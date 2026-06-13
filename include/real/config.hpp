@@ -21,17 +21,17 @@ namespace real::detail {
  * `{1000}` quantifiers expand to hundreds of millions of instructions. Caps
  * peak match-state memory to a few MiB at the limit.
  */
-inline constexpr std::size_t max_program_size = 262144;  //!< 256 Ki instructions
+inline constexpr std::size_t max_program_size {262144}; //!< 256 Ki instructions
 
 //! \brief Per-quantifier bounded-repeat cap, enforced at parse time.
-inline constexpr std::int32_t max_repeat_count = 1000;
+inline constexpr std::int32_t max_repeat_count {1000};
 
 //! \brief Maximum capture groups; bounds `slot_count` = `2 * (groups + 1)`.
-inline constexpr std::int32_t max_group_count = 32766;
+inline constexpr std::int32_t max_group_count {32766};
 
 //! \brief Maximum parser recursion depth; prevents stack overflow on deep nesting.
-inline constexpr std::int32_t max_nesting_depth = 200;
+inline constexpr std::int32_t max_nesting_depth {200};
 
-}  // namespace real::detail
+} // namespace real::detail
 
-#endif  // REAL_CONFIG_HPP
+#endif // REAL_CONFIG_HPP

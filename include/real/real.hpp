@@ -91,7 +91,7 @@ public:
    */
   [[nodiscard]] constexpr std::string_view operator[](std::size_t group) const
   {
-    const std::size_t s = start(group);
+    const std::size_t s {start(group)};
     return s == npos ? std::string_view {} : text_.substr(s, end(group) - s);
   }
 
@@ -103,8 +103,8 @@ public:
   [[nodiscard]] constexpr std::size_t group_index(std::string_view name) const
   {
     for (const detail::named_group& ng : names_) {
-      const auto begin  = static_cast<std::size_t>(ng.begin);
-      const auto length = static_cast<std::size_t>(ng.end - ng.begin);
+      const auto begin {static_cast<std::size_t>(ng.begin)};
+      const auto length {static_cast<std::size_t>(ng.end - ng.begin)};
       if (pattern_.substr(begin, length) == name) {
         return static_cast<std::size_t>(ng.group);
       }
@@ -115,31 +115,31 @@ public:
   //! \param[in] name Group name. \return Its start offset, or npos if unknown.
   [[nodiscard]] constexpr std::size_t start(std::string_view name) const
   {
-    const std::size_t g = group_index(name);
+    const std::size_t g {group_index(name)};
     return g == npos ? npos : start(g);
   }
 
   //! \param[in] name Group name. \return Its end offset, or npos if unknown.
   [[nodiscard]] constexpr std::size_t end(std::string_view name) const
   {
-    const std::size_t g = group_index(name);
+    const std::size_t g {group_index(name)};
     return g == npos ? npos : end(g);
   }
 
   //! \param[in] name Group name. \return Its matched text, empty if unknown/unset.
   [[nodiscard]] constexpr std::string_view operator[](std::string_view name) const
   {
-    const std::size_t g = group_index(name);
+    const std::size_t g {group_index(name)};
     return g == npos ? std::string_view {} : (*this)[g];
   }
 
 private:
 
-  std::string_view                     text_;             //!< The searched text.
-  SlotStorage                          slots_;            //!< Flattened capture slots.
-  bool                                 matched_ = false;  //!< Whether a match occurred.
-  std::string_view                     pattern_;          //!< Pattern text (for named lookups).
-  std::span<const detail::named_group> names_;            //!< Borrowed named-group table.
+  std::string_view                     text_;       //!< The searched text.
+  SlotStorage                          slots_;      //!< Flattened capture slots.
+  bool                                 matched_ {}; //!< Whether a match occurred.
+  std::string_view                     pattern_;    //!< Pattern text (for named lookups).
+  std::span<const detail::named_group> names_;      //!< Borrowed named-group table.
 };
 
 //! The result type of the default, runtime-compiled `real::regex`.
@@ -204,14 +204,14 @@ public:
 
 private:
 
-  detail::program_view         prog_;                     //!< The program being run.
-  std::string_view             pattern_;                  //!< Pattern text (named lookups).
-  std::string_view             text_;                     //!< The text being scanned.
-  std::size_t                  pos_                 = 0;   //!< Current scan offset.
-  std::size_t                  forbid_empty_until_  = 0;   //!< Empty-match guard (see pike.hpp).
-  bool                         done_                = true; //!< True once exhausted.
-  value_type                   current_;                  //!< The current match.
-  typename Storage::state_type state_;                    //!< VM scratch, reused across the walk.
+  detail::program_view         prog_;                  //!< The program being run.
+  std::string_view             pattern_;               //!< Pattern text (named lookups).
+  std::string_view             text_;                  //!< The text being scanned.
+  std::size_t                  pos_ {};                //!< Current scan offset.
+  std::size_t                  forbid_empty_until_ {}; //!< Empty-match guard (see pike.hpp).
+  bool                         done_ {true};           //!< True once exhausted.
+  value_type                   current_;               //!< The current match.
+  typename Storage::state_type state_;                 //!< VM scratch, reused across the walk.
 
   //! Finds the next match, applying the empty-match advance rules.
   constexpr void advance()
@@ -226,10 +226,10 @@ private:
       done_ = true;
       return;
     }
-    const std::size_t start = slots[0];
-    const std::size_t end   = slots[1];
-    current_                = value_type(text_, std::move(slots), true, pattern_, prog_.names);
-    pos_                    = end;
+    const std::size_t start {slots[0]};
+    const std::size_t end {slots[1]};
+    current_ = value_type(text_, std::move(slots), true, pattern_, prog_.names);
+    pos_     = end;
     if (end == start) {
       // CPython 3.7+: after an empty match, the next match may start at the
       // same position only if it is non-empty; another empty match there is
@@ -277,9 +277,9 @@ public:
 
 private:
 
-  detail::program_view prog_;     //!< The program being run.
-  std::string_view     pattern_;  //!< Pattern text (named lookups).
-  std::string_view     text_;     //!< The text to iterate.
+  detail::program_view prog_;    //!< The program being run.
+  std::string_view     pattern_; //!< Pattern text (named lookups).
+  std::string_view     text_;    //!< The text to iterate.
 };
 
 /*!
@@ -387,7 +387,7 @@ public:
   //! Deleted: `find_iter` on a temporary regex would dangle.
   [[nodiscard]] basic_match_range<Storage> find_iter(std::string_view text) const&& = delete;
   //! Deleted: `find_iter` on a temporary regex would dangle.
-  [[nodiscard]] basic_match_range<Storage> find_iter(const char* text) const&&      = delete;
+  [[nodiscard]] basic_match_range<Storage> find_iter(const char* text) const&& = delete;
 
   /*!
    * \brief All matches, eagerly (like Python `re.findall` but full results).
@@ -416,7 +416,7 @@ public:
   //! Deleted: `find_all` on a temporary regex would dangle.
   [[nodiscard]] std::vector<result_type> find_all(std::string_view text) const&& = delete;
   //! Deleted: `find_all` on a temporary regex would dangle.
-  [[nodiscard]] std::vector<result_type> find_all(const char* text) const&&      = delete;
+  [[nodiscard]] std::vector<result_type> find_all(const char* text) const&& = delete;
 
   /*!
    * \brief Replaces matches in \p text (Python `re.sub`).
@@ -436,8 +436,8 @@ public:
                                               std::size_t      max_count = 0) const
   {
     std::string out;
-    std::size_t last = 0;
-    std::size_t done = 0;
+    std::size_t last {};
+    std::size_t done {};
     for (const result_type& m : find_iter(text)) {
       if (max_count != 0 && done == max_count) {
         break;
@@ -465,8 +465,8 @@ public:
                                                               std::size_t      max_splits = 0) const
   {
     std::vector<std::string_view> out;
-    std::size_t                   last = 0;
-    std::size_t                   done = 0;
+    std::size_t                   last {};
+    std::size_t                   done {};
     for (const result_type& m : find_iter(text)) {
       if (max_splits != 0 && done == max_splits) {
         break;
@@ -554,7 +554,7 @@ public:
 
 private:
 
-  Storage program_;  //!< The storage policy holding the compiled program.
+  Storage program_; //!< The storage policy holding the compiled program.
 
   //! \param[in] ng A named group. \return Its name, sliced from the pattern text.
   [[nodiscard]] constexpr std::string_view name_of(const detail::named_group& ng) const
@@ -575,9 +575,9 @@ private:
    */
   constexpr void expand_replacement(std::string& out, const result_type& m, std::string_view replacement) const
   {
-    std::size_t i = 0;
+    std::size_t i {};
     while (i < replacement.size()) {
-      const char c = replacement[i];
+      const char c {replacement[i]};
       if (c != '$') {
         out.push_back(c);
         ++i;
@@ -587,7 +587,7 @@ private:
       if (i >= replacement.size()) {
         throw regex_error("dangling $ in replacement", i - 1);
       }
-      const char d = replacement[i];
+      const char d {replacement[i]};
       if (d == '$') {
         out.push_back('$');
         ++i;
@@ -597,7 +597,7 @@ private:
         ++i;
       }
       else if (d >= '0' && d <= '9') {
-        std::size_t group = 0;
+        std::size_t group {};
         while (i < replacement.size() && replacement[i] >= '0' &&
                replacement[i] <= '9') {
           group = (group * 10) + static_cast<std::size_t>(replacement[i] - '0');
@@ -609,8 +609,8 @@ private:
         out.append(m[group]);
       }
       else if (d == '{') {
-        const std::size_t name_begin = i + 1;
-        std::size_t       j          = name_begin;
+        const std::size_t name_begin {i + 1};
+        std::size_t       j {name_begin};
         while (j < replacement.size() && replacement[j] != '}') {
           ++j;
         }
@@ -642,9 +642,9 @@ private:
   {
     typename Storage::state_type   state;
     typename Storage::slot_storage slots;
-    const detail::program_view     prog = program_.view();
+    const detail::program_view     prog {program_.view()};
     detail::pike_vm                vm(prog, state);
-    const bool                     matched = vm.run(text, 0, mode, slots);
+    const bool                     matched {vm.run(text, 0, mode, slots)};
     return {text, std::move(slots), matched, pattern(), prog.names};
   }
 };

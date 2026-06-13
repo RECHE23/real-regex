@@ -29,8 +29,8 @@ namespace real::detail {
  */
 constexpr std::size_t codepoint_advance(std::string_view text, std::size_t pos)
 {
-  const auto  lead   = static_cast<std::uint8_t>(text[pos]);
-  std::size_t length = 1;
+  const auto  lead {static_cast<std::uint8_t>(text[pos])};
+  std::size_t length {1};
   if (lead >= 0xF0) {
     length = 4;
   }
@@ -40,8 +40,8 @@ constexpr std::size_t codepoint_advance(std::string_view text, std::size_t pos)
   else if (lead >= 0xC0) {
     length = 2;
   }
-  std::size_t       i     = pos + 1;
-  const std::size_t limit = pos + length < text.size() ? pos + length : text.size();
+  std::size_t       i {pos + 1};
+  const std::size_t limit {pos + length < text.size() ? pos + length : text.size()};
   while (i < limit && (static_cast<unsigned>(static_cast<std::uint8_t>(text[i])) & 0xC0U) ==
                         0x80U) {
     ++i; // skip UTF-8 continuation bytes (10xxxxxx)

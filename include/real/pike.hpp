@@ -61,10 +61,10 @@ struct eps_entry
 template <typename PcVec, typename SlotVec, typename MarkVec>
 struct basic_thread_list
 {
-  PcVec         pcs;             //!< Live program counters, in priority order.
-  SlotVec       slots;           //!< Flattened capture slots, parallel to \ref pcs.
-  MarkVec       mark;            //!< Per-pc generation stamp (see \ref seen).
-  std::uint64_t generation = 0;  //!< Current generation; bumped by \ref reset.
+  PcVec         pcs;           //!< Live program counters, in priority order.
+  SlotVec       slots;         //!< Flattened capture slots, parallel to \ref pcs.
+  MarkVec       mark;          //!< Per-pc generation stamp (see \ref seen).
+  std::uint64_t generation {}; //!< Current generation; bumped by \ref reset.
 
   /*!
    * \brief Clears the list in O(1) by bumping the generation.
@@ -108,9 +108,9 @@ struct basic_thread_list
 template <typename ThreadList, typename WorkVec, typename EpsVec>
 struct basic_pike_state
 {
-  ThreadList lists[2];  //!< Current and next thread lists (flipped by index).
-  WorkVec    working;   //!< Capture slots along the current DFS path.
-  EpsVec     stack;     //!< Epsilon-closure DFS stack.
+  ThreadList lists[2]; //!< Current and next thread lists (flipped by index).
+  WorkVec    working;  //!< Capture slots along the current DFS path.
+  EpsVec     stack;    //!< Epsilon-closure DFS stack.
 };
 
 //! Thread list specialized on `std::vector` (the dynamic storage mode).
@@ -156,8 +156,7 @@ public:
    * \return `true` if a match was found.
    */
   template <typename OutSlots>
-  constexpr bool run(std::string_view text, std::size_t start, run_mode mode, OutSlots& out_slots,
-                     std::size_t forbid_empty_until = 0)
+  constexpr bool run(std::string_view text, std::size_t start, run_mode mode, OutSlots& out_slots, std::size_t forbid_empty_until = 0)
   {
     text_               = text;
     forbid_empty_until_ = forbid_empty_until;
@@ -169,16 +168,16 @@ public:
     if (prog_.hints.exact_literal_len > 0) {
       return run_exact_literal(text, start, mode, out_slots);
     }
-    const std::size_t code_size = prog_.code.size();
-    auto*             clist     = &state_.lists[0];
-    auto*             nlist     = &state_.lists[1];
+    const std::size_t code_size {prog_.code.size()};
+    auto*             clist {&state_.lists[0]};
+    auto*             nlist {&state_.lists[1]};
     clist->reset(code_size);
     nlist->reset(code_size);
     state_.working.assign(prog_.slot_count, npos);
     out_slots.assign(prog_.slot_count, npos);
 
-    bool        matched = false;
-    std::size_t pos     = start;
+    bool        matched {};
+    std::size_t pos {start};
     while (pos <= text.size()) {
       const bool seeding = (pos == start) || (mode == run_mode::search && !matched);
       if (seeding && mode == run_mode::search && !matched && clist->pcs.empty()) {
@@ -213,9 +212,9 @@ public:
         continue;
       }
       step(*clist, *nlist, pos, mode, matched, out_slots);
-      auto* swap = clist;
-      clist      = nlist;
-      nlist      = swap;
+      auto* swap {clist};
+      clist = nlist;
+      nlist = swap;
       nlist->reset(code_size);
       ++pos;
     }
@@ -224,9 +223,9 @@ public:
 
 private:
 
-  program_view     prog_;   //!< The program being executed.
-  State&           state_;  //!< Borrowed reusable scratch state.
-  std::string_view text_;   //!< The subject text for the current run.
+  program_view     prog_;  //!< The program being executed.
+  State&           state_; //!< Borrowed reusable scratch state.
+  std::string_view text_;  //!< The subject text for the current run.
 
   /*!
    * \brief Reject empty matches whose start is below this offset.
@@ -237,7 +236,7 @@ private:
    * UTF-8 aligned. 0 means no restriction (single match/search/fullmatch
    * never restrict).
    */
-  std::size_t      forbid_empty_until_ = 0;
+  std::size_t forbid_empty_until_ {};
 
   //! The concrete thread-list type taken from the bound `State`.
   using list_type = std::remove_reference_t<decltype(std::declval<State&>().lists[0])>;
@@ -263,7 +262,7 @@ private:
     const auto in_class = [&](std::size_t i) {
       return k.test(static_cast<std::uint8_t>(text[i]));
     };
-    std::size_t s = start;
+    std::size_t s {start};
     if (mode == run_mode::search) {
       while (s < text.size() && !in_class(s)) {
         ++s;
@@ -273,7 +272,7 @@ private:
       out_slots.assign(2, npos);
       return false;
     }
-    std::size_t e = s + 1;
+    std::size_t e {s + 1};
     while (e < text.size() && in_class(e)) {
       ++e;
     }
@@ -294,13 +293,12 @@ private:
    * \param[in] len  Length of the literal (`hints.exact_literal_len`).
    * \return `true` if `text[cand : cand+len]` equals the literal.
    */
-  [[nodiscard]] constexpr bool literal_at(std::string_view text, std::size_t cand,
-                                          std::size_t len) const
+  [[nodiscard]] constexpr bool literal_at(std::string_view text, std::size_t cand, std::size_t len) const
   {
     if (cand + len > text.size()) {
       return false;
     }
-    const auto pfx = std::string_view(prog_.hints.prefix.data(), len);
+    const auto pfx {std::string_view(prog_.hints.prefix.data(), len)};
     if (std::is_constant_evaluated()) {
       return text.substr(cand, len) == pfx;
     }
@@ -324,19 +322,22 @@ private:
   constexpr bool replay_literal(std::size_t cand, std::size_t len, OutSlots& out_slots) const
   {
     out_slots.assign(prog_.slot_count, npos);
-    std::size_t consumed = 0;
+    std::size_t consumed {};
     for (std::size_t pc = 0; pc < prog_.code.size(); ++pc) {
-      const instr& in = prog_.code[pc];
+      const instr& in {prog_.code[pc]};
       if (in.op == opcode::save) {
         out_slots[in.arg16] = cand + consumed;
-      } else if (in.op == opcode::assert_position) {
+      }
+      else if (in.op == opcode::assert_position) {
         if (!assertion_holds(static_cast<assert_kind>(in.arg8), cand + consumed)) {
           out_slots.assign(prog_.slot_count, npos);
           return false;
         }
-      } else if ((in.op == opcode::byte || in.op == opcode::klass) && consumed < len) {
+      }
+      else if ((in.op == opcode::byte || in.op == opcode::klass) && consumed < len) {
         ++consumed;
-      } else if (in.op == opcode::match) {
+      }
+      else if (in.op == opcode::match) {
         break;
       }
     }
@@ -366,23 +367,23 @@ private:
   template <typename OutSlots>
   constexpr bool run_exact_literal(std::string_view text, std::size_t start, run_mode mode, OutSlots& out_slots)
   {
-    const std::size_t len = static_cast<std::size_t>(prog_.hints.exact_literal_len);
+    const std::size_t len {static_cast<std::size_t>(prog_.hints.exact_literal_len)};
     if (len == 0) {
       out_slots.assign(prog_.slot_count, npos);
       return false;
     }
     if (mode != run_mode::search) {
       const bool full_ok = mode != run_mode::full || start + len == text.size();
-      const bool ok = literal_at(text, start, len) && full_ok &&
-                      replay_literal(start, len, out_slots);
+      const bool ok      = literal_at(text, start, len) && full_ok &&
+                           replay_literal(start, len, out_slots);
       if (!ok) {
         out_slots.assign(prog_.slot_count, npos);
       }
       return ok;
     }
-    std::size_t from = start;
+    std::size_t from {start};
     while (true) {
-      const std::size_t cand = next_candidate(text, from, start);
+      const std::size_t cand {next_candidate(text, from, start)};
       if (cand > text.size() || cand + len > text.size()) {
         out_slots.assign(prog_.slot_count, npos);
         return false;
@@ -408,7 +409,7 @@ private:
    */
   [[nodiscard]] constexpr std::size_t next_candidate(std::string_view text, std::size_t pos, std::size_t start) const
   {
-    const pattern_hints& h = prog_.hints;
+    const pattern_hints& h {prog_.hints};
     if (h.anchored_start) {
       return pos == start ? pos : npos; // one shot at the start
     }
@@ -419,7 +420,7 @@ private:
       return find_byte(text, pos, static_cast<char>(h.single_first));
     }
     if (h.line_anchored && pos != start) {
-      const std::size_t nl = find_byte(text, pos - 1, '\n');
+      const std::size_t nl {find_byte(text, pos - 1, '\n')};
       return nl == npos ? npos : nl + 1;
     }
     if (h.first_bytes_valid) {
@@ -447,7 +448,7 @@ private:
    */
   [[nodiscard]] constexpr bool seed_viable(std::string_view text, std::size_t pos, std::size_t start) const
   {
-    const pattern_hints& h = prog_.hints;
+    const pattern_hints& h {prog_.hints};
     if (h.anchored_start && pos != start) {
       return false;
     }
@@ -473,7 +474,7 @@ private:
    */
   [[nodiscard]] constexpr bool assertion_holds(assert_kind kind, std::size_t pos) const
   {
-    const std::size_t len     = text_.size();
+    const std::size_t len {text_.size()};
     const auto        byte_at = [&](std::size_t i) { return static_cast<std::uint8_t>(text_[i]); };
     switch (kind) {
       case assert_kind::text_start:
@@ -489,15 +490,15 @@ private:
       case assert_kind::word_boundary:
       case assert_kind::not_word_boundary:
         {
-          const bool before = pos > 0 && is_ascii_word_byte(byte_at(pos - 1));
-          const bool after  = pos < len && is_ascii_word_byte(byte_at(pos));
+          const bool before {pos > 0 && is_ascii_word_byte(byte_at(pos - 1))};
+          const bool after {pos < len && is_ascii_word_byte(byte_at(pos))};
           return (before != after) == (kind == assert_kind::word_boundary);
         }
       case assert_kind::word_start:
       case assert_kind::word_end:
         {
-          const bool before = pos > 0 && is_ascii_word_byte(byte_at(pos - 1));
-          const bool after  = pos < len && is_ascii_word_byte(byte_at(pos));
+          const bool before {pos > 0 && is_ascii_word_byte(byte_at(pos - 1))};
+          const bool after {pos < len && is_ascii_word_byte(byte_at(pos))};
           return kind == assert_kind::word_start ? (!before && after)
                                                  : (before && !after);
         }
@@ -523,11 +524,11 @@ private:
   template <typename OutSlots>
   constexpr void step(list_type& clist, list_type& nlist, std::size_t pos, run_mode mode, bool& matched, OutSlots& out_slots)
   {
-    const std::uint16_t slot_count = prog_.slot_count;
+    const std::uint16_t slot_count {prog_.slot_count};
     for (std::size_t i = 0; i < clist.pcs.size(); ++i) {
-      const std::int32_t pc   = clist.pcs[i];
-      const instr&       in   = prog_.code[static_cast<std::size_t>(pc)];
-      const std::size_t  base = i * slot_count;
+      const std::int32_t pc {clist.pcs[i]};
+      const instr&       in {prog_.code[static_cast<std::size_t>(pc)]};
+      const std::size_t  base {i * slot_count};
       switch (in.op) {
         case opcode::byte:
           if (pos < text_.size() &&
@@ -591,22 +592,22 @@ private:
    */
   constexpr void add_thread(list_type& list, std::int32_t pc0, std::size_t pos)
   {
-    auto& stack = state_.stack;
+    auto& stack {state_.stack};
     stack.clear();
     stack.push_back({.pc = pc0, .slot = 0, .restore_value = 0});
     while (!stack.empty()) {
-      const auto entry = stack.back();
+      const auto entry {stack.back()};
       stack.pop_back();
       if (entry.pc < 0) {
         state_.working[entry.slot] = entry.restore_value;
         continue;
       }
-      const std::int32_t pc = entry.pc;
+      const std::int32_t pc {entry.pc};
       if (list.seen(pc)) {
         continue;
       }
       list.mark_seen(pc);
-      const instr& in = prog_.code[static_cast<std::size_t>(pc)];
+      const instr& in {prog_.code[static_cast<std::size_t>(pc)]};
       switch (in.op) {
         case opcode::jump:
           stack.push_back({.pc = in.x, .slot = 0, .restore_value = 0});

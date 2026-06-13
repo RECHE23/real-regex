@@ -23,7 +23,7 @@
 namespace real {
 
 //! Sentinel for "no position" / unset capture slot (akin to std::string::npos).
-inline constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
+inline constexpr std::size_t npos {std::numeric_limits<std::size_t>::max()};
 
 /*!
  * \brief Compilation flags, mirroring Python's `re.I`, `re.M` and `re.S`.
@@ -33,11 +33,11 @@ inline constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
  */
 enum class flags : std::uint8_t
 {
-  none      = 0,  //!< No flags.
-  icase     = 1,  //!< Case-insensitive (ASCII).
-  multiline = 2,  //!< `^` and `$` also match at line boundaries.
-  dotall    = 4,  //!< `.` also matches `\n`.
-  bytes     = 8,  //!< Binary mode: `.` and `[^…]` match raw bytes, not codepoints.
+  none      = 0, //!< No flags.
+  icase     = 1, //!< Case-insensitive (ASCII).
+  multiline = 2, //!< `^` and `$` also match at line boundaries.
+  dotall    = 4, //!< `.` also matches `\n`.
+  bytes     = 8, //!< Binary mode: `.` and `[^…]` match raw bytes, not codepoints.
 };
 
 /*!
@@ -141,11 +141,11 @@ enum class assert_kind : std::uint8_t
 //! One NFA instruction. Field meaning depends on \ref op.
 struct instr
 {
-  opcode        op;        //!< The operation.
-  std::uint8_t  arg8  = 0; //!< Byte literal, or \ref assert_kind, depending on op.
-  std::uint16_t arg16 = 0; //!< Class index (klass) or capture slot (save).
-  std::int32_t  x     = 0; //!< Primary branch target (split/jump).
-  std::int32_t  y     = 0; //!< Secondary branch target (split).
+  opcode        op;       //!< The operation.
+  std::uint8_t  arg8 {};  //!< Byte literal, or \ref assert_kind, depending on op.
+  std::uint16_t arg16 {}; //!< Class index (klass) or capture slot (save).
+  std::int32_t  x {};     //!< Primary branch target (split/jump).
+  std::int32_t  y {};     //!< Secondary branch target (split).
 };
 
 /*!
@@ -157,14 +157,14 @@ struct instr
  */
 struct pattern_hints
 {
-  std::array<char, 16> prefix {};                 //!< Required literal prefix (possibly truncated).
-  std::uint8_t         prefix_size       = 0;     //!< Valid bytes in \ref prefix.
-  bool                 anchored_start    = false; //!< `\A` / `^` (no multiline): only position 0.
-  bool                 line_anchored     = false; //!< `^` multiline: position 0 or after `\n`.
-  bool                 first_bytes_valid = false; //!< False when an empty match is possible.
-  std::int16_t         single_first      = -1;    //!< The unique possible first byte, or -1.
-  char_class           first_bytes;               //!< All possible first bytes.
-  std::int32_t         greedy_class_loop = -1;    //!< Class index if the whole pattern is "class+", else -1.
+  std::array<char, 16> prefix {};              //!< Required literal prefix (possibly truncated).
+  std::uint8_t         prefix_size {};         //!< Valid bytes in \ref prefix.
+  bool                 anchored_start {};      //!< `\A` / `^` (no multiline): only position 0.
+  bool                 line_anchored {};       //!< `^` multiline: position 0 or after `\n`.
+  bool                 first_bytes_valid {};   //!< False when an empty match is possible.
+  std::int16_t         single_first {-1};      //!< The unique possible first byte, or -1.
+  char_class           first_bytes;            //!< All possible first bytes.
+  std::int32_t         greedy_class_loop {-1}; //!< Class index if the whole pattern is "class+", else -1.
 
   /*!
    * \brief Length of the pure-literal match, or 0.
@@ -174,7 +174,7 @@ struct pattern_hints
    * branches or further consuming ops). Enables a direct slot-replay bypass
    * of the full Pike VM — the major win for "search for a fixed string".
    */
-  std::uint8_t exact_literal_len = 0;
+  std::uint8_t exact_literal_len {};
 };
 
 /*!
@@ -185,9 +185,9 @@ struct pattern_hints
  */
 struct named_group
 {
-  std::int32_t group = 0; //!< Capture group number.
-  std::int32_t begin = 0; //!< Start offset of the name in the pattern text.
-  std::int32_t end   = 0; //!< End offset (exclusive) of the name.
+  std::int32_t group {}; //!< Capture group number.
+  std::int32_t begin {}; //!< Start offset of the name in the pattern text.
+  std::int32_t end {};   //!< End offset (exclusive) of the name.
 };
 
 /*!
@@ -198,23 +198,23 @@ struct named_group
  */
 struct program_view
 {
-  std::span<const instr>       code;                //!< The instruction stream.
-  std::span<const char_class>  classes;             //!< Interned character classes.
-  std::span<const named_group> names;               //!< Named capture groups.
-  std::uint16_t                slot_count = 2;       //!< `2 * (capture groups + 1)`.
-  bool                         byte_mode  = false;   //!< \ref flags::bytes mode — positions are raw bytes.
-  pattern_hints                hints;                //!< Search-acceleration hints.
+  std::span<const instr>       code;           //!< The instruction stream.
+  std::span<const char_class>  classes;        //!< Interned character classes.
+  std::span<const named_group> names;          //!< Named capture groups.
+  std::uint16_t                slot_count {2}; //!< `2 * (capture groups + 1)`.
+  bool                         byte_mode {};   //!< \ref flags::bytes mode — positions are raw bytes.
+  pattern_hints                hints;          //!< Search-acceleration hints.
 };
 
 //! Owning, heap-allocated program: the storage backing `real::regex`.
 struct dynamic_program
 {
-  std::vector<instr>       code;               //!< The instruction stream.
-  std::vector<char_class>  classes;            //!< Interned character classes.
-  std::vector<named_group> names;              //!< Named capture groups.
-  std::uint16_t            slot_count = 2;      //!< `2 * (capture groups + 1)`.
-  bool                     byte_mode  = false;  //!< \ref flags::bytes mode.
-  pattern_hints            hints;               //!< Search-acceleration hints.
+  std::vector<instr>       code;           //!< The instruction stream.
+  std::vector<char_class>  classes;        //!< Interned character classes.
+  std::vector<named_group> names;          //!< Named capture groups.
+  std::uint16_t            slot_count {2}; //!< `2 * (capture groups + 1)`.
+  bool                     byte_mode {};   //!< \ref flags::bytes mode.
+  pattern_hints            hints;          //!< Search-acceleration hints.
 
   //! \return A non-owning \ref program_view over this program.
   [[nodiscard]] constexpr program_view view() const

@@ -54,17 +54,17 @@ enum class anchor_kind : std::uint8_t
 //! One AST node. Active fields depend on \ref kind (noted per field).
 struct ast_node
 {
-  node_kind    kind    = node_kind::empty;   //!< Which fields below are meaningful.
-  std::uint8_t byte    = 0;                  //!< byte: the exact byte value.
-  anchor_kind  anchor  = anchor_kind::caret; //!< anchor: the assertion kind.
-  bool         negated = false;              //!< klass: written as `[^...]` / `\D` `\W` `\S`.
-  bool         lazy    = false;              //!< repeat: prefer the shortest expansion.
-  std::int32_t klass   = -1;                 //!< klass: index into \ref ast::classes.
-  std::int32_t min     = 0;                  //!< repeat: minimum count.
-  std::int32_t max     = -1;                 //!< repeat: maximum count (-1 = unbounded).
-  std::int32_t group   = -1;                 //!< group: capture number, -1 for `(?:...)`.
-  std::int32_t child   = -1;                 //!< First child (concat, repeat, alternation, group).
-  std::int32_t next    = -1;                 //!< Next sibling in the parent's child list.
+  node_kind    kind {node_kind::empty};     //!< Which fields below are meaningful.
+  std::uint8_t byte {};                     //!< byte: the exact byte value.
+  anchor_kind  anchor {anchor_kind::caret}; //!< anchor: the assertion kind.
+  bool         negated {};                  //!< klass: written as `[^...]` / `\D` `\W` `\S`.
+  bool         lazy {};                     //!< repeat: prefer the shortest expansion.
+  std::int32_t klass {-1};                  //!< klass: index into \ref ast::classes.
+  std::int32_t min {};                      //!< repeat: minimum count.
+  std::int32_t max {-1};                    //!< repeat: maximum count (-1 = unbounded).
+  std::int32_t group {-1};                  //!< group: capture number, -1 for `(?:...)`.
+  std::int32_t child {-1};                  //!< First child (concat, repeat, alternation, group).
+  std::int32_t next {-1};                   //!< Next sibling in the parent's child list.
 };
 
 /*!
@@ -76,12 +76,12 @@ struct ast_node
  */
 struct ast
 {
-  std::vector<ast_node>    nodes;                       //!< The node pool; \ref root indexes it.
-  std::vector<char_class>  classes;                     //!< Class bitmaps as written, before negation.
-  std::vector<named_group> names;                       //!< Named capture groups.
-  flags                    inline_flags = flags::none;  //!< Flags from a leading `(?ims)`.
-  std::int32_t             group_count  = 0;            //!< Number of capturing groups.
-  std::int32_t             root         = -1;           //!< Index of the root node.
+  std::vector<ast_node>    nodes;                      //!< The node pool; \ref root indexes it.
+  std::vector<char_class>  classes;                    //!< Class bitmaps as written, before negation.
+  std::vector<named_group> names;                      //!< Named capture groups.
+  flags                    inline_flags {flags::none}; //!< Flags from a leading `(?ims)`.
+  std::int32_t             group_count {};             //!< Number of capturing groups.
+  std::int32_t             root {-1};                  //!< Index of the root node.
 };
 
 //! Recursive-descent parser: a pattern string in, an \ref ast out.
@@ -113,9 +113,9 @@ public:
 
 private:
 
-  std::string_view pattern_;        //!< The pattern being parsed.
-  std::size_t      pos_   = 0;      //!< Current read offset into \ref pattern_.
-  std::int32_t     depth_ = 0;      //!< Current group nesting (see \ref max_nesting_depth).
+  std::string_view pattern_;  //!< The pattern being parsed.
+  std::size_t      pos_ {};   //!< Current read offset into \ref pattern_.
+  std::int32_t     depth_ {}; //!< Current group nesting (see \ref max_nesting_depth).
 
   /*!
    * \brief Aborts the parse with a \ref real::regex_error at the current offset.
@@ -182,7 +182,7 @@ private:
   static constexpr std::int32_t add_class_node(ast& out, const char_class& cc, bool negated)
   {
     out.classes.push_back(cc);
-    const auto index = static_cast<std::int32_t>(out.classes.size()) - 1;
+    const auto index {static_cast<std::int32_t>(out.classes.size()) - 1};
     return add_node(out, {.kind = node_kind::klass, .negated = negated, .klass = index});
   }
 
@@ -196,13 +196,13 @@ private:
    */
   constexpr std::int32_t parse_alternation(ast& out)
   {
-    std::int32_t first = parse_sequence(out);
+    std::int32_t first {parse_sequence(out)};
     if (eof() || peek() != '|') {
       return first;
     }
-    std::int32_t last = first;
+    std::int32_t last {first};
     while (accept('|')) {
-      const std::int32_t branch                      = parse_sequence(out); // may be empty
+      const std::int32_t branch {parse_sequence(out)}; // may be empty
       out.nodes[static_cast<std::size_t>(last)].next = branch;
       last                                           = branch;
     }
@@ -218,11 +218,11 @@ private:
    */
   constexpr std::int32_t parse_sequence(ast& out)
   {
-    std::int32_t first = -1;
-    std::int32_t last  = -1;
+    std::int32_t first {-1};
+    std::int32_t last {-1};
     while (!eof() && peek() != '|' && peek() != ')') {
-      std::int32_t atom = parse_atom(out);
-      atom              = parse_quantifier(out, atom);
+      std::int32_t atom {parse_atom(out)};
+      atom = parse_quantifier(out, atom);
       if (first == -1) {
         first = atom;
       }
@@ -249,7 +249,7 @@ private:
    */
   constexpr std::int32_t parse_atom(ast& out)
   {
-    const char c = peek();
+    const char c {peek()};
     switch (c) {
       case '*':
       case '+':
@@ -299,14 +299,14 @@ private:
     // Like Python: a bare anchor cannot be repeated ((?:^)* is fine).
     if (out.nodes[static_cast<std::size_t>(atom)].kind == node_kind::anchor &&
         (peek() == '*' || peek() == '+' || peek() == '?' || peek() == '{')) {
-      std::int32_t ignored_min = 0;
-      std::int32_t ignored_max = -1;
+      std::int32_t ignored_min {};
+      std::int32_t ignored_max {-1};
       if (peek() != '{' || try_parse_braces(ignored_min, ignored_max)) {
         fail("nothing to repeat");
       }
     }
-    std::int32_t min = 0;
-    std::int32_t max = -1;
+    std::int32_t min {};
+    std::int32_t max {-1};
     switch (peek()) {
       case '*':
         ++pos_;
@@ -327,11 +327,11 @@ private:
       default:
         return atom;
     }
-    const bool lazy = accept('?');
+    const bool lazy {accept('?')};
     if (!eof()) {
-      const char   c           = peek();
-      std::int32_t ignored_min = 0;
-      std::int32_t ignored_max = -1;
+      const char   c {peek()};
+      std::int32_t ignored_min {};
+      std::int32_t ignored_max {-1};
       if (c == '*' || c == '+' || c == '?' ||
           (c == '{' && try_parse_braces(ignored_min, ignored_max))) {
         fail("multiple repeat");
@@ -350,11 +350,11 @@ private:
    */
   constexpr bool try_parse_braces(std::int32_t& min, std::int32_t& max)
   {
-    const std::size_t save = pos_;
+    const std::size_t save {pos_};
     ++pos_; // consume '{'
-    const std::int32_t n         = parse_repeat_count();
-    std::int32_t       m         = n;
-    bool               has_comma = false;
+    const std::int32_t n {parse_repeat_count()};
+    std::int32_t       m {n};
+    bool               has_comma {};
     if (accept(',')) {
       has_comma = true;
       m         = parse_repeat_count();
@@ -380,7 +380,7 @@ private:
    */
   constexpr std::int32_t parse_repeat_count()
   {
-    std::int32_t value = -1;
+    std::int32_t value {-1};
     while (!eof() && peek() >= '0' && peek() <= '9') {
       value = value < 0 ? 0 : value;
       value = (value * 10) + (peek() - '0');
@@ -448,13 +448,13 @@ private:
    */
   constexpr bool parse_global_flags_prefix(ast& out)
   {
-    const std::size_t save = pos_;
+    const std::size_t save {pos_};
     if (!accept('(') || !accept('?')) {
       pos_ = save;
       return false;
     }
-    flags found      = flags::none;
-    bool  any_letter = false;
+    flags found {flags::none};
+    bool  any_letter {};
     while (!eof() && is_flag_letter(peek())) {
       found      = found | flag_for_letter(peek());
       any_letter = true;
@@ -488,12 +488,12 @@ private:
    */
   constexpr std::int32_t parse_group(ast& out)
   {
-    const std::size_t open_pos = pos_;
+    const std::size_t open_pos {pos_};
     if (++depth_ > max_nesting_depth) {
       fail("pattern nesting too deep");
     }
     ++pos_; // consume '('
-    std::int32_t group = -1;
+    std::int32_t group {-1};
     if (accept('?')) {
       if (accept(':')) {
         // non-capturing
@@ -539,7 +539,7 @@ private:
     else {
       group = new_group(out, open_pos);
     }
-    const std::int32_t body = parse_alternation(out);
+    const std::int32_t body {parse_alternation(out)};
     if (!accept(')')) {
       pos_ = open_pos;
       fail("missing ), unterminated subpattern");
@@ -578,19 +578,19 @@ private:
    */
   constexpr void parse_group_name(ast& out, std::int32_t group)
   {
-    const std::size_t begin = pos_;
+    const std::size_t begin {pos_};
     if (eof() || !is_name_start(peek())) {
       fail("bad character in group name");
     }
     while (!eof() && (is_ascii_alnum(peek()) || peek() == '_')) {
       ++pos_;
     }
-    const std::size_t end = pos_;
+    const std::size_t end {pos_};
     expect('>', "bad character in group name");
     for (const named_group& existing : out.names) {
-      const std::string_view name    = pattern_.substr(begin, end - begin);
-      const auto             e_begin = static_cast<std::size_t>(existing.begin);
-      const auto             e_end   = static_cast<std::size_t>(existing.end);
+      const std::string_view name {pattern_.substr(begin, end - begin)};
+      const auto             e_begin {static_cast<std::size_t>(existing.begin)};
+      const auto             e_end {static_cast<std::size_t>(existing.end)};
       if (pattern_.substr(e_begin, e_end - e_begin) == name) {
         fail("redefinition of group name");
       }
@@ -612,7 +612,7 @@ private:
    */
   constexpr std::int32_t parse_byte_escape()
   {
-    const char c = peek();
+    const char c {peek()};
     switch (c) {
       case 'n':
         ++pos_;
@@ -638,8 +638,8 @@ private:
       case 'x':
         {
           ++pos_;
-          const std::int32_t hi = hex_digit();
-          const std::int32_t lo = hex_digit();
+          const std::int32_t hi {hex_digit()};
+          const std::int32_t lo {hex_digit()};
           return (hi * 16) + lo; // arithmetic, not signed bitwise (MISRA)
         }
       default:
@@ -662,7 +662,7 @@ private:
     if (eof()) {
       fail("invalid \\x escape: expected two hex digits");
     }
-    const char c = peek();
+    const char c {peek()};
     ++pos_;
     if (c >= '0' && c <= '9') {
       return c - '0';
@@ -732,7 +732,7 @@ private:
         return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::word_end});
       default:
         {
-          const std::int32_t b = parse_byte_escape();
+          const std::int32_t b {parse_byte_escape()};
           if (b < 0) {
             fail("unsupported escape sequence");
           }
@@ -751,7 +751,7 @@ private:
    */
   constexpr std::int32_t parse_class_item(char_class& cc)
   {
-    const char c = peek();
+    const char c {peek()};
     if (static_cast<std::uint8_t>(c) >= 0x80) {
       fail("non-ASCII character class member not supported");
     }
@@ -785,7 +785,7 @@ private:
         return 0x08; // backspace, only inside classes
       default:
         {
-          const std::int32_t b = parse_byte_escape();
+          const std::int32_t b {parse_byte_escape()};
           if (b < 0) {
             fail("unsupported escape sequence");
           }
@@ -806,11 +806,11 @@ private:
    */
   constexpr std::int32_t parse_class(ast& out)
   {
-    const std::size_t open_pos = pos_;
+    const std::size_t open_pos {pos_};
     ++pos_; // consume '['
-    const bool negated = accept('^');
+    const bool negated {accept('^')};
     char_class cc;
-    bool       first = true;
+    bool       first {true};
     while (true) {
       if (eof()) {
         pos_ = open_pos;
@@ -820,9 +820,9 @@ private:
         ++pos_;
         break;
       }
-      first                       = false; // a ']' right after '[' or '[^' is a literal
-      const std::size_t  item_pos = pos_;
-      const std::int32_t lo       = parse_class_item(cc);
+      first = false; // a ']' right after '[' or '[^' is a literal
+      const std::size_t  item_pos {pos_};
+      const std::int32_t lo {parse_class_item(cc)};
       if (lo < 0) {
         continue; // set item: nothing more to do
       }
@@ -830,7 +830,7 @@ private:
       if (!eof() && peek() == '-' && pos_ + 1 < pattern_.size() &&
           pattern_[pos_ + 1] != ']') {
         ++pos_; // consume '-'
-        const std::int32_t hi = parse_class_item(cc);
+        const std::int32_t hi {parse_class_item(cc)};
         if (hi < 0 || hi < lo) {
           pos_ = item_pos;
           fail("bad character range");

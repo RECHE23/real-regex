@@ -39,7 +39,7 @@ namespace real {
 template <std::size_t N>
 struct fixed_string
 {
-  char data[N] = {};  //!< The captured characters, including the trailing NUL.
+  char data[N] = {}; //!< The captured characters, including the trailing NUL.
 
   /*!
    * \brief Captures a string literal.
@@ -132,8 +132,8 @@ public:
 
 private:
 
-  std::array<T, Cap> data_ {};   //!< Inline element storage.
-  std::size_t        size_ = 0;  //!< Number of elements in use.
+  std::array<T, Cap> data_ {}; //!< Inline element storage.
+  std::size_t        size_ {}; //!< Number of elements in use.
 };
 
 /*!
@@ -153,23 +153,30 @@ class small_vec
 
   //! Smallest unsigned type that can index the inline buffer.
   using size_type = std::conditional_t<
-      (InlineCapacity <= 255), std::uint8_t,
-      std::conditional_t<(InlineCapacity <= 65535), std::uint16_t, std::size_t>>;
+    (InlineCapacity <= 255),
+    std::uint8_t,
+    std::conditional_t<(InlineCapacity <= 65535), std::uint16_t, std::size_t>>;
 
-  size_type size_ = 0;                                       //!< Number of elements in use.
-  size_type capacity_ = static_cast<size_type>(InlineCapacity); //!< Current capacity.
-  bool is_heap_ = false;                                     //!< True once spilled to the heap.
+  size_type size_ {};                                           //!< Number of elements in use.
+  size_type capacity_ {static_cast<size_type>(InlineCapacity)}; //!< Current capacity.
+  bool      is_heap_ {};                                        //!< True once spilled to the heap.
 
   //! Active member (inline buffer or heap pointer) per \ref is_heap_ state.
-  union Storage {
-    T inline_buffer[InlineCapacity];                  //!< Inline storage (when not heap).
-    T* heap_ptr;                                      //!< Heap storage (when \ref is_heap_).
-    constexpr Storage() noexcept : inline_buffer{} {} //!< Starts in the inline state.
-    constexpr ~Storage() {}                           //!< Destruction handled by \ref cleanup.
+  union Storage
+  {
+    T  inline_buffer[InlineCapacity]; //!< Inline storage (when not heap).
+    T* heap_ptr;                      //!< Heap storage (when \ref is_heap_).
+
+    constexpr Storage() noexcept
+      : inline_buffer {}
+    {}                      //!< Starts in the inline state.
+
+    constexpr ~Storage() {} //!< Destruction handled by \ref cleanup.
   } storage_ {};
 
   //! \return Pointer to the inline buffer.
   [[nodiscard]] constexpr T* inline_data() noexcept { return storage_.inline_buffer; }
+
   //! \return Const pointer to the inline buffer.
   [[nodiscard]] constexpr const T* inline_data() const noexcept { return storage_.inline_buffer; }
 
@@ -181,7 +188,8 @@ class small_vec
    * \param[out] dest  Destination (uninitialized) range.
    */
   template <bool Move>
-  constexpr void transfer_range(const T* src, std::size_t count, T* dest) {
+  constexpr void transfer_range(const T* src, std::size_t count, T* dest)
+  {
     if constexpr (std::is_trivially_copyable_v<T>) {
       if (!std::is_constant_evaluated()) {
         std::memcpy(dest, src, count * sizeof(T));
@@ -191,14 +199,16 @@ class small_vec
     for (std::size_t i = 0; i < count; ++i) {
       if constexpr (Move) {
         std::construct_at(&dest[i], std::move(src[i]));
-      } else {
+      }
+      else {
         std::construct_at(&dest[i], src[i]);
       }
     }
   }
 
   //! Destroys heap elements and frees the heap block, if any (run-time only).
-  constexpr void cleanup() noexcept {
+  constexpr void cleanup() noexcept
+  {
     if (std::is_constant_evaluated()) {
       return;
     }
@@ -213,13 +223,15 @@ class small_vec
   }
 
   //! Doubles the capacity (saturating), spilling to the heap as needed.
-  void extend_capacity() {
-    std::size_t current = static_cast<std::size_t>(capacity_);
-    std::size_t new_cap = (current > (std::size_t)-1 / 2) ? (std::size_t)-1 : current * 2;
+  void extend_capacity()
+  {
+    std::size_t current {static_cast<std::size_t>(capacity_)};
+    std::size_t new_cap {(current > (std::size_t)-1 / 2) ? (std::size_t)-1 : current * 2};
     reserve(new_cap);
   }
 
 public:
+
   using value_type = T;           //!< Element type.
   using size_type_ = std::size_t; //!< Size type (for std-container API compat).
 
@@ -227,7 +239,8 @@ public:
   constexpr small_vec() noexcept = default;
 
   //! Destroys elements and frees any heap block.
-  constexpr ~small_vec() {
+  constexpr ~small_vec()
+  {
     if (!std::is_constant_evaluated()) {
       cleanup();
     }
@@ -239,10 +252,11 @@ public:
    * \throws std::bad_alloc during constant evaluation if growth is needed
    *         (constexpr use must stay within `InlineCapacity`).
    */
-  constexpr void push_back(const T& value) {
+  constexpr void push_back(const T& value)
+  {
     if (size_ >= capacity_) {
       if (std::is_constant_evaluated()) {
-        throw std::bad_alloc{};
+        throw std::bad_alloc {};
       }
       extend_capacity();
     }
@@ -251,7 +265,8 @@ public:
       // relate heap_ptr's allocation size to size_.
       // NOLINTNEXTLINE(clang-analyzer-security.ArrayBound)
       std::construct_at(&storage_.heap_ptr[size_], value);
-    } else {
+    }
+    else {
       inline_data()[size_] = value;
     }
     ++size_;
@@ -263,18 +278,20 @@ public:
    * \param[in] value The value to fill with.
    * \throws std::bad_alloc during constant evaluation if growth is needed.
    */
-  constexpr void assign(std::size_t count, const T& value) {
+  constexpr void assign(std::size_t count, const T& value)
+  {
     clear();
     if (count > capacity_) {
       if (std::is_constant_evaluated()) {
-        throw std::bad_alloc{};
+        throw std::bad_alloc {};
       }
       reserve(count);
     }
     for (std::size_t i = 0; i < count; ++i) {
       if (is_heap_) {
         std::construct_at(&storage_.heap_ptr[i], value);
-      } else {
+      }
+      else {
         inline_data()[i] = value;
       }
     }
@@ -288,12 +305,14 @@ public:
   [[nodiscard]] constexpr bool empty() const noexcept { return size_ == 0; }
 
   //! \param[in] i Index. \return Reference to the element at \p i.
-  [[nodiscard]] constexpr T& operator[](std::size_t i) noexcept {
+  [[nodiscard]] constexpr T& operator[](std::size_t i) noexcept
+  {
     return is_heap_ ? storage_.heap_ptr[i] : inline_data()[i];
   }
 
   //! \param[in] i Index. \return Const reference to the element at \p i.
-  [[nodiscard]] constexpr const T& operator[](std::size_t i) const noexcept {
+  [[nodiscard]] constexpr const T& operator[](std::size_t i) const noexcept
+  {
     return is_heap_ ? storage_.heap_ptr[i] : inline_data()[i];
   }
 
@@ -301,16 +320,20 @@ public:
   constexpr void clear() noexcept { size_ = 0; }
 
   //! \return Reference to the last element.
-  [[nodiscard]] constexpr T& back() noexcept {
+  [[nodiscard]] constexpr T& back() noexcept
+  {
     return is_heap_ ? storage_.heap_ptr[size_ - 1] : inline_data()[size_ - 1];
   }
+
   //! \return Const reference to the last element.
-  [[nodiscard]] constexpr const T& back() const noexcept {
+  [[nodiscard]] constexpr const T& back() const noexcept
+  {
     return is_heap_ ? storage_.heap_ptr[size_ - 1] : inline_data()[size_ - 1];
   }
 
   //! Removes the last element if any.
-  constexpr void pop_back() noexcept {
+  constexpr void pop_back() noexcept
+  {
     if (size_ > 0) {
       --size_;
       // For VM-internal use (POD types like size_t, eps_entry) explicit destroy is unnecessary.
@@ -323,52 +346,59 @@ public:
    * \param[in] new_capacity Desired minimum capacity; smaller is a no-op.
    * \throws std::bad_alloc during constant evaluation (constexpr stays inline).
    */
-  constexpr void reserve(std::size_t new_capacity) {
+  constexpr void reserve(std::size_t new_capacity)
+  {
     if (new_capacity <= capacity_) {
       return;
     }
     if (std::is_constant_evaluated()) {
-      throw std::bad_alloc{};
+      throw std::bad_alloc {};
     }
-    T* new_data = static_cast<T*>(::operator new(new_capacity * sizeof(T)));
-    T* old_data = is_heap_ ? storage_.heap_ptr : inline_data();
+    T* new_data {static_cast<T*>(::operator new(new_capacity * sizeof(T)))};
+    T* old_data {is_heap_ ? storage_.heap_ptr : inline_data()};
     transfer_range<false>(old_data, size_, new_data);
     if (is_heap_) {
       ::operator delete(storage_.heap_ptr);
     }
     storage_.heap_ptr = new_data;
-    capacity_ = static_cast<size_type>(new_capacity);
-    is_heap_ = true;
+    capacity_         = static_cast<size_type>(new_capacity);
+    is_heap_          = true;
   }
 
   //! Move constructor: steals \p other's heap block or moves inline elements.
   constexpr small_vec(small_vec&& other) noexcept
-    : size_(other.size_), capacity_(other.capacity_), is_heap_(other.is_heap_) {
+    : size_(other.size_),
+      capacity_(other.capacity_),
+      is_heap_(other.is_heap_)
+  {
     if (is_heap_) {
-      storage_.heap_ptr = other.storage_.heap_ptr;
+      storage_.heap_ptr       = other.storage_.heap_ptr;
       other.storage_.heap_ptr = nullptr;
-      other.is_heap_ = false;
-      other.size_ = 0;
-      other.capacity_ = static_cast<size_type>(InlineCapacity);
-    } else {
+      other.is_heap_          = false;
+      other.size_             = 0;
+      other.capacity_         = static_cast<size_type>(InlineCapacity);
+    }
+    else {
       transfer_range<true>(other.inline_data(), size_, inline_data());
     }
   }
 
   //! Move assignment. \param[in,out] other Source (left empty). \return *this.
-  constexpr small_vec& operator=(small_vec&& other) noexcept {
+  constexpr small_vec& operator=(small_vec&& other) noexcept
+  {
     if (this != &other) {
       cleanup();
-      size_ = other.size_;
+      size_     = other.size_;
       capacity_ = other.capacity_;
-      is_heap_ = other.is_heap_;
+      is_heap_  = other.is_heap_;
       if (is_heap_) {
-        storage_.heap_ptr = other.storage_.heap_ptr;
+        storage_.heap_ptr       = other.storage_.heap_ptr;
         other.storage_.heap_ptr = nullptr;
-        other.is_heap_ = false;
-        other.size_ = 0;
-        other.capacity_ = static_cast<size_type>(InlineCapacity);
-      } else {
+        other.is_heap_          = false;
+        other.size_             = 0;
+        other.capacity_         = static_cast<size_type>(InlineCapacity);
+      }
+      else {
         transfer_range<true>(other.inline_data(), size_, inline_data());
       }
     }
@@ -377,32 +407,37 @@ public:
 
   //! Copy constructor (needed for `vector<match_result>` in find_all).
   constexpr small_vec(const small_vec& other)
-    : size_(other.size_), capacity_(other.capacity_) {
+    : size_(other.size_),
+      capacity_(other.capacity_)
+  {
     if (other.is_heap_) {
       if (std::is_constant_evaluated()) {
-        throw std::bad_alloc{}; // dynamic heap path not for constexpr (static_regex uses static_vec)
+        throw std::bad_alloc {}; // dynamic heap path not for constexpr (static_regex uses static_vec)
       }
       storage_.heap_ptr = static_cast<T*>(::operator new(other.capacity_ * sizeof(T)));
       transfer_range<false>(other.storage_.heap_ptr, other.size_, storage_.heap_ptr);
-      is_heap_ = true;
+      is_heap_  = true;
       capacity_ = other.capacity_;
-    } else {
+    }
+    else {
       transfer_range<false>(other.inline_data(), other.size_, inline_data());
     }
   }
 
   //! Copy assignment. \param[in] other Source. \return *this.
-  constexpr small_vec& operator=(const small_vec& other) {
+  constexpr small_vec& operator=(const small_vec& other)
+  {
     if (this != &other) {
       cleanup();
       size_ = other.size_;
       if (other.is_heap_) {
         storage_.heap_ptr = static_cast<T*>(::operator new(other.capacity_ * sizeof(T)));
         transfer_range<false>(other.storage_.heap_ptr, other.size_, storage_.heap_ptr);
-        is_heap_ = true;
+        is_heap_  = true;
         capacity_ = other.capacity_;
-      } else {
-        is_heap_ = false;
+      }
+      else {
+        is_heap_  = false;
         capacity_ = static_cast<size_type>(InlineCapacity);
         transfer_range<false>(other.inline_data(), other.size_, inline_data());
       }
@@ -419,7 +454,7 @@ public:
  */
 struct dynamic_storage
 {
-  static constexpr bool is_compile_time = false; //!< Selects the runtime constructor.
+  static constexpr bool is_compile_time {}; //!< Selects the runtime constructor.
   //! Capture-slot container: SBO, avoiding the heap for typical small group counts.
   using slot_storage = small_vec<std::size_t, 32>;
   //! VM scratch state: SBO thread lists, working slots and eps stack.
@@ -430,9 +465,9 @@ struct dynamic_storage
     small_vec<std::size_t, 64>,
     small_vec<eps_entry, 32>>;
 
-  std::string     pattern_text;             //!< The original pattern text.
-  dynamic_program program;                  //!< The compiled program.
-  flags           effective_flags = flags::none; //!< Constructor flags merged with any (?ims).
+  std::string     pattern_text;                  //!< The original pattern text.
+  dynamic_program program;                       //!< The compiled program.
+  flags           effective_flags {flags::none}; //!< Constructor flags merged with any (?ims).
 
   /*!
    * \brief Parses and compiles \p pattern with flags \p f.
@@ -443,8 +478,8 @@ struct dynamic_storage
    */
   static constexpr dynamic_storage compile(std::string_view pattern, flags f)
   {
-    const ast   tree      = detail::parse(pattern);
-    const flags effective = f | tree.inline_flags;
+    const ast   tree {detail::parse(pattern)};
+    const flags effective {f | tree.inline_flags};
     return {.pattern_text    = std::string(pattern),
             .program         = detail::compile(tree, effective),
             .effective_flags = effective};
@@ -473,14 +508,14 @@ struct dynamic_storage
 template <fixed_string Pat, flags F = flags::none>
 struct static_storage
 {
-  static constexpr bool is_compile_time = true; //!< Selects the default constructor.
+  static constexpr bool is_compile_time {true}; //!< Selects the default constructor.
 
 private:
 
   //! \return The freshly built program (used for both measuring and filling).
   static constexpr dynamic_program build()
   {
-    const ast tree = detail::parse(Pat.view());
+    const ast tree {detail::parse(Pat.view())};
     return detail::compile(tree, F | tree.inline_flags);
   }
 
@@ -504,18 +539,18 @@ private:
 
 public:
 
-  static constexpr flags         effective_flags = F | detail::parse(Pat.view()).inline_flags; //!< Flags merged with (?ims).
-  static constexpr pattern_hints hints           = build().hints;          //!< Search hints.
-  static constexpr std::size_t   code_size       = build().code.size();    //!< Instruction count.
-  static constexpr std::size_t   class_count     = build().classes.size(); //!< Distinct class count.
-  static constexpr std::size_t   name_count      = build().names.size();   //!< Named-group count.
-  static constexpr std::uint16_t slot_count      = build().slot_count;     //!< `2*(groups+1)`.
+  static constexpr flags         effective_flags {F | detail::parse(Pat.view()).inline_flags};      //!< Flags merged with (?ims).
+  static constexpr pattern_hints hints {build().hints};                                             //!< Search hints.
+  static constexpr std::size_t   code_size {build().code.size()};                                   //!< Instruction count.
+  static constexpr std::size_t   class_count {build().classes.size()};                              //!< Distinct class count.
+  static constexpr std::size_t   name_count {build().names.size()};                                 //!< Named-group count.
+  static constexpr std::uint16_t slot_count {build().slot_count};                                   //!< `2*(groups+1)`.
 
-  static constexpr std::array<instr, code_size>        code = take<instr, code_size>(build().code); //!< The program.
+  static constexpr std::array<instr, code_size>        code {take<instr, code_size>(build().code)}; //!< The program.
   static constexpr std::array<char_class, class_count> classes =
-    take<char_class, class_count>(build().classes); //!< Interned classes.
+    take<char_class, class_count>(build().classes);                                                 //!< Interned classes.
   static constexpr std::array<named_group, name_count> names =
-    take<named_group, name_count>(build().names);   //!< Named groups.
+    take<named_group, name_count>(build().names);                                                   //!< Named groups.
 
   //! Capture-slot container: fixed-capacity, no heap.
   using slot_storage = static_vec<std::size_t, slot_count>;

@@ -38,12 +38,12 @@ constexpr pattern_hints analyze_program(std::span<const instr>      code,
 
   // Start anchoring: the first non-save instruction tells whether every
   // match must begin at position 0 (or at a line start).
-  std::size_t pc = 0;
+  std::size_t pc {};
   while (code[pc].op == opcode::save) {
     ++pc;
   }
   if (code[pc].op == opcode::assert_position) {
-    const auto kind  = static_cast<assert_kind>(code[pc].arg8);
+    const auto kind {static_cast<assert_kind>(code[pc].arg8)};
     h.anchored_start = kind == assert_kind::text_start;
     h.line_anchored  = kind == assert_kind::line_start;
   }
@@ -52,7 +52,7 @@ constexpr pattern_hints analyze_program(std::span<const instr>      code,
   // Saves and assertions do not consume, so they are crossed: every match
   // still has to begin with the collected bytes (hints only ever filter
   // candidate positions; the engine verifies).
-  std::size_t p = 0;
+  std::size_t p {};
   while (h.prefix_size < h.prefix.size()) {
     if (code[p].op == opcode::save || code[p].op == opcode::assert_position) {
       ++p;
@@ -73,19 +73,21 @@ constexpr pattern_hints analyze_program(std::span<const instr>      code,
   // VM so they can reject bad cands and let search continue. Leading asserts
   // (before any byte) are ok (next_candidate + replay will handle).
   if (h.prefix_size > 0) {
-    bool has_inter_or_trailing_assert = false;
-    bool seen_byte = false;
+    bool has_inter_or_trailing_assert {};
+    bool seen_byte {};
     for (std::size_t i = 0; i < code.size() && !has_inter_or_trailing_assert; ++i) {
       if (code[i].op == opcode::byte) {
         seen_byte = true;
-      } else if (seen_byte && code[i].op == opcode::assert_position) {
+      }
+      else if (seen_byte && code[i].op == opcode::assert_position) {
         has_inter_or_trailing_assert = true;
-      } else if (seen_byte && code[i].op == opcode::match) {
+      }
+      else if (seen_byte && code[i].op == opcode::match) {
         break;
       }
     }
     if (!has_inter_or_trailing_assert) {
-      std::size_t q = p;
+      std::size_t q {p};
       while (q < code.size() && code[q].op == opcode::save) {
         ++q;
       }
@@ -102,15 +104,15 @@ constexpr pattern_hints analyze_program(std::span<const instr>      code,
   std::vector<bool>         visited(code.size(), false);
   std::vector<std::int32_t> stack;
   stack.push_back(0);
-  bool empty_match_possible = false;
+  bool empty_match_possible {};
   while (!stack.empty()) {
-    const std::int32_t at = stack.back();
+    const std::int32_t at {stack.back()};
     stack.pop_back();
     if (visited[static_cast<std::size_t>(at)]) {
       continue;
     }
     visited[static_cast<std::size_t>(at)] = true;
-    const instr& in                       = code[static_cast<std::size_t>(at)];
+    const instr& in {code[static_cast<std::size_t>(at)]};
     switch (in.op) {
       case opcode::save:
       case opcode::assert_position:
@@ -149,7 +151,7 @@ constexpr pattern_hints analyze_program(std::span<const instr>      code,
     h.single_first = static_cast<unsigned char>(h.prefix[0]);
   }
   else if (h.first_bytes_valid) {
-    int found = -1;
+    int found {-1};
     for (unsigned b = 0; b < 256 && found != -2; ++b) {
       if (h.first_bytes.test(static_cast<std::uint8_t>(b))) {
         found = found == -1 ? static_cast<int>(b) : -2;
@@ -176,7 +178,7 @@ constexpr std::size_t find_byte(std::string_view text, std::size_t pos, char byt
     return npos;
   }
   if (!std::is_constant_evaluated()) {
-    const void* hit = std::memchr(text.data() + pos, byte, text.size() - pos);
+    const void* hit {std::memchr(text.data() + pos, byte, text.size() - pos)};
     return hit == nullptr
              ? npos
              : static_cast<std::size_t>(static_cast<const char*>(hit) - text.data());
@@ -208,7 +210,7 @@ constexpr std::size_t find_prefix(std::string_view text, std::size_t pos, std::s
   if (pos >= text.size()) {
     return npos;
   }
-  const auto off = text.substr(pos).find(prefix);
+  const auto off {text.substr(pos).find(prefix)};
   if (off == std::string_view::npos) {
     return npos;
   }

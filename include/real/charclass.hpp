@@ -23,7 +23,7 @@ namespace real::detail {
  */
 struct char_class
 {
-  std::array<std::uint64_t, 4> bits {};  //!< Bitmap; bit `b` is byte `b's` membership.
+  std::array<std::uint64_t, 4> bits {}; //!< Bitmap; bit `b` is byte `b's` membership.
 
   /*!
    * \brief Adds byte \p b to the set.
@@ -31,7 +31,7 @@ struct char_class
    */
   constexpr void set(std::uint8_t b)
   {
-    const unsigned bit = b;
+    const unsigned bit {b};
     bits[bit >> 6U] |= std::uint64_t {1} << (bit & 63U);
   }
 
@@ -87,7 +87,7 @@ struct char_class
    */
   [[nodiscard]] constexpr bool test(std::uint8_t b) const
   {
-    const unsigned bit = b;
+    const unsigned bit {b};
     return ((bits[bit >> 6U] >> (bit & 63U)) & 1U) != 0;
   }
 
@@ -115,7 +115,7 @@ struct char_class
 constexpr void fold_ascii_case(char_class& cc)
 {
   for (std::uint8_t c = 'A'; c <= 'Z'; ++c) {
-    const auto lower = static_cast<std::uint8_t>(c + 32);
+    const auto lower {static_cast<std::uint8_t>(c + 32)};
     if (cc.test(c)) {
       cc.set(lower);
     }

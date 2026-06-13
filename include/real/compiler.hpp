@@ -68,7 +68,7 @@ public:
 private:
 
   const ast& tree_;                //!< The AST being compiled.
-  flags      flags_ = flags::none; //!< Effective compilation flags.
+  flags      flags_ {flags::none}; //!< Effective compilation flags.
 
   // --- low-level emission helpers -------------------------------------
 
@@ -148,7 +148,7 @@ private:
    */
   static constexpr void emit_klass(dynamic_program& prog, const char_class& cc)
   {
-    std::size_t index = prog.classes.size();
+    std::size_t index {prog.classes.size()};
     for (std::size_t i = 0; i < prog.classes.size(); ++i) {
       if (prog.classes[i] == cc) {
         index = i;
@@ -187,7 +187,7 @@ private:
    */
   constexpr void emit_codepoint_class(dynamic_program& prog, const char_class& ascii) const
   {
-    const char_class cont = continuation_set();
+    const char_class cont {continuation_set()};
     char_class       lead2;
     lead2.set_range(0xC2, 0xDF);
     char_class lead3;
@@ -195,25 +195,25 @@ private:
     char_class lead4;
     lead4.set_range(0xF0, 0xF4);
 
-    const std::int32_t s1 = emit_split(prog);
+    const std::int32_t s1 {emit_split(prog)};
     patch_x(prog, s1, here(prog));
     emit_klass(prog, ascii);
-    const std::int32_t j1 = emit_jump(prog);
+    const std::int32_t j1 {emit_jump(prog)};
 
     patch_y(prog, s1, here(prog));
-    const std::int32_t s2 = emit_split(prog);
+    const std::int32_t s2 {emit_split(prog)};
     patch_x(prog, s2, here(prog));
     emit_klass(prog, lead2);
     emit_klass(prog, cont);
-    const std::int32_t j2 = emit_jump(prog);
+    const std::int32_t j2 {emit_jump(prog)};
 
     patch_y(prog, s2, here(prog));
-    const std::int32_t s3 = emit_split(prog);
+    const std::int32_t s3 {emit_split(prog)};
     patch_x(prog, s3, here(prog));
     emit_klass(prog, lead3);
     emit_klass(prog, cont);
     emit_klass(prog, cont);
-    const std::int32_t j3 = emit_jump(prog);
+    const std::int32_t j3 {emit_jump(prog)};
 
     patch_y(prog, s3, here(prog));
     emit_klass(prog, lead4);
@@ -221,7 +221,7 @@ private:
     emit_klass(prog, cont);
     emit_klass(prog, cont);
 
-    const std::int32_t end = here(prog);
+    const std::int32_t end {here(prog)};
     patch_x(prog, j1, end);
     patch_x(prog, j2, end);
     patch_x(prog, j3, end);
@@ -236,13 +236,13 @@ private:
    */
   constexpr void emit_node(dynamic_program& prog, std::int32_t index) const
   {
-    const ast_node& node = tree_.nodes[static_cast<std::size_t>(index)];
+    const ast_node& node {tree_.nodes[static_cast<std::size_t>(index)]};
     switch (node.kind) {
       case node_kind::empty:
         break;
       case node_kind::byte:
         {
-          const auto b      = node.byte;
+          const auto b {node.byte};
           const bool letter = (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z');
           if (has_flag(flags_, flags::icase) && letter) {
             char_class both;
@@ -257,7 +257,7 @@ private:
         }
       case node_kind::klass:
         {
-          char_class written = tree_.classes[static_cast<std::size_t>(node.klass)];
+          char_class written {tree_.classes[static_cast<std::size_t>(node.klass)]};
           if (has_flag(flags_, flags::icase)) {
             fold_ascii_case(written); // before negation, like Python
           }
@@ -333,7 +333,7 @@ private:
    */
   [[nodiscard]] constexpr assert_kind assert_kind_for(anchor_kind anchor) const
   {
-    const bool multiline = has_flag(flags_, flags::multiline);
+    const bool multiline {has_flag(flags_, flags::multiline)};
     switch (anchor) {
       case anchor_kind::caret:
         return multiline ? assert_kind::line_start : assert_kind::text_start;
@@ -367,11 +367,11 @@ private:
   constexpr void emit_alternation(dynamic_program& prog, const ast_node& node) const
   {
     std::vector<std::int32_t> jumps;
-    std::int32_t              branch = node.child;
+    std::int32_t              branch {node.child};
     while (branch != -1) {
-      const std::int32_t after = tree_.nodes[static_cast<std::size_t>(branch)].next;
+      const std::int32_t after {tree_.nodes[static_cast<std::size_t>(branch)].next};
       if (after != -1) {
-        const std::int32_t s = emit_split(prog);
+        const std::int32_t s {emit_split(prog)};
         patch_x(prog, s, here(prog));
         emit_node(prog, branch);
         jumps.push_back(emit_jump(prog));
@@ -382,7 +382,7 @@ private:
       }
       branch = after;
     }
-    const std::int32_t end = here(prog);
+    const std::int32_t end {here(prog)};
     for (const std::int32_t j : jumps) {
       patch_x(prog, j, end);
     }
@@ -404,9 +404,9 @@ private:
       if (node.max == -1 && i == node.min - 1) {
         // Last mandatory copy doubles as the loop body: e+ patterns
         // emit the body exactly once.
-        const std::int32_t body = here(prog);
+        const std::int32_t body {here(prog)};
         emit_node(prog, node.child);
-        const std::int32_t s = emit_split(prog);
+        const std::int32_t s {emit_split(prog)};
         patch_x(prog, s, node.lazy ? here(prog) : body);
         patch_y(prog, s, node.lazy ? body : here(prog));
         return;
@@ -414,10 +414,10 @@ private:
       emit_node(prog, node.child);
     }
     if (node.max == -1) {                            // min == 0: a star loop
-      const std::int32_t s = emit_split(prog);
+      const std::int32_t s {emit_split(prog)};
       patch_x(prog, s, node.lazy ? -1 : here(prog)); // body side set below
       emit_node(prog, node.child);
-      const std::int32_t j = emit_jump(prog);
+      const std::int32_t j {emit_jump(prog)};
       patch_x(prog, j, s);
       if (node.lazy) {
         patch_x(prog, s, here(prog));
@@ -434,7 +434,7 @@ private:
       exits.push_back(emit_split(prog));
       emit_node(prog, node.child);
     }
-    const std::int32_t end = here(prog);
+    const std::int32_t end {here(prog)};
     for (const std::int32_t s : exits) {
       patch_x(prog, s, node.lazy ? end : s + 1);
       patch_y(prog, s, node.lazy ? s + 1 : end);
