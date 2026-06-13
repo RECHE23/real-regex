@@ -20,7 +20,7 @@ jobs:
             cxx: clang++
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Test (runtime + constexpr static_assert)
         run: make test CXX=${{ matrix.cxx }}
       - name: Sanitizers (ASan + UBSan)
@@ -29,7 +29,7 @@ jobs:
   misra:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install clang-tidy
         run: sudo apt-get update && sudo apt-get install -y clang-tidy
       - name: MISRA C++:2023-oriented analysis
@@ -38,7 +38,7 @@ jobs:
   fuzz:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Robustness fuzzing smoke run (libFuzzer + ASan/UBSan)
         run: make fuzz FUZZ_TIME=60 CXX=clang++
 
@@ -53,7 +53,7 @@ jobs:
           - os: ubuntu-latest     # x86-64 GCC, sanity for the CMake path
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
@@ -69,8 +69,8 @@ jobs:
         python: ["3.10", "3.14"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
       - name: Install build dependencies
