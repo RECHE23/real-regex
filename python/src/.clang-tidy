@@ -1,0 +1,14 @@
+# The CPython C API forces patterns the library config forbids
+# (const_cast for PyArg keywords, function-pointer casts for METH_KEYWORDS,
+# unnamed getset closure parameters). Relax only those, only here.
+InheritParentConfig: true
+Checks: >
+  -cppcoreguidelines-pro-type-const-cast,
+  -cppcoreguidelines-pro-type-cstyle-cast,
+  -bugprone-casting-through-void,
+  -bugprone-reserved-identifier,
+  -cert-dcl37-c,
+  -cert-dcl51-cpp,
+  -readability-named-parameter,
+  -readability-redundant-casting,
+  -modernize-use-designated-initializers,
