@@ -12,6 +12,11 @@ CTEST  ?= ctest
 PYTHON ?= python3
 BUILD  := build
 
+# Run Python against the in-place build under python/, ahead of any installed
+# copy (PYTHONPATH precedes site-packages, so an editable install elsewhere
+# cannot shadow the freshly built extension).
+PYRUN := PYTHONPATH=$(CURDIR)/python $(PYTHON)
+
 # Forward CMAKE_CXX_COMPILER only when CXX is set on the command line;
 # otherwise CMake selects the platform default.
 ifeq ($(origin CXX),command line)
@@ -125,13 +130,13 @@ python:
 	$(PYTHON) setup.py -q build_ext --inplace
 
 python-test: python
-	cd python && $(PYTHON) -m unittest discover -s tests
+	$(PYRUN) -m unittest discover -s python/tests
 
 bench-python: python
-	$(PYTHON) benchmarks/bench.py
+	$(PYRUN) benchmarks/bench.py
 
 bench-fuzz: python
-	$(PYTHON) benchmarks/fuzz_bench.py
+	$(PYRUN) benchmarks/fuzz_bench.py
 
 # Installs the package from the repository root (root pyproject.toml builds the
 # abi3 extension against include/). uninstall removes it by distribution name.
