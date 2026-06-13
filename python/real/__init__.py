@@ -23,7 +23,7 @@ __all__ = [
     "U", "UNICODE", "NOFLAG",
 ]
 
-__version__ = "0.1.0"
+__version__ = "2026.6.1"
 
 NOFLAG = 0
 I = IGNORECASE = 2
