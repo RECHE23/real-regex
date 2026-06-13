@@ -1,0 +1,2 @@
+CompileFlags:
+  Add: [-std=c++20, -I/Users/rchenard/Projects/real-v1/include, -I/opt/homebrew/opt/python@3.14/Frameworks/Python.framework/Versions/3.14/include/python3.14]

@@ -1,0 +1,16 @@
+build/
+*.o
+*.profraw
+*.profdata
+*.so
+__pycache__/
+*.egg-info/
+dist/
+.DS_Store
+.idea/
+
+# libFuzzer writes generated inputs here; keep only hand-written seeds
+build/fuzz/
+
+# Doxygen output
+build/doc/

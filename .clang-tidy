@@ -1,0 +1,150 @@
+---
+# REAL clang-tidy configuration
+# Modern C++20 best practices for header-only library
+# Based on: C++ Core Guidelines + CERT + Modern C++20 best practices
+
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-exception-escape,
+  -bugprone-branch-clone,
+  -bugprone-unchecked-optional-access,
+  -bugprone-infinite-loop,
+  -bugprone-empty-catch,
+  -bugprone-macro-parentheses,
+  -bugprone-suspicious-stringview-data-usage,
+  cert-*,
+  -cert-err58-cpp,
+  -cert-dcl59-cpp,
+  clang-analyzer-*,
+  -clang-analyzer-optin.performance.Padding,
+  -clang-analyzer-optin.core.EnumCastOutOfRange,
+  concurrency-*,
+  cppcoreguidelines-*,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  -cppcoreguidelines-avoid-c-arrays,
+  -cppcoreguidelines-pro-type-member-init,
+  -cppcoreguidelines-non-private-member-variables-in-classes,
+  -cppcoreguidelines-init-variables,
+  -cppcoreguidelines-special-member-functions,
+  -cppcoreguidelines-missing-std-forward,
+  -cppcoreguidelines-avoid-const-or-ref-data-members,
+  -cppcoreguidelines-macro-usage,
+  -cppcoreguidelines-owning-memory,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-avoid-do-while,
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
+  misc-*,
+  -misc-non-private-member-variables-in-classes,
+  -misc-include-cleaner,
+  -misc-const-correctness,
+  -misc-use-internal-linkage,
+  -misc-header-include-cycle,
+  -misc-use-anonymous-namespace,
+  -misc-no-recursion,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  -modernize-use-auto,
+  -modernize-avoid-c-arrays,
+  performance-*,
+  -performance-enum-size,
+  -performance-avoid-endl,
+  portability-*,
+  readability-*,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-function-cognitive-complexity,
+  -readability-function-size,
+  -readability-identifier-naming,
+  -readability-convert-member-functions-to-static,
+  -readability-redundant-inline-specifier,
+  -readability-use-concise-preprocessor-directives,
+  -readability-avoid-const-params-in-decls,
+
+# Don't treat warnings as errors (too strict for initial setup)
+# WarningsAsErrors: ''
+
+CheckOptions:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Performance Tuning
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  # Move operations
+  - { key: performance-move-const-arg.CheckTriviallyCopyableMove, value: 0 }
+  - { key: performance-unnecessary-value-param.AllowedTypes, value: '' }
+
+  # Efficient STL usage
+  - { key: performance-inefficient-string-concatenation.StrictMode, value: 1 }
+  - { key: performance-for-range-copy.WarnOnAllAutoCopies, value: 1 }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Modernize C++
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  # Use default member initialization
+  - { key: modernize-use-default-member-init.UseAssignment, value: 1 }
+
+  # Use nullptr
+  - { key: modernize-use-nullptr.NullMacros, value: 'NULL' }
+
+  # Use override
+  - { key: modernize-use-override.AllowOverrideAndFinal, value: 0 }
+  - { key: modernize-use-override.IgnoreDestructors, value: 1 }
+
+  # Use nodiscard
+  - { key: modernize-use-nodiscard.ReplacementString, value: '[[nodiscard]]' }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Readability
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  # Function complexity
+  - { key: readability-function-size.LineThreshold, value: 200 }
+  - { key: readability-function-size.StatementThreshold, value: 150 }
+  - { key: readability-function-size.BranchThreshold, value: 50 }
+  - { key: readability-function-size.ParameterThreshold, value: 8 }
+
+  # Magic numbers
+  - { key: readability-magic-numbers.IgnoredIntegerValues, value: '0;1;2;3;4;8;10;16;32;64;100;128;256;512;1024' }
+  - { key: readability-magic-numbers.IgnoredFloatingPointValues, value: '0.0;1.0;2.0' }
+
+  # Implicit conversions
+  - { key: readability-implicit-bool-conversion.AllowPointerConditions, value: 1 }
+  - { key: readability-implicit-bool-conversion.AllowIntegerConditions, value: 1 }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Bugprone checks
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  # Suspicious operations
+  - { key: bugprone-suspicious-string-compare.WarnOnImplicitComparison, value: 1 }
+  - { key: bugprone-suspicious-string-compare.WarnOnLogicalNotComparison, value: 1 }
+
+  # String operations
+  - { key: bugprone-string-constructor.WarnOnLargeLength, value: 1 }
+  - { key: bugprone-string-constructor.LargeLengthThreshold, value: 8388608 }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # C++ Core Guidelines specific
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  # Virtual functions
+  - { key: cppcoreguidelines-explicit-virtual-functions.IgnoreDestructors, value: 1 }
+
+  # Slicing
+  - { key: cppcoreguidelines-slicing.CheckSliceMethodCall, value: 1 }
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Header Filter (only check our code, not dependencies)
+# ═══════════════════════════════════════════════════════════════════════════
+
+HeaderFilterRegex: '.*/(include/real|tests)/.*'
+
+# Exclude system headers and third-party libraries
+SystemHeaders: false

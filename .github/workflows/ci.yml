@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # POSIX developer workflow: the Makefile, both compilers, plus sanitizers.
+  posix:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cxx: g++-14
+          - os: ubuntu-latest
+            cxx: clang++
+          - os: macos-latest
+            cxx: clang++
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test (runtime + constexpr static_assert)
+        run: make test CXX=${{ matrix.cxx }}
+      - name: Sanitizers (ASan + UBSan)
+        run: make sanitize CXX=${{ matrix.cxx }}
+
+  misra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-tidy
+        run: sudo apt-get update && sudo apt-get install -y clang-tidy
+      - name: MISRA C++:2023-oriented analysis
+        run: make misra
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Robustness fuzzing smoke run (libFuzzer + ASan/UBSan)
+        run: make fuzz FUZZ_TIME=60 CXX=clang++
+
+  # Portable build entry: Windows/MSVC and native ARM, through CMake.
+  cmake:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest   # MSVC
+          - os: ubuntu-24.04-arm  # native AArch64
+          - os: ubuntu-latest     # x86-64 GCC, sanity for the CMake path
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+  python:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.10", "3.14"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install build dependencies
+        run: python -m pip install --upgrade pip setuptools wheel
+      - name: Build the binding (using root pyproject.toml) and run suites
+        run: |
+          python -m pip install -e .
+          python -m unittest discover -s python/tests
