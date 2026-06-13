@@ -5,7 +5,7 @@
  * Extracts \ref real::detail::pattern_hints from a compiled program (required
  * literal prefix, start anchoring, possible-first-byte set, fast-path shapes)
  * and provides the primitives the engine uses to skip ahead when no thread is
- * alive. Uses \c memchr / the platform substring search at run time and plain
+ * alive. Uses `memchr` / the platform substring search at run time and plain
  * loops in constexpr. Hints never affect \e what matches — only how fast; an
  * equivalence test runs the engine with hints disabled to prove it.
  */
@@ -29,7 +29,7 @@ namespace real::detail {
  * \param[in] code    The instruction stream.
  * \param[in] classes The interned character classes referenced by \p code.
  * \return The \ref pattern_hints (anchoring, literal prefix, first-byte set,
- *         and the \c class+ / exact-literal fast-path flags).
+ *         and the `class+` / exact-literal fast-path flags).
  */
 constexpr pattern_hints analyze_program(std::span<const instr>      code,
                                         std::span<const char_class> classes)
@@ -161,9 +161,9 @@ constexpr pattern_hints analyze_program(std::span<const instr>      code,
 }
 
 /*!
- * \brief Index of \p byte in <tt>text[pos..)</tt>, or \ref real::npos.
+ * \brief Index of \p byte in `text[pos..)`, or \ref real::npos.
  *
- * Uses \c memchr at run time and a plain loop during constant evaluation.
+ * Uses `memchr` at run time and a plain loop during constant evaluation.
  *
  * \param[in] text The subject text.
  * \param[in] pos  Index to start scanning from.

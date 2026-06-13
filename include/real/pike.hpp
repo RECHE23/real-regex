@@ -6,8 +6,8 @@
  * once per position (generation-marked dedup), so no pattern can backtrack
  * catastrophically.
  *
- * The VM is generic over its container policy — \c std::vector for the
- * dynamic storage mode, fixed-capacity \c static_vec (storage.hpp) for
+ * The VM is generic over its container policy — `std::vector` for the
+ * dynamic storage mode, fixed-capacity `static_vec` (storage.hpp) for
  * compile-time sized patterns, where a whole run performs zero heap
  * allocations.
  */
@@ -29,17 +29,17 @@ namespace real::detail {
 //! How a VM run is anchored.
 enum class run_mode : std::uint8_t
 {
-  prefix, //!< Anchored at the start position (Python \c re.match).
-  full,   //!< Anchored at both ends (Python \c re.fullmatch).
-  search, //!< First match anywhere (Python \c re.search).
+  prefix, //!< Anchored at the start position (Python `re.match`).
+  full,   //!< Anchored at both ends (Python `re.fullmatch`).
+  search, //!< First match anywhere (Python `re.search`).
 };
 
 /*!
  * \brief One entry on the epsilon-closure DFS stack.
  *
- * Two kinds: explore a program counter (<tt>pc >= 0</tt>), or restore a
+ * Two kinds: explore a program counter (`pc >= 0`), or restore a
  * capture slot to its previous value once the subtree it covered is done
- * (<tt>pc == -1</tt>). This mutates one working slot array in place rather
+ * (`pc == -1`). This mutates one working slot array in place rather
  * than copying all slots per branch.
  */
 struct eps_entry
@@ -52,7 +52,7 @@ struct eps_entry
 /*!
  * \brief One priority-ordered list of NFA threads (leftmost-greedy semantics).
  *
- * \c mark is generation-stamped so clearing the list between positions is O(1).
+ * `mark` is generation-stamped so clearing the list between positions is O(1).
  *
  * \tparam PcVec   Container of program counters.
  * \tparam SlotVec Flattened capture slots (pcs.size() * slot_count).
@@ -81,7 +81,7 @@ struct basic_thread_list
     slots.clear();
   }
 
-  //! \param[in] pc A program counter. \return \c true if \p pc is already in this generation.
+  //! \param[in] pc A program counter. \return `true` if \p pc is already in this generation.
   [[nodiscard]] constexpr bool seen(std::int32_t pc) const
   {
     return mark[static_cast<std::size_t>(pc)] == generation;
@@ -98,7 +98,7 @@ struct basic_thread_list
  * \brief Reusable VM scratch state.
  *
  * One run allocates nothing once warm (and never allocates with static
- * containers); \c find_all-style loops reuse the same state across runs. The
+ * containers); `find_all-style` loops reuse the same state across runs. The
  * two thread lists are flipped by index, never swapped.
  *
  * \tparam ThreadList The thread-list type (a \ref basic_thread_list).
@@ -113,7 +113,7 @@ struct basic_pike_state
   EpsVec     stack;     //!< Epsilon-closure DFS stack.
 };
 
-//! Thread list specialized on \c std::vector (the dynamic storage mode).
+//! Thread list specialized on `std::vector` (the dynamic storage mode).
 using thread_list = basic_thread_list<std::vector<std::int32_t>, std::vector<std::size_t>, std::vector<std::uint64_t>>;
 //! VM scratch state for the dynamic storage mode.
 using pike_state =
@@ -153,7 +153,7 @@ public:
    *             this offset (the iterator sets it to the next codepoint
    *             boundary so a non-empty match may follow an empty one without
    *             re-yielding it — CPython 3.7+ rule). 0 means no restriction.
-   * \return \c true if a match was found.
+   * \return `true` if a match was found.
    */
   template <typename OutSlots>
   constexpr bool run(std::string_view text, std::size_t start, run_mode mode, OutSlots& out_slots,
@@ -239,7 +239,7 @@ private:
    */
   std::size_t      forbid_empty_until_ = 0;
 
-  //! The concrete thread-list type taken from the bound \c State.
+  //! The concrete thread-list type taken from the bound `State`.
   using list_type = std::remove_reference_t<decltype(std::declval<State&>().lists[0])>;
 
   /*!
@@ -253,7 +253,7 @@ private:
    * \param[in]  start     Index to begin at.
    * \param[in]  mode      Anchoring mode.
    * \param[out] out_slots Receives the (start, end) span on success.
-   * \return \c true if a non-empty run was found.
+   * \return `true` if a non-empty run was found.
    */
   template <typename OutSlots>
   constexpr bool run_class_loop(std::string_view text, std::size_t start, run_mode mode, OutSlots& out_slots)
@@ -291,8 +291,8 @@ private:
    * \brief Tests whether the fixed literal prefix occurs at \p cand.
    * \param[in] text The subject text.
    * \param[in] cand Candidate start offset.
-   * \param[in] len  Length of the literal (\c hints.exact_literal_len).
-   * \return \c true if <tt>text[cand : cand+len]</tt> equals the literal.
+   * \param[in] len  Length of the literal (`hints.exact_literal_len`).
+   * \return `true` if `text[cand : cand+len]` equals the literal.
    */
   [[nodiscard]] constexpr bool literal_at(std::string_view text, std::size_t cand,
                                           std::size_t len) const
@@ -310,15 +310,15 @@ private:
   /*!
    * \brief Fills capture slots for a literal match at \p cand.
    *
-   * Replays \c save instructions at their consumed offsets and checks any
+   * Replays `save` instructions at their consumed offsets and checks any
    * zero-width assertions in the chain at \p cand.
    *
    * \tparam OutSlots Output slot container.
    * \param[in]  cand      Start offset of the literal match.
    * \param[in]  len       Length of the literal.
    * \param[out] out_slots Receives the capture slots.
-   * \return \c false (and clears \p out_slots) if an assertion fails here, so
-   *         the caller tries the next occurrence; \c true otherwise.
+   * \return `false` (and clears \p out_slots) if an assertion fails here, so
+   *         the caller tries the next occurrence; `true` otherwise.
    */
   template <typename OutSlots>
   constexpr bool replay_literal(std::size_t cand, std::size_t len, OutSlots& out_slots) const
@@ -351,17 +351,17 @@ private:
    *
    * The prefilter locates the fixed bytes; this replays saves directly, with
    * no thread lists, epsilon stack or per-position stepping. A leading or
-   * trailing zero-width assertion (\c \\b, \c ^, \c $ …) may make a given
+   * trailing zero-width assertion (`\b`, `^`, `$` …) may make a given
    * occurrence fail, so in search mode it scans successive occurrences until
-   * the assertions hold — the case a differential-fuzz finding (\c \\B2 on
-   * \c "220") exposed.
+   * the assertions hold — the case a differential-fuzz finding (`\B2` on
+   * `"220"`) exposed.
    *
    * \tparam OutSlots Output slot container.
    * \param[in]  text      The subject text.
    * \param[in]  start     Index to begin at.
    * \param[in]  mode      Anchoring mode.
    * \param[out] out_slots Receives the capture slots on success.
-   * \return \c true if a match was found.
+   * \return `true` if a match was found.
    */
   template <typename OutSlots>
   constexpr bool run_exact_literal(std::string_view text, std::size_t start, run_mode mode, OutSlots& out_slots)
@@ -443,7 +443,7 @@ private:
    * \param[in] text  The subject text.
    * \param[in] pos   The candidate seed position.
    * \param[in] start The run's start offset.
-   * \return \c true if a fresh thread should be seeded at \p pos.
+   * \return `true` if a fresh thread should be seeded at \p pos.
    */
   [[nodiscard]] constexpr bool seed_viable(std::string_view text, std::size_t pos, std::size_t start) const
   {
@@ -469,7 +469,7 @@ private:
    * \brief Evaluates a zero-width assertion at \p pos in the current text.
    * \param[in] kind The assertion to evaluate.
    * \param[in] pos  The position at which to evaluate it.
-   * \return \c true if the assertion holds there.
+   * \return `true` if the assertion holds there.
    */
   [[nodiscard]] constexpr bool assertion_holds(assert_kind kind, std::size_t pos) const
   {
@@ -509,15 +509,15 @@ private:
    * \brief Advances every thread of \p clist by the byte at \p pos.
    *
    * Survivors that consumed a byte land in \p nlist. A thread reaching
-   * \c match records its slots and cuts all lower-priority threads, so
+   * `match` records its slots and cuts all lower-priority threads, so
    * priority (leftmost-greedy) order is preserved.
    *
    * \tparam OutSlots Output slot container.
    * \param[in,out] clist     The current thread list (consumed).
    * \param[in,out] nlist     The next thread list (receives survivors).
    * \param[in]     pos        The current input position.
-   * \param[in]     mode       Anchoring mode (affects \c match acceptance).
-   * \param[in,out] matched    Set to \c true when a match is recorded.
+   * \param[in]     mode       Anchoring mode (affects `match` acceptance).
+   * \param[in,out] matched    Set to `true` when a match is recorded.
    * \param[out]    out_slots  Receives the slots of an accepted match.
    */
   template <typename OutSlots>
@@ -569,7 +569,7 @@ private:
   /*!
    * \brief Loads a thread's saved slots into the working slot array.
    * \param[in] clist The list holding the thread.
-   * \param[in] base  Flattened offset of the thread's slots in \c clist.slots.
+   * \param[in] base  Flattened offset of the thread's slots in `clist.slots`.
    */
   constexpr void load_working(const list_type& clist, std::size_t base)
   {
@@ -581,13 +581,13 @@ private:
   /*!
    * \brief Adds \p pc0 and its whole epsilon closure to \p list.
    *
-   * Threads are added in DFS (priority) order; the current \c working slots
+   * Threads are added in DFS (priority) order; the current `working` slots
    * are snapshotted into the list for each consuming thread. Saves and
    * assertions are handled during the closure walk.
    *
    * \param[in,out] list The thread list to populate.
    * \param[in]     pc0  The program counter to seed from.
-   * \param[in]     pos  The current input position (for \c save / assertions).
+   * \param[in]     pos  The current input position (for `save` / assertions).
    */
   constexpr void add_thread(list_type& list, std::int32_t pc0, std::size_t pos)
   {

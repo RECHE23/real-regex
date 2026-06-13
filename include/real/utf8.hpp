@@ -19,13 +19,13 @@ namespace real::detail {
  * \brief Number of bytes from \p pos to the start of the next codepoint.
  *
  * Reads the lead byte at \p pos to determine the sequence length, then
- * consumes any UTF-8 continuation bytes (\c 10xxxxxx) up to that length.
+ * consumes any UTF-8 continuation bytes (`10xxxxxx`) up to that length.
  * Invalid or truncated sequences advance by a single byte, so the result is
- * always in <tt>[1, 4]</tt> and forward progress is guaranteed.
+ * always in `[1, 4]` and forward progress is guaranteed.
  *
  * \param[in] text The subject text.
  * \param[in] pos  Index of the codepoint's lead byte; must be < text.size().
- * \return The codepoint's byte length, in <tt>[1, 4]</tt>.
+ * \return The codepoint's byte length, in `[1, 4]`.
  */
 constexpr std::size_t codepoint_advance(std::string_view text, std::size_t pos)
 {

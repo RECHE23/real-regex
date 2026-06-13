@@ -8,8 +8,8 @@
  *
  * Character classes are ASCII-only by design (non-ASCII members are
  * rejected): this guarantees every construct consumes whole codepoints, so
- * match boundaries never split a UTF-8 sequence. Negated classes and \c .
- * match any non-ASCII codepoint, like Python's \c re on ASCII classes.
+ * match boundaries never split a UTF-8 sequence. Negated classes and `.`
+ * match any non-ASCII codepoint, like Python's `re` on ASCII classes.
  */
 #ifndef REAL_AST_HPP
 #define REAL_AST_HPP
@@ -30,25 +30,25 @@ enum class node_kind : std::uint8_t
   empty,       //!< Matches the empty string.
   byte,        //!< One exact byte.
   klass,       //!< One codepoint constrained by classes[klass] (negated or not).
-  any,         //!< One codepoint, except newline (the \c . metacharacter).
+  any,         //!< One codepoint, except newline (the `.` metacharacter).
   concat,      //!< Children matched in sequence.
-  repeat,      //!< Child repeated <tt>[min, max]</tt> times (max -1 = unbounded).
+  repeat,      //!< Child repeated `[min, max]` times (max -1 = unbounded).
   alternation, //!< Children are branches, leftmost preferred.
-  group,       //!< Child wrapped in a group; \c group >= 0 when capturing.
+  group,       //!< Child wrapped in a group; `group` >= 0 when capturing.
   anchor,      //!< Zero-width assertion; kind in \ref ast_node::anchor.
 };
 
 //! The specific zero-width assertion of an \ref node_kind::anchor node.
 enum class anchor_kind : std::uint8_t
 {
-  caret,             //!< \c ^  (text or line start, depending on multiline).
-  dollar,            //!< \c $  (end, before a trailing \c \\n, or line end with m).
-  text_start,        //!< \c \\A.
-  text_end,          //!< \c \\Z.
-  word_boundary,     //!< \c \\b.
-  not_word_boundary, //!< \c \\B.
-  word_start,        //!< \c \\< (start of word; REAL extension, not in Python re).
-  word_end,          //!< \c \\> (end of word; REAL extension, not in Python re).
+  caret,             //!< `^`  (text or line start, depending on multiline).
+  dollar,            //!< `$`  (end, before a trailing `\n`, or line end with m).
+  text_start,        //!< `\A`.
+  text_end,          //!< `\Z`.
+  word_boundary,     //!< `\b`.
+  not_word_boundary, //!< `\B`.
+  word_start,        //!< `\<` (start of word; REAL extension, not in Python re).
+  word_end,          //!< `\>` (end of word; REAL extension, not in Python re).
 };
 
 //! One AST node. Active fields depend on \ref kind (noted per field).
@@ -57,12 +57,12 @@ struct ast_node
   node_kind    kind    = node_kind::empty;   //!< Which fields below are meaningful.
   std::uint8_t byte    = 0;                  //!< byte: the exact byte value.
   anchor_kind  anchor  = anchor_kind::caret; //!< anchor: the assertion kind.
-  bool         negated = false;              //!< klass: written as <tt>[^...]</tt> / \c \\D \\W \\S.
+  bool         negated = false;              //!< klass: written as `[^...]` / `\D` `\W` `\S`.
   bool         lazy    = false;              //!< repeat: prefer the shortest expansion.
   std::int32_t klass   = -1;                 //!< klass: index into \ref ast::classes.
   std::int32_t min     = 0;                  //!< repeat: minimum count.
   std::int32_t max     = -1;                 //!< repeat: maximum count (-1 = unbounded).
-  std::int32_t group   = -1;                 //!< group: capture number, -1 for <tt>(?:...)</tt>.
+  std::int32_t group   = -1;                 //!< group: capture number, -1 for `(?:...)`.
   std::int32_t child   = -1;                 //!< First child (concat, repeat, alternation, group).
   std::int32_t next    = -1;                 //!< Next sibling in the parent's child list.
 };
@@ -79,7 +79,7 @@ struct ast
   std::vector<ast_node>    nodes;                       //!< The node pool; \ref root indexes it.
   std::vector<char_class>  classes;                     //!< Class bitmaps as written, before negation.
   std::vector<named_group> names;                       //!< Named capture groups.
-  flags                    inline_flags = flags::none;  //!< Flags from a leading <tt>(?ims)</tt>.
+  flags                    inline_flags = flags::none;  //!< Flags from a leading `(?ims)`.
   std::int32_t             group_count  = 0;            //!< Number of capturing groups.
   std::int32_t             root         = -1;           //!< Index of the root node.
 };
@@ -134,7 +134,7 @@ private:
     throw Error(message, pos_);
   }
 
-  //! \return \c true if the read offset is at or past the end of the pattern.
+  //! \return `true` if the read offset is at or past the end of the pattern.
   [[nodiscard]] constexpr bool eof() const { return pos_ >= pattern_.size(); }
 
   //! \return The current character without consuming it (undefined at eof()).
@@ -143,7 +143,7 @@ private:
   /*!
    * \brief Consumes the current character if it equals \p c.
    * \param[in] c The character to match.
-   * \return \c true (and advances) on a match, else \c false.
+   * \return `true` (and advances) on a match, else `false`.
    */
   [[nodiscard]] constexpr bool accept(char c)
   {
@@ -154,7 +154,7 @@ private:
     return false;
   }
 
-  //! \param[in] c A character. \return \c true if \p c is in <tt>[0-9A-Za-z]</tt>.
+  //! \param[in] c A character. \return `true` if \p c is in `[0-9A-Za-z]`.
   static constexpr bool is_ascii_alnum(char c)
   {
     return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
@@ -187,7 +187,7 @@ private:
   }
 
   /*!
-   * \brief Parses <tt>alternation := sequence ('|' sequence)*</tt>.
+   * \brief Parses `alternation := sequence ('|' sequence)*`.
    *
    * The leftmost branch is preferred (Python / Perl semantics, not longest).
    *
@@ -212,7 +212,7 @@ private:
   }
 
   /*!
-   * \brief Parses <tt>sequence := (atom quantifier?)*</tt>, stopping at \c | or \c ).
+   * \brief Parses `sequence := (atom quantifier?)*`, stopping at `|` or `)`.
    * \param[in,out] out The AST being built.
    * \return The index of a concat node, a single atom, or an empty node.
    */
@@ -243,7 +243,7 @@ private:
   }
 
   /*!
-   * \brief Parses one atom: a literal, \c ., a class, a group, an anchor or an escape.
+   * \brief Parses one atom: a literal, `.`, a class, a group, an anchor or an escape.
    * \param[in,out] out The AST being built.
    * \return The index of the atom node.
    */
@@ -282,10 +282,10 @@ private:
   /*!
    * \brief Wraps \p atom in a repeat node if a quantifier follows.
    *
-   * Grammar: <tt>quantifier := ('*' | '+' | '?' | '{n}' | '{n,}' | '{,m}' |
-   * '{n,m}') '?'?</tt>. An invalid <tt>{...}</tt> is not a quantifier at all
-   * and stays literal text, exactly like Python (e.g. \c a{, \c a{2,3x,
-   * \c a{,} all match literally). A bare anchor cannot be repeated.
+   * Grammar: `quantifier := ('*' | '+' | '?' | '{n}' | '{n,}' | '{,m}' |
+   * '{n,m}') '?'?`. An invalid `{...}` is not a quantifier at all
+   * and stays literal text, exactly like Python (e.g. `a{`, `a{2,3x`,
+   * `a{,}` all match literally). A bare anchor cannot be repeated.
    *
    * \param[in,out] out  The AST being built.
    * \param[in]     atom Index of the atom the quantifier would apply to.
@@ -341,10 +341,10 @@ private:
   }
 
   /*!
-   * \brief Tries to parse <tt>{n} / {n,} / {,m} / {n,m}</tt> starting at \c {.
+   * \brief Tries to parse `{n} / {n,} / {,m} / {n,m}` starting at `{`.
    * \param[out] min Lower bound on success.
    * \param[out] max Upper bound on success (-1 for unbounded).
-   * \return \c true on a valid quantifier (position advanced); \c false if the
+   * \return `true` on a valid quantifier (position advanced); `false` if the
    *         braces are not a quantifier (position restored — literal text).
    * \throws real::regex_error when the bounds are impossible (min > max).
    */
@@ -430,21 +430,21 @@ private:
     }
   }
 
-  //! \param[in] c A character. \return \c true if \p c is a flag letter (imsa).
+  //! \param[in] c A character. \return `true` if \p c is a flag letter (imsa).
   static constexpr bool is_flag_letter(char c)
   {
     return c == 'i' || c == 'm' || c == 's' || c == 'a';
   }
 
   /*!
-   * \brief Consumes a leading <tt>(?ims)</tt> global-flags group, if present.
+   * \brief Consumes a leading `(?ims)` global-flags group, if present.
    *
    * Like Python (3.11+), global flags are only legal at the very start of the
    * pattern; later occurrences are rejected in \ref parse_group.
    *
    * \param[in,out] out Receives the flags into \ref ast::inline_flags.
-   * \return \c true if a flags group was consumed (position advanced), else
-   *         \c false (position restored, for \ref parse_group to handle).
+   * \return `true` if a flags group was consumed (position advanced), else
+   *         `false` (position restored, for \ref parse_group to handle).
    */
   constexpr bool parse_global_flags_prefix(ast& out)
   {
@@ -551,7 +551,7 @@ private:
   /*!
    * \brief Allocates the next capture group number.
    * \param[in,out] out      The AST being built.
-   * \param[in]     open_pos Offset of the group's \c ( (for error reporting).
+   * \param[in]     open_pos Offset of the group's `(` (for error reporting).
    * \return The new (1-based) capture group number.
    * \throws real::regex_error beyond \ref max_group_count.
    */
@@ -564,14 +564,14 @@ private:
     return ++out.group_count;
   }
 
-  //! \param[in] c A character. \return \c true if \p c may start a group name.
+  //! \param[in] c A character. \return `true` if \p c may start a group name.
   static constexpr bool is_name_start(char c)
   {
     return c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
   }
 
   /*!
-   * \brief Parses <tt>name := [A-Za-z_][A-Za-z0-9_]* '>'</tt> and records it.
+   * \brief Parses `name := [A-Za-z_][A-Za-z0-9_]* '>'` and records it.
    * \param[in,out] out   The AST; the name is appended to \ref ast::names.
    * \param[in]     group The capture number this name refers to.
    * \throws real::regex_error on a bad character or a duplicate name.
@@ -603,12 +603,12 @@ private:
   /*!
    * \brief Parses a single-byte escape (valid inside and outside classes).
    *
-   * Handles \c \\n \c \\t \c \\r \c \\f \c \\v \c \\a \c \\0, \c \\xHH and
+   * Handles `\n` `\t` `\r` `\f` `\v` `\a` `\0`, `\xHH` and
    * escaped ASCII punctuation.
    *
    * \return The byte value, or -1 when the escape is not a single byte
-   *         (the caller then handles \c \\d \c \\w \c \\s, etc.).
-   * \throws real::regex_error on a malformed \c \\x escape.
+   *         (the caller then handles `\d` `\w` `\s`, etc.).
+   * \throws real::regex_error on a malformed `\x` escape.
    */
   constexpr std::int32_t parse_byte_escape()
   {
@@ -654,7 +654,7 @@ private:
 
   /*!
    * \brief Consumes one hexadecimal digit.
-   * \return Its value in <tt>[0, 15]</tt>.
+   * \return Its value in `[0, 15]`.
    * \throws real::regex_error if the next character is not a hex digit.
    */
   constexpr std::int32_t hex_digit()
@@ -680,8 +680,8 @@ private:
   /*!
    * \brief Parses an escape outside a character class.
    *
-   * Handles the class escapes \c \\d \c \\D \c \\w \c \\W \c \\s \c \\S, the
-   * anchors \c \\A \c \\Z \c \\b \c \\B, and single-byte escapes.
+   * Handles the class escapes `\d` `\D` `\w` `\W` `\s` `\S`, the
+   * anchors `\A` `\Z` `\b` `\B`, and single-byte escapes.
    *
    * \param[in,out] out The AST being built.
    * \return The index of the resulting node.
@@ -743,7 +743,7 @@ private:
 
   /*!
    * \brief Parses one member inside a character class.
-   * \param[in,out] cc The class being built; a set member (\c \\d etc.) is
+   * \param[in,out] cc The class being built; a set member (`\d` etc.) is
    *                   merged directly into it.
    * \return A single byte (usable as a range endpoint), or -1 when the member
    *         was a whole set merged into \p cc.
@@ -795,10 +795,10 @@ private:
   }
 
   /*!
-   * \brief Parses a bracketed character class <tt>[...]</tt> or <tt>[^...]</tt>.
+   * \brief Parses a bracketed character class `[...]` or `[^...]`.
    *
-   * Supports ranges, escapes and the embedded set escapes; a \c ] right after
-   * \c [ or \c [^ is a literal, and a trailing \c - is a literal dash.
+   * Supports ranges, escapes and the embedded set escapes; a `]` right after
+   * `[` or `[^` is a literal, and a trailing `-` is a literal dash.
    *
    * \param[in,out] out The AST being built.
    * \return The index of the \ref node_kind::klass node.

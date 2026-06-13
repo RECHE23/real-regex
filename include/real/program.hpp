@@ -26,7 +26,7 @@ namespace real {
 inline constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
 
 /*!
- * \brief Compilation flags, mirroring Python's \c re.I, \c re.M and \c re.S.
+ * \brief Compilation flags, mirroring Python's `re.I`, `re.M` and `re.S`.
  *
  * Combinable with \ref operator|. Case folding is ASCII-only, consistent with
  * the library's character-class semantics.
@@ -35,9 +35,9 @@ enum class flags : std::uint8_t
 {
   none      = 0,  //!< No flags.
   icase     = 1,  //!< Case-insensitive (ASCII).
-  multiline = 2,  //!< \c ^ and \c $ also match at line boundaries.
-  dotall    = 4,  //!< \c . also matches \c \\n.
-  bytes     = 8,  //!< Binary mode: \c . and <tt>[^…]</tt> match raw bytes, not codepoints.
+  multiline = 2,  //!< `^` and `$` also match at line boundaries.
+  dotall    = 4,  //!< `.` also matches `\n`.
+  bytes     = 8,  //!< Binary mode: `.` and `[^…]` match raw bytes, not codepoints.
 };
 
 /*!
@@ -66,7 +66,7 @@ constexpr flags operator&(flags a, flags b)
  * \brief Tests whether \p flag is set in \p value.
  * \param[in] value The flag set to query.
  * \param[in] flag  The single flag to look for.
- * \return \c true if \p flag is present in \p value.
+ * \return `true` if \p flag is present in \p value.
  */
 constexpr bool has_flag(flags value, flags flag)
 {
@@ -76,7 +76,7 @@ constexpr bool has_flag(flags value, flags flag)
 /*!
  * \brief Exception thrown for an invalid pattern (or one exceeding a limit).
  *
- * In a constexpr context (\c static_regex), reaching the throw is a
+ * In a constexpr context (`static_regex`), reaching the throw is a
  * compile-time error, with the message appearing in the diagnostic trace.
  */
 class regex_error : public std::exception
@@ -120,22 +120,22 @@ enum class opcode : std::uint8_t
 };
 
 /*!
- * \brief Kind of zero-width assertion carried in <tt>assert_position</tt>'s arg8.
+ * \brief Kind of zero-width assertion carried in `assert_position`'s arg8.
  *
  * Multiline and trailing-newline subtleties are resolved at compile time; the
  * engine only evaluates these predicates at a position.
  */
 enum class assert_kind : std::uint8_t
 {
-  text_start,                //!< \c \\A, and \c ^ without multiline.
-  text_end,                  //!< \c \\Z.
-  text_end_or_final_newline, //!< \c $ without multiline (Python semantics).
-  line_start,                //!< \c ^ with multiline.
-  line_end,                  //!< \c $ with multiline.
-  word_boundary,             //!< \c \\b (ASCII word characters).
-  not_word_boundary,         //!< \c \\B.
-  word_start,                //!< \c \\< (non-word/start on the left, word on the right).
-  word_end,                  //!< \c \\> (word on the left, non-word/end on the right).
+  text_start,                //!< `\A`, and `^` without multiline.
+  text_end,                  //!< `\Z`.
+  text_end_or_final_newline, //!< `$` without multiline (Python semantics).
+  line_start,                //!< `^` with multiline.
+  line_end,                  //!< `$` with multiline.
+  word_boundary,             //!< `\b` (ASCII word characters).
+  not_word_boundary,         //!< `\B`.
+  word_start,                //!< `\<` (non-word/start on the left, word on the right).
+  word_end,                  //!< `\>` (word on the left, non-word/end on the right).
 };
 
 //! One NFA instruction. Field meaning depends on \ref op.
@@ -151,7 +151,7 @@ struct instr
 /*!
  * \brief Search-acceleration hints extracted from a compiled program.
  *
- * Filled by \c analyze_program (prefilter.hpp). The engine consults them to
+ * Filled by `analyze_program` (prefilter.hpp). The engine consults them to
  * skip positions that cannot start a match and to take fast paths; they never
  * change \e what matches, only how fast.
  */
@@ -159,8 +159,8 @@ struct pattern_hints
 {
   std::array<char, 16> prefix {};                 //!< Required literal prefix (possibly truncated).
   std::uint8_t         prefix_size       = 0;     //!< Valid bytes in \ref prefix.
-  bool                 anchored_start    = false; //!< \c \\A / \c ^ (no multiline): only position 0.
-  bool                 line_anchored     = false; //!< \c ^ multiline: position 0 or after \c \\n.
+  bool                 anchored_start    = false; //!< `\A` / `^` (no multiline): only position 0.
+  bool                 line_anchored     = false; //!< `^` multiline: position 0 or after `\n`.
   bool                 first_bytes_valid = false; //!< False when an empty match is possible.
   std::int16_t         single_first      = -1;    //!< The unique possible first byte, or -1.
   char_class           first_bytes;               //!< All possible first bytes.
@@ -201,18 +201,18 @@ struct program_view
   std::span<const instr>       code;                //!< The instruction stream.
   std::span<const char_class>  classes;             //!< Interned character classes.
   std::span<const named_group> names;               //!< Named capture groups.
-  std::uint16_t                slot_count = 2;       //!< <tt>2 * (capture groups + 1)</tt>.
+  std::uint16_t                slot_count = 2;       //!< `2 * (capture groups + 1)`.
   bool                         byte_mode  = false;   //!< \ref flags::bytes mode — positions are raw bytes.
   pattern_hints                hints;                //!< Search-acceleration hints.
 };
 
-//! Owning, heap-allocated program: the storage backing \c real::regex.
+//! Owning, heap-allocated program: the storage backing `real::regex`.
 struct dynamic_program
 {
   std::vector<instr>       code;               //!< The instruction stream.
   std::vector<char_class>  classes;            //!< Interned character classes.
   std::vector<named_group> names;              //!< Named capture groups.
-  std::uint16_t            slot_count = 2;      //!< <tt>2 * (capture groups + 1)</tt>.
+  std::uint16_t            slot_count = 2;      //!< `2 * (capture groups + 1)`.
   bool                     byte_mode  = false;  //!< \ref flags::bytes mode.
   pattern_hints            hints;               //!< Search-acceleration hints.
 

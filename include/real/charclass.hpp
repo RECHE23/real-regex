@@ -4,7 +4,7 @@
  *
  * The engine only ever tests bitmaps: negation and "one whole codepoint"
  * semantics are resolved at compile time (see compiler.hpp), never at match
- * time. Also provides the ASCII sets behind \c \\d, \c \\w and \c \\s.
+ * time. Also provides the ASCII sets behind `\d`, `\w` and `\s`.
  */
 #ifndef REAL_CHARCLASS_HPP
 #define REAL_CHARCLASS_HPP
@@ -23,7 +23,7 @@ namespace real::detail {
  */
 struct char_class
 {
-  std::array<std::uint64_t, 4> bits {};  //!< Bitmap; bit \c b is byte \c b's membership.
+  std::array<std::uint64_t, 4> bits {};  //!< Bitmap; bit `b` is byte `b's` membership.
 
   /*!
    * \brief Adds byte \p b to the set.
@@ -36,7 +36,7 @@ struct char_class
   }
 
   /*!
-   * \brief Adds the inclusive byte range <tt>[lo, hi]</tt> to the set.
+   * \brief Adds the inclusive byte range `[lo, hi]` to the set.
    * \param[in] lo First byte of the range.
    * \param[in] hi Last byte of the range (inclusive).
    */
@@ -83,7 +83,7 @@ struct char_class
   /*!
    * \brief Tests membership of byte \p b.
    * \param[in] b The byte to test.
-   * \return \c true if \p b is in the set.
+   * \return `true` if \p b is in the set.
    */
   [[nodiscard]] constexpr bool test(std::uint8_t b) const
   {
@@ -93,7 +93,7 @@ struct char_class
 
   /*!
    * \brief Reports whether the set has no members.
-   * \return \c true if the set is empty.
+   * \return `true` if the set is empty.
    */
   [[nodiscard]] constexpr bool empty() const
   {
@@ -107,7 +107,7 @@ struct char_class
  * \brief Closes \p cc under ASCII case folding.
  *
  * Whenever a letter is present its other-case twin is added. Applied to a
- * class \e before negation, so <tt>[^a]</tt> with \c icase rejects both
+ * class \e before negation, so `[^a]` with `icase` rejects both
  * 'a' and 'A', matching Python.
  *
  * \param[in,out] cc The class to fold in place.
@@ -126,9 +126,9 @@ constexpr void fold_ascii_case(char_class& cc)
 }
 
 /*!
- * \brief Reports whether \p b is an ASCII "word" byte (<tt>[0-9A-Za-z_]</tt>).
+ * \brief Reports whether \p b is an ASCII "word" byte (`[0-9A-Za-z_]`).
  * \param[in] b The byte to classify.
- * \return \c true for ASCII word bytes, used by \c \\b / \c \\w.
+ * \return `true` for ASCII word bytes, used by `\b` / `\w`.
  */
 [[nodiscard]] constexpr bool is_ascii_word_byte(std::uint8_t b)
 {
@@ -137,8 +137,8 @@ constexpr void fold_ascii_case(char_class& cc)
 }
 
 /*!
- * \brief The ASCII digit set behind \c \\d (Python \c re.ASCII semantics).
- * \return The set <tt>[0-9]</tt>.
+ * \brief The ASCII digit set behind `\d` (Python `re.ASCII` semantics).
+ * \return The set `[0-9]`.
  */
 constexpr char_class digit_set()
 {
@@ -148,8 +148,8 @@ constexpr char_class digit_set()
 }
 
 /*!
- * \brief The ASCII word set behind \c \\w.
- * \return The set <tt>[0-9A-Za-z_]</tt>.
+ * \brief The ASCII word set behind `\w`.
+ * \return The set `[0-9A-Za-z_]`.
  */
 constexpr char_class word_set()
 {
@@ -162,8 +162,8 @@ constexpr char_class word_set()
 }
 
 /*!
- * \brief The ASCII whitespace set behind \c \\s.
- * \return The set <tt>[ \\t\\n\\r\\f\\v]</tt>.
+ * \brief The ASCII whitespace set behind `\s`.
+ * \return The set `[ \t\n\r\f\v]`.
  */
 constexpr char_class space_set()
 {

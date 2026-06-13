@@ -3,10 +3,10 @@
  * \brief Storage policies: where a program lives and how scratch is allocated.
  *
  * - \ref real::detail::dynamic_storage — everything sized at run time,
- *   exactly once, on the heap (backs \c real::regex).
+ *   exactly once, on the heap (backs `real::regex`).
  * - \ref real::detail::static_storage — the pattern is compiled at compile
  *   time into static constexpr arrays of exact size, and match scratch lives
- *   on the stack: zero allocations (backs \c real::static_regex).
+ *   on the stack: zero allocations (backs `real::static_regex`).
  *
  * Exact sizing uses C++20 transient constexpr allocation: the program is
  * built once to measure each array, then rebuilt to fill it.
@@ -31,7 +31,7 @@ namespace real {
 /*!
  * \brief A fixed-size string usable as a non-type template parameter.
  *
- * Enables \c static_regex<"\\d+">: the literal is captured into \ref data at
+ * Enables `static_regex<"\d+">`: the literal is captured into \ref data at
  * compile time.
  *
  * \tparam N Size of the character array, including the terminating NUL.
@@ -45,7 +45,7 @@ struct fixed_string
    * \brief Captures a string literal.
    *
    * Implicit by design: it is what lets a string literal be a non-type
-   * template argument; marking it \c explicit would defeat the purpose.
+   * template argument; marking it `explicit` would defeat the purpose.
    *
    * \param[in] s The string literal to capture.
    */
@@ -66,7 +66,7 @@ namespace detail {
 /*!
  * \brief Fixed-capacity vector backed by an inline array (no heap).
  *
- * The subset of \c std::vector the Pike VM uses, for the static storage mode.
+ * The subset of `std::vector` the Pike VM uses, for the static storage mode.
  * Overflow cannot happen for the engine's own containers (capacities are
  * derived bounds) but is checked defensively.
  *
@@ -81,7 +81,7 @@ public:
   /*!
    * \brief Appends \p value.
    * \param[in] value The element to append.
-   * \throws std::length_error if the capacity \c Cap is exceeded.
+   * \throws std::length_error if the capacity `Cap` is exceeded.
    */
   constexpr void push_back(const T& value)
   {
@@ -99,7 +99,7 @@ public:
    * \brief Resizes to \p count copies of \p value.
    * \param[in] count Number of elements.
    * \param[in] value The value to fill with.
-   * \throws std::length_error if \p count exceeds the capacity \c Cap.
+   * \throws std::length_error if \p count exceeds the capacity `Cap`.
    */
   constexpr void assign(std::size_t count, const T& value)
   {
@@ -115,7 +115,7 @@ public:
   //! \return The number of elements.
   [[nodiscard]] constexpr std::size_t size() const { return size_; }
 
-  //! \return \c true if empty.
+  //! \return `true` if empty.
   [[nodiscard]] constexpr bool empty() const { return size_ == 0; }
 
   //! \param[in] i Index. \return Reference to the element at \p i.
@@ -139,7 +139,7 @@ private:
 /*!
  * \brief Small-buffer-optimized vector for the dynamic hot paths.
  *
- * Keeps up to \c InlineCapacity elements inline (no heap), spilling to the
+ * Keeps up to `InlineCapacity` elements inline (no heap), spilling to the
  * heap beyond that — so the common small-group match avoids allocation
  * entirely. Used for capture slots and working state in the dynamic mode.
  *
@@ -237,7 +237,7 @@ public:
    * \brief Appends \p value, growing to the heap if the inline buffer is full.
    * \param[in] value The element to append.
    * \throws std::bad_alloc during constant evaluation if growth is needed
-   *         (constexpr use must stay within \c InlineCapacity).
+   *         (constexpr use must stay within `InlineCapacity`).
    */
   constexpr void push_back(const T& value) {
     if (size_ >= capacity_) {
@@ -284,7 +284,7 @@ public:
   //! \return The number of elements.
   [[nodiscard]] constexpr std::size_t size() const noexcept { return size_; }
 
-  //! \return \c true if empty.
+  //! \return `true` if empty.
   [[nodiscard]] constexpr bool empty() const noexcept { return size_ == 0; }
 
   //! \param[in] i Index. \return Reference to the element at \p i.
@@ -375,7 +375,7 @@ public:
     return *this;
   }
 
-  //! Copy constructor (needed for <tt>vector\<match_result\></tt> in find_all).
+  //! Copy constructor (needed for `vector<match_result>` in find_all).
   constexpr small_vec(const small_vec& other)
     : size_(other.size_), capacity_(other.capacity_) {
     if (other.is_heap_) {
@@ -412,7 +412,7 @@ public:
 };
 
 /*!
- * \brief Storage policy backing \c real::regex: heap, sized once at run time.
+ * \brief Storage policy backing `real::regex`: heap, sized once at run time.
  *
  * Match scratch uses small-buffer-optimized containers, so the common
  * small-group match runs without a heap allocation.
@@ -461,11 +461,11 @@ struct dynamic_storage
 };
 
 /*!
- * \brief Storage policy backing \c real::static_regex: compile-time, stateless.
+ * \brief Storage policy backing `real::static_regex`: compile-time, stateless.
  *
- * Every array is a \c static \c constexpr member sized exactly by a measuring
- * pass over the same compilation, so a \c static_regex object is stateless
- * (\c sizeof 1) and matching allocates nothing.
+ * Every array is a `static` `constexpr` member sized exactly by a measuring
+ * pass over the same compilation, so a `static_regex` object is stateless
+ * (`sizeof` 1) and matching allocates nothing.
  *
  * \tparam Pat The pattern, as a \ref real::fixed_string non-type parameter.
  * \tparam F   Compilation flags.
@@ -509,7 +509,7 @@ public:
   static constexpr std::size_t   code_size       = build().code.size();    //!< Instruction count.
   static constexpr std::size_t   class_count     = build().classes.size(); //!< Distinct class count.
   static constexpr std::size_t   name_count      = build().names.size();   //!< Named-group count.
-  static constexpr std::uint16_t slot_count      = build().slot_count;     //!< <tt>2*(groups+1)</tt>.
+  static constexpr std::uint16_t slot_count      = build().slot_count;     //!< `2*(groups+1)`.
 
   static constexpr std::array<instr, code_size>        code = take<instr, code_size>(build().code); //!< The program.
   static constexpr std::array<char_class, class_count> classes =

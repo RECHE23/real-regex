@@ -2,16 +2,16 @@
  * \file compiler.hpp
  * \brief AST → NFA program, via Thompson construction.
  *
- * The emitted program always has the shape <tt>save 0, \<body\>, save 1,
- * match</tt>, so slots 0/1 delimit group 0 (the whole match).
+ * The emitted program always has the shape `save 0, <body>, save 1,
+ * match`, so slots 0/1 delimit group 0 (the whole match).
  *
  * Multi-codepoint semantics are compiled down to byte-level alternatives
- * (RE2-style): \c . and negated classes expand to UTF-8 lead/continuation
+ * (RE2-style): `.` and negated classes expand to UTF-8 lead/continuation
  * byte classes joined by split/jump, so the engine itself only ever steps one
  * byte at a time, in lock-step — which preserves linear time.
  *
  * Branch targets are emitted as placeholders and patched only through the
- * \c patch_x / \c patch_y helpers, never by rewriting emitted instructions
+ * `patch_x` / `patch_y` helpers, never by rewriting emitted instructions
  * wholesale.
  */
 #ifndef REAL_COMPILER_HPP
@@ -81,12 +81,12 @@ private:
   /*!
    * \brief Appends one instruction, enforcing the program-size cap.
    *
-   * The check lives inside \c emit so it fires \e during a large unroll loop,
+   * The check lives inside `emit` so it fires \e during a large unroll loop,
    * before the vector grows to the full bad size — this is the central
    * defense (\ref max_program_size) against the DoS where tiny nested bounded
    * quantifiers expand to hundreds of millions of instructions. It is
    * constexpr-friendly: exceeding the cap fails compilation for a
-   * \c static_regex, or throws at run time.
+   * `static_regex`, or throws at run time.
    *
    * \param[in,out] prog The program being built.
    * \param[in]     in   The instruction to append.
@@ -100,14 +100,14 @@ private:
     prog.code.push_back(in);
   }
 
-  //! Emits a \c split with placeholder targets. \return Its instruction index.
+  //! Emits a `split` with placeholder targets. \return Its instruction index.
   static constexpr std::int32_t emit_split(dynamic_program& prog)
   {
     emit(prog, {.op = opcode::split, .x = -1, .y = -1});
     return here(prog) - 1;
   }
 
-  //! Emits a \c jump with a placeholder target. \return Its instruction index.
+  //! Emits a `jump` with a placeholder target. \return Its instruction index.
   static constexpr std::int32_t emit_jump(dynamic_program& prog)
   {
     emit(prog, {.op = opcode::jump, .x = -1});
@@ -137,7 +137,7 @@ private:
   }
 
   /*!
-   * \brief Emits a \c klass instruction, interning \p cc.
+   * \brief Emits a `klass` instruction, interning \p cc.
    *
    * Identical bitmaps share one slot, so the UTF-8 continuation class is
    * stored once however often it is emitted.
@@ -166,7 +166,7 @@ private:
 
   // --- UTF-8 byte expansion --------------------------------------------
 
-  //! \return The class of UTF-8 continuation bytes (<tt>0x80–0xBF</tt>).
+  //! \return The class of UTF-8 continuation bytes (`0x80–0xBF`).
   static constexpr char_class continuation_set()
   {
     char_class cc;
@@ -178,7 +178,7 @@ private:
    * \brief Emits "one codepoint matching \p ascii, or any non-ASCII codepoint".
    *
    * Expands to the byte-level alternation
-   * <tt>ascii | lead2 cont | lead3 cont cont | lead4 cont cont cont</tt>, so
+   * `ascii | lead2 cont | lead3 cont cont | lead4 cont cont cont`, so
    * the engine steps one byte at a time while still consuming whole codepoints.
    *
    * \param[in,out] prog  The program being built.
@@ -325,7 +325,7 @@ private:
   /*!
    * \brief Maps an AST \ref anchor_kind to the runtime \ref assert_kind.
    *
-   * \c ^ and \c $ depend on the multiline flag; everything else maps
+   * `^` and `$` depend on the multiline flag; everything else maps
    * one-to-one.
    *
    * \param[in] anchor The AST anchor kind.
@@ -391,9 +391,9 @@ private:
   /*!
    * \brief Emits a quantifier (Thompson construction).
    *
-   * Greedy prefers <tt>split.x</tt> (enter the body); lazy swaps the branches.
-   * Counted forms unroll: \c min mandatory copies, then either a loop
-   * (<tt>max == -1</tt>) or optional copies sharing one exit.
+   * Greedy prefers `split.x` (enter the body); lazy swaps the branches.
+   * Counted forms unroll: `min` mandatory copies, then either a loop
+   * (`max == -1`) or optional copies sharing one exit.
    *
    * \param[in,out] prog The program being built.
    * \param[in]     node The \ref node_kind::repeat node.

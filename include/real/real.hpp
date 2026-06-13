@@ -1,6 +1,6 @@
 /*!
  * \file real.hpp
- * \brief The public API: \c real::regex, \c real::static_regex and results.
+ * \brief The public API: `real::regex`, `real::static_regex` and results.
  *
  * Header-only, C++20, constexpr from end to end. Include this one header.
  */
@@ -24,7 +24,7 @@ namespace real {
  * \brief The result of a match attempt: success, spans and captures.
  *
  * Group views point into the searched text, which must outlive the result —
- * the rvalue \c std::string overloads on the regex are deleted to catch the
+ * the rvalue `std::string` overloads on the regex are deleted to catch the
  * common dangling mistake at compile time. Named-group lookups reference the
  * regex's name table, so the regex must outlive the result too.
  *
@@ -55,10 +55,10 @@ public:
       names_(names)
   {}
 
-  //! \return \c true if the attempt matched.
+  //! \return `true` if the attempt matched.
   [[nodiscard]] constexpr bool matched() const { return matched_; }
 
-  //! \return \c true if the attempt matched (explicit bool conversion).
+  //! \return `true` if the attempt matched (explicit bool conversion).
   constexpr explicit operator bool() const { return matched_; }
 
   //! \return The number of groups, including group 0 (the whole match).
@@ -142,7 +142,7 @@ private:
   std::span<const detail::named_group> names_;            //!< Borrowed named-group table.
 };
 
-//! The result type of the default, runtime-compiled \c real::regex.
+//! The result type of the default, runtime-compiled `real::regex`.
 using match_result = basic_match_result<std::vector<std::size_t>>;
 
 /*!
@@ -196,7 +196,7 @@ public:
   //! Advances to the next match (post-increment; no value returned).
   constexpr void operator++(int) { advance(); }
 
-  //! \param[in] other Another iterator. \return \c true if both denote the same position/end.
+  //! \param[in] other Another iterator. \return `true` if both denote the same position/end.
   [[nodiscard]] constexpr bool operator==(const basic_match_iterator& other) const
   {
     return done_ == other.done_ && (done_ || pos_ == other.pos_);
@@ -246,7 +246,7 @@ private:
 };
 
 /*!
- * \brief A range of matches, returned by \c find_iter() and usable in range-for.
+ * \brief A range of matches, returned by `find_iter()` and usable in range-for.
  * \tparam Storage The regex's storage policy.
  */
 template <typename Storage>
@@ -285,7 +285,7 @@ private:
 /*!
  * \brief A compiled regular expression, parameterized on its storage policy.
  *
- * \c Storage owns the program; matching allocates only per-run scratch — and
+ * `Storage` owns the program; matching allocates only per-run scratch — and
  * nothing at all when the storage is compile-time. Use the \ref real::regex
  * and \ref real::static_regex aliases rather than this template directly.
  *
@@ -300,7 +300,7 @@ public:
   using result_type = basic_match_result<typename Storage::slot_storage>; //!< This regex's match-result type.
 
   /*!
-   * \brief Compiles \p pattern at run time (the \c real::regex constructor).
+   * \brief Compiles \p pattern at run time (the `real::regex` constructor).
    * \param[in] pattern The pattern text.
    * \param[in] f       Optional flags (merged with a leading (?ims)).
    * \throws real::regex_error on an invalid or over-limit pattern.
@@ -316,9 +316,9 @@ public:
   = default;
 
   /*!
-   * \brief Match anchored at the start of \p text (Python \c re.match).
+   * \brief Match anchored at the start of \p text (Python `re.match`).
    * \param[in] text The subject text (must outlive the result).
-   * \return The match result (test with \c matched() / \c operator bool).
+   * \return The match result (test with `matched()` / `operator` bool).
    */
   [[nodiscard]] constexpr result_type match(std::string_view text) const
   {
@@ -326,7 +326,7 @@ public:
   }
 
   /*!
-   * \brief Match the entire \p text (Python \c re.fullmatch).
+   * \brief Match the entire \p text (Python `re.fullmatch`).
    * \param[in] text The subject text (must outlive the result).
    * \return The match result.
    */
@@ -336,7 +336,7 @@ public:
   }
 
   /*!
-   * \brief Leftmost match anywhere in \p text (Python \c re.search).
+   * \brief Leftmost match anywhere in \p text (Python `re.search`).
    * \param[in] text The subject text (must outlive the result).
    * \return The match result.
    */
@@ -345,26 +345,26 @@ public:
     return run(text, detail::run_mode::search);
   }
 
-  //! \c match overload for string literals. \param[in] text NUL-terminated text. \return The result.
+  //! `match` overload for string literals. \param[in] text NUL-terminated text. \return The result.
   [[nodiscard]] constexpr result_type match(const char* text) const
   {
     return match(std::string_view(text));
   }
 
-  //! \c fullmatch overload for string literals. \param[in] text NUL-terminated text. \return The result.
+  //! `fullmatch` overload for string literals. \param[in] text NUL-terminated text. \return The result.
   [[nodiscard]] constexpr result_type fullmatch(const char* text) const
   {
     return fullmatch(std::string_view(text));
   }
 
-  //! \c search overload for string literals. \param[in] text NUL-terminated text. \return The result.
+  //! `search` overload for string literals. \param[in] text NUL-terminated text. \return The result.
   [[nodiscard]] constexpr result_type search(const char* text) const
   {
     return search(std::string_view(text));
   }
 
   /*!
-   * \brief Lazy range over all non-overlapping matches (Python \c re.finditer).
+   * \brief Lazy range over all non-overlapping matches (Python `re.finditer`).
    *
    * Only callable on an lvalue regex: calling on a temporary would dangle in a
    * C++20 range-for (the range initializer's temporaries die before the loop
@@ -378,19 +378,19 @@ public:
     return {program_.view(), pattern(), text};
   }
 
-  //! \c find_iter overload for string literals. \param[in] text NUL-terminated text. \return The range.
+  //! `find_iter` overload for string literals. \param[in] text NUL-terminated text. \return The range.
   [[nodiscard]] constexpr basic_match_range<Storage> find_iter(const char* text) const&
   {
     return find_iter(std::string_view(text));
   }
 
-  //! Deleted: \c find_iter on a temporary regex would dangle.
+  //! Deleted: `find_iter` on a temporary regex would dangle.
   [[nodiscard]] basic_match_range<Storage> find_iter(std::string_view text) const&& = delete;
-  //! Deleted: \c find_iter on a temporary regex would dangle.
+  //! Deleted: `find_iter` on a temporary regex would dangle.
   [[nodiscard]] basic_match_range<Storage> find_iter(const char* text) const&&      = delete;
 
   /*!
-   * \brief All matches, eagerly (like Python \c re.findall but full results).
+   * \brief All matches, eagerly (like Python `re.findall` but full results).
    *
    * Lvalue-only for the same reason as \ref find_iter (results reference this
    * regex's name table).
@@ -407,22 +407,22 @@ public:
     return out;
   }
 
-  //! \c find_all overload for string literals. \param[in] text NUL-terminated text. \return The results.
+  //! `find_all` overload for string literals. \param[in] text NUL-terminated text. \return The results.
   [[nodiscard]] constexpr std::vector<result_type> find_all(const char* text) const&
   {
     return find_all(std::string_view(text));
   }
 
-  //! Deleted: \c find_all on a temporary regex would dangle.
+  //! Deleted: `find_all` on a temporary regex would dangle.
   [[nodiscard]] std::vector<result_type> find_all(std::string_view text) const&& = delete;
-  //! Deleted: \c find_all on a temporary regex would dangle.
+  //! Deleted: `find_all` on a temporary regex would dangle.
   [[nodiscard]] std::vector<result_type> find_all(const char* text) const&&      = delete;
 
   /*!
-   * \brief Replaces matches in \p text (Python \c re.sub).
+   * \brief Replaces matches in \p text (Python `re.sub`).
    *
-   * The \p replacement may reference groups: \c $$ → '$', \c $& or \c $0 →
-   * whole match, \c $1 …, and \c ${name}. Returns an owning string, so a
+   * The \p replacement may reference groups: `$$` → '$', `$&` or `$0` →
+   * whole match, `$1` …, and `${name}`. Returns an owning string, so a
    * temporary \p text is fine here.
    *
    * \param[in] text        The subject text.
@@ -452,10 +452,10 @@ public:
   }
 
   /*!
-   * \brief Splits \p text on matches (Python \c re.split).
+   * \brief Splits \p text on matches (Python `re.split`).
    *
    * Each capturing group's text is inserted after its split (an unset group
-   * yields an empty view, where Python would use \c None).
+   * yields an empty view, where Python would use `None`).
    *
    * \param[in] text       The subject text (must outlive the returned views).
    * \param[in] max_splits Maximum splits (0 = split everywhere).
@@ -482,7 +482,7 @@ public:
     return out;
   }
 
-  //! \c split overload for string literals. \param[in] text NUL-terminated text. \param[in] max_splits Max splits. \return The pieces.
+  //! `split` overload for string literals. \param[in] text NUL-terminated text. \param[in] max_splits Max splits. \return The pieces.
   [[nodiscard]] constexpr std::vector<std::string_view> split(const char* text,
                                                               std::size_t max_splits = 0) const
   {
@@ -513,7 +513,7 @@ public:
   /*!
    * \brief The raw compiled program, for embedders (advanced).
    *
-   * Lets an embedder (e.g. the Python binding) drive \c detail::pike_vm with
+   * Lets an embedder (e.g. the Python binding) drive `detail::pike_vm` with
    * caller-owned reusable scratch. Valid as long as this regex is alive.
    *
    * \return A non-owning \ref detail::program_view.
@@ -570,7 +570,7 @@ private:
    *
    * \param[in,out] out         The output string to append to.
    * \param[in]     m           The match supplying the captured groups.
-   * \param[in]     replacement The replacement template (\c $$, \c $&, \c $1, \c ${name}).
+   * \param[in]     replacement The replacement template (`$$`, `$&`, `$1`, `${name}`).
    * \throws real::regex_error on a malformed or out-of-range reference.
    */
   constexpr void expand_replacement(std::string& out, const result_type& m, std::string_view replacement) const
