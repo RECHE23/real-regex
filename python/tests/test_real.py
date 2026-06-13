@@ -176,5 +176,19 @@ class TestRedosSafety(unittest.TestCase):
         self.assertLess(time.perf_counter() - start, 0.1)
 
 
+class TestCppIntegration(unittest.TestCase):
+    def test_get_include_resolves_to_the_headers(self):
+        import os
+        inc = real.get_include()
+        self.assertTrue(os.path.isdir(inc))
+        self.assertTrue(os.path.isfile(os.path.join(inc, "real", "real.hpp")))
+
+    def test_get_config(self):
+        cfg = real.get_config()
+        self.assertEqual(cfg["version"], real.__version__)
+        self.assertEqual(cfg["include"], real.get_include())
+        self.assertEqual(cfg["cxx_standard"], "c++20")
+
+
 if __name__ == "__main__":
     unittest.main()
