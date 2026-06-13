@@ -51,6 +51,22 @@ TEST(word_boundaries)
   EXPECT_EQ(real::regex("\\b\\d+\\b").search("a 42 b")[0], "42"sv);
 }
 
+TEST(word_start_and_word_end_anchors)
+{
+  // \< asserts a word starts here (non-word/start on the left, word on the
+  // right); \> asserts a word ends here. REAL extension beyond Python re.
+  EXPECT_EQ(real::regex("\\<cat\\>").search("a cat here").start(), 2U);
+  EXPECT(!real::regex("\\<cat\\>").search("category")); // not a whole word
+  EXPECT(!real::regex("\\<cat\\>").search("concat"));
+  EXPECT_EQ(real::regex("\\<\\w+").search("foo bar")[0], "foo"sv);
+  EXPECT_EQ(real::regex("\\w+\\>").search(".foo.").start(), 1U);
+  EXPECT(real::regex("\\<").match("abc"));     // word start at the text start
+  EXPECT_EQ(real::regex("\\>").search("abc").start(), 3U); // word end at text end
+  EXPECT(!real::regex("\\<").search(" "));     // no word, no word start
+  // \< and \> are zero-width, like the other anchors.
+  EXPECT_THROWS(real::regex("\\<?"), real::regex_error);
+}
+
 TEST(icase_flag)
 {
   EXPECT(real::regex("hello", real::flags::icase).fullmatch("HeLLo"));

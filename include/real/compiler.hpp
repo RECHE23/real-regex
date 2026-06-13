@@ -348,6 +348,10 @@ private:
         return assert_kind::word_boundary;
       case anchor_kind::not_word_boundary:
         return assert_kind::not_word_boundary;
+      case anchor_kind::word_start:
+        return assert_kind::word_start;
+      case anchor_kind::word_end:
+        return assert_kind::word_end;
     }
     return assert_kind::text_start; // unreachable
   }

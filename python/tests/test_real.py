@@ -176,6 +176,23 @@ class TestRedosSafety(unittest.TestCase):
         self.assertLess(time.perf_counter() - start, 0.1)
 
 
+class TestWordEdgeAnchors(unittest.TestCase):
+    # \< and \> are word-start / word-end anchors (a REAL extension; Python re
+    # has no equivalent), reusing the same ASCII word-character notion as \b.
+    def test_word_start_and_end(self):
+        self.assertEqual(real.findall(r"\<\w+", "foo bar-baz"), ["foo", "bar", "baz"])
+        self.assertEqual(real.findall(r"\w+\>", "foo bar-baz"), ["foo", "bar", "baz"])
+
+    def test_whole_word_only(self):
+        self.assertTrue(real.search(r"\<cat\>", "a cat here"))
+        self.assertIsNone(real.search(r"\<cat\>", "category"))
+        self.assertIsNone(real.search(r"\<cat\>", "concat"))
+
+    def test_zero_width_at_edges(self):
+        self.assertEqual(real.search(r"\<", "abc").span(), (0, 0))
+        self.assertEqual(real.search(r"\>", "abc").span(), (3, 3))
+
+
 class TestCppIntegration(unittest.TestCase):
     def test_get_include_resolves_to_the_headers(self):
         import os

@@ -79,6 +79,8 @@ constexpr bool anchor_and_flag_cases()
   CONSTEXPR_EXPECT(!real::regex("ab\\Z").search("ab\n"));
   CONSTEXPR_EXPECT(real::regex("\\bcat\\b").search("a cat!").start() == 2);
   CONSTEXPR_EXPECT(!real::regex("\\bcat\\b").search("concat"));
+  CONSTEXPR_EXPECT(real::regex("\\<cat\\>").search("a cat!").start() == 2);
+  CONSTEXPR_EXPECT(!real::regex("\\<cat\\>").search("category"));
   CONSTEXPR_EXPECT(real::regex("hello", real::flags::icase).fullmatch("HeLLo").matched());
   CONSTEXPR_EXPECT(!real::regex("[^a]", real::flags::icase).fullmatch("A"));
   CONSTEXPR_EXPECT(real::regex("a.b", real::flags::dotall).fullmatch("a\nb").matched());

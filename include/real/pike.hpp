@@ -493,6 +493,14 @@ private:
           const bool after  = pos < len && is_ascii_word_byte(byte_at(pos));
           return (before != after) == (kind == assert_kind::word_boundary);
         }
+      case assert_kind::word_start:
+      case assert_kind::word_end:
+        {
+          const bool before = pos > 0 && is_ascii_word_byte(byte_at(pos - 1));
+          const bool after  = pos < len && is_ascii_word_byte(byte_at(pos));
+          return kind == assert_kind::word_start ? (!before && after)
+                                                 : (before && !after);
+        }
     }
     return false; // unreachable
   }

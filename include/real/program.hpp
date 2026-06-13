@@ -134,6 +134,8 @@ enum class assert_kind : std::uint8_t
   line_end,                  //!< \c $ with multiline.
   word_boundary,             //!< \c \\b (ASCII word characters).
   not_word_boundary,         //!< \c \\B.
+  word_start,                //!< \c \\< (non-word/start on the left, word on the right).
+  word_end,                  //!< \c \\> (word on the left, non-word/end on the right).
 };
 
 //! One NFA instruction. Field meaning depends on \ref op.

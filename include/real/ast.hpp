@@ -47,6 +47,8 @@ enum class anchor_kind : std::uint8_t
   text_end,          //!< \c \\Z.
   word_boundary,     //!< \c \\b.
   not_word_boundary, //!< \c \\B.
+  word_start,        //!< \c \\< (start of word; REAL extension, not in Python re).
+  word_end,          //!< \c \\> (end of word; REAL extension, not in Python re).
 };
 
 //! One AST node. Active fields depend on \ref kind (noted per field).
@@ -722,6 +724,12 @@ private:
       case 'B':
         ++pos_;
         return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::not_word_boundary});
+      case '<':
+        ++pos_;
+        return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::word_start});
+      case '>':
+        ++pos_;
+        return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::word_end});
       default:
         {
           const std::int32_t b = parse_byte_escape();

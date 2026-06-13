@@ -42,6 +42,7 @@ depend on the platform, the pattern and the input.
 | `^` `$` | line/text anchors (Python semantics: `$` also matches before a final `\n`) |
 | `\A` `\Z` | strict text start / end |
 | `\b` `\B` | word boundary / non-boundary (ASCII word characters) |
+| `\<` `\>` | start / end of word (REAL extension, not in Python `re`) |
 | `(?ims)` prefix | global flags: `i` case-insensitive (ASCII), `m` multiline, `s` dotall — also `real::flags` on the constructor |
 
 **Unicode model:** matching is UTF-8 byte-based, but every construct consumes
