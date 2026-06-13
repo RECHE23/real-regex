@@ -1,0 +1,164 @@
+# REAL
+
+**Regular Expression Algorithmic Library** — a header-only C++20 regex engine,
+constexpr from end to end, with an `re`-compatible Python binding.
+
+- **Linear time, always.** The engine is a Pike VM (Thompson NFA simulation):
+  no backtracking, ReDoS-safe by construction.
+- **Constexpr-friendly.** Patterns known at compile time are parsed, compiled
+  and matched at compile time.
+- **Minimal memory.** Static (sizes fixed at compile time, zero allocation),
+  dynamic (storage sized exactly once at pattern compilation), or hybrid
+  (compile-time pattern, runtime text, zero heap allocation).
+- **Zero dependencies.** One include.
+
+Unsupported syntax is rejected with `real::regex_error` rather than silently
+diverging. Deferred (and rejected): lookarounds, backreferences,
+atomic/possessive groups, Unicode property classes, Unicode case folding,
+`re.X`, `pos`/`endpos`. The planned next step is a lazy DFA for the
+dense-candidate cases where `re` is still ahead.
+
+Over the benchmark suite (`make bench-python`), REAL is **1.98x faster than
+Python's `re`** at the geometric mean, with identical outputs; the `(a+)+b`
+ReDoS case completes in microseconds where `re` takes over a second.
+
+## Supported syntax
+
+| Syntax | Meaning |
+|---|---|
+| `abc` | literal bytes (UTF-8 patterns match their UTF-8 bytes) |
+| `\.` `\*` `\\` … | escaped metacharacter, matched literally |
+| `.` | any codepoint except `\n` |
+| `[abc]` `[a-z]` `[^abc]` | character class (members must be ASCII); `[^…]` matches any codepoint outside the set |
+| `\d \D \w \W \s \S` | digit / word / space classes (ASCII sets, like Python's `re.ASCII`) |
+| `\n \t \r \f \v \a \0` `\xHH` | control and hex escapes |
+| `x*` `x+` `x?` | quantifiers (greedy; append `?` for lazy) |
+| `x{n}` `x{n,}` `x{,m}` `x{n,m}` | counted repetition (greedy or lazy; counts capped at 1000) |
+| `a\|b` | alternation, leftmost branch preferred |
+| `(…)` `(?:…)` | capturing / non-capturing group |
+| `(?P<name>…)` `(?<name>…)` | named capturing group (Python and .NET styles) |
+| `^` `$` | line/text anchors (Python semantics: `$` also matches before a final `\n`) |
+| `\A` `\Z` | strict text start / end |
+| `\b` `\B` | word boundary / non-boundary (ASCII word characters) |
+| `(?ims)` prefix | global flags: `i` case-insensitive (ASCII), `m` multiline, `s` dotall — also `real::flags` on the constructor |
+
+**Unicode model:** matching is UTF-8 byte-based, but every construct consumes
+whole codepoints (multi-byte sequences compile to byte-level alternatives), so
+match boundaries never split a character. Class members and the `\d \w \s`
+sets are ASCII by design; `[^…]`, `\D \W \S` and `.` do match non-ASCII
+codepoints.
+
+**Divergence from Python:** when a *nullable* loop body ends with an empty
+iteration — e.g. `(a*)*` on `"aa"` — Python captures that final empty
+iteration (`''`); REAL, like Perl/PCRE, keeps the last non-empty one (`"aa"`).
+Group 0 is identical either way.
+
+## C++ API
+
+```cpp
+#include <real/real.hpp>
+
+real::regex rx("hello");     // runtime pattern, storage sized exactly once
+rx.match("hello world");     // anchored at the start   (Python re.match)
+rx.fullmatch("hello");       // whole text              (Python re.fullmatch)
+rx.search("say hello");      // leftmost match anywhere (Python re.search)
+```
+
+`match`/`fullmatch`/`search` return a `real::match_result`: `matched()`,
+`operator bool`, `start(g)`, `end(g)`, `m[g]` (a `std::string_view` into the
+searched text, which must outlive the result), and the same accessors by group
+name (`m["year"]`, `group_index`).
+
+```cpp
+for (auto& m : rx.find_iter(text)) { … }      // lazy, Python finditer rules
+rx.find_all(text);                            // eager vector<match_result>
+rx.replace(text, "$2:$1");                    // $&, $1…, ${name}, $$ — re.sub
+rx.replace(text, "#", 2);                     // count limit
+rx.split(text);                               // Python re.split, with groups
+```
+
+Empty matches follow Python's rules: they are yielded (even right after a
+non-empty match) and the scan then advances one whole codepoint.
+`find_iter`/`find_all` cannot be called on a temporary regex, and
+`match`/`search`/`split` cannot take a temporary `std::string`.
+
+### Three memory modes
+
+```cpp
+// Static: pattern compiled at compile time into exactly-sized constexpr
+// arrays; an invalid pattern is a *compile error*.
+constexpr real::static_regex<"(\\d{4})-(\\d{2})"> date;
+static_assert(date.search("on 2026-06-10")[1] == "2026");  // constexpr match
+
+// Hybrid: compile-time pattern, runtime text — matching performs zero heap
+// allocations (state lives on the stack).
+date.search(runtime_text);
+
+// Dynamic: everything at runtime; the program is sized exactly once at
+// compilation, match state is per-run scratch.
+real::regex rx2(user_pattern, real::flags::icase);
+```
+
+The pure library is standard C++20 with no platform dependencies. `real::real`
+is the CMake `FetchContent`/`find_package` target.
+
+## Python binding
+
+An `re`-compatible module backed by the C++ engine (CPython Limited API, one
+abi3 extension, zero dependencies):
+
+```python
+import real
+
+real.search(r"(?P<y>\d{4})-(?P<m>\d{2})", "on 2026-06-10").groupdict()
+real.compile(r"\w+").findall(text)         # findall/finditer/split/sub/subn
+real.sub(r"\s+", " ", text)                # templates: \1, \g<name>, callables
+real.compile(rb"[^;]+").findall(raw)       # bytes patterns: raw-byte semantics
+```
+
+`str` matching is UTF-8 with character indices in `start/end/span`; `bytes`
+patterns get `re`'s exact raw-byte semantics. Unsupported `re` features raise
+`real.error` at compile time. Build with `make python && make python-test`.
+
+Once published: `pip install real-regex` (one `cp310-abi3` wheel per platform
+serves CPython 3.10+; the self-contained sdist compiles where no wheel
+matches). Pushing a `v*` tag triggers `.github/workflows/release.yml`
+(`cibuildwheel` + PyPI Trusted Publishing); set `[project.urls]` in
+`pyproject.toml` and bump the version in both `pyproject.toml` and
+`python/real/__init__.py` before the first publish.
+
+## Development
+
+```bash
+make help       # list all targets
+make test       # build and run the test suite
+make coverage   # line coverage report (LLVM)
+make sanitize   # tests under ASan + UBSan
+make lint       # clang-tidy
+make misra      # MISRA C++:2023-oriented analysis
+make fuzz       # libFuzzer robustness fuzzing (clang)
+make doc        # API reference (Doxygen)
+```
+
+The API reference is published at <https://reche23.github.io/real-regex/>.
+
+Select the compiler with `make test CXX=g++-14`. Every behaviour is tested at
+runtime and in constexpr (`static_assert`) under Clang and GCC; an equivalence
+suite checks the prefilter and fast paths never change results; a parity suite
+and a randomized differential fuzzer compare Python outputs against `re`.
+
+CI exercises:
+
+| Platform | Architecture | Compiler |
+|----------|--------------|----------|
+| Linux    | x86-64       | GCC, Clang |
+| Linux    | AArch64      | GCC |
+| macOS    | Apple Silicon (arm64) | Apple Clang |
+| Windows  | x86-64       | MSVC |
+
+IntelLLVM (`icpx`), x86-64 macOS and the BSDs share the Clang flag set and are
+supported by the build configuration but not exercised in CI.
+
+## License
+
+MIT — Copyright (c) 2026 René Chenard

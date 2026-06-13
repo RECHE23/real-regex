@@ -1,0 +1,50 @@
+# Doxygen configuration for REAL — API reference generation (`make doc`).
+# Style follows the MEF++/GIREF conventions: banner-block comments whose
+# first sentence is the brief (no autobrief), in-place attribute docs
+# (`//!<`), and exhaustive extraction of the whole library.
+
+PROJECT_NAME           = "REAL"
+PROJECT_BRIEF          = "Regular Expression Algorithmic Library — constexpr C++20 regex"
+OUTPUT_DIRECTORY       = build/doc
+OUTPUT_LANGUAGE        = English
+
+# --- what to document ------------------------------------------------------
+INPUT                  = include/real README.md
+FILE_PATTERNS          = *.hpp
+RECURSIVE              = YES
+USE_MDFILE_AS_MAINPAGE = README.md
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+EXTRACT_ANON_NSPACES   = YES
+INTERNAL_DOCS          = YES
+
+# --- comment interpretation ------------------------------------------------
+# Banner-block style: the first sentence of a /*! */ block is the brief.
+JAVADOC_AUTOBRIEF      = NO
+QT_AUTOBRIEF           = NO
+MULTILINE_CPP_IS_BRIEF = NO
+# C++20 / templates / constexpr are not C; keep full C++ output.
+OPTIMIZE_OUTPUT_FOR_C  = NO
+
+# --- diagnostics: keep the doc honest (warn on undocumented members) -------
+QUIET                  = YES
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = YES
+
+# --- output ----------------------------------------------------------------
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+HTML_OUTPUT            = html
+SOURCE_BROWSER         = YES
+ALPHABETICAL_INDEX     = YES
+
+# --- graphs (only if dot/graphviz is present) ------------------------------
+HAVE_DOT               = NO
+
+# --- preprocessing: expand the library's feature macros sensibly -----------
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = NO
