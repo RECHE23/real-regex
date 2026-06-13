@@ -46,6 +46,7 @@ help:
 	@echo "  make bench-fuzz   Randomized comparative benchmark over fuzzed input"
 	@echo "  make install      Install the Python package (pip)"
 	@echo "  make uninstall    Uninstall the Python package (pip)"
+	@echo "  make release      Cut a calendar-versioned release (tag + push)"
 	@echo ""
 	@echo "  Override the compiler: make test CXX=g++-14"
 
@@ -139,6 +140,26 @@ install:
 
 uninstall:
 	$(PYTHON) -m pip uninstall -y real-regex
+
+# Cuts a calendar-versioned release. Computes YYYY.M.PATCH with the patch reset
+# each month (first release of a month is .0; PEP 440 drops leading zeros, so
+# 2026.6.1, never 2026.06.001), bumps both version files, commits, tags and
+# pushes. Pushing the tag drives the Release workflow, which builds the wheels
+# and sdist and publishes to PyPI. Run from a clean main.
+release:
+	@test "$$(git symbolic-ref --short HEAD)" = main || { echo "release from main only"; exit 1; }
+	@test -z "$$(git status --porcelain)" || { echo "working tree not clean"; exit 1; }
+	@git fetch --tags --quiet origin
+	@year=$$(date -u +%Y); month=$$(date -u +%m | sed 's/^0//'); \
+	 patch=$$(git tag -l "v$$year.$$month.*" | wc -l | tr -d ' '); \
+	 version="$$year.$$month.$$patch"; \
+	 echo "Releasing v$$version"; \
+	 sed -i.bak -E "s/^version = \".*\"/version = \"$$version\"/" pyproject.toml && rm -f pyproject.toml.bak; \
+	 sed -i.bak -E "s/^__version__ = \".*\"/__version__ = \"$$version\"/" python/real/__init__.py && rm -f python/real/__init__.py.bak; \
+	 git add pyproject.toml python/real/__init__.py; \
+	 git commit -m "release: v$$version"; \
+	 git tag "v$$version"; \
+	 git push origin HEAD "v$$version"
 
 clean:
 	rm -rf $(BUILD) python/build python/real/*.so python/*.egg-info *.egg-info dist

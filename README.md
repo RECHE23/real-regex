@@ -18,9 +18,11 @@ atomic/possessive groups, Unicode property classes, Unicode case folding,
 `re.X`, `pos`/`endpos`. The planned next step is a lazy DFA for the
 dense-candidate cases where `re` is still ahead.
 
-Over the benchmark suite (`make bench-python`), REAL is **1.98x faster than
-Python's `re`** at the geometric mean, with identical outputs; the `(a+)+b`
-ReDoS case completes in microseconds where `re` takes over a second.
+Matching is linear in the input length: a Thompson NFA simulation (Pike VM)
+with marked states, so a pattern such as `(a+)+b` cannot trigger exponential
+backtracking. `make bench-python` measures throughput against `re` on a set of
+representative workloads and asserts identical results; the figures it prints
+depend on the platform, the pattern and the input.
 
 ## Supported syntax
 
@@ -120,30 +122,30 @@ real.compile(rb"[^;]+").findall(raw)       # bytes patterns: raw-byte semantics
 patterns get `re`'s exact raw-byte semantics. Unsupported `re` features raise
 `real.error` at compile time. Build with `make python && make python-test`.
 
-Once published: `pip install real-regex` (one `cp310-abi3` wheel per platform
-serves CPython 3.10+; the self-contained sdist compiles where no wheel
-matches).
+`pip install real-regex` installs one `cp310-abi3` wheel per platform
+(CPython 3.10+; the self-contained sdist compiles where no wheel matches).
 
-**Release process (manual + tag-driven, for reliability):**
-- Use calendar versioning `YYYY.M.PATCH` with monthly patch reset
-  (e.g. `2026.6.0` for the first release of June 2026, then `2026.6.1` etc.;
-  next month starts at `.0`).
-- Update the version in **both** places:
-  - `pyproject.toml` (the one used by the release guard and PyPI)
-  - `python/real/__init__.py` (the runtime `__version__` exposed to users)
-- Commit the change (optionally include `[release]` in the message as a
-  human signal or for future automation).
-- `git tag v2026.6.0`
-- `git push origin main v2026.6.0`
+### Embedding the C++ library through the Python package
 
-The tag triggers `.github/workflows/release.yml`:
-- `check-version` ensures the tag exactly matches the version in `pyproject.toml`.
-- It builds abi3 wheels with `cibuildwheel` (Linux/macOS/Windows) + sdist.
-- Publishes to PyPI using Trusted Publishing (OIDC) — no secrets.
+The wheel also ships the C++ headers, so a project can compile against REAL
+located through its Python install — the convention used by `petsc4py` and
+`slepc4py`:
 
-We deliberately kept the process simple and explicit (no auto-bump on
-merge yet) to avoid accidental publishes and keep the history auditable.
-The tag-based guard + OIDC is the reliable core.
+```bash
+c++ -std=c++20 $(python -c "import real; print(real.get_include())") app.cpp
+```
+
+`real.get_config()` returns the version, the include directory and the
+required C++ standard.
+
+**Releasing.** Run `make release`. It computes the next calendar version
+`YYYY.M.PATCH` — the patch resets each month, the first release of a month is
+`.0` (PEP 440 drops leading zeros, so `2026.6.1`, never `2026.06.001`) — bumps
+it in `pyproject.toml` and `python/real/__init__.py`, then commits, tags and
+pushes. The tag drives `release.yml`, which checks the tag matches the version,
+builds abi3 wheels (`cibuildwheel`, Linux/macOS/Windows) and the sdist, and
+publishes to PyPI via Trusted Publishing (OIDC, no stored secret). The pushed
+tag is the single thing that triggers a publish.
 
 ## Development
 
