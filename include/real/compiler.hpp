@@ -334,26 +334,34 @@ private:
   [[nodiscard]] constexpr assert_kind assert_kind_for(anchor_kind anchor) const
   {
     const bool multiline {has_flag(flags_, flags::multiline)};
+    assert_kind result {};
     switch (anchor) {
       case anchor_kind::caret:
-        return multiline ? assert_kind::line_start : assert_kind::text_start;
+        result = multiline ? assert_kind::line_start : assert_kind::text_start;
+        break;
       case anchor_kind::dollar:
-        return multiline ? assert_kind::line_end
-                         : assert_kind::text_end_or_final_newline;
+        result = multiline ? assert_kind::line_end : assert_kind::text_end_or_final_newline;
+        break;
       case anchor_kind::text_start:
-        return assert_kind::text_start;
+        result = assert_kind::text_start;
+        break;
       case anchor_kind::text_end:
-        return assert_kind::text_end;
+        result = assert_kind::text_end;
+        break;
       case anchor_kind::word_boundary:
-        return assert_kind::word_boundary;
+        result = assert_kind::word_boundary;
+        break;
       case anchor_kind::not_word_boundary:
-        return assert_kind::not_word_boundary;
+        result = assert_kind::not_word_boundary;
+        break;
       case anchor_kind::word_start:
-        return assert_kind::word_start;
+        result = assert_kind::word_start;
+        break;
       case anchor_kind::word_end:
-        return assert_kind::word_end;
+        result = assert_kind::word_end;
+        break;
     }
-    return assert_kind::text_start; // unreachable
+    return result;
   }
 
   /*!

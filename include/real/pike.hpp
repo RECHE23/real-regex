@@ -476,34 +476,41 @@ private:
   {
     const std::size_t len {text_.size()};
     const auto        byte_at = [&](std::size_t i) { return static_cast<std::uint8_t>(text_[i]); };
+    bool              result {};
     switch (kind) {
       case assert_kind::text_start:
-        return pos == 0;
+        result = pos == 0;
+        break;
       case assert_kind::text_end:
-        return pos == len;
+        result = pos == len;
+        break;
       case assert_kind::text_end_or_final_newline:
-        return pos == len || (pos + 1 == len && byte_at(pos) == '\n');
+        result = pos == len || (pos + 1 == len && byte_at(pos) == '\n');
+        break;
       case assert_kind::line_start:
-        return pos == 0 || byte_at(pos - 1) == '\n';
+        result = pos == 0 || byte_at(pos - 1) == '\n';
+        break;
       case assert_kind::line_end:
-        return pos == len || byte_at(pos) == '\n';
+        result = pos == len || byte_at(pos) == '\n';
+        break;
       case assert_kind::word_boundary:
       case assert_kind::not_word_boundary:
         {
           const bool before {pos > 0 && is_ascii_word_byte(byte_at(pos - 1))};
           const bool after {pos < len && is_ascii_word_byte(byte_at(pos))};
-          return (before != after) == (kind == assert_kind::word_boundary);
+          result = (before != after) == (kind == assert_kind::word_boundary);
         }
+        break;
       case assert_kind::word_start:
       case assert_kind::word_end:
         {
           const bool before {pos > 0 && is_ascii_word_byte(byte_at(pos - 1))};
           const bool after {pos < len && is_ascii_word_byte(byte_at(pos))};
-          return kind == assert_kind::word_start ? (!before && after)
-                                                 : (before && !after);
+          result = kind == assert_kind::word_start ? (!before && after) : (before && !after);
         }
+        break;
     }
-    return false; // unreachable
+    return result;
   }
 
   /*!
