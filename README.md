@@ -122,10 +122,28 @@ patterns get `re`'s exact raw-byte semantics. Unsupported `re` features raise
 
 Once published: `pip install real-regex` (one `cp310-abi3` wheel per platform
 serves CPython 3.10+; the self-contained sdist compiles where no wheel
-matches). Pushing a `v*` tag triggers `.github/workflows/release.yml`
-(`cibuildwheel` + PyPI Trusted Publishing); set `[project.urls]` in
-`pyproject.toml` and bump the version in both `pyproject.toml` and
-`python/real/__init__.py` before the first publish.
+matches).
+
+**Release process (manual + tag-driven, for reliability):**
+- Use calendar versioning `YYYY.M.PATCH` with monthly patch reset
+  (e.g. `2026.6.0` for the first release of June 2026, then `2026.6.1` etc.;
+  next month starts at `.0`).
+- Update the version in **both** places:
+  - `pyproject.toml` (the one used by the release guard and PyPI)
+  - `python/real/__init__.py` (the runtime `__version__` exposed to users)
+- Commit the change (optionally include `[release]` in the message as a
+  human signal or for future automation).
+- `git tag v2026.6.0`
+- `git push origin main v2026.6.0`
+
+The tag triggers `.github/workflows/release.yml`:
+- `check-version` ensures the tag exactly matches the version in `pyproject.toml`.
+- It builds abi3 wheels with `cibuildwheel` (Linux/macOS/Windows) + sdist.
+- Publishes to PyPI using Trusted Publishing (OIDC) — no secrets.
+
+We deliberately kept the process simple and explicit (no auto-bump on
+merge yet) to avoid accidental publishes and keep the history auditable.
+The tag-based guard + OIDC is the reliable core.
 
 ## Development
 
