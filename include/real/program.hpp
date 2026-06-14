@@ -166,6 +166,8 @@ struct pattern_hints
   char_class           first_bytes;            //!< All possible first bytes.
   std::int32_t         greedy_class_loop {-1}; //!< Class index if the whole pattern is "class+", else -1.
   bool                 fixed_shape {};         //!< Whole pattern is a fixed-width byte/klass sequence (no branches/asserts/captures).
+  std::int32_t         codepoint_class_ascii {-1}; //!< ASCII-class index when the whole pattern is `.`/negated-class (optionally `+`), else -1.
+  bool                 codepoint_class_plus {};    //!< The \ref codepoint_class_ascii pattern is a greedy `+` loop (vs a single codepoint).
 
   /*!
    * \brief Length of the pure-literal match, or 0.

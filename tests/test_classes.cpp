@@ -153,3 +153,28 @@ TEST(unterminated_class_reports_open_bracket_position)
     EXPECT_EQ(e.position(), 2U);
   }
 }
+
+TEST(codepoint_class_fast_path)
+{
+  // `.` and negated classes (optionally greedy `+`) take a codepoint-aware
+  // fast path; results must equal the general engine, including on multi-byte
+  // and malformed UTF-8.
+  const real::regex notcomma("[^,]+");
+  const auto        runs = notcomma.find_all("a,bb,ccc");
+  EXPECT_EQ(runs.size(), 3U);
+  EXPECT_EQ(runs[2][0], "ccc"sv);
+  // Multi-byte codepoints are consumed whole (é is two bytes).
+  EXPECT_EQ(notcomma.search("café,x")[0], "café"sv);
+  // `.` excludes newline; `.+` stops at it.
+  const real::regex dotplus(".+");
+  EXPECT_EQ(dotplus.find_all("a\nbb\nccc").size(), 3U);
+  // Bare dot matches one codepoint at a time.
+  const real::regex dot(".");
+  EXPECT_EQ(dot.find_all("ab").size(), 2U);
+  EXPECT(dot.fullmatch("é")); // one multi-byte codepoint
+  // Malformed UTF-8: a lone continuation byte is not a codepoint, so [^,]
+  // does not match it (exactly like the general engine).
+  const char        bad[] {'a', static_cast<char>(0x80), 'b'};
+  const std::string s(bad, sizeof bad);
+  EXPECT_EQ(notcomma.find_all(s).size(), 2U); // "a" and "b", the 0x80 skipped
+}

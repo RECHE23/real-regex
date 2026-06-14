@@ -25,6 +25,59 @@
 namespace real::detail {
 
 /*!
+ * \brief Recognizes the byte-level UTF-8 expansion the compiler emits for `.`
+ *        and negated classes (see `emit_codepoint_class`).
+ *
+ * The 16-instruction block at \p b is one ASCII class plus the four
+ * lead/continuation byte branches. The shape and the UTF-8 byte ranges are
+ * both checked, so the match is unambiguous.
+ *
+ * \param[in] code    The instruction stream.
+ * \param[in] classes The interned classes.
+ * \param[in] b       Index of the block's leading split.
+ * \return The ASCII-class index of the codepoint class, or -1 if \p b does not
+ *         begin such a block.
+ */
+constexpr std::int32_t codepoint_class_at(std::span<const instr>      code,
+                                          std::span<const char_class> classes,
+                                          std::size_t                 b)
+{
+  if (b + 16 > code.size()) {
+    return -1;
+  }
+  const auto is_range = [&](std::uint16_t idx, int lo, int hi) {
+    char_class want;
+    want.set_range(static_cast<std::uint8_t>(lo), static_cast<std::uint8_t>(hi));
+    return idx < classes.size() && classes[idx] == want;
+  };
+  const auto bi = [&](std::size_t off) { return static_cast<std::int32_t>(b + off); };
+  const bool shape {
+    code[b].op == opcode::split && code[b].x == bi(1) && code[b].y == bi(3) &&
+    code[b + 1].op == opcode::klass && code[b + 2].op == opcode::jump &&
+    code[b + 3].op == opcode::split && code[b + 3].x == bi(4) && code[b + 3].y == bi(7) &&
+    code[b + 4].op == opcode::klass && code[b + 5].op == opcode::klass &&
+    code[b + 6].op == opcode::jump && code[b + 7].op == opcode::split &&
+    code[b + 7].x == bi(8) && code[b + 7].y == bi(12) && code[b + 8].op == opcode::klass &&
+    code[b + 9].op == opcode::klass && code[b + 10].op == opcode::klass &&
+    code[b + 11].op == opcode::jump && code[b + 12].op == opcode::klass &&
+    code[b + 13].op == opcode::klass && code[b + 14].op == opcode::klass &&
+    code[b + 15].op == opcode::klass};
+  const bool ranges {
+    is_range(code[b + 4].arg16, 0xC2, 0xDF) && is_range(code[b + 5].arg16, 0x80, 0xBF) &&
+    is_range(code[b + 8].arg16, 0xE0, 0xEF) && is_range(code[b + 12].arg16, 0xF0, 0xF4)};
+  if (!shape || !ranges) {
+    return -1;
+  }
+  const std::uint16_t ascii {code[b + 1].arg16};
+  for (int x = 0x80; x <= 0xFF; ++x) {
+    if (classes[ascii].test(static_cast<std::uint8_t>(x))) {
+      return -1; // the ASCII branch must hold ASCII bytes only
+    }
+  }
+  return static_cast<std::int32_t>(ascii);
+}
+
+/*!
  * \brief Walks a compiled program once to derive its search hints.
  * \param[in] code    The instruction stream.
  * \param[in] classes The interned character classes referenced by \p code.
@@ -174,6 +227,24 @@ constexpr pattern_hints analyze_program(std::span<const instr>      code,
         code[i].op == opcode::match) {
       h.fixed_shape = true;
     }
+  }
+
+  // Whole pattern is a single codepoint class (`.`/negated class), optionally a
+  // greedy `+`. Layout: save 0, the 16-instruction codepoint block (at 1..16),
+  // then either save 1, match (bare, 19 instructions) or split(loop, exit),
+  // save 1, match (the `+`, 20 instructions). No captures; `*` is excluded
+  // because its empty match rules out a consuming fast path.
+  if (code.size() == 19 && code[0].op == opcode::save &&
+      codepoint_class_at(code, classes, 1) >= 0 && code[17].op == opcode::save &&
+      code[18].op == opcode::match) {
+    h.codepoint_class_ascii = codepoint_class_at(code, classes, 1);
+    h.codepoint_class_plus  = false;
+  }
+  else if (code.size() == 20 && code[0].op == opcode::save &&
+           codepoint_class_at(code, classes, 1) >= 0 && code[17].op == opcode::split &&
+           code[17].x == 1 && code[18].op == opcode::save && code[19].op == opcode::match) {
+    h.codepoint_class_ascii = codepoint_class_at(code, classes, 1);
+    h.codepoint_class_plus  = true;
   }
 
   if (h.prefix_size > 0) {

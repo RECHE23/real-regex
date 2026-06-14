@@ -171,6 +171,9 @@ public:
     if (prog_.hints.fixed_shape) {
       return run_fixed_shape(text, start, mode, out_slots);
     }
+    if (prog_.hints.codepoint_class_ascii >= 0) {
+      return run_codepoint_class(text, start, mode, out_slots);
+    }
     const std::size_t code_size {prog_.code.size()};
     auto*             clist {&state_.lists[0]};
     auto*             nlist {&state_.lists[1]};
@@ -359,6 +362,82 @@ private:
       ++s;
     }
     return false;
+  }
+
+  /*!
+   * \brief Fast path for `.` / a negated class, optionally a greedy `+`.
+   *
+   * Scans codepoints directly, mirroring the byte-level expansion the VM would
+   * run: an ASCII byte matches the ASCII set; a valid 2–4 byte UTF-8 sequence
+   * always matches (a negated ASCII class excludes only ASCII); anything else
+   * (lone continuation, bad lead, truncation) stops, exactly as the VM's
+   * lead/continuation branches would fail. Covers `.+`, `[^,]+`, `.`, `[^,]`.
+   *
+   * \tparam OutSlots Output slot container.
+   * \param[in]  text      The subject text.
+   * \param[in]  start     Index to begin at.
+   * \param[in]  mode      Anchoring mode.
+   * \param[out] out_slots Receives the matched span on success.
+   * \return `true` if at least one codepoint matched.
+   */
+  template <typename OutSlots>
+  constexpr bool run_codepoint_class(std::string_view text, std::size_t start, run_mode mode, OutSlots& out_slots)
+  {
+    const char_class& ascii {
+      prog_.classes[static_cast<std::size_t>(prog_.hints.codepoint_class_ascii)]};
+    out_slots.assign(2, npos);
+
+    const auto cont = [&](std::size_t i) {
+      const auto x {static_cast<std::uint8_t>(text[i])};
+      return x >= 0x80 && x <= 0xBF;
+    };
+    // Byte length of a matching codepoint at i, or 0 for no match.
+    const auto width = [&](std::size_t i) -> std::size_t {
+      const auto b {static_cast<std::uint8_t>(text[i])};
+      if (b < 0x80) {
+        return ascii.test(b) ? 1 : 0;
+      }
+      if (b >= 0xC2 && b <= 0xDF) {
+        return i + 1 < text.size() && cont(i + 1) ? 2 : 0;
+      }
+      if (b >= 0xE0 && b <= 0xEF) {
+        return i + 2 < text.size() && cont(i + 1) && cont(i + 2) ? 3 : 0;
+      }
+      if (b >= 0xF0 && b <= 0xF4) {
+        return i + 3 < text.size() && cont(i + 1) && cont(i + 2) && cont(i + 3) ? 4 : 0;
+      }
+      return 0;
+    };
+
+    std::size_t s {start};
+    if (mode == run_mode::search) {
+      while (s < text.size() && width(s) == 0) {
+        ++s;
+      }
+    }
+    if (s >= text.size()) {
+      return false;
+    }
+    const std::size_t w0 {width(s)};
+    if (w0 == 0) {
+      return false;
+    }
+    std::size_t e {s + w0};
+    if (prog_.hints.codepoint_class_plus) {
+      while (e < text.size()) {
+        const std::size_t w {width(e)};
+        if (w == 0) {
+          break;
+        }
+        e += w;
+      }
+    }
+    if (mode == run_mode::full && e != text.size()) {
+      return false;
+    }
+    out_slots[0] = s;
+    out_slots[1] = e;
+    return true;
   }
 
   /*!
