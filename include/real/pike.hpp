@@ -296,6 +296,77 @@ private:
   }
 
   /*!
+   * \brief Matches the run of byte/klass instructions starting at \p pc.
+   *
+   * Shared by the fixed-shape and alternation fast paths. Consumes one text
+   * byte per instruction and stops at the first non-consuming op (a save,
+   * jump or match).
+   *
+   * \param[in] text The subject text.
+   * \param[in] pc   Index of the first instruction of the run.
+   * \param[in] s    Text offset to match from.
+   * \return The end offset on a full match, or \ref npos on a mismatch.
+   */
+  [[nodiscard]] constexpr std::size_t match_byte_klass_run(std::string_view text, std::size_t pc, std::size_t s) const
+  {
+    std::size_t consumed {};
+    while (pc < prog_.code.size()) {
+      const instr& in {prog_.code[pc]};
+      if (in.op != opcode::byte && in.op != opcode::klass) {
+        break;
+      }
+      if (s + consumed >= text.size()) {
+        return npos;
+      }
+      const auto b {static_cast<std::uint8_t>(text[s + consumed])};
+      const bool ok {in.op == opcode::byte ? b == in.arg8
+                                           : prog_.classes[in.arg16].test(b)};
+      if (!ok) {
+        return npos;
+      }
+      ++consumed;
+      ++pc;
+    }
+    return s + consumed;
+  }
+
+  /*!
+   * \brief Leftmost search by scanning candidate positions (first-byte hints).
+   *
+   * Shared by the fast paths that verify a fixed shape at a position: it walks
+   * candidate starts via \ref next_candidate and reports the first that
+   * \p match_at accepts.
+   *
+   * \tparam MatchAt  Callable `std::size_t(std::size_t pos)` returning the
+   *                  match end at \p pos, or \ref npos.
+   * \tparam OutSlots Output slot container (already sized to two).
+   * \param[in]  text      The subject text.
+   * \param[in]  start     Index to begin at.
+   * \param[in]  match_at  The per-position matcher.
+   * \param[out] out_slots Receives the (start, end) span on success.
+   * \return `true` if a match was found.
+   */
+  template <typename MatchAt, typename OutSlots>
+  constexpr bool fast_search(std::string_view text, std::size_t start, MatchAt match_at, OutSlots& out_slots)
+  {
+    std::size_t s {start};
+    while (s <= text.size()) {
+      s = next_candidate(text, s, start);
+      if (s > text.size()) {
+        break;
+      }
+      const std::size_t e {match_at(s)};
+      if (e != npos) {
+        out_slots[0] = s;
+        out_slots[1] = e;
+        return true;
+      }
+      ++s;
+    }
+    return false;
+  }
+
+  /*!
    * \brief Fast path for a whole-pattern fixed-width byte/klass sequence.
    *
    * A straight-line program (no branches/assertions) has exactly one thread,
@@ -314,33 +385,12 @@ private:
   constexpr bool run_fixed_shape(std::string_view text, std::size_t start, run_mode mode, OutSlots& out_slots)
   {
     out_slots.assign(2, npos);
-
-    // Verifies the sequence at \p s; returns its end offset, or npos on a miss.
-    const auto verify = [&](std::size_t s) -> std::size_t {
-      std::size_t consumed {};
-      for (const instr& in : prog_.code) {
-        if (in.op == opcode::save) {
-          continue;
-        }
-        if (in.op == opcode::match) {
-          break;
-        }
-        if (s + consumed >= text.size()) {
-          return npos;
-        }
-        const auto b {static_cast<std::uint8_t>(text[s + consumed])};
-        const bool ok {in.op == opcode::byte ? b == in.arg8
-                                             : prog_.classes[in.arg16].test(b)};
-        if (!ok) {
-          return npos;
-        }
-        ++consumed;
-      }
-      return s + consumed;
-    };
+    // The sequence starts after the single leading save (the detection in
+    // analyze_program requires exactly one) and runs to save 1.
+    const auto at = [&](std::size_t s) { return match_byte_klass_run(text, 1, s); };
 
     if (mode != run_mode::search) {
-      const std::size_t e {verify(start)};
+      const std::size_t e {at(start)};
       if (e == npos || (mode == run_mode::full && e != text.size())) {
         return false;
       }
@@ -348,23 +398,7 @@ private:
       out_slots[1] = e;
       return true;
     }
-
-    // search: leftmost candidate (via the first-byte hints), then verify.
-    std::size_t s {start};
-    while (s <= text.size()) {
-      s = next_candidate(text, s, start);
-      if (s > text.size()) {
-        break;
-      }
-      const std::size_t e {verify(s)};
-      if (e != npos) {
-        out_slots[0] = s;
-        out_slots[1] = e;
-        return true;
-      }
-      ++s;
-    }
-    return false;
+    return fast_search(text, start, at, out_slots);
   }
 
   /*!
@@ -462,35 +496,17 @@ private:
   constexpr bool run_alternation(std::string_view text, std::size_t start, run_mode mode, OutSlots& out_slots)
   {
     out_slots.assign(2, npos);
-    const auto&       code {prog_.code};
-    const std::size_t exit {code.size() - 2};
+    const auto& code {prog_.code};
 
-    // Verifies the straight-line branch at \p q against text at \p s.
-    const auto verify = [&](std::size_t q, std::size_t s) -> std::size_t {
-      std::size_t consumed {};
-      while (q < exit && (code[q].op == opcode::byte || code[q].op == opcode::klass)) {
-        if (s + consumed >= text.size()) {
-          return npos;
-        }
-        const auto b {static_cast<std::uint8_t>(text[s + consumed])};
-        const bool ok {code[q].op == opcode::byte
-                         ? b == code[q].arg8
-                         : prog_.classes[code[q].arg16].test(b)};
-        if (!ok) {
-          return npos;
-        }
-        ++consumed;
-        ++q;
-      }
-      return s + consumed;
-    };
-
-    // First branch that matches at \p s (and, for full, spans to the end).
+    // First branch that matches at \p s (and, for full, spans to the end). The
+    // branches are read from the split chain in source order (highest priority
+    // first), mirroring the VM's thread priority.
     const auto match_at = [&](std::size_t s, bool require_full) -> std::size_t {
       std::size_t pc {1};
       while (true) {
         const bool        is_split {code[pc].op == opcode::split};
-        const std::size_t e {verify(is_split ? static_cast<std::size_t>(code[pc].x) : pc, s)};
+        const std::size_t branch {is_split ? static_cast<std::size_t>(code[pc].x) : pc};
+        const std::size_t e {match_byte_klass_run(text, branch, s)};
         if (e != npos && (!require_full || e == text.size())) {
           return e;
         }
@@ -510,22 +526,7 @@ private:
       out_slots[1] = e;
       return true;
     }
-
-    std::size_t s {start};
-    while (s <= text.size()) {
-      s = next_candidate(text, s, start);
-      if (s > text.size()) {
-        break;
-      }
-      const std::size_t e {match_at(s, false)};
-      if (e != npos) {
-        out_slots[0] = s;
-        out_slots[1] = e;
-        return true;
-      }
-      ++s;
-    }
-    return false;
+    return fast_search(text, start, [&](std::size_t s) { return match_at(s, false); }, out_slots);
   }
 
   /*!

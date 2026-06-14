@@ -286,17 +286,16 @@ constexpr pattern_hints analyze_program(std::span<const instr>      code,
   // then either save 1, match (bare, 19 instructions) or split(loop, exit),
   // save 1, match (the `+`, 20 instructions). No captures; `*` is excluded
   // because its empty match rules out a consuming fast path.
-  if (code.size() == 19 && code[0].op == opcode::save &&
-      codepoint_class_at(code, classes, 1) >= 0 && code[17].op == opcode::save &&
-      code[18].op == opcode::match) {
-    h.codepoint_class_ascii = codepoint_class_at(code, classes, 1);
-    h.codepoint_class_plus  = false;
-  }
-  else if (code.size() == 20 && code[0].op == opcode::save &&
-           codepoint_class_at(code, classes, 1) >= 0 && code[17].op == opcode::split &&
-           code[17].x == 1 && code[18].op == opcode::save && code[19].op == opcode::match) {
-    h.codepoint_class_ascii = codepoint_class_at(code, classes, 1);
-    h.codepoint_class_plus  = true;
+  if ((code.size() == 19 || code.size() == 20) && code[0].op == opcode::save) {
+    const std::int32_t ascii {codepoint_class_at(code, classes, 1)};
+    const bool bare {code.size() == 19 && code[17].op == opcode::save &&
+                     code[18].op == opcode::match};
+    const bool plus {code.size() == 20 && code[17].op == opcode::split && code[17].x == 1 &&
+                     code[18].op == opcode::save && code[19].op == opcode::match};
+    if (ascii >= 0 && (bare || plus)) {
+      h.codepoint_class_ascii = ascii;
+      h.codepoint_class_plus  = plus;
+    }
   }
 
   // Whole pattern is an alternation of straight-line branches.
