@@ -1,7 +1,6 @@
 # Doxygen configuration for REAL — API reference generation (`make doc`).
-# Style follows the MEF++/GIREF conventions: banner-block comments whose
-# first sentence is the brief (no autobrief), in-place attribute docs
-# (`//!<`), and exhaustive extraction of the whole library.
+# Style: banner-block comments whose first sentence is the brief (no autobrief),
+# in-place attribute docs (`//!<`), and exhaustive extraction of the whole library.
 
 PROJECT_NAME           = "REAL"
 PROJECT_BRIEF          = "Regular Expression Algorithmic Library — constexpr C++20 regex"

@@ -384,20 +384,58 @@ PyObject* Match_get_string(PyObject* self, void*) {
 }
 
 PyMethodDef match_methods[] = {
-    {"group", Match_group, METH_VARARGS, "Return one or more subgroups."},
+    {"group", Match_group, METH_VARARGS,
+     "group(group=0, /)\n"
+     "Return the matched substring or subgroups.\n\n"
+     "Args:\n"
+     "    group (int or str, optional): Group number or name. Defaults to 0\n"
+     "        (the whole match).\n\n"
+     "Returns:\n"
+     "    str or bytes or None: The matched text, or None if the group did\n"
+     "        not participate. Multiple arguments return a tuple."},
     {"groups", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Match_groups)),
-     METH_VARARGS | METH_KEYWORDS, "Return a tuple of all subgroups."},
+     METH_VARARGS | METH_KEYWORDS,
+     "groups(default=None, /)\n"
+     "Return a tuple of all subgroup strings.\n\n"
+     "Args:\n"
+     "    default: Value for groups that did not participate.\n\n"
+     "Returns:\n"
+     "    tuple: One entry per capturing group (group 1 onwards)."},
     {"groupdict", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Match_groupdict)),
-     METH_VARARGS | METH_KEYWORDS, "Return a dict of named subgroups."},
-    {"start", Match_start, METH_VARARGS, "Index of the start of a group."},
-    {"end", Match_end, METH_VARARGS, "Index of the end of a group."},
-    {"span", Match_span, METH_VARARGS, "(start, end) of a group."},
+     METH_VARARGS | METH_KEYWORDS,
+     "groupdict(default=None, /)\n"
+     "Return a dictionary mapping group names to matched strings.\n\n"
+     "Args:\n"
+     "    default: Value for groups that did not participate.\n\n"
+     "Returns:\n"
+     "    dict: {name: matched_text} for all named groups."},
+    {"start", Match_start, METH_VARARGS,
+     "start(group=0, /)\n"
+     "Return the start index of a group in the original string.\n\n"
+     "Args:\n"
+     "    group (int or str, optional): Group number or name. Defaults to 0.\n\n"
+     "Returns:\n"
+     "    int: Character index where the group starts."},
+    {"end", Match_end, METH_VARARGS,
+     "end(group=0, /)\n"
+     "Return the end index of a group in the original string.\n\n"
+     "Args:\n"
+     "    group (int or str, optional): Group number or name. Defaults to 0.\n\n"
+     "Returns:\n"
+     "    int: Character index where the group ends."},
+    {"span", Match_span, METH_VARARGS,
+     "span(group=0, /)\n"
+     "Return the (start, end) indices of a group.\n\n"
+     "Args:\n"
+     "    group (int or str, optional): Group number or name. Defaults to 0.\n\n"
+     "Returns:\n"
+     "    tuple: (start, end) character indices."},
     {nullptr, nullptr, 0, nullptr},
 };
 
 PyGetSetDef match_getset[] = {
-    {"re", Match_get_re, nullptr, "The pattern object.", nullptr},
-    {"string", Match_get_string, nullptr, "The searched string.", nullptr},
+    {"re", Match_get_re, nullptr, "The Pattern object that produced this match.", nullptr},
+    {"string", Match_get_string, nullptr, "The string or bytes that was searched.", nullptr},
     {nullptr, nullptr, nullptr, nullptr, nullptr},
 };
 
@@ -842,25 +880,79 @@ PyObject* Pattern_get_groupindex(PyObject* self, void*) {
 }
 
 PyMethodDef pattern_methods[] = {
-    {"match", Pattern_match, METH_O, "Anchored match at the start."},
-    {"fullmatch", Pattern_fullmatch, METH_O, "Match the entire string."},
-    {"search", Pattern_search, METH_O, "Leftmost match anywhere."},
-    {"findall", Pattern_findall, METH_O, "All matches, re.findall semantics."},
-    {"finditer", Pattern_finditer, METH_O, "Iterator over all Match objects."},
+    {"match", Pattern_match, METH_O,
+     "match(string, /)\n"
+     "Try to match only at the start of the string.\n\n"
+     "Args:\n"
+     "    string (str or bytes): Text to match.\n\n"
+     "Returns:\n"
+     "    Match or None: Match object on success, None otherwise."},
+    {"fullmatch", Pattern_fullmatch, METH_O,
+     "fullmatch(string, /)\n"
+     "Try to match the entire string.\n\n"
+     "Args:\n"
+     "    string (str or bytes): Text to match.\n\n"
+     "Returns:\n"
+     "    Match or None: Match object on success, None otherwise."},
+    {"search", Pattern_search, METH_O,
+     "search(string, /)\n"
+     "Scan the string for the leftmost match.\n\n"
+     "Args:\n"
+     "    string (str or bytes): Text to search.\n\n"
+     "Returns:\n"
+     "    Match or None: Match object on success, None otherwise."},
+    {"findall", Pattern_findall, METH_O,
+     "findall(string, /)\n"
+     "Return all non-overlapping matches.\n\n"
+     "Args:\n"
+     "    string (str or bytes): Text to search.\n\n"
+     "Returns:\n"
+     "    list: List of strings, bytes, or tuples depending on groups."},
+    {"finditer", Pattern_finditer, METH_O,
+     "finditer(string, /)\n"
+     "Return an iterator yielding Match objects.\n\n"
+     "Args:\n"
+     "    string (str or bytes): Text to search.\n\n"
+     "Returns:\n"
+     "    iterator: Iterator over all matches."},
     {"split", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_split)),
-     METH_VARARGS | METH_KEYWORDS, "Split by pattern occurrences."},
+     METH_VARARGS | METH_KEYWORDS,
+     "split(string, maxsplit=0, /)\n"
+     "Split the string by occurrences of the pattern.\n\n"
+     "Args:\n"
+     "    string (str or bytes): Text to split.\n"
+     "    maxsplit (int, optional): Maximum number of splits. 0 means no limit.\n\n"
+     "Returns:\n"
+     "    list: Substrings with captured groups interleaved."},
     {"sub", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_sub)),
-     METH_VARARGS | METH_KEYWORDS, "Replace matches."},
+     METH_VARARGS | METH_KEYWORDS,
+     "sub(repl, string, count=0, /)\n"
+     "Replace occurrences of the pattern in the string.\n\n"
+     "Args:\n"
+     "    repl (str, bytes, or callable): Replacement template or callable\n"
+     "        accepting a Match object.\n"
+     "    string (str or bytes): Text to modify.\n"
+     "    count (int, optional): Maximum replacements. 0 means all.\n\n"
+     "Returns:\n"
+     "    str or bytes: Result after replacements."},
     {"subn", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_subn)),
-     METH_VARARGS | METH_KEYWORDS, "Replace matches, returning (result, count)."},
+     METH_VARARGS | METH_KEYWORDS,
+     "subn(repl, string, count=0, /)\n"
+     "Replace occurrences and return the result plus the count.\n\n"
+     "Args:\n"
+     "    repl (str, bytes, or callable): Replacement template or callable.\n"
+     "    string (str or bytes): Text to modify.\n"
+     "    count (int, optional): Maximum replacements. 0 means all.\n\n"
+     "Returns:\n"
+     "    tuple: (result, number_of_substitutions)."},
     {nullptr, nullptr, 0, nullptr},
 };
 
 PyGetSetDef pattern_getset[] = {
-    {"pattern", Pattern_get_pattern, nullptr, "The pattern text.", nullptr},
-    {"flags", Pattern_get_flags, nullptr, "The compilation flags.", nullptr},
-    {"groups", Pattern_get_groups, nullptr, "Number of capturing groups.", nullptr},
-    {"groupindex", Pattern_get_groupindex, nullptr, "Mapping name -> group number.",
+    {"pattern", Pattern_get_pattern, nullptr, "The pattern string or bytes used for compilation.", nullptr},
+    {"flags", Pattern_get_flags, nullptr, "The compilation flags as passed to compile().", nullptr},
+    {"groups", Pattern_get_groups, nullptr, "Number of capturing groups (excluding group 0).", nullptr},
+    {"groupindex", Pattern_get_groupindex, nullptr, "Mapping from group name to group number.",
      nullptr},
     {nullptr, nullptr, nullptr, nullptr, nullptr},
 };
@@ -971,12 +1063,22 @@ PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
 
 PyMethodDef module_methods[] = {
     {"compile", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(real_compile)),
-     METH_VARARGS | METH_KEYWORDS, "Compile a pattern into a real.Pattern."},
+     METH_VARARGS | METH_KEYWORDS,
+     "compile(pattern, flags=0, /)\n"
+     "Compile a regular expression pattern into a real.Pattern object.\n\n"
+     "Args:\n"
+     "    pattern (str or bytes): The regular expression pattern.\n"
+     "    flags (int, optional): Bitwise OR of re-compatible flags. Defaults to 0.\n\n"
+     "Returns:\n"
+     "    Pattern: Compiled pattern object.\n\n"
+     "Raises:\n"
+     "    error: If the pattern is invalid or unsupported."},
     {nullptr, nullptr, 0, nullptr},
 };
 
 PyModuleDef module_def = {
-    PyModuleDef_HEAD_INIT, "_real", "REAL regex engine (C++ core).", -1,
+    PyModuleDef_HEAD_INIT, "_real",
+    "REAL regex engine C++ core (linear-time Thompson NFA simulation).", -1,
     module_methods,        nullptr, nullptr,                         nullptr, nullptr,
 };
 

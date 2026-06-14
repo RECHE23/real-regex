@@ -28,7 +28,9 @@
 
 namespace real::detail {
 
-//! Compiles an \ref ast into a \ref dynamic_program (NFA bytecode).
+/*!
+ * \brief Compiles an \ref ast into a \ref dynamic_program (NFA bytecode).
+ */
   class compiler
   {
 public:
@@ -73,7 +75,9 @@ private:
 
     // --- low-level emission helpers -------------------------------------
 
-    //! \param[in] prog The program. \return The index of the next instruction.
+    /*!
+     * \param[in] prog The program. \return The index of the next instruction.
+     */
     static constexpr std::int32_t here(const dynamic_program& prog)
     {
       return static_cast<std::int32_t>(prog.code.size());
@@ -102,14 +106,18 @@ private:
       prog.code.push_back(in);
     }
 
-    //! Emits a `split` with placeholder targets. \return Its instruction index.
+    /*!
+     * \brief Emits a `split` with placeholder targets. \return Its instruction index.
+     */
     static constexpr std::int32_t emit_split(dynamic_program& prog)
     {
       emit(prog, {.op = opcode::split, .x = -1, .y = -1});
       return here(prog) - 1;
     }
 
-    //! Emits a `jump` with a placeholder target. \return Its instruction index.
+    /*!
+     * \brief Emits a `jump` with a placeholder target. \return Its instruction index.
+     */
     static constexpr std::int32_t emit_jump(dynamic_program& prog)
     {
       emit(prog, {.op = opcode::jump, .x = -1});

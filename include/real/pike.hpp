@@ -26,7 +26,9 @@
 
 namespace real::detail {
 
-//! How a VM run is anchored.
+/*!
+ * \brief How a VM run is anchored.
+ */
   enum class run_mode : std::uint8_t
   {
     prefix, //!< Anchored at the start position (Python `re.match`).
@@ -81,13 +83,17 @@ namespace real::detail {
       slots.clear();
     }
 
-    //! \param[in] pc A program counter. \return `true` if \p pc is already in this generation.
+    /*!
+     * \param[in] pc A program counter. \return `true` if \p pc is already in this generation.
+     */
     [[nodiscard]] constexpr bool seen(std::int32_t pc) const
     {
       return mark[static_cast<std::size_t>(pc)] == generation;
     }
 
-    //! Marks \p pc as present in the current generation. \param[in] pc The program counter.
+    /*!
+     * \brief Marks \p pc as present in the current generation. \param[in] pc The program counter.
+     */
     constexpr void mark_seen(std::int32_t pc)
     {
       mark[static_cast<std::size_t>(pc)] = generation;
@@ -113,9 +119,13 @@ namespace real::detail {
     EpsVec     stack;    //!< Epsilon-closure DFS stack.
   };
 
-//! Thread list specialized on `std::vector` (the dynamic storage mode).
+/*!
+ * \brief Thread list specialized on `std::vector` (the dynamic storage mode).
+ */
   using thread_list = basic_thread_list<std::vector<std::int32_t>, std::vector<std::size_t>, std::vector<std::uint64_t>>;
-//! VM scratch state for the dynamic storage mode.
+/*!
+ * \brief VM scratch state for the dynamic storage mode.
+ */
   using pike_state =
     basic_pike_state<thread_list, std::vector<std::size_t>, std::vector<eps_entry>>;
 
@@ -252,7 +262,9 @@ private:
      */
     std::size_t forbid_empty_until_ {};
 
-    //! The concrete thread-list type taken from the bound `State`.
+    /*!
+     * \brief The concrete thread-list type taken from the bound `State`.
+     */
     using list_type = std::remove_reference_t<decltype(std::declval<State&>().lists[0])>;
 
     /*!

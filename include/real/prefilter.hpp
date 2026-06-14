@@ -81,8 +81,8 @@ namespace real::detail {
  * \brief Tests whether the whole program is an alternation of straight-line
  *        branches (e.g. `the|fox|dog`).
  *
- * Layout: save 0, a chain of `split` nodes whose \c x is a branch of byte/klass
- * ending in `jump` to the shared exit and whose \c y is the next split, the
+ * Layout: save 0, a chain of `split` nodes whose `x` is a branch of byte/klass
+ * ending in `jump` to the shared exit and whose `y` is the next split, the
  * last branch falling through to save 1, match. Captures, assertions, nested
  * branches and empty branches all disqualify it.
  *

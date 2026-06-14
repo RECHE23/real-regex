@@ -57,7 +57,9 @@ namespace real {
       }
     }
 
-    //! \return A view of the string, excluding the trailing NUL.
+    /*!
+     * \return A view of the string, excluding the trailing NUL.
+     */
     [[nodiscard]] constexpr std::string_view view() const
     {
       return {data, N - 1};
@@ -95,7 +97,9 @@ public:
         ++size_;
       }
 
-      //! Removes all elements (capacity unchanged).
+      /*!
+       * \brief Removes all elements (capacity unchanged).
+       */
       constexpr void clear()
       {
         size_ = 0;
@@ -119,37 +123,49 @@ public:
         size_ = count;
       }
 
-      //! \return The number of elements.
+      /*!
+       * \return The number of elements.
+       */
       [[nodiscard]] constexpr std::size_t size() const
       {
         return size_;
       }
 
-      //! \return `true` if empty.
+      /*!
+       * \return `true` if empty.
+       */
       [[nodiscard]] constexpr bool empty() const
       {
         return size_ == 0;
       }
 
-      //! \param[in] i Index. \return Reference to the element at \p i.
+      /*!
+       * \param[in] i Index. \return Reference to the element at \p i.
+       */
       [[nodiscard]] constexpr T& operator[](std::size_t i)
       {
         return data_[i];
       }
 
-      //! \param[in] i Index. \return Const reference to the element at \p i.
+      /*!
+       * \param[in] i Index. \return Const reference to the element at \p i.
+       */
       [[nodiscard]] constexpr const T& operator[](std::size_t i) const
       {
         return data_[i];
       }
 
-      //! \return Reference to the last element.
+      /*!
+       * \return Reference to the last element.
+       */
       [[nodiscard]] constexpr T& back()
       {
         return data_[size_ - 1];
       }
 
-      //! Removes the last element.
+      /*!
+       * \brief Removes the last element.
+       */
       constexpr void pop_back()
       {
         --size_;
@@ -176,7 +192,9 @@ private:
     {
       static_assert(InlineCapacity > 0, "InlineCapacity must be positive");
 
-      //! Smallest unsigned type that can index the inline buffer.
+      /*!
+       * \brief Smallest unsigned type that can index the inline buffer.
+       */
       using size_type = std::conditional_t<
         (InlineCapacity <= 255),
         std::uint8_t,
@@ -186,7 +204,9 @@ private:
       size_type capacity_ {static_cast<size_type>(InlineCapacity)}; //!< Current capacity.
       bool      is_heap_  {};                                       //!< True once spilled to the heap.
 
-      //! Active member (inline buffer or heap pointer) per \ref is_heap_ state.
+      /*!
+       * \brief Active member (inline buffer or heap pointer) per \ref is_heap_ state.
+       */
       union Storage
       {
         T  inline_buffer[InlineCapacity]; //!< Inline storage (when not heap).
@@ -199,13 +219,17 @@ private:
         constexpr ~Storage() {} //!< Destruction handled by \ref cleanup.
       } storage_ {};
 
-      //! \return Pointer to the inline buffer.
+      /*!
+       * \return Pointer to the inline buffer.
+       */
       [[nodiscard]] constexpr T* inline_data() noexcept
       {
         return storage_.inline_buffer;
       }
 
-      //! \return Const pointer to the inline buffer.
+      /*!
+       * \return Const pointer to the inline buffer.
+       */
       [[nodiscard]] constexpr const T* inline_data() const noexcept
       {
         return storage_.inline_buffer;
@@ -239,7 +263,9 @@ private:
         }
       }
 
-      //! Destroys heap elements and frees the heap block, if any (run-time only).
+      /*!
+       * \brief Destroys heap elements and frees the heap block, if any (run-time only).
+       */
       constexpr void cleanup() noexcept
       {
         if (std::is_constant_evaluated()) {
@@ -255,7 +281,9 @@ private:
         }
       }
 
-      //! Doubles the capacity (saturating), spilling to the heap as needed.
+      /*!
+       * \brief Doubles the capacity (saturating), spilling to the heap as needed.
+       */
       void extend_capacity()
       {
         std::size_t current {static_cast<std::size_t>(capacity_)};
@@ -268,10 +296,14 @@ public:
       using value_type = T;           //!< Element type.
       using size_type_ = std::size_t; //!< Size type (for std-container API compat).
 
-      //! Constructs an empty vector in the inline state.
+      /*!
+       * \brief Constructs an empty vector in the inline state.
+       */
       constexpr small_vec() noexcept = default;
 
-      //! Destroys elements and frees any heap block.
+      /*!
+       * \brief Destroys elements and frees any heap block.
+       */
       constexpr ~small_vec()
       {
         if (!std::is_constant_evaluated()) {
@@ -332,49 +364,65 @@ public:
         size_ = static_cast<size_type>(count);
       }
 
-      //! \return The number of elements.
+      /*!
+       * \return The number of elements.
+       */
       [[nodiscard]] constexpr std::size_t size() const noexcept
       {
         return size_;
       }
 
-      //! \return `true` if empty.
+      /*!
+       * \return `true` if empty.
+       */
       [[nodiscard]] constexpr bool empty() const noexcept
       {
         return size_ == 0;
       }
 
-      //! \param[in] i Index. \return Reference to the element at \p i.
+      /*!
+       * \param[in] i Index. \return Reference to the element at \p i.
+       */
       [[nodiscard]] constexpr T& operator[](std::size_t i) noexcept
       {
         return is_heap_ ? storage_.heap_ptr[i] : inline_data()[i];
       }
 
-      //! \param[in] i Index. \return Const reference to the element at \p i.
+      /*!
+       * \param[in] i Index. \return Const reference to the element at \p i.
+       */
       [[nodiscard]] constexpr const T& operator[](std::size_t i) const noexcept
       {
         return is_heap_ ? storage_.heap_ptr[i] : inline_data()[i];
       }
 
-      //! Removes all elements (capacity and heap state unchanged).
+      /*!
+       * \brief Removes all elements (capacity and heap state unchanged).
+       */
       constexpr void clear() noexcept
       {
         size_ = 0;
       }
 
-      //! \return Reference to the last element.
+      /*!
+       * \return Reference to the last element.
+       */
       [[nodiscard]] constexpr T& back() noexcept
       {
         return is_heap_ ? storage_.heap_ptr[size_ - 1] : inline_data()[size_ - 1];
       }
 
-      //! \return Const reference to the last element.
+      /*!
+       * \return Const reference to the last element.
+       */
       [[nodiscard]] constexpr const T& back() const noexcept
       {
         return is_heap_ ? storage_.heap_ptr[size_ - 1] : inline_data()[size_ - 1];
       }
 
-      //! Removes the last element if any.
+      /*!
+       * \brief Removes the last element if any.
+       */
       constexpr void pop_back() noexcept
       {
         if (size_ > 0) {
@@ -408,7 +456,9 @@ public:
         is_heap_          = true;
       }
 
-      //! Move constructor: steals \p other's heap block or moves inline elements.
+      /*!
+       * \brief Move constructor: steals \p other's heap block or moves inline elements.
+       */
       constexpr small_vec(small_vec&& other) noexcept
         : size_(other.size_),
           capacity_(other.capacity_),
@@ -426,7 +476,9 @@ public:
         }
       }
 
-      //! Move assignment. \param[in,out] other Source (left empty). \return *this.
+      /*!
+       * \brief Move assignment. \param[in,out] other Source (left empty). \return *this.
+       */
       constexpr small_vec& operator=(small_vec&& other) noexcept
       {
         if (this != &other) {
@@ -448,7 +500,9 @@ public:
         return *this;
       }
 
-      //! Copy constructor (needed for `vector<match_result>` in find_all).
+      /*!
+       * \brief Copy constructor (needed for `vector<match_result>` in find_all).
+       */
       constexpr small_vec(const small_vec& other)
         : size_(other.size_),
           capacity_(other.capacity_)
@@ -467,7 +521,9 @@ public:
         }
       }
 
-      //! Copy assignment. \param[in] other Source. \return *this.
+      /*!
+       * \brief Copy assignment. \param[in] other Source. \return *this.
+       */
       constexpr small_vec& operator=(const small_vec& other)
       {
         if (this != &other) {
@@ -498,9 +554,13 @@ public:
     struct dynamic_storage
     {
       static constexpr bool is_compile_time {}; //!< Selects the runtime constructor.
-      //! Capture-slot container: SBO, avoiding the heap for typical small group counts.
+      /*!
+       * \brief Capture-slot container: SBO, avoiding the heap for typical small group counts.
+       */
       using slot_storage = small_vec<std::size_t, 32>;
-      //! VM scratch state: SBO thread lists, working slots and eps stack.
+      /*!
+       * \brief VM scratch state: SBO thread lists, working slots and eps stack.
+       */
       using state_type = basic_pike_state<
         basic_thread_list<small_vec<std::int32_t, 64>,
                           small_vec<std::size_t, 256>,
@@ -529,19 +589,25 @@ public:
                 .effective_flags = effective};
       }
 
-      //! \return A non-owning view of the compiled program.
+      /*!
+       * \return A non-owning view of the compiled program.
+       */
       [[nodiscard]] constexpr program_view view() const
       {
         return program.view();
       }
 
-      //! \return The original pattern text.
+      /*!
+       * \return The original pattern text.
+       */
       [[nodiscard]] constexpr std::string_view pattern() const
       {
         return pattern_text;
       }
 
-      //! \return The effective flags (constructor flags merged with (?ims)).
+      /*!
+       * \return The effective flags (constructor flags merged with (?ims)).
+       */
       [[nodiscard]] constexpr flags compiled_flags() const
       {
         return effective_flags;
@@ -565,7 +631,9 @@ public:
 
 private:
 
-      //! \return The freshly built program (used for both measuring and filling).
+      /*!
+       * \return The freshly built program (used for both measuring and filling).
+       */
       static constexpr dynamic_program build()
       {
         const ast tree {detail::parse(Pat.view(), F)};
@@ -605,7 +673,9 @@ public:
       static constexpr std::array<named_group, name_count> names =
         take<named_group, name_count>(build().names);                                                            //!< Named groups.
 
-      //! Capture-slot container: fixed-capacity, no heap.
+      /*!
+       * \brief Capture-slot container: fixed-capacity, no heap.
+       */
       using slot_storage = static_vec<std::size_t, slot_count>;
       /*!
        * \brief VM scratch state, all fixed-capacity (zero heap).
@@ -620,7 +690,9 @@ public:
         static_vec<std::size_t, slot_count>,
         static_vec<eps_entry, (3 * code_size) + 4>>;
 
-      //! \return A non-owning view of the compile-time program.
+      /*!
+       * \return A non-owning view of the compile-time program.
+       */
       [[nodiscard]] constexpr program_view view() const
       {
         return {.code       = code,
@@ -631,13 +703,17 @@ public:
                 .hints      = hints};
       }
 
-      //! \return The pattern text.
+      /*!
+       * \return The pattern text.
+       */
       [[nodiscard]] constexpr std::string_view pattern() const
       {
         return Pat.view();
       }
 
-      //! \return The effective flags.
+      /*!
+       * \return The effective flags.
+       */
       [[nodiscard]] constexpr flags compiled_flags() const
       {
         return effective_flags;

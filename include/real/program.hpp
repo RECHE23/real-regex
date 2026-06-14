@@ -22,7 +22,9 @@
 
 namespace real {
 
-//! Sentinel for "no position" / unset capture slot (akin to std::string::npos).
+/*!
+ * \brief Sentinel for "no position" / unset capture slot (akin to std::string::npos).
+ */
   inline constexpr std::size_t npos {std::numeric_limits<std::size_t>::max()};
 
 /*!
@@ -98,13 +100,17 @@ public:
         position_(position)
     {}
 
-    //! \return The formatted error message (with position).
+    /*!
+     * \return The formatted error message (with position).
+     */
     [[nodiscard]] const char* what() const noexcept override
     {
       return message_.c_str();
     }
 
-    //! \return The byte offset in the pattern where the error was found.
+    /*!
+     * \return The byte offset in the pattern where the error was found.
+     */
     [[nodiscard]] std::size_t position() const noexcept
     {
       return position_;
@@ -118,7 +124,9 @@ private:
 
   namespace detail {
 
-//! NFA instruction opcodes executed by the Pike VM.
+/*!
+ * \brief NFA instruction opcodes executed by the Pike VM.
+ */
     enum class opcode : std::uint8_t
     {
       byte,            //!< Consume one byte equal to arg8; fall through to pc+1.
@@ -149,7 +157,9 @@ private:
       word_end,                  //!< `\>` (word on the left, non-word/end on the right).
     };
 
-//! One NFA instruction. Field meaning depends on \ref op.
+/*!
+ * \brief One NFA instruction. Field meaning depends on \ref op.
+ */
     struct instr
     {
       opcode        op;       //!< The operation.
@@ -221,7 +231,9 @@ private:
       pattern_hints                hints;          //!< Search-acceleration hints.
     };
 
-//! Owning, heap-allocated program: the storage backing `real::regex`.
+/*!
+ * \brief Owning, heap-allocated program: the storage backing `real::regex`.
+ */
     struct dynamic_program
     {
       std::vector<instr>       code;           //!< The instruction stream.
@@ -231,7 +243,9 @@ private:
       bool                     byte_mode  {};  //!< \ref flags::bytes mode.
       pattern_hints            hints;          //!< Search-acceleration hints.
 
-      //! \return A non-owning \ref program_view over this program.
+      /*!
+       * \return A non-owning \ref program_view over this program.
+       */
       [[nodiscard]] constexpr program_view view() const
       {
         return {.code       = std::span<const instr>(code),

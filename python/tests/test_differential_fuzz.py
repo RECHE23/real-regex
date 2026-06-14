@@ -42,6 +42,7 @@ _CASE_TIMEOUT = 0.25
 
 
 class _Timeout(Exception):
+    """Raised when a single re comparison exceeds the per-case timeout."""
     pass
 
 
@@ -53,11 +54,13 @@ class deadline:
     """Context manager bounding a block to _CASE_TIMEOUT (no-op off Unix)."""
 
     def __enter__(self):
+        """Arm the real-time alarm."""
         if _HAVE_ALARM:
             signal.setitimer(signal.ITIMER_REAL, _CASE_TIMEOUT)
         return self
 
     def __exit__(self, *_):
+        """Disarm the alarm; always propagate exceptions."""
         if _HAVE_ALARM:
             signal.setitimer(signal.ITIMER_REAL, 0)
         return False
@@ -77,12 +80,25 @@ _ANCHORS = ["^", "$", r"\b", r"\B", r"\A", r"\Z"]
 
 
 class PatternGen:
-    """Generates a random pattern; tracks nothing global but its own rng."""
+    """Generates a random pattern inside REAL's supported grammar."""
 
     def __init__(self, rng):
+        """Bind a random number generator.
+
+        Args:
+            rng (random.Random): Random state to use.
+        """
         self.rng = rng
 
     def _atom(self, depth):
+        """Return a literal, class, or nested group atom.
+
+        Args:
+            depth (int): Current nesting depth.
+
+        Returns:
+            str: A pattern fragment.
+        """
         r = self.rng.random()
         # Shallow nesting keeps the worst-case backtracking re must do bounded
         # (it is ~n^k in the count k of nested quantifiers) so the differential
@@ -94,10 +110,26 @@ class PatternGen:
         return self.rng.choice(_CLASSES)
 
     def _group(self, depth):
+        """Return a capturing or non-capturing group.
+
+        Args:
+            depth (int): Current nesting depth.
+
+        Returns:
+            str: A group pattern fragment.
+        """
         inner = self._alt(depth + 1)
         return ("(?:" if self.rng.random() < 0.5 else "(") + inner + ")"
 
     def _element(self, depth):
+        """Return an atom with a quantifier, avoiding nullable loop bodies.
+
+        Args:
+            depth (int): Current nesting depth.
+
+        Returns:
+            str: A quantified pattern fragment.
+        """
         quant = self.rng.choice(_QUANTS)
         if quant not in _NONLOOP_QUANTS:
             # Looping quantifier: the body must always consume, so wrap a bare
@@ -107,14 +139,35 @@ class PatternGen:
         return self._atom(depth) + quant
 
     def _seq(self, depth):
+        """Return a concatenated sequence of elements.
+
+        Args:
+            depth (int): Current nesting depth.
+
+        Returns:
+            str: A sequence pattern fragment.
+        """
         n = self.rng.randint(1, 3)
         return "".join(self._element(depth) for _ in range(n))
 
     def _alt(self, depth):
+        """Return an alternation of sequences.
+
+        Args:
+            depth (int): Current nesting depth.
+
+        Returns:
+            str: An alternation pattern fragment.
+        """
         n = self.rng.randint(1, 3)
         return "|".join(self._seq(depth) for _ in range(n))
 
     def pattern(self):
+        """Generate a complete pattern, optionally surrounded by anchors.
+
+        Returns:
+            str: A random regular expression pattern.
+        """
         body = self._alt(0)
         if self.rng.random() < 0.3:
             body = self.rng.choice(_ANCHORS) + body
@@ -124,6 +177,14 @@ class PatternGen:
 
 
 def random_text(rng):
+    """Generate a short random subject string.
+
+    Args:
+        rng (random.Random): Random state to use.
+
+    Returns:
+        str: Random text for matching.
+    """
     # Short texts on purpose: a generated pattern can be catastrophic for
     # *re*'s backtracking engine (REAL stays linear), and short input bounds
     # re's worst case to a few thousand steps so the differential never hangs.
@@ -133,7 +194,15 @@ def random_text(rng):
 
 
 def match_facts(m, ngroups):
-    """Comparable tuple: overall span + every group's span (None if unset)."""
+    """Comparable tuple: overall span + every group's span (None if unset).
+
+    Args:
+        m (Match or None): A match object.
+        ngroups (int): Number of capturing groups in the pattern.
+
+    Returns:
+        tuple or None: Match facts suitable for equality comparison.
+    """
     if m is None:
         return None
     return (m.span(),) + tuple(m.span(g) for g in range(1, ngroups + 1))
@@ -149,7 +218,10 @@ _FLAG_PAIRS = [
 
 
 class TestDifferentialFuzz(unittest.TestCase):
+    """Differential fuzz test comparing real against Python re."""
+
     def test_random_patterns_match_re(self):
+        """Random patterns produce the same results as re across all APIs."""
         rng = random.Random(SEED)
         checked = 0
         skipped = 0
@@ -196,6 +268,7 @@ class TestDifferentialFuzz(unittest.TestCase):
         self.assertGreater(checked, ITERS // 2)
 
     def test_verbose_matches_re(self):
+        """Random verbose patterns produce the same results as re.VERBOSE."""
         # re.X: unescaped whitespace and #-comments outside classes are ignored.
         # Inject them into generated patterns and require REAL and re to agree.
         rng = random.Random(SEED ^ 0x5EED)
@@ -236,6 +309,13 @@ def verbosify(pattern, rng):
     Whitespace goes only outside character classes and never right after a
     backslash or a `(` (which would split an escape or a `(?...)` token); both
     engines apply the same rule, so a correct REAL agrees with re on the result.
+
+    Args:
+        pattern (str): Original compact pattern.
+        rng (random.Random): Random state.
+
+    Returns:
+        str: Pattern with injected insignificant whitespace/comments.
     """
     out = []
     i = 0

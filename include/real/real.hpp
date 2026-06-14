@@ -36,7 +36,9 @@ namespace real {
   {
 public:
 
-    //! Constructs an empty (non-matched) result.
+    /*!
+     * \brief Constructs an empty (non-matched) result.
+     */
     constexpr basic_match_result() = default;
 
     /*!
@@ -59,18 +61,24 @@ public:
         names_(names)
     {}
 
-    //! \return `true` if the attempt matched.
+    /*!
+     * \return `true` if the attempt matched.
+     */
     [[nodiscard]] constexpr bool matched() const
     {
       return matched_;
     }
 
-    //! \return `true` if the attempt matched (explicit bool conversion).
+    /*!
+     * \return `true` if the attempt matched (explicit bool conversion).
+     */
     constexpr explicit operator bool() const {
       return matched_;
     }
 
-    //! \return The number of groups, including group 0 (the whole match).
+    /*!
+     * \return The number of groups, including group 0 (the whole match).
+     */
     [[nodiscard]] constexpr std::size_t size() const
     {
       return slots_.size() / 2;
@@ -124,21 +132,27 @@ public:
       return npos;
     }
 
-    //! \param[in] name Group name. \return Its start offset, or npos if unknown.
+    /*!
+     * \param[in] name Group name. \return Its start offset, or npos if unknown.
+     */
     [[nodiscard]] constexpr std::size_t start(std::string_view name) const
     {
       const std::size_t g {group_index(name)};
       return g == npos ? npos : start(g);
     }
 
-    //! \param[in] name Group name. \return Its end offset, or npos if unknown.
+    /*!
+     * \param[in] name Group name. \return Its end offset, or npos if unknown.
+     */
     [[nodiscard]] constexpr std::size_t end(std::string_view name) const
     {
       const std::size_t g {group_index(name)};
       return g == npos ? npos : end(g);
     }
 
-    //! \param[in] name Group name. \return Its matched text, empty if unknown/unset.
+    /*!
+     * \param[in] name Group name. \return Its matched text, empty if unknown/unset.
+     */
     [[nodiscard]] constexpr std::string_view operator[](std::string_view name) const
     {
       const std::size_t g {group_index(name)};
@@ -154,7 +168,9 @@ private:
     std::span<const detail::named_group> names_;      //!< Borrowed named-group table.
   };
 
-//! The result type of the default, runtime-compiled `real::regex`.
+/*!
+ * \brief The result type of the default, runtime-compiled `real::regex`.
+ */
   using match_result = basic_match_result<std::vector<std::size_t>>;
 
 /*!
@@ -174,7 +190,9 @@ public:
     using value_type      = basic_match_result<typename Storage::slot_storage>; //!< Yielded match type.
     using difference_type = std::ptrdiff_t;                                     //!< Iterator traits.
 
-    //! Constructs the end sentinel.
+    /*!
+     * \brief Constructs the end sentinel.
+     */
     constexpr basic_match_iterator() = default;
 
     /*!
@@ -194,32 +212,42 @@ public:
       advance();
     }
 
-    //! \return The current match.
+    /*!
+     * \return The current match.
+     */
     [[nodiscard]] constexpr const value_type& operator*() const
     {
       return current_;
     }
 
-    //! \return Pointer to the current match.
+    /*!
+     * \return Pointer to the current match.
+     */
     [[nodiscard]] constexpr const value_type* operator->() const
     {
       return &current_;
     }
 
-    //! Advances to the next match. \return *this.
+    /*!
+     * \brief Advances to the next match. \return *this.
+     */
     constexpr basic_match_iterator& operator++()
     {
       advance();
       return *this;
     }
 
-    //! Advances to the next match (post-increment; no value returned).
+    /*!
+     * \brief Advances to the next match (post-increment; no value returned).
+     */
     constexpr void operator++(int)
     {
       advance();
     }
 
-    //! \param[in] other Another iterator. \return `true` if both denote the same position/end.
+    /*!
+     * \param[in] other Another iterator. \return `true` if both denote the same position/end.
+     */
     [[nodiscard]] constexpr bool operator==(const basic_match_iterator& other) const
     {
       return done_ == other.done_ && (done_ || pos_ == other.pos_);
@@ -236,7 +264,9 @@ private:
     value_type                   current_;                   //!< The current match.
     typename Storage::state_type state_;                     //!< VM scratch, reused across the walk.
 
-    //! Finds the next match, applying the empty-match advance rules.
+    /*!
+     * \brief Finds the next match, applying the empty-match advance rules.
+     */
     constexpr void advance()
     {
       if (done_ || pos_ > text_.size()) {
@@ -291,13 +321,17 @@ public:
         text_(text)
     {}
 
-    //! \return An iterator to the first match.
+    /*!
+     * \return An iterator to the first match.
+     */
     [[nodiscard]] constexpr basic_match_iterator<Storage> begin() const
     {
       return {prog_, pattern_, text_};
     }
 
-    //! \return The end sentinel.
+    /*!
+     * \return The end sentinel.
+     */
     [[nodiscard]] constexpr basic_match_iterator<Storage> end() const
     {
       return {};
@@ -339,7 +373,9 @@ public:
       : program_(Storage::compile(pattern, f))
     {}
 
-    //! Default constructor for the stateless compile-time storage (static_regex).
+    /*!
+     * \brief Default constructor for the stateless compile-time storage (static_regex).
+     */
     constexpr basic_regex()
     requires(Storage::is_compile_time)
     = default;
@@ -374,19 +410,25 @@ public:
       return run(text, detail::run_mode::search);
     }
 
-    //! `match` overload for string literals. \param[in] text NUL-terminated text. \return The result.
+    /*!
+     * \brief `match` overload for string literals. \param[in] text NUL-terminated text. \return The result.
+     */
     [[nodiscard]] constexpr result_type match(const char* text) const
     {
       return match(std::string_view(text));
     }
 
-    //! `fullmatch` overload for string literals. \param[in] text NUL-terminated text. \return The result.
+    /*!
+     * \brief `fullmatch` overload for string literals. \param[in] text NUL-terminated text. \return The result.
+     */
     [[nodiscard]] constexpr result_type fullmatch(const char* text) const
     {
       return fullmatch(std::string_view(text));
     }
 
-    //! `search` overload for string literals. \param[in] text NUL-terminated text. \return The result.
+    /*!
+     * \brief `search` overload for string literals. \param[in] text NUL-terminated text. \return The result.
+     */
     [[nodiscard]] constexpr result_type search(const char* text) const
     {
       return search(std::string_view(text));
@@ -407,15 +449,21 @@ public:
       return {program_.view(), pattern(), text};
     }
 
-    //! `find_iter` overload for string literals. \param[in] text NUL-terminated text. \return The range.
+    /*!
+     * \brief `find_iter` overload for string literals. \param[in] text NUL-terminated text. \return The range.
+     */
     [[nodiscard]] constexpr basic_match_range<Storage> find_iter(const char* text) const&
     {
       return find_iter(std::string_view(text));
     }
 
-    //! Deleted: `find_iter` on a temporary regex would dangle.
+    /*!
+     * \brief Deleted: `find_iter` on a temporary regex would dangle.
+     */
     [[nodiscard]] basic_match_range<Storage> find_iter(std::string_view text) const&& = delete;
-    //! Deleted: `find_iter` on a temporary regex would dangle.
+    /*!
+     * \brief Deleted: `find_iter` on a temporary regex would dangle.
+     */
     [[nodiscard]] basic_match_range<Storage> find_iter(const char* text) const&& = delete;
 
     /*!
@@ -436,15 +484,21 @@ public:
       return out;
     }
 
-    //! `find_all` overload for string literals. \param[in] text NUL-terminated text. \return The results.
+    /*!
+     * \brief `find_all` overload for string literals. \param[in] text NUL-terminated text. \return The results.
+     */
     [[nodiscard]] constexpr std::vector<result_type> find_all(const char* text) const&
     {
       return find_all(std::string_view(text));
     }
 
-    //! Deleted: `find_all` on a temporary regex would dangle.
+    /*!
+     * \brief Deleted: `find_all` on a temporary regex would dangle.
+     */
     [[nodiscard]] std::vector<result_type> find_all(std::string_view text) const&& = delete;
-    //! Deleted: `find_all` on a temporary regex would dangle.
+    /*!
+     * \brief Deleted: `find_all` on a temporary regex would dangle.
+     */
     [[nodiscard]] std::vector<result_type> find_all(const char* text) const&& = delete;
 
     /*!
@@ -511,7 +565,9 @@ public:
       return out;
     }
 
-    //! `split` overload for string literals. \param[in] text NUL-terminated text. \param[in] max_splits Max splits. \return The pieces.
+    /*!
+     * \brief `split` overload for string literals. \param[in] text NUL-terminated text. \param[in] max_splits Max splits. \return The pieces.
+     */
     [[nodiscard]] constexpr std::vector<std::string_view> split(const char* text,
                                                                 std::size_t max_splits = 0) const
     {
@@ -527,19 +583,25 @@ public:
     [[nodiscard]] std::vector<std::string_view> split(const std::string&& text,
                                                       std::size_t         max_splits = 0) const = delete; //!< Deleted: temporary text would dangle.
 
-    //! \return The pattern text this regex was compiled from.
+    /*!
+     * \return The pattern text this regex was compiled from.
+     */
     [[nodiscard]] constexpr std::string_view pattern() const
     {
       return program_.pattern();
     }
 
-    //! \return The effective flags (constructor flags merged with a (?ims) prefix).
+    /*!
+     * \return The effective flags (constructor flags merged with a (?ims) prefix).
+     */
     [[nodiscard]] constexpr flags compile_flags() const
     {
       return program_.compiled_flags();
     }
 
-    //! \return The number of capturing groups (excluding group 0).
+    /*!
+     * \return The number of capturing groups (excluding group 0).
+     */
     [[nodiscard]] constexpr std::size_t group_count() const
     {
       return (program_.view().slot_count / 2) - 1;
@@ -591,7 +653,9 @@ private:
 
     Storage program_; //!< The storage policy holding the compiled program.
 
-    //! \param[in] ng A named group. \return Its name, sliced from the pattern text.
+    /*!
+     * \param[in] ng A named group. \return Its name, sliced from the pattern text.
+     */
     [[nodiscard]] constexpr std::string_view name_of(const detail::named_group& ng) const
     {
       return pattern().substr(static_cast<std::size_t>(ng.begin),
@@ -686,7 +750,9 @@ private:
     }
   };
 
-//! The runtime-compiled regex type — the primary entry point.
+/*!
+ * \brief The runtime-compiled regex type — the primary entry point.
+ */
   using regex = basic_regex<detail::dynamic_storage>;
 
 /*!

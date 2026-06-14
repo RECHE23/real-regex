@@ -24,7 +24,9 @@
 
 namespace real::detail {
 
-//! Kind of an AST node; selects which fields of \ref ast_node are meaningful.
+/*!
+ * \brief Kind of an AST node; selects which fields of \ref real::detail::ast_node are meaningful.
+ */
   enum class node_kind : std::uint8_t
   {
     empty,       //!< Matches the empty string.
@@ -35,10 +37,12 @@ namespace real::detail {
     repeat,      //!< Child repeated `[min, max]` times (max -1 = unbounded).
     alternation, //!< Children are branches, leftmost preferred.
     group,       //!< Child wrapped in a group; `group` >= 0 when capturing.
-    anchor,      //!< Zero-width assertion; kind in \ref ast_node::anchor.
+    anchor,      //!< Zero-width assertion; kind in \ref real::detail::ast_node::anchor.
   };
 
-//! The specific zero-width assertion of an \ref node_kind::anchor node.
+/*!
+ * \brief The specific zero-width assertion of an `anchor` node (see `node_kind::anchor`).
+ */
   enum class anchor_kind : std::uint8_t
   {
     caret,             //!< `^`  (text or line start, depending on multiline).
@@ -51,7 +55,9 @@ namespace real::detail {
     word_end,          //!< `\>` (end of word; REAL extension, not in Python re).
   };
 
-//! One AST node. Active fields depend on \ref kind (noted per field).
+/*!
+ * \brief One AST node. Active fields depend on \ref kind (noted per field).
+ */
   struct ast_node
   {
     node_kind    kind    {node_kind::empty};   //!< Which fields below are meaningful.
@@ -84,7 +90,9 @@ namespace real::detail {
     std::int32_t             root         {-1};          //!< Index of the root node.
   };
 
-//! Recursive-descent parser: a pattern string in, an \ref ast out.
+/*!
+ * \brief Recursive-descent parser: a pattern string in, an \ref ast out.
+ */
   class parser
   {
 public:
@@ -169,13 +177,17 @@ private:
       throw Error(message, pos_);
     }
 
-    //! \return `true` if the read offset is at or past the end of the pattern.
+    /*!
+     * \return `true` if the read offset is at or past the end of the pattern.
+     */
     [[nodiscard]] constexpr bool eof() const
     {
       return pos_ >= pattern_.size();
     }
 
-    //! \return The current character without consuming it (undefined at eof()).
+    /*!
+     * \return The current character without consuming it (undefined at eof()).
+     */
     [[nodiscard]] constexpr char peek() const
     {
       return pattern_[pos_];
@@ -195,7 +207,9 @@ private:
       return false;
     }
 
-    //! \param[in] c A character. \return `true` if \p c is in `[0-9A-Za-z]`.
+    /*!
+     * \param[in] c A character. \return `true` if \p c is in `[0-9A-Za-z]`.
+     */
     static constexpr bool is_ascii_alnum(char c)
     {
       return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
@@ -484,7 +498,9 @@ private:
       }
     }
 
-    //! \param[in] c A character. \return `true` if \p c is a flag letter (imsax).
+    /*!
+     * \param[in] c A character. \return `true` if \p c is a flag letter (imsax).
+     */
     static constexpr bool is_flag_letter(char c)
     {
       return c == 'i' || c == 'm' || c == 's' || c == 'a' || c == 'x';
@@ -622,7 +638,9 @@ private:
       return ++out.group_count;
     }
 
-    //! \param[in] c A character. \return `true` if \p c may start a group name.
+    /*!
+     * \param[in] c A character. \return `true` if \p c may start a group name.
+     */
     static constexpr bool is_name_start(char c)
     {
       return c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
