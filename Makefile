@@ -27,7 +27,8 @@ CXXSTD   := -std=c++20
 INCLUDES := -Iinclude
 
 .PHONY: all build test sanitize coverage lint misra fuzz doc format clean \
-        python python-test bench-python bench-fuzz install uninstall help
+        python python-test bench-python bench-fuzz bench-engines \
+        install uninstall release help
 
 .DEFAULT_GOAL := help
 
@@ -49,6 +50,7 @@ help:
 	@echo "  make python-test  Run the Python test suites"
 	@echo "  make bench-python Comparative benchmark vs Python re"
 	@echo "  make bench-fuzz   Randomized comparative benchmark over fuzzed input"
+	@echo "  make bench-engines  C++ throughput vs std::regex/PCRE2/RE2 (if present)"
 	@echo "  make install      Install the Python package (pip)"
 	@echo "  make uninstall    Uninstall the Python package (pip)"
 	@echo "  make release      Cut a calendar-versioned release (tag + push)"
@@ -137,6 +139,17 @@ bench-python: python
 
 bench-fuzz: python
 	$(PYRUN) benchmarks/fuzz_bench.py
+
+# Multi-engine C++ throughput benchmark (REAL vs std::regex vs PCRE2 vs RE2).
+# Optional engines are compiled in only when pkg-config locates them.
+bench-engines:
+	@mkdir -p $(BUILD)
+	@flags=""; \
+	 if pkg-config --exists libpcre2-8; then flags="$$flags -DHAVE_PCRE2 $$(pkg-config --cflags --libs libpcre2-8)"; fi; \
+	 if pkg-config --exists re2; then flags="$$flags -DHAVE_RE2 $$(pkg-config --cflags --libs re2)"; fi; \
+	 echo "engines: REAL std::regex$${flags:+ +optional}"; \
+	 c++ -std=c++20 -O2 $(INCLUDES) benchmarks/bench_engines.cpp $$flags -o $(BUILD)/bench_engines
+	@$(BUILD)/bench_engines
 
 # Installs the package from the repository root (root pyproject.toml builds the
 # abi3 extension against include/). uninstall removes it by distribution name.
