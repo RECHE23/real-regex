@@ -177,6 +177,43 @@ constexpr char_class space_set()
   return cc;
 }
 
+// --- UTF-8 byte-class sets -------------------------------------------------
+// The single source of truth for how `.` and negated classes expand to bytes:
+// the compiler emits these sets (compiler.hpp) and the prefilter recognizes
+// the same shape (prefilter.hpp). Keeping them here keeps the two in lock-step.
+
+//! \return UTF-8 continuation bytes `10xxxxxx` (`0x80–0xBF`).
+constexpr char_class utf8_cont_set()
+{
+  char_class cc;
+  cc.set_range(0x80, 0xBF);
+  return cc;
+}
+
+//! \return Lead bytes of a 2-byte UTF-8 sequence (`0xC2–0xDF`).
+constexpr char_class utf8_lead2_set()
+{
+  char_class cc;
+  cc.set_range(0xC2, 0xDF);
+  return cc;
+}
+
+//! \return Lead bytes of a 3-byte UTF-8 sequence (`0xE0–0xEF`).
+constexpr char_class utf8_lead3_set()
+{
+  char_class cc;
+  cc.set_range(0xE0, 0xEF);
+  return cc;
+}
+
+//! \return Lead bytes of a 4-byte UTF-8 sequence (`0xF0–0xF4`).
+constexpr char_class utf8_lead4_set()
+{
+  char_class cc;
+  cc.set_range(0xF0, 0xF4);
+  return cc;
+}
+
 } // namespace real::detail
 
 #endif // REAL_CHARCLASS_HPP

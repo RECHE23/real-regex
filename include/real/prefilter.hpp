@@ -45,9 +45,9 @@ constexpr std::int32_t codepoint_class_at(std::span<const instr>      code,
   if (b + 16 > code.size()) {
     return -1;
   }
-  const auto is_range = [&](std::uint16_t idx, int lo, int hi) {
-    char_class want;
-    want.set_range(static_cast<std::uint8_t>(lo), static_cast<std::uint8_t>(hi));
+  // Compares the class at instruction \p idx with one of the shared UTF-8 sets
+  // the compiler emits (charclass.hpp) — keeping detection and emission aligned.
+  const auto is_set = [&](std::uint16_t idx, const char_class& want) {
     return idx < classes.size() && classes[idx] == want;
   };
   const auto bi = [&](std::size_t off) { return static_cast<std::int32_t>(b + off); };
@@ -63,8 +63,8 @@ constexpr std::int32_t codepoint_class_at(std::span<const instr>      code,
     code[b + 13].op == opcode::klass && code[b + 14].op == opcode::klass &&
     code[b + 15].op == opcode::klass};
   const bool ranges {
-    is_range(code[b + 4].arg16, 0xC2, 0xDF) && is_range(code[b + 5].arg16, 0x80, 0xBF) &&
-    is_range(code[b + 8].arg16, 0xE0, 0xEF) && is_range(code[b + 12].arg16, 0xF0, 0xF4)};
+    is_set(code[b + 4].arg16, utf8_lead2_set()) && is_set(code[b + 5].arg16, utf8_cont_set()) &&
+    is_set(code[b + 8].arg16, utf8_lead3_set()) && is_set(code[b + 12].arg16, utf8_lead4_set())};
   if (!shape || !ranges) {
     return -1;
   }

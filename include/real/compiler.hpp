@@ -166,20 +166,14 @@ private:
 
   // --- UTF-8 byte expansion --------------------------------------------
 
-  //! \return The class of UTF-8 continuation bytes (`0x80–0xBF`).
-  static constexpr char_class continuation_set()
-  {
-    char_class cc;
-    cc.set_range(0x80, 0xBF);
-    return cc;
-  }
-
   /*!
    * \brief Emits "one codepoint matching \p ascii, or any non-ASCII codepoint".
    *
    * Expands to the byte-level alternation
    * `ascii | lead2 cont | lead3 cont cont | lead4 cont cont cont`, so
    * the engine steps one byte at a time while still consuming whole codepoints.
+   * The UTF-8 byte sets come from charclass.hpp, shared with the prefilter that
+   * recognizes this exact shape.
    *
    * \param[in,out] prog  The program being built.
    * \param[in]     ascii The accepted ASCII bytes (the non-ASCII branches are
@@ -187,13 +181,10 @@ private:
    */
   constexpr void emit_codepoint_class(dynamic_program& prog, const char_class& ascii) const
   {
-    const char_class cont {continuation_set()};
-    char_class       lead2;
-    lead2.set_range(0xC2, 0xDF);
-    char_class lead3;
-    lead3.set_range(0xE0, 0xEF);
-    char_class lead4;
-    lead4.set_range(0xF0, 0xF4);
+    const char_class cont {utf8_cont_set()};
+    const char_class lead2 {utf8_lead2_set()};
+    const char_class lead3 {utf8_lead3_set()};
+    const char_class lead4 {utf8_lead4_set()};
 
     const std::int32_t s1 {emit_split(prog)};
     patch_x(prog, s1, here(prog));
