@@ -62,7 +62,7 @@ namespace real {
     {}
 
     /*!
-     * \return `true` if the attempt matched.
+     * \brief Returns `true` if the attempt matched.
      */
     [[nodiscard]] constexpr bool matched() const
     {
@@ -70,14 +70,14 @@ namespace real {
     }
 
     /*!
-     * \return `true` if the attempt matched (explicit bool conversion).
+     * \brief Returns `true` if the attempt matched (explicit bool conversion).
      */
     constexpr explicit operator bool() const {
       return matched_;
     }
 
     /*!
-     * \return The number of groups, including group 0 (the whole match).
+     * \brief Returns the number of groups, including group 0 (the whole match).
      */
     [[nodiscard]] constexpr std::size_t size() const
     {
@@ -133,7 +133,9 @@ namespace real {
     }
 
     /*!
-     * \param[in] name Group name. \return Its start offset, or npos if unknown.
+     * \brief Returns its start offset, or npos if unknown.
+     * \param[in] name Group name.
+     * \return Its start offset, or npos if unknown.
      */
     [[nodiscard]] constexpr std::size_t start(std::string_view name) const
     {
@@ -142,7 +144,9 @@ namespace real {
     }
 
     /*!
-     * \param[in] name Group name. \return Its end offset, or npos if unknown.
+     * \brief Returns its end offset, or npos if unknown.
+     * \param[in] name Group name.
+     * \return Its end offset, or npos if unknown.
      */
     [[nodiscard]] constexpr std::size_t end(std::string_view name) const
     {
@@ -151,7 +155,9 @@ namespace real {
     }
 
     /*!
-     * \param[in] name Group name. \return Its matched text, empty if unknown/unset.
+     * \brief Returns its matched text, empty if unknown/unset.
+     * \param[in] name Group name.
+     * \return Its matched text, empty if unknown/unset.
      */
     [[nodiscard]] constexpr std::string_view operator[](std::string_view name) const
     {
@@ -213,7 +219,7 @@ namespace real {
     }
 
     /*!
-     * \return The current match.
+     * \brief Returns the current match.
      */
     [[nodiscard]] constexpr const value_type& operator*() const
     {
@@ -221,7 +227,7 @@ namespace real {
     }
 
     /*!
-     * \return Pointer to the current match.
+     * \brief Returns pointer to the current match.
      */
     [[nodiscard]] constexpr const value_type* operator->() const
     {
@@ -229,7 +235,8 @@ namespace real {
     }
 
     /*!
-     * \brief Advances to the next match. \return *this.
+     * \brief Advances to the next match.
+     * \return *this.
      */
     constexpr basic_match_iterator& operator++()
     {
@@ -246,7 +253,9 @@ namespace real {
     }
 
     /*!
-     * \param[in] other Another iterator. \return `true` if both denote the same position/end.
+     * \brief Returns `true` if both denote the same position/end.
+     * \param[in] other Another iterator.
+     * \return `true` if both denote the same position/end.
      */
     [[nodiscard]] constexpr bool operator==(const basic_match_iterator& other) const
     {
@@ -322,7 +331,7 @@ namespace real {
     {}
 
     /*!
-     * \return An iterator to the first match.
+     * \brief Returns an iterator to the first match.
      */
     [[nodiscard]] constexpr basic_match_iterator<Storage> begin() const
     {
@@ -330,7 +339,7 @@ namespace real {
     }
 
     /*!
-     * \return The end sentinel.
+     * \brief Returns the end sentinel.
      */
     [[nodiscard]] constexpr basic_match_iterator<Storage> end() const
     {
@@ -411,7 +420,9 @@ namespace real {
     }
 
     /*!
-     * \brief `match` overload for string literals. \param[in] text NUL-terminated text. \return The result.
+     * \brief `match` overload for string literals.
+     * \param[in] text NUL-terminated text.
+     * \return The result.
      */
     [[nodiscard]] constexpr result_type match(const char* text) const
     {
@@ -419,7 +430,9 @@ namespace real {
     }
 
     /*!
-     * \brief `fullmatch` overload for string literals. \param[in] text NUL-terminated text. \return The result.
+     * \brief `fullmatch` overload for string literals.
+     * \param[in] text NUL-terminated text.
+     * \return The result.
      */
     [[nodiscard]] constexpr result_type fullmatch(const char* text) const
     {
@@ -427,7 +440,9 @@ namespace real {
     }
 
     /*!
-     * \brief `search` overload for string literals. \param[in] text NUL-terminated text. \return The result.
+     * \brief `search` overload for string literals.
+     * \param[in] text NUL-terminated text.
+     * \return The result.
      */
     [[nodiscard]] constexpr result_type search(const char* text) const
     {
@@ -450,7 +465,9 @@ namespace real {
     }
 
     /*!
-     * \brief `find_iter` overload for string literals. \param[in] text NUL-terminated text. \return The range.
+     * \brief `find_iter` overload for string literals.
+     * \param[in] text NUL-terminated text.
+     * \return The range.
      */
     [[nodiscard]] constexpr basic_match_range<Storage> find_iter(const char* text) const&
     {
@@ -485,7 +502,9 @@ namespace real {
     }
 
     /*!
-     * \brief `find_all` overload for string literals. \param[in] text NUL-terminated text. \return The results.
+     * \brief `find_all` overload for string literals.
+     * \param[in] text NUL-terminated text.
+     * \return The results.
      */
     [[nodiscard]] constexpr std::vector<result_type> find_all(const char* text) const&
     {
@@ -566,7 +585,10 @@ namespace real {
     }
 
     /*!
-     * \brief `split` overload for string literals. \param[in] text NUL-terminated text. \param[in] max_splits Max splits. \return The pieces.
+     * \brief `split` overload for string literals.
+     * \param[in] text NUL-terminated text.
+     * \param[in] max_splits Max splits.
+     * \return The pieces.
      */
     [[nodiscard]] constexpr std::vector<std::string_view> split(const char* text,
                                                                 std::size_t max_splits = 0) const
@@ -584,7 +606,7 @@ namespace real {
                                                       std::size_t         max_splits = 0) const = delete; //!< Deleted: temporary text would dangle.
 
     /*!
-     * \return The pattern text this regex was compiled from.
+     * \brief Returns the pattern text this regex was compiled from.
      */
     [[nodiscard]] constexpr std::string_view pattern() const
     {
@@ -592,7 +614,7 @@ namespace real {
     }
 
     /*!
-     * \return The effective flags (constructor flags merged with a (?ims) prefix).
+     * \brief Returns the effective flags (constructor flags merged with a (?ims) prefix).
      */
     [[nodiscard]] constexpr flags compile_flags() const
     {
@@ -600,7 +622,7 @@ namespace real {
     }
 
     /*!
-     * \return The number of capturing groups (excluding group 0).
+     * \brief Returns the number of capturing groups (excluding group 0).
      */
     [[nodiscard]] constexpr std::size_t group_count() const
     {
@@ -654,7 +676,9 @@ namespace real {
     Storage program_; //!< The storage policy holding the compiled program.
 
     /*!
-     * \param[in] ng A named group. \return Its name, sliced from the pattern text.
+     * \brief Returns its name, sliced from the pattern text.
+     * \param[in] ng A named group.
+     * \return Its name, sliced from the pattern text.
      */
     [[nodiscard]] constexpr std::string_view name_of(const detail::named_group& ng) const
     {

@@ -178,7 +178,7 @@ namespace real::detail {
     }
 
     /*!
-     * \return `true` if the read offset is at or past the end of the pattern.
+     * \brief Returns `true` if the read offset is at or past the end of the pattern.
      */
     [[nodiscard]] constexpr bool eof() const
     {
@@ -186,7 +186,7 @@ namespace real::detail {
     }
 
     /*!
-     * \return The current character without consuming it (undefined at eof()).
+     * \brief Returns the current character without consuming it (undefined at eof()).
      */
     [[nodiscard]] constexpr char peek() const
     {
@@ -208,7 +208,9 @@ namespace real::detail {
     }
 
     /*!
-     * \param[in] c A character. \return `true` if \p c is in `[0-9A-Za-z]`.
+     * \brief Returns `true` if \p c is in `[0-9A-Za-z]`.
+     * \param[in] c A character.
+     * \return `true` if \p c is in `[0-9A-Za-z]`.
      */
     static constexpr bool is_ascii_alnum(char c)
     {
@@ -499,7 +501,9 @@ namespace real::detail {
     }
 
     /*!
-     * \param[in] c A character. \return `true` if \p c is a flag letter (imsax).
+     * \brief Returns `true` if \p c is a flag letter (imsax).
+     * \param[in] c A character.
+     * \return `true` if \p c is a flag letter (imsax).
      */
     static constexpr bool is_flag_letter(char c)
     {
@@ -639,7 +643,9 @@ namespace real::detail {
     }
 
     /*!
-     * \param[in] c A character. \return `true` if \p c may start a group name.
+     * \brief Returns `true` if \p c may start a group name.
+     * \param[in] c A character.
+     * \return `true` if \p c may start a group name.
      */
     static constexpr bool is_name_start(char c)
     {

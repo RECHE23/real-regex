@@ -76,7 +76,9 @@ namespace real::detail {
     // --- low-level emission helpers -------------------------------------
 
     /*!
-     * \param[in] prog The program. \return The index of the next instruction.
+     * \brief Returns the index of the next instruction.
+     * \param[in] prog The program.
+     * \return The index of the next instruction.
      */
     static constexpr std::int32_t here(const dynamic_program& prog)
     {
@@ -107,7 +109,8 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Emits a `split` with placeholder targets. \return Its instruction index.
+     * \brief Emits a `split` with placeholder targets.
+     * \return Its instruction index.
      */
     static constexpr std::int32_t emit_split(dynamic_program& prog)
     {
@@ -116,7 +119,8 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Emits a `jump` with a placeholder target. \return Its instruction index.
+     * \brief Emits a `jump` with a placeholder target.
+     * \return Its instruction index.
      */
     static constexpr std::int32_t emit_jump(dynamic_program& prog)
     {

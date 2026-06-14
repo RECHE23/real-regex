@@ -84,7 +84,9 @@ namespace real::detail {
     }
 
     /*!
-     * \param[in] pc A program counter. \return `true` if \p pc is already in this generation.
+     * \brief Returns `true` if \p pc is already in this generation.
+     * \param[in] pc A program counter.
+     * \return `true` if \p pc is already in this generation.
      */
     [[nodiscard]] constexpr bool seen(std::int32_t pc) const
     {
@@ -92,7 +94,8 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Marks \p pc as present in the current generation. \param[in] pc The program counter.
+     * \brief Marks \p pc as present in the current generation.
+     * \param[in] pc The program counter.
      */
     constexpr void mark_seen(std::int32_t pc)
     {

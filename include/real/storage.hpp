@@ -58,7 +58,7 @@ namespace real {
     }
 
     /*!
-     * \return A view of the string, excluding the trailing NUL.
+     * \brief Returns a view of the string, excluding the trailing NUL.
      */
     [[nodiscard]] constexpr std::string_view view() const
     {
@@ -124,7 +124,7 @@ namespace real {
       }
 
       /*!
-       * \return The number of elements.
+       * \brief Returns the number of elements.
        */
       [[nodiscard]] constexpr std::size_t size() const
       {
@@ -132,7 +132,7 @@ namespace real {
       }
 
       /*!
-       * \return `true` if empty.
+       * \brief Returns `true` if empty.
        */
       [[nodiscard]] constexpr bool empty() const
       {
@@ -140,7 +140,9 @@ namespace real {
       }
 
       /*!
-       * \param[in] i Index. \return Reference to the element at \p i.
+       * \brief Returns reference to the element at \p i.
+       * \param[in] i Index.
+       * \return Reference to the element at \p i.
        */
       [[nodiscard]] constexpr T& operator[](std::size_t i)
       {
@@ -148,7 +150,9 @@ namespace real {
       }
 
       /*!
-       * \param[in] i Index. \return Const reference to the element at \p i.
+       * \brief Returns const reference to the element at \p i.
+       * \param[in] i Index.
+       * \return Const reference to the element at \p i.
        */
       [[nodiscard]] constexpr const T& operator[](std::size_t i) const
       {
@@ -156,7 +160,7 @@ namespace real {
       }
 
       /*!
-       * \return Reference to the last element.
+       * \brief Returns reference to the last element.
        */
       [[nodiscard]] constexpr T& back()
       {
@@ -220,7 +224,7 @@ namespace real {
       } storage_ {};
 
       /*!
-       * \return Pointer to the inline buffer.
+       * \brief Returns pointer to the inline buffer.
        */
       [[nodiscard]] constexpr T* inline_data() noexcept
       {
@@ -228,7 +232,7 @@ namespace real {
       }
 
       /*!
-       * \return Const pointer to the inline buffer.
+       * \brief Returns const pointer to the inline buffer.
        */
       [[nodiscard]] constexpr const T* inline_data() const noexcept
       {
@@ -365,7 +369,7 @@ namespace real {
       }
 
       /*!
-       * \return The number of elements.
+       * \brief Returns the number of elements.
        */
       [[nodiscard]] constexpr std::size_t size() const noexcept
       {
@@ -373,7 +377,7 @@ namespace real {
       }
 
       /*!
-       * \return `true` if empty.
+       * \brief Returns `true` if empty.
        */
       [[nodiscard]] constexpr bool empty() const noexcept
       {
@@ -381,7 +385,9 @@ namespace real {
       }
 
       /*!
-       * \param[in] i Index. \return Reference to the element at \p i.
+       * \brief Returns reference to the element at \p i.
+       * \param[in] i Index.
+       * \return Reference to the element at \p i.
        */
       [[nodiscard]] constexpr T& operator[](std::size_t i) noexcept
       {
@@ -389,7 +395,9 @@ namespace real {
       }
 
       /*!
-       * \param[in] i Index. \return Const reference to the element at \p i.
+       * \brief Returns const reference to the element at \p i.
+       * \param[in] i Index.
+       * \return Const reference to the element at \p i.
        */
       [[nodiscard]] constexpr const T& operator[](std::size_t i) const noexcept
       {
@@ -405,7 +413,7 @@ namespace real {
       }
 
       /*!
-       * \return Reference to the last element.
+       * \brief Returns reference to the last element.
        */
       [[nodiscard]] constexpr T& back() noexcept
       {
@@ -413,7 +421,7 @@ namespace real {
       }
 
       /*!
-       * \return Const reference to the last element.
+       * \brief Returns const reference to the last element.
        */
       [[nodiscard]] constexpr const T& back() const noexcept
       {
@@ -477,7 +485,9 @@ namespace real {
       }
 
       /*!
-       * \brief Move assignment. \param[in,out] other Source (left empty). \return *this.
+       * \brief Move assignment.
+       * \param[in,out] other Source (left empty).
+       * \return *this.
        */
       constexpr small_vec& operator=(small_vec&& other) noexcept
       {
@@ -522,7 +532,9 @@ namespace real {
       }
 
       /*!
-       * \brief Copy assignment. \param[in] other Source. \return *this.
+       * \brief Copy assignment.
+       * \param[in] other Source.
+       * \return *this.
        */
       constexpr small_vec& operator=(const small_vec& other)
       {
@@ -590,7 +602,7 @@ namespace real {
       }
 
       /*!
-       * \return A non-owning view of the compiled program.
+       * \brief Returns a non-owning view of the compiled program.
        */
       [[nodiscard]] constexpr program_view view() const
       {
@@ -598,7 +610,7 @@ namespace real {
       }
 
       /*!
-       * \return The original pattern text.
+       * \brief Returns the original pattern text.
        */
       [[nodiscard]] constexpr std::string_view pattern() const
       {
@@ -606,7 +618,7 @@ namespace real {
       }
 
       /*!
-       * \return The effective flags (constructor flags merged with (?ims)).
+       * \brief Returns the effective flags (constructor flags merged with (?ims)).
        */
       [[nodiscard]] constexpr flags compiled_flags() const
       {
@@ -632,7 +644,7 @@ namespace real {
     private:
 
       /*!
-       * \return The freshly built program (used for both measuring and filling).
+       * \brief Returns the freshly built program (used for both measuring and filling).
        */
       static constexpr dynamic_program build()
       {
@@ -691,7 +703,7 @@ namespace real {
         static_vec<eps_entry, (3 * code_size) + 4>>;
 
       /*!
-       * \return A non-owning view of the compile-time program.
+       * \brief Returns a non-owning view of the compile-time program.
        */
       [[nodiscard]] constexpr program_view view() const
       {
@@ -704,7 +716,7 @@ namespace real {
       }
 
       /*!
-       * \return The pattern text.
+       * \brief Returns the pattern text.
        */
       [[nodiscard]] constexpr std::string_view pattern() const
       {
@@ -712,7 +724,7 @@ namespace real {
       }
 
       /*!
-       * \return The effective flags.
+       * \brief Returns the effective flags.
        */
       [[nodiscard]] constexpr flags compiled_flags() const
       {

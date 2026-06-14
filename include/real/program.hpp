@@ -101,7 +101,7 @@ namespace real {
     {}
 
     /*!
-     * \return The formatted error message (with position).
+     * \brief Returns the formatted error message (with position).
      */
     [[nodiscard]] const char* what() const noexcept override
     {
@@ -109,7 +109,7 @@ namespace real {
     }
 
     /*!
-     * \return The byte offset in the pattern where the error was found.
+     * \brief Returns the byte offset in the pattern where the error was found.
      */
     [[nodiscard]] std::size_t position() const noexcept
     {
@@ -244,7 +244,7 @@ namespace real {
       pattern_hints            hints;          //!< Search-acceleration hints.
 
       /*!
-       * \return A non-owning \ref program_view over this program.
+       * \brief Returns a non-owning \ref program_view over this program.
        */
       [[nodiscard]] constexpr program_view view() const
       {
