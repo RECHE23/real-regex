@@ -1,0 +1,307 @@
+/*!
+\page design How REAL Works — a guided tour
+
+This page is a self-contained tour of REAL for a reader new to regex engines.
+It follows a pattern from text to a match, explains the data structures that
+make the engine fast and small, and points at the file or class responsible for
+each step. It pairs with the per-file API reference generated from the headers.
+
+> **At a glance.** REAL is a linear-time (ReDoS-safe), `constexpr`,
+> header-only, dependency-free regex engine: a Thompson NFA simulated by a
+> *Pike VM*, accelerated by a literal prefilter and a handful of whole-pattern
+> fast paths.
+
+\tableofcontents
+
+\section g_problem 1. The problem, and two ways to solve it
+
+A regular expression denotes a *set* of strings; *matching* asks whether, and
+where, some text belongs to that set. What makes an engine trustworthy is not
+raw speed but a *predictable* worst case: it runs on untrusted patterns and
+untrusted input, so its running time is a security property.
+
+There are two classic engine families:
+
+- **Backtracking** (Perl, PCRE, Python's `re`, `std::regex`): try one
+  alternative, and on failure rewind and try the next. Simple and feature-rich,
+  but on some patterns it explores exponentially many paths. On `(a+)+b` over
+  \f$n\f$ copies of `a` with no `b`, the work is \f$\Theta(2^{n})\f$ — a few
+  dozen characters can hang the program. An attacker who controls a pattern or
+  input weaponizes this; it is called *ReDoS*.
+
+- **Automaton simulation** (RE2, Rust's `regex`, REAL): track *all* the ways
+  the pattern could match so far, advancing them together one character at a
+  time. It never rewinds, so the time is \f$O(n\cdot m)\f$ for input length
+  \f$n\f$ and program size \f$m\f$ — linear in the input, for *every* pattern.
+
+REAL belongs to the second family. Linear time is a guarantee by construction.
+
+\section g_parse 2. Parsing: pattern text → a syntax tree
+
+*What you'll learn: how the pattern string becomes a tree, and why the tree
+uses array indices instead of pointers.*
+
+\ref real::detail::parser is a hand-written **recursive-descent** parser: one
+function per grammar level, calling the next, mirroring the grammar exactly —
+
+\f[
+  \text{alternation} \to \text{sequence}\,(\,\texttt{|}\,\text{sequence})^{*},
+  \quad \text{sequence} \to (\text{atom}\;\text{quantifier}?)^{*}
+\f]
+
+so \ref real::detail::parser::parse_alternation calls `parse_sequence`, which
+calls `parse_atom` then `parse_quantifier`. An atom is a literal, a class
+`[...]`, a group, an anchor or an escape. Each malformed construct throws a
+\ref real::regex_error carrying the **byte offset** of the problem, so messages
+point at the exact spot.
+
+The tree (\ref real::detail::ast) is an **index pool**: every \ref
+real::detail::ast_node stores its children and next sibling as `int32_t`
+*indices* into one `std::vector`, never as pointers.
+
+\note Index-pool nodes are the first of several choices that buy *both*
+performance and `constexpr`-friendliness: there are no raw pointers to chase
+(cache-friendly) and no pointer-based ownership (so the whole tree is a literal
+value the compiler can build during compilation).
+
+\section g_compile 3. Compiling: AST → an NFA program (Thompson)
+
+\ref real::detail::compiler turns the tree into a flat *program* of
+instructions — an NFA in bytecode — by **Thompson's construction**: each node
+becomes a small fragment and the fragments are wired together. `a(b|c)` becomes:
+
+\dot
+digraph nfa {
+  rankdir=LR; node [shape=circle, fontsize=10]; edge [fontsize=9];
+  start [shape=point]; start -> n0;
+  n0 -> n1 [label="a"];
+  n1 -> n2 [label="b"]; n1 -> n3 [label="c"];
+  n2 -> acc [style=dashed]; n3 -> acc [style=dashed];
+  acc [shape=doublecircle, label="✓"];
+}
+\enddot
+
+The instruction set (\ref real::detail::opcode) is small: `byte`/`klass`
+consume one input byte if it matches a literal or a 256-bit class; `split`
+forks two possibilities (this builds `|`, `*`, `+`, `?`); `jump` is a goto;
+`save` records a position into a capture slot; `match` accepts. There is no
+loop instruction — `a*` is a `split` that enters the body or skips it, with a
+`jump` back — and bounded repeats like `a{3}` are *unrolled*.
+
+\note **Atomic offset patching.** Forward branch targets are not known when an
+instruction is emitted, so they are written as placeholders and filled in only
+through `patch_x`/`patch_y`. Centralizing this was the single biggest source of
+bugs in earlier engines; one disciplined helper makes the fragment wiring
+provably consistent.
+
+\section g_pike 4. The Pike VM: simulating in linear time
+
+*What you'll learn: how tracking many states at once avoids backtracking, and
+the one invariant that makes it linear.*
+
+A backtracker walks one path at a time. The **Pike VM** (\ref
+real::detail::pike_vm) keeps a *list of live threads* — one per program counter
+the pattern could currently be at — and advances every thread by the same input
+byte. `run` loops over input positions; `step` consumes the byte (a thread
+whose `byte`/`klass` fails dies); and on `split`/`jump`/`save` the **epsilon
+closure** follows the no-input edges to enqueue the reachable consuming states.
+
+The one idea that makes this linear is **deduplication**: at each input position
+a given program counter is enqueued *at most once*. \ref
+real::detail::basic_thread_list stamps each pc with a `generation` counter, so
+"already seen?" and clearing the list between positions are both \f$O(1)\f$.
+With only \f$m\f$ program counters, each of the \f$n\f$ positions does
+\f$O(m)\f$ work:
+
+\f[
+  T(n) = O(n \cdot m), \qquad \text{independent of the pattern's shape.}
+\f]
+
+That invariant — *each state at most once per position* — is exactly what a
+backtracker lacks, and exactly why no input can make REAL blow up.
+
+\subsection g_semantics Semantics, captures, and the closure trick
+
+Matching must pick the *leftmost* match and, among ties, the greedy /
+first-alternative one, and report capture groups. REAL keeps the thread list in
+**priority order**: a `split` explores the preferred branch first, so the first
+thread to reach `match` is the one Perl and Python would choose. Captures are
+`save` instructions writing offsets into a thread's slots.
+
+The closure could copy every thread's slots at each fork (expensive). Instead it
+mutates **one** working-slots array along a depth-first walk and pushes a
+*restore* entry (\ref real::detail::eps_entry) to undo the write when the
+subtree is done — so capturing costs an undo record, not a slot-array copy.
+
+\subsection g_compare How it compares
+
+| Property            | Backtracking        | DFA                       | Pike VM (REAL)        |
+|---------------------|---------------------|---------------------------|-----------------------|
+| Worst-case time     | \f$\Theta(2^n)\f$   | \f$O(n)\f$                | \f$O(n\cdot m)\f$     |
+| Memory              | recursion depth     | states (can explode)      | \f$O(m)\f$ threads    |
+| Capture groups      | yes                 | not natively              | yes                   |
+| ReDoS-safe          | no                  | yes                       | yes                   |
+| constexpr-friendly  | n/a                 | no (mutable cache)        | yes                   |
+
+A **DFA** is faster still — one table lookup per byte — but can need
+exponentially many states, does not natively yield captures, and its mutable
+state cache cannot run at compile time. REAL keeps the Pike VM and recovers the
+constant-factor speed with the fast paths of \ref g_fastpaths; measured against
+RE2 (a mature lazy-DFA engine) the combination matches or beats it across the
+benchmark, so a second engine is not worth its complexity. **Backreferences**
+(`\1`) would force backtracking and forfeit the linear bound, so they are
+excluded.
+
+\section g_unicode 5. Text as bytes: ASCII and UTF-8
+
+*What you'll learn: how a byte-at-a-time engine matches whole Unicode
+codepoints without ever decoding them in the hot loop.*
+
+A character class is a \ref real::detail::char_class — a **256-bit bitmap**
+(four `std::uint64_t`) whose membership test is a single shift-and-mask:
+
+\f[
+  b \in S \iff \big(\text{bits}[\,b \gg 6\,] \gg (b \,\&\, 63)\big) \,\&\, 1 .
+\f]
+
+`\d \w \s` and case folding are ASCII by design. The payoff is alignment: a
+construct that matches a whole codepoint (`.`, a negated class) is compiled to
+a byte-level alternation over the UTF-8 lead/continuation byte sets (the
+`utf8_*_set` of charclass.hpp) —
+
+\f[
+  \texttt{.} \;\equiv\; \underbrace{\text{ascii}}_{1\text{ byte}}
+   \;\big|\; \text{lead}_2\,\text{cont}
+   \;\big|\; \text{lead}_3\,\text{cont}\,\text{cont}
+   \;\big|\; \text{lead}_4\,\text{cont}\,\text{cont}\,\text{cont}
+\f]
+
+so the engine still steps **one byte at a time** (the thread-list model and the
+linear bound are untouched), yet a match can only end on a codepoint boundary,
+because that structure only accepts well-formed sequences. Because class members
+stay ASCII, a delimiter byte never appears mid-sequence, which is what keeps the
+boundary guarantee.
+
+\section g_data 6. The data structures behind the speed
+
+*What you'll learn: the handful of structures that give top speed, minimal
+memory, and a simple, robust core.*
+
+- **256-bit class bitmap** (\ref real::detail::char_class): \f$O(1)\f$
+  membership, no branches per character. Identical bitmaps are **interned** by
+  the compiler (`emit_klass`), so the UTF-8 continuation class — emitted dozens
+  of times — is stored once and referenced by index.
+
+- **Small-buffer optimization** (\ref real::detail::small_vec). Capture slots
+  and the per-thread working state usually hold a handful of elements, so
+  `small_vec<T, N>` keeps the first `N` inline and spills to the heap only
+  beyond that. The common small match therefore allocates **nothing**, and the
+  size field uses the smallest integer that can index the inline buffer:
+
+\dot
+digraph sbo {
+  rankdir=LR; fontsize=10; fontname="Helvetica";
+  node [shape=record, fontsize=10, fontname="Helvetica"];
+  sv [label="{small_vec | size | <i>inline[N] | <h>heap ptr}"];
+  buf [label="heap buffer\n(only once size exceeds N)", shape=box, style=dashed];
+  sv:h -> buf [style=dashed, label="spill"];
+}
+\enddot
+
+- **Double-buffered thread lists.** The VM holds two lists (current / next) and
+  *flips them by index* each position — never copies. Combined with the
+  generation stamp, advancing a position is allocation-free and the per-position
+  clear is \f$O(1)\f$.
+
+- **Reusable scratch** (\ref real::detail::basic_pike_state). The lists, working
+  slots and closure stack live in one state object reused across calls, so a
+  `find_all` loop allocates **once, then never again** — and with the static
+  storage policy, never at all.
+
+- **Exact sizing for `constexpr`.** A `static_regex` builds its program twice:
+  once to *measure* each array, then to *fill* exactly-sized `constexpr` arrays
+  (\ref real::detail::static_vec). No slack, no heap.
+
+- **Pattern-as-a-type** (\ref real::fixed_string). A small literal
+  wrapper lets the pattern travel as a non-type template argument, so
+  `real::static_regex<"\\d+">` is a distinct type carrying its own program.
+
+\note Two non-choices are also part of the design: no hand-written SIMD (the
+libc `memchr`/`memmem` used by the prefilter are already vectorized, and an
+earlier SIMD experiment added thousands of lines for no measurable gain), and
+no second engine — micro-optimizations are kept only when a benchmark proves
+them.
+
+\section g_fastpaths 7. The fast paths
+
+Linear time bounds the *growth*, not the *constant*. `analyze_program`
+(prefilter.hpp) inspects the program once and records hints; the engine then
+shortcuts whenever it can, and otherwise falls back to the Pike VM:
+
+\dot
+digraph dispatch {
+  rankdir=TB; node [shape=box, fontsize=9, fontname="Helvetica"]; edge [fontsize=8];
+  run [label="run()"];
+  cl  [label="class+  → maximal-run scan"];
+  lit [label="pure literal  → memchr/memmem"];
+  fx  [label="fixed-width byte/klass sequence  → one walk"];
+  cp  [label=".  / negated class  → codepoint scan"];
+  alt [label="alternation of straight branches  → try in priority"];
+  vm  [label="Pike VM (general — the oracle)", shape=ellipse];
+  run -> cl -> lit -> fx -> cp -> alt -> vm [label="no hint matches"];
+}
+\enddot
+
+For instance `[0-9a-f]{8}` compiles to eight identical `klass` instructions;
+`analyze_program` recognizes the fixed-width shape and the engine matches it by
+scanning eight class bytes in a tight loop — no thread list — which on the
+benchmark turns its worst relative case into a win over RE2.
+
+\warning A fast path is an optimization, never a second source of truth. The
+Pike VM stays the **oracle**: each fast path is kept only when it provably
+yields the same result, checked at runtime, in `constexpr`, and by a
+differential fuzzer that compares against Python's `re` over tens of thousands
+of generated patterns (it has caught real engine bugs, including an empty-match
+divergence and a UTF-8 boundary case).
+
+\section g_map 8. Architecture map: who does what
+
+Headers form layers; a header only includes those below it (each file's Doxygen
+*include graph* shows this).
+
+| Header          | Key types / functions                                   | Role |
+|-----------------|---------------------------------------------------------|------|
+| `config.hpp`    | `max_program_size`, `max_nesting_depth`, …              | The resource caps (see \ref g_safety). |
+| `charclass.hpp` | \ref real::detail::char_class; `digit_set`…; `utf8_*_set` | The byte-set bitmap, the ASCII sets, the shared UTF-8 sets. |
+| `utf8.hpp`      | `codepoint_advance`                                     | Step one whole codepoint (only to advance past an empty match). |
+| `program.hpp`   | \ref real::detail::opcode, \ref real::detail::instr, \ref real::flags, \ref real::detail::pattern_hints, \ref real::detail::program_view | The compiled program's vocabulary and a non-owning view of it. |
+| `ast.hpp`       | \ref real::detail::ast_node, \ref real::detail::ast, \ref real::detail::parser | Recursive-descent parser → index-pool syntax tree. |
+| `compiler.hpp`  | \ref real::detail::compiler                             | Thompson construction with atomic offset patching. |
+| `prefilter.hpp` | `analyze_program`, `find_byte`, `find_prefix`           | Search hints, candidate skipping, fast-path shape recognition. |
+| `pike.hpp`      | \ref real::detail::pike_vm, \ref real::detail::basic_thread_list, \ref real::detail::basic_pike_state | The engine: thread lists, scratch, run loop, fast paths. |
+| `storage.hpp`   | \ref real::detail::dynamic_storage, \ref real::detail::static_storage, \ref real::detail::small_vec, \ref real::fixed_string | Where the program and scratch live: heap, or exact constexpr arrays. |
+| `real.hpp`      | \ref real::regex, \ref real::static_regex, \ref real::basic_match_result | The public API: match/search, iteration, replace, split. |
+
+One parse → compile → execute pipeline, parameterized on a storage policy,
+backs all three memory modes (no second hierarchy): \ref
+real::detail::dynamic_storage (heap, sized once) and \ref
+real::detail::static_storage (compile-time, exact arrays — including the hybrid
+compile-time-pattern / runtime-text mode).
+
+\section g_safety 9. Compile time and safety
+
+Every stage above is `constexpr`, so `real::static_regex` is parsed, compiled
+and matched while *your* program compiles, and an invalid pattern is a
+compilation error. Two denial-of-service vectors are closed structurally:
+*ReDoS via input* by the linear-time guarantee, and *resource exhaustion via
+pattern* (e.g. `a{1000}{1000}` unrolling) by the caps in config.hpp on program
+size, nesting depth, repeat and group counts.
+
+\section g_refs Further reading
+
+- K. Thompson, *Regular Expression Search Algorithm* (CACM, 1968) — the
+  construction.
+- R. Cox, *Regular Expression Matching Can Be Simple And Fast* and its sequels
+  (https://swtch.com/~rsc/regexp/) — the Pike VM, the cost of backtracking,
+  and RE2.
+*/

@@ -34,6 +34,8 @@ WARN_IF_DOC_ERROR      = YES
 WARN_NO_PARAMDOC       = YES
 
 # --- output ----------------------------------------------------------------
+# MathJax renders the LaTeX in the design guide client-side (no local LaTeX).
+USE_MATHJAX            = YES
 GENERATE_HTML          = YES
 GENERATE_LATEX         = NO
 HTML_OUTPUT            = html
