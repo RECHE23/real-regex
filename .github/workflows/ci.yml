@@ -11,8 +11,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install Uncrustify
-        run: sudo apt-get update && sudo apt-get install -y uncrustify
+      - name: Install Uncrustify 0.82.0
+        run: |
+          sudo apt-get update && sudo apt-get install -y cmake build-essential
+          curl -L -o uncrustify-src.tar.gz https://github.com/uncrustify/uncrustify/releases/download/uncrustify-0.82.0/uncrustify-0.82.0.tar.gz
+          tar -xzf uncrustify-src.tar.gz
+          cd uncrustify-uncrustify-0.82.0
+          mkdir build && cd build
+          cmake ..
+          cmake --build . -j
+          sudo cmake --install .
       - name: Check formatting
         run: make format-check
 

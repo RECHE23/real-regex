@@ -27,7 +27,8 @@ CXXSTD       := -std=c++20
 INCLUDES     := -Iinclude
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp')
 
-.PHONY: all build test sanitize coverage lint misra fuzz doc format format-check clean \
+.PHONY: all build test sanitize coverage coverage-build coverage-html \
+        lint misra fuzz doc doc-no-coverage format format-check clean \
         python python-test bench-python bench-fuzz bench-engines \
         install uninstall release help
 
@@ -39,11 +40,12 @@ help:
 	@echo "  make build      Configure and build the test binary (CMake)"
 	@echo "  make test       Build and run the test suite (ctest)"
 	@echo "  make sanitize   Build and run the tests under ASan + UBSan"
-	@echo "  make coverage   Line-coverage report (Clang/LLVM)"
+	@echo "  make coverage   Line-coverage text summary + HTML report"
 	@echo "  make lint       clang-tidy over the test sources"
 	@echo "  make misra      MISRA C++:2023-oriented analysis"
 	@echo "  make fuzz       libFuzzer robustness fuzzing (Clang; FUZZ_TIME=secs)"
-	@echo "  make doc        Generate the API reference (Doxygen)"
+	@echo "  make doc        Generate API reference (Doxygen) with embedded coverage"
+	@echo "  make doc-no-coverage  Generate API reference without coverage report"
 	@echo "  make format     Uncrustify, in place"
 	@echo "  make format-check  Uncrustify, dry-run, exits non-zero on diff"
 	@echo "  make clean      Remove build artifacts"
@@ -78,18 +80,42 @@ sanitize:
 # Coverage uses LLVM source-based instrumentation, so it pins a Clang
 # toolchain end to end. On macOS the Apple toolchain is required: Homebrew
 # clang links a profile runtime whose .profraw the Homebrew llvm-profdata
-# cannot read. Override COV_CXX / PROFDATA / LLVM_COV on other platforms.
+# cannot read. On Linux the bare llvm-profdata/llvm-cov tools work.
+ifeq ($(shell uname -s),Darwin)
 COV_CXX  ?= /usr/bin/clang++
 PROFDATA ?= xcrun llvm-profdata
 LLVM_COV ?= xcrun llvm-cov
+else
+COV_CXX  ?= clang++
+PROFDATA ?= llvm-profdata
+LLVM_COV ?= llvm-cov
+endif
 COV_DIR  := $(BUILD)/coverage
 
-coverage:
+# Shared build/run/merge steps used by both the text summary and the HTML report.
+coverage-build:
 	$(CMAKE) -S . -B $(COV_DIR) -DREAL_COVERAGE=ON -DCMAKE_CXX_COMPILER=$(COV_CXX)
 	$(CMAKE) --build $(COV_DIR) -j
 	LLVM_PROFILE_FILE=$(COV_DIR)/tests.profraw $(COV_DIR)/real_tests_bin
 	$(PROFDATA) merge -sparse $(COV_DIR)/tests.profraw -o $(COV_DIR)/tests.profdata
+
+coverage: coverage-build
 	$(LLVM_COV) report $(COV_DIR)/real_tests_bin -instr-profile=$(COV_DIR)/tests.profdata
+	$(LLVM_COV) show $(COV_DIR)/real_tests_bin -instr-profile=$(COV_DIR)/tests.profdata \
+	    -format=html -output-dir=$(COV_DIR)/html -show-line-counts-or-regions
+	@grep -q "REAL dark-coverage theme" $(COV_DIR)/html/style.css 2>/dev/null || \
+	    cat docs/coverage-style.css >> $(COV_DIR)/html/style.css
+	@echo "HTML coverage report: $(COV_DIR)/html/index.html"
+
+# Silent variant used by make doc: keeps the terminal focused on the doc output.
+coverage-html:
+	@mkdir -p $(COV_DIR)
+	@$(MAKE) --silent coverage-build > $(COV_DIR)/build.log 2>&1 || (cat $(COV_DIR)/build.log; exit 1)
+	@$(LLVM_COV) show $(COV_DIR)/real_tests_bin -instr-profile=$(COV_DIR)/tests.profdata \
+	    -format=html -output-dir=$(COV_DIR)/html -show-line-counts-or-regions
+	@grep -q "REAL dark-coverage theme" $(COV_DIR)/html/style.css 2>/dev/null || \
+	    cat docs/coverage-style.css >> $(COV_DIR)/html/style.css
+	@echo "HTML coverage report: $(COV_DIR)/html/index.html"
 
 # --- QA tools (wrappers; no compilation policy here) ----------------------
 
@@ -118,7 +144,16 @@ fuzz:
 	$(FUZZ_DIR)/fuzz_target -max_total_time=$(FUZZ_TIME) -timeout=10 \
 	    $(FUZZ_DIR)/corpus fuzz/corpus
 
-doc:
+doc: coverage-html
+	mkdir -p $(BUILD)/doc
+	doxygen Doxyfile
+	@rm -rf $(BUILD)/doc/html/coverage
+	@cp -R $(COV_DIR)/html $(BUILD)/doc/html/coverage
+	@echo "API reference: $(BUILD)/doc/html/index.html"
+
+# Doc target for environments without Clang/LLVM coverage tools (e.g. CI that only
+# needs the API reference). It does not rebuild the coverage report.
+doc-no-coverage:
 	mkdir -p $(BUILD)/doc
 	doxygen Doxyfile
 	@echo "API reference: $(BUILD)/doc/html/index.html"

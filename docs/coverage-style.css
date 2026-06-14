@@ -1,0 +1,121 @@
+/* REAL dark-coverage theme — appended to llvm-cov's style.css.
+   Respects the viewer's system/browser colour scheme so the embedded report
+   matches Doxygen's automatic dark mode. */
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background-color: #090D16;
+    color: #D9DDE5;
+  }
+
+  a {
+    color: #64B5F6;
+  }
+
+  a:visited {
+    color: #B388FF;
+  }
+
+  a:hover {
+    color: #FFFFFF;
+  }
+
+  .source-name-title {
+    background-color: #101626;
+    border-bottom-color: #232A3A;
+    color: #AFC2E8;
+  }
+
+  .centered,
+  .expansion-view {
+    border-color: #232A3A;
+  }
+
+  .expansion-view {
+    background-color: #090D16;
+  }
+
+  table {
+    border-color: #232A3A;
+  }
+
+  .light-row,
+  .light-row-bold {
+    background: #0E1420;
+    border-color: #232A3A;
+    color: #D9DDE5;
+  }
+
+  th, td {
+    border-right-color: #1A2230;
+    border-left-color: #1A2230;
+  }
+
+  tr:hover {
+    background-color: #182031;
+  }
+
+  .line-number {
+    color: #5D6B85;
+  }
+
+  .covered-line {
+    color: #4FC3F7;
+  }
+
+  .uncovered-line {
+    color: #FF8A80;
+  }
+
+  .column-entry-gray {
+    background-color: #232A3A;
+    color: #D9DDE5;
+  }
+
+  .column-entry-gray:hover,
+  tr:hover .column-entry-gray {
+    background-color: #2E3648;
+  }
+
+  .column-entry-yellow {
+    background-color: #4A4312;
+    color: #D9DDE5;
+  }
+
+  .column-entry-yellow:hover,
+  tr:hover .column-entry-yellow {
+    background-color: #332D0C;
+  }
+
+  .column-entry-red {
+    background-color: #4A1515;
+    color: #D9DDE5;
+  }
+
+  .column-entry-red:hover,
+  tr:hover .column-entry-red {
+    background-color: #2F0D0D;
+  }
+
+  .column-entry-green {
+    background-color: #124A12;
+    color: #D9DDE5;
+  }
+
+  .column-entry-green:hover,
+  tr:hover .column-entry-green {
+    background-color: #0C300C;
+  }
+
+  .tooltip {
+    background-color: #1E3A5F;
+  }
+
+  .red {
+    background-color: #4A1515;
+  }
+
+  .cyan {
+    background-color: #123A4A;
+  }
+}

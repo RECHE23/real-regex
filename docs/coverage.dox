@@ -1,0 +1,22 @@
+/*!
+\page coverage Coverage report
+
+The C++ test suite is built with LLVM source-based coverage instrumentation.
+The detailed HTML report is embedded below; it is generated next to this
+documentation by `make doc`.
+
+\htmlonly
+<iframe src="coverage/index.html" width="100%" height="800px"
+        style="border:1px solid #ccc; border-radius:4px;">
+  <p>Your browser does not support iframes.
+     <a href="coverage/index.html">Open the coverage report directly.</a></p>
+</iframe>
+\endhtmlonly
+
+\section coverage_summary Interpreting the summary
+
+The text table printed by `make coverage` shows coverage per file across
+regions, functions, lines and branches. The HTML report keeps the same totals
+and adds per-line highlighting: covered lines are green, uncovered lines are
+red, and partially covered regions are yellow.
+*/
