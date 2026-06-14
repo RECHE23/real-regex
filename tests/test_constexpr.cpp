@@ -72,6 +72,8 @@ constexpr bool group_cases()
   CONSTEXPR_EXPECT(real::regex("(ab)+").fullmatch("abab").start(1) == 2);
   CONSTEXPR_EXPECT(real::regex("(?P<y>\\d+)x").search("42x")["y"] == std::string_view("42"));
   CONSTEXPR_EXPECT(real::regex("(?:a|b)c").fullmatch("bc").matched());
+  CONSTEXPR_EXPECT(real::regex("the|fox|dog").search("a dog").start() == 2); // alternation fast path
+  CONSTEXPR_EXPECT(real::regex("a|ab").search("ab").end() == 1);             // leftmost-first
   return true;
 }
 

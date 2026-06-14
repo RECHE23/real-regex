@@ -174,6 +174,9 @@ public:
     if (prog_.hints.codepoint_class_ascii >= 0) {
       return run_codepoint_class(text, start, mode, out_slots);
     }
+    if (prog_.hints.fixed_alternation) {
+      return run_alternation(text, start, mode, out_slots);
+    }
     const std::size_t code_size {prog_.code.size()};
     auto*             clist {&state_.lists[0]};
     auto*             nlist {&state_.lists[1]};
@@ -438,6 +441,91 @@ private:
     out_slots[0] = s;
     out_slots[1] = e;
     return true;
+  }
+
+  /*!
+   * \brief Fast path for an alternation of straight-line branches.
+   *
+   * Each branch is a fixed-width byte/klass sequence, so at a candidate the
+   * branches are tried in source order (leftmost-first priority) and the first
+   * that matches wins — exactly the Pike VM's thread priority. The branch
+   * structure is read directly from the split chain in the program.
+   *
+   * \tparam OutSlots Output slot container.
+   * \param[in]  text      The subject text.
+   * \param[in]  start     Index to begin at.
+   * \param[in]  mode      Anchoring mode.
+   * \param[out] out_slots Receives the matched span on success.
+   * \return `true` if some branch matched.
+   */
+  template <typename OutSlots>
+  constexpr bool run_alternation(std::string_view text, std::size_t start, run_mode mode, OutSlots& out_slots)
+  {
+    out_slots.assign(2, npos);
+    const auto&       code {prog_.code};
+    const std::size_t exit {code.size() - 2};
+
+    // Verifies the straight-line branch at \p q against text at \p s.
+    const auto verify = [&](std::size_t q, std::size_t s) -> std::size_t {
+      std::size_t consumed {};
+      while (q < exit && (code[q].op == opcode::byte || code[q].op == opcode::klass)) {
+        if (s + consumed >= text.size()) {
+          return npos;
+        }
+        const auto b {static_cast<std::uint8_t>(text[s + consumed])};
+        const bool ok {code[q].op == opcode::byte
+                         ? b == code[q].arg8
+                         : prog_.classes[code[q].arg16].test(b)};
+        if (!ok) {
+          return npos;
+        }
+        ++consumed;
+        ++q;
+      }
+      return s + consumed;
+    };
+
+    // First branch that matches at \p s (and, for full, spans to the end).
+    const auto match_at = [&](std::size_t s, bool require_full) -> std::size_t {
+      std::size_t pc {1};
+      while (true) {
+        const bool        is_split {code[pc].op == opcode::split};
+        const std::size_t e {verify(is_split ? static_cast<std::size_t>(code[pc].x) : pc, s)};
+        if (e != npos && (!require_full || e == text.size())) {
+          return e;
+        }
+        if (!is_split) {
+          return npos;
+        }
+        pc = static_cast<std::size_t>(code[pc].y);
+      }
+    };
+
+    if (mode != run_mode::search) {
+      const std::size_t e {match_at(start, mode == run_mode::full)};
+      if (e == npos) {
+        return false;
+      }
+      out_slots[0] = start;
+      out_slots[1] = e;
+      return true;
+    }
+
+    std::size_t s {start};
+    while (s <= text.size()) {
+      s = next_candidate(text, s, start);
+      if (s > text.size()) {
+        break;
+      }
+      const std::size_t e {match_at(s, false)};
+      if (e != npos) {
+        out_slots[0] = s;
+        out_slots[1] = e;
+        return true;
+      }
+      ++s;
+    }
+    return false;
   }
 
   /*!

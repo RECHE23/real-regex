@@ -78,6 +78,58 @@ constexpr std::int32_t codepoint_class_at(std::span<const instr>      code,
 }
 
 /*!
+ * \brief Tests whether the whole program is an alternation of straight-line
+ *        branches (e.g. `the|fox|dog`).
+ *
+ * Layout: save 0, a chain of `split` nodes whose \c x is a branch of byte/klass
+ * ending in `jump` to the shared exit and whose \c y is the next split, the
+ * last branch falling through to save 1, match. Captures, assertions, nested
+ * branches and empty branches all disqualify it.
+ *
+ * \param[in] code The instruction stream.
+ * \return `true` if the program has that shape with at least two branches.
+ */
+constexpr bool is_fixed_alternation(std::span<const instr> code)
+{
+  const std::size_t n {code.size()};
+  if (n < 7 || code[0].op != opcode::save || code[n - 2].op != opcode::save ||
+      code[n - 1].op != opcode::match) {
+    return false;
+  }
+  const std::size_t exit {n - 2};
+  std::size_t       pc {1};
+  std::int32_t      branches {};
+  while (true) {
+    const bool is_split {code[pc].op == opcode::split};
+    std::size_t q {is_split ? static_cast<std::size_t>(code[pc].x) : pc};
+    std::int32_t w {};
+    while (q < exit && (code[q].op == opcode::byte || code[q].op == opcode::klass)) {
+      ++q;
+      ++w;
+    }
+    if (w == 0) {
+      return false;
+    }
+    ++branches;
+    if (is_split) {
+      // A non-final branch ends with `jump exit`; continue at the split's y.
+      if (q >= exit || code[q].op != opcode::jump ||
+          code[q].x != static_cast<std::int32_t>(exit)) {
+        return false;
+      }
+      pc = static_cast<std::size_t>(code[pc].y);
+      if (pc >= exit) {
+        return false;
+      }
+    }
+    else {
+      // The final branch falls straight through to the exit (save 1).
+      return q == exit && branches >= 2;
+    }
+  }
+}
+
+/*!
  * \brief Walks a compiled program once to derive its search hints.
  * \param[in] code    The instruction stream.
  * \param[in] classes The interned character classes referenced by \p code.
@@ -245,6 +297,11 @@ constexpr pattern_hints analyze_program(std::span<const instr>      code,
            code[17].x == 1 && code[18].op == opcode::save && code[19].op == opcode::match) {
     h.codepoint_class_ascii = codepoint_class_at(code, classes, 1);
     h.codepoint_class_plus  = true;
+  }
+
+  // Whole pattern is an alternation of straight-line branches.
+  if (is_fixed_alternation(code)) {
+    h.fixed_alternation = true;
   }
 
   if (h.prefix_size > 0) {

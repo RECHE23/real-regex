@@ -195,3 +195,24 @@ TEST(unterminated_group_reports_open_paren_position)
     EXPECT_EQ(e.position(), 2U);
   }
 }
+
+TEST(fixed_alternation_fast_path)
+{
+  // Whole-pattern alternation of straight-line branches takes a fast path;
+  // results must equal the general engine (leftmost-first priority).
+  const real::regex words("the|fox|dog");
+  EXPECT_EQ(words.search("a dog here").start(), 2U);
+  EXPECT_EQ(words.find_all("the fox dog").size(), 3U);
+  // Leftmost-first: the first branch that matches at the position wins.
+  EXPECT_EQ(real::regex("a|ab").search("ab")[0], "a"sv);
+  EXPECT_EQ(real::regex("ab|a").search("ab")[0], "ab"sv);
+  EXPECT_EQ(real::regex("cat|car").search("cart car")[0], "car"sv);
+  // match (anchored start) keeps leftmost-first; fullmatch needs end-to-end,
+  // so it picks the branch that spans the whole text.
+  EXPECT_EQ(real::regex("a|ab").match("ab").end(), 1U);
+  EXPECT(real::regex("a|ab").fullmatch("ab"));    // the "ab" branch
+  EXPECT(!real::regex("a|xy").fullmatch("ab"));
+  // Branches may mix literals and fixed classes.
+  const real::regex mixed("[0-9][0-9]|no");
+  EXPECT_EQ(mixed.find_all("12 no 34").size(), 3U);
+}
