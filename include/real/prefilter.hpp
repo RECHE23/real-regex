@@ -147,6 +147,36 @@ constexpr pattern_hints analyze_program(std::span<const instr>      code,
     h.greedy_class_loop = code[1].arg16;
   }
 
+  // "class{n}" shape (fixed count >= 2): save 0, n identical klass, save 1,
+  // match. A fixed-width run of one positive class with no captures (exactly
+  // one leading and one trailing save), no splits/asserts. Negated classes and
+  // `.` expand to byte-level alternatives, so they never form this shape.
+  {
+    std::size_t  i {};
+    std::int32_t lead_saves {};
+    while (i < code.size() && code[i].op == opcode::save) {
+      ++lead_saves;
+      ++i;
+    }
+    if (lead_saves == 1 && i < code.size() && code[i].op == opcode::klass) {
+      const std::uint16_t idx {code[i].arg16};
+      std::int32_t        n {};
+      while (i < code.size() && code[i].op == opcode::klass && code[i].arg16 == idx) {
+        ++n;
+        ++i;
+      }
+      std::int32_t trail_saves {};
+      while (i < code.size() && code[i].op == opcode::save) {
+        ++trail_saves;
+        ++i;
+      }
+      if (n >= 2 && trail_saves == 1 && i + 1 == code.size() && code[i].op == opcode::match) {
+        h.counted_class = idx;
+        h.counted_n     = n;
+      }
+    }
+  }
+
   if (h.prefix_size > 0) {
     h.single_first = static_cast<unsigned char>(h.prefix[0]);
   }

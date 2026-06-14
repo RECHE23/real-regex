@@ -52,6 +52,8 @@ constexpr bool quantifier_cases()
   CONSTEXPR_EXPECT(real::regex("\\d+").fullmatch("123").matched());
   CONSTEXPR_EXPECT(real::regex("a{").fullmatch("a{").matched());
   CONSTEXPR_EXPECT(real::regex("<.+?>").search("<a><b>").end() == 3);
+  CONSTEXPR_EXPECT(real::regex("[0-9a-f]{8}").search("x a3f9c1d8 y").start() == 2);
+  CONSTEXPR_EXPECT(!real::regex("[0-9a-f]{8}").fullmatch("deadbeef0"));
   return true;
 }
 

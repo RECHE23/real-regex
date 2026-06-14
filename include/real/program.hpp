@@ -165,6 +165,8 @@ struct pattern_hints
   std::int16_t         single_first {-1};      //!< The unique possible first byte, or -1.
   char_class           first_bytes;            //!< All possible first bytes.
   std::int32_t         greedy_class_loop {-1}; //!< Class index if the whole pattern is "class+", else -1.
+  std::int32_t         counted_class {-1};     //!< Class index if the whole pattern is "class{n}" (fixed count), else -1.
+  std::int32_t         counted_n {};           //!< The fixed repeat count for \ref counted_class.
 
   /*!
    * \brief Length of the pure-literal match, or 0.

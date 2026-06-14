@@ -165,6 +165,9 @@ public:
     if (prog_.hints.greedy_class_loop >= 0) {
       return run_class_loop(text, start, mode, out_slots);
     }
+    if (prog_.hints.counted_class >= 0) {
+      return run_counted_class(text, start, mode, out_slots);
+    }
     if (prog_.hints.exact_literal_len > 0) {
       return run_exact_literal(text, start, mode, out_slots);
     }
@@ -284,6 +287,66 @@ private:
     out_slots[0] = s;
     out_slots[1] = e;
     return true;
+  }
+
+  /*!
+   * \brief Fast path for a whole-pattern "class{n}" (fixed count).
+   *
+   * The match is always exactly \p n class bytes, so there is no greedy/lazy
+   * ambiguity: search finds the leftmost window of n consecutive class bytes
+   * with one scan; match/fullmatch check the n bytes at the start.
+   *
+   * \tparam OutSlots Output slot container.
+   * \param[in]  text      The subject text.
+   * \param[in]  start     Index to begin at.
+   * \param[in]  mode      Anchoring mode.
+   * \param[out] out_slots Receives the (start, start+n) span on success.
+   * \return `true` if a fixed-width run was found.
+   */
+  template <typename OutSlots>
+  constexpr bool run_counted_class(std::string_view text, std::size_t start, run_mode mode, OutSlots& out_slots)
+  {
+    const char_class& k {prog_.classes[static_cast<std::size_t>(prog_.hints.counted_class)]};
+    const std::size_t n {static_cast<std::size_t>(prog_.hints.counted_n)};
+    const auto        in_class = [&](std::size_t i) {
+      return k.test(static_cast<std::uint8_t>(text[i]));
+    };
+    out_slots.assign(2, npos);
+
+    if (mode != run_mode::search) {
+      // match / fullmatch: the n bytes must sit at the start position.
+      if (start + n > text.size()) {
+        return false;
+      }
+      for (std::size_t i {start}; i < start + n; ++i) {
+        if (!in_class(i)) {
+          return false;
+        }
+      }
+      if (mode == run_mode::full && start + n != text.size()) {
+        return false;
+      }
+      out_slots[0] = start;
+      out_slots[1] = start + n;
+      return true;
+    }
+
+    // search: leftmost run of n consecutive class bytes.
+    std::size_t run {};
+    for (std::size_t i {start}; i < text.size(); ++i) {
+      if (in_class(i)) {
+        ++run;
+        if (run == n) {
+          out_slots[0] = i + 1 - n;
+          out_slots[1] = i + 1;
+          return true;
+        }
+      }
+      else {
+        run = 0;
+      }
+    }
+    return false;
   }
 
   /*!

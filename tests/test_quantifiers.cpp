@@ -1,9 +1,12 @@
 // Quantifiers: greedy and lazy *, +, ?, {n}, {n,}, {,m}, {n,m} — and the
 // linear-time guarantee on patterns that explode backtracking engines.
 #include <chrono>
+#include <string_view>
 
 #include "framework.hpp"
 #include "real/real.hpp"
+
+using namespace std::string_view_literals;
 
 TEST(star_plus_question_greedy)
 {
@@ -79,6 +82,27 @@ TEST(quantifier_errors)
   EXPECT_THROWS(real::regex("a*{2}"), real::regex_error);
   EXPECT_THROWS(real::regex("a{3,2}"), real::regex_error);
   EXPECT_THROWS(real::regex("a{1001}"), real::regex_error);
+}
+
+TEST(counted_class_fixed_width)
+{
+  // Whole-pattern "class{n}" takes a fixed-width fast path; results must equal
+  // the general engine. Fixed-width tokens (hex ids, codes) are the target.
+  const real::regex hex("[0-9a-f]{8}");
+  EXPECT_EQ(hex.search("req=a3f9c1d8 end").start(), 4U);
+  EXPECT_EQ(hex.search("req=a3f9c1d8 end")[0], "a3f9c1d8"sv);
+  EXPECT(!hex.search("only 1234ab here")); // fewer than 8 hex in a row
+  const auto all = hex.find_all("a3f9c1d8 x deadbeef");
+  EXPECT_EQ(all.size(), 2U);
+  EXPECT_EQ(all[1][0], "deadbeef"sv);
+  // match / fullmatch anchoring.
+  EXPECT_EQ(hex.match("deadbeefXX").end(), 8U);
+  EXPECT(!hex.match("zz")); // not at start
+  EXPECT(hex.fullmatch("deadbeef"));
+  EXPECT(!hex.fullmatch("deadbeef0")); // exactly 8, no more
+  // A longer run yields back-to-back fixed windows (no overlap).
+  const real::regex d4("[0-9]{4}");
+  EXPECT_EQ(d4.find_all("123456789").size(), 2U);
 }
 
 TEST(pathological_pattern_stays_linear)
