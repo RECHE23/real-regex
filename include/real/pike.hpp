@@ -165,11 +165,11 @@ public:
     if (prog_.hints.greedy_class_loop >= 0) {
       return run_class_loop(text, start, mode, out_slots);
     }
-    if (prog_.hints.counted_class >= 0) {
-      return run_counted_class(text, start, mode, out_slots);
-    }
     if (prog_.hints.exact_literal_len > 0) {
       return run_exact_literal(text, start, mode, out_slots);
+    }
+    if (prog_.hints.fixed_shape) {
+      return run_fixed_shape(text, start, mode, out_slots);
     }
     const std::size_t code_size {prog_.code.size()};
     auto*             clist {&state_.lists[0]};
@@ -290,61 +290,73 @@ private:
   }
 
   /*!
-   * \brief Fast path for a whole-pattern "class{n}" (fixed count).
+   * \brief Fast path for a whole-pattern fixed-width byte/klass sequence.
    *
-   * The match is always exactly \p n class bytes, so there is no greedy/lazy
-   * ambiguity: search finds the leftmost window of n consecutive class bytes
-   * with one scan; match/fullmatch check the n bytes at the start.
+   * A straight-line program (no branches/assertions) has exactly one thread,
+   * so a match is a fixed-width sequence verified by a single walk: each
+   * `byte`/`klass` instruction consumes one text byte. There is no greedy/lazy
+   * ambiguity. Covers `class{n}` and mixed shapes like `\d{4}-\d{2}-\d{2}`.
    *
    * \tparam OutSlots Output slot container.
    * \param[in]  text      The subject text.
    * \param[in]  start     Index to begin at.
    * \param[in]  mode      Anchoring mode.
-   * \param[out] out_slots Receives the (start, start+n) span on success.
-   * \return `true` if a fixed-width run was found.
+   * \param[out] out_slots Receives the matched span on success.
+   * \return `true` if the sequence matched.
    */
   template <typename OutSlots>
-  constexpr bool run_counted_class(std::string_view text, std::size_t start, run_mode mode, OutSlots& out_slots)
+  constexpr bool run_fixed_shape(std::string_view text, std::size_t start, run_mode mode, OutSlots& out_slots)
   {
-    const char_class& k {prog_.classes[static_cast<std::size_t>(prog_.hints.counted_class)]};
-    const std::size_t n {static_cast<std::size_t>(prog_.hints.counted_n)};
-    const auto        in_class = [&](std::size_t i) {
-      return k.test(static_cast<std::uint8_t>(text[i]));
-    };
     out_slots.assign(2, npos);
 
-    if (mode != run_mode::search) {
-      // match / fullmatch: the n bytes must sit at the start position.
-      if (start + n > text.size()) {
-        return false;
-      }
-      for (std::size_t i {start}; i < start + n; ++i) {
-        if (!in_class(i)) {
-          return false;
+    // Verifies the sequence at \p s; returns its end offset, or npos on a miss.
+    const auto verify = [&](std::size_t s) -> std::size_t {
+      std::size_t consumed {};
+      for (const instr& in : prog_.code) {
+        if (in.op == opcode::save) {
+          continue;
         }
+        if (in.op == opcode::match) {
+          break;
+        }
+        if (s + consumed >= text.size()) {
+          return npos;
+        }
+        const auto b {static_cast<std::uint8_t>(text[s + consumed])};
+        const bool ok {in.op == opcode::byte ? b == in.arg8
+                                             : prog_.classes[in.arg16].test(b)};
+        if (!ok) {
+          return npos;
+        }
+        ++consumed;
       }
-      if (mode == run_mode::full && start + n != text.size()) {
+      return s + consumed;
+    };
+
+    if (mode != run_mode::search) {
+      const std::size_t e {verify(start)};
+      if (e == npos || (mode == run_mode::full && e != text.size())) {
         return false;
       }
       out_slots[0] = start;
-      out_slots[1] = start + n;
+      out_slots[1] = e;
       return true;
     }
 
-    // search: leftmost run of n consecutive class bytes.
-    std::size_t run {};
-    for (std::size_t i {start}; i < text.size(); ++i) {
-      if (in_class(i)) {
-        ++run;
-        if (run == n) {
-          out_slots[0] = i + 1 - n;
-          out_slots[1] = i + 1;
-          return true;
-        }
+    // search: leftmost candidate (via the first-byte hints), then verify.
+    std::size_t s {start};
+    while (s <= text.size()) {
+      s = next_candidate(text, s, start);
+      if (s > text.size()) {
+        break;
       }
-      else {
-        run = 0;
+      const std::size_t e {verify(s)};
+      if (e != npos) {
+        out_slots[0] = s;
+        out_slots[1] = e;
+        return true;
       }
+      ++s;
     }
     return false;
   }

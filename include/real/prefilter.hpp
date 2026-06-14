@@ -147,10 +147,12 @@ constexpr pattern_hints analyze_program(std::span<const instr>      code,
     h.greedy_class_loop = code[1].arg16;
   }
 
-  // "class{n}" shape (fixed count >= 2): save 0, n identical klass, save 1,
-  // match. A fixed-width run of one positive class with no captures (exactly
-  // one leading and one trailing save), no splits/asserts. Negated classes and
-  // `.` expand to byte-level alternatives, so they never form this shape.
+  // "fixed shape": a straight-line run of byte/klass with no branches or
+  // assertions and no captures (exactly one leading and one trailing save).
+  // The whole match is fixed width, so one walk verifies it. Covers class{n}
+  // and mixed sequences such as \d{4}-\d{2}-\d{2}; pure literals are caught by
+  // the exact-literal path first. Negated classes and `.` expand to byte-level
+  // branches, so they never form this shape.
   {
     std::size_t  i {};
     std::int32_t lead_saves {};
@@ -158,22 +160,19 @@ constexpr pattern_hints analyze_program(std::span<const instr>      code,
       ++lead_saves;
       ++i;
     }
-    if (lead_saves == 1 && i < code.size() && code[i].op == opcode::klass) {
-      const std::uint16_t idx {code[i].arg16};
-      std::int32_t        n {};
-      while (i < code.size() && code[i].op == opcode::klass && code[i].arg16 == idx) {
-        ++n;
-        ++i;
-      }
-      std::int32_t trail_saves {};
-      while (i < code.size() && code[i].op == opcode::save) {
-        ++trail_saves;
-        ++i;
-      }
-      if (n >= 2 && trail_saves == 1 && i + 1 == code.size() && code[i].op == opcode::match) {
-        h.counted_class = idx;
-        h.counted_n     = n;
-      }
+    std::int32_t width {};
+    while (i < code.size() && (code[i].op == opcode::byte || code[i].op == opcode::klass)) {
+      ++width;
+      ++i;
+    }
+    std::int32_t trail_saves {};
+    while (i < code.size() && code[i].op == opcode::save) {
+      ++trail_saves;
+      ++i;
+    }
+    if (lead_saves == 1 && trail_saves == 1 && width >= 1 && i + 1 == code.size() &&
+        code[i].op == opcode::match) {
+      h.fixed_shape = true;
     }
   }
 

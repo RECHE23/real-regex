@@ -105,6 +105,23 @@ TEST(counted_class_fixed_width)
   EXPECT_EQ(d4.find_all("123456789").size(), 2U);
 }
 
+TEST(fixed_shape_sequence)
+{
+  // A straight-line mix of classes and literals (e.g. a date) is a fixed-width
+  // sequence taking the same fast path; results equal the general engine.
+  const real::regex date("[0-9]{4}-[0-9]{2}-[0-9]{2}");
+  EXPECT_EQ(date.search("on 2026-06-13!").start(), 3U);
+  EXPECT_EQ(date.search("on 2026-06-13!")[0], "2026-06-13"sv);
+  EXPECT(!date.search("2026/06/13"));      // wrong separators
+  EXPECT(!date.search("202-06-13"));       // too few year digits
+  EXPECT_EQ(date.find_all("2026-06-13 1999-01-02").size(), 2U);
+  EXPECT(date.fullmatch("2026-06-13"));
+  EXPECT(!date.fullmatch("2026-06-13 "));  // trailing content
+  // Class + literal interleaving.
+  const real::regex mix("a[0-9]c");
+  EXPECT_EQ(mix.find_all("xa5cya9c").size(), 2U);
+}
+
 TEST(pathological_pattern_stays_linear)
 {
   // a*a*a*a*a*b is exponential for naive backtrackers; the Pike VM is
