@@ -23,10 +23,11 @@ ifeq ($(origin CXX),command line)
 CMAKE_CXX := -DCMAKE_CXX_COMPILER=$(CXX)
 endif
 
-CXXSTD   := -std=c++20
-INCLUDES := -Iinclude
+CXXSTD       := -std=c++20
+INCLUDES     := -Iinclude
+FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp')
 
-.PHONY: all build test sanitize coverage lint misra fuzz doc format clean \
+.PHONY: all build test sanitize coverage lint misra fuzz doc format format-check clean \
         python python-test bench-python bench-fuzz bench-engines \
         install uninstall release help
 
@@ -43,7 +44,8 @@ help:
 	@echo "  make misra      MISRA C++:2023-oriented analysis"
 	@echo "  make fuzz       libFuzzer robustness fuzzing (Clang; FUZZ_TIME=secs)"
 	@echo "  make doc        Generate the API reference (Doxygen)"
-	@echo "  make format     clang-format, in place"
+	@echo "  make format     Uncrustify, in place"
+	@echo "  make format-check  Uncrustify, dry-run, exits non-zero on diff"
 	@echo "  make clean      Remove build artifacts"
 	@echo ""
 	@echo "  make python       Build the abi3 Python extension in place"
@@ -122,7 +124,10 @@ doc:
 	@echo "API reference: $(BUILD)/doc/html/index.html"
 
 format:
-	clang-format -i $(shell find include tests -name '*.hpp' -o -name '*.cpp')
+	uncrustify -c uncrustify.cfg --replace --no-backup $(FORMAT_FILES)
+
+format-check:
+	uncrustify -c uncrustify.cfg --check $(FORMAT_FILES)
 
 # --- Python binding -------------------------------------------------------
 

@@ -157,14 +157,16 @@ tag is the single thing that triggers a publish.
 ## Development
 
 ```bash
-make help       # list all targets
-make test       # build and run the test suite
-make coverage   # line coverage report (LLVM)
-make sanitize   # tests under ASan + UBSan
-make lint       # clang-tidy
-make misra      # MISRA C++:2023-oriented analysis
-make fuzz       # libFuzzer robustness fuzzing (clang)
-make doc        # API reference (Doxygen)
+make help        # list all targets
+make test        # build and run the test suite
+make coverage    # line coverage report (LLVM)
+make sanitize    # tests under ASan + UBSan
+make lint        # clang-tidy
+make misra       # MISRA C++:2023-oriented analysis
+make fuzz        # libFuzzer robustness fuzzing (clang)
+make doc         # API reference (Doxygen)
+make format      # Uncrustify, in place
+make format-check  # Uncrustify, dry-run; exits non-zero on diff
 ```
 
 The API reference is published at <https://reche23.github.io/real-regex/>.

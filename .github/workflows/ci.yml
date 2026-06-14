@@ -6,6 +6,16 @@ on:
   pull_request:
 
 jobs:
+  # Formatting gate: ensure the whole C++ codebase is formatted with Uncrustify.
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Uncrustify
+        run: sudo apt-get update && sudo apt-get install -y uncrustify
+      - name: Check formatting
+        run: make format-check
+
   # POSIX developer workflow: the Makefile, both compilers, plus sanitizers.
   posix:
     strategy:
