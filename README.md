@@ -20,9 +20,16 @@ dense-candidate cases where `re` is still ahead.
 
 Matching is linear in the input length: a Thompson NFA simulation (Pike VM)
 with marked states, so a pattern such as `(a+)+b` cannot trigger exponential
-backtracking. `make bench-python` measures throughput against `re` on a set of
-representative workloads and asserts identical results; the figures it prints
-depend on the platform, the pattern and the input.
+backtracking. A literal prefilter and several whole-pattern fast paths
+(literals, fixed-width sequences, `.`/negated-class runs, alternations of
+straight-line branches) keep the constant factor low without leaving the
+linear-time guarantee.
+
+`make bench-python` compares throughput against Python's `re`, and
+`make bench-engines` compares against `std::regex`, PCRE2 and RE2 in one C++
+process (each engine's match counts are checked equal). Figures depend on the
+platform, pattern and input; reproduce them locally rather than trusting a
+number here.
 
 ## Supported syntax
 
