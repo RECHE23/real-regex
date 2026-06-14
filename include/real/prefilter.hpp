@@ -24,20 +24,20 @@
 
 namespace real::detail {
 
-/*!
- * \brief Recognizes the byte-level UTF-8 expansion the compiler emits for `.`
- *        and negated classes (see `emit_codepoint_class`).
- *
- * The 16-instruction block at \p b is one ASCII class plus the four
- * lead/continuation byte branches. The shape and the UTF-8 byte ranges are
- * both checked, so the match is unambiguous.
- *
- * \param[in] code    The instruction stream.
- * \param[in] classes The interned classes.
- * \param[in] b       Index of the block's leading split.
- * \return The ASCII-class index of the codepoint class, or -1 if \p b does not
- *         begin such a block.
- */
+  /*!
+   * \brief Recognizes the byte-level UTF-8 expansion the compiler emits for `.`
+   *        and negated classes (see `emit_codepoint_class`).
+   *
+   * The 16-instruction block at \p b is one ASCII class plus the four
+   * lead/continuation byte branches. The shape and the UTF-8 byte ranges are
+   * both checked, so the match is unambiguous.
+   *
+   * \param[in] code    The instruction stream.
+   * \param[in] classes The interned classes.
+   * \param[in] b       Index of the block's leading split.
+   * \return The ASCII-class index of the codepoint class, or -1 if \p b does not
+   *         begin such a block.
+   */
   constexpr std::int32_t codepoint_class_at(std::span<const instr>      code,
                                             std::span<const char_class> classes,
                                             std::size_t                 b)
@@ -77,18 +77,18 @@ namespace real::detail {
     return static_cast<std::int32_t>(ascii);
   }
 
-/*!
- * \brief Tests whether the whole program is an alternation of straight-line
- *        branches (e.g. `the|fox|dog`).
- *
- * Layout: save 0, a chain of `split` nodes whose `x` is a branch of byte/klass
- * ending in `jump` to the shared exit and whose `y` is the next split, the
- * last branch falling through to save 1, match. Captures, assertions, nested
- * branches and empty branches all disqualify it.
- *
- * \param[in] code The instruction stream.
- * \return `true` if the program has that shape with at least two branches.
- */
+  /*!
+   * \brief Tests whether the whole program is an alternation of straight-line
+   *        branches (e.g. `the|fox|dog`).
+   *
+   * Layout: save 0, a chain of `split` nodes whose `x` is a branch of byte/klass
+   * ending in `jump` to the shared exit and whose `y` is the next split, the
+   * last branch falling through to save 1, match. Captures, assertions, nested
+   * branches and empty branches all disqualify it.
+   *
+   * \param[in] code The instruction stream.
+   * \return `true` if the program has that shape with at least two branches.
+   */
   constexpr bool is_fixed_alternation(std::span<const instr> code)
   {
     const std::size_t n {code.size()};
@@ -129,13 +129,13 @@ namespace real::detail {
     }
   }
 
-/*!
- * \brief Walks a compiled program once to derive its search hints.
- * \param[in] code    The instruction stream.
- * \param[in] classes The interned character classes referenced by \p code.
- * \return The \ref pattern_hints (anchoring, literal prefix, first-byte set,
- *         and the `class+` / exact-literal fast-path flags).
- */
+  /*!
+   * \brief Walks a compiled program once to derive its search hints.
+   * \param[in] code    The instruction stream.
+   * \param[in] classes The interned character classes referenced by \p code.
+   * \return The \ref pattern_hints (anchoring, literal prefix, first-byte set,
+   *         and the `class+` / exact-literal fast-path flags).
+   */
   constexpr pattern_hints analyze_program(std::span<const instr>      code,
                                           std::span<const char_class> classes)
   {
@@ -318,16 +318,16 @@ namespace real::detail {
     return h;
   }
 
-/*!
- * \brief Index of \p byte in `text[pos..)`, or \ref real::npos.
- *
- * Uses `memchr` at run time and a plain loop during constant evaluation.
- *
- * \param[in] text The subject text.
- * \param[in] pos  Index to start scanning from.
- * \param[in] byte The byte to find.
- * \return The index of the first occurrence at or after \p pos, else npos.
- */
+  /*!
+   * \brief Index of \p byte in `text[pos..)`, or \ref real::npos.
+   *
+   * Uses `memchr` at run time and a plain loop during constant evaluation.
+   *
+   * \param[in] text The subject text.
+   * \param[in] pos  Index to start scanning from.
+   * \param[in] byte The byte to find.
+   * \return The index of the first occurrence at or after \p pos, else npos.
+   */
   constexpr std::size_t find_byte(std::string_view text,
                                   std::size_t      pos,
                                   char             byte)
@@ -349,17 +349,17 @@ namespace real::detail {
     return npos;
   }
 
-/*!
- * \brief First position >= \p pos where \p prefix occurs in \p text, or npos.
- *
- * A thin wrapper over the platform's substring search, which is correct and
- * well tuned for the short prefixes (<= 16 bytes) the analyzer extracts.
- *
- * \param[in] text   The subject text.
- * \param[in] pos    Index to start searching from.
- * \param[in] prefix The literal to locate (empty matches at \p pos).
- * \return The index of the first occurrence at or after \p pos, else npos.
- */
+  /*!
+   * \brief First position >= \p pos where \p prefix occurs in \p text, or npos.
+   *
+   * A thin wrapper over the platform's substring search, which is correct and
+   * well tuned for the short prefixes (<= 16 bytes) the analyzer extracts.
+   *
+   * \param[in] text   The subject text.
+   * \param[in] pos    Index to start searching from.
+   * \param[in] prefix The literal to locate (empty matches at \p pos).
+   * \return The index of the first occurrence at or after \p pos, else npos.
+   */
   constexpr std::size_t find_prefix(std::string_view text,
                                     std::size_t      pos,
                                     std::string_view prefix)

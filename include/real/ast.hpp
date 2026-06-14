@@ -24,9 +24,9 @@
 
 namespace real::detail {
 
-/*!
- * \brief Kind of an AST node; selects which fields of \ref real::detail::ast_node are meaningful.
- */
+  /*!
+   * \brief Kind of an AST node; selects which fields of \ref real::detail::ast_node are meaningful.
+   */
   enum class node_kind : std::uint8_t
   {
     empty,       //!< Matches the empty string.
@@ -40,9 +40,9 @@ namespace real::detail {
     anchor,      //!< Zero-width assertion; kind in \ref real::detail::ast_node::anchor.
   };
 
-/*!
- * \brief The specific zero-width assertion of an `anchor` node (see `node_kind::anchor`).
- */
+  /*!
+   * \brief The specific zero-width assertion of an `anchor` node (see `node_kind::anchor`).
+   */
   enum class anchor_kind : std::uint8_t
   {
     caret,             //!< `^`  (text or line start, depending on multiline).
@@ -55,9 +55,9 @@ namespace real::detail {
     word_end,          //!< `\>` (end of word; REAL extension, not in Python re).
   };
 
-/*!
- * \brief One AST node. Active fields depend on \ref kind (noted per field).
- */
+  /*!
+   * \brief One AST node. Active fields depend on \ref kind (noted per field).
+   */
   struct ast_node
   {
     node_kind    kind    {node_kind::empty};   //!< Which fields below are meaningful.
@@ -73,13 +73,13 @@ namespace real::detail {
     std::int32_t next    {-1};                 //!< Next sibling in the parent's child list.
   };
 
-/*!
- * \brief A parsed pattern: the node pool plus side tables.
- *
- * Resource caps used during parsing and later Thompson unrolling are
- * centralized in config.hpp (\ref max_repeat_count, \ref max_group_count,
- * \ref max_nesting_depth, \ref max_program_size).
- */
+  /*!
+   * \brief A parsed pattern: the node pool plus side tables.
+   *
+   * Resource caps used during parsing and later Thompson unrolling are
+   * centralized in config.hpp (\ref max_repeat_count, \ref max_group_count,
+   * \ref max_nesting_depth, \ref max_program_size).
+   */
   struct ast
   {
     std::vector<ast_node>    nodes;                      //!< The node pool; \ref root indexes it.
@@ -90,12 +90,12 @@ namespace real::detail {
     std::int32_t             root         {-1};          //!< Index of the root node.
   };
 
-/*!
- * \brief Recursive-descent parser: a pattern string in, an \ref ast out.
- */
+  /*!
+   * \brief Recursive-descent parser: a pattern string in, an \ref ast out.
+   */
   class parser
   {
-public:
+  public:
 
     /*!
      * \brief Binds the parser to a pattern and the constructor flags.
@@ -125,7 +125,7 @@ public:
       return out;
     }
 
-private:
+  private:
 
     std::string_view pattern_;    //!< The pattern being parsed.
     std::size_t      pos_     {}; //!< Current read offset into \ref pattern_.
@@ -922,13 +922,13 @@ private:
     }
   };
 
-/*!
- * \brief Parses \p pattern into an \ref ast (convenience over \ref parser).
- * \param[in] pattern The pattern text.
- * \param[in] init    Constructor flags; only `verbose` affects parsing.
- * \return The parsed AST.
- * \throws real::regex_error on unsupported or malformed syntax.
- */
+  /*!
+   * \brief Parses \p pattern into an \ref ast (convenience over \ref parser).
+   * \param[in] pattern The pattern text.
+   * \param[in] init    Constructor flags; only `verbose` affects parsing.
+   * \return The parsed AST.
+   * \throws real::regex_error on unsupported or malformed syntax.
+   */
   constexpr ast parse(std::string_view pattern,
                       flags            init = flags::none)
   {

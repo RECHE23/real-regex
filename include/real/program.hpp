@@ -22,17 +22,17 @@
 
 namespace real {
 
-/*!
- * \brief Sentinel for "no position" / unset capture slot (akin to std::string::npos).
- */
+  /*!
+   * \brief Sentinel for "no position" / unset capture slot (akin to std::string::npos).
+   */
   inline constexpr std::size_t npos {std::numeric_limits<std::size_t>::max()};
 
-/*!
- * \brief Compilation flags, mirroring Python's `re.I`, `re.M` and `re.S`.
- *
- * Combinable with \ref operator|. Case folding is ASCII-only, consistent with
- * the library's character-class semantics.
- */
+  /*!
+   * \brief Compilation flags, mirroring Python's `re.I`, `re.M` and `re.S`.
+   *
+   * Combinable with \ref operator|. Case folding is ASCII-only, consistent with
+   * the library's character-class semantics.
+   */
   enum class flags : std::uint8_t
   {
     none      = 0,  //!< No flags.
@@ -43,51 +43,51 @@ namespace real {
     verbose   = 16, //!< Verbose mode (`re.X`): ignore unescaped whitespace and `#` comments outside classes.
   };
 
-/*!
- * \brief Bitwise-OR of two flag sets.
- * \param[in] a First flag set.
- * \param[in] b Second flag set.
- * \return The union of \p a and \p b.
- */
+  /*!
+   * \brief Bitwise-OR of two flag sets.
+   * \param[in] a First flag set.
+   * \param[in] b Second flag set.
+   * \return The union of \p a and \p b.
+   */
   constexpr flags operator|(flags a,
                             flags b)
   {
     return static_cast<flags>(static_cast<std::uint8_t>(a) | static_cast<std::uint8_t>(b));
   }
 
-/*!
- * \brief Bitwise-AND of two flag sets.
- * \param[in] a First flag set.
- * \param[in] b Second flag set.
- * \return The intersection of \p a and \p b.
- */
+  /*!
+   * \brief Bitwise-AND of two flag sets.
+   * \param[in] a First flag set.
+   * \param[in] b Second flag set.
+   * \return The intersection of \p a and \p b.
+   */
   constexpr flags operator&(flags a,
                             flags b)
   {
     return static_cast<flags>(static_cast<std::uint8_t>(a) & static_cast<std::uint8_t>(b));
   }
 
-/*!
- * \brief Tests whether \p flag is set in \p value.
- * \param[in] value The flag set to query.
- * \param[in] flag  The single flag to look for.
- * \return `true` if \p flag is present in \p value.
- */
+  /*!
+   * \brief Tests whether \p flag is set in \p value.
+   * \param[in] value The flag set to query.
+   * \param[in] flag  The single flag to look for.
+   * \return `true` if \p flag is present in \p value.
+   */
   constexpr bool has_flag(flags value,
                           flags flag)
   {
     return (value & flag) != flags::none;
   }
 
-/*!
- * \brief Exception thrown for an invalid pattern (or one exceeding a limit).
- *
- * In a constexpr context (`static_regex`), reaching the throw is a
- * compile-time error, with the message appearing in the diagnostic trace.
- */
+  /*!
+   * \brief Exception thrown for an invalid pattern (or one exceeding a limit).
+   *
+   * In a constexpr context (`static_regex`), reaching the throw is a
+   * compile-time error, with the message appearing in the diagnostic trace.
+   */
   class regex_error : public std::exception
   {
-public:
+  public:
 
     /*!
      * \brief Builds the error.
@@ -116,7 +116,7 @@ public:
       return position_;
     }
 
-private:
+  private:
 
     std::string message_;  //!< Formatted message returned by what().
     std::size_t position_; //!< Offset in the pattern text.
@@ -124,9 +124,9 @@ private:
 
   namespace detail {
 
-/*!
- * \brief NFA instruction opcodes executed by the Pike VM.
- */
+    /*!
+     * \brief NFA instruction opcodes executed by the Pike VM.
+     */
     enum class opcode : std::uint8_t
     {
       byte,            //!< Consume one byte equal to arg8; fall through to pc+1.
@@ -138,12 +138,12 @@ private:
       match,           //!< Accept.
     };
 
-/*!
- * \brief Kind of zero-width assertion carried in `assert_position`'s arg8.
- *
- * Multiline and trailing-newline subtleties are resolved at compile time; the
- * engine only evaluates these predicates at a position.
- */
+    /*!
+     * \brief Kind of zero-width assertion carried in `assert_position`'s arg8.
+     *
+     * Multiline and trailing-newline subtleties are resolved at compile time; the
+     * engine only evaluates these predicates at a position.
+     */
     enum class assert_kind : std::uint8_t
     {
       text_start,                //!< `\A`, and `^` without multiline.
@@ -157,9 +157,9 @@ private:
       word_end,                  //!< `\>` (word on the left, non-word/end on the right).
     };
 
-/*!
- * \brief One NFA instruction. Field meaning depends on \ref op.
- */
+    /*!
+     * \brief One NFA instruction. Field meaning depends on \ref op.
+     */
     struct instr
     {
       opcode        op;       //!< The operation.
@@ -169,13 +169,13 @@ private:
       std::int32_t  y     {}; //!< Secondary branch target (split).
     };
 
-/*!
- * \brief Search-acceleration hints extracted from a compiled program.
- *
- * Filled by `analyze_program` (prefilter.hpp). The engine consults them to
- * skip positions that cannot start a match and to take fast paths; they never
- * change \e what matches, only how fast.
- */
+    /*!
+     * \brief Search-acceleration hints extracted from a compiled program.
+     *
+     * Filled by `analyze_program` (prefilter.hpp). The engine consults them to
+     * skip positions that cannot start a match and to take fast paths; they never
+     * change \e what matches, only how fast.
+     */
     struct pattern_hints
     {
       std::array<char, 16> prefix                {};   //!< Required literal prefix (possibly truncated).
@@ -202,12 +202,12 @@ private:
       std::uint8_t exact_literal_len {};
     };
 
-/*!
- * \brief A named capture group.
- *
- * The name is stored as a byte range into the pattern text rather than an
- * owned string, keeping the type constexpr-friendly.
- */
+    /*!
+     * \brief A named capture group.
+     *
+     * The name is stored as a byte range into the pattern text rather than an
+     * owned string, keeping the type constexpr-friendly.
+     */
     struct named_group
     {
       std::int32_t group {}; //!< Capture group number.
@@ -215,12 +215,12 @@ private:
       std::int32_t end   {}; //!< End offset (exclusive) of the name.
     };
 
-/*!
- * \brief Non-owning view of a compiled program — what the engine executes.
- *
- * The spans point into storage that must outlive the view (the owning regex
- * object). Both the dynamic and static storage policies expose one of these.
- */
+    /*!
+     * \brief Non-owning view of a compiled program — what the engine executes.
+     *
+     * The spans point into storage that must outlive the view (the owning regex
+     * object). Both the dynamic and static storage policies expose one of these.
+     */
     struct program_view
     {
       std::span<const instr>       code;           //!< The instruction stream.
@@ -231,9 +231,9 @@ private:
       pattern_hints                hints;          //!< Search-acceleration hints.
     };
 
-/*!
- * \brief Owning, heap-allocated program: the storage backing `real::regex`.
- */
+    /*!
+     * \brief Owning, heap-allocated program: the storage backing `real::regex`.
+     */
     struct dynamic_program
     {
       std::vector<instr>       code;           //!< The instruction stream.

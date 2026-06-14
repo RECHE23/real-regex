@@ -20,21 +20,21 @@
 
 namespace real {
 
-/*!
- * \brief The result of a match attempt: success, spans and captures.
- *
- * Group views point into the searched text, which must outlive the result —
- * the rvalue `std::string` overloads on the regex are deleted to catch the
- * common dangling mistake at compile time. Named-group lookups reference the
- * regex's name table, so the regex must outlive the result too.
- *
- * \tparam SlotStorage The capture-slot container (vector- or static-backed),
- *         supplied by the storage policy.
- */
+  /*!
+   * \brief The result of a match attempt: success, spans and captures.
+   *
+   * Group views point into the searched text, which must outlive the result —
+   * the rvalue `std::string` overloads on the regex are deleted to catch the
+   * common dangling mistake at compile time. Named-group lookups reference the
+   * regex's name table, so the regex must outlive the result too.
+   *
+   * \tparam SlotStorage The capture-slot container (vector- or static-backed),
+   *         supplied by the storage policy.
+   */
   template <typename SlotStorage>
   class basic_match_result
   {
-public:
+  public:
 
     /*!
      * \brief Constructs an empty (non-matched) result.
@@ -159,7 +159,7 @@ public:
       return g == npos ? std::string_view {} : (*this)[g];
     }
 
-private:
+  private:
 
     std::string_view                     text_;       //!< The searched text.
     SlotStorage                          slots_;      //!< Flattened capture slots.
@@ -168,24 +168,24 @@ private:
     std::span<const detail::named_group> names_;      //!< Borrowed named-group table.
   };
 
-/*!
- * \brief The result type of the default, runtime-compiled `real::regex`.
- */
+  /*!
+   * \brief The result type of the default, runtime-compiled `real::regex`.
+   */
   using match_result = basic_match_result<std::vector<std::size_t>>;
 
-/*!
- * \brief Forward iterator over the non-overlapping matches in a text.
- *
- * Follows Python's empty-match rules: an empty match is yielded (even right
- * after a non-empty one), then the scan advances by one codepoint. The regex
- * and the text must outlive the iterator. Obtained from \ref basic_match_range.
- *
- * \tparam Storage The regex's storage policy (selects the result/scratch types).
- */
+  /*!
+   * \brief Forward iterator over the non-overlapping matches in a text.
+   *
+   * Follows Python's empty-match rules: an empty match is yielded (even right
+   * after a non-empty one), then the scan advances by one codepoint. The regex
+   * and the text must outlive the iterator. Obtained from \ref basic_match_range.
+   *
+   * \tparam Storage The regex's storage policy (selects the result/scratch types).
+   */
   template <typename Storage>
   class basic_match_iterator
   {
-public:
+  public:
 
     using value_type      = basic_match_result<typename Storage::slot_storage>; //!< Yielded match type.
     using difference_type = std::ptrdiff_t;                                     //!< Iterator traits.
@@ -253,7 +253,7 @@ public:
       return done_ == other.done_ && (done_ || pos_ == other.pos_);
     }
 
-private:
+  private:
 
     detail::program_view         prog_;                      //!< The program being run.
     std::string_view             pattern_;                   //!< Pattern text (named lookups).
@@ -298,14 +298,14 @@ private:
     }
   };
 
-/*!
- * \brief A range of matches, returned by `find_iter()` and usable in range-for.
- * \tparam Storage The regex's storage policy.
- */
+  /*!
+   * \brief A range of matches, returned by `find_iter()` and usable in range-for.
+   * \tparam Storage The regex's storage policy.
+   */
   template <typename Storage>
   class basic_match_range
   {
-public:
+  public:
 
     /*!
      * \brief Binds the range to a program and text.
@@ -337,27 +337,27 @@ public:
       return {};
     }
 
-private:
+  private:
 
     detail::program_view prog_;    //!< The program being run.
     std::string_view     pattern_; //!< Pattern text (named lookups).
     std::string_view     text_;    //!< The text to iterate.
   };
 
-/*!
- * \brief A compiled regular expression, parameterized on its storage policy.
- *
- * `Storage` owns the program; matching allocates only per-run scratch — and
- * nothing at all when the storage is compile-time. Use the \ref real::regex
- * and \ref real::static_regex aliases rather than this template directly.
- *
- * \tparam Storage \ref real::detail::dynamic_storage or
- *         \ref real::detail::static_storage.
- */
+  /*!
+   * \brief A compiled regular expression, parameterized on its storage policy.
+   *
+   * `Storage` owns the program; matching allocates only per-run scratch — and
+   * nothing at all when the storage is compile-time. Use the \ref real::regex
+   * and \ref real::static_regex aliases rather than this template directly.
+   *
+   * \tparam Storage \ref real::detail::dynamic_storage or
+   *         \ref real::detail::static_storage.
+   */
   template <typename Storage>
   class basic_regex
   {
-public:
+  public:
 
     using result_type = basic_match_result<typename Storage::slot_storage>; //!< This regex's match-result type.
 
@@ -649,7 +649,7 @@ public:
       return out;
     }
 
-private:
+  private:
 
     Storage program_; //!< The storage policy holding the compiled program.
 
@@ -750,21 +750,21 @@ private:
     }
   };
 
-/*!
- * \brief The runtime-compiled regex type — the primary entry point.
- */
+  /*!
+   * \brief The runtime-compiled regex type — the primary entry point.
+   */
   using regex = basic_regex<detail::dynamic_storage>;
 
-/*!
- * \brief A fully compile-time regex.
- *
- * The pattern is parsed, compiled and exactly sized at compile time; matching
- * allocates nothing and also works in a constexpr context. An invalid pattern
- * is a compile error.
- *
- * \tparam Pattern The pattern, as a \ref fixed_string literal.
- * \tparam F       Compilation flags.
- */
+  /*!
+   * \brief A fully compile-time regex.
+   *
+   * The pattern is parsed, compiled and exactly sized at compile time; matching
+   * allocates nothing and also works in a constexpr context. An invalid pattern
+   * is a compile error.
+   *
+   * \tparam Pattern The pattern, as a \ref fixed_string literal.
+   * \tparam F       Compilation flags.
+   */
   template <fixed_string Pattern, flags F = flags::none>
   using static_regex = basic_regex<detail::static_storage<Pattern, F>>;
 } // namespace real

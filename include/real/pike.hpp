@@ -26,9 +26,9 @@
 
 namespace real::detail {
 
-/*!
- * \brief How a VM run is anchored.
- */
+  /*!
+   * \brief How a VM run is anchored.
+   */
   enum class run_mode : std::uint8_t
   {
     prefix, //!< Anchored at the start position (Python `re.match`).
@@ -36,14 +36,14 @@ namespace real::detail {
     search, //!< First match anywhere (Python `re.search`).
   };
 
-/*!
- * \brief One entry on the epsilon-closure DFS stack.
- *
- * Two kinds: explore a program counter (`pc >= 0`), or restore a
- * capture slot to its previous value once the subtree it covered is done
- * (`pc == -1`). This mutates one working slot array in place rather
- * than copying all slots per branch.
- */
+  /*!
+   * \brief One entry on the epsilon-closure DFS stack.
+   *
+   * Two kinds: explore a program counter (`pc >= 0`), or restore a
+   * capture slot to its previous value once the subtree it covered is done
+   * (`pc == -1`). This mutates one working slot array in place rather
+   * than copying all slots per branch.
+   */
   struct eps_entry
   {
     std::int32_t  pc;            //!< pc to explore, or -1 for a slot-restore entry.
@@ -51,15 +51,15 @@ namespace real::detail {
     std::size_t   restore_value; //!< Value to restore the slot to.
   };
 
-/*!
- * \brief One priority-ordered list of NFA threads (leftmost-greedy semantics).
- *
- * `mark` is generation-stamped so clearing the list between positions is O(1).
- *
- * \tparam PcVec   Container of program counters.
- * \tparam SlotVec Flattened capture slots (pcs.size() * slot_count).
- * \tparam MarkVec Per-pc generation marks for O(1) dedup.
- */
+  /*!
+   * \brief One priority-ordered list of NFA threads (leftmost-greedy semantics).
+   *
+   * `mark` is generation-stamped so clearing the list between positions is O(1).
+   *
+   * \tparam PcVec   Container of program counters.
+   * \tparam SlotVec Flattened capture slots (pcs.size() * slot_count).
+   * \tparam MarkVec Per-pc generation marks for O(1) dedup.
+   */
   template <typename PcVec, typename SlotVec, typename MarkVec>
   struct basic_thread_list
   {
@@ -100,17 +100,17 @@ namespace real::detail {
     }
   };
 
-/*!
- * \brief Reusable VM scratch state.
- *
- * One run allocates nothing once warm (and never allocates with static
- * containers); `find_all-style` loops reuse the same state across runs. The
- * two thread lists are flipped by index, never swapped.
- *
- * \tparam ThreadList The thread-list type (a \ref basic_thread_list).
- * \tparam WorkVec    Container for the working capture slots.
- * \tparam EpsVec     Container for the epsilon-closure stack.
- */
+  /*!
+   * \brief Reusable VM scratch state.
+   *
+   * One run allocates nothing once warm (and never allocates with static
+   * containers); `find_all-style` loops reuse the same state across runs. The
+   * two thread lists are flipped by index, never swapped.
+   *
+   * \tparam ThreadList The thread-list type (a \ref basic_thread_list).
+   * \tparam WorkVec    Container for the working capture slots.
+   * \tparam EpsVec     Container for the epsilon-closure stack.
+   */
   template <typename ThreadList, typename WorkVec, typename EpsVec>
   struct basic_pike_state
   {
@@ -119,24 +119,24 @@ namespace real::detail {
     EpsVec     stack;    //!< Epsilon-closure DFS stack.
   };
 
-/*!
- * \brief Thread list specialized on `std::vector` (the dynamic storage mode).
- */
+  /*!
+   * \brief Thread list specialized on `std::vector` (the dynamic storage mode).
+   */
   using thread_list = basic_thread_list<std::vector<std::int32_t>, std::vector<std::size_t>, std::vector<std::uint64_t>>;
-/*!
- * \brief VM scratch state for the dynamic storage mode.
- */
+  /*!
+   * \brief VM scratch state for the dynamic storage mode.
+   */
   using pike_state =
     basic_pike_state<thread_list, std::vector<std::size_t>, std::vector<eps_entry>>;
 
-/*!
- * \brief The Pike VM, generic over the scratch-state container policy.
- * \tparam State A \ref basic_pike_state instantiation (vector- or static-backed).
- */
+  /*!
+   * \brief The Pike VM, generic over the scratch-state container policy.
+   * \tparam State A \ref basic_pike_state instantiation (vector- or static-backed).
+   */
   template <typename State>
   class pike_vm
   {
-public:
+  public:
 
     /*!
      * \brief Binds the VM to a program and caller-owned scratch state.
@@ -245,7 +245,7 @@ public:
       return matched;
     }
 
-private:
+  private:
 
     program_view     prog_;  //!< The program being executed.
     State&           state_; //!< Borrowed reusable scratch state.

@@ -16,29 +16,29 @@
 
 namespace test {
 
-/** \brief One registered test case. */
+  /** \brief One registered test case. */
   struct test_case
   {
     const char* name;    //!< Human-readable test name.
     void        (*fn)(); //!< Test function to invoke.
   };
 
-/*!
- * \brief Returns the global test-case registry.
- * \return A reference to the vector of registered tests.
- */
+  /*!
+   * \brief Returns the global test-case registry.
+   * \return A reference to the vector of registered tests.
+   */
   inline std::vector<test_case>& registry()
   {
     static std::vector<test_case> cases;
     return cases;
   }
 
-/*!
- * \brief Auto-registration helper for TEST() macros.
- *
- * Constructing a global registrar pushes the named test function into
- * \ref registry at program start-up.
- */
+  /*!
+   * \brief Auto-registration helper for TEST() macros.
+   *
+   * Constructing a global registrar pushes the named test function into
+   * \ref registry at program start-up.
+   */
   struct registrar
   {
     /*!\brief Registers a test case.
@@ -137,10 +137,10 @@ namespace test {
     }
   } // namespace detail
 
-/*!
- * \brief Runs all registered tests.
- * \return 0 if all tests passed, 1 otherwise.
- */
+  /*!
+   * \brief Runs all registered tests.
+   * \return 0 if all tests passed, 1 otherwise.
+   */
   inline int run_all()
   {
     int tests_failed = 0;

@@ -28,12 +28,12 @@
 
 namespace real::detail {
 
-/*!
- * \brief Compiles an \ref ast into a \ref dynamic_program (NFA bytecode).
- */
+  /*!
+   * \brief Compiles an \ref ast into a \ref dynamic_program (NFA bytecode).
+   */
   class compiler
   {
-public:
+  public:
 
     /*!
      * \brief Binds the compiler to a parsed pattern and its flags.
@@ -68,7 +68,7 @@ public:
       return prog;
     }
 
-private:
+  private:
 
     const ast& tree_;                //!< The AST being compiled.
     flags      flags_ {flags::none}; //!< Effective compilation flags.
@@ -460,13 +460,13 @@ private:
     }
   };
 
-/*!
- * \brief Compiles \p tree to an NFA program (convenience over \ref compiler).
- * \param[in] tree The parsed AST.
- * \param[in] f    The effective compilation flags.
- * \return The compiled \ref dynamic_program.
- * \throws real::regex_error if the program exceeds \ref max_program_size.
- */
+  /*!
+   * \brief Compiles \p tree to an NFA program (convenience over \ref compiler).
+   * \param[in] tree The parsed AST.
+   * \param[in] f    The effective compilation flags.
+   * \return The compiled \ref dynamic_program.
+   * \throws real::regex_error if the program exceeds \ref max_program_size.
+   */
   constexpr dynamic_program compile(const ast& tree,
                                     flags      f)
   {

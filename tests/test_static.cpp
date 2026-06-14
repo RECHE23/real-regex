@@ -73,16 +73,16 @@ namespace {
   static_assert(icase_rx.fullmatch("HéLLO").matched()); // ASCII letters fold…
   static_assert(!icase_rx.fullmatch("HÉLLO"));          // …the é does not
 
-// Exact sizing: the storage arrays have exactly the measured sizes, and the
-// type is stateless (all data is static constexpr).
+  // Exact sizing: the storage arrays have exactly the measured sizes, and the
+  // type is stateless (all data is static constexpr).
   using date_storage = real::detail::static_storage<"(\\d{4})-(\\d{2})">;
   static_assert(date_storage::slot_count == 6);
   static_assert(date_storage::code.size() == date_storage::code_size);
   static_assert(date_storage::class_count == 1); // one interned digit class
   static_assert(sizeof(real::static_regex<"(\\d{4})-(\\d{2})">) == 1);
 
-// Invalid patterns are *compile errors* (uncomment to verify):
-//   constexpr real::static_regex<"(a"> broken;
+  // Invalid patterns are *compile errors* (uncomment to verify):
+  //   constexpr real::static_regex<"(a"> broken;
 } // namespace
 
 TEST(static_regex_matches_at_runtime_like_dynamic)

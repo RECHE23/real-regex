@@ -28,14 +28,14 @@
 
 namespace real {
 
-/*!
- * \brief A fixed-size string usable as a non-type template parameter.
- *
- * Enables `static_regex<"\d+">`: the literal is captured into \ref data at
- * compile time.
- *
- * \tparam N Size of the character array, including the terminating NUL.
- */
+  /*!
+   * \brief A fixed-size string usable as a non-type template parameter.
+   *
+   * Enables `static_regex<"\d+">`: the literal is captured into \ref data at
+   * compile time.
+   *
+   * \tparam N Size of the character array, including the terminating NUL.
+   */
   template <std::size_t N>
   struct fixed_string
   {
@@ -68,20 +68,20 @@ namespace real {
 
   namespace detail {
 
-/*!
- * \brief Fixed-capacity vector backed by an inline array (no heap).
- *
- * The subset of `std::vector` the Pike VM uses, for the static storage mode.
- * Overflow cannot happen for the engine's own containers (capacities are
- * derived bounds) but is checked defensively.
- *
- * \tparam T   Element type.
- * \tparam Cap Inline capacity.
- */
+    /*!
+     * \brief Fixed-capacity vector backed by an inline array (no heap).
+     *
+     * The subset of `std::vector` the Pike VM uses, for the static storage mode.
+     * Overflow cannot happen for the engine's own containers (capacities are
+     * derived bounds) but is checked defensively.
+     *
+     * \tparam T   Element type.
+     * \tparam Cap Inline capacity.
+     */
     template <typename T, std::size_t Cap>
     class static_vec
     {
-public:
+    public:
 
       /*!
        * \brief Appends \p value.
@@ -171,22 +171,22 @@ public:
         --size_;
       }
 
-private:
+    private:
 
       std::array<T, Cap> data_ {}; //!< Inline element storage.
       std::size_t        size_ {}; //!< Number of elements in use.
     };
 
-/*!
- * \brief Small-buffer-optimized vector for the dynamic hot paths.
- *
- * Keeps up to `InlineCapacity` elements inline (no heap), spilling to the
- * heap beyond that — so the common small-group match avoids allocation
- * entirely. Used for capture slots and working state in the dynamic mode.
- *
- * \tparam T              Element type.
- * \tparam InlineCapacity Number of elements held inline before spilling.
- */
+    /*!
+     * \brief Small-buffer-optimized vector for the dynamic hot paths.
+     *
+     * Keeps up to `InlineCapacity` elements inline (no heap), spilling to the
+     * heap beyond that — so the common small-group match avoids allocation
+     * entirely. Used for capture slots and working state in the dynamic mode.
+     *
+     * \tparam T              Element type.
+     * \tparam InlineCapacity Number of elements held inline before spilling.
+     */
     template <typename T, std::size_t InlineCapacity>
     class small_vec
     {
@@ -291,7 +291,7 @@ private:
         reserve(new_cap);
       }
 
-public:
+    public:
 
       using value_type = T;           //!< Element type.
       using size_type_ = std::size_t; //!< Size type (for std-container API compat).
@@ -545,12 +545,12 @@ public:
       }
     };
 
-/*!
- * \brief Storage policy backing `real::regex`: heap, sized once at run time.
- *
- * Match scratch uses small-buffer-optimized containers, so the common
- * small-group match runs without a heap allocation.
- */
+    /*!
+     * \brief Storage policy backing `real::regex`: heap, sized once at run time.
+     *
+     * Match scratch uses small-buffer-optimized containers, so the common
+     * small-group match runs without a heap allocation.
+     */
     struct dynamic_storage
     {
       static constexpr bool is_compile_time {}; //!< Selects the runtime constructor.
@@ -614,22 +614,22 @@ public:
       }
     };
 
-/*!
- * \brief Storage policy backing `real::static_regex`: compile-time, stateless.
- *
- * Every array is a `static` `constexpr` member sized exactly by a measuring
- * pass over the same compilation, so a `static_regex` object is stateless
- * (`sizeof` 1) and matching allocates nothing.
- *
- * \tparam Pat The pattern, as a \ref real::fixed_string non-type parameter.
- * \tparam F   Compilation flags.
- */
+    /*!
+     * \brief Storage policy backing `real::static_regex`: compile-time, stateless.
+     *
+     * Every array is a `static` `constexpr` member sized exactly by a measuring
+     * pass over the same compilation, so a `static_regex` object is stateless
+     * (`sizeof` 1) and matching allocates nothing.
+     *
+     * \tparam Pat The pattern, as a \ref real::fixed_string non-type parameter.
+     * \tparam F   Compilation flags.
+     */
     template <fixed_string Pat, flags F = flags::none>
     struct static_storage
     {
       static constexpr bool is_compile_time {true}; //!< Selects the default constructor.
 
-private:
+    private:
 
       /*!
        * \return The freshly built program (used for both measuring and filling).
@@ -658,7 +658,7 @@ private:
         return out;
       }
 
-public:
+    public:
 
       static constexpr flags         effective_flags            {F | detail::parse(Pat.view(), F).inline_flags}; //!< Flags merged with (?ims).
       static constexpr pattern_hints hints                      {build().hints};                                 //!< Search hints.

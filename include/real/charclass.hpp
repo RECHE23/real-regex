@@ -15,12 +15,12 @@
 
 namespace real::detail {
 
-/*!
- * \brief A set of byte values (0–255) as a 256-bit bitmap.
- *
- * Membership, insertion and complement are all O(1) or O(256) and constexpr.
- * All bit manipulation uses unsigned operands (MISRA forbids signed bitwise).
- */
+  /*!
+   * \brief A set of byte values (0–255) as a 256-bit bitmap.
+   *
+   * Membership, insertion and complement are all O(1) or O(256) and constexpr.
+   * All bit manipulation uses unsigned operands (MISRA forbids signed bitwise).
+   */
   struct char_class
   {
     std::array<std::uint64_t, 4> bits {}; //!< Bitmap; bit `b` is byte `b's` membership.
@@ -104,15 +104,15 @@ namespace real::detail {
     constexpr bool operator==(const char_class&) const = default;
   };
 
-/*!
- * \brief Closes \p cc under ASCII case folding.
- *
- * Whenever a letter is present its other-case twin is added. Applied to a
- * class \e before negation, so `[^a]` with `icase` rejects both
- * 'a' and 'A', matching Python.
- *
- * \param[in,out] cc The class to fold in place.
- */
+  /*!
+   * \brief Closes \p cc under ASCII case folding.
+   *
+   * Whenever a letter is present its other-case twin is added. Applied to a
+   * class \e before negation, so `[^a]` with `icase` rejects both
+   * 'a' and 'A', matching Python.
+   *
+   * \param[in,out] cc The class to fold in place.
+   */
   constexpr void fold_ascii_case(char_class& cc)
   {
     for (std::uint8_t c = 'A'; c <= 'Z'; ++c) {
@@ -126,21 +126,21 @@ namespace real::detail {
     }
   }
 
-/*!
- * \brief Reports whether \p b is an ASCII "word" byte (`[0-9A-Za-z_]`).
- * \param[in] b The byte to classify.
- * \return `true` for ASCII word bytes, used by `\b` / `\w`.
- */
+  /*!
+   * \brief Reports whether \p b is an ASCII "word" byte (`[0-9A-Za-z_]`).
+   * \param[in] b The byte to classify.
+   * \return `true` for ASCII word bytes, used by `\b` / `\w`.
+   */
   [[nodiscard]] constexpr bool is_ascii_word_byte(std::uint8_t b)
   {
     return (b >= '0' && b <= '9') || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') ||
            b == '_';
   }
 
-/*!
- * \brief The ASCII digit set behind `\d` (Python `re.ASCII` semantics).
- * \return The set `[0-9]`.
- */
+  /*!
+   * \brief The ASCII digit set behind `\d` (Python `re.ASCII` semantics).
+   * \return The set `[0-9]`.
+   */
   constexpr char_class digit_set()
   {
     char_class cc;
@@ -148,10 +148,10 @@ namespace real::detail {
     return cc;
   }
 
-/*!
- * \brief The ASCII word set behind `\w`.
- * \return The set `[0-9A-Za-z_]`.
- */
+  /*!
+   * \brief The ASCII word set behind `\w`.
+   * \return The set `[0-9A-Za-z_]`.
+   */
   constexpr char_class word_set()
   {
     char_class cc;
@@ -162,10 +162,10 @@ namespace real::detail {
     return cc;
   }
 
-/*!
- * \brief The ASCII whitespace set behind `\s`.
- * \return The set `[ \t\n\r\f\v]`.
- */
+  /*!
+   * \brief The ASCII whitespace set behind `\s`.
+   * \return The set `[ \t\n\r\f\v]`.
+   */
   constexpr char_class space_set()
   {
     char_class cc;
@@ -178,15 +178,15 @@ namespace real::detail {
     return cc;
   }
 
-// --- UTF-8 byte-class sets -------------------------------------------------
-// The single source of truth for how `.` and negated classes expand to bytes:
-// the compiler emits these sets (compiler.hpp) and the prefilter recognizes
-// the same shape (prefilter.hpp). Keeping them here keeps the two in lock-step.
+  // --- UTF-8 byte-class sets -------------------------------------------------
+  // The single source of truth for how `.` and negated classes expand to bytes:
+  // the compiler emits these sets (compiler.hpp) and the prefilter recognizes
+  // the same shape (prefilter.hpp). Keeping them here keeps the two in lock-step.
 
-/*!
- * \brief The UTF-8 continuation-byte set `10xxxxxx`.
- * \return The set `[0x80, 0xBF]`.
- */
+  /*!
+   * \brief The UTF-8 continuation-byte set `10xxxxxx`.
+   * \return The set `[0x80, 0xBF]`.
+   */
   constexpr char_class utf8_cont_set()
   {
     char_class cc;
@@ -194,10 +194,10 @@ namespace real::detail {
     return cc;
   }
 
-/*!
- * \brief The lead-byte set of a 2-byte UTF-8 sequence.
- * \return The set `[0xC2, 0xDF]`.
- */
+  /*!
+   * \brief The lead-byte set of a 2-byte UTF-8 sequence.
+   * \return The set `[0xC2, 0xDF]`.
+   */
   constexpr char_class utf8_lead2_set()
   {
     char_class cc;
@@ -205,10 +205,10 @@ namespace real::detail {
     return cc;
   }
 
-/*!
- * \brief The lead-byte set of a 3-byte UTF-8 sequence.
- * \return The set `[0xE0, 0xEF]`.
- */
+  /*!
+   * \brief The lead-byte set of a 3-byte UTF-8 sequence.
+   * \return The set `[0xE0, 0xEF]`.
+   */
   constexpr char_class utf8_lead3_set()
   {
     char_class cc;
@@ -216,10 +216,10 @@ namespace real::detail {
     return cc;
   }
 
-/*!
- * \brief The lead-byte set of a 4-byte UTF-8 sequence.
- * \return The set `[0xF0, 0xF4]`.
- */
+  /*!
+   * \brief The lead-byte set of a 4-byte UTF-8 sequence.
+   * \return The set `[0xF0, 0xF4]`.
+   */
   constexpr char_class utf8_lead4_set()
   {
     char_class cc;
