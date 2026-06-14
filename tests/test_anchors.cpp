@@ -165,6 +165,19 @@ TEST(flag_errors)
 {
   EXPECT_THROWS(real::regex("a(?i)b"), real::regex_error); // not at start
   EXPECT_THROWS(real::regex("(?i:a)"), real::regex_error); // scoped: unsupported
-  EXPECT_THROWS(real::regex("(?x)a"), real::regex_error);  // verbose: unsupported
   EXPECT_THROWS(real::regex("(?u)a"), real::regex_error);  // unicode classes: unsupported
+  EXPECT(real::regex("(?x) a b").fullmatch("ab"));         // verbose: supported
+}
+
+TEST(verbose_mode)
+{
+  // re.X: unescaped whitespace and # comments are ignored outside classes.
+  EXPECT(real::regex("(?x) a b c").fullmatch("abc"));
+  EXPECT(!real::regex("(?x) a b c").fullmatch("a bc")); // whitespace in text is literal
+  EXPECT(real::regex(R"((?x)\d{4} - \d{2})").fullmatch("2026-06"));
+  EXPECT(real::regex("(?x) a # trailing comment\n b").fullmatch("ab"));
+  EXPECT(real::regex("(?x)[ ]").fullmatch(" "));      // space inside a class is literal
+  EXPECT(real::regex(R"((?x)a\ b)").fullmatch("a b")); // escaped space is literal
+  EXPECT(real::regex("a b", real::flags::verbose).fullmatch("ab")); // constructor flag
+  EXPECT(real::regex("(?ix) HELLO").fullmatch("hello"));            // combined with icase
 }

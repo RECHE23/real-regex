@@ -6,10 +6,10 @@ A linear-time (ReDoS-safe) regex engine with an `re`-compatible API:
     real.search(r"(\d{4})-(\d{2})", text)
     real.compile(r"\w+").findall(text)
 
-Supported flags: IGNORECASE/I, MULTILINE/M, DOTALL/S (ASCII/A and UNICODE/U
-are accepted no-ops: classes are ASCII, text is Unicode). Unsupported re
-features raise real.error at compile time: lookarounds, backreferences,
-re.X/re.L, and Match.expand/pos/endpos. See the project README.
+Supported flags: IGNORECASE/I, MULTILINE/M, DOTALL/S, VERBOSE/X (ASCII/A and
+UNICODE/U are accepted no-ops: classes are ASCII, text is Unicode). Unsupported
+re features raise real.error at compile time: lookarounds, backreferences,
+re.L, and Match.expand/pos/endpos. See the project README.
 """
 
 import functools
@@ -21,7 +21,7 @@ __all__ = [
     "compile", "match", "fullmatch", "search", "findall", "finditer",
     "split", "sub", "subn", "escape", "purge", "error", "Pattern", "Match",
     "A", "ASCII", "I", "IGNORECASE", "M", "MULTILINE", "S", "DOTALL",
-    "U", "UNICODE", "NOFLAG", "get_include", "get_config",
+    "X", "VERBOSE", "U", "UNICODE", "NOFLAG", "get_include", "get_config",
 ]
 
 __version__ = "2026.6.2"
@@ -31,6 +31,7 @@ I = IGNORECASE = 2
 M = MULTILINE = 8
 S = DOTALL = 16
 U = UNICODE = 32
+X = VERBOSE = 64
 A = ASCII = 256
 
 

@@ -913,12 +913,12 @@ PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
         return nullptr;
     }
 
-    if ((py_flags & (PYFLAG_LOCALE | PYFLAG_VERBOSE | PYFLAG_DEBUG)) != 0) {
-        set_error("re.L, re.X and re.DEBUG are not supported by real");
+    if ((py_flags & (PYFLAG_LOCALE | PYFLAG_DEBUG)) != 0) {
+        set_error("re.L and re.DEBUG are not supported by real");
         return nullptr;
     }
     constexpr unsigned long known = PYFLAG_IGNORECASE | PYFLAG_MULTILINE | PYFLAG_DOTALL |
-                                    PYFLAG_UNICODE | PYFLAG_ASCII;
+                                    PYFLAG_UNICODE | PYFLAG_ASCII | PYFLAG_VERBOSE;
     if ((py_flags & ~known) != 0) {
         set_error("unknown flag passed to real.compile");
         return nullptr;
@@ -935,6 +935,9 @@ PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
     }
     if ((py_flags & PYFLAG_DOTALL) != 0) {
         f = f | real::flags::dotall;
+    }
+    if ((py_flags & PYFLAG_VERBOSE) != 0) {
+        f = f | real::flags::verbose;
     }
 
     real::regex* rx = nullptr;

@@ -30,9 +30,17 @@ class TestCompile(unittest.TestCase):
 
     def test_unsupported_flags_raise(self):
         import re
-        for flag in (re.X, re.L, re.DEBUG):
+        for flag in (re.L, re.DEBUG):
             with self.assertRaises(real.error):
                 real.compile("a", int(flag))
+
+    def test_verbose_flag(self):
+        # re.X / real.X: whitespace and # comments ignored outside classes.
+        self.assertTrue(real.compile(r"a b c", real.X).fullmatch("abc"))
+        self.assertTrue(real.compile(r"\d{4} - \d{2}", real.VERBOSE).fullmatch("2026-06"))
+        self.assertTrue(real.compile("a # note\nb", real.X).fullmatch("ab"))
+        self.assertTrue(real.compile(r"[ ]", real.X).fullmatch(" "))  # literal in class
+        self.assertTrue(real.compile(r"(?x) a b c").fullmatch("abc"))  # inline (?x)
 
     def test_noop_flags_accepted(self):
         self.assertTrue(real.compile("a", real.A).match("a"))

@@ -195,6 +195,68 @@ class TestDifferentialFuzz(unittest.TestCase):
         # Make sure the generator actually produced comparable work.
         self.assertGreater(checked, ITERS // 2)
 
+    def test_verbose_matches_re(self):
+        # re.X: unescaped whitespace and #-comments outside classes are ignored.
+        # Inject them into generated patterns and require REAL and re to agree.
+        rng = random.Random(SEED ^ 0x5EED)
+        checked = 0
+        for _ in range(ITERS // 2):
+            gen = PatternGen(rng)
+            verbose = verbosify(gen.pattern(), rng)
+            try:
+                rp = re.compile(verbose, re.ASCII | re.VERBOSE)
+            except re.error:
+                continue
+            try:
+                xp = real.compile(verbose, real.X)
+            except real.error:
+                continue  # REAL may reject a narrower grammar; only agreement is required
+            ng = rp.groups
+            for _ in range(3):
+                text = random_text(rng)
+                if not text:
+                    continue
+                ctx = f"verbose pattern={verbose!r} text={text!r}"
+                try:
+                    with deadline():
+                        facts = (match_facts(xp.search(text), ng),
+                                 [m.span() for m in xp.finditer(text)])
+                        ref = (match_facts(rp.search(text), ng),
+                               [m.span() for m in rp.finditer(text)])
+                except _Timeout:
+                    continue
+                self.assertEqual(facts, ref, ctx)
+                checked += 1
+        self.assertGreater(checked, 0)
+
+
+def verbosify(pattern, rng):
+    """Insert verbose-insignificant whitespace and #-comments into a pattern.
+
+    Whitespace goes only outside character classes and never right after a
+    backslash or a `(` (which would split an escape or a `(?...)` token); both
+    engines apply the same rule, so a correct REAL agrees with re on the result.
+    """
+    out = []
+    i = 0
+    in_class = False
+    while i < len(pattern):
+        c = pattern[i]
+        prev = pattern[i - 1] if i > 0 else ""
+        if not in_class and prev not in ("\\", "(") and rng.random() < 0.4:
+            out.append(rng.choice([" ", "  ", "\t", "\n", "  # note\n"]))
+        if c == "\\" and i + 1 < len(pattern):
+            out.append(pattern[i:i + 2])
+            i += 2
+            continue
+        if not in_class and c == "[":
+            in_class = True
+        elif in_class and c == "]":
+            in_class = False
+        out.append(c)
+        i += 1
+    return "".join(out)
+
 
 if __name__ == "__main__":
     unittest.main()

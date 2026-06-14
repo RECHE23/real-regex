@@ -15,8 +15,7 @@ constexpr from end to end, with an `re`-compatible Python binding.
 Unsupported syntax is rejected with `real::regex_error` rather than silently
 diverging. Deferred (and rejected): lookarounds, backreferences,
 atomic/possessive groups, Unicode property classes, Unicode case folding,
-`re.X`, `pos`/`endpos`. The planned next step is a lazy DFA for the
-dense-candidate cases where `re` is still ahead.
+`pos`/`endpos`.
 
 Matching is linear in the input length: a Thompson NFA simulation (Pike VM)
 with marked states, so a pattern such as `(a+)+b` cannot trigger exponential
@@ -50,7 +49,7 @@ number here.
 | `\A` `\Z` | strict text start / end |
 | `\b` `\B` | word boundary / non-boundary (ASCII word characters) |
 | `\<` `\>` | start / end of word (REAL extension, not in Python `re`) |
-| `(?ims)` prefix | global flags: `i` case-insensitive (ASCII), `m` multiline, `s` dotall — also `real::flags` on the constructor |
+| `(?imsx)` prefix | global flags: `i` case-insensitive (ASCII), `m` multiline, `s` dotall, `x` verbose (ignore unescaped whitespace and `#` comments outside classes) — also `real::flags` on the constructor |
 
 **Unicode model:** matching is UTF-8 byte-based, but every construct consumes
 whole codepoints (multi-byte sequences compile to byte-level alternatives), so

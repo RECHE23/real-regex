@@ -89,9 +89,15 @@ class parser
 {
 public:
 
-  //! \param[in] pattern The pattern text to parse (borrowed, must outlive use).
-  constexpr explicit parser(std::string_view pattern)
-    : pattern_(pattern)
+  /*!
+   * \brief Binds the parser to a pattern and the constructor flags.
+   * \param[in] pattern The pattern text (borrowed, must outlive use).
+   * \param[in] init    Flags from the constructor; only `verbose` affects
+   *                    parsing (a leading `(?x)` can add it too).
+   */
+  constexpr explicit parser(std::string_view pattern, flags init = flags::none)
+    : pattern_(pattern),
+      verbose_(has_flag(init, flags::verbose))
   {}
 
   /*!
@@ -113,9 +119,38 @@ public:
 
 private:
 
-  std::string_view pattern_;  //!< The pattern being parsed.
-  std::size_t      pos_ {};   //!< Current read offset into \ref pattern_.
-  std::int32_t     depth_ {}; //!< Current group nesting (see \ref max_nesting_depth).
+  std::string_view pattern_;     //!< The pattern being parsed.
+  std::size_t      pos_ {};      //!< Current read offset into \ref pattern_.
+  std::int32_t     depth_ {};    //!< Current group nesting (see \ref max_nesting_depth).
+  bool             verbose_ {};  //!< `re.X`: skip unescaped whitespace and `#` comments outside classes.
+
+  /*!
+   * \brief In verbose mode, consumes insignificant whitespace and `#` comments.
+   *
+   * No-op unless \ref verbose_. Called only between tokens outside character
+   * classes; escaped whitespace (`\ `) is read as a literal by the escape
+   * parser, never reaching here.
+   */
+  constexpr void skip_insignificant()
+  {
+    if (!verbose_) {
+      return;
+    }
+    while (!eof()) {
+      const char c {peek()};
+      if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v') {
+        ++pos_;
+      }
+      else if (c == '#') {
+        while (!eof() && peek() != '\n') {
+          ++pos_;
+        }
+      }
+      else {
+        break;
+      }
+    }
+  }
 
   /*!
    * \brief Aborts the parse with a \ref real::regex_error at the current offset.
@@ -220,8 +255,13 @@ private:
   {
     std::int32_t first {-1};
     std::int32_t last {-1};
-    while (!eof() && peek() != '|' && peek() != ')') {
+    while (true) {
+      skip_insignificant(); // verbose: between elements and before '|' / ')'
+      if (eof() || peek() == '|' || peek() == ')') {
+        break;
+      }
       std::int32_t atom {parse_atom(out)};
+      skip_insignificant(); // verbose: whitespace between an atom and its quantifier
       atom = parse_quantifier(out, atom);
       if (first == -1) {
         first = atom;
@@ -420,6 +460,8 @@ private:
         return flags::multiline;
       case 's':
         return flags::dotall;
+      case 'x':
+        return flags::verbose;
       // 'a' (ASCII) is a recognized flag, accepted as a no-op because ASCII
       // is already this library's semantics — intent distinct from an
       // unrecognized letter, hence kept separate from default.
@@ -430,10 +472,10 @@ private:
     }
   }
 
-  //! \param[in] c A character. \return `true` if \p c is a flag letter (imsa).
+  //! \param[in] c A character. \return `true` if \p c is a flag letter (imsax).
   static constexpr bool is_flag_letter(char c)
   {
-    return c == 'i' || c == 'm' || c == 's' || c == 'a';
+    return c == 'i' || c == 'm' || c == 's' || c == 'a' || c == 'x';
   }
 
   /*!
@@ -465,6 +507,9 @@ private:
       return false;
     }
     out.inline_flags = out.inline_flags | found;
+    if (has_flag(found, flags::verbose)) {
+      verbose_ = true; // affects how the rest of the pattern is parsed
+    }
     return true;
   }
 
@@ -851,9 +896,9 @@ private:
  * \return The parsed AST.
  * \throws real::regex_error on unsupported or malformed syntax.
  */
-constexpr ast parse(std::string_view pattern)
+constexpr ast parse(std::string_view pattern, flags init = flags::none)
 {
-  return parser(pattern).parse();
+  return parser(pattern, init).parse();
 }
 
 } // namespace real::detail

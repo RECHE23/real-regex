@@ -38,6 +38,7 @@ enum class flags : std::uint8_t
   multiline = 2, //!< `^` and `$` also match at line boundaries.
   dotall    = 4, //!< `.` also matches `\n`.
   bytes     = 8, //!< Binary mode: `.` and `[^…]` match raw bytes, not codepoints.
+  verbose   = 16, //!< Verbose mode (`re.X`): ignore unescaped whitespace and `#` comments outside classes.
 };
 
 /*!

@@ -478,7 +478,7 @@ struct dynamic_storage
    */
   static constexpr dynamic_storage compile(std::string_view pattern, flags f)
   {
-    const ast   tree {detail::parse(pattern)};
+    const ast   tree {detail::parse(pattern, f)};
     const flags effective {f | tree.inline_flags};
     return {.pattern_text    = std::string(pattern),
             .program         = detail::compile(tree, effective),
@@ -515,7 +515,7 @@ private:
   //! \return The freshly built program (used for both measuring and filling).
   static constexpr dynamic_program build()
   {
-    const ast tree {detail::parse(Pat.view())};
+    const ast tree {detail::parse(Pat.view(), F)};
     return detail::compile(tree, F | tree.inline_flags);
   }
 
@@ -539,7 +539,7 @@ private:
 
 public:
 
-  static constexpr flags         effective_flags {F | detail::parse(Pat.view()).inline_flags};      //!< Flags merged with (?ims).
+  static constexpr flags         effective_flags {F | detail::parse(Pat.view(), F).inline_flags};   //!< Flags merged with (?ims).
   static constexpr pattern_hints hints {build().hints};                                             //!< Search hints.
   static constexpr std::size_t   code_size {build().code.size()};                                   //!< Instruction count.
   static constexpr std::size_t   class_count {build().classes.size()};                              //!< Distinct class count.
