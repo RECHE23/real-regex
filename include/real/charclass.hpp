@@ -23,28 +23,28 @@ namespace real::detail {
    */
   struct char_class
   {
-    std::array<std::uint64_t, 4> bits {}; //!< Bitmap; bit `b` is byte `b's` membership.
+    std::array<std::uint64_t, 4> bits {}; //!< Bitmap; bit `byte` is byte `byte`'s membership.
 
     /*!
-     * \brief Adds byte \p b to the set.
-     * \param[in] b The byte to insert.
+     * \brief Adds byte \p byte to the set.
+     * \param[in] byte The byte to insert.
      */
-    constexpr void set(std::uint8_t b)
+    constexpr void set(std::uint8_t byte)
     {
-      const unsigned bit {b};
+      const unsigned bit {byte};
       bits[bit >> 6U] |= std::uint64_t {1} << (bit & 63U);
     }
 
     /*!
-     * \brief Adds the inclusive byte range `[lo, hi]` to the set.
-     * \param[in] lo First byte of the range.
-     * \param[in] hi Last byte of the range (inclusive).
+     * \brief Adds the inclusive byte range `[low, high]` to the set.
+     * \param[in] low  First byte of the range.
+     * \param[in] high Last byte of the range (inclusive).
      */
-    constexpr void set_range(std::uint8_t lo,
-                             std::uint8_t hi)
+    constexpr void set_range(std::uint8_t low,
+                             std::uint8_t high)
     {
-      for (unsigned b = lo; b <= hi; ++b) {
-        set(static_cast<std::uint8_t>(b));
+      for (unsigned byte = low; byte <= high; ++byte) {
+        set(static_cast<std::uint8_t>(byte));
       }
     }
 
@@ -82,13 +82,13 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Tests membership of byte \p b.
-     * \param[in] b The byte to test.
-     * \return `true` if \p b is in the set.
+     * \brief Tests membership of byte \p byte.
+     * \param[in] byte The byte to test.
+     * \return `true` if \p byte is in the set.
      */
-    [[nodiscard]] constexpr bool test(std::uint8_t b) const
+    [[nodiscard]] constexpr bool test(std::uint8_t byte) const
     {
-      const unsigned bit {b};
+      const unsigned bit {byte};
       return ((bits[bit >> 6U] >> (bit & 63U)) & 1U) != 0;
     }
 
@@ -105,36 +105,36 @@ namespace real::detail {
   };
 
   /*!
-   * \brief Closes \p cc under ASCII case folding.
+   * \brief Closes \p klass under ASCII case folding.
    *
    * Whenever a letter is present its other-case twin is added. Applied to a
    * class \e before negation, so `[^a]` with `icase` rejects both
    * 'a' and 'A', matching Python.
    *
-   * \param[in,out] cc The class to fold in place.
+   * \param[in,out] klass The class to fold in place.
    */
-  constexpr void fold_ascii_case(char_class& cc)
+  constexpr void fold_ascii_case(char_class& klass)
   {
-    for (std::uint8_t c = 'A'; c <= 'Z'; ++c) {
-      const auto lower {static_cast<std::uint8_t>(c + 32)};
-      if (cc.test(c)) {
-        cc.set(lower);
+    for (std::uint8_t upper = 'A'; upper <= 'Z'; ++upper) {
+      const auto lower {static_cast<std::uint8_t>(upper + 32)};
+      if (klass.test(upper)) {
+        klass.set(lower);
       }
-      if (cc.test(lower)) {
-        cc.set(c);
+      if (klass.test(lower)) {
+        klass.set(upper);
       }
     }
   }
 
   /*!
-   * \brief Reports whether \p b is an ASCII "word" byte (`[0-9A-Za-z_]`).
-   * \param[in] b The byte to classify.
+   * \brief Reports whether \p byte is an ASCII "word" byte (`[0-9A-Za-z_]`).
+   * \param[in] byte The byte to classify.
    * \return `true` for ASCII word bytes, used by `\b` / `\w`.
    */
-  [[nodiscard]] constexpr bool is_ascii_word_byte(std::uint8_t b)
+  [[nodiscard]] constexpr bool is_ascii_word_byte(std::uint8_t byte)
   {
-    return (b >= '0' && b <= '9') || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') ||
-           b == '_';
+    return (byte >= '0' && byte <= '9') || (byte >= 'A' && byte <= 'Z') ||
+           (byte >= 'a' && byte <= 'z') || byte == '_';
   }
 
   /*!
@@ -143,9 +143,9 @@ namespace real::detail {
    */
   constexpr char_class digit_set()
   {
-    char_class cc;
-    cc.set_range('0', '9');
-    return cc;
+    char_class result;
+    result.set_range('0', '9');
+    return result;
   }
 
   /*!
@@ -154,12 +154,12 @@ namespace real::detail {
    */
   constexpr char_class word_set()
   {
-    char_class cc;
-    cc.set_range('0', '9');
-    cc.set_range('A', 'Z');
-    cc.set_range('a', 'z');
-    cc.set('_');
-    return cc;
+    char_class result;
+    result.set_range('0', '9');
+    result.set_range('A', 'Z');
+    result.set_range('a', 'z');
+    result.set('_');
+    return result;
   }
 
   /*!
@@ -168,14 +168,14 @@ namespace real::detail {
    */
   constexpr char_class space_set()
   {
-    char_class cc;
-    cc.set(' ');
-    cc.set('\t');
-    cc.set('\n');
-    cc.set('\r');
-    cc.set('\f');
-    cc.set('\v');
-    return cc;
+    char_class result;
+    result.set(' ');
+    result.set('\t');
+    result.set('\n');
+    result.set('\r');
+    result.set('\f');
+    result.set('\v');
+    return result;
   }
 
   // --- UTF-8 byte-class sets -------------------------------------------------
@@ -189,9 +189,9 @@ namespace real::detail {
    */
   constexpr char_class utf8_cont_set()
   {
-    char_class cc;
-    cc.set_range(0x80, 0xBF);
-    return cc;
+    char_class result;
+    result.set_range(0x80, 0xBF);
+    return result;
   }
 
   /*!
@@ -200,9 +200,9 @@ namespace real::detail {
    */
   constexpr char_class utf8_lead2_set()
   {
-    char_class cc;
-    cc.set_range(0xC2, 0xDF);
-    return cc;
+    char_class result;
+    result.set_range(0xC2, 0xDF);
+    return result;
   }
 
   /*!
@@ -211,9 +211,9 @@ namespace real::detail {
    */
   constexpr char_class utf8_lead3_set()
   {
-    char_class cc;
-    cc.set_range(0xE0, 0xEF);
-    return cc;
+    char_class result;
+    result.set_range(0xE0, 0xEF);
+    return result;
   }
 
   /*!
@@ -222,9 +222,9 @@ namespace real::detail {
    */
   constexpr char_class utf8_lead4_set()
   {
-    char_class cc;
-    cc.set_range(0xF0, 0xF4);
-    return cc;
+    char_class result;
+    result.set_range(0xF0, 0xF4);
+    return result;
   }
 } // namespace real::detail
 

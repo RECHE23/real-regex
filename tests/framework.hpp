@@ -19,8 +19,8 @@ namespace test {
   /** \brief One registered test case. */
   struct test_case
   {
-    const char* name;    //!< Human-readable test name.
-    void        (*fn)(); //!< Test function to invoke.
+    const char* name;          //!< Human-readable test name.
+    void        (*function)(); //!< Test function to invoke.
   };
 
   /*!
@@ -42,13 +42,13 @@ namespace test {
   struct registrar
   {
     /*!\brief Registers a test case.
-     * \param[in] name Test name.
-     * \param[in] fn   Test function.
+     * \param[in] name     Test name.
+     * \param[in] function Test function.
      */
     registrar(const char* name,
-              void (*fn)()) noexcept
+              void (*function)()) noexcept
     {
-      registry().push_back({.name = name, .fn = fn});
+      registry().push_back({.name = name, .function = function});
     }
   };
 
@@ -74,17 +74,17 @@ namespace test {
     }
 
     /*!\brief Checks a boolean condition.
-     * \param[in] ok   The condition result.
-     * \param[in] file Source file of the check.
-     * \param[in] line Line number of the check.
-     * \param[in] expr String representation of the condition.
+     * \param[in] condition The condition result.
+     * \param[in] file      Source file of the check.
+     * \param[in] line      Line number of the check.
+     * \param[in] expr      String representation of the condition.
      */
-    inline void check(bool        ok,
+    inline void check(bool        condition,
                       const char* file,
                       int         line,
                       const char* expr)
     {
-      if (ok) {
+      if (condition) {
         ++checks_passed;
         return;
       }
@@ -144,17 +144,17 @@ namespace test {
   inline int run_all()
   {
     int tests_failed = 0;
-    for (const auto& tc : registry()) {
-      detail::current_test   = tc.name;
+    for (const auto& test_case : registry()) {
+      detail::current_test   = test_case.name;
       detail::current_failed = false;
       try {
-        tc.fn();
+        test_case.function();
       }
-      catch (const std::exception& e) {
-        detail::report_failure(tc.name, 0, std::string("unexpected exception: ") + e.what());
+      catch (const std::exception& ex) {
+        detail::report_failure(test_case.name, 0, std::string("unexpected exception: ") + ex.what());
       }
       catch (...) {
-        detail::report_failure(tc.name, 0, "unexpected non-standard exception");
+        detail::report_failure(test_case.name, 0, "unexpected non-standard exception");
       }
       if (detail::current_failed) {
         ++tests_failed;

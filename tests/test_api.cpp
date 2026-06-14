@@ -28,11 +28,11 @@ TEST(literal_fullmatch_consumes_everything)
 TEST(literal_search_finds_leftmost)
 {
   const real::regex        rx("ab");
-  auto                     m = rx.search("xxabyyab");
-  EXPECT(m);
-  EXPECT_EQ(m.start(), 2U);
-  EXPECT_EQ(m.end(), 4U);
-  EXPECT_EQ(m[0], "ab"sv);
+  auto                     match = rx.search("xxabyyab");
+  EXPECT(match);
+  EXPECT_EQ(match.start(), 2U);
+  EXPECT_EQ(match.end(), 4U);
+  EXPECT_EQ(match[0], "ab"sv);
   EXPECT(!rx.search("xyz"));
 }
 
@@ -57,11 +57,11 @@ TEST(escaped_metacharacters_are_literals)
 TEST(no_match_result_is_empty)
 {
   const real::regex        rx("zzz");
-  auto                     m = rx.search("abc");
-  EXPECT(!m);
-  EXPECT_EQ(m.start(), real::npos);
-  EXPECT_EQ(m.end(), real::npos);
-  EXPECT_EQ(m[0], ""sv);
+  auto                     match = rx.search("abc");
+  EXPECT(!match);
+  EXPECT_EQ(match.start(), real::npos);
+  EXPECT_EQ(match.end(), real::npos);
+  EXPECT_EQ(match[0], ""sv);
 }
 
 TEST(unsupported_syntax_is_rejected)
@@ -78,9 +78,9 @@ TEST(regex_error_reports_position)
     real::regex rx("ab\\q");
     EXPECT(false);
   }
-  catch (const real::regex_error& e) {
-    EXPECT_EQ(e.position(), 3U);
-    EXPECT(std::string_view(e.what()).find("escape") != std::string_view::npos);
+  catch (const real::regex_error& ex) {
+    EXPECT_EQ(ex.position(), 3U);
+    EXPECT(std::string_view(ex.what()).find("escape") != std::string_view::npos);
   }
 }
 
@@ -107,14 +107,14 @@ TEST(dynamic_large_slots_sbo)
   }
   real::regex rx(pat);
   std::string subject(40, 'x');
-  auto        m = rx.search(subject); // owning string -> use view internally; avoids deleted && overload
-  EXPECT(m.matched());
-  EXPECT(m.size() > 32);              // >32 groups -> slot count >64, forces reserve in small_vec (heap path)
-  EXPECT(m[39] == "x");               // last group participates
+  auto        match = rx.search(subject); // owning string -> use view internally; avoids deleted && overload
+  EXPECT(match.matched());
+  EXPECT(match.size() > 32);              // >32 groups -> slot count >64, forces reserve in small_vec (heap path)
+  EXPECT(match[39] == "x");               // last group participates
 
   // Explicit copy after growth: exercises small_vec heap copy ctor (was a coverage gap
   // for the SBO advancement; secures that grown results can be copied without issue).
-  auto m2 = m; // NOLINT(performance-unnecessary-copy-initialization) — the copy is the test
+  auto m2 = match; // NOLINT(performance-unnecessary-copy-initialization) — the copy is the test
   EXPECT(m2.size() > 32);
   EXPECT(m2[39] == "x");
 }
@@ -143,8 +143,8 @@ TEST(small_vec_grown_result_copy_exercises_heap_copy)
   }
   real::regex rx(pat);
   std::string subject(40, 'x');
-  auto        m  = rx.search(subject);
-  auto        m2 = m; // NOLINT(performance-unnecessary-copy-initialization) — copy after growth is the test
+  auto        match  = rx.search(subject);
+  auto        m2     = match; // NOLINT(performance-unnecessary-copy-initialization) — copy after growth is the test
   EXPECT(m2.size() > 32);
   EXPECT(m2[39] == "x");
 
@@ -170,9 +170,9 @@ TEST(program_size_limit)
     EXPECT(r.raw_program().code.size() < 300);
     // matching still functions
     std::string subject(200, 'a');
-    auto        m = r.search(subject);
-    EXPECT(m.matched());
-    EXPECT_EQ(m[0].size(), 200U);
+    auto        match = r.search(subject);
+    EXPECT(match.matched());
+    EXPECT_EQ(match[0].size(), 200U);
   }
 
   // A nested shape that multiplies unrolls beyond cap must raise cleanly.
@@ -184,9 +184,9 @@ TEST(program_size_limit)
     std::string what;
     try {
       real::regex r(pat);
-    } catch (const real::regex_error& e) {
+    } catch (const real::regex_error& ex) {
       threw = true;
-      what  = e.what();
+      what  = ex.what();
     } catch (...) {
       // other exception bad
     }

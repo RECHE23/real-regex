@@ -66,23 +66,23 @@ TEST(alternation_under_star)
 TEST(captures_basic)
 {
   const real::regex        rx("(\\d{4})-(\\d{2})");
-  auto                     m = rx.search("date: 2026-06!");
-  EXPECT(m);
-  EXPECT_EQ(m.size(), 3U);
-  EXPECT_EQ(m[0], "2026-06"sv);
-  EXPECT_EQ(m[1], "2026"sv);
-  EXPECT_EQ(m[2], "06"sv);
-  EXPECT_EQ(m.start(1), 6U);
-  EXPECT_EQ(m.end(2), 13U);
+  auto                     match = rx.search("date: 2026-06!");
+  EXPECT(match);
+  EXPECT_EQ(match.size(), 3U);
+  EXPECT_EQ(match[0], "2026-06"sv);
+  EXPECT_EQ(match[1], "2026"sv);
+  EXPECT_EQ(match[2], "06"sv);
+  EXPECT_EQ(match.start(1), 6U);
+  EXPECT_EQ(match.end(2), 13U);
 }
 
 TEST(captures_numbered_by_open_paren)
 {
   const real::regex        rx("((a)(b))c");
-  auto                     m = rx.fullmatch("abc");
-  EXPECT_EQ(m[1], "ab"sv);
-  EXPECT_EQ(m[2], "a"sv);
-  EXPECT_EQ(m[3], "b"sv);
+  auto                     match = rx.fullmatch("abc");
+  EXPECT_EQ(match[1], "ab"sv);
+  EXPECT_EQ(match[2], "a"sv);
+  EXPECT_EQ(match[3], "b"sv);
   EXPECT_EQ(rx.group_count(), 3U);
 }
 
@@ -90,11 +90,11 @@ TEST(captures_across_three_branch_alternation)
 {
   // Historical bug: captures lost in alternations of 3+ branches.
   const real::regex        rx("(a)|(b)|(c)");
-  auto                     m = rx.search("zb");
-  EXPECT(m);
-  EXPECT_EQ(m.start(1), real::npos); // like Python: (None, 'b', None)
-  EXPECT_EQ(m[2], "b"sv);
-  EXPECT_EQ(m.start(3), real::npos);
+  auto                     match = rx.search("zb");
+  EXPECT(match);
+  EXPECT_EQ(match.start(1), real::npos); // like Python: (None, 'b', None)
+  EXPECT_EQ(match[2], "b"sv);
+  EXPECT_EQ(match.start(3), real::npos);
 }
 
 TEST(unset_and_repeated_groups_python_semantics)
@@ -104,9 +104,9 @@ TEST(unset_and_repeated_groups_python_semantics)
   EXPECT_EQ(real::regex("(ab)+").fullmatch("abab").start(1), 2U);
   EXPECT_EQ(real::regex("(a+)+").match("aaa")[1], "aaa"sv);
   // (a*)(a*): greedy first, empty second.
-  auto m = real::regex("(a*)(a*)").fullmatch("aa");
-  EXPECT_EQ(m[1], "aa"sv);
-  EXPECT_EQ(m[2], ""sv);
+  auto match = real::regex("(a*)(a*)").fullmatch("aa");
+  EXPECT_EQ(match[1], "aa"sv);
+  EXPECT_EQ(match[2], ""sv);
 }
 
 TEST(nullable_loop_capture_keeps_last_nonempty_iteration)
@@ -123,24 +123,24 @@ TEST(nullable_loop_capture_keeps_last_nonempty_iteration)
 TEST(non_capturing_groups)
 {
   const real::regex        rx("(?:ab)+(c)");
-  auto                     m = rx.fullmatch("ababc");
+  auto                     match = rx.fullmatch("ababc");
   EXPECT_EQ(rx.group_count(), 1U);
-  EXPECT_EQ(m[1], "c"sv);
+  EXPECT_EQ(match[1], "c"sv);
   EXPECT(real::regex("(?:a|b)c").fullmatch("bc"));
 }
 
 TEST(named_groups_python_and_dotnet_styles)
 {
   const real::regex        rx("(?P<year>\\d{4})-(?<month>\\d{2})");
-  auto                     m = rx.search("2026-06");
-  EXPECT_EQ(m.group_index("year"), 1U);
-  EXPECT_EQ(m.group_index("month"), 2U);
-  EXPECT_EQ(m["year"], "2026"sv);
-  EXPECT_EQ(m["month"], "06"sv);
-  EXPECT_EQ(m.start("year"), 0U);
-  EXPECT_EQ(m.end("month"), 7U);
-  EXPECT_EQ(m.group_index("day"), real::npos);
-  EXPECT_EQ(m["day"], ""sv);
+  auto                     match = rx.search("2026-06");
+  EXPECT_EQ(match.group_index("year"), 1U);
+  EXPECT_EQ(match.group_index("month"), 2U);
+  EXPECT_EQ(match["year"], "2026"sv);
+  EXPECT_EQ(match["month"], "06"sv);
+  EXPECT_EQ(match.start("year"), 0U);
+  EXPECT_EQ(match.end("month"), 7U);
+  EXPECT_EQ(match.group_index("day"), real::npos);
+  EXPECT_EQ(match["day"], ""sv);
 }
 
 TEST(quantified_groups)
@@ -191,8 +191,8 @@ TEST(unterminated_group_reports_open_paren_position)
     real::regex rx("ab(cd");
     EXPECT(false);
   }
-  catch (const real::regex_error& e) {
-    EXPECT_EQ(e.position(), 2U);
+  catch (const real::regex_error& ex) {
+    EXPECT_EQ(ex.position(), 2U);
   }
 }
 

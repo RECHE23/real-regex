@@ -180,9 +180,9 @@ TEST(prefilter_rare_byte_literal)
   text[500] = 'x';
   std::string s = "aax";  // freq: a=2, x=1 → rarest 'x' at idx 2
   real::regex rx(s);
-  auto        m = rx.search(text);
-  EXPECT(m.matched());
-  EXPECT_EQ(m.start(), 498U);
+  auto        match = rx.search(text);
+  EXPECT(match.matched());
+  EXPECT_EQ(match.start(), 498U);
 }
 
 TEST(prefilter_rare_byte_with_rare_in_middle)
@@ -195,9 +195,9 @@ TEST(prefilter_rare_byte_with_rare_in_middle)
   text[100] = 'x';
   text[101] = 'a';
   real::regex rx("axa");
-  auto        m = rx.search(text);
-  EXPECT(m.matched());
-  EXPECT_EQ(m.start(), 99U);
+  auto        match = rx.search(text);
+  EXPECT(match.matched());
+  EXPECT_EQ(match.start(), 99U);
 }
 
 TEST(prefilter_rare_byte_rare_first)
@@ -209,9 +209,9 @@ TEST(prefilter_rare_byte_rare_first)
   text[100] = 'a';
   text[101] = 'a';
   real::regex rx("xaa");  // 'x' rarest in literal (freq x=1, a=2), at idx 0
-  auto        m = rx.search(text);
-  EXPECT(m.matched());
-  EXPECT_EQ(m.start(), 99U);
+  auto        match = rx.search(text);
+  EXPECT(match.matched());
+  EXPECT_EQ(match.start(), 99U);
 }
 
 TEST(prefilter_rare_byte_cand_before_pos)
@@ -222,9 +222,9 @@ TEST(prefilter_rare_byte_cand_before_pos)
   // cand=1, match.
   std::string text = "xaax";
   real::regex rx("aax");
-  auto        m = rx.search(text);
-  EXPECT(m.matched());
-  EXPECT_EQ(m.start(), 1U);
+  auto        match = rx.search(text);
+  EXPECT(match.matched());
+  EXPECT_EQ(match.start(), 1U);
 }
 
 TEST(literal_prefilter_throughput_smoke)
@@ -233,14 +233,14 @@ TEST(literal_prefilter_throughput_smoke)
   std::string text(8 << 20, 'a');
   text += "needle";
   const real::regex  rx("needle\\d?");
-  const auto         begin = std::chrono::steady_clock::now();
-  auto               m     = rx.search(text);
+  const auto         begin     = std::chrono::steady_clock::now();
+  auto               match     = rx.search(text);
   for (int i = 1; i < 20; ++i) {
-    m = rx.search(text);
+    match = rx.search(text);
   }
   const auto elapsed = std::chrono::steady_clock::now() - begin;
-  EXPECT(m.matched());
-  EXPECT_EQ(m.start(), static_cast<std::size_t>(8 << 20));
+  EXPECT(match.matched());
+  EXPECT_EQ(match.start(), static_cast<std::size_t>(8 << 20));
   EXPECT(elapsed < std::chrono::seconds(2)); // 160 MB scanned in total
 }
 
@@ -288,9 +288,9 @@ TEST(prefilter_rare_byte_global_freq_prefers_rare_letters)
   text[225] = 'r';
   text[226] = 'y';
   real::regex rx("query");
-  auto        m = rx.search(text);
-  EXPECT(m.matched());
-  EXPECT_EQ(m.start(), 222U);
+  auto        match = rx.search(text);
+  EXPECT(match.matched());
+  EXPECT_EQ(match.start(), 222U);
 }
 
 TEST(prefilter_rare_byte_global_freq_punctuation_anchor)
@@ -306,9 +306,9 @@ TEST(prefilter_rare_byte_global_freq_punctuation_anchor)
   text[82]  = 'a';
   text[83]  = 'r';
   real::regex rx("foo{bar");
-  auto        m = rx.search(text);
-  EXPECT(m.matched());
-  EXPECT_EQ(m.start(), 77U);
+  auto        match = rx.search(text);
+  EXPECT(match.matched());
+  EXPECT_EQ(match.start(), 77U);
 }
 
 TEST(prefilter_rare_byte_global_freq_prose_like)
@@ -325,9 +325,9 @@ TEST(prefilter_rare_byte_global_freq_prose_like)
   const std::size_t insert = 47;
   hay.replace(insert, lit.size(), lit);
   real::regex rx(lit);
-  auto        m = rx.search(hay);
-  EXPECT(m.matched());
-  EXPECT_EQ(m.start(), insert);
+  auto        match = rx.search(hay);
+  EXPECT(match.matched());
+  EXPECT_EQ(match.start(), insert);
 }
 
 TEST(exact_literal_fastpath_hint_and_results)

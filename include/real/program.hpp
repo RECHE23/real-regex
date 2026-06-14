@@ -45,26 +45,26 @@ namespace real {
 
   /*!
    * \brief Bitwise-OR of two flag sets.
-   * \param[in] a First flag set.
-   * \param[in] b Second flag set.
-   * \return The union of \p a and \p b.
+   * \param[in] lhs First flag set.
+   * \param[in] rhs Second flag set.
+   * \return The union of \p lhs and \p rhs.
    */
-  constexpr flags operator|(flags a,
-                            flags b)
+  constexpr flags operator|(flags lhs,
+                            flags rhs)
   {
-    return static_cast<flags>(static_cast<std::uint8_t>(a) | static_cast<std::uint8_t>(b));
+    return static_cast<flags>(static_cast<std::uint8_t>(lhs) | static_cast<std::uint8_t>(rhs));
   }
 
   /*!
    * \brief Bitwise-AND of two flag sets.
-   * \param[in] a First flag set.
-   * \param[in] b Second flag set.
-   * \return The intersection of \p a and \p b.
+   * \param[in] lhs First flag set.
+   * \param[in] rhs Second flag set.
+   * \return The intersection of \p lhs and \p rhs.
    */
-  constexpr flags operator&(flags a,
-                            flags b)
+  constexpr flags operator&(flags lhs,
+                            flags rhs)
   {
-    return static_cast<flags>(static_cast<std::uint8_t>(a) & static_cast<std::uint8_t>(b));
+    return static_cast<flags>(static_cast<std::uint8_t>(lhs) & static_cast<std::uint8_t>(rhs));
   }
 
   /*!
@@ -162,11 +162,11 @@ namespace real {
      */
     struct instr
     {
-      opcode        op;       //!< The operation.
-      std::uint8_t  arg8  {}; //!< Byte literal, or \ref assert_kind, depending on op.
-      std::uint16_t arg16 {}; //!< Class index (klass) or capture slot (save).
-      std::int32_t  x     {}; //!< Primary branch target (split/jump).
-      std::int32_t  y     {}; //!< Secondary branch target (split).
+      opcode        op;                  //!< The operation.
+      std::uint8_t  arg8             {}; //!< Byte literal, or \ref assert_kind, depending on op.
+      std::uint16_t arg16            {}; //!< Class index (klass) or capture slot (save).
+      std::int32_t  primary_target   {}; //!< Primary branch target (split/jump).
+      std::int32_t  secondary_target {}; //!< Secondary branch target (split).
     };
 
     /*!

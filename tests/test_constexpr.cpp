@@ -100,9 +100,9 @@ namespace {
     std::size_t       count = 0;
     std::size_t       total = 0;
     const real::regex digits("\\d+");
-    for (const auto& m : digits.find_iter("a1 bb22 c333")) {
+    for (const auto& match : digits.find_iter("a1 bb22 c333")) {
       ++count;
-      total += m.end() - m.start();
+      total += match.end() - match.start();
     }
     CONSTEXPR_EXPECT(count == 3);
     CONSTEXPR_EXPECT(total == 6);

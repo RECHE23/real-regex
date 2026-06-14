@@ -47,13 +47,13 @@ namespace real {
      * Implicit by design: it is what lets a string literal be a non-type
      * template argument; marking it `explicit` would defeat the purpose.
      *
-     * \param[in] s The string literal to capture.
+     * \param[in] literal The string literal to capture.
      */
     // NOLINTNEXTLINE(google-explicit-constructor,hicpp-explicit-conversions)
-    constexpr fixed_string(const char (&s)[N])
+    constexpr fixed_string(const char (&literal)[N])
     {
       for (std::size_t i = 0; i < N; ++i) {
-        data[i] = s[i];
+        data[i] = literal[i];
       }
     }
 
@@ -585,17 +585,17 @@ namespace real {
       flags           effective_flags {flags::none}; //!< Constructor flags merged with any (?ims).
 
       /*!
-       * \brief Parses and compiles \p pattern with flags \p f.
-       * \param[in] pattern The pattern text.
-       * \param[in] f       The requested flags (merged with a leading (?ims)).
+       * \brief Parses and compiles \p pattern with flags \p compile_flags.
+       * \param[in] pattern       The pattern text.
+       * \param[in] compile_flags The requested flags (merged with a leading (?ims)).
        * \return A populated storage object.
        * \throws real::regex_error on an invalid or over-limit pattern.
        */
       static constexpr dynamic_storage compile(std::string_view pattern,
-                                               flags            f)
+                                               flags            compile_flags)
       {
-        const ast   tree      {detail::parse(pattern, f)};
-        const flags effective {f | tree.inline_flags};
+        const ast   tree      {detail::parse(pattern, compile_flags)};
+        const flags effective {compile_flags | tree.inline_flags};
         return {.pattern_text    = std::string(pattern),
                 .program         = detail::compile(tree, effective),
                 .effective_flags = effective};
@@ -657,17 +657,17 @@ namespace real {
        * \tparam T   Element type.
        * \tparam N   Exact size (measured from \ref build).
        * \tparam Vec Source container type.
-       * \param[in] v The source vector.
+       * \param[in] source The source vector.
        * \return The exactly-sized array.
        */
       template <typename T, std::size_t N, typename Vec>
-      static constexpr std::array<T, N> take(const Vec& v)
+      static constexpr std::array<T, N> take(const Vec& source)
       {
-        std::array<T, N> out {};
+        std::array<T, N> result {};
         for (std::size_t i = 0; i < N; ++i) {
-          out[i] = v[i];
+          result[i] = source[i];
         }
-        return out;
+        return result;
       }
 
     public:

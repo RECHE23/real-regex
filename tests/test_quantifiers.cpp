@@ -1,4 +1,4 @@
-// Quantifiers: greedy and lazy *, +, ?, {n}, {n,}, {,m}, {n,m} — and the
+// Quantifiers: greedy and lazy *, +, ?, {n}, {n,}, {,match}, {n,match} — and the
 // linear-time guarantee on patterns that explode backtracking engines.
 #include <chrono>
 #include <string_view>

@@ -68,27 +68,27 @@ struct MatchObject {
     std::vector<Py_ssize_t>* char_spans;
 };
 
-PatternObject* as_pattern(PyObject* o) { return reinterpret_cast<PatternObject*>(o); }
-MatchObject* as_match(PyObject* o) { return reinterpret_cast<MatchObject*>(o); }
+PatternObject* as_pattern(PyObject* obj) { return reinterpret_cast<PatternObject*>(obj); }
+MatchObject* as_match(PyObject* obj) { return reinterpret_cast<MatchObject*>(obj); }
 
 void Pattern_dealloc(PyObject* self) {
     PyTypeObject* tp = Py_TYPE(self);
-    PatternObject* p = as_pattern(self);
-    delete p->rx;
-    delete p->scratch;
-    delete p->scratch_slots;
-    Py_XDECREF(p->pattern_obj);
+    PatternObject* pattern = as_pattern(self);
+    delete pattern->rx;
+    delete pattern->scratch;
+    delete pattern->scratch_slots;
+    Py_XDECREF(pattern->pattern_obj);
     PyObject_Free(self);
     Py_DECREF(reinterpret_cast<PyObject*>(tp));
 }
 
 void Match_dealloc(PyObject* self) {
     PyTypeObject* tp = Py_TYPE(self);
-    MatchObject* m = as_match(self);
-    delete m->byte_spans;
-    delete m->char_spans;
-    Py_XDECREF(m->subject);
-    Py_XDECREF(m->pattern);
+    MatchObject* match = as_match(self);
+    delete match->byte_spans;
+    delete match->char_spans;
+    Py_XDECREF(match->subject);
+    Py_XDECREF(match->pattern);
     PyObject_Free(self);
     Py_DECREF(reinterpret_cast<PyObject*>(tp));
 }
@@ -172,12 +172,12 @@ void compute_char_spans(const subject_view& sv, const std::vector<Py_ssize_t>& b
 }
 
 // Decodes subject bytes [s, e) as the right Python type (str or bytes).
-PyObject* slice_subject(PatternObject* pat, const subject_view& sv, Py_ssize_t s,
-                        Py_ssize_t e) {
+PyObject* slice_subject(PatternObject* pat, const subject_view& sv, Py_ssize_t start,
+                        Py_ssize_t end) {
     if (pat->is_bytes != 0) {
-        return PyBytes_FromStringAndSize(sv.data + s, e - s);
+        return PyBytes_FromStringAndSize(sv.data + start, end - start);
     }
-    return PyUnicode_DecodeUTF8(sv.data + s, e - s, nullptr);
+    return PyUnicode_DecodeUTF8(sv.data + start, end - start, nullptr);
 }
 
 PyObject* empty_like(PatternObject* pat) {
@@ -190,20 +190,20 @@ PyObject* empty_like(PatternObject* pat) {
 // ---------------------------------------------------------------------------
 
 PyObject* make_match(PatternObject* pat, PyObject* subject, const subject_view& sv,
-                     const auto& m) {
+                     const auto& match) {
     auto* obj = PyObject_New(MatchObject, reinterpret_cast<PyTypeObject*>(match_type));
     if (obj == nullptr) {
         return nullptr;
     }
     obj->subject = Py_NewRef(subject);
     obj->pattern = Py_NewRef(reinterpret_cast<PyObject*>(pat));
-    obj->byte_spans = new std::vector<Py_ssize_t>(2 * m.size());
+    obj->byte_spans = new std::vector<Py_ssize_t>(2 * match.size());
     obj->char_spans = new std::vector<Py_ssize_t>();
     auto& bytes = *obj->byte_spans;
-    for (std::size_t g = 0; g < m.size(); ++g) {
-        const std::size_t s = m.start(g);
-        bytes[2 * g] = s == real::npos ? -1 : static_cast<Py_ssize_t>(s);
-        bytes[(2 * g) + 1] = s == real::npos ? -1 : static_cast<Py_ssize_t>(m.end(g));
+    for (std::size_t group = 0; group < match.size(); ++group) {
+        const std::size_t start = match.start(group);
+        bytes[2 * group] = start == real::npos ? -1 : static_cast<Py_ssize_t>(start);
+        bytes[(2 * group) + 1] = start == real::npos ? -1 : static_cast<Py_ssize_t>(match.end(group));
     }
     compute_char_spans(sv, bytes, *obj->char_spans);
     return reinterpret_cast<PyObject*>(obj);
@@ -214,18 +214,18 @@ PyObject* make_match(PatternObject* pat, PyObject* subject, const subject_view& 
 // ---------------------------------------------------------------------------
 
 // Group argument -> group number, or -1 with an exception set.
-Py_ssize_t resolve_group(MatchObject* m, PyObject* arg) {
-    PatternObject* pat = as_pattern(m->pattern);
+Py_ssize_t resolve_group(MatchObject* match, PyObject* arg) {
+    PatternObject* pat = as_pattern(match->pattern);
     if (PyLong_Check(arg)) {
-        const Py_ssize_t g = PyLong_AsSsize_t(arg);
-        if (g == -1 && PyErr_Occurred() != nullptr) {
+        const Py_ssize_t group = PyLong_AsSsize_t(arg);
+        if (group == -1 && PyErr_Occurred() != nullptr) {
             return -1;
         }
-        if (g < 0 || static_cast<std::size_t>(g) > pat->rx->group_count()) {
+        if (group < 0 || static_cast<std::size_t>(group) > pat->rx->group_count()) {
             PyErr_SetString(PyExc_IndexError, "no such group");
             return -1;
         }
-        return g;
+        return group;
     }
     if (PyUnicode_Check(arg)) {
         Py_ssize_t len = 0;
@@ -233,49 +233,49 @@ Py_ssize_t resolve_group(MatchObject* m, PyObject* arg) {
         if (name == nullptr) {
             return -1;
         }
-        const std::size_t g =
+        const std::size_t group =
             pat->rx->group_index(std::string_view(name, static_cast<std::size_t>(len)));
-        if (g == real::npos) {
+        if (group == real::npos) {
             PyErr_SetString(PyExc_IndexError, "no such group");
             return -1;
         }
-        return static_cast<Py_ssize_t>(g);
+        return static_cast<Py_ssize_t>(group);
     }
     PyErr_SetString(PyExc_IndexError, "no such group");
     return -1;
 }
 
-PyObject* group_value(MatchObject* m, Py_ssize_t g, PyObject* default_value) {
-    PatternObject* pat = as_pattern(m->pattern);
-    const Py_ssize_t s = (*m->byte_spans)[2 * g];
-    if (s < 0) {
+PyObject* group_value(MatchObject* match, Py_ssize_t group, PyObject* default_value) {
+    PatternObject* pat = as_pattern(match->pattern);
+    const Py_ssize_t start = (*match->byte_spans)[2 * group];
+    if (start < 0) {
         return Py_NewRef(default_value);
     }
-    const Py_ssize_t e = (*m->byte_spans)[(2 * g) + 1];
+    const Py_ssize_t end = (*match->byte_spans)[(2 * group) + 1];
     subject_view sv;
-    if (get_subject(pat, m->subject, &sv) < 0) {
+    if (get_subject(pat, match->subject, &sv) < 0) {
         return nullptr;
     }
-    return slice_subject(pat, sv, s, e);
+    return slice_subject(pat, sv, start, end);
 }
 
 PyObject* Match_group(PyObject* self, PyObject* args) {
-    MatchObject* m = as_match(self);
+    MatchObject* match = as_match(self);
     const Py_ssize_t nargs = PyTuple_Size(args);
     if (nargs == 0) {
-        return group_value(m, 0, Py_None);
+        return group_value(match, 0, Py_None);
     }
     if (nargs == 1) {
-        const Py_ssize_t g = resolve_group(m, PyTuple_GetItem(args, 0));
-        return g < 0 ? nullptr : group_value(m, g, Py_None);
+        const Py_ssize_t group = resolve_group(match, PyTuple_GetItem(args, 0));
+        return group < 0 ? nullptr : group_value(match, group, Py_None);
     }
     PyObject* out = PyTuple_New(nargs);
     if (out == nullptr) {
         return nullptr;
     }
     for (Py_ssize_t i = 0; i < nargs; ++i) {
-        const Py_ssize_t g = resolve_group(m, PyTuple_GetItem(args, i));
-        PyObject* value = g < 0 ? nullptr : group_value(m, g, Py_None);
+        const Py_ssize_t group = resolve_group(match, PyTuple_GetItem(args, i));
+        PyObject* value = group < 0 ? nullptr : group_value(match, group, Py_None);
         if (value == nullptr) {
             Py_DECREF(out);
             return nullptr;
@@ -286,37 +286,37 @@ PyObject* Match_group(PyObject* self, PyObject* args) {
 }
 
 PyObject* Match_subscript(PyObject* self, PyObject* key) {
-    MatchObject* m = as_match(self);
-    const Py_ssize_t g = resolve_group(m, key);
-    return g < 0 ? nullptr : group_value(m, g, Py_None);
+    MatchObject* match = as_match(self);
+    const Py_ssize_t group = resolve_group(match, key);
+    return group < 0 ? nullptr : group_value(match, group, Py_None);
 }
 
 PyObject* Match_groups(PyObject* self, PyObject* args, PyObject* kwargs) {
-    MatchObject* m = as_match(self);
+    MatchObject* match = as_match(self);
     PyObject* default_value = Py_None;
     static const char* const keywords[] = {"default", nullptr};
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|O",
                                      const_cast<char**>(keywords), &default_value)) {
         return nullptr;
     }
-    const auto n = static_cast<Py_ssize_t>(as_pattern(m->pattern)->rx->group_count());
-    PyObject* out = PyTuple_New(n);
+    const auto group_count = static_cast<Py_ssize_t>(as_pattern(match->pattern)->rx->group_count());
+    PyObject* out = PyTuple_New(group_count);
     if (out == nullptr) {
         return nullptr;
     }
-    for (Py_ssize_t g = 1; g <= n; ++g) {
-        PyObject* value = group_value(m, g, default_value);
+    for (Py_ssize_t group = 1; group <= group_count; ++group) {
+        PyObject* value = group_value(match, group, default_value);
         if (value == nullptr) {
             Py_DECREF(out);
             return nullptr;
         }
-        PyTuple_SetItem(out, g - 1, value);
+        PyTuple_SetItem(out, group - 1, value);
     }
     return out;
 }
 
 PyObject* Match_groupdict(PyObject* self, PyObject* args, PyObject* kwargs) {
-    MatchObject* m = as_match(self);
+    MatchObject* match = as_match(self);
     PyObject* default_value = Py_None;
     static const char* const keywords[] = {"default", nullptr};
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|O",
@@ -327,8 +327,8 @@ PyObject* Match_groupdict(PyObject* self, PyObject* args, PyObject* kwargs) {
     if (out == nullptr) {
         return nullptr;
     }
-    for (const auto& [name, index] : as_pattern(m->pattern)->rx->named_groups()) {
-        PyObject* value = group_value(m, static_cast<Py_ssize_t>(index), default_value);
+    for (const auto& [name, index] : as_pattern(match->pattern)->rx->named_groups()) {
+        PyObject* value = group_value(match, static_cast<Py_ssize_t>(index), default_value);
         if (value == nullptr ||
             PyDict_SetItemString(out, std::string(name).c_str(), value) < 0) {
             Py_XDECREF(value);
@@ -343,27 +343,27 @@ PyObject* Match_groupdict(PyObject* self, PyObject* args, PyObject* kwargs) {
 enum class span_part : std::uint8_t { start, end, both };
 
 PyObject* match_position(PyObject* self, PyObject* args, span_part part) {
-    MatchObject* m = as_match(self);
+    MatchObject* match = as_match(self);
     PyObject* arg = nullptr;
     if (!PyArg_ParseTuple(args, "|O", &arg)) {
         return nullptr;
     }
-    Py_ssize_t g = 0;
+    Py_ssize_t group = 0;
     if (arg != nullptr) {
-        g = resolve_group(m, arg);
-        if (g < 0) {
+        group = resolve_group(match, arg);
+        if (group < 0) {
             return nullptr;
         }
     }
-    const Py_ssize_t s = (*m->char_spans)[2 * g];
-    const Py_ssize_t e = (*m->char_spans)[(2 * g) + 1];
+    const Py_ssize_t start = (*match->char_spans)[2 * group];
+    const Py_ssize_t end = (*match->char_spans)[(2 * group) + 1];
     switch (part) {
         case span_part::start:
-            return PyLong_FromSsize_t(s);
+            return PyLong_FromSsize_t(start);
         case span_part::end:
-            return PyLong_FromSsize_t(e);
+            return PyLong_FromSsize_t(end);
         case span_part::both:
-            return Py_BuildValue("(nn)", s, e);
+            return Py_BuildValue("(nn)", start, end);
     }
     return nullptr;  // unreachable
 }
@@ -472,9 +472,9 @@ PyObject* run_single(PyObject* self, PyObject* string, real::detail::run_mode mo
     if (!vm.run(sv.view(), 0, mode, *pat->scratch_slots)) {
         Py_RETURN_NONE;
     }
-    const real::match_result m(sv.view(), *pat->scratch_slots, true, pat->rx->pattern(),
+    const real::match_result match(sv.view(), *pat->scratch_slots, true, pat->rx->pattern(),
                                prog.names);
-    return make_match(pat, string, sv, m);
+    return make_match(pat, string, sv, match);
 }
 
 PyObject* Pattern_match(PyObject* self, PyObject* string) {
@@ -502,30 +502,30 @@ PyObject* Pattern_findall(PyObject* self, PyObject* string) {
         return nullptr;
     }
     const std::size_t ngroups = pat->rx->group_count();
-    for (const auto& m : pat->rx->find_iter(sv.view())) {
+    for (const auto& match : pat->rx->find_iter(sv.view())) {
         PyObject* item = nullptr;
         if (ngroups == 0) {
-            item = slice_subject(pat, sv, static_cast<Py_ssize_t>(m.start()),
-                                 static_cast<Py_ssize_t>(m.end()));
+            item = slice_subject(pat, sv, static_cast<Py_ssize_t>(match.start()),
+                                 static_cast<Py_ssize_t>(match.end()));
         } else if (ngroups == 1) {
-            item = m.start(1) == real::npos
+            item = match.start(1) == real::npos
                        ? empty_like(pat)
-                       : slice_subject(pat, sv, static_cast<Py_ssize_t>(m.start(1)),
-                                       static_cast<Py_ssize_t>(m.end(1)));
+                       : slice_subject(pat, sv, static_cast<Py_ssize_t>(match.start(1)),
+                                       static_cast<Py_ssize_t>(match.end(1)));
         } else {
             item = PyTuple_New(static_cast<Py_ssize_t>(ngroups));
-            for (std::size_t g = 1; item != nullptr && g <= ngroups; ++g) {
+            for (std::size_t group = 1; item != nullptr && group <= ngroups; ++group) {
                 PyObject* part =
-                    m.start(g) == real::npos
+                    match.start(group) == real::npos
                         ? empty_like(pat)
-                        : slice_subject(pat, sv, static_cast<Py_ssize_t>(m.start(g)),
-                                        static_cast<Py_ssize_t>(m.end(g)));
+                        : slice_subject(pat, sv, static_cast<Py_ssize_t>(match.start(group)),
+                                        static_cast<Py_ssize_t>(match.end(group)));
                 if (part == nullptr) {
                     Py_DECREF(item);
                     item = nullptr;
                     break;
                 }
-                PyTuple_SetItem(item, static_cast<Py_ssize_t>(g) - 1, part);
+                PyTuple_SetItem(item, static_cast<Py_ssize_t>(group) - 1, part);
             }
         }
         if (item == nullptr || PyList_Append(out, item) < 0) {
@@ -548,8 +548,8 @@ PyObject* Pattern_finditer(PyObject* self, PyObject* string) {
     if (matches == nullptr) {
         return nullptr;
     }
-    for (const auto& m : pat->rx->find_iter(sv.view())) {
-        PyObject* obj = make_match(pat, string, sv, m);
+    for (const auto& match : pat->rx->find_iter(sv.view())) {
+        PyObject* obj = make_match(pat, string, sv, match);
         if (obj == nullptr || PyList_Append(matches, obj) < 0) {
             Py_XDECREF(obj);
             Py_DECREF(matches);
@@ -589,26 +589,26 @@ PyObject* Pattern_split(PyObject* self, PyObject* args, PyObject* kwargs) {
     };
     Py_ssize_t last = 0;
     Py_ssize_t done = 0;
-    for (const auto& m : pat->rx->find_iter(sv.view())) {
+    for (const auto& match : pat->rx->find_iter(sv.view())) {
         if (maxsplit != 0 && done == maxsplit) {
             break;
         }
-        if (!append(slice_subject(pat, sv, last, static_cast<Py_ssize_t>(m.start())))) {
+        if (!append(slice_subject(pat, sv, last, static_cast<Py_ssize_t>(match.start())))) {
             Py_DECREF(out);
             return nullptr;
         }
-        for (std::size_t g = 1; g <= pat->rx->group_count(); ++g) {
+        for (std::size_t group = 1; group <= pat->rx->group_count(); ++group) {
             PyObject* piece =
-                m.start(g) == real::npos
+                match.start(group) == real::npos
                     ? Py_NewRef(Py_None)
-                    : slice_subject(pat, sv, static_cast<Py_ssize_t>(m.start(g)),
-                                    static_cast<Py_ssize_t>(m.end(g)));
+                    : slice_subject(pat, sv, static_cast<Py_ssize_t>(match.start(group)),
+                                    static_cast<Py_ssize_t>(match.end(group)));
             if (!append(piece)) {
                 Py_DECREF(out);
                 return nullptr;
             }
         }
-        last = static_cast<Py_ssize_t>(m.end());
+        last = static_cast<Py_ssize_t>(match.end());
         ++done;
     }
     if (!append(slice_subject(pat, sv, last, sv.len))) {
@@ -630,7 +630,7 @@ struct repl_segment {
 
 void set_error(const char* message) { PyErr_SetString(error_type, message); }
 
-// Parses Python's replacement template syntax (\1, \g<name>, escapes).
+// Parses Python's replacement template syntax (\1, \group<name>, escapes).
 int parse_template(PatternObject* pat, std::string_view repl,
                    std::vector<repl_segment>& out) {
     std::string literal;
@@ -641,9 +641,9 @@ int parse_template(PatternObject* pat, std::string_view repl,
     };
     std::size_t i = 0;
     while (i < repl.size()) {
-        const char c = repl[i];
-        if (c != '\\') {
-            literal.push_back(c);
+        const char ch = repl[i];
+        if (ch != '\\') {
+            literal.push_back(ch);
             ++i;
             continue;
         }
@@ -652,8 +652,8 @@ int parse_template(PatternObject* pat, std::string_view repl,
             set_error("bad escape (end of pattern)");
             return -1;
         }
-        const char d = repl[i];
-        if (d >= '0' && d <= '9') {
+        const char next_ch = repl[i];
+        if (next_ch >= '0' && next_ch <= '9') {
             Py_ssize_t group = 0;  // \0 .. \99
             std::size_t digits = 0;
             while (i < repl.size() && digits < 2 && repl[i] >= '0' && repl[i] <= '9') {
@@ -668,7 +668,7 @@ int parse_template(PatternObject* pat, std::string_view repl,
             flush_group(group);
             continue;
         }
-        if (d == 'g') {
+        if (next_ch == 'g') {
             ++i;
             if (i >= repl.size() || repl[i] != '<') {
                 set_error("missing < in \\g");
@@ -695,12 +695,12 @@ int parse_template(PatternObject* pat, std::string_view repl,
                     group = (group * 10) + (digit - '0');
                 }
             } else {
-                const std::size_t g = pat->rx->group_index(name);
-                if (g == real::npos) {
+                const std::size_t named_group_index = pat->rx->group_index(name);
+                if (named_group_index == real::npos) {
                     set_error("unknown group name");
                     return -1;
                 }
-                group = static_cast<Py_ssize_t>(g);
+                group = static_cast<Py_ssize_t>(named_group_index);
             }
             if (static_cast<std::size_t>(group) > pat->rx->group_count()) {
                 set_error("invalid group reference");
@@ -710,7 +710,7 @@ int parse_template(PatternObject* pat, std::string_view repl,
             continue;
         }
         ++i;
-        switch (d) {
+        switch (next_ch) {
             case 'n': literal.push_back('\n'); break;
             case 't': literal.push_back('\t'); break;
             case 'r': literal.push_back('\r'); break;
@@ -722,12 +722,12 @@ int parse_template(PatternObject* pat, std::string_view repl,
             default:
                 // Like Python: unknown letter escapes are errors, escaped
                 // punctuation keeps the backslash.
-                if ((d >= 'A' && d <= 'Z') || (d >= 'a' && d <= 'z')) {
+                if ((next_ch >= 'A' && next_ch <= 'Z') || (next_ch >= 'a' && next_ch <= 'z')) {
                     set_error("bad escape in replacement");
                     return -1;
                 }
                 literal.push_back('\\');
-                literal.push_back(d);
+                literal.push_back(next_ch);
                 break;
         }
     }
@@ -791,13 +791,13 @@ PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_c
     std::string result;
     Py_ssize_t last = 0;
     Py_ssize_t done = 0;
-    for (const auto& m : pat->rx->find_iter(sv.view())) {
+    for (const auto& match : pat->rx->find_iter(sv.view())) {
         if (count != 0 && done == count) {
             break;
         }
-        result.append(sv.data + last, static_cast<std::size_t>(m.start()) - last);
+        result.append(sv.data + last, static_cast<std::size_t>(match.start()) - last);
         if (callable) {
-            PyObject* match_obj = make_match(pat, string, sv, m);
+            PyObject* match_obj = make_match(pat, string, sv, match);
             if (match_obj == nullptr) {
                 return nullptr;
             }
@@ -817,13 +817,13 @@ PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_c
             for (const repl_segment& seg : segments) {
                 if (seg.group < 0) {
                     result.append(seg.literal);
-                } else if (m.start(static_cast<std::size_t>(seg.group)) != real::npos) {
-                    const auto g = static_cast<std::size_t>(seg.group);
-                    result.append(sv.data + m.start(g), m.end(g) - m.start(g));
+                } else if (match.start(static_cast<std::size_t>(seg.group)) != real::npos) {
+                    const auto group = static_cast<std::size_t>(seg.group);
+                    result.append(sv.data + match.start(group), match.end(group) - match.start(group));
                 }
             }
         }
-        last = static_cast<Py_ssize_t>(m.end());
+        last = static_cast<Py_ssize_t>(match.end());
         ++done;
     }
     result.append(sv.data + last, static_cast<std::size_t>(sv.len - last));
@@ -1015,31 +1015,31 @@ PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
         set_error("unknown flag passed to real.compile");
         return nullptr;
     }
-    real::flags f = real::flags::none;
+    real::flags compile_flags = real::flags::none;
     if (is_bytes != 0) {
-        f = f | real::flags::bytes;  // raw-byte semantics, like re on bytes
+        compile_flags = compile_flags | real::flags::bytes;  // raw-byte semantics, like re on bytes
     }
     if ((py_flags & PYFLAG_IGNORECASE) != 0) {
-        f = f | real::flags::icase;
+        compile_flags = compile_flags | real::flags::icase;
     }
     if ((py_flags & PYFLAG_MULTILINE) != 0) {
-        f = f | real::flags::multiline;
+        compile_flags = compile_flags | real::flags::multiline;
     }
     if ((py_flags & PYFLAG_DOTALL) != 0) {
-        f = f | real::flags::dotall;
+        compile_flags = compile_flags | real::flags::dotall;
     }
     if ((py_flags & PYFLAG_VERBOSE) != 0) {
-        f = f | real::flags::verbose;
+        compile_flags = compile_flags | real::flags::verbose;
     }
 
     real::regex* rx = nullptr;
     try {
-        rx = new real::regex(std::string_view(data, static_cast<std::size_t>(len)), f);
-    } catch (const real::regex_error& e) {
-        set_error(e.what());
+        rx = new real::regex(std::string_view(data, static_cast<std::size_t>(len)), compile_flags);
+    } catch (const real::regex_error& ex) {
+        set_error(ex.what());
         return nullptr;
-    } catch (const std::exception& e) {
-        PyErr_SetString(PyExc_RuntimeError, e.what());
+    } catch (const std::exception& ex) {
+        PyErr_SetString(PyExc_RuntimeError, ex.what());
         return nullptr;
     }
 

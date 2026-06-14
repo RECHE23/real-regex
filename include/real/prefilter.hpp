@@ -32,17 +32,17 @@ namespace real::detail {
    * lead/continuation byte branches. The shape and the UTF-8 byte ranges are
    * both checked, so the match is unambiguous.
    *
-   * \param[in] code    The instruction stream.
-   * \param[in] classes The interned classes.
-   * \param[in] b       Index of the block's leading split.
+   * \param[in] code        The instruction stream.
+   * \param[in] classes     The interned classes.
+   * \param[in] block_start Index of the block's leading split.
    * \return The ASCII-class index of the codepoint class, or -1 if \p b does not
    *         begin such a block.
    */
   constexpr std::int32_t codepoint_class_at(std::span<const instr>      code,
                                             std::span<const char_class> classes,
-                                            std::size_t                 b)
+                                            std::size_t                 block_start)
   {
-    if (b + 16 > code.size()) {
+    if (block_start + 16 > code.size()) {
       return -1;
     }
     // Compares the class at instruction \p idx with one of the shared UTF-8 sets
@@ -50,27 +50,32 @@ namespace real::detail {
     const auto is_set = [&](std::uint16_t idx, const char_class& want) {
                           return idx < classes.size() && classes[idx] == want;
                         };
-    const auto bi = [&](std::size_t off) { return static_cast<std::int32_t>(b + off); };
+    const auto bi = [&](std::size_t off) { return static_cast<std::int32_t>(block_start + off); };
     const bool shape {
-      code[b].op == opcode::split && code[b].x == bi(1) && code[b].y == bi(3) &&
-      code[b + 1].op == opcode::klass && code[b + 2].op == opcode::jump &&
-      code[b + 3].op == opcode::split && code[b + 3].x == bi(4) && code[b + 3].y == bi(7) &&
-      code[b + 4].op == opcode::klass && code[b + 5].op == opcode::klass &&
-      code[b + 6].op == opcode::jump && code[b + 7].op == opcode::split &&
-      code[b + 7].x == bi(8) && code[b + 7].y == bi(12) && code[b + 8].op == opcode::klass &&
-      code[b + 9].op == opcode::klass && code[b + 10].op == opcode::klass &&
-      code[b + 11].op == opcode::jump && code[b + 12].op == opcode::klass &&
-      code[b + 13].op == opcode::klass && code[b + 14].op == opcode::klass &&
-      code[b + 15].op == opcode::klass};
+      code[block_start].op == opcode::split && code[block_start].primary_target == bi(1) &&
+      code[block_start].secondary_target == bi(3) &&
+      code[block_start + 1].op == opcode::klass && code[block_start + 2].op == opcode::jump &&
+      code[block_start + 3].op == opcode::split && code[block_start + 3].primary_target == bi(4) &&
+      code[block_start + 3].secondary_target == bi(7) &&
+      code[block_start + 4].op == opcode::klass && code[block_start + 5].op == opcode::klass &&
+      code[block_start + 6].op == opcode::jump && code[block_start + 7].op == opcode::split &&
+      code[block_start + 7].primary_target == bi(8) && code[block_start + 7].secondary_target == bi(12) &&
+      code[block_start + 8].op == opcode::klass &&
+      code[block_start + 9].op == opcode::klass && code[block_start + 10].op == opcode::klass &&
+      code[block_start + 11].op == opcode::jump && code[block_start + 12].op == opcode::klass &&
+      code[block_start + 13].op == opcode::klass && code[block_start + 14].op == opcode::klass &&
+      code[block_start + 15].op == opcode::klass};
     const bool ranges {
-      is_set(code[b + 4].arg16, utf8_lead2_set()) && is_set(code[b + 5].arg16, utf8_cont_set()) &&
-      is_set(code[b + 8].arg16, utf8_lead3_set()) && is_set(code[b + 12].arg16, utf8_lead4_set())};
+      is_set(code[block_start + 4].arg16, utf8_lead2_set()) &&
+      is_set(code[block_start + 5].arg16, utf8_cont_set()) &&
+      is_set(code[block_start + 8].arg16, utf8_lead3_set()) &&
+      is_set(code[block_start + 12].arg16, utf8_lead4_set())};
     if (!shape || !ranges) {
       return -1;
     }
-    const std::uint16_t ascii {code[b + 1].arg16};
-    for (int x = 0x80; x <= 0xFF; ++x) {
-      if (classes[ascii].test(static_cast<std::uint8_t>(x))) {
+    const std::uint16_t ascii {code[block_start + 1].arg16};
+    for (int byte = 0x80; byte <= 0xFF; ++byte) {
+      if (classes[ascii].test(static_cast<std::uint8_t>(byte))) {
         return -1; // the ASCII branch must hold ASCII bytes only
       }
     }
@@ -81,9 +86,9 @@ namespace real::detail {
    * \brief Tests whether the whole program is an alternation of straight-line
    *        branches (e.g. `the|fox|dog`).
    *
-   * Layout: save 0, a chain of `split` nodes whose `x` is a branch of byte/klass
-   * ending in `jump` to the shared exit and whose `y` is the next split, the
-   * last branch falling through to save 1, match. Captures, assertions, nested
+   * Layout: save 0, a chain of `split` nodes whose `primary_target` is a branch
+   * of byte/klass ending in `jump` to the shared exit and whose `secondary_target`
+   * is the next split, the last branch falling through to save 1, match. Captures, assertions, nested
    * branches and empty branches all disqualify it.
    *
    * \param[in] code The instruction stream.
@@ -91,40 +96,40 @@ namespace real::detail {
    */
   constexpr bool is_fixed_alternation(std::span<const instr> code)
   {
-    const std::size_t n {code.size()};
-    if (n < 7 || code[0].op != opcode::save || code[n - 2].op != opcode::save ||
-        code[n - 1].op != opcode::match) {
+    const std::size_t code_size {code.size()};
+    if (code_size < 7 || code[0].op != opcode::save || code[code_size - 2].op != opcode::save ||
+        code[code_size - 1].op != opcode::match) {
       return false;
     }
-    const std::size_t exit     {n - 2};
+    const std::size_t exit     {code_size - 2};
     std::size_t       pc       {1};
     std::int32_t      branches {};
     while (true) {
-      const bool   is_split {code[pc].op == opcode::split};
-      std::size_t  q        {is_split ? static_cast<std::size_t>(code[pc].x) : pc};
-      std::int32_t w        {};
-      while (q < exit && (code[q].op == opcode::byte || code[q].op == opcode::klass)) {
-        ++q;
-        ++w;
+      const bool   is_split     {code[pc].op == opcode::split};
+      std::size_t  branch_end   {is_split ? static_cast<std::size_t>(code[pc].primary_target) : pc};
+      std::int32_t branch_width {};
+      while (branch_end < exit && (code[branch_end].op == opcode::byte || code[branch_end].op == opcode::klass)) {
+        ++branch_end;
+        ++branch_width;
       }
-      if (w == 0) {
+      if (branch_width == 0) {
         return false;
       }
       ++branches;
       if (is_split) {
         // A non-final branch ends with `jump exit`; continue at the split's y.
-        if (q >= exit || code[q].op != opcode::jump ||
-            code[q].x != static_cast<std::int32_t>(exit)) {
+        if (branch_end >= exit || code[branch_end].op != opcode::jump ||
+            code[branch_end].primary_target != static_cast<std::int32_t>(exit)) {
           return false;
         }
-        pc = static_cast<std::size_t>(code[pc].y);
+        pc = static_cast<std::size_t>(code[pc].secondary_target);
         if (pc >= exit) {
           return false;
         }
       }
       else {
         // The final branch falls straight through to the exit (save 1).
-        return q == exit && branches >= 2;
+        return branch_end == exit && branches >= 2;
       }
     }
   }
@@ -139,7 +144,7 @@ namespace real::detail {
   constexpr pattern_hints analyze_program(std::span<const instr>      code,
                                           std::span<const char_class> classes)
   {
-    pattern_hints h;
+    pattern_hints hints;
 
     // Start anchoring: the first non-save instruction tells whether every
     // match must begin at position 0 (or at a line start).
@@ -149,26 +154,26 @@ namespace real::detail {
     }
     if (code[pc].op == opcode::assert_position) {
       const auto kind {static_cast<assert_kind>(code[pc].arg8)};
-      h.anchored_start = kind == assert_kind::text_start;
-      h.line_anchored  = kind == assert_kind::line_start;
+      hints.anchored_start = kind == assert_kind::text_start;
+      hints.line_anchored  = kind == assert_kind::line_start;
     }
 
     // Required literal prefix: consecutive byte instructions from the start.
     // Saves and assertions do not consume, so they are crossed: every match
     // still has to begin with the collected bytes (hints only ever filter
     // candidate positions; the engine verifies).
-    std::size_t p {};
-    while (h.prefix_size < h.prefix.size()) {
-      if (code[p].op == opcode::save || code[p].op == opcode::assert_position) {
-        ++p;
+    std::size_t prefix_pc {};
+    while (hints.prefix_size < hints.prefix.size()) {
+      if (code[prefix_pc].op == opcode::save || code[prefix_pc].op == opcode::assert_position) {
+        ++prefix_pc;
         continue;
       }
-      if (code[p].op != opcode::byte) {
+      if (code[prefix_pc].op != opcode::byte) {
         break;
       }
-      h.prefix[h.prefix_size] = static_cast<char>(code[p].arg8);
-      ++h.prefix_size;
-      ++p;
+      hints.prefix[hints.prefix_size] = static_cast<char>(code[prefix_pc].arg8);
+      ++hints.prefix_size;
+      ++prefix_pc;
     }
 
     // Exact literal fast-path hint: the collected prefix bytes are the entire
@@ -177,7 +182,7 @@ namespace real::detail {
     // etc) are post-filters on the byte candidate and must go through normal
     // VM so they can reject bad cands and let search continue. Leading asserts
     // (before any byte) are ok (next_candidate + replay will handle).
-    if (h.prefix_size > 0) {
+    if (hints.prefix_size > 0) {
       bool has_inter_or_trailing_assert {};
       bool seen_byte                    {};
       for (std::size_t i = 0; i < code.size() && !has_inter_or_trailing_assert; ++i) {
@@ -192,12 +197,12 @@ namespace real::detail {
         }
       }
       if (!has_inter_or_trailing_assert) {
-        std::size_t q {p};
+        std::size_t q {prefix_pc};
         while (q < code.size() && code[q].op == opcode::save) {
           ++q;
         }
         if (q < code.size() && code[q].op == opcode::match) {
-          h.exact_literal_len = h.prefix_size;
+          hints.exact_literal_len = hints.prefix_size;
         }
       }
     }
@@ -211,45 +216,45 @@ namespace real::detail {
     stack.push_back(0);
     bool empty_match_possible {};
     while (!stack.empty()) {
-      const std::int32_t at {stack.back()};
+      const std::int32_t current_pc {stack.back()};
       stack.pop_back();
-      if (visited[static_cast<std::size_t>(at)]) {
+      if (visited[static_cast<std::size_t>(current_pc)]) {
         continue;
       }
-      visited[static_cast<std::size_t>(at)] = true;
-      const instr& in {code[static_cast<std::size_t>(at)]};
-      switch (in.op) {
+      visited[static_cast<std::size_t>(current_pc)] = true;
+      const instr& instruction {code[static_cast<std::size_t>(current_pc)]};
+      switch (instruction.op) {
         case opcode::save:
         case opcode::assert_position:
-          stack.push_back(at + 1);
+          stack.push_back(current_pc + 1);
           break;
         case opcode::jump:
-          stack.push_back(in.x);
+          stack.push_back(instruction.primary_target);
           break;
         case opcode::split:
-          stack.push_back(in.x);
-          stack.push_back(in.y);
+          stack.push_back(instruction.primary_target);
+          stack.push_back(instruction.secondary_target);
           break;
         case opcode::byte:
-          h.first_bytes.set(in.arg8);
+          hints.first_bytes.set(instruction.arg8);
           break;
         case opcode::klass:
-          h.first_bytes.merge(classes[in.arg16]);
+          hints.first_bytes.merge(classes[instruction.arg16]);
           break;
         case opcode::match:
           empty_match_possible = true;
           break;
       }
     }
-    h.first_bytes_valid = !empty_match_possible && !h.first_bytes.empty();
+    hints.first_bytes_valid = !empty_match_possible && !hints.first_bytes.empty();
 
     // "class+" shape: save 0, klass, split(back to the klass, exit),
     // save 1, match — greedy only (the lazy variant has different
     // semantics) and no capture groups.
     if (code.size() == 5 && code[0].op == opcode::save && code[1].op == opcode::klass &&
-        code[2].op == opcode::split && code[2].x == 1 && code[2].y == 3 &&
+        code[2].op == opcode::split && code[2].primary_target == 1 && code[2].secondary_target == 3 &&
         code[3].op == opcode::save && code[4].op == opcode::match) {
-      h.greedy_class_loop = code[1].arg16;
+      hints.greedy_class_loop = code[1].arg16;
     }
 
     // "fixed shape": a straight-line run of byte/klass with no branches or
@@ -277,7 +282,7 @@ namespace real::detail {
       }
       if (lead_saves == 1 && trail_saves == 1 && width >= 1 && i + 1 == code.size() &&
           code[i].op == opcode::match) {
-        h.fixed_shape = true;
+        hints.fixed_shape = true;
       }
     }
 
@@ -290,32 +295,32 @@ namespace real::detail {
       const std::int32_t ascii {codepoint_class_at(code, classes, 1)};
       const bool         bare  {code.size() == 19 && code[17].op == opcode::save &&
                                 code[18].op == opcode::match};
-      const bool plus          {code.size() == 20 && code[17].op == opcode::split && code[17].x == 1 &&
+      const bool plus          {code.size() == 20 && code[17].op == opcode::split && code[17].primary_target == 1 &&
                                 code[18].op == opcode::save && code[19].op == opcode::match};
       if (ascii >= 0 && (bare || plus)) {
-        h.codepoint_class_ascii = ascii;
-        h.codepoint_class_plus  = plus;
+        hints.codepoint_class_ascii = ascii;
+        hints.codepoint_class_plus  = plus;
       }
     }
 
     // Whole pattern is an alternation of straight-line branches.
     if (is_fixed_alternation(code)) {
-      h.fixed_alternation = true;
+      hints.fixed_alternation = true;
     }
 
-    if (h.prefix_size > 0) {
-      h.single_first = static_cast<unsigned char>(h.prefix[0]);
+    if (hints.prefix_size > 0) {
+      hints.single_first = static_cast<unsigned char>(hints.prefix[0]);
     }
-    else if (h.first_bytes_valid) {
+    else if (hints.first_bytes_valid) {
       int found {-1};
-      for (unsigned b = 0; b < 256 && found != -2; ++b) {
-        if (h.first_bytes.test(static_cast<std::uint8_t>(b))) {
-          found = found == -1 ? static_cast<int>(b) : -2;
+      for (unsigned byte = 0; byte < 256 && found != -2; ++byte) {
+        if (hints.first_bytes.test(static_cast<std::uint8_t>(byte))) {
+          found = found == -1 ? static_cast<int>(byte) : -2;
         }
       }
-      h.single_first = found >= 0 ? static_cast<std::int16_t>(found) : -1;
+      hints.single_first = found >= 0 ? static_cast<std::int16_t>(found) : -1;
     }
-    return h;
+    return hints;
   }
 
   /*!

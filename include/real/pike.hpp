@@ -289,32 +289,32 @@ namespace real::detail {
                                   run_mode         mode,
                                   OutSlots&        out_slots)
     {
-      const char_class& k =
+      const char_class& klass =
         prog_.classes[static_cast<std::size_t>(prog_.hints.greedy_class_loop)];
       const auto in_class = [&](std::size_t i) {
-                              return k.test(static_cast<std::uint8_t>(text[i]));
+                              return klass.test(static_cast<std::uint8_t>(text[i]));
                             };
-      std::size_t s {start};
+      std::size_t match_start {start};
       if (mode == run_mode::search) {
-        while (s < text.size() && !in_class(s)) {
-          ++s;
+        while (match_start < text.size() && !in_class(match_start)) {
+          ++match_start;
         }
       }
-      if (s >= text.size() || !in_class(s)) {
+      if (match_start >= text.size() || !in_class(match_start)) {
         out_slots.assign(2, npos);
         return false;
       }
-      std::size_t e {s + 1};
-      while (e < text.size() && in_class(e)) {
-        ++e;
+      std::size_t match_end {match_start + 1};
+      while (match_end < text.size() && in_class(match_end)) {
+        ++match_end;
       }
-      if (mode == run_mode::full && e != text.size()) {
+      if (mode == run_mode::full && match_end != text.size()) {
         out_slots.assign(2, npos);
         return false;
       }
       out_slots.assign(2, npos);
-      out_slots[0] = s;
-      out_slots[1] = e;
+      out_slots[0] = match_start;
+      out_slots[1] = match_end;
       return true;
     }
 
@@ -336,16 +336,16 @@ namespace real::detail {
     {
       std::size_t consumed {};
       while (pc < prog_.code.size()) {
-        const instr& in {prog_.code[pc]};
-        if (in.op != opcode::byte && in.op != opcode::klass) {
+        const instr& instruction {prog_.code[pc]};
+        if (instruction.op != opcode::byte && instruction.op != opcode::klass) {
           break;
         }
         if (s + consumed >= text.size()) {
           return npos;
         }
-        const auto b  {static_cast<std::uint8_t>(text[s + consumed])};
-        const bool ok {in.op == opcode::byte ? b == in.arg8
-                                           : prog_.classes[in.arg16].test(b)};
+        const auto byte_value {static_cast<std::uint8_t>(text[s + consumed])};
+        const bool ok         {instruction.op == opcode::byte ? byte_value == instruction.arg8
+                                                   : prog_.classes[instruction.arg16].test(byte_value)};
         if (!ok) {
           return npos;
         }
@@ -377,19 +377,19 @@ namespace real::detail {
                                MatchAt          match_at,
                                OutSlots&        out_slots)
     {
-      std::size_t s {start};
-      while (s <= text.size()) {
-        s = next_candidate(text, s, start);
-        if (s > text.size()) {
+      std::size_t match_start {start};
+      while (match_start <= text.size()) {
+        match_start = next_candidate(text, match_start, start);
+        if (match_start > text.size()) {
           break;
         }
-        const std::size_t e {match_at(s)};
-        if (e != npos) {
-          out_slots[0] = s;
-          out_slots[1] = e;
+        const std::size_t match_end {match_at(match_start)};
+        if (match_end != npos) {
+          out_slots[0] = match_start;
+          out_slots[1] = match_end;
           return true;
         }
-        ++s;
+        ++match_start;
       }
       return false;
     }
@@ -421,12 +421,12 @@ namespace real::detail {
       const auto at = [&](std::size_t s) { return match_byte_klass_run(text, 1, s); };
 
       if (mode != run_mode::search) {
-        const std::size_t e {at(start)};
-        if (e == npos || (mode == run_mode::full && e != text.size())) {
+        const std::size_t match_end {at(start)};
+        if (match_end == npos || (mode == run_mode::full && match_end != text.size())) {
           return false;
         }
         out_slots[0] = start;
-        out_slots[1] = e;
+        out_slots[1] = match_end;
         return true;
       }
       return fast_search(text, start, at, out_slots);
@@ -459,55 +459,55 @@ namespace real::detail {
       out_slots.assign(2, npos);
 
       const auto cont = [&](std::size_t i) {
-                          const auto x {static_cast<std::uint8_t>(text[i])};
-                          return x >= 0x80 && x <= 0xBF;
+                          const auto cont_byte {static_cast<std::uint8_t>(text[i])};
+                          return cont_byte >= 0x80 && cont_byte <= 0xBF;
                         };
       // Byte length of a matching codepoint at i, or 0 for no match.
       const auto width = [&](std::size_t i) -> std::size_t {
-                           const auto b {static_cast<std::uint8_t>(text[i])};
-                           if (b < 0x80) {
-                             return ascii.test(b) ? 1 : 0;
+                           const auto byte_value {static_cast<std::uint8_t>(text[i])};
+                           if (byte_value < 0x80) {
+                             return ascii.test(byte_value) ? 1 : 0;
                            }
-                           if (b >= 0xC2 && b <= 0xDF) {
+                           if (byte_value >= 0xC2 && byte_value <= 0xDF) {
                              return i + 1 < text.size() && cont(i + 1) ? 2 : 0;
                            }
-                           if (b >= 0xE0 && b <= 0xEF) {
+                           if (byte_value >= 0xE0 && byte_value <= 0xEF) {
                              return i + 2 < text.size() && cont(i + 1) && cont(i + 2) ? 3 : 0;
                            }
-                           if (b >= 0xF0 && b <= 0xF4) {
+                           if (byte_value >= 0xF0 && byte_value <= 0xF4) {
                              return i + 3 < text.size() && cont(i + 1) && cont(i + 2) && cont(i + 3) ? 4 : 0;
                            }
                            return 0;
                          };
 
-      std::size_t s {start};
+      std::size_t match_start {start};
       if (mode == run_mode::search) {
-        while (s < text.size() && width(s) == 0) {
-          ++s;
+        while (match_start < text.size() && width(match_start) == 0) {
+          ++match_start;
         }
       }
-      if (s >= text.size()) {
+      if (match_start >= text.size()) {
         return false;
       }
-      const std::size_t w0 {width(s)};
-      if (w0 == 0) {
+      const std::size_t first_width {width(match_start)};
+      if (first_width == 0) {
         return false;
       }
-      std::size_t e {s + w0};
+      std::size_t match_end {match_start + first_width};
       if (prog_.hints.codepoint_class_plus) {
-        while (e < text.size()) {
-          const std::size_t w {width(e)};
-          if (w == 0) {
+        while (match_end < text.size()) {
+          const std::size_t codepoint_width {width(match_end)};
+          if (codepoint_width == 0) {
             break;
           }
-          e += w;
+          match_end += codepoint_width;
         }
       }
-      if (mode == run_mode::full && e != text.size()) {
+      if (mode == run_mode::full && match_end != text.size()) {
         return false;
       }
-      out_slots[0] = s;
-      out_slots[1] = e;
+      out_slots[0] = match_start;
+      out_slots[1] = match_end;
       return true;
     }
 
@@ -538,32 +538,32 @@ namespace real::detail {
       // First branch that matches at \p s (and, for full, spans to the end). The
       // branches are read from the split chain in source order (highest priority
       // first), mirroring the VM's thread priority.
-      const auto match_at = [&](std::size_t s, bool require_full) -> std::size_t {
+      const auto match_at = [&](std::size_t match_start, bool require_full) -> std::size_t {
                               std::size_t pc {1};
                               while (true) {
-                                const bool        is_split {code[pc].op == opcode::split};
-                                const std::size_t branch   {is_split ? static_cast<std::size_t>(code[pc].x) : pc};
-                                const std::size_t e        {match_byte_klass_run(text, branch, s)};
-                                if (e != npos && (!require_full || e == text.size())) {
-                                  return e;
+                                const bool        is_split  {code[pc].op == opcode::split};
+                                const std::size_t branch    {is_split ? static_cast<std::size_t>(code[pc].primary_target) : pc};
+                                const std::size_t match_end {match_byte_klass_run(text, branch, match_start)};
+                                if (match_end != npos && (!require_full || match_end == text.size())) {
+                                  return match_end;
                                 }
                                 if (!is_split) {
                                   return npos;
                                 }
-                                pc = static_cast<std::size_t>(code[pc].y);
+                                pc = static_cast<std::size_t>(code[pc].secondary_target);
                               }
                             };
 
       if (mode != run_mode::search) {
-        const std::size_t e {match_at(start, mode == run_mode::full)};
-        if (e == npos) {
+        const std::size_t match_end {match_at(start, mode == run_mode::full)};
+        if (match_end == npos) {
           return false;
         }
         out_slots[0] = start;
-        out_slots[1] = e;
+        out_slots[1] = match_end;
         return true;
       }
-      return fast_search(text, start, [&](std::size_t s) { return match_at(s, false); }, out_slots);
+      return fast_search(text, start, [&](std::size_t match_start) { return match_at(match_start, false); }, out_slots);
     }
 
     /*!
@@ -608,20 +608,20 @@ namespace real::detail {
       out_slots.assign(prog_.slot_count, npos);
       std::size_t consumed {};
       for (std::size_t pc = 0; pc < prog_.code.size(); ++pc) {
-        const instr& in {prog_.code[pc]};
-        if (in.op == opcode::save) {
-          out_slots[in.arg16] = cand + consumed;
+        const instr& instruction {prog_.code[pc]};
+        if (instruction.op == opcode::save) {
+          out_slots[instruction.arg16] = cand + consumed;
         }
-        else if (in.op == opcode::assert_position) {
-          if (!assertion_holds(static_cast<assert_kind>(in.arg8), cand + consumed)) {
+        else if (instruction.op == opcode::assert_position) {
+          if (!assertion_holds(static_cast<assert_kind>(instruction.arg8), cand + consumed)) {
             out_slots.assign(prog_.slot_count, npos);
             return false;
           }
         }
-        else if ((in.op == opcode::byte || in.op == opcode::klass) && consumed < len) {
+        else if ((instruction.op == opcode::byte || instruction.op == opcode::klass) && consumed < len) {
           ++consumed;
         }
-        else if (in.op == opcode::match) {
+        else if (instruction.op == opcode::match) {
           break;
         }
       }
@@ -698,23 +698,23 @@ namespace real::detail {
                                                        std::size_t      pos,
                                                        std::size_t      start) const
     {
-      const pattern_hints& h {prog_.hints};
-      if (h.anchored_start) {
+      const pattern_hints& hints {prog_.hints};
+      if (hints.anchored_start) {
         return pos == start ? pos : npos; // one shot at the start
       }
-      if (h.prefix_size >= 2) {
-        return find_prefix(text, pos, std::string_view(h.prefix.data(), h.prefix_size));
+      if (hints.prefix_size >= 2) {
+        return find_prefix(text, pos, std::string_view(hints.prefix.data(), hints.prefix_size));
       }
-      if (h.single_first >= 0) {
-        return find_byte(text, pos, static_cast<char>(h.single_first));
+      if (hints.single_first >= 0) {
+        return find_byte(text, pos, static_cast<char>(hints.single_first));
       }
-      if (h.line_anchored && pos != start) {
+      if (hints.line_anchored && pos != start) {
         const std::size_t nl {find_byte(text, pos - 1, '\n')};
         return nl == npos ? npos : nl + 1;
       }
-      if (h.first_bytes_valid) {
+      if (hints.first_bytes_valid) {
         while (pos < text.size() &&
-               !h.first_bytes.test(static_cast<std::uint8_t>(text[pos]))) {
+               !hints.first_bytes.test(static_cast<std::uint8_t>(text[pos]))) {
           ++pos;
         }
         return pos < text.size() ? pos : npos;
@@ -739,8 +739,8 @@ namespace real::detail {
                                              std::size_t      pos,
                                              std::size_t      start) const
     {
-      const pattern_hints& h {prog_.hints};
-      if (h.anchored_start && pos != start) {
+      const pattern_hints& hints {prog_.hints};
+      if (hints.anchored_start && pos != start) {
         return false;
       }
       // A match can never start inside a multi-byte codepoint: in non-byte mode
@@ -751,10 +751,10 @@ namespace real::detail {
           (static_cast<std::uint8_t>(text[pos]) & 0xC0U) == 0x80U) {
         return false;
       }
-      if (!h.first_bytes_valid) {
+      if (!hints.first_bytes_valid) {
         return true;
       }
-      return pos < text.size() && h.first_bytes.test(static_cast<std::uint8_t>(text[pos]));
+      return pos < text.size() && hints.first_bytes.test(static_cast<std::uint8_t>(text[pos]));
     }
 
     /*!
@@ -831,19 +831,19 @@ namespace real::detail {
       const std::uint16_t slot_count {prog_.slot_count};
       for (std::size_t i = 0; i < clist.pcs.size(); ++i) {
         const std::int32_t pc {clist.pcs[i]};
-        const instr&       in {prog_.code[static_cast<std::size_t>(pc)]};
+        const instr&       instruction {prog_.code[static_cast<std::size_t>(pc)]};
         const std::size_t  base {i * slot_count};
-        switch (in.op) {
+        switch (instruction.op) {
           case opcode::byte:
             if (pos < text_.size() &&
-                static_cast<std::uint8_t>(text_[pos]) == in.arg8) {
+                static_cast<std::uint8_t>(text_[pos]) == instruction.arg8) {
               load_working(clist, base);
               add_thread(nlist, pc + 1, pos + 1);
             }
             break;
           case opcode::klass:
             if (pos < text_.size() &&
-                prog_.classes[in.arg16].test(static_cast<std::uint8_t>(text_[pos]))) {
+                prog_.classes[instruction.arg16].test(static_cast<std::uint8_t>(text_[pos]))) {
               load_working(clist, base);
               add_thread(nlist, pc + 1, pos + 1);
             }
@@ -914,25 +914,25 @@ namespace real::detail {
           continue;
         }
         list.mark_seen(pc);
-        const instr& in {prog_.code[static_cast<std::size_t>(pc)]};
-        switch (in.op) {
+        const instr& instruction {prog_.code[static_cast<std::size_t>(pc)]};
+        switch (instruction.op) {
           case opcode::jump:
-            stack.push_back({.pc = in.x, .slot = 0, .restore_value = 0});
+            stack.push_back({.pc = instruction.primary_target, .slot = 0, .restore_value = 0});
             break;
           case opcode::split:
-            // x is preferred: push y first so x pops (explores) first.
-            stack.push_back({.pc = in.y, .slot = 0, .restore_value = 0});
-            stack.push_back({.pc = in.x, .slot = 0, .restore_value = 0});
+            // primary_target is preferred: push secondary first so primary pops (explores) first.
+            stack.push_back({.pc = instruction.secondary_target, .slot = 0, .restore_value = 0});
+            stack.push_back({.pc = instruction.primary_target, .slot = 0, .restore_value = 0});
             break;
           case opcode::save:
-            stack.push_back({.pc            = -1,
-                             .slot          = in.arg16,
-                             .restore_value = state_.working[in.arg16]});
-            state_.working[in.arg16]        = pos;
-            stack.push_back({.pc            = pc + 1, .slot = 0, .restore_value = 0});
+            stack.push_back({.pc              = -1,
+                             .slot            = instruction.arg16,
+                             .restore_value   = state_.working[instruction.arg16]});
+            state_.working[instruction.arg16] = pos;
+            stack.push_back({.pc              = pc + 1, .slot = 0, .restore_value = 0});
             break;
           case opcode::assert_position:
-            if (assertion_holds(static_cast<assert_kind>(in.arg8), pos)) {
+            if (assertion_holds(static_cast<assert_kind>(instruction.arg8), pos)) {
               stack.push_back({.pc = pc + 1, .slot = 0, .restore_value = 0});
             }
             break;

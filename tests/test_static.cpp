@@ -23,8 +23,8 @@ namespace {
 void* operator new(std::size_t count)
 {
   ++alloc_count;
-  if (void* p = std::malloc(count)) {
-    return p;
+  if (void* ptr = std::malloc(count)) {
+    return ptr;
   }
   throw std::bad_alloc();
 }
@@ -87,36 +87,36 @@ namespace {
 
 TEST(static_regex_matches_at_runtime_like_dynamic)
 {
-  const std::string text = "meeting on 2026-06-10, room 4";
-  const auto        m    = date_rx.search(text);
-  EXPECT(m.matched());
-  EXPECT_EQ(m[0], "2026-06"sv);
-  EXPECT_EQ(m[1], "2026"sv);
-  EXPECT_EQ(m[2], "06"sv);
+  const std::string text     = "meeting on 2026-06-10, room 4";
+  const auto        match    = date_rx.search(text);
+  EXPECT(match.matched());
+  EXPECT_EQ(match[0], "2026-06"sv);
+  EXPECT_EQ(match[1], "2026"sv);
+  EXPECT_EQ(match[2], "06"sv);
   // Same results as the dynamic engine on the same pattern.
   const real::regex dyn("(\\d{4})-(\\d{2})");
-  EXPECT_EQ(dyn.search(text).start(), m.start());
+  EXPECT_EQ(dyn.search(text).start(), match.start());
 }
 
 TEST(static_regex_matching_allocates_nothing)
 {
-  const std::string      text   = "meeting on 2026-06-10, room 4"; // allocates
-  const std::string_view view   = text;
-  const std::size_t      before = alloc_count;
-  const auto             m      = date_rx.search(view);
-  const auto             f      = date_rx.fullmatch(view);
-  const bool             ok     = m.matched() && !f.matched();
+  const std::string      text       = "meeting on 2026-06-10, room 4"; // allocates
+  const std::string_view view       = text;
+  const std::size_t      before     = alloc_count;
+  const auto             match      = date_rx.search(view);
+  const auto             f          = date_rx.fullmatch(view);
+  const bool             ok         = match.matched() && !f.matched();
   EXPECT_EQ(alloc_count - before, 0U); // hybrid mode: zero allocations
   EXPECT(ok);
-  EXPECT_EQ(m.start(), 11U);
+  EXPECT_EQ(match.start(), 11U);
 }
 
 TEST(static_regex_named_groups_and_flags)
 {
-  constexpr real::static_regex<"(?P<h>\\d{2}):(?P<m>\\d{2})"> clock;
-  const auto                                                  m = clock.search("at 09:45!");
-  EXPECT_EQ(m["h"], "09"sv);
-  EXPECT_EQ(m["m"], "45"sv);
+  constexpr real::static_regex<"(?P<h>\\d{2}):(?P<m>\\d{2})">     clock;
+  const auto                                                      match = clock.search("at 09:45!");
+  EXPECT_EQ(match["h"], "09"sv);
+  EXPECT_EQ(match["m"], "45"sv);
   constexpr real::static_regex<"^b.d$", real::flags::multiline | real::flags::dotall> ml;
   EXPECT(ml.search("xx\nb\nd"));
   EXPECT(has_flag(ml.compile_flags(), real::flags::multiline));
@@ -127,8 +127,8 @@ TEST(static_regex_iteration_and_replace)
 {
   constexpr real::static_regex<"\\d+"> digits;
   std::size_t                          count = 0;
-  for (const auto& m : digits.find_iter("a1 bb22 c333")) {
-    count += m.end() - m.start();
+  for (const auto& match : digits.find_iter("a1 bb22 c333")) {
+    count += match.end() - match.start();
   }
   EXPECT_EQ(count, 6U);
   EXPECT_EQ(digits.replace("a1b22", "#"), std::string("a#b#"));
@@ -152,8 +152,8 @@ TEST(static_regex_constexpr_iteration)
   constexpr std::size_t n = [] {
                               constexpr real::static_regex<"[ab]+"> rx;
                               std::size_t                           total = 0;
-                              for (const auto& m : rx.find_iter("ab cd abba")) {
-                                total += m.end() - m.start();
+                              for (const auto& match : rx.find_iter("ab cd abba")) {
+                                total += match.end() - match.start();
                               }
                               return total;
                             }();

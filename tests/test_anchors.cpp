@@ -1,4 +1,4 @@
-// Anchors, word boundaries and compilation flags (i, m, s), with Python's
+// Anchors, word boundaries and compilation flags (i, match, s), with Python's
 // exact semantics for $ (matches before a final newline) and ^/$ in
 // multiline mode.
 #include <string_view>
@@ -147,9 +147,9 @@ TEST(seed_threads_have_fresh_capture_slots)
   // Regression: a search seed must not inherit capture slots from dead
   // threads of earlier positions ((a) participates at pos 0, not in the
   // actual match at pos 2).
-  auto m = real::regex("(a)*b").search("axb");
-  EXPECT_EQ(m[0], "b"sv);
-  EXPECT_EQ(m.start(1), real::npos); // Python: group(1) is None
+  auto match = real::regex("(a)*b").search("axb");
+  EXPECT_EQ(match[0], "b"sv);
+  EXPECT_EQ(match.start(1), real::npos); // Python: group(1) is None
 }
 
 TEST(search_keeps_seeding_after_dead_assertions)

@@ -25,8 +25,8 @@ TEST(find_iter_is_lazy_and_range_for_compatible)
 {
   const real::regex rx("[ab]");
   std::string       seen;
-  for (const auto& m : rx.find_iter("xaybz")) {
-    seen += m[0];
+  for (const auto& match : rx.find_iter("xaybz")) {
+    seen += match[0];
   }
   EXPECT_EQ(seen, std::string("ab"));
 }
@@ -45,7 +45,7 @@ TEST(temporary_regex_cannot_dangle_in_iteration)
   // find_iter / find_all on a temporary regex are deleted overloads: in a
   // C++20 range-for the temporary would die before the loop body. This
   // must not compile (caught originally by the constexpr interpreter):
-  //   for (auto& m : real::regex("x").find_iter(text)) { ... }
+  //   for (auto& match : real::regex("x").find_iter(text)) { ... }
   const real::regex rx("x");
   EXPECT(rx.find_iter("x").begin() != rx.find_iter("x").end());
 }

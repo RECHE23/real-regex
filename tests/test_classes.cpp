@@ -149,8 +149,8 @@ TEST(unterminated_class_reports_open_bracket_position)
     real::regex rx("ab[cd");
     EXPECT(false);
   }
-  catch (const real::regex_error& e) {
-    EXPECT_EQ(e.position(), 2U);
+  catch (const real::regex_error& ex) {
+    EXPECT_EQ(ex.position(), 2U);
   }
 }
 
@@ -175,6 +175,6 @@ TEST(codepoint_class_fast_path)
   // Malformed UTF-8: a lone continuation byte is not a codepoint, so [^,]
   // does not match it (exactly like the general engine).
   const char        bad[] {'a', static_cast<char>(0x80), 'b'};
-  const std::string s(bad, sizeof bad);
-  EXPECT_EQ(notcomma.find_all(s).size(), 2U); // "a" and "b", the 0x80 skipped
+  const std::string text(bad, sizeof bad);
+  EXPECT_EQ(notcomma.find_all(text).size(), 2U); // "a" and "b", the 0x80 skipped
 }

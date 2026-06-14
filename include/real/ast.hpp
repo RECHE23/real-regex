@@ -99,14 +99,14 @@ namespace real::detail {
 
     /*!
      * \brief Binds the parser to a pattern and the constructor flags.
-     * \param[in] pattern The pattern text (borrowed, must outlive use).
-     * \param[in] init    Flags from the constructor; only `verbose` affects
-     *                    parsing (a leading `(?x)` can add it too).
+     * \param[in] pattern      The pattern text (borrowed, must outlive use).
+     * \param[in] initial_flags Flags from the constructor; only `verbose` affects
+     *                          parsing (a leading `(?x)` can add it too).
      */
     constexpr explicit parser(std::string_view pattern,
-                              flags            init = flags::none)
+                              flags            initial_flags = flags::none)
       : pattern_(pattern),
-        verbose_(has_flag(init, flags::verbose))
+        verbose_(has_flag(initial_flags, flags::verbose))
     {}
 
     /*!
@@ -145,11 +145,11 @@ namespace real::detail {
         return;
       }
       while (!eof()) {
-        const char c {peek()};
-        if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v') {
+        const char ch {peek()};
+        if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\f' || ch == '\v') {
           ++pos_;
         }
-        else if (c == '#') {
+        else if (ch == '#') {
           while (!eof() && peek() != '\n') {
             ++pos_;
           }
@@ -194,13 +194,13 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Consumes the current character if it equals \p c.
-     * \param[in] c The character to match.
+     * \brief Consumes the current character if it equals \p ch.
+     * \param[in] ch The character to match.
      * \return `true` (and advances) on a match, else `false`.
      */
-    [[nodiscard]] constexpr bool accept(char c)
+    [[nodiscard]] constexpr bool accept(char ch)
     {
-      if (!eof() && peek() == c) {
+      if (!eof() && peek() == ch) {
         ++pos_;
         return true;
       }
@@ -208,13 +208,13 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Returns `true` if \p c is in `[0-9A-Za-z]`.
-     * \param[in] c A character.
-     * \return `true` if \p c is in `[0-9A-Za-z]`.
+     * \brief Returns `true` if \p ch is in `[0-9A-Za-z]`.
+     * \param[in] ch A character.
+     * \return `true` if \p ch is in `[0-9A-Za-z]`.
      */
-    static constexpr bool is_ascii_alnum(char c)
+    static constexpr bool is_ascii_alnum(char ch)
     {
-      return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+      return (ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z');
     }
 
     /*!
@@ -233,15 +233,15 @@ namespace real::detail {
     /*!
      * \brief Interns a class bitmap and appends a \ref node_kind::klass node.
      * \param[in,out] out     The AST being built.
-     * \param[in]     cc      The class bitmap as written (before negation).
+     * \param[in]     klass      The class bitmap as written (before negation).
      * \param[in]     negated Whether the class was written negated.
      * \return The index of the new node.
      */
     static constexpr std::int32_t add_class_node(ast&              out,
-                                                 const char_class& cc,
+                                                 const char_class& klass,
                                                  bool              negated)
     {
-      out.classes.push_back(cc);
+      out.classes.push_back(klass);
       const auto index {static_cast<std::int32_t>(out.classes.size()) - 1};
       return add_node(out, {.kind = node_kind::klass, .negated = negated, .klass = index});
     }
@@ -314,8 +314,8 @@ namespace real::detail {
      */
     constexpr std::int32_t parse_atom(ast& out)
     {
-      const char c {peek()};
-      switch (c) {
+      const char ch {peek()};
+      switch (ch) {
         case '*':
         case '+':
         case '?':
@@ -340,7 +340,7 @@ namespace real::detail {
         default:
           // Like Python: lone '{', ']' and '}' are ordinary characters.
           ++pos_;
-          return add_node(out, {.kind = node_kind::byte, .byte = static_cast<std::uint8_t>(c)});
+          return add_node(out, {.kind = node_kind::byte, .byte = static_cast<std::uint8_t>(ch)});
       }
     }
 
@@ -395,11 +395,11 @@ namespace real::detail {
       }
       const bool lazy {accept('?')};
       if (!eof()) {
-        const char   c           {peek()};
+        const char   ch          {peek()};
         std::int32_t ignored_min {};
         std::int32_t ignored_max {-1};
-        if (c == '*' || c == '+' || c == '?' ||
-            (c == '{' && try_parse_braces(ignored_min, ignored_max))) {
+        if (ch == '*' || ch == '+' || ch == '?' ||
+            (ch == '{' && try_parse_braces(ignored_min, ignored_max))) {
           fail("multiple repeat");
         }
       }
@@ -417,23 +417,23 @@ namespace real::detail {
     constexpr bool try_parse_braces(std::int32_t& min,
                                     std::int32_t& max)
     {
-      const std::size_t save       {pos_};
+      const std::size_t saved_pos   {pos_};
       ++pos_; // consume '{'
-      const std::int32_t n         {parse_repeat_count()};
-      std::int32_t       m         {n};
-      bool               has_comma {};
+      const std::int32_t repeat_min {parse_repeat_count()};
+      std::int32_t       repeat_max {repeat_min};
+      bool               has_comma  {};
       if (accept(',')) {
-        has_comma = true;
-        m         = parse_repeat_count();
+        has_comma  = true;
+        repeat_max = parse_repeat_count();
       }
-      if (!accept('}') || (n < 0 && m < 0)) {
-        pos_ = save;
+      if (!accept('}') || (repeat_min < 0 && repeat_max < 0)) {
+        pos_ = saved_pos;
         return false; // "{", "{}", "{,}", "{x"…: literal text
       }
-      min = n < 0 ? 0 : n;
-      max = (has_comma && m < 0) ? -1 : m;
+      min = repeat_min < 0 ? 0 : repeat_min;
+      max = (has_comma && repeat_max < 0) ? -1 : repeat_max;
       if (max != -1 && max < min) {
-        pos_ = save;
+        pos_ = saved_pos;
         fail("min repeat greater than max repeat");
       }
       return true;
@@ -460,28 +460,28 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Consumes \p c or fails.
-     * \param[in] c       The required character.
-     * \param[in] message Error message if \p c is not present.
-     * \throws real::regex_error when the next character is not \p c.
+     * \brief Consumes \p ch or fails.
+     * \param[in] ch      The required character.
+     * \param[in] message Error message if \p ch is not present.
+     * \throws real::regex_error when the next character is not \p ch.
      */
-    constexpr void expect(char        c,
+    constexpr void expect(char        ch,
                           const char* message)
     {
-      if (!accept(c)) {
+      if (!accept(ch)) {
         fail(message);
       }
     }
 
     /*!
      * \brief Maps a flag letter to its \ref flags value.
-     * \param[in] c One of 'i', 'm', 's', 'a'.
+     * \param[in] letter One of 'i', 'm', 's', 'a'.
      * \return The flag; \ref flags::none for 'a' (ASCII — already the default)
      *         and for any unrecognized letter.
      */
-    static constexpr flags flag_for_letter(char c)
+    static constexpr flags flag_for_letter(char letter)
     {
-      switch (c) {
+      switch (letter) {
         case 'i':
           return flags::icase;
         case 'm':
@@ -501,13 +501,13 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Returns `true` if \p c is a flag letter (imsax).
-     * \param[in] c A character.
-     * \return `true` if \p c is a flag letter (imsax).
+     * \brief Returns `true` if \p letter is a flag letter (imsax).
+     * \param[in] letter A character.
+     * \return `true` if \p letter is a flag letter (imsax).
      */
-    static constexpr bool is_flag_letter(char c)
+    static constexpr bool is_flag_letter(char letter)
     {
-      return c == 'i' || c == 'm' || c == 's' || c == 'a' || c == 'x';
+      return letter == 'i' || letter == 'm' || letter == 's' || letter == 'a' || letter == 'x';
     }
 
     /*!
@@ -522,9 +522,9 @@ namespace real::detail {
      */
     constexpr bool parse_global_flags_prefix(ast& out)
     {
-      const std::size_t save {pos_};
+      const std::size_t saved_pos {pos_};
       if (!accept('(') || !accept('?')) {
-        pos_ = save;
+        pos_ = saved_pos;
         return false;
       }
       flags found      {flags::none};
@@ -535,7 +535,7 @@ namespace real::detail {
         ++pos_;
       }
       if (!any_letter || !accept(')')) {
-        pos_ = save; // some other (?...) construct: let parse_group decide
+        pos_ = saved_pos; // some other (?...) construct: let parse_group decide
         return false;
       }
       out.inline_flags = out.inline_flags | found;
@@ -643,13 +643,13 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Returns `true` if \p c may start a group name.
-     * \param[in] c A character.
-     * \return `true` if \p c may start a group name.
+     * \brief Returns `true` if \p ch may start a group name.
+     * \param[in] ch A character.
+     * \return `true` if \p ch may start a group name.
      */
-    static constexpr bool is_name_start(char c)
+    static constexpr bool is_name_start(char ch)
     {
-      return c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+      return ch == '_' || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z');
     }
 
     /*!
@@ -695,8 +695,8 @@ namespace real::detail {
      */
     constexpr std::int32_t parse_byte_escape()
     {
-      const char c {peek()};
-      switch (c) {
+      const char ch {peek()};
+      switch (ch) {
         case 'n':
           ++pos_;
           return '\n';
@@ -721,15 +721,15 @@ namespace real::detail {
         case 'x':
           {
             ++pos_;
-            const std::int32_t hi {hex_digit()};
-            const std::int32_t lo {hex_digit()};
-            return (hi * 16) + lo; // arithmetic, not signed bitwise (MISRA)
+            const std::int32_t high_nibble {hex_digit()};
+            const std::int32_t low_nibble  {hex_digit()};
+            return (high_nibble * 16) + low_nibble; // arithmetic, not signed bitwise (MISRA)
           }
         default:
           // Any escaped ASCII punctuation is that literal character.
-          if (static_cast<std::uint8_t>(c) < 0x80 && !is_ascii_alnum(c)) {
+          if (static_cast<std::uint8_t>(ch) < 0x80 && !is_ascii_alnum(ch)) {
             ++pos_;
-            return static_cast<std::uint8_t>(c);
+            return static_cast<std::uint8_t>(ch);
           }
           return -1;
       }
@@ -745,16 +745,16 @@ namespace real::detail {
       if (eof()) {
         fail("invalid \\x escape: expected two hex digits");
       }
-      const char c {peek()};
+      const char ch {peek()};
       ++pos_;
-      if (c >= '0' && c <= '9') {
-        return c - '0';
+      if (ch >= '0' && ch <= '9') {
+        return ch - '0';
       }
-      if (c >= 'a' && c <= 'f') {
-        return c - 'a' + 10;
+      if (ch >= 'a' && ch <= 'f') {
+        return ch - 'a' + 10;
       }
-      if (c >= 'A' && c <= 'F') {
-        return c - 'A' + 10;
+      if (ch >= 'A' && ch <= 'F') {
+        return ch - 'A' + 10;
       }
       --pos_;
       fail("invalid \\x escape: expected two hex digits");
@@ -815,32 +815,32 @@ namespace real::detail {
           return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::word_end});
         default:
           {
-            const std::int32_t b {parse_byte_escape()};
-            if (b < 0) {
+            const std::int32_t byte_value {parse_byte_escape()};
+            if (byte_value < 0) {
               fail("unsupported escape sequence");
             }
-            return add_node(out, {.kind = node_kind::byte, .byte = static_cast<std::uint8_t>(b)});
+            return add_node(out, {.kind = node_kind::byte, .byte = static_cast<std::uint8_t>(byte_value)});
           }
       }
     }
 
     /*!
      * \brief Parses one member inside a character class.
-     * \param[in,out] cc The class being built; a set member (`\d` etc.) is
+     * \param[in,out] klass The class being built; a set member (`\d` etc.) is
      *                   merged directly into it.
      * \return A single byte (usable as a range endpoint), or -1 when the member
-     *         was a whole set merged into \p cc.
+     *         was a whole set merged into \p klass.
      * \throws real::regex_error on a non-ASCII member or an unsupported escape.
      */
-    constexpr std::int32_t parse_class_item(char_class& cc)
+    constexpr std::int32_t parse_class_item(char_class& klass)
     {
-      const char c {peek()};
-      if (static_cast<std::uint8_t>(c) >= 0x80) {
+      const char ch {peek()};
+      if (static_cast<std::uint8_t>(ch) >= 0x80) {
         fail("non-ASCII character class member not supported");
       }
-      if (c != '\\') {
+      if (ch != '\\') {
         ++pos_;
-        return static_cast<std::uint8_t>(c);
+        return static_cast<std::uint8_t>(ch);
       }
       ++pos_; // consume the backslash
       if (eof()) {
@@ -849,15 +849,15 @@ namespace real::detail {
       switch (peek()) {
         case 'd':
           ++pos_;
-          cc.merge(digit_set());
+          klass.merge(digit_set());
           return -1;
         case 'w':
           ++pos_;
-          cc.merge(word_set());
+          klass.merge(word_set());
           return -1;
         case 's':
           ++pos_;
-          cc.merge(space_set());
+          klass.merge(space_set());
           return -1;
         case 'D':
         case 'W':
@@ -868,11 +868,11 @@ namespace real::detail {
           return 0x08; // backspace, only inside classes
         default:
           {
-            const std::int32_t b {parse_byte_escape()};
-            if (b < 0) {
+            const std::int32_t byte_value {parse_byte_escape()};
+            if (byte_value < 0) {
               fail("unsupported escape sequence");
             }
-            return b;
+            return byte_value;
           }
       }
     }
@@ -892,7 +892,7 @@ namespace real::detail {
       const std::size_t open_pos {pos_};
       ++pos_; // consume '['
       const bool negated         {accept('^')};
-      char_class cc;
+      char_class klass;
       bool       first           {true};
       while (true) {
         if (eof()) {
@@ -904,41 +904,41 @@ namespace real::detail {
           break;
         }
         first = false; // a ']' right after '[' or '[^' is a literal
-        const std::size_t  item_pos {pos_};
-        const std::int32_t lo       {parse_class_item(cc)};
-        if (lo < 0) {
+        const std::size_t  item_pos     {pos_};
+        const std::int32_t range_start  {parse_class_item(klass)};
+        if (range_start < 0) {
           continue; // set item: nothing more to do
         }
         // Possible range: 'x-y', where a trailing '-]' is a literal '-'.
         if (!eof() && peek() == '-' && pos_ + 1 < pattern_.size() &&
             pattern_[pos_ + 1] != ']') {
           ++pos_; // consume '-'
-          const std::int32_t hi {parse_class_item(cc)};
-          if (hi < 0 || hi < lo) {
+          const std::int32_t range_end {parse_class_item(klass)};
+          if (range_end < 0 || range_end < range_start) {
             pos_ = item_pos;
             fail("bad character range");
           }
-          cc.set_range(static_cast<std::uint8_t>(lo), static_cast<std::uint8_t>(hi));
+          klass.set_range(static_cast<std::uint8_t>(range_start), static_cast<std::uint8_t>(range_end));
         }
         else {
-          cc.set(static_cast<std::uint8_t>(lo));
+          klass.set(static_cast<std::uint8_t>(range_start));
         }
       }
-      return add_class_node(out, cc, negated);
+      return add_class_node(out, klass, negated);
     }
   };
 
   /*!
    * \brief Parses \p pattern into an \ref ast (convenience over \ref parser).
-   * \param[in] pattern The pattern text.
-   * \param[in] init    Constructor flags; only `verbose` affects parsing.
+   * \param[in] pattern       The pattern text.
+   * \param[in] initial_flags Constructor flags; only `verbose` affects parsing.
    * \return The parsed AST.
    * \throws real::regex_error on unsupported or malformed syntax.
    */
   constexpr ast parse(std::string_view pattern,
-                      flags            init = flags::none)
+                      flags            initial_flags = flags::none)
   {
-    return parser(pattern, init).parse();
+    return parser(pattern, initial_flags).parse();
   }
 } // namespace real::detail
 

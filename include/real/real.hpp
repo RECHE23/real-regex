@@ -122,11 +122,11 @@ namespace real {
      */
     [[nodiscard]] constexpr std::size_t group_index(std::string_view name) const
     {
-      for (const detail::named_group& ng : names_) {
-        const auto begin  {static_cast<std::size_t>(ng.begin)};
-        const auto length {static_cast<std::size_t>(ng.end - ng.begin)};
+      for (const detail::named_group& named_group : names_) {
+        const auto begin  {static_cast<std::size_t>(named_group.begin)};
+        const auto length {static_cast<std::size_t>(named_group.end - named_group.begin)};
         if (pattern_.substr(begin, length) == name) {
-          return static_cast<std::size_t>(ng.group);
+          return static_cast<std::size_t>(named_group.group);
         }
       }
       return npos;
@@ -372,14 +372,14 @@ namespace real {
 
     /*!
      * \brief Compiles \p pattern at run time (the `real::regex` constructor).
-     * \param[in] pattern The pattern text.
-     * \param[in] f       Optional flags (merged with a leading (?ims)).
+     * \param[in] pattern      The pattern text.
+     * \param[in] compile_flags Optional flags (merged with a leading (?ims)).
      * \throws real::regex_error on an invalid or over-limit pattern.
      */
     constexpr explicit basic_regex(std::string_view pattern,
-                                   flags            f = flags::none)
+                                   flags            compile_flags = flags::none)
     requires(!Storage::is_compile_time)
-      : program_(Storage::compile(pattern, f))
+      : program_(Storage::compile(pattern, compile_flags))
     {}
 
     /*!
@@ -494,11 +494,11 @@ namespace real {
      */
     [[nodiscard]] constexpr std::vector<result_type> find_all(std::string_view text) const&
     {
-      std::vector<result_type> out;
-      for (const result_type& m : find_iter(text)) {
-        out.push_back(m);
+      std::vector<result_type> result;
+      for (const result_type& match : find_iter(text)) {
+        result.push_back(match);
       }
-      return out;
+      return result;
     }
 
     /*!
@@ -537,20 +537,20 @@ namespace real {
                                                 std::string_view replacement,
                                                 std::size_t      max_count = 0) const
     {
-      std::string out;
+      std::string result;
       std::size_t last {};
       std::size_t done {};
-      for (const result_type& m : find_iter(text)) {
+      for (const result_type& match : find_iter(text)) {
         if (max_count != 0 && done == max_count) {
           break;
         }
-        out.append(text.substr(last, m.start() - last));
-        expand_replacement(out, m, replacement);
-        last = m.end();
+        result.append(text.substr(last, match.start() - last));
+        expand_replacement(result, match, replacement);
+        last = match.end();
         ++done;
       }
-      out.append(text.substr(last));
-      return out;
+      result.append(text.substr(last));
+      return result;
     }
 
     /*!
@@ -566,22 +566,22 @@ namespace real {
     [[nodiscard]] constexpr std::vector<std::string_view> split(std::string_view text,
                                                                 std::size_t      max_splits = 0) const
     {
-      std::vector<std::string_view> out;
+      std::vector<std::string_view> result;
       std::size_t                   last {};
       std::size_t                   done {};
-      for (const result_type& m : find_iter(text)) {
+      for (const result_type& match : find_iter(text)) {
         if (max_splits != 0 && done == max_splits) {
           break;
         }
-        out.push_back(text.substr(last, m.start() - last));
-        for (std::size_t g = 1; g < m.size(); ++g) {
-          out.push_back(m[g]);
+        result.push_back(text.substr(last, match.start() - last));
+        for (std::size_t group = 1; group < match.size(); ++group) {
+          result.push_back(match[group]);
         }
-        last = m.end();
+        last = match.end();
         ++done;
       }
-      out.push_back(text.substr(last));
-      return out;
+      result.push_back(text.substr(last));
+      return result;
     }
 
     /*!
@@ -649,9 +649,9 @@ namespace real {
      */
     [[nodiscard]] constexpr std::size_t group_index(std::string_view name) const
     {
-      for (const detail::named_group& ng : program_.view().names) {
-        if (name_of(ng) == name) {
-          return static_cast<std::size_t>(ng.group);
+      for (const detail::named_group& named_group : program_.view().names) {
+        if (name_of(named_group) == name) {
+          return static_cast<std::size_t>(named_group.group);
         }
       }
       return npos;
@@ -664,11 +664,11 @@ namespace real {
     [[nodiscard]] constexpr std::vector<std::pair<std::string_view, std::size_t>>
     named_groups() const
     {
-      std::vector<std::pair<std::string_view, std::size_t>> out;
-      for (const detail::named_group& ng : program_.view().names) {
-        out.emplace_back(name_of(ng), static_cast<std::size_t>(ng.group));
+      std::vector<std::pair<std::string_view, std::size_t>> result;
+      for (const detail::named_group& named_group : program_.view().names) {
+        result.emplace_back(name_of(named_group), static_cast<std::size_t>(named_group.group));
       }
-      return out;
+      return result;
     }
 
   private:
@@ -677,13 +677,13 @@ namespace real {
 
     /*!
      * \brief Returns its name, sliced from the pattern text.
-     * \param[in] ng A named group.
+     * \param[in] named_group A named group.
      * \return Its name, sliced from the pattern text.
      */
-    [[nodiscard]] constexpr std::string_view name_of(const detail::named_group& ng) const
+    [[nodiscard]] constexpr std::string_view name_of(const detail::named_group& named_group) const
     {
-      return pattern().substr(static_cast<std::size_t>(ng.begin),
-                              static_cast<std::size_t>(ng.end - ng.begin));
+      return pattern().substr(static_cast<std::size_t>(named_group.begin),
+                              static_cast<std::size_t>(named_group.end - named_group.begin));
     }
 
     /*!
@@ -692,19 +692,19 @@ namespace real {
      * Strict like Python: an invalid or out-of-range reference is an error.
      *
      * \param[in,out] out         The output string to append to.
-     * \param[in]     m           The match supplying the captured groups.
+     * \param[in]     match       The match supplying the captured groups.
      * \param[in]     replacement The replacement template (`$$`, `$&`, `$1`, `${name}`).
      * \throws real::regex_error on a malformed or out-of-range reference.
      */
     constexpr void expand_replacement(std::string&       out,
-                                      const result_type& m,
+                                      const result_type& match,
                                       std::string_view   replacement) const
     {
       std::size_t i {};
       while (i < replacement.size()) {
-        const char c {replacement[i]};
-        if (c != '$') {
-          out.push_back(c);
+        const char ch {replacement[i]};
+        if (ch != '$') {
+          out.push_back(ch);
           ++i;
           continue;
         }
@@ -712,28 +712,28 @@ namespace real {
         if (i >= replacement.size()) {
           throw regex_error("dangling $ in replacement", i - 1);
         }
-        const char d {replacement[i]};
-        if (d == '$') {
+        const char next_ch {replacement[i]};
+        if (next_ch == '$') {
           out.push_back('$');
           ++i;
         }
-        else if (d == '&') {
-          out.append(m[0]);
+        else if (next_ch == '&') {
+          out.append(match[0]);
           ++i;
         }
-        else if (d >= '0' && d <= '9') {
+        else if (next_ch >= '0' && next_ch <= '9') {
           std::size_t group {};
           while (i < replacement.size() && replacement[i] >= '0' &&
                  replacement[i] <= '9') {
             group = (group * 10) + static_cast<std::size_t>(replacement[i] - '0');
             ++i;
           }
-          if (group >= m.size()) {
+          if (group >= match.size()) {
             throw regex_error("invalid group reference in replacement", i);
           }
-          out.append(m[group]);
+          out.append(match[group]);
         }
-        else if (d == '{') {
+        else if (next_ch == '{') {
           const std::size_t name_begin {i + 1};
           std::size_t       j          {name_begin};
           while (j < replacement.size() && replacement[j] != '}') {
@@ -743,11 +743,11 @@ namespace real {
             throw regex_error("malformed ${name} in replacement", i);
           }
           const std::size_t group =
-            m.group_index(replacement.substr(name_begin, j - name_begin));
+            match.group_index(replacement.substr(name_begin, j - name_begin));
           if (group == npos) {
             throw regex_error("unknown group name in replacement", i);
           }
-          out.append(m[group]);
+          out.append(match[group]);
           i = j + 1;
         }
         else {

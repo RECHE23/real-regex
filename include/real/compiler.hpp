@@ -11,7 +11,7 @@
  * byte at a time, in lock-step — which preserves linear time.
  *
  * Branch targets are emitted as placeholders and patched only through the
- * `patch_x` / `patch_y` helpers, never by rewriting emitted instructions
+ * `patch_primary` / `patch_secondary` helpers, never by rewriting emitted instructions
  * wholesale.
  */
 #ifndef REAL_COMPILER_HPP
@@ -38,12 +38,12 @@ namespace real::detail {
     /*!
      * \brief Binds the compiler to a parsed pattern and its flags.
      * \param[in] tree The AST to compile (borrowed, must outlive the compiler).
-     * \param[in] f    The effective compilation flags.
+     * \param[in] compile_flags The effective compilation flags.
      */
     constexpr compiler(const ast& tree,
-                       flags      f)
+                       flags      compile_flags)
       : tree_(tree),
-        flags_(f)
+        flags_(compile_flags)
     {}
 
     /*!
@@ -95,17 +95,17 @@ namespace real::detail {
      * constexpr-friendly: exceeding the cap fails compilation for a
      * `static_regex`, or throws at run time.
      *
-     * \param[in,out] prog The program being built.
-     * \param[in]     in   The instruction to append.
+     * \param[in,out] prog        The program being built.
+     * \param[in]     instruction The instruction to append.
      * \throws real::regex_error when \ref max_program_size would be exceeded.
      */
     static constexpr void emit(dynamic_program& prog,
-                               instr            in)
+                               instr            instruction)
     {
       if (prog.code.size() >= max_program_size) {
         throw regex_error("program too large", 0);
       }
-      prog.code.push_back(in);
+      prog.code.push_back(instruction);
     }
 
     /*!
@@ -114,7 +114,7 @@ namespace real::detail {
      */
     static constexpr std::int32_t emit_split(dynamic_program& prog)
     {
-      emit(prog, {.op = opcode::split, .x = -1, .y = -1});
+      emit(prog, {.op = opcode::split, .primary_target = -1, .secondary_target = -1});
       return here(prog) - 1;
     }
 
@@ -124,7 +124,7 @@ namespace real::detail {
      */
     static constexpr std::int32_t emit_jump(dynamic_program& prog)
     {
-      emit(prog, {.op = opcode::jump, .x = -1});
+      emit(prog, {.op = opcode::jump, .primary_target = -1});
       return here(prog) - 1;
     }
 
@@ -134,11 +134,11 @@ namespace real::detail {
      * \param[in]     pc     Index of the split/jump to patch.
      * \param[in]     target Instruction index to branch to.
      */
-    static constexpr void patch_x(dynamic_program& prog,
-                                  std::int32_t     pc,
-                                  std::int32_t     target)
+    static constexpr void patch_primary(dynamic_program& prog,
+                                        std::int32_t     pc,
+                                        std::int32_t     target)
     {
-      prog.code[static_cast<std::size_t>(pc)].x = target;
+      prog.code[static_cast<std::size_t>(pc)].primary_target = target;
     }
 
     /*!
@@ -147,29 +147,29 @@ namespace real::detail {
      * \param[in]     pc     Index of the split to patch.
      * \param[in]     target Instruction index to branch to.
      */
-    static constexpr void patch_y(dynamic_program& prog,
-                                  std::int32_t     pc,
-                                  std::int32_t     target)
+    static constexpr void patch_secondary(dynamic_program& prog,
+                                          std::int32_t     pc,
+                                          std::int32_t     target)
     {
-      prog.code[static_cast<std::size_t>(pc)].y = target;
+      prog.code[static_cast<std::size_t>(pc)].secondary_target = target;
     }
 
     /*!
-     * \brief Emits a `klass` instruction, interning \p cc.
+     * \brief Emits a `klass` instruction, interning \p klass.
      *
      * Identical bitmaps share one slot, so the UTF-8 continuation class is
      * stored once however often it is emitted.
      *
      * \param[in,out] prog The program being built.
-     * \param[in]     cc   The class bitmap to match.
+     * \param[in]     klass   The class bitmap to match.
      * \throws real::regex_error if more than 65536 distinct classes are needed.
      */
     static constexpr void emit_klass(dynamic_program&  prog,
-                                     const char_class& cc)
+                                     const char_class& klass)
     {
       std::size_t index {prog.classes.size()};
       for (std::size_t i = 0; i < prog.classes.size(); ++i) {
-        if (prog.classes[i] == cc) {
+        if (prog.classes[i] == klass) {
           index = i;
           break;
         }
@@ -178,7 +178,7 @@ namespace real::detail {
         if (index > 0xFFFF) {
           throw regex_error("too many character classes", 0);
         }
-        prog.classes.push_back(cc);
+        prog.classes.push_back(klass);
       }
       emit(prog, {.op = opcode::klass, .arg16 = static_cast<std::uint16_t>(index)});
     }
@@ -207,35 +207,35 @@ namespace real::detail {
       const char_class lead4 {utf8_lead4_set()};
 
       const std::int32_t s1  {emit_split(prog)};
-      patch_x(prog, s1, here(prog));
+      patch_primary(prog, s1, here(prog));
       emit_klass(prog, ascii);
       const std::int32_t j1 {emit_jump(prog)};
 
-      patch_y(prog, s1, here(prog));
+      patch_secondary(prog, s1, here(prog));
       const std::int32_t s2 {emit_split(prog)};
-      patch_x(prog, s2, here(prog));
+      patch_primary(prog, s2, here(prog));
       emit_klass(prog, lead2);
       emit_klass(prog, cont);
       const std::int32_t j2 {emit_jump(prog)};
 
-      patch_y(prog, s2, here(prog));
+      patch_secondary(prog, s2, here(prog));
       const std::int32_t s3 {emit_split(prog)};
-      patch_x(prog, s3, here(prog));
+      patch_primary(prog, s3, here(prog));
       emit_klass(prog, lead3);
       emit_klass(prog, cont);
       emit_klass(prog, cont);
       const std::int32_t j3 {emit_jump(prog)};
 
-      patch_y(prog, s3, here(prog));
+      patch_secondary(prog, s3, here(prog));
       emit_klass(prog, lead4);
       emit_klass(prog, cont);
       emit_klass(prog, cont);
       emit_klass(prog, cont);
 
       const std::int32_t end {here(prog)};
-      patch_x(prog, j1, end);
-      patch_x(prog, j2, end);
-      patch_x(prog, j3, end);
+      patch_primary(prog, j1, end);
+      patch_primary(prog, j2, end);
+      patch_primary(prog, j3, end);
     }
 
     // --- node emission ----------------------------------------------------
@@ -254,16 +254,17 @@ namespace real::detail {
           break;
         case node_kind::byte:
           {
-            const auto b {node.byte};
-            const bool letter = (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z');
+            const auto byte_value {node.byte};
+            const bool letter = (byte_value >= 'A' && byte_value <= 'Z') ||
+                                (byte_value >= 'a' && byte_value <= 'z');
             if (has_flag(flags_, flags::icase) && letter) {
               char_class both;
-              both.set(b);
+              both.set(byte_value);
               fold_ascii_case(both);
               emit_klass(prog, both);
             }
             else {
-              emit(prog, {.op = opcode::byte, .arg8 = b});
+              emit(prog, {.op = opcode::byte, .arg8 = byte_value});
             }
             break;
           }
@@ -393,10 +394,10 @@ namespace real::detail {
         const std::int32_t after {tree_.nodes[static_cast<std::size_t>(branch)].next};
         if (after != -1) {
           const std::int32_t s {emit_split(prog)};
-          patch_x(prog, s, here(prog));
+          patch_primary(prog, s, here(prog));
           emit_node(prog, branch);
           jumps.push_back(emit_jump(prog));
-          patch_y(prog, s, here(prog));
+          patch_secondary(prog, s, here(prog));
         }
         else {
           emit_node(prog, branch); // last branch: falls through
@@ -405,14 +406,14 @@ namespace real::detail {
       }
       const std::int32_t end {here(prog)};
       for (const std::int32_t j : jumps) {
-        patch_x(prog, j, end);
+        patch_primary(prog, j, end);
       }
     }
 
     /*!
      * \brief Emits a quantifier (Thompson construction).
      *
-     * Greedy prefers `split.x` (enter the body); lazy swaps the branches.
+     * Greedy prefers `split.primary_target` (enter the body); lazy swaps the branches.
      * Counted forms unroll: `min` mandatory copies, then either a loop
      * (`max == -1`) or optional copies sharing one exit.
      *
@@ -429,24 +430,24 @@ namespace real::detail {
           const std::int32_t body {here(prog)};
           emit_node(prog, node.child);
           const std::int32_t s    {emit_split(prog)};
-          patch_x(prog, s, node.lazy ? here(prog) : body);
-          patch_y(prog, s, node.lazy ? body : here(prog));
+          patch_primary(prog, s, node.lazy ? here(prog) : body);
+          patch_secondary(prog, s, node.lazy ? body : here(prog));
           return;
         }
         emit_node(prog, node.child);
       }
-      if (node.max == -1) {                            // min == 0: a star loop
+      if (node.max == -1) {                                  // min == 0: a star loop
         const std::int32_t s {emit_split(prog)};
-        patch_x(prog, s, node.lazy ? -1 : here(prog)); // body side set below
+        patch_primary(prog, s, node.lazy ? -1 : here(prog)); // body side set below
         emit_node(prog, node.child);
         const std::int32_t j {emit_jump(prog)};
-        patch_x(prog, j, s);
+        patch_primary(prog, j, s);
         if (node.lazy) {
-          patch_x(prog, s, here(prog));
-          patch_y(prog, s, s + 1);
+          patch_primary(prog, s, here(prog));
+          patch_secondary(prog, s, s + 1);
         }
         else {
-          patch_y(prog, s, here(prog));
+          patch_secondary(prog, s, here(prog));
         }
         return;
       }
@@ -458,8 +459,8 @@ namespace real::detail {
       }
       const std::int32_t end {here(prog)};
       for (const std::int32_t s : exits) {
-        patch_x(prog, s, node.lazy ? end : s + 1);
-        patch_y(prog, s, node.lazy ? s + 1 : end);
+        patch_primary(prog, s, node.lazy ? end : s + 1);
+        patch_secondary(prog, s, node.lazy ? s + 1 : end);
       }
     }
   };
@@ -467,14 +468,14 @@ namespace real::detail {
   /*!
    * \brief Compiles \p tree to an NFA program (convenience over \ref compiler).
    * \param[in] tree The parsed AST.
-   * \param[in] f    The effective compilation flags.
+   * \param[in] compile_flags The effective compilation flags.
    * \return The compiled \ref dynamic_program.
    * \throws real::regex_error if the program exceeds \ref max_program_size.
    */
   constexpr dynamic_program compile(const ast& tree,
-                                    flags      f)
+                                    flags      compile_flags)
   {
-    return compiler(tree, f).compile();
+    return compiler(tree, compile_flags).compile();
   }
 } // namespace real::detail
 
