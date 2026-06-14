@@ -1,0 +1,80 @@
+/*!
+\page architecture Architecture
+
+REAL is header-only and lives entirely in `include/real/`. Dependencies point
+strictly downward: a header only includes those below it. Doxygen's include
+graph on each file's page shows this layering; the summary is:
+
+| Layer        | Header          | Responsibility                                              |
+|--------------|-----------------|-------------------------------------------------------------|
+| foundation   | `config.hpp`    | Resource limits (program size, nesting, repeat, groups).    |
+| foundation   | `charclass.hpp` | 256-bit byte set; ASCII `\d \w \s`; the UTF-8 byte sets.     |
+| foundation   | `utf8.hpp`      | Codepoint advance (used only by match iteration).           |
+| core types   | `program.hpp`   | Opcodes, `instr`, `flags`, `pattern_hints`, `regex_error`.  |
+| front end    | `ast.hpp`       | Recursive-descent parser: pattern text → AST.               |
+| middle end   | `compiler.hpp`  | AST → NFA bytecode (Thompson construction).                 |
+| analysis     | `prefilter.hpp` | Search hints + fast-path shape recognition.                 |
+| engine       | `pike.hpp`      | Pike VM (Thompson NFA simulation) + fast paths.             |
+| policy       | `storage.hpp`   | Dynamic / static storage; small_vec; fixed_string.          |
+| API          | `real.hpp`      | `regex`, `static_regex`, results, iteration, replace, split.|
+
+\section arch_pipeline Pipeline
+
+A pattern flows through parse → compile → analyze once at construction; each
+match then runs the engine over the program.
+
+\dot
+digraph pipeline {
+  rankdir=LR;
+  node [shape=box, fontsize=10, fontname="Helvetica"];
+  edge [fontsize=9, fontname="Helvetica"];
+
+  pat   [label="pattern text"];
+  ast   [label="AST\n(ast.hpp)"];
+  prog  [label="NFA program\n(compiler.hpp)"];
+  hints [label="pattern_hints\n(prefilter.hpp)"];
+  vm    [label="Pike VM\n(pike.hpp)", shape=ellipse];
+  fast  [label="fast paths\n(literal / class+ /\nfixed shape / codepoint /\nalternation)", shape=ellipse];
+  res   [label="match_result\n(real.hpp)"];
+
+  pat  -> ast   [label="parse"];
+  ast  -> prog  [label="compile"];
+  prog -> hints [label="analyze"];
+  hints -> fast [label="shape\nrecognized"];
+  hints -> vm   [label="otherwise"];
+  fast -> res;
+  vm   -> res;
+}
+\enddot
+
+\section arch_storage Storage policies
+
+One parse/compile/execute pipeline, parameterized on a storage policy, backs
+all three memory modes (no second hierarchy):
+
+- \ref real::detail::dynamic_storage — everything sized once on the heap at
+  pattern compilation (backs \ref real::regex).
+- \ref real::detail::static_storage — the pattern is compiled at compile time
+  into exactly-sized constexpr arrays; matching runs with no heap allocation
+  (backs \ref real::static_regex, including the hybrid compile-time-pattern /
+  runtime-text mode).
+
+\section arch_fastpaths Fast paths
+
+The Pike VM is the general, always-correct engine and the oracle for the
+fast paths. `analyze_program` recognizes whole-pattern shapes and records a
+hint; the engine then bypasses the thread machinery for them, producing
+results identical to the VM. In dispatch order: pure literal (substring
+search), `class+` (run scan), a fixed-width byte/klass sequence, `.` / a
+negated class (codepoint scan), and an alternation of straight-line branches.
+
+\section arch_invariants Invariants
+
+- **Linear time.** Every program counter is added to a thread list at most
+  once per input position (generation-marked dedup): no backtracking.
+- **Codepoint alignment.** Multi-byte constructs compile to byte-level UTF-8
+  alternatives, so the engine steps one byte at a time yet match boundaries
+  never split a codepoint.
+- **Atomic offset patching.** Branch targets are emitted as placeholders and
+  patched only through dedicated helpers, never by rewriting instructions.
+*/

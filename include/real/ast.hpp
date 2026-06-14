@@ -893,6 +893,7 @@ private:
 /*!
  * \brief Parses \p pattern into an \ref ast (convenience over \ref parser).
  * \param[in] pattern The pattern text.
+ * \param[in] init    Constructor flags; only `verbose` affects parsing.
  * \return The parsed AST.
  * \throws real::regex_error on unsupported or malformed syntax.
  */

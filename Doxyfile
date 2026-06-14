@@ -9,7 +9,7 @@ OUTPUT_DIRECTORY       = build/doc
 OUTPUT_LANGUAGE        = English
 
 # --- what to document ------------------------------------------------------
-INPUT                  = include/real README.md
+INPUT                  = include/real README.md docs/architecture.dox
 FILE_PATTERNS          = *.hpp
 RECURSIVE              = YES
 USE_MDFILE_AS_MAINPAGE = README.md
@@ -41,8 +41,17 @@ HTML_OUTPUT            = html
 SOURCE_BROWSER         = YES
 ALPHABETICAL_INDEX     = YES
 
-# --- graphs (only if dot/graphviz is present) ------------------------------
-HAVE_DOT               = NO
+# --- graphs (require Graphviz `dot`) ---------------------------------------
+# Structural graphs (header include dependencies = the layering, plus
+# collaboration diagrams) are generated automatically; call graphs are left
+# off as they are noisy for this engine.
+HAVE_DOT               = YES
+DOT_IMAGE_FORMAT       = svg
+INTERACTIVE_SVG        = YES
+INCLUDE_GRAPH          = YES
+INCLUDED_BY_GRAPH      = NO
+CALL_GRAPH             = NO
+CALLER_GRAPH           = NO
 
 # --- preprocessing: expand the library's feature macros sensibly -----------
 ENABLE_PREPROCESSING   = YES

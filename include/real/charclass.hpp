@@ -182,7 +182,10 @@ constexpr char_class space_set()
 // the compiler emits these sets (compiler.hpp) and the prefilter recognizes
 // the same shape (prefilter.hpp). Keeping them here keeps the two in lock-step.
 
-//! \return UTF-8 continuation bytes `10xxxxxx` (`0x80–0xBF`).
+/*!
+ * \brief The UTF-8 continuation-byte set `10xxxxxx`.
+ * \return The set `[0x80, 0xBF]`.
+ */
 constexpr char_class utf8_cont_set()
 {
   char_class cc;
@@ -190,7 +193,10 @@ constexpr char_class utf8_cont_set()
   return cc;
 }
 
-//! \return Lead bytes of a 2-byte UTF-8 sequence (`0xC2–0xDF`).
+/*!
+ * \brief The lead-byte set of a 2-byte UTF-8 sequence.
+ * \return The set `[0xC2, 0xDF]`.
+ */
 constexpr char_class utf8_lead2_set()
 {
   char_class cc;
@@ -198,7 +204,10 @@ constexpr char_class utf8_lead2_set()
   return cc;
 }
 
-//! \return Lead bytes of a 3-byte UTF-8 sequence (`0xE0–0xEF`).
+/*!
+ * \brief The lead-byte set of a 3-byte UTF-8 sequence.
+ * \return The set `[0xE0, 0xEF]`.
+ */
 constexpr char_class utf8_lead3_set()
 {
   char_class cc;
@@ -206,7 +215,10 @@ constexpr char_class utf8_lead3_set()
   return cc;
 }
 
-//! \return Lead bytes of a 4-byte UTF-8 sequence (`0xF0–0xF4`).
+/*!
+ * \brief The lead-byte set of a 4-byte UTF-8 sequence.
+ * \return The set `[0xF0, 0xF4]`.
+ */
 constexpr char_class utf8_lead4_set()
 {
   char_class cc;
