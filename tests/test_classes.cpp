@@ -125,7 +125,7 @@ TEST(invalid_utf8_subjects_make_progress)
   const real::regex xs("x*");
   EXPECT_EQ(xs.find_all("a\xC3"
                         "b"sv)
-              .size(),
+            .size(),
             4U);                 // 0, 1, 2 (after the lone lead byte), 3
   const real::regex dot(".");
   EXPECT(!dot.search("\xC3"sv)); // lead byte without continuation: no dot

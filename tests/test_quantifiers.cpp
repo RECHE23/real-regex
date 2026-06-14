@@ -97,7 +97,7 @@ TEST(counted_class_fixed_width)
   EXPECT_EQ(all[1][0], "deadbeef"sv);
   // match / fullmatch anchoring.
   EXPECT_EQ(hex.match("deadbeefXX").end(), 8U);
-  EXPECT(!hex.match("zz")); // not at start
+  EXPECT(!hex.match("zz"));            // not at start
   EXPECT(hex.fullmatch("deadbeef"));
   EXPECT(!hex.fullmatch("deadbeef0")); // exactly 8, no more
   // A longer run yields back-to-back fixed windows (no overlap).

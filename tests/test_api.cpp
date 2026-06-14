@@ -28,7 +28,7 @@ TEST(literal_fullmatch_consumes_everything)
 TEST(literal_search_finds_leftmost)
 {
   const real::regex        rx("ab");
-  auto m = rx.search("xxabyyab");
+  auto                     m = rx.search("xxabyyab");
   EXPECT(m);
   EXPECT_EQ(m.start(), 2U);
   EXPECT_EQ(m.end(), 4U);
@@ -57,7 +57,7 @@ TEST(escaped_metacharacters_are_literals)
 TEST(no_match_result_is_empty)
 {
   const real::regex        rx("zzz");
-  auto m = rx.search("abc");
+  auto                     m = rx.search("abc");
   EXPECT(!m);
   EXPECT_EQ(m.start(), real::npos);
   EXPECT_EQ(m.end(), real::npos);
@@ -107,10 +107,10 @@ TEST(dynamic_large_slots_sbo)
   }
   real::regex rx(pat);
   std::string subject(40, 'x');
-  auto m = rx.search(subject);  // owning string -> use view internally; avoids deleted && overload
+  auto        m = rx.search(subject); // owning string -> use view internally; avoids deleted && overload
   EXPECT(m.matched());
-  EXPECT(m.size() > 32);  // >32 groups -> slot count >64, forces reserve in small_vec (heap path)
-  EXPECT(m[39] == "x");   // last group participates
+  EXPECT(m.size() > 32);              // >32 groups -> slot count >64, forces reserve in small_vec (heap path)
+  EXPECT(m[39] == "x");               // last group participates
 
   // Explicit copy after growth: exercises small_vec heap copy ctor (was a coverage gap
   // for the SBO advancement; secures that grown results can be copied without issue).
@@ -125,7 +125,7 @@ TEST(dynamic_find_all_exercises_result_copies_with_sbo)
   // std::vector<result_type> and push_back copies the small_vec slots.
   // Exercises inline SBO copy path for common small-group case.
   real::regex rx("(\\w+)");
-  auto results = rx.find_all("a1 b22 c333");
+  auto        results = rx.find_all("a1 b22 c333");
   EXPECT_EQ(results.size(), 3U);
   EXPECT_EQ(results[0][1], "a1");
   EXPECT_EQ(results[1][1], "b22");
@@ -143,8 +143,8 @@ TEST(small_vec_grown_result_copy_exercises_heap_copy)
   }
   real::regex rx(pat);
   std::string subject(40, 'x');
-  auto m = rx.search(subject);
-  auto m2 = m; // NOLINT(performance-unnecessary-copy-initialization) — copy after growth is the test
+  auto        m  = rx.search(subject);
+  auto        m2 = m; // NOLINT(performance-unnecessary-copy-initialization) — copy after growth is the test
   EXPECT(m2.size() > 32);
   EXPECT(m2[39] == "x");
 
@@ -162,36 +162,36 @@ TEST(small_vec_grown_result_copy_exercises_heap_copy)
 
 TEST(program_size_limit)
 {
-    // Reasonable large bounded (a{200} emits ~203 instr) must still work.
-    // Well below cap; exercises unroll path without hitting limit.
-    {
-        real::regex r("a{200}");
-        EXPECT(r.raw_program().code.size() > 150);
-        EXPECT(r.raw_program().code.size() < 300);
-        // matching still functions
-        std::string subject(200, 'a');
-        auto m = r.search(subject);
-        EXPECT(m.matched());
-        EXPECT_EQ(m[0].size(), 200U);
-    }
+  // Reasonable large bounded (a{200} emits ~203 instr) must still work.
+  // Well below cap; exercises unroll path without hitting limit.
+  {
+    real::regex r("a{200}");
+    EXPECT(r.raw_program().code.size() > 150);
+    EXPECT(r.raw_program().code.size() < 300);
+    // matching still functions
+    std::string subject(200, 'a');
+    auto        m = r.search(subject);
+    EXPECT(m.matched());
+    EXPECT_EQ(m[0].size(), 200U);
+  }
 
-    // A nested shape that multiplies unrolls beyond cap must raise cleanly.
-    // Tune exponents so product of unrolls > 262144 while pattern text small.
-    // Rough: 400 * 400 * 2  > cap.
-    {
-        std::string pat = "((a{400}){400}){2}";
-        bool threw = false;
-        std::string what;
-        try {
-            real::regex r(pat);
-        } catch (const real::regex_error& e) {
-            threw = true;
-            what = e.what();
-        } catch (...) {
-            // other exception bad
-        }
-        EXPECT(threw);
-        // Message contains "program too large" (position 0 as we don't track emit site precisely)
-        EXPECT(what.find("program too large") != std::string::npos);
+  // A nested shape that multiplies unrolls beyond cap must raise cleanly.
+  // Tune exponents so product of unrolls > 262144 while pattern text small.
+  // Rough: 400 * 400 * 2  > cap.
+  {
+    std::string pat   = "((a{400}){400}){2}";
+    bool        threw = false;
+    std::string what;
+    try {
+      real::regex r(pat);
+    } catch (const real::regex_error& e) {
+      threw = true;
+      what  = e.what();
+    } catch (...) {
+      // other exception bad
     }
+    EXPECT(threw);
+    // Message contains "program too large" (position 0 as we don't track emit site precisely)
+    EXPECT(what.find("program too large") != std::string::npos);
+  }
 }

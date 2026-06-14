@@ -60,9 +60,9 @@ TEST(word_start_and_word_end_anchors)
   EXPECT(!real::regex("\\<cat\\>").search("concat"));
   EXPECT_EQ(real::regex("\\<\\w+").search("foo bar")[0], "foo"sv);
   EXPECT_EQ(real::regex("\\w+\\>").search(".foo.").start(), 1U);
-  EXPECT(real::regex("\\<").match("abc"));     // word start at the text start
+  EXPECT(real::regex("\\<").match("abc"));                 // word start at the text start
   EXPECT_EQ(real::regex("\\>").search("abc").start(), 3U); // word end at text end
-  EXPECT(!real::regex("\\<").search(" "));     // no word, no word start
+  EXPECT(!real::regex("\\<").search(" "));                 // no word, no word start
   // \< and \> are zero-width, like the other anchors.
   EXPECT_THROWS(real::regex("\\<?"), real::regex_error);
 }
@@ -125,7 +125,7 @@ TEST(literal_after_assertion_scans_to_next_occurrence)
   EXPECT_EQ(real::regex("\\Bb").search("bbc").start(), 1U);
   EXPECT(real::regex("\\bfoo\\b").search("a foo b")); // word-boundary literal
   EXPECT_EQ(real::regex("foo\\b").search("foofoo foo").start(), 3U);
-  EXPECT(!real::regex("\\B2").search("2")); // single '2': boundary, no match
+  EXPECT(!real::regex("\\B2").search("2"));           // single '2': boundary, no match
 }
 
 TEST(prefilter_jump_resets_stale_seen_marks)
@@ -173,11 +173,11 @@ TEST(verbose_mode)
 {
   // re.X: unescaped whitespace and # comments are ignored outside classes.
   EXPECT(real::regex("(?x) a b c").fullmatch("abc"));
-  EXPECT(!real::regex("(?x) a b c").fullmatch("a bc")); // whitespace in text is literal
+  EXPECT(!real::regex("(?x) a b c").fullmatch("a bc"));             // whitespace in text is literal
   EXPECT(real::regex(R"((?x)\d{4} - \d{2})").fullmatch("2026-06"));
   EXPECT(real::regex("(?x) a # trailing comment\n b").fullmatch("ab"));
-  EXPECT(real::regex("(?x)[ ]").fullmatch(" "));      // space inside a class is literal
-  EXPECT(real::regex(R"((?x)a\ b)").fullmatch("a b")); // escaped space is literal
+  EXPECT(real::regex("(?x)[ ]").fullmatch(" "));                    // space inside a class is literal
+  EXPECT(real::regex(R"((?x)a\ b)").fullmatch("a b"));              // escaped space is literal
   EXPECT(real::regex("a b", real::flags::verbose).fullmatch("ab")); // constructor flag
   EXPECT(real::regex("(?ix) HELLO").fullmatch("hello"));            // combined with icase
 }

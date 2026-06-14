@@ -16,8 +16,7 @@ using namespace std::string_view_literals;
 
 namespace {
 
-std::size_t alloc_count = 0;
-
+  std::size_t alloc_count = 0;
 }
 
 // NOLINTBEGIN — this *is* the allocator: malloc and odd names are the point.
@@ -45,12 +44,14 @@ void operator delete[](void* ptr) noexcept
   std::free(ptr);
 }
 
-void operator delete(void* ptr, std::size_t) noexcept
+void operator delete(void* ptr,
+                     std::size_t) noexcept
 {
   std::free(ptr);
 }
 
-void operator delete[](void* ptr, std::size_t) noexcept
+void operator delete[](void* ptr,
+                       std::size_t) noexcept
 {
   std::free(ptr);
 }
@@ -61,28 +62,27 @@ void operator delete[](void* ptr, std::size_t) noexcept
 
 namespace {
 
-constexpr real::static_regex<"(\\d{4})-(\\d{2})"> date_rx;
+  constexpr real::static_regex<"(\\d{4})-(\\d{2})"> date_rx;
 
-static_assert(date_rx.search("on 2026-06-10").start() == 3);
-static_assert(date_rx.search("on 2026-06-10")[1] == "2026"sv);
-static_assert(!date_rx.search("nothing"));
-static_assert(date_rx.group_count() == 2);
+  static_assert(date_rx.search("on 2026-06-10").start() == 3);
+  static_assert(date_rx.search("on 2026-06-10")[1] == "2026"sv);
+  static_assert(!date_rx.search("nothing"));
+  static_assert(date_rx.group_count() == 2);
 
-constexpr real::static_regex<"(?i)héllo"> icase_rx;
-static_assert(icase_rx.fullmatch("HéLLO").matched()); // ASCII letters fold…
-static_assert(!icase_rx.fullmatch("HÉLLO"));          // …the é does not
+  constexpr real::static_regex<"(?i)héllo"> icase_rx;
+  static_assert(icase_rx.fullmatch("HéLLO").matched()); // ASCII letters fold…
+  static_assert(!icase_rx.fullmatch("HÉLLO"));          // …the é does not
 
 // Exact sizing: the storage arrays have exactly the measured sizes, and the
 // type is stateless (all data is static constexpr).
-using date_storage = real::detail::static_storage<"(\\d{4})-(\\d{2})">;
-static_assert(date_storage::slot_count == 6);
-static_assert(date_storage::code.size() == date_storage::code_size);
-static_assert(date_storage::class_count == 1); // one interned digit class
-static_assert(sizeof(real::static_regex<"(\\d{4})-(\\d{2})">) == 1);
+  using date_storage = real::detail::static_storage<"(\\d{4})-(\\d{2})">;
+  static_assert(date_storage::slot_count == 6);
+  static_assert(date_storage::code.size() == date_storage::code_size);
+  static_assert(date_storage::class_count == 1); // one interned digit class
+  static_assert(sizeof(real::static_regex<"(\\d{4})-(\\d{2})">) == 1);
 
 // Invalid patterns are *compile errors* (uncomment to verify):
 //   constexpr real::static_regex<"(a"> broken;
-
 } // namespace
 
 TEST(static_regex_matches_at_runtime_like_dynamic)
@@ -150,13 +150,13 @@ TEST(static_vec_overflow_throws)
 TEST(static_regex_constexpr_iteration)
 {
   constexpr std::size_t n = [] {
-    constexpr real::static_regex<"[ab]+"> rx;
-    std::size_t                           total = 0;
-    for (const auto& m : rx.find_iter("ab cd abba")) {
-      total += m.end() - m.start();
-    }
-    return total;
-  }();
+                              constexpr real::static_regex<"[ab]+"> rx;
+                              std::size_t                           total = 0;
+                              for (const auto& m : rx.find_iter("ab cd abba")) {
+                                total += m.end() - m.start();
+                              }
+                              return total;
+                            }();
   static_assert(n == 6);
   EXPECT_EQ(n, 6U);
 }

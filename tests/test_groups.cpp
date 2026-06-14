@@ -66,7 +66,7 @@ TEST(alternation_under_star)
 TEST(captures_basic)
 {
   const real::regex        rx("(\\d{4})-(\\d{2})");
-  auto m = rx.search("date: 2026-06!");
+  auto                     m = rx.search("date: 2026-06!");
   EXPECT(m);
   EXPECT_EQ(m.size(), 3U);
   EXPECT_EQ(m[0], "2026-06"sv);
@@ -79,7 +79,7 @@ TEST(captures_basic)
 TEST(captures_numbered_by_open_paren)
 {
   const real::regex        rx("((a)(b))c");
-  auto m = rx.fullmatch("abc");
+  auto                     m = rx.fullmatch("abc");
   EXPECT_EQ(m[1], "ab"sv);
   EXPECT_EQ(m[2], "a"sv);
   EXPECT_EQ(m[3], "b"sv);
@@ -90,7 +90,7 @@ TEST(captures_across_three_branch_alternation)
 {
   // Historical bug: captures lost in alternations of 3+ branches.
   const real::regex        rx("(a)|(b)|(c)");
-  auto m = rx.search("zb");
+  auto                     m = rx.search("zb");
   EXPECT(m);
   EXPECT_EQ(m.start(1), real::npos); // like Python: (None, 'b', None)
   EXPECT_EQ(m[2], "b"sv);
@@ -123,7 +123,7 @@ TEST(nullable_loop_capture_keeps_last_nonempty_iteration)
 TEST(non_capturing_groups)
 {
   const real::regex        rx("(?:ab)+(c)");
-  auto m = rx.fullmatch("ababc");
+  auto                     m = rx.fullmatch("ababc");
   EXPECT_EQ(rx.group_count(), 1U);
   EXPECT_EQ(m[1], "c"sv);
   EXPECT(real::regex("(?:a|b)c").fullmatch("bc"));
@@ -132,7 +132,7 @@ TEST(non_capturing_groups)
 TEST(named_groups_python_and_dotnet_styles)
 {
   const real::regex        rx("(?P<year>\\d{4})-(?<month>\\d{2})");
-  auto m = rx.search("2026-06");
+  auto                     m = rx.search("2026-06");
   EXPECT_EQ(m.group_index("year"), 1U);
   EXPECT_EQ(m.group_index("month"), 2U);
   EXPECT_EQ(m["year"], "2026"sv);
@@ -173,11 +173,11 @@ TEST(nesting_depth_is_bounded_instead_of_overflowing_the_stack)
   // on '('*50000 — a denial of service through any binding. Deep nesting is
   // now a clean regex_error; reasonable nesting keeps working.
   const auto nested = [](std::size_t depth) {
-    std::string pattern(depth, '(');
-    pattern += "a";
-    pattern.append(depth, ')');
-    return pattern;
-  };
+                        std::string pattern(depth, '(');
+                        pattern += "a";
+                        pattern.append(depth, ')');
+                        return pattern;
+                      };
   EXPECT(real::regex(nested(100)).fullmatch("a"));
   EXPECT(real::regex(nested(real::detail::max_nesting_depth)).fullmatch("a"));
   EXPECT_THROWS(real::regex(nested(real::detail::max_nesting_depth + 1)), real::regex_error);

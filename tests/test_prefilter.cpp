@@ -14,12 +14,11 @@ using real::detail::dynamic_storage;
 
 namespace {
 
-real::detail::pattern_hints hints_of(std::string_view pattern,
-                                     real::flags      f = real::flags::none)
-{
-  return dynamic_storage::compile(pattern, f).program.hints;
-}
-
+  real::detail::pattern_hints hints_of(std::string_view pattern,
+                                       real::flags      f = real::flags::none)
+  {
+    return dynamic_storage::compile(pattern, f).program.hints;
+  }
 } // namespace
 
 TEST(prefix_literal_is_extracted)
@@ -181,7 +180,7 @@ TEST(prefilter_rare_byte_literal)
   text[500] = 'x';
   std::string s = "aax";  // freq: a=2, x=1 → rarest 'x' at idx 2
   real::regex rx(s);
-  auto m = rx.search(text);
+  auto        m = rx.search(text);
   EXPECT(m.matched());
   EXPECT_EQ(m.start(), 498U);
 }
@@ -192,11 +191,11 @@ TEST(prefilter_rare_byte_with_rare_in_middle)
   // "axa" : 'x' is rarest in literal (a=2, x=1), at idx=1 (middle).
   // Text has the sequence with 'x' also rare in surrounding.
   std::string text(200, 'a');
-  text[99] = 'a';
+  text[99]  = 'a';
   text[100] = 'x';
   text[101] = 'a';
   real::regex rx("axa");
-  auto m = rx.search(text);
+  auto        m = rx.search(text);
   EXPECT(m.matched());
   EXPECT_EQ(m.start(), 99U);
 }
@@ -206,11 +205,11 @@ TEST(prefilter_rare_byte_rare_first)
   // Bonify for rare prefilter: case where rarest byte is first in prefix
   // (rare_idx=0), to hit that branch in the selection loop.
   std::string text(200, 'a');
-  text[99] = 'x';
+  text[99]  = 'x';
   text[100] = 'a';
   text[101] = 'a';
   real::regex rx("xaa");  // 'x' rarest in literal (freq x=1, a=2), at idx 0
-  auto m = rx.search(text);
+  auto        m = rx.search(text);
   EXPECT(m.matched());
   EXPECT_EQ(m.start(), 99U);
 }
@@ -223,7 +222,7 @@ TEST(prefilter_rare_byte_cand_before_pos)
   // cand=1, match.
   std::string text = "xaax";
   real::regex rx("aax");
-  auto m = rx.search(text);
+  auto        m = rx.search(text);
   EXPECT(m.matched());
   EXPECT_EQ(m.start(), 1U);
 }
@@ -235,7 +234,7 @@ TEST(literal_prefilter_throughput_smoke)
   text += "needle";
   const real::regex  rx("needle\\d?");
   const auto         begin = std::chrono::steady_clock::now();
-  auto m = rx.search(text);
+  auto               m     = rx.search(text);
   for (int i = 1; i < 20; ++i) {
     m = rx.search(text);
   }
@@ -254,22 +253,22 @@ TEST(prefilter_works_in_constexpr_too)
   // We only force the constant evaluation (via static_assert on the helper) on compilers
   // where it is known to work. Runtime EXPECT runs on all.
   auto needle_ct = [] {
-    const real::regex rx("needle");
-    return rx.search("a long constexpr haystack with a needle inside").start() == 33;
-  };
+                     const real::regex rx("needle");
+                     return rx.search("a long constexpr haystack with a needle inside").start() == 33;
+                   };
   auto rare_ct = [] {
-    const real::regex rx("aax");
-    // "aaaax" : match at pos 2 ("aax" with 'x' rarest in literal)
-    return rx.search("aaaax").start() == 2;
-  };
+                   const real::regex rx("aax");
+                   // "aaaax" : match at pos 2 ("aax" with 'x' rarest in literal)
+                   return rx.search("aaaax").start() == 2;
+                 };
 
 #if !defined(__GNUC__) || defined(__clang__) || __GNUC__ >= 15
   static_assert(needle_ct());
   static_assert(rare_ct());
-  const bool ok_val = needle_ct();
+  const bool ok_val      = needle_ct();
   const bool ok_rare_val = rare_ct();
 #else
-  const bool ok_val = needle_ct();
+  const bool ok_val      = needle_ct();
   const bool ok_rare_val = rare_ct();
 #endif
   EXPECT(ok_val);
@@ -289,7 +288,7 @@ TEST(prefilter_rare_byte_global_freq_prefers_rare_letters)
   text[225] = 'r';
   text[226] = 'y';
   real::regex rx("query");
-  auto m = rx.search(text);
+  auto        m = rx.search(text);
   EXPECT(m.matched());
   EXPECT_EQ(m.start(), 222U);
 }
@@ -307,7 +306,7 @@ TEST(prefilter_rare_byte_global_freq_punctuation_anchor)
   text[82]  = 'a';
   text[83]  = 'r';
   real::regex rx("foo{bar");
-  auto m = rx.search(text);
+  auto        m = rx.search(text);
   EXPECT(m.matched());
   EXPECT_EQ(m.start(), 77U);
 }
@@ -318,15 +317,15 @@ TEST(prefilter_rare_byte_global_freq_prose_like)
   // Ensures no regression and that search still finds correctly (prefilter only
   // affects speed, never results — already proven by hints_never_change_results).
   std::string hay =
-      "The quick brown fox jumps over the lazy dog. "
-      "Pack my box with five dozen liquor jugs. "
-      "How vexingly quick daft zebras jump! ";
+    "The quick brown fox jumps over the lazy dog. "
+    "Pack my box with five dozen liquor jugs. "
+    "How vexingly quick daft zebras jump! ";
   // Place "quiz" ( 'q' and 'z' are globally rare ) at a known offset.
-  const std::string lit = "quiz";
+  const std::string lit    = "quiz";
   const std::size_t insert = 47;
   hay.replace(insert, lit.size(), lit);
   real::regex rx(lit);
-  auto m = rx.search(hay);
+  auto        m = rx.search(hay);
   EXPECT(m.matched());
   EXPECT_EQ(m.start(), insert);
 }
@@ -350,13 +349,13 @@ TEST(exact_literal_fastpath_hint_and_results)
 
   // Fastpath must still produce correct results (including groups).
   real::regex plain("needle");
-  auto m1 = plain.search("hay needle in stack");
+  auto        m1 = plain.search("hay needle in stack");
   EXPECT(m1.matched());
   EXPECT_EQ(m1.start(), 4U);
   EXPECT_EQ(m1[0], "needle"sv);
 
   real::regex grouped("(ne)(ed)le");
-  auto m2 = grouped.search("xxneedleyy");
+  auto        m2 = grouped.search("xxneedleyy");
   EXPECT(m2.matched());
   EXPECT_EQ(m2.start(), 2U);
   EXPECT_EQ(m2[1], "ne"sv);
@@ -364,7 +363,7 @@ TEST(exact_literal_fastpath_hint_and_results)
 
   // Anchored literal success via fastpath.
   real::regex anchored("^abc");
-  auto m3 = anchored.search("abc def");
+  auto        m3 = anchored.search("abc def");
   EXPECT(m3.matched());
   EXPECT_EQ(m3.start(), 0U);
 }
