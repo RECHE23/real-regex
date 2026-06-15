@@ -11,6 +11,8 @@ CMAKE  ?= cmake
 CTEST  ?= ctest
 PYTHON ?= python3
 BUILD  := build
+# Parallelism: detected core count (override with JOBS=N).
+JOBS   ?= $(shell sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
 
 # Run Python against the in-place build under python/, ahead of any installed
 # copy (PYTHONPATH precedes site-packages, so an editable install elsewhere
@@ -67,14 +69,14 @@ all: build
 
 build:
 	$(CMAKE) -S . -B $(BUILD) $(CMAKE_CXX) -DCMAKE_BUILD_TYPE=Release
-	$(CMAKE) --build $(BUILD) -j
+	$(CMAKE) --build $(BUILD) --parallel $(JOBS)
 
 test: build
 	$(CTEST) --test-dir $(BUILD) --output-on-failure
 
 sanitize:
 	$(CMAKE) -S . -B $(BUILD)/sanitize $(CMAKE_CXX) -DREAL_SANITIZE=ON
-	$(CMAKE) --build $(BUILD)/sanitize -j
+	$(CMAKE) --build $(BUILD)/sanitize --parallel $(JOBS)
 	$(CTEST) --test-dir $(BUILD)/sanitize --output-on-failure
 
 # Coverage uses LLVM source-based instrumentation, so it pins a Clang
@@ -95,7 +97,7 @@ COV_DIR  := $(BUILD)/coverage
 # Shared build/run/merge steps used by both the text summary and the HTML report.
 coverage-build:
 	$(CMAKE) -S . -B $(COV_DIR) -DREAL_COVERAGE=ON -DCMAKE_CXX_COMPILER=$(COV_CXX)
-	$(CMAKE) --build $(COV_DIR) -j
+	$(CMAKE) --build $(COV_DIR) --parallel $(JOBS)
 	LLVM_PROFILE_FILE=$(COV_DIR)/tests.profraw $(COV_DIR)/real_tests_bin
 	$(PROFDATA) merge -sparse $(COV_DIR)/tests.profraw -o $(COV_DIR)/tests.profdata
 
@@ -120,7 +122,7 @@ coverage-html:
 # --- QA tools (wrappers; no compilation policy here) ----------------------
 
 lint:
-	clang-tidy $(wildcard tests/*.cpp) -- $(CXXSTD) $(INCLUDES)
+	@ls tests/*.cpp | xargs -P $(JOBS) -I{} clang-tidy {} -- $(CXXSTD) $(INCLUDES)
 
 # Analyzes the library through a one-line translation unit; the line filter
 # restricts diagnostics to the included headers.
