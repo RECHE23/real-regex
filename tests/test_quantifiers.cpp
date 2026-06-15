@@ -122,6 +122,36 @@ TEST(fixed_shape_sequence)
   EXPECT_EQ(mix.find_all("xa5cya9c").size(), 2U);
 }
 
+TEST(class_scan_fast_paths_iterate)
+{
+  // The "class+" and codepoint-class fast paths build a flat membership table
+  // once and reuse it across an iterated walk. Iterating several matches must
+  // give exactly the general engine's greedy result (and exercises the table
+  // cache-hit on every match after the first).
+  const real::regex word("[a-z]+");
+  const auto        ws = word.find_all("foo bar123 baz qux");
+  EXPECT_EQ(ws.size(), 4U);
+  EXPECT_EQ(ws[0][0], "foo"sv);
+  EXPECT_EQ(ws[1][0], "bar"sv);              // stops before the digits
+  EXPECT_EQ(ws[3][0], "qux"sv);
+  EXPECT_EQ(word.match("hello!").end(), 5U); // greedy, longest run
+  EXPECT(word.fullmatch("abc"));
+  EXPECT(!word.fullmatch("abc1"));           // trailing non-class
+
+  const real::regex digits("[0-9]+");
+  EXPECT_EQ(digits.find_all("a12b345c6").size(), 3U);
+
+  // Codepoint-class fast path (negated class spanning a greedy run), iterated.
+  const real::regex field("[^,]+");
+  const auto        fs = field.find_all("a,bb,ccc");
+  EXPECT_EQ(fs.size(), 3U);
+  EXPECT_EQ(fs[1][0], "bb"sv);
+  EXPECT_EQ(fs[2][0], "ccc"sv);
+  // `.` spans whole (multibyte) codepoints; the ASCII table only gates ASCII.
+  const real::regex dot(".+");
+  EXPECT_EQ(dot.find_all("ab\ncd").size(), 2U); // `.` excludes the newline
+}
+
 TEST(pathological_pattern_stays_linear)
 {
   // a*a*a*a*a*b is exponential for naive backtrackers; the Pike VM is
