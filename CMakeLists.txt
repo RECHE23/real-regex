@@ -6,7 +6,7 @@
 # (add_subdirectory or FetchContent). Tests build only when REAL is the
 # top-level project.
 cmake_minimum_required(VERSION 3.16)
-project(real LANGUAGES CXX)
+project(real VERSION 2026.6.5 LANGUAGES CXX)
 
 # Use ccache as a compiler launcher when available (a no-op otherwise): the
 # coverage / sanitizer / dual-compiler gates rebuild from scratch, so caching
@@ -32,6 +32,29 @@ target_compile_features(real INTERFACE cxx_std_20)
 
 include(GNUInstallDirs)
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+# find_package(real CONFIG) support: export the interface target and generate a
+# config package, so a downstream CMake project can consume the installed
+# library idiomatically, exactly as it consumes any system library:
+#   find_package(real CONFIG REQUIRED)
+#   target_link_libraries(app PRIVATE real::real)
+install(TARGETS real EXPORT realTargets)
+install(EXPORT realTargets
+    NAMESPACE real::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/real)
+include(CMakePackageConfigHelpers)
+configure_package_config_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/realConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/realConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/real)
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/realConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion)
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/realConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/realConfigVersion.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/real)
 
 if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     return()

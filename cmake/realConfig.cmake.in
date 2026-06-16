@@ -1,0 +1,7 @@
+@PACKAGE_INIT@
+
+# REAL is a header-only leaf library: it depends only on the C++ standard
+# library, so the config just pulls in the exported interface target.
+include("${CMAKE_CURRENT_LIST_DIR}/realTargets.cmake")
+
+check_required_components(real)

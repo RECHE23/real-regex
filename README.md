@@ -109,7 +109,14 @@ real::regex rx2(user_pattern, real::flags::icase);
 ```
 
 The pure library is standard C++20 with no platform dependencies. `real::real`
-is the CMake `FetchContent`/`find_package` target.
+is the CMake target, available three ways — `add_subdirectory`, `FetchContent`,
+or an installed config package:
+
+```cmake
+# After `cmake --install <build> --prefix <prefix>`:
+find_package(real CONFIG REQUIRED)
+target_link_libraries(app PRIVATE real::real)
+```
 
 ## Python binding
 

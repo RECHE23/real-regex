@@ -72,12 +72,22 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
-      - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-      - name: Build
-        run: cmake --build build --config Release
-      - name: Test
-        run: ctest --test-dir build -C Release --output-on-failure
+      # One bash script across all three OSes (bash ships on the Windows runner);
+      # --config/-C Release cover the multi-config MSVC generator and no-op on the
+      # single-config Linux ones. The final stage proves the installed config
+      # package: a standalone project finds REAL purely through find_package.
+      - name: Configure, build, test, install and find_package smoke
+        shell: bash
+        run: |
+          set -e
+          STAGE="${{ github.workspace }}/_stage"
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
+          ctest --test-dir build -C Release --output-on-failure
+          cmake --install build --config Release --prefix "$STAGE"
+          cmake -S cmake/smoke -B build-smoke -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$STAGE"
+          cmake --build build-smoke --config Release
+          ctest --test-dir build-smoke -C Release --output-on-failure
 
   python:
     strategy:
