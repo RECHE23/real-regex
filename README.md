@@ -198,3 +198,7 @@ supported by the build configuration but not exercised in CI.
 ## License
 
 MIT — Copyright (c) 2026 René Chenard
+
+## Author
+
+René Chenard
