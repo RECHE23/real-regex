@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: ['**']   # all branches, but not release tags (release.yml covers those)
+    paths-ignore: ['**.md', 'docs/**']   # doc-only pushes don't need the full matrix
   pull_request:
 
 jobs:
@@ -11,18 +12,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install Uncrustify 0.82.0
+      # The pinned Uncrustify binary never changes, so cache it (keyed by version)
+      # and rebuild from source only on a cache miss — saving the ~3-minute build
+      # on every subsequent run.
+      - name: Cache Uncrustify 0.82.0
+        id: uncrustify
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/bin/uncrustify
+          key: uncrustify-0.82.0-${{ runner.os }}
+      - name: Build Uncrustify 0.82.0
+        if: steps.uncrustify.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update && sudo apt-get install -y cmake build-essential
           curl -L -o uncrustify-src.tar.gz https://github.com/uncrustify/uncrustify/releases/download/uncrustify-0.82.0/uncrustify-0.82.0.tar.gz
           tar -xzf uncrustify-src.tar.gz
           cd uncrustify-uncrustify-0.82.0
           mkdir build && cd build
-          cmake ..
-          cmake --build . -j
-          sudo cmake --install .
+          cmake .. && cmake --build . -j
+          mkdir -p "$HOME/.local/bin" && cp uncrustify "$HOME/.local/bin/"
       - name: Check formatting
-        run: make format-check
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          make format-check
 
   # POSIX developer workflow: the Makefile, both compilers, plus sanitizers.
   posix:
