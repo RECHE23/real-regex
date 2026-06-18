@@ -32,6 +32,9 @@ WARNINGS               = YES
 WARN_IF_UNDOCUMENTED   = YES
 WARN_IF_DOC_ERROR      = YES
 WARN_NO_PARAMDOC       = YES
+# Fail the build on any warning (after listing them all), so the doc gate enforces
+# the zero-warning discipline rather than printing warnings that slip through.
+WARN_AS_ERROR          = FAIL_ON_WARNINGS
 
 # --- output ----------------------------------------------------------------
 # MathJax renders the LaTeX in the design guide client-side (no local LaTeX).

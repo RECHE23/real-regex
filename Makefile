@@ -30,7 +30,7 @@ INCLUDES     := -Iinclude
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html \
-        lint misra fuzz doc doc-no-coverage format format-check clean \
+        lint misra fuzz doc doc-no-coverage format format-check full-local-gate clean \
         python python-test bench-python bench-fuzz bench-engines \
         install uninstall release help
 
@@ -54,6 +54,7 @@ help:
 	@echo ""
 	@echo "  make python       Build the abi3 Python extension in place"
 	@echo "  make python-test  Run the Python test suites"
+	@echo "  make full-local-gate  Every pass/fail gate in one command (the macOS gate of record)"
 	@echo "  make bench-python Comparative benchmark vs Python re"
 	@echo "  make bench-fuzz   Randomized comparative benchmark over fuzzed input"
 	@echo "  make bench-engines  C++ throughput vs std::regex/PCRE2/RE2 (if present)"
@@ -175,6 +176,22 @@ python:
 
 python-test: python
 	$(PYRUN) -m unittest discover -s python/tests
+
+# Every pass/fail gate this machine owns, in one command — the canonical pre-push check
+# and, like the SciLang-era libraries, the macOS gate of record. REAL holds its own
+# (>95% lines) coverage bar rather than the strict 100% 4D of the SciLang-era libraries,
+# so coverage is NOT bundled here (run `make coverage` separately); this gate is the
+# binary pass/fail checks. doc-no-coverage fails on any Doxygen warning (WARN_AS_ERROR).
+full-local-gate:
+	@$(MAKE) format-check
+	@$(MAKE) test
+	@$(MAKE) test CXX=g++-14 BUILD=$(BUILD)/gcc
+	@$(MAKE) sanitize
+	@$(MAKE) misra
+	@$(MAKE) doc-no-coverage
+	@$(MAKE) python-test
+	@$(MAKE) lint | tee $(BUILD)/lint.log; ! grep -qE 'warning:|error:' $(BUILD)/lint.log
+	@echo "full-local-gate: ALL gates green (clang + g++-14, sanitize, MISRA, lint, doc, python)"
 
 bench-python: python
 	$(PYRUN) benchmarks/bench.py
