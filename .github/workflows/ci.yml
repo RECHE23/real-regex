@@ -17,7 +17,7 @@ jobs:
       # on every subsequent run.
       - name: Cache Uncrustify 0.82.0
         id: uncrustify
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.local/bin/uncrustify
           key: uncrustify-0.82.0-${{ runner.os }}
