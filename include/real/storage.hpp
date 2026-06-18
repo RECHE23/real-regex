@@ -188,6 +188,11 @@ namespace real {
      * heap beyond that — so the common small-group match avoids allocation
      * entirely. Used for capture slots and working state in the dynamic mode.
      *
+     * \note \p T must be **trivially destructible** (enforced by a `static_assert`):
+     *       small_vec runs no element destructors — inline elements in particular are
+     *       never individually destroyed — which suits its POD-like VM use and keeps the
+     *       hot path allocation- and bookkeeping-free.
+     *
      * \tparam T              Element type.
      * \tparam InlineCapacity Number of elements held inline before spilling.
      */
@@ -195,6 +200,11 @@ namespace real {
     class small_vec
     {
       static_assert(InlineCapacity > 0, "InlineCapacity must be positive");
+      // small_vec runs no element destructors — inline elements in particular are never
+      // destroyed (cleanup() only frees the heap block). That is correct only for
+      // trivially-destructible types, which is its sole use (POD-like VM state).
+      static_assert(std::is_trivially_destructible_v<T>,
+                    "small_vec is for trivially-destructible types only");
 
       /*!
        * \brief Smallest unsigned type that can index the inline buffer.
@@ -268,7 +278,9 @@ namespace real {
       }
 
       /*!
-       * \brief Destroys heap elements and frees the heap block, if any (run-time only).
+       * \brief Frees the heap block, if any (run-time only). \p T is trivially
+       *        destructible (see the class `static_assert`), so no element destructors
+       *        run — and inline storage needs no cleanup at all.
        */
       constexpr void cleanup() noexcept
       {
@@ -276,11 +288,6 @@ namespace real {
           return;
         }
         if (is_heap_) {
-          if constexpr (!std::is_trivially_destructible_v<T>) {
-            for (std::size_t i = 0; i < size_; ++i) {
-              std::destroy_at(&storage_.heap_ptr[i]);
-            }
-          }
           ::operator delete(storage_.heap_ptr);
         }
       }
