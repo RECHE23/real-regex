@@ -28,7 +28,8 @@ linear-time guarantee.
 `make bench-engines` compares against `std::regex`, PCRE2 and RE2 in one C++
 process (each engine's match counts are checked equal). Figures depend on the
 platform, pattern and input; reproduce them locally rather than trusting a
-number here.
+number here. A measured baseline, with the exact machine and engine versions, is
+archived in [`BENCHMARKS.md`](BENCHMARKS.md).
 
 ## Supported syntax
 
