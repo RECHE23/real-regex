@@ -184,6 +184,15 @@ runtime and in constexpr (`static_assert`) under Clang and GCC; an equivalence
 suite checks the prefilter and fast paths never change results; a parity suite
 and a randomized differential fuzzer compare Python outputs against `re`.
 
+**Coverage bar.** REAL holds a high line-coverage bar (mid-90s on `include/`),
+checked with `make coverage`. It deliberately does *not* adopt the
+100%-on-all-four-dimensions (lines, functions, regions, *and* branches) gate used
+by the SciLang-stack libraries built on top of it: as the oldest and most complex
+engine here, its dual runtime/constexpr execution and Pike-VM branch structure
+leave some regions and branches impractical to drive to 100% without contrived
+tests. That lower-but-still-high bar is a deliberate, documented exception, not an
+oversight — REAL keeps its own gate (above) and its broad public CI.
+
 CI exercises:
 
 | Platform | Architecture | Compiler |
