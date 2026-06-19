@@ -21,10 +21,10 @@ answer is not a benchmark win.
 | --- | --- |
 | Machine | Apple M1 Pro (`arm64`), Darwin 23.6.0 |
 | C++ compiler | Apple clang 16.0.0, flags `-O2 -std=c++20` |
-| Engines | REAL 2026.6.5, `std::regex` (libc++), PCRE2 10.47 (JIT), RE2 11.0.0 |
-| Python | CPython 3.14.3, `re` (stdlib) vs REAL 2026.6.5 (abi3 binding) |
+| Engines | REAL 2026.6.6, `std::regex` (libc++), PCRE2 10.47 (JIT), RE2 11.0.0 |
+| Python | CPython 3.14.3, `re` (stdlib) vs REAL 2026.6.6 (abi3 binding) |
 | Method | median of repeated batches; match counts checked equal across engines |
-| As of | 2026-06-17 — the published `2026.6.5` plus the current reserve |
+| As of | 2026-06-17 — the code published as `2026.6.6` (2026-06-18) |
 
 ## A. C++ engine throughput
 

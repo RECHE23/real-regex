@@ -6,7 +6,7 @@
 # (add_subdirectory or FetchContent). Tests build only when REAL is the
 # top-level project.
 cmake_minimum_required(VERSION 3.16)
-project(real VERSION 2026.6.5 LANGUAGES CXX)
+project(real VERSION 2026.6.6 LANGUAGES CXX)
 
 # Use ccache as a compiler launcher when available (a no-op otherwise): the
 # coverage / sanitizer / dual-compiler gates rebuild from scratch, so caching
