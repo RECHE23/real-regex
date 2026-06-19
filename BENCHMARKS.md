@@ -78,6 +78,21 @@ high-volume `findall`/`split` on "easy" patterns where CPython's C engine has a 
 per-match constant. REAL's edge widens on anchored search, compilation, and anything
 pathological; the two losses are an accepted trade for linear-time safety.
 
+### `finditer` memory — lazy iteration
+
+`Pattern.finditer` yields one `Match` at a time (an internal lazy iterator over the
+C++ match cursor), so iterating it holds **O(1)** matches live, against **O(n)** for
+materialising them. Peak Python allocation (`tracemalloc`, `benchmarks/finditer_memory.py`):
+
+| matches | lazy iteration | `list(finditer)` |
+| ------: | -------------: | ---------------: |
+|  50 000 |       ~0.5 KiB |         ~2.7 MiB |
+| 200 000 |       ~0.5 KiB |          ~11 MiB |
+
+(`tracemalloc` counts only Python-level allocations; each `Match` also owns C++ span
+vectors, so the eager footprint is larger still.) `findall` stays eager — returning a
+list is its contract.
+
 ## C. ReDoS safety — the headline property
 
 The catastrophic backtracking case `(a+)+b` over `"a"×N` (no `b`, so no match):
