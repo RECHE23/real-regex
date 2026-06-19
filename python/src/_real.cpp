@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -31,6 +32,7 @@ namespace {
 PyObject* error_type = nullptr;    // real.error
 PyObject* pattern_type = nullptr;  // real.Pattern
 PyObject* match_type = nullptr;    // real.Match
+PyObject* match_iterator_type = nullptr;  // real.MatchIterator (internal: created, not exposed)
 
 // Python re flag values.
 constexpr unsigned long PYFLAG_IGNORECASE = 2;
@@ -106,6 +108,32 @@ struct subject_view {
         return {data, static_cast<std::size_t>(len)};
     }
 };
+
+// The C++ lazy match cursor for the dynamic-storage regex: exactly what
+// find_iter().begin() yields. basic_match_iterator owns its VM scratch (state_)
+// and cursor (pos_/done_/current_) and reads only an immutable program view, so
+// operator++ touches NO shared Pattern state (scratch_slots) — independent
+// iterators over the same Pattern are reentrant by construction (see real.hpp).
+using match_iter_t =
+    decltype(std::declval<const real::regex&>().find_iter(std::string_view {}).begin());
+
+struct MatchIteratorObject {
+    PyObject_HEAD
+    PyObject* pattern;   // owning PatternObject: keeps the regex program + pattern text alive
+    PyObject* subject;   // str or bytes: keeps the scanned bytes alive
+    subject_view sv;     // by value: a non-owning view into `subject`'s bytes
+    match_iter_t* cur;   // heap cursor; its text_/prog_ borrow `subject` and the regex
+};
+
+void MatchIterator_dealloc(PyObject* self) {
+    PyTypeObject* tp = Py_TYPE(self);
+    auto* it = reinterpret_cast<MatchIteratorObject*>(self);
+    delete it->cur;  // delete the cursor BEFORE releasing the refs it borrows from
+    Py_XDECREF(it->subject);
+    Py_XDECREF(it->pattern);
+    PyObject_Free(self);
+    Py_DECREF(reinterpret_cast<PyObject*>(tp));
+}
 
 int get_subject(PatternObject* pat, PyObject* obj, subject_view* out) {
     if (pat->is_bytes != 0) {
@@ -538,28 +566,64 @@ PyObject* Pattern_findall(PyObject* self, PyObject* string) {
     return out;
 }
 
+PyObject* MatchIterator_iter(PyObject* self) {
+    return Py_NewRef(self);
+}
+
+PyObject* MatchIterator_iternext(PyObject* self) {
+    auto* it = reinterpret_cast<MatchIteratorObject*>(self);
+    if (*it->cur == match_iter_t {}) {  // default-constructed == end sentinel: exhausted
+        return nullptr;                 // NULL with no exception set => StopIteration
+    }
+    PyObject* obj = make_match(as_pattern(it->pattern), it->subject, it->sv, **it->cur);
+    if (obj == nullptr) {
+        return nullptr;
+    }
+    ++(*it->cur);
+    return obj;
+}
+
+PyType_Slot match_iterator_slots[] = {
+    {Py_tp_dealloc, reinterpret_cast<void*>(MatchIterator_dealloc)},
+    {Py_tp_iter, reinterpret_cast<void*>(MatchIterator_iter)},
+    {Py_tp_iternext, reinterpret_cast<void*>(MatchIterator_iternext)},
+    {0, nullptr},
+};
+
+PyType_Spec match_iterator_spec = {
+    "real.MatchIterator",
+    sizeof(MatchIteratorObject),
+    0,
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_DISALLOW_INSTANTIATION,
+    match_iterator_slots,
+};
+
+// Lazy: holds the C++ match cursor and yields one Match per __next__, so peak
+// memory is O(1) in the number of matches (findall stays eager — a list is correct
+// there). The cursor borrows the regex program and the subject bytes; both are
+// pinned by the pattern/subject refs and the stored subject_view.
 PyObject* Pattern_finditer(PyObject* self, PyObject* string) {
     PatternObject* pat = as_pattern(self);
     subject_view sv;
     if (get_subject(pat, string, &sv) < 0) {
         return nullptr;
     }
-    PyObject* matches = PyList_New(0);
-    if (matches == nullptr) {
+    auto* it = PyObject_New(MatchIteratorObject, reinterpret_cast<PyTypeObject*>(match_iterator_type));
+    if (it == nullptr) {
         return nullptr;
     }
-    for (const auto& match : pat->rx->find_iter(sv.view())) {
-        PyObject* obj = make_match(pat, string, sv, match);
-        if (obj == nullptr || PyList_Append(matches, obj) < 0) {
-            Py_XDECREF(obj);
-            Py_DECREF(matches);
-            return nullptr;
-        }
-        Py_DECREF(obj);
+    it->pattern = Py_NewRef(self);
+    it->subject = Py_NewRef(string);
+    it->sv = sv;
+    it->cur = nullptr;
+    try {
+        it->cur = new match_iter_t(pat->rx->find_iter(it->sv.view()).begin());
+    } catch (...) {
+        Py_DECREF(reinterpret_cast<PyObject*>(it));  // dealloc frees the refs; cur is null
+        PyErr_SetString(error_type, "finditer: failed to start iteration");
+        return nullptr;
     }
-    PyObject* it = PyObject_GetIter(matches);
-    Py_DECREF(matches);
-    return it;
+    return reinterpret_cast<PyObject*>(it);
 }
 
 PyObject* Pattern_split(PyObject* self, PyObject* args, PyObject* kwargs) {
@@ -1092,7 +1156,9 @@ PyMODINIT_FUNC PyInit__real() {  // PyMODINIT_FUNC already says extern "C"
     error_type = PyErr_NewException("real.error", nullptr, nullptr);
     pattern_type = PyType_FromSpec(&pattern_spec);
     match_type = PyType_FromSpec(&match_spec);
+    match_iterator_type = PyType_FromSpec(&match_iterator_spec);  // internal: created, not exposed
     if (error_type == nullptr || pattern_type == nullptr || match_type == nullptr ||
+        match_iterator_type == nullptr ||
         PyModule_AddObject(module, "error", Py_NewRef(error_type)) < 0 ||
         PyModule_AddObject(module, "Pattern", Py_NewRef(pattern_type)) < 0 ||
         PyModule_AddObject(module, "Match", Py_NewRef(match_type)) < 0) {

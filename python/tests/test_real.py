@@ -185,6 +185,23 @@ class TestModuleFunctions(unittest.TestCase):
                          ["a", "x", None, "b", None, "y", "c"])
         self.assertEqual(real.split(r",", "a,b,c", maxsplit=1), ["a", "b,c"])
 
+    def test_finditer_is_lazy_and_reentrant(self):
+        """finditer returns a real lazy iterator: self-iterating, exhausting with
+        StopIteration, reentrant (independent cursors on one Pattern), and scaling
+        to many matches without materialising them."""
+        p = real.compile(r"\d+")
+        it = p.finditer("a1b22c333")
+        self.assertIs(iter(it), it)                                # its own iterator
+        self.assertEqual(next(it).group(), "1")                    # lazy: first match, no draining
+        self.assertEqual([m.group() for m in it], ["22", "333"])  # resumes from the cursor
+        with self.assertRaises(StopIteration):
+            next(it)
+        i1, i2 = p.finditer("1 2 3"), p.finditer("4 5 6")          # independent cursors, same Pattern
+        self.assertEqual(
+            [next(i1).group(), next(i2).group(), next(i1).group(), next(i2).group()],
+            ["1", "4", "2", "5"])
+        self.assertEqual(sum(1 for _ in p.finditer("x9 " * 10000)), 10000)  # scale
+
     def test_escape_roundtrip(self):
         """escape() produces a pattern that matches the original literal."""
         for text in ["a.b*c", "1+1=2?", "[hi]{2}|x^$", "plain"]:
