@@ -14,7 +14,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [{ name = "René Chenard", email = "rene.chenard.1@ulaval.ca" }]
+authors = [{ name = "René Chenard" }]
 keywords = ["regex", "regular-expression", "redos", "linear-time", "re"]
 classifiers = [
     "Development Status :: 4 - Beta",
