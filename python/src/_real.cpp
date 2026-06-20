@@ -34,6 +34,17 @@ PyObject* pattern_type = nullptr;  // real.Pattern
 PyObject* match_type = nullptr;    // real.Match
 PyObject* match_iterator_type = nullptr;  // real.MatchIterator (internal: created, not exposed)
 
+// Releases the GIL for a scope (RAII): restores it on EVERY exit, including a C++
+// exception — unlike the bare Py_BEGIN/END_ALLOW_THREADS macros, whose END is
+// skipped on a throw, leaving the GIL released (undefined behaviour afterwards).
+struct GilRelease {
+    PyThreadState* saved;
+    GilRelease() : saved(PyEval_SaveThread()) {}
+    ~GilRelease() { PyEval_RestoreThread(saved); }
+    GilRelease(const GilRelease&) = delete;
+    GilRelease& operator=(const GilRelease&) = delete;
+};
+
 // Python re flag values.
 constexpr unsigned long PYFLAG_IGNORECASE = 2;
 constexpr unsigned long PYFLAG_LOCALE = 4;
@@ -52,10 +63,6 @@ struct PatternObject {
     PyObject_HEAD
     PyObject* pattern_obj;  // original str or bytes
     real::regex* rx;
-    // Reusable VM scratch: single runs allocate nothing once warm. Safe
-    // because the GIL serializes access (the binding never releases it).
-    real::detail::pike_state* scratch;
-    std::vector<std::size_t>* scratch_slots;
     unsigned long py_flags;
     int is_bytes;
 };
@@ -77,8 +84,6 @@ void Pattern_dealloc(PyObject* self) {
     PyTypeObject* tp = Py_TYPE(self);
     PatternObject* pattern = as_pattern(self);
     delete pattern->rx;
-    delete pattern->scratch;
-    delete pattern->scratch_slots;
     Py_XDECREF(pattern->pattern_obj);
     PyObject_Free(self);
     Py_DECREF(reinterpret_cast<PyObject*>(tp));
@@ -493,15 +498,40 @@ PyObject* run_single(PyObject* self, PyObject* string, real::detail::run_mode mo
     if (get_subject(pat, string, &sv) < 0) {
         return nullptr;
     }
-    // Drive the VM directly with the pattern's reusable scratch: a single
-    // call allocates nothing until a match is found.
+    // Local VM scratch (no shared Pattern state) so the scan is reentrant and can
+    // run with the GIL released — several threads may match concurrently, even on
+    // the same Pattern. The subject bytes stay valid while released: the subject is
+    // an immutable str/bytes, its ref is held by the caller, and get_subject above
+    // already materialised the UTF-8 view under the GIL.
+    // Per-call VM scratch. A reused (thread-local) state is NOT safe here: pike_vm
+    // caches the class lookup table inside the state keyed by the per-PROGRAM class
+    // index, so a state reused across different patterns would serve a stale table
+    // (e.g. \d+ then \w+ both use class index 0 → wrong match). A fresh state per call
+    // is correct; it costs one allocation, which is why small subjects keep the GIL
+    // below (the alloc + toggle would dominate a sub-microsecond scan). No shared
+    // Pattern state, so the scan is race-free with the GIL released. Subject bytes stay
+    // valid while released: immutable str/bytes, ref held, UTF-8 already materialised.
     const real::detail::program_view prog = pat->rx->raw_program();
-    real::detail::pike_vm vm(prog, *pat->scratch);
-    if (!vm.run(sv.view(), 0, mode, *pat->scratch_slots)) {
+    real::detail::pike_state         state;
+    std::vector<std::size_t>         slots;
+    real::detail::pike_vm            vm(prog, state);
+    // Releasing the GIL costs a thread-state save/restore (plus re-acquire contention)
+    // that only pays off once the scan outlasts it; below this size the toggle dominates
+    // a sub-microsecond scan, so small subjects keep the GIL while larger ones release it
+    // and scan in parallel. 512 B chosen from measurement (see BENCHMARKS.md).
+    constexpr Py_ssize_t gil_release_min_bytes = 512;
+    bool                 matched = false;
+    if (sv.len >= gil_release_min_bytes) {
+        const GilRelease unlocked;  // released ONLY around the pure-C++ scan
+        matched = vm.run(sv.view(), 0, mode, slots);
+    }
+    else {
+        matched = vm.run(sv.view(), 0, mode, slots);  // small: toggle would cost more than the scan
+    }
+    if (!matched) {
         Py_RETURN_NONE;
     }
-    const real::match_result match(sv.view(), *pat->scratch_slots, true, pat->rx->pattern(),
-                               prog.names);
+    const real::match_result match(sv.view(), slots, true, pat->rx->pattern(), prog.names);
     return make_match(pat, string, sv, match);
 }
 
@@ -1114,8 +1144,6 @@ PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
     }
     obj->pattern_obj = Py_NewRef(pattern);
     obj->rx = rx;
-    obj->scratch = new real::detail::pike_state();
-    obj->scratch_slots = new std::vector<std::size_t>();
     obj->py_flags = py_flags;
     obj->is_bytes = is_bytes;
     return reinterpret_cast<PyObject*>(obj);

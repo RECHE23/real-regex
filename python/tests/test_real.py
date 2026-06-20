@@ -202,6 +202,39 @@ class TestModuleFunctions(unittest.TestCase):
             ["1", "4", "2", "5"])
         self.assertEqual(sum(1 for _ in p.finditer("x9 " * 10000)), 10000)  # scale
 
+    def test_search_is_thread_safe(self):
+        """Concurrent search/match on shared and distinct Patterns give correct
+        results. match/fullmatch/search release the GIL around the scan for subjects
+        >= 512 B (here ~1 KB) and use per-call-local scratch — no shared state to race."""
+        import threading
+        big = "word " * 200  # ~1 KB (>= the 512 B GIL-release threshold), contains no digits
+        subjects = [big + f"#{i}" for i in range(400)]
+        expected = [str(i) for i in range(400)]  # search(\d+) finds the trailing number
+        results = [None] * len(subjects)
+        errors = []
+        shared = real.compile(r"\d+")
+
+        def worker(indices, pat):
+            try:
+                for i in indices:
+                    found = pat.search(subjects[i])
+                    results[i] = found.group() if found else None
+                    if pat.match(subjects[i]) is not None:  # anchored: subject starts with "word"
+                        errors.append(f"match unexpectedly matched at {i}")
+            except BaseException as exc:  # noqa: BLE001 — record; asserted in the main thread
+                errors.append(exc)
+
+        threads = []
+        for t in range(4):
+            pat = shared if t % 2 == 0 else real.compile(r"\d+")  # mix shared + distinct Patterns
+            threads.append(threading.Thread(target=worker, args=(range(t, len(subjects), 4), pat)))
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
+        self.assertEqual(errors, [])
+        self.assertEqual(results, expected)
+
     def test_escape_roundtrip(self):
         """escape() produces a pattern that matches the original literal."""
         for text in ["a.b*c", "1+1=2?", "[hi]{2}|x^$", "plain"]:

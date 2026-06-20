@@ -93,6 +93,32 @@ materialising them. Peak Python allocation (`tracemalloc`, `benchmarks/finditer_
 vectors, so the eager footprint is larger still.) `findall` stays eager — returning a
 list is its contract.
 
+### Threaded single-shot matching — GIL release
+
+`match` / `fullmatch` / `search` release the GIL around the core VM scan so threads
+can match in parallel (with the GIL held, throughput was flat at 1.00× across
+threads — the GIL was the bottleneck). The scan uses **per-call local scratch**, so
+it is reentrant by construction; the previous shared `pat->scratch` fields were
+**removed**. The GIL is released **only when the subject is ≥ 512 B** — below that the
+thread-state save/restore costs more than the sub-microsecond scan.
+
+Throughput (searches/sec), pattern `\w+@\w+\.\w+`, `benchmarks/gil_throughput.py`:
+
+| subject       | 1 thread |    2T |    4T |        8T |
+| ------------- | -------: | ----: | ----: | --------: |
+| tiny (16 B)   |   1.61 M | 0.99× | 0.99× |     1.00× |
+| medium (1 KB) |   38.3 K | 1.90× | 3.29× |     2.82× |
+| large (64 KB) |      599 | 1.91× | 3.45× | **4.15×** |
+
+Real (≥ 512 B) subjects scale **3–4×** at 8 threads. Honest trade-off: single-thread
+tiny-subject throughput dropped (~3.07 M → ~1.61 M searches/sec) — the per-call
+scratch allocation, which a 16 B sub-microsecond scan can't amortise. That is a pure
+micro-benchmark (a tight loop of single matches on a 16 B string); real workloads use
+larger subjects (which scale) or `findall`/`finditer` (unaffected), so it is accepted.
+A thread-local *warm* scratch would remove it but is unsafe here — `pike_vm` caches
+the class table by per-program class index, so a state reused across patterns returns
+wrong results — hence per-call scratch.
+
 ## C. ReDoS safety — the headline property
 
 The catastrophic backtracking case `(a+)+b` over `"a"×N` (no `b`, so no match):
