@@ -61,7 +61,7 @@ namespace real::detail {
       emit(prog, {.op = opcode::save, .arg16 = 1});
       emit(prog, {.op = opcode::match});
       prog.byte_mode  = has_flag(flags_, flags::bytes);
-      prog.hints      = analyze_program(prog.code, prog.classes);
+      prog.hints      = analyze_program(prog.code, prog.classes, prog.codepoint_mark_ascii, prog.codepoint_mark_offset);
       if (prog.code.size() > max_program_size) {
         throw regex_error("program too large", 0);
       }
@@ -201,12 +201,13 @@ namespace real::detail {
     constexpr void emit_codepoint_class(dynamic_program&  prog,
                                         const char_class& ascii) const
     {
-      const char_class cont  {utf8_cont_set()};
-      const char_class lead2 {utf8_lead2_set()};
-      const char_class lead3 {utf8_lead3_set()};
-      const char_class lead4 {utf8_lead4_set()};
+      const std::int32_t block_start {here(prog)}; // start offset, recorded as the marker below
+      const char_class   cont        {utf8_cont_set()};
+      const char_class   lead2       {utf8_lead2_set()};
+      const char_class   lead3       {utf8_lead3_set()};
+      const char_class   lead4       {utf8_lead4_set()};
 
-      const std::int32_t s1  {emit_split(prog)};
+      const std::int32_t s1          {emit_split(prog)};
       patch_primary(prog, s1, here(prog));
       emit_klass(prog, ascii);
       const std::int32_t j1 {emit_jump(prog)};
@@ -236,6 +237,11 @@ namespace real::detail {
       patch_primary(prog, j1, end);
       patch_primary(prog, j2, end);
       patch_primary(prog, j3, end);
+
+      // Record the marker (offset + ASCII sub-class index) so analyze_program reads
+      // it instead of reverse-engineering this 16-instruction block's bytecode shape.
+      prog.codepoint_mark_offset = block_start;
+      prog.codepoint_mark_ascii  = static_cast<std::int32_t>(prog.code[static_cast<std::size_t>(block_start) + 1].arg16);
     }
 
     // --- node emission ----------------------------------------------------

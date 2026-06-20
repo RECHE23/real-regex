@@ -25,64 +25,6 @@
 namespace real::detail {
 
   /*!
-   * \brief Recognizes the byte-level UTF-8 expansion the compiler emits for `.`
-   *        and negated classes (see `emit_codepoint_class`).
-   *
-   * The 16-instruction block at \p b is one ASCII class plus the four
-   * lead/continuation byte branches. The shape and the UTF-8 byte ranges are
-   * both checked, so the match is unambiguous.
-   *
-   * \param[in] code        The instruction stream.
-   * \param[in] classes     The interned classes.
-   * \param[in] block_start Index of the block's leading split.
-   * \return The ASCII-class index of the codepoint class, or -1 if \p b does not
-   *         begin such a block.
-   */
-  constexpr std::int32_t codepoint_class_at(std::span<const instr>      code,
-                                            std::span<const char_class> classes,
-                                            std::size_t                 block_start)
-  {
-    if (block_start + 16 > code.size()) {
-      return -1;
-    }
-    // Compares the class at instruction \p idx with one of the shared UTF-8 sets
-    // the compiler emits (charclass.hpp) — keeping detection and emission aligned.
-    const auto is_set = [&](std::uint16_t idx, const char_class& want) {
-                          return idx < classes.size() && classes[idx] == want;
-                        };
-    const auto bi = [&](std::size_t off) { return static_cast<std::int32_t>(block_start + off); };
-    const bool shape {
-      code[block_start].op == opcode::split && code[block_start].primary_target == bi(1) &&
-      code[block_start].secondary_target == bi(3) &&
-      code[block_start + 1].op == opcode::klass && code[block_start + 2].op == opcode::jump &&
-      code[block_start + 3].op == opcode::split && code[block_start + 3].primary_target == bi(4) &&
-      code[block_start + 3].secondary_target == bi(7) &&
-      code[block_start + 4].op == opcode::klass && code[block_start + 5].op == opcode::klass &&
-      code[block_start + 6].op == opcode::jump && code[block_start + 7].op == opcode::split &&
-      code[block_start + 7].primary_target == bi(8) && code[block_start + 7].secondary_target == bi(12) &&
-      code[block_start + 8].op == opcode::klass &&
-      code[block_start + 9].op == opcode::klass && code[block_start + 10].op == opcode::klass &&
-      code[block_start + 11].op == opcode::jump && code[block_start + 12].op == opcode::klass &&
-      code[block_start + 13].op == opcode::klass && code[block_start + 14].op == opcode::klass &&
-      code[block_start + 15].op == opcode::klass};
-    const bool ranges {
-      is_set(code[block_start + 4].arg16, utf8_lead2_set()) &&
-      is_set(code[block_start + 5].arg16, utf8_cont_set()) &&
-      is_set(code[block_start + 8].arg16, utf8_lead3_set()) &&
-      is_set(code[block_start + 12].arg16, utf8_lead4_set())};
-    if (!shape || !ranges) {
-      return -1;
-    }
-    const std::uint16_t ascii {code[block_start + 1].arg16};
-    for (int byte = 0x80; byte <= 0xFF; ++byte) {
-      if (classes[ascii].test(static_cast<std::uint8_t>(byte))) {
-        return -1; // the ASCII branch must hold ASCII bytes only
-      }
-    }
-    return static_cast<std::int32_t>(ascii);
-  }
-
-  /*!
    * \brief Tests whether the whole program is an alternation of straight-line
    *        branches (e.g. `the|fox|dog`).
    *
@@ -136,13 +78,19 @@ namespace real::detail {
 
   /*!
    * \brief Walks a compiled program once to derive its search hints.
-   * \param[in] code    The instruction stream.
-   * \param[in] classes The interned character classes referenced by \p code.
+   * \param[in] code           The instruction stream.
+   * \param[in] classes        The interned character classes referenced by \p code.
+   * \param[in] cp_mark_ascii  ASCII sub-class index of an emitted codepoint-class
+   *                           block (-1 = none), as recorded by `emit_codepoint_class`.
+   * \param[in] cp_mark_offset Program offset where that block starts (-1 = none); the
+   *                           whole-pattern codepoint fast path requires it to be 1.
    * \return The \ref pattern_hints (anchoring, literal prefix, first-byte set,
    *         and the `class+` / exact-literal fast-path flags).
    */
   constexpr pattern_hints analyze_program(std::span<const instr>      code,
-                                          std::span<const char_class> classes)
+                                          std::span<const char_class> classes,
+                                          std::int32_t                cp_mark_ascii,
+                                          std::int32_t                cp_mark_offset)
   {
     pattern_hints hints;
 
@@ -292,11 +240,28 @@ namespace real::detail {
     // save 1, match (the `+`, 20 instructions). No captures; `*` is excluded
     // because its empty match rules out a consuming fast path.
     if ((code.size() == 19 || code.size() == 20) && code[0].op == opcode::save) {
-      const std::int32_t ascii {codepoint_class_at(code, classes, 1)};
-      const bool         bare  {code.size() == 19 && code[17].op == opcode::save &&
-                                code[18].op == opcode::match};
-      const bool plus          {code.size() == 20 && code[17].op == opcode::split && code[17].primary_target == 1 &&
-                                code[18].op == opcode::save && code[19].op == opcode::match};
+      // The ASCII sub-class index comes from the marker the compiler set when it
+      // emitted the block (emit_codepoint_class) — we no longer reverse-engineer the
+      // 16-instruction bytecode shape here. The whole-program size / `+`-loop checks
+      // are program structure; the ASCII-only test is class content; neither depends
+      // on the block's internal opcode layout.
+      std::int32_t ascii {(cp_mark_ascii >= 0 && cp_mark_offset == 1
+                           && static_cast<std::size_t>(cp_mark_ascii) < classes.size())
+                          ? cp_mark_ascii
+                          : -1};
+      if (ascii >= 0) {
+        const char_class& ascii_class {classes[static_cast<std::size_t>(ascii)]};
+        for (int byte {0x80}; byte <= 0xFF; ++byte) {
+          if (ascii_class.test(static_cast<std::uint8_t>(byte))) {
+            ascii = -1; // the ASCII branch must hold ASCII bytes only
+            break;
+          }
+        }
+      }
+      const bool bare {code.size() == 19 && code[17].op == opcode::save &&
+                       code[18].op == opcode::match};
+      const bool plus {code.size() == 20 && code[17].op == opcode::split && code[17].primary_target == 1 &&
+                       code[18].op == opcode::save && code[19].op == opcode::match};
       if (ascii >= 0 && (bare || plus)) {
         hints.codepoint_class_ascii = ascii;
         hints.codepoint_class_plus  = plus;

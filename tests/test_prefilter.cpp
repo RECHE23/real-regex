@@ -92,6 +92,38 @@ TEST(class_loop_fast_path_results_match_python_semantics)
   EXPECT_EQ(rx.find_all("a bb 𝄞 ccc").size(), 3U);
 }
 
+TEST(codepoint_class_fast_path_activation)
+{
+  // `.` and negated classes `[^…]` compile to the 16-instruction UTF-8 codepoint
+  // block; when that block is the *whole* pattern (optionally a greedy `+`), the
+  // engine takes a per-codepoint scan. The hint comes from a marker the compiler
+  // records at emission — analyze_program no longer re-recognizes the bytecode shape.
+  EXPECT(hints_of(".").codepoint_class_ascii >= 0);
+  EXPECT(!hints_of(".").codepoint_class_plus);                           // a single codepoint
+  EXPECT(hints_of(".+").codepoint_class_ascii >= 0);
+  EXPECT(hints_of(".+").codepoint_class_plus);                           // the greedy `+` loop
+  EXPECT(hints_of("[^x]").codepoint_class_ascii >= 0);                   // negated class: same block
+  EXPECT(hints_of("[^x]+").codepoint_class_plus);
+  EXPECT(hints_of(".", real::flags::dotall).codepoint_class_ascii >= 0); // still a fast path
+
+  // The hint never changes results: `.` is one codepoint, never a partial byte.
+  const real::regex dot(".");
+  EXPECT_EQ(dot.find_all("a𝄞b").size(), 3U); // 'a', the 4-byte 𝄞, 'b'
+}
+
+TEST(codepoint_class_hint_requires_whole_pattern)
+{
+  // A codepoint block that is not the whole pattern must not get the hint, even
+  // when the program is the same size as a qualifying one. `a.` is 20 instructions
+  // — exactly `.+`'s size — but the block starts at offset 2, so the marker's
+  // offset check rejects it; `.a` keeps offset 1 but fails the trailing-shape check.
+  EXPECT_EQ(hints_of("a.").codepoint_class_ascii, -1);  // block not at the start
+  EXPECT_EQ(hints_of(".a").codepoint_class_ascii, -1);  // trailing byte, not save/+
+  EXPECT_EQ(hints_of("(.)").codepoint_class_ascii, -1); // captured: extra saves
+  EXPECT_EQ(hints_of("a|.").codepoint_class_ascii, -1); // an alternation branch
+  EXPECT_EQ(hints_of(".*").codepoint_class_ascii, -1);  // nullable: no consuming fast path
+}
+
 TEST(optional_head_keeps_first_bytes)
 {
   // a?b: first byte is 'a' or 'b'; no empty match. Skipping stays sound.

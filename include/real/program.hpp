@@ -243,6 +243,11 @@ namespace real {
       bool                     byte_mode  {};  //!< \ref flags::bytes mode.
       pattern_hints            hints;          //!< Search-acceleration hints.
 
+      // Codepoint-class marker, set by `emit_codepoint_class` at emission so the
+      // prefilter need not reverse-engineer the emitted block's bytecode shape.
+      std::int32_t codepoint_mark_ascii  {-1}; //!< ASCII sub-class index of an emitted codepoint-class block (-1 = none).
+      std::int32_t codepoint_mark_offset {-1}; //!< Where that block starts (program offset); the whole-pattern hint requires offset 1.
+
       /*!
        * \brief Returns a non-owning \ref program_view over this program.
        */
