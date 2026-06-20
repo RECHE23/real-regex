@@ -13,9 +13,8 @@ constexpr from end to end, with an `re`-compatible Python binding.
 - **Zero dependencies.** One include.
 
 Unsupported syntax is rejected with `real::regex_error` rather than silently
-diverging. Deferred (and rejected): lookarounds, backreferences,
-atomic/possessive groups, Unicode property classes, Unicode case folding,
-`pos`/`endpos`.
+diverging. Not yet: lookarounds, backreferences, atomic/possessive groups,
+Unicode property classes, Unicode case folding, `pos`/`endpos`.
 
 Matching is linear in the input length: a Thompson NFA simulation (Pike VM)
 with marked states, so a pattern such as `(a+)+b` cannot trigger exponential
