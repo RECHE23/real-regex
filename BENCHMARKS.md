@@ -127,10 +127,9 @@ matches with the GIL **released** and records each match's byte spans into a fla
 program); a second pass builds the Python objects with the GIL **held**. That second
 pass is the catch — it allocates **O(matches)** Python objects under the GIL, a *serial*
 tail that both caps scaling (~2× for fast-scanning patterns) and, on small match-dense
-subjects, lets the frequent per-call GIL toggling *regress* throughput. So the release
-threshold here is **4 KB**, not the 512 B of single-shot matching (measured: the
-no-regression point is ~2 KB for the fastest-scanning patterns; 4 KB keeps a margin).
-Below it the interleaved scan runs under the held GIL, byte-identical to before.
+subjects, lets the frequent per-call GIL toggling *regress* multi-thread throughput. So
+the release threshold here is **4 KB**, not the 512 B of single-shot matching. Below it
+the interleaved scan runs under the held GIL, byte-identical to before.
 
 Throughput (calls/sec), `benchmarks/gil_throughput.py` — `findall` `\w+`:
 
@@ -151,11 +150,25 @@ Throughput (calls/sec), `benchmarks/gil_throughput.py` — `findall` `\w+`:
 **Reading.** Single-thread is within noise of the pre-change path at every size (the
 offset buffer and one GIL toggle cost nothing measurable next to the object building).
 Multi-thread scales to a **build-bound ~2× ceiling** for these fast-scanning patterns —
-the GIL-held build is the serial portion (Amdahl). Patterns that scan more per match,
-e.g. `.` (one codepoint per match), scale further (~4× at 8 threads on ≥ 32 KB) because
-their parallel scan is a larger share of the call. Sub-4 KB subjects stay flat **by
+this is **not** linear scaling: the GIL-held build is an irreducible serial fraction
+(Amdahl), so more threads cannot push these patterns past ~2×. Patterns that scan more per
+match, e.g. `.` (one codepoint per match), scale further (~4× at 8 threads on ≥ 32 KB)
+because their parallel scan is a larger share of the call. Sub-4 KB subjects stay flat **by
 design**: the threshold keeps them on the serial path rather than paying toggle
 contention for no gain.
+
+**Cross-platform.** The threshold is measured, not arbitrary, and the regression it
+guards is specific to macOS / Apple Silicon: *forcing* the release at 1 KB there drops a
+fast-scanning pattern to **0.85× at 4 threads** (the `PyEval_SaveThread`/`RestoreThread`
+toggle is dear — P/E cores + QoS under oversubscription — and dwarfs the sub-millisecond
+call). That is the regression 4 KB avoids. On Intel/Linux (i5-4590T Haswell, 2 cores) the
+toggle is cheap enough that releasing pays from **0.5 KB** (~1.7×) with **no regression at
+any size**, plateauing near **1.9×** (~95 % of 2 cores). So 4 KB is the
+cross-platform-*robust* value — the max of the two platforms' requirements — and doubles
+as a macOS anti-regression guard rather than a single-machine artifact: it never hurts on
+either platform, and the gain it forgoes below 4 KB is sub-millisecond. A per-`#if __APPLE__`
+split (4 KB on macOS, 512 B elsewhere) is measured-sound but deliberately not taken — one
+honest constant beats a platform fork for a sub-millisecond knob.
 
 Transient memory: the collect phase holds **O(matches × (groups + 1))** byte offsets
 (8 B each) for the call's duration — small, but not zero. `findall`/`split` already
