@@ -249,11 +249,19 @@ namespace real::detail {
                            && static_cast<std::size_t>(cp_mark_ascii) < classes.size())
                           ? cp_mark_ascii
                           : -1};
+      // Content guard: the recorded ASCII sub-class must hold ASCII bytes only.
+      // Provably unreachable today — `ast.hpp::parse_class_item` rejects any class
+      // member >= 0x80 and `char_class::invert_ascii` leaves the high bytes (>= 0x80)
+      // cleared (non-ASCII codepoints are matched via the UTF-8 multi-byte branches),
+      // so the marked sub-class is always pure ASCII. Kept deliberately: unlike the
+      // bytecode-shape recognition this replaced, it is a *content* check that stays
+      // robust to layout changes and becomes load-bearing again if a Unicode
+      // codepoint-class mode is ever added.
       if (ascii >= 0) {
         const char_class& ascii_class {classes[static_cast<std::size_t>(ascii)]};
         for (int byte {0x80}; byte <= 0xFF; ++byte) {
           if (ascii_class.test(static_cast<std::uint8_t>(byte))) {
-            ascii = -1; // the ASCII branch must hold ASCII bytes only
+            ascii = -1; // a high byte would mean a non-ASCII sub-class (see guard above)
             break;
           }
         }
