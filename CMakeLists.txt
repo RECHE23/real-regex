@@ -6,7 +6,16 @@
 # (add_subdirectory or FetchContent). Tests build only when REAL is the
 # top-level project.
 cmake_minimum_required(VERSION 3.16)
-project(real VERSION 2026.6.6 LANGUAGES CXX)
+
+# Single source of truth for the version: pyproject.toml (which `make release`
+# bumps and setup.py reads). Deriving it here means the CMake package version can
+# never drift from the Python package — the defect that had left this frozen at
+# 2026.6.6 while the wheels shipped 2026.6.8.
+file(READ "${CMAKE_CURRENT_LIST_DIR}/pyproject.toml" _real_pyproject)
+if(NOT _real_pyproject MATCHES "[\r\n]version = \"([0-9]+\\.[0-9]+\\.[0-9]+)\"")
+  message(FATAL_ERROR "REAL: could not parse the project version from pyproject.toml")
+endif()
+project(real VERSION "${CMAKE_MATCH_1}" LANGUAGES CXX)
 
 # Use ccache as a compiler launcher when available (a no-op otherwise): the
 # coverage / sanitizer / dual-compiler gates rebuild from scratch, so caching

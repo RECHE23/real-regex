@@ -32,7 +32,7 @@ FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp')
 .PHONY: all build test sanitize coverage coverage-build coverage-html \
         lint misra fuzz doc doc-no-coverage format format-check full-local-gate clean \
         python python-test bench-python bench-fuzz bench-engines \
-        install uninstall release help
+        version-check install uninstall release help
 
 .DEFAULT_GOAL := help
 
@@ -54,6 +54,7 @@ help:
 	@echo ""
 	@echo "  make python       Build the abi3 Python extension in place"
 	@echo "  make python-test  Run the Python test suites"
+	@echo "  make version-check  Assert pyproject = __init__ = CMake-derived version"
 	@echo "  make full-local-gate  Every pass/fail gate in one command (the macOS gate of record)"
 	@echo "  make bench-python Comparative benchmark vs Python re"
 	@echo "  make bench-fuzz   Randomized comparative benchmark over fuzzed input"
@@ -177,6 +178,20 @@ python:
 python-test: python
 	$(PYRUN) -m unittest discover -s python/tests
 
+# Version-consistency gate: pyproject.toml is the single source of truth — `make
+# release` bumps __init__.py from it, CMakeLists.txt derives it. Asserts the three
+# agree and that CMake still DERIVES (no hardcoded literal that could drift) — the
+# invariant the CMake 2026.6.6-vs-.8 drift violated.
+version-check:
+	@py=$$(sed -nE 's/^version = "([0-9][0-9.]*)"/\1/p' pyproject.toml); \
+	 ini=$$(sed -nE 's/^__version__ = "([0-9][0-9.]*)"/\1/p' python/real/__init__.py); \
+	 lit=$$(sed -nE 's/^project\([A-Za-z_]+ VERSION ([0-9][0-9.]*).*/\1/p' CMakeLists.txt); \
+	 if [ -z "$$py" ]; then echo "version-check: no version found in pyproject.toml"; exit 1; fi; \
+	 if [ "$$py" != "$$ini" ]; then echo "version-check: DRIFT pyproject=$$py vs __init__=$$ini"; exit 1; fi; \
+	 if [ -n "$$lit" ]; then echo "version-check: CMakeLists.txt hardcodes VERSION $$lit (must derive from pyproject.toml = $$py)"; exit 1; fi; \
+	 if ! grep -q 'file(READ.*pyproject\.toml' CMakeLists.txt; then echo "version-check: CMakeLists.txt must derive its version from pyproject.toml"; exit 1; fi; \
+	 echo "version-check: $$py (pyproject = __init__ = CMake-derived)"
+
 # Every pass/fail gate this machine owns, in one command — the canonical pre-push check
 # and, like the SciLang-era libraries, the macOS gate of record. REAL holds its own
 # (>95% lines) coverage bar rather than the strict 100% 4D of the SciLang-era libraries,
@@ -184,6 +199,7 @@ python-test: python
 # binary pass/fail checks. doc-no-coverage fails on any Doxygen warning (WARN_AS_ERROR).
 full-local-gate:
 	@$(MAKE) format-check
+	@$(MAKE) version-check
 	@$(MAKE) test
 	@$(MAKE) test CXX=g++-14 BUILD=$(BUILD)/gcc
 	@$(MAKE) sanitize
@@ -191,7 +207,7 @@ full-local-gate:
 	@$(MAKE) doc-no-coverage
 	@$(MAKE) python-test
 	@$(MAKE) lint | tee $(BUILD)/lint.log; ! grep -qE 'warning:|error:' $(BUILD)/lint.log
-	@echo "full-local-gate: ALL gates green (clang + g++-14, sanitize, MISRA, lint, doc, python)"
+	@echo "full-local-gate: ALL gates green (clang + g++-14, sanitize, MISRA, lint, doc, python, version-check)"
 
 bench-python: python
 	$(PYRUN) benchmarks/bench.py
@@ -220,7 +236,8 @@ uninstall:
 
 # Cuts a calendar-versioned release. Computes YYYY.M.PATCH with the patch reset
 # each month (first release of a month is .0; PEP 440 drops leading zeros, so
-# 2026.6.1, never 2026.06.001), bumps both version files, commits, tags and
+# 2026.6.1, never 2026.06.001), bumps pyproject.toml + __init__.py (CMakeLists.txt
+# derives its version from pyproject.toml, so it follows automatically), commits, tags and
 # pushes. Pushing the tag drives the Release workflow, which builds the wheels
 # and sdist and publishes to PyPI. Run from a clean main.
 release:
