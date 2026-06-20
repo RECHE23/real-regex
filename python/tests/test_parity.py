@@ -115,6 +115,37 @@ class TestParity(unittest.TestCase):
         """split() yields identical results."""
         self.for_all(lambda p, r, t: self.assertEqual(p.split(t), r.split(t)))
 
+    # Large subjects take the GIL-released two-phase findall/split path (spans collected
+    # without the GIL, Python objects built under it). The corpus above maxes at ~200 B,
+    # so it only exercises the small interleaved path; these cases repeat a unit well
+    # past the two-phase threshold to pin that path against re. Nullable / zero-width
+    # patterns are the classic trap (empty matches plus the 3.7+ advance), and the
+    # multi-group case exercises the flat span buffer's stride. All avoid the one
+    # documented divergence (capture of a nullable loop's final empty iteration), so re
+    # and REAL must agree exactly.
+    LARGE_UNITS = [
+        (r"a*", "xaay"),                  # nullable: empties interleave with runs
+        (r"\w*", "ab cd  ef "),           # nullable across whitespace gaps
+        (r"x*", "axxbxc"),                # nullable, sparse matches
+        (r"\d{0,2}", "12 3 456 78 "),     # bounded nullable
+        (r",", "a,b,,c,"),                # separators: many matches incl. empties
+        (r"(\w+)@(\w+)", "bob@ex alice@te "),  # multi-group: exercises buffer stride
+        (r"", "abcde"),                   # zero-width everywhere (empty pattern)
+        (r"\b", "ab cd ef "),             # zero-width at word boundaries
+    ]
+
+    def test_large_subject_parity(self):
+        """findall/split over large subjects (two-phase path) match re, including
+        maxsplit (which early-stops the span-collection phase)."""
+        for pattern, unit in self.LARGE_UNITS:
+            text = unit * (16 * 1024 // len(unit) + 1)  # ~16 KB: well past the threshold
+            self.assertGreaterEqual(len(text.encode()), 8192)
+            p, r = real.compile(pattern), re.compile(pattern, re.ASCII)
+            with self.subTest(pattern=pattern, n=len(text)):
+                self.assertEqual(p.findall(text), r.findall(text))
+                self.assertEqual(p.split(text), r.split(text))
+                self.assertEqual(p.split(text, 3), r.split(text, 3))
+
     def test_sub_parity(self):
         """sub() with a literal replacement yields identical results."""
         self.for_all(lambda p, r, t: self.assertEqual(p.sub("#", t), r.sub("#", t)))

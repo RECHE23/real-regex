@@ -45,6 +45,23 @@ struct GilRelease {
     GilRelease& operator=(const GilRelease&) = delete;
 };
 
+// Releasing the GIL costs a thread-state save/restore (plus re-acquire contention)
+// that only pays off once the pure-C++ work outlasts it; subject size is the a-priori
+// proxy for that work, so below a threshold the GIL is simply kept. Two thresholds,
+// because the two paths have different serial tails (measured — see BENCHMARKS.md):
+//
+//  - Single-shot match/fullmatch/search returns ONE match, so essentially all the
+//    work is the parallelisable scan. 512 B is where the scan first outlasts the
+//    toggle.
+//  - findall/split then BUILD O(matches) Python objects under the GIL. That serial
+//    tail both caps scaling (~2x for fast-scanning patterns) and, on small
+//    match-dense subjects, makes the frequent toggling *regress* multi-thread
+//    throughput (the per-call toggle/contention dwarfs a sub-millisecond call). The
+//    no-regression point sits near 2 KB for the fastest-scanning patterns; 4 KB keeps
+//    a margin and a gain across thread counts.
+constexpr Py_ssize_t gil_release_min_bytes         = 512;   //!< single-shot scan (run_single)
+constexpr Py_ssize_t gil_release_collect_min_bytes = 4096;  //!< findall/split collect-spans phase
+
 // Python re flag values.
 constexpr unsigned long PYFLAG_IGNORECASE = 2;
 constexpr unsigned long PYFLAG_LOCALE = 4;
@@ -515,12 +532,9 @@ PyObject* run_single(PyObject* self, PyObject* string, real::detail::run_mode mo
     real::detail::pike_state         state;
     std::vector<std::size_t>         slots;
     real::detail::pike_vm            vm(prog, state);
-    // Releasing the GIL costs a thread-state save/restore (plus re-acquire contention)
-    // that only pays off once the scan outlasts it; below this size the toggle dominates
-    // a sub-microsecond scan, so small subjects keep the GIL while larger ones release it
-    // and scan in parallel. 512 B chosen from measurement (see BENCHMARKS.md).
-    constexpr Py_ssize_t gil_release_min_bytes = 512;
-    bool                 matched = false;
+    // GIL released only above the shared size threshold (gil_release_min_bytes):
+    // below it the save/restore would dominate a sub-microsecond scan.
+    bool matched = false;
     if (sv.len >= gil_release_min_bytes) {
         const GilRelease unlocked;  // released ONLY around the pure-C++ scan
         matched = vm.run(sv.view(), 0, mode, slots);
@@ -549,6 +563,36 @@ PyObject* Pattern_search(PyObject* self, PyObject* string) {
 // Pattern: findall / finditer / split
 // ---------------------------------------------------------------------------
 
+// Phase one of the two-phase findall / split on large subjects: walk the matches
+// with the GIL released and record each match's group byte spans into a flat buffer
+// with stride 2*(ngroups+1) — [start0,end0, start1,end1, ...] (group 0 is the whole
+// match; an unmatched optional group stores real::npos). This is pure C++ and
+// reentrant: the iterator owns its VM scratch and only reads an immutable program
+// view, so threads collect concurrently on a shared Pattern. The subject bytes stay
+// valid while released (immutable str/bytes, ref held, UTF-8 already materialised).
+// `max_matches == 0` means no limit (findall); split passes its maxsplit. Returns
+// false only on a C++ allocation failure — the GIL is already re-acquired by then.
+bool collect_match_spans(PatternObject* pat, const subject_view& sv, std::size_t ngroups,
+                         std::size_t max_matches, std::vector<std::size_t>& spans) {
+    try {
+        const GilRelease unlocked;
+        std::size_t count = 0;
+        for (const auto& match : pat->rx->find_iter(sv.view())) {
+            if (max_matches != 0 && count == max_matches) {
+                break;
+            }
+            for (std::size_t group = 0; group <= ngroups; ++group) {
+                spans.push_back(match.start(group));
+                spans.push_back(match.end(group));
+            }
+            ++count;
+        }
+    } catch (...) {
+        return false;  // ~GilRelease re-acquired the GIL during unwinding
+    }
+    return true;
+}
+
 PyObject* Pattern_findall(PyObject* self, PyObject* string) {
     PatternObject* pat = as_pattern(self);
     subject_view sv;
@@ -560,38 +604,74 @@ PyObject* Pattern_findall(PyObject* self, PyObject* string) {
         return nullptr;
     }
     const std::size_t ngroups = pat->rx->group_count();
-    for (const auto& match : pat->rx->find_iter(sv.view())) {
-        PyObject* item = nullptr;
+    // Builds one findall item from a match's group spans (g == 0 is the whole match;
+    // an unmatched optional group has start == npos). `span(g)` returns {start, end}.
+    const auto build_item = [&](auto span) -> PyObject* {
         if (ngroups == 0) {
-            item = slice_subject(pat, sv, static_cast<Py_ssize_t>(match.start()),
-                                 static_cast<Py_ssize_t>(match.end()));
-        } else if (ngroups == 1) {
-            item = match.start(1) == real::npos
-                       ? empty_like(pat)
-                       : slice_subject(pat, sv, static_cast<Py_ssize_t>(match.start(1)),
-                                       static_cast<Py_ssize_t>(match.end(1)));
-        } else {
-            item = PyTuple_New(static_cast<Py_ssize_t>(ngroups));
-            for (std::size_t group = 1; item != nullptr && group <= ngroups; ++group) {
-                PyObject* part =
-                    match.start(group) == real::npos
-                        ? empty_like(pat)
-                        : slice_subject(pat, sv, static_cast<Py_ssize_t>(match.start(group)),
-                                        static_cast<Py_ssize_t>(match.end(group)));
-                if (part == nullptr) {
-                    Py_DECREF(item);
-                    item = nullptr;
-                    break;
-                }
-                PyTuple_SetItem(item, static_cast<Py_ssize_t>(group) - 1, part);
-            }
+            const auto [s, e] = span(0);
+            return slice_subject(pat, sv, static_cast<Py_ssize_t>(s), static_cast<Py_ssize_t>(e));
         }
+        if (ngroups == 1) {
+            const auto [s, e] = span(1);
+            return s == real::npos
+                       ? empty_like(pat)
+                       : slice_subject(pat, sv, static_cast<Py_ssize_t>(s), static_cast<Py_ssize_t>(e));
+        }
+        PyObject* item = PyTuple_New(static_cast<Py_ssize_t>(ngroups));
+        if (item == nullptr) {
+            return nullptr;
+        }
+        for (std::size_t group = 1; group <= ngroups; ++group) {
+            const auto [s, e] = span(group);
+            PyObject* part = s == real::npos
+                                 ? empty_like(pat)
+                                 : slice_subject(pat, sv, static_cast<Py_ssize_t>(s),
+                                                 static_cast<Py_ssize_t>(e));
+            if (part == nullptr) {
+                Py_DECREF(item);
+                return nullptr;
+            }
+            PyTuple_SetItem(item, static_cast<Py_ssize_t>(group) - 1, part);
+        }
+        return item;
+    };
+    const auto append_item = [&](PyObject* item) -> bool {
         if (item == nullptr || PyList_Append(out, item) < 0) {
             Py_XDECREF(item);
+            return false;
+        }
+        Py_DECREF(item);
+        return true;
+    };
+
+    if (sv.len >= gil_release_collect_min_bytes) {
+        // Large subject: collect spans with the GIL released, then build under the GIL.
+        std::vector<std::size_t> spans;
+        if (!collect_match_spans(pat, sv, ngroups, 0, spans)) {
+            Py_DECREF(out);
+            return PyErr_NoMemory();
+        }
+        const std::size_t stride = 2 * (ngroups + 1);
+        for (std::size_t base = 0; base < spans.size(); base += stride) {
+            if (!append_item(build_item([&](std::size_t group) {
+                return std::pair {spans[base + (2 * group)], spans[base + (2 * group) + 1]};
+            }))) {
+                Py_DECREF(out);
+                return nullptr;
+            }
+        }
+        return out;
+    }
+
+    // Small subject: interleaved scan under the held GIL (releasing it would cost more
+    // than the sub-microsecond walk). Byte-identical to the pre-threshold behaviour.
+    for (const auto& match : pat->rx->find_iter(sv.view())) {
+        if (!append_item(build_item([&](std::size_t group) {
+            return std::pair {match.start(group), match.end(group)};
+        }))) {
             Py_DECREF(out);
             return nullptr;
         }
-        Py_DECREF(item);
     }
     return out;
 }
@@ -681,30 +761,65 @@ PyObject* Pattern_split(PyObject* self, PyObject* args, PyObject* kwargs) {
         Py_DECREF(item);
         return true;
     };
-    Py_ssize_t last = 0;
-    Py_ssize_t done = 0;
-    for (const auto& match : pat->rx->find_iter(sv.view())) {
-        if (maxsplit != 0 && done == maxsplit) {
-            break;
+    const std::size_t ngroups = pat->rx->group_count();
+    Py_ssize_t        last    = 0;
+    // Emits the segment before one match followed by its captured-group pieces, then
+    // advances `last` past the match. `span(g)` returns {start, end} byte offsets
+    // (g == 0 is the whole match; an unmatched optional group has start == npos).
+    const auto emit_match = [&](auto span) -> bool {
+        const auto [ms, me] = span(0);
+        if (!append(slice_subject(pat, sv, last, static_cast<Py_ssize_t>(ms)))) {
+            return false;
         }
-        if (!append(slice_subject(pat, sv, last, static_cast<Py_ssize_t>(match.start())))) {
-            Py_DECREF(out);
-            return nullptr;
-        }
-        for (std::size_t group = 1; group <= pat->rx->group_count(); ++group) {
-            PyObject* piece =
-                match.start(group) == real::npos
-                    ? Py_NewRef(Py_None)
-                    : slice_subject(pat, sv, static_cast<Py_ssize_t>(match.start(group)),
-                                    static_cast<Py_ssize_t>(match.end(group)));
+        for (std::size_t group = 1; group <= ngroups; ++group) {
+            const auto [gs, ge] = span(group);
+            PyObject* piece = gs == real::npos
+                                  ? Py_NewRef(Py_None)
+                                  : slice_subject(pat, sv, static_cast<Py_ssize_t>(gs),
+                                                  static_cast<Py_ssize_t>(ge));
             if (!append(piece)) {
+                return false;
+            }
+        }
+        last = static_cast<Py_ssize_t>(me);
+        return true;
+    };
+
+    if (sv.len >= gil_release_collect_min_bytes) {
+        // Large subject: collect spans with the GIL released, then build under the GIL.
+        std::vector<std::size_t> spans;
+        const std::size_t max_matches = maxsplit > 0 ? static_cast<std::size_t>(maxsplit) : 0;
+        if (!collect_match_spans(pat, sv, ngroups, max_matches, spans)) {
+            Py_DECREF(out);
+            return PyErr_NoMemory();
+        }
+        const std::size_t stride = 2 * (ngroups + 1);
+        for (std::size_t base = 0; base < spans.size(); base += stride) {
+            if (!emit_match([&](std::size_t group) {
+                return std::pair {spans[base + (2 * group)], spans[base + (2 * group) + 1]};
+            })) {
                 Py_DECREF(out);
                 return nullptr;
             }
         }
-        last = static_cast<Py_ssize_t>(match.end());
-        ++done;
     }
+    else {
+        // Small subject: interleaved scan under the held GIL. Byte-identical behaviour.
+        Py_ssize_t done = 0;
+        for (const auto& match : pat->rx->find_iter(sv.view())) {
+            if (maxsplit != 0 && done == maxsplit) {
+                break;
+            }
+            if (!emit_match([&](std::size_t group) {
+                return std::pair {match.start(group), match.end(group)};
+            })) {
+                Py_DECREF(out);
+                return nullptr;
+            }
+            ++done;
+        }
+    }
+    // Trailing segment after the last match (common to both paths).
     if (!append(slice_subject(pat, sv, last, sv.len))) {
         Py_DECREF(out);
         return nullptr;

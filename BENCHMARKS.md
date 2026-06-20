@@ -119,6 +119,49 @@ A thread-local *warm* scratch would remove it but is unsafe here — `pike_vm` c
 the class table by per-program class index, so a state reused across patterns returns
 wrong results — hence per-call scratch.
 
+### Threaded `findall` / `split` — GIL release (two-phase)
+
+`findall` and `split` also release the GIL, but in two phases: a first pass walks the
+matches with the GIL **released** and records each match's byte spans into a flat buffer
+(reentrant — the match iterator owns its VM scratch and only reads the immutable
+program); a second pass builds the Python objects with the GIL **held**. That second
+pass is the catch — it allocates **O(matches)** Python objects under the GIL, a *serial*
+tail that both caps scaling (~2× for fast-scanning patterns) and, on small match-dense
+subjects, lets the frequent per-call GIL toggling *regress* throughput. So the release
+threshold here is **4 KB**, not the 512 B of single-shot matching (measured: the
+no-regression point is ~2 KB for the fastest-scanning patterns; 4 KB keeps a margin).
+Below it the interleaved scan runs under the held GIL, byte-identical to before.
+
+Throughput (calls/sec), `benchmarks/gil_throughput.py` — `findall` `\w+`:
+
+| subject           | 1 thread |    2T |    4T |    8T |
+| ----------------- | -------: | ----: | ----: | ----: |
+| 1 KB  (GIL kept)  |   93.2 K | 1.01× | 1.00× | 1.01× |
+| 16 KB (two-phase) |   6.45 K | 1.85× | 1.85× | 1.82× |
+| 64 KB (two-phase) |   1.60 K | 1.95× | 1.99× | 2.04× |
+
+`split` `\s+`:
+
+| subject           | 1 thread |    2T |    4T |    8T |
+| ----------------- | -------: | ----: | ----: | ----: |
+| 1 KB  (GIL kept)  |   94.0 K | 1.01× | 1.00× | 1.00× |
+| 16 KB (two-phase) |   5.92 K | 1.85× | 1.94× | 1.88× |
+| 64 KB (two-phase) |   1.59 K | 1.97× | 1.98× | 1.95× |
+
+**Reading.** Single-thread is within noise of the pre-change path at every size (the
+offset buffer and one GIL toggle cost nothing measurable next to the object building).
+Multi-thread scales to a **build-bound ~2× ceiling** for these fast-scanning patterns —
+the GIL-held build is the serial portion (Amdahl). Patterns that scan more per match,
+e.g. `.` (one codepoint per match), scale further (~4× at 8 threads on ≥ 32 KB) because
+their parallel scan is a larger share of the call. Sub-4 KB subjects stay flat **by
+design**: the threshold keeps them on the serial path rather than paying toggle
+contention for no gain.
+
+Transient memory: the collect phase holds **O(matches × (groups + 1))** byte offsets
+(8 B each) for the call's duration — small, but not zero. `findall`/`split` already
+return O(matches) Python objects, so the order is unchanged; `finditer` stays lazy
+(O(1) memory) on the interleaved path and is deliberately left untouched.
+
 ## C. ReDoS safety — the headline property
 
 The catastrophic backtracking case `(a+)+b` over `"a"×N` (no `b`, so no match):
