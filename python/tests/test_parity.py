@@ -171,6 +171,37 @@ class TestParity(unittest.TestCase):
                         self.match_facts(p.search(text)),
                         self.match_facts(r.search(text)))
 
+    def test_escape_parity_per_char(self):
+        """real.escape agrees with re.escape on every ASCII char — proving the
+        CPython 3.7+ semantics (only the special set is escaped; punctuation such
+        as ! : / @ % = , is NOT, unlike pre-3.7 re.escape)."""
+        for code in range(128):
+            ch = chr(code)
+            with self.subTest(code=code):
+                self.assertEqual(real.escape(ch), re.escape(ch))
+
+    def test_escape_parity_samples(self):
+        """real.escape matches re.escape on representative strings, including the
+        non-special punctuation, the regex metacharacters, and non-ASCII text."""
+        samples = [
+            "", "abc_123", "a.b*c+", "!:/@%=,", "a b\tc\n", "(x|y)?",
+            "[a-z]{2,3}", "$^\\.|", "# comment ~&", "héllo", "naïve—world",
+        ]
+        for sample in samples:
+            with self.subTest(sample=sample):
+                self.assertEqual(real.escape(sample), re.escape(sample))
+
+    def test_escape_parity_bytes(self):
+        """real.escape matches re.escape for bytes patterns, on every byte value
+        and on representative byte strings."""
+        for value in range(256):
+            raw = bytes([value])
+            with self.subTest(value=value):
+                self.assertEqual(real.escape(raw), re.escape(raw))
+        for raw in [b"", b"a.b*c+", b"!:/@%=,", b"\x00\xff (raw) ~&#"]:
+            with self.subTest(raw=raw):
+                self.assertEqual(real.escape(raw), re.escape(raw))
+
 
 if __name__ == "__main__":
     unittest.main()
