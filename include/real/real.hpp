@@ -7,6 +7,7 @@
 #ifndef REAL_REAL_HPP
 #define REAL_REAL_HPP
 
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -640,6 +641,52 @@ namespace real {
     [[nodiscard]] constexpr detail::program_view raw_program() const
     {
       return program_.view();
+    }
+
+    /*!
+     * \brief Whether first-byte filtering is useful for this pattern.
+     *
+     * `true` iff every non-empty match provably begins with a byte from a known
+     * set, so \ref may_start_with can reject positions. `false` when a zero-length
+     * match is possible (or the set is empty) — then \ref may_start_with is `true`
+     * for every byte and the filter buys nothing. This is the same set the engine's
+     * own prefilter uses, exposed for embedders (e.g. a lexer's rule dispatch).
+     *
+     * \return `true` if the first-byte set is usable.
+     */
+    [[nodiscard]] constexpr bool has_first_byte_set() const noexcept
+    {
+      return raw_program().hints.first_bytes_valid;
+    }
+
+    /*!
+     * \brief The single byte every non-empty match must begin with, if unique.
+     *
+     * \return The byte when the pattern has exactly one possible first byte (e.g.
+     *         a plain literal like `if` / `def`); `std::nullopt` for zero or several.
+     */
+    [[nodiscard]] constexpr std::optional<unsigned char> unique_first_byte() const noexcept
+    {
+      const int first {raw_program().hints.single_first};
+      return first < 0 ? std::nullopt : std::optional<unsigned char>(static_cast<unsigned char>(first));
+    }
+
+    /*!
+     * \brief Whether a non-empty match can begin with \p byte (sound, conservative).
+     *
+     * A `false` result is a **guarantee**: no non-empty match of this pattern
+     * begins with \p byte. A `true` result is a conservative superset — it does
+     * not promise a match actually starts there. When first-byte filtering is not
+     * usable (\ref has_first_byte_set is `false`, i.e. an empty match is possible),
+     * this returns `true` for every byte, so it is safe to use on its own.
+     *
+     * \param[in] byte The candidate leading byte.
+     * \return `false` only when \p byte can never start a non-empty match.
+     */
+    [[nodiscard]] constexpr bool may_start_with(unsigned char byte) const noexcept
+    {
+      const detail::program_view view {raw_program()};
+      return !view.hints.first_bytes_valid || view.hints.first_bytes.test(byte);
     }
 
     /*!
