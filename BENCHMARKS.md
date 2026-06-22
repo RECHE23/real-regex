@@ -189,6 +189,16 @@ The catastrophic backtracking case `(a+)+b` over `"a"×N` (no `b`, so no match):
 REAL and RE2 stay linear; the backtracking engines (`std::regex`, `re`) either refuse
 or blow up at trivially small inputs. This is the property REAL is built to guarantee.
 
+## D. `real::dfa` — capture-free maximal-munch DFA (opt-in)
+
+`real::dfa` (`<real/dfa.hpp>`, opt-in — not pulled in by `<real/real.hpp>`) fuses a set
+of patterns into one DFA that recognizes the winning rule (longest match; ties to the
+earliest pattern; empty excluded) in a single pass — the rule dispatch a lexer wants.
+It is built once at run time, then immutable. It is not timed here in isolation; as a
+lexer's per-mode dispatch it runs ≈20× the per-rule scan on a rule set where many rules
+share leading bytes (measured in SciLex, which consumes it through `dfa_modes`).
+Patterns with a zero-width assertion no DFA can represent throw `real::dfa_error`.
+
 ## Methodology & reproduction
 
 - **Goal.** A competitive snapshot *and* a same-machine regression tripwire — not a

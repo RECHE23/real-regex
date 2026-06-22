@@ -108,6 +108,26 @@ date.search(runtime_text);
 real::regex rx2(user_pattern, real::flags::icase);
 ```
 
+### DFA over a rule set (opt-in)
+
+```cpp
+#include <real/dfa.hpp>   // opt-in: not pulled in by <real/real.hpp>
+
+const std::array patterns {real::regex("\\s+"), real::regex("[0-9]+"),
+                           real::regex("[A-Za-z_][A-Za-z0-9_]*")};
+real::dfa d(std::span<const real::regex>(patterns));   // built once, then immutable
+auto hit = d.match("foo");   // -> {rule_index = 2, length = 3}; std::nullopt if none
+```
+
+`real::dfa` fuses a set of patterns into one **capture-free, maximal-munch DFA**: a
+single left-to-right pass recognizes the winning rule (longest match; ties to the
+earliest pattern; empty excluded) instead of running each pattern in turn — linear-time
+and ReDoS-safe like the engine, built at run time and then immutable. It is the
+accelerated rule dispatch a lexer wants (SciLex's `dfa_modes` is built on it). A pattern
+carrying a zero-width assertion no DFA can represent (`$`, `\b`, multiline `^`/`$`)
+throws `real::dfa_error`; lazy and greedy accept the same language, so feed it
+longest-match-faithful rules.
+
 The pure library is standard C++20 with no platform dependencies. `real::real`
 is the CMake target, available three ways — `add_subdirectory`, `FetchContent`,
 or an installed config package:
