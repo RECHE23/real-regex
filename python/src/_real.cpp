@@ -240,8 +240,7 @@ PyObject* empty_like(PatternObject* pat) {
 // Match construction
 // ---------------------------------------------------------------------------
 
-PyObject* make_match(PatternObject* pat, PyObject* subject, const subject_view& sv,
-                     const auto& match) {
+PyObject* make_match(PatternObject* pat, PyObject* subject, const auto& match) {
     auto* obj = PyObject_New(MatchObject, reinterpret_cast<PyTypeObject*>(match_type));
     if (obj == nullptr) {
         return nullptr;
@@ -249,14 +248,17 @@ PyObject* make_match(PatternObject* pat, PyObject* subject, const subject_view& 
     obj->subject = Py_NewRef(subject);
     obj->pattern = Py_NewRef(reinterpret_cast<PyObject*>(pat));
     obj->byte_spans = new std::vector<Py_ssize_t>(2 * match.size());
-    obj->char_spans = new std::vector<Py_ssize_t>();
+    // char_spans is computed lazily (nullptr until the first .start()/.end()/.span()).
+    // .group()/__getitem__ read byte_spans, so a finditer that reads only .group() never
+    // pays compute_char_spans, which walks byte 0 -> match offset = O(position) per match
+    // (quadratic over a non-ASCII scan). See ensure_char_spans.
+    obj->char_spans = nullptr;
     auto& bytes = *obj->byte_spans;
     for (std::size_t group = 0; group < match.size(); ++group) {
         const std::size_t start = match.start(group);
         bytes[2 * group] = start == real::npos ? -1 : static_cast<Py_ssize_t>(start);
         bytes[(2 * group) + 1] = start == real::npos ? -1 : static_cast<Py_ssize_t>(match.end(group));
     }
-    compute_char_spans(sv, bytes, *obj->char_spans);
     return reinterpret_cast<PyObject*>(obj);
 }
 
@@ -391,6 +393,24 @@ PyObject* Match_groupdict(PyObject* self, PyObject* args, PyObject* kwargs) {
     return out;
 }
 
+// Computes and caches char_spans on first use (lazy). make_match leaves it nullptr;
+// only .start()/.end()/.span() need it, so a finditer reading only .group() (which uses
+// byte_spans) never pays compute_char_spans -- O(match offset) per match, i.e. quadratic
+// over a non-ASCII scan. Runs under the GIL (every Match method does), so the
+// check-compute-cache is serialized and idempotent; sv is re-derived like group_value.
+int ensure_char_spans(MatchObject* match) {
+    if (match->char_spans != nullptr) {
+        return 0;
+    }
+    subject_view sv;
+    if (get_subject(as_pattern(match->pattern), match->subject, &sv) < 0) {
+        return -1;
+    }
+    match->char_spans = new std::vector<Py_ssize_t>();
+    compute_char_spans(sv, *match->byte_spans, *match->char_spans);
+    return 0;
+}
+
 enum class span_part : std::uint8_t { start, end, both };
 
 PyObject* match_position(PyObject* self, PyObject* args, span_part part) {
@@ -405,6 +425,9 @@ PyObject* match_position(PyObject* self, PyObject* args, span_part part) {
         if (group < 0) {
             return nullptr;
         }
+    }
+    if (ensure_char_spans(match) < 0) {
+        return nullptr;
     }
     const Py_ssize_t start = (*match->char_spans)[2 * group];
     const Py_ssize_t end = (*match->char_spans)[(2 * group) + 1];
@@ -561,7 +584,7 @@ PyObject* run_single(PyObject* self, PyObject* string, real::detail::run_mode mo
         Py_RETURN_NONE;
     }
     const real::match_result match(sv.view(), slots, true, pat->rx->pattern(), prog.names);
-    return make_match(pat, string, sv, match);
+    return make_match(pat, string, match);
 }
 
 PyObject* Pattern_match(PyObject* self, PyObject* string) {
@@ -700,7 +723,7 @@ PyObject* MatchIterator_iternext(PyObject* self) {
     if (*it->cur == match_iter_t {}) {  // default-constructed == end sentinel: exhausted
         return nullptr;                 // NULL with no exception set => StopIteration
     }
-    PyObject* obj = make_match(as_pattern(it->pattern), it->subject, it->sv, **it->cur);
+    PyObject* obj = make_match(as_pattern(it->pattern), it->subject, **it->cur);
     if (obj == nullptr) {
         return nullptr;
     }
@@ -1037,7 +1060,7 @@ PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_c
         }
         result.append(sv.data + last, static_cast<std::size_t>(match.start()) - last);
         if (callable) {
-            PyObject* match_obj = make_match(pat, string, sv, match);
+            PyObject* match_obj = make_match(pat, string, match);
             if (match_obj == nullptr) {
                 return nullptr;
             }

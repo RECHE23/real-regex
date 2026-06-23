@@ -248,6 +248,34 @@ class TestParity(unittest.TestCase):
         with self.assertRaises(real.error):
             sm.expand(r"\99")                       # out-of-range group, like sub
 
+    def test_lazy_char_spans_non_ascii_parity(self):
+        """char_spans is computed lazily (only on .start/.end/.span). Verify the char
+        offsets stay correct (parity with re) on a non-ASCII subject — where byte offset
+        != char offset — regardless of access order, for matches from search and
+        finditer."""
+        text = "café crème déjà 42 testé voilà"  # multi-byte chars shift later offsets
+        pattern = r"\w+"
+        rp, rr = real.compile(pattern), re.compile(pattern, re.ASCII)
+
+        # .group() FIRST (the path that now skips char_spans), THEN the offsets.
+        pm, rm = rp.search(text), rr.search(text)
+        self.assertEqual(pm.group(), rm.group())
+        self.assertEqual(pm.span(), rm.span())              # forces the lazy compute
+        self.assertEqual((pm.start(), pm.end()), (rm.start(), rm.end()))
+        self.assertEqual(pm.span(), rm.span())              # idempotent second read
+
+        # Opposite order: .start() BEFORE .group().
+        pm2 = rp.search(text)
+        self.assertEqual(pm2.start(), rm.start())
+        self.assertEqual(pm2.group(), rm.group())
+
+        # finditer: spans correct for matches at every position (parity with re), and
+        # the .group()-then-.span() order under iteration.
+        self.assertEqual([m.span() for m in rp.finditer(text)],
+                         [m.span() for m in rr.finditer(text)])
+        self.assertEqual([(m.group(), m.span()) for m in rp.finditer(text)],
+                         [(m.group(), m.span()) for m in rr.finditer(text)])
+
     def test_bytes_parity(self):
         """Bytes patterns behave identically to re on bytes subjects."""
         for pattern in [rb"\d+", rb"(\w+)=(\w+)", rb"[^;]+"]:
