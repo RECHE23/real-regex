@@ -160,6 +160,94 @@ class TestParity(unittest.TestCase):
                         real.compile(pattern).sub(repl, text),
                         re.compile(pattern, re.ASCII).sub(repl, text))
 
+    def test_subn_parity(self):
+        """subn() returns the same (string, count) pair as re — pins the shared
+        non-callable template path through the counted variant too."""
+        for pattern, repl in [(r"(\w+)@(\w+)", r"\2/\1"), (r"\s+", "_")]:
+            for text in TEXTS:
+                with self.subTest(pattern=pattern, text=text[:20]):
+                    self.assertEqual(
+                        real.compile(pattern).subn(repl, text),
+                        re.compile(pattern, re.ASCII).subn(repl, text))
+
+    def test_expand_parity(self):
+        r"""Match.expand reproduces re.Match.expand across templates: \1, \g<name>,
+        \g<1>, \g<0> (the whole match), escapes, empty, and repeated references."""
+        cases = [
+            (r"(\w+)@(\w+)", "bob@example", r"\2/\1"),
+            (r"(\w+)@(\w+)", "bob@example", r"\g<2>/\g<1>"),     # \g<1>, \g<2>
+            (r"(?P<u>\w+)@(?P<h>\w+)", "bob@example", r"\g<u> at \g<h>"),
+            (r"(\d+)", "abc 42 xyz", r"[\g<0>]"),                # \g<0> = whole match
+            (r"(\d+)", "abc 42 xyz", r"n=\1 raw=\\ end"),        # \\ -> one backslash
+            (r"(\w+)", "hi", "line1\\nline2\\t\\1"),             # \n, \t escapes
+            (r"(\w+)", "hi", r""),                               # empty template
+            (r"(\w)(\w)(\w)", "abc", r"\3\2\1\3\2\1"),           # repeated references
+            (r"(\w+)", "hi", r"!:/@%=,\1"),                      # non-escaped punctuation
+        ]
+        for pattern, text, template in cases:
+            with self.subTest(pattern=pattern, template=template):
+                pm, rm = (real.compile(pattern).search(text),
+                          re.compile(pattern, re.ASCII).search(text))
+                self.assertIsNotNone(pm)
+                self.assertIsNotNone(rm)
+                self.assertEqual(pm.expand(template), rm.expand(template))
+
+    def test_expand_combined_template_parity(self):
+        r"""A single template mixing \g<0>, \1 and a literal with backslashes."""
+        pattern, text, template = r"(\w+)", "word", r"[\g<0>]=\1\\done"
+        pm = real.compile(pattern).search(text)
+        rm = re.compile(pattern, re.ASCII).search(text)
+        self.assertEqual(pm.expand(template), rm.expand(template))
+
+    def test_expand_nonparticipating_group_parity(self):
+        """A template touching a group that did not participate matches re — the
+        group contributes nothing (the shared sub/expand semantics)."""
+        pattern, text = r"(a)|(b)", "a"  # group 2 is unset on "a"
+        for template in [r"[\1][\2]", r"\g<2>", r"x\2y\1"]:
+            with self.subTest(template=template):
+                pm = real.compile(pattern).search(text)
+                rm = re.compile(pattern, re.ASCII).search(text)
+                self.assertEqual(pm.expand(template), rm.expand(template))
+
+    def test_expand_bytes_parity(self):
+        r"""Match.expand on a bytes pattern with a bytes template."""
+        pattern, text, template = rb"(\w+)=(\w+)", b"k=v", rb"\2:\1:[\g<0>]"
+        pm = real.compile(pattern).search(text)
+        rm = re.compile(pattern).search(text)
+        self.assertEqual(pm.expand(template), rm.expand(template))
+
+    def test_expand_non_ascii_offsets_parity(self):
+        r"""expand resolves byte offsets correctly when non-ASCII text precedes the
+        match (byte offset != character offset)."""
+        pattern, text, template = r"(\d+)-(\d+)", "café 12-34", r"\2-\1 [\g<0>]"
+        pm = real.compile(pattern).search(text)
+        rm = re.compile(pattern, re.ASCII).search(text)
+        self.assertIsNotNone(pm)
+        self.assertEqual(pm.expand(template), rm.expand(template))
+
+    def test_expand_from_search_and_finditer_parity(self):
+        r"""expand works on a match from search AND from each finditer match."""
+        pattern, text, template = r"(\w)(\d)", "a1 b2 c3", r"\2\1"
+        rp, rr = real.compile(pattern), re.compile(pattern, re.ASCII)
+        self.assertEqual(rp.search(text).expand(template),
+                         rr.search(text).expand(template))
+        self.assertEqual([m.expand(template) for m in rp.finditer(text)],
+                         [m.expand(template) for m in rr.finditer(text)])
+
+    def test_expand_errors(self):
+        r"""Wrong template type raises TypeError; an out-of-range group reference
+        raises (like sub) — for both real and re."""
+        sm = real.compile(r"(\w+)").search("hi")
+        with self.assertRaises(TypeError):
+            sm.expand(b"\\1")                       # bytes template on a str pattern
+        bm = real.compile(rb"(\w+)").search(b"hi")
+        with self.assertRaises(TypeError):
+            bm.expand("\\1")                        # str template on a bytes pattern
+        with self.assertRaises(re.error):
+            re.compile(r"(\w+)").search("hi").expand(r"\99")
+        with self.assertRaises(real.error):
+            sm.expand(r"\99")                       # out-of-range group, like sub
+
     def test_bytes_parity(self):
         """Bytes patterns behave identically to re on bytes subjects."""
         for pattern in [rb"\d+", rb"(\w+)=(\w+)", rb"[^;]+"]:

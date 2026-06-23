@@ -18,6 +18,7 @@
 #include <real/real.hpp>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -433,6 +434,9 @@ PyObject* Match_get_string(PyObject* self, void*) {
     return Py_NewRef(as_match(self)->subject);
 }
 
+// Defined after the replacement-template machinery (apply_template / parse_template).
+PyObject* Match_expand(PyObject* self, PyObject* template_arg);
+
 PyMethodDef match_methods[] = {
     {"group", Match_group, METH_VARARGS,
      "group(group=0, /)\n"
@@ -480,6 +484,17 @@ PyMethodDef match_methods[] = {
      "    group (int or str, optional): Group number or name. Defaults to 0.\n\n"
      "Returns:\n"
      "    tuple: (start, end) character indices."},
+    {"expand", Match_expand, METH_O,
+     "expand(template, /)\n"
+     "Return the string obtained by backslash-substituting the template, exactly\n"
+     "as sub() would for this match.\n\n"
+     "Args:\n"
+     "    template (str or bytes): A template with \\1, \\g<name>, \\g<1>, \\g<0>\n"
+     "        (the whole match) and escapes. Must match the pattern's str/bytes\n"
+     "        type.\n\n"
+     "Returns:\n"
+     "    str or bytes: The expanded template. A group that did not participate\n"
+     "        contributes nothing."},
     {nullptr, nullptr, 0, nullptr},
 };
 
@@ -972,6 +987,22 @@ int get_repl_text(PatternObject* pat, PyObject* repl, std::string_view* out) {
     return 0;
 }
 
+// Applies parsed replacement segments to `out` — the single non-callable template
+// application path, shared by sub and Match.expand so the two cannot diverge. `span(g)`
+// gives group g's [begin, end) byte range in `subject_data`, or nullopt when the group
+// did not participate (it then contributes nothing — REAL's sub/expand semantics).
+template <typename SpanFn>
+void apply_template(const std::vector<repl_segment>& segs, const char* subject_data,
+                    SpanFn span, std::string& out) {
+    for (const repl_segment& seg : segs) {
+        if (seg.group < 0) {
+            out.append(seg.literal);
+        } else if (const auto range = span(static_cast<std::size_t>(seg.group))) {
+            out.append(subject_data + range->first, range->second - range->first);
+        }
+    }
+}
+
 PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_count) {
     PatternObject* pat = as_pattern(self);
     PyObject* repl = nullptr;
@@ -1023,14 +1054,14 @@ PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_c
             result.append(text);
             Py_DECREF(value);
         } else {
-            for (const repl_segment& seg : segments) {
-                if (seg.group < 0) {
-                    result.append(seg.literal);
-                } else if (match.start(static_cast<std::size_t>(seg.group)) != real::npos) {
-                    const auto group = static_cast<std::size_t>(seg.group);
-                    result.append(sv.data + match.start(group), match.end(group) - match.start(group));
-                }
-            }
+            apply_template(segments, sv.data,
+                           [&](std::size_t g) -> std::optional<std::pair<std::size_t, std::size_t>> {
+                               const std::size_t s = match.start(g);
+                               return s == real::npos
+                                          ? std::nullopt
+                                          : std::optional {std::pair {s, match.end(g)}};
+                           },
+                           result);
         }
         last = static_cast<Py_ssize_t>(match.end());
         ++done;
@@ -1048,6 +1079,41 @@ PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_c
     }
     PyObject* pair = Py_BuildValue("(Nn)", out, done);
     return pair;
+}
+
+// Match.expand(template): the string sub() would produce for THIS match. Shares the
+// segment machinery (parse_template + apply_template) with sub, so they never diverge.
+PyObject* Match_expand(PyObject* self, PyObject* template_arg) {
+    MatchObject* match = as_match(self);
+    PatternObject* pat = as_pattern(match->pattern);
+
+    std::string_view repl_text;
+    if (get_repl_text(pat, template_arg, &repl_text) < 0) {  // imposes str/bytes, like sub
+        return nullptr;
+    }
+    std::vector<repl_segment> segments;
+    if (parse_template(pat, repl_text, segments) < 0) {
+        return nullptr;
+    }
+    subject_view sv;
+    if (get_subject(pat, match->subject, &sv) < 0) {  // re-derive the UTF-8 view, like group_value
+        return nullptr;
+    }
+
+    std::string result;
+    apply_template(segments, sv.data,
+                   [&](std::size_t g) -> std::optional<std::pair<std::size_t, std::size_t>> {
+                       const Py_ssize_t start = (*match->byte_spans)[2 * g];
+                       return start < 0
+                                  ? std::nullopt
+                                  : std::optional {std::pair {static_cast<std::size_t>(start),
+                                                              static_cast<std::size_t>((*match->byte_spans)[(2 * g) + 1])}};
+                   },
+                   result);
+
+    return pat->is_bytes != 0
+               ? PyBytes_FromStringAndSize(result.data(), static_cast<Py_ssize_t>(result.size()))
+               : PyUnicode_DecodeUTF8(result.data(), static_cast<Py_ssize_t>(result.size()), nullptr);
 }
 
 PyObject* Pattern_sub(PyObject* self, PyObject* args, PyObject* kwargs) {

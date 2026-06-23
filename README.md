@@ -149,6 +149,7 @@ import real
 real.search(r"(?P<y>\d{4})-(?P<m>\d{2})", "on 2026-06-10").groupdict()
 real.compile(r"\w+").findall(text)         # findall/finditer/split/sub/subn
 real.sub(r"\s+", " ", text)                # templates: \1, \g<name>, callables
+real.search(r"(\w+)=(\w+)", "k=v").expand(r"\2:\1")   # Match.expand -> "v:k"
 real.compile(rb"[^;]+").findall(raw)       # bytes patterns: raw-byte semantics
 ```
 
