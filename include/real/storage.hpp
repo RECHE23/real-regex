@@ -206,17 +206,17 @@ namespace real {
       static_assert(std::is_trivially_destructible_v<T>,
                     "small_vec is for trivially-destructible types only");
 
-      /*!
-       * \brief Smallest unsigned type that can index the inline buffer.
-       */
-      using size_type = std::conditional_t<
-        (InlineCapacity <= 255),
-        std::uint8_t,
-        std::conditional_t<(InlineCapacity <= 65535), std::uint16_t, std::size_t>>;
-
-      size_type size_     {};                                       //!< Number of elements in use.
-      size_type capacity_ {static_cast<size_type>(InlineCapacity)}; //!< Current capacity.
-      bool      is_heap_  {};                                       //!< True once spilled to the heap.
+      // size_ and capacity_ are ALWAYS std::size_t — never a type narrowed on
+      // InlineCapacity. small_vec spills to the heap and routinely holds far more than
+      // its inline capacity (up to code_size in the VM: ~3·code_size epsilon entries, the
+      // live thread count of a wide alternation, the 2·(groups+1) capture slots). A
+      // uint8_t / uint16_t counter would truncate: at 256 / 65536, static_cast wraps the
+      // capacity to 0, reserve() then sees new_cap ≤ capacity_ and no-ops, so the buffer
+      // is rewritten in place and back() indexes out of bounds. The inline buffer
+      // dominates sizeof, so the wide counter is free.
+      std::size_t size_     {};               //!< Number of elements in use.
+      std::size_t capacity_ {InlineCapacity}; //!< Current capacity.
+      bool        is_heap_  {};               //!< True once spilled to the heap.
 
       /*!
        * \brief Active member (inline buffer or heap pointer) per \ref is_heap_ state.
@@ -278,6 +278,26 @@ namespace real {
       }
 
       /*!
+       * \brief Transfers \p other's inline elements into this vector's inline buffer.
+       *
+       * The copy/move paths use this when \p other has not spilled. The count is
+       * clamped to `InlineCapacity` — a no-op on the value, since this runs only when
+       * the elements are inline (`size_ <= InlineCapacity`) — but it lets the optimizer
+       * see the inline buffer cannot overflow. Without it, g++ -O3 value-propagates a
+       * spilled source's large `size_` into this then-dead branch and reports a spurious
+       * `-Wstringop-overflow` on the memcpy in \ref transfer_range.
+       *
+       * \tparam Move If true, move-construct the elements; otherwise copy-construct.
+       * \param[in] other The not-yet-spilled source vector.
+       */
+      template <bool Move>
+      constexpr void transfer_inline_from(const small_vec& other)
+      {
+        const std::size_t inline_count {other.size_ <= InlineCapacity ? other.size_ : InlineCapacity};
+        transfer_range<Move>(other.inline_data(), inline_count, inline_data());
+      }
+
+      /*!
        * \brief Frees the heap block, if any (run-time only). \p T is trivially
        *        destructible (see the class `static_assert`), so no element destructors
        *        run — and inline storage needs no cleanup at all.
@@ -297,7 +317,7 @@ namespace real {
        */
       void extend_capacity()
       {
-        std::size_t current {static_cast<std::size_t>(capacity_)};
+        std::size_t current {capacity_};
         std::size_t new_cap {(current > (std::size_t)-1 / 2) ? (std::size_t)-1 : current * 2};
         reserve(new_cap);
       }
@@ -372,7 +392,7 @@ namespace real {
             inline_data()[i] = value;
           }
         }
-        size_ = static_cast<size_type>(count);
+        size_ = count;
       }
 
       /*!
@@ -467,7 +487,7 @@ namespace real {
           ::operator delete(storage_.heap_ptr);
         }
         storage_.heap_ptr = new_data;
-        capacity_         = static_cast<size_type>(new_capacity);
+        capacity_         = new_capacity;
         is_heap_          = true;
       }
 
@@ -484,10 +504,10 @@ namespace real {
           other.storage_.heap_ptr = nullptr;
           other.is_heap_          = false;
           other.size_             = 0;
-          other.capacity_         = static_cast<size_type>(InlineCapacity);
+          other.capacity_         = InlineCapacity;
         }
         else {
-          transfer_range<true>(other.inline_data(), size_, inline_data());
+          transfer_inline_from<true>(other);
         }
       }
 
@@ -508,10 +528,10 @@ namespace real {
             other.storage_.heap_ptr = nullptr;
             other.is_heap_          = false;
             other.size_             = 0;
-            other.capacity_         = static_cast<size_type>(InlineCapacity);
+            other.capacity_         = InlineCapacity;
           }
           else {
-            transfer_range<true>(other.inline_data(), size_, inline_data());
+            transfer_inline_from<true>(other);
           }
         }
         return *this;
@@ -534,7 +554,7 @@ namespace real {
           capacity_ = other.capacity_;
         }
         else {
-          transfer_range<false>(other.inline_data(), other.size_, inline_data());
+          transfer_inline_from<false>(other);
         }
       }
 
@@ -556,8 +576,8 @@ namespace real {
           }
           else {
             is_heap_  = false;
-            capacity_ = static_cast<size_type>(InlineCapacity);
-            transfer_range<false>(other.inline_data(), other.size_, inline_data());
+            capacity_ = InlineCapacity;
+            transfer_inline_from<false>(other);
           }
         }
         return *this;
