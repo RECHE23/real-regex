@@ -43,8 +43,21 @@ namespace real::detail {
     constexpr void set_range(std::uint8_t low,
                              std::uint8_t high)
     {
-      for (unsigned byte = low; byte <= high; ++byte) {
-        set(static_cast<std::uint8_t>(byte));
+      if (low > high) {
+        return; // callers pass low <= high (the parser rejects [z-a]); keeps the word math total
+      }
+      // Set whole 64-bit words at once (4 iterations) instead of looping byte by byte.
+      for (unsigned word = 0; word < bits.size(); ++word) {
+        const unsigned word_low  {word * 64U};
+        const unsigned word_high {word_low + 63U};
+        if (high < word_low || low > word_high) {
+          continue; // this word holds no byte of [low, high]
+        }
+        const unsigned a {low > word_low ? low - word_low : 0U};     // first bit set, within the word
+        const unsigned b {high < word_high ? high - word_low : 63U}; // last bit set, within the word
+        bits[word] |= (b - a == 63U)
+                      ? ~std::uint64_t {0}
+                      : (((std::uint64_t {1} << (b - a + 1U)) - 1U) << a);
       }
     }
 

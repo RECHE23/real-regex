@@ -164,15 +164,17 @@ namespace real {
        */
       [[nodiscard]] constexpr T& back()
       {
-        return data_[size_ - 1];
+        return data_[size_ != 0 ? size_ - 1 : 0]; // defensive: never index with an underflowed size_ - 1
       }
 
       /*!
-       * \brief Removes the last element.
+       * \brief Removes the last element, if any (a no-op when empty, like small_vec).
        */
       constexpr void pop_back()
       {
-        --size_;
+        if (size_ != 0) {
+          --size_;
+        }
       }
 
     private:
