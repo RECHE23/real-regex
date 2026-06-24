@@ -170,6 +170,40 @@ class TestParity(unittest.TestCase):
                         real.compile(pattern).subn(repl, text),
                         re.compile(pattern, re.ASCII).subn(repl, text))
 
+    def _assert_sub_parity(self, pattern, repl, text):
+        """real.sub == re.sub, and if re rejects the template, REAL rejects it too."""
+        rp = real.compile(pattern)
+        rr = re.compile(pattern, 0 if isinstance(pattern, bytes) else re.ASCII)
+        try:
+            expected = rr.sub(repl, text)
+        except re.error:
+            with self.assertRaises(real.error):
+                rp.sub(repl, text)
+            return
+        self.assertEqual(rp.sub(repl, text), expected)
+
+    def test_sub_octal_and_group_escapes_parity(self):
+        r"""Replacement digit escapes follow CPython: \0-prefixed and all-octal three-digit
+        runs are octal escapes, the rest are group references. Parity with re on str and bytes,
+        error cases included (re raises -> REAL raises). \012 must give '\n', not group 0."""
+        str_cases = [
+            (r"x", r"\0"), (r"x", r"\00"), (r"x", r"\000"), (r"x", r"\012"),
+            (r"x", r"\0377"), (r"x", r"\101"), (r"x", r"\200"), (r"x", r"a\0b"),
+            (r"(x)", r"\1"), (r"(x)", r"\1\012"), (r"(x)", r"[\0\1]"),
+            (r"(x)", r"\123"),                       # all-octal 3-digit -> octal, not group 123
+            (r"x", r"\8"), (r"x", r"\9"), (r"(x)", r"\08"),
+        ]
+        for pattern, repl in str_cases:
+            with self.subTest(pattern=pattern, repl=repl, kind="str"):
+                self._assert_sub_parity(pattern, repl, "axbxc")
+        byte_cases = [
+            (rb"x", rb"\0"), (rb"x", rb"\012"), (rb"x", rb"\0377"), (rb"x", rb"\101"),
+            (rb"x", rb"\200"), (rb"(x)", rb"\1"), (rb"(x)", rb"\123"), (rb"x", rb"\8"),
+        ]
+        for pattern, repl in byte_cases:
+            with self.subTest(pattern=pattern, repl=repl, kind="bytes"):
+                self._assert_sub_parity(pattern, repl, b"axbxc")
+
     def test_sub_large_subject_parity(self):
         """sub/subn on a large subject (past the GIL-release threshold, ~15 KB) are
         byte-identical to re — exercises the GIL-released non-callable path, including a
