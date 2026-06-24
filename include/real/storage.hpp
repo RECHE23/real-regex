@@ -15,6 +15,7 @@
 #define REAL_STORAGE_HPP
 
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -160,21 +161,21 @@ namespace real {
       }
 
       /*!
-       * \brief Returns reference to the last element.
+       * \brief Returns reference to the last element. Precondition: the vector is non-empty.
        */
       [[nodiscard]] constexpr T& back()
       {
-        return data_[size_ != 0 ? size_ - 1 : 0]; // defensive: never index with an underflowed size_ - 1
+        assert(size_ > 0 && "back() on an empty static_vec"); // debug precondition; no-op under NDEBUG
+        return data_[size_ - 1];
       }
 
       /*!
-       * \brief Removes the last element, if any (a no-op when empty, like small_vec).
+       * \brief Removes the last element. Precondition: the vector is non-empty.
        */
       constexpr void pop_back()
       {
-        if (size_ != 0) {
-          --size_;
-        }
+        assert(size_ > 0 && "pop_back() on an empty static_vec");
+        --size_;
       }
 
     private:
@@ -442,31 +443,33 @@ namespace real {
       }
 
       /*!
-       * \brief Returns reference to the last element.
+       * \brief Returns reference to the last element. Precondition: the vector is non-empty.
        */
       [[nodiscard]] constexpr T& back() noexcept
       {
+        assert(size_ > 0 && "back() on an empty small_vec"); // debug precondition; no-op under NDEBUG
         return is_heap_ ? storage_.heap_ptr[size_ - 1] : inline_data()[size_ - 1];
       }
 
       /*!
-       * \brief Returns const reference to the last element.
+       * \brief Returns const reference to the last element. Precondition: the vector is non-empty.
        */
       [[nodiscard]] constexpr const T& back() const noexcept
       {
+        assert(size_ > 0 && "back() on an empty small_vec");
         return is_heap_ ? storage_.heap_ptr[size_ - 1] : inline_data()[size_ - 1];
       }
 
       /*!
-       * \brief Removes the last element if any.
+       * \brief Removes the last element. Precondition: the vector is non-empty.
+       *
+       * For VM-internal use (POD types like size_t, eps_entry) explicit destroy is unnecessary;
+       * full cleanup happens in the destructor / clear when on the heap.
        */
       constexpr void pop_back() noexcept
       {
-        if (size_ > 0) {
-          --size_;
-          // For VM-internal use (POD types like size_t, eps_entry) explicit destroy is unnecessary.
-          // Full cleanup happens in dtor/clear when heap. Matches static_vec style for simplicity.
-        }
+        assert(size_ > 0 && "pop_back() on an empty small_vec");
+        --size_;
       }
 
       /*!

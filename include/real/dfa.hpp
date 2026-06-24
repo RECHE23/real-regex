@@ -35,6 +35,7 @@
 #include <string_view>
 #include <vector>
 
+#include "config.hpp"
 #include "real.hpp"
 
 namespace real {
@@ -144,7 +145,10 @@ namespace real {
     inline void dfa_set_bit(dfa_set&    s,
                             std::size_t i)
     {
-      s[i >> 6U] |= (std::uint64_t {1} << (i & 63U));
+      const std::size_t word {i >> 6U};
+      if (word < s.size()) { // defensive bound, mirroring dfa_test_bit (the set is sized to fit)
+        s[word] |= (std::uint64_t {1} << (i & 63U));
+      }
     }
 
     inline bool dfa_test_bit(const dfa_set& s,
@@ -311,7 +315,11 @@ namespace real {
 
     //! \brief Subset construction over byte-classes, then Moore minimization
     //!        (initial partition by accept tag, so distinct rule tags never merge).
-    inline dfa_tables dfa_build(std::span<const program_view> programs)
+    //! \param[in] programs  The flattened NFA programs.
+    //! \param[in] state_cap Maximum DFA states before \ref dfa_error (a test hook; the
+    //!                      default is the production cap \ref max_dfa_states).
+    inline dfa_tables dfa_build(std::span<const program_view> programs,
+                                std::size_t                   state_cap = max_dfa_states)
     {
       const dfa_nfa          nfa {dfa_flatten(programs)};
       const dfa_byte_classes bc  {dfa_compute_classes(nfa)};
@@ -333,6 +341,10 @@ namespace real {
                                                 const std::int64_t acc {dfa_accept_of(nfa, s)};
                                                 sets.push_back(std::move(s));
                                                 accept_pre.push_back(acc);
+                                                if (sets.size() > state_cap) { // bound the 2^NFA worst case
+                                                  throw dfa_error("DFA state count exceeded max_dfa_states; "
+                                                                  "pattern is too complex for a DFA");
+                                                }
                                                 return static_cast<std::uint32_t>(sets.size() - 1);
                                               }};
 

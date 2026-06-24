@@ -158,6 +158,22 @@ TEST(dfa_assertion_contract)
                 real::dfa_error);                                                       // \b
 }
 
+TEST(dfa_state_cap_rejects_explosion)
+{
+  // Subset construction is 2^NFA in the worst case; the state cap turns that into a clean
+  // dfa_error rather than a memory blow-up. A tiny cap keeps this fast (the production default,
+  // max_dfa_states, is far larger and is exercised by every other DFA test).
+  const real::regex                             rx("[ab]*a[ab][ab][ab][ab][ab]"); // ~2^6 DFA states
+  const std::vector<real::detail::program_view> views {rx.raw_program()};
+  EXPECT_THROWS(real::detail::dfa_build(views, 32), real::dfa_error);
+
+  // The same pattern builds fine under the generous default cap; lexer-style DFAs are tiny and
+  // are never rejected.
+  const std::vector<real::regex> ok {real::regex("[ab]*a[ab][ab][ab][ab][ab]")};
+  const real::dfa                d  {std::span<const real::regex>(ok)};
+  EXPECT(d.match("aaaaaa").has_value());
+}
+
 // Accessors report a sane, minimized automaton.
 TEST(dfa_accessors)
 {

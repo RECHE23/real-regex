@@ -35,6 +35,11 @@ namespace real::detail {
   //! \brief Maximum bytes a bounded lookaround sub-pattern may consume (its L_max).
   //!        Bounds the per-position lookaround evaluation, preserving linear time.
   inline constexpr std::int32_t max_lookaround_length {255};
+
+  //! \brief Maximum DFA states (opt-in `real::dfa`). Subset construction is 2^NFA in the
+  //!        worst case; this caps it so a pathological pattern throws \ref real::dfa_error
+  //!        instead of exhausting memory. Generous: real lexer DFAs use far fewer.
+  inline constexpr std::size_t max_dfa_states {65536};
 } // namespace real::detail
 
 #endif // REAL_CONFIG_HPP

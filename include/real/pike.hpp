@@ -15,6 +15,7 @@
 #define REAL_PIKE_HPP
 
 #include <array>
+#include <cassert>
 #include <cstdint>
 #include <string_view>
 #include <type_traits>
@@ -1064,6 +1065,9 @@ namespace real::detail {
         const auto byte_value {static_cast<std::uint8_t>(text_[p])};
         for (const std::int32_t pc : clist->pcs) {
           const instr& in      {prog_.code[static_cast<std::size_t>(pc)]};
+          // Parked pcs are only consuming ops; the ternary's else assumes klass (sub_add_thread
+          // parks nothing else). The assert makes that invariant explicit (no-op under NDEBUG).
+          assert((in.op == opcode::byte || in.op == opcode::klass) && "lookaround parked a non-consuming op");
           const bool   consume {in.op == opcode::byte ? byte_value == in.arg8
                                                       : prog_.classes[in.arg16].test(byte_value)};
           if (consume) {
@@ -1138,6 +1142,9 @@ namespace real::detail {
         const auto byte_value {static_cast<std::uint8_t>(text_[p])};
         for (const std::int32_t pc : clist->pcs) {
           const instr& in      {prog_.code[static_cast<std::size_t>(pc)]};
+          // Parked pcs are only consuming ops; the ternary's else assumes klass (sub_add_thread
+          // parks nothing else). The assert makes that invariant explicit (no-op under NDEBUG).
+          assert((in.op == opcode::byte || in.op == opcode::klass) && "lookaround parked a non-consuming op");
           const bool   consume {in.op == opcode::byte ? byte_value == in.arg8
                                                       : prog_.classes[in.arg16].test(byte_value)};
           if (consume) {
