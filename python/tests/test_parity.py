@@ -182,6 +182,28 @@ class TestParity(unittest.TestCase):
             return
         self.assertEqual(rp.sub(repl, text), expected)
 
+    def test_pattern_octal_escapes_parity(self):
+        r"""Octal escapes in PATTERNS (twin of the template fix, shared decoder): \012 \101
+        \123 \0 \00 \000 match the byte they encode, like re. str + bytes; ASCII values."""
+        str_cases = [
+            (r"\012", "\n"), (r"\101", "A"), (r"\123", "S"), (r"\0", "\x00"),
+            (r"\00", "\x00"), (r"\000", "\x00"), (r"a\101b", "aAb"), (r"\060\061", "01"),
+        ]
+        for pattern, subject in str_cases:
+            with self.subTest(pattern=pattern, kind="str"):
+                self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
+                                 self.match_facts(re.compile(pattern, re.ASCII).search(subject)))
+        # \400 > 0o377 is an error in re; REAL rejects it too.
+        with self.assertRaises(re.error):
+            re.compile(r"\400")
+        with self.assertRaises(real.error):
+            real.compile(r"\400")
+        for pattern, subject in [(rb"\012", b"\n"), (rb"\101", b"A"), (rb"\0", b"\x00"),
+                                 (rb"\123", b"S")]:
+            with self.subTest(pattern=pattern, kind="bytes"):
+                self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
+                                 self.match_facts(re.compile(pattern).search(subject)))
+
     def test_sub_octal_and_group_escapes_parity(self):
         r"""Replacement digit escapes follow CPython: \0-prefixed and all-octal three-digit
         runs are octal escapes, the rest are group references. Parity with re on str and bytes,

@@ -92,6 +92,70 @@ namespace real::detail {
     std::int32_t             root         {-1};          //!< Index of the root node.
   };
 
+  //! \brief What a `\<digit>` escape decoded to (see \ref decode_digit_escape).
+  enum class digit_escape_kind : std::uint8_t
+  {
+    octal,          //!< An octal byte escape; `value` is the byte (0-255).
+    group_ref,      //!< A decimal group number; `value` is the group (a back-reference in a pattern).
+    octal_overflow, //!< A 3-octal-digit escape greater than 0o377 (an error in CPython).
+  };
+
+  //! \brief Result of \ref decode_digit_escape.
+  struct digit_escape_result
+  {
+    digit_escape_kind kind   {digit_escape_kind::group_ref}; //!< Which interpretation applies.
+    unsigned          value  {};                             //!< Octal byte, or decimal group number.
+    std::size_t       length {};                             //!< Characters consumed from the first digit.
+  };
+
+  /*!
+   * \brief Decodes a `\<digit>` escape per CPython's exact rule (shared by the pattern parser
+   *        and the replacement-template parser, so the two never drift).
+   *
+   * \p first indexes the first digit (just past the backslash). A `\0` prefix, or any 1-7
+   * digit immediately followed by two more octal digits, is an OCTAL escape (`\0`: value & 0xff;
+   * the 3-octal form errors above 0o377). Otherwise the digits are a decimal group number — a
+   * back-reference in a pattern, a group reference in a replacement template.
+   *
+   * \param[in] text  The pattern or template text.
+   * \param[in] first Offset of the first digit.
+   * \return The decoded kind, value and consumed length.
+   */
+  constexpr digit_escape_result decode_digit_escape(std::string_view text,
+                                                    std::size_t      first)
+  {
+    const auto is_octal {[](char c) { return c >= '0' && c <= '7'; }};
+    const auto is_digit {[](char c) { return c >= '0' && c <= '9'; }};
+    if (text[first] == '0') {
+      unsigned    value {};
+      std::size_t taken {};
+      while (taken < 3 && first + taken < text.size() && is_octal(text[first + taken])) {
+        value = (value * 8U) + static_cast<unsigned>(text[first + taken] - '0');
+        ++taken;
+      }
+      return {.kind = digit_escape_kind::octal, .value = value & 0xFFU, .length = taken};
+    }
+    std::size_t length {1};
+    if (first + 1 < text.size() && is_digit(text[first + 1])) {
+      length = 2;
+      if (is_octal(text[first]) && is_octal(text[first + 1]) && first + 2 < text.size() &&
+          is_octal(text[first + 2])) {
+        const unsigned value {(static_cast<unsigned>(text[first] - '0') * 8U * 8U) +
+                              (static_cast<unsigned>(text[first + 1] - '0') * 8U) +
+                              static_cast<unsigned>(text[first + 2] - '0')};
+        return value > 0xFFU ? digit_escape_result {.kind   = digit_escape_kind::octal_overflow,
+                                                    .value  = value,
+                                                    .length = 3}
+                             : digit_escape_result {.kind   = digit_escape_kind::octal, .value = value, .length = 3};
+      }
+    }
+    unsigned group {};
+    for (std::size_t k = 0; k < length; ++k) {
+      group = (group * 10U) + static_cast<unsigned>(text[first + k] - '0');
+    }
+    return {.kind = digit_escape_kind::group_ref, .value = group, .length = length};
+  }
+
   /*!
    * \brief Recursive-descent parser: a pattern string in, an \ref ast out.
    */
@@ -737,6 +801,9 @@ namespace real::detail {
     constexpr std::int32_t parse_byte_escape()
     {
       const char ch {peek()};
+      if (ch >= '0' && ch <= '9') {
+        return parse_digit_escape(); // octal byte, or a rejected back-reference
+      }
       switch (ch) {
         case 'n':
           ++pos_;
@@ -756,9 +823,6 @@ namespace real::detail {
         case 'a':
           ++pos_;
           return '\a';
-        case '0':
-          ++pos_;
-          return '\0';
         case 'x':
           {
             ++pos_;
@@ -774,6 +838,29 @@ namespace real::detail {
           }
           return -1;
       }
+    }
+
+    /*!
+     * \brief Parses a `\<digit>` escape via the shared \ref decode_digit_escape.
+     *
+     * Octal escapes (`\0`, `\012`, a three-octal-digit run) become one byte (value & 0xff,
+     * mirroring `\xHH`). A decimal group number is a back-reference, which REAL does not
+     * support (a deliberate, documented limitation).
+     *
+     * \return The byte value of an octal escape.
+     * \throws real::regex_error on an over-long octal escape or a back-reference.
+     */
+    constexpr std::int32_t parse_digit_escape()
+    {
+      const digit_escape_result decoded {decode_digit_escape(pattern_, pos_)};
+      pos_ += decoded.length;
+      if (decoded.kind == digit_escape_kind::octal) {
+        return static_cast<std::int32_t>(decoded.value); // a single byte, like \xHH
+      }
+      if (decoded.kind == digit_escape_kind::octal_overflow) {
+        fail("octal escape value outside of range 0-0o377");
+      }
+      fail("backreferences are not supported"); // a decimal group number = a back-reference
     }
 
     /*!

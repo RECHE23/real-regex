@@ -311,6 +311,23 @@ class TestCppIntegration(unittest.TestCase):
         self.assertEqual(cfg["cxx_standard"], "c++20")
 
 
+class TestBackreferencesRejected(unittest.TestCase):
+    """Backreferences are a documented limitation; the digit decoder must reject them with a
+    clear error rather than silently mis-parsing (and never confuse them with octal escapes)."""
+
+    def test_backref_rejected(self):
+        for pattern in [r"(a)\1", r"(a)(b)\2", r"\1", r"\8", r"\12"]:
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(real.error):
+                    real.compile(pattern)
+
+    def test_octal_still_compiles(self):
+        # The twin of \1: octal escapes must NOT be rejected.
+        for pattern in [r"\012", r"\101", r"\0", r"\000"]:
+            with self.subTest(pattern=pattern):
+                self.assertIsNotNone(real.compile(pattern))
+
+
 class TestErrorHierarchy(unittest.TestCase):
     """real.error must subclass re.error so ``except re.error:`` catches REAL's errors."""
 

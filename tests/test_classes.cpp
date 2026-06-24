@@ -83,6 +83,29 @@ TEST(control_and_hex_escapes)
   EXPECT(real::regex("[\\x30-\\x39]").fullmatch("7"));
 }
 
+TEST(octal_escapes)
+{
+  // \0 plus up to two octal digits, and a 1-7 digit followed by two more octal digits, are
+  // octal byte escapes (value & 0xff), like \xHH.
+  EXPECT(real::regex("\\012").fullmatch("\n"sv));         // 0o12 == '\n'
+  EXPECT(real::regex("\\101\\102").fullmatch("AB"sv));    // 0o101 'A', 0o102 'B'
+  EXPECT(real::regex("\\123").fullmatch("S"sv));          // 0o123 'S'
+  EXPECT(real::regex("\\00").fullmatch("\0"sv));
+  EXPECT(real::regex("\\000").fullmatch("\0"sv));
+  EXPECT(real::regex("a\\060b").fullmatch("a0b"sv));      // 0o60 == '0'
+  EXPECT_THROWS(real::regex("\\400"), real::regex_error); // 0o400 > 0o377, like re
+}
+
+TEST(backreferences_are_rejected)
+{
+  // Backreferences are unsupported; \1 (and \8 \9, which re reads as group refs, and \12 which
+  // is not a 3-octal run) are a clear error rather than silently mis-parsed.
+  EXPECT_THROWS(real::regex("(a)\\1"), real::regex_error);
+  EXPECT_THROWS(real::regex("\\1"), real::regex_error);
+  EXPECT_THROWS(real::regex("\\8"), real::regex_error);
+  EXPECT_THROWS(real::regex("\\12"), real::regex_error);
+}
+
 TEST(dot_matches_one_codepoint_except_newline)
 {
   EXPECT(real::regex(".").fullmatch("a"));

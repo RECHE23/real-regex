@@ -1123,13 +1123,11 @@ int parse_template(PatternObject* pat, std::string_view repl,
         }
         const char next_ch = repl[i];
         if (next_ch >= '0' && next_ch <= '9') {
-            // Digit escapes follow CPython re._parser.parse_template exactly:
-            //   \0 .. \0oo  -> octal escape (\0 then up to two more octal digits, value & 0xff)
-            //   \1 .. \99   -> decimal group reference, UNLESS a 1-9 digit is followed by two
-            //                  more octal digits (all three octal) -> octal escape (value <= 0o377)
-            // OCTDIGITS = 0-7, DIGITS = 0-9. Works for str (chr(value), UTF-8 encoded) and bytes.
-            const auto is_oct = [](char c) { return c >= '0' && c <= '7'; };
-            const auto is_dig = [](char c) { return c >= '0' && c <= '9'; };
+            // Octal-vs-group-reference decoding is shared with the pattern parser
+            // (real::detail::decode_digit_escape, ast.hpp) so the two never drift. Here a group
+            // reference resolves to the matched group's text; in a pattern it is a back-reference.
+            // For str the octal byte becomes chr(value) in UTF-8 (values >= 128 round-trip);
+            // for bytes it is one raw byte.
             const auto push_char_code = [&](unsigned value) {
                 if (pat->is_bytes != 0 || value < 0x80U) {
                     literal.push_back(static_cast<char>(value));  // one byte (bytes, or ASCII str)
@@ -1139,49 +1137,22 @@ int parse_template(PatternObject* pat, std::string_view repl,
                     literal.push_back(static_cast<char>(0x80U | (value & 0x3FU)));
                 }
             };
-            if (next_ch == '0') {
-                unsigned    value {};
-                std::size_t taken {};
-                while (taken < 3 && i < repl.size() && is_oct(repl[i])) {
-                    value = (value * 8U) + static_cast<unsigned>(repl[i] - '0');
-                    ++i;
-                    ++taken;
-                }
-                push_char_code(value & 0xFFU);
+            const real::detail::digit_escape_result decoded {real::detail::decode_digit_escape(repl, i)};
+            i += decoded.length;
+            if (decoded.kind == real::detail::digit_escape_kind::octal_overflow) {
+                set_error("octal escape value outside of range 0-0o377");
+                return -1;
+            }
+            if (decoded.kind == real::detail::digit_escape_kind::octal) {
+                push_char_code(decoded.value);
                 continue;
             }
-            // 1-9: a group reference, unless it extends to a full three-octal-digit run.
-            std::string digits(1, next_ch);
-            ++i;
-            bool isoctal {false};
-            if (i < repl.size() && is_dig(repl[i])) {
-                digits.push_back(repl[i]);
-                ++i;
-                if (is_oct(digits[0]) && is_oct(digits[1]) && i < repl.size() && is_oct(repl[i])) {
-                    digits.push_back(repl[i]);
-                    ++i;
-                    isoctal = true;
-                    const unsigned value {(static_cast<unsigned>(digits[0] - '0') * 8U * 8U) +
-                                          (static_cast<unsigned>(digits[1] - '0') * 8U) +
-                                          static_cast<unsigned>(digits[2] - '0')};
-                    if (value > 0xFFU) {
-                        set_error("octal escape value outside of range 0-0o377");
-                        return -1;
-                    }
-                    push_char_code(value);
-                }
+            const Py_ssize_t group {static_cast<Py_ssize_t>(decoded.value)};  // decimal group reference
+            if (static_cast<std::size_t>(group) > pat->rx->group_count()) {
+                set_error("invalid group reference");
+                return -1;
             }
-            if (!isoctal) {
-                Py_ssize_t group {};
-                for (const char digit : digits) {
-                    group = (group * 10) + (digit - '0');
-                }
-                if (static_cast<std::size_t>(group) > pat->rx->group_count()) {
-                    set_error("invalid group reference");
-                    return -1;
-                }
-                flush_group(group);
-            }
+            flush_group(group);
             continue;
         }
         if (next_ch == 'g') {
