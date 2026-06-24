@@ -3,5 +3,5 @@
 graft include
 recursive-include python/src *.cpp
 recursive-include python/tests *.py
-include python/README.md
-include README.md LICENSE ARCHITECTURE.md
+include python/real/py.typed
+include README.md LICENSE

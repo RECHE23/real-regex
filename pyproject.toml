@@ -40,7 +40,7 @@ package-dir = { "" = "python" }
 packages = ["real"]
 
 [tool.setuptools.package-data]
-real = ["*.so", "*.pyd"]
+real = ["*.so", "*.pyd", "py.typed"]
 
 # Build one abi3 wheel per platform (cp310 → works on CPython 3.10+).
 [tool.cibuildwheel]
