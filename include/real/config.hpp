@@ -31,6 +31,10 @@ namespace real::detail {
 
   //! \brief Maximum parser recursion depth; prevents stack overflow on deep nesting.
   inline constexpr std::int32_t max_nesting_depth {200};
+
+  //! \brief Maximum bytes a bounded lookaround sub-pattern may consume (its L_max).
+  //!        Bounds the per-position lookaround evaluation, preserving linear time.
+  inline constexpr std::int32_t max_lookaround_length {255};
 } // namespace real::detail
 
 #endif // REAL_CONFIG_HPP

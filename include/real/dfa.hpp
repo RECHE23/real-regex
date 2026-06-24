@@ -128,6 +128,9 @@ namespace real {
             throw dfa_error("pattern has a zero-width assertion that no DFA can represent "
                             "(only \\A/^ is allowed)");
           }
+          else if (in.op == opcode::assert_lookaround) {
+            throw dfa_error("pattern has a lookaround, which no DFA can represent");
+          }
           nfa.code.push_back(out);
           nfa.accept_rule.push_back(in.op == opcode::match ? static_cast<std::int64_t>(r) : -1);
         }
@@ -185,7 +188,8 @@ namespace real {
             break;
           case opcode::byte:
           case opcode::klass:
-          case opcode::match: break; // terminal in the closure
+          case opcode::match:
+          case opcode::assert_lookaround: break; // terminal / unreachable (dfa_flatten rejects lookaround)
         }
       }
       return present;

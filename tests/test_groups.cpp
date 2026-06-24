@@ -160,10 +160,8 @@ TEST(group_errors)
   EXPECT_THROWS(real::regex("(?P<n>x)(?P<n>y)"), real::regex_error);
   EXPECT_THROWS(real::regex("(?P<n*>x)"), real::regex_error);
   EXPECT_THROWS(real::regex("(?P=n)"), real::regex_error);
-  EXPECT_THROWS(real::regex("(?=x)"), real::regex_error);
-  EXPECT_THROWS(real::regex("(?!x)"), real::regex_error);
-  EXPECT_THROWS(real::regex("(?<=x)"), real::regex_error);
-  EXPECT_THROWS(real::regex("(?<!x)"), real::regex_error);
+  EXPECT_THROWS(real::regex("(?<=x)"), real::regex_error); // lookbehind: COMMIT 2
+  EXPECT_THROWS(real::regex("(?<!x)"), real::regex_error); // lookbehind: COMMIT 2
   EXPECT_THROWS(real::regex("(?>x)"), real::regex_error);
 }
 

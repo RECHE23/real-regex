@@ -129,13 +129,14 @@ namespace real {
      */
     enum class opcode : std::uint8_t
     {
-      byte,            //!< Consume one byte equal to arg8; fall through to pc+1.
-      klass,           //!< Consume one byte in classes[arg16]; fall through to pc+1.
-      split,           //!< Epsilon-branch to x (preferred) and y.
-      jump,            //!< Epsilon-jump to x.
-      save,            //!< Store current position in slot arg16; fall through (epsilon).
-      assert_position, //!< Epsilon; proceeds only if assertion arg8 holds here.
-      match,           //!< Accept.
+      byte,              //!< Consume one byte equal to arg8; fall through to pc+1.
+      klass,             //!< Consume one byte in classes[arg16]; fall through to pc+1.
+      split,             //!< Epsilon-branch to x (preferred) and y.
+      jump,              //!< Epsilon-jump to x.
+      save,              //!< Store current position in slot arg16; fall through (epsilon).
+      assert_position,   //!< Epsilon; proceeds only if assertion arg8 holds here.
+      match,             //!< Accept.
+      assert_lookaround, //!< Epsilon; proceeds only if the lookaround sub-program arg16 holds here.
     };
 
     /*!
@@ -155,6 +156,33 @@ namespace real {
       not_word_boundary,         //!< `\B`.
       word_start,                //!< `\<` (non-word/start on the left, word on the right).
       word_end,                  //!< `\>` (word on the left, non-word/end on the right).
+    };
+
+    /*!
+     * \brief Direction of a lookaround sub-pattern.
+     */
+    enum class look_dir : std::uint8_t
+    {
+      ahead,  //!< `(?=` / `(?!` — the sub matches starting at the position.
+      behind, //!< `(?<=` / `(?<!` — the sub matches ending exactly at the position.
+    };
+
+    /*!
+     * \brief A bounded lookaround sub-program, referenced by `assert_lookaround`'s arg16.
+     *
+     * The sub-pattern's bytecode lives as a region inside the main `code` buffer (appended
+     * after the main program), so it survives copy/move of \ref dynamic_program with no
+     * stored pointers — the views are rebuilt on demand from these offsets. `l_max` bounds
+     * the bytes the sub can consume (unbounded sub-patterns are rejected at compile time):
+     * the source of the strict linear-time guarantee.
+     */
+    struct lookaround_sub
+    {
+      std::int32_t code_offset {};                //!< First instruction of the sub-program in `code`.
+      std::int32_t code_length {};                //!< Instruction count of the sub-program.
+      std::int32_t l_max       {};                //!< Max bytes the sub-pattern can consume (bounded).
+      look_dir     direction   {look_dir::ahead}; //!< Ahead or behind.
+      bool         negative    {};                //!< `(?!` / `(?<!` (negated assertion).
     };
 
     /*!
@@ -200,6 +228,9 @@ namespace real {
        * of the full Pike VM — the major win for "search for a fixed string".
        */
       std::uint8_t exact_literal_len {};
+
+      //! \brief True if the program contains a lookaround; forces the general VM (no DFA, no fast path).
+      bool has_lookaround {};
     };
 
     /*!
@@ -223,12 +254,13 @@ namespace real {
      */
     struct program_view
     {
-      std::span<const instr>       code;           //!< The instruction stream.
-      std::span<const char_class>  classes;        //!< Interned character classes.
-      std::span<const named_group> names;          //!< Named capture groups.
-      std::uint16_t                slot_count {2}; //!< `2 * (capture groups + 1)`.
-      bool                         byte_mode  {};  //!< \ref flags::bytes mode — positions are raw bytes.
-      pattern_hints                hints;          //!< Search-acceleration hints.
+      std::span<const instr>          code;           //!< The instruction stream (main + lookaround regions).
+      std::span<const char_class>     classes;        //!< Interned character classes.
+      std::span<const named_group>    names;          //!< Named capture groups.
+      std::span<const lookaround_sub> lookarounds;    //!< Bounded lookaround sub-programs (regions of \ref code).
+      std::uint16_t                   slot_count {2}; //!< `2 * (capture groups + 1)`.
+      bool                            byte_mode  {};  //!< \ref flags::bytes mode — positions are raw bytes.
+      pattern_hints                   hints;          //!< Search-acceleration hints.
     };
 
     /*!
@@ -236,12 +268,13 @@ namespace real {
      */
     struct dynamic_program
     {
-      std::vector<instr>       code;           //!< The instruction stream.
-      std::vector<char_class>  classes;        //!< Interned character classes.
-      std::vector<named_group> names;          //!< Named capture groups.
-      std::uint16_t            slot_count {2}; //!< `2 * (capture groups + 1)`.
-      bool                     byte_mode  {};  //!< \ref flags::bytes mode.
-      pattern_hints            hints;          //!< Search-acceleration hints.
+      std::vector<instr>          code;           //!< The instruction stream (main program + lookaround sub-program regions).
+      std::vector<char_class>     classes;        //!< Interned character classes.
+      std::vector<named_group>    names;          //!< Named capture groups.
+      std::vector<lookaround_sub> lookarounds;    //!< Bounded lookaround sub-programs (regions of \ref code).
+      std::uint16_t               slot_count {2}; //!< `2 * (capture groups + 1)`.
+      bool                        byte_mode  {};  //!< \ref flags::bytes mode.
+      pattern_hints               hints;          //!< Search-acceleration hints.
 
       // Codepoint-class marker, set by `emit_codepoint_class` at emission so the
       // prefilter need not reverse-engineer the emitted block's bytecode shape.
@@ -253,12 +286,13 @@ namespace real {
        */
       [[nodiscard]] constexpr program_view view() const
       {
-        return {.code       = std::span<const instr>(code),
-                .classes    = std::span<const char_class>(classes),
-                .names      = std::span<const named_group>(names),
-                .slot_count = slot_count,
-                .byte_mode  = byte_mode,
-                .hints      = hints};
+        return {.code        = std::span<const instr>(code),
+                .classes     = std::span<const char_class>(classes),
+                .names       = std::span<const named_group>(names),
+                .lookarounds = std::span<const lookaround_sub>(lookarounds),
+                .slot_count  = slot_count,
+                .byte_mode   = byte_mode,
+                .hints       = hints};
       }
     };
   } // namespace detail

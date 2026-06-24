@@ -172,8 +172,18 @@ format-check:
 
 # Builds the abi3 extension in place against include/. Packaging lives in the
 # root pyproject.toml / setup.py.
-python:
-	$(PYTHON) setup.py -q build_ext --inplace
+# build_ext compares only _real.cpp's timestamp against the built .so; it never sees the
+# header-only engine the .cpp #includes, so a header-only change would leave a stale .so.
+# Gate the rebuild on the headers through a stamp, and pass --force so the recompile
+# actually happens when a header changed (build_ext would otherwise skip it).
+HEADERS := $(wildcard include/real/*.hpp)
+
+python: $(BUILD)/py_ext.stamp
+
+$(BUILD)/py_ext.stamp: python/src/_real.cpp $(HEADERS)
+	$(PYTHON) setup.py -q build_ext --inplace --force
+	@mkdir -p $(BUILD)
+	@touch $@
 
 python-test: python
 	$(PYRUN) -m unittest discover -s python/tests

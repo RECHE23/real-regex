@@ -142,10 +142,26 @@ namespace real::detail {
    */
   using thread_list = basic_thread_list<std::vector<std::int32_t>, std::vector<std::size_t>, std::vector<std::uint64_t>>;
   /*!
-   * \brief VM scratch state for the dynamic storage mode.
+   * \brief Reusable, isolated scratch for one level of lookaround evaluation (dynamic only).
+   *
+   * Vector-backed, independent of the main scratch's container policy; reset on each
+   * evaluation, never sharing the main \ref basic_pike_state. One level suffices — nested
+   * lookaround is rejected at compile time. Present only on the dynamic states; the static
+   * state has no such member, so the lookaround code is `if constexpr`-elided there.
    */
-  using pike_state =
-    basic_pike_state<thread_list, std::vector<std::size_t>, std::vector<eps_entry>>;
+  struct lookaround_scratch
+  {
+    thread_list            lists[2]; //!< Sub-VM thread lists (pcs only; the sub is capture-free).
+    std::vector<eps_entry> stack;    //!< Sub-VM epsilon-closure stack.
+  };
+
+  /*!
+   * \brief VM scratch state for the dynamic storage mode, plus the lookaround sub-scratch.
+   */
+  struct pike_state : basic_pike_state<thread_list, std::vector<std::size_t>, std::vector<eps_entry>>
+  {
+    lookaround_scratch lookaround; //!< Isolated sub-scratch for bounded lookaround evaluation.
+  };
 
   /*!
    * \brief The Pike VM, generic over the scratch-state container policy.
@@ -905,6 +921,7 @@ namespace real::detail {
           case opcode::jump:
           case opcode::save:
           case opcode::assert_position:
+          case opcode::assert_lookaround:
             break; // epsilon ops never appear in a stepped list
         }
       }
@@ -975,6 +992,21 @@ namespace real::detail {
               stack.push_back({.pc = pc + 1, .slot = 0, .restore_value = 0});
             }
             break;
+          case opcode::assert_lookaround:
+            // Epsilon: the thread proceeds only if the bounded sub-pattern holds here,
+            // evaluated on the isolated sub-scratch. Dynamic only — the static state has
+            // no `lookaround` member and static_regex rejects lookarounds at compile, so
+            // this is `if constexpr`-elided (zero footprint for static_regex).
+            // (intentionally uncovered: llvm-cov reports 0 on the `if constexpr`-false
+            // instantiations; the dynamic instantiation that runs lookaround_holds is covered.)
+            if constexpr (requires(State & s) {
+            s.lookaround;
+          }) {
+              if (lookaround_holds(instruction.arg16, pos)) {
+                stack.push_back({.pc = pc + 1, .slot = 0, .restore_value = 0});
+              }
+            }
+            break;
           case opcode::byte:
           case opcode::klass:
           case opcode::match:
@@ -982,6 +1014,116 @@ namespace real::detail {
             for (std::uint16_t s = 0; s < prog_.slot_count; ++s) {
               list.slots.push_back(state_.working[s]);
             }
+            break;
+        }
+      }
+    }
+
+    /*!
+     * \brief Evaluates a bounded lookahead sub-program at \p pos (true if it should proceed).
+     *
+     * Runs a self-contained Pike simulation of the sub-program region on a DEDICATED,
+     * isolated sub-scratch (`state_.lookaround`) — the main `state_` (lists/working/stack)
+     * is never touched, so an in-flight match is unaffected (the isolation invariant). The
+     * sub is capture-free, so reaching its `match` op means "the sub matches a prefix at
+     * \p pos", which is all a `(?=` needs; `(?!` negates the result. The scan is bounded to
+     * `l_max` bytes (the source of strict linearity per match position), and stops at the
+     * first match. COMMIT 1: ahead only (lookbehind = COMMIT 2).
+     *
+     * \param[in] sub_id Index into `prog_.lookarounds`.
+     * \param[in] pos    The text position the assertion is evaluated at.
+     * \return `true` if the (possibly negated) assertion holds, so the thread proceeds.
+     */
+    [[nodiscard]] constexpr bool lookaround_holds(std::uint16_t sub_id,
+                                                  std::size_t   pos)
+    {
+      const lookaround_sub& sub       {prog_.lookarounds[sub_id]};
+      const std::size_t     code_size {prog_.code.size()};
+      thread_list*          clist     {&state_.lookaround.lists[0]};
+      thread_list*          nlist     {&state_.lookaround.lists[1]};
+      clist->reset(code_size);
+      nlist->reset(code_size);
+      bool matched            {};
+      sub_add_thread(*clist, sub.code_offset, pos, matched);
+      const std::size_t limit {pos + static_cast<std::size_t>(sub.l_max)};
+      for (std::size_t p {pos}; !matched && !clist->pcs.empty() && p < text_.size() && p < limit; ++p) {
+        const auto byte_value {static_cast<std::uint8_t>(text_[p])};
+        for (const std::int32_t pc : clist->pcs) {
+          const instr& in      {prog_.code[static_cast<std::size_t>(pc)]};
+          const bool   consume {in.op == opcode::byte ? byte_value == in.arg8
+                                                      : prog_.classes[in.arg16].test(byte_value)};
+          if (consume) {
+            sub_add_thread(*nlist, pc + 1, p + 1, matched);
+          }
+        }
+        thread_list* const done {clist};
+        clist = nlist;
+        nlist = done;
+        nlist->reset(code_size);
+      }
+      return sub.negative ? !matched : matched;
+    }
+
+    /*!
+     * \brief Epsilon-closure for the lookaround sub-VM, on the isolated sub-scratch.
+     *
+     * Parks consuming (`byte`/`klass`) program counters in \p list and sets \p matched on
+     * reaching the sub's `match`. A capture-free sub emits no `save` (handled defensively as
+     * epsilon) and no `assert_lookaround` (nesting is rejected at compile time). Touches only
+     * `state_.lookaround.stack`, never the main `state_`. Linearity: `mark_seen` dedups
+     * epsilon threads within a generation; once `p` advances, the same (pc,p) cannot recur,
+     * so each `assert_lookaround` is evaluated at most once per position → O(n·k·L). No memo
+     * table is needed (it would be redundant and break constexpr).
+     *
+     * \param[in,out] list    The sub thread list to populate.
+     * \param[in]     pc0     The sub-program counter to seed from.
+     * \param[in]     pos     The current input position (for assertions).
+     * \param[in,out] matched Set to `true` if the sub's `match` is reachable here.
+     */
+    constexpr void sub_add_thread(thread_list& list,
+                                  std::int32_t pc0,
+                                  std::size_t  pos,
+                                  bool&        matched)
+    {
+      auto& stack {state_.lookaround.stack};
+      stack.clear();
+      stack.push_back({.pc = pc0, .slot = 0, .restore_value = 0});
+      while (!stack.empty()) {
+        const std::int32_t pc {stack.back().pc};
+        stack.pop_back();
+        if (list.seen(pc)) {
+          continue;
+        }
+        list.mark_seen(pc);
+        const instr& in {prog_.code[static_cast<std::size_t>(pc)]};
+        switch (in.op) {
+          case opcode::jump:
+            stack.push_back({.pc = in.primary_target, .slot = 0, .restore_value = 0});
+            break;
+          case opcode::split:
+            stack.push_back({.pc = in.secondary_target, .slot = 0, .restore_value = 0});
+            stack.push_back({.pc = in.primary_target, .slot = 0, .restore_value = 0});
+            break;
+          case opcode::save:
+            // intentionally uncovered: a capture-free sub emits no `save`; kept as an
+            // epsilon arm for completeness should the emission ever change.
+            stack.push_back({.pc = pc + 1, .slot = 0, .restore_value = 0});
+            break;
+          case opcode::assert_position:
+            if (assertion_holds(static_cast<assert_kind>(in.arg8), pos)) {
+              stack.push_back({.pc = pc + 1, .slot = 0, .restore_value = 0});
+            }
+            break;
+          case opcode::match:
+            matched = true;
+            break;
+          case opcode::byte:
+          case opcode::klass:
+            list.pcs.push_back(pc);
+            break;
+          case opcode::assert_lookaround:
+            // intentionally uncovered: -Wswitch exhaustiveness arm; nesting is rejected at
+            // parse time, so a sub-program never contains an assert_lookaround.
             break;
         }
       }

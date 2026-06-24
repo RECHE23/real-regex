@@ -66,7 +66,7 @@ TEST(no_match_result_is_empty)
 
 TEST(unsupported_syntax_is_rejected)
 {
-  EXPECT_THROWS(real::regex("(?=a)"), real::regex_error);  // lookarounds: v2
+  EXPECT_THROWS(real::regex("(?<=a)"), real::regex_error); // lookbehind: COMMIT 2
   EXPECT_THROWS(real::regex("(?P=g)"), real::regex_error); // backrefs: v2
   EXPECT_THROWS(real::regex("\\q"), real::regex_error);
   EXPECT_THROWS(real::regex("a\\"), real::regex_error);

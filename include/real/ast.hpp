@@ -38,6 +38,7 @@ namespace real::detail {
     alternation, //!< Children are branches, leftmost preferred.
     group,       //!< Child wrapped in a group; `group` >= 0 when capturing.
     anchor,      //!< Zero-width assertion; kind in \ref real::detail::ast_node::anchor.
+    lookaround,  //!< Bounded lookaround: `child` = sub-pattern, `negated` = (?!/(?<!), `min` = direction (0 ahead, 1 behind).
   };
 
   /*!
@@ -127,10 +128,11 @@ namespace real::detail {
 
   private:
 
-    std::string_view pattern_;    //!< The pattern being parsed.
-    std::size_t      pos_     {}; //!< Current read offset into \ref pattern_.
-    std::int32_t     depth_   {}; //!< Current group nesting (see \ref max_nesting_depth).
-    bool             verbose_ {}; //!< `re.X`: skip unescaped whitespace and `#` comments outside classes.
+    std::string_view pattern_;          //!< The pattern being parsed.
+    std::size_t      pos_           {}; //!< Current read offset into \ref pattern_.
+    std::int32_t     depth_         {}; //!< Current group nesting (see \ref max_nesting_depth).
+    bool             verbose_       {}; //!< `re.X`: skip unescaped whitespace and `#` comments outside classes.
+    bool             in_lookaround_ {}; //!< True while parsing a lookaround sub-pattern (rejects nesting).
 
     /*!
      * \brief In verbose mode, consumes insignificant whitespace and `#` comments.
@@ -595,7 +597,7 @@ namespace real::detail {
           parse_group_name(out, group);
         }
         else if (!eof() && (peek() == '=' || peek() == '!')) {
-          fail("lookahead is not supported");
+          return parse_lookaround(out, look_dir::ahead, open_pos);
         }
         else if (!eof() && peek() == '>') {
           fail("atomic groups are not supported");
@@ -623,6 +625,43 @@ namespace real::detail {
       }
       --depth_;
       return add_node(out, {.kind = node_kind::group, .group = group, .child = body});
+    }
+
+    /*!
+     * \brief Parses a lookaround after `(?=` / `(?!` (ahead) — the `=`/`!` is not yet consumed.
+     *
+     * Builds a \ref node_kind::lookaround node. The sub-pattern is a full alternation; its
+     * capture groups advance the global group counter (so outer group numbers stay
+     * consistent) but are compiled capture-free (V1 limitation, documented). Nesting a
+     * lookaround inside a lookaround is rejected. Boundedness and the byte L_max are
+     * enforced later by the compiler.
+     *
+     * \param[in,out] out       The AST being built.
+     * \param[in]     direction Ahead or behind.
+     * \param[in]     open_pos  Offset of the group's `(` (for error reporting).
+     * \return The index of the lookaround node.
+     */
+    constexpr std::int32_t parse_lookaround(ast&        out,
+                                            look_dir    direction,
+                                            std::size_t open_pos)
+    {
+      if (in_lookaround_) {
+        fail("nested lookaround is not supported");
+      }
+      const bool negative {peek() == '!'};
+      ++pos_; // consume '=' or '!'
+      in_lookaround_         = true;
+      const std::int32_t sub {parse_alternation(out)};
+      in_lookaround_         = false;
+      if (!accept(')')) {
+        pos_ = open_pos;
+        fail("missing ), unterminated subpattern");
+      }
+      --depth_;
+      return add_node(out, {.kind    = node_kind::lookaround,
+                            .negated = negative,
+                            .min     = direction == look_dir::behind ? 1 : 0,
+                            .child   = sub});
     }
 
     /*!

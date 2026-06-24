@@ -94,6 +94,15 @@ namespace real::detail {
   {
     pattern_hints hints;
 
+    // A lookaround forces the general Pike VM: no DFA, no fast path. Detected up front;
+    // the fast-path hints are cleared at the end so none can fire even partially.
+    for (const instr& in : code) {
+      if (in.op == opcode::assert_lookaround) {
+        hints.has_lookaround = true;
+        break;
+      }
+    }
+
     // Start anchoring: the first non-save instruction tells whether every
     // match must begin at position 0 (or at a line start).
     std::size_t pc {};
@@ -174,6 +183,10 @@ namespace real::detail {
       switch (instruction.op) {
         case opcode::save:
         case opcode::assert_position:
+        case opcode::assert_lookaround:
+          // Cross conservatively (an assertion constrains positions, not the byte here);
+          // for a lookaround this yields a sound SUPERSET of first bytes, so ⑤ never
+          // wrongly rejects a valid start.
           stack.push_back(current_pc + 1);
           break;
         case opcode::jump:
@@ -279,6 +292,18 @@ namespace real::detail {
     // Whole pattern is an alternation of straight-line branches.
     if (is_fixed_alternation(code)) {
       hints.fixed_alternation = true;
+    }
+
+    // A lookaround program never takes a fast path or the DFA: the general VM must run so
+    // the sub-VM can evaluate the assertion. Clear every fast-path hint (belt-and-suspenders
+    // — the structural detectors above already miss these shapes). The literal prefix /
+    // first-byte set below stay valid (and sound) filters.
+    if (hints.has_lookaround) {
+      hints.greedy_class_loop     = -1;
+      hints.exact_literal_len     = 0;
+      hints.fixed_shape           = false;
+      hints.codepoint_class_ascii = -1;
+      hints.fixed_alternation     = false;
     }
 
     if (hints.prefix_size > 0) {

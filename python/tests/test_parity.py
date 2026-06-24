@@ -472,6 +472,57 @@ class TestParity(unittest.TestCase):
                         self.match_facts(p.search(text)),
                         self.match_facts(r.search(text)))
 
+    # Bounded lookahead (?=...) / (?!...). Two REAL-specific divergences keep these cases
+    # narrow: (1) REAL's lookahead sub is capture-free (re captures inside a lookaround), so
+    # every capturing group stays OUTSIDE the lookahead; (2) re accepts an unbounded sub
+    # (e.g. (?=a*)) whereas REAL rejects it to stay linear — those belong in test_real.py,
+    # not here. On the bounded, capture-free-inside cases below the two engines must agree
+    # exactly, in search/match/fullmatch as in findall/finditer.
+    LOOKAHEAD_CASES = [
+        (r"(?=\d)\w+", "abc 123 xyz"),       # leading assertion then consume
+        (r"(?=\d)\w+", "a1b2c3"),
+        (r"(?=\d)\w+", "no digits here"),
+        (r"\d+(?=px)", "10px 20em 30px"),    # trailing assertion
+        (r"\w+(?=:)", "key: value k2: v2"),
+        (r"foo(?!bar)", "foobar foobaz foo"),  # negative
+        (r"q(?!u)\w", "quack quit qix qa"),
+        (r"(?=\bfoo)\w+", "a foo barfoo foobar"),  # \b assertion inside the sub
+        (r"(?=\d{3})\d+", "12 345 6789"),    # bounded repeat inside (L_max = 3)
+        (r"a(?=b)", "ab ac ab"),
+        (r"a(?!b)", "ab ac ad"),
+        (r"\w+(?=\d)", "abc1 de2 fg"),       # word run ending right before a digit
+    ]
+
+    def test_lookahead_match_parity(self):
+        """search/match/fullmatch with bounded lookahead == re (spans + groups)."""
+        for pattern, text in self.LOOKAHEAD_CASES:
+            p, r = real.compile(pattern), re.compile(pattern, re.ASCII)
+            for method in ("search", "match", "fullmatch"):
+                with self.subTest(pattern=pattern, text=text, method=method):
+                    self.assertEqual(self.match_facts(getattr(p, method)(text)),
+                                     self.match_facts(getattr(r, method)(text)))
+
+    def test_lookahead_findall_finditer_parity(self):
+        """findall/finditer with bounded lookahead == re (every match, every span)."""
+        for pattern, text in self.LOOKAHEAD_CASES:
+            p, r = real.compile(pattern), re.compile(pattern, re.ASCII)
+            with self.subTest(pattern=pattern, text=text):
+                self.assertEqual(p.findall(text), r.findall(text))
+                self.assertEqual([m.span() for m in p.finditer(text)],
+                                 [m.span() for m in r.finditer(text)])
+
+    def test_lookahead_multibyte_literal_parity(self):
+        r"""A multi-byte UTF-8 literal inside the lookahead: its L_max must be the true
+        byte length (café = 5 bytes), and offsets/results stay byte-for-byte with re."""
+        for pattern, text in [(r"(?=café)\w+", "au café crème"),
+                              (r"\w+(?=é)", "café déjà fin")]:
+            p, r = real.compile(pattern), re.compile(pattern, re.ASCII)
+            with self.subTest(pattern=pattern):
+                self.assertEqual(self.match_facts(p.search(text)),
+                                 self.match_facts(r.search(text)))
+                self.assertEqual([m.span() for m in p.finditer(text)],
+                                 [m.span() for m in r.finditer(text)])
+
     def test_escape_parity_per_char(self):
         """real.escape agrees with re.escape on every ASCII char — proving the
         CPython 3.7+ semantics (only the special set is escaped; punctuation such

@@ -248,11 +248,15 @@ namespace real::detail {
 
     /*!
      * \brief Emits the bytecode for the AST node at \p index (recursively).
-     * \param[in,out] prog  The program being built.
-     * \param[in]     index Index of the node in \ref ast::nodes.
+     * \param[in,out] prog         The program being built.
+     * \param[in]     index        Index of the node in \ref ast::nodes.
+     * \param[in]     capture_free When true, capturing groups emit no `save` ops — used
+     *                             inside a lookaround sub-program, whose captures do not
+     *                             participate in the overall match.
      */
     constexpr void emit_node(dynamic_program& prog,
-                             std::int32_t     index) const
+                             std::int32_t     index,
+                             bool             capture_free = false) const
     {
       const ast_node& node {tree_.nodes[static_cast<std::size_t>(index)]};
       switch (node.kind) {
@@ -319,24 +323,28 @@ namespace real::detail {
         case node_kind::concat:
           for (std::int32_t child = node.child; child != -1;
                child              = tree_.nodes[static_cast<std::size_t>(child)].next) {
-            emit_node(prog, child);
+            emit_node(prog, child, capture_free);
           }
           break;
         case node_kind::repeat:
-          emit_repeat(prog, node);
+          emit_repeat(prog, node, capture_free);
           break;
         case node_kind::alternation:
-          emit_alternation(prog, node);
+          emit_alternation(prog, node, capture_free);
           break;
         case node_kind::group:
-          if (node.group >= 0) {
+          if (node.group >= 0 && !capture_free) {
             emit(prog, {.op = opcode::save, .arg16 = static_cast<std::uint16_t>(2 * node.group)});
-            emit_node(prog, node.child);
+            emit_node(prog, node.child, capture_free);
             emit(prog, {.op = opcode::save, .arg16 = static_cast<std::uint16_t>((2 * node.group) + 1)});
           }
           else {
-            emit_node(prog, node.child);
+            // capture-free (a lookaround sub-pattern) or non-capturing group.
+            emit_node(prog, node.child, capture_free);
           }
+          break;
+        case node_kind::lookaround:
+          emit_lookaround(prog, node, capture_free);
           break;
       }
     }
@@ -388,11 +396,13 @@ namespace real::detail {
      *
      * Every branch but the last jumps to a shared exit, patched once at the end.
      *
-     * \param[in,out] prog The program being built.
-     * \param[in]     node The \ref node_kind::alternation node.
+     * \param[in,out] prog         The program being built.
+     * \param[in]     node         The \ref node_kind::alternation node.
+     * \param[in]     capture_free Propagated to each branch (see \ref emit_node).
      */
     constexpr void emit_alternation(dynamic_program& prog,
-                                    const ast_node&  node) const
+                                    const ast_node&  node,
+                                    bool             capture_free) const
     {
       std::vector<std::int32_t> jumps;
       std::int32_t              branch {node.child};
@@ -401,12 +411,12 @@ namespace real::detail {
         if (after != -1) {
           const std::int32_t s {emit_split(prog)};
           patch_primary(prog, s, here(prog));
-          emit_node(prog, branch);
+          emit_node(prog, branch, capture_free);
           jumps.push_back(emit_jump(prog));
           patch_secondary(prog, s, here(prog));
         }
         else {
-          emit_node(prog, branch); // last branch: falls through
+          emit_node(prog, branch, capture_free); // last branch: falls through
         }
         branch = after;
       }
@@ -423,29 +433,31 @@ namespace real::detail {
      * Counted forms unroll: `min` mandatory copies, then either a loop
      * (`max == -1`) or optional copies sharing one exit.
      *
-     * \param[in,out] prog The program being built.
-     * \param[in]     node The \ref node_kind::repeat node.
+     * \param[in,out] prog         The program being built.
+     * \param[in]     node         The \ref node_kind::repeat node.
+     * \param[in]     capture_free Propagated to the body copies (see \ref emit_node).
      */
     constexpr void emit_repeat(dynamic_program& prog,
-                               const ast_node&  node) const
+                               const ast_node&  node,
+                               bool             capture_free) const
     {
       for (std::int32_t i = 0; i < node.min; ++i) {
         if (node.max == -1 && i == node.min - 1) {
           // Last mandatory copy doubles as the loop body: e+ patterns
           // emit the body exactly once.
           const std::int32_t body {here(prog)};
-          emit_node(prog, node.child);
+          emit_node(prog, node.child, capture_free);
           const std::int32_t s    {emit_split(prog)};
           patch_primary(prog, s, node.lazy ? here(prog) : body);
           patch_secondary(prog, s, node.lazy ? body : here(prog));
           return;
         }
-        emit_node(prog, node.child);
+        emit_node(prog, node.child, capture_free);
       }
       if (node.max == -1) {                                  // min == 0: a star loop
         const std::int32_t s {emit_split(prog)};
         patch_primary(prog, s, node.lazy ? -1 : here(prog)); // body side set below
-        emit_node(prog, node.child);
+        emit_node(prog, node.child, capture_free);
         const std::int32_t j {emit_jump(prog)};
         patch_primary(prog, j, s);
         if (node.lazy) {
@@ -461,13 +473,129 @@ namespace real::detail {
       std::vector<std::int32_t> exits;
       for (std::int32_t i = node.min; i < node.max; ++i) {
         exits.push_back(emit_split(prog));
-        emit_node(prog, node.child);
+        emit_node(prog, node.child, capture_free);
       }
       const std::int32_t end {here(prog)};
       for (const std::int32_t s : exits) {
         patch_primary(prog, s, node.lazy ? end : s + 1);
         patch_secondary(prog, s, node.lazy ? s + 1 : end);
       }
+    }
+
+    /*!
+     * \brief Emits a bounded lookaround: an `assert_lookaround` whose sub-program is a
+     *        capture-free region the main flow jumps over.
+     *
+     * Layout: `assert_lookaround sub_id; jump AFTER; [sub-program] match; AFTER: …`. The
+     * main VM only steps the `assert_lookaround` (epsilon) and the skip-`jump`; the sub
+     * region is entered solely by the sub-VM at `code_offset`. The sub-pattern must be
+     * bounded (L_max in bytes ≤ \ref max_lookaround_length) — the linear-time guarantee.
+     *
+     * \param[in,out] prog         The program being built.
+     * \param[in]     node         The \ref node_kind::lookaround node.
+     * \param[in]     capture_free True only when already inside a lookaround (rejected).
+     * \throws real::regex_error on an unbounded or over-long sub-pattern, or nesting.
+     */
+    constexpr void emit_lookaround(dynamic_program& prog,
+                                   const ast_node&  node,
+                                   bool             capture_free) const
+    {
+      if (capture_free) {
+        // intentionally uncovered: fail-loud net for a parser-guaranteed invariant. The
+        // parser rejects nested lookarounds first, so capture_free is never true here; a
+        // nested lookaround reaching the compiler would break the linear-time guarantee,
+        // so a throw beats a silent miscompile if that parser guard ever regresses.
+        throw regex_error("nested lookaround is not supported", 0);
+      }
+      const std::int32_t lmax {l_max_bytes(node.child)};
+      if (lmax < 0) {
+        throw regex_error("unbounded lookaround is not supported (use a fixed repeat count)", 0);
+      }
+      if (lmax > max_lookaround_length) {
+        throw regex_error("lookaround sub-pattern too long", 0);
+      }
+      const std::size_t sub_id {prog.lookarounds.size()};
+      prog.lookarounds.push_back({});                  // placeholder, filled once the region is emitted
+      emit(prog, {.op = opcode::assert_lookaround, .arg16 = static_cast<std::uint16_t>(sub_id)});
+      const std::int32_t skip       {emit_jump(prog)}; // main flow jumps over the sub-region
+      const std::int32_t sub_offset {here(prog)};
+      emit_node(prog, node.child, /*capture_free=*/ true);
+      emit(prog, {.op = opcode::match});               // sub-program terminator
+      patch_primary(prog, skip, here(prog));
+      prog.lookarounds[sub_id] = {.code_offset = sub_offset,
+                                  .code_length = here(prog) - sub_offset,
+                                  .l_max       = lmax,
+                                  .direction   = node.min == 1 ? look_dir::behind : look_dir::ahead,
+                                  .negative    = node.negated};
+    }
+
+    /*!
+     * \brief Upper bound, in bytes, on what the sub-AST at \p index can consume; -1 if
+     *        unbounded (a `*`, `+` or `{n,}` repeat) or if it nests a lookaround.
+     *
+     * Codepoint-consuming shapes (`.`, a negated class outside bytes mode) count as one
+     * codepoint = up to 4 bytes (A1); a literal byte or an ASCII class is one byte.
+     *
+     * \param[in] index Index of the sub-AST node.
+     * \return The byte upper bound, or -1 when not statically bounded.
+     */
+    [[nodiscard]] constexpr std::int32_t l_max_bytes(std::int32_t index) const
+    {
+      const ast_node& node {tree_.nodes[static_cast<std::size_t>(index)]};
+      switch (node.kind) {
+        case node_kind::empty:
+        case node_kind::anchor:
+          return 0;
+        case node_kind::byte:
+          return 1;
+        case node_kind::klass:
+          return (node.negated && !has_flag(flags_, flags::bytes)) ? 4 : 1;
+        case node_kind::any:
+          return has_flag(flags_, flags::bytes) ? 1 : 4;
+        case node_kind::concat:
+          {
+            std::int32_t total {0};
+            for (std::int32_t child = node.child; child != -1;
+                 child              = tree_.nodes[static_cast<std::size_t>(child)].next) {
+              const std::int32_t c {l_max_bytes(child)};
+              if (c < 0) {
+                return -1;
+              }
+              total += c;
+            }
+            return total;
+          }
+        case node_kind::alternation:
+          {
+            std::int32_t widest {0};
+            for (std::int32_t branch = node.child; branch != -1;
+                 branch              = tree_.nodes[static_cast<std::size_t>(branch)].next) {
+              const std::int32_t c {l_max_bytes(branch)};
+              if (c < 0) {
+                return -1;
+              }
+              if (c > widest) {
+                widest = c;
+              }
+            }
+            return widest;
+          }
+        case node_kind::repeat:
+          {
+            if (node.max == -1) {
+              return -1; // *, +, {n,} are not statically bounded
+            }
+            const std::int32_t body {l_max_bytes(node.child)};
+            return body < 0 ? -1 : node.max * body;
+          }
+        case node_kind::group:
+          return l_max_bytes(node.child);
+        case node_kind::lookaround:
+          // intentionally uncovered: -Wswitch exhaustiveness arm; the parser rejects nested
+          // lookarounds first, so l_max_bytes never recurses into one. Treated as unbounded.
+          return -1;
+      }
+      return -1;
     }
   };
 

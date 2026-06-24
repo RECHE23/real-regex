@@ -7,9 +7,11 @@ A linear-time (ReDoS-safe) regex engine with an ``re``-compatible API:
     real.compile(r"\w+").findall(text)
 
 Supported flags: IGNORECASE/I, MULTILINE/M, DOTALL/S, VERBOSE/X (ASCII/A and
-UNICODE/U are accepted no-ops: classes are ASCII, text is Unicode). Unsupported
-``re`` features raise :class:`real.error` at compile time: lookarounds,
-backreferences, and re.L. See the project README.
+UNICODE/U are accepted no-ops: classes are ASCII, text is Unicode). Bounded
+lookahead ``(?=...)``/``(?!...)`` is supported in linear time (its sub-pattern
+must be length-bounded and is capture-free). The remaining ``re`` features raise
+:class:`real.error` at compile time: lookbehind, backreferences, and re.L. See
+the project README.
 """
 
 import functools

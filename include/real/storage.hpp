@@ -600,12 +600,15 @@ namespace real {
       /*!
        * \brief VM scratch state: SBO thread lists, working slots and eps stack.
        */
-      using state_type = basic_pike_state<
-        basic_thread_list<small_vec<std::int32_t, 64>,
-                          small_vec<std::size_t, 256>,
-                          std::vector<std::uint64_t>>,
-        small_vec<std::size_t, 64>,
-        small_vec<eps_entry, 32>>;
+      struct state_type : basic_pike_state<
+                            basic_thread_list<small_vec<std::int32_t, 64>,
+                                              small_vec<std::size_t, 256>,
+                                              std::vector<std::uint64_t>>,
+                            small_vec<std::size_t, 64>,
+                            small_vec<eps_entry, 32>>
+      {
+        lookaround_scratch lookaround; //!< Isolated sub-scratch for bounded lookaround evaluation.
+      };
 
       std::string     pattern_text;                  //!< The original pattern text.
       dynamic_program program;                       //!< The compiled program.
@@ -675,8 +678,14 @@ namespace real {
        */
       static constexpr dynamic_program build()
       {
-        const ast tree {detail::parse(Pat.view(), F)};
-        return detail::compile(tree, F | tree.inline_flags);
+        const ast       tree {detail::parse(Pat.view(), F)};
+        dynamic_program prog {detail::compile(tree, F | tree.inline_flags)};
+        if (!prog.lookarounds.empty()) {
+          // Honest absence: the constexpr sub-VM is a measured follow-up. A clear compile
+          // error (this throw, evaluated at compile time) beats a silent miscompile.
+          throw regex_error("static_regex does not support lookarounds yet (use real::regex)", 0);
+        }
+        return prog;
       }
 
       /*!
@@ -734,12 +743,13 @@ namespace real {
        */
       [[nodiscard]] constexpr program_view view() const
       {
-        return {.code       = code,
-                .classes    = classes,
-                .names      = names,
-                .slot_count = slot_count,
-                .byte_mode  = has_flag(effective_flags, flags::bytes),
-                .hints      = hints};
+        return {.code        = code,
+                .classes     = classes,
+                .names       = names,
+                .lookarounds = {}, // static_regex rejects lookarounds at compile (always empty)
+                .slot_count  = slot_count,
+                .byte_mode   = has_flag(effective_flags, flags::bytes),
+                .hints       = hints};
       }
 
       /*!
