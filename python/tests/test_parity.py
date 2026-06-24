@@ -371,6 +371,96 @@ class TestParity(unittest.TestCase):
                         self.match_facts(getattr(rp, method)(text, pos, endpos)),
                         self.match_facts(getattr(rr, method)(text, pos, endpos)))
 
+    def _cmp_findall_finditer(self, pattern, text, pos, endpos, flags=0):
+        """Assert real == re for findall and finditer(text, pos, endpos)."""
+        re_flags = re.ASCII | (re.MULTILINE if (flags & real.M) else 0)
+        rp, rr = real.compile(pattern, flags), re.compile(pattern, re_flags)
+        with self.subTest(pattern=pattern, pos=pos, endpos=endpos, flags=flags):
+            self.assertEqual(rp.findall(text, pos, endpos), rr.findall(text, pos, endpos))
+            self.assertEqual([m.span() for m in rp.finditer(text, pos, endpos)],
+                             [m.span() for m in rr.finditer(text, pos, endpos)])
+
+    def test_findall_finditer_region_parity(self):
+        """findall/finditer(text, pos, endpos) == re: pos>0, endpos<len, both, clamp,
+        pos>endpos (empty)."""
+        for pattern, text, pos, endpos in [
+            (r"\w+", "foo bar baz qux", 4, 11),
+            (r"\w+", "foo bar baz", 4, 100),    # endpos clamped
+            (r"\w+", "foo bar baz", 0, 7),
+            (r"(\w)(\w+)", "aa bb cc", 3, 8),
+            (r"\w+", "hello", 4, 2),            # pos > endpos → empty
+            (r"\w+", "hello", 100, 100),        # clamped → empty
+            (r"\d+", "a1 b22 c333", 0, 6),
+        ]:
+            self._cmp_findall_finditer(pattern, text, pos, endpos)
+
+    def test_finditer_stops_at_endpos_midword_parity(self):
+        """findall/finditer stop at endpos even for a match that would extend past it."""
+        self._cmp_findall_finditer(r"\w+", "hello world", 0, 8)  # → "hello", "wo"
+
+    def test_findall_finditer_region_anchor_parity(self):
+        r"""\A/\Z/^/$ x ML within a findall/finditer region == re."""
+        for pattern, text, pos, endpos, flags in [
+            (r"\A\w+", "foobar", 3, 6, 0),               # \A never at pos>0
+            (r"^\w+", "foo\nbar\nbaz", 4, 11, real.M),   # ^ ML after \n
+            (r"^\w+", "foo\nbar\nbaz", 4, 11, 0),        # ^ non-ML: only absolute 0
+            (r"\w+\Z", "foobar", 0, 3, 0),               # \Z at endpos
+            (r"\w+$", "foo\nbar", 0, 7, real.M),         # $ ML before internal \n
+        ]:
+            self._cmp_findall_finditer(pattern, text, pos, endpos, flags)
+
+    def test_match_pos_endpos_attributes_parity(self):
+        """Match.pos/.endpos == re on match/search/fullmatch (with and without
+        pos/endpos), including clamp and bytes."""
+        for pattern, text, args in [
+            (r"\w+", "hello world", ()),
+            (r"\w+", "hello world", (3,)),
+            (r"\w+", "hello world", (3, 8)),
+            (r"\w+", "hello world", (3, 100)),    # endpos clamped
+            (r"\w+", "hello world", (100, 200)),  # both clamped → no match
+        ]:
+            rp, rr = real.compile(pattern), re.compile(pattern, re.ASCII)
+            for method in ("match", "search", "fullmatch"):
+                with self.subTest(pattern=pattern, args=args, method=method):
+                    pm, rm = getattr(rp, method)(text, *args), getattr(rr, method)(text, *args)
+                    if rm is None:
+                        self.assertIsNone(pm)
+                    else:
+                        self.assertEqual((pm.pos, pm.endpos), (rm.pos, rm.endpos))
+        bp, br = real.compile(rb"\w+"), re.compile(rb"\w+")  # bytes: byte offsets
+        bpm, brm = bp.search(b"foo bar", 2, 6), br.search(b"foo bar", 2, 6)
+        self.assertEqual((bpm.pos, bpm.endpos), (brm.pos, brm.endpos))
+
+    def test_finditer_match_pos_endpos_parity(self):
+        """Matches from finditer(pos, endpos) carry the call's .pos/.endpos, not 0/len."""
+        text = "foo bar baz qux"
+        rp, rr = real.compile(r"\w+"), re.compile(r"\w+", re.ASCII)
+        pm, rm = list(rp.finditer(text, 4, 11)), list(rr.finditer(text, 4, 11))
+        self.assertEqual([(m.pos, m.endpos) for m in pm], [(m.pos, m.endpos) for m in rm])
+        self.assertTrue(pm and all(m.pos == 4 and m.endpos == 11 for m in pm))
+
+    def test_findall_finditer_same_region_consistent(self):
+        """findall and finditer over the same region produce the same texts."""
+        rp = real.compile(r"\w+")
+        text = "a1 b2 c3 d4"
+        self.assertEqual(rp.findall(text, 3, 8), [m.group() for m in rp.finditer(text, 3, 8)])
+
+    def test_findall_finditer_region_non_ascii_parity(self):
+        """Region findall/finditer with a non-ASCII subject: character offsets == re."""
+        text = "café déjà 42 voilà"
+        for pos, endpos in [(0, 4), (5, 9), (7, 18), (0, 18)]:
+            self._cmp_findall_finditer(r"\w+", text, pos, endpos)
+
+    def test_findall_finditer_region_bytes_parity(self):
+        """Region findall/finditer with a bytes subject: byte offsets == re."""
+        text = b"foo bar 123 baz"
+        for pos, endpos in [(4, 11), (0, 7), (8, 15)]:
+            rp, rr = real.compile(rb"\w+"), re.compile(rb"\w+")
+            with self.subTest(pos=pos, endpos=endpos):
+                self.assertEqual(rp.findall(text, pos, endpos), rr.findall(text, pos, endpos))
+                self.assertEqual([m.span() for m in rp.finditer(text, pos, endpos)],
+                                 [m.span() for m in rr.finditer(text, pos, endpos)])
+
     def test_bytes_parity(self):
         """Bytes patterns behave identically to re on bytes subjects."""
         for pattern in [rb"\d+", rb"(\w+)=(\w+)", rb"[^;]+"]:

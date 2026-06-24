@@ -207,13 +207,16 @@ namespace real {
      * \param[in] prog    The compiled program to run.
      * \param[in] pattern The pattern text (for named-group resolution).
      * \param[in] text    The text to iterate over (borrowed).
+     * \param[in] start   Byte offset to begin iterating from (0 = the whole text).
      */
     constexpr basic_match_iterator(detail::program_view prog,
                                    std::string_view     pattern,
-                                   std::string_view     text)
+                                   std::string_view     text,
+                                   std::size_t          start = 0)
       : prog_(prog),
         pattern_(pattern),
         text_(text),
+        pos_(start),
         done_(false)
     {
       advance();
@@ -322,13 +325,16 @@ namespace real {
      * \param[in] prog    The compiled program.
      * \param[in] pattern The pattern text (for named-group resolution).
      * \param[in] text    The text to iterate over (borrowed).
+     * \param[in] start   Byte offset to begin iterating from (0 = the whole text).
      */
     constexpr basic_match_range(detail::program_view prog,
                                 std::string_view     pattern,
-                                std::string_view     text)
+                                std::string_view     text,
+                                std::size_t          start = 0)
       : prog_(prog),
         pattern_(pattern),
-        text_(text)
+        text_(text),
+        start_(start)
     {}
 
     /*!
@@ -336,7 +342,7 @@ namespace real {
      */
     [[nodiscard]] constexpr basic_match_iterator<Storage> begin() const
     {
-      return {prog_, pattern_, text_};
+      return {prog_, pattern_, text_, start_};
     }
 
     /*!
@@ -349,9 +355,10 @@ namespace real {
 
   private:
 
-    detail::program_view prog_;    //!< The program being run.
-    std::string_view     pattern_; //!< Pattern text (named lookups).
-    std::string_view     text_;    //!< The text to iterate.
+    detail::program_view prog_;     //!< The program being run.
+    std::string_view     pattern_;  //!< Pattern text (named lookups).
+    std::string_view     text_;     //!< The text to iterate.
+    std::size_t          start_ {}; //!< Byte offset to begin iterating from (region support).
   };
 
   /*!
@@ -508,6 +515,20 @@ namespace real {
     }
 
     /*!
+     * \brief Region-aware `find_iter`: iterate matches within `[pos, endpos)` (Python
+     *        `finditer` with `pos` / `endpos`). \p endpos truncates the subject to a view
+     *        so iteration stops at it; \p pos is the start, not a slice (see \ref run).
+     *        Byte offsets; \p endpos defaults to the end of \p text.
+     */
+    [[nodiscard]] constexpr basic_match_range<Storage> find_iter(std::string_view text,
+                                                                 std::size_t      pos,
+                                                                 std::size_t      endpos = npos) const&
+    {
+      const std::size_t end {endpos < text.size() ? endpos : text.size()};
+      return {program_.view(), pattern(), text.substr(0, end), pos};
+    }
+
+    /*!
      * \brief Deleted: `find_iter` on a temporary regex would dangle.
      */
     [[nodiscard]] basic_match_range<Storage> find_iter(std::string_view text) const&& = delete;
@@ -515,6 +536,11 @@ namespace real {
      * \brief Deleted: `find_iter` on a temporary regex would dangle.
      */
     [[nodiscard]] basic_match_range<Storage> find_iter(const char* text) const&& = delete;
+    /*!
+     * \brief Deleted: region `find_iter` on a temporary regex would dangle.
+     */
+    [[nodiscard]] basic_match_range<Storage> find_iter(std::string_view text, std::size_t,
+                                                       std::size_t = npos) const&& = delete;
 
     /*!
      * \brief All matches, eagerly (like Python `re.findall` but full results).
@@ -630,16 +656,18 @@ namespace real {
     }
 
     // Searched text must outlive the result: reject temporary std::string.
-    [[nodiscard]] result_type                   match(const std::string&& text) const           = delete;               //!< Deleted: temporary text would dangle.
-    [[nodiscard]] result_type                   fullmatch(const std::string&& text) const       = delete;               //!< Deleted: temporary text would dangle.
-    [[nodiscard]] result_type                   search(const std::string&& text) const          = delete;               //!< Deleted: temporary text would dangle.
-    [[nodiscard]] result_type match(const std::string && text, std::size_t, std::size_t     = npos) const     = delete; //!< Deleted: temporary text would dangle.
-    [[nodiscard]] result_type fullmatch(const std::string && text, std::size_t, std::size_t = npos) const = delete;     //!< Deleted: temporary text would dangle.
-    [[nodiscard]] result_type search(const std::string && text, std::size_t, std::size_t    = npos) const    = delete;  //!< Deleted: temporary text would dangle.
-    [[nodiscard]] basic_match_range<Storage>    find_iter(const std::string&& text) const&      = delete;               //!< Deleted: temporary text would dangle.
-    [[nodiscard]] std::vector<result_type>      find_all(const std::string&& text) const&       = delete;               //!< Deleted: temporary text would dangle.
+    [[nodiscard]] result_type                   match(const std::string&& text) const           = delete;                            //!< Deleted: temporary text would dangle.
+    [[nodiscard]] result_type                   fullmatch(const std::string&& text) const       = delete;                            //!< Deleted: temporary text would dangle.
+    [[nodiscard]] result_type                   search(const std::string&& text) const          = delete;                            //!< Deleted: temporary text would dangle.
+    [[nodiscard]] result_type match(const std::string && text, std::size_t, std::size_t     = npos) const     = delete;              //!< Deleted: temporary text would dangle.
+    [[nodiscard]] result_type fullmatch(const std::string && text, std::size_t, std::size_t = npos) const = delete;                  //!< Deleted: temporary text would dangle.
+    [[nodiscard]] result_type search(const std::string && text, std::size_t, std::size_t    = npos) const    = delete;               //!< Deleted: temporary text would dangle.
+    [[nodiscard]] basic_match_range<Storage>    find_iter(const std::string&& text) const&      = delete;                            //!< Deleted: temporary text would dangle.
+    [[nodiscard]] basic_match_range<Storage>    find_iter(const std::string && text, std::size_t,
+                                                          std::size_t                           = npos) const&             = delete; //!< Deleted: temporary text would dangle.
+    [[nodiscard]] std::vector<result_type>      find_all(const std::string&& text) const&       = delete;                            //!< Deleted: temporary text would dangle.
     [[nodiscard]] std::vector<std::string_view> split(const std::string&& text,
-                                                      std::size_t         max_splits = 0) const = delete;               //!< Deleted: temporary text would dangle.
+                                                      std::size_t         max_splits = 0) const = delete;                            //!< Deleted: temporary text would dangle.
 
     /*!
      * \brief Returns the pattern text this regex was compiled from.

@@ -3,6 +3,7 @@
 // Byte offsets; subjects are ASCII so byte == char. These pin the C++ engine overloads
 // that back the Python binding's pos/endpos (whose parity vs re is tested separately).
 #include <string_view>
+#include <vector>
 
 #include "framework.hpp"
 #include "real/real.hpp"
@@ -88,4 +89,58 @@ TEST(region_spans_are_absolute)
   EXPECT_EQ(m.start(1), 3U);
   EXPECT_EQ(m[2], "ello"sv);
   EXPECT_EQ(m.start(2), 4U);
+}
+
+TEST(region_find_iter_iterates_within_region)
+{
+  const real::regex             rx("\\w+");
+  std::vector<std::string_view> got;
+  for (const auto& m : rx.find_iter("foo bar baz qux"sv, 4, 11)) {
+    got.push_back(m[0]); // region [4,11) = "bar baz"
+  }
+  EXPECT_EQ(got.size(), 2U);
+  EXPECT_EQ(got[0], "bar"sv);
+  EXPECT_EQ(got[1], "baz"sv);
+}
+
+TEST(region_find_iter_stops_mid_word_at_endpos)
+{
+  const real::regex             rx("\\w+");
+  std::vector<std::string_view> got;
+  for (const auto& m : rx.find_iter("hello world"sv, 0, 8)) {
+    got.push_back(m[0]); // region [0,8) = "hello wo" → the second word is truncated
+  }
+  EXPECT_EQ(got.size(), 2U);
+  EXPECT_EQ(got[0], "hello"sv);
+  EXPECT_EQ(got[1], "wo"sv);
+}
+
+TEST(region_find_iter_one_arg_unchanged_and_default_endpos)
+{
+  const real::regex rx("\\w+");
+  std::size_t       n {};
+  for (const auto& m : rx.find_iter("a b c"sv)) { // 1-arg: whole text, unchanged
+    (void) m;
+    ++n;
+  }
+  EXPECT_EQ(n, 3U);
+  std::vector<std::string_view> got;
+  for (const auto& m : rx.find_iter("a b c"sv, 2)) { // from pos 2, default endpos
+    got.push_back(m[0]);
+  }
+  EXPECT_EQ(got.size(), 2U);
+  EXPECT_EQ(got[0], "b"sv);
+}
+
+TEST(region_find_iter_anchors_in_region)
+{
+  // ^ MULTILINE within the region holds at pos only if text[pos-1] == '\n'.
+  const real::regex             rx("^\\w+", real::flags::multiline);
+  std::vector<std::string_view> got;
+  for (const auto& m : rx.find_iter("foo\nbar\nbaz"sv, 4, 11)) {
+    got.push_back(m[0]); // ^ at 4 (after \n) and at 8 (after \n)
+  }
+  EXPECT_EQ(got.size(), 2U);
+  EXPECT_EQ(got[0], "bar"sv);
+  EXPECT_EQ(got[1], "baz"sv);
 }

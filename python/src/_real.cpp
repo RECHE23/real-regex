@@ -94,6 +94,10 @@ struct MatchObject {
     // char_spans are what Python sees (equal for bytes and ASCII subjects).
     std::vector<Py_ssize_t>* byte_spans;
     std::vector<Py_ssize_t>* char_spans;
+    // Effective (clamped) pos/endpos of the matching call, as re exposes them: character
+    // offsets for a str subject, byte offsets for bytes.
+    Py_ssize_t pos;
+    Py_ssize_t endpos;
 };
 
 PatternObject* as_pattern(PyObject* obj) { return reinterpret_cast<PatternObject*>(obj); }
@@ -146,6 +150,8 @@ struct MatchIteratorObject {
     PyObject* pattern;   // owning PatternObject: keeps the regex program + pattern text alive
     PyObject* subject;   // str or bytes: keeps the scanned bytes alive
     subject_view sv;     // by value: a non-owning view into `subject`'s bytes
+    Py_ssize_t pos;      // the iterator's pos/endpos (char for str, byte for bytes), copied
+    Py_ssize_t endpos;   // onto each yielded Match's .pos/.endpos
     match_iter_t* cur;   // heap cursor; its text_/prog_ borrow `subject` and the regex
 };
 
@@ -241,7 +247,8 @@ PyObject* empty_like(PatternObject* pat) {
 // Match construction
 // ---------------------------------------------------------------------------
 
-PyObject* make_match(PatternObject* pat, PyObject* subject, const auto& match) {
+PyObject* make_match(PatternObject* pat, PyObject* subject, const auto& match,
+                     Py_ssize_t pos, Py_ssize_t endpos) {
     auto* obj = PyObject_New(MatchObject, reinterpret_cast<PyTypeObject*>(match_type));
     if (obj == nullptr) {
         return nullptr;
@@ -254,6 +261,8 @@ PyObject* make_match(PatternObject* pat, PyObject* subject, const auto& match) {
     // pays compute_char_spans, which walks byte 0 -> match offset = O(position) per match
     // (quadratic over a non-ASCII scan). See ensure_char_spans.
     obj->char_spans = nullptr;
+    obj->pos = pos;
+    obj->endpos = endpos;
     auto& bytes = *obj->byte_spans;
     for (std::size_t group = 0; group < match.size(); ++group) {
         const std::size_t start = match.start(group);
@@ -457,6 +466,8 @@ PyObject* Match_get_re(PyObject* self, void*) { return Py_NewRef(as_match(self)-
 PyObject* Match_get_string(PyObject* self, void*) {
     return Py_NewRef(as_match(self)->subject);
 }
+PyObject* Match_get_pos(PyObject* self, void*) { return PyLong_FromSsize_t(as_match(self)->pos); }
+PyObject* Match_get_endpos(PyObject* self, void*) { return PyLong_FromSsize_t(as_match(self)->endpos); }
 
 // Defined after the replacement-template machinery (apply_template / parse_template).
 PyObject* Match_expand(PyObject* self, PyObject* template_arg);
@@ -525,6 +536,8 @@ PyMethodDef match_methods[] = {
 PyGetSetDef match_getset[] = {
     {"re", Match_get_re, nullptr, "The Pattern object that produced this match.", nullptr},
     {"string", Match_get_string, nullptr, "The string or bytes that was searched.", nullptr},
+    {"pos", Match_get_pos, nullptr, "Effective pos passed to the matching call (clamped; default 0).", nullptr},
+    {"endpos", Match_get_endpos, nullptr, "Effective endpos passed to the matching call (clamped; default len).", nullptr},
     {nullptr, nullptr, nullptr, nullptr, nullptr},
 };
 
@@ -619,7 +632,7 @@ PyObject* run_region(PyObject* self, PyObject* args, PyObject* kwargs, real::det
     }
     // Built over the FULL subject so capture offsets are absolute (slots are in [0, endpos)).
     const real::match_result match(sv.view(), slots, true, pat->rx->pattern(), prog.names);
-    return make_match(pat, string, match);
+    return make_match(pat, string, match, pos, endpos);  // .pos/.endpos = the clamped offsets
 }
 
 PyObject* Pattern_match(PyObject* self, PyObject* args, PyObject* kwargs) {
@@ -646,11 +659,12 @@ PyObject* Pattern_search(PyObject* self, PyObject* args, PyObject* kwargs) {
 // `max_matches == 0` means no limit (findall); split passes its maxsplit. Returns
 // false only on a C++ allocation failure — the GIL is already re-acquired by then.
 bool collect_match_spans(PatternObject* pat, const subject_view& sv, std::size_t ngroups,
-                         std::size_t max_matches, std::vector<std::size_t>& spans) {
+                         std::size_t max_matches, std::vector<std::size_t>& spans,
+                         std::size_t pos_byte, std::size_t endpos_byte) {
     try {
         const GilRelease unlocked;
         std::size_t count = 0;
-        for (const auto& match : pat->rx->find_iter(sv.view())) {
+        for (const auto& match : pat->rx->find_iter(sv.view(), pos_byte, endpos_byte)) {
             if (max_matches != 0 && count == max_matches) {
                 break;
             }
@@ -666,12 +680,25 @@ bool collect_match_spans(PatternObject* pat, const subject_view& sv, std::size_t
     return true;
 }
 
-PyObject* Pattern_findall(PyObject* self, PyObject* string) {
+PyObject* Pattern_findall(PyObject* self, PyObject* args, PyObject* kwargs) {
     PatternObject* pat = as_pattern(self);
+    PyObject* string = nullptr;
+    Py_ssize_t pos = 0;
+    Py_ssize_t endpos = PY_SSIZE_T_MAX;
+    static const char* const keywords[] = {"string", "pos", "endpos", nullptr};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|nn", const_cast<char**>(keywords),
+                                     &string, &pos, &endpos)) {
+        return nullptr;
+    }
     subject_view sv;
     if (get_subject(pat, string, &sv) < 0) {
         return nullptr;
     }
+    const Py_ssize_t char_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
+    pos = std::clamp(pos, Py_ssize_t {0}, char_len);
+    endpos = std::clamp(endpos, Py_ssize_t {0}, char_len);
+    const std::size_t pos_byte = char_to_byte(sv, pos);
+    const std::size_t end_byte = char_to_byte(sv, endpos);
     PyObject* out = PyList_New(0);
     if (out == nullptr) {
         return nullptr;
@@ -717,10 +744,11 @@ PyObject* Pattern_findall(PyObject* self, PyObject* string) {
         return true;
     };
 
-    if (sv.len >= gil_release_collect_min_bytes) {
-        // Large subject: collect spans with the GIL released, then build under the GIL.
+    const std::size_t scan_len = pos_byte < end_byte ? end_byte - pos_byte : 0;
+    if (scan_len >= static_cast<std::size_t>(gil_release_collect_min_bytes)) {
+        // Large region: collect spans with the GIL released, then build under the GIL.
         std::vector<std::size_t> spans;
-        if (!collect_match_spans(pat, sv, ngroups, 0, spans)) {
+        if (!collect_match_spans(pat, sv, ngroups, 0, spans, pos_byte, end_byte)) {
             Py_DECREF(out);
             return PyErr_NoMemory();
         }
@@ -736,9 +764,9 @@ PyObject* Pattern_findall(PyObject* self, PyObject* string) {
         return out;
     }
 
-    // Small subject: interleaved scan under the held GIL (releasing it would cost more
-    // than the sub-microsecond walk). Byte-identical to the pre-threshold behaviour.
-    for (const auto& match : pat->rx->find_iter(sv.view())) {
+    // Small region: interleaved scan under the held GIL (releasing it would cost more
+    // than the sub-microsecond walk).
+    for (const auto& match : pat->rx->find_iter(sv.view(), pos_byte, end_byte)) {
         if (!append_item(build_item([&](std::size_t group) {
             return std::pair {match.start(group), match.end(group)};
         }))) {
@@ -758,7 +786,7 @@ PyObject* MatchIterator_iternext(PyObject* self) {
     if (*it->cur == match_iter_t {}) {  // default-constructed == end sentinel: exhausted
         return nullptr;                 // NULL with no exception set => StopIteration
     }
-    PyObject* obj = make_match(as_pattern(it->pattern), it->subject, **it->cur);
+    PyObject* obj = make_match(as_pattern(it->pattern), it->subject, **it->cur, it->pos, it->endpos);
     if (obj == nullptr) {
         return nullptr;
     }
@@ -785,12 +813,23 @@ PyType_Spec match_iterator_spec = {
 // memory is O(1) in the number of matches (findall stays eager — a list is correct
 // there). The cursor borrows the regex program and the subject bytes; both are
 // pinned by the pattern/subject refs and the stored subject_view.
-PyObject* Pattern_finditer(PyObject* self, PyObject* string) {
+PyObject* Pattern_finditer(PyObject* self, PyObject* args, PyObject* kwargs) {
     PatternObject* pat = as_pattern(self);
+    PyObject* string = nullptr;
+    Py_ssize_t pos = 0;
+    Py_ssize_t endpos = PY_SSIZE_T_MAX;
+    static const char* const keywords[] = {"string", "pos", "endpos", nullptr};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|nn", const_cast<char**>(keywords),
+                                     &string, &pos, &endpos)) {
+        return nullptr;
+    }
     subject_view sv;
     if (get_subject(pat, string, &sv) < 0) {
         return nullptr;
     }
+    const Py_ssize_t char_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
+    pos = std::clamp(pos, Py_ssize_t {0}, char_len);
+    endpos = std::clamp(endpos, Py_ssize_t {0}, char_len);
     auto* it = PyObject_New(MatchIteratorObject, reinterpret_cast<PyTypeObject*>(match_iterator_type));
     if (it == nullptr) {
         return nullptr;
@@ -798,9 +837,12 @@ PyObject* Pattern_finditer(PyObject* self, PyObject* string) {
     it->pattern = Py_NewRef(self);
     it->subject = Py_NewRef(string);
     it->sv = sv;
+    it->pos = pos;        // char/byte offsets, copied onto each yielded Match's .pos/.endpos
+    it->endpos = endpos;
     it->cur = nullptr;
     try {
-        it->cur = new match_iter_t(pat->rx->find_iter(it->sv.view()).begin());
+        it->cur = new match_iter_t(
+            pat->rx->find_iter(it->sv.view(), char_to_byte(sv, pos), char_to_byte(sv, endpos)).begin());
     } catch (...) {
         Py_DECREF(reinterpret_cast<PyObject*>(it));  // dealloc frees the refs; cur is null
         PyErr_SetString(error_type, "finditer: failed to start iteration");
@@ -862,7 +904,7 @@ PyObject* Pattern_split(PyObject* self, PyObject* args, PyObject* kwargs) {
         // Large subject: collect spans with the GIL released, then build under the GIL.
         std::vector<std::size_t> spans;
         const std::size_t max_matches = maxsplit > 0 ? static_cast<std::size_t>(maxsplit) : 0;
-        if (!collect_match_spans(pat, sv, ngroups, max_matches, spans)) {
+        if (!collect_match_spans(pat, sv, ngroups, max_matches, spans, 0, static_cast<std::size_t>(sv.len))) {
             Py_DECREF(out);
             return PyErr_NoMemory();
         }
@@ -1132,13 +1174,15 @@ PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_c
         }
     } else {
         // Callable: each replacement re-enters Python, so the GIL is held throughout.
-        Py_ssize_t last = 0;
+        // sub has no pos/endpos, so each Match spans the whole subject (.pos=0, .endpos=len).
+        const Py_ssize_t full_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
+        Py_ssize_t       last     = 0;
         for (const auto& match : pat->rx->find_iter(sv.view())) {
             if (count != 0 && done == count) {
                 break;
             }
             result.append(sv.data + last, static_cast<std::size_t>(match.start()) - last);
-            PyObject* match_obj = make_match(pat, string, match);
+            PyObject* match_obj = make_match(pat, string, match, 0, full_len);
             if (match_obj == nullptr) {
                 return nullptr;
             }
@@ -1279,20 +1323,28 @@ PyMethodDef pattern_methods[] = {
      "    endpos (int): Where the string is treated as ending ($ and \\Z see it).\n\n"
      "Returns:\n"
      "    Match or None: Match object on success, None otherwise."},
-    {"findall", Pattern_findall, METH_O,
-     "findall(string, /)\n"
-     "Return all non-overlapping matches.\n\n"
+    {"findall", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_findall)),
+     METH_VARARGS | METH_KEYWORDS,
+     "findall(string, pos=0, endpos=sys.maxsize)\n"
+     "Return all non-overlapping matches in the region [pos, endpos).\n\n"
      "Args:\n"
-     "    string (str or bytes): Text to search.\n\n"
+     "    string (str or bytes): Text to search.\n"
+     "    pos (int): Where to start. Character offset for str, byte offset for bytes.\n"
+     "        Not a slice: \\A and ^ (without MULTILINE) still fail at pos > 0.\n"
+     "    endpos (int): Where the string is treated as ending; matches stop there.\n\n"
      "Returns:\n"
      "    list: List of strings, bytes, or tuples depending on groups."},
-    {"finditer", Pattern_finditer, METH_O,
-     "finditer(string, /)\n"
-     "Return an iterator yielding Match objects.\n\n"
+    {"finditer", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_finditer)),
+     METH_VARARGS | METH_KEYWORDS,
+     "finditer(string, pos=0, endpos=sys.maxsize)\n"
+     "Return an iterator yielding Match objects for the region [pos, endpos).\n\n"
      "Args:\n"
-     "    string (str or bytes): Text to search.\n\n"
+     "    string (str or bytes): Text to search.\n"
+     "    pos (int): Where to start. Character offset for str, byte offset for bytes.\n"
+     "        Not a slice: \\A and ^ (without MULTILINE) still fail at pos > 0.\n"
+     "    endpos (int): Where the string is treated as ending; iteration stops there.\n\n"
      "Returns:\n"
-     "    iterator: Iterator over all matches."},
+     "    iterator: Iterator over all matches (each carries the region's .pos/.endpos)."},
     {"split", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_split)),
      METH_VARARGS | METH_KEYWORDS,
      "split(string, maxsplit=0, /)\n"
