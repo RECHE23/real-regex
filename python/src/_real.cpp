@@ -567,16 +567,108 @@ PyMethodDef match_methods[] = {
     {nullptr, nullptr, 0, nullptr},
 };
 
+// re.Match.lastindex: index of the last capturing group to CLOSE in this match -- the re
+// semantics are "last marked", NOT the highest index (((a)(b)) -> 1, not 3). Read it off the
+// program's close-save offsets: scanning in offset order, the last participating close-save
+// (an odd slot, group >= 1) wins. This is exact (it also resolves zero-width cases, where the
+// spans alone cannot tell nesting from sequence). -1 means no group matched (Python None).
+Py_ssize_t match_lastindex_value(MatchObject* match) {
+    PatternObject*                   pat   = as_pattern(match->pattern);
+    const real::detail::program_view prog  = pat->rx->raw_program();
+    const std::vector<Py_ssize_t>&   spans = *match->byte_spans;
+    Py_ssize_t                       last  = -1;
+    for (const real::detail::instr& in : prog.code) {
+        if (in.op != real::detail::opcode::save) {
+            continue;
+        }
+        const unsigned slot = in.arg16;
+        if ((slot & 1U) == 0U || slot == 1U) {
+            continue;  // an opening save, or group 0's closing save
+        }
+        const std::size_t group = (slot - 1U) / 2U;
+        if ((2U * group) < spans.size() && spans[2U * group] >= 0) {
+            last = static_cast<Py_ssize_t>(group);  // participated; a later offset overrides
+        }
+    }
+    return last;
+}
+
+PyObject* Match_get_lastindex(PyObject* self, void* /*closure*/) {
+    const Py_ssize_t index = match_lastindex_value(as_match(self));
+    if (index < 0) {
+        Py_RETURN_NONE;
+    }
+    return PyLong_FromSsize_t(index);
+}
+
+PyObject* Match_get_lastgroup(PyObject* self, void* /*closure*/) {
+    MatchObject*     match = as_match(self);
+    const Py_ssize_t index = match_lastindex_value(match);
+    if (index < 0) {
+        Py_RETURN_NONE;
+    }
+    for (const auto& [name, group] : as_pattern(match->pattern)->rx->named_groups()) {
+        if (static_cast<Py_ssize_t>(group) == index) {
+            return PyUnicode_FromStringAndSize(name.data(), static_cast<Py_ssize_t>(name.size()));
+        }
+    }
+    Py_RETURN_NONE;  // the last group is unnamed
+}
+
+// re.Match.regs: ((start0, end0), (start1, end1), ...) over group 0 and every group, in the
+// character offsets Python sees; a group that did not participate is (-1, -1).
+PyObject* Match_get_regs(PyObject* self, void* /*closure*/) {
+    MatchObject* match = as_match(self);
+    if (ensure_char_spans(match) < 0) {
+        return nullptr;
+    }
+    const std::vector<Py_ssize_t>& spans = *match->char_spans;
+    const Py_ssize_t               count = static_cast<Py_ssize_t>(spans.size() / 2);
+    PyObject*                      regs  = PyTuple_New(count);
+    if (regs == nullptr) {
+        return nullptr;
+    }
+    for (Py_ssize_t group = 0; group < count; ++group) {
+        PyObject* pair = Py_BuildValue("(nn)", spans[2 * group], spans[(2 * group) + 1]);
+        if (pair == nullptr || PyTuple_SetItem(regs, group, pair) < 0) {
+            Py_DECREF(regs);
+            return nullptr;
+        }
+    }
+    return regs;
+}
+
+// re.Match repr: <real.Match object; span=(s, e), match=REPR> with the match repr truncated
+// to 50 characters, like re (which uses "%.50R").
+PyObject* Match_repr(PyObject* self) {
+    MatchObject* match = as_match(self);
+    if (ensure_char_spans(match) < 0) {
+        return nullptr;
+    }
+    PyObject* whole = group_value(match, 0, Py_None);  // group 0 always participates
+    if (whole == nullptr) {
+        return nullptr;
+    }
+    PyObject* result = PyUnicode_FromFormat("<real.Match object; span=(%zd, %zd), match=%.50R>",
+                                            (*match->char_spans)[0], (*match->char_spans)[1], whole);
+    Py_DECREF(whole);
+    return result;
+}
+
 PyGetSetDef match_getset[] = {
     {"re", Match_get_re, nullptr, "The Pattern object that produced this match.", nullptr},
     {"string", Match_get_string, nullptr, "The string or bytes that was searched.", nullptr},
     {"pos", Match_get_pos, nullptr, "Effective pos passed to the matching call (clamped; default 0).", nullptr},
     {"endpos", Match_get_endpos, nullptr, "Effective endpos passed to the matching call (clamped; default len).", nullptr},
+    {"lastindex", Match_get_lastindex, nullptr, "Index of the last matched capturing group, or None.", nullptr},
+    {"lastgroup", Match_get_lastgroup, nullptr, "Name of the last matched capturing group, or None.", nullptr},
+    {"regs", Match_get_regs, nullptr, "Tuple of (start, end) spans for the whole match and each group.", nullptr},
     {nullptr, nullptr, nullptr, nullptr, nullptr},
 };
 
 PyType_Slot match_slots[] = {
     {Py_tp_dealloc, reinterpret_cast<void*>(Match_dealloc)},
+    {Py_tp_repr, reinterpret_cast<void*>(Match_repr)},
     {Py_tp_methods, static_cast<void*>(match_methods)},
     {Py_tp_getset, static_cast<void*>(match_getset)},
     {Py_mp_subscript, reinterpret_cast<void*>(Match_subscript)},
@@ -1492,8 +1584,41 @@ PyGetSetDef pattern_getset[] = {
     {nullptr, nullptr, nullptr, nullptr, nullptr},
 };
 
+// re.Pattern is a value type: two patterns compiled from the same text with the same flags
+// compare equal even when they are distinct objects. Equality keys on (pattern text, flags);
+// the str/bytes type difference falls out of the pattern comparison. Comparing to a non-Pattern
+// yields NotImplemented (no crash).
+PyObject* Pattern_richcompare(PyObject* self, PyObject* other, int op) {
+    if ((op != Py_EQ && op != Py_NE) ||
+        PyObject_TypeCheck(other, reinterpret_cast<PyTypeObject*>(pattern_type)) == 0) {
+        Py_RETURN_NOTIMPLEMENTED;
+    }
+    PatternObject* lhs       = as_pattern(self);
+    PatternObject* rhs       = as_pattern(other);
+    const int      same_text = PyObject_RichCompareBool(lhs->pattern_obj, rhs->pattern_obj, Py_EQ);
+    if (same_text < 0) {
+        return nullptr;
+    }
+    const bool equal = (same_text == 1) && (lhs->py_flags == rhs->py_flags);
+    return PyBool_FromLong(static_cast<long>(equal == (op == Py_EQ)));
+}
+
+// Consistent with Pattern_richcompare: hash((pattern, flags)).
+Py_hash_t Pattern_hash(PyObject* self) {
+    PatternObject* pat = as_pattern(self);
+    PyObject*      key = Py_BuildValue("(Ok)", pat->pattern_obj, pat->py_flags);
+    if (key == nullptr) {
+        return -1;
+    }
+    const Py_hash_t hash = PyObject_Hash(key);
+    Py_DECREF(key);
+    return hash;
+}
+
 PyType_Slot pattern_slots[] = {
     {Py_tp_dealloc, reinterpret_cast<void*>(Pattern_dealloc)},
+    {Py_tp_richcompare, reinterpret_cast<void*>(Pattern_richcompare)},
+    {Py_tp_hash, reinterpret_cast<void*>(Pattern_hash)},
     {Py_tp_methods, static_cast<void*>(pattern_methods)},
     {Py_tp_getset, static_cast<void*>(pattern_getset)},
     {0, nullptr},

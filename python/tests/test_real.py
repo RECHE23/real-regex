@@ -357,5 +357,49 @@ class TestBindingCleanup(unittest.TestCase):
                          "a[1]b[22]")
 
 
+class TestMatchRepr(unittest.TestCase):
+    """Match.__repr__ mirrors re's format (only the module prefix differs)."""
+
+    def test_repr_mirrors_re(self):
+        import re
+        for pattern, text in [(r"(\d+)", "abc 123 def"), (r".+", "x" * 100),
+                              (r".+", "café crème")]:
+            with self.subTest(pattern=pattern):
+                pm = real.compile(pattern).search(text)
+                rm = re.compile(pattern, re.ASCII).search(text)
+                self.assertEqual(repr(pm).replace("real.Match", "re.Match"), repr(rm))
+
+    def test_repr_bytes(self):
+        import re
+        pm = real.compile(rb"\w+").search(b"hello")
+        rm = re.compile(rb"\w+").search(b"hello")
+        self.assertEqual(repr(pm).replace("real.Match", "re.Match"), repr(rm))
+
+
+class TestPatternValueSemantics(unittest.TestCase):
+    """re.Pattern is a value type: equal text + flags compare equal and hash equal."""
+
+    def test_equality_and_hash(self):
+        a = real.compile("ab+", real.I)
+        real.purge()
+        b = real.compile("ab+", real.I)             # distinct object, same text + flags
+        self.assertIsNot(a, b)
+        self.assertEqual(a, b)
+        self.assertEqual(hash(a), hash(b))
+        self.assertEqual(len({a, b, real.compile("ab+", real.I)}), 1)  # usable as set/dict keys
+
+    def test_inequality(self):
+        a = real.compile("ab+", real.I)
+        self.assertNotEqual(a, real.compile("ab+"))            # different flags
+        self.assertNotEqual(a, real.compile("ab*", real.I))   # different text
+        self.assertNotEqual(a, real.compile(b"ab+", real.I))  # str vs bytes
+
+    def test_compare_to_non_pattern(self):
+        a = real.compile("x")
+        self.assertFalse(a == 42)   # NotImplemented -> Python falls back, no crash
+        self.assertTrue(a != 42)
+        self.assertNotEqual(a, "x")
+
+
 if __name__ == "__main__":
     unittest.main()

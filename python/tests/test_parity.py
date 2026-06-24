@@ -604,6 +604,26 @@ class TestParity(unittest.TestCase):
                 self.assertEqual([m.span() for m in p.finditer(text)],
                                  [m.span() for m in r.finditer(text)])
 
+    def test_match_lastindex_lastgroup_regs_parity(self):
+        """Match.lastindex / .lastgroup / .regs == re across flat, nested, alternation,
+        optional and named groups. lastindex is the last group to CLOSE (re semantics), not
+        the highest index -- ((a)(b)) -> 1, (a*)(b*) on '' -> 2, ((a*)) on '' -> 1."""
+        cases = [
+            (r"(a)(b)", "ab"), (r"((a)(b))", "ab"), (r"(a)|(b)", "b"), (r"(a)|(b)", "a"),
+            (r"(a)(b)?", "a"), (r"(a)(b)?", "ab"), (r"(a*)(b*)", ""), (r"((a*))", ""),
+            (r"(a)(b)(c)", "abc"), (r"((a)(b))(c)", "abc"), (r"(a(b(c)))", "abc"),
+            (r"(?P<x>a)(?P<y>b)", "ab"), (r"(?P<x>a)(?P<y>b)?", "a"),
+            (r"(?P<outer>(?P<inner>a))", "a"), (r"x", "x"), (r"(a)(b)?(c)", "ac"),
+        ]
+        for pattern, text in cases:
+            with self.subTest(pattern=pattern, text=text):
+                pm = real.compile(pattern).match(text)
+                rm = re.compile(pattern, re.ASCII).match(text)
+                self.assertIsNotNone(pm)
+                self.assertEqual(pm.lastindex, rm.lastindex)
+                self.assertEqual(pm.lastgroup, rm.lastgroup)
+                self.assertEqual(pm.regs, rm.regs)
+
     def test_escape_parity_per_char(self):
         """real.escape agrees with re.escape on every ASCII char — proving the
         CPython 3.7+ semantics (only the special set is escaped; punctuation such
