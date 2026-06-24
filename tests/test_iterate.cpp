@@ -1,5 +1,6 @@
 // find_iter / find_all / replace / split, with Python's empty-match rules
 // (verified against re: spans, sub and split outputs are identical).
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -160,4 +161,20 @@ TEST(empty_match_then_nonempty_at_same_position_cpython37)
   // a match starting inside the 2-byte sequence.
   const real::regex star("x*");
   EXPECT_EQ(star.find_all("é").size(), 2U);
+}
+
+TEST(find_iter_models_forward_iterator)
+{
+  const real::regex rx("\\d+");
+  using iter_t = decltype(rx.find_iter("").begin());
+  static_assert(std::forward_iterator<iter_t>); // conformance: post-increment + multipass
+
+  // it++ returns the pre-increment position (an independent copy); iteration then continues.
+  auto       range {rx.find_iter("a1 b22 c333")};
+  auto       it    {range.begin()};
+  const auto first {it++};
+  EXPECT_EQ((*first)[0], "1"sv);  // the copy kept the old position
+  EXPECT_EQ((*it)[0], "22"sv);    // *this advanced
+  ++it;
+  EXPECT_EQ((*it)[0], "333"sv);
 }

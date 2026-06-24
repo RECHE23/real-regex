@@ -7,6 +7,7 @@
 #ifndef REAL_REAL_HPP
 #define REAL_REAL_HPP
 
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -194,8 +195,11 @@ namespace real {
   {
   public:
 
-    using value_type      = basic_match_result<typename Storage::slot_storage>; //!< Yielded match type.
-    using difference_type = std::ptrdiff_t;                                     //!< Iterator traits.
+    using value_type        = basic_match_result<typename Storage::slot_storage>; //!< Yielded match type.
+    using difference_type   = std::ptrdiff_t;                                     //!< Iterator traits.
+    using reference         = const value_type&;                                  //!< Dereference type.
+    using pointer           = const value_type*;                                  //!< Arrow type.
+    using iterator_category = std::forward_iterator_tag;                          //!< Multipass: copies are independent.
 
     /*!
      * \brief Constructs the end sentinel.
@@ -249,11 +253,14 @@ namespace real {
     }
 
     /*!
-     * \brief Advances to the next match (post-increment; no value returned).
+     * \brief Advances to the next match (post-increment).
+     * \return A copy of the iterator at its pre-increment position.
      */
-    constexpr void operator++(int)
+    constexpr basic_match_iterator operator++(int)
     {
+      basic_match_iterator previous {*this};
       advance();
+      return previous;
     }
 
     /*!
