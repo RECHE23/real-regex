@@ -94,21 +94,78 @@ TEST(lookaround_rejects_unbounded_sub)
   EXPECT_THROWS(real::regex("(?=a*)"), real::regex_error);
   EXPECT_THROWS(real::regex("(?=a+)"), real::regex_error);
   EXPECT_THROWS(real::regex("(?=a{2,})"), real::regex_error);
+  EXPECT_THROWS(real::regex("(?<=a*)"), real::regex_error);  // behind, unbounded
+  EXPECT_THROWS(real::regex("(?<!a+)"), real::regex_error);
 }
 
 TEST(lookaround_rejects_nested)
 {
   EXPECT_THROWS(real::regex("(?=(?!a)b)"), real::regex_error);
+  EXPECT_THROWS(real::regex("(?<=(?<=a)b)"), real::regex_error); // nested behind
 }
 
 TEST(lookaround_rejects_over_long_sub)
 {
-  EXPECT_THROWS(real::regex("(?=a{300})"), real::regex_error); // > max_lookaround_length (255)
+  EXPECT_THROWS(real::regex("(?=a{300})"), real::regex_error);  // > max_lookaround_length (255)
+  EXPECT_THROWS(real::regex("(?<=a{300})"), real::regex_error);
 }
 
-TEST(lookbehind_still_rejected_in_commit_1)
+TEST(lookbehind_positive)
 {
-  // Lookbehind arrives in COMMIT 2; for now it is a clean compile error, not a miscompile.
-  EXPECT_THROWS(real::regex("(?<=a)b"), real::regex_error);
-  EXPECT_THROWS(real::regex("(?<!a)b"), real::regex_error);
+  EXPECT_EQ(real::regex("(?<=ab)c").search("xabc")[0], "c"sv);  // 'c' preceded by "ab"
+  EXPECT_EQ(real::regex("(?<=ab)c").search("xabc").start(), 3U);
+  EXPECT(!real::regex("(?<=ab)c").search("ac bc"));             // no "ab" precedes a 'c'
+}
+
+TEST(lookbehind_negative)
+{
+  // 'c' NOT preceded by "ab": leftmost is the first 'c' (preceded by 'x').
+  EXPECT_EQ(real::regex("(?<!ab)c").search("xc abc")[0], "c"sv);
+  EXPECT_EQ(real::regex("(?<!ab)c").search("xc abc").start(), 1U);
+}
+
+TEST(lookbehind_must_end_exactly_at_pos)
+{
+  // THE lookbehind trap: "ab" occurs but ends at index 2, not right before 'c' at 3, so
+  // (?<=ab) must NOT hold there. A "somewhere in the window" check would wrongly match.
+  EXPECT(!real::regex("(?<=ab)c").search("abxc"));
+}
+
+TEST(lookbehind_bounded_repeat_is_allowed)
+{
+  EXPECT_EQ(real::regex(R"((?<=\d{3})x)").search("12 123x")[0], "x"sv);
+}
+
+TEST(lookbehind_codepoint_aligned_start)
+{
+  // Multi-byte literal: L_max counts bytes (é = 2 bytes), and a candidate start may not fall
+  // on a UTF-8 continuation byte (A9). 'x' is preceded by the codepoint é.
+  EXPECT_EQ(real::regex("(?<=é)x").search("éx")[0], "x"sv);
+  EXPECT(!real::regex("(?<=é)x").search("ax")); // preceded by ASCII 'a', not é
+}
+
+TEST(lookbehind_does_not_corrupt_main_captures)
+{
+  // Isolation: evaluating the lookbehind must not disturb the trailing capture.
+  const auto m {real::regex("(?<=ab)(c)").search("abc")};
+  EXPECT(m);
+  EXPECT_EQ(m[0], "c"sv);
+  EXPECT_EQ(m[1], "c"sv);
+}
+
+TEST(lookahead_and_lookbehind_combined)
+{
+  // Both directions in one pattern: 'b' preceded by 'a' and followed by 'c'.
+  EXPECT_EQ(real::regex("(?<=a)b(?=c)").search("abc")[0], "b"sv);
+  EXPECT(!real::regex("(?<=a)b(?=c)").search("abd")); // followed by 'd', not 'c'
+}
+
+TEST(lookbehind_variable_width_beyond_re)
+{
+  // REAL allows any *bounded* lookbehind sub, including variable-width — re and PCRE require
+  // a fixed width here. (?<=a|bb) holds whether 'a' (1 back) or "bb" (2 back) precedes pos.
+  const real::regex rx("(?<=a|bb)c");
+  EXPECT_EQ(rx.search("xac")[0], "c"sv);  // preceded by 'a'
+  EXPECT_EQ(rx.search("xbbc")[0], "c"sv); // preceded by "bb"
+  EXPECT(!rx.search("xbc"));              // preceded by a single 'b' — neither branch
 }

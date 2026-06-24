@@ -29,7 +29,7 @@ class TestCompile(unittest.TestCase):
 
     def test_invalid_patterns_raise_error(self):
         """Invalid syntax raises real.error."""
-        for pattern in [r"(", r")", r"a**", r"[z-a]", r"(?<=x)",  # (?<=x): lookbehind (COMMIT 2)
+        for pattern in [r"(", r")", r"a**", r"[z-a]", r"(?>x)",  # (?>x): atomic group, unsupported
                         r"(?P=name)", r"(?P<1>x)", r"\q", "a\\"]:
             with self.assertRaises(real.error, msg=pattern):
                 real.compile(pattern)

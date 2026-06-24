@@ -8,10 +8,10 @@ A linear-time (ReDoS-safe) regex engine with an ``re``-compatible API:
 
 Supported flags: IGNORECASE/I, MULTILINE/M, DOTALL/S, VERBOSE/X (ASCII/A and
 UNICODE/U are accepted no-ops: classes are ASCII, text is Unicode). Bounded
-lookahead ``(?=...)``/``(?!...)`` is supported in linear time (its sub-pattern
-must be length-bounded and is capture-free). The remaining ``re`` features raise
-:class:`real.error` at compile time: lookbehind, backreferences, and re.L. See
-the project README.
+lookarounds — lookahead ``(?=...)``/``(?!...)`` and lookbehind ``(?<=...)``/``(?<!...)``
+— are supported in linear time (each sub-pattern must be length-bounded and is
+capture-free). The remaining ``re`` features raise :class:`real.error` at compile
+time: backreferences and re.L. See the project README.
 """
 
 import functools

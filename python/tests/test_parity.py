@@ -523,6 +523,53 @@ class TestParity(unittest.TestCase):
                 self.assertEqual([m.span() for m in p.finditer(text)],
                                  [m.span() for m in r.finditer(text)])
 
+    # Bounded lookbehind (?<=...) / (?<!...). Same constraints as lookahead (capture-free
+    # sub, bounded length); the cases here also pin the exact-end-at-pos rule (a sub that
+    # matches earlier in the window must NOT count) and alternation behind with branches of
+    # different lengths (which exercises distinct candidate starts).
+    LOOKBEHIND_CASES = [
+        (r"(?<=ab)c", "xabc abc"),
+        (r"(?<=ab)c", "abxc"),                  # trap: "ab" ends before, not at, the 'c'
+        (r"(?<=\d)x", "1x 2x ax"),
+        (r"(?<=\d{3})x", "12x 123x 1234x"),     # bounded repeat behind
+        (r"(?<!ab)c", "xc abc cc"),             # negative
+        (r"(?<!\d)x", "1x ax bx"),
+        (r"(?<=foo)bar", "foobar xbar foobar"),
+        # NB: variable-width lookbehind (e.g. (?<=a|bb)) is NOT a parity case — re rejects it
+        # ("look-behind requires fixed-width pattern"); REAL accepts any bounded sub. That
+        # capability is pinned as a REAL-only differentiator in tests/test_lookaround.cpp.
+    ]
+
+    def test_lookbehind_match_parity(self):
+        """search/match/fullmatch with bounded lookbehind == re (spans + groups)."""
+        for pattern, text in self.LOOKBEHIND_CASES:
+            p, r = real.compile(pattern), re.compile(pattern, re.ASCII)
+            for method in ("search", "match", "fullmatch"):
+                with self.subTest(pattern=pattern, text=text, method=method):
+                    self.assertEqual(self.match_facts(getattr(p, method)(text)),
+                                     self.match_facts(getattr(r, method)(text)))
+
+    def test_lookbehind_findall_finditer_parity(self):
+        """findall/finditer with bounded lookbehind == re (every match, every span)."""
+        for pattern, text in self.LOOKBEHIND_CASES:
+            p, r = real.compile(pattern), re.compile(pattern, re.ASCII)
+            with self.subTest(pattern=pattern, text=text):
+                self.assertEqual(p.findall(text), r.findall(text))
+                self.assertEqual([m.span() for m in p.finditer(text)],
+                                 [m.span() for m in r.finditer(text)])
+
+    def test_lookbehind_non_ascii_offsets_parity(self):
+        r"""Multi-byte subject: L_max counts bytes and a candidate start may not split a
+        codepoint (A9); character offsets must still match re."""
+        for pattern, text in [(r"(?<=é)x", "café éx déjà"),
+                              (r"(?<=\w)é", "aé bé .é")]:
+            p, r = real.compile(pattern), re.compile(pattern, re.ASCII)
+            with self.subTest(pattern=pattern):
+                self.assertEqual(self.match_facts(p.search(text)),
+                                 self.match_facts(r.search(text)))
+                self.assertEqual([m.span() for m in p.finditer(text)],
+                                 [m.span() for m in r.finditer(text)])
+
     def test_escape_parity_per_char(self):
         """real.escape agrees with re.escape on every ASCII char — proving the
         CPython 3.7+ semantics (only the special set is escaped; punctuation such

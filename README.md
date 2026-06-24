@@ -12,14 +12,16 @@ constexpr from end to end, with an `re`-compatible Python binding.
   (compile-time pattern, runtime text, zero heap allocation).
 - **Zero dependencies.** One include.
 
-Bounded lookahead `(?=...)`/`(?!...)` matches in linear time: its sub-pattern must
-be length-bounded (an unbounded sub such as `(?=a*)` is rejected) and is
-capture-free — groups inside the lookahead do not participate in the result, a
-deliberate divergence from `re`. `static_regex` does not accept lookarounds yet.
+Bounded lookarounds match in linear time: lookahead `(?=...)`/`(?!...)` and lookbehind
+`(?<=...)`/`(?<!...)`. Each sub-pattern must be length-bounded (an unbounded sub such as
+`(?=a*)` is rejected) and is capture-free — groups inside a lookaround do not participate
+in the result, a deliberate divergence from `re`. Lookbehind accepts any bounded
+sub-pattern, including variable-width alternations such as `(?<=a|bb)`, which `re` and PCRE
+reject as non-fixed-width. `static_regex` does not accept lookarounds yet.
 
 Unsupported syntax is rejected with `real::regex_error` rather than silently
-diverging. Not yet: lookbehind, backreferences, atomic/possessive groups,
-Unicode property classes, Unicode case folding, `pos`/`endpos`.
+diverging. Not yet: backreferences, atomic/possessive groups, Unicode property classes,
+Unicode case folding, `pos`/`endpos`.
 
 Matching is linear in the input length: a Thompson NFA simulation (Pike VM)
 with marked states, so a pattern such as `(a+)+b` cannot trigger exponential

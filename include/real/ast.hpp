@@ -591,7 +591,7 @@ namespace real::detail {
         }
         else if (accept('<')) {
           if (!eof() && (peek() == '=' || peek() == '!')) {
-            fail("lookbehind is not supported");
+            return parse_lookaround(out, look_dir::behind, open_pos);
           }
           group = new_group(out, open_pos);
           parse_group_name(out, group);
@@ -628,7 +628,8 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Parses a lookaround after `(?=` / `(?!` (ahead) — the `=`/`!` is not yet consumed.
+     * \brief Parses a lookaround after `(?=` / `(?!` (ahead) or `(?<=` / `(?<!` (behind) —
+     *        the `=`/`!` is not yet consumed.
      *
      * Builds a \ref node_kind::lookaround node. The sub-pattern is a full alternation; its
      * capture groups advance the global group counter (so outer group numbers stay

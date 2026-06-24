@@ -1020,15 +1020,14 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Evaluates a bounded lookahead sub-program at \p pos (true if it should proceed).
+     * \brief Evaluates a bounded lookaround at \p pos (true if the thread should proceed).
      *
-     * Runs a self-contained Pike simulation of the sub-program region on a DEDICATED,
-     * isolated sub-scratch (`state_.lookaround`) — the main `state_` (lists/working/stack)
-     * is never touched, so an in-flight match is unaffected (the isolation invariant). The
-     * sub is capture-free, so reaching its `match` op means "the sub matches a prefix at
-     * \p pos", which is all a `(?=` needs; `(?!` negates the result. The scan is bounded to
-     * `l_max` bytes (the source of strict linearity per match position), and stops at the
-     * first match. COMMIT 1: ahead only (lookbehind = COMMIT 2).
+     * Dispatches on direction and applies the negation. Both directions run a self-contained
+     * Pike simulation of the sub-program region on a DEDICATED, isolated sub-scratch
+     * (`state_.lookaround`) — the main `state_` (lists/working/stack) is never touched, so an
+     * in-flight match is unaffected (the isolation invariant) — and are bounded to `l_max`
+     * bytes (the source of strict linearity per position). The sub is capture-free; `(?!` /
+     * `(?<!` negate the result.
      *
      * \param[in] sub_id Index into `prog_.lookarounds`.
      * \param[in] pos    The text position the assertion is evaluated at.
@@ -1037,10 +1036,25 @@ namespace real::detail {
     [[nodiscard]] constexpr bool lookaround_holds(std::uint16_t sub_id,
                                                   std::size_t   pos)
     {
-      const lookaround_sub& sub       {prog_.lookarounds[sub_id]};
-      const std::size_t     code_size {prog_.code.size()};
-      thread_list*          clist     {&state_.lookaround.lists[0]};
-      thread_list*          nlist     {&state_.lookaround.lists[1]};
+      const lookaround_sub& sub     {prog_.lookarounds[sub_id]};
+      const bool            matched {sub.direction == look_dir::behind
+                                       ? lookbehind_matches(sub, pos)
+                                       : lookahead_matches(sub, pos)};
+      return sub.negative ? !matched : matched;
+    }
+
+    /*!
+     * \brief Lookahead: does the sub-pattern match a prefix starting at \p pos?
+     *
+     * Forward Pike simulation from \p pos, bounded to `l_max` bytes, stopping at the first
+     * `match` (the sub is capture-free, so any reached `match` is a witness).
+     */
+    [[nodiscard]] constexpr bool lookahead_matches(const lookaround_sub& sub,
+                                                   std::size_t           pos)
+    {
+      const std::size_t code_size {prog_.code.size()};
+      thread_list*      clist     {&state_.lookaround.lists[0]};
+      thread_list*      nlist     {&state_.lookaround.lists[1]};
       clist->reset(code_size);
       nlist->reset(code_size);
       bool matched            {};
@@ -1061,7 +1075,84 @@ namespace real::detail {
         nlist = done;
         nlist->reset(code_size);
       }
-      return sub.negative ? !matched : matched;
+      return matched;
+    }
+
+    /*!
+     * \brief Lookbehind: does the sub-pattern match a window ENDING EXACTLY at \p pos?
+     *
+     * The match must finish precisely at \p pos, not merely somewhere inside the window —
+     * the defining correctness trap of lookbehind. Candidate starts run from \p pos backward
+     * to `pos - l_max` (bytes, A1); in non-bytes mode a start may not fall on a UTF-8
+     * continuation byte, which would split a codepoint (A9). The first start whose sub-pattern
+     * fullmatches `[s, pos)` is a witness.
+     */
+    [[nodiscard]] constexpr bool lookbehind_matches(const lookaround_sub& sub,
+                                                    std::size_t           pos)
+    {
+      const std::size_t lmax         {static_cast<std::size_t>(sub.l_max)};
+      const std::size_t window_start {pos > lmax ? pos - lmax : 0};
+      for (std::size_t s {pos};; --s) {
+        // s == pos reads nothing (always a valid boundary); for s < pos the start must begin
+        // a codepoint — not a 0x80–0xBF continuation byte — unless we are in raw-bytes mode.
+        const bool aligned {prog_.byte_mode || s >= pos
+                            || (static_cast<std::uint8_t>(text_[s]) & 0xC0U) != 0x80U};
+        if (aligned && sub_fullmatch_window(sub.code_offset, s, pos)) {
+          return true;
+        }
+        if (s == window_start) {
+          break; // reached the far edge; stop before s underflows past 0
+        }
+      }
+      return false;
+    }
+
+    /*!
+     * \brief Reports whether the sub-program, run from \p start, reaches `match` EXACTLY at
+     *        \p pos (a fullmatch of `[start, pos)`), on the isolated sub-scratch.
+     *
+     * A `match` reached before \p pos (a shorter window) is deliberately discarded — lookbehind
+     * requires the sub to end at \p pos. Touches only `state_.lookaround`.
+     */
+    [[nodiscard]] constexpr bool sub_fullmatch_window(std::int32_t code_offset,
+                                                      std::size_t  start,
+                                                      std::size_t  pos)
+    {
+      const std::size_t code_size {prog_.code.size()};
+      thread_list*      clist     {&state_.lookaround.lists[0]};
+      thread_list*      nlist     {&state_.lookaround.lists[1]};
+      clist->reset(code_size);
+      nlist->reset(code_size);
+      bool here {false};
+      sub_add_thread(*clist, code_offset, start, here);
+      if (start == pos) {
+        return here; // empty window: the sub must match the empty string exactly at pos
+      }
+      bool sink {false}; // matches reached before pos: collected then ignored
+      for (std::size_t p {start}; p < pos; ++p) {
+        if (clist->pcs.empty()) {
+          return false;
+        }
+        const bool last       {p + 1 == pos};
+        bool       at_pos     {false};
+        const auto byte_value {static_cast<std::uint8_t>(text_[p])};
+        for (const std::int32_t pc : clist->pcs) {
+          const instr& in      {prog_.code[static_cast<std::size_t>(pc)]};
+          const bool   consume {in.op == opcode::byte ? byte_value == in.arg8
+                                                      : prog_.classes[in.arg16].test(byte_value)};
+          if (consume) {
+            sub_add_thread(*nlist, pc + 1, p + 1, last ? at_pos : sink);
+          }
+        }
+        if (last) {
+          return at_pos; // a match counts only when it ends exactly at pos
+        }
+        thread_list* const done {clist};
+        clist = nlist;
+        nlist = done;
+        nlist->reset(code_size);
+      }
+      return false; // intentionally uncovered: the p+1==pos iteration always returns above
     }
 
     /*!
