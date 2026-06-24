@@ -305,6 +305,72 @@ class TestParity(unittest.TestCase):
         self.assertEqual([(m.group(), m.span()) for m in rp.finditer(text)],
                          [(m.group(), m.span()) for m in rr.finditer(text)])
 
+    def _cmp_region(self, pattern, text, pos, endpos, flags=0):
+        """Assert real == re for match/search/fullmatch(text, pos, endpos)."""
+        re_flags = re.ASCII
+        re_flags |= re.MULTILINE if (flags & real.M) else 0
+        re_flags |= re.DOTALL if (flags & real.S) else 0
+        re_flags |= re.IGNORECASE if (flags & real.I) else 0
+        rp, rr = real.compile(pattern, flags), re.compile(pattern, re_flags)
+        for method in ("match", "search", "fullmatch"):
+            with self.subTest(pattern=pattern, pos=pos, endpos=endpos, method=method, flags=flags):
+                self.assertEqual(self.match_facts(getattr(rp, method)(text, pos, endpos)),
+                                 self.match_facts(getattr(rr, method)(text, pos, endpos)))
+
+    def test_pos_endpos_parity(self):
+        """pos/endpos match re: pos>0, endpos<len, both, pos==endpos, pos>endpos,
+        out-of-range (clamped); spans and groups absolute."""
+        for pattern, text, pos, endpos in [
+            (r"\w+", "foo bar baz", 4, 7),
+            (r"\w+", "foo bar baz", 4, 100),    # endpos clamped to len
+            (r"\w+", "foo bar baz", 0, 3),
+            (r"(\w)(\w+)", "xx hello", 3, 8),   # absolute group spans
+            (r"\w+", "hello", 2, 2),            # pos == endpos
+            (r"\w+", "hello", 4, 2),            # pos > endpos → no match
+            (r"\w+", "hello", 100, 100),        # pos clamped
+            (r"\d+", "ab123cd", 0, 5),
+        ]:
+            self._cmp_region(pattern, text, pos, endpos)
+
+    def test_pos_endpos_anchor_parity(self):
+        r"""The anchor table (\A \Z ^ $) under pos/endpos matches re — pos is the VM
+        start, not a slice."""
+        for pattern, text, pos, endpos, flags in [
+            (r"\Abar", "foobar", 3, 6, 0),         # \A at pos>0 fails (NOT a slice)
+            (r"\Afoo", "foobar", 0, 6, 0),         # \A at 0 holds
+            (r"^bar", "foo\nbar", 4, 7, real.M),   # ^ ML at pos right after \n holds
+            (r"^bar", "foobar", 3, 6, real.M),     # ^ ML at pos not after \n fails
+            (r"^bar", "foo\nbar", 4, 7, 0),        # ^ non-ML at pos>0 fails even after \n
+            (r"o\Z", "foo", 0, 3, 0),              # \Z at endpos
+            (r"o$", "foo", 0, 3, 0),               # $ at endpos
+            (r"o$", "foo\nx", 0, 4, 0),            # $ non-ML before trailing \n at endpos-1
+            (r"o$", "foo\nbar", 0, 7, real.M),     # $ ML before internal \n
+        ]:
+            self._cmp_region(pattern, text, pos, endpos, flags)
+
+    def test_pos_endpos_non_ascii_char_offsets_parity(self):
+        """For a str subject pos/endpos are CHARACTER offsets (re semantics) even with
+        multi-byte chars; endpos on a char boundary cuts correctly."""
+        text = "café déjà 42 voilà"  # multi-byte: char offset != byte offset past 'é'
+        for pattern, pos, endpos in [
+            (r"\w+", 0, 4), (r"\w+", 5, 9), (r"\w+", 7, 18),
+            (r"\d+", 0, 18), (r"\d+", 10, 12), (r".", 5, 6),
+        ]:
+            self._cmp_region(pattern, text, pos, endpos)
+
+    def test_pos_endpos_bytes_parity(self):
+        """For a bytes subject pos/endpos are BYTE offsets."""
+        text = b"foo bar 123 baz"
+        for pattern, pos, endpos in [
+            (rb"\w+", 4, 11), (rb"\d+", 0, 11), (rb"\w+", 8, 11), (rb"\w+", 4, 2),
+        ]:
+            rp, rr = real.compile(pattern), re.compile(pattern)
+            for method in ("match", "search", "fullmatch"):
+                with self.subTest(pattern=pattern, pos=pos, endpos=endpos, method=method):
+                    self.assertEqual(
+                        self.match_facts(getattr(rp, method)(text, pos, endpos)),
+                        self.match_facts(getattr(rr, method)(text, pos, endpos)))
+
     def test_bytes_parity(self):
         """Bytes patterns behave identically to re on bytes subjects."""
         for pattern in [rb"\d+", rb"(\w+)=(\w+)", rb"[^;]+"]:

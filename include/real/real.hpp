@@ -421,6 +421,38 @@ namespace real {
     }
 
     /*!
+     * \brief Region-aware `match`: anchored at \p pos within `text[0:endpos]` (Python
+     *        `re.match` with `pos` / `endpos`). Byte offsets; \p pos is not a slice (see
+     *        \ref run — `\A` fails at `pos > 0`); \p endpos defaults to the end of \p text.
+     */
+    [[nodiscard]] constexpr result_type match(std::string_view text,
+                                              std::size_t      pos,
+                                              std::size_t      endpos = npos) const
+    {
+      return run(text, pos, endpos, detail::run_mode::prefix);
+    }
+
+    /*!
+     * \brief Region-aware `fullmatch`: the whole region `[pos, endpos)` must match.
+     */
+    [[nodiscard]] constexpr result_type fullmatch(std::string_view text,
+                                                  std::size_t      pos,
+                                                  std::size_t      endpos = npos) const
+    {
+      return run(text, pos, endpos, detail::run_mode::full);
+    }
+
+    /*!
+     * \brief Region-aware `search`: leftmost match within `[pos, endpos)`.
+     */
+    [[nodiscard]] constexpr result_type search(std::string_view text,
+                                               std::size_t      pos,
+                                               std::size_t      endpos = npos) const
+    {
+      return run(text, pos, endpos, detail::run_mode::search);
+    }
+
+    /*!
      * \brief `match` overload for string literals.
      * \param[in] text NUL-terminated text.
      * \return The result.
@@ -598,13 +630,16 @@ namespace real {
     }
 
     // Searched text must outlive the result: reject temporary std::string.
-    [[nodiscard]] result_type                   match(const std::string&& text) const           = delete; //!< Deleted: temporary text would dangle.
-    [[nodiscard]] result_type                   fullmatch(const std::string&& text) const       = delete; //!< Deleted: temporary text would dangle.
-    [[nodiscard]] result_type                   search(const std::string&& text) const          = delete; //!< Deleted: temporary text would dangle.
-    [[nodiscard]] basic_match_range<Storage>    find_iter(const std::string&& text) const&      = delete; //!< Deleted: temporary text would dangle.
-    [[nodiscard]] std::vector<result_type>      find_all(const std::string&& text) const&       = delete; //!< Deleted: temporary text would dangle.
+    [[nodiscard]] result_type                   match(const std::string&& text) const           = delete;               //!< Deleted: temporary text would dangle.
+    [[nodiscard]] result_type                   fullmatch(const std::string&& text) const       = delete;               //!< Deleted: temporary text would dangle.
+    [[nodiscard]] result_type                   search(const std::string&& text) const          = delete;               //!< Deleted: temporary text would dangle.
+    [[nodiscard]] result_type match(const std::string && text, std::size_t, std::size_t     = npos) const     = delete; //!< Deleted: temporary text would dangle.
+    [[nodiscard]] result_type fullmatch(const std::string && text, std::size_t, std::size_t = npos) const = delete;     //!< Deleted: temporary text would dangle.
+    [[nodiscard]] result_type search(const std::string && text, std::size_t, std::size_t    = npos) const    = delete;  //!< Deleted: temporary text would dangle.
+    [[nodiscard]] basic_match_range<Storage>    find_iter(const std::string&& text) const&      = delete;               //!< Deleted: temporary text would dangle.
+    [[nodiscard]] std::vector<result_type>      find_all(const std::string&& text) const&       = delete;               //!< Deleted: temporary text would dangle.
     [[nodiscard]] std::vector<std::string_view> split(const std::string&& text,
-                                                      std::size_t         max_splits = 0) const = delete; //!< Deleted: temporary text would dangle.
+                                                      std::size_t         max_splits = 0) const = delete;               //!< Deleted: temporary text would dangle.
 
     /*!
      * \brief Returns the pattern text this regex was compiled from.
@@ -812,11 +847,35 @@ namespace real {
     [[nodiscard]] constexpr result_type run(std::string_view text,
                                             detail::run_mode mode) const
     {
+      return run(text, 0, npos, mode);
+    }
+
+    /*!
+     * \brief Region-aware single attempt: match over `text[0:endpos]` starting at \p pos.
+     *
+     * \p pos is the VM start offset, not a slice — zero-width assertions still see the
+     * absolute position, so `\A` and `^` (non-multiline) fail at `pos > 0`, matching
+     * Python `re`. \p endpos truncates the subject to a view (no copy), so `$` / `\Z`
+     * treat it as the end. \p endpos is clamped to the text length; `pos > endpos` yields
+     * no match. Capture offsets are absolute byte offsets in \p text.
+     *
+     * \param[in] text   The full subject (offsets are relative to it; must outlive the result).
+     * \param[in] pos    Byte offset to start matching at.
+     * \param[in] endpos Byte offset of the exclusive region end; \ref npos = end of text.
+     * \param[in] mode   The anchoring mode.
+     * \return The match result, with offsets absolute in \p text.
+     */
+    [[nodiscard]] constexpr result_type run(std::string_view text,
+                                            std::size_t      pos,
+                                            std::size_t      endpos,
+                                            detail::run_mode mode) const
+    {
+      const std::size_t              end {endpos < text.size() ? endpos : text.size()};
       typename Storage::state_type   state;
       typename Storage::slot_storage slots;
       const detail::program_view     prog    {program_.view()};
       detail::pike_vm                vm(prog, state);
-      const bool                     matched {vm.run(text, 0, mode, slots)};
+      const bool                     matched {vm.run(text.substr(0, end), pos, mode, slots)};
       return {text, std::move(slots), matched, pattern(), prog.names};
     }
   };

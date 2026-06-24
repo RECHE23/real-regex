@@ -9,7 +9,7 @@ A linear-time (ReDoS-safe) regex engine with an ``re``-compatible API:
 Supported flags: IGNORECASE/I, MULTILINE/M, DOTALL/S, VERBOSE/X (ASCII/A and
 UNICODE/U are accepted no-ops: classes are ASCII, text is Unicode). Unsupported
 ``re`` features raise :class:`real.error` at compile time: lookarounds,
-backreferences, re.L, and Match.pos/endpos. See the project README.
+backreferences, and re.L. See the project README.
 """
 
 import functools

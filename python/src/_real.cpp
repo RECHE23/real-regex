@@ -17,6 +17,7 @@
 
 #include <real/real.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -547,54 +548,88 @@ PyType_Spec match_spec = {
 // Pattern: simple run methods
 // ---------------------------------------------------------------------------
 
-PyObject* run_single(PyObject* self, PyObject* string, real::detail::run_mode mode) {
+// char offset -> byte offset within sv. For a bytes subject or a pure-ASCII str
+// (char_is_byte), char == byte; otherwise walk the UTF-8 the way compute_char_spans
+// counts codepoints. `char_idx` must already be clamped to [0, char_len]; a char offset
+// always lands on a codepoint boundary, so the byte offset is exact.
+std::size_t char_to_byte(const subject_view& sv, Py_ssize_t char_idx) {
+    if (sv.char_is_byte) {
+        return static_cast<std::size_t>(char_idx);
+    }
+    std::size_t byte = 0;
+    const auto len = static_cast<std::size_t>(sv.len);
+    for (Py_ssize_t chars = 0; chars < char_idx && byte < len; ++chars) {
+        ++byte;  // the lead byte
+        while (byte < len && (static_cast<unsigned char>(sv.data[byte]) & 0xC0U) == 0x80U) {
+            ++byte;  // skip UTF-8 continuation bytes
+        }
+    }
+    return byte;
+}
+
+// Backs Pattern.match/search/fullmatch with the re signature (string, pos=0,
+// endpos=sys.maxsize). pos/endpos are PER-CALL (no stored state); they are CHARACTER
+// offsets for a str subject, BYTE offsets for bytes. The attempt runs over text[0:endpos]
+// starting at pos: pos is the VM start, NOT a slice (so \A and ^ without MULTILINE fail
+// at pos>0); endpos truncates the subject to a view. Capture offsets are absolute.
+PyObject* run_region(PyObject* self, PyObject* args, PyObject* kwargs, real::detail::run_mode mode) {
     PatternObject* pat = as_pattern(self);
+    PyObject* string = nullptr;
+    Py_ssize_t pos = 0;
+    Py_ssize_t endpos = PY_SSIZE_T_MAX;
+    static const char* const keywords[] = {"string", "pos", "endpos", nullptr};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|nn", const_cast<char**>(keywords),
+                                     &string, &pos, &endpos)) {
+        return nullptr;
+    }
     subject_view sv;
     if (get_subject(pat, string, &sv) < 0) {
         return nullptr;
     }
-    // Local VM scratch (no shared Pattern state) so the scan is reentrant and can
-    // run with the GIL released — several threads may match concurrently, even on
-    // the same Pattern. The subject bytes stay valid while released: the subject is
-    // an immutable str/bytes, its ref is held by the caller, and get_subject above
-    // already materialised the UTF-8 view under the GIL.
-    // Per-call VM scratch. A reused (thread-local) state is NOT safe here: pike_vm
-    // caches the class lookup table inside the state keyed by the per-PROGRAM class
-    // index, so a state reused across different patterns would serve a stale table
-    // (e.g. \d+ then \w+ both use class index 0 → wrong match). A fresh state per call
-    // is correct; it costs one allocation, which is why small subjects keep the GIL
-    // below (the alloc + toggle would dominate a sub-microsecond scan). No shared
-    // Pattern state, so the scan is race-free with the GIL released. Subject bytes stay
-    // valid while released: immutable str/bytes, ref held, UTF-8 already materialised.
+    // Clamp char offsets to [0, char_len] (re clamps silently — out of range never errors),
+    // then convert to byte offsets.
+    const Py_ssize_t char_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
+    pos = std::clamp(pos, Py_ssize_t {0}, char_len);
+    endpos = std::clamp(endpos, Py_ssize_t {0}, char_len);
+    const std::size_t pos_byte = char_to_byte(sv, pos);
+    const std::size_t end_byte = char_to_byte(sv, endpos);
+    const std::string_view region = sv.view().substr(0, end_byte);  // endpos truncation (a view)
+
+    // Per-call VM scratch (no shared Pattern state) → reentrant; the scan may run with the
+    // GIL released. A reused (thread-local) state is NOT safe: pike_vm caches the class
+    // lookup table inside the state keyed by the per-PROGRAM class index, so reuse across
+    // patterns would serve a stale table. Subject bytes stay valid while released: immutable
+    // str/bytes, ref held, UTF-8 already materialised. Released only above the size threshold
+    // (below it the toggle would dominate a sub-microsecond scan).
     const real::detail::program_view prog = pat->rx->raw_program();
     real::detail::pike_state         state;
     std::vector<std::size_t>         slots;
     real::detail::pike_vm            vm(prog, state);
-    // GIL released only above the shared size threshold (gil_release_min_bytes):
-    // below it the save/restore would dominate a sub-microsecond scan.
+    const std::size_t scan_len = pos_byte < end_byte ? end_byte - pos_byte : 0;
     bool matched = false;
-    if (sv.len >= gil_release_min_bytes) {
+    if (scan_len >= static_cast<std::size_t>(gil_release_min_bytes)) {
         const GilRelease unlocked;  // released ONLY around the pure-C++ scan
-        matched = vm.run(sv.view(), 0, mode, slots);
+        matched = vm.run(region, pos_byte, mode, slots);
     }
     else {
-        matched = vm.run(sv.view(), 0, mode, slots);  // small: toggle would cost more than the scan
+        matched = vm.run(region, pos_byte, mode, slots);  // small: toggle would cost more
     }
     if (!matched) {
         Py_RETURN_NONE;
     }
+    // Built over the FULL subject so capture offsets are absolute (slots are in [0, endpos)).
     const real::match_result match(sv.view(), slots, true, pat->rx->pattern(), prog.names);
     return make_match(pat, string, match);
 }
 
-PyObject* Pattern_match(PyObject* self, PyObject* string) {
-    return run_single(self, string, real::detail::run_mode::prefix);
+PyObject* Pattern_match(PyObject* self, PyObject* args, PyObject* kwargs) {
+    return run_region(self, args, kwargs, real::detail::run_mode::prefix);
 }
-PyObject* Pattern_fullmatch(PyObject* self, PyObject* string) {
-    return run_single(self, string, real::detail::run_mode::full);
+PyObject* Pattern_fullmatch(PyObject* self, PyObject* args, PyObject* kwargs) {
+    return run_region(self, args, kwargs, real::detail::run_mode::full);
 }
-PyObject* Pattern_search(PyObject* self, PyObject* string) {
-    return run_single(self, string, real::detail::run_mode::search);
+PyObject* Pattern_search(PyObject* self, PyObject* args, PyObject* kwargs) {
+    return run_region(self, args, kwargs, real::detail::run_mode::search);
 }
 
 // ---------------------------------------------------------------------------
@@ -1212,25 +1247,36 @@ PyObject* Pattern_get_groupindex(PyObject* self, void*) {
 }
 
 PyMethodDef pattern_methods[] = {
-    {"match", Pattern_match, METH_O,
-     "match(string, /)\n"
-     "Try to match only at the start of the string.\n\n"
+    {"match", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_match)),
+     METH_VARARGS | METH_KEYWORDS,
+     "match(string, pos=0, endpos=sys.maxsize)\n"
+     "Try to match at position pos in the string.\n\n"
      "Args:\n"
-     "    string (str or bytes): Text to match.\n\n"
+     "    string (str or bytes): Text to match.\n"
+     "    pos (int): Where to start. Character offset for str, byte offset for bytes.\n"
+     "        Not a slice: \\A and ^ (without MULTILINE) still fail at pos > 0.\n"
+     "    endpos (int): Where the string is treated as ending ($ and \\Z see it).\n\n"
      "Returns:\n"
      "    Match or None: Match object on success, None otherwise."},
-    {"fullmatch", Pattern_fullmatch, METH_O,
-     "fullmatch(string, /)\n"
-     "Try to match the entire string.\n\n"
+    {"fullmatch", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_fullmatch)),
+     METH_VARARGS | METH_KEYWORDS,
+     "fullmatch(string, pos=0, endpos=sys.maxsize)\n"
+     "Try to match the whole region [pos, endpos) of the string.\n\n"
      "Args:\n"
-     "    string (str or bytes): Text to match.\n\n"
+     "    string (str or bytes): Text to match.\n"
+     "    pos (int): Start. Character offset for str, byte offset for bytes.\n"
+     "    endpos (int): End of the region the match must span ($ and \\Z see it).\n\n"
      "Returns:\n"
      "    Match or None: Match object on success, None otherwise."},
-    {"search", Pattern_search, METH_O,
-     "search(string, /)\n"
-     "Scan the string for the leftmost match.\n\n"
+    {"search", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_search)),
+     METH_VARARGS | METH_KEYWORDS,
+     "search(string, pos=0, endpos=sys.maxsize)\n"
+     "Scan the region [pos, endpos) for the leftmost match.\n\n"
      "Args:\n"
-     "    string (str or bytes): Text to search.\n\n"
+     "    string (str or bytes): Text to search.\n"
+     "    pos (int): Where to start. Character offset for str, byte offset for bytes.\n"
+     "        Not a slice: \\A and ^ (without MULTILINE) still fail at pos > 0.\n"
+     "    endpos (int): Where the string is treated as ending ($ and \\Z see it).\n\n"
      "Returns:\n"
      "    Match or None: Match object on success, None otherwise."},
     {"findall", Pattern_findall, METH_O,
