@@ -525,7 +525,7 @@ namespace real::detail {
       prog.lookarounds[sub_id] = {.code_offset = sub_offset,
                                   .code_length = here(prog) - sub_offset,
                                   .l_max       = lmax,
-                                  .direction   = node.min == 1 ? look_dir::behind : look_dir::ahead,
+                                  .direction   = node.direction,
                                   .negative    = node.negated};
     }
 

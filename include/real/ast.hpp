@@ -38,7 +38,7 @@ namespace real::detail {
     alternation, //!< Children are branches, leftmost preferred.
     group,       //!< Child wrapped in a group; `group` >= 0 when capturing.
     anchor,      //!< Zero-width assertion; kind in \ref real::detail::ast_node::anchor.
-    lookaround,  //!< Bounded lookaround: `child` = sub-pattern, `negated` = (?!/(?<!), `min` = direction (0 ahead, 1 behind).
+    lookaround,  //!< Bounded lookaround: `child` = sub-pattern, `negated` = (?!/(?<!), `direction` = ahead/behind.
   };
 
   /*!
@@ -61,17 +61,18 @@ namespace real::detail {
    */
   struct ast_node
   {
-    node_kind    kind    {node_kind::empty};   //!< Which fields below are meaningful.
-    std::uint8_t byte    {};                   //!< byte: the exact byte value.
-    anchor_kind  anchor  {anchor_kind::caret}; //!< anchor: the assertion kind.
-    bool         negated {};                   //!< klass: written as `[^...]` / `\D` `\W` `\S`.
-    bool         lazy    {};                   //!< repeat: prefer the shortest expansion.
-    std::int32_t klass   {-1};                 //!< klass: index into \ref ast::classes.
-    std::int32_t min     {};                   //!< repeat: minimum count.
-    std::int32_t max     {-1};                 //!< repeat: maximum count (-1 = unbounded).
-    std::int32_t group   {-1};                 //!< group: capture number, -1 for `(?:...)`.
-    std::int32_t child   {-1};                 //!< First child (concat, repeat, alternation, group).
-    std::int32_t next    {-1};                 //!< Next sibling in the parent's child list.
+    node_kind    kind      {node_kind::empty};   //!< Which fields below are meaningful.
+    std::uint8_t byte      {};                   //!< byte: the exact byte value.
+    anchor_kind  anchor    {anchor_kind::caret}; //!< anchor: the assertion kind.
+    bool         negated   {};                   //!< klass: written as `[^...]` / `\D` `\W` `\S`.
+    bool         lazy      {};                   //!< repeat: prefer the shortest expansion.
+    look_dir     direction {look_dir::ahead};    //!< lookaround: ahead `(?=`/`(?!` or behind `(?<=`/`(?<!`.
+    std::int32_t klass     {-1};                 //!< klass: index into \ref ast::classes.
+    std::int32_t min       {};                   //!< repeat: minimum count.
+    std::int32_t max       {-1};                 //!< repeat: maximum count (-1 = unbounded).
+    std::int32_t group     {-1};                 //!< group: capture number, -1 for `(?:...)`.
+    std::int32_t child     {-1};                 //!< First child (concat, repeat, alternation, group).
+    std::int32_t next      {-1};                 //!< Next sibling in the parent's child list.
   };
 
   /*!
@@ -659,10 +660,10 @@ namespace real::detail {
         fail("missing ), unterminated subpattern");
       }
       --depth_;
-      return add_node(out, {.kind    = node_kind::lookaround,
-                            .negated = negative,
-                            .min     = direction == look_dir::behind ? 1 : 0,
-                            .child   = sub});
+      return add_node(out, {.kind      = node_kind::lookaround,
+                            .negated   = negative,
+                            .direction = direction,
+                            .child     = sub});
     }
 
     /*!
