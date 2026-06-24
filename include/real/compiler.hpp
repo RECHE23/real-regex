@@ -586,7 +586,13 @@ namespace real::detail {
               return -1; // *, +, {n,} are not statically bounded
             }
             const std::int32_t body {l_max_bytes(node.child)};
-            return body < 0 ? -1 : node.max * body;
+            if (body < 0) {
+              return -1;
+            }
+            if (body > 0 && node.max > max_lookaround_length / body) {
+              return -1; // the product would exceed the cap (nested {n}{m}...) -> reject; no int32 overflow
+            }
+            return node.max * body;
           }
         case node_kind::group:
           return l_max_bytes(node.child);

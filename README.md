@@ -21,7 +21,7 @@ reject as non-fixed-width. `static_regex` does not accept lookarounds yet.
 
 Unsupported syntax is rejected with `real::regex_error` rather than silently
 diverging. Not yet: backreferences, atomic/possessive groups, Unicode property classes,
-Unicode case folding, `pos`/`endpos`.
+Unicode case folding.
 
 Matching is linear in the input length: a Thompson NFA simulation (Pike VM)
 with marked states, so a pattern such as `(a+)+b` cannot trigger exponential
