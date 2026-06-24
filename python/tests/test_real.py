@@ -311,5 +311,51 @@ class TestCppIntegration(unittest.TestCase):
         self.assertEqual(cfg["cxx_standard"], "c++20")
 
 
+class TestErrorHierarchy(unittest.TestCase):
+    """real.error must subclass re.error so ``except re.error:`` catches REAL's errors."""
+
+    def test_real_error_subclasses_re_error(self):
+        import re
+        self.assertTrue(issubclass(real.error, re.error))
+        self.assertTrue(issubclass(real.error, Exception))
+
+    def test_error_caught_at_every_level(self):
+        """A compile error is catchable as real.error (native), re.error (the
+        re-compatibility point) and Exception (the common base)."""
+        import re
+        with self.assertRaises(real.error):
+            real.compile("(")
+        with self.assertRaises(re.error):     # <- the re-compatibility guarantee
+            real.compile("(")
+        with self.assertRaises(Exception):
+            real.compile("(")
+
+
+class TestBindingCleanup(unittest.TestCase):
+    """Anti-regression smoke for the binding's exception/cleanup surface: match
+    construction and the scan paths must build correct objects (no leak, no UB) across
+    search / finditer / findall / split / sub. The real oracle for the OOM paths is a
+    clean ``make sanitize``; these pin the happy paths the new guards wrap."""
+
+    def test_search_groups_intact(self):
+        p = real.compile(r"(\d+)-(\d+)")
+        m = p.search("a 12-34 b")
+        self.assertIsNotNone(m)
+        self.assertEqual(m.span(1), (2, 4))
+        self.assertEqual(m.span(2), (5, 7))
+        self.assertEqual(m.group(1), "12")
+
+    def test_finditer_and_findall(self):
+        p = real.compile(r"(\d+)-(\d+)")
+        self.assertEqual([m.span() for m in p.finditer("1-2 3-4")], [(0, 3), (4, 7)])
+        self.assertEqual(p.findall("1-2 3-4"), [("1", "2"), ("3", "4")])
+
+    def test_split_and_sub(self):
+        self.assertEqual(real.compile(r"\s+").split("a b  c"), ["a", "b", "c"])
+        self.assertEqual(real.compile(r"(\d+)").sub(r"<\1>", "a1b22"), "a<1>b<22>")
+        self.assertEqual(real.compile(r"\d+").sub(lambda m: f"[{m.group()}]", "a1b22"),
+                         "a[1]b[22]")
+
+
 if __name__ == "__main__":
     unittest.main()

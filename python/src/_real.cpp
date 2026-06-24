@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <new>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -247,15 +248,33 @@ PyObject* empty_like(PatternObject* pat) {
 // Match construction
 // ---------------------------------------------------------------------------
 
+// Convert the C++ exception currently being handled into a Python error and return nullptr.
+// Call ONLY from inside a catch block; it keeps any C++ exception from crossing a CPython
+// frame (undefined behaviour): bad_alloc -> MemoryError, anything else -> real.error with its
+// message. The int-returning call sites ignore the nullptr and return their own -1.
+PyObject* set_cpp_error() {
+    try {
+        throw;
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
+    } catch (const std::exception& ex) {
+        PyErr_SetString(error_type, ex.what());
+        return nullptr;
+    } catch (...) {
+        PyErr_SetString(error_type, "internal error");
+        return nullptr;
+    }
+}
+
 PyObject* make_match(PatternObject* pat, PyObject* subject, const auto& match,
                      Py_ssize_t pos, Py_ssize_t endpos) {
     auto* obj = PyObject_New(MatchObject, reinterpret_cast<PyTypeObject*>(match_type));
     if (obj == nullptr) {
         return nullptr;
     }
-    obj->subject = Py_NewRef(subject);
-    obj->pattern = Py_NewRef(reinterpret_cast<PyObject*>(pat));
-    obj->byte_spans = new std::vector<Py_ssize_t>(2 * match.size());
+    // Initialise every owned field before anything that can throw, so a partial failure
+    // unwinds safely through Match_dealloc (delete on a nullptr span is fine).
+    obj->byte_spans = nullptr;
     // char_spans is computed lazily (nullptr until the first .start()/.end()/.span()).
     // .group()/__getitem__ read byte_spans, so a finditer that reads only .group() never
     // pays compute_char_spans, which walks byte 0 -> match offset = O(position) per match
@@ -263,6 +282,14 @@ PyObject* make_match(PatternObject* pat, PyObject* subject, const auto& match,
     obj->char_spans = nullptr;
     obj->pos = pos;
     obj->endpos = endpos;
+    obj->subject = Py_NewRef(subject);
+    obj->pattern = Py_NewRef(reinterpret_cast<PyObject*>(pat));
+    try {
+        obj->byte_spans = new std::vector<Py_ssize_t>(2 * match.size());
+    } catch (...) {
+        Py_DECREF(obj);  // dealloc frees the two refs; both spans are nullptr
+        return set_cpp_error();
+    }
     auto& bytes = *obj->byte_spans;
     for (std::size_t group = 0; group < match.size(); ++group) {
         const std::size_t start = match.start(group);
@@ -416,8 +443,15 @@ int ensure_char_spans(MatchObject* match) {
     if (get_subject(as_pattern(match->pattern), match->subject, &sv) < 0) {
         return -1;
     }
-    match->char_spans = new std::vector<Py_ssize_t>();
-    compute_char_spans(sv, *match->byte_spans, *match->char_spans);
+    try {
+        match->char_spans = new std::vector<Py_ssize_t>();
+        compute_char_spans(sv, *match->byte_spans, *match->char_spans);
+    } catch (...) {
+        delete match->char_spans;     // nullptr (new threw) or the partly-built vector
+        match->char_spans = nullptr;  // leave it recomputable and dealloc-safe
+        set_cpp_error();
+        return -1;
+    }
     return 0;
 }
 
@@ -619,20 +653,24 @@ PyObject* run_region(PyObject* self, PyObject* args, PyObject* kwargs, real::det
     std::vector<std::size_t>         slots;
     real::detail::pike_vm            vm(prog, state);
     const std::size_t scan_len = pos_byte < end_byte ? end_byte - pos_byte : 0;
-    bool matched = false;
-    if (scan_len >= static_cast<std::size_t>(gil_release_min_bytes)) {
-        const GilRelease unlocked;  // released ONLY around the pure-C++ scan
-        matched = vm.run(region, pos_byte, mode, slots);
+    try {
+        bool matched = false;
+        if (scan_len >= static_cast<std::size_t>(gil_release_min_bytes)) {
+            const GilRelease unlocked;  // released ONLY around the pure-C++ scan
+            matched = vm.run(region, pos_byte, mode, slots);
+        }
+        else {
+            matched = vm.run(region, pos_byte, mode, slots);  // small: toggle would cost more
+        }
+        if (!matched) {
+            Py_RETURN_NONE;
+        }
+        // Built over the FULL subject so capture offsets are absolute (slots are in [0, endpos)).
+        const real::match_result match(sv.view(), slots, true, pat->rx->pattern(), prog.names);
+        return make_match(pat, string, match, pos, endpos);  // .pos/.endpos = the clamped offsets
+    } catch (...) {
+        return set_cpp_error();  // e.g. bad_alloc growing the scratch -> Python error, never UB
     }
-    else {
-        matched = vm.run(region, pos_byte, mode, slots);  // small: toggle would cost more
-    }
-    if (!matched) {
-        Py_RETURN_NONE;
-    }
-    // Built over the FULL subject so capture offsets are absolute (slots are in [0, endpos)).
-    const real::match_result match(sv.view(), slots, true, pat->rx->pattern(), prog.names);
-    return make_match(pat, string, match, pos, endpos);  // .pos/.endpos = the clamped offsets
 }
 
 PyObject* Pattern_match(PyObject* self, PyObject* args, PyObject* kwargs) {
@@ -766,13 +804,18 @@ PyObject* Pattern_findall(PyObject* self, PyObject* args, PyObject* kwargs) {
 
     // Small region: interleaved scan under the held GIL (releasing it would cost more
     // than the sub-microsecond walk).
-    for (const auto& match : pat->rx->find_iter(sv.view(), pos_byte, end_byte)) {
-        if (!append_item(build_item([&](std::size_t group) {
-            return std::pair {match.start(group), match.end(group)};
-        }))) {
-            Py_DECREF(out);
-            return nullptr;
+    try {
+        for (const auto& match : pat->rx->find_iter(sv.view(), pos_byte, end_byte)) {
+            if (!append_item(build_item([&](std::size_t group) {
+                return std::pair {match.start(group), match.end(group)};
+            }))) {
+                Py_DECREF(out);
+                return nullptr;
+            }
         }
+    } catch (...) {
+        Py_DECREF(out);
+        return set_cpp_error();
     }
     return out;
 }
@@ -786,11 +829,17 @@ PyObject* MatchIterator_iternext(PyObject* self) {
     if (*it->cur == match_iter_t {}) {  // default-constructed == end sentinel: exhausted
         return nullptr;                 // NULL with no exception set => StopIteration
     }
-    PyObject* obj = make_match(as_pattern(it->pattern), it->subject, **it->cur, it->pos, it->endpos);
-    if (obj == nullptr) {
-        return nullptr;
+    PyObject* obj = nullptr;
+    try {
+        obj = make_match(as_pattern(it->pattern), it->subject, **it->cur, it->pos, it->endpos);
+        if (obj == nullptr) {
+            return nullptr;
+        }
+        ++(*it->cur);  // advances the lazy scan; may grow the scratch (bad_alloc)
+    } catch (...) {
+        Py_XDECREF(obj);
+        return set_cpp_error();
     }
-    ++(*it->cur);
     return obj;
 }
 
@@ -845,8 +894,7 @@ PyObject* Pattern_finditer(PyObject* self, PyObject* args, PyObject* kwargs) {
             pat->rx->find_iter(it->sv.view(), char_to_byte(sv, pos), char_to_byte(sv, endpos)).begin());
     } catch (...) {
         Py_DECREF(reinterpret_cast<PyObject*>(it));  // dealloc frees the refs; cur is null
-        PyErr_SetString(error_type, "finditer: failed to start iteration");
-        return nullptr;
+        return set_cpp_error();  // bad_alloc -> MemoryError, otherwise real.error
     }
     return reinterpret_cast<PyObject*>(it);
 }
@@ -920,18 +968,23 @@ PyObject* Pattern_split(PyObject* self, PyObject* args, PyObject* kwargs) {
     }
     else {
         // Small subject: interleaved scan under the held GIL. Byte-identical behaviour.
-        Py_ssize_t done = 0;
-        for (const auto& match : pat->rx->find_iter(sv.view())) {
-            if (maxsplit != 0 && done == maxsplit) {
-                break;
+        try {
+            Py_ssize_t done = 0;
+            for (const auto& match : pat->rx->find_iter(sv.view())) {
+                if (maxsplit != 0 && done == maxsplit) {
+                    break;
+                }
+                if (!emit_match([&](std::size_t group) {
+                    return std::pair {match.start(group), match.end(group)};
+                })) {
+                    Py_DECREF(out);
+                    return nullptr;
+                }
+                ++done;
             }
-            if (!emit_match([&](std::size_t group) {
-                return std::pair {match.start(group), match.end(group)};
-            })) {
-                Py_DECREF(out);
-                return nullptr;
-            }
-            ++done;
+        } catch (...) {
+            Py_DECREF(out);
+            return set_cpp_error();
         }
     }
     // Trailing segment after the last match (common to both paths).
@@ -1162,46 +1215,51 @@ PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_c
         // Non-callable: the scan is pure C++ (run_template_sub). On a large subject release
         // the GIL so threads scan in parallel -- the only Python object is the final string,
         // built below under the GIL (no O(matches) build under the GIL, unlike findall/split).
-        if (sv.len >= gil_release_collect_min_bytes) {
-            try {
+        try {
+            if (sv.len >= gil_release_collect_min_bytes) {
                 const GilRelease unlocked;
                 run_template_sub(*pat->rx, sv, segments, count, result, done);
-            } catch (...) {
-                return PyErr_NoMemory();  // ~GilRelease re-acquired the GIL during unwinding
+            } else {
+                run_template_sub(*pat->rx, sv, segments, count, result, done);  // small: keep the GIL
             }
-        } else {
-            run_template_sub(*pat->rx, sv, segments, count, result, done);  // small: keep the GIL
+        } catch (...) {
+            return set_cpp_error();  // ~GilRelease re-acquired the GIL during unwinding
         }
     } else {
         // Callable: each replacement re-enters Python, so the GIL is held throughout.
         // sub has no pos/endpos, so each Match spans the whole subject (.pos=0, .endpos=len).
-        const Py_ssize_t full_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
-        Py_ssize_t       last     = 0;
-        for (const auto& match : pat->rx->find_iter(sv.view())) {
-            if (count != 0 && done == count) {
-                break;
-            }
-            result.append(sv.data + last, static_cast<std::size_t>(match.start()) - last);
-            PyObject* match_obj = make_match(pat, string, match, 0, full_len);
-            if (match_obj == nullptr) {
-                return nullptr;
-            }
-            PyObject* value = PyObject_CallFunctionObjArgs(repl, match_obj, nullptr);
-            Py_DECREF(match_obj);
-            if (value == nullptr) {
-                return nullptr;
-            }
-            std::string_view text;
-            if (get_repl_text(pat, value, &text) < 0) {
+        // A C++ throw here (scratch/string growth under OOM) is converted, never propagated.
+        try {
+            const Py_ssize_t full_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
+            Py_ssize_t       last     = 0;
+            for (const auto& match : pat->rx->find_iter(sv.view())) {
+                if (count != 0 && done == count) {
+                    break;
+                }
+                result.append(sv.data + last, static_cast<std::size_t>(match.start()) - last);
+                PyObject* match_obj = make_match(pat, string, match, 0, full_len);
+                if (match_obj == nullptr) {
+                    return nullptr;
+                }
+                PyObject* value = PyObject_CallFunctionObjArgs(repl, match_obj, nullptr);
+                Py_DECREF(match_obj);
+                if (value == nullptr) {
+                    return nullptr;
+                }
+                std::string_view text;
+                if (get_repl_text(pat, value, &text) < 0) {
+                    Py_DECREF(value);
+                    return nullptr;
+                }
+                result.append(text);
                 Py_DECREF(value);
-                return nullptr;
+                last = static_cast<Py_ssize_t>(match.end());
+                ++done;
             }
-            result.append(text);
-            Py_DECREF(value);
-            last = static_cast<Py_ssize_t>(match.end());
-            ++done;
+            result.append(sv.data + last, static_cast<std::size_t>(sv.len - last));
+        } catch (...) {
+            return set_cpp_error();
         }
-        result.append(sv.data + last, static_cast<std::size_t>(sv.len - last));
     }
 
     PyObject* out = pat->is_bytes != 0
@@ -1468,6 +1526,8 @@ PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
     } catch (const real::regex_error& ex) {
         set_error(ex.what());
         return nullptr;
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
     } catch (const std::exception& ex) {
         PyErr_SetString(PyExc_RuntimeError, ex.what());
         return nullptr;
@@ -1517,7 +1577,17 @@ PyMODINIT_FUNC PyInit__real() {  // PyMODINIT_FUNC already says extern "C"
     if (module == nullptr) {
         return nullptr;
     }
-    error_type = PyErr_NewException("real.error", nullptr, nullptr);
+    // Subclass re.error so `except re.error:` catches REAL's errors too (re-compatibility).
+    // PyErr_NewException does not steal the base reference. If re is unavailable, fall back
+    // to a standalone exception (base = Exception).
+    PyObject* re_mod = PyImport_ImportModule("re");
+    PyObject* re_err = re_mod != nullptr ? PyObject_GetAttrString(re_mod, "error") : nullptr;
+    if (re_err == nullptr) {
+        PyErr_Clear();
+    }
+    error_type = PyErr_NewException("real.error", re_err, nullptr);
+    Py_XDECREF(re_err);
+    Py_XDECREF(re_mod);
     pattern_type = PyType_FromSpec(&pattern_spec);
     match_type = PyType_FromSpec(&match_spec);
     match_iterator_type = PyType_FromSpec(&match_iterator_spec);  // internal: created, not exposed
