@@ -170,6 +170,35 @@ class TestParity(unittest.TestCase):
                         real.compile(pattern).subn(repl, text),
                         re.compile(pattern, re.ASCII).subn(repl, text))
 
+    def test_sub_large_subject_parity(self):
+        """sub/subn on a large subject (past the GIL-release threshold, ~15 KB) are
+        byte-identical to re — exercises the GIL-released non-callable path, including a
+        count cap (the count-break inside run_template_sub)."""
+        text = "word " * 3000  # ~15 KB, well past the 4 KB threshold
+        for pattern, repl in [(r"\w+", r"<\g<0>>"), (r"(\w)(\w+)", r"\2\1"), (r"\s+", "_")]:
+            with self.subTest(pattern=pattern):
+                rp, rr = real.compile(pattern), re.compile(pattern, re.ASCII)
+                self.assertEqual(rp.sub(repl, text), rr.sub(repl, text))
+                self.assertEqual(rp.subn(repl, text), rr.subn(repl, text))
+                self.assertEqual(rp.sub(repl, text, 5), rr.sub(repl, text, 5))  # count cap
+
+    def test_sub_large_subject_threaded_parity(self):
+        """sub on a large subject from several threads sharing one Pattern stays correct
+        and byte-identical to re — proves the GIL-released scan is reentrant."""
+        import threading
+        text = "word " * 4000  # ~20 KB
+        rp = real.compile(r"\w+")
+        expected = re.compile(r"\w+", re.ASCII).sub(r"<\g<0>>", text)
+        results = [None] * 8
+        def work(i):
+            results[i] = rp.sub(r"<\g<0>>", text)
+        threads = [threading.Thread(target=work, args=(i,)) for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(results, [expected] * 8)
+
     def test_expand_parity(self):
         r"""Match.expand reproduces re.Match.expand across templates: \1, \g<name>,
         \g<1>, \g<0> (the whole match), escapes, empty, and repeated references."""

@@ -1026,6 +1026,34 @@ void apply_template(const std::vector<repl_segment>& segs, const char* subject_d
     }
 }
 
+// Pure C++ (no Python C-API): applies a parsed non-callable sub template across the
+// whole subject -- find_iter + append + apply_template, exactly sub_impl's non-callable
+// loop. Safe to run with the GIL released (callable subs never reach here; the subject
+// bytes are pinned by the caller's str/bytes ref). `done` receives the replacement count.
+void run_template_sub(const real::regex& rx, const subject_view& sv,
+                      const std::vector<repl_segment>& segments, Py_ssize_t count,
+                      std::string& result, Py_ssize_t& done) {
+    Py_ssize_t last = 0;
+    done = 0;
+    for (const auto& match : rx.find_iter(sv.view())) {
+        if (count != 0 && done == count) {
+            break;
+        }
+        result.append(sv.data + last, static_cast<std::size_t>(match.start()) - last);
+        apply_template(segments, sv.data,
+                       [&](std::size_t g) -> std::optional<std::pair<std::size_t, std::size_t>> {
+                           const std::size_t s = match.start(g);
+                           return s == real::npos
+                                      ? std::nullopt
+                                      : std::optional {std::pair {s, match.end(g)}};
+                       },
+                       result);
+        last = static_cast<Py_ssize_t>(match.end());
+        ++done;
+    }
+    result.append(sv.data + last, static_cast<std::size_t>(sv.len - last));
+}
+
 PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_count) {
     PatternObject* pat = as_pattern(self);
     PyObject* repl = nullptr;
@@ -1052,14 +1080,29 @@ PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_c
     }
 
     std::string result;
-    Py_ssize_t last = 0;
     Py_ssize_t done = 0;
-    for (const auto& match : pat->rx->find_iter(sv.view())) {
-        if (count != 0 && done == count) {
-            break;
+    if (!callable) {
+        // Non-callable: the scan is pure C++ (run_template_sub). On a large subject release
+        // the GIL so threads scan in parallel -- the only Python object is the final string,
+        // built below under the GIL (no O(matches) build under the GIL, unlike findall/split).
+        if (sv.len >= gil_release_collect_min_bytes) {
+            try {
+                const GilRelease unlocked;
+                run_template_sub(*pat->rx, sv, segments, count, result, done);
+            } catch (...) {
+                return PyErr_NoMemory();  // ~GilRelease re-acquired the GIL during unwinding
+            }
+        } else {
+            run_template_sub(*pat->rx, sv, segments, count, result, done);  // small: keep the GIL
         }
-        result.append(sv.data + last, static_cast<std::size_t>(match.start()) - last);
-        if (callable) {
+    } else {
+        // Callable: each replacement re-enters Python, so the GIL is held throughout.
+        Py_ssize_t last = 0;
+        for (const auto& match : pat->rx->find_iter(sv.view())) {
+            if (count != 0 && done == count) {
+                break;
+            }
+            result.append(sv.data + last, static_cast<std::size_t>(match.start()) - last);
             PyObject* match_obj = make_match(pat, string, match);
             if (match_obj == nullptr) {
                 return nullptr;
@@ -1076,20 +1119,11 @@ PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_c
             }
             result.append(text);
             Py_DECREF(value);
-        } else {
-            apply_template(segments, sv.data,
-                           [&](std::size_t g) -> std::optional<std::pair<std::size_t, std::size_t>> {
-                               const std::size_t s = match.start(g);
-                               return s == real::npos
-                                          ? std::nullopt
-                                          : std::optional {std::pair {s, match.end(g)}};
-                           },
-                           result);
+            last = static_cast<Py_ssize_t>(match.end());
+            ++done;
         }
-        last = static_cast<Py_ssize_t>(match.end());
-        ++done;
+        result.append(sv.data + last, static_cast<std::size_t>(sv.len - last));
     }
-    result.append(sv.data + last, static_cast<std::size_t>(sv.len - last));
 
     PyObject* out = pat->is_bytes != 0
                         ? PyBytes_FromStringAndSize(result.data(),
