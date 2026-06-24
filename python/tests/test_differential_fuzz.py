@@ -328,22 +328,30 @@ class TestDifferentialFuzz(unittest.TestCase):
                 ctx = f"pattern={pattern!r} text={text!r} flags={real_flags}"
                 pos = rng.randint(0, len(text))
                 endpos = rng.randint(pos, len(text) + 2)  # may exceed len -> clamped, like re
+                # An empty search region (endpos == pos) places zero-width assertions
+                # (\b, \B, ...) on a virtual empty string, whose match re changed in 3.11
+                # (\B went None -> (k, k)); REAL follows the modern, by-definition behaviour
+                # and so disagrees with re < 3.11. Mirror the empty-text skip above and
+                # compare only a non-empty region; the desired behaviour for the empty case
+                # is pinned explicitly, independent of re's version, in test_real.py.
+                compare_region = endpos > pos
                 try:
                     with deadline():
                         facts = (match_facts(xp.search(text), ng),
                                  match_facts(xp.match(text), ng),
                                  match_facts(xp.fullmatch(text), ng),
                                  [m.span() for m in xp.finditer(text)],
-                                 xp.findall(text),
-                                 match_facts(xp.search(text, pos, endpos), ng),   # region
-                                 match_facts(xp.match(text, pos, endpos), ng))
+                                 xp.findall(text))
                         ref = (match_facts(rp.search(text), ng),
                                match_facts(rp.match(text), ng),
                                match_facts(rp.fullmatch(text), ng),
                                [m.span() for m in rp.finditer(text)],
-                               rp.findall(text),
-                               match_facts(rp.search(text, pos, endpos), ng),
-                               match_facts(rp.match(text, pos, endpos), ng))
+                               rp.findall(text))
+                        if compare_region:
+                            facts += (match_facts(xp.search(text, pos, endpos), ng),
+                                      match_facts(xp.match(text, pos, endpos), ng))
+                            ref += (match_facts(rp.search(text, pos, endpos), ng),
+                                    match_facts(rp.match(text, pos, endpos), ng))
                 except _Timeout:
                     skipped += 1  # re could not keep up — a perf case, not a bug
                     continue

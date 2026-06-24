@@ -293,6 +293,37 @@ class TestWordEdgeAnchors(unittest.TestCase):
         self.assertEqual(real.search(r"\>", "abc").span(), (3, 3))
 
 
+class TestBoundaryOnEmpty(unittest.TestCase):
+    r"""\b and \B on an empty string / empty search region (the modern semantics).
+
+    By definition an empty string contains no word boundary, so \B (NOT a word
+    boundary) matches at position 0 while \b does not. REAL implements this
+    by-definition behaviour — which is also Python re's behaviour since 3.11.
+    Python re < 3.11 has a pre-3.11 quirk (\B on the empty string returns no
+    match), so the differential fuzzer cannot use re as an oracle here and skips
+    the empty region (endpos == pos). These assertions pin REAL's desired
+    behaviour directly, independent of the running Python's re version.
+    """
+
+    def test_capital_b_matches_empty_string(self):
+        r"""\B matches the empty string at (0, 0): no boundary exists to negate."""
+        self.assertEqual(real.search(r"\B", "").span(), (0, 0))
+
+    def test_small_b_does_not_match_empty_string(self):
+        r"""\b does not match the empty string: there is no word boundary."""
+        self.assertIsNone(real.search(r"\b", ""))
+
+    def test_capital_b_matches_empty_region(self):
+        r"""\B matches inside an empty region (endpos == pos truncates to empty)."""
+        self.assertEqual(real.compile(r"\B").search("abc", 0, 0).span(), (0, 0))
+        # The exact pattern/region the CI differential surfaced on Python 3.10.
+        self.assertEqual(real.compile(r"2*C*\B").search("c20", 0, 0).span(), (0, 0))
+
+    def test_small_b_does_not_match_empty_region(self):
+        r"""\b does not match inside an empty region (endpos == pos)."""
+        self.assertIsNone(real.compile(r"\b").search("abc", 0, 0))
+
+
 class TestCppIntegration(unittest.TestCase):
     """Tests for the C++ embedding helpers."""
 
