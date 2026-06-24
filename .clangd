@@ -1,2 +1,5 @@
+# Portable baseline. clangd reads per-machine include paths from
+# build/compile_commands.json (the build sets CMAKE_EXPORT_COMPILE_COMMANDS=ON).
+# Keep machine-specific flags in your user config (~/.config/clangd/config.yaml).
 CompileFlags:
-  Add: [-std=c++20, -I/Users/rchenard/Projects/real-v1/include, -I/opt/homebrew/opt/python@3.14/Frameworks/Python.framework/Versions/3.14/include/python3.14]
+  Add: [-std=c++20]

@@ -8,6 +8,7 @@ __pycache__/
 dist/
 .DS_Store
 .idea/
+.vscode/
 
 # libFuzzer writes generated inputs here; keep only hand-written seeds
 build/fuzz/
