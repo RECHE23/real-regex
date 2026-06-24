@@ -50,6 +50,12 @@ def _split(pattern, subject, iters):
         f(subject)
 
 
+def _sub(pattern, subject, iters):
+    f = pattern.sub
+    for _ in range(iters):
+        f(r"<\g<0>>", subject)  # non-callable template (\g<0> -> apply_template path)
+
+
 def table(title, work, pattern_str, cases):
     print(f"{title}, pattern {pattern_str!r}:")
     for label, subject, total in cases:
@@ -82,6 +88,11 @@ def main():
     table("findall throughput (calls/sec)", _findall, r"\w+", multi_cases)
     print()
     table("split throughput (calls/sec)", _split, r"\s+", multi_cases)
+    print()
+    # sub (non-callable template): per-match work is pure C++ and the ONLY Python object
+    # is the final string (not O(matches)), so the parallelisable fraction is ~the whole
+    # op — expected to scale better than findall/split's ~2x build-bound ceiling.
+    table("sub throughput (calls/sec)", _sub, r"\w+", multi_cases)
 
 
 if __name__ == "__main__":
