@@ -92,7 +92,7 @@ namespace real::detail {
     std::int32_t             root         {-1};          //!< Index of the root node.
   };
 
-  //! \brief What a `\<digit>` escape decoded to (see \ref decode_digit_escape).
+  //! \brief What a `\<digit>` escape decoded to (see decode_digit_escape()).
   enum class digit_escape_kind : std::uint8_t
   {
     octal,          //!< An octal byte escape; `value` is the byte (0-255).
@@ -100,7 +100,7 @@ namespace real::detail {
     octal_overflow, //!< A 3-octal-digit escape greater than 0o377 (an error in CPython).
   };
 
-  //! \brief Result of \ref decode_digit_escape.
+  //! \brief Result of decode_digit_escape().
   struct digit_escape_result
   {
     digit_escape_kind kind   {digit_escape_kind::group_ref}; //!< Which interpretation applies.
@@ -841,7 +841,7 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Parses a `\<digit>` escape via the shared \ref decode_digit_escape.
+     * \brief Parses a `\<digit>` escape via the shared decode_digit_escape().
      *
      * Octal escapes (`\0`, `\012`, a three-octal-digit run) become one byte (value & 0xff,
      * mirroring `\xHH`). A decimal group number is a back-reference, which REAL does not
