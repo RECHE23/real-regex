@@ -77,34 +77,12 @@ namespace real::detail {
   }
 
   /*!
-   * \brief Walks a compiled program once to derive its search hints.
-   * \param[in] code           The instruction stream.
-   * \param[in] classes        The interned character classes referenced by \p code.
-   * \param[in] cp_mark_ascii  ASCII sub-class index of an emitted codepoint-class
-   *                           block (-1 = none), as recorded by `emit_codepoint_class`.
-   * \param[in] cp_mark_offset Program offset where that block starts (-1 = none); the
-   *                           whole-pattern codepoint fast path requires it to be 1.
-   * \return The \ref pattern_hints (anchoring, literal prefix, first-byte set,
-   *         and the `class+` / exact-literal fast-path flags).
+   * \brief Records start anchoring: the first non-save instruction tells whether every
+   *        match must begin at position 0 (`\A`/`^` non-multiline) or at a line start.
    */
-  constexpr pattern_hints analyze_program(std::span<const instr>      code,
-                                          std::span<const char_class> classes,
-                                          std::int32_t                cp_mark_ascii,
-                                          std::int32_t                cp_mark_offset)
+  constexpr void extract_anchoring(std::span<const instr> code,
+                                   pattern_hints&         hints)
   {
-    pattern_hints hints;
-
-    // A lookaround forces the general Pike VM: no DFA, no fast path. Detected up front;
-    // the fast-path hints are cleared at the end so none can fire even partially.
-    for (const instr& in : code) {
-      if (in.op == opcode::assert_lookaround) {
-        hints.has_lookaround = true;
-        break;
-      }
-    }
-
-    // Start anchoring: the first non-save instruction tells whether every
-    // match must begin at position 0 (or at a line start).
     std::size_t pc {};
     while (code[pc].op == opcode::save) {
       ++pc;
@@ -114,11 +92,21 @@ namespace real::detail {
       hints.anchored_start = kind == assert_kind::text_start;
       hints.line_anchored  = kind == assert_kind::line_start;
     }
+  }
 
-    // Required literal prefix: consecutive byte instructions from the start.
-    // Saves and assertions do not consume, so they are crossed: every match
-    // still has to begin with the collected bytes (hints only ever filter
-    // candidate positions; the engine verifies).
+  /*!
+   * \brief Collects the required literal prefix and the exact-literal fast-path length.
+   *
+   * The prefix is the consecutive leading byte instructions (saves and assertions do not
+   * consume, so they are crossed: every match still has to begin with the collected bytes;
+   * hints only ever filter candidate positions, the engine verifies). The exact-literal hint
+   * fires when those bytes ARE the whole match — no assertion appears after the first byte up
+   * to `match` (only saves may be crossed). Trailing/inter assertions ($, \b after, …) are
+   * post-filters that must go through the normal VM; leading assertions are fine.
+   */
+  constexpr void extract_prefix(std::span<const instr> code,
+                                pattern_hints&         hints)
+  {
     std::size_t prefix_pc {};
     while (hints.prefix_size < hints.prefix.size()) {
       if (code[prefix_pc].op == opcode::save || code[prefix_pc].op == opcode::assert_position) {
@@ -133,12 +121,6 @@ namespace real::detail {
       ++prefix_pc;
     }
 
-    // Exact literal fast-path hint: the collected prefix bytes are the entire
-    // match (no asserts appear after the first byte instr up to match; only
-    // saves may be crossed after the bytes). Trailing/inter asserts ($, \b after,
-    // etc) are post-filters on the byte candidate and must go through normal
-    // VM so they can reject bad cands and let search continue. Leading asserts
-    // (before any byte) are ok (next_candidate + replay will handle).
     if (hints.prefix_size > 0) {
       bool has_inter_or_trailing_assert {};
       bool seen_byte                    {};
@@ -163,30 +145,35 @@ namespace real::detail {
         }
       }
     }
+  }
 
-    // Possible first bytes: DFS over the epsilon closure of pc 0. Assertions
-    // are crossed conservatively (they constrain positions, not bytes). If
-    // `match` is reachable without consuming, an empty match is possible and
-    // no byte-based skipping is sound.
-    std::vector<bool>         visited(code.size(), false);
-    std::vector<std::int32_t> stack;
+  /*!
+   * \brief Computes the possible first-byte set by a DFS over the epsilon closure of pc 0.
+   *
+   * Assertions are crossed conservatively (they constrain positions, not bytes; a lookaround
+   * yields a sound SUPERSET so ⑤ never wrongly rejects a valid start). If `match` is reachable
+   * without consuming, an empty match is possible and no byte-based skipping is sound.
+   */
+  constexpr void compute_first_bytes(std::span<const instr>      code,
+                                     std::span<const char_class> classes,
+                                     pattern_hints&              hints)
+  {
+    std::vector<unsigned char> visited(code.size(), 0); // unsigned char, not vector<bool> (constexpr, faster)
+    std::vector<std::int32_t>  stack;
     stack.push_back(0);
     bool empty_match_possible {};
     while (!stack.empty()) {
       const std::int32_t current_pc {stack.back()};
       stack.pop_back();
-      if (visited[static_cast<std::size_t>(current_pc)]) {
+      if (visited[static_cast<std::size_t>(current_pc)] != 0) {
         continue;
       }
-      visited[static_cast<std::size_t>(current_pc)] = true;
+      visited[static_cast<std::size_t>(current_pc)] = 1;
       const instr& instruction {code[static_cast<std::size_t>(current_pc)]};
       switch (instruction.op) {
         case opcode::save:
         case opcode::assert_position:
         case opcode::assert_lookaround:
-          // Cross conservatively (an assertion constrains positions, not the byte here);
-          // for a lookaround this yields a sound SUPERSET of first bytes, so ⑤ never
-          // wrongly rejects a valid start.
           stack.push_back(current_pc + 1);
           break;
         case opcode::jump:
@@ -208,9 +195,21 @@ namespace real::detail {
       }
     }
     hints.first_bytes_valid = !empty_match_possible && !hints.first_bytes.empty();
+  }
 
+  /*!
+   * \brief Detects the whole-pattern fast-path shapes and sets their hint flags: `class+`,
+   *        fixed-shape straight runs, a single codepoint class (`.`/negated, optional `+`),
+   *        and an alternation of straight-line branches.
+   */
+  constexpr void detect_fast_shapes(std::span<const instr>      code,
+                                    std::span<const char_class> classes,
+                                    std::int32_t                cp_mark_ascii,
+                                    std::int32_t                cp_mark_offset,
+                                    pattern_hints&              hints)
+  {
     // "class+" shape: save 0, klass, split(back to the klass, exit),
-    // save 1, match — greedy only (the lazy variant has different
+    // save 1, match -- greedy only (the lazy variant has different
     // semantics) and no capture groups.
     if (code.size() == 5 && code[0].op == opcode::save && code[1].op == opcode::klass &&
         code[2].op == opcode::split && code[2].primary_target == 1 && code[2].secondary_target == 3 &&
@@ -293,6 +292,42 @@ namespace real::detail {
     if (is_fixed_alternation(code)) {
       hints.fixed_alternation = true;
     }
+  }
+
+  /*!
+   * \brief Walks a compiled program once to derive its search hints.
+   * \param[in] code           The instruction stream.
+   * \param[in] classes        The interned character classes referenced by \p code.
+   * \param[in] cp_mark_ascii  ASCII sub-class index of an emitted codepoint-class
+   *                           block (-1 = none), as recorded by `emit_codepoint_class`.
+   * \param[in] cp_mark_offset Program offset where that block starts (-1 = none); the
+   *                           whole-pattern codepoint fast path requires it to be 1.
+   * \return The \ref pattern_hints (anchoring, literal prefix, first-byte set,
+   *         and the `class+` / exact-literal fast-path flags).
+   */
+  constexpr pattern_hints analyze_program(std::span<const instr>      code,
+                                          std::span<const char_class> classes,
+                                          std::int32_t                cp_mark_ascii,
+                                          std::int32_t                cp_mark_offset)
+  {
+    pattern_hints hints;
+
+    // A lookaround forces the general Pike VM: no DFA, no fast path. Detected up front;
+    // the fast-path hints are cleared at the end so none can fire even partially.
+    for (const instr& in : code) {
+      if (in.op == opcode::assert_lookaround) {
+        hints.has_lookaround = true;
+        break;
+      }
+    }
+
+    extract_anchoring(code, hints);
+
+    extract_prefix(code, hints);
+
+    compute_first_bytes(code, classes, hints);
+
+    detect_fast_shapes(code, classes, cp_mark_ascii, cp_mark_offset, hints);
 
     // A lookaround program never takes a fast path or the DFA: the general VM must run so
     // the sub-VM can evaluate the assertion. Clear every fast-path hint (belt-and-suspenders
