@@ -29,7 +29,7 @@ CXXSTD       := -std=c++20
 INCLUDES     := -Iinclude
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp')
 
-.PHONY: all build test sanitize coverage coverage-build coverage-html \
+.PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
         lint misra fuzz doc doc-no-coverage format format-check full-local-gate clean \
         python python-test bench-python bench-fuzz bench-engines \
         version-check install uninstall release help
@@ -110,6 +110,17 @@ coverage: coverage-build
 	@grep -q "REAL dark-coverage theme" $(COV_DIR)/html/style.css 2>/dev/null || \
 	    cat docs/coverage-style.css >> $(COV_DIR)/html/style.css
 	@echo "HTML coverage report: $(COV_DIR)/html/index.html"
+
+# Minimum line coverage enforced by `coverage-check` (the CI gate). `make coverage` itself
+# stays advisory for local iteration; CI fails the build if a change drops below the floor.
+COV_FLOOR := 95.0
+
+coverage-check: coverage-build
+	@pct=$$($(LLVM_COV) report $(COV_DIR)/real_tests_bin -instr-profile=$(COV_DIR)/tests.profdata \
+	        | awk '$$1 == "TOTAL" { gsub(/%/, "", $$10); print $$10 }'); \
+	  echo "Line coverage: $$pct% (floor $(COV_FLOOR)%)"; \
+	  awk -v p="$$pct" -v f="$(COV_FLOOR)" 'BEGIN { exit !(p + 0 >= f + 0) }' || \
+	    { echo "FAIL: line coverage $$pct% is below the $(COV_FLOOR)% floor"; exit 1; }
 
 # Silent variant used by make doc: keeps the terminal focused on the doc output.
 coverage-html:

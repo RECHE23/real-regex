@@ -646,6 +646,20 @@ class TestParity(unittest.TestCase):
                 self.assertEqual(pm.lastgroup, rm.lastgroup)
                 self.assertEqual(pm.regs, rm.regs)
 
+    def test_lookaround_bytes_parity(self):
+        """Bounded, capture-free lookarounds on BYTES subjects match re — byte-mode alignment
+        (the lookbehind start scan does not skip continuation bytes)."""
+        for pattern, subject in [
+            (rb"(?<=ab)c", b"xabc"), (rb"(?<=ab)c", b"abxc"), (rb"\d+(?=px)", b"10px 20em"),
+            (rb"a(?!b)", b"ab ac ad"), (rb"(?<!\d)x", b"1x ax"), (rb"(?<=foo)bar", b"foobar xbar"),
+        ]:
+            with self.subTest(pattern=pattern):
+                rp, rr = real.compile(pattern), re.compile(pattern)
+                self.assertEqual(self.match_facts(rp.search(subject)),
+                                 self.match_facts(rr.search(subject)))
+                self.assertEqual([m.span() for m in rp.finditer(subject)],
+                                 [m.span() for m in rr.finditer(subject)])
+
     def test_escape_parity_per_char(self):
         """real.escape agrees with re.escape on every ASCII char — proving the
         CPython 3.7+ semantics (only the special set is escaped; punctuation such

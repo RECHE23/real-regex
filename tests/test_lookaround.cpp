@@ -169,3 +169,17 @@ TEST(lookbehind_variable_width_beyond_re)
   EXPECT_EQ(rx.search("xbbc")[0], "c"sv); // preceded by "bb"
   EXPECT(!rx.search("xbc"));              // preceded by a single 'b' — neither branch
 }
+
+TEST(lookaround_in_bytes_mode)
+{
+  using real::flags;
+  // Byte mode: the lookaround sub matches raw bytes, and the lookbehind start scan does NOT
+  // skip UTF-8 continuation bytes (the byte_mode short-circuit in lookbehind_matches).
+  EXPECT_EQ(real::regex("(?<=ab)c", flags::bytes).search("xabc")[0], "c"sv);
+  EXPECT(!real::regex("(?<=ab)c", flags::bytes).search("abxc"));            // exact-end-at-pos holds
+  EXPECT_EQ(real::regex("a(?!b)", flags::bytes).search("ab ax")[0], "a"sv); // negative lookahead
+  // é = 0xC3 0xA9: a lookbehind may start on the continuation byte 0xA9 (no alignment skip),
+  // so (?<=\xC3) holds right before it.
+  EXPECT(real::regex(R"((?<=\xC3)\xA9)", flags::bytes).search("é"sv));
+  EXPECT(!real::regex(R"((?<=\xC3)\xA9)", flags::bytes).search("a\xA9"sv)); // 0xA9 not preceded by 0xC3
+}

@@ -311,6 +311,24 @@ class TestCppIntegration(unittest.TestCase):
         self.assertEqual(cfg["cxx_standard"], "c++20")
 
 
+class TestPatternIntrospection(unittest.TestCase):
+    """Pattern.groupindex and Pattern.flags expose the compiled pattern's metadata."""
+
+    def test_groupindex(self):
+        import re
+        p = real.compile(r"(?P<year>\d{4})-(?P<month>\d{2})-(\d{2})")
+        self.assertEqual(dict(p.groupindex), {"year": 1, "month": 2})  # group 3 is unnamed
+        r = re.compile(r"(?P<year>\d{4})-(?P<month>\d{2})-(\d{2})", re.ASCII)
+        self.assertEqual(dict(p.groupindex), dict(r.groupindex))       # parity with re
+        self.assertEqual(dict(real.compile("abc").groupindex), {})
+
+    def test_flags_reflect_compile_arguments(self):
+        self.assertEqual(real.compile("x", real.I).flags & real.I, real.I)
+        both = real.M | real.S
+        self.assertEqual(real.compile("x", both).flags & both, both)
+        self.assertEqual(real.compile("x").flags & real.I, 0)
+
+
 class TestBackreferencesRejected(unittest.TestCase):
     """Backreferences are a documented limitation; the digit decoder must reject them with a
     clear error rather than silently mis-parsing (and never confuse them with octal escapes)."""

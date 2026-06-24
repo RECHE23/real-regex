@@ -77,6 +77,11 @@ _NONLOOP_QUANTS = ["", "?", "??"]
 _CONSUMING = [re.escape(c) for c in "abABC012_-"] + \
              [r"\d", r"\w", r"\s", ".", "[abc]", "[a-c]", "[^abc]", "[a-z0-9]"]
 _ANCHORS = ["^", "$", r"\b", r"\B", r"\A", r"\Z"]
+# Atoms allowed inside a (capture-free) lookaround sub-pattern: ASCII, single codepoint,
+# so REAL and re agree on the subjects generated here.
+_LA_ATOMS = [re.escape(c) for c in "abAB01_ "] + [r"\d", r"\w", r"\s", "[abc]", "[a-z]"]
+# Bounded quantifiers usable inside a lookahead sub (never *, +, {n,} -> unbounded).
+_LA_BOUNDED_QUANTS = ["", "", "?", "{2}", "{1,2}"]
 
 
 class PatternGen:
@@ -103,11 +108,58 @@ class PatternGen:
         # Shallow nesting keeps the worst-case backtracking re must do bounded
         # (it is ~n^k in the count k of nested quantifiers) so the differential
         # stays fast even on platforms without the per-case timeout.
-        if depth < 2 and r < 0.18:
+        if depth < 2 and r < 0.08:
+            return self._lookaround()  # zero-width; only ever gets a non-loop quant (see _element)
+        if depth < 2 and r < 0.24:
             return self._group(depth)
-        if r < 0.55:
+        if r < 0.36:
+            return self._octal_atom()
+        if r < 0.66:
             return re.escape(self.rng.choice(_LITERALS))
         return self.rng.choice(_CLASSES)
+
+    def _octal_atom(self):
+        """Return an octal escape (\\ooo) of an ASCII char in the alphabet.
+
+        Both engines decode \\ooo (value < 128) to that single byte, so it matches the
+        same character (and can actually fire against the generated subjects).
+
+        Returns:
+            str: An octal byte escape such as ``\\141``.
+        """
+        ch = self.rng.choice("abcABC012 _-")
+        return "\\" + format(ord(ch), "03o")
+
+    def _capture_free_sub(self, fixed_width):
+        """Return a short capture-free sub-pattern for a lookaround.
+
+        Args:
+            fixed_width (bool): True for a lookbehind (re requires a fixed width: no
+                quantifiers); False for a lookahead (bounded quantifiers allowed).
+
+        Returns:
+            str: A capture-free, ASCII, bounded sub-pattern.
+        """
+        parts = []
+        for _ in range(self.rng.randint(1, 3)):
+            atom = self.rng.choice(_LA_ATOMS)
+            if not fixed_width:
+                atom += self.rng.choice(_LA_BOUNDED_QUANTS)
+            parts.append(atom)
+        return "".join(parts)
+
+    def _lookaround(self):
+        """Return a bounded, capture-free lookaround.
+
+        Lookbehind sub-patterns are fixed-width (re's requirement) and lookahead
+        sub-patterns are bounded; both are capture-free, so REAL (whose lookaround sub
+        is capture-free) and re agree on the comparable facts.
+
+        Returns:
+            str: A lookaround such as ``(?=\\d{2})`` or ``(?<=ab)``.
+        """
+        kind = self.rng.choice(["(?=", "(?!", "(?<=", "(?<!"])
+        return kind + self._capture_free_sub(fixed_width=kind.startswith("(?<")) + ")"
 
     def _group(self, depth):
         """Return a capturing or non-capturing group.
@@ -193,6 +245,33 @@ def random_text(rng):
     return "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 10)))
 
 
+def random_template(rng, ngroups):
+    """Generate a replacement template: literals, group refs, octal escapes, ``\\g<0>``.
+
+    The octal escapes (``\\012`` etc.) are the case that silently mis-parsed before the
+    decoder fix; comparing real.sub against re.sub over them is exactly the closed gap.
+
+    Args:
+        rng (random.Random): Random state.
+        ngroups (int): Number of capturing groups (so a group reference stays valid).
+
+    Returns:
+        str: A replacement template string.
+    """
+    parts = []
+    for _ in range(rng.randint(0, 4)):
+        r = rng.random()
+        if r < 0.4:
+            parts.append(rng.choice("xy-_: "))
+        elif r < 0.6 and ngroups > 0:
+            parts.append("\\" + str(rng.randint(1, ngroups)))                  # group ref \1..\ng
+        elif r < 0.8:
+            parts.append("\\" + format(ord(rng.choice("abAB01")), "03o"))      # octal escape \ooo
+        else:
+            parts.append(r"\g<0>")                                             # the whole match
+    return "".join(parts)
+
+
 def match_facts(m, ngroups):
     """Comparable tuple: overall span + every group's span (None if unset).
 
@@ -247,23 +326,41 @@ class TestDifferentialFuzz(unittest.TestCase):
                 if not text:
                     continue  # empty text + zero-width anchors/\b/\B/ lazy empty matches are notoriously variable across engines and Python versions for some patterns; skip to keep differential strict on comparable cases
                 ctx = f"pattern={pattern!r} text={text!r} flags={real_flags}"
+                pos = rng.randint(0, len(text))
+                endpos = rng.randint(pos, len(text) + 2)  # may exceed len -> clamped, like re
                 try:
                     with deadline():
                         facts = (match_facts(xp.search(text), ng),
                                  match_facts(xp.match(text), ng),
                                  match_facts(xp.fullmatch(text), ng),
                                  [m.span() for m in xp.finditer(text)],
-                                 xp.findall(text))
+                                 xp.findall(text),
+                                 match_facts(xp.search(text, pos, endpos), ng),   # region
+                                 match_facts(xp.match(text, pos, endpos), ng))
                         ref = (match_facts(rp.search(text), ng),
                                match_facts(rp.match(text), ng),
                                match_facts(rp.fullmatch(text), ng),
                                [m.span() for m in rp.finditer(text)],
-                               rp.findall(text))
+                               rp.findall(text),
+                               match_facts(rp.search(text, pos, endpos), ng),
+                               match_facts(rp.match(text, pos, endpos), ng))
                 except _Timeout:
                     skipped += 1  # re could not keep up — a perf case, not a bug
                     continue
                 self.assertEqual(facts, ref, ctx)
                 checked += 1
+                # sub() with octal / group-ref templates — the axis that would have caught
+                # the \012 mis-parse. Skip when either side rejects the template by design.
+                template = random_template(rng, ng)
+                try:
+                    with deadline():
+                        real_sub, re_sub = xp.sub(template, text), rp.sub(template, text)
+                except _Timeout:
+                    skipped += 1
+                    continue
+                except (real.error, re.error):
+                    continue  # one side rejects the template (e.g. a backref); not comparable
+                self.assertEqual(real_sub, re_sub, ctx + f" template={template!r}")
         # Make sure the generator actually produced comparable work.
         self.assertGreater(checked, ITERS // 2)
 
@@ -296,6 +393,40 @@ class TestDifferentialFuzz(unittest.TestCase):
                                  [m.span() for m in xp.finditer(text)])
                         ref = (match_facts(rp.search(text), ng),
                                [m.span() for m in rp.finditer(text)])
+                except _Timeout:
+                    continue
+                self.assertEqual(facts, ref, ctx)
+                checked += 1
+        self.assertGreater(checked, 0)
+
+    def test_random_bytes_match_re(self):
+        """Random patterns on BYTES subjects match re — byte mode (raw bytes, no UTF-8),
+        exercising lookarounds whose codepoint alignment differs from the str path."""
+        rng = random.Random(SEED ^ 0xB17E5)
+        checked = 0
+        for _ in range(ITERS // 2):
+            pattern = PatternGen(rng).pattern()  # the generator is ASCII-only -> a valid bytes pattern
+            try:
+                rp = re.compile(pattern.encode())
+            except re.error:
+                continue
+            try:
+                xp = real.compile(pattern.encode())
+            except real.error:
+                continue  # REAL may reject a narrower grammar; only agreement is required
+            ng = rp.groups
+            for _ in range(2):
+                text = bytes(rng.choice(b"abcABC012 _-\n\t\x80\xff")
+                             for _ in range(rng.randint(1, 10)))
+                ctx = f"bytes pattern={pattern!r} text={text!r}"
+                try:
+                    with deadline():
+                        facts = (match_facts(xp.search(text), ng),
+                                 [m.span() for m in xp.finditer(text)],
+                                 xp.findall(text))
+                        ref = (match_facts(rp.search(text), ng),
+                               [m.span() for m in rp.finditer(text)],
+                               rp.findall(text))
                 except _Timeout:
                     continue
                 self.assertEqual(facts, ref, ctx)

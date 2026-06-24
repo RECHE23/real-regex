@@ -72,6 +72,16 @@ jobs:
       - name: Robustness fuzzing smoke run (libFuzzer + ASan/UBSan)
         run: make fuzz FUZZ_TIME=60 CXX=clang++
 
+  # Coverage gate: fail the build if line coverage drops below the floor (was advisory).
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install clang + llvm
+        run: sudo apt-get update && sudo apt-get install -y clang llvm
+      - name: Coverage gate (line >= floor)
+        run: make coverage-check
+
   # Portable build entry: Windows/MSVC and native ARM, through CMake.
   cmake:
     strategy:
