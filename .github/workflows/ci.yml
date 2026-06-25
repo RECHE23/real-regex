@@ -51,10 +51,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          path: real-v1
+      # The test harness (framework.hpp) is fetched from SciForge as a sibling, so
+      # the Makefile's default resolution (../sciforge-v1/include) finds it.
+      - uses: actions/checkout@v6
+        with:
+          repository: RECHE23/sciforge
+          ref: v2026.6.0
+          path: sciforge-v1
       - name: Test (runtime + constexpr static_assert)
-        run: make test CXX=${{ matrix.cxx }}
+        run: make -C real-v1 test CXX=${{ matrix.cxx }}
       - name: Sanitizers (ASan + UBSan)
-        run: make sanitize CXX=${{ matrix.cxx }}
+        run: make -C real-v1 sanitize CXX=${{ matrix.cxx }}
 
   misra:
     runs-on: ubuntu-latest
@@ -77,10 +86,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          path: real-v1
+      - uses: actions/checkout@v6
+        with:
+          repository: RECHE23/sciforge
+          ref: v2026.6.0
+          path: sciforge-v1
       - name: Install clang + llvm
         run: sudo apt-get update && sudo apt-get install -y clang llvm
       - name: Coverage gate (line >= floor)
-        run: make coverage-check
+        run: make -C real-v1 coverage-check
 
   # Portable build entry: Windows/MSVC and native ARM, through CMake.
   cmake:
@@ -94,6 +110,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          path: real-v1
+      - uses: actions/checkout@v6
+        with:
+          repository: RECHE23/sciforge
+          ref: v2026.6.0
+          path: sciforge-v1
       # One bash script across all three OSes (bash ships on the Windows runner);
       # --config/-C Release cover the multi-config MSVC generator and no-op on the
       # single-config Linux ones. The final stage proves the installed config
@@ -103,13 +126,13 @@ jobs:
         run: |
           set -e
           STAGE="${{ github.workspace }}/_stage"
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --config Release
-          ctest --test-dir build -C Release --output-on-failure
-          cmake --install build --config Release --prefix "$STAGE"
-          cmake -S cmake/smoke -B build-smoke -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$STAGE"
-          cmake --build build-smoke --config Release
-          ctest --test-dir build-smoke -C Release --output-on-failure
+          cmake -S real-v1 -B real-v1/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build real-v1/build --config Release
+          ctest --test-dir real-v1/build -C Release --output-on-failure
+          cmake --install real-v1/build --config Release --prefix "$STAGE"
+          cmake -S real-v1/cmake/smoke -B real-v1/build-smoke -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$STAGE"
+          cmake --build real-v1/build-smoke --config Release
+          ctest --test-dir real-v1/build-smoke -C Release --output-on-failure
 
   python:
     strategy:
