@@ -325,7 +325,7 @@ namespace real::detail {
      */
     constexpr std::int32_t parse_alternation(ast& out)
     {
-      std::int32_t first {parse_sequence(out)};
+      const std::int32_t first {parse_sequence(out)};
       if (eof() || peek() != '|') {
         return first;
       }

@@ -40,3 +40,9 @@ in a header-only constexpr regex engine; none hides a defect.
 | `misc-no-recursion` | The descent parser is intentionally recursive (depth is bounded and guarded). |
 | `bugprone-easily-swappable-parameters` | Some public signatures take adjacent same-type parameters (e.g. `pos`, `endpos`) to match the `re` API. |
 | `cppcoreguidelines-avoid-const-or-ref-data-members` | A few helper types hold a reference/const member by design and are non-assignable. |
+| `cert-dcl21-cpp` | Obsolete "postfix `operator++` should return a const object" rule — returning a const value disables move semantics and contradicts standard-iterator conventions; the check was dropped in newer clang-tidy. |
+
+> The profile is run with different clang-tidy versions locally (Homebrew) and in
+> CI (distro `apt`); check sets differ slightly between versions. The disables and
+> fixes above keep the gate green on both. A future step pins one clang-tidy
+> version (owned by SciForge) so the gate is fully reproducible.

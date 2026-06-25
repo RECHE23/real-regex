@@ -351,7 +351,7 @@ namespace real::detail {
           found = found == -1 ? static_cast<int>(byte) : -2;
         }
       }
-      hints.single_first = found >= 0 ? static_cast<std::int16_t>(found) : -1;
+      hints.single_first = found >= 0 ? static_cast<std::int16_t>(found) : std::int16_t {-1};
     }
     return hints;
   }
