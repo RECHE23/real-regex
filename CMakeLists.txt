@@ -84,7 +84,7 @@ set(SCIFORGE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../sciforge/include"
     CACHE PATH "Path to SciForge's include directory (maintainer's default; override for your layout)")
 set(SCIFORGE_REPO "${CMAKE_CURRENT_SOURCE_DIR}/../sciforge"
     CACHE STRING "SciForge git repository (path or URL) when fetching")
-set(SCIFORGE_TAG "v2026.6.2" CACHE STRING "SciForge git tag when fetching")
+set(SCIFORGE_TAG "v2026.6.4" CACHE STRING "SciForge git tag when fetching")
 
 if(REAL_FETCH_SCIFORGE)
     include(FetchContent)

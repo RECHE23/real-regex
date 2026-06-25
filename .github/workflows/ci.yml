@@ -12,25 +12,29 @@ jobs:
   # config. REAL has no dependency siblings; its one MISRA deviation (the SBO union)
   # lives in its Makefile's --checks, so nothing is passed here.
   lint:
-    uses: RECHE23/sciforge/.github/workflows/lint-cpp.yml@v2026.6.2
+    uses: RECHE23/sciforge/.github/workflows/lint-cpp.yml@v2026.6.4
     with:
       deps: '[]'
-      sciforge-ref: v2026.6.2
+      sciforge-ref: v2026.6.4
       runner-mode: hosted
 
-  # POSIX developer workflow: the Makefile, both compilers, plus sanitizers.
-  posix:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            cxx: g++-14
-          - os: ubuntu-latest
-            cxx: clang++
-          - os: macos-latest
-            cxx: clang++
-    runs-on: ${{ matrix.os }}
+  # POSIX + CMake build via SciForge's reusable build spine: the Makefile under
+  # g++-14 + clang++ with sanitizers, and the CMake configure/build/test/install +
+  # find_package smoke across linux-x64, Windows/MSVC and native ARM. REAL is a leaf
+  # (no dependency siblings) and public (hosted; no self-hosted runner).
+  build:
+    uses: RECHE23/sciforge/.github/workflows/build-cpp.yml@v2026.6.4
+    with:
+      deps: '[]'
+      sciforge-ref: v2026.6.4
+      runner-mode: hosted
+
+  # macOS posix leg. REAL is public, so — unlike the private repos, where macOS is
+  # the maintainer's local gate and CI deliberately omits it — contributor PRs are
+  # covered on macOS here. build-cpp's posix is Linux-only, so this keeps the macOS
+  # coverage as a standalone leg (test + sanitizers under Apple clang).
+  posix-macos:
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -40,12 +44,12 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: RECHE23/sciforge
-          ref: v2026.6.2
+          ref: v2026.6.4
           path: sciforge
       - name: Test (runtime + constexpr static_assert)
-        run: make -C real-regex test CXX=${{ matrix.cxx }}
+        run: make -C real-regex test CXX=clang++
       - name: Sanitizers (ASan + UBSan)
-        run: make -C real-regex sanitize CXX=${{ matrix.cxx }}
+        run: make -C real-regex sanitize CXX=clang++
 
   fuzz:
     runs-on: ubuntu-latest
@@ -64,48 +68,12 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: RECHE23/sciforge
-          ref: v2026.6.2
+          ref: v2026.6.4
           path: sciforge
       - name: Install clang + llvm
         run: sudo apt-get update && sudo apt-get install -y clang llvm
       - name: Coverage gate (line >= floor)
         run: make -C real-regex coverage-check
-
-  # Portable build entry: Windows/MSVC and native ARM, through CMake.
-  cmake:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest   # MSVC
-          - os: ubuntu-24.04-arm  # native AArch64
-          - os: ubuntu-latest     # x86-64 GCC, sanity for the CMake path
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          path: real-regex
-      - uses: actions/checkout@v6
-        with:
-          repository: RECHE23/sciforge
-          ref: v2026.6.2
-          path: sciforge
-      # One bash script across all three OSes (bash ships on the Windows runner);
-      # --config/-C Release cover the multi-config MSVC generator and no-op on the
-      # single-config Linux ones. The final stage proves the installed config
-      # package: a standalone project finds REAL purely through find_package.
-      - name: Configure, build, test, install and find_package smoke
-        shell: bash
-        run: |
-          set -e
-          STAGE="${{ github.workspace }}/_stage"
-          cmake -S real-regex -B real-regex/build -DCMAKE_BUILD_TYPE=Release
-          cmake --build real-regex/build --config Release
-          ctest --test-dir real-regex/build -C Release --output-on-failure
-          cmake --install real-regex/build --config Release --prefix "$STAGE"
-          cmake -S real-regex/cmake/smoke -B real-regex/build-smoke -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$STAGE"
-          cmake --build real-regex/build-smoke --config Release
-          ctest --test-dir real-regex/build-smoke -C Release --output-on-failure
 
   python:
     strategy:
