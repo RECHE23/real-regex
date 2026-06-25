@@ -31,6 +31,9 @@ INCLUDES     := -Iinclude
 # as <sciforge/test/framework.hpp>. clang-tidy (make lint) needs that path too.
 # Sibling checkout by default — matches the CMake SCIFORGE_INCLUDE_DIR default.
 SCIFORGE_INCLUDE ?= ../sciforge/include
+# SciForge also owns the shared lint config (the MISRA base + uncrustify.cfg), in
+# its lint/ dir. Same sibling default; CI checks SciForge out alongside as ../sciforge.
+SCIFORGE_LINT ?= ../sciforge/lint
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
@@ -148,10 +151,15 @@ lint:
 # (otherwise bugprone-exception-escape fires on the scaffolding, not the library).
 # NB: no --line-filter — it suppresses every diagnostic outside the TU file, which
 # silently hides ALL header findings (the gate was vacant before this).
+# The MISRA profile is the shared base owned by SciForge (lint/clang-tidy-misra);
+# REAL's one extra deviation — the SBO union in storage.hpp — is appended on the
+# command line with --checks (which appends to the config's Checks), not by forking
+# the shared file. See MISRA.md.
 misra:
 	mkdir -p $(BUILD)
 	printf '#include <real/real.hpp>\nint main(){ try { const real::regex r("a"); return r.search("a") ? 0 : 1; } catch (...) { return 2; } }\n' > $(BUILD)/misra_tu.cpp
-	clang-tidy --config-file=.clang-tidy-misra \
+	clang-tidy --config-file=$(SCIFORGE_LINT)/clang-tidy-misra \
+	    --checks='-cppcoreguidelines-pro-type-union-access' \
 	    --header-filter='include/real/.*' \
 	    $(BUILD)/misra_tu.cpp -- $(CXXSTD) $(INCLUDES)
 
@@ -183,10 +191,10 @@ doc-no-coverage:
 	@echo "API reference: $(BUILD)/doc/html/index.html"
 
 format:
-	uncrustify -c uncrustify.cfg --replace --no-backup $(FORMAT_FILES)
+	uncrustify -c $(SCIFORGE_LINT)/uncrustify.cfg --replace --no-backup $(FORMAT_FILES)
 
 format-check:
-	uncrustify -c uncrustify.cfg --check $(FORMAT_FILES)
+	uncrustify -c $(SCIFORGE_LINT)/uncrustify.cfg --check $(FORMAT_FILES)
 
 # --- Python binding -------------------------------------------------------
 
