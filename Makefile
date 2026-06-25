@@ -30,7 +30,7 @@ INCLUDES     := -Iinclude
 # The test harness (framework.hpp) is owned by SciForge; the test TUs include it
 # as <sciforge/test/framework.hpp>. clang-tidy (make lint) needs that path too.
 # Sibling checkout by default — matches the CMake SCIFORGE_INCLUDE_DIR default.
-SCIFORGE_INCLUDE ?= ../sciforge-v1/include
+SCIFORGE_INCLUDE ?= ../sciforge/include
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \

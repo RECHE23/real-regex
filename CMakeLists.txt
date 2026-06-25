@@ -75,14 +75,14 @@ enable_testing()
 # infrastructure repository — and is never carried as a local copy. Resolution
 # mirrors how REAL's own consumers find REAL, two modes:
 #  * Default (local development): a sibling checkout, used live. The maintainer's
-#    layout uses ../sciforge-v1; override with -DSCIFORGE_INCLUDE_DIR=/path.
+#    layout uses ../sciforge; override with -DSCIFORGE_INCLUDE_DIR=/path.
 #  * CI / reproducible builds: -DREAL_FETCH_SCIFORGE=ON fetches SciForge with
 #    FetchContent from a configurable repository + tag. Prepared but inert by
 #    default; once SciForge publishes a CalVer tag, pin SCIFORGE_TAG to it.
 option(REAL_FETCH_SCIFORGE "Fetch SciForge (test harness) with FetchContent" OFF)
-set(SCIFORGE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../sciforge-v1/include"
+set(SCIFORGE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../sciforge/include"
     CACHE PATH "Path to SciForge's include directory (maintainer's default; override for your layout)")
-set(SCIFORGE_REPO "${CMAKE_CURRENT_SOURCE_DIR}/../sciforge-v1"
+set(SCIFORGE_REPO "${CMAKE_CURRENT_SOURCE_DIR}/../sciforge"
     CACHE STRING "SciForge git repository (path or URL) when fetching")
 set(SCIFORGE_TAG "v2026.6.0" CACHE STRING "SciForge git tag when fetching")
 

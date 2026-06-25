@@ -24,20 +24,20 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          path: real-v1
+          path: real-regex
       - uses: actions/checkout@v6
         with:
           repository: RECHE23/sciforge
           ref: v2026.6.0
-          path: sciforge-v1
+          path: sciforge
       - name: Install Doxygen, Graphviz, Clang and LLVM coverage tools
         run: sudo apt-get update && sudo apt-get install -y doxygen graphviz clang llvm
       - name: Generate the API reference
-        run: make -C real-v1 doc
+        run: make -C real-regex doc
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: real-v1/build/doc/html
+          path: real-regex/build/doc/html
 
   deploy:
     needs: build
