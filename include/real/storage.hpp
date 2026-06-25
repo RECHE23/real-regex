@@ -236,6 +236,16 @@ namespace real {
         {}                  //!< Starts in the inline state.
 
         constexpr ~Storage() {} //!< Destruction handled by \ref cleanup.
+
+        // Rule of Five, made explicit. The union holds a possibly non-trivial T, so
+        // copy/move would be implicitly deleted anyway; small_vec manages copy, move
+        // and element lifetimes itself (is_heap_-aware) and never copies Storage by
+        // value. Declaring these deleted is also a safety guard: a defaulted copy
+        // would byte-copy the union and inherit the wrong active member (double-free).
+        Storage(const Storage&)             = delete;
+        Storage& operator=(const Storage&)  = delete;
+        Storage(Storage &&)                 = delete;
+        Storage& operator=(Storage&&)       = delete;
       } storage_ {};
 
       /*!
@@ -243,7 +253,7 @@ namespace real {
        */
       [[nodiscard]] constexpr T* inline_data() noexcept
       {
-        return storage_.inline_buffer;
+        return &storage_.inline_buffer[0];
       }
 
       /*!
@@ -251,7 +261,7 @@ namespace real {
        */
       [[nodiscard]] constexpr const T* inline_data() const noexcept
       {
-        return storage_.inline_buffer;
+        return &storage_.inline_buffer[0];
       }
 
       /*!
@@ -324,8 +334,8 @@ namespace real {
        */
       void extend_capacity()
       {
-        std::size_t current {capacity_};
-        std::size_t new_cap {(current > (std::size_t)-1 / 2) ? (std::size_t)-1 : current * 2};
+        const std::size_t current {capacity_};
+        const std::size_t new_cap {(current > (std::size_t)-1 / 2) ? (std::size_t)-1 : current * 2};
         reserve(new_cap);
       }
 
@@ -489,8 +499,8 @@ namespace real {
         if (std::is_constant_evaluated()) {
           throw std::bad_alloc {};
         }
-        T* new_data {static_cast<T*>(::operator new(new_capacity * sizeof(T)))};
-        T* old_data {is_heap_ ? storage_.heap_ptr : inline_data()};
+        T      * new_data {static_cast<T*>(::operator new(new_capacity * sizeof(T)))};
+        const T* old_data {is_heap_ ? storage_.heap_ptr : inline_data()};
         transfer_range<false>(old_data, size_, new_data);
         if (is_heap_) {
           ::operator delete(storage_.heap_ptr);

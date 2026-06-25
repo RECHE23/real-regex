@@ -141,13 +141,18 @@ coverage-html:
 lint:
 	@ls tests/*.cpp | xargs -P $(JOBS) -I{} clang-tidy {} -- $(CXXSTD) $(INCLUDES) -I$(SCIFORGE_INCLUDE)
 
-# Analyzes the library through a one-line translation unit; the line filter
-# restricts diagnostics to the included headers.
+# Analyzes the library's own headers through a synthetic translation unit that
+# includes the umbrella header and exercises the engine (so templates get
+# instantiated and checked). --header-filter scopes diagnostics to include/real/;
+# the TU's body is wrapped in try/catch so main cannot let an exception escape
+# (otherwise bugprone-exception-escape fires on the scaffolding, not the library).
+# NB: no --line-filter — it suppresses every diagnostic outside the TU file, which
+# silently hides ALL header findings (the gate was vacant before this).
 misra:
 	mkdir -p $(BUILD)
-	printf '#include <real/real.hpp>\nint main(){ const real::regex r("a"); return r.search("a") ? 0 : 1; }\n' > $(BUILD)/misra_tu.cpp
+	printf '#include <real/real.hpp>\nint main(){ try { const real::regex r("a"); return r.search("a") ? 0 : 1; } catch (...) { return 2; } }\n' > $(BUILD)/misra_tu.cpp
 	clang-tidy --config-file=.clang-tidy-misra \
-	    --line-filter='[{"name":"misra_tu.cpp","lines":[[1,1]]}]' \
+	    --header-filter='include/real/.*' \
 	    $(BUILD)/misra_tu.cpp -- $(CXXSTD) $(INCLUDES)
 
 # libFuzzer is a Clang feature; this target always uses Clang regardless of CXX.
