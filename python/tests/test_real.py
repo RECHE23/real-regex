@@ -293,35 +293,67 @@ class TestWordEdgeAnchors(unittest.TestCase):
         self.assertEqual(real.search(r"\>", "abc").span(), (3, 3))
 
 
-class TestBoundaryOnEmpty(unittest.TestCase):
-    r"""\b and \B on an empty string / empty search region (the modern semantics).
+class TestIntentionalDivergences(unittest.TestCase):
+    r"""Every intentional divergence from Python re, pinned as a real-only assertion.
 
-    By definition an empty string contains no word boundary, so \B (NOT a word
-    boundary) matches at position 0 while \b does not. REAL implements this
-    by-definition behaviour — which is also Python re's behaviour since 3.11.
-    Python re < 3.11 has a pre-3.11 quirk (\B on the empty string returns no
-    match), so the differential fuzzer cannot use re as an oracle here and skips
-    the empty region (endpos == pos). These assertions pin REAL's desired
-    behaviour directly, independent of the running Python's re version.
+    These lock REAL's contract independently of the running re version; the rationale
+    for each is in the "Differences from Python re" documentation page (docs/divergences.dox).
     """
 
-    def test_capital_b_matches_empty_string(self):
-        r"""\B matches the empty string at (0, 0): no boundary exists to negate."""
+    def test_character_classes_are_ascii_only(self):
+        # A non-ASCII class member is rejected -- the guarantee that every match is
+        # codepoint-aligned. re would accept all of these.
+        for pattern in [r"[é]", r"[\u00e9]", r"[à-ÿ]"]:
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(real.error):
+                    real.compile(pattern)
+
+    def test_icase_folds_ascii_only(self):
+        # ASCII letters fold under I; bytes >= 0x80 (é) do not, so é != É -- unlike re's
+        # Unicode case folding.
+        self.assertIsNotNone(real.compile("a", real.I).fullmatch("A"))
+        self.assertIsNotNone(real.compile(r"é", real.I).fullmatch("é"))
+        self.assertIsNone(real.compile(r"é", real.I).fullmatch("É"))
+
+    def test_hex_escape_is_byte_level(self):
+        # \xHH for HH >= 0x80 matches the raw byte, not chr(HH): re str \xe9 matches U+00E9 (é),
+        # REAL \xe9 matches the single byte 0xE9 (which a well-formed str's UTF-8 of é never is).
+        self.assertIsNotNone(real.compile(rb"\xe9").fullmatch(b"\xe9"))
+        self.assertIsNone(real.compile(r"\xe9").search("é"))
+
+    def test_word_boundary_on_empty_is_modern(self):
+        # \B matches the empty string/region (no boundary to negate); \b does not. REAL's
+        # by-definition behaviour == re >= 3.11 (re < 3.11 had the opposite quirk for \B).
         self.assertEqual(real.search(r"\B", "").span(), (0, 0))
-
-    def test_small_b_does_not_match_empty_string(self):
-        r"""\b does not match the empty string: there is no word boundary."""
-        self.assertIsNone(real.search(r"\b", ""))
-
-    def test_capital_b_matches_empty_region(self):
-        r"""\B matches inside an empty region (endpos == pos truncates to empty)."""
         self.assertEqual(real.compile(r"\B").search("abc", 0, 0).span(), (0, 0))
-        # The exact pattern/region the CI differential surfaced on Python 3.10.
         self.assertEqual(real.compile(r"2*C*\B").search("c20", 0, 0).span(), (0, 0))
-
-    def test_small_b_does_not_match_empty_region(self):
-        r"""\b does not match inside an empty region (endpos == pos)."""
+        self.assertIsNone(real.search(r"\b", ""))
         self.assertIsNone(real.compile(r"\b").search("abc", 0, 0))
+
+    def test_nullable_loop_keeps_last_nonempty_iteration(self):
+        # (a*)* on "aa": REAL (like Perl/PCRE, which forbid repeating an empty match) reports
+        # the last NON-empty iteration for group 1 ("aa"); re reports the final empty one ("").
+        # Group 0 is identical in both.
+        m = real.fullmatch(r"(a*)*", "aa")
+        self.assertEqual(m.group(0), "aa")
+        self.assertEqual(m.group(1), "aa")
+
+    def test_rejected_by_design(self):
+        # Each rejected for a documented reason (see the divergences page): backreferences
+        # would break linearity; \N{} / \p{} need megabytes of Unicode tables; conditional
+        # groups are non-regular.
+        for pattern in [r"(a)\1", r"(?P=name)", r"\N{BULLET}", r"(?(1)a|b)", r"\p{L}"]:
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(real.error):
+                    real.compile(pattern)
+
+    def test_lookbehind_variable_width_accepted(self):
+        # A bounded variable-width lookbehind is ACCEPTED -- beyond re/PCRE, which require a
+        # fixed width.
+        import re as _re
+        with self.assertRaises(_re.error):
+            _re.compile(r"(?<=a|bb)c")
+        self.assertEqual(real.compile(r"(?<=a|bb)c").search("xbbc").group(), "c")
 
 
 class TestCppIntegration(unittest.TestCase):

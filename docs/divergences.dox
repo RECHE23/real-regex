@@ -1,0 +1,65 @@
+/*!
+\page divergences Differences from Python re
+
+REAL targets parity with Python's `re`, and a randomized differential fuzzer plus a
+large parity corpus enforce it. A handful of behaviours diverge **on purpose**; each is
+listed here with its rationale, and each is pinned by a direct, version-independent
+assertion in `TestIntentionalDivergences` (python/tests/test_real.py) so the contract
+cannot drift silently.
+
+\tableofcontents
+
+\section div_ascii ASCII-only character classes
+
+Character classes are ASCII-only: a non-ASCII member such as `[é]` or `[é]` is a
+`real::regex_error`, where `re` would accept it. This is what guarantees that every
+construct consumes whole codepoints, so a match boundary never splits a UTF-8 sequence.
+Negated classes and `.` still match *any* non-ASCII codepoint — only explicit non-ASCII
+*members* are rejected.
+
+\section div_icase Case folding is ASCII-only
+
+Under `IGNORECASE`, REAL folds ASCII letters only (`a` matches `A`). Bytes ≥ 0x80 are
+never folded, so `é` (é) does **not** match `É`, unlike `re`'s Unicode case folding.
+This follows directly from the ASCII-only class policy.
+
+\section div_hex `\xHH` (HH ≥ 0x80) is byte-level
+
+`\xHH` matches the raw byte `0xHH`, not the codepoint `chr(HH)`. On a str pattern `re`
+reads `\xe9` as U+00E9 (é); REAL reads it as the single byte `0xE9` — which a well-formed
+str's UTF-8 of é (`C3 A9`) never contains. Use `é` for the codepoint.
+
+\section div_boundary `\b` / `\B` on an empty string or region
+
+By definition an empty string has no word boundary, so `\B` (not-a-boundary) matches at
+position 0 while `\b` does not. REAL implements this by-definition behaviour, which is
+also `re`'s since Python 3.11 (`re` < 3.11 had the opposite quirk for `\B` on the empty
+string). The differential fuzzer therefore cannot use `re` as an oracle on an empty
+region and skips it; the assertions pin REAL's behaviour directly.
+
+\section div_nullable Capture of a nullable loop's final iteration
+
+For a nullable loop such as `(a*)*` on `"aa"`, REAL reports the last **non-empty**
+iteration for group 1 (`"aa"`) — like Perl and PCRE, which forbid repeating an empty
+match — whereas `re` reports the final **empty** iteration (`""`). Group 0 is identical
+in both.
+
+\section div_rejected Rejected by design
+
+Each of these raises a clear `real::regex_error`, for a reason worth keeping:
+
+- **Backreferences** (`(a)\1`, `(?P=name)`) — a backreference makes the language
+  non-regular; supporting it would forfeit the linear-time, ReDoS-safe guarantee that is
+  REAL's reason to exist.
+- **Named Unicode escapes** `\N{...}` and **Unicode property classes** `\p{...}` — both
+  need megabytes of Unicode tables, which would break the zero-dependency, one-include
+  design. (Unicode property classes are a candidate for a separate opt-in header, not a
+  core feature, and are not in standard `re` either.)
+- **Conditional groups** `(?(id)yes|no)` — non-regular control flow.
+
+\section div_lookbehind Variable-width lookbehind (a capability beyond re)
+
+REAL accepts any **bounded** lookbehind, including variable-width alternations such as
+`(?<=a|bb)`, which `re` and PCRE reject as non-fixed-width. The bound keeps the scan
+linear; see \ref design for how the lookbehind sub-VM works.
+*/

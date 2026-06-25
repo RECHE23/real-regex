@@ -73,8 +73,10 @@ namespace real {
      * \brief Fixed-capacity vector backed by an inline array (no heap).
      *
      * The subset of `std::vector` the Pike VM uses, for the static storage mode.
-     * Overflow cannot happen for the engine's own containers (capacities are
-     * derived bounds) but is checked defensively.
+     * Overflow cannot happen for the engine's own containers: `static_storage` sizes each
+     * one exactly via its measure pass, so the `length_error` guards are an unreachable
+     * structural safety net — kept deliberately, and never hit at run time (hence not
+     * covered by the runtime coverage report).
      *
      * \tparam T   Element type.
      * \tparam Cap Inline capacity.
@@ -270,6 +272,8 @@ namespace real {
             return;
           }
         }
+        // Element-wise transfer: the constexpr path, and the run-time path for a
+        // non-trivially-copyable T (the VM's POD element types take the memcpy above).
         for (std::size_t i = 0; i < count; ++i) {
           if constexpr (Move) {
             std::construct_at(&dest[i], std::move(src[i]));
@@ -680,6 +684,10 @@ namespace real {
 
       /*!
        * \brief Returns the freshly built program (used for both measuring and filling).
+       *
+       * Runs only at compile time (a `static_regex` instantiation), so it is invisible to the
+       * runtime coverage report; it is exercised by the constexpr `static_assert`s in
+       * tests/test_static.cpp and tests/test_constexpr.cpp.
        */
       static constexpr dynamic_program build()
       {

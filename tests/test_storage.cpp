@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
 #include "framework.hpp"
@@ -219,4 +220,50 @@ TEST(many_capturing_groups_exceed_255_slots_all_captured)
   EXPECT_EQ(match.start(1), 0U);
   EXPECT_EQ(match[group_count][0], text[static_cast<std::size_t>(group_count - 1)]);
   EXPECT_EQ(match.end(group_count), static_cast<std::size_t>(group_count));
+}
+
+TEST(small_vec_transfer_non_trivially_copyable)
+{
+  // small_vec::transfer_range has a memcpy fast path for trivially-copyable elements (the
+  // only kind the VM uses) and an element-wise construct_at loop otherwise. This pins the
+  // loop at run time with a type that is non-trivially-copyable (a user-provided copy
+  // constructor) yet trivially destructible (so it satisfies small_vec's contract).
+  struct boxed
+  {
+    int v {};
+    constexpr boxed() = default;
+    constexpr explicit boxed(int value) : v(value)
+    {}
+    // Deliberately user-provided (NOT '= default'): that is exactly what makes boxed
+    // non-trivially-copyable, which forces transfer_range's element-wise loop instead of
+    // its memcpy fast path. Defaulting it (as the lint suggests) would defeat the test.
+    // NOLINTNEXTLINE(modernize-use-equals-default)
+    constexpr boxed(const boxed& other) : v(other.v)
+    {}
+    constexpr boxed& operator=(const boxed&) = default;
+  };
+  static_assert(std::is_trivially_destructible_v<boxed>);
+  static_assert(!std::is_trivially_copyable_v<boxed>);
+
+  // Grow past the inline capacity: spill then regrow, copying elements each time.
+  real::detail::small_vec<boxed, 2> grown;
+  for (int i = 0; i < 8; ++i) {
+    grown.push_back(boxed(i));
+  }
+  EXPECT_EQ(grown.size(), 8U);
+  EXPECT_EQ(grown[7].v, 7);
+
+  // Copy-construct a spilled vector (transfer_range<false> over the heap block).
+  auto copied = grown;
+  EXPECT_EQ(copied.size(), 8U);
+  EXPECT_EQ(copied[0].v, 0);
+  EXPECT_EQ(copied[7].v, 7);
+
+  // Move-construct an inline (not spilled) vector (transfer_inline_from<true> -> Move branch).
+  real::detail::small_vec<boxed, 2> inline_one;
+  inline_one.push_back(boxed(5));
+  inline_one.push_back(boxed(6));
+  auto moved = std::move(inline_one);
+  EXPECT_EQ(moved.size(), 2U);
+  EXPECT_EQ(moved[1].v, 6);
 }

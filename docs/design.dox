@@ -299,6 +299,7 @@ size, nesting depth, repeat and group counts.
 
 \section g_refs Further reading
 
+- \ref divergences — every intentional difference from Python `re`, with its rationale.
 - K. Thompson, *Regular Expression Search Algorithm* (CACM, 1968) — the
   construction.
 - R. Cox, *Regular Expression Matching Can Be Simple And Fast* and its sequels
