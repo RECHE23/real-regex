@@ -106,6 +106,32 @@ TEST(backreferences_are_rejected)
   EXPECT_THROWS(real::regex("\\12"), real::regex_error);
 }
 
+TEST(unicode_codepoint_escapes)
+{
+  // \u / \U decode a code point and emit its UTF-8 bytes (str mode), like a literal char.
+  EXPECT(real::regex("\\u00e9").fullmatch("é"sv));                // U+00E9 -> C3 A9
+  EXPECT(real::regex("a\\u00e9b").fullmatch("aéb"sv));
+  EXPECT(real::regex("\\u0041").fullmatch("A"));                  // ASCII code point
+  EXPECT(real::regex("\\u20ac").fullmatch("€"sv));                // 3-byte: E2 82 AC
+  EXPECT(real::regex("\\U0001F600").fullmatch("😀"sv));            // 4-byte: F0 9F 98 80
+  EXPECT_EQ(real::regex("\\u00e9+").search("ééé"sv)[0], "ééé"sv); // quantifies the whole codepoint
+  // Inside a class: ASCII members are fine, a non-ASCII code point is rejected like a literal é.
+  EXPECT(real::regex("[\\u0041\\u0042]").fullmatch("B"));
+  EXPECT_THROWS(real::regex("[\\u00e9]"), real::regex_error);
+}
+
+TEST(unicode_escape_rejections)
+{
+  EXPECT_THROWS(real::regex("\\u00e9", real::flags::bytes), real::regex_error); // not in bytes mode
+  EXPECT_THROWS(real::regex("[\\u0041]", real::flags::bytes), real::regex_error);
+  EXPECT_THROWS(real::regex("\\uD800"), real::regex_error);                     // surrogate
+  EXPECT_THROWS(real::regex("\\U00110000"), real::regex_error);                 // > U+10FFFF
+  EXPECT_THROWS(real::regex("\\u00e"), real::regex_error);                      // incomplete (3 hex)
+  EXPECT_THROWS(real::regex("\\U0001F60"), real::regex_error);                  // incomplete (7 hex)
+  EXPECT_THROWS(real::regex("\\N{BULLET}"), real::regex_error);                 // named unicode escape
+  EXPECT_THROWS(real::regex("[\\N{BULLET}]"), real::regex_error);
+}
+
 TEST(dot_matches_one_codepoint_except_newline)
 {
   EXPECT(real::regex(".").fullmatch("a"));

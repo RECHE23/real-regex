@@ -467,5 +467,39 @@ class TestPatternValueSemantics(unittest.TestCase):
         self.assertNotEqual(a, "x")
 
 
+class TestUnicodeAndConstructs(unittest.TestCase):
+    r"""\u / \U code-point escapes, (?#...) comments, and clean rejections."""
+
+    def test_unicode_escape_rejections(self):
+        # str-mode \u / \U work (see parity tests); these forms are rejected with clear errors.
+        for pattern in [r"\uD800", r"\U00110000", r"\u00e", r"\U0001F60", r"\N{BULLET}"]:
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(real.error):
+                    real.compile(pattern)
+
+    def test_unicode_escape_rejected_in_bytes(self):
+        for pattern in [rb"\u0041", rb"\U0001F600", rb"[\u0041]"]:
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(real.error):
+                    real.compile(pattern)
+
+    def test_non_ascii_class_member_rejected(self):
+        # [\u00e9] is a non-ASCII class member; REAL rejects it (ASCII-only classes), unlike re.
+        with self.assertRaises(real.error):
+            real.compile(r"[\u00e9]")
+
+    def test_icase_unicode_escape_stays_case_sensitive(self):
+        # \u00e9 (é) is bytes >= 0x80, never ASCII-case-folded, so it stays case-sensitive under
+        # I -- a deliberate divergence from re's Unicode case folding (REAL is ASCII-only).
+        self.assertIsNotNone(real.compile(r"\u00e9", real.I).search("é"))
+        self.assertIsNone(real.compile(r"\u00e9", real.I).search("É"))
+
+    def test_group_construct_rejections(self):
+        for pattern in [r"(?P=name)", r"(?(1)a|b)", r"(a)(?(1)b)"]:
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(real.error):
+                    real.compile(pattern)
+
+
 if __name__ == "__main__":
     unittest.main()

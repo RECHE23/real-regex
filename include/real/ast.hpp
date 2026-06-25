@@ -172,7 +172,8 @@ namespace real::detail {
     constexpr explicit parser(std::string_view pattern,
                               flags            initial_flags = flags::none)
       : pattern_(pattern),
-        verbose_(has_flag(initial_flags, flags::verbose))
+        verbose_(has_flag(initial_flags, flags::verbose)),
+        bytes_(has_flag(initial_flags, flags::bytes))
     {}
 
     /*!
@@ -198,6 +199,7 @@ namespace real::detail {
     std::int32_t     depth_         {}; //!< Current group nesting (see \ref max_nesting_depth).
     bool             verbose_       {}; //!< `re.X`: skip unescaped whitespace and `#` comments outside classes.
     bool             in_lookaround_ {}; //!< True while parsing a lookaround sub-pattern (rejects nesting).
+    bool             bytes_         {}; //!< In \ref flags::bytes mode, rejects code-point escapes (`\u`/`\U`).
 
     /*!
      * \brief In verbose mode, consumes insignificant whitespace and `#` comments.
@@ -639,6 +641,19 @@ namespace real::detail {
       ++pos_; // consume '('
       std::int32_t group {-1};
       if (accept('?')) {
+        if (accept('#')) {
+          // (?#...) comment: skip to the first ')' (a backslash is not special here, like re);
+          // emits nothing. Works the same in verbose and non-verbose mode.
+          while (!eof() && peek() != ')') {
+            ++pos_;
+          }
+          if (!accept(')')) {
+            pos_ = open_pos;
+            fail("missing ), unterminated comment");
+          }
+          --depth_;
+          return add_node(out, {.kind = node_kind::empty});
+        }
         if (accept(':')) {
           // non-capturing
         }
@@ -648,7 +663,7 @@ namespace real::detail {
             parse_group_name(out, group);
           }
           else if (!eof() && peek() == '=') {
-            fail("backreferences are not supported");
+            fail("named backreferences are not supported");
           }
           else {
             fail("unknown extension");
@@ -666,6 +681,9 @@ namespace real::detail {
         }
         else if (!eof() && peek() == '>') {
           fail("atomic groups are not supported");
+        }
+        else if (!eof() && peek() == '(') {
+          fail("conditional groups are not supported");
         }
         else if (!eof() && is_flag_letter(peek())) {
           while (!eof() && is_flag_letter(peek())) {
@@ -889,6 +907,99 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Decodes a `\uHHHH` (4 hex) or `\UHHHHHHHH` (8 hex) code-point escape (str only).
+     *
+     * Rejected with clear messages: byte mode (no code-point meaning), a surrogate
+     * (U+D800–U+DFFF), beyond U+10FFFF, or incomplete hex. The backslash and `u`/`U` are
+     * already consumed; this reads the hex digits.
+     *
+     * \param[in] capital True for `\U` (8 digits), false for `\u` (4 digits).
+     * \return The code point in `[0, 0x10FFFF]` (never a surrogate).
+     */
+    constexpr std::int32_t parse_unicode_codepoint(bool capital)
+    {
+      if (bytes_) {
+        fail("\\u and \\U escapes are not allowed in bytes patterns");
+      }
+      const int    width {capital ? 8 : 4};
+      std::int32_t value {};
+      for (int i = 0; i < width; ++i) {
+        std::int32_t digit {-1};
+        if (!eof()) {
+          const char ch {peek()};
+          if (ch >= '0' && ch <= '9') {
+            digit = ch - '0';
+          }
+          else if (ch >= 'a' && ch <= 'f') {
+            digit = (ch - 'a') + 10;
+          }
+          else if (ch >= 'A' && ch <= 'F') {
+            digit = (ch - 'A') + 10;
+          }
+        }
+        if (digit < 0) {
+          fail(capital ? "invalid \\U escape: expected 8 hex digits"
+                       : "invalid \\u escape: expected 4 hex digits");
+        }
+        value = (value * 16) + digit;
+        ++pos_;
+      }
+      if (value >= 0xD800 && value <= 0xDFFF) {
+        fail("invalid Unicode escape: surrogate code point");
+      }
+      if (value > 0x10FFFF) {
+        fail("invalid Unicode escape: code point out of range");
+      }
+      return value;
+    }
+
+    /*!
+     * \brief Emits a code point as its 1–4 UTF-8 bytes — the same byte-level form a literal
+     *        multi-byte character produces — as a single atom (a byte node, or a concat).
+     * \param[in,out] out The AST being built.
+     * \param[in]     cp  A code point in `[0, 0x10FFFF]`.
+     * \return The node index.
+     */
+    constexpr std::int32_t emit_codepoint_utf8(ast&         out,
+                                               std::int32_t cp)
+    {
+      const auto value {static_cast<std::uint32_t>(cp)};
+      if (value < 0x80U) {
+        return add_node(out, {.kind = node_kind::byte, .byte = static_cast<std::uint8_t>(value)});
+      }
+      std::int32_t first {-1};
+      std::int32_t last  {-1};
+      const auto   emit_byte {[&](std::uint8_t one) {
+                                const std::int32_t node {add_node(out, {.kind = node_kind::byte, .byte = one})};
+                                if (first < 0) {
+                                  first = node;
+                                }
+                                else {
+                                  out.nodes[static_cast<std::size_t>(last)].next = node;
+                                }
+                                last = node;
+                              }};
+      if (value < 0x800U) {
+        emit_byte(static_cast<std::uint8_t>(0xC0U | (value >> 6U)));
+        emit_byte(static_cast<std::uint8_t>(0x80U | (value & 0x3FU)));
+      }
+      else if (value < 0x10000U) {
+        emit_byte(static_cast<std::uint8_t>(0xE0U | (value >> 12U)));
+        emit_byte(static_cast<std::uint8_t>(0x80U | ((value >> 6U) & 0x3FU)));
+        emit_byte(static_cast<std::uint8_t>(0x80U | (value & 0x3FU)));
+      }
+      else {
+        emit_byte(static_cast<std::uint8_t>(0xF0U | (value >> 18U)));
+        emit_byte(static_cast<std::uint8_t>(0x80U | ((value >> 12U) & 0x3FU)));
+        emit_byte(static_cast<std::uint8_t>(0x80U | ((value >> 6U) & 0x3FU)));
+        emit_byte(static_cast<std::uint8_t>(0x80U | (value & 0x3FU)));
+      }
+      const std::int32_t seq {add_node(out, {.kind = node_kind::concat})};
+      out.nodes[static_cast<std::size_t>(seq)].child = first;
+      return seq;
+    }
+
+    /*!
      * \brief Parses an escape outside a character class.
      *
      * Handles the class escapes `\d` `\D` `\w` `\W` `\s` `\S`, the
@@ -941,6 +1052,14 @@ namespace real::detail {
         case '>':
           ++pos_;
           return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::word_end});
+        case 'u':
+          ++pos_;
+          return emit_codepoint_utf8(out, parse_unicode_codepoint(false));
+        case 'U':
+          ++pos_;
+          return emit_codepoint_utf8(out, parse_unicode_codepoint(true));
+        case 'N':
+          fail("named Unicode escapes (\\N{...}) are not supported");
         default:
           {
             const std::int32_t byte_value {parse_byte_escape()};
@@ -994,6 +1113,20 @@ namespace real::detail {
         case 'b':
           ++pos_;
           return 0x08; // backspace, only inside classes
+        case 'u':
+        case 'U':
+          {
+            const bool capital    {peek() == 'U'};
+            ++pos_;
+            const std::int32_t cp {parse_unicode_codepoint(capital)};
+            if (cp >= 0x80) {
+              // A non-ASCII code point is no more a valid class member than a literal `é`.
+              fail("non-ASCII character class member not supported");
+            }
+            return cp;
+          }
+        case 'N':
+          fail("named Unicode escapes (\\N{...}) are not supported");
         default:
           {
             const std::int32_t byte_value {parse_byte_escape()};

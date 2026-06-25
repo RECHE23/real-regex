@@ -112,8 +112,10 @@ class PatternGen:
             return self._lookaround()  # zero-width; only ever gets a non-loop quant (see _element)
         if depth < 2 and r < 0.24:
             return self._group(depth)
-        if r < 0.36:
+        if r < 0.32:
             return self._octal_atom()
+        if r < 0.40:
+            return self._unicode_atom()
         if r < 0.66:
             return re.escape(self.rng.choice(_LITERALS))
         return self.rng.choice(_CLASSES)
@@ -129,6 +131,27 @@ class PatternGen:
         """
         ch = self.rng.choice("abcABC012 _-")
         return "\\" + format(ord(ch), "03o")
+
+    def _unicode_atom(self):
+        r"""Return a \uHHHH / \UHHHHHHHH code-point escape for a char in the alphabet.
+
+        Both engines decode it to the same code point (str mode), so it matches the same
+        character; the subject occasionally contains it (e.g. é in 'café').
+
+        Returns:
+            str: A code-point escape such as ``a`` or ``\U000000e9``.
+        """
+        cp = ord(self.rng.choice("abAB01é"))
+        return ("\\u%04x" % cp) if self.rng.random() < 0.5 else ("\\U%08x" % cp)
+
+    def _comment(self):
+        """Return a (?#...) comment (ignored by both engines).
+
+        Returns:
+            str: A comment such as ``(?#note)``.
+        """
+        body = "".join(self.rng.choice("abc 12") for _ in range(self.rng.randint(0, 5)))
+        return "(?#" + body + ")"
 
     def _capture_free_sub(self, fixed_width):
         """Return a short capture-free sub-pattern for a lookaround.
@@ -199,8 +222,12 @@ class PatternGen:
         Returns:
             str: A sequence pattern fragment.
         """
-        n = self.rng.randint(1, 3)
-        return "".join(self._element(depth) for _ in range(n))
+        parts = []
+        for _ in range(self.rng.randint(1, 3)):
+            if self.rng.random() < 0.08:
+                parts.append(self._comment())  # a comment is never quantified, so it is safe here
+            parts.append(self._element(depth))
+        return "".join(parts)
 
     def _alt(self, depth):
         """Return an alternation of sequences.

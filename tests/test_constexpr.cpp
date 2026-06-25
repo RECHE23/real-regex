@@ -38,8 +38,10 @@ namespace {
     CONSTEXPR_EXPECT(!real::regex(".").fullmatch("\n"));
     CONSTEXPR_EXPECT(real::regex("a.c").fullmatch("aéc").matched());
     CONSTEXPR_EXPECT(real::regex("\\x41").fullmatch("A").matched());
-    CONSTEXPR_EXPECT(real::regex("[^,]+").search("ab,c").end() == 2); // codepoint-class +
-    CONSTEXPR_EXPECT(real::regex(".+").search("a\nb").end() == 1);    // dot stops at \n
+    CONSTEXPR_EXPECT(real::regex("\\u00e9").fullmatch("é").matched());  // \u code point at compile time
+    CONSTEXPR_EXPECT(real::regex("a(?#c)b").fullmatch("ab").matched()); // (?#...) comment at compile time
+    CONSTEXPR_EXPECT(real::regex("[^,]+").search("ab,c").end() == 2);   // codepoint-class +
+    CONSTEXPR_EXPECT(real::regex(".+").search("a\nb").end() == 1);      // dot stops at \n
     return true;
   }
 

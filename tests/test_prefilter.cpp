@@ -202,10 +202,10 @@ TEST(anchored_search_is_one_shot)
   EXPECT(elapsed < std::chrono::seconds(1)); // ~µs each, generous bound
 }
 
-TEST(prefilter_rare_byte_literal)
+TEST(prefilter_find_prefix_literal)
 {
-  // Exercises the rare-byte anchor path in find_prefix for >=3 byte literal
-  // (rare 'x' in mostly 'a's; 'x' is also rarest *in the literal* "aax").
+  // find_prefix locates the required literal prefix as a substring (std::string_view::find,
+  // i.e. memchr/memcmp); the engine then verifies from that candidate. "aax" in a run of 'a's.
   std::string text(1000, 'a');
   text[498] = 'a';
   text[499] = 'a';
@@ -217,11 +217,9 @@ TEST(prefilter_rare_byte_literal)
   EXPECT_EQ(match.start(), 498U);
 }
 
-TEST(prefilter_rare_byte_with_rare_in_middle)
+TEST(prefilter_find_prefix_in_run)
 {
-  // Additional case for rare-byte logic: rarest byte in middle of prefix.
-  // "axa" : 'x' is rarest in literal (a=2, x=1), at idx=1 (middle).
-  // Text has the sequence with 'x' also rare in surrounding.
+  // The literal prefix "axa" is found as a substring inside a long run of 'a's.
   std::string text(200, 'a');
   text[99]  = 'a';
   text[100] = 'x';
@@ -232,26 +230,23 @@ TEST(prefilter_rare_byte_with_rare_in_middle)
   EXPECT_EQ(match.start(), 99U);
 }
 
-TEST(prefilter_rare_byte_rare_first)
+TEST(prefilter_find_prefix_distinct_first_byte)
 {
-  // Bonify for rare prefilter: case where rarest byte is first in prefix
-  // (rare_idx=0), to hit that branch in the selection loop.
+  // The literal prefix "xaa" begins with a byte distinct from the surrounding run.
   std::string text(200, 'a');
   text[99]  = 'x';
   text[100] = 'a';
   text[101] = 'a';
-  real::regex rx("xaa");  // 'x' rarest in literal (freq x=1, a=2), at idx 0
+  real::regex rx("xaa"); // literal prefix found as a substring at index 99
   auto        match = rx.search(text);
   EXPECT(match.matched());
   EXPECT_EQ(match.start(), 99U);
 }
 
-TEST(prefilter_rare_byte_cand_before_pos)
+TEST(prefilter_find_prefix_candidate_before_pos)
 {
-  // Exercises the rare path when a rare byte is found but cand < pos
-  // (skip and continue to next rare). For "aax" (rare 'x' at idx 2),
-  // first 'x' at 0 gives cand underflow/large, skipped; next at 3 gives
-  // cand=1, match.
+  // A literal occurrence found by find_prefix can land before the scan position; the engine
+  // skips it and continues. "aax" in "xaax" matches at index 1.
   std::string text = "xaax";
   real::regex rx("aax");
   auto        match = rx.search(text);
@@ -278,7 +273,7 @@ TEST(literal_prefilter_throughput_smoke)
 
 TEST(prefilter_works_in_constexpr_too)
 {
-  // These helpers exercise the prefilter (including rare-byte path) at constexpr time.
+  // These helpers exercise the prefilter (including find_prefix) at constexpr time.
   // The regex construction/destruction ends up using std::string (in dynamic_storage::pattern_text).
   // On libstdc++ shipped with GCC <15 the string dtor is not a valid constant expression,
   // causing "not a constant expression" errors during ct evaluation.
@@ -288,31 +283,30 @@ TEST(prefilter_works_in_constexpr_too)
                      const real::regex rx("needle");
                      return rx.search("a long constexpr haystack with a needle inside").start() == 33;
                    };
-  auto rare_ct = [] {
-                   const real::regex rx("aax");
-                   // "aaaax" : match at pos 2 ("aax" with 'x' rarest in literal)
-                   return rx.search("aaaax").start() == 2;
-                 };
+  auto prefix_ct = [] {
+                     const real::regex rx("aax");
+                     // "aaaax": find_prefix locates "aax", match at pos 2.
+                     return rx.search("aaaax").start() == 2;
+                   };
 
 #if !defined(__GNUC__) || defined(__clang__) || __GNUC__ >= 15
   static_assert(needle_ct());
-  static_assert(rare_ct());
-  const bool ok_val      = needle_ct();
-  const bool ok_rare_val = rare_ct();
+  static_assert(prefix_ct());
+  const bool ok_val        = needle_ct();
+  const bool ok_prefix_val = prefix_ct();
 #else
-  const bool ok_val      = needle_ct();
-  const bool ok_rare_val = rare_ct();
+  const bool ok_val        = needle_ct();
+  const bool ok_prefix_val = prefix_ct();
 #endif
   EXPECT(ok_val);
-  EXPECT(ok_rare_val);
+  EXPECT(ok_prefix_val);
 }
 
-// --- global frequency table refinement for rare anchor selection -----------
+// --- find_prefix on word / punctuation / prose literals --------------------
 
-TEST(prefilter_rare_byte_global_freq_prefers_rare_letters)
+TEST(prefilter_find_prefix_word)
 {
-  // 'q' has very low global freq in the table (excellent anchor).
-  // Literal "query" on 'e'-heavy text: global selection picks 'q' for large skips.
+  // The whole literal "query" is found as a substring in 'e'-heavy text.
   std::string text(400, 'e');
   text[222] = 'q';
   text[223] = 'u';
@@ -325,10 +319,9 @@ TEST(prefilter_rare_byte_global_freq_prefers_rare_letters)
   EXPECT_EQ(match.start(), 222U);
 }
 
-TEST(prefilter_rare_byte_global_freq_punctuation_anchor)
+TEST(prefilter_find_prefix_with_punctuation)
 {
-  // Punctuation like '{' scores very low globally (15) — great prefilter anchor.
-  // Mix with common letters; global rarity should drive the choice.
+  // A literal prefix containing punctuation ("foo{bar") is found as a substring.
   std::string text(250, 'a');
   text[77]  = 'f';
   text[78]  = 'o';
@@ -343,16 +336,15 @@ TEST(prefilter_rare_byte_global_freq_punctuation_anchor)
   EXPECT_EQ(match.start(), 77U);
 }
 
-TEST(prefilter_rare_byte_global_freq_prose_like)
+TEST(prefilter_find_prefix_prose)
 {
-  // More realistic: literal with a rare letter inside on mixed "prose" hay.
-  // Ensures no regression and that search still finds correctly (prefilter only
-  // affects speed, never results — already proven by hints_never_change_results).
+  // A realistic literal in mixed prose; the prefilter only affects speed, never results
+  // (already proven by hints_never_change_results).
   std::string hay =
     "The quick brown fox jumps over the lazy dog. "
     "Pack my box with five dozen liquor jugs. "
     "How vexingly quick daft zebras jump! ";
-  // Place "quiz" ( 'q' and 'z' are globally rare ) at a known offset.
+  // Place "quiz" at a known offset.
   const std::string lit    = "quiz";
   const std::size_t insert = 47;
   hay.replace(insert, lit.size(), lit);

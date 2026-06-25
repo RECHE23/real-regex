@@ -660,6 +660,27 @@ class TestParity(unittest.TestCase):
                 self.assertEqual([m.span() for m in rp.finditer(subject)],
                                  [m.span() for m in rr.finditer(subject)])
 
+    def test_unicode_escapes_parity(self):
+        r"""\uHHHH / \UHHHHHHHH match the same code point as re (str mode): REAL emits the
+        UTF-8 bytes, re matches the code point, and on a str subject they agree."""
+        for pattern, subject in [
+            (r"\u00e9", "café"), (r"a\u00e9b", "x aéb y"), (r"\u0041", "an A here"),
+            (r"\U0001F600", "hi 😀!"), (r"caf\u00e9", "a café b"), (r"\u00e9+", "ééé done"),
+        ]:
+            with self.subTest(pattern=pattern):
+                self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
+                                 self.match_facts(re.compile(pattern, re.ASCII).search(subject)))
+
+    def test_inline_comment_parity(self):
+        r"""(?#...) is a comment in both engines: consumed to the first ')', emits nothing."""
+        for pattern, subject in [
+            (r"a(?#x)b", "ab cab"), (r"(?#lead)\d+", "x 42 y"), (r"a(?# a backslash \ here )b", "ab"),
+            (r"(?#c)\w+(?#c2)", "hello"),
+        ]:
+            with self.subTest(pattern=pattern):
+                self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
+                                 self.match_facts(re.compile(pattern, re.ASCII).search(subject)))
+
     def test_escape_parity_per_char(self):
         """real.escape agrees with re.escape on every ASCII char — proving the
         CPython 3.7+ semantics (only the special set is escaped; punctuation such

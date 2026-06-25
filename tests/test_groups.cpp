@@ -163,6 +163,19 @@ TEST(group_errors)
   EXPECT_THROWS(real::regex("(?>x)"), real::regex_error); // atomic groups: not supported
 }
 
+TEST(inline_comment_and_group_construct_rejections)
+{
+  // (?#...) is a comment: consumed, emits nothing, and coexists with the other (? constructs.
+  EXPECT(real::regex("a(?#ignored)b").fullmatch("ab"));
+  EXPECT(real::regex("(?#lead)\\d+").fullmatch("42"));
+  EXPECT(real::regex("(?=a)(?#c)a").fullmatch("a"));          // alongside a lookaround
+  EXPECT(real::regex("(?i)(?#c)abc").fullmatch("ABC"));       // alongside inline flags
+  EXPECT_THROWS(real::regex("a(?#unterminated"), real::regex_error);
+  // Unsupported group constructs are clean, specific errors.
+  EXPECT_THROWS(real::regex("(?(1)a|b)"), real::regex_error); // conditional
+  EXPECT_THROWS(real::regex("(?P=name)"), real::regex_error); // named backreference
+}
+
 TEST(nesting_depth_is_bounded_instead_of_overflowing_the_stack)
 {
   // Regression: the recursive-descent parser used to crash (stack overflow)
