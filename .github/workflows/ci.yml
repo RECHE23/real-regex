@@ -12,44 +12,28 @@ jobs:
   # config. REAL has no dependency siblings; its one MISRA deviation (the SBO union)
   # lives in its Makefile's --checks, so nothing is passed here.
   lint:
-    uses: RECHE23/sciforge/.github/workflows/lint-cpp.yml@v2026.6.4
+    uses: RECHE23/sciforge/.github/workflows/lint-cpp.yml@v2026.6.5
     with:
       deps: '[]'
-      sciforge-ref: v2026.6.4
+      sciforge-ref: v2026.6.5
       runner-mode: hosted
 
-  # POSIX + CMake build via SciForge's reusable build spine: the Makefile under
-  # g++-14 + clang++ with sanitizers, and the CMake configure/build/test/install +
-  # find_package smoke across linux-x64, Windows/MSVC and native ARM. REAL is a leaf
-  # (no dependency siblings) and public (hosted; no self-hosted runner).
+  # POSIX + CMake build via SciForge's reusable build spine, fully collapsed: the
+  # Makefile under g++-14 + clang++ on Linux AND Apple clang on macOS (test +
+  # sanitizers), and the CMake configure/build/test/install + find_package smoke
+  # across linux-x64, Windows/MSVC and native ARM. REAL is a leaf (no dependency
+  # siblings) and public (hosted; no self-hosted runner). macOS is enabled because
+  # REAL is the public repo where contributor PRs warrant macOS coverage (the
+  # private repos opt out, matching their pre-cat-B matrices).
   build:
-    uses: RECHE23/sciforge/.github/workflows/build-cpp.yml@v2026.6.4
+    uses: RECHE23/sciforge/.github/workflows/build-cpp.yml@v2026.6.5
     with:
       deps: '[]'
-      sciforge-ref: v2026.6.4
+      sciforge-ref: v2026.6.5
       runner-mode: hosted
-
-  # macOS posix leg. REAL is public, so — unlike the private repos, where macOS is
-  # the maintainer's local gate and CI deliberately omits it — contributor PRs are
-  # covered on macOS here. build-cpp's posix is Linux-only, so this keeps the macOS
-  # coverage as a standalone leg (test + sanitizers under Apple clang).
-  posix-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          path: real-regex
-      # The test harness (framework.hpp) is fetched from SciForge as a sibling, so
-      # the Makefile's default resolution (../sciforge/include) finds it.
-      - uses: actions/checkout@v6
-        with:
-          repository: RECHE23/sciforge
-          ref: v2026.6.4
-          path: sciforge
-      - name: Test (runtime + constexpr static_assert)
-        run: make -C real-regex test CXX=clang++
-      - name: Sanitizers (ASan + UBSan)
-        run: make -C real-regex sanitize CXX=clang++
+      enable-macos: true
+      enable-windows-msvc: true
+      enable-arm: true
 
   fuzz:
     runs-on: ubuntu-latest
@@ -68,7 +52,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: RECHE23/sciforge
-          ref: v2026.6.4
+          ref: v2026.6.5
           path: sciforge
       - name: Install clang + llvm
         run: sudo apt-get update && sudo apt-get install -y clang llvm
