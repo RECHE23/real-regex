@@ -12,7 +12,7 @@
 #include <string_view>
 #include <vector>
 
-#include "framework.hpp"
+#include <sciforge/test/framework.hpp>
 #include "real/dfa.hpp"
 
 namespace {

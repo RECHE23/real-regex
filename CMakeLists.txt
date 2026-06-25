@@ -71,11 +71,44 @@ endif()
 
 enable_testing()
 
+# The test harness (framework.hpp) is owned by SciForge — the ecosystem's shared
+# infrastructure repository — and is never carried as a local copy. Resolution
+# mirrors how REAL's own consumers find REAL, two modes:
+#  * Default (local development): a sibling checkout, used live. The maintainer's
+#    layout uses ../sciforge-v1; override with -DSCIFORGE_INCLUDE_DIR=/path.
+#  * CI / reproducible builds: -DREAL_FETCH_SCIFORGE=ON fetches SciForge with
+#    FetchContent from a configurable repository + tag. Prepared but inert by
+#    default; once SciForge publishes a CalVer tag, pin SCIFORGE_TAG to it.
+option(REAL_FETCH_SCIFORGE "Fetch SciForge (test harness) with FetchContent" OFF)
+set(SCIFORGE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../sciforge-v1/include"
+    CACHE PATH "Path to SciForge's include directory (maintainer's default; override for your layout)")
+set(SCIFORGE_REPO "${CMAKE_CURRENT_SOURCE_DIR}/../sciforge-v1"
+    CACHE STRING "SciForge git repository (path or URL) when fetching")
+set(SCIFORGE_TAG "main" CACHE STRING "SciForge git tag when fetching (pin to a CalVer tag once released)")
+
+if(REAL_FETCH_SCIFORGE)
+    include(FetchContent)
+    FetchContent_Declare(sciforge GIT_REPOSITORY "${SCIFORGE_REPO}" GIT_TAG "${SCIFORGE_TAG}")
+    FetchContent_GetProperties(sciforge)
+    if(NOT sciforge_POPULATED)
+        FetchContent_Populate(sciforge) # source only (header-only): no transitive CMake
+    endif()
+    set(SCIFORGE_INCLUDE_DIR "${sciforge_SOURCE_DIR}/include")
+endif()
+
+if(NOT EXISTS "${SCIFORGE_INCLUDE_DIR}/sciforge/test/framework.hpp")
+    message(FATAL_ERROR
+        "SciForge test harness not found at SCIFORGE_INCLUDE_DIR='${SCIFORGE_INCLUDE_DIR}'. "
+        "Use -DREAL_FETCH_SCIFORGE=ON, or set -DSCIFORGE_INCLUDE_DIR=/path/to/sciforge/include.")
+endif()
+
 file(GLOB REAL_TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp)
 # Target name avoids a clash with CMake's generated RUN_TESTS on
 # case-insensitive generators (Visual Studio).
 add_executable(real_tests_bin ${REAL_TEST_SOURCES})
 target_link_libraries(real_tests_bin PRIVATE real::real)
+# The harness include path comes from SciForge, not from a local tests/ copy.
+target_include_directories(real_tests_bin PRIVATE "${SCIFORGE_INCLUDE_DIR}")
 set_target_properties(real_tests_bin PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 # Warnings-as-errors everywhere. IntelLLVM (icpx) and AppleClang accept the

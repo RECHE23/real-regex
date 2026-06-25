@@ -27,6 +27,10 @@ endif
 
 CXXSTD       := -std=c++20
 INCLUDES     := -Iinclude
+# The test harness (framework.hpp) is owned by SciForge; the test TUs include it
+# as <sciforge/test/framework.hpp>. clang-tidy (make lint) needs that path too.
+# Sibling checkout by default — matches the CMake SCIFORGE_INCLUDE_DIR default.
+SCIFORGE_INCLUDE ?= ../sciforge-v1/include
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
@@ -135,7 +139,7 @@ coverage-html:
 # --- QA tools (wrappers; no compilation policy here) ----------------------
 
 lint:
-	@ls tests/*.cpp | xargs -P $(JOBS) -I{} clang-tidy {} -- $(CXXSTD) $(INCLUDES)
+	@ls tests/*.cpp | xargs -P $(JOBS) -I{} clang-tidy {} -- $(CXXSTD) $(INCLUDES) -I$(SCIFORGE_INCLUDE)
 
 # Analyzes the library through a one-line translation unit; the line filter
 # restricts diagnostics to the included headers.

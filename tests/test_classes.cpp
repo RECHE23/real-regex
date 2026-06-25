@@ -2,7 +2,7 @@
 // the UTF-8 whole-codepoint guarantees of negated classes and dot.
 #include <string_view>
 
-#include "framework.hpp"
+#include <sciforge/test/framework.hpp>
 #include "real/real.hpp"
 
 using namespace std::string_view_literals;

@@ -1,7 +1,7 @@
 // Dual compilation: every case here is evaluated at compile time
 // (static_assert) AND at runtime (TEST), because constexpr evaluation and
 // generated code historically fail in different ways.
-#include "framework.hpp"
+#include <sciforge/test/framework.hpp>
 #include "real/real.hpp"
 
 namespace {

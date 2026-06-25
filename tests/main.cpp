@@ -1,4 +1,4 @@
-#include "framework.hpp"
+#include <sciforge/test/framework.hpp>
 
 int main()
 {

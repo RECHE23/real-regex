@@ -2,7 +2,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "framework.hpp"
+#include <sciforge/test/framework.hpp>
 
 TEST(framework_expect_and_eq)
 {

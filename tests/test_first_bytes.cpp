@@ -8,7 +8,7 @@
 #include <optional>
 #include <string_view>
 
-#include "framework.hpp"
+#include <sciforge/test/framework.hpp>
 #include "real/real.hpp"
 
 // Probe 1 — the SQL pivot: an icase literal folds BOTH cases into the set, so a

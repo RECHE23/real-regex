@@ -5,7 +5,7 @@
 #include <string_view>
 #include <vector>
 
-#include "framework.hpp"
+#include <sciforge/test/framework.hpp>
 #include "real/real.hpp"
 
 using namespace std::string_view_literals;
