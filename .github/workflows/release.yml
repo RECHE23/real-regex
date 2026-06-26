@@ -9,55 +9,18 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  # Guard: the tag must match the version declared in pyproject.toml.
-  check-version:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Tag matches pyproject version
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          tag="${GITHUB_REF_NAME#v}"
-          proj=$(grep -E '^version *=' pyproject.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "tag=$tag pyproject=$proj"
-          test "$tag" = "$proj" || { echo "::error::tag v$tag != pyproject version $proj"; exit 1; }
-
-  wheels:
-    needs: check-version
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest      # manylinux x86_64
-          - os: ubuntu-24.04-arm   # manylinux aarch64 (native)
-          - os: macos-latest       # universal: x86_64 + arm64
-          - os: windows-latest     # amd64
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v6
-      - name: Build wheels (cibuildwheel, abi3 cp310)
-        run: pipx run cibuildwheel --output-dir wheelhouse
-        env:
-          CIBW_ARCHS_MACOS: "x86_64 arm64"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: wheels-${{ matrix.os }}
-          path: wheelhouse/*.whl
-
-  sdist:
-    needs: check-version
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Build sdist
-        run: pipx run build --sdist
-      - uses: actions/upload-artifact@v7
-        with:
-          name: sdist
-          path: dist/*.tar.gz
+  # Build the wheels (cibuildwheel abi3 across 4 OS) + sdist via SciForge's reusable
+  # build-only spine (it also guards tag == pyproject version), uploading them as
+  # artifacts. Inputs carry REAL's exact cibuildwheel config. Publishing stays below,
+  # in this repo, so the OIDC identity matches the PyPI trusted-publisher.
+  build:
+    uses: RECHE23/sciforge/.github/workflows/build-wheels.yml@v2026.6.7
+    with:
+      wheel-os: '["ubuntu-latest","ubuntu-24.04-arm","macos-latest","windows-latest"]'
+      cibw-archs-macos: "x86_64 arm64"
 
   publish:
-    needs: [wheels, sdist]
+    needs: build
     runs-on: ubuntu-latest
     # Only publish on an actual tag push, not manual dry-runs.
     if: startsWith(github.ref, 'refs/tags/v')
