@@ -59,21 +59,15 @@ jobs:
       - name: Coverage gate (line >= floor)
         run: make -C real-regex coverage-check
 
+  # Python binding (abi3) build + unittest via SciForge's reusable spine. REAL's
+  # binding is a leaf (no dependency siblings); its exact prior coverage is
+  # {linux, macOS, Windows} x {3.10, 3.14}, replicated by the platform toggles.
   python:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.10", "3.14"]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python }}
-      - name: Install build dependencies
-        run: python -m pip install --upgrade pip setuptools wheel
-      - name: Build the binding (using root pyproject.toml) and run suites
-        run: |
-          python -m pip install -e .
-          python -m unittest discover -s python/tests
+    uses: RECHE23/sciforge/.github/workflows/python-cpp.yml@v2026.6.6
+    with:
+      python-versions: '["3.10","3.14"]'
+      sciforge-ref: v2026.6.6
+      deps: '[]'
+      runner-mode: hosted
+      enable-macos: true
+      enable-windows: true
