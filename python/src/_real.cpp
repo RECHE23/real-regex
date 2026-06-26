@@ -16,6 +16,8 @@
 #include <Python.h>
 
 #include <real/real.hpp>
+#include <sciforge/binding/error.hpp>
+#include <sciforge/binding/gil.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -37,16 +39,9 @@ PyObject* pattern_type = nullptr;  // real.Pattern
 PyObject* match_type = nullptr;    // real.Match
 PyObject* match_iterator_type = nullptr;  // real.MatchIterator (internal: created, not exposed)
 
-// Releases the GIL for a scope (RAII): restores it on EVERY exit, including a C++
-// exception — unlike the bare Py_BEGIN/END_ALLOW_THREADS macros, whose END is
-// skipped on a throw, leaving the GIL released (undefined behaviour afterwards).
-struct GilRelease {
-    PyThreadState* saved;
-    GilRelease() : saved(PyEval_SaveThread()) {}
-    ~GilRelease() { PyEval_RestoreThread(saved); }
-    GilRelease(const GilRelease&) = delete;
-    GilRelease& operator=(const GilRelease&) = delete;
-};
+// RAII GIL release (restores on every exit, including a throw): the shared
+// sciforge::binding::gil_release, kept under the local name the call sites use.
+using GilRelease = sciforge::binding::gil_release;
 
 // Releasing the GIL costs a thread-state save/restore (plus re-acquire contention)
 // that only pays off once the pure-C++ work outlasts it; subject size is the a-priori
@@ -252,19 +247,7 @@ PyObject* empty_like(PatternObject* pat) {
 // Call ONLY from inside a catch block; it keeps any C++ exception from crossing a CPython
 // frame (undefined behaviour): bad_alloc -> MemoryError, anything else -> real.error with its
 // message. The int-returning call sites ignore the nullptr and return their own -1.
-PyObject* set_cpp_error() {
-    try {
-        throw;
-    } catch (const std::bad_alloc&) {
-        return PyErr_NoMemory();
-    } catch (const std::exception& ex) {
-        PyErr_SetString(error_type, ex.what());
-        return nullptr;
-    } catch (...) {
-        PyErr_SetString(error_type, "internal error");
-        return nullptr;
-    }
-}
+PyObject* set_cpp_error() { return sciforge::binding::set_cpp_error(error_type); }
 
 PyObject* make_match(PatternObject* pat, PyObject* subject, const auto& match,
                      Py_ssize_t pos, Py_ssize_t endpos) {

@@ -5,6 +5,7 @@ import os
 import shutil
 import sys
 
+import sciforge_build
 from setuptools import Extension, setup
 from setuptools.command.build_py import build_py
 
@@ -54,7 +55,7 @@ setup(
         Extension(
             "real._real",
             sources=["python/src/_real.cpp"],
-            include_dirs=["include"],
+            include_dirs=["include", sciforge_build.get_include()],
             extra_compile_args=compile_args,
             define_macros=[("Py_LIMITED_API", "0x030A0000")],
             py_limited_api=True,
