@@ -209,7 +209,7 @@ HEADERS := $(wildcard include/real/*.hpp)
 python: $(BUILD)/py_ext.stamp
 
 $(BUILD)/py_ext.stamp: python/src/_real.cpp $(HEADERS)
-	$(PYTHON) setup.py -q build_ext --inplace --force
+	SCIFORGE_INCLUDE=$(SCIFORGE_INCLUDE) $(PYTHON) setup.py -q build_ext --inplace --force
 	@mkdir -p $(BUILD)
 	@touch $@
 
