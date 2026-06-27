@@ -1,23 +1,31 @@
-// Multi-engine throughput benchmark: REAL vs std::regex vs PCRE2 (JIT) vs RE2.
+// Multi-engine throughput collector: REAL vs std::regex vs PCRE2 (JIT) vs RE2.
 //
-// In-process, apples-to-apples: every engine compiles the pattern once, then
-// counts all non-overlapping matches over the same corpus; we time only the
-// scan (median of repeats) and report ns per byte plus a ratio versus REAL.
-// Engines other than REAL/std::regex are conditionally compiled:
+// This program ONLY measures and emits JSON — no statistics, no formatting, no
+// google-benchmark. The Python consumer (bench_engines.py) parses the JSON and applies the
+// shared, dependency-free stats module (benchmarks/real_bench) to produce the table,
+// confidence intervals, and ASCII box-plots.
+//
+// In-process and apples-to-apples: every engine compiles the pattern once, then counts all
+// non-overlapping matches over the same corpus. A warm-up repetition is discarded (the first
+// scan is cache-cold); then N raw per-scan samples are emitted (not a median). Match counts
+// are emitted per engine so a semantic divergence is visible. PCRE2/RE2 are conditionally
+// compiled and reported only when present.
+//
 //   c++ -std=c++20 -O2 -Iinclude benchmarks/bench_engines.cpp \
 //       -DHAVE_PCRE2 $(pkg-config --cflags --libs libpcre2-8) \
 //       -DHAVE_RE2 $(pkg-config --cflags --libs re2 absl_strings ...) -o bench_engines
-//
-// Match counts are printed per engine so semantic divergences are visible
-// (the engines share ASCII-class semantics on these patterns, so counts agree).
+//   BENCH_SAMPLES=30 ./bench_engines > engines.json
 
 #include <real/real.hpp>
 
-#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <ctime>
 #include <regex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #if defined(HAVE_PCRE2)
@@ -28,28 +36,115 @@
 #  include <re2/re2.h>
 #endif
 
+#ifndef BENCH_FLAGS
+#  define BENCH_FLAGS "unknown"
+#endif
+#ifndef BENCH_COMMIT
+#  define BENCH_COMMIT "unknown"
+#endif
+
 namespace {
 
 using clock_type = std::chrono::steady_clock;
 
-// Runs scan() reps times, returns the median wall time in nanoseconds; writes
-// the match count it produces into out_count (checked across engines).
-template <typename Scan>
-double median_ns(Scan&& scan, int reps, std::size_t& out_count)
+int sample_count()
 {
-  std::vector<double> samples;
-  samples.reserve(static_cast<std::size_t>(reps));
-  for (int i = 0; i < reps; ++i) {
-    const auto t0 = clock_type::now();
-    out_count     = scan();
-    const auto t1 = clock_type::now();
-    samples.push_back(std::chrono::duration<double, std::nano>(t1 - t0).count());
-  }
-  std::ranges::sort(samples);
-  return samples[samples.size() / 2];
+  const char* env = std::getenv("BENCH_SAMPLES");
+  const int   n   = (env != nullptr) ? std::atoi(env) : 30;
+  return n > 0 ? n : 30;
 }
 
-// --- corpora --------------------------------------------------------------
+// Discards one warm-up scan, then collects `n` raw per-scan samples (nanoseconds). The match
+// count from the last scan is captured for the cross-engine check.
+struct result
+{
+  std::vector<double> samples;
+  std::size_t         count {};
+};
+
+template <typename Scan>
+result collect(Scan&& scan, int n)
+{
+  result r;
+  r.count = scan();                  // warm-up: discarded
+  r.samples.reserve(static_cast<std::size_t>(n));
+  for (int i = 0; i < n; ++i) {
+    const auto t0 = clock_type::now();
+    r.count       = scan();
+    const auto t1 = clock_type::now();
+    r.samples.push_back(std::chrono::duration<double, std::nano>(t1 - t0).count());
+  }
+  return r;
+}
+
+// --- a tiny, comma-safe JSON emitter ---------------------------------------
+
+std::string json_string(const std::string& v)
+{
+  std::string out = "\"";
+  for (const char c : v) {
+    if (c == '"' || c == '\\') {
+      out += '\\';
+      out += c;
+    }
+    else if (c == '\n') {
+      out += "\\n";
+    }
+    else {
+      out += c;
+    }
+  }
+  out += '"';
+  return out;
+}
+
+std::string json_number(double v)
+{
+  char buf[64];
+  std::snprintf(buf, sizeof(buf), "%.6g", v);
+  return buf;
+}
+
+std::string json_join(const std::vector<std::string>& items)
+{
+  std::string out;
+  for (std::size_t i = 0; i < items.size(); ++i) {
+    if (i != 0) {
+      out += ',';
+    }
+    out += items[i];
+  }
+  return out;
+}
+
+std::string json_array(const std::vector<double>& values)
+{
+  std::vector<std::string> items;
+  items.reserve(values.size());
+  for (const double v : values) {
+    items.push_back(json_number(v));
+  }
+  return "[" + json_join(items) + "]";
+}
+
+std::string json_object(const std::vector<std::pair<std::string, std::string>>& fields)
+{
+  std::vector<std::string> items;
+  items.reserve(fields.size());
+  for (const auto& [key, value] : fields) {
+    items.push_back(json_string(key) + ":" + value);
+  }
+  return "{" + json_join(items) + "}";
+}
+
+// One engine's measurement, or the literal "unsupported" when the engine cannot run it.
+std::string engine_result(const result& r)
+{
+  return json_object({{"samples", json_array(r.samples)},
+                      {"count", json_number(static_cast<double>(r.count))}});
+}
+
+// --- corpora ---------------------------------------------------------------
 
 std::string repeat_to(const std::string& unit, std::size_t target)
 {
@@ -61,48 +156,21 @@ std::string repeat_to(const std::string& unit, std::size_t target)
   return s;
 }
 
-// ~200 KB of lowercase words separated by spaces (word/class scans).
-std::string corpus_words()
+std::string corpus_words(std::size_t bytes = 200000)
 {
-  return repeat_to("the quick brown fox jumps over a lazy dog and then rests ", 200000);
+  return repeat_to("the quick brown fox jumps over a lazy dog and then rests ", bytes);
 }
-
-// ~200 KB of log lines each carrying an 8-hex id (the dense case REAL trailed).
 std::string corpus_hex()
 {
   return repeat_to("info 2026-06-13 req=a3f9c1d8 status=200 took=42ms path=/x\n", 200000);
 }
-
-// ~200 KB with sparse digit runs and dates.
 std::string corpus_mixed()
 {
   return repeat_to("order 4821 placed on 2026-06-13 total 199 items 7 ref ab12 ", 200000);
 }
-
-// ~200 KB of comma-separated fields.
 std::string corpus_csv()
 {
   return repeat_to("alpha,bravo,charlie,delta,echo,foxtrot,golf,hotel,india,juliet,", 200000);
-}
-
-struct bench_case
-{
-  const char* name;
-  const char* pattern; // common subset: literals, classes, +, {n}, alternation
-  std::string corpus;
-};
-
-std::vector<bench_case> cases()
-{
-  return {
-    {.name = "words [a-z]+", .pattern = "[a-z]+", .corpus = corpus_words()},
-    {.name = "alt the|fox|dog", .pattern = "the|fox|dog", .corpus = corpus_words()},
-    {.name = "hex [0-9a-f]{8}", .pattern = "[0-9a-f]{8}", .corpus = corpus_hex()},
-    {.name = "digits [0-9]+", .pattern = "[0-9]+", .corpus = corpus_mixed()},
-    {.name = "date {4}-{2}-{2}", .pattern = "[0-9]{4}-[0-9]{2}-[0-9]{2}", .corpus = corpus_mixed()},
-    {.name = "fields [^,]+", .pattern = "[^,]+", .corpus = corpus_csv()},
-    {.name = "literal", .pattern = "charlie", .corpus = corpus_csv()},
-  };
 }
 
 // --- engines (each counts non-overlapping matches) ------------------------
@@ -121,16 +189,15 @@ std::size_t real_count(const std::string& pat, const std::string& text)
 std::size_t std_count(const std::string& pat, const std::string& text)
 {
   const std::regex re(pat, std::regex::ECMAScript | std::regex::optimize);
-  auto             it  = std::sregex_iterator(text.begin(), text.end(), re);
-  const auto       end = std::sregex_iterator();
-  return static_cast<std::size_t>(std::distance(it, end));
+  return static_cast<std::size_t>(
+    std::distance(std::sregex_iterator(text.begin(), text.end(), re), std::sregex_iterator()));
 }
 
 #if defined(HAVE_PCRE2)
 std::size_t pcre2_count(const std::string& pat, const std::string& text)
 {
-  int        errc {};
-  PCRE2_SIZE erroff {};
+  int         errc {};
+  PCRE2_SIZE  erroff {};
   pcre2_code* re = pcre2_compile(reinterpret_cast<PCRE2_SPTR>(pat.c_str()),
                                  PCRE2_ZERO_TERMINATED, 0, &errc, &erroff, nullptr);
   if (re == nullptr) {
@@ -141,8 +208,8 @@ std::size_t pcre2_count(const std::string& pat, const std::string& text)
   std::size_t       n {};
   PCRE2_SIZE        pos {};
   while (pos <= text.size()) {
-    const int rc = pcre2_jit_match(re, reinterpret_cast<PCRE2_SPTR>(text.data()),
-                                   text.size(), pos, 0, md, nullptr);
+    const int rc = pcre2_jit_match(re, reinterpret_cast<PCRE2_SPTR>(text.data()), text.size(),
+                                   pos, 0, md, nullptr);
     if (rc < 0) {
       break;
     }
@@ -159,13 +226,11 @@ std::size_t pcre2_count(const std::string& pat, const std::string& text)
 #if defined(HAVE_RE2)
 std::size_t re2_count(const std::string& pat, const std::string& text)
 {
-  const RE2       re(pat);
-  re2::StringPiece input(text);
+  const RE2        re(pat);
   re2::StringPiece m;
   std::size_t      n {};
   std::size_t      pos {};
-  while (pos <= text.size() &&
-         re.Match(text, pos, text.size(), RE2::UNANCHORED, &m, 1)) {
+  while (pos <= text.size() && re.Match(text, pos, text.size(), RE2::UNANCHORED, &m, 1)) {
     const std::size_t s = static_cast<std::size_t>(m.data() - text.data());
     const std::size_t e = s + m.size();
     ++n;
@@ -175,95 +240,184 @@ std::size_t re2_count(const std::string& pat, const std::string& text)
 }
 #endif
 
-void run()
+// Build the "engines" object for one (pattern, corpus). `lookaround` marks RE2 unsupported.
+std::string engines_object(const std::string& pat, const std::string& text, int n,
+                           bool lookaround = false)
 {
-  constexpr int reps = 9;
-  std::printf("%-22s %10s", "case", "REAL ns/B");
-  std::printf(" %12s", "std ns/B(x)");
+  std::vector<std::pair<std::string, std::string>> fields;
+  fields.emplace_back("real", engine_result(collect([&] { return real_count(pat, text); }, n)));
+  fields.emplace_back("std", engine_result(collect([&] { return std_count(pat, text); }, n)));
 #if defined(HAVE_PCRE2)
-  std::printf(" %14s", "pcre2jit ns/B(x)");
+  fields.emplace_back("pcre2", engine_result(collect([&] { return pcre2_count(pat, text); }, n)));
 #endif
 #if defined(HAVE_RE2)
-  std::printf(" %12s", "re2 ns/B(x)");
-#endif
-  std::printf("   matches(R/s%s%s)\n", "", "");
-
-  for (const auto& c : cases()) {
-    const std::string pat {c.pattern};
-    const double      bytes = static_cast<double>(c.corpus.size());
-
-    std::size_t  rc {};
-    const double rt = median_ns([&] { return real_count(pat, c.corpus); }, reps, rc);
-
-    std::size_t  sc {};
-    const double st = median_ns([&] { return std_count(pat, c.corpus); }, reps, sc);
-
-    std::printf("%-22s %10.3f", c.name, rt / bytes);
-    std::printf(" %9.3f(%4.2fx)", st / bytes, st / rt);
-
-#if defined(HAVE_PCRE2)
-    std::size_t  pc {};
-    const double pt = median_ns([&] { return pcre2_count(pat, c.corpus); }, reps, pc);
-    std::printf(" %10.3f(%4.2fx)", pt / bytes, pt / rt);
-#endif
-#if defined(HAVE_RE2)
-    std::size_t  ec {};
-    const double et = median_ns([&] { return re2_count(pat, c.corpus); }, reps, ec);
-    std::printf(" %8.3f(%4.2fx)", et / bytes, et / rt);
-#endif
-
-    std::printf("   %zu/%zu", rc, sc);
-#if defined(HAVE_PCRE2)
-    std::printf("/%zu", pc);
-#endif
-#if defined(HAVE_RE2)
-    std::printf("/%zu", ec);
-#endif
-    std::printf("\n");
+  if (lookaround) {
+    fields.emplace_back("re2", json_string("unsupported")); // RE2 has no lookaround
   }
-  std::printf("\n(x) = engine_time / REAL_time. >1 means REAL is faster. "
-              "ns/B = nanoseconds per corpus byte (lower is better).\n");
+  else {
+    fields.emplace_back("re2", engine_result(collect([&] { return re2_count(pat, text); }, n)));
+  }
+#else
+  (void) lookaround;
+#endif
+  return json_object(fields);
 }
 
-// Safety axis: a nested quantifier that has no match is linear for REAL and
-// RE2 but exponential for a backtracker. We scale the linear engines to a huge
-// input and std::regex only to tiny inputs (it doubles per added character).
-void run_redos()
+struct bench_case
 {
-  std::printf("\nReDoS safety — (a+)+b over \"a\"*N (no 'b', so no match):\n");
-  std::size_t       sink {};
-  const std::string big(100000, 'a');
+  std::string name;
+  std::string family;
+  std::string pattern;
+  std::string corpus;
+  bool        lookaround = false;
+};
 
-  const real::regex rx("(a+)+b");
-  const double      rt = median_ns([&] { return rx.search(big).matched() ? 1U : 0U; }, 3, sink);
-  std::printf("  REAL        N=100000 : %8.3f ms (linear)\n", rt / 1e6);
+std::vector<bench_case> cases()
+{
+  return {
+    {"words [a-z]+", "class-scan", "[a-z]+", corpus_words()},
+    {"fields [^,]+", "class-scan", "[^,]+", corpus_csv()},
+    {"alt the|fox|dog", "alternation", "the|fox|dog", corpus_words()},
+    {"hex [0-9a-f]{8}", "quantifier", "[0-9a-f]{8}", corpus_hex()},
+    {"date {4}-{2}-{2}", "quantifier", "[0-9]{4}-[0-9]{2}-[0-9]{2}", corpus_mixed()},
+    {"digits [0-9]+", "density", "[0-9]+", corpus_mixed()},
+    {"literal", "literal", "charlie", corpus_csv()},
+    // Differentiator: a bounded lookahead. REAL/std/PCRE2 support it; RE2 has no lookaround.
+    {"lookahead [a-z]+(?=[a-z])", "differentiator", "[a-z]+(?=[a-z])", corpus_words(), true},
+  };
+}
+
+std::string emit_cases(int n)
+{
+  std::vector<std::string> entries;
+  for (const auto& c : cases()) {
+    const auto bytes = static_cast<double>(c.corpus.size());
+    entries.push_back(json_object({
+      {"name", json_string(c.name)},
+      {"family", json_string(c.family)},
+      {"pattern", json_string(c.pattern)},
+      {"corpus_bytes", json_number(bytes)},
+      {"engines", engines_object(c.pattern, c.corpus, n, c.lookaround)},
+    }));
+  }
+  return "[" + json_join(entries) + "]";
+}
+
+// Scaling sweep: one class-scan pattern across sizes (the linear-throughput headline).
+std::string emit_scaling(int n)
+{
+  const std::string        pattern = "[a-z]+";
+  std::vector<std::string> entries;
+  for (const std::size_t size : {std::size_t(1000), std::size_t(10000),
+                                 std::size_t(100000), std::size_t(1000000)}) {
+    const std::string corpus = corpus_words(size);
+    entries.push_back(json_object({
+      {"size", json_number(static_cast<double>(corpus.size()))},
+      {"engines", engines_object(pattern, corpus, n)},
+    }));
+  }
+  return "[" + json_join(entries) + "]";
+}
+
+// ReDoS, folded into the same schema: (a+)+b over "a"*N with no 'b'. The linear engines
+// (REAL, RE2) run a large N; std::regex (a backtracker) only tiny N. Emitted as a list of
+// {engine, n, samples}.
+std::string emit_redos(int n)
+{
+  std::vector<std::string> entries;
+  const std::string        big(100000, 'a');
+
+  entries.push_back(json_object({
+    {"engine", json_string("real")}, {"n", json_number(100000)},
+    {"samples", json_array(collect([&] {
+      const real::regex rx("(a+)+b");
+      return rx.search(big).matched() ? 1U : 0U;
+    }, n).samples)}}));
 
 #if defined(HAVE_RE2)
-  const RE2    re("(a+)+b");
-  const double et = median_ns([&] { return RE2::PartialMatch(big, re) ? 1U : 0U; }, 3, sink);
-  std::printf("  RE2         N=100000 : %8.3f ms (linear)\n", et / 1e6);
+  entries.push_back(json_object({
+    {"engine", json_string("re2")}, {"n", json_number(100000)},
+    {"samples", json_array(collect([&] {
+      const RE2 re("(a+)+b");
+      return RE2::PartialMatch(big, re) ? 1U : 0U;
+    }, n).samples)}}));
 #endif
 
-  std::printf("  std::regex (backtracker, tiny N only):\n");
-  for (const int n : {22, 24, 26, 28}) {
-    const std::string s(static_cast<std::size_t>(n), 'a');
-    const std::regex  re("(a+)+b");
+  for (const int small : {22, 24, 26}) {
+    const std::string s(static_cast<std::size_t>(small), 'a');
+    std::vector<double> samples;
     try {
-      const double t = median_ns([&] { return std::regex_search(s, re) ? 1U : 0U; }, 3, sink);
-      std::printf("    std::regex N=%-6d : %8.3f ms\n", n, t / 1e6);
+      samples = collect([&] {
+        const std::regex re("(a+)+b");
+        return std::regex_search(s, re) ? 1U : 0U;
+      }, 3).samples; // a backtracker: keep reps small
     }
-    catch (const std::exception& e) {
-      // libc++ aborts catastrophic backtracking with error_complexity.
-      std::printf("    std::regex N=%-6d : refused (%s)\n", n, e.what());
+    catch (const std::exception&) {
+      // libc++ may abort catastrophic backtracking; leave the samples empty.
     }
+    entries.push_back(json_object({
+      {"engine", json_string("std")}, {"n", json_number(static_cast<double>(small))},
+      {"samples", json_array(samples)}}));
   }
+  return "[" + json_join(entries) + "]";
+}
+
+std::string present_engines()
+{
+  std::vector<std::string> names = {json_string("real"), json_string("std")};
+#if defined(HAVE_PCRE2)
+  names.push_back(json_string("pcre2"));
+#endif
+#if defined(HAVE_RE2)
+  names.push_back(json_string("re2"));
+#endif
+  return "[" + json_join(names) + "]";
+}
+
+const char* arch()
+{
+#if defined(__aarch64__) || defined(_M_ARM64)
+  return "arm64";
+#elif defined(__x86_64__) || defined(_M_X64)
+  return "x86_64";
+#else
+  return "unknown";
+#endif
+}
+
+std::string utc_date()
+{
+  const std::time_t now = std::time(nullptr);
+  char              buf[32];
+  std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", std::gmtime(&now));
+  return buf;
+}
+
+std::string emit_meta(int n)
+{
+  return json_object({
+    {"bench", json_string("engines")},
+    {"cpu", json_string(arch())},
+    {"compiler", json_string(__VERSION__)},
+    {"flags", json_string(BENCH_FLAGS)},
+    {"engines", present_engines()},
+    {"date", json_string(utc_date())},
+    {"commit", json_string(BENCH_COMMIT)},
+    {"samples", json_number(n)},
+  });
 }
 
 } // namespace
 
 int main()
 {
-  run();
-  run_redos();
+  const int n = sample_count();
+  const std::string doc = json_object({
+    {"meta", emit_meta(n)},
+    {"cases", emit_cases(n)},
+    {"scaling", emit_scaling(n)},
+    {"redos", emit_redos(n)},
+  });
+  std::printf("%s\n", doc.c_str());
   return 0;
 }

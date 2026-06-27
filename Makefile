@@ -255,14 +255,18 @@ bench-fuzz: python
 
 # Multi-engine C++ throughput benchmark (REAL vs std::regex vs PCRE2 vs RE2).
 # Optional engines are compiled in only when pkg-config locates them.
+# The C++ binary only measures and emits JSON; benchmarks/bench_engines.py (the consumer)
+# applies the shared stats module to produce the table, CIs, and ASCII box-plots. Manual,
+# not a CI gate. Tune samples via BENCH_SAMPLES / BENCH_BOOTSTRAP.
 bench-engines:
 	@mkdir -p $(BUILD)
 	@flags=""; \
 	 if pkg-config --exists libpcre2-8; then flags="$$flags -DHAVE_PCRE2 $$(pkg-config --cflags --libs libpcre2-8)"; fi; \
 	 if pkg-config --exists re2; then flags="$$flags -DHAVE_RE2 $$(pkg-config --cflags --libs re2)"; fi; \
+	 commit=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown); \
 	 echo "engines: REAL std::regex$${flags:+ +optional}"; \
-	 c++ -std=c++20 -O2 $(INCLUDES) benchmarks/bench_engines.cpp $$flags -o $(BUILD)/bench_engines
-	@$(BUILD)/bench_engines
+	 c++ -std=c++20 -O2 -DBENCH_FLAGS='"-O2"' -DBENCH_COMMIT="\"$$commit\"" $(INCLUDES) benchmarks/bench_engines.cpp $$flags -o $(BUILD)/bench_engines
+	$(PYTHON) benchmarks/bench_engines.py $(BUILD)/bench_engines
 
 # Installs the package from the repository root (root pyproject.toml builds the
 # abi3 extension against include/). uninstall removes it by distribution name.
