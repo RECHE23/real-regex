@@ -272,7 +272,7 @@ bench-engines:
 	 if pkg-config --exists re2; then flags="$$flags -DHAVE_RE2 $$(pkg-config --cflags --libs re2)"; fi; \
 	 commit=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown); \
 	 echo "engines: REAL std::regex$${flags:+ +optional}"; \
-	 c++ -std=c++20 -O2 -DBENCH_FLAGS='"-O2"' -DBENCH_COMMIT="\"$$commit\"" $(INCLUDES) benchmarks/bench_engines.cpp $$flags -o $(BUILD)/bench_engines
+	 c++ -std=c++20 -O2 -DBENCH_FLAGS='"-O2"' -DBENCH_COMMIT="\"$$commit\"" $(INCLUDES) -I$(SCIFORGE_INCLUDE) benchmarks/bench_engines.cpp $$flags -o $(BUILD)/bench_engines
 	$(PYRUN) benchmarks/bench_engines.py $(BUILD)/bench_engines
 
 # Installs the package from the repository root (root pyproject.toml builds the

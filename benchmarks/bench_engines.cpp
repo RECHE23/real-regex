@@ -17,8 +17,8 @@
 //   BENCH_SAMPLES=30 ./bench_engines > engines.json
 
 #include <real/real.hpp>
+#include <sciforge/bench.hpp>
 
-#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -45,7 +45,15 @@
 
 namespace {
 
-using clock_type = std::chrono::steady_clock;
+// The timing primitives and the comma-safe JSON emitter now live in SciForge's shared C++
+// collector (include/sciforge/bench.hpp, sibling via SCIFORGE_INCLUDE). The using-declarations
+// keep every json_* call site below unchanged; this file keeps its own custom multi-section
+// JSON shape ({meta,cases,scaling,redos}), so it does NOT use emit_case/emit_run.
+using sciforge::bench::json_array;
+using sciforge::bench::json_join;
+using sciforge::bench::json_number;
+using sciforge::bench::json_object;
+using sciforge::bench::json_string;
 
 int sample_count()
 {
@@ -65,76 +73,22 @@ struct result
 template <typename Scan>
 result collect(Scan&& scan, int n)
 {
-  result r;
-  r.count = scan();                  // warm-up: discarded
-  r.samples.reserve(static_cast<std::size_t>(n));
-  for (int i = 0; i < n; ++i) {
-    const auto t0 = clock_type::now();
-    r.count       = scan();
-    const auto t1 = clock_type::now();
-    r.samples.push_back(std::chrono::duration<double, std::nano>(t1 - t0).count());
+  // Manual warm-up (discarded): with inner=1, sciforge::bench::collect does NOT calibrate and
+  // so does NOT warm up — this line keeps the original "first scan is cache-cold, discard it"
+  // behavior, giving exactly 1 warm + n timed scans.
+  scan();
+  std::size_t count = 0;
+  // inner=1 keeps "1 sample = 1 scan" (the distribution real's box-plots need); the shared
+  // collector returns seconds, so scale to nanoseconds — real's JSON and bench_engines.py are
+  // unchanged.
+  const std::vector<double> secs = sciforge::bench::collect([&] { return count = scan(); }, n, 1);
+  result                    r;
+  r.count = count;
+  r.samples.reserve(secs.size());
+  for (const double s : secs) {
+    r.samples.push_back(s * 1e9);
   }
   return r;
-}
-
-// --- a tiny, comma-safe JSON emitter ---------------------------------------
-
-std::string json_string(const std::string& v)
-{
-  std::string out = "\"";
-  for (const char c : v) {
-    if (c == '"' || c == '\\') {
-      out += '\\';
-      out += c;
-    }
-    else if (c == '\n') {
-      out += "\\n";
-    }
-    else {
-      out += c;
-    }
-  }
-  out += '"';
-  return out;
-}
-
-std::string json_number(double v)
-{
-  char buf[64];
-  std::snprintf(buf, sizeof(buf), "%.6g", v);
-  return buf;
-}
-
-std::string json_join(const std::vector<std::string>& items)
-{
-  std::string out;
-  for (std::size_t i = 0; i < items.size(); ++i) {
-    if (i != 0) {
-      out += ',';
-    }
-    out += items[i];
-  }
-  return out;
-}
-
-std::string json_array(const std::vector<double>& values)
-{
-  std::vector<std::string> items;
-  items.reserve(values.size());
-  for (const double v : values) {
-    items.push_back(json_number(v));
-  }
-  return "[" + json_join(items) + "]";
-}
-
-std::string json_object(const std::vector<std::pair<std::string, std::string>>& fields)
-{
-  std::vector<std::string> items;
-  items.reserve(fields.size());
-  for (const auto& [key, value] : fields) {
-    items.push_back(json_string(key) + ":" + value);
-  }
-  return "{" + json_join(items) + "}";
 }
 
 // One engine's measurement, or the literal "unsupported" when the engine cannot run it.
