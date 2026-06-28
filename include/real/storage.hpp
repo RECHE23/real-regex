@@ -14,6 +14,8 @@
 #ifndef REAL_STORAGE_HPP
 #define REAL_STORAGE_HPP
 
+#include "version.hpp"
+
 #include <array>
 #include <cassert>
 #include <cstddef>

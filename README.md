@@ -145,6 +145,33 @@ find_package(real CONFIG REQUIRED)
 target_link_libraries(app PRIVATE real::real)
 ```
 
+## Installation
+
+REAL is header-only, so "installing" just places the headers and the package
+metadata where a consumer can find them. After `cmake --install <build> --prefix
+<prefix>`, there are three ways to consume it from C++:
+
+```cmake
+# 1. CMake — find_package against the installed config package:
+find_package(real CONFIG REQUIRED)
+target_link_libraries(app PRIVATE real::real)
+```
+
+```sh
+# 2. pkg-config — for Make / Meson / autotools (and the system packagers):
+c++ -std=c++20 $(pkg-config --cflags real) app.cpp -o app
+```
+
+```sh
+# 3. Direct copy — vendor include/ into your tree, no build system needed:
+c++ -std=c++20 -I/path/to/real/include app.cpp -o app
+```
+
+REAL requires **C++20 or later**. Every header asserts it (`#include <real/...>`
+fails fast with a clear message under an older standard), and pkg-config has no
+field to convey a language standard — so the consumer must pass `-std=c++20` (or
+newer) itself, as shown above.
+
 ## Python binding
 
 An `re`-compatible module backed by the C++ engine (CPython Limited API, one

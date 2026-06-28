@@ -65,6 +65,15 @@ install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/realConfigVersion.cmake
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/real)
 
+# pkg-config support for non-CMake consumers (Make/Meson/autotools, and the system packagers —
+# Homebrew/vcpkg). GNUInstallDirs-aware: a noarch packager passing -DCMAKE_INSTALL_LIBDIR=lib
+# lands real.pc in lib/pkgconfig and the CMake config in lib/cmake/real, both on standard search
+# paths. PROJECT_VERSION is the pyproject-derived version, so the .pc can never drift.
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cmake/real.pc.in
+               ${CMAKE_CURRENT_BINARY_DIR}/real.pc @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/real.pc
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+
 if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     return()
 endif()

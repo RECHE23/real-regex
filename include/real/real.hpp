@@ -7,6 +7,8 @@
 #ifndef REAL_REAL_HPP
 #define REAL_REAL_HPP
 
+#include "version.hpp"
+
 #include <iterator>
 #include <optional>
 #include <span>

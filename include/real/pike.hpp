@@ -14,6 +14,8 @@
 #ifndef REAL_PIKE_HPP
 #define REAL_PIKE_HPP
 
+#include "version.hpp"
+
 #include <array>
 #include <cassert>
 #include <cstdint>

@@ -10,6 +10,8 @@
 #ifndef REAL_PROGRAM_HPP
 #define REAL_PROGRAM_HPP
 
+#include "version.hpp"
+
 #include <array>
 #include <cstdint>
 #include <exception>

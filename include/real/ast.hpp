@@ -14,6 +14,8 @@
 #ifndef REAL_AST_HPP
 #define REAL_AST_HPP
 
+#include "version.hpp"
+
 #include <cstdint>
 #include <string_view>
 #include <vector>

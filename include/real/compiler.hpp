@@ -17,6 +17,8 @@
 #ifndef REAL_COMPILER_HPP
 #define REAL_COMPILER_HPP
 
+#include "version.hpp"
+
 #include <cstdint>
 #include <vector>
 

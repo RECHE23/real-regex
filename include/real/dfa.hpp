@@ -24,6 +24,8 @@
 #ifndef REAL_DFA_HPP
 #define REAL_DFA_HPP
 
+#include "version.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>

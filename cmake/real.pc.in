@@ -1,0 +1,10 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: real
+Description: REAL — header-only C++20 linear-time regex engine
+URL: https://github.com/RECHE23/real-regex
+Version: @PROJECT_VERSION@
+# real requires C++20 or later. The consumer must add -std=c++20 (or later) to its own
+# CXXFLAGS — pkg-config has no field to convey a language-standard requirement.
+Cflags: -I${includedir}

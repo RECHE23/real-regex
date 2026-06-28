@@ -46,7 +46,7 @@ FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp')
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
         lint misra fuzz doc doc-no-coverage format format-check full-local-gate clean \
         python python-test bench-python bench-fuzz bench-engines \
-        version-check install uninstall release help
+        version-check install install-smoke uninstall release help
 
 .DEFAULT_GOAL := help
 
@@ -235,7 +235,12 @@ version-check:
 	 if [ "$$py" != "$$ini" ]; then echo "version-check: DRIFT pyproject=$$py vs __init__=$$ini"; exit 1; fi; \
 	 if [ -n "$$lit" ]; then echo "version-check: CMakeLists.txt hardcodes VERSION $$lit (must derive from pyproject.toml = $$py)"; exit 1; fi; \
 	 if ! grep -q 'file(READ.*pyproject\.toml' CMakeLists.txt; then echo "version-check: CMakeLists.txt must derive its version from pyproject.toml"; exit 1; fi; \
-	 echo "version-check: $$py (pyproject = __init__ = CMake-derived)"
+	 vmaj=$$(sed -nE 's/^#define REAL_VERSION_MAJOR ([0-9]+).*/\1/p' include/real/version.hpp); \
+	 vmin=$$(sed -nE 's/^#define REAL_VERSION_MINOR ([0-9]+).*/\1/p' include/real/version.hpp); \
+	 vpat=$$(sed -nE 's/^#define REAL_VERSION_PATCH ([0-9]+).*/\1/p' include/real/version.hpp); \
+	 hdr="$$vmaj.$$vmin.$$vpat"; \
+	 if [ "$$hdr" != "$$py" ]; then echo "version-check: DRIFT version.hpp=$$hdr vs pyproject=$$py"; exit 1; fi; \
+	 echo "version-check: $$py (pyproject = __init__ = CMake-derived = version.hpp)"
 
 # Every pass/fail gate this machine owns, in one command — the canonical pre-push check
 # and, like the SciLang-era libraries, the macOS gate of record. REAL holds its own
@@ -275,6 +280,48 @@ bench-engines:
 	 c++ -std=c++20 -O2 -DBENCH_FLAGS='"-O2"' -DBENCH_COMMIT="\"$$commit\"" $(INCLUDES) -I$(SCIFORGE_INCLUDE) benchmarks/bench_engines.cpp $$flags -o $(BUILD)/bench_engines
 	$(PYRUN) benchmarks/bench_engines.py $(BUILD)/bench_engines
 
+# Proves the *system* install end to end: install REAL to a temp prefix (noarch LIBDIR=lib,
+# the layout the packagers use), then consume it the three supported C++ ways plus a negative
+# check that the C++20 guard fires. CXX is honored (run under clang and g++). Configure needs
+# the SciForge harness only because REAL's top-level CMake also configures the test target; the
+# install itself copies headers/config/.pc. Used by the install-smoke CI job.
+install-smoke:
+	@set -e; \
+	 pfx=$$(mktemp -d); cfg=$$(mktemp -d); work=$$(mktemp -d); \
+	 trap 'rm -rf "$$pfx" "$$cfg" "$$work"' EXIT; \
+	 cxx="$${CXX:-c++}"; \
+	 echo "install-smoke: install REAL -> $$pfx (LIBDIR=lib), consumer cxx=$$cxx"; \
+	 $(CMAKE) -S . -B "$$cfg" -DCMAKE_INSTALL_PREFIX="$$pfx" -DCMAKE_INSTALL_LIBDIR=lib \
+	          -DSCIFORGE_INCLUDE_DIR=$(SCIFORGE_INCLUDE) >/dev/null; \
+	 $(CMAKE) --install "$$cfg" >/dev/null; \
+	 expected=$$(sed -nE 's/^version = "([0-9][0-9.]*)"/\1/p' pyproject.toml); \
+	 printf '#include <real/real.hpp>\n#include <real/version.hpp>\nstatic_assert(REAL_VERSION_MAJOR >= 2026, "version macro visible");\nint main(){ const real::regex r("[0-9]+"); return r.search("x42").matched() ? 0 : 1; }\n' > "$$work/smoke.cpp"; \
+	 printf '#include <real/dfa.hpp>\nint main(){ return 0; }\n' > "$$work/negative.cpp"; \
+	 echo "  (a) find_package(real CONFIG REQUIRED)"; \
+	 printf 'cmake_minimum_required(VERSION 3.16)\nproject(s CXX)\nfind_package(real CONFIG REQUIRED)\nadd_executable(s smoke.cpp)\ntarget_link_libraries(s PRIVATE real::real)\nset_target_properties(s PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)\n' > "$$work/CMakeLists.txt"; \
+	 $(CMAKE) -S "$$work" -B "$$work/b" -DCMAKE_PREFIX_PATH="$$pfx" >/dev/null; \
+	 $(CMAKE) --build "$$work/b" >/dev/null; \
+	 "$$work/b/s"; echo "      find_package: OK"; \
+	 echo "  (b) pkg-config --cflags real + --modversion"; \
+	 export PKG_CONFIG_PATH="$$pfx/lib/pkgconfig"; \
+	 modv=$$(pkg-config --modversion real); \
+	 test "$$modv" = "$$expected" || { echo "      modversion $$modv != pyproject $$expected"; exit 1; }; \
+	 $$cxx -std=c++20 $$(pkg-config --cflags real) "$$work/smoke.cpp" -o "$$work/s_pc"; \
+	 "$$work/s_pc"; echo "      pkg-config ($$modv): OK"; \
+	 echo "  (c) direct-copy: -I<prefix>/include"; \
+	 $$cxx -std=c++20 -I"$$pfx/include" "$$work/smoke.cpp" -o "$$work/s_dc"; \
+	 "$$work/s_dc"; echo "      direct-copy: OK"; \
+	 echo "  (d) negative: <real/dfa.hpp> under -std=c++17 must fail with a C++20 message"; \
+	 if err=$$($$cxx -std=c++17 -I"$$pfx/include" "$$work/negative.cpp" -o "$$work/neg" 2>&1); then \
+	   echo "      ERROR: the -std=c++17 compile SUCCEEDED — the guard did not fire"; exit 1; \
+	 else \
+	   case "$$err" in \
+	     *C++20*) echo "      negative: OK (rejected, message mentions C++20)";; \
+	     *) echo "      ERROR: failed, but the message does not mention C++20:"; printf '%s\n' "$$err" | head -3; exit 1;; \
+	   esac; \
+	 fi; \
+	 echo "install-smoke: OK (find_package + pkg-config + direct-copy + negative guard)"
+
 # Installs the package from the repository root (root pyproject.toml builds the
 # abi3 extension against include/). uninstall removes it by distribution name.
 install:
@@ -299,7 +346,11 @@ release:
 	 echo "Releasing v$$version"; \
 	 sed -i.bak -E "s/^version = \".*\"/version = \"$$version\"/" pyproject.toml && rm -f pyproject.toml.bak; \
 	 sed -i.bak -E "s/^__version__ = \".*\"/__version__ = \"$$version\"/" python/real/__init__.py && rm -f python/real/__init__.py.bak; \
-	 git add pyproject.toml python/real/__init__.py; \
+	 vmaj=$$(echo "$$version" | cut -d. -f1); vmin=$$(echo "$$version" | cut -d. -f2); vpat=$$(echo "$$version" | cut -d. -f3); \
+	 sed -i.bak -E "s/^#define REAL_VERSION_MAJOR .*/#define REAL_VERSION_MAJOR $$vmaj/; \
+	                s/^#define REAL_VERSION_MINOR .*/#define REAL_VERSION_MINOR $$vmin/; \
+	                s/^#define REAL_VERSION_PATCH .*/#define REAL_VERSION_PATCH $$vpat/" include/real/version.hpp && rm -f include/real/version.hpp.bak; \
+	 git add pyproject.toml python/real/__init__.py include/real/version.hpp; \
 	 git commit -m "release: v$$version"; \
 	 git tag "v$$version"; \
 	 git push origin HEAD "v$$version"

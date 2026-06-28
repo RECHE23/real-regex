@@ -12,6 +12,8 @@
 #ifndef REAL_PREFILTER_HPP
 #define REAL_PREFILTER_HPP
 
+#include "version.hpp"
+
 #include <cstdint>
 #include <cstring>
 #include <span>

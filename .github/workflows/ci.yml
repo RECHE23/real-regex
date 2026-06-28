@@ -59,6 +59,30 @@ jobs:
       - name: Coverage gate (line >= floor)
         run: make -C real-regex coverage-check
 
+  # System-install smoke: install REAL to a temp prefix (noarch LIBDIR=lib) and consume it the
+  # three supported C++ ways (find_package, pkg-config, direct-copy) plus a negative check that
+  # the C++20 guard fires under -std=c++17 (the only thing exercising the guard — CI otherwise
+  # builds C++20). pkg-config and cmake are installed explicitly (absent from some images);
+  # SciForge is a sibling so REAL's top-level configure resolves the test harness (the install
+  # itself is harness-free).
+  install-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: real-regex
+      - uses: actions/checkout@v6
+        with:
+          repository: RECHE23/sciforge
+          ref: v2026.6.5
+          path: sciforge
+      - name: Install pkg-config + cmake + clang
+        run: sudo apt-get update && sudo apt-get install -y pkg-config cmake clang
+      - name: Install smoke (g++)
+        run: make -C real-regex install-smoke
+      - name: Install smoke (clang++)
+        run: make -C real-regex install-smoke CXX=clang++
+
   # Python binding (abi3) build + unittest via SciForge's reusable spine. REAL's
   # binding is a leaf (no dependency siblings); its exact prior coverage is
   # {linux, macOS, Windows} x {3.10, 3.14}, replicated by the platform toggles.
