@@ -172,6 +172,13 @@ fails fast with a clear message under an older standard), and pkg-config has no
 field to convey a language standard — so the consumer must pass `-std=c++20` (or
 newer) itself, as shown above.
 
+The header-only library builds and installs with nothing but a C++20 compiler and
+CMake. The [SciForge](https://github.com/RECHE23/sciforge) test harness is needed
+**only** to build the test suite (`BUILD_TESTING=ON`, the default for development
+and CI), the Python binding and the CI scripts — never the library. Packagers
+configure with `-DBUILD_TESTING=OFF` to install the library alone, with no
+SciForge dependency.
+
 ## Python binding
 
 An `re`-compatible module backed by the C++ engine (CPython Limited API, one

@@ -31,6 +31,11 @@ endif()
 option(REAL_SANITIZE "Build the tests with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
 option(REAL_COVERAGE "Build the tests with LLVM source-based coverage instrumentation" OFF)
 
+# The header-only library itself needs nothing but a C++20 compiler. The test SUITE needs the
+# SciForge harness — so tests are gated on the standard BUILD_TESTING option. Packagers
+# (brew/vcpkg/apt/dnf) configure with -DBUILD_TESTING=OFF: library only, no SciForge.
+option(BUILD_TESTING "Build the REAL test suite (requires the SciForge test harness)" ON)
+
 # Header-only library: consumers link real::real to get the include path.
 add_library(real INTERFACE)
 add_library(real::real ALIAS real)
@@ -74,7 +79,11 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cmake/real.pc.in
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/real.pc
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 
-if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+# Everything above (the interface target, the install rules, the config package and pkg-config)
+# is harness-free. Everything below — SciForge resolution and the test target — is built only
+# when REAL is the top-level project AND tests are wanted. A packager (-DBUILD_TESTING=OFF) stops
+# here: it installs the library without ever touching SciForge.
+if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR OR NOT BUILD_TESTING)
     return()
 endif()
 

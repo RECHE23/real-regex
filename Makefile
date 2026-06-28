@@ -280,11 +280,10 @@ bench-engines:
 	 c++ -std=c++20 -O2 -DBENCH_FLAGS='"-O2"' -DBENCH_COMMIT="\"$$commit\"" $(INCLUDES) -I$(SCIFORGE_INCLUDE) benchmarks/bench_engines.cpp $$flags -o $(BUILD)/bench_engines
 	$(PYRUN) benchmarks/bench_engines.py $(BUILD)/bench_engines
 
-# Proves the *system* install end to end: install REAL to a temp prefix (noarch LIBDIR=lib,
-# the layout the packagers use), then consume it the three supported C++ ways plus a negative
-# check that the C++20 guard fires. CXX is honored (run under clang and g++). Configure needs
-# the SciForge harness only because REAL's top-level CMake also configures the test target; the
-# install itself copies headers/config/.pc. Used by the install-smoke CI job.
+# Proves the *system* install end to end, the exact packager path: install REAL to a temp prefix
+# with -DBUILD_TESTING=OFF (noarch LIBDIR=lib, no SciForge — the library stands alone), then
+# consume it the three supported C++ ways plus a negative check that the C++20 guard fires. CXX is
+# honored (run under clang and g++). Used by the install-smoke CI job.
 install-smoke:
 	@set -e; \
 	 pfx=$$(mktemp -d); cfg=$$(mktemp -d); work=$$(mktemp -d); \
@@ -292,7 +291,7 @@ install-smoke:
 	 cxx="$${CXX:-c++}"; \
 	 echo "install-smoke: install REAL -> $$pfx (LIBDIR=lib), consumer cxx=$$cxx"; \
 	 $(CMAKE) -S . -B "$$cfg" -DCMAKE_INSTALL_PREFIX="$$pfx" -DCMAKE_INSTALL_LIBDIR=lib \
-	          -DSCIFORGE_INCLUDE_DIR=$(SCIFORGE_INCLUDE) >/dev/null; \
+	          -DBUILD_TESTING=OFF >/dev/null; \
 	 $(CMAKE) --install "$$cfg" >/dev/null; \
 	 expected=$$(sed -nE 's/^version = "([0-9][0-9.]*)"/\1/p' pyproject.toml); \
 	 printf '#include <real/real.hpp>\n#include <real/version.hpp>\nstatic_assert(REAL_VERSION_MAJOR >= 2026, "version macro visible");\nint main(){ const real::regex r("[0-9]+"); return r.search("x42").matched() ? 0 : 1; }\n' > "$$work/smoke.cpp"; \
