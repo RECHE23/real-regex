@@ -19,7 +19,6 @@ and an optional JSON export. A matplotlib reader is a separate, opt-in benchmark
 """
 
 import argparse
-import gc
 import json
 import os
 import platform
@@ -28,14 +27,23 @@ import re
 import statistics
 import subprocess
 import sys
-import time
 from datetime import datetime, timezone
 
 sys.path.insert(0, "python")
 import real  # noqa: E402
-# Dep-free stats from SciForge's shared substrate (sciforge.bench); the sibling
-# ../sciforge/python is on PYTHONPATH via the Makefile (make bench-python).
-from sciforge.bench import ascii_boxplot, fmt, geomean_ci, median_iqr  # noqa: E402
+# Dep-free bench substrate from SciForge (sciforge.bench); the sibling ../sciforge/python is on
+# PYTHONPATH via the Makefile (make bench-python). compare()/verdict() drive the comparison —
+# REAL (subject) vs re (reference), gated by a per-method equality callable — and collect() the
+# single-fn REAL-only profiles. The verdict's faster/slower/indecisive call is generalized here.
+from sciforge.bench import (  # noqa: E402
+    ascii_boxplot,
+    collect,
+    compare,
+    fmt,
+    geomean_ci,
+    median_iqr,
+    verdict,
+)
 
 N_SAMPLES = int(os.environ.get("BENCH_SAMPLES", "40"))
 BOOTSTRAP_B = int(os.environ.get("BENCH_BOOTSTRAP", "1000"))
@@ -88,60 +96,13 @@ UNICODE_100K = " ".join(
 
 
 # ---------------------------------------------------------------------------
-# Measurement — paired, gc-disabled, distribution of per-op times
+# Measurement — the paired comparison is sciforge.bench.compare(); single-fn
+# REAL-only profiles use sciforge.bench.collect().
 # ---------------------------------------------------------------------------
 
-def _calibrate(fn):
-    fn()
-    t0 = time.perf_counter()
-    fn()
-    once = max(time.perf_counter() - t0, 1e-9)
-    return max(1, int(TARGET_BATCH / once))
-
-
-def _batch(fn, n):
-    t0 = time.perf_counter()
-    for _ in range(n):
-        fn()
-    return (time.perf_counter() - t0) / n
-
-
-def collect_pair(re_fn, real_fn, samples=N_SAMPLES):
-    """Per-op time distributions for re and REAL, measured on adjacent runs.
-
-    The inner loop (n iterations) amortises perf_counter overhead; the outer loop gathers
-    `samples` per-op times each. re and REAL are timed back-to-back per sample so the ratios
-    are paired (same machine state). GC is disabled across the timed region.
-    """
-    re_fn()
-    real_fn()  # warmup + first-run caches
-    n_re, n_real = _calibrate(re_fn), _calibrate(real_fn)
-    re_times, real_times, ratios = [], [], []
-    gc.disable()
-    try:
-        for _ in range(samples):
-            r = _batch(re_fn, n_re)
-            x = _batch(real_fn, n_real)
-            re_times.append(r)
-            real_times.append(x)
-            ratios.append(r / x)
-    finally:
-        gc.enable()
-    return re_times, real_times, ratios
-
-
-def collect_one(fn, samples=N_SAMPLES):
-    """A per-op time distribution for a single function (REAL-only profiles)."""
-    fn()
-    n = _calibrate(fn)
-    out = []
-    gc.disable()
-    try:
-        for _ in range(samples):
-            out.append(_batch(fn, n))
-    finally:
-        gc.enable()
-    return out
+def _median(label, fn):
+    """Median per-op time of a single function (the REAL-only profiles), via collect()."""
+    return median_iqr(collect(label, fn, samples=N_SAMPLES, batch_target=TARGET_BATCH).samples)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -191,30 +152,39 @@ case("sub dates refs", "quantifiers/captures", r"(\d{4})-(\d{2})-(\d{2})", "sub"
 case("split commas @100KB", "quantifiers/captures", r",\s*", "split", PROSE_100K)
 
 
+def _match_equal(method):
+    """The per-case equality callable (a closure capturing `method`): search compares spans
+    (None-safe), every other method compares the results directly. This is the regex-domain
+    judgement — it lives here, never in sciforge.bench."""
+    def equal(subject_result, reference_result):
+        if method == "search":
+            s = None if subject_result is None else subject_result.span()
+            r = None if reference_result is None else reference_result.span()
+            return s == r
+        return subject_result == reference_result
+    return equal
+
+
 def run_case(spec):
-    """Verify equality, then collect the paired distribution. Returns a JSON-ready record
-    or None on a result mismatch."""
+    """Gate REAL vs re with the per-method equality callable, then time them paired (compare()).
+    Returns the compare() Case (its `mismatch` flag marks a result disagreement)."""
     rp = re.compile(spec["pattern"], re.ASCII if spec["re_flags"] is None else spec["re_flags"])
     xp = real.compile(spec["pattern"], spec["flags"])
     method, args, text = spec["method"], spec["args"], spec["text"]
+    # REAL is the subject, re the reference; ratio = re_time / real_time (>1 ⇒ REAL faster).
+    return compare(spec["name"],
+                   lambda: getattr(xp, method)(*args, text),
+                   lambda: getattr(rp, method)(*args, text),
+                   _match_equal(method),
+                   samples=N_SAMPLES, batch_target=TARGET_BATCH,
+                   family=spec["family"], key=spec["key"])
 
-    expected = getattr(rp, method)(*args, text)
-    got = getattr(xp, method)(*args, text)
-    if method == "search":
-        expected = None if expected is None else expected.span()
-        got = None if got is None else got.span()
-    if expected != got:
-        return None
 
-    re_times, real_times, ratios = collect_pair(lambda: getattr(rp, method)(*args, text),
-                                                lambda: getattr(xp, method)(*args, text))
-    median, q1, q3, iqr, mn = median_iqr(ratios)
-    _, ci_low, ci_high = geomean_ci(ratios, B=BOOTSTRAP_B)
-    return dict(
-        name=spec["name"], family=spec["family"], unit="ratio re/real", key=spec["key"],
-        re_median=statistics.median(re_times), real_median=statistics.median(real_times),
-        samples_re=re_times, samples_real=real_times, ratios=ratios,
-        stats=dict(median=median, iqr=iqr, min=mn, ci_low=ci_low, ci_high=ci_high))
+def _case_stats(case):
+    """Per-case table stats derived from a comparison Case's paired ratios."""
+    median, _q1, _q3, iqr, mn = median_iqr(case.extra["ratios"])
+    _, ci_low, ci_high = geomean_ci(case.extra["ratios"], B=BOOTSTRAP_B)
+    return dict(median=median, iqr=iqr, min=mn, ci_low=ci_low, ci_high=ci_high)
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +200,7 @@ def lookaround_profile():
     points = []
     for size in SIZES:
         text = PROSE[size]
-        t = median_iqr(collect_one(lambda: xp.findall(text)))[0]
+        t = _median("lookaround", lambda: xp.findall(text))
         points.append((len(text), t, len(text) / t / 1e6))  # (bytes, sec, MB/s)
     slope, intercept, r2 = _linear_fit([(n, t) for n, t, _ in points])
     return points, slope, r2
@@ -255,8 +225,8 @@ def redos_profile():
     a 10k input. Informational — a throughput contrast, not a fair ratio."""
     pattern = r"(a+)+b"
     n_re = 24
-    t_re = median_iqr(collect_one(lambda: re.search(pattern, "a" * n_re)))[0]
-    t_real = median_iqr(collect_one(lambda: real.search(pattern, "a" * 10_000)))[0]
+    t_re = _median("redos-re", lambda: re.search(pattern, "a" * n_re))
+    t_real = _median("redos-real", lambda: real.search(pattern, "a" * 10_000))
     return n_re, t_re, t_real
 
 
@@ -288,45 +258,44 @@ def main(json_path=None):
           f"on {info['cpu']} ({info['host']})")
     print(f"samples={N_SAMPLES}  bootstrap={BOOTSTRAP_B}  commit={info['commit']}  {info['date']}\n")
 
-    records, failures = [], []
+    cases = [run_case(spec) for spec in CASES]
+    records = [case for case in cases if not case.extra["mismatch"]]   # successfully compared
+    failures = [case.name for case in cases if case.extra["mismatch"]]
     by_family = {}
-    for spec in CASES:
-        record = run_case(spec)
-        if record is None:
-            failures.append(spec["name"])
-            continue
-        records.append(record)
-        by_family.setdefault(spec["family"], []).append(record)
+    for case in records:
+        by_family.setdefault(case.extra["family"], []).append(case)
 
     header = f"{'case':<24} {'family':<18} {'re':>9} {'REAL':>9} {'ratio (95% CI)':>22}"
     print(header)
     print("-" * len(header))
     for family in dict.fromkeys(spec["family"] for spec in CASES):
-        for record in by_family.get(family, []):
-            stats = record["stats"]
+        for case in by_family.get(family, []):
+            stats = _case_stats(case)
             ci = f"{stats['median']:.2f}x [{stats['ci_low']:.2f}-{stats['ci_high']:.2f}]"
-            print(f"{record['name']:<24} {record['family']:<18} "
-                  f"{fmt(record['re_median'], 6)} {fmt(record['real_median'], 6)} {ci:>22}")
+            re_median = statistics.median(case.extra["reference_samples"])
+            real_median = statistics.median(case.samples)
+            print(f"{case.name:<24} {case.extra['family']:<18} "
+                  f"{fmt(re_median, 6)} {fmt(real_median, 6)} {ci:>22}")
     if failures:
         print(f"\n  result mismatches (excluded): {', '.join(failures)}")
 
     # Box-plots, re vs REAL side by side per case (own time axis), for a few representative
     # cases — a typical win, a differentiator blow-out, and a case where re wins.
-    by_name = {r["name"]: r for r in records}
+    by_name = {case.name: case for case in records}
     print("\nper-op time distributions — re vs REAL (left = faster):")
     for name in ["words findall @1MB", "date search @100KB", "emails findall groups"]:
-        record = by_name.get(name)
-        if record is None:
+        case = by_name.get(name)
+        if case is None:
             continue
         print(f"  {name}:")
-        print(ascii_boxplot([record["samples_re"], record["samples_real"]], ["re", "REAL"], width=42))
+        print(ascii_boxplot([case.extra["reference_samples"], case.samples], ["re", "REAL"], width=42))
 
     # And the headline scaling family as ratio distributions on one shared axis.
     print("\nratio distributions — scaling family (re/real; right = REAL faster):")
     scaling = by_family.get("scaling", [])
     if scaling:
-        print(ascii_boxplot([r["ratios"] for r in scaling],
-                            [r["name"].replace(" findall", "") for r in scaling], width=46))
+        print(ascii_boxplot([case.extra["ratios"] for case in scaling],
+                            [case.name.replace(" findall", "") for case in scaling], width=46))
 
     # REAL-only differentiators.
     points, _slope, r2 = lookaround_profile()
@@ -338,38 +307,31 @@ def main(json_path=None):
     print(f"\nREAL-only — ReDoS (a+)+b: re n={n_re} {fmt(t_re, 6)}  vs  REAL n=10000 {fmt(t_real, 6)} "
           f"({t_re / t_real:.0f}x on tiny-vs-large input)")
 
-    # CI-aware verdict over the key cases' median ratios.
-    key_medians = [r["stats"]["median"] for r in records if r["key"]]
-    geomean, ci_low, ci_high = geomean_ci(key_medians, B=BOOTSTRAP_B)
-    if ci_low > 1.0:
-        verdict = f"REAL faster overall: {geomean:.2f}x [{ci_low:.2f}-{ci_high:.2f}] (CI clears 1.0)"
-        ok = True
-    elif ci_high < 1.0:
-        verdict = f"REAL slower overall: {geomean:.2f}x [{ci_low:.2f}-{ci_high:.2f}] (CI below 1.0)"
-        ok = False
-    else:
-        verdict = f"indecisive: {geomean:.2f}x [{ci_low:.2f}-{ci_high:.2f}] (CI straddles 1.0)"
-        ok = True  # indecisive is not a regression; only a mismatch or a clear-slower fails
+    # CI-aware verdict over the key cases (the shared, generalized aggregator). REAL's policy:
+    # a clear-slower is a regression, and any result mismatch fails — indecisive is acceptable.
+    result = verdict(cases, key=lambda case: case.extra["key"], subject_label="REAL",
+                     bootstrap=BOOTSTRAP_B)
     print("-" * len(header))
-    print(f"geomean over {len(key_medians)} key cases: {verdict}")
+    print(f"geomean over key cases: {result.text}")
 
-    payload = dict(meta=info, cases=[_json_case(r) for r in records],
-                   summary=dict(geomean=geomean, geomean_ci=[ci_low, ci_high], verdict=verdict))
+    payload = dict(meta=info, cases=[_json_case(case) for case in records],
+                   summary=dict(geomean=result.geomean, geomean_ci=[result.ci_low, result.ci_high],
+                                verdict=result.text))
     if json_path:
         with open(json_path, "w") as fh:
             json.dump(payload, fh, indent=2)
         print(f"JSON written: {json_path}")
 
-    ok = ok and not failures
+    ok = result.passed and result.classification != "slower" and not failures
     print("VERDICT:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 
 
-def _json_case(record):
-    """A compact JSON record per case (keeps the raw samples for the offline plotter)."""
-    return dict(name=record["name"], family=record["family"], unit=record["unit"],
-                samples_re=record["samples_re"], samples_real=record["samples_real"],
-                ratios=record["ratios"], stats=record["stats"])
+def _json_case(case):
+    """A compact JSON record per Case (keeps the raw samples for the offline plotter)."""
+    return dict(name=case.name, family=case.extra["family"], unit="ratio re/real",
+                samples_re=case.extra["reference_samples"], samples_real=case.samples,
+                ratios=case.extra["ratios"], stats=_case_stats(case))
 
 
 def profile_main():
