@@ -2,7 +2,7 @@
 """Consumer for the multi-engine collector (bench_engines.cpp).
 
 The C++ binary only measures and emits JSON; this script parses it and applies the shared,
-dependency-free stats module (benchmarks/real_bench) to produce the report: per-engine
+dependency-free stats module (sciforge.bench) to produce the report: per-engine
 median ns/byte with a ratio-vs-REAL and a bootstrap CI, ASCII box-plots of the per-scan time
 distributions (REAL / std / PCRE2 / RE2 side by side per case), the scaling sweep, and the
 ReDoS contrast. A "ratio > 1" means REAL is faster than that engine. Engines the pattern does
@@ -20,8 +20,9 @@ import statistics
 import subprocess
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from real_bench import ascii_boxplot, ratio_ci  # noqa: E402
+# Dep-free stats from SciForge's shared substrate (sciforge.bench); the sibling
+# ../sciforge/python is on PYTHONPATH via the Makefile (make bench-engines).
+from sciforge.bench import ascii_boxplot, ratio_ci  # noqa: E402
 
 BOOTSTRAP_B = int(os.environ.get("BENCH_BOOTSTRAP", "1000"))
 ENGINE_W = 27  # fixed width for an engine column (ns/byte + ratio + CI)

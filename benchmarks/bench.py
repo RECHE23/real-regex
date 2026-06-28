@@ -32,9 +32,10 @@ import time
 from datetime import datetime, timezone
 
 sys.path.insert(0, "python")
-sys.path.insert(0, "benchmarks")
 import real  # noqa: E402
-from real_bench import ascii_boxplot, geomean_ci, median_iqr  # noqa: E402
+# Dep-free stats from SciForge's shared substrate (sciforge.bench); the sibling
+# ../sciforge/python is on PYTHONPATH via the Makefile (make bench-python).
+from sciforge.bench import ascii_boxplot, fmt, geomean_ci, median_iqr  # noqa: E402
 
 N_SAMPLES = int(os.environ.get("BENCH_SAMPLES", "40"))
 BOOTSTRAP_B = int(os.environ.get("BENCH_BOOTSTRAP", "1000"))
@@ -141,14 +142,6 @@ def collect_one(fn, samples=N_SAMPLES):
     finally:
         gc.enable()
     return out
-
-
-def fmt(seconds):
-    if seconds < 1e-6:
-        return f"{seconds * 1e9:6.0f} ns"
-    if seconds < 1e-3:
-        return f"{seconds * 1e6:6.1f} µs"
-    return f"{seconds * 1e3:6.2f} ms"
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +306,7 @@ def main(json_path=None):
             stats = record["stats"]
             ci = f"{stats['median']:.2f}x [{stats['ci_low']:.2f}-{stats['ci_high']:.2f}]"
             print(f"{record['name']:<24} {record['family']:<18} "
-                  f"{fmt(record['re_median'])} {fmt(record['real_median'])} {ci:>22}")
+                  f"{fmt(record['re_median'], 6)} {fmt(record['real_median'], 6)} {ci:>22}")
     if failures:
         print(f"\n  result mismatches (excluded): {', '.join(failures)}")
 
@@ -339,10 +332,10 @@ def main(json_path=None):
     points, _slope, r2 = lookaround_profile()
     print("\nREAL-only — bounded lookahead throughput (linear-time profile):")
     for n, t, mbps in points:
-        print(f"  {n:>9} bytes  {fmt(t)}  {mbps:6.1f} MB/s")
+        print(f"  {n:>9} bytes  {fmt(t, 6)}  {mbps:6.1f} MB/s")
     print(f"  linear fit R² = {r2:.4f}  (≈1.0 confirms O(n), not backtracking)")
     n_re, t_re, t_real = redos_profile()
-    print(f"\nREAL-only — ReDoS (a+)+b: re n={n_re} {fmt(t_re)}  vs  REAL n=10000 {fmt(t_real)} "
+    print(f"\nREAL-only — ReDoS (a+)+b: re n={n_re} {fmt(t_re, 6)}  vs  REAL n=10000 {fmt(t_real, 6)} "
           f"({t_re / t_real:.0f}x on tiny-vs-large input)")
 
     # CI-aware verdict over the key cases' median ratios.

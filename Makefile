@@ -14,10 +14,17 @@ BUILD  := build
 # Parallelism: detected core count (override with JOBS=N).
 JOBS   ?= $(shell sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
 
+# SciForge owns the shared, dev-only benchmark substrate (sciforge.bench: dep-free stats,
+# schema, collector), in its python/ dir. Same sibling default as SCIFORGE_INCLUDE/_LINT;
+# CI checks SciForge out alongside as ../sciforge. Never a build/runtime dependency — the
+# benches import it only when run (make bench-*), and it is never shipped in the wheel.
+SCIFORGE_PYTHON ?= ../sciforge/python
+
 # Run Python against the in-place build under python/, ahead of any installed
 # copy (PYTHONPATH precedes site-packages, so an editable install elsewhere
-# cannot shadow the freshly built extension).
-PYRUN := PYTHONPATH=$(CURDIR)/python $(PYTHON)
+# cannot shadow the freshly built extension). The SciForge sibling is appended so the
+# benches can `import sciforge.bench` (the shared stats/schema substrate).
+PYRUN := PYTHONPATH=$(CURDIR)/python:$(abspath $(SCIFORGE_PYTHON)) $(PYTHON)
 
 # Forward CMAKE_CXX_COMPILER only when CXX is set on the command line;
 # otherwise CMake selects the platform default.
@@ -266,7 +273,7 @@ bench-engines:
 	 commit=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown); \
 	 echo "engines: REAL std::regex$${flags:+ +optional}"; \
 	 c++ -std=c++20 -O2 -DBENCH_FLAGS='"-O2"' -DBENCH_COMMIT="\"$$commit\"" $(INCLUDES) benchmarks/bench_engines.cpp $$flags -o $(BUILD)/bench_engines
-	$(PYTHON) benchmarks/bench_engines.py $(BUILD)/bench_engines
+	$(PYRUN) benchmarks/bench_engines.py $(BUILD)/bench_engines
 
 # Installs the package from the repository root (root pyproject.toml builds the
 # abi3 extension against include/). uninstall removes it by distribution name.

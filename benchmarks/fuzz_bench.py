@@ -32,9 +32,10 @@ import time
 from datetime import datetime, timezone
 
 sys.path.insert(0, "python")
-sys.path.insert(0, "benchmarks")
 import real  # noqa: E402
-from real_bench import ascii_ecdf, geomean_ci  # noqa: E402
+# Dep-free stats from SciForge's shared substrate (sciforge.bench); the sibling
+# ../sciforge/python is on PYTHONPATH via the Makefile (make bench-fuzz).
+from sciforge.bench import ascii_ecdf, fmt, geomean_ci  # noqa: E402
 
 CASES = int(os.environ.get("REAL_FUZZ_BENCH_CASES", "3000"))
 SEED = int(os.environ.get("REAL_FUZZ_BENCH_SEED", "20260612"))
@@ -94,14 +95,6 @@ def gen_text(rng):
         return "a" * n
     alphabet = rng.choice(["ab", "abc012", "a"])
     return "".join(rng.choice(alphabet) for _ in range(n))
-
-
-def fmt(seconds):
-    if seconds < 1e-6:
-        return f"{seconds * 1e9:.0f} ns"
-    if seconds < 1e-3:
-        return f"{seconds * 1e6:.1f} µs"
-    return f"{seconds * 1e3:.2f} ms"
 
 
 def git_commit():
