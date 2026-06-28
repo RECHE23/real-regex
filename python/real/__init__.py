@@ -26,7 +26,7 @@ __all__ = [
     "X", "VERBOSE", "U", "UNICODE", "NOFLAG", "get_include", "get_config",
 ]
 
-__version__ = "2026.6.16"
+__version__ = "2026.6.17"
 
 NOFLAG = 0
 I = IGNORECASE = 2
