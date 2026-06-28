@@ -179,6 +179,14 @@ and CI), the Python binding and the CI scripts — never the library. Packagers
 configure with `-DBUILD_TESTING=OFF` to install the library alone, with no
 SciForge dependency.
 
+### Homebrew (macOS / Linux)
+
+    brew install RECHE23/sci/real-regex
+
+Consume it via CMake `find_package(real)`, `pkg-config --cflags real`, or
+`-I"$(brew --prefix real-regex)/include"` — see the
+[tap README](https://github.com/RECHE23/homebrew-sci) for usage.
+
 ## Python binding
 
 An `re`-compatible module backed by the C++ engine (CPython Limited API, one
