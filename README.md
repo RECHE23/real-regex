@@ -4,7 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/real-regex)](https://pypi.org/project/real-regex/)
 [![release](https://img.shields.io/github/v/release/RECHE23/real-regex)](https://github.com/RECHE23/real-regex/releases)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue)](https://en.cppreference.com/w/cpp/20)
-[![header-only](https://img.shields.io/badge/header--only-yes-green)](#installation)
+![header-only](https://img.shields.io/badge/header--only-yes-green)
 [![coverage](https://img.shields.io/badge/coverage-%E2%89%A595%25-brightgreen)](https://reche23.github.io/real-regex/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
