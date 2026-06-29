@@ -250,6 +250,23 @@ namespace real {
         Storage& operator=(Storage&&)       = delete;
       } storage_ {};
 
+      // Run-time cache of the active storage base (inline buffer or heap block), refreshed on
+      // every state change via \ref refresh_data. The hot accessors (operator[], back, push_back)
+      // index through it, so they avoid the per-access `is_heap_` branch that the profile showed
+      // dominating add_thread. NOT used during constant evaluation: a pointer to a subobject of
+      // *this is not a usable constant across copies, so the constexpr path keeps the is_heap_
+      // branch (guarded by std::is_constant_evaluated). static_regex uses static_vec, not
+      // small_vec, so this never participates in compile-time matching.
+      T* data_ {};
+
+      //! \brief Refreshes \ref data_ to the active storage base (run time only).
+      constexpr void refresh_data() noexcept
+      {
+        if (!std::is_constant_evaluated()) {
+          data_ = is_heap_ ? storage_.heap_ptr : inline_data();
+        }
+      }
+
       /*!
        * \brief Returns pointer to the inline buffer.
        */
@@ -349,7 +366,10 @@ namespace real {
       /*!
        * \brief Constructs an empty vector in the inline state.
        */
-      constexpr small_vec() noexcept = default;
+      constexpr small_vec() noexcept
+      {
+        refresh_data(); // points data_ at the inline buffer (run time)
+      }
 
       /*!
        * \brief Destroys elements and frees any heap block.
@@ -375,14 +395,19 @@ namespace real {
           }
           extend_capacity();
         }
-        if (is_heap_) {
-          // size_ < capacity_ holds here (checked above); the analyzer cannot
-          // relate heap_ptr's allocation size to size_.
-          // NOLINTNEXTLINE(clang-analyzer-security.ArrayBound)
-          std::construct_at(&storage_.heap_ptr[size_], value);
+        if (std::is_constant_evaluated()) {
+          if (is_heap_) {
+            std::construct_at(&storage_.heap_ptr[size_], value);
+          }
+          else {
+            inline_data()[size_] = value;
+          }
         }
         else {
-          inline_data()[size_] = value;
+          // size_ < capacity_ holds here (checked above); the analyzer cannot relate the active
+          // block's allocation size to size_. data_ is the active base (branchless).
+          // NOLINTNEXTLINE(clang-analyzer-security.ArrayBound)
+          std::construct_at(&data_[size_], value);
         }
         ++size_;
       }
@@ -437,7 +462,10 @@ namespace real {
        */
       [[nodiscard]] constexpr T& operator[](std::size_t i) noexcept
       {
-        return is_heap_ ? storage_.heap_ptr[i] : inline_data()[i];
+        if (std::is_constant_evaluated()) {
+          return is_heap_ ? storage_.heap_ptr[i] : inline_data()[i];
+        }
+        return data_[i];
       }
 
       /*!
@@ -447,7 +475,10 @@ namespace real {
        */
       [[nodiscard]] constexpr const T& operator[](std::size_t i) const noexcept
       {
-        return is_heap_ ? storage_.heap_ptr[i] : inline_data()[i];
+        if (std::is_constant_evaluated()) {
+          return is_heap_ ? storage_.heap_ptr[i] : inline_data()[i];
+        }
+        return data_[i];
       }
 
       /*!
@@ -464,7 +495,10 @@ namespace real {
       [[nodiscard]] constexpr T& back() noexcept
       {
         assert(size_ > 0 && "back() on an empty small_vec"); // debug precondition; no-op under NDEBUG
-        return is_heap_ ? storage_.heap_ptr[size_ - 1] : inline_data()[size_ - 1];
+        if (std::is_constant_evaluated()) {
+          return is_heap_ ? storage_.heap_ptr[size_ - 1] : inline_data()[size_ - 1];
+        }
+        return data_[size_ - 1];
       }
 
       /*!
@@ -473,7 +507,10 @@ namespace real {
       [[nodiscard]] constexpr const T& back() const noexcept
       {
         assert(size_ > 0 && "back() on an empty small_vec");
-        return is_heap_ ? storage_.heap_ptr[size_ - 1] : inline_data()[size_ - 1];
+        if (std::is_constant_evaluated()) {
+          return is_heap_ ? storage_.heap_ptr[size_ - 1] : inline_data()[size_ - 1];
+        }
+        return data_[size_ - 1];
       }
 
       /*!
@@ -510,6 +547,7 @@ namespace real {
         storage_.heap_ptr = new_data;
         capacity_         = new_capacity;
         is_heap_          = true;
+        refresh_data(); // run-time path only (constexpr threw above); data_ now points at the heap block
       }
 
       /*!
@@ -530,6 +568,8 @@ namespace real {
         else {
           transfer_inline_from<true>(other);
         }
+        refresh_data();
+        other.refresh_data(); // other is now empty/inline
       }
 
       /*!
@@ -554,6 +594,8 @@ namespace real {
           else {
             transfer_inline_from<true>(other);
           }
+          refresh_data();
+          other.refresh_data(); // other is now empty/inline
         }
         return *this;
       }
@@ -577,6 +619,7 @@ namespace real {
         else {
           transfer_inline_from<false>(other);
         }
+        refresh_data();
       }
 
       /*!
@@ -600,6 +643,7 @@ namespace real {
             capacity_ = InlineCapacity;
             transfer_inline_from<false>(other);
           }
+          refresh_data();
         }
         return *this;
       }
