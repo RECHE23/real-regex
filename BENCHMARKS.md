@@ -49,7 +49,7 @@ PCRE2-JIT emits native machine code per pattern, whereas REAL is a header-only
 *constexpr* Pike VM with no runtime code generation. REAL trades that last constant
 factor for being compile-time-evaluable, dependency-free, and linear-time guaranteed.
 
-## B. Python binding vs `re`
+## B. Python binding vs re
 
 `ratio` is *re_time / REAL_time* — **> 1 means REAL is faster**.
 
@@ -78,7 +78,7 @@ high-volume `findall`/`split` on "easy" patterns where CPython's C engine has a 
 per-match constant. REAL's edge widens on anchored search, compilation, and anything
 pathological; the two losses are an accepted trade for linear-time safety.
 
-### `finditer` memory — lazy iteration
+### finditer memory — lazy iteration
 
 `Pattern.finditer` yields one `Match` at a time (an internal lazy iterator over the
 C++ match cursor), so iterating it holds **O(1)** matches live, against **O(n)** for
@@ -119,7 +119,7 @@ A thread-local *warm* scratch would remove it but is unsafe here — `pike_vm` c
 the class table by per-program class index, so a state reused across patterns returns
 wrong results — hence per-call scratch.
 
-### Threaded `findall` / `split` — GIL release (two-phase)
+### Threaded findall / split — GIL release (two-phase)
 
 `findall` and `split` also release the GIL, but in two phases: a first pass walks the
 matches with the GIL **released** and records each match's byte spans into a flat buffer
@@ -189,7 +189,7 @@ The catastrophic backtracking case `(a+)+b` over `"a"×N` (no `b`, so no match):
 REAL and RE2 stay linear; the backtracking engines (`std::regex`, `re`) either refuse
 or blow up at trivially small inputs. This is the property REAL is built to guarantee.
 
-## D. `real::dfa` — capture-free maximal-munch DFA (opt-in)
+## D. real::dfa — capture-free maximal-munch DFA (opt-in)
 
 `real::dfa` (`<real/dfa.hpp>`, opt-in — not pulled in by `<real/real.hpp>`) fuses a set
 of patterns into one DFA that recognizes the winning rule (longest match; ties to the

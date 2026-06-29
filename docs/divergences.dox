@@ -11,7 +11,7 @@ cannot drift silently.
 
 \section div_ascii ASCII-only character classes
 
-Character classes are ASCII-only: a non-ASCII member such as `[é]` or `[é]` is a
+Character classes are ASCII-only: a non-ASCII member such as `[é]` (precomposed or decomposed) is a
 `real::regex_error`, where `re` would accept it. This is what guarantees that every
 construct consumes whole codepoints, so a match boundary never splits a UTF-8 sequence.
 Negated classes and `.` still match *any* non-ASCII codepoint — only explicit non-ASCII
@@ -23,13 +23,13 @@ Under `IGNORECASE`, REAL folds ASCII letters only (`a` matches `A`). Bytes ≥ 0
 never folded, so `é` (é) does **not** match `É`, unlike `re`'s Unicode case folding.
 This follows directly from the ASCII-only class policy.
 
-\section div_hex `\xHH` (HH ≥ 0x80) is byte-level
+\section div_hex \\xHH (HH ≥ 0x80) is byte-level
 
 `\xHH` matches the raw byte `0xHH`, not the codepoint `chr(HH)`. On a str pattern `re`
 reads `\xe9` as U+00E9 (é); REAL reads it as the single byte `0xE9` — which a well-formed
 str's UTF-8 of é (`C3 A9`) never contains. Use `é` for the codepoint.
 
-\section div_boundary `\b` / `\B` on an empty string or region
+\section div_boundary \\b / \\B on an empty string or region
 
 By definition an empty string has no word boundary, so `\B` (not-a-boundary) matches at
 position 0 while `\b` does not. REAL implements this by-definition behaviour, which is
