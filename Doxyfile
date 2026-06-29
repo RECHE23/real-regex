@@ -48,11 +48,13 @@ ALPHABETICAL_INDEX     = YES
 # --- theme: native Doxygen (light/dark) ------------------------------------
 # Doxygen's built-in theme (>= 1.9.6). Self-consistent on every version — it renders the same
 # on the local Doxygen and on CI's 1.9.8, with no third-party skew (a vendored theme designed
-# for an older Doxygen broke under a newer local one). TREEVIEW gives the navigation sidebar;
-# TOGGLE gives a light/dark switch that defaults to the OS preference, matching
-# docs/coverage-style.css (the coverage iframe already keys off prefers-color-scheme).
+# for an older Doxygen broke under a newer local one). TREEVIEW gives the navigation sidebar.
+# AUTO_LIGHT follows the OS preference (light by default), so the main page AND the llvm-cov
+# coverage iframe both key off prefers-color-scheme and stay harmonized — docs/coverage-style.css
+# was written exactly to match Doxygen's automatic dark. (A JS toggle could return later with an
+# iframe-sync; deferred.)
 GENERATE_TREEVIEW      = YES
-HTML_COLORSTYLE        = TOGGLE
+HTML_COLORSTYLE        = AUTO_LIGHT
 
 # --- graphs (require Graphviz `dot`) ---------------------------------------
 # Structural graphs (header include dependencies = the layering, plus

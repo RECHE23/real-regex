@@ -33,7 +33,7 @@ REAL gives you **both**: linear-time, ReDoS-safe matching *with* bounded lookaro
 
 ## How it compares
 
-| | **REAL** | `std::regex` | RE2 / Rust | PCRE2-JIT | Python `re` |
+| | **REAL** | std::regex | RE2 / Rust | PCRE2-JIT | Python re |
 |---|:---:|:---:|:---:|:---:|:---:|
 | Linear-time, ReDoS-safe       | ✅ | ❌ | ✅ | ❌ | ❌ |
 | Lookarounds                   | ✅ | ✅ | ❌ | ✅ | ✅ |
@@ -48,8 +48,7 @@ Throughput is qualitative — exact multipliers and methodology are in
 
 **Every other engine that has lookarounds backtracks** (ReDoS-unsafe), and every linear-time
 engine drops them — **REAL is the only one with both**: bounded lookarounds *and* linear-time,
-ReDoS-safe matching. **vs CTRE** (the other constexpr C++ regex): both are compile-time and
-header-only, but REAL is linear-time / ReDoS-safe where CTRE backtracks.
+ReDoS-safe matching.
 
 ## ReDoS, in numbers
 
