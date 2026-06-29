@@ -1,7 +1,18 @@
 # REAL
 
-**Regular Expression Algorithmic Library** — a header-only C++20 regex engine,
-constexpr from end to end, with an `re`-compatible Python binding.
+[![CI](https://github.com/RECHE23/real-regex/actions/workflows/ci.yml/badge.svg)](https://github.com/RECHE23/real-regex/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/real-regex)](https://pypi.org/project/real-regex/)
+[![release](https://img.shields.io/github/v/release/RECHE23/real-regex)](https://github.com/RECHE23/real-regex/releases)
+[![C++20](https://img.shields.io/badge/C%2B%2B-20-blue)](https://en.cppreference.com/w/cpp/20)
+[![header-only](https://img.shields.io/badge/header--only-yes-green)](#installation)
+[![coverage](https://img.shields.io/badge/coverage-%E2%89%A595%25-brightgreen)](https://reche23.github.io/real-regex/)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+Linear-time, ReDoS-safe C++20 regex with bounded lookarounds — RE2's safety plus the
+lookarounds RE2 can't do — and a drop-in `re`-compatible Python binding.
+
+**Regular Expression Algorithmic Library** — a header-only C++20 regex engine, constexpr
+from end to end, with an `re`-compatible Python binding.
 
 - **Linear time, always.** The engine is a Pike VM (Thompson NFA simulation):
   no backtracking, ReDoS-safe by construction.
@@ -12,30 +23,130 @@ constexpr from end to end, with an `re`-compatible Python binding.
   (compile-time pattern, runtime text, zero heap allocation).
 - **Zero dependencies.** One include.
 
-Bounded lookarounds match in linear time: lookahead `(?=...)`/`(?!...)` and lookbehind
-`(?<=...)`/`(?<!...)`. Each sub-pattern must be length-bounded (an unbounded sub such as
-`(?=a*)` is rejected) and is capture-free — groups inside a lookaround do not participate
-in the result, a deliberate divergence from `re`. Lookbehind accepts any bounded
-sub-pattern, including variable-width alternations such as `(?<=a|bb)`, which `re` and PCRE
-reject as non-fixed-width. `static_regex` does not accept lookarounds yet.
+## The problem
 
-Unsupported syntax is rejected with `real::regex_error` rather than silently
-diverging. Not yet: backreferences, atomic/possessive groups, Unicode property classes,
-Unicode case folding.
+Backtracking engines — PCRE, `std::regex`, Python `re` — are vulnerable to **ReDoS**: a
+pattern like `(a+)+b` takes exponential time on a hostile input. The linear-time engines
+that fix this — **RE2**, Rust's `regex` — buy safety by **dropping lookarounds** entirely.
 
-Matching is linear in the input length: a Thompson NFA simulation (Pike VM)
-with marked states, so a pattern such as `(a+)+b` cannot trigger exponential
-backtracking. A literal prefilter and several whole-pattern fast paths
-(literals, fixed-width sequences, `.`/negated-class runs, alternations of
-straight-line branches) keep the constant factor low without leaving the
-linear-time guarantee.
+REAL gives you **both**: linear-time, ReDoS-safe matching *with* bounded lookarounds.
+
+## How it compares
+
+| | **REAL** | `std::regex` | RE2 / Rust | PCRE2-JIT | Python `re` |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Linear-time, ReDoS-safe       | ✅ | ❌ | ✅ | ❌ | ❌ |
+| Bounded lookarounds           | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Header-only, zero-dependency  | ✅ | ✅¹ | ❌ | ❌ | — |
+| Constexpr (compile-time match)| ✅ | ❌ | ❌ | ❌ | ❌ |
+| Drop-in Python `re`           | ✅² | ❌ | ❌ | ❌ | ✅ |
+| Raw throughput                | fast | slow | ≈ REAL | **fastest** | slow |
+
+¹ part of the C++ standard library. ² for the supported subset (no backreferences, etc.).
+Throughput is qualitative — exact multipliers and methodology are in
+[`BENCHMARKS.md`](BENCHMARKS.md).
+
+**REAL is the only column with both** linear-time/ReDoS-safety **and** bounded lookarounds.
+**vs CTRE** (the other constexpr C++ regex): both are compile-time and header-only, but REAL
+is linear-time / ReDoS-safe where CTRE backtracks.
+
+## ReDoS, in numbers
+
+The classic catastrophic-backtracking pattern `(a+)+b` over `"a"×N` (no `b`, so no match):
+
+| engine | input | time |
+| --- | --- | ---: |
+| **REAL** | N = 100 000 | **5.9 ms** — linear |
+| RE2 | N = 100 000 | 0.2 ms — linear |
+| `std::regex` | N = 22 | *refused* — "complexity … exceeded a pre-set level" |
+| Python `re` | n = 24 | **1118 ms** — and climbing exponentially |
+
+REAL and RE2 stay linear; the backtracking engines refuse or blow up at trivially small
+inputs. These figures are from [`BENCHMARKS.md` §C](BENCHMARKS.md); they depend on the
+platform, pattern and input, so reproduce them locally with `make bench-engines` rather than
+trusting a number here.
+
+## Quickstart
+
+**Python** — `pip install real-regex`, drop-in for the supported `re` subset:
+
+```python
+import real as re                  # drop-in for the supported re subset
+re.search(r"\d+", "x42")           # -> a Match; findall / finditer / sub / split too
+```
+
+**C++** — header-only, C++20:
+
+```cmake
+find_package(real CONFIG REQUIRED)
+target_link_libraries(app PRIVATE real::real)
+```
+
+```cpp
+#include <real/real.hpp>
+real::regex re("[0-9]+");
+re.search("x42").matched();        // true
+```
+
+## Installation
+
+| Channel | Command |
+| --- | --- |
+| PyPI (Python + headers) | `pip install real-regex` |
+| Homebrew (macOS / Linux) | `brew install RECHE23/sci/real-regex` |
+| vcpkg | via the [`vcpkg-sci`](https://github.com/RECHE23/vcpkg-sci) registry → `"dependencies": ["real-regex"]` |
+| CMake FetchContent | `FetchContent_Declare(real GIT_REPOSITORY https://github.com/RECHE23/real-regex GIT_TAG v2026.6.18)` |
+| Vendored | copy `include/` and compile with `-std=c++20 -I include` |
+
+REAL is header-only, so "installing" just places the headers and the package metadata where a
+consumer can find them. After `cmake --install <build> --prefix <prefix>`, there are three
+ways to consume it from C++:
+
+```cmake
+# 1. CMake — find_package against the installed config package:
+find_package(real CONFIG REQUIRED)
+target_link_libraries(app PRIVATE real::real)
+```
+
+```sh
+# 2. pkg-config — for Make / Meson / autotools (and the system packagers):
+c++ -std=c++20 $(pkg-config --cflags real) app.cpp -o app
+```
+
+```sh
+# 3. Direct copy — vendor include/ into your tree, no build system needed:
+c++ -std=c++20 -I/path/to/real/include app.cpp -o app
+```
+
+`real::real` is also available without installing, via `add_subdirectory` or `FetchContent`.
+
+REAL requires **C++20 or later**. Every header asserts it (`#include <real/...>`
+fails fast with a clear message under an older standard), and pkg-config has no
+field to convey a language standard — so the consumer must pass `-std=c++20` (or
+newer) itself, as shown above.
+
+The header-only library builds and installs with nothing but a C++20 compiler and
+CMake. The [SciForge](https://github.com/RECHE23/sciforge) test harness is needed
+**only** to build the test suite (`BUILD_TESTING=ON`, the default for development
+and CI), the Python binding and the CI scripts — never the library. Packagers
+configure with `-DBUILD_TESTING=OFF` to install the library alone, with no
+SciForge dependency.
+
+The Homebrew formula consumes the library via CMake `find_package(real)`,
+`pkg-config --cflags real`, or `-I"$(brew --prefix real-regex)/include"` — see the
+[tap README](https://github.com/RECHE23/homebrew-sci) for usage.
+
+## Documentation & benchmarks
+
+- **API reference** (Doxygen, with embedded coverage): <https://reche23.github.io/real-regex/>
+- **Benchmarks** — a measured baseline with the exact machine and engine versions:
+  [`BENCHMARKS.md`](BENCHMARKS.md)
 
 `make bench-python` compares throughput against Python's `re`, and
 `make bench-engines` compares against `std::regex`, PCRE2 and RE2 in one C++
 process (each engine's match counts are checked equal). Figures depend on the
 platform, pattern and input; reproduce them locally rather than trusting a
-number here. A measured baseline, with the exact machine and engine versions, is
-archived in [`BENCHMARKS.md`](BENCHMARKS.md).
+number here.
 
 ## Supported syntax
 
@@ -58,6 +169,17 @@ archived in [`BENCHMARKS.md`](BENCHMARKS.md).
 | `\<` `\>` | start / end of word (REAL extension, not in Python `re`) |
 | `(?imsx)` prefix | global flags: `i` case-insensitive (ASCII), `m` multiline, `s` dotall, `x` verbose (ignore unescaped whitespace and `#` comments outside classes) — also `real::flags` on the constructor |
 
+**Bounded lookarounds** match in linear time: lookahead `(?=...)`/`(?!...)` and lookbehind
+`(?<=...)`/`(?<!...)`. Each sub-pattern must be length-bounded (an unbounded sub such as
+`(?=a*)` is rejected) and is capture-free — groups inside a lookaround do not participate
+in the result, a deliberate divergence from `re`. Lookbehind accepts any bounded
+sub-pattern, including variable-width alternations such as `(?<=a|bb)`, which `re` and PCRE
+reject as non-fixed-width. `static_regex` does not accept lookarounds yet.
+
+Unsupported syntax is rejected with `real::regex_error` rather than silently
+diverging. Not yet: backreferences, atomic/possessive groups, Unicode property classes,
+Unicode case folding.
+
 **Unicode model:** matching is UTF-8 byte-based, but every construct consumes
 whole codepoints (multi-byte sequences compile to byte-level alternatives), so
 match boundaries never split a character. Class members and the `\d \w \s`
@@ -68,6 +190,13 @@ codepoints.
 iteration — e.g. `(a*)*` on `"aa"` — Python captures that final empty
 iteration (`''`); REAL, like Perl/PCRE, keeps the last non-empty one (`"aa"`).
 Group 0 is identical either way.
+
+Matching is linear in the input length: a Thompson NFA simulation (Pike VM)
+with marked states, so a pattern such as `(a+)+b` cannot trigger exponential
+backtracking. A literal prefilter and several whole-pattern fast paths
+(literals, fixed-width sequences, `.`/negated-class runs, alternations of
+straight-line branches) keep the constant factor low without leaving the
+linear-time guarantee.
 
 ## C++ API
 
@@ -134,58 +263,6 @@ accelerated rule dispatch a lexer wants (SciLex's `dfa_modes` is built on it). A
 carrying a zero-width assertion no DFA can represent (`$`, `\b`, multiline `^`/`$`)
 throws `real::dfa_error`; lazy and greedy accept the same language, so feed it
 longest-match-faithful rules.
-
-The pure library is standard C++20 with no platform dependencies. `real::real`
-is the CMake target, available three ways — `add_subdirectory`, `FetchContent`,
-or an installed config package:
-
-```cmake
-# After `cmake --install <build> --prefix <prefix>`:
-find_package(real CONFIG REQUIRED)
-target_link_libraries(app PRIVATE real::real)
-```
-
-## Installation
-
-REAL is header-only, so "installing" just places the headers and the package
-metadata where a consumer can find them. After `cmake --install <build> --prefix
-<prefix>`, there are three ways to consume it from C++:
-
-```cmake
-# 1. CMake — find_package against the installed config package:
-find_package(real CONFIG REQUIRED)
-target_link_libraries(app PRIVATE real::real)
-```
-
-```sh
-# 2. pkg-config — for Make / Meson / autotools (and the system packagers):
-c++ -std=c++20 $(pkg-config --cflags real) app.cpp -o app
-```
-
-```sh
-# 3. Direct copy — vendor include/ into your tree, no build system needed:
-c++ -std=c++20 -I/path/to/real/include app.cpp -o app
-```
-
-REAL requires **C++20 or later**. Every header asserts it (`#include <real/...>`
-fails fast with a clear message under an older standard), and pkg-config has no
-field to convey a language standard — so the consumer must pass `-std=c++20` (or
-newer) itself, as shown above.
-
-The header-only library builds and installs with nothing but a C++20 compiler and
-CMake. The [SciForge](https://github.com/RECHE23/sciforge) test harness is needed
-**only** to build the test suite (`BUILD_TESTING=ON`, the default for development
-and CI), the Python binding and the CI scripts — never the library. Packagers
-configure with `-DBUILD_TESTING=OFF` to install the library alone, with no
-SciForge dependency.
-
-### Homebrew (macOS / Linux)
-
-    brew install RECHE23/sci/real-regex
-
-Consume it via CMake `find_package(real)`, `pkg-config --cflags real`, or
-`-I"$(brew --prefix real-regex)/include"` — see the
-[tap README](https://github.com/RECHE23/homebrew-sci) for usage.
 
 ## Python binding
 
