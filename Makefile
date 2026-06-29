@@ -319,7 +319,11 @@ install-smoke:
 	     *) echo "      ERROR: failed, but the message does not mention C++20:"; printf '%s\n' "$$err" | head -3; exit 1;; \
 	   esac; \
 	 fi; \
-	 echo "install-smoke: OK (find_package + pkg-config + direct-copy + negative guard)"
+	 echo "  (e) examples/ build + run against the installed package (proves the showcase examples never rot)"; \
+	 $(CMAKE) -S examples -B "$$work/ex" -DCMAKE_PREFIX_PATH="$$pfx" >/dev/null; \
+	 $(CMAKE) --build "$$work/ex" >/dev/null; \
+	 "$$work/ex/hello"; "$$work/ex/redos_demo"; echo "      examples: OK"; \
+	 echo "install-smoke: OK (find_package + pkg-config + direct-copy + negative guard + examples)"
 
 # Installs the package from the repository root (root pyproject.toml builds the
 # abi3 extension against include/). uninstall removes it by distribution name.

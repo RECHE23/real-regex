@@ -36,7 +36,7 @@ REAL gives you **both**: linear-time, ReDoS-safe matching *with* bounded lookaro
 | | **REAL** | `std::regex` | RE2 / Rust | PCRE2-JIT | Python `re` |
 |---|:---:|:---:|:---:|:---:|:---:|
 | Linear-time, ReDoS-safe       | ✅ | ❌ | ✅ | ❌ | ❌ |
-| Bounded lookarounds           | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Lookarounds                   | ✅ | ✅ | ❌ | ✅ | ✅ |
 | Header-only, zero-dependency  | ✅ | ✅¹ | ❌ | ❌ | — |
 | Constexpr (compile-time match)| ✅ | ❌ | ❌ | ❌ | ❌ |
 | Drop-in Python `re`           | ✅² | ❌ | ❌ | ❌ | ✅ |
@@ -46,9 +46,10 @@ REAL gives you **both**: linear-time, ReDoS-safe matching *with* bounded lookaro
 Throughput is qualitative — exact multipliers and methodology are in
 [`BENCHMARKS.md`](BENCHMARKS.md).
 
-**REAL is the only column with both** linear-time/ReDoS-safety **and** bounded lookarounds.
-**vs CTRE** (the other constexpr C++ regex): both are compile-time and header-only, but REAL
-is linear-time / ReDoS-safe where CTRE backtracks.
+**Every other engine that has lookarounds backtracks** (ReDoS-unsafe), and every linear-time
+engine drops them — **REAL is the only one with both**: bounded lookarounds *and* linear-time,
+ReDoS-safe matching. **vs CTRE** (the other constexpr C++ regex): both are compile-time and
+header-only, but REAL is linear-time / ReDoS-safe where CTRE backtracks.
 
 ## ReDoS, in numbers
 
@@ -87,6 +88,8 @@ target_link_libraries(app PRIVATE real::real)
 real::regex re("[0-9]+");
 re.search("x42").matched();        // true
 ```
+
+More runnable programs — including the ReDoS demo — are in [`examples/`](examples/).
 
 ## Installation
 
