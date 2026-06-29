@@ -6,7 +6,7 @@
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue)](https://en.cppreference.com/w/cpp/20)
 ![header-only](https://img.shields.io/badge/header--only-yes-green)
 [![coverage](https://img.shields.io/badge/coverage-%E2%89%A595%25-brightgreen)](https://reche23.github.io/real-regex/)
-[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/RECHE23/real-regex/blob/main/LICENSE)
 
 Linear-time, ReDoS-safe C++20 regex with bounded lookarounds — RE2's safety plus the
 lookarounds RE2 can't do — and a drop-in `re`-compatible Python binding.
@@ -44,7 +44,7 @@ REAL gives you **both**: linear-time, ReDoS-safe matching *with* bounded lookaro
 
 ¹ part of the C++ standard library. ² for the supported subset (no backreferences, etc.).
 Throughput is qualitative — exact multipliers and methodology are in
-[`BENCHMARKS.md`](BENCHMARKS.md).
+[`BENCHMARKS.md`](https://github.com/RECHE23/real-regex/blob/main/BENCHMARKS.md).
 
 **Every other engine that has lookarounds backtracks** (ReDoS-unsafe), and every linear-time
 engine drops them — **REAL is the only one with both**: bounded lookarounds *and* linear-time,
@@ -62,7 +62,7 @@ The classic catastrophic-backtracking pattern `(a+)+b` over `"a"×N` (no `b`, so
 | Python `re` | n = 24 | **1118 ms** — and climbing exponentially |
 
 REAL and RE2 stay linear; the backtracking engines refuse or blow up at trivially small
-inputs. These figures are from [`BENCHMARKS.md` §C](BENCHMARKS.md); they depend on the
+inputs. These figures are from [`BENCHMARKS.md` §C](https://github.com/RECHE23/real-regex/blob/main/BENCHMARKS.md); they depend on the
 platform, pattern and input, so reproduce them locally with `make bench-engines` rather than
 trusting a number here.
 
@@ -88,7 +88,7 @@ real::regex re("[0-9]+");
 re.search("x42").matched();        // true
 ```
 
-More runnable programs — including the ReDoS demo — are in [`examples/`](examples/).
+More runnable programs — including the ReDoS demo — are in [`examples/`](https://github.com/RECHE23/real-regex/tree/main/examples).
 
 ## Installation
 
@@ -142,7 +142,7 @@ The Homebrew formula consumes the library via CMake `find_package(real)`,
 
 - **API reference** (Doxygen, with embedded coverage): <https://reche23.github.io/real-regex/>
 - **Benchmarks** — a measured baseline with the exact machine and engine versions:
-  [`BENCHMARKS.md`](BENCHMARKS.md)
+  [`BENCHMARKS.md`](https://github.com/RECHE23/real-regex/blob/main/BENCHMARKS.md)
 
 `make bench-python` compares throughput against Python's `re`, and
 `make bench-engines` compares against `std::regex`, PCRE2 and RE2 in one C++
