@@ -20,6 +20,8 @@
 #include <regex>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -95,6 +97,23 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   const std::string std_out {std::regex_replace(subject, std_re, fmt)};
   if (compat_out != std_out) {
     __builtin_trap(); // regex_replace divergence (format or empty-match traversal)
+  }
+
+  // S2b net: the SEQUENCE of match spans from the iterator must equal std::sregex_iterator's — not
+  // just the first match. The empty-match advancement is the risk; a nullable real-backed pattern
+  // routes the iterator to the lazy std backend, a non-nullable one drives real's region traversal.
+  using span = std::pair<long, long>;
+  std::vector<span> compat_spans;
+  for (real::compat::sregex_iterator it(subject.begin(), subject.end(), compat), end; it != end;
+       ++it) {
+    compat_spans.emplace_back(it->position(0), it->length(0));
+  }
+  std::vector<span> std_spans;
+  for (std::sregex_iterator it(subject.begin(), subject.end(), std_re), end; it != end; ++it) {
+    std_spans.emplace_back(it->position(0), it->length(0));
+  }
+  if (compat_spans != std_spans) {
+    __builtin_trap(); // iterator span-sequence divergence (empty-match traversal)
   }
   return 0;
 }

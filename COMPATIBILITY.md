@@ -51,6 +51,18 @@ are honoured; `format_sed` routes to `std::regex` (POSIX replacement syntax). A 
 real-backed pattern runs the substitution on `real`'s linear traversal — measured **6–17× faster**
 than `std::regex_replace`; a nullable one falls back to `std` (see the table above).
 
+## Iteration (`regex_iterator`)
+
+`real::compat::regex_iterator` (with `sregex_iterator` / `cregex_iterator`) walks the non-overlapping
+matches like `std::regex_iterator`. Same per-operation routing as `regex_replace`: a non-nullable
+real-backed pattern drives `real`'s linear traversal (repeated region search — a non-nullable pattern
+never matches empty, so the position always advances and the ECMAScript and `real` sequences agree);
+the std backend and nullable patterns wrap `std::regex_iterator` (whose empty-match advance *is*
+ECMAScript's). The default-constructed iterator is the end sentinel. Constructing from a temporary
+regex is `=delete`d (it would dangle), exactly as `std::regex_iterator`. The differential fuzzer
+compares the whole **span sequence**, not just the first match — the empty-match traversal being the
+risk it pins. (`regex_token_iterator` — split/`-1` fields — is the next slice.)
+
 ## Intentional divergences from libstdc++ `std::regex` (spec-correct)
 
 `real::compat` follows the **ECMAScript spec**; the following are libstdc++ deviations that the

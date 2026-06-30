@@ -302,6 +302,68 @@ TEST(compat_regex_replace)
   }
 }
 
+TEST(compat_regex_iterator)
+{
+  // The span SEQUENCE (not just the first match) must equal std::sregex_iterator — the
+  // empty-match advancement is the risk, gated by the nullable->std routing.
+  const std::vector<std::pair<std::string, std::string>> cases {
+    {R"(\w+)", "two  words here"}, {R"(\d+)", "a1b22c333"}, {"(a)(b)", "abab xab"},
+    {"o", "foo boo"}, {"x*", "abc"}, {R"(\b\w)", "a bc def"}, {".", "ab"},
+    {R"((\d{4})-(\d{2}))", "2026-06 1999-12"}, {"", "ab"}, {"a*", "baab"},
+  };
+  for (const auto& [pat, subj] : cases) {
+    const rc::regex                    re(pat);
+    std::vector<std::pair<long, long>> got;
+    std::vector<std::pair<long, long>> ref;
+    for (rc::sregex_iterator it(subj.begin(), subj.end(), re), e; it != e; ++it) {
+      got.emplace_back(it->position(0), it->length(0));
+    }
+    const std::regex sre(pat, std::regex::ECMAScript);
+    for (std::sregex_iterator it(subj.begin(), subj.end(), sre), e; it != e; ++it) {
+      ref.emplace_back(it->position(0), it->length(0));
+    }
+    EXPECT(got == ref);
+  }
+
+  // Groups are exposed on the yielded match_results.
+  const rc::regex          g("(\\w)(\\w)");
+  const std::string        s {"abcd"};
+  std::vector<std::string> g1;
+  for (rc::sregex_iterator it(s.begin(), s.end(), g), e; it != e; ++it) {
+    g1.push_back(it->str(1));
+  }
+  EXPECT_EQ(g1.size(), 2U);
+  EXPECT_EQ(g1[0], "a");
+  EXPECT_EQ(g1[1], "c");
+
+  // cregex_iterator over a C string — real path (\d is non-nullable).
+  const char*     cstr {"a1b2"};
+  const rc::regex digit(R"(\d)");
+  std::size_t     n    {0};
+  for (rc::cregex_iterator it(cstr, cstr + 4, digit), e; it != e; ++it) {
+    ++n;
+  }
+  EXPECT_EQ(n, 2U);
+
+  // cregex_iterator std path: a nullable real-backed pattern routes the iterator to std, whose
+  // empty-match advance is ECMAScript's. The span sequence must still equal std::cregex_iterator's.
+  const rc::regex digits(R"(\d*)");
+  EXPECT(!digits.uses_real_traversal());
+  std::vector<std::pair<long, long>> cgot;
+  std::vector<std::pair<long, long>> cref;
+  for (rc::cregex_iterator it(cstr, cstr + 4, digits), e; it != e; ++it) {
+    cgot.emplace_back(it->position(0), it->length(0));
+  }
+  const std::regex sdigits(R"(\d*)", std::regex::ECMAScript);
+  for (std::cregex_iterator it(cstr, cstr + 4, sdigits), e; it != e; ++it) {
+    cref.emplace_back(it->position(0), it->length(0));
+  }
+  EXPECT(cgot == cref);
+
+  // Nullable pattern iterates via the std backend (empty-match traversal differs).
+  EXPECT(!rc::regex("x*").uses_real_traversal());
+}
+
 TEST(compat_api_surface)
 {
   // basic_regex ctors + accessors.

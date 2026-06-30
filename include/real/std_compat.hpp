@@ -901,6 +901,146 @@ namespace real::compat {
     const std::string result {regex_replace(std::string(first, last), re, fmt, flags)};
     return std::copy(result.begin(), result.end(), out);
   }
+
+  // --- regex_iterator ----------------------------------------------------------------------
+
+  /*!
+   * \brief Iterates the non-overlapping matches of a pattern in a sequence (`std::regex_iterator`).
+   *
+   * Same per-operation routing as `regex_replace` — a real-backed, non-nullable pattern drives
+   * `real`'s linear traversal (repeated region search — a non-nullable pattern never matches empty,
+   * so the position always advances past the match and the ECMAScript and `real` sequences agree);
+   * the std backend and nullable patterns wrap `std::regex_iterator` (whose empty-match advance is
+   * ECMAScript's). The default-constructed iterator is the end sentinel.
+   *
+   * \tparam BidirIt A contiguous iterator into the searched sequence.
+   */
+  template <typename BidirIt,
+            typename CharT  = typename std::iterator_traits<BidirIt>::value_type,
+            typename Traits = std::regex_traits<CharT>>
+  class regex_iterator
+  {
+  public:
+
+    using value_type        = match_results<BidirIt>;     //!< Yielded match.
+    using difference_type   = std::ptrdiff_t;             //!< Iterator traits.
+    using pointer           = const value_type*;          //!< Arrow type.
+    using reference         = const value_type&;          //!< Dereference type.
+    using iterator_category = std::forward_iterator_tag;  //!< std::regex_iterator parity.
+    using regex_type        = basic_regex<CharT, Traits>; //!< The pattern type.
+
+    //! \brief Constructs the end sentinel.
+    regex_iterator() = default;
+
+    //! \brief Constructs a begin iterator over `[first, last)` and finds the first match.
+    regex_iterator(BidirIt           first,
+                   BidirIt           last,
+                   const regex_type& re)
+      : begin_(first), end_(last), re_(&re)
+    {
+      if (re.uses_real_traversal()) {
+        real_path_ = true;
+        next_real();
+      }
+      else {
+        std_it_.emplace(first, last, re.std_engine());
+        sync_std();
+      }
+    }
+
+    //! \brief Constructing from a temporary regex would dangle (std::regex_iterator parity).
+    regex_iterator(BidirIt            first,
+                   BidirIt            last,
+                   const regex_type&& re) = delete;
+
+    [[nodiscard]] reference operator*() const
+    {
+      return match_;
+    }
+
+    [[nodiscard]] pointer   operator->() const
+    {
+      return &match_;
+    }
+
+    regex_iterator& operator++()
+    {
+      if (at_end_) {
+        return *this;
+      }
+      if (real_path_) {
+        next_real();
+      }
+      else {
+        ++(*std_it_);
+        sync_std();
+      }
+      return *this;
+    }
+
+    regex_iterator operator++(int)
+    {
+      regex_iterator previous {*this};
+      ++(*this);
+      return previous;
+    }
+
+    [[nodiscard]] bool operator==(const regex_iterator& other) const
+    {
+      if (at_end_ || other.at_end_) {
+        return at_end_ == other.at_end_;
+      }
+      return match_.position(0) == other.match_.position(0)
+             && match_.length(0) == other.match_.length(0);
+    }
+
+    [[nodiscard]] bool operator!=(const regex_iterator& other) const
+    {
+      return !(*this == other);
+    }
+
+  private:
+
+    BidirIt                                     begin_     {};
+    BidirIt                                     end_       {};
+    const regex_type*                           re_        {nullptr};
+    bool                                        real_path_ {false};
+    std::size_t                                 real_pos_  {};
+    std::optional<std::regex_iterator<BidirIt>> std_it_;
+    value_type                                  match_;
+    bool                                        at_end_ {true};
+
+    //! \brief Advances the real path: next region search from \ref real_pos_.
+    void next_real()
+    {
+      const std::string_view sv     {std::to_address(begin_),
+                                     static_cast<std::size_t>(std::distance(begin_, end_))};
+      const auto             result {std::get<real::regex>(re_->engine()).search(sv, real_pos_)};
+      if (!result.matched()) {
+        at_end_ = true;
+        return;
+      }
+      match_.reset(begin_, end_);
+      match_.fill_from_real(result);
+      real_pos_ = result.end(0); // non-nullable: end > start >= pos, so this always advances
+      at_end_   = false;
+    }
+
+    //! \brief Syncs the std path from the wrapped std::regex_iterator.
+    void sync_std()
+    {
+      if (*std_it_ == std::regex_iterator<BidirIt> {}) {
+        at_end_ = true;
+        return;
+      }
+      match_.reset(begin_, end_);
+      match_.fill_from_std(**std_it_);
+      at_end_ = false;
+    }
+  };
+
+  using sregex_iterator = regex_iterator<std::string::const_iterator>; //!< Over a std::string.
+  using cregex_iterator = regex_iterator<const char*>;                 //!< Over a C string.
 } // namespace real::compat
 
 #endif // REAL_STD_COMPAT_HPP
