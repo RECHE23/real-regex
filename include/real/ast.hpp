@@ -175,7 +175,8 @@ namespace real::detail {
                               flags            initial_flags = flags::none)
       : pattern_(pattern),
         verbose_(has_flag(initial_flags, flags::verbose)),
-        bytes_(has_flag(initial_flags, flags::bytes))
+        bytes_(has_flag(initial_flags, flags::bytes)),
+        ecma_(has_flag(initial_flags, flags::ecma))
     {}
 
     /*!
@@ -202,6 +203,7 @@ namespace real::detail {
     bool             verbose_       {}; //!< `re.X`: skip unescaped whitespace and `#` comments outside classes.
     bool             in_lookaround_ {}; //!< True while parsing a lookaround sub-pattern (rejects nesting).
     bool             bytes_         {}; //!< In \ref flags::bytes mode, rejects code-point escapes (`\u`/`\U`).
+    bool             ecma_          {}; //!< ECMAScript grammar: `\A \Z \< \>` are identity-escape literals, not anchors.
 
     /*!
      * \brief In verbose mode, consumes insignificant whitespace and `#` comments.
@@ -842,6 +844,10 @@ namespace real::detail {
           return '\v';
         case 'a':
           ++pos_;
+          // REAL/Python `\a` is the bell (0x07). ECMAScript has no `\a` escape — it is an identity
+          // escape (the literal 'a'). Gate under ecma; `\n \t \r \f \v` are ECMAScript ControlEscapes
+          // and stay unchanged. This covers both contexts (parse_byte_escape is shared with classes).
+          if (ecma_) { return 'a'; }
           return '\a';
         case 'x':
           {
@@ -1036,11 +1042,17 @@ namespace real::detail {
         case 'S':
           ++pos_;
           return add_class_node(out, space_set(), true);
+        // `\A \Z \< \>` are REAL extensions (text-start/end, word-start/end). ECMAScript has no
+        // such escapes — they are identity escapes (the literal character). Under the ecma flag
+        // (the std-compat layer), emit the literal; otherwise keep REAL's anchor. `\b`/`\B` are
+        // standard word boundaries in both and stay unchanged.
         case 'A':
           ++pos_;
+          if (ecma_) { return add_node(out, {.kind = node_kind::byte, .byte = 'A'}); }
           return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::text_start});
         case 'Z':
           ++pos_;
+          if (ecma_) { return add_node(out, {.kind = node_kind::byte, .byte = 'Z'}); }
           return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::text_end});
         case 'b':
           ++pos_;
@@ -1050,9 +1062,11 @@ namespace real::detail {
           return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::not_word_boundary});
         case '<':
           ++pos_;
+          if (ecma_) { return add_node(out, {.kind = node_kind::byte, .byte = '<'}); }
           return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::word_start});
         case '>':
           ++pos_;
+          if (ecma_) { return add_node(out, {.kind = node_kind::byte, .byte = '>'}); }
           return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::word_end});
         case 'u':
           ++pos_;
@@ -1162,11 +1176,14 @@ namespace real::detail {
           pos_ = open_pos;
           fail("unterminated character class");
         }
-        if (peek() == ']' && !first) {
+        // Python (default): a ']' right after '[' or '[^' is a literal member, so `[]`/`[^]`
+        // continue. ECMAScript (ecma): ']' always closes — `[]` is the empty class (matches
+        // nothing) and `[^]` is its negation (matches any character, the "any incl. newline" idiom).
+        if (peek() == ']' && (!first || ecma_)) {
           ++pos_;
           break;
         }
-        first = false; // a ']' right after '[' or '[^' is a literal
+        first = false;
         const std::size_t  item_pos     {pos_};
         const std::int32_t range_start  {parse_class_item(klass)};
         if (range_start < 0) {

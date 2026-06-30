@@ -1,6 +1,7 @@
 // Anchors, word boundaries and compilation flags (i, match, s), with Python's
 // exact semantics for $ (matches before a final newline) and ^/$ in
 // multiline mode.
+#include <regex>
 #include <string_view>
 
 #include <sciforge/test/framework.hpp>
@@ -167,6 +168,102 @@ TEST(flag_errors)
   EXPECT_THROWS(real::regex("(?i:a)"), real::regex_error); // scoped: unsupported
   EXPECT_THROWS(real::regex("(?u)a"), real::regex_error);  // unicode classes: unsupported
   EXPECT(real::regex("(?x) a b").fullmatch("ab"));         // verbose: supported
+}
+
+TEST(ecma_flag_dollar_end_only)
+{
+  // Default (Python): `$` (no multiline) matches at end OR just before a final `\n`.
+  EXPECT(real::regex("foo$").search("foo\n").matched());
+  EXPECT(real::regex("foo$").search("foo").matched());
+  // ecma: `$` (no multiline) matches ONLY at the very end (ECMAScript `$`).
+  EXPECT(!real::regex("foo$", real::flags::ecma).search("foo\n").matched());
+  EXPECT(real::regex("foo$", real::flags::ecma).search("foo").matched());
+  // The flag is orthogonal to multiline: `^`/`$` at line boundaries are unaffected.
+  EXPECT(real::regex("foo$", real::flags::multiline).search("foo\nbar").matched());
+  EXPECT(real::regex("foo$", real::flags::multiline | real::flags::ecma).search("foo\nbar").matched());
+  // \Z is always end-only, with or without the flag (unchanged).
+  EXPECT(!real::regex(R"(foo\Z)").search("foo\n").matched());
+
+  // Differential: ecma `$` must match std::regex's ECMAScript `$` (end-only).
+  const std::regex      ecma {"foo$"}; // std::regex defaults to ECMAScript
+  for (const std::string subject : {"foo", "foo\n", "foobar", "\nfoo"}) {
+    const bool std_match  {std::regex_search(subject, ecma)};
+    const bool real_match {real::regex("foo$", real::flags::ecma).search(subject).matched()};
+    EXPECT_EQ(real_match, std_match);
+  }
+}
+
+TEST(ecma_flag_dot_excludes_cr)
+{
+  // Default (Python): `.` (no dotall) excludes `\n` only; `\r` is an ordinary character.
+  EXPECT(real::regex(".").search("\r").matched());
+  EXPECT(!real::regex(".").search("\n").matched());
+  // ecma: `.` (no dotall) excludes `\n` AND `\r` (ECMAScript), at the byte level.
+  EXPECT(!real::regex(".", real::flags::ecma).search("\r").matched());
+  EXPECT(!real::regex(".", real::flags::ecma).search("\n").matched());
+  EXPECT(real::regex(".", real::flags::ecma).search("a").matched());
+  EXPECT(real::regex(".", real::flags::ecma).search("\t").matched()); // \t is not a line terminator
+  // A byte of a multi-byte line terminator (U+2028 = E2 80 A8) is ordinary at byte level.
+  EXPECT(real::regex(".", real::flags::ecma | real::flags::bytes).search("\xE2").matched());
+  // dotall still wins: `.` matches everything, ecma notwithstanding.
+  EXPECT(real::regex(".", real::flags::ecma | real::flags::dotall).search("\r").matched());
+
+  // Differential vs std::regex<char> ECMAScript `.` over the line-terminator bytes.
+  const std::regex ecma_dot {"."}; // ECMAScript: `.` excludes \n, \r, U+2028, U+2029
+  for (const std::string subject : {"\r", "\n", "a", "\t"}) {
+    const bool std_match  {std::regex_search(subject, ecma_dot)};
+    const bool real_match {real::regex(".", real::flags::ecma | real::flags::bytes).search(subject).matched()};
+    EXPECT_EQ(real_match, std_match);
+  }
+}
+
+TEST(ecma_flag_anchor_escapes_are_literals)
+{
+  // REAL extensions: `\A \Z` (text-start/end) and `\< \>` (word-start/end) are anchors by default.
+  EXPECT(real::regex(R"(\Aabc)").search("abc").matched());
+  EXPECT(!real::regex(R"(\Aabc)").search("xabc").matched());   // \A anchors to the start
+  EXPECT(real::regex(R"(foo\>)").search("foo bar").matched()); // \> = word end
+  EXPECT(!real::regex(R"(foo\>)").search("foobar").matched());
+
+  // Under ecma, ECMAScript has no such escapes — they are identity-escape LITERALS.
+  EXPECT(real::regex(R"(\Aabc)", real::flags::ecma).search("Aabc").matched()); // \A == literal 'A'
+  EXPECT(!real::regex(R"(\Aabc)", real::flags::ecma).search("abc").matched()); // not an anchor
+  EXPECT(real::regex(R"(\Z)", real::flags::ecma).search("xZy").matched());     // \Z == literal 'Z'
+  EXPECT(real::regex(R"(a\>b)", real::flags::ecma).search("a>b").matched());   // \> == literal '>'
+  EXPECT(real::regex(R"(a\<b)", real::flags::ecma).search("a<b").matched());   // \< == literal '<'
+
+  // `\a` is the bell (0x07) by default (Python); ECMAScript has no `\a` -> literal 'a' (both
+  // outside and inside a class — parse_byte_escape is shared).
+  const std::string bell(1, '\a');
+  EXPECT(real::regex(R"(\a)").search(bell).matched());                   // default: bell
+  EXPECT(real::regex(R"(\a)", real::flags::ecma).search("a").matched()); // ecma: literal 'a'
+  EXPECT(real::regex(R"([\a]+)", real::flags::ecma).fullmatch("aaa").matched());
+  EXPECT(!real::regex(R"(\a)", real::flags::ecma).search(bell).matched());
+
+  // Differential: ecma `\<` / `\>` must match std::regex's ECMAScript identity escape (literal).
+  for (const auto& [pat, subj] : std::vector<std::pair<std::string, std::string>> {
+    {R"(\>)", "a>b"}, {R"(\<)", "a<b"}, {R"(x\>y)", "x>y"}}) {
+    const bool real_match {real::regex(pat, real::flags::ecma | real::flags::bytes).search(subj).matched()};
+    const bool std_match  {std::regex_search(subj, std::regex(pat, std::regex::ECMAScript))};
+    EXPECT_EQ(real_match, std_match);
+  }
+}
+
+TEST(ecma_flag_bracket_close_semantics)
+{
+  // Default (Python): a `]` right after `[` or `[^` is a literal class member.
+  EXPECT(real::regex("[]]").search("]").matched());   // class containing ']'
+  EXPECT(real::regex("[^]]").search("x").matched());  // not-']'
+  EXPECT(!real::regex("[^]]").search("]").matched());
+
+  // ecma: `]` always closes. `[]` is the empty class (matches nothing); `[^]` is its negation
+  // (matches ANY character, including a newline — the ECMAScript "any incl. newline" idiom).
+  EXPECT(!real::regex("[]", real::flags::ecma | real::flags::bytes).search("a").matched());  // empty
+  EXPECT(real::regex("[^]", real::flags::ecma | real::flags::bytes).search("a").matched());  // any
+  EXPECT(real::regex("[^]", real::flags::ecma | real::flags::bytes).search("\n").matched()); // incl. \n
+  // `[^]]+` is `[^]` (any) then `]+`, NOT a not-']' class.
+  EXPECT(real::regex("[^]]+", real::flags::ecma | real::flags::bytes).fullmatch("a]]").matched());
+  EXPECT(!real::regex("[^]]+", real::flags::ecma | real::flags::bytes).fullmatch("ab").matched());
 }
 
 TEST(verbose_mode)

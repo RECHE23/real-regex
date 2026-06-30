@@ -83,3 +83,15 @@ namespace {
   static_assert(abc_rx.may_start_with('a'));
   static_assert(!abc_rx.may_start_with('b'));
 } // namespace
+
+// Probe 8 — empty_match_possible (the nullable gate, exposed for embedders). Conservative:
+// assertions pass through, so a pattern that is only anchors (`^$`) is flagged nullable.
+TEST(empty_match_possible_hint)
+{
+  for (const char* p : {"a*", "(abc)?", "x*y?", "^$"}) {
+    EXPECT(real::regex(p).raw_program().hints.empty_match_possible);
+  }
+  for (const char* p : {"foo", "a+", R"(\d{4})", "[a-z]+"}) {
+    EXPECT(!real::regex(p).raw_program().hints.empty_match_possible);
+  }
+}
