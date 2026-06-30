@@ -85,5 +85,16 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   if (cf && (cm.position(0) != sm.position(0) || cm.length(0) != sm.length(0))) {
     __builtin_trap(); // whole-match span divergence
   }
+
+  // S2 net: regex_replace must match std::regex_replace — the empty-match TRAVERSAL is the new risk.
+  // A nullable real-backed pattern routes to the lazy std backend (so it equals std by construction);
+  // a non-nullable one runs the compat substitution on real's traversal, which must agree with std.
+  // The format exercises $&, $1, $`, $', $$ and a literal.
+  static const std::string fmt {"<$&|$1|$`|$'|$$x>"};
+  const std::string compat_out {real::compat::regex_replace(subject, compat, fmt)};
+  const std::string std_out {std::regex_replace(subject, std_re, fmt)};
+  if (compat_out != std_out) {
+    __builtin_trap(); // regex_replace divergence (format or empty-match traversal)
+  }
   return 0;
 }

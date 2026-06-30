@@ -37,9 +37,19 @@ ASCII `icase`, `multiline`. Non-ASCII **literals** match byte-for-byte like `std
 | Non-ASCII **inside a class** `[é]`, `[\x80-\xff]` | `real` rejects raw high bytes in `[...]` | clean rejection → std fallback |
 | Unbounded / oversized lookaround | exceeds `real`'s bounded-lookaround cap | `real` rejects → std fallback |
 | POSIX grammars, `collate` | `real` is ECMAScript-only | screened to std up front |
+| **Nullable patterns in `regex_replace`/iterators** | empty-match *traversal* (advance-after-empty-match) differs between `real` (Python) and ECMAScript | a real-backed pattern that can match empty (`a*`, `(x)?`) routes those operations to a lazily-built `std::regex` — **per operation**, so `search`/`match` keep `real`'s ReDoS-safety even for nullable-ReDoS like `(a*)*` |
 
 These patterns run on `std::regex` and therefore lose the linear-time guarantee — a documented,
 non-silent trade. Prefer ReDoS-safe equivalents for untrusted input.
+
+## `regex_replace`
+
+The replacement format is ECMAScript: `$$` → `$`, `$&` → the whole match, `` $` `` → the text since
+the previous match, `$'` → the text to the end, `$N` / `$NN` → group N (matching
+`std::regex_replace`, which the differential harness pins). `format_first_only` and `format_no_copy`
+are honoured; `format_sed` routes to `std::regex` (POSIX replacement syntax). A non-nullable
+real-backed pattern runs the substitution on `real`'s linear traversal — measured **6–17× faster**
+than `std::regex_replace`; a nullable one falls back to `std` (see the table above).
 
 ## Intentional divergences from libstdc++ `std::regex` (spec-correct)
 

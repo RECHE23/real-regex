@@ -11,17 +11,20 @@
  * `real` is always built with `flags::bytes | flags::ecma` so its byte-oriented, ECMAScript-`$`,
  * ECMAScript-`.` semantics align with `std::basic_regex<char>` (validated by a differential).
  *
- * S1 scope: `basic_regex<char>`, `sub_match`, `match_results`, `regex_error`, `regex_search`,
- * `regex_match`, and the S1 flags. Iterators, `regex_replace`, full `match_flag_type`, `wregex`
- * and the POSIX grammars are later slices.
+ * Scope so far: `basic_regex<char>`, `sub_match`, `match_results`, `regex_error`, `regex_search`,
+ * `regex_match` (S1), and `regex_replace` (S2a). Iterators, `wregex`, and the full POSIX grammar
+ * engines are later slices. `regex_replace`/iterators route nullable patterns to `std::regex`
+ * because the empty-match traversal differs from ECMAScript (see `basic_regex::nullable`).
  */
 #ifndef REAL_STD_COMPAT_HPP
 #define REAL_STD_COMPAT_HPP
 
 #include "version.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <iterator>
+#include <optional>
 #include <regex>
 #include <string>
 #include <string_view>
@@ -71,15 +74,18 @@ namespace real::compat {
     enum match_flag_type : unsigned
     {
       match_default    = 0,
-      match_not_bol    = 1U << 0U, //!< `^` does not match the start of the sequence.
-      match_not_eol    = 1U << 1U, //!< `$` does not match the end of the sequence.
-      match_not_bow    = 1U << 2U, //!< `\b` does not match at the start.
-      match_not_eow    = 1U << 3U, //!< `\b` does not match at the end.
+      match_not_bol    = 1U << 0U,   //!< `^` does not match the start of the sequence.
+      match_not_eol    = 1U << 1U,   //!< `$` does not match the end of the sequence.
+      match_not_bow    = 1U << 2U,   //!< `\b` does not match at the start.
+      match_not_eow    = 1U << 3U,   //!< `\b` does not match at the end.
       match_any        = 1U << 4U,
-      match_not_null   = 1U << 5U, //!< Do not match an empty sequence.
-      match_continuous = 1U << 6U, //!< The match must start at the first character.
+      match_not_null   = 1U << 5U,   //!< Do not match an empty sequence.
+      match_continuous = 1U << 6U,   //!< The match must start at the first character.
       match_prev_avail = 1U << 7U,
-      format_default   = 0,
+      format_default    = 0,
+      format_sed        = 1U << 8U,  //!< sed/POSIX replacement syntax (routes to std).
+      format_no_copy    = 1U << 9U,  //!< Do not copy the parts of the text that did not match.
+      format_first_only = 1U << 10U, //!< Replace only the first match.
     };
 
     constexpr match_flag_type operator|(match_flag_type a,
@@ -483,8 +489,11 @@ namespace real::compat {
     void swap(basic_regex& other) noexcept
     {
       engine_.swap(other.engine_);
+      std::swap(pattern_, other.pattern_);
       std::swap(flags_, other.flags_);
       std::swap(mark_count_, other.mark_count_);
+      std::swap(nullable_, other.nullable_);
+      std::swap(lazy_std_, other.lazy_std_);
     }
 
     //! \brief True if this regex is backed by the `real` engine (vs the std fallback).
@@ -499,17 +508,52 @@ namespace real::compat {
       return engine_;
     }
 
+    //! \brief Whether the pattern can match the empty string (real's `empty_match_possible` hint).
+    //!
+    //! Empty-match *traversal* (replace / iterate) follows Python's advance rules in `real`, which
+    //! differ from ECMAScript. So a nullable real-backed pattern routes those operations to a lazily
+    //! built `std::regex` (\ref std_engine) — per operation, not at construction, so `search`/`match`
+    //! keep `real`'s linear-time guarantee even on nullable-ReDoS patterns like `(a*)*`.
+    [[nodiscard]] bool nullable() const noexcept
+    {
+      return nullable_;
+    }
+
+    //! \brief Whether replace/iterate run on the `real` traversal (real-backed AND non-nullable).
+    [[nodiscard]] bool uses_real_traversal() const noexcept
+    {
+      return uses_real() && !nullable_;
+    }
+
+    //! \brief The `std::regex` for the std / lazy-std path (built once on demand for real+nullable).
+    [[nodiscard]] const std::basic_regex<CharT, Traits>& std_engine() const
+    {
+      if (std::holds_alternative<std::basic_regex<CharT, Traits>>(engine_)) {
+        return std::get<std::basic_regex<CharT, Traits>>(engine_);
+      }
+      if (!lazy_std_.has_value()) {
+        lazy_std_.emplace(pattern_.data(), pattern_.size(), detail::to_std(flags_));
+      }
+      return *lazy_std_;
+    }
+
   private:
 
     // std backend first so the variant is default-constructible (real::regex has no default ctor).
-    std::variant<std::basic_regex<CharT, Traits>, real::regex> engine_;
-    flag_type                                                  flags_      {regex_constants::ECMAScript};
-    std::size_t                                                mark_count_ {};
+    std::variant<std::basic_regex<CharT, Traits>, real::regex>          engine_;
+    string_type                                                         pattern_;       //!< Original pattern (for the lazy std build).
+    flag_type                                                           flags_      {regex_constants::ECMAScript};
+    std::size_t                                                         mark_count_ {};
+    bool                                                                nullable_   {}; //!< empty_match_possible (real-backed).
+    mutable std::optional<std::basic_regex<CharT, Traits>>              lazy_std_;      //!< Lazy std for nullable replace/iterate.
 
     void assign(std::basic_string_view<CharT> pattern,
                 flag_type                     f)
     {
-      flags_ = f;
+      flags_   = f;
+      pattern_ = string_type(pattern);
+      lazy_std_.reset();
+      nullable_ = false;
       if constexpr (!std::is_same_v<CharT, char>) {
         engine_.template emplace<std::basic_regex<CharT, Traits>>(pattern.data(), pattern.size(), detail::to_std(f));
         mark_count_ = std::get<std::basic_regex<CharT, Traits>>(engine_).mark_count();
@@ -524,6 +568,7 @@ namespace real::compat {
         try {
           real::regex compiled(sv, detail::to_real(f));
           mark_count_ = compiled.group_count();
+          nullable_   = compiled.raw_program().hints.empty_match_possible;
           engine_.template emplace<real::regex>(std::move(compiled));
         }
         catch (const real::regex_error&) {
@@ -706,6 +751,156 @@ namespace real::compat {
   bool regex_match(const std::basic_string<CharT>&&,
                    match_results<typename std::basic_string<CharT>::const_iterator>&,
                    const basic_regex<CharT, Traits>&) = delete;
+
+  // --- regex_replace -----------------------------------------------------------------------
+
+  namespace detail {
+
+    //! \brief Maps compat replacement flags to std::regex_constants match flags (the std path).
+    inline std::regex_constants::match_flag_type to_std_match(regex_constants::match_flag_type f) noexcept
+    {
+      namespace sc = std::regex_constants;
+      auto s {sc::match_default};
+      using namespace regex_constants;
+      if ((f & format_no_copy) != 0U) { s |= sc::format_no_copy; }
+      if ((f & format_first_only) != 0U) { s |= sc::format_first_only; }
+      if ((f & format_sed) != 0U) { s |= sc::format_sed; }
+      if ((f & match_not_bol) != 0U) { s |= sc::match_not_bol; }
+      if ((f & match_not_eol) != 0U) { s |= sc::match_not_eol; }
+      return s;
+    }
+
+    //! \brief Appends one match's ECMAScript-expanded replacement.
+    //!
+    //! The ECMAScript replacement references: dollar-dollar to a literal `$`, dollar-ampersand to the
+    //! whole match, dollar-backtick to the prefix, dollar-quote to the suffix, and `$N`/`$NN` to a
+    //! group. Offsets come from the match's group spans relative to \p text. The prefix is the
+    //! unmatched text *since the previous match* (`[prefix_start, start)`) and the suffix runs to the
+    //! end — matching `std::regex_replace` (which uses `match_results` prefix/suffix), the parity
+    //! oracle. A `$N`/`$NN` for a non-participating group inserts nothing; an invalid `$` is literal.
+    template <typename RealMatch>
+    void expand_format(std::string&     out,
+                       const RealMatch& m,
+                       std::string_view fmt,
+                       std::string_view text,
+                       std::size_t      prefix_start)
+    {
+      const std::size_t group_count {m.size()};   // includes group 0
+      const std::size_t whole_start {m.start(0)};
+      const std::size_t whole_end   {m.end(0)};
+      for (std::size_t i = 0; i < fmt.size(); ++i) {
+        if (fmt[i] != '$') {
+          out.push_back(fmt[i]);
+          continue;
+        }
+        if (i + 1 >= fmt.size()) {
+          out.push_back('$');
+          break;
+        }
+        const char next {fmt[i + 1]};
+        if (next == '$') {
+          out.push_back('$');
+          ++i;
+        }
+        else if (next == '&') {
+          out.append(text.substr(whole_start, whole_end - whole_start));
+          ++i;
+        }
+        else if (next == '`') {
+          out.append(text.substr(prefix_start, whole_start - prefix_start));
+          ++i;
+        }
+        else if (next == '\'') {
+          out.append(text.substr(whole_end));
+          ++i;
+        }
+        else if (next >= '0' && next <= '9') {
+          std::size_t group    {static_cast<std::size_t>(next - '0')};
+          std::size_t consumed {1};
+          if (i + 2 < fmt.size() && fmt[i + 2] >= '0' && fmt[i + 2] <= '9') {
+            const std::size_t two_digit {(group * 10) + static_cast<std::size_t>(fmt[i + 2] - '0')};
+            if (two_digit < group_count) { // prefer the 2-digit group when it exists
+              group    = two_digit;
+              consumed = 2;
+            }
+          }
+          if (group >= 1 && group < group_count && m.start(group) != real::npos) {
+            out.append(text.substr(m.start(group), m.end(group) - m.start(group)));
+          }
+          i += consumed;
+        }
+        else {
+          out.push_back('$'); // a `$` not forming a valid reference is literal
+        }
+      }
+    }
+  } // namespace detail
+
+  /*!
+   * \brief Replaces matches of \p re in \p s with the ECMAScript-formatted \p fmt.
+   *
+   * Real-backed, non-nullable patterns run the substitution on `real` (linear, ReDoS-safe); the
+   * std backend and nullable real-backed patterns route to `std::regex_replace` (the empty-match
+   * traversal differs between Python `real` and ECMAScript, see \ref basic_regex::nullable).
+   */
+  template <typename Traits>
+  std::string regex_replace(const std::string&               s,
+                            const basic_regex<char, Traits>& re,
+                            const std::string&               fmt,
+                            regex_constants::match_flag_type flags = regex_constants::format_default)
+  {
+    if (!re.uses_real_traversal()) {
+      return std::regex_replace(s, re.std_engine(), fmt, detail::to_std_match(flags));
+    }
+    const real::regex&     engine     {std::get<real::regex>(re.engine())};
+    const std::string_view text       {s};
+    std::string            out;
+    const bool             first_only {(flags & regex_constants::format_first_only) != 0U};
+    const bool             no_copy    {(flags & regex_constants::format_no_copy) != 0U};
+    std::size_t            last_end   {0};
+    bool                   done       {false};
+    for (const auto& match : engine.find_iter(s)) {
+      if (done) {
+        break;
+      }
+      const std::size_t prefix_start {last_end};
+      if (!no_copy) {
+        out.append(text.substr(last_end, match.start() - last_end));
+      }
+      detail::expand_format(out, match, std::string_view {fmt}, text, prefix_start);
+      last_end = match.end();
+      if (first_only) {
+        done = true;
+      }
+    }
+    if (!no_copy) {
+      out.append(text.substr(last_end));
+    }
+    return out;
+  }
+
+  //! \brief `regex_replace` overload for a C-string format.
+  template <typename Traits>
+  std::string regex_replace(const std::string&               s,
+                            const basic_regex<char, Traits>& re,
+                            const char                     * fmt,
+                            regex_constants::match_flag_type flags = regex_constants::format_default)
+  {
+    return regex_replace(s, re, std::string(fmt), flags);
+  }
+
+  //! \brief `regex_replace` writing to an output iterator (std parity).
+  template <typename OutputIt, typename BidirIt, typename Traits>
+  OutputIt regex_replace(OutputIt                         out,
+                         BidirIt                          first,
+                         BidirIt                          last,
+                         const basic_regex<char, Traits>& re,
+                         const std::string&               fmt,
+                         regex_constants::match_flag_type flags = regex_constants::format_default)
+  {
+    const std::string result {regex_replace(std::string(first, last), re, fmt, flags)};
+    return std::copy(result.begin(), result.end(), out);
+  }
 } // namespace real::compat
 
 #endif // REAL_STD_COMPAT_HPP

@@ -249,6 +249,59 @@ TEST(compat_regex_match_whole_sequence)
   }
 }
 
+TEST(compat_regex_replace)
+{
+  // ECMAScript format expansion + differential vs std::regex_replace.
+  const std::vector<std::tuple<std::string, std::string, std::string>> cases {
+    {"o", "foo bar", "0"}, {R"((\w+)@(\w+))", "a@b", "$2.$1"}, {"\\d+", "x12y34", "#"},
+    {"(a)(b)", "ab", "$&-$1-$2"}, {"l", "hello", "[$`|$']"}, {"a", "banana", "X"},
+    {R"((\d{4})-(\d{2}))", "2026-06", "$2/$1"}, {"x", "axbxc", "$$"},
+    {"x*", "abc", "-"}, // nullable -> lazy std fallback
+  };
+  for (const auto& [pat, subj, fmt] : cases) {
+    const rc::regex   re(pat);
+    const std::string got {rc::regex_replace(subj, re, fmt)};
+    const std::string ref {std::regex_replace(subj, std::regex(pat, std::regex::ECMAScript), fmt)};
+    EXPECT_EQ(got, ref);
+  }
+
+  // Nullable pattern uses the lazy std backend for replace (the empty-match traversal differs).
+  EXPECT(rc::regex("a*").uses_real());            // real-backed for search/match (S1)
+  EXPECT(!rc::regex("a*").uses_real_traversal()); // but NOT for replace/iterate (nullable)
+
+  // flags: format_first_only, format_no_copy.
+  EXPECT_EQ(rc::regex_replace(std::string("a b c"), rc::regex("\\w"), "X",
+                              rc::regex_constants::format_first_only),
+            std::string("X b c"));
+  EXPECT_EQ(rc::regex_replace(std::string("a1b2c3"), rc::regex("\\d"), "<$&>",
+                              rc::regex_constants::format_no_copy),
+            std::string("<1><2><3>"));
+
+  // const char* fmt + output-iterator overloads.
+  EXPECT_EQ(rc::regex_replace(std::string("foo"), rc::regex("o"), "0"), std::string("f00"));
+  std::string       sink;
+  const std::string src {"a-b-c"};
+  rc::regex_replace(std::back_inserter(sink), src.begin(), src.end(), rc::regex("-"), std::string("+"));
+  EXPECT_EQ(sink, std::string("a+b+c"));
+
+  // Std-backed pattern (backref) routes regex_replace to std::regex_replace.
+  const rc::regex back(R"((a)\1)");
+  EXPECT(!back.uses_real());
+  EXPECT_EQ(rc::regex_replace(std::string("aa b aa"), back, "X"), std::string("X b X"));
+
+  // Edge cases vs std: $NN two-digit group, trailing $ (literal), non-participating group, no match.
+  for (const auto& [pat, subj, fmt] :
+       std::vector<std::tuple<std::string, std::string, std::string>> {
+    {"(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)", "abcdefghijk", "$10>$11"},
+    {"a", "a", "end$"},
+    {"(a)(b)?(c)", "ac", "[$1$2$3]"},
+    {"x", "yyy", "Z"},
+  }) {
+    EXPECT_EQ(rc::regex_replace(subj, rc::regex(pat), fmt),
+              std::regex_replace(subj, std::regex(pat, std::regex::ECMAScript), fmt));
+  }
+}
+
 TEST(compat_api_surface)
 {
   // basic_regex ctors + accessors.
