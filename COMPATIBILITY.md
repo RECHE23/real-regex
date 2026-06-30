@@ -60,8 +60,17 @@ never matches empty, so the position always advances and the ECMAScript and `rea
 the std backend and nullable patterns wrap `std::regex_iterator` (whose empty-match advance *is*
 ECMAScript's). The default-constructed iterator is the end sentinel. Constructing from a temporary
 regex is `=delete`d (it would dangle), exactly as `std::regex_iterator`. The differential fuzzer
-compares the whole **span sequence**, not just the first match — the empty-match traversal being the
-risk it pins. (`regex_token_iterator` — split/`-1` fields — is the next slice.)
+compares the whole **span sequence** (and each match's `prefix()`/`suffix()`), not just the first
+match — the empty-match traversal being the risk it pins.
+
+`regex_token_iterator` (with `sregex_token_iterator` / `cregex_token_iterator`) wraps that iterator,
+so it inherits the nullable routing unchanged. For each match it yields the requested fields in
+order: `N >= 0` is capture group `N` (a non-participating group is an empty `matched == false`
+token), and `-1` is the text *before* this match since the previous one (the match's `prefix()`),
+which makes `-1` a splitter. After the last match a trailing `-1` field yields the final suffix
+**only when it is non-empty** (an empty field *between* adjacent matches is still produced — the
+asymmetry `std` pins); with `-1` and no match at all, the whole sequence is the single token. The
+fuzzer compares the `(str, matched)` token sequence for the `-1` and `0` fields.
 
 ## Intentional divergences from libstdc++ `std::regex` (spec-correct)
 

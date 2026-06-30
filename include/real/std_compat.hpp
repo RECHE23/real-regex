@@ -12,9 +12,10 @@
  * ECMAScript-`.` semantics align with `std::basic_regex<char>` (validated by a differential).
  *
  * Scope so far: `basic_regex<char>`, `sub_match`, `match_results`, `regex_error`, `regex_search`,
- * `regex_match` (S1), and `regex_replace` (S2a). Iterators, `wregex`, and the full POSIX grammar
- * engines are later slices. `regex_replace`/iterators route nullable patterns to `std::regex`
- * because the empty-match traversal differs from ECMAScript (see `basic_regex::nullable`).
+ * `regex_match` (S1), `regex_replace` (S2a), and `regex_iterator` / `regex_token_iterator` (S2b).
+ * `wregex`, the full `match_flag_type`, and the POSIX grammar engines are later slices.
+ * `regex_replace`/iterators route nullable patterns to `std::regex` because the empty-match
+ * traversal differs from ECMAScript (see `basic_regex::nullable`).
  */
 #ifndef REAL_STD_COMPAT_HPP
 #define REAL_STD_COMPAT_HPP
@@ -326,6 +327,15 @@ namespace real::compat {
       groups_.clear();
       prefix_ = suffix_ = value_type {.first = last, .second = last, .matched = false};
       ready_  = false;
+    }
+
+    //! \brief Re-bases the unmatched prefix to start at `first` — for iteration, where a match's
+    //!        prefix runs from the *previous* match's end (not the sequence start). The std path
+    //!        already gets this from the wrapped `std::regex_iterator`; the real path needs it.
+    void rebase_prefix(BidirIt first)
+    {
+      prefix_.first   = first;
+      prefix_.matched = first != prefix_.second;
     }
 
     //! \brief Fills from real's byte offsets over the sequence `[first_, last_)`.
@@ -1022,6 +1032,8 @@ namespace real::compat {
       }
       match_.reset(begin_, end_);
       match_.fill_from_real(result);
+      // Iteration: the prefix runs from the previous match end (== real_pos_ here), not the start.
+      match_.rebase_prefix(begin_ + static_cast<difference_type>(real_pos_));
       real_pos_ = result.end(0); // non-nullable: end > start >= pos, so this always advances
       at_end_   = false;
     }
@@ -1041,6 +1053,187 @@ namespace real::compat {
 
   using sregex_iterator = regex_iterator<std::string::const_iterator>; //!< Over a std::string.
   using cregex_iterator = regex_iterator<const char*>;                 //!< Over a C string.
+
+  // --- regex_token_iterator ----------------------------------------------------------------------
+
+  /*!
+   * \brief Enumerates selected sub-matches (or the text *between* matches) — `std::regex_token_iterator`.
+   *
+   * Wraps `regex_iterator`, so it inherits the per-operation nullable routing untouched (it never
+   * replays the engine choice). For each match it yields the requested fields in order: a field `N >= 0`
+   * is capture group `N` (a non-participating group yields an empty `matched == false` token); the field
+   * `-1` is the text *before* this match since the previous one — i.e. the match's `prefix()` — which
+   * turns `-1` into a splitter. After the last match, a trailing `-1` field yields the final suffix
+   * **iff it is non-empty** (std's rule; an empty field *between* adjacent matches is still produced,
+   * the asymmetry std pins). With `-1` and no match at all, the whole sequence is the single token.
+   *
+   * \tparam BidirIt A contiguous iterator into the searched sequence.
+   */
+  template <typename BidirIt,
+            typename CharT  = typename std::iterator_traits<BidirIt>::value_type,
+            typename Traits = std::regex_traits<CharT>>
+  class regex_token_iterator
+  {
+  public:
+
+    using regex_type        = basic_regex<CharT, Traits>; //!< The pattern type.
+    using value_type        = sub_match<BidirIt>;         //!< Yielded token.
+    using difference_type   = std::ptrdiff_t;             //!< Iterator traits.
+    using pointer           = const value_type*;          //!< Arrow type.
+    using reference         = const value_type&;          //!< Dereference type.
+    using iterator_category = std::forward_iterator_tag;  //!< std::regex_token_iterator parity.
+
+    //! \brief Constructs the end sentinel.
+    regex_token_iterator() = default;
+
+    //! \brief Selects a single sub-match field (`0` = whole match, `N` = group N, `-1` = split).
+    regex_token_iterator(BidirIt           first,
+                         BidirIt           last,
+                         const regex_type& re,
+                         int               submatch = 0)
+      : regex_token_iterator(first,
+                             last,
+                             re,
+                             std::vector<int> {submatch})
+    {}
+
+    //! \brief Selects a list of fields, cycled per match (e.g. `{1, 2}`, `{-1}`).
+    regex_token_iterator(BidirIt                 first,
+                         BidirIt                 last,
+                         const regex_type&       re,
+                         const std::vector<int>& submatches)
+      : position_(first, last, re), subs_(submatches)
+    {
+      if (subs_.empty()) {
+        subs_.push_back(0);
+      }
+      for (const int s : subs_) {
+        if (s == -1) {
+          has_m1_ = true;
+          break;
+        }
+      }
+      init(first, last);
+    }
+
+    //! \brief Selects a list of fields from a braced list (e.g. `{-1}`).
+    regex_token_iterator(BidirIt                    first,
+                         BidirIt                    last,
+                         const regex_type&          re,
+                         std::initializer_list<int> submatches)
+      : regex_token_iterator(first,
+                             last,
+                             re,
+                             std::vector<int>(submatches))
+    {}
+
+    //! \brief Constructing from a temporary regex would dangle (std::regex_token_iterator parity).
+    regex_token_iterator(BidirIt            first,
+                         BidirIt            last,
+                         const regex_type&& re,
+                         int                submatch = 0) = delete;
+    regex_token_iterator(BidirIt                 first,
+                         BidirIt                 last,
+                         const regex_type&&      re,
+                         const std::vector<int>& submatches) = delete; //!< \overload
+
+    [[nodiscard]] reference operator*() const
+    {
+      return current_;
+    }
+
+    [[nodiscard]] pointer   operator->() const
+    {
+      return &current_;
+    }
+
+    regex_token_iterator& operator++()
+    {
+      if (at_end_) {
+        return *this;
+      }
+      if (suffix_mode_) { // the trailing -1 field was the last token
+        *this = regex_token_iterator {};
+        return *this;
+      }
+      const regex_iterator<BidirIt, CharT, Traits> prev {position_};
+      if (n_ + 1 < subs_.size()) {
+        ++n_; // more fields for the same match
+        set_field();
+      }
+      else {
+        n_ = 0;
+        ++position_;
+        if (position_ != regex_iterator<BidirIt, CharT, Traits> {}) {
+          set_field();                   // first field of the next match
+        }
+        else if (has_m1_ && prev->suffix().length() != 0) {
+          current_     = prev->suffix(); // trailing split field, only when non-empty
+          suffix_mode_ = true;
+        }
+        else {
+          at_end_ = true;
+        }
+      }
+      return *this;
+    }
+
+    regex_token_iterator operator++(int)
+    {
+      regex_token_iterator previous {*this};
+      ++(*this);
+      return previous;
+    }
+
+    [[nodiscard]] bool operator==(const regex_token_iterator& other) const
+    {
+      if (at_end_ || other.at_end_) {
+        return at_end_ == other.at_end_;
+      }
+      return position_ == other.position_ && n_ == other.n_ && suffix_mode_ == other.suffix_mode_
+             && current_.first == other.current_.first && current_.second == other.current_.second;
+    }
+
+    [[nodiscard]] bool operator!=(const regex_token_iterator& other) const
+    {
+      return !(*this == other);
+    }
+
+  private:
+
+    regex_iterator<BidirIt, CharT, Traits> position_;            //!< The underlying match walk.
+    std::vector<int>                       subs_;                //!< Field selectors, cycled per match.
+    std::size_t                            n_           {0};     //!< Current field index into \ref subs_.
+    value_type                             current_;             //!< Current token (by value — no aliasing).
+    bool                                   has_m1_      {false}; //!< Whether a `-1` (split) field is present.
+    bool                                   suffix_mode_ {false}; //!< Emitting the trailing split suffix.
+    bool                                   at_end_      {true};  //!< End-of-sequence.
+
+    //! \brief Computes the current token from the current match and `subs_[n_]`.
+    void set_field()
+    {
+      current_ = (subs_[n_] == -1) ? position_->prefix() : (*position_)[subs_[n_]];
+    }
+
+    //! \brief Establishes the first token (or the whole-sequence token when there is no match).
+    void init(BidirIt first,
+              BidirIt last)
+    {
+      if (position_ != regex_iterator<BidirIt, CharT, Traits> {}) {
+        at_end_ = false;
+        set_field();
+      }
+      else if (has_m1_) { // no match at all: the whole sequence is one split token
+        at_end_ = false;
+        // std marks this whole-sequence suffix token as participating even when empty (matched=true),
+        // unlike an empty field *between* matches (a prefix, matched=false). The fuzzer pinned this.
+        current_ = value_type {.first = first, .second = last, .matched = true};
+      }
+    }
+  };
+
+  using sregex_token_iterator = regex_token_iterator<std::string::const_iterator>; //!< Over a std::string.
+  using cregex_token_iterator = regex_token_iterator<const char*>;                 //!< Over a C string.
 } // namespace real::compat
 
 #endif // REAL_STD_COMPAT_HPP

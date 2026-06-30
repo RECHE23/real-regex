@@ -115,5 +115,26 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   if (compat_spans != std_spans) {
     __builtin_trap(); // iterator span-sequence divergence (empty-match traversal)
   }
+
+  // S2b-2 net: the token SEQUENCE from regex_token_iterator must equal std::sregex_token_iterator's.
+  // The -1 (split) field is the divergence-prone one: empty fields between adjacent matches are
+  // produced, the trailing suffix only when non-empty, and a no-match yields the whole sequence.
+  // Compare (str, matched) so the participation flag is pinned too.
+  using token = std::pair<std::string, bool>;
+  for (const int field : {-1, 0}) {
+    std::vector<token> compat_tokens;
+    for (real::compat::sregex_token_iterator it(subject.begin(), subject.end(), compat, field), end;
+         it != end; ++it) {
+      compat_tokens.emplace_back(it->str(), it->matched);
+    }
+    std::vector<token> std_tokens;
+    for (std::sregex_token_iterator it(subject.begin(), subject.end(), std_re, field), end;
+         it != end; ++it) {
+      std_tokens.emplace_back(it->str(), it->matched);
+    }
+    if (compat_tokens != std_tokens) {
+      __builtin_trap(); // token-sequence divergence (split fields / trailing suffix derivation)
+    }
+  }
   return 0;
 }

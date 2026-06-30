@@ -364,6 +364,87 @@ TEST(compat_regex_iterator)
   EXPECT(!rc::regex("x*").uses_real_traversal());
 }
 
+namespace {
+
+  // The token SEQUENCE (str + matched flag) from real::compat must equal std::sregex_token_iterator's.
+  bool tokens_agree(const std::string&      pat,
+                    const std::string&      subj,
+                    const std::vector<int>& fields)
+  {
+    const rc::regex                           rre(pat);
+    const std::regex                          sre(pat, std::regex::ECMAScript);
+    std::vector<std::pair<std::string, bool>> got;
+    std::vector<std::pair<std::string, bool>> ref;
+    for (rc::sregex_token_iterator it(subj.begin(), subj.end(), rre, fields), e; it != e; ++it) {
+      got.emplace_back(it->str(), it->matched);
+    }
+    for (std::sregex_token_iterator it(subj.begin(), subj.end(), sre, fields), e; it != e; ++it) {
+      ref.emplace_back(it->str(), it->matched);
+    }
+    return got == ref;
+  }
+} // namespace
+
+TEST(compat_regex_token_iterator)
+{
+  // Whole-match (field 0) tokenizing.
+  EXPECT(tokens_agree(R"(\w+)", "two  words here", {0}));
+
+  // Split on a separator (field -1): the prefix-between-matches semantics, incl. the trailing suffix.
+  EXPECT(tokens_agree(",", "a,b,c", {-1}));                // a | b | c (trailing suffix "c" non-empty)
+  EXPECT(tokens_agree(",", "a,b,", {-1}));                 // a | b | (trailing EMPTY suffix dropped by std)
+  EXPECT(tokens_agree(",", ",a,b", {-1}));                 // leading empty field | a | b
+  EXPECT(tokens_agree(",", "a,,b", {-1}));                 // a | EMPTY between adjacent | b
+  EXPECT(tokens_agree(",", ",,", {-1}));                   // empty | empty (then empty suffix dropped)
+  EXPECT(tokens_agree(R"(\s+)", "  x  y  ", {-1}));        // leading + trailing whitespace splits
+  EXPECT(tokens_agree("x", "abc", {-1}));                  // no match: the whole string is one token
+  EXPECT(tokens_agree("x", "", {-1}));                     // fuzzer-found: no match on empty -> one
+  EXPECT(tokens_agree("a", "", {-1}));                     // empty token with matched=true (std rule)
+
+  // Field list, cycled per match — and a non-participating group must yield an empty token.
+  EXPECT(tokens_agree(R"((\w)(\w))", "abcd", {1, 2}));     // a,b,c,d
+  EXPECT(tokens_agree(R"((\d)|([a-z]))", "1a2b", {1, 2})); // alternation: each match fills one of two groups
+  EXPECT(tokens_agree(R"((\w+)=(\w+))", "k1=v1 k2=v2", {1, 2, -1}));
+
+  // The std backend (nullable pattern) routes through the same wrapper.
+  EXPECT(!rc::regex(R"(\w*)").uses_real_traversal());
+  EXPECT(tokens_agree(R"(\w+)", "alpha beta", {0}));
+
+  // cregex_token_iterator over a C string (split).
+  const char             * cstr {"x:y:z"};
+  const rc::regex          colon(":");
+  std::vector<std::string> parts;
+  for (rc::cregex_token_iterator it(cstr, cstr + 5, colon, -1), e; it != e; ++it) {
+    parts.push_back(it->str());
+  }
+  EXPECT_EQ(parts.size(), 3U);
+  EXPECT_EQ(parts[0], "x");
+  EXPECT_EQ(parts[2], "z");
+
+  // An empty field list behaves as the whole-match field {0}.
+  const std::string        ws {"a b"};
+  const rc::regex          word(R"(\w+)");
+  std::vector<std::string> empty_subs_tokens;
+  for (rc::sregex_token_iterator it(ws.begin(), ws.end(), word, std::vector<int> {}), e; it != e;
+       ++it) {
+    empty_subs_tokens.push_back(it->str());
+  }
+  EXPECT_EQ(empty_subs_tokens.size(), 2U);
+  EXPECT_EQ(empty_subs_tokens[0], "a");
+
+  // Two non-end iterators over the same input compare equal until one advances (full ==/!= path).
+  rc::sregex_token_iterator a(ws.begin(), ws.end(), word, 0);
+  rc::sregex_token_iterator b(ws.begin(), ws.end(), word, 0);
+  EXPECT(a == b);
+  ++a;
+  EXPECT(a != b);
+
+  // Incrementing an end iterator is a harmless no-op (defensive guard).
+  rc::sregex_token_iterator end_it;
+  ++end_it;
+  EXPECT(end_it == rc::sregex_token_iterator {});
+}
+
 TEST(compat_api_surface)
 {
   // basic_regex ctors + accessors.
