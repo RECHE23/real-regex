@@ -93,6 +93,25 @@ optimization left for later, not a hand-coded partition — the differential fuz
 have to police a mis-categorization. The fuzzer generates a random flag subset and compares
 `compat(mf)` vs `std(mf)` on search + match + iterate, which is what proves the partition.
 
+## Always-`std` parts of the surface (`wregex`, POSIX, `nosubs`)
+
+`real` runs only the **`char` path with default traits, ECMAScript grammar, reporting every group**.
+Everything outside that is routed to `std::regex` by a compile-time gate (`real_eligible<CharT, Traits>`)
+plus the option screen — `real` is never even tried, so these are std by construction (R4 holds trivially):
+
+- **`wregex` / `wchar_t` (and `char8/16/32_t`, custom `Traits`)**: the gate is `constexpr`, so `real`'s
+  char-only code (the byte `string_view`, `fill_from_real`, `next_real`) is **compiled out** for these
+  instantiations — the `real::regex` alternative of the backend variant stays dead. `wregex::uses_real()`
+  is always `false`. The wide typedefs are provided: `wregex`, `wsmatch`/`wcmatch`,
+  `wssub_match`/`wcsub_match`, `wsregex_iterator`/`wcregex_iterator`,
+  `wsregex_token_iterator`/`wcregex_token_iterator`; `regex_search`/`regex_match`/`regex_replace` are
+  templated on `CharT` and dispatch the wide path to `std`.
+- **POSIX grammars** (`basic`/`extended`/`awk`/`grep`/`egrep`) and **`collate`**: screened to `std` up
+  front (`real` is ECMAScript-only).
+- **`nosubs`**: `std` answers it by exposing only group 0, while `real` always reports every group — a
+  structural both-accept divergence — so `nosubs` is screened to `std`. (Honoring it on `real` by
+  truncating `match_results` to size 1 is a measured optimization for later, not a correctness need.)
+
 ## Intentional divergences from libstdc++ `std::regex` (spec-correct)
 
 `real::compat` follows the **ECMAScript spec**; the following are libstdc++ deviations that the

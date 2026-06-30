@@ -544,6 +544,107 @@ TEST(compat_regex_token_iterator)
   EXPECT(end_it == rc::sregex_token_iterator {});
 }
 
+TEST(compat_wregex_always_std)
+{
+  // The real backend is eligible only for char + default traits; everything else is always std.
+  static_assert(rc::detail::real_eligible<char, std::regex_traits<char>>);
+  static_assert(!rc::detail::real_eligible<wchar_t, std::regex_traits<wchar_t>>);
+  static_assert(!rc::detail::real_eligible<char, std::regex_traits<wchar_t>>); // custom/other traits
+
+  // wregex is constructed straight on std (uses_real() is always false) and matches std::wregex.
+  const std::vector<std::pair<std::wstring, std::wstring>> cases {
+    {LR"((\w+)@(\w+))", L"foo@bar baz@qux"},
+    {LR"(\d{4}-\d{2}-\d{2})", L"on 2026-06-30 ok"},
+    {LR"([A-Za-z]+)", L"Hello World"},
+  };
+  for (const auto& [pat, subj] : cases) {
+    const rc::wregex  wr(pat);
+    EXPECT(!wr.uses_real()); // always std for wchar_t
+    const std::wregex sw(pat, std::regex::ECMAScript);
+    rc::wsmatch       wm;
+    std::wsmatch      sm;
+    EXPECT_EQ(rc::regex_search(subj, wm, wr), std::regex_search(subj, sm, sw));
+    EXPECT_EQ(wm.size(), sm.size()); // a wsmatch fills via fill_from_std
+    EXPECT_EQ(wm.position(0), sm.position(0));
+    EXPECT_EQ(wm.length(0), sm.length(0));
+
+    // Iterator span sequence parity.
+    std::vector<std::pair<long, long>> wspans;
+    std::vector<std::pair<long, long>> sspans;
+    for (rc::wsregex_iterator it(subj.begin(), subj.end(), wr), e; it != e; ++it) {
+      wspans.emplace_back(it->position(0), it->length(0));
+    }
+    for (std::wsregex_iterator it(subj.begin(), subj.end(), sw), e; it != e; ++it) {
+      sspans.emplace_back(it->position(0), it->length(0));
+    }
+    EXPECT(wspans == sspans);
+  }
+
+  // Token split + replace parity on the wide path.
+  const std::wstring        csv {L"a,bb,ccc"};
+  const rc::wregex          comma(L",");
+  std::vector<std::wstring> wparts;
+  for (rc::wsregex_token_iterator it(csv.begin(), csv.end(), comma, -1), e; it != e; ++it) {
+    wparts.push_back(it->str());
+  }
+  EXPECT_EQ(wparts.size(), 3U);
+  EXPECT(wparts[2] == L"ccc");
+  EXPECT(rc::regex_replace(csv, comma, std::wstring(L";"))
+         == std::regex_replace(csv, std::wregex(L","), std::wstring(L";")));
+
+  // regex_match on the wide path.
+  EXPECT(rc::regex_match(std::wstring(L"abcd"), rc::wregex(LR"(\w+)")));
+  EXPECT(!rc::regex_match(std::wstring(L"ab cd"), rc::wregex(LR"(\w+)")));
+}
+
+TEST(compat_nosubs_routes_to_std)
+{
+  // nosubs makes std report only group 0; real reports every group -> a structural divergence,
+  // so nosubs routes to std. Verify the backend AND that m.size()==1 exactly like std.
+  const rc::regex re(R"((\w+)@(\w+))", rc::regex_constants::nosubs);
+  EXPECT(!re.uses_real()); // forced to std by the option screen
+
+  rc::smatch        m;
+  std::smatch       sm;
+  const std::string subj {"user@host"};
+  const std::regex  sre(R"((\w+)@(\w+))", std::regex::ECMAScript | std::regex::nosubs);
+  EXPECT_EQ(rc::regex_search(subj, m, re), std::regex_search(subj, sm, sre));
+  EXPECT_EQ(m.size(), sm.size()); // both expose only the whole match
+  EXPECT_EQ(m.size(), 1U);
+  EXPECT_EQ(m.position(0), sm.position(0));
+  EXPECT_EQ(m.length(0), sm.length(0));
+}
+
+TEST(compat_posix_grammars_route_to_std)
+{
+  namespace rcc = rc::regex_constants;
+  // grammar_forces_std routes POSIX grammars + collate to std up front; confirm the differential.
+  struct Case
+  {
+    std::string                              pattern;
+    std::string                              subject;
+    rcc::syntax_option_type                  ropt;
+    std::regex_constants::syntax_option_type sopt;
+  };
+  const std::vector<Case> cases {
+    {.pattern = "[[:digit:]]+", .subject = "abc123", .ropt = rcc::extended, .sopt = std::regex_constants::extended},
+    {.pattern = R"(\(ab\)*)", .subject = "ababab", .ropt = rcc::basic, .sopt = std::regex_constants::basic},
+    {.pattern = "a+b", .subject = "aaab", .ropt = rcc::extended, .sopt = std::regex_constants::extended},
+  };
+  for (const Case& c : cases) {
+    const rc::regex re(c.pattern, c.ropt);
+    EXPECT(!re.uses_real()); // POSIX grammar -> std
+    const std::regex  sre(c.pattern, c.sopt);
+    rc::smatch        m;
+    std::smatch       sm;
+    EXPECT_EQ(rc::regex_search(c.subject, m, re), std::regex_search(c.subject, sm, sre));
+    if (rc::regex_search(c.subject, m, re)) {
+      EXPECT_EQ(m.position(0), sm.position(0));
+      EXPECT_EQ(m.length(0), sm.length(0));
+    }
+  }
+}
+
 TEST(compat_api_surface)
 {
   // basic_regex ctors + accessors.

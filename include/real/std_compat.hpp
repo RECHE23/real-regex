@@ -11,11 +11,13 @@
  * `real` is always built with `flags::bytes | flags::ecma` so its byte-oriented, ECMAScript-`$`,
  * ECMAScript-`.` semantics align with `std::basic_regex<char>` (validated by a differential).
  *
- * Scope so far: `basic_regex<char>`, `sub_match`, `match_results`, `regex_error`, `regex_search`,
- * `regex_match` (S1), `regex_replace` (S2a), and `regex_iterator` / `regex_token_iterator` (S2b).
- * `wregex`, the full `match_flag_type`, and the POSIX grammar engines are later slices.
- * `regex_replace`/iterators route nullable patterns to `std::regex` because the empty-match
- * traversal differs from ECMAScript (see `basic_regex::nullable`).
+ * Surface: `basic_regex` / `sub_match` / `match_results` / `regex_error`, `regex_search`,
+ * `regex_match` (S1), `regex_replace` (S2a), `regex_iterator` / `regex_token_iterator` (S2b),
+ * the full `match_flag_type` (S3), and `wregex` + POSIX grammars + `nosubs` (S4). `real` runs only
+ * the `char` / default-traits / ECMAScript / every-group path (see `detail::real_eligible`); wide
+ * `CharT`, custom traits, POSIX/`collate`, and `nosubs` are always `std`. `regex_replace`/iterators
+ * route nullable patterns to `std::regex` (the empty-match traversal differs from ECMAScript, see
+ * `basic_regex::nullable`), and a constraining `match_flag` routes that operation to `std`.
  */
 #ifndef REAL_STD_COMPAT_HPP
 #define REAL_STD_COMPAT_HPP
@@ -407,17 +409,35 @@ namespace real::compat {
     bool                               ready_  {false};  //!< Whether a match is stored.
   };
 
-  using smatch = match_results<std::string::const_iterator>; //!< Match over a std::string.
-  using cmatch = match_results<const char*>;                 //!< Match over a C string.
+  using ssub_match  = sub_match<std::string::const_iterator>;  //!< Sub-match over a std::string.
+  using csub_match  = sub_match<const char*>;                  //!< Sub-match over a C string.
+  using wssub_match = sub_match<std::wstring::const_iterator>; //!< Sub-match over a std::wstring.
+  using wcsub_match = sub_match<const wchar_t*>;               //!< Sub-match over a wide C string.
+
+  using smatch  = match_results<std::string::const_iterator>;  //!< Match over a std::string.
+  using cmatch  = match_results<const char*>;                  //!< Match over a C string.
+  using wsmatch = match_results<std::wstring::const_iterator>; //!< Match over a std::wstring (always std).
+  using wcmatch = match_results<const wchar_t*>;               //!< Match over a wide C string (always std).
 
   namespace detail {
 
-    //! \brief Grammars that force the std backend (real implements ECMAScript only).
+    //! \brief Whether `real` is even *eligible* for this `basic_regex` instantiation. `real` runs only
+    //!        the `char` path with default traits; `wchar_t`/`char8_t`/… and custom traits are always
+    //!        std. This is a compile-time gate: it must compile `real`'s char-only code (the byte
+    //!        `string_view`, `fill_from_real`) *out* for other `CharT`, not merely skip it at runtime.
+    template <typename CharT, typename Traits>
+    inline constexpr bool real_eligible =
+      std::is_same_v<CharT, char> && std::is_same_v<Traits, std::regex_traits<char>>;
+
+    //! \brief Grammars/options that force the std backend (real implements default-traits ECMAScript,
+    //!        reporting every group — so `nosubs`, which std answers by exposing only group 0, also
+    //!        routes to std to avoid a structural both-accept divergence).
     inline bool grammar_forces_std(regex_constants::syntax_option_type f) noexcept
     {
       using namespace regex_constants;
       return (f & (basic | extended | awk | grep | egrep)) != ECMAScript
-             || (f & collate) != ECMAScript;
+             || (f & collate) != ECMAScript
+             || (f & nosubs) != ECMAScript;
     }
 
     //! \brief Pattern text that real *accepts* but matches differently from libstdc++ — a both-accept
@@ -596,12 +616,7 @@ namespace real::compat {
       pattern_ = string_type(pattern);
       lazy_std_.reset();
       nullable_ = false;
-      if constexpr (!std::is_same_v<CharT, char>) {
-        engine_.template emplace<std::basic_regex<CharT, Traits>>(pattern.data(), pattern.size(), detail::to_std(f));
-        mark_count_ = std::get<std::basic_regex<CharT, Traits>>(engine_).mark_count();
-        return;
-      }
-      else {
+      if constexpr (detail::real_eligible<CharT, Traits>) {
         const std::string_view sv {pattern.data(), pattern.size()};
         if (detail::grammar_forces_std(f) || detail::pattern_forces_std(sv)) {
           emplace_std(sv, f);
@@ -624,6 +639,14 @@ namespace real::compat {
           }
         }
       }
+      else {
+        // wchar_t / char8/16/32 / custom traits: real is never eligible, so go straight to std. The
+        // real::regex variant alternative stays dead for this CharT (never emplaced), and real's
+        // char-only helpers are not instantiated. always-std => std parity by construction (R4).
+        engine_.template emplace<std::basic_regex<CharT, Traits>>(pattern.data(), pattern.size(),
+                                                                  detail::to_std(f));
+        mark_count_ = std::get<std::basic_regex<CharT, Traits>>(engine_).mark_count();
+      }
     }
 
     void emplace_std(std::string_view sv,
@@ -635,7 +658,8 @@ namespace real::compat {
     }
   };
 
-  using regex = basic_regex<char>; //!< The char-path compat regex.
+  using regex  = basic_regex<char>;    //!< The char-path compat regex (real-eligible).
+  using wregex = basic_regex<wchar_t>; //!< The wide compat regex (always the std backend).
 
   // --- free functions ----------------------------------------------------------------------
 
@@ -693,14 +717,16 @@ namespace real::compat {
              regex_constants::match_flag_type  mf)
     {
       m.reset(first, last);
-      const std::string_view sv {std::to_address(first),
-                                 static_cast<std::size_t>(std::distance(first, last))};
-      if (re.uses_real() && real_honors(mf)) {
-        const real::regex& engine {std::get<real::regex>(re.engine())};
-        const auto         result {anchored ? engine.fullmatch(sv) : engine.search(sv)};
-        if (!result.matched()) { return false; }
-        m.fill_from_real(result);
-        return true;
+      if constexpr (real_eligible<CharT, Traits>) {
+        if (re.uses_real() && real_honors(mf)) {
+          const std::string_view sv     {std::to_address(first),
+                                         static_cast<std::size_t>(std::distance(first, last))};
+          const real::regex&     engine {std::get<real::regex>(re.engine())};
+          const auto             result {anchored ? engine.fullmatch(sv) : engine.search(sv)};
+          if (!result.matched()) { return false; }
+          m.fill_from_real(result);
+          return true;
+        }
       }
       const std::basic_regex<CharT, Traits>& std_engine {re.std_engine()}; // lazy-built if real-backed
       std::match_results<BidirIt>            std_m;
@@ -720,11 +746,13 @@ namespace real::compat {
                        bool                              anchored,
                        regex_constants::match_flag_type  mf)
     {
-      const std::string_view sv {std::to_address(first),
-                                 static_cast<std::size_t>(std::distance(first, last))};
-      if (re.uses_real() && real_honors(mf)) {
-        const real::regex& engine {std::get<real::regex>(re.engine())};
-        return anchored ? engine.fullmatch(sv).matched() : engine.search(sv).matched();
+      if constexpr (real_eligible<CharT, Traits>) {
+        if (re.uses_real() && real_honors(mf)) {
+          const std::string_view sv     {std::to_address(first),
+                                         static_cast<std::size_t>(std::distance(first, last))};
+          const real::regex&     engine {std::get<real::regex>(re.engine())};
+          return anchored ? engine.fullmatch(sv).matched() : engine.search(sv).matched();
+        }
       }
       const std::basic_regex<CharT, Traits>& std_engine {re.std_engine()};
       const auto                             sf         {to_std_match(mf)};
@@ -928,62 +956,68 @@ namespace real::compat {
    * std backend and nullable real-backed patterns route to `std::regex_replace` (the empty-match
    * traversal differs between Python `real` and ECMAScript, see \ref basic_regex::nullable).
    */
-  template <typename Traits>
-  std::string regex_replace(const std::string&               s,
-                            const basic_regex<char, Traits>& re,
-                            const std::string&               fmt,
-                            regex_constants::match_flag_type flags = regex_constants::format_default)
+  template <typename CharT, typename Traits>
+  std::basic_string<CharT> regex_replace(const std::basic_string<CharT>&   s,
+                                         const basic_regex<CharT, Traits>& re,
+                                         const std::basic_string<CharT>&   fmt,
+                                         regex_constants::match_flag_type  flags = regex_constants::format_default)
   {
-    if (!re.uses_real_traversal()) {
+    if constexpr (!detail::real_eligible<CharT, Traits>) {
+      // wide / custom-traits: always std (real is not eligible for this CharT).
       return std::regex_replace(s, re.std_engine(), fmt, detail::to_std_match(flags));
     }
-    const real::regex&     engine     {std::get<real::regex>(re.engine())};
-    const std::string_view text       {s};
-    std::string            out;
-    const bool             first_only {(flags & regex_constants::format_first_only) != 0U};
-    const bool             no_copy    {(flags & regex_constants::format_no_copy) != 0U};
-    std::size_t            last_end   {0};
-    bool                   done       {false};
-    for (const auto& match : engine.find_iter(s)) {
-      if (done) {
-        break;
+    else {
+      if (!re.uses_real_traversal()) {
+        return std::regex_replace(s, re.std_engine(), fmt, detail::to_std_match(flags));
       }
-      const std::size_t prefix_start {last_end};
+      const real::regex&     engine     {std::get<real::regex>(re.engine())};
+      const std::string_view text       {s};
+      std::string            out;
+      const bool             first_only {(flags & regex_constants::format_first_only) != 0U};
+      const bool             no_copy    {(flags & regex_constants::format_no_copy) != 0U};
+      std::size_t            last_end   {0};
+      bool                   done       {false};
+      for (const auto& match : engine.find_iter(s)) {
+        if (done) {
+          break;
+        }
+        const std::size_t prefix_start {last_end};
+        if (!no_copy) {
+          out.append(text.substr(last_end, match.start() - last_end));
+        }
+        detail::expand_format(out, match, std::string_view {fmt}, text, prefix_start);
+        last_end = match.end();
+        if (first_only) {
+          done = true;
+        }
+      }
       if (!no_copy) {
-        out.append(text.substr(last_end, match.start() - last_end));
+        out.append(text.substr(last_end));
       }
-      detail::expand_format(out, match, std::string_view {fmt}, text, prefix_start);
-      last_end = match.end();
-      if (first_only) {
-        done = true;
-      }
+      return out;
     }
-    if (!no_copy) {
-      out.append(text.substr(last_end));
-    }
-    return out;
   }
 
   //! \brief `regex_replace` overload for a C-string format.
-  template <typename Traits>
-  std::string regex_replace(const std::string&               s,
-                            const basic_regex<char, Traits>& re,
-                            const char                     * fmt,
-                            regex_constants::match_flag_type flags = regex_constants::format_default)
+  template <typename CharT, typename Traits>
+  std::basic_string<CharT> regex_replace(const std::basic_string<CharT>&   s,
+                                         const basic_regex<CharT, Traits>& re,
+                                         const CharT                     * fmt,
+                                         regex_constants::match_flag_type  flags = regex_constants::format_default)
   {
-    return regex_replace(s, re, std::string(fmt), flags);
+    return regex_replace(s, re, std::basic_string<CharT>(fmt), flags);
   }
 
   //! \brief `regex_replace` writing to an output iterator (std parity).
-  template <typename OutputIt, typename BidirIt, typename Traits>
-  OutputIt regex_replace(OutputIt                         out,
-                         BidirIt                          first,
-                         BidirIt                          last,
-                         const basic_regex<char, Traits>& re,
-                         const std::string&               fmt,
-                         regex_constants::match_flag_type flags = regex_constants::format_default)
+  template <typename OutputIt, typename BidirIt, typename CharT, typename Traits>
+  OutputIt regex_replace(OutputIt                          out,
+                         BidirIt                           first,
+                         BidirIt                           last,
+                         const basic_regex<CharT, Traits>& re,
+                         const std::basic_string<CharT>&   fmt,
+                         regex_constants::match_flag_type  flags = regex_constants::format_default)
   {
-    const std::string result {regex_replace(std::string(first, last), re, fmt, flags)};
+    const std::basic_string<CharT> result {regex_replace(std::basic_string<CharT>(first, last), re, fmt, flags)};
     return std::copy(result.begin(), result.end(), out);
   }
 
@@ -1026,14 +1060,17 @@ namespace real::compat {
                    regex_constants::match_flag_type flags = regex_constants::match_default)
       : begin_(first), end_(last), re_(&re)
     {
-      if (re.uses_real_traversal() && detail::real_honors(flags)) {
-        real_path_ = true;
-        next_real();
+      // The real traversal exists only for the char/default-traits path; for wide/custom-traits
+      // CharT the branch is compiled out, so next_real() (char-only) is never instantiated.
+      if constexpr (detail::real_eligible<CharT, Traits>) {
+        if (re.uses_real_traversal() && detail::real_honors(flags)) {
+          real_path_ = true;
+          next_real();
+          return;
+        }
       }
-      else {
-        std_it_.emplace(first, last, re.std_engine(), detail::to_std_match(flags));
-        sync_std();
-      }
+      std_it_.emplace(first, last, re.std_engine(), detail::to_std_match(flags));
+      sync_std();
     }
 
     //! \brief Constructing from a temporary regex would dangle (std::regex_iterator parity).
@@ -1057,13 +1094,16 @@ namespace real::compat {
       if (at_end_) {
         return *this;
       }
-      if (real_path_) {
-        next_real();
+      // Guarded so next_real() (char-only) is not instantiated for wide/custom-traits CharT, where
+      // real_path_ is always false anyway (the ctor's real branch is compiled out).
+      if constexpr (detail::real_eligible<CharT, Traits>) {
+        if (real_path_) {
+          next_real();
+          return *this;
+        }
       }
-      else {
-        ++(*std_it_);
-        sync_std();
-      }
+      ++(*std_it_);
+      sync_std();
       return *this;
     }
 
@@ -1130,8 +1170,10 @@ namespace real::compat {
     }
   };
 
-  using sregex_iterator = regex_iterator<std::string::const_iterator>; //!< Over a std::string.
-  using cregex_iterator = regex_iterator<const char*>;                 //!< Over a C string.
+  using sregex_iterator  = regex_iterator<std::string::const_iterator>;  //!< Over a std::string.
+  using cregex_iterator  = regex_iterator<const char*>;                  //!< Over a C string.
+  using wsregex_iterator = regex_iterator<std::wstring::const_iterator>; //!< Over a std::wstring (std).
+  using wcregex_iterator = regex_iterator<const wchar_t*>;               //!< Over a wide C string (std).
 
   // --- regex_token_iterator ----------------------------------------------------------------------
 
@@ -1319,8 +1361,10 @@ namespace real::compat {
     }
   };
 
-  using sregex_token_iterator = regex_token_iterator<std::string::const_iterator>; //!< Over a std::string.
-  using cregex_token_iterator = regex_token_iterator<const char*>;                 //!< Over a C string.
+  using sregex_token_iterator  = regex_token_iterator<std::string::const_iterator>;  //!< Over a std::string.
+  using cregex_token_iterator  = regex_token_iterator<const char*>;                  //!< Over a C string.
+  using wsregex_token_iterator = regex_token_iterator<std::wstring::const_iterator>; //!< Over a std::wstring (std).
+  using wcregex_token_iterator = regex_token_iterator<const wchar_t*>;               //!< Over a wide C string (std).
 } // namespace real::compat
 
 #endif // REAL_STD_COMPAT_HPP
