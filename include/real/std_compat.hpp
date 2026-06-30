@@ -95,6 +95,17 @@ namespace real::compat {
       return static_cast<match_flag_type>(static_cast<unsigned>(a) | static_cast<unsigned>(b));
     }
 
+    constexpr match_flag_type operator&(match_flag_type a,
+                                        match_flag_type b) noexcept
+    {
+      return static_cast<match_flag_type>(static_cast<unsigned>(a) & static_cast<unsigned>(b));
+    }
+
+    constexpr match_flag_type operator~(match_flag_type a) noexcept
+    {
+      return static_cast<match_flag_type>(~static_cast<unsigned>(a));
+    }
+
     //! \brief Error categories. Aliased to std's so `regex_error::code()` is a true drop-in.
     using error_type = std::regex_constants::error_type;
   } // namespace regex_constants
@@ -409,6 +420,27 @@ namespace real::compat {
              || (f & collate) != ECMAScript;
     }
 
+    //! \brief Pattern text that real *accepts* but matches differently from libstdc++ — a both-accept
+    //!        silent divergence, so it must route to std up front (real's accept hides it otherwise).
+    //!
+    //! `\0` followed by a digit: `real` reads it as a legacy octal escape (Annex B, e.g. `\012` →
+    //! newline) while libstdc++ reads `\0` as NUL then a literal digit. Strict ECMAScript makes `\0`+
+    //! digit a syntax error (no valid production), so neither is "the" spec answer — routing to std
+    //! keeps compat ≡ its secondary oracle and the contract (never a silent divergence). The fuzzer
+    //! found this. (`\1`-`\9` already route to std via real's backreference rejection.)
+    [[nodiscard]] inline bool pattern_forces_std(std::string_view p) noexcept
+    {
+      for (std::size_t i = 0; i < p.size(); ++i) {
+        if (p[i] == '\\') {
+          if (i + 2 < p.size() && p[i + 1] == '0' && p[i + 2] >= '0' && p[i + 2] <= '9') {
+            return true;
+          }
+          ++i; // consume the escaped character (so `\\0` is an escaped backslash, not `\0`)
+        }
+      }
+      return false;
+    }
+
     //! \brief Maps compat options to real::flags (always with bytes|ecma for std-char alignment).
     inline real::flags to_real(regex_constants::syntax_option_type f) noexcept
     {
@@ -571,7 +603,7 @@ namespace real::compat {
       }
       else {
         const std::string_view sv {pattern.data(), pattern.size()};
-        if (detail::grammar_forces_std(f)) {
+        if (detail::grammar_forces_std(f) || detail::pattern_forces_std(sv)) {
           emplace_std(sv, f);
           return;
         }
@@ -609,29 +641,72 @@ namespace real::compat {
 
   namespace detail {
 
+    //! \brief Whether `real` can honor the requested match flags, so the operation may stay on it.
+    //!
+    //! Only `match_default` and the non-constraining `match_any` hint stay on `real` (which satisfies
+    //! `match_any` by returning the leftmost match, so ignoring it is sound). *Any* constraining bit —
+    //! `not_bol`, `not_eol`, `not_bow`, `not_eow`, `not_null`, `match_continuous`, `match_prev_avail` —
+    //! is not expressible through `real`'s API, so the operation routes to `std` (§0: a constraining
+    //! flag is never accepted-then-ignored). Affining this (e.g. `continuous`→`real.match(pos)`) is a
+    //! measured optimization for later, not a hand-coded partition the fuzzer would have to police.
+    [[nodiscard]] inline bool real_honors(regex_constants::match_flag_type mf) noexcept
+    {
+      constexpr unsigned non_constraining {static_cast<unsigned>(regex_constants::match_default)
+                                           | static_cast<unsigned>(regex_constants::match_any)};
+      return (static_cast<unsigned>(mf) & ~non_constraining) == 0U;
+    }
+
+    //! \brief Maps compat match/format flags to `std::regex_constants` — exhaustive (the std path).
+    //!
+    //! Every compat bit has an entry: a forgotten bit would be silently lost on the std path, which
+    //! is exactly the divergence §0 forbids. Both the match-control flags (search/match/iterate) and
+    //! the format flags (replace) are mapped here.
+    [[nodiscard]] inline std::regex_constants::match_flag_type
+    to_std_match(regex_constants::match_flag_type f) noexcept
+    {
+      namespace sc = std::regex_constants;
+      using namespace regex_constants;
+      auto s {sc::match_default};
+      if ((f & match_not_bol) != 0U) { s |= sc::match_not_bol; }
+      if ((f & match_not_eol) != 0U) { s |= sc::match_not_eol; }
+      if ((f & match_not_bow) != 0U) { s |= sc::match_not_bow; }
+      if ((f & match_not_eow) != 0U) { s |= sc::match_not_eow; }
+      if ((f & match_any) != 0U) { s |= sc::match_any; }
+      if ((f & match_not_null) != 0U) { s |= sc::match_not_null; }
+      if ((f & match_continuous) != 0U) { s |= sc::match_continuous; }
+      if ((f & match_prev_avail) != 0U) { s |= sc::match_prev_avail; }
+      if ((f & format_sed) != 0U) { s |= sc::format_sed; }
+      if ((f & format_no_copy) != 0U) { s |= sc::format_no_copy; }
+      if ((f & format_first_only) != 0U) { s |= sc::format_first_only; }
+      return s;
+    }
+
     //! \brief Runs the active backend over `[first, last)` and fills \p m. \p anchored selects
-    //!        whole-sequence match (regex_match) vs leftmost search (regex_search).
+    //!        whole-sequence match (regex_match) vs leftmost search (regex_search). A constraining
+    //!        match flag (see \ref real_honors) routes to `std` even for a real-backed pattern.
     template <typename BidirIt, typename CharT, typename Traits>
     bool run(BidirIt                           first,
              BidirIt                           last,
              match_results<BidirIt>&           m,
              const basic_regex<CharT, Traits>& re,
-             bool                              anchored)
+             bool                              anchored,
+             regex_constants::match_flag_type  mf)
     {
       m.reset(first, last);
       const std::string_view sv {std::to_address(first),
                                  static_cast<std::size_t>(std::distance(first, last))};
-      if (std::holds_alternative<real::regex>(re.engine())) {
+      if (re.uses_real() && real_honors(mf)) {
         const real::regex& engine {std::get<real::regex>(re.engine())};
         const auto         result {anchored ? engine.fullmatch(sv) : engine.search(sv)};
         if (!result.matched()) { return false; }
         m.fill_from_real(result);
         return true;
       }
-      const auto&                 std_engine {std::get<std::basic_regex<CharT, Traits>>(re.engine())};
-      std::match_results<BidirIt> std_m;
-      const bool                  ok         {anchored ? std::regex_match(first, last, std_m, std_engine)
-                              : std::regex_search(first, last, std_m, std_engine)};
+      const std::basic_regex<CharT, Traits>& std_engine {re.std_engine()}; // lazy-built if real-backed
+      std::match_results<BidirIt>            std_m;
+      const auto                             sf         {to_std_match(mf)};
+      const bool                             ok         {anchored ? std::regex_match(first, last, std_m, std_engine, sf)
+                              : std::regex_search(first, last, std_m, std_engine, sf)};
       if (!ok) { return false; }
       m.fill_from_std(std_m);
       return true;
@@ -642,17 +717,19 @@ namespace real::compat {
     bool run_nocapture(BidirIt                           first,
                        BidirIt                           last,
                        const basic_regex<CharT, Traits>& re,
-                       bool                              anchored)
+                       bool                              anchored,
+                       regex_constants::match_flag_type  mf)
     {
       const std::string_view sv {std::to_address(first),
                                  static_cast<std::size_t>(std::distance(first, last))};
-      if (std::holds_alternative<real::regex>(re.engine())) {
+      if (re.uses_real() && real_honors(mf)) {
         const real::regex& engine {std::get<real::regex>(re.engine())};
         return anchored ? engine.fullmatch(sv).matched() : engine.search(sv).matched();
       }
-      const auto& std_engine {std::get<std::basic_regex<CharT, Traits>>(re.engine())};
-      return anchored ? std::regex_match(first, last, std_engine)
-                      : std::regex_search(first, last, std_engine);
+      const std::basic_regex<CharT, Traits>& std_engine {re.std_engine()};
+      const auto                             sf         {to_std_match(mf)};
+      return anchored ? std::regex_match(first, last, std_engine, sf)
+                      : std::regex_search(first, last, std_engine, sf);
     }
   } // namespace detail
 
@@ -661,47 +738,53 @@ namespace real::compat {
   bool regex_search(BidirIt                           first,
                     BidirIt                           last,
                     match_results<BidirIt>&           m,
-                    const basic_regex<CharT, Traits>& re)
+                    const basic_regex<CharT, Traits>& re,
+                    regex_constants::match_flag_type  flags = regex_constants::match_default)
   {
-    return detail::run(first, last, m, re, /*anchored=*/ false);
+    return detail::run(first, last, m, re, /*anchored=*/ false, flags);
   }
 
   template <typename CharT, typename Traits>
   bool regex_search(const std::basic_string<CharT>&                                   s,
                     match_results<typename std::basic_string<CharT>::const_iterator>& m,
-                    const basic_regex<CharT, Traits>&                                 re)
+                    const basic_regex<CharT, Traits>&                                 re,
+                    regex_constants::match_flag_type                                  flags = regex_constants::match_default)
   {
-    return detail::run(s.begin(), s.end(), m, re, false);
+    return detail::run(s.begin(), s.end(), m, re, false, flags);
   }
 
   template <typename CharT, typename Traits>
   bool regex_search(const CharT                     * s,
                     match_results<const CharT*>&      m,
-                    const basic_regex<CharT, Traits>& re)
+                    const basic_regex<CharT, Traits>& re,
+                    regex_constants::match_flag_type  flags = regex_constants::match_default)
   {
-    return detail::run(s, s + std::char_traits<CharT>::length(s), m, re, false);
+    return detail::run(s, s + std::char_traits<CharT>::length(s), m, re, false, flags);
   }
 
   template <typename BidirIt, typename CharT, typename Traits>
   bool regex_search(BidirIt                           first,
                     BidirIt                           last,
-                    const basic_regex<CharT, Traits>& re)
+                    const basic_regex<CharT, Traits>& re,
+                    regex_constants::match_flag_type  flags = regex_constants::match_default)
   {
-    return detail::run_nocapture(first, last, re, false);
+    return detail::run_nocapture(first, last, re, false, flags);
   }
 
   template <typename CharT, typename Traits>
   bool regex_search(const std::basic_string<CharT>&   s,
-                    const basic_regex<CharT, Traits>& re)
+                    const basic_regex<CharT, Traits>& re,
+                    regex_constants::match_flag_type  flags = regex_constants::match_default)
   {
-    return detail::run_nocapture(s.begin(), s.end(), re, false);
+    return detail::run_nocapture(s.begin(), s.end(), re, false, flags);
   }
 
   template <typename CharT, typename Traits>
   bool regex_search(const CharT                     * s,
-                    const basic_regex<CharT, Traits>& re)
+                    const basic_regex<CharT, Traits>& re,
+                    regex_constants::match_flag_type  flags = regex_constants::match_default)
   {
-    return detail::run_nocapture(s, s + std::char_traits<CharT>::length(s), re, false);
+    return detail::run_nocapture(s, s + std::char_traits<CharT>::length(s), re, false, flags);
   }
 
   //! \brief Match of the entire `[first, last)` (Python `re.fullmatch` / `std::regex_match`).
@@ -709,47 +792,53 @@ namespace real::compat {
   bool regex_match(BidirIt                           first,
                    BidirIt                           last,
                    match_results<BidirIt>&           m,
-                   const basic_regex<CharT, Traits>& re)
+                   const basic_regex<CharT, Traits>& re,
+                   regex_constants::match_flag_type  flags = regex_constants::match_default)
   {
-    return detail::run(first, last, m, re, /*anchored=*/ true);
+    return detail::run(first, last, m, re, /*anchored=*/ true, flags);
   }
 
   template <typename CharT, typename Traits>
   bool regex_match(const std::basic_string<CharT>&                                   s,
                    match_results<typename std::basic_string<CharT>::const_iterator>& m,
-                   const basic_regex<CharT, Traits>&                                 re)
+                   const basic_regex<CharT, Traits>&                                 re,
+                   regex_constants::match_flag_type                                  flags = regex_constants::match_default)
   {
-    return detail::run(s.begin(), s.end(), m, re, true);
+    return detail::run(s.begin(), s.end(), m, re, true, flags);
   }
 
   template <typename CharT, typename Traits>
   bool regex_match(const CharT                     * s,
                    match_results<const CharT*>&      m,
-                   const basic_regex<CharT, Traits>& re)
+                   const basic_regex<CharT, Traits>& re,
+                   regex_constants::match_flag_type  flags = regex_constants::match_default)
   {
-    return detail::run(s, s + std::char_traits<CharT>::length(s), m, re, true);
+    return detail::run(s, s + std::char_traits<CharT>::length(s), m, re, true, flags);
   }
 
   template <typename BidirIt, typename CharT, typename Traits>
   bool regex_match(BidirIt                           first,
                    BidirIt                           last,
-                   const basic_regex<CharT, Traits>& re)
+                   const basic_regex<CharT, Traits>& re,
+                   regex_constants::match_flag_type  flags = regex_constants::match_default)
   {
-    return detail::run_nocapture(first, last, re, true);
+    return detail::run_nocapture(first, last, re, true, flags);
   }
 
   template <typename CharT, typename Traits>
   bool regex_match(const std::basic_string<CharT>&   s,
-                   const basic_regex<CharT, Traits>& re)
+                   const basic_regex<CharT, Traits>& re,
+                   regex_constants::match_flag_type  flags = regex_constants::match_default)
   {
-    return detail::run_nocapture(s.begin(), s.end(), re, true);
+    return detail::run_nocapture(s.begin(), s.end(), re, true, flags);
   }
 
   template <typename CharT, typename Traits>
   bool regex_match(const CharT                     * s,
-                   const basic_regex<CharT, Traits>& re)
+                   const basic_regex<CharT, Traits>& re,
+                   regex_constants::match_flag_type  flags = regex_constants::match_default)
   {
-    return detail::run_nocapture(s, s + std::char_traits<CharT>::length(s), re, true);
+    return detail::run_nocapture(s, s + std::char_traits<CharT>::length(s), re, true, flags);
   }
 
   // Reject matching against an rvalue string (the result would dangle), mirroring real/std.
@@ -765,20 +854,6 @@ namespace real::compat {
   // --- regex_replace -----------------------------------------------------------------------
 
   namespace detail {
-
-    //! \brief Maps compat replacement flags to std::regex_constants match flags (the std path).
-    inline std::regex_constants::match_flag_type to_std_match(regex_constants::match_flag_type f) noexcept
-    {
-      namespace sc = std::regex_constants;
-      auto s {sc::match_default};
-      using namespace regex_constants;
-      if ((f & format_no_copy) != 0U) { s |= sc::format_no_copy; }
-      if ((f & format_first_only) != 0U) { s |= sc::format_first_only; }
-      if ((f & format_sed) != 0U) { s |= sc::format_sed; }
-      if ((f & match_not_bol) != 0U) { s |= sc::match_not_bol; }
-      if ((f & match_not_eol) != 0U) { s |= sc::match_not_eol; }
-      return s;
-    }
 
     //! \brief Appends one match's ECMAScript-expanded replacement.
     //!
@@ -943,25 +1018,29 @@ namespace real::compat {
     regex_iterator() = default;
 
     //! \brief Constructs a begin iterator over `[first, last)` and finds the first match.
-    regex_iterator(BidirIt           first,
-                   BidirIt           last,
-                   const regex_type& re)
+    //!        A constraining match flag (see \ref detail::real_honors) routes to the std backend,
+    //!        which carries the flags through the wrapped `std::regex_iterator`.
+    regex_iterator(BidirIt                          first,
+                   BidirIt                          last,
+                   const regex_type&                re,
+                   regex_constants::match_flag_type flags = regex_constants::match_default)
       : begin_(first), end_(last), re_(&re)
     {
-      if (re.uses_real_traversal()) {
+      if (re.uses_real_traversal() && detail::real_honors(flags)) {
         real_path_ = true;
         next_real();
       }
       else {
-        std_it_.emplace(first, last, re.std_engine());
+        std_it_.emplace(first, last, re.std_engine(), detail::to_std_match(flags));
         sync_std();
       }
     }
 
     //! \brief Constructing from a temporary regex would dangle (std::regex_iterator parity).
-    regex_iterator(BidirIt            first,
-                   BidirIt            last,
-                   const regex_type&& re) = delete;
+    regex_iterator(BidirIt                          first,
+                   BidirIt                          last,
+                   const regex_type&&               re,
+                   regex_constants::match_flag_type flags = regex_constants::match_default) = delete;
 
     [[nodiscard]] reference operator*() const
     {
@@ -1087,22 +1166,26 @@ namespace real::compat {
     regex_token_iterator() = default;
 
     //! \brief Selects a single sub-match field (`0` = whole match, `N` = group N, `-1` = split).
-    regex_token_iterator(BidirIt           first,
-                         BidirIt           last,
-                         const regex_type& re,
-                         int               submatch = 0)
+    regex_token_iterator(BidirIt                          first,
+                         BidirIt                          last,
+                         const regex_type&                re,
+                         int                              submatch = 0,
+                         regex_constants::match_flag_type flags    = regex_constants::match_default)
       : regex_token_iterator(first,
                              last,
                              re,
-                             std::vector<int> {submatch})
+                             std::vector<int> {submatch},
+                             flags)
     {}
 
-    //! \brief Selects a list of fields, cycled per match (e.g. `{1, 2}`, `{-1}`).
-    regex_token_iterator(BidirIt                 first,
-                         BidirIt                 last,
-                         const regex_type&       re,
-                         const std::vector<int>& submatches)
-      : position_(first, last, re), subs_(submatches)
+    //! \brief Selects a list of fields, cycled per match (e.g. `{1, 2}`, `{-1}`). The match flags are
+    //!        forwarded to the wrapped `regex_iterator`, so the nullable/honors routing is inherited.
+    regex_token_iterator(BidirIt                          first,
+                         BidirIt                          last,
+                         const regex_type&                re,
+                         const std::vector<int>&          submatches,
+                         regex_constants::match_flag_type flags = regex_constants::match_default)
+      : position_(first, last, re, flags), subs_(submatches)
     {
       if (subs_.empty()) {
         subs_.push_back(0);
@@ -1117,25 +1200,29 @@ namespace real::compat {
     }
 
     //! \brief Selects a list of fields from a braced list (e.g. `{-1}`).
-    regex_token_iterator(BidirIt                    first,
-                         BidirIt                    last,
-                         const regex_type&          re,
-                         std::initializer_list<int> submatches)
+    regex_token_iterator(BidirIt                          first,
+                         BidirIt                          last,
+                         const regex_type&                re,
+                         std::initializer_list<int>       submatches,
+                         regex_constants::match_flag_type flags = regex_constants::match_default)
       : regex_token_iterator(first,
                              last,
                              re,
-                             std::vector<int>(submatches))
+                             std::vector<int>(submatches),
+                             flags)
     {}
 
     //! \brief Constructing from a temporary regex would dangle (std::regex_token_iterator parity).
-    regex_token_iterator(BidirIt            first,
-                         BidirIt            last,
-                         const regex_type&& re,
-                         int                submatch = 0) = delete;
-    regex_token_iterator(BidirIt                 first,
-                         BidirIt                 last,
-                         const regex_type&&      re,
-                         const std::vector<int>& submatches) = delete; //!< \overload
+    regex_token_iterator(BidirIt                          first,
+                         BidirIt                          last,
+                         const regex_type&&               re,
+                         int                              submatch = 0,
+                         regex_constants::match_flag_type flags    = regex_constants::match_default) = delete;
+    regex_token_iterator(BidirIt                          first,
+                         BidirIt                          last,
+                         const regex_type&&               re,
+                         const std::vector<int>&          submatches,
+                         regex_constants::match_flag_type flags = regex_constants::match_default) = delete; //!< \overload
 
     [[nodiscard]] reference operator*() const
     {

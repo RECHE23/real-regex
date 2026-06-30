@@ -197,6 +197,105 @@ TEST(compat_backend_selection)
 
   // A POSIX grammar option forces the std backend up front.
   EXPECT(!rc::regex("a+", rc::regex_constants::extended).uses_real());
+
+  // `\0`+digit is a legacy octal escape on real (Annex B) but NUL+literal on libstdc++ — a both-
+  // accept silent divergence the fuzzer found, so it routes to std up front (no silent divergence).
+  EXPECT(!rc::regex(R"(\00)").uses_real());  // octal NUL on real, NUL+'0' on std -> std
+  EXPECT(!rc::regex(R"(\012)").uses_real()); // octal newline on real -> std
+  EXPECT(rc::regex(R"(\0)").uses_real());    // \0 alone is NUL on both -> stays on real
+  EXPECT(rc::regex(R"(\0x)").uses_real());   // \0 then non-digit literal -> stays on real
+  // The screened pattern still matches (via std) exactly as std does.
+  const std::string nul {std::string("a") + '\0' + "0b"};
+  EXPECT_EQ(rc::regex_search(nul, rc::regex(R"(\00)")),
+            std::regex_search(nul.cbegin(), nul.cend(), std::regex(R"(\00)", std::regex::ECMAScript)));
+}
+
+namespace {
+
+  // search [lo, hi) with a match flag on BOTH backends; assert identical verdict + whole-match span.
+  bool mf_search_agrees(const std::string&                            pat,
+                        std::string::const_iterator                   lo,
+                        std::string::const_iterator                   hi,
+                        rc::regex_constants::match_flag_type          rf,
+                        std::regex_constants::match_flag_type         sf)
+  {
+    const rc::regex  rre(pat);
+    const std::regex sre(pat, std::regex::ECMAScript);
+    rc::smatch       rm;
+    std::smatch      sm;
+    const bool       rok {rc::regex_search(lo, hi, rm, rre, rf)};
+    const bool       sok {std::regex_search(lo, hi, sm, sre, sf)};
+    if (rok != sok) {
+      return false;
+    }
+    return !rok || (rm.position(0) == sm.position(0) && rm.length(0) == sm.length(0));
+  }
+} // namespace
+
+TEST(compat_match_flags)
+{
+  namespace mc = rc::regex_constants;
+  namespace sc = std::regex_constants;
+
+  // A constraining flag must route to std and match it exactly (not be accepted-then-ignored).
+  const std::string a1 {"xabc"};
+  EXPECT(mf_search_agrees("^abc", a1.begin(), a1.end(), mc::match_not_bol, sc::match_not_bol));
+  const std::string a2 {"abcx"};
+  EXPECT(mf_search_agrees("abc$", a2.begin(), a2.end(), mc::match_not_eol, sc::match_not_eol));
+
+  // match_continuous: the match must begin at the first character.
+  const std::string c1 {"abcabc"};
+  EXPECT(mf_search_agrees("abc", c1.begin(), c1.end(), mc::match_continuous, sc::match_continuous));
+  const std::string c2 {"xabc"}; // no anchored match at 0 -> both fail
+  EXPECT(mf_search_agrees("abc", c2.begin(), c2.end(), mc::match_continuous, sc::match_continuous));
+
+  // not_bow / not_eow on word boundaries.
+  const std::string w1 {"abc"};
+  EXPECT(mf_search_agrees(R"(\babc)", w1.begin(), w1.end(), mc::match_not_bow, sc::match_not_bow));
+
+  // not_null on a nullable pattern (routes to std, which respects the flag).
+  const std::string n1; // empty subject
+  EXPECT(mf_search_agrees("a*", n1.begin(), n1.end(), mc::match_not_null, sc::match_not_null));
+  const std::string n2 {"b"};
+  EXPECT(mf_search_agrees("a*", n2.begin(), n2.end(), mc::match_not_null, sc::match_not_null));
+
+  // match_prev_avail: scanning a sub-range where the char before `lo` exists; \b sees it.
+  const std::string pv {"a word"};
+  EXPECT(mf_search_agrees(R"(\bword)", pv.begin() + 2, pv.end(), mc::match_prev_avail, sc::match_prev_avail));
+
+  // Multi-flag combo routes to std too.
+  const std::string m1 {"abc"};
+  EXPECT(mf_search_agrees("^abc$", m1.begin(), m1.end(),
+                          mc::match_not_bol | mc::match_not_eol, sc::match_not_bol | sc::match_not_eol));
+
+  // match_default and the match_any hint keep the real backend (and still agree with std).
+  const std::string d1 {"x abc y"};
+  EXPECT(mf_search_agrees(R"(\w+)", d1.begin(), d1.end(), mc::match_default, sc::match_default));
+  EXPECT(mf_search_agrees(R"(\w+)", d1.begin(), d1.end(), mc::match_any, sc::match_any));
+  EXPECT(rc::detail::real_honors(mc::match_default));
+  EXPECT(rc::detail::real_honors(mc::match_any));
+  EXPECT(!rc::detail::real_honors(mc::match_continuous));
+  EXPECT(!rc::detail::real_honors(mc::match_not_bol));
+
+  // regex_match with a flag (whole-sequence) also honors-or-falls-back.
+  const rc::regex   word(R"(\w+)");
+  const std::string subj {"abc"};
+  rc::smatch        wm;
+  EXPECT(rc::regex_match(subj, wm, word, mc::match_default));  // real path
+  EXPECT(rc::regex_match(subj, wm, word, mc::match_not_null)); // std path, non-empty still matches
+
+  // Iterator: a constraining flag routes the iterator to std; the span sequence equals std's.
+  const std::string                  it1 {"abc abc"};
+  std::vector<std::pair<long, long>> got;
+  std::vector<std::pair<long, long>> ref;
+  for (rc::sregex_iterator it(it1.begin(), it1.end(), word, mc::match_continuous), e; it != e; ++it) {
+    got.emplace_back(it->position(0), it->length(0));
+  }
+  const std::regex sword(R"(\w+)", std::regex::ECMAScript);
+  for (std::sregex_iterator it(it1.begin(), it1.end(), sword, sc::match_continuous), e; it != e; ++it) {
+    ref.emplace_back(it->position(0), it->length(0));
+  }
+  EXPECT(got == ref);
 }
 
 TEST(compat_match_results_offsets_and_groups)
@@ -510,14 +609,19 @@ TEST(compat_api_surface)
 
 TEST(compat_invalid_for_both_throws_compat_error)
 {
-  // Invalid for real AND std -> compat::regex_error (a std::regex_error).
-  bool threw {false};
-  try {
-    const rc::regex re("(unclosed");
-    (void)re;
-  }
-  catch (const std::regex_error&) {
-    threw = true;
-  }
-  EXPECT(threw);
+  // Invalid for real AND std -> compat::regex_error (a std::regex_error). Because the layer always
+  // falls back to std before throwing, the thrown error wraps std's: .code() is std's exact code.
+  const auto code_of {[](auto make) -> int {
+                        try {
+                          make();
+                        }
+                        catch (const std::regex_error& e) {
+                          return static_cast<int>(e.code()); // inherited std::regex_error::code()
+                        }
+                        return -1; // did not throw
+                      }};
+  const int std_code    {code_of([] { (void)std::regex("(unclosed", std::regex::ECMAScript); })};
+  const int compat_code {code_of([] { (void)rc::regex("(unclosed"); })};
+  EXPECT(compat_code != -1);         // it threw
+  EXPECT_EQ(compat_code, std_code);  // and reports std's exact code
 }

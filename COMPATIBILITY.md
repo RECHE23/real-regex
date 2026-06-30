@@ -37,6 +37,7 @@ ASCII `icase`, `multiline`. Non-ASCII **literals** match byte-for-byte like `std
 | Non-ASCII **inside a class** `[é]`, `[\x80-\xff]` | `real` rejects raw high bytes in `[...]` | clean rejection → std fallback |
 | Unbounded / oversized lookaround | exceeds `real`'s bounded-lookaround cap | `real` rejects → std fallback |
 | POSIX grammars, `collate` | `real` is ECMAScript-only | screened to std up front |
+| `\0` followed by a digit (`\00`, `\012`) | `real` reads a legacy octal escape (Annex B); libstdc++ reads `\0`=NUL then a literal digit — strict ECMAScript makes it a syntax error, so neither is the spec answer | screened to std up front (a both-accept divergence otherwise; the fuzzer found it) |
 | **Nullable patterns in `regex_replace`/iterators** | empty-match *traversal* (advance-after-empty-match) differs between `real` (Python) and ECMAScript | a real-backed pattern that can match empty (`a*`, `(x)?`) routes those operations to a lazily-built `std::regex` — **per operation**, so `search`/`match` keep `real`'s ReDoS-safety even for nullable-ReDoS like `(a*)*` |
 
 These patterns run on `std::regex` and therefore lose the linear-time guarantee — a documented,
@@ -71,6 +72,26 @@ which makes `-1` a splitter. After the last match a trailing `-1` field yields t
 **only when it is non-empty** (an empty field *between* adjacent matches is still produced — the
 asymmetry `std` pins); with `-1` and no match at all, the whole sequence is the single token. The
 fuzzer compares the `(str, matched)` token sequence for the `-1` and `0` fields.
+
+## Match flags (`match_flag_type`)
+
+`regex_search` / `regex_match` and both iterators take an optional `match_flag_type` (default
+`match_default`). The rule is **honor-on-`real` or fall back to `std`, never accept-then-ignore**:
+
+- `match_default` and `match_any` keep the `real` backend. `match_any` is a non-constraining hint
+  (return *a* match) that `real` already satisfies by returning the leftmost match, so ignoring it is
+  sound.
+- **Any constraining flag** — `match_not_bol`, `match_not_eol`, `match_not_bow`, `match_not_eow`,
+  `match_not_null`, `match_continuous`, `match_prev_avail` — is not expressible through `real`'s API,
+  so that single operation routes to `std::regex` (lazy-built if the pattern is real-backed), which
+  honors every flag by construction. The flags are translated by an exhaustive compat→std table.
+
+This is a *per-operation* decision, like the nullable routing: a pattern keeps `real`'s ReDoS-safety
+for its flag-free `search`/`match` calls and only the flagged call pays the `std` cost. Affining a
+flag onto `real` (e.g. `match_continuous` → `real`'s anchored `match` at a position) is a measured
+optimization left for later, not a hand-coded partition — the differential fuzzer would otherwise
+have to police a mis-categorization. The fuzzer generates a random flag subset and compares
+`compat(mf)` vs `std(mf)` on search + match + iterate, which is what proves the partition.
 
 ## Intentional divergences from libstdc++ `std::regex` (spec-correct)
 

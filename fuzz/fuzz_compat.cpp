@@ -136,5 +136,51 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
       __builtin_trap(); // token-sequence divergence (split fields / trailing suffix derivation)
     }
   }
+
+  // S3 net: a random subset of match flags must produce identical results compat(mf) vs std(mf) on
+  // search + match + iterate. A constraining flag mis-categorized as honored-in-real (real_honors
+  // letting it stay on real) would diverge here. data[0] (otherwise unused) drives the flag subset.
+  namespace rcc = real::compat::regex_constants;
+  namespace sc  = std::regex_constants;
+  const std::uint8_t   fbits {data[0]};
+  auto                 cmf {rcc::match_default};
+  auto                 smf {sc::match_default};
+  if ((fbits & 0x01U) != 0U) { cmf = cmf | rcc::match_not_bol; smf |= sc::match_not_bol; }
+  if ((fbits & 0x02U) != 0U) { cmf = cmf | rcc::match_not_eol; smf |= sc::match_not_eol; }
+  if ((fbits & 0x04U) != 0U) { cmf = cmf | rcc::match_not_bow; smf |= sc::match_not_bow; }
+  if ((fbits & 0x08U) != 0U) { cmf = cmf | rcc::match_not_eow; smf |= sc::match_not_eow; }
+  if ((fbits & 0x10U) != 0U) { cmf = cmf | rcc::match_continuous; smf |= sc::match_continuous; }
+  if ((fbits & 0x20U) != 0U) { cmf = cmf | rcc::match_not_null; smf |= sc::match_not_null; }
+  if ((fbits & 0x40U) != 0U) { cmf = cmf | rcc::match_any; smf |= sc::match_any; }
+  // match_prev_avail requires *(first-1) to be valid: search a sub-range starting one past begin.
+  const bool prev_avail {(fbits & 0x80U) != 0U && !subject.empty()};
+  if (prev_avail) { cmf = cmf | rcc::match_prev_avail; smf |= sc::match_prev_avail; }
+  const auto lo {prev_avail ? subject.begin() + 1 : subject.begin()};
+
+  real::compat::smatch cmf_m;
+  std::smatch          smf_m;
+  if (real::compat::regex_search(lo, subject.end(), cmf_m, compat, cmf)
+      != std::regex_search(lo, subject.end(), smf_m, std_re, smf)) {
+    __builtin_trap(); // verdict divergence under match flags
+  }
+  if (cmf_m.ready() && smf_m.ready() && cmf_m[0].matched && smf_m[0].matched
+      && (cmf_m.position(0) != smf_m.position(0) || cmf_m.length(0) != smf_m.length(0))) {
+    __builtin_trap(); // span divergence under match flags
+  }
+  if (real::compat::regex_match(lo, subject.end(), compat, cmf)
+      != std::regex_match(lo, subject.end(), std_re, smf)) {
+    __builtin_trap(); // regex_match verdict divergence under match flags
+  }
+  std::vector<span> compat_mf_spans;
+  for (real::compat::sregex_iterator it(lo, subject.end(), compat, cmf), end; it != end; ++it) {
+    compat_mf_spans.emplace_back(it->position(0), it->length(0));
+  }
+  std::vector<span> std_mf_spans;
+  for (std::sregex_iterator it(lo, subject.end(), std_re, smf), end; it != end; ++it) {
+    std_mf_spans.emplace_back(it->position(0), it->length(0));
+  }
+  if (compat_mf_spans != std_mf_spans) {
+    __builtin_trap(); // iterator span-sequence divergence under match flags
+  }
   return 0;
 }
