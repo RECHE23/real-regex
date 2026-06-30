@@ -43,6 +43,34 @@ namespace {
 
 // ─── A. small_vec directly: the spill must not truncate the counters ───────────
 
+// The inline buffer is value-initialized only at compile time (run time leaves it
+// uninitialized and writes each slot via placement-new). This constexpr exercise pins
+// that the compile-time path stays correct: the union's inline std::array must be the
+// active, initialized member so push_back (assignment) and assign work in a constant
+// expression. A regression in the Storage activation makes this fail to compile.
+constexpr bool small_vec_constexpr_roundtrip()
+{
+  real::detail::small_vec<std::size_t, 8> v;
+  v.push_back(3);
+  v.push_back(7);
+  if (v.size() != 2U || v[0] != 3U || v[1] != 7U || v.back() != 7U) { return false; }
+  v.assign(5, 42U); // constexpr assign path: fill the (alive) inline buffer
+  if (v.size() != 5U) { return false; }
+  for (std::size_t i = 0; i < 5; ++i) {
+    if (v[i] != 42U) { return false; }
+  }
+  v.clear();
+  v.push_back(9);
+  return v.size() == 1U && v[0] == 9U;
+}
+
+static_assert(small_vec_constexpr_roundtrip(), "small_vec must work in a constant expression");
+
+TEST(small_vec_constexpr_roundtrip_runtime)
+{
+  EXPECT(small_vec_constexpr_roundtrip()); // same body, also at run time (uninitialized buffer path)
+}
+
 TEST(small_vec_spills_past_inline_buffer_preserving_all_elements)
 {
   real::detail::small_vec<int, 32> v;

@@ -200,6 +200,15 @@ namespace real {
      *       never individually destroyed — which suits its POD-like VM use and keeps the
      *       hot path allocation- and bookkeeping-free.
      *
+     * \warning **Run-time invariant — the inline buffer is left UNINITIALIZED** (value-initialized
+     *          only under `std::is_constant_evaluated()`, in the `Storage` union constructor). Every
+     *          element's lifetime is begun by `std::construct_at` (placement-new) before it is read,
+     *          and reads stay within `[0, size_)`. Any accessor added here must preserve that
+     *          write-before-read order, or it reads indeterminate memory — a silent UB the former
+     *          value-init used to mask. MemorySanitizer is the detector (the CI sanitize leg is
+     *          ASan/UBSan, which does not catch it); run MSan on the devbox when changing how
+     *          small_vec accesses its elements.
+     *
      * \tparam T              Element type.
      * \tparam InlineCapacity Number of elements held inline before spilling.
      */
@@ -228,14 +237,36 @@ namespace real {
       /*!
        * \brief Active member (inline buffer or heap pointer) per \ref is_heap_ state.
        */
+      //! \brief Inline element block. A struct (not a bare C array) so the union ctor can
+      //!        activate it as a whole with \c construct_at in a constant expression, while
+      //!        \ref inline_data still indexes a plain C array — which the static analyzer can
+      //!        bound (a \c std::array's `operator[]` hides the extent and trips a false
+      //!        out-of-bounds on \ref transfer_range).
+      struct inline_block
+      {
+        T elems[InlineCapacity];
+      };
       union Storage
       {
-        T  inline_buffer[InlineCapacity]; //!< Inline storage (when not heap).
-        T* heap_ptr;                      //!< Heap storage (when \ref is_heap_).
+        inline_block inline_buffer; //!< Inline storage (when not heap).
+        T*           heap_ptr;      //!< Heap storage (when \ref is_heap_).
 
+        //! \brief Starts in the inline state.
+        //!
+        //! At **run time** the inline buffer is left UNINITIALIZED: small_vec writes every
+        //! element through \c std::construct_at (placement-new) before any read (push_back and
+        //! assign), so the value-init was pure overhead — ~30 % of the instruction count on a
+        //! findall tokenizing workload (a fresh slot buffer per match, of which ~2 slots serve).
+        //! At **compile time** the member must be active and initialized for the constexpr
+        //! matching path (which assigns through \ref inline_data), so it is value-initialized
+        //! there via \c construct_at on the whole \ref inline_block — activating a class-type
+        //! member is what a constexpr union allows (an element-wise or bare C-array activation is not).
         constexpr Storage() noexcept
-          : inline_buffer {}
-        {}                  //!< Starts in the inline state.
+        {
+          if (std::is_constant_evaluated()) {
+            std::construct_at(&inline_buffer);
+          }
+        }
 
         constexpr ~Storage() {} //!< Destruction handled by \ref cleanup.
 
@@ -272,7 +303,7 @@ namespace real {
        */
       [[nodiscard]] constexpr T* inline_data() noexcept
       {
-        return &storage_.inline_buffer[0];
+        return &storage_.inline_buffer.elems[0];
       }
 
       /*!
@@ -280,7 +311,7 @@ namespace real {
        */
       [[nodiscard]] constexpr const T* inline_data() const noexcept
       {
-        return &storage_.inline_buffer[0];
+        return &storage_.inline_buffer.elems[0];
       }
 
       /*!
@@ -429,11 +460,21 @@ namespace real {
           reserve(count);
         }
         for (std::size_t i = 0; i < count; ++i) {
-          if (is_heap_) {
-            std::construct_at(&storage_.heap_ptr[i], value);
+          if (std::is_constant_evaluated()) {
+            // Compile time: the inline buffer is value-initialized, so assign through it;
+            // the heap path is never taken in a constant expression.
+            if (is_heap_) {
+              std::construct_at(&storage_.heap_ptr[i], value);
+            }
+            else {
+              inline_data()[i] = value;
+            }
           }
           else {
-            inline_data()[i] = value;
+            // Run time: the inline buffer is uninitialized (see \ref Storage), so this is the
+            // first write — placement-new begins each element's lifetime. data_ is the active
+            // base (inline or heap), branchless like push_back.
+            std::construct_at(&data_[i], value);
           }
         }
         size_ = count;
