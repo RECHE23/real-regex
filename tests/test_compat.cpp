@@ -834,7 +834,8 @@ TEST(compat_token_field_selectors)
     const std::string                         subj {"abcd"};
     const rc::regex                           rre(R"((\w)(\w))");
     const std::regex                          sre(R"((\w)(\w))", std::regex::ECMAScript);
-    std::vector<std::tuple<std::ptrdiff_t, std::ptrdiff_t, bool>> got; // ptrdiff_t: distance() narrows to long on MSVC-LLP64 under /WX
+    // ptrdiff_t (not long): distance() is ptrdiff_t, which narrows to 32-bit long on MSVC-LLP64 under /WX.
+    std::vector<std::tuple<std::ptrdiff_t, std::ptrdiff_t, bool>> got;
     std::vector<std::tuple<std::ptrdiff_t, std::ptrdiff_t, bool>> ref;
     for (rc::sregex_token_iterator it(subj.begin(), subj.end(), rre, 5), e; it != e; ++it) {
       got.emplace_back(std::distance(subj.cbegin(), it->first), std::distance(subj.cbegin(), it->second),
