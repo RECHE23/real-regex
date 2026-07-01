@@ -310,12 +310,14 @@ class TestIntentionalDivergences(unittest.TestCase):
         self.assertIsNone(real.compile(r"[^é]").fullmatch("é"))     # negation excludes é ...
         self.assertIsNotNone(real.compile(r"[^é]").fullmatch("à"))  # ... but matches other code points
 
-    def test_icase_folds_ascii_only(self):
-        # ASCII letters fold under I; bytes >= 0x80 (é) do not, so é != É -- unlike re's
-        # Unicode case folding.
+    def test_icase_folds_unicode(self):
+        # Text-mode icase does full Unicode simple case folding, like re.IGNORECASE: ASCII letters,
+        # and non-ASCII code points, fold -- é matches É, and k matches Kelvin (U+212A).
         self.assertIsNotNone(real.compile("a", real.I).fullmatch("A"))
         self.assertIsNotNone(real.compile(r"é", real.I).fullmatch("é"))
-        self.assertIsNone(real.compile(r"é", real.I).fullmatch("É"))
+        self.assertIsNotNone(real.compile(r"é", real.I).fullmatch("É"))
+        self.assertIsNotNone(real.compile("k", real.I).fullmatch("K"))  # k <-> Kelvin
+        # The \w \d \s shorthands stay ASCII by design (the separate Unicode-word arc).
 
     def test_hex_escape_is_byte_level(self):
         # \xHH for HH >= 0x80 matches the raw byte, not chr(HH): re str \xe9 matches U+00E9 (é),
@@ -524,11 +526,12 @@ class TestUnicodeAndConstructs(unittest.TestCase):
         with self.assertRaises(real.error):
             real.compile(b"[\xc3\xa9]")  # bytes-mode: raw non-ASCII class member -> rejected
 
-    def test_icase_unicode_escape_stays_case_sensitive(self):
-        # \u00e9 (é) is bytes >= 0x80, never ASCII-case-folded, so it stays case-sensitive under
-        # I -- a deliberate divergence from re's Unicode case folding (REAL is ASCII-only).
+    def test_icase_unicode_escape_folds(self):
+        # \u00e9 (é) is a code-point literal, so under icase it folds like the raw é -- it matches É
+        # (Unicode case folding, CF2). A \xHH escape keeps byte provenance and does NOT fold.
         self.assertIsNotNone(real.compile(r"\u00e9", real.I).search("é"))
-        self.assertIsNone(real.compile(r"\u00e9", real.I).search("É"))
+        self.assertIsNotNone(real.compile(r"\u00e9", real.I).search("É"))
+        self.assertIsNone(real.compile(rb"\xe9", real.I).search(b"\xc9"))  # \xHH byte provenance: no fold
 
     def test_group_construct_rejections(self):
         for pattern in [r"(?P=name)", r"(?(1)a|b)", r"(a)(?(1)b)"]:

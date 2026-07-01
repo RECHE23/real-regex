@@ -71,7 +71,7 @@ namespace {
 
   constexpr real::static_regex<"(?i)héllo"> icase_rx;
   static_assert(icase_rx.fullmatch("HéLLO").matched()); // ASCII letters fold…
-  static_assert(!icase_rx.fullmatch("HÉLLO"));          // …the é does not
+  static_assert(icase_rx.fullmatch("HÉLLO").matched()); // …and the é folds too (Unicode icase, CF2)
 
   // Exact sizing: the storage arrays have exactly the measured sizes, and the
   // type is stateless (all data is static constexpr).

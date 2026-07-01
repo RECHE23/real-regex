@@ -487,3 +487,66 @@ TEST(utf8_malformed_subject_iteration_is_boundary_aligned)
   EXPECT_EQ(xs.replace(lead_ascii, "-"),
             cat({"-", "a", "-", bytes({0xC3}), "-", "b", "-"}));              // every byte preserved
 }
+
+TEST(icase_unicode_folding_contract)
+{
+  using real::flags;
+  const flags i                {flags::icase};
+  // The canonical fold contract, end to end (matching, not just the table).
+  const std::string e          {"é"};
+  const std::string E          {"É"};
+  const std::string SS         {"ẞ"};
+  const std::string Kelvin     {bytes({0xE2, 0x84, 0xAA})};
+  const std::string longs      {bytes({0xC5, 0xBF})}; // ſ
+  const std::string dotI       {bytes({0xC4, 0xB0})}; // İ
+  const std::string dotless    {bytes({0xC4, 0xB1})}; // ı
+  const std::string sigma      {"σ"};
+  const std::string Sigma      {"Σ"};
+  const std::string finalSigma {"ς"};
+
+  // Literals fold (é/É, ß/ẞ but ß != ss, k/K/Kelvin, i cluster, s/ſ, sigma cluster).
+  EXPECT(fullmatches("é", E, i));
+  EXPECT(fullmatches("ß", SS, i));
+  EXPECT(!fullmatches("ß", "ss", i)); // simple fold, not full (ß is not ss)
+  EXPECT(fullmatches("k", Kelvin, i));
+  EXPECT(fullmatches("i", dotI, i));
+  EXPECT(fullmatches("i", dotless, i));
+  EXPECT(fullmatches("s", longs, i));
+  EXPECT(fullmatches("σ", finalSigma, i)); // σ / ς
+  EXPECT(fullmatches("σ", Sigma, i));      // σ / Σ
+  EXPECT(fullmatches("Σ", sigma, i));      // and back
+
+  // k in a class AND its negation.
+  EXPECT(fullmatches("[k]", Kelvin, i));
+  EXPECT(!fullmatches("[^k]", Kelvin, i)); // negation is of the FOLDED set {k,K,Kelvin}
+  EXPECT(fullmatches("[^k]", e, i));       // but other code points still match
+
+  // [a-z] under icase attracts the non-ASCII fold partners of its letters.
+  EXPECT(fullmatches("[a-z]", Kelvin, i));
+  EXPECT(fullmatches("[a-z]", longs, i));
+  EXPECT(fullmatches("[a-z]", dotI, i));
+  // [^\x00-\x7f] (all non-ASCII) under icase excludes those attracted partners.
+  EXPECT(!fullmatches("[^\\x00-\\x7f]", Kelvin, i));
+  EXPECT(!fullmatches("[^\\x00-\\x7f]", longs, i));
+
+  // \xHH keeps byte provenance: never folds, even under icase.
+  EXPECT(!fullmatches("\\xE9", E, i));               // \xE9 (byte 0xE9) does not match É
+  EXPECT(fullmatches("\\xE9", bytes({0xE9}), i));    // it matches the raw byte
+
+  // Lookbehind width uses the folded class: k folds to include Kelvin (3 bytes) -> width 3.
+  const auto rejects {[](const std::string& p) {
+                        try {
+                          const real::regex r(p, flags::icase);
+                          return false;
+                        }
+                        catch (const real::regex_error&) {
+                          return true;
+                        }
+                      }};
+  EXPECT(!rejects("(?<=k{85})x")); // 85 x 3 = 255 <= 255
+  EXPECT(rejects("(?<=k{86})x"));  // 86 x 3 = 258 > 255
+
+  // ASCII-only fold has no non-ASCII contamination: 'a' matches only a / A.
+  EXPECT(fullmatches("a", "A", i));
+  EXPECT(!fullmatches("a", e, i));
+}

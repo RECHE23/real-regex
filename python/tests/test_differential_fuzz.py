@@ -328,6 +328,11 @@ def match_facts(m, ngroups):
     return (m.span(),) + tuple(m.span(g) for g in range(1, ngroups + 1))
 
 
+# Under real.I the icase oracle is refined per pattern (see the loop): pure literals/classes fold
+# like re.IGNORECASE, ASCII shorthands stay ASCII, and byte-escapes are dropped from icase.
+_ASCII_SHORTHAND = re.compile(r"\\[wWdDsSbB]")
+_BYTE_ESCAPE = re.compile(r"\\x|\\[0-7]")
+
 _FLAG_PAIRS = [
     (0, re.ASCII),
     (real.I, re.ASCII | re.IGNORECASE),
@@ -349,6 +354,17 @@ class TestDifferentialFuzz(unittest.TestCase):
             gen = PatternGen(rng)
             pattern = gen.pattern()
             real_flags, re_flags = rng.choice(_FLAG_PAIRS)
+            if real_flags == real.I:
+                # Text-mode icase = full Unicode fold for literals/classes/ranges (oracle re.IGNORECASE);
+                # \w \d \s \b stay ASCII (oracle re.ASCII|re.IGNORECASE neutralises them). A \xHH / octal
+                # byte-escape keeps byte provenance and never folds -- re folds it, so no oracle agrees:
+                # drop icase for those patterns rather than pin a wrong result.
+                if _BYTE_ESCAPE.search(pattern):
+                    real_flags, re_flags = 0, re.ASCII
+                elif _ASCII_SHORTHAND.search(pattern):
+                    re_flags = re.ASCII | re.IGNORECASE
+                else:
+                    re_flags = re.IGNORECASE
             try:
                 rp = re.compile(pattern, re_flags)
             except re.error:

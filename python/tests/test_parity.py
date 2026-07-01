@@ -57,6 +57,12 @@ PATTERNS = [
     r"[éà]+",
     r"[Ā-ſ]+",
     r"gr[éè]ce",
+    # icase cross-boundary (CF2): ASCII literals/classes fold to non-ASCII partners under re.I.
+    r"k",
+    r"[ks]",
+    r"straße",
+    r"σ+",
+    r"MASSE",
 ]
 
 TEXTS = [
@@ -75,14 +81,25 @@ TEXTS = [
     "ééé and éé and é",
     "ababab abab",
     "a" * 200 + "b",
+    "Kelvin K k ſ S s İ ı I i ß ẞ σ Σ ς masse maße",  # icase fold partners (Kelvin, long-s, dotted-i…)
 ]
 
 FLAG_SETS = [
     (0, re.ASCII),
-    (real.I, re.ASCII | re.IGNORECASE),
+    (real.I, re.ASCII | re.IGNORECASE),  # icase oracle is refined per-pattern; see _icase_oracle
     (real.M, re.ASCII | re.MULTILINE),
     (real.S, re.ASCII | re.DOTALL),
 ]
+
+# Shorthands / boundaries (\w \W \d \D \s \S \b \B) stay ASCII under real.I -- a documented,
+# out-of-scope divergence (the "Unicode word/boundary" arc). So a pattern that uses one is compared
+# under re.ASCII|re.IGNORECASE (neutralising it); a pure literal/class/range pattern folds like
+# re.IGNORECASE (full Unicode case folding -- the icase arc's scope).
+_ASCII_SHORTHAND = re.compile(r"\\[wWdDsSbB]")
+
+
+def _icase_oracle(pattern):
+    return re.ASCII | re.IGNORECASE if _ASCII_SHORTHAND.search(pattern) else re.IGNORECASE
 
 
 class TestParity(unittest.TestCase):
@@ -93,6 +110,8 @@ class TestParity(unittest.TestCase):
         for pattern in PATTERNS:
             for text in TEXTS:
                 for real_flags, re_flags in FLAG_SETS:
+                    if real_flags == real.I:
+                        re_flags = _icase_oracle(pattern)
                     with self.subTest(pattern=pattern, text=text[:20],
                                       flags=real_flags):
                         check(real.compile(pattern, real_flags),

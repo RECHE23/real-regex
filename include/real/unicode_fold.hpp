@@ -2977,6 +2977,27 @@ namespace real::detail {
   //! \brief Number of entries in \ref unicode_fold_table.
   inline constexpr std::size_t unicode_fold_table_size {2940};
 
+  //! \brief Binary-searches \ref unicode_fold_table for \p cp; returns its entry or `nullptr`.
+  //!        Shared by the parser (is a literal cased?) and the compiler (its fold partners).
+  constexpr const fold_entry* find_fold_entry(std::uint32_t cp)
+  {
+    std::size_t lo {0};
+    std::size_t hi {unicode_fold_table_size};
+    while (lo < hi) {
+      const std::size_t mid {lo + ((hi - lo) / 2)};
+      if (unicode_fold_table[mid].cp < cp) {
+        lo = mid + 1;
+      }
+      else {
+        hi = mid;
+      }
+    }
+    if (lo < unicode_fold_table_size && unicode_fold_table[lo].cp == cp) {
+      return &unicode_fold_table[lo];
+    }
+    return nullptr;
+  }
+
 } // namespace real::detail
 
 #endif // REAL_UNICODE_FOLD_HPP

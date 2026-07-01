@@ -176,26 +176,6 @@ namespace real::detail {
     return ranges.size() == 1 && ranges[0].lo == 0x80U && ranges[0].hi == 0x10FFFFU;
   }
 
-  //! \brief Binary-searches \ref unicode_fold_table for \p cp; returns its entry or `nullptr`.
-  constexpr const fold_entry* find_fold_entry(std::uint32_t cp)
-  {
-    std::size_t lo {0};
-    std::size_t hi {unicode_fold_table_size};
-    while (lo < hi) {
-      const std::size_t mid {lo + ((hi - lo) / 2)};
-      if (unicode_fold_table[mid].cp < cp) {
-        lo = mid + 1;
-      }
-      else {
-        hi = mid;
-      }
-    }
-    if (lo < unicode_fold_table_size && unicode_fold_table[lo].cp == cp) {
-      return &unicode_fold_table[lo];
-    }
-    return nullptr;
-  }
-
   /*!
    * \brief Expands a character class to its Unicode simple case-fold closure (text-mode `icase`).
    *
@@ -542,21 +522,26 @@ namespace real::detail {
      */
     [[nodiscard]] constexpr class_def effective_class(const ast_node& node) const
     {
-      const class_def& def   {tree_.classes[static_cast<std::size_t>(node.klass)]};
-      char_class       ascii {def.ascii};
+      class_def folded {tree_.classes[static_cast<std::size_t>(node.klass)]};
       if (has_flag(flags_, flags::icase)) {
-        fold_ascii_case(ascii); // ASCII case fold, before negation, like Python (non-ASCII members
-                                // stay case-sensitive — see divergences.dox)
+        if (has_flag(flags_, flags::bytes)) {
+          fold_ascii_case(folded.ascii);     // bytes: ASCII-only fold (compat-safe; a bytes class has no ranges)
+        }
+        else {
+          folded = unicode_casefold(folded); // text: full Unicode fold of the whole class, both directions
+        }
       }
+      // The fold is applied BEFORE negation (Python order): [^k] under icase is the complement of
+      // {k, K, Kelvin}, so it rejects Kelvin.
       if (!node.negated) {
-        return {.ascii = ascii, .ranges = def.ranges};
+        return folded;
       }
       if (has_flag(flags_, flags::bytes)) {
-        ascii.invert(); // raw bytes: plain 256-bit complement, no code-point ranges
-        return {.ascii = ascii, .ranges = {}};
+        folded.ascii.invert(); // raw bytes: plain 256-bit complement, no code-point ranges
+        return {.ascii = folded.ascii, .ranges = {}};
       }
-      ascii.invert_ascii();
-      return {.ascii = ascii, .ranges = complement_code_ranges(def.ranges)};
+      folded.ascii.invert_ascii();
+      return {.ascii = folded.ascii, .ranges = complement_code_ranges(folded.ranges)};
     }
 
     // --- node emission ----------------------------------------------------
@@ -578,21 +563,12 @@ namespace real::detail {
         case node_kind::empty:
           break;
         case node_kind::byte:
-          {
-            const auto byte_value {node.byte};
-            const bool letter = (byte_value >= 'A' && byte_value <= 'Z') ||
-                                (byte_value >= 'a' && byte_value <= 'z');
-            if (has_flag(flags_, flags::icase) && letter) {
-              char_class both;
-              both.set(byte_value);
-              fold_ascii_case(both);
-              emit_klass(prog, both);
-            }
-            else {
-              emit(prog, {.op = opcode::byte, .arg8 = byte_value});
-            }
-            break;
-          }
+          // A `byte` node is a raw byte with byte provenance (a `\xHH` / octal escape, or a non-cased
+          // literal), never case-folded: under icase a cased literal was promoted to a foldable
+          // singleton class at the parser, so it never reaches here. This preserves the deliberate
+          // `\xHH` provenance split (see emit_literal_codepoint / divergences.dox).
+          emit(prog, {.op = opcode::byte, .arg8 = node.byte});
+          break;
         case node_kind::klass:
           {
             const class_def eff {effective_class(node)};

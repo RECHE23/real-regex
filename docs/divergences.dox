@@ -22,12 +22,19 @@ A malformed UTF-8 member in the pattern is a `real::regex_error`. In **bytes mod
 non-ASCII class member is rejected (raw byte semantics), which is what the `std::regex`
 compat layer relies on to fall back to `std`.
 
-\section div_icase Case folding is ASCII-only
+\section div_icase Case folding: Unicode for literals/classes, ASCII for shorthands
 
-Under `IGNORECASE`, REAL folds ASCII letters only (`a` matches `A`). Code points ≥ 0x80 are
-never folded, so `é` does **not** match `É` — as a literal or as a class member (`[é]` under
-`IGNORECASE` still does not match `É`), unlike `re`'s Unicode case folding. Unicode case
-folding is a candidate for a separate opt-in arc, not the default.
+Under `IGNORECASE` in text (code-point) mode, REAL does full **Unicode simple case folding** for
+literals, classes and ranges — identical to `re.IGNORECASE`: `é` matches `É`, `[é]`/`[à-ÿ]` fold,
+`k` matches Kelvin (U+212A), `ß` matches `ẞ` (but not `ss` — simple, not full, folding). A cased
+literal is promoted to a foldable code point; a **`\xHH` / octal byte escape keeps byte provenance
+and never folds** (`\xe9` under `IGNORECASE` does not match `É`), the same deliberate byte-vs-code-point
+split as \ref div_hex.
+
+Still ASCII by design (a documented divergence, the separate "Unicode word/boundary" arc): the
+`\w \W \d \D \s \S` shorthands and the `\b \B` boundaries. `re` treats these as Unicode regardless
+of `IGNORECASE`; REAL keeps them ASCII. In **bytes mode** `IGNORECASE` folds ASCII only (byte-for-byte
+`std::regex<char>`), so the compat layer is unaffected.
 
 \section div_hex \\xHH (HH ≥ 0x80) is byte-level
 
