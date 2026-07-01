@@ -214,9 +214,11 @@ namespace real::detail {
                                          }};
     for (std::uint32_t cp = 0; cp < 0x80U; ++cp) {
       if (in.ascii.test(static_cast<std::uint8_t>(cp))) {
-        if (const fold_entry* const entry {find_fold_entry(cp)}) {
-          for (std::uint8_t i = 0; i < entry->count; ++i) {
-            add_partner(entry->partner[i]);
+        const std::size_t idx {find_fold_index(cp)};
+        if (idx != unicode_fold_table_size) {
+          const fold_entry& entry {unicode_fold_table[idx]};
+          for (std::uint8_t i = 0; i < entry.count; ++i) {
+            add_partner(entry.partner[i]);
           }
         }
       }

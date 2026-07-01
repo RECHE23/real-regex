@@ -33,10 +33,10 @@ TEST(first_bytes_icase_folds_to_nonascii_lead)
   EXPECT(rx.has_first_byte_set());
   EXPECT(rx.may_start_with('k'));
   EXPECT(rx.may_start_with('K'));
-  EXPECT(rx.may_start_with(static_cast<char>(0xE2))); // Kelvin U+212A = E2 84 AA -> lead 0xE2
+  EXPECT(rx.may_start_with(static_cast<unsigned char>(0xE2))); // Kelvin U+212A = E2 84 AA -> lead 0xE2
   EXPECT(!rx.may_start_with('a'));
   std::string hay(2000, 'x');
-  hay.replace(1000, 3, "\xE2\x84\xAA");               // Kelvin at byte 1000, in 2 KiB of noise
+  hay.replace(1000, 3, "\xE2\x84\xAA");                        // Kelvin at byte 1000, in 2 KiB of noise
   const auto m {rx.search(hay)};
   EXPECT(m.matched());
   EXPECT_EQ(m.start(), 1000U);

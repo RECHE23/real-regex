@@ -2977,9 +2977,12 @@ namespace real::detail {
   //! \brief Number of entries in \ref unicode_fold_table.
   inline constexpr std::size_t unicode_fold_table_size {2940};
 
-  //! \brief Binary-searches \ref unicode_fold_table for \p cp; returns its entry or `nullptr`.
+  //! \brief Binary-searches \ref unicode_fold_table for \p cp; returns its index, or
+  //!        \ref unicode_fold_table_size if \p cp is not cased. An index (not a pointer into
+  //!        the table) keeps this usable in a constant expression on every compiler — g++
+  //!        rejects a `&table[i] != nullptr` comparison inside a `static_regex`.
   //!        Shared by the parser (is a literal cased?) and the compiler (its fold partners).
-  constexpr const fold_entry* find_fold_entry(std::uint32_t cp)
+  constexpr std::size_t find_fold_index(std::uint32_t cp)
   {
     std::size_t lo {0};
     std::size_t hi {unicode_fold_table_size};
@@ -2993,9 +2996,9 @@ namespace real::detail {
       }
     }
     if (lo < unicode_fold_table_size && unicode_fold_table[lo].cp == cp) {
-      return &unicode_fold_table[lo];
+      return lo;
     }
-    return nullptr;
+    return unicode_fold_table_size;
   }
 
 } // namespace real::detail

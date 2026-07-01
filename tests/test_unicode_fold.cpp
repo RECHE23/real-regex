@@ -11,8 +11,10 @@
 
 using real::detail::class_def;
 using real::detail::code_range;
-using real::detail::find_fold_entry;
+using real::detail::find_fold_index;
 using real::detail::unicode_casefold;
+using real::detail::unicode_fold_table;
+using real::detail::unicode_fold_table_size;
 
 namespace {
 
@@ -20,17 +22,18 @@ namespace {
   bool partner_set_is(std::uint32_t                        cp,
                       std::initializer_list<std::uint32_t> expected)
   {
-    const auto* entry {find_fold_entry(cp)};
-    if (entry == nullptr) {
+    const std::size_t idx {find_fold_index(cp)};
+    if (idx == unicode_fold_table_size) {
       return expected.size() == 0;
     }
-    if (entry->count != expected.size()) {
+    const auto& entry {unicode_fold_table[idx]};
+    if (entry.count != expected.size()) {
       return false;
     }
     for (const std::uint32_t want : expected) {
       bool found {false};
-      for (std::uint8_t i = 0; i < entry->count; ++i) {
-        found = found || (entry->partner[i] == want);
+      for (std::uint8_t i = 0; i < entry.count; ++i) {
+        found = found || (entry.partner[i] == want);
       }
       if (!found) {
         return false;

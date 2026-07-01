@@ -1070,7 +1070,7 @@ namespace real::detail {
           return add_class_node(out, bitmap, false);
         }
         if (!bytes_ && cp >= 0x80 &&
-            detail::find_fold_entry(static_cast<std::uint32_t>(cp)) != nullptr) {
+            detail::find_fold_index(static_cast<std::uint32_t>(cp)) != detail::unicode_fold_table_size) {
           const std::vector<code_range> single {
             {.lo = static_cast<std::uint32_t>(cp), .hi = static_cast<std::uint32_t>(cp)}};
           return add_class_node(out, char_class {}, false, single);
