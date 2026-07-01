@@ -92,13 +92,20 @@ _LA_BOUNDED_QUANTS = ["", "", "?", "{2}", "{1,2}"]
 class PatternGen:
     """Generates a random pattern inside REAL's supported grammar."""
 
-    def __init__(self, rng):
+    def __init__(self, rng, ascii_only=False):
         """Bind a random number generator.
 
         Args:
             rng (random.Random): Random state to use.
+            ascii_only (bool): Restrict literals/classes to ASCII, so every generated pattern is a
+                valid *bytes* pattern (raw non-ASCII members are rejected on the bytes path). Used by
+                the bytes differential; the str differential leaves it False to exercise UTF-8.
         """
         self.rng = rng
+        self.ascii_only = ascii_only
+        # _CLASSES entries after the first 12 are the UTF-8 classes ([é], [à-ÿ], ...): drop them for bytes.
+        self._literals = "abcABC012 _-." if ascii_only else _LITERALS
+        self._classes = _CLASSES[:12] if ascii_only else _CLASSES
 
     def _atom(self, depth):
         """Return a literal, class, or nested group atom.
@@ -122,8 +129,8 @@ class PatternGen:
         if r < 0.40:
             return self._unicode_atom()
         if r < 0.66:
-            return re.escape(self.rng.choice(_LITERALS))
-        return self.rng.choice(_CLASSES)
+            return re.escape(self.rng.choice(self._literals))
+        return self.rng.choice(self._classes)
 
     def _octal_atom(self):
         """Return an octal escape (\\ooo) of an ASCII char in the alphabet.
@@ -146,7 +153,7 @@ class PatternGen:
         Returns:
             str: A code-point escape such as ``a`` or ``\U000000e9``.
         """
-        cp = ord(self.rng.choice("abAB01é"))
+        cp = ord(self.rng.choice("abAB01" if self.ascii_only else "abAB01é"))
         return ("\\u%04x" % cp) if self.rng.random() < 0.5 else ("\\U%08x" % cp)
 
     def _comment(self):
@@ -445,7 +452,7 @@ class TestDifferentialFuzz(unittest.TestCase):
         rng = random.Random(SEED ^ 0xB17E5)
         checked = 0
         for _ in range(ITERS // 2):
-            pattern = PatternGen(rng).pattern()  # the generator is ASCII-only -> a valid bytes pattern
+            pattern = PatternGen(rng, ascii_only=True).pattern()  # byte-safe: no raw non-ASCII members
             try:
                 rp = re.compile(pattern.encode())
             except re.error:

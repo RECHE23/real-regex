@@ -34,7 +34,7 @@ ASCII `icase`, `multiline`. Non-ASCII **literals** match byte-for-byte like `std
 | Construct | Why | Treatment |
 |---|---|---|
 | Backreferences `\1`, `(?P=n)` | `real` does not implement them | `real` rejects → std fallback (std supports them) |
-| Non-ASCII **inside a class** `[é]`, `[\x80-\xff]` | `real` rejects raw high bytes in `[...]` | clean rejection → std fallback |
+| **Raw** non-ASCII bytes inside a class `[é]` | `real`'s bytes path rejects raw high bytes in `[...]` (a `\xHH` escape does *not* — `[\x80-\xff]` stays on `real` as a byte class, matching `std::regex<char>`) | clean rejection → std fallback |
 | Unbounded / oversized lookaround | exceeds `real`'s bounded-lookaround cap | `real` rejects → std fallback |
 | POSIX grammars, `collate` | `real` is ECMAScript-only | screened to std up front |
 | `\0` followed by a digit (`\00`, `\012`) | `real` reads a legacy octal escape (Annex B); libstdc++ reads `\0`=NUL then a literal digit — strict ECMAScript makes it a syntax error, so neither is the spec answer | screened to std up front (a both-accept divergence otherwise; the fuzzer found it) |

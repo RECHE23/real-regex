@@ -422,3 +422,52 @@ TEST(utf8_class_program_size_bounded)
   EXPECT(real::regex("[\\u0000-\\U0010FFFF]").raw_program().code.size() < 128U);
   EXPECT(real::regex("[^é]").raw_program().code.size() < 128U);
 }
+
+TEST(utf8_class_effective_never_match_and_width)
+{
+  // GPT-5.4 re-audit: one effective (post-negation) class drives BOTH emission and width, so they
+  // never disagree — and an impossible class is a never-match, not a crash.
+  EXPECT(!searches("[^\\u0000-\\U0010FFFF]", "x"));  // negation of the whole space: matches nothing
+  EXPECT(!searches("[^\\u0000-\\U0010FFFF]", "é"));  // (compiles + runs; the HIGH crash is gone)
+  EXPECT(fullmatches("[\\u0000-\\U0010FFFF]", "x")); // the whole space matches every code point
+  EXPECT(fullmatches("[\\u0000-\\U0010FFFF]", "é"));
+  EXPECT(fullmatches("[\\u0000-\\U0010FFFF]", "😀"));
+
+  const auto rejects {[](const std::string& p) {
+                        try {
+                          const real::regex r(p);
+                          return false;
+                        }
+                        catch (const real::regex_error&) {
+                          return true;
+                        }
+                      }};
+  // Negated all-non-ASCII -> effective class is ASCII-only -> lookbehind width 1 (64 <= 255 accepted).
+  EXPECT(!rejects("(?<=[^\\x80-\\U0010FFFF]{64})x"));
+  EXPECT(fullmatches("[^\\x80-\\U0010FFFF]", "a"));
+  EXPECT(!fullmatches("[^\\x80-\\U0010FFFF]", "é"));
+  // Negated all-ASCII -> effective class is any non-ASCII -> width 4.
+  EXPECT(!rejects("(?<=[^\\x00-\\x7f]{63})x")); // 252 <= 255
+  EXPECT(rejects("(?<=[^\\x00-\\x7f]{64})x"));  // 256 > 255
+  EXPECT(fullmatches("[^\\x00-\\x7f]", "é"));
+  EXPECT(!fullmatches("[^\\x00-\\x7f]", "a"));
+}
+
+TEST(utf8_malformed_subject_iteration_is_boundary_aligned)
+{
+  // Malformed-subject policy: empty-match iteration advances to the next code-point boundary (a
+  // non-continuation byte), the same boundary the matcher seeds at — so it always makes progress and
+  // stays code-point-aligned. A malformed continuation run is stepped over as one unit.
+  const real::regex xs("x*");
+  const std::string overlong   {bytes({0xC0, 0x80})};
+  const std::string bad_leads  {bytes({0xF5, 0xF6})};
+  const std::string lead_ascii {cat({"a", bytes({0xC3}), "b"})};
+  // Overlong C0 80: boundaries at 0 and 2 (0x80 is a continuation, not a start) -> 2 empty matches.
+  EXPECT_EQ(xs.find_all(overlong).size(), 2U);
+  // Two invalid leads F5 F6 (neither is a continuation): boundaries 0,1,2 -> 3 empty matches.
+  EXPECT_EQ(xs.find_all(bad_leads).size(), 3U);
+  // A lone lead then ASCII: a\xC3b -> boundaries 0,1,2,3 (the 'b' is not a continuation) -> 4.
+  EXPECT_EQ(xs.find_all(lead_ascii).size(), 4U);
+  // split over the same never stalls (one piece per boundary gap).
+  EXPECT(!xs.split(overlong).empty());
+}

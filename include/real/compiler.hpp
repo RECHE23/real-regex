@@ -168,6 +168,13 @@ namespace real::detail {
     return gaps;
   }
 
+  //! \brief Whether \p ranges is exactly the whole non-ASCII space `[U+0080, U+10FFFF]` — the
+  //!        "any non-ASCII code point" shape emitted by the compact \ref compiler::emit_codepoint_class.
+  constexpr bool is_any_non_ascii(const std::vector<code_range>& ranges)
+  {
+    return ranges.size() == 1 && ranges[0].lo == 0x80U && ranges[0].hi == 0x10FFFFU;
+  }
+
   /*!
    * \brief Compiles an \ref ast into a \ref dynamic_program (NFA bytecode).
    */
@@ -435,8 +442,39 @@ namespace real::detail {
           branches.push_back(branch);
         }
       }
-      // ranges is non-empty here, so at least one code-point branch exists; branches is never empty.
+      if (branches.empty()) {
+        // An impossible class (e.g. the negation of the whole code-point space): match nothing. An
+        // empty bitmap rejects every byte, so the thread dies — a never-match, not a crash.
+        emit_klass(prog, char_class {});
+        return;
+      }
       emit_byte_sequences(prog, branches);
+    }
+
+    /*!
+     * \brief The class a `node_kind::klass` node effectively accepts, after negation, icase folding
+     *        and the bytes/code-point split. This is the ONE source of truth consumed by both
+     *        \ref emit_node and \ref l_max_bytes, so what is emitted and its measured width can never
+     *        disagree. Positive: as written. Negated: the ASCII complement plus, in code-point mode,
+     *        the code-point complement over `[U+0080, U+10FFFF]` minus surrogates.
+     */
+    [[nodiscard]] constexpr class_def effective_class(const ast_node& node) const
+    {
+      const class_def& def   {tree_.classes[static_cast<std::size_t>(node.klass)]};
+      char_class       ascii {def.ascii};
+      if (has_flag(flags_, flags::icase)) {
+        fold_ascii_case(ascii); // ASCII case fold, before negation, like Python (non-ASCII members
+                                // stay case-sensitive — see divergences.dox)
+      }
+      if (!node.negated) {
+        return {.ascii = ascii, .ranges = def.ranges};
+      }
+      if (has_flag(flags_, flags::bytes)) {
+        ascii.invert(); // raw bytes: plain 256-bit complement, no code-point ranges
+        return {.ascii = ascii, .ranges = {}};
+      }
+      ascii.invert_ascii();
+      return {.ascii = ascii, .ranges = complement_code_ranges(def.ranges)};
     }
 
     // --- node emission ----------------------------------------------------
@@ -475,39 +513,20 @@ namespace real::detail {
           }
         case node_kind::klass:
           {
-            const class_def& def     {tree_.classes[static_cast<std::size_t>(node.klass)]};
-            char_class       written {def.ascii};
-            if (has_flag(flags_, flags::icase)) {
-              fold_ascii_case(written); // ASCII case fold, before negation, like Python (non-ASCII
-                                        // code-point members stay case-sensitive — see COMPATIBILITY.md)
-            }
-            const std::vector<code_range>& cp_ranges {def.ranges};
-            if (cp_ranges.empty()) {
-              // No non-ASCII code-point members: the established ASCII / any-non-ASCII behaviour.
-              if (!node.negated) {
-                emit_klass(prog, written);
-                break;
-              }
-              if (has_flag(flags_, flags::bytes)) {
-                written.invert(); // raw bytes: plain 256-bit complement
-                emit_klass(prog, written);
-                break;
-              }
-              written.invert_ascii();
-              emit_codepoint_class(prog, written);
+            const class_def eff {effective_class(node)};
+            if (has_flag(flags_, flags::bytes) || eff.ranges.empty()) {
+              // Bytes mode is a single 256-bit bitmap; a code-point class with no non-ASCII members is
+              // just its ASCII bitmap. An empty bitmap here (impossible class) is a never-match.
+              emit_klass(prog, eff.ascii);
               break;
             }
-            // A class with specific non-ASCII code points (code-point mode only). Positive: the ASCII
-            // bitmap OR the exact code-point ranges. Negated: the complement of both — the ASCII
-            // complement OR every valid code point NOT in the ranges ([^é] matches à/ü but NOT é).
-            if (!node.negated) {
-              emit_class_codepoints(prog, written, cp_ranges);
+            if (is_any_non_ascii(eff.ranges)) {
+              // "ASCII bitmap OR any non-ASCII code point" (`.`-family, `[^x]`): the compact
+              // emit_codepoint_class shape the prefilter/DFA fast path recognizes.
+              emit_codepoint_class(prog, eff.ascii);
+              break;
             }
-            else {
-              char_class ascii_complement {written};
-              ascii_complement.invert_ascii();
-              emit_class_codepoints(prog, ascii_complement, complement_code_ranges(cp_ranges));
-            }
+            emit_class_codepoints(prog, eff.ascii, eff.ranges);
             break;
           }
         case node_kind::any:
@@ -771,24 +790,22 @@ namespace real::detail {
           return 1;
         case node_kind::klass:
           {
-            // Widest UTF-8 encoding the class can match. Bytes mode: a byte, 1. Code-point mode: a
-            // negated class matches any non-ASCII code point (4); a positive class is the widest of
-            // its code-point ranges (2/3/4 by the range's top code point), or 1 if ASCII-only.
+            // Widest UTF-8 encoding the class can match, from the SAME effective (post-negation) class
+            // that emit_node compiles — so width and emission never disagree. Bytes mode: one byte.
+            // Otherwise 1 for any ASCII member, plus the widest code-point range (2/3/4 by top code
+            // point); an impossible class matches nothing, reported as 1 (harmless — it never matches).
             if (has_flag(flags_, flags::bytes)) {
               return 1;
             }
-            if (node.negated) {
-              return 4;
-            }
-            const std::vector<code_range>& ranges {tree_.classes[static_cast<std::size_t>(node.klass)].ranges};
-            std::int32_t                   width  {1}; // covers any ASCII bitmap member
-            for (const code_range& r : ranges) {
+            const class_def eff   {effective_class(node)};
+            std::int32_t    width {eff.ascii.empty() ? 0 : 1};
+            for (const code_range& r : eff.ranges) {
               const std::int32_t w {r.hi < 0x800U ? 2 : (r.hi < 0x10000U ? 3 : 4)};
               if (w > width) {
                 width = w;
               }
             }
-            return width;
+            return width == 0 ? 1 : width;
           }
         case node_kind::any:
           return has_flag(flags_, flags::bytes) ? 1 : 4;

@@ -35,6 +35,12 @@ folding is a candidate for a separate opt-in arc, not the default.
 reads `\xe9` as U+00E9 (é); REAL reads it as the single byte `0xE9` — which a well-formed
 str's UTF-8 of é (`C3 A9`) never contains. Use `é` for the codepoint.
 
+One deliberate exception makes `\xHH` **context-dependent** in a str (code-point-mode) pattern:
+*inside a character class* `[\xHH]`, a value ≥ 0x80 is the code point `U+00HH` (so `[\xe9]` ==
+`[é]` == `[é]`), because a class member is a code point, whereas outside a class `\xe9`
+stays the single byte `0xE9`. In `bytes` mode `\xHH` is always the raw byte, in a class or not
+(so a `bytes` class is byte-for-byte `std::regex<char>`).
+
 \section div_boundary \\b / \\B on an empty string or region
 
 By definition an empty string has no word boundary, so `\B` (not-a-boundary) matches at

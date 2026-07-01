@@ -160,3 +160,17 @@ TEST(static_regex_constexpr_iteration)
   static_assert(n == 6);
   EXPECT_EQ(n, 6U);
 }
+
+TEST(static_regex_utf8_literals_and_classes_are_constexpr)
+{
+  // The UTF-8 arc (U1 atomic literals, U2 code-point classes) is fully constexpr: these patterns
+  // compile at build time and match at compile time. Pinned so a later change cannot regress it.
+  static_assert(real::static_regex<"é+">().search("ééé").matched());
+  static_assert(real::static_regex<"[é]">().search("é").matched());
+  static_assert(!real::static_regex<"[é]">().search("à").matched());
+  static_assert(real::static_regex<"[à-ÿ]">().search("ê").matched());
+  static_assert(real::static_regex<"[^é]">().search("à").matched());
+  static_assert(!real::static_regex<"[^é]">().search("é").matched());
+  EXPECT(real::static_regex<"é+">().search("ééé").matched());
+  EXPECT(real::static_regex<"[^é]">().fullmatch("€").matched());
+}

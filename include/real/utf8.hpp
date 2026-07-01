@@ -17,41 +17,6 @@
 
 namespace real::detail {
 
-  /*!
-   * \brief Number of bytes from \p pos to the start of the next codepoint.
-   *
-   * Reads the lead byte at \p pos to determine the sequence length, then
-   * consumes any UTF-8 continuation bytes (`10xxxxxx`) up to that length.
-   * Invalid or truncated sequences advance by a single byte, so the result is
-   * always in `[1, 4]` and forward progress is guaranteed.
-   *
-   * \param[in] text The subject text.
-   * \param[in] pos  Index of the codepoint's lead byte; must be < text.size().
-   * \return The codepoint's byte length, in `[1, 4]`.
-   */
-  constexpr std::size_t codepoint_advance(std::string_view text,
-                                          std::size_t      pos)
-  {
-    const auto  lead   {static_cast<std::uint8_t>(text[pos])};
-    std::size_t length {1};
-    if (lead >= 0xF0) {
-      length = 4;
-    }
-    else if (lead >= 0xE0) {
-      length = 3;
-    }
-    else if (lead >= 0xC0) {
-      length = 2;
-    }
-    std::size_t       i     {pos + 1};
-    const std::size_t limit {pos + length < text.size() ? pos + length : text.size()};
-    while (i < limit && (static_cast<unsigned>(static_cast<std::uint8_t>(text[i])) & 0xC0U) ==
-           0x80U) {
-      ++i; // skip UTF-8 continuation bytes (10xxxxxx)
-    }
-    return i - pos;
-  }
-
   //! \brief The result of a strict UTF-8 decode: the code point, its byte length, and validity.
   struct decoded_codepoint
   {
@@ -118,6 +83,33 @@ namespace real::detail {
       return {.cp = cp, .length = length, .valid = false}; // out of range (incl. 0xF5+) or surrogate
     }
     return {.cp = cp, .length = length, .valid = true};
+  }
+
+  /*!
+   * \brief Number of bytes from \p pos to the next code-point boundary, for advancing past an empty
+   *        match during iteration.
+   *
+   * A code-point boundary is any byte that is **not** a UTF-8 continuation byte (`10xxxxxx`). This
+   * advances over the byte at \p pos and every continuation byte that follows, landing on the next
+   * boundary (or the end). It is deliberately the SAME notion of "boundary" the matcher uses to seed
+   * search positions (`seed_viable` in pike.hpp only starts a match at a non-continuation byte), so
+   * empty-match stepping and match starts stay in lock-step. For well-formed text this is exactly the
+   * code point's length (1–4). For malformed text (an overlong such as `C0 80`, a truncated or lone
+   * continuation, an invalid lead) the continuation run is stepped over as one unit — the documented
+   * code-point-alignment policy, not a special case. Forward progress is always >= 1 byte.
+   *
+   * \param[in] text The subject text.
+   * \param[in] pos  Index of the lead byte; must be < text.size().
+   * \return The advance in bytes (>= 1).
+   */
+  constexpr std::size_t codepoint_advance(std::string_view text,
+                                          std::size_t      pos)
+  {
+    std::size_t i {pos + 1};
+    while (i < text.size() && (static_cast<unsigned>(static_cast<std::uint8_t>(text[i])) & 0xC0U) == 0x80U) {
+      ++i; // skip UTF-8 continuation bytes (10xxxxxx) to the next code-point boundary
+    }
+    return i - pos;
   }
 } // namespace real::detail
 
