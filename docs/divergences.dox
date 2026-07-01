@@ -27,32 +27,32 @@ compat layer relies on to fall back to `std`.
 Under `IGNORECASE` in text (code-point) mode, REAL does full **Unicode simple case folding** for
 literals, classes and ranges — identical to `re.IGNORECASE`: `é` matches `É`, `[é]`/`[à-ÿ]` fold,
 `k` matches Kelvin (U+212A), `ß` matches `ẞ` (but not `ss` — simple, not full, folding). A cased
-literal is promoted to a foldable code point; a `\xHH` or octal byte escape keeps byte provenance and
-**never folds** (`\xe9` under `IGNORECASE` does not match `É`) — the same deliberate byte-vs-code-point
+literal is promoted to a foldable code point; a `\\xHH` or octal byte escape keeps byte provenance and
+**never folds** (`\\xe9` under `IGNORECASE` does not match `É`) — the same deliberate byte-vs-code-point
 split as \ref div_hex.
 
 Still ASCII by design (a documented divergence, the separate "Unicode word/boundary" arc): the
-`\w \W \d \D \s \S` shorthands and the `\b \B` boundaries. `re` treats these as Unicode regardless
+`\\w \\W \\d \\D \\s \\S` shorthands and the `\\b \\B` boundaries. `re` treats these as Unicode regardless
 of `IGNORECASE`; REAL keeps them ASCII. In **bytes mode** `IGNORECASE` folds ASCII only (byte-for-byte
 `std::regex<char>`), so the compat layer is unaffected.
 
 \section div_hex \\xHH (HH ≥ 0x80) is byte-level
 
-`\xHH` matches the raw byte `0xHH`, not the codepoint `chr(HH)`. On a str pattern `re`
-reads `\xe9` as U+00E9 (é); REAL reads it as the single byte `0xE9` — which a well-formed
+`\\xHH` matches the raw byte `0xHH`, not the codepoint `chr(HH)`. On a str pattern `re`
+reads `\\xe9` as U+00E9 (é); REAL reads it as the single byte `0xE9` — which a well-formed
 str's UTF-8 of é (`C3 A9`) never contains. Use `é` for the codepoint.
 
-One deliberate exception makes `\xHH` **context-dependent** in a str (code-point-mode) pattern:
-*inside a character class* `[\xHH]`, a value ≥ 0x80 is the code point `U+00HH` (so `[\xe9]` ==
-`[é]` == `[é]`), because a class member is a code point, whereas outside a class `\xe9`
-stays the single byte `0xE9`. In `bytes` mode `\xHH` is always the raw byte, in a class or not
+One deliberate exception makes `\\xHH` **context-dependent** in a str (code-point-mode) pattern:
+*inside a character class* `[\\xHH]`, a value ≥ 0x80 is the code point `U+00HH` (so `[\\xe9]` ==
+`[é]` == `[é]`), because a class member is a code point, whereas outside a class `\\xe9`
+stays the single byte `0xE9`. In `bytes` mode `\\xHH` is always the raw byte, in a class or not
 (so a `bytes` class is byte-for-byte `std::regex<char>`).
 
 \section div_boundary \\b / \\B on an empty string or region
 
-By definition an empty string has no word boundary, so `\B` (not-a-boundary) matches at
-position 0 while `\b` does not. REAL implements this by-definition behaviour, which is
-also `re`'s since Python 3.11 (`re` < 3.11 had the opposite quirk for `\B` on the empty
+By definition an empty string has no word boundary, so `\\B` (not-a-boundary) matches at
+position 0 while `\\b` does not. REAL implements this by-definition behaviour, which is
+also `re`'s since Python 3.11 (`re` < 3.11 had the opposite quirk for `\\B` on the empty
 string). The differential fuzzer therefore cannot use `re` as an oracle on an empty
 region and skips it; the assertions pin REAL's behaviour directly.
 
@@ -70,7 +70,7 @@ Each of these raises a clear `real::regex_error`, for a reason worth keeping:
 - **Backreferences** (`(a)\1`, `(?P=name)`) — a backreference makes the language
   non-regular; supporting it would forfeit the linear-time, ReDoS-safe guarantee that is
   REAL's reason to exist.
-- **Named Unicode escapes** `\N{...}` and **Unicode property classes** `\p{...}` — both
+- **Named Unicode escapes** `\\N{...}` and **Unicode property classes** `\\p{...}` — both
   need megabytes of Unicode tables, which would break the zero-dependency, one-include
   design. (Unicode property classes are a candidate for a separate opt-in header, not a
   core feature, and are not in standard `re` either.)

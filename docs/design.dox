@@ -164,7 +164,7 @@ A character class is a \ref real::detail::char_class — a **256-bit bitmap**
   b \in S \iff \big(\text{bits}[\,b \gg 6\,] \gg (b \,\&\, 63)\big) \,\&\, 1 .
 \f]
 
-`\d \w \s` are ASCII by design; case folding is full Unicode for literals/classes
+`\\d \\w \\s` are ASCII by design; case folding is full Unicode for literals/classes
 (text-mode `IGNORECASE`, via the generated `unicode_fold.hpp` orbits), ASCII for the
 shorthands. The payoff is alignment: a
 construct that matches a whole codepoint (`.`, a negated class) is compiled to
