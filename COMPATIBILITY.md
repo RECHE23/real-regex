@@ -82,9 +82,31 @@ static mutex keeps the value semantics defaulted.)
 
 A failed `regex_search` / `regex_match` leaves the `match_results` **ready** (`ready() == true`,
 `size() == 0`, `empty()`), exactly like `std::regex`. `operator[]` / `position` / `length` / `str`
-for an out-of-range group index return a std-conformant unmatched sub_match / `0` / `""` (never
-out of bounds — a token selector like `{2}`/`{5}` or a field `< -1` relies on this; a field `< -1`
-is undefined in `std`, and compat is *safe* there, yielding an unmatched token).
+for an out-of-range group index return an **end-anchored unmatched sub_match** (`{end, end, false}`,
+so `position()` is the full sequence length and `length()` is `0`) — never out of bounds. A token
+selector like `{2}`/`{5}` or a field `< -1` relies on this; a field `< -1` is undefined in `std`, and
+compat is *safe* there, yielding an unmatched token.
+
+## Platform-variant `std::regex` (MSVC vs libstdc++/libc++)
+
+`std::regex` is not identical across implementations, and a few of its behaviours are
+platform-variant. Where `real::compat` **wraps** `std` (a fallback pattern, a wide `CharT`, a
+constraining flag) it is `≡` the *local* `std` by construction; where it is **real-backed** it
+chooses the spec-reasonable behaviour, which may differ from a given `std` on those points:
+
+- **Out-of-range / unmatched `sub_match`.** libstdc++/libc++ anchor it at the sequence end
+  (`position() == length`); MSVC-`std` leaves it singular (`position() == 0`). `real::compat` is
+  real-backed, so its `match_results` come from `real`'s offsets and it is **end-anchored
+  universally** — matching libstdc++/libc++, differing from MSVC on `.first`/`.second`/`.position`
+  (the participation flag and `str()` are empty/`false` everywhere). This is a deliberate, documented
+  choice, not a bug; the tests assert the end-anchored contract directly and only differ against
+  `std` on the platform-invariant fields.
+- **Escape strictness (`\0`+digit).** `\0` followed by a digit (`\00`, `\012`) is screened to `std`
+  (see the fallback table). `std` itself is platform-variant: libstdc++/libc++ accept it (Annex B
+  legacy octal, lenient), MSVC-`std` rejects it (`error_escape`, strict). `real::compat` defers to
+  the local `std` on both sides — it **throws iff `std` throws**, and where `std` accepts, it runs on
+  `std` and matches it. So the *construction* of such a pattern succeeds on Linux and throws a
+  `real::compat::regex_error` on MSVC, exactly as the platform's `std::regex` does.
 
 ## Iteration (`regex_iterator`)
 

@@ -185,6 +185,36 @@ TEST(compat_libstdcxx_deviations_are_allowlisted)
   }
 }
 
+namespace {
+
+  // `\0`+digit is a legacy octal escape on real (Annex B) that real screens to std (a both-accept
+  // divergence otherwise). std itself is platform-variant here: libstdc++/libc++ accept it (Annex B
+  // lenient), MSVC-std rejects it (error_escape, strict). compat defers to the LOCAL std on both
+  // sides — it throws iff std throws; if both accept, it uses std (not real) and matches std.
+  void expect_defers_to_local_std_on_escape(const std::string& pat)
+  {
+    const auto rejects {[](auto make) {
+                          try {
+                            make();
+                            return false;
+                          }
+                          catch (const std::regex_error&) {
+                            return true;
+                          }
+                        }};
+    const bool std_rejects    {rejects([&] { (void)std::regex(pat, std::regex::ECMAScript); })};
+    const bool compat_rejects {rejects([&] { (void)rc::regex(pat); })};
+    EXPECT_EQ(compat_rejects, std_rejects); // throws iff std throws (== the local std)
+    if (!std_rejects) {
+      const rc::regex re(pat);
+      EXPECT(!re.uses_real()); // screened to std, not real
+      const std::string nul {std::string("a") + '\0' + "0b"};
+      EXPECT_EQ(rc::regex_search(nul, re),
+                std::regex_search(nul.cbegin(), nul.cend(), std::regex(pat, std::regex::ECMAScript)));
+    }
+  }
+} // namespace
+
 TEST(compat_backend_selection)
 {
   // ECMAScript-representable -> real backend (linear, ReDoS-safe).
@@ -203,16 +233,13 @@ TEST(compat_backend_selection)
   // A POSIX grammar option forces the std backend up front.
   EXPECT(!rc::regex("a+", rc::regex_constants::extended).uses_real());
 
-  // `\0`+digit is a legacy octal escape on real (Annex B) but NUL+literal on libstdc++ — a both-
-  // accept silent divergence the fuzzer found, so it routes to std up front (no silent divergence).
-  EXPECT(!rc::regex(R"(\00)").uses_real());  // octal NUL on real, NUL+'0' on std -> std
-  EXPECT(!rc::regex(R"(\012)").uses_real()); // octal newline on real -> std
-  EXPECT(rc::regex(R"(\0)").uses_real());    // \0 alone is NUL on both -> stays on real
-  EXPECT(rc::regex(R"(\0x)").uses_real());   // \0 then non-digit literal -> stays on real
-  // The screened pattern still matches (via std) exactly as std does.
-  const std::string nul {std::string("a") + '\0' + "0b"};
-  EXPECT_EQ(rc::regex_search(nul, rc::regex(R"(\00)")),
-            std::regex_search(nul.cbegin(), nul.cend(), std::regex(R"(\00)", std::regex::ECMAScript)));
+  // `\0`+digit is screened to std (a both-accept divergence otherwise). std is platform-variant on
+  // it (libstdc++/libc++ accept, MSVC-std rejects), so compat defers to the local std: throw iff std
+  // throws; if both accept, it uses std (not real) and matches std.
+  expect_defers_to_local_std_on_escape(R"(\00)");  // octal NUL on real -> std (accept on Linux, reject on MSVC)
+  expect_defers_to_local_std_on_escape(R"(\012)"); // octal newline on real -> std
+  EXPECT(rc::regex(R"(\0)").uses_real());          // \0 alone is NUL on both -> stays on real (platform-stable)
+  EXPECT(rc::regex(R"(\0x)").uses_real());         // \0 then non-digit literal -> stays on real
 }
 
 namespace {
@@ -745,29 +772,40 @@ TEST(compat_invalid_for_both_throws_compat_error)
 }
 
 namespace {
-  // Deep sentinel differential: every observable of m[n] (first/second offsets, matched, position,
-  // length, str) must equal std's — std anchors an out-of-range / unmatched sub_match at the sequence
-  // END ({end, end, false}), so position == the full length, not 0. Comparing only .matched let the
-  // S7-fixed regression (a singular default sentinel, position 0) hide.
-  void expect_sentinel_matches_std(const rc::smatch&           m,
-                                   const std::smatch&          sm,
-                                   std::string::const_iterator cbegin,
-                                   std::size_t                 n)
+  // The out-of-range / unmatched sub_match m[n]. real::compat is real-backed, so its match_results is
+  // built from real's offsets (fill_from_real), not the local std — it anchors the sentinel at the
+  // sequence END universally ({end, end, false}, position == length). std's sentinel is
+  // platform-variant: libstdc++/libc++ anchor it at the end too, but MSVC leaves it singular
+  // (position 0). So this asserts compat's CHOSEN end-anchored behaviour DIRECTLY (the regression
+  // guard that caught the S7 singular-sentinel bug) and differs against std only on the invariants
+  // that hold on every stdlib — .first/.second/.position are NOT compared against std.
+  void expect_end_anchored_sentinel(const rc::smatch&           m,
+                                    const std::smatch&          sm,
+                                    std::string::const_iterator cend,
+                                    std::size_t                 text_size,
+                                    std::size_t                 n)
   {
-    EXPECT_EQ(m[n].matched, sm[n].matched);
-    EXPECT_EQ(std::distance(cbegin, m[n].first), std::distance(cbegin, sm[n].first));
-    EXPECT_EQ(std::distance(cbegin, m[n].second), std::distance(cbegin, sm[n].second));
-    EXPECT_EQ(m.position(n), sm.position(n));
-    EXPECT_EQ(m.length(n), sm.length(n));
-    EXPECT_EQ(m.str(n), sm.str(n));
+    // (1) compat's chosen behaviour, asserted directly (not against a platform-variant std).
+    EXPECT(m[n].first == cend);
+    EXPECT(m[n].second == cend);
+    EXPECT(!m[n].matched);
+    EXPECT_EQ(m.position(n), static_cast<std::ptrdiff_t>(text_size));
+    EXPECT_EQ(m.length(n), 0);
+    EXPECT(m.str(n).empty());
+    // (2) invariants shared with std on every platform.
+    EXPECT_EQ(m[n].matched, sm[n].matched); // unmatched everywhere
+    EXPECT_EQ(m.str(n), sm.str(n));         // empty everywhere
   }
 } // namespace
 
 TEST(compat_match_results_out_of_range)
 {
-  // S7-1: operator[]/position/length/str for n >= size() (and after a failed match) must be
-  // byte-for-byte std-conformant — the sentinel is {end, end, false}, so position is the full length.
-  const std::string subj {"hello"};    // length 5 -> a wrong position-0 sentinel is obvious
+  // S7-1: operator[]/position/length/str for n >= size() (and after a failed match) must never be
+  // out-of-bounds and must be end-anchored ({end, end, false}, position == length). Asserted directly
+  // (regression guard for the S7 singular-sentinel bug); the std differential is invariant-only, since
+  // std's own OOB sentinel is platform-variant (end-anchored on libstdc++/libc++, singular on MSVC).
+  const std::string subj   {"hello"};     // length 5 -> a wrong position-0 sentinel is obvious
+  const std::size_t n_text {subj.size()};
 
   // (a) Successful multi-group match: in-range non-participating group + out-of-range indices.
   const rc::regex  re(R"((\w)(\d)?)"); // group 2 optional -> non-participating on "h"
@@ -777,11 +815,9 @@ TEST(compat_match_results_out_of_range)
   EXPECT(rc::regex_search(subj, m, re));
   EXPECT(std::regex_search(subj, sm, sre));
   EXPECT_EQ(m.size(), 3U);
-  expect_sentinel_matches_std(m, sm, subj.cbegin(), 2);            // non-participating in-range
+  expect_end_anchored_sentinel(m, sm, subj.cend(), n_text, 2); // non-participating in-range
   for (const std::size_t n : {m.size(), m.size() + 1, m.size() + 5}) {
-    expect_sentinel_matches_std(m, sm, subj.cbegin(), n);         // out-of-range
-    EXPECT(m[n].first == subj.cend());                            // anchored at end, not singular
-    EXPECT(m[n].second == subj.cend());
+    expect_end_anchored_sentinel(m, sm, subj.cend(), n_text, n); // out-of-range
   }
 
   // (b) After a FAILED search: m[0] and out-of-range indices are the same end-anchored sentinel.
@@ -792,8 +828,7 @@ TEST(compat_match_results_out_of_range)
   EXPECT(!rc::regex_search(subj, fm, nore));
   EXPECT(!std::regex_search(subj, sfm, snore));
   for (const std::size_t n : {std::size_t {0}, std::size_t {1}, std::size_t {7}}) {
-    expect_sentinel_matches_std(fm, sfm, subj.cbegin(), n);
-    EXPECT(fm[n].first == subj.cend());
+    expect_end_anchored_sentinel(fm, sfm, subj.cend(), n_text, n);
   }
 }
 
