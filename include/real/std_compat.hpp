@@ -1161,7 +1161,7 @@ namespace real::compat {
                    BidirIt                          last,
                    const regex_type&                re,
                    regex_constants::match_flag_type flags = regex_constants::match_default)
-      : begin_(first), end_(last), re_(&re)
+      : begin_(first), end_(last), re_(&re), flags_(flags)
     {
       // The real traversal exists only for the char/default-traits path; for wide/custom-traits
       // CharT the branch is compiled out, so next_real() (char-only) is never instantiated.
@@ -1224,7 +1224,7 @@ namespace real::compat {
       }
       // std-conformant: two non-end iterators are equal only for the same regex + sequence at the
       // same current match (not just a coincidental same-position/length across different regexes).
-      return re_ == other.re_ && begin_ == other.begin_ && end_ == other.end_
+      return re_ == other.re_ && begin_ == other.begin_ && end_ == other.end_ && flags_ == other.flags_
              && match_.position(0) == other.match_.position(0)
              && match_.length(0) == other.match_.length(0);
     }
@@ -1239,6 +1239,7 @@ namespace real::compat {
     BidirIt                                     begin_     {};
     BidirIt                                     end_       {};
     const regex_type*                           re_        {nullptr};
+    regex_constants::match_flag_type            flags_     {regex_constants::match_default};
     bool                                        real_path_ {false};
     std::size_t                                 real_pos_  {};
     std::optional<std::regex_iterator<BidirIt>> std_it_;

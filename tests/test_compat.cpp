@@ -1094,6 +1094,14 @@ TEST(compat_iterator_equality_conformance)
   ++ia_copy;
   EXPECT(ia != ia_copy);  // advanced -> different position
 
+  // A': two iterators over the SAME regex + text but DIFFERENT match flags are not equal (std
+  // distinguishes them on libc++ and libstdc++); same flags -> equal.
+  rc::sregex_iterator idef(s.begin(), s.end(), ra, rc::regex_constants::match_default);
+  rc::sregex_iterator idef2(s.begin(), s.end(), ra, rc::regex_constants::match_default);
+  rc::sregex_iterator inbol(s.begin(), s.end(), ra, rc::regex_constants::match_not_bol);
+  EXPECT(idef == idef2); // same flags
+  EXPECT(idef != inbol); // different match flags -> not equal (conformance)
+
   // token_iterator: same current token but different field lists -> not equal.
   rc::sregex_token_iterator ta(s.begin(), s.end(), ra, 0);
   rc::sregex_token_iterator tb(s.begin(), s.end(), ra, std::vector<int> {0, -1});
