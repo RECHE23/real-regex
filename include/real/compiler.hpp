@@ -475,12 +475,13 @@ namespace real::detail {
           }
         case node_kind::klass:
           {
-            char_class written {tree_.classes[static_cast<std::size_t>(node.klass)]};
+            const class_def& def     {tree_.classes[static_cast<std::size_t>(node.klass)]};
+            char_class       written {def.ascii};
             if (has_flag(flags_, flags::icase)) {
               fold_ascii_case(written); // ASCII case fold, before negation, like Python (non-ASCII
                                         // code-point members stay case-sensitive — see COMPATIBILITY.md)
             }
-            const std::vector<code_range>& cp_ranges {tree_.class_ranges[static_cast<std::size_t>(node.klass)]};
+            const std::vector<code_range>& cp_ranges {def.ranges};
             if (cp_ranges.empty()) {
               // No non-ASCII code-point members: the established ASCII / any-non-ASCII behaviour.
               if (!node.negated) {
@@ -769,7 +770,26 @@ namespace real::detail {
         case node_kind::byte:
           return 1;
         case node_kind::klass:
-          return (node.negated && !has_flag(flags_, flags::bytes)) ? 4 : 1;
+          {
+            // Widest UTF-8 encoding the class can match. Bytes mode: a byte, 1. Code-point mode: a
+            // negated class matches any non-ASCII code point (4); a positive class is the widest of
+            // its code-point ranges (2/3/4 by the range's top code point), or 1 if ASCII-only.
+            if (has_flag(flags_, flags::bytes)) {
+              return 1;
+            }
+            if (node.negated) {
+              return 4;
+            }
+            const std::vector<code_range>& ranges {tree_.classes[static_cast<std::size_t>(node.klass)].ranges};
+            std::int32_t                   width  {1}; // covers any ASCII bitmap member
+            for (const code_range& r : ranges) {
+              const std::int32_t w {r.hi < 0x800U ? 2 : (r.hi < 0x10000U ? 3 : 4)};
+              if (w > width) {
+                width = w;
+              }
+            }
+            return width;
+          }
         case node_kind::any:
           return has_flag(flags_, flags::bytes) ? 1 : 4;
         case node_kind::concat:

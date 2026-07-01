@@ -157,7 +157,7 @@ number here.
 | `abc` | literal bytes (UTF-8 patterns match their UTF-8 bytes) |
 | `\.` `\*` `\\` … | escaped metacharacter, matched literally |
 | `.` | any codepoint except `\n` |
-| `[abc]` `[a-z]` `[^abc]` | character class (members must be ASCII); `[^…]` matches any codepoint outside the set |
+| `[abc]` `[a-z]` `[^abc]` `[é]` `[à-ÿ]` | character class, ASCII **and** non-ASCII code-point members / ranges (str mode); `[^…]` matches any code point outside the set |
 | `\d \D \w \W \s \S` | digit / word / space classes (ASCII sets, like Python's `re.ASCII`) |
 | `\n \t \r \f \v \a \0` `\xHH` | control and hex escapes |
 | `x*` `x+` `x?` | quantifiers (greedy; append `?` for lazy) |
@@ -184,9 +184,13 @@ Unicode case folding.
 
 **Unicode model:** matching is UTF-8 byte-based, but every construct consumes
 whole codepoints (multi-byte sequences compile to byte-level alternatives), so
-match boundaries never split a character. Class members and the `\d \w \s`
-sets are ASCII by design; `[^…]`, `\D \W \S` and `.` do match non-ASCII
-codepoints.
+match boundaries never split a character. In str (code-point) mode a character
+class carries specific non-ASCII code points and ranges (`[é]`, `[à-ÿ]`, `[^é]`),
+compiled to the canonical UTF-8 automaton (never an overlong or surrogate
+encoding); `[^…]`, `\D \W \S` and `.` also match non-ASCII code points. The
+`\d \w \s` sets and case folding (`i`) remain ASCII by design, so `[é]` under `i`
+does not match `É`. In `bytes` mode a class is raw bytes (a non-ASCII member is a
+byte value, matching `std::basic_regex<char>`).
 
 **Divergence from Python:** when a *nullable* loop body ends with an empty
 iteration — e.g. `(a*)*` on `"aa"` — Python captures that final empty

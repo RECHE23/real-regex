@@ -297,3 +297,128 @@ TEST(utf8_class_security_and_malformed)
   // bytes mode: a non-ASCII class member is still rejected (the compat layer relies on it).
   EXPECT_THROWS(real::regex("[é]", flags::bytes), real::regex_error);
 }
+
+TEST(utf8_bytes_mode_classes)
+{
+  // Bloquant A: in bytes mode a class member >= 0x80 (from \xHH) is a RAW BYTE in the bitmap, not a
+  // code point — so a bytes-mode class is byte-for-byte a std::basic_regex<char> class (compat relies
+  // on it). The differential vs std::regex lives in test_compat.cpp.
+  EXPECT(searches(R"([\xE9])", bytes({0xE9}), flags::bytes));         // the byte 0xE9
+  EXPECT(!searches(R"([\xE9])", bytes({0xC3, 0xA9}), flags::bytes));  // NOT the code-point encoding
+  EXPECT(searches(R"([\x80-\xFF])", bytes({0xFF}), flags::bytes));
+  EXPECT(searches(R"([\x80-\xFF])", bytes({0x80}), flags::bytes));
+  EXPECT(!searches(R"([\x80-\xFF])", "a", flags::bytes));
+  EXPECT(searches(R"([^\x00-\x7f])", bytes({0xC3}), flags::bytes));   // negated byte class
+  // code-point mode: [\xe9] is U+00E9 (unchanged by the fix).
+  const std::string e {"é"};
+  EXPECT(searches(R"([\xe9])", e));
+  EXPECT(!searches(R"([\xe9])", bytes({0xE9})));
+}
+
+TEST(utf8_class_lookaround_width)
+{
+  // Bloquant B: a code-point class contributes its real byte width to a fixed-width lookaround (and
+  // to the 255-byte cap), not 1. Before the fix [é] counted as 1 byte -> a false (?<![é]) match and a
+  // bypassable cap.
+  const std::string e {"é"};
+  EXPECT(searches("(?=[é])é", e));
+  EXPECT(searches("(?<=[é])x", cat({e, "x"})));  // lookbehind width 2 for [é]
+  EXPECT(searches("(?<![é])x", "ax"));           // not preceded by é -> matches
+  EXPECT(!searches("(?<![é])x", cat({e, "x"}))); // preceded by é -> no match (the false-match fix)
+
+  const auto rejects {[](const std::string& p) {
+                        try {
+                          const real::regex r(p);
+                          return false;
+                        }
+                        catch (const real::regex_error&) {
+                          return true;
+                        }
+                      }};
+  EXPECT(!rejects("(?<=[é]{127})x")); // 127 x 2 = 254 <= 255
+  EXPECT(rejects("(?<=[é]{128})x"));  // 128 x 2 = 256 > 255
+  EXPECT(!rejects("(?<=[😀]{63})x"));  // 63 x 4 = 252 <= 255
+  EXPECT(rejects("(?<=[😀]{64})x"));   // 64 x 4 = 256 > 255
+  EXPECT(rejects("(?<=[^é]{64})x"));  // negated class -> 4 bytes -> 256 > 255
+}
+
+TEST(utf8_ranges_algorithm_units)
+{
+  using real::detail::code_range;
+  using real::detail::complement_code_ranges;
+  using real::detail::encode_utf8_bytes;
+  using real::detail::utf8_range_sequences;
+
+  // encode_utf8_bytes: canonical encodings.
+  std::uint8_t buf[4] {};
+  EXPECT_EQ(encode_utf8_bytes(0x41U, buf), 1U);
+  EXPECT_EQ(buf[0], 0x41U);
+  EXPECT_EQ(encode_utf8_bytes(0xE9U, buf), 2U);    // é
+  EXPECT_EQ(buf[0], 0xC3U);
+  EXPECT_EQ(buf[1], 0xA9U);
+  EXPECT_EQ(encode_utf8_bytes(0x20ACU, buf), 3U);  // €
+  EXPECT_EQ(encode_utf8_bytes(0x1F600U, buf), 4U); // 😀
+
+  // A degenerate range is the single code point's bytes.
+  const auto e {utf8_range_sequences(0xE9U, 0xE9U)};
+  EXPECT_EQ(e.size(), 1U);
+  EXPECT_EQ(e[0].length, 2U);
+  EXPECT_EQ(e[0].parts[0].lo, 0xC3U);
+  EXPECT_EQ(e[0].parts[0].hi, 0xC3U);
+
+  // The whole 2-byte plane is one canonical sequence [C2-DF][80-BF] (excludes overlong C0/C1).
+  const auto two {utf8_range_sequences(0x80U, 0x7FFU)};
+  EXPECT_EQ(two.size(), 1U);
+  EXPECT_EQ(two[0].parts[0].lo, 0xC2U);
+  EXPECT_EQ(two[0].parts[0].hi, 0xDFU);
+  EXPECT_EQ(two[0].parts[1].lo, 0x80U);
+  EXPECT_EQ(two[0].parts[1].hi, 0xBFU);
+
+  // Length boundaries split into separate sequences (2-byte vs 3-byte, etc.).
+  EXPECT(utf8_range_sequences(0x7FFU, 0x800U).size() >= 2U);    // 0x7FF/0x800 boundary
+  EXPECT(utf8_range_sequences(0xFFFFU, 0x10000U).size() >= 2U); // 0xFFFF/0x10000 boundary
+
+  // Crossing 0x80 is not this function's job (the parser splits ASCII off); a range starting < 0x80
+  // still produces a 1-byte sub-sequence.
+  const auto crossing {utf8_range_sequences(0x61U, 0xE9U)};
+  EXPECT(crossing.size() >= 2U);
+  EXPECT_EQ(crossing[0].parts[0].lo, 0x61U); // the ASCII 1-byte part
+
+  // Surrogates are excluded: a range spanning U+D800..U+DFFF omits them.
+  const auto around_surrogate {utf8_range_sequences(0xD000U, 0xE001U)};
+  for (const auto& seq : around_surrogate) {
+    // No sequence may encode a surrogate: the 3-byte ED A0..BF form must not appear.
+    if (seq.length == 3U && seq.parts[0].lo == 0xEDU) {
+      EXPECT(seq.parts[1].hi < 0xA0U); // ED continuation stays in 80..9F (U+D000..U+D7FF)
+    }
+  }
+
+  // Empty / NOP: lo > hi yields nothing.
+  EXPECT_EQ(utf8_range_sequences(0x100U, 0x0FFU).size(), 0U);
+
+  // complement_code_ranges over [0x80, 0x10FFFF].
+  const auto comp {complement_code_ranges({{.lo = 0xE9U, .hi = 0xE9U}})};
+  EXPECT_EQ(comp.size(), 2U);
+  EXPECT_EQ(comp[0].lo, 0x80U);
+  EXPECT_EQ(comp[0].hi, 0xE8U);
+  EXPECT_EQ(comp[1].lo, 0xEAU);
+  EXPECT_EQ(comp[1].hi, 0x10FFFFU);
+
+  // Overlapping / adjacent inputs merge before complementing.
+  const auto merged {complement_code_ranges({{.lo = 0xE0U, .hi = 0xFFU}, {.lo = 0xE9U, .hi = 0xE9U}})};
+  EXPECT_EQ(merged.size(), 2U); // {E0..FF} absorbs {E9}, leaving [80..DF] and [100..10FFFF]
+  EXPECT_EQ(merged[0].hi, 0xDFU);
+  EXPECT_EQ(merged[1].lo, 0x100U);
+
+  // Complement of the whole space is empty.
+  EXPECT_EQ(complement_code_ranges({{.lo = 0x80U, .hi = 0x10FFFFU}}).size(), 0U);
+}
+
+TEST(utf8_class_program_size_bounded)
+{
+  // GAP-2: a large UTF-8 class compiles to a bounded automaton (byte-class subset construction keeps
+  // it small); no program-size / DFA-state explosion.
+  EXPECT(real::regex("[\\u0080-\\uFFFF]").raw_program().code.size() < 128U);
+  EXPECT(real::regex("[\\u0000-\\U0010FFFF]").raw_program().code.size() < 128U);
+  EXPECT(real::regex("[^é]").raw_program().code.size() < 128U);
+}

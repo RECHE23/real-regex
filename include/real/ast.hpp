@@ -38,7 +38,7 @@ namespace real::detail {
   {
     empty,       //!< Matches the empty string.
     byte,        //!< One exact byte.
-    klass,       //!< One codepoint constrained by classes[klass] (negated or not).
+    klass,       //!< One codepoint constrained by classes[klass] (a \ref class_def; negated or not).
     any,         //!< One codepoint, except newline (the `.` metacharacter).
     concat,      //!< Children matched in sequence.
     repeat,      //!< Child repeated `[min, max]` times (max -1 = unbounded).
@@ -89,6 +89,14 @@ namespace real::detail {
     std::uint32_t hi {}; //!< Last code point (inclusive).
   };
 
+  //! \brief A parsed character class: its ASCII bitmap plus any non-ASCII code-point ranges. Bundling
+  //!        the two (rather than parallel side tables) makes them impossible to desynchronize.
+  struct class_def
+  {
+    char_class              ascii;  //!< ASCII members as a bitmap (all 256 bytes in bytes mode); pre-negation.
+    std::vector<code_range> ranges; //!< Non-ASCII code-point ranges (code-point mode only; empty otherwise).
+  };
+
   /*!
    * \brief A parsed pattern: the node pool plus side tables.
    *
@@ -98,13 +106,12 @@ namespace real::detail {
    */
   struct ast
   {
-    std::vector<ast_node>                nodes;                      //!< The node pool; \ref root indexes it.
-    std::vector<char_class>              classes;                    //!< Class ASCII bitmaps as written, before negation.
-    std::vector<std::vector<code_range>> class_ranges;               //!< Non-ASCII code-point ranges per class (parallel to \ref classes; code-point mode only).
-    std::vector<named_group>             names;                      //!< Named capture groups.
-    flags                                inline_flags {flags::none}; //!< Flags from a leading `(?ims)`.
-    std::int32_t                         group_count  {};            //!< Number of capturing groups.
-    std::int32_t                         root         {-1};          //!< Index of the root node.
+    std::vector<ast_node>    nodes;                      //!< The node pool; \ref root indexes it.
+    std::vector<class_def>   classes;                    //!< Character classes as written, before negation.
+    std::vector<named_group> names;                      //!< Named capture groups.
+    flags                    inline_flags {flags::none}; //!< Flags from a leading `(?ims)`.
+    std::int32_t             group_count  {};            //!< Number of capturing groups.
+    std::int32_t             root         {-1};          //!< Index of the root node.
   };
 
   //! \brief What a `\<digit>` escape decoded to (see decode_digit_escape()).
@@ -329,8 +336,7 @@ namespace real::detail {
                                                  bool                           negated,
                                                  const std::vector<code_range>& ranges = {})
     {
-      out.classes.push_back(klass);
-      out.class_ranges.push_back(ranges);
+      out.classes.push_back({.ascii = klass, .ranges = ranges});
       const auto index {static_cast<std::int32_t>(out.classes.size()) - 1};
       return add_node(out, {.kind = node_kind::klass, .negated = negated, .klass = index});
     }
@@ -1210,18 +1216,25 @@ namespace real::detail {
       char_class              klass;
       std::vector<code_range> ranges; // non-ASCII members (code-point mode); empty in bytes/ASCII-only classes
       bool                    first   {true};
-      // Add one code point (< 0x80 -> bitmap; >= 0x80 -> a degenerate code-point range).
+      // Add one member. In bytes mode a member >= 0x80 (from `\xHH`) is a raw byte in the bitmap, NOT
+      // a code point — so class_ranges stays empty and a bytes-mode class is byte-for-byte a
+      // std::basic_regex<char> class (what the compat layer relies on). In code-point mode, >= 0x80 is
+      // a (degenerate) code-point range.
       const auto add_cp {[&](std::int32_t cp) {
-                           if (cp < 0x80) {
+                           if (bytes_ || cp < 0x80) {
                              klass.set(static_cast<std::uint8_t>(cp));
                            }
                            else {
                              ranges.push_back({static_cast<std::uint32_t>(cp), static_cast<std::uint32_t>(cp)});
                            }
                          }};
-      // Add an inclusive range [lo, hi]; a range crossing 0x7F/0x80 splits (ASCII part -> bitmap).
+      // Add an inclusive range [lo, hi]. Bytes mode: the whole range is bytes in the bitmap.
+      // Code-point mode: a range crossing 0x7F/0x80 splits (the ASCII part -> bitmap).
       const auto add_range {[&](std::int32_t lo, std::int32_t hi) {
-                              if (lo < 0x80) {
+                              if (bytes_) {
+                                klass.set_range(static_cast<std::uint8_t>(lo), static_cast<std::uint8_t>(hi));
+                              }
+                              else if (lo < 0x80) {
                                 klass.set_range(static_cast<std::uint8_t>(lo), static_cast<std::uint8_t>(hi < 0x80 ? hi : 0x7F));
                                 if (hi >= 0x80) {
                                   ranges.push_back({0x80U, static_cast<std::uint32_t>(hi)});

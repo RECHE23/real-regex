@@ -149,6 +149,27 @@ TEST(compat_corpus_backend_and_differential)
   EXPECT(fallback_count * 5U < corpus().size()); // < 20% fallback
 }
 
+TEST(compat_byte_class_matches_std)
+{
+  // Bloquant A (U2-fix): a bytes-path class member >= 0x80 is a RAW BYTE, exactly like
+  // std::basic_regex<char> — never a re-encoded UTF-8 code point. Each pattern stays on the real
+  // backend and agrees with std::regex byte-for-byte on high-byte subjects.
+  const auto raw {[](std::initializer_list<int> values) {
+                    std::string s;
+                    for (const int v : values) {
+                      s += static_cast<char>(v);
+                    }
+                    return s;
+                  }};
+  for (const char* pat : {R"([\x80-\xff]+)", R"([\xe9])", R"([^\x00-\x7f])", R"([\xc3\xa9]+)"}) {
+    EXPECT(rc::regex(pat).uses_real());
+    EXPECT(agree(pat, raw({0xC3, 0xA9})));
+    EXPECT(agree(pat, raw({0xFF, 0x80, 0x41})));
+    EXPECT(agree(pat, std::string("abc")));
+    EXPECT(agree(pat, raw({0xE9})));
+  }
+}
+
 TEST(compat_libstdcxx_deviations_are_allowlisted)
 {
   // libstdc++ deviations from the ECMAScript spec; real::compat follows the spec (Option B).
