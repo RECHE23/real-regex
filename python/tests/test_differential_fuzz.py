@@ -70,7 +70,9 @@ class deadline:
 # (the U1 fix). re is the code-point oracle for the differential.
 _LITERALS = "abcABC012 _-.é€😀"
 _CLASSES = [r"\d", r"\D", r"\w", r"\W", r"\s", r"\S", ".",
-            "[abc]", "[a-c]", "[^abc]", "[a-z0-9]", r"[\dx]"]
+            "[abc]", "[a-c]", "[^abc]", "[a-z0-9]", r"[\dx]",
+            # UTF-8 classes (U2): specific code points / ranges / negation, code-point mode.
+            "[é]", "[éàü]", "[à-ÿ]", "[a-zé]", "[^é]", "[^à-ÿ]", "[Ā-ſ]"]
 _QUANTS = ["", "*", "+", "?", "??", "*?", "+?", "{2}", "{1,3}", "{2,}", "{0,2}"]
 # Quantifiers that cannot repeat (so cannot create a nullable loop). Anything
 # else establishes a "looping context" whose body must always consume.

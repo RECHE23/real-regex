@@ -208,3 +208,92 @@ TEST(utf8_empty_match_advances_by_codepoint)
   // re yields an empty match at each code-point boundary plus the end: 5 code points -> 6 matches.
   EXPECT_EQ(count, 6U);
 }
+
+TEST(utf8_character_classes)
+{
+  // U2: a character class carries specific non-ASCII code points, not "any non-ASCII".
+  const std::string e    {"é"};
+  const std::string a    {"à"};
+  const std::string u    {"ü"};
+  const std::string euro {"€"};
+  EXPECT(fullmatches("[é]", e));
+  EXPECT(!fullmatches("[é]", a));                            // specific code point, not any non-ASCII
+  EXPECT(fullmatches("[é]", e) == fullmatches(R"([é])", e)); // [é] == [é]
+  EXPECT(fullmatches("[éàü]", a));
+  EXPECT(fullmatches("[éàü]", u));
+  EXPECT(!fullmatches("[éàü]", euro));
+  // Mixed ASCII + non-ASCII members.
+  EXPECT(fullmatches("[a-zé]", "m"));
+  EXPECT(fullmatches("[a-zé]", e));
+  EXPECT(!fullmatches("[a-zé]", a));
+  EXPECT(!fullmatches("[a-zé]", "A"));
+  // Quantified class over code points.
+  EXPECT_EQ(match_len("[éà]+", cat({e, a, e})), 6U); // 3 code points x 2 bytes
+}
+
+TEST(utf8_class_ranges)
+{
+  const std::string a    {"à"};    // U+00E0
+  const std::string e    {"é"};    // U+00E9 (in à..ÿ)
+  const std::string y    {"ÿ"};    // U+00FF
+  const std::string euro {"€"};
+  EXPECT(fullmatches("[à-ÿ]", a)); // range endpoints + interior
+  EXPECT(fullmatches("[à-ÿ]", e));
+  EXPECT(fullmatches("[à-ÿ]", y));
+  EXPECT(!fullmatches("[à-ÿ]", euro));
+  // Range crossing 0x7F/0x80: [a-é] = a..0x7F (bitmap) + 0x80..é (code-point range).
+  EXPECT(fullmatches("[a-é]", "a"));
+  EXPECT(fullmatches("[a-é]", "~")); // 0x7E, in the ASCII part
+  EXPECT(fullmatches("[a-é]", a));   // à = 0xE0 <= é = 0xE9
+  EXPECT(fullmatches("[a-é]", e));
+  EXPECT(!fullmatches("[a-é]", y));  // ÿ = 0xFF > é
+  // 2-byte range via \u.
+  const std::string u0100 {bytes({0xC4, 0x80})};
+  const std::string u017F {bytes({0xC5, 0xBF})};
+  const std::string u0180 {bytes({0xC6, 0x80})};
+  EXPECT(fullmatches(R"([Ā-ſ])", u0100));
+  EXPECT(fullmatches(R"([Ā-ſ])", u017F));
+  EXPECT(!fullmatches(R"([Ā-ſ])", u0180));
+}
+
+TEST(utf8_class_negation)
+{
+  // The trap: [^é] must match every code point EXCEPT é (not "any non-ASCII", which would match é).
+  const std::string e    {"é"};
+  const std::string a    {"à"};
+  const std::string u    {"ü"};
+  const std::string euro {"€"};
+  EXPECT(!fullmatches("[^é]", e));  // é is excluded
+  EXPECT(fullmatches("[^é]", a));   // other code points match
+  EXPECT(fullmatches("[^é]", u));
+  EXPECT(fullmatches("[^é]", euro));
+  EXPECT(fullmatches("[^é]", "a")); // ASCII too
+  // Negated range.
+  EXPECT(!fullmatches("[^à-ÿ]", a));
+  EXPECT(!fullmatches("[^à-ÿ]", e));
+  EXPECT(fullmatches("[^à-ÿ]", euro));
+  EXPECT(fullmatches("[^à-ÿ]", "a"));
+  // Overlapping members in a negated class are merged before complementing (é lies inside à-ÿ),
+  // so [^à-ÿé] behaves as [^à-ÿ].
+  EXPECT(!fullmatches("[^à-ÿé]", a));
+  EXPECT(!fullmatches("[^à-ÿé]", e));
+  EXPECT(fullmatches("[^à-ÿé]", euro));
+}
+
+TEST(utf8_class_security_and_malformed)
+{
+  const std::string e {"é"};
+  // A class carrying specific code points uses the canonical UTF-8-ranges automaton, so it never
+  // matches an overlong / surrogate encoding — positive AND negated. (`.` and an ASCII-only negated
+  // class like `[^x]` keep the pre-existing "any non-ASCII" superset — see COMPATIBILITY.md.)
+  EXPECT(!searches("[é]", bytes({0xC0, 0x80})));                                       // overlong NUL
+  EXPECT(searches("[é]", e));
+  EXPECT(!fullmatches("[^é]", bytes({0xC0, 0x80})));                                   // negated: overlong not a code point
+  EXPECT(!fullmatches("[^é]", bytes({0xED, 0xA0, 0x80})));                             // negated: surrogate encoding excluded
+  EXPECT(fullmatches("[^é]", bytes({0xC3, 0xA0})));                                    // but a real other code point matches (à)
+  // Malformed member in the pattern -> compile error.
+  EXPECT_THROWS(real::regex(cat({"[", bytes({0x80}), "]"})), real::regex_error);       // lone continuation
+  EXPECT_THROWS(real::regex(cat({"[", bytes({0xC0, 0x80}), "]"})), real::regex_error); // overlong
+  // bytes mode: a non-ASCII class member is still rejected (the compat layer relies on it).
+  EXPECT_THROWS(real::regex("[é]", flags::bytes), real::regex_error);
+}

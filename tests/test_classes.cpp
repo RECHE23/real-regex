@@ -115,9 +115,12 @@ TEST(unicode_codepoint_escapes)
   EXPECT(real::regex("\\u20ac").fullmatch("€"sv));                // 3-byte: E2 82 AC
   EXPECT(real::regex("\\U0001F600").fullmatch("😀"sv));            // 4-byte: F0 9F 98 80
   EXPECT_EQ(real::regex("\\u00e9+").search("ééé"sv)[0], "ééé"sv); // quantifies the whole codepoint
-  // Inside a class: ASCII members are fine, a non-ASCII code point is rejected like a literal é.
+  // Inside a class (code-point mode, U2): ASCII members and non-ASCII code points are both members.
   EXPECT(real::regex("[\\u0041\\u0042]").fullmatch("B"));
-  EXPECT_THROWS(real::regex("[\\u00e9]"), real::regex_error);
+  EXPECT(real::regex("[\\u00e9]").fullmatch("é"sv));              // é is a class member
+  EXPECT(!real::regex("[\\u00e9]").fullmatch("à"sv));             // and only that code point
+  EXPECT(real::regex("[é]").fullmatch("é"sv));                    // [é] == [é]
+  EXPECT(!real::regex("[é]").fullmatch("à"sv));
 }
 
 TEST(unicode_escape_rejections)
@@ -186,7 +189,7 @@ TEST(class_errors)
   EXPECT_THROWS(real::regex("[z-a]"), real::regex_error);
   EXPECT_THROWS(real::regex("[a-\\d]"), real::regex_error);
   EXPECT_THROWS(real::regex("[\\D]"), real::regex_error);
-  EXPECT_THROWS(real::regex("[é]"), real::regex_error);
+  EXPECT_THROWS(real::regex("[é]", real::flags::bytes), real::regex_error); // non-ASCII class member: bytes mode only
   EXPECT_THROWS(real::regex("\\x4"), real::regex_error);
   EXPECT_THROWS(real::regex("\\xg0"), real::regex_error);
   EXPECT_THROWS(real::regex("\\p"), real::regex_error);

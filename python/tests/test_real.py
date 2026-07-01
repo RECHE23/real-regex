@@ -300,13 +300,15 @@ class TestIntentionalDivergences(unittest.TestCase):
     for each is in the "Differences from Python re" documentation page (docs/divergences.dox).
     """
 
-    def test_character_classes_are_ascii_only(self):
-        # A non-ASCII class member is rejected -- the guarantee that every match is
-        # codepoint-aligned. re would accept all of these.
-        for pattern in [r"[é]", r"[\u00e9]", r"[à-ÿ]"]:
-            with self.subTest(pattern=pattern):
-                with self.assertRaises(real.error):
-                    real.compile(pattern)
+    def test_character_class_non_ascii_members(self):
+        # U2: a str-mode class carries specific non-ASCII code points (was rejected before U2).
+        # The broad differential-vs-re lives in test_parity; here we pin the behaviour.
+        self.assertIsNotNone(real.compile(r"[é]").fullmatch("é"))
+        self.assertIsNone(real.compile(r"[é]").fullmatch("à"))      # a specific code point, not "any non-ASCII"
+        self.assertIsNotNone(real.compile(r"[\u00e9]").fullmatch("é"))
+        self.assertIsNotNone(real.compile(r"[à-ÿ]").fullmatch("ê")) # a code-point range
+        self.assertIsNone(real.compile(r"[^é]").fullmatch("é"))     # negation excludes é ...
+        self.assertIsNotNone(real.compile(r"[^é]").fullmatch("à"))  # ... but matches other code points
 
     def test_icase_folds_ascii_only(self):
         # ASCII letters fold under I; bytes >= 0x80 (é) do not, so é != É -- unlike re's
@@ -515,10 +517,12 @@ class TestUnicodeAndConstructs(unittest.TestCase):
                 with self.assertRaises(real.error):
                     real.compile(pattern)
 
-    def test_non_ascii_class_member_rejected(self):
-        # [\u00e9] is a non-ASCII class member; REAL rejects it (ASCII-only classes), unlike re.
+    def test_non_ascii_class_member_accepted_in_str_mode(self):
+        # U2: a non-ASCII class member is accepted in str mode; bytes mode still rejects raw high bytes.
+        self.assertIsNotNone(real.compile(r"[\u00e9]").search("é"))
+        self.assertIsNotNone(real.compile(r"[é]").search("a café"))
         with self.assertRaises(real.error):
-            real.compile(r"[\u00e9]")
+            real.compile(b"[\xc3\xa9]")  # bytes-mode: raw non-ASCII class member -> rejected
 
     def test_icase_unicode_escape_stays_case_sensitive(self):
         # \u00e9 (é) is bytes >= 0x80, never ASCII-case-folded, so it stays case-sensitive under

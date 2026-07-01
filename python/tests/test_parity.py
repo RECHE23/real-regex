@@ -46,6 +46,17 @@ PATTERNS = [
     r"(é)(é)",
     r"coûte",
     r"😀+",
+    # UTF-8 character classes (U2): specific code points / ranges / negation, re the oracle.
+    r"[é]",
+    r"[éàü]",
+    r"[à-ÿ]",
+    r"[a-zé]",
+    r"[a-é]",
+    r"[^é]",
+    r"[^à-ÿ]",
+    r"[éà]+",
+    r"[Ā-ſ]+",
+    r"gr[éè]ce",
 ]
 
 TEXTS = [

@@ -9,19 +9,25 @@ cannot drift silently.
 
 \tableofcontents
 
-\section div_ascii ASCII-only character classes
+\section div_ascii UTF-8 character classes (code-point mode)
 
-Character classes are ASCII-only: a non-ASCII member such as `[é]` (precomposed or decomposed) is a
-`real::regex_error`, where `re` would accept it. This is what guarantees that every
-construct consumes whole codepoints, so a match boundary never splits a UTF-8 sequence.
-Negated classes and `.` still match *any* non-ASCII codepoint — only explicit non-ASCII
-*members* are rejected.
+In code-point mode (the default), a character class carries specific non-ASCII code-point
+members and ranges: `[é]`, `[éàü]`, `[à-ÿ]`, `[a-zé]`, and their negations `[^é]` / `[^à-ÿ]`
+all match exactly like `re` (the code-point oracle). They compile to the canonical
+UTF-8-ranges automaton, so a class never matches an overlong or surrogate byte sequence —
+`[é]` matches only `C3 A9`, and `[^é]` matches every valid code point *except* é. `.` and an
+ASCII-only negated class such as `[^x]` still match *any* non-ASCII code point (the
+pre-existing sound superset, which also accepts a malformed byte sequence as "a character").
+A malformed UTF-8 member in the pattern is a `real::regex_error`. In **bytes mode** a
+non-ASCII class member is rejected (raw byte semantics), which is what the `std::regex`
+compat layer relies on to fall back to `std`.
 
 \section div_icase Case folding is ASCII-only
 
-Under `IGNORECASE`, REAL folds ASCII letters only (`a` matches `A`). Bytes ≥ 0x80 are
-never folded, so `é` (é) does **not** match `É`, unlike `re`'s Unicode case folding.
-This follows directly from the ASCII-only class policy.
+Under `IGNORECASE`, REAL folds ASCII letters only (`a` matches `A`). Code points ≥ 0x80 are
+never folded, so `é` does **not** match `É` — as a literal or as a class member (`[é]` under
+`IGNORECASE` still does not match `É`), unlike `re`'s Unicode case folding. Unicode case
+folding is a candidate for a separate opt-in arc, not the default.
 
 \section div_hex \\xHH (HH ≥ 0x80) is byte-level
 

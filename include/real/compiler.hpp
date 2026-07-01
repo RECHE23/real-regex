@@ -19,6 +19,7 @@
 
 #include "version.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -29,6 +30,143 @@
 #include "program.hpp"
 
 namespace real::detail {
+
+  //! \brief One byte-range step `[lo, hi]` of a UTF-8 sequence produced by the code-point-range algorithm.
+  struct utf8_byte_range
+  {
+    std::uint8_t lo {}; //!< Low byte (inclusive).
+    std::uint8_t hi {}; //!< High byte (inclusive).
+  };
+
+  //! \brief A canonical UTF-8 byte-range sequence (1–4 steps) covering part of a code-point range.
+  struct utf8_byte_seq
+  {
+    utf8_byte_range parts[4] {}; //!< The per-byte ranges.
+    std::size_t     length   {}; //!< Number of active steps (1–4).
+  };
+
+  //! \brief Encodes \p cp to its UTF-8 bytes in \p out, returning the length (1–4).
+  constexpr std::size_t encode_utf8_bytes(std::uint32_t cp,
+                                          std::uint8_t (&out)[4])
+  {
+    if (cp < 0x80U) {
+      out[0] = static_cast<std::uint8_t>(cp);
+      return 1;
+    }
+    if (cp < 0x800U) {
+      out[0] = static_cast<std::uint8_t>(0xC0U | (cp >> 6U));
+      out[1] = static_cast<std::uint8_t>(0x80U | (cp & 0x3FU));
+      return 2;
+    }
+    if (cp < 0x10000U) {
+      out[0] = static_cast<std::uint8_t>(0xE0U | (cp >> 12U));
+      out[1] = static_cast<std::uint8_t>(0x80U | ((cp >> 6U) & 0x3FU));
+      out[2] = static_cast<std::uint8_t>(0x80U | (cp & 0x3FU));
+      return 3;
+    }
+    out[0] = static_cast<std::uint8_t>(0xF0U | (cp >> 18U));
+    out[1] = static_cast<std::uint8_t>(0x80U | ((cp >> 12U) & 0x3FU));
+    out[2] = static_cast<std::uint8_t>(0x80U | ((cp >> 6U) & 0x3FU));
+    out[3] = static_cast<std::uint8_t>(0x80U | (cp & 0x3FU));
+    return 4;
+  }
+
+  /*!
+   * \brief Splits `[start, end]` (same UTF-8 length after the length-boundary split) into contiguous
+   *        byte-range sequences (RE2 / rust regex-syntax `Utf8Sequences`). Every produced sequence is
+   *        canonical by construction — no overlong forms, no surrogates — which is exactly the
+   *        security property qE needs. Appends to \p out.
+   */
+  constexpr void utf8_push_range(std::uint32_t               start,
+                                 std::uint32_t               end,
+                                 std::vector<utf8_byte_seq>& out)
+  {
+    if (start > end) {
+      return;
+    }
+    constexpr std::uint32_t length_max[4] {0x7FU, 0x7FFU, 0xFFFFU, 0x10FFFFU};
+    for (const std::uint32_t max : length_max) {
+      if (start <= max && max < end) { // range spans a UTF-8 length boundary: split there
+        utf8_push_range(start, max, out);
+        utf8_push_range(max + 1, end, out);
+        return;
+      }
+    }
+    for (unsigned i = 1; i < 4; ++i) { // split so each continuation byte covers a contiguous sub-range
+      const std::uint32_t mask {(1U << (6U * i)) - 1U};
+      if ((start & ~mask) != (end & ~mask)) {
+        if ((start & mask) != 0U) {
+          utf8_push_range(start, start | mask, out);
+          utf8_push_range((start | mask) + 1U, end, out);
+          return;
+        }
+        if ((end & mask) != mask) {
+          utf8_push_range(start, (end & ~mask) - 1U, out);
+          utf8_push_range(end & ~mask, end, out);
+          return;
+        }
+      }
+    }
+    std::uint8_t      start_bytes[4] {};
+    std::uint8_t      end_bytes[4]   {};
+    const std::size_t n              {encode_utf8_bytes(start, start_bytes)};
+    encode_utf8_bytes(end, end_bytes);
+    utf8_byte_seq seq                {};
+    seq.length = n;
+    for (std::size_t j = 0; j < n; ++j) {
+      seq.parts[j] = {.lo = start_bytes[j], .hi = end_bytes[j]};
+    }
+    out.push_back(seq);
+  }
+
+  //! \brief Canonical UTF-8 byte-range sequences for the code-point range `[lo, hi]`, excluding the
+  //!        surrogate block `[U+D800, U+DFFF]` (so a negated class never matches a surrogate encoding).
+  constexpr std::vector<utf8_byte_seq> utf8_range_sequences(std::uint32_t lo,
+                                                            std::uint32_t hi)
+  {
+    std::vector<utf8_byte_seq> out;
+    if (hi < 0xD800U || lo > 0xDFFFU) {
+      utf8_push_range(lo, hi, out); // no surrogate overlap
+    }
+    else {
+      if (lo <= 0xD7FFU) {
+        utf8_push_range(lo, 0xD7FFU, out);
+      }
+      if (hi >= 0xE000U) {
+        utf8_push_range(0xE000U, hi, out);
+      }
+    }
+    return out;
+  }
+
+  //! \brief Complements a set of code-point ranges within `[0x80, 0x10FFFF]` (used by negated classes).
+  //!        Input ranges may be unsorted/overlapping; the gaps are returned sorted.
+  constexpr std::vector<code_range> complement_code_ranges(std::vector<code_range> ranges)
+  {
+    std::sort(ranges.begin(), ranges.end(),
+              [](const code_range& a, const code_range& b) { return a.lo < b.lo; });
+    std::vector<code_range> merged;
+    for (const code_range& r : ranges) {
+      if (!merged.empty() && r.lo <= merged.back().hi + 1U) {
+        merged.back().hi = merged.back().hi > r.hi ? merged.back().hi : r.hi;
+      }
+      else {
+        merged.push_back(r);
+      }
+    }
+    std::vector<code_range> gaps;
+    std::uint32_t           next {0x80U};
+    for (const code_range& r : merged) {
+      if (r.lo > next) {
+        gaps.push_back({.lo = next, .hi = r.lo - 1U});
+      }
+      next = r.hi + 1U;
+    }
+    if (next <= 0x10FFFFU) {
+      gaps.push_back({.lo = next, .hi = 0x10FFFFU});
+    }
+    return gaps;
+  }
 
   /*!
    * \brief Compiles an \ref ast into a \ref dynamic_program (NFA bytecode).
@@ -246,6 +384,61 @@ namespace real::detail {
       prog.codepoint_mark_ascii  = static_cast<std::int32_t>(prog.code[static_cast<std::size_t>(block_start) + 1].arg16);
     }
 
+    /*!
+     * \brief Emits an alternation of byte-range sequences (`branches`) as split/jump — the general
+     *        form of \ref emit_codepoint_class. Each branch is a chain of `klass` steps; the leftmost
+     *        matching branch wins. Used for a character class carrying specific code-point ranges.
+     */
+    constexpr void emit_byte_sequences(dynamic_program&                            prog,
+                                       const std::vector<std::vector<char_class>>& branches) const
+    {
+      std::vector<std::int32_t> jumps;
+      for (std::size_t b = 0; b + 1 < branches.size(); ++b) {
+        const std::int32_t split {emit_split(prog)};
+        patch_primary(prog, split, here(prog));
+        for (const char_class& step : branches[b]) {
+          emit_klass(prog, step);
+        }
+        jumps.push_back(emit_jump(prog));
+        patch_secondary(prog, split, here(prog));
+      }
+      for (const char_class& step : branches.back()) {
+        emit_klass(prog, step);
+      }
+      const std::int32_t end {here(prog)};
+      for (const std::int32_t jump : jumps) {
+        patch_primary(prog, jump, end);
+      }
+    }
+
+    /*!
+     * \brief Emits a code-point class: the ASCII bitmap (one byte, if any) OR the canonical UTF-8
+     *        byte sequences of each code-point range. This is the specific-code-point generalization
+     *        of \ref emit_codepoint_class (whose `[U+0080, U+10FFFF]` "any non-ASCII" is one case).
+     */
+    constexpr void emit_class_codepoints(dynamic_program&               prog,
+                                         const char_class&              ascii,
+                                         const std::vector<code_range>& ranges) const
+    {
+      std::vector<std::vector<char_class>> branches;
+      if (!ascii.empty()) {
+        branches.push_back({ascii});
+      }
+      for (const code_range& range : ranges) {
+        for (const utf8_byte_seq& seq : utf8_range_sequences(range.lo, range.hi)) {
+          std::vector<char_class> branch;
+          for (std::size_t i = 0; i < seq.length; ++i) {
+            char_class step;
+            step.set_range(seq.parts[i].lo, seq.parts[i].hi);
+            branch.push_back(step);
+          }
+          branches.push_back(branch);
+        }
+      }
+      // ranges is non-empty here, so at least one code-point branch exists; branches is never empty.
+      emit_byte_sequences(prog, branches);
+    }
+
     // --- node emission ----------------------------------------------------
 
     /*!
@@ -284,19 +477,36 @@ namespace real::detail {
           {
             char_class written {tree_.classes[static_cast<std::size_t>(node.klass)]};
             if (has_flag(flags_, flags::icase)) {
-              fold_ascii_case(written); // before negation, like Python
+              fold_ascii_case(written); // ASCII case fold, before negation, like Python (non-ASCII
+                                        // code-point members stay case-sensitive — see COMPATIBILITY.md)
             }
+            const std::vector<code_range>& cp_ranges {tree_.class_ranges[static_cast<std::size_t>(node.klass)]};
+            if (cp_ranges.empty()) {
+              // No non-ASCII code-point members: the established ASCII / any-non-ASCII behaviour.
+              if (!node.negated) {
+                emit_klass(prog, written);
+                break;
+              }
+              if (has_flag(flags_, flags::bytes)) {
+                written.invert(); // raw bytes: plain 256-bit complement
+                emit_klass(prog, written);
+                break;
+              }
+              written.invert_ascii();
+              emit_codepoint_class(prog, written);
+              break;
+            }
+            // A class with specific non-ASCII code points (code-point mode only). Positive: the ASCII
+            // bitmap OR the exact code-point ranges. Negated: the complement of both — the ASCII
+            // complement OR every valid code point NOT in the ranges ([^é] matches à/ü but NOT é).
             if (!node.negated) {
-              emit_klass(prog, written);
-              break;
+              emit_class_codepoints(prog, written, cp_ranges);
             }
-            if (has_flag(flags_, flags::bytes)) {
-              written.invert(); // raw bytes: plain 256-bit complement
-              emit_klass(prog, written);
-              break;
+            else {
+              char_class ascii_complement {written};
+              ascii_complement.invert_ascii();
+              emit_class_codepoints(prog, ascii_complement, complement_code_ranges(cp_ranges));
             }
-            written.invert_ascii();
-            emit_codepoint_class(prog, written);
             break;
           }
         case node_kind::any:
