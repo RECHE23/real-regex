@@ -267,17 +267,20 @@ version-check:
 # (>95% lines) coverage bar rather than the strict 100% 4D of the SciLang-era libraries,
 # so coverage is NOT bundled here (run `make coverage` separately); this gate is the
 # binary pass/fail checks. doc-no-coverage fails on any Doxygen warning (WARN_AS_ERROR).
+# GXX defaults to the CI GCC (g++-14); override with `make full-local-gate GXX=g++-13`. If it is
+# absent, the GCC leg is skipped with a warning (the g++-14 CI job is the backstop).
+GXX ?= g++-14
 full-local-gate:
 	@$(MAKE) format-check
 	@$(MAKE) version-check
 	@$(MAKE) test
-	@$(MAKE) test CXX=g++-14 BUILD=$(BUILD)/gcc
+	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "full-local-gate: WARN — $(GXX) absent, GCC leg skipped (CI covers it)"; fi
 	@$(MAKE) sanitize
 	@$(MAKE) misra
 	@$(MAKE) doc-no-coverage
 	@$(MAKE) python-test
 	@$(MAKE) lint | tee $(BUILD)/lint.log; ! grep -qE 'warning:|error:' $(BUILD)/lint.log
-	@echo "full-local-gate: ALL gates green (clang + g++-14, sanitize, MISRA, lint, doc, python, version-check)"
+	@echo "full-local-gate: ALL gates green (clang + $(GXX) when present, sanitize, MISRA, lint, doc, python, version-check)"
 
 bench-python: python
 	$(PYRUN) benchmarks/bench.py
