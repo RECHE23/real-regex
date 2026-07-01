@@ -48,9 +48,22 @@ non-silent trade. Prefer ReDoS-safe equivalents for untrusted input.
 The replacement format is ECMAScript: `$$` → `$`, `$&` → the whole match, `` $` `` → the text since
 the previous match, `$'` → the text to the end, `$N` / `$NN` → group N (matching
 `std::regex_replace`, which the differential harness pins). `format_first_only` and `format_no_copy`
-are honoured; `format_sed` routes to `std::regex` (POSIX replacement syntax). A non-nullable
-real-backed pattern runs the substitution on `real`'s linear traversal — measured **6–17× faster**
-than `std::regex_replace`; a nullable one falls back to `std` (see the table above).
+are honoured. A non-nullable real-backed pattern runs the substitution on `real`'s linear traversal —
+measured **6–17× faster** than `std::regex_replace`; a nullable one falls back to `std`.
+
+Three replace inputs route the whole substitution to `std::regex_replace` (so compat == std):
+**`format_sed`** (POSIX replacement syntax the ECMAScript expander would mis-read), the flag being
+present; and a format containing **`$0`**, which is platform-variant (libstdc++ = the whole match,
+strict-ECMAScript/MSVC = a literal `$0`) so `real` cannot pick one without risking a silent
+divergence.
+
+## Behaviour after a failed match
+
+A failed `regex_search` / `regex_match` leaves the `match_results` **ready** (`ready() == true`,
+`size() == 0`, `empty()`), exactly like `std::regex`. `operator[]` / `position` / `length` / `str`
+for an out-of-range group index return a std-conformant unmatched sub_match / `0` / `""` (never
+out of bounds — a token selector like `{2}`/`{5}` or a field `< -1` relies on this; a field `< -1`
+is undefined in `std`, and compat is *safe* there, yielding an unmatched token).
 
 ## Iteration (`regex_iterator`)
 

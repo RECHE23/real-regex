@@ -9,6 +9,7 @@
 #include <regex>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <sciforge/test/framework.hpp>
@@ -725,4 +726,173 @@ TEST(compat_invalid_for_both_throws_compat_error)
   const int compat_code {code_of([] { (void)rc::regex("(unclosed"); })};
   EXPECT(compat_code != -1);         // it threw
   EXPECT_EQ(compat_code, std_code);  // and reports std's exact code
+
+  // .code() by category (not just unclosed-paren): WHEN compat throws (invalid for BOTH backends),
+  // it must carry std's exact code. A pattern real accepts but std rejects is a benign real-superset
+  // (compat does not throw) and is skipped — the throw path is exactly "std also rejected".
+  for (const char* pat : {"(unclosed", "[unterminated", "a{2,1}", "a{", "*nostart", R"(a\)"}) {
+    const int cc {code_of([pat] { (void)rc::regex(pat); })};
+    if (cc == -1) {
+      continue; // real accepted it (benign superset) -> compat did not throw
+    }
+    const int sc {code_of([pat] { (void)std::regex(pat, std::regex::ECMAScript); })};
+    EXPECT_EQ(cc, sc); // same category code std reports (compat only throws when std also rejects)
+  }
+}
+
+TEST(compat_match_results_out_of_range)
+{
+  // B1: operator[]/position/length/str for n >= size() must be std-conformant (unmatched / 0 / ""),
+  // never out-of-bounds. A pattern with one group has size()==2 (whole + group 1).
+  const rc::regex   re(R"((\w)(\d)?)"); // group 2 is optional -> can be non-participating
+  rc::smatch        m;
+  const std::string subj {"a"};
+  EXPECT(rc::regex_search(subj, m, re));
+  EXPECT_EQ(m.size(), 3U); // whole + 2 groups
+
+  const std::regex sre(R"((\w)(\d)?)", std::regex::ECMAScript);
+  std::smatch      sm;
+  EXPECT(std::regex_search(subj, sm, sre));
+
+  for (std::size_t n : {m.size(), m.size() + 1, m.size() + 5}) {
+    EXPECT(!m[n].matched);                      // out-of-range -> unmatched sub_match
+    EXPECT_EQ(m.position(n), 0);                // std-conformant sentinels
+    EXPECT_EQ(m.length(n), 0);
+    EXPECT(m.str(n).empty());
+    EXPECT_EQ(m[n].matched, sm[n].matched);     // matches std's out-of-range behaviour
+    EXPECT_EQ(m.length(n), sm.length(n));
+  }
+  // A non-participating in-range group (group 2 here) is unmatched with length 0.
+  EXPECT(!m[2].matched);
+  EXPECT_EQ(m.length(2), 0);
+}
+
+namespace {
+
+  // Compare a token field-selector list compat vs std::sregex_token_iterator (str + matched).
+  bool token_fields_agree(const std::string&      pat,
+                          const std::string&      subj,
+                          const std::vector<int>& fields)
+  {
+    const rc::regex                           rre(pat);
+    const std::regex                          sre(pat, std::regex::ECMAScript);
+    std::vector<std::pair<std::string, bool>> got;
+    std::vector<std::pair<std::string, bool>> ref;
+    for (rc::sregex_token_iterator it(subj.begin(), subj.end(), rre, fields), e; it != e; ++it) {
+      got.emplace_back(it->str(), it->matched);
+    }
+    for (std::sregex_token_iterator it(subj.begin(), subj.end(), sre, fields), e; it != e; ++it) {
+      ref.emplace_back(it->str(), it->matched);
+    }
+    return got == ref;
+  }
+} // namespace
+
+TEST(compat_token_field_selectors)
+{
+  // B2: field selectors incl. out-of-range and mixed with -1 (no guessing — differential vs std).
+  EXPECT(token_fields_agree(R"((\w)(\w))", "abcd", {2}));      // in-range group 2
+  EXPECT(token_fields_agree(R"((\w)(\w))", "abcd", {1, 2}));   // list
+  EXPECT(token_fields_agree(R"((\w)(\w))", "abcd", {5}));      // out-of-range -> unmatched tokens
+  EXPECT(token_fields_agree(R"((\w)(\w))", "abcd", {1, 5}));   // mixed valid + out-of-range
+  EXPECT(token_fields_agree(",", "a,b", {1, -1}));             // valid-group + split, WITH matches
+  EXPECT(token_fields_agree(",", "a,b", {-1, 1}));             // split + group, order matters
+
+  // NO-match + a list containing -1: the standard ([re.tokiter.cnstr] "one of the elements is -1")
+  // yields exactly ONE whole-sequence token. libstdc++ conforms; libc++ has a bug (checks only
+  // subs[0], dropping the token for {1,-1}), so this is pinned explicitly, not differential.
+  for (const std::vector<int>& fields : {std::vector<int> {1, -1}, std::vector<int> {-1, 1}}) {
+    const std::string                         nomatch {"a,b"};
+    const rc::regex                           none("x");
+    std::vector<std::pair<std::string, bool>> toks;
+    for (rc::sregex_token_iterator it(nomatch.begin(), nomatch.end(), none, fields), e; it != e;
+         ++it) {
+      toks.emplace_back(it->str(), it->matched);
+    }
+    EXPECT_EQ(toks.size(), 1U);         // exactly one token (no field cycling past the end)
+    EXPECT(toks[0].first == "a,b");     // the whole sequence
+    EXPECT(toks[0].second);             // matched == true
+  }
+
+  // A field < -1 is undefined in std; compat is SAFE (yields an unmatched token, never OOB).
+  const std::string                         subj {"abcd"};
+  const rc::regex                           two(R"((\w)(\w))");
+  std::vector<std::pair<std::string, bool>> neg;
+  for (rc::sregex_token_iterator it(subj.begin(), subj.end(), two, std::vector<int> {-2}), e; it != e;
+       ++it) {
+    neg.emplace_back(it->str(), it->matched);
+  }
+  for (const auto& [str, matched] : neg) {
+    EXPECT(!matched); // safe unmatched tokens, no crash / OOB
+    EXPECT(str.empty());
+  }
+}
+
+namespace {
+  // Detects whether regex_search(<StrRef>, m, re, flag) is well-formed for the given value category
+  // (std::forward preserves lvalue/rvalue-ness of the string argument).
+  template <typename StrRef>
+  concept FlagSearchable = requires (StrRef s, rc::smatch& m, const rc::regex& re) {
+    rc::regex_search(std::forward<StrRef>(s), m, re, rc::regex_constants::match_default);
+  };
+  template <typename StrRef>
+  concept FlagMatchable = requires (StrRef s, rc::smatch& m, const rc::regex& re) {
+    rc::regex_match(std::forward<StrRef>(s), m, re, rc::regex_constants::match_default);
+  };
+} // namespace
+
+TEST(compat_rvalue_with_flags_rejected_at_compile_time)
+{
+  // B3: matching a temporary string with a match flag must be =delete'd (else the match_results
+  // would dangle). The lvalue form stays callable; the rvalue form is rejected.
+  static_assert(FlagSearchable<std::string&>);    // lvalue: OK
+  static_assert(!FlagSearchable<std::string &&>); // rvalue + flag: deleted
+  static_assert(FlagMatchable<std::string&>);
+  static_assert(!FlagMatchable<std::string &&>);
+  EXPECT(true);                                   // compile-time assertions above are the test
+}
+
+TEST(compat_replace_dollar_zero_and_sed_route_to_std)
+{
+  // B4: `$0` is platform-variant, so it routes to std (compat == std, never silently dropped).
+  const rc::regex   word(R"(\w+)");
+  EXPECT(word.uses_real_traversal()); // real-eligible: the screen (not the pattern) is what routes it
+  const std::regex  sword(R"(\w+)", std::regex::ECMAScript);
+  const std::string subj {"ab cd"};
+  EXPECT_EQ(rc::regex_replace(subj, word, std::string("<$0>")),
+            std::regex_replace(subj, sword, std::string("<$0>")));
+  // $$ is NOT $0 and stays on the real expander (still equals std).
+  EXPECT_EQ(rc::regex_replace(subj, word, std::string("<$$>")),
+            std::regex_replace(subj, sword, std::string("<$$>")));
+
+  // B5: format_sed uses POSIX replacement syntax (`&` = whole match); the ECMAScript expander would
+  // mis-read it, so it routes to std.
+  EXPECT_EQ(rc::regex_replace(subj, word, std::string("<&>"), rc::regex_constants::format_sed),
+            std::regex_replace(subj, sword, std::string("<&>"), std::regex_constants::format_sed));
+}
+
+TEST(compat_ready_after_failed_match)
+{
+  // B6: after a failed search/match std leaves ready()==true, size()==0. Ours must too.
+  const rc::regex   re("abc"); // real-backed
+  rc::smatch        m;
+  const std::string subj {"zzz"};
+  EXPECT(!rc::regex_search(subj, m, re));
+  EXPECT(m.ready());
+  EXPECT_EQ(m.size(), 0U);
+  EXPECT(m.empty());
+
+  rc::smatch m2;
+  EXPECT(!rc::regex_match(subj, m2, re));
+  EXPECT(m2.ready());
+  EXPECT_EQ(m2.size(), 0U);
+
+  // Same on the std backend (a fallback pattern).
+  const rc::regex   back(R"((a)\1)"); // backref -> std
+  EXPECT(!back.uses_real());
+  rc::smatch        m3;
+  const std::string subj2 {"xyz"};
+  EXPECT(!rc::regex_search(subj2, m3, back));
+  EXPECT(m3.ready());
+  EXPECT_EQ(m3.size(), 0U);
 }

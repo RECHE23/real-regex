@@ -273,28 +273,31 @@ namespace real::compat {
       return groups_.empty();
     }
 
-    //! \brief The sub-match for group \p n (group 0 is the whole match).
+    //! \brief The sub-match for group \p n (group 0 is the whole match). Out-of-range `n` returns a
+    //!        reference to a static unmatched sub_match, exactly like `std::match_results::operator[]`
+    //!        (never out-of-bounds — a token selector `{2}`/`{5}` or a negative field relies on this).
     const_reference operator[](size_type n) const
     {
-      return groups_[n];
+      static const value_type unmatched {};
+      return n < groups_.size() ? groups_[n] : unmatched;
     }
 
-    //! \brief Start offset of group \p n relative to the start of the searched sequence.
+    //! \brief Start offset of group \p n relative to the start of the searched sequence (0 if out of range).
     [[nodiscard]] difference_type position(size_type n = 0) const
     {
-      return std::distance(first_, groups_[n].first);
+      return n < groups_.size() ? std::distance(first_, groups_[n].first) : difference_type {0};
     }
 
-    //! \brief Length of group \p n.
+    //! \brief Length of group \p n (0 if out of range or unmatched).
     [[nodiscard]] difference_type length(size_type n = 0) const
     {
-      return groups_[n].length();
+      return n < groups_.size() ? groups_[n].length() : difference_type {0};
     }
 
-    //! \brief Matched text of group \p n.
+    //! \brief Matched text of group \p n (empty if out of range or unmatched).
     [[nodiscard]] string_type str(size_type n = 0) const
     {
-      return groups_[n].str();
+      return (*this)[n].str();
     }
 
     //! \brief The unmatched prefix (sequence start up to the whole match).
@@ -340,6 +343,14 @@ namespace real::compat {
       groups_.clear();
       prefix_ = suffix_ = value_type {.first = last, .second = last, .matched = false};
       ready_  = false;
+    }
+
+    //! \brief Marks a *ready but unmatched* result — after a failed search/match `std` leaves
+    //!        `ready() == true` with `size() == 0` (a not-ready result would be a divergence).
+    void set_ready_no_match()
+    {
+      groups_.clear();
+      ready_ = true;
     }
 
     //! \brief Re-bases the unmatched prefix to start at `first` — for iteration, where a match's
@@ -456,6 +467,25 @@ namespace real::compat {
             return true;
           }
           ++i; // consume the escaped character (so `\\0` is an escaped backslash, not `\0`)
+        }
+      }
+      return false;
+    }
+
+    //! \brief Replacement format text that must route to std: `$0`. `$0` is platform-variant
+    //!        (libstdc++ = the whole match, strict-ECMAScript/MSVC = a literal), so real cannot
+    //!        pick one without risking a silent divergence — route to std, which is authoritative
+    //!        for its own platform. `$$` is skipped (an escaped literal `$`).
+    [[nodiscard]] inline bool format_forces_std(std::string_view fmt) noexcept
+    {
+      for (std::size_t i = 0; i < fmt.size(); ++i) {
+        if (fmt[i] == '$' && i + 1 < fmt.size()) {
+          if (fmt[i + 1] == '$') {
+            ++i;         // `$$` — escaped literal dollar
+          }
+          else if (fmt[i + 1] == '0') {
+            return true; // `$0…` platform-variant
+          }
         }
       }
       return false;
@@ -723,7 +753,10 @@ namespace real::compat {
                                          static_cast<std::size_t>(std::distance(first, last))};
           const real::regex&     engine {std::get<real::regex>(re.engine())};
           const auto             result {anchored ? engine.fullmatch(sv) : engine.search(sv)};
-          if (!result.matched()) { return false; }
+          if (!result.matched()) {
+            m.set_ready_no_match(); // std leaves ready()==true, size()==0 on a failed match
+            return false;
+          }
           m.fill_from_real(result);
           return true;
         }
@@ -733,7 +766,10 @@ namespace real::compat {
       const auto                             sf         {to_std_match(mf)};
       const bool                             ok         {anchored ? std::regex_match(first, last, std_m, std_engine, sf)
                               : std::regex_search(first, last, std_m, std_engine, sf)};
-      if (!ok) { return false; }
+      if (!ok) {
+        m.set_ready_no_match();
+        return false;
+      }
       m.fill_from_std(std_m);
       return true;
     }
@@ -869,15 +905,27 @@ namespace real::compat {
     return detail::run_nocapture(s, s + std::char_traits<CharT>::length(s), re, true, flags);
   }
 
-  // Reject matching against an rvalue string (the result would dangle), mirroring real/std.
+  // Reject matching against an rvalue string (the result would dangle), mirroring real/std. Both the
+  // 3-arg and the 4-arg (with match flags) forms must be deleted — otherwise the temporary binds to
+  // the const-ref overload and the filled match_results dangles into freed storage.
   template <typename CharT, typename Traits>
   bool regex_search(const std::basic_string<CharT>&&,
                     match_results<typename std::basic_string<CharT>::const_iterator>&,
                     const basic_regex<CharT, Traits>&) = delete;
   template <typename CharT, typename Traits>
+  bool regex_search(const std::basic_string<CharT>&&,
+                    match_results<typename std::basic_string<CharT>::const_iterator>&,
+                    const basic_regex<CharT, Traits>&,
+                    regex_constants::match_flag_type) = delete;
+  template <typename CharT, typename Traits>
   bool regex_match(const std::basic_string<CharT>&&,
                    match_results<typename std::basic_string<CharT>::const_iterator>&,
                    const basic_regex<CharT, Traits>&) = delete;
+  template <typename CharT, typename Traits>
+  bool regex_match(const std::basic_string<CharT>&&,
+                   match_results<typename std::basic_string<CharT>::const_iterator>&,
+                   const basic_regex<CharT, Traits>&,
+                   regex_constants::match_flag_type) = delete;
 
   // --- regex_replace -----------------------------------------------------------------------
 
@@ -967,7 +1015,11 @@ namespace real::compat {
       return std::regex_replace(s, re.std_engine(), fmt, detail::to_std_match(flags));
     }
     else {
-      if (!re.uses_real_traversal()) {
+      // Route to std when: the pattern is not real-traversable (std/nullable), OR the replacement is
+      // sed syntax (format_sed — the ECMAScript expander would mis-read it), OR the format uses `$0`
+      // (platform-variant, see detail::format_forces_std). Only then does the real expander run.
+      if (!re.uses_real_traversal() || (flags & regex_constants::format_sed) != 0U
+          || detail::format_forces_std(std::string_view {fmt})) {
         return std::regex_replace(s, re.std_engine(), fmt, detail::to_std_match(flags));
       }
       const real::regex&     engine     {std::get<real::regex>(re.engine())};
@@ -1352,10 +1404,13 @@ namespace real::compat {
         at_end_ = false;
         set_field();
       }
-      else if (has_m1_) { // no match at all: the whole sequence is one split token
-        at_end_ = false;
+      else if (has_m1_) {    // no match at all: the whole sequence is ONE split token, then end
+        at_end_      = false;
+        suffix_mode_ = true; // terminal — the standard yields exactly one token here, no field cycling
         // std marks this whole-sequence suffix token as participating even when empty (matched=true),
         // unlike an empty field *between* matches (a prefix, matched=false). The fuzzer pinned this.
+        // (Per [re.tokiter.cnstr] "one of the elements of subs is -1" — has_m1; libstdc++ conforms,
+        // libc++ has a bug here that checks only subs[0], so it drops the token for e.g. {1,-1}.)
         current_ = value_type {.first = first, .second = last, .matched = true};
       }
     }
