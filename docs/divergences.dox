@@ -29,7 +29,7 @@ literals, classes and ranges — identical to `re.IGNORECASE`: `é` matches `É`
 `k` matches Kelvin (U+212A), `ß` matches `ẞ` (but not `ss` — simple, not full, folding). A cased
 literal is promoted to a foldable code point; a \\xHH or octal byte escape keeps byte provenance and
 **never folds** (\\xe9 under `IGNORECASE` does not match `É`) — the same deliberate byte-vs-code-point
-split as \ref div_hex.
+split described in the hex-escape section below.
 
 Still ASCII by design (a documented divergence, the separate "Unicode word/boundary" arc): the
 \\w \\W \\d \\D \\s \\S shorthands and the \\b \\B boundaries. `re` treats these as Unicode regardless
