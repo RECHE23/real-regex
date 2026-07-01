@@ -805,7 +805,11 @@ namespace real::detail {
                 width = w;
               }
             }
-            return width == 0 ? 1 : width;
+            // An impossible (never-match) class contributes 0: it consumes nothing, so a dead branch
+            // in a bounded lookaround (the negation of the whole code-point space, repeated) does not
+            // inflate the width -- the alternation `a | <impossible>{300}` stays width 1.
+            // Its emitted never-match still makes the branch fail — a width of 0 is not an empty match.
+            return width;
           }
         case node_kind::any:
           return has_flag(flags_, flags::bytes) ? 1 : 4;

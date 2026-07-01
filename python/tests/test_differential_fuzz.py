@@ -126,7 +126,9 @@ class PatternGen:
             return self._group(depth)
         if r < 0.32:
             return self._octal_atom()
-        if r < 0.40:
+        if r < 0.40 and not self.ascii_only:
+            # \u/\U escapes are a str-only construct (REAL rejects them in bytes mode), so a byte-safe
+            # pattern never emits them -- otherwise the bytes differential would just skip on re.error.
             return self._unicode_atom()
         if r < 0.66:
             return re.escape(self.rng.choice(self._literals))
@@ -451,8 +453,11 @@ class TestDifferentialFuzz(unittest.TestCase):
         exercising lookarounds whose codepoint alignment differs from the str path."""
         rng = random.Random(SEED ^ 0xB17E5)
         checked = 0
+        total = 0
+        compiled = 0
         for _ in range(ITERS // 2):
             pattern = PatternGen(rng, ascii_only=True).pattern()  # byte-safe: no raw non-ASCII members
+            total += 1
             try:
                 rp = re.compile(pattern.encode())
             except re.error:
@@ -461,6 +466,7 @@ class TestDifferentialFuzz(unittest.TestCase):
                 xp = real.compile(pattern.encode())
             except real.error:
                 continue  # REAL may reject a narrower grammar; only agreement is required
+            compiled += 1
             ng = rp.groups
             for _ in range(2):
                 text = bytes(rng.choice(b"abcABC012 _-\n\t\x80\xff")
@@ -479,6 +485,9 @@ class TestDifferentialFuzz(unittest.TestCase):
                 self.assertEqual(facts, ref, ctx)
                 checked += 1
         self.assertGreater(checked, 0)
+        # The byte-safe generator emits no str-only constructs (raw non-ASCII, \u/\U), so the vast
+        # majority of patterns compile on both engines -- the bytes differential is not mostly skips.
+        self.assertGreater(compiled / total, 0.8)
 
 
 def verbosify(pattern, rng):

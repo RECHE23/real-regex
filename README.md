@@ -192,6 +192,18 @@ encoding); `[^…]`, `\D \W \S` and `.` also match non-ASCII code points. The
 does not match `É`. In `bytes` mode a class is raw bytes (a non-ASCII member is a
 byte value, matching `std::basic_regex<char>`).
 
+> **Breaking / migration (UTF-8 arc).** In str (code-point) mode, non-ASCII pattern
+> text now decodes to whole code points instead of independent bytes. If you relied on
+> the old byte behaviour:
+> - A raw non-ASCII **literal** is now one atom: `é+` matches `éé` (was: `+` on the
+>   last byte only). Use `bytes` mode for byte semantics.
+> - A **character class** accepts non-ASCII members and ranges: `[é]`, `[à-ÿ]`, `[^é]`
+>   (was: a compile error). `[^é]` now means "any code point except é", not "any byte".
+> - `\xHH` is **context-dependent**: outside a class it is still the raw byte `0xHH`;
+>   *inside* a str-mode class `[\xHH]` (HH ≥ 0x80) it is the code point `U+00HH`.
+> - `bytes` mode is unchanged (raw bytes throughout) and remains a byte-for-byte
+>   `std::basic_regex<char>` drop-in.
+
 **Divergence from Python:** when a *nullable* loop body ends with an empty
 iteration — e.g. `(a*)*` on `"aa"` — Python captures that final empty
 iteration (`''`); REAL, like Perl/PCRE, keeps the last non-empty one (`"aa"`).

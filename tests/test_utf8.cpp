@@ -451,6 +451,14 @@ TEST(utf8_class_effective_never_match_and_width)
   EXPECT(rejects("(?<=[^\\x00-\\x7f]{64})x"));  // 256 > 255
   EXPECT(fullmatches("[^\\x00-\\x7f]", "é"));
   EXPECT(!fullmatches("[^\\x00-\\x7f]", "a"));
+
+  // An impossible class contributes width 0 (never-match, not empty-match): a dead branch in a
+  // bounded lookaround is accepted and never inflates the width, and the assertion still fails.
+  EXPECT(!rejects("(?<=a|[^\\u0000-\\U0010FFFF]{300})x"));        // dead branch counts 0 -> alternation width 1
+  EXPECT(searches("(?<=a|[^\\u0000-\\U0010FFFF]{300})x", "ax"));  // matches via the live `a` branch
+  EXPECT(!searches("(?<=a|[^\\u0000-\\U0010FFFF]{300})x", "bx")); // the dead branch never matches
+  EXPECT(!searches("(?<=[^\\u0000-\\U0010FFFF])x", "ax"));        // width 0 is never-match ...
+  EXPECT(searches("(?<![^\\u0000-\\U0010FFFF])x", "ax"));         // ... so the negative form is always true
 }
 
 TEST(utf8_malformed_subject_iteration_is_boundary_aligned)
@@ -468,6 +476,14 @@ TEST(utf8_malformed_subject_iteration_is_boundary_aligned)
   EXPECT_EQ(xs.find_all(bad_leads).size(), 3U);
   // A lone lead then ASCII: a\xC3b -> boundaries 0,1,2,3 (the 'b' is not a continuation) -> 4.
   EXPECT_EQ(xs.find_all(lead_ascii).size(), 4U);
-  // split over the same never stalls (one piece per boundary gap).
-  EXPECT(!xs.split(overlong).empty());
+
+  // split and replace over malformed input observe the same boundary policy and never stall.
+  // Nullable split at every boundary gap: one empty-delimited piece per boundary.
+  EXPECT_EQ(xs.split(overlong).size(), xs.find_all(overlong).size() + 1);
+  EXPECT_EQ(xs.split(bad_leads).size(), 4U);                                  // 3 empty matches -> 4 pieces
+  // replace with a nullable pattern inserts at each boundary without dropping the malformed bytes.
+  EXPECT_EQ(xs.replace(overlong, "-"), cat({"-", bytes({0xC0, 0x80}), "-"})); // boundaries 0 and 2
+  EXPECT_EQ(xs.replace(bad_leads, "-"), cat({"-", bytes({0xF5}), "-", bytes({0xF6}), "-"}));
+  EXPECT_EQ(xs.replace(lead_ascii, "-"),
+            cat({"-", "a", "-", bytes({0xC3}), "-", "b", "-"}));              // every byte preserved
 }
