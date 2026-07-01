@@ -28,6 +28,7 @@
 #include "config.hpp"
 #include "prefilter.hpp"
 #include "program.hpp"
+#include "unicode_fold.hpp"
 
 namespace real::detail {
 
@@ -173,6 +174,87 @@ namespace real::detail {
   constexpr bool is_any_non_ascii(const std::vector<code_range>& ranges)
   {
     return ranges.size() == 1 && ranges[0].lo == 0x80U && ranges[0].hi == 0x10FFFFU;
+  }
+
+  //! \brief Binary-searches \ref unicode_fold_table for \p cp; returns its entry or `nullptr`.
+  constexpr const fold_entry* find_fold_entry(std::uint32_t cp)
+  {
+    std::size_t lo {0};
+    std::size_t hi {unicode_fold_table_size};
+    while (lo < hi) {
+      const std::size_t mid {lo + ((hi - lo) / 2)};
+      if (unicode_fold_table[mid].cp < cp) {
+        lo = mid + 1;
+      }
+      else {
+        hi = mid;
+      }
+    }
+    if (lo < unicode_fold_table_size && unicode_fold_table[lo].cp == cp) {
+      return &unicode_fold_table[lo];
+    }
+    return nullptr;
+  }
+
+  /*!
+   * \brief Expands a character class to its Unicode simple case-fold closure (text-mode `icase`).
+   *
+   * The M2 algorithm — the fold acts on the WHOLE class, cross-boundary in both directions, before
+   * negation:
+   *   - **Bitmap (iterate-members-lookup):** each ASCII member (< 0x80) contributes its fold partners
+   *     (ASCII partners re-enter the bitmap; non-ASCII partners like `k`↦Kelvin become code-point
+   *     ranges). This is also the path the ASCII-letter literal fold takes, so there is one route.
+   *   - **Ranges (intersect-entries):** every fold entry whose code point falls inside a class range
+   *     contributes its partners (so a range attracts its ASCII partners, e.g. `[K…]`↦`k`, and
+   *     `[U+0080-U+10FFFF]` attracts `k`/`K` back into the bitmap).
+   *
+   * Idempotent on ASCII-only orbits (`[a]`↦`{a, A}`, no non-ASCII contamination). Partners that are
+   * already present are harmlessly re-added (the compiler tolerates redundant ranges).
+   */
+  constexpr class_def unicode_casefold(const class_def& in)
+  {
+    class_def  out {in};
+    const auto covered_by_input {[&in](std::uint32_t p) {
+                                   for (const code_range& r : in.ranges) {
+                                     if (p >= r.lo && p <= r.hi) {
+                                       return true;
+                                     }
+                                   }
+                                   return false;
+                                 }};
+    const auto add_partner {[&out, &covered_by_input](std::uint32_t p) {
+                              if (p < 0x80U) {
+                                out.ascii.set(static_cast<std::uint8_t>(p)); // bitmap set is idempotent
+                              }
+                              else if (!covered_by_input(p)) {
+                                out.ranges.push_back({.lo = p, .hi = p});    // a non-ASCII partner not already in the class
+                              }
+                            }};
+    for (std::uint32_t cp = 0; cp < 0x80U; ++cp) {
+      if (in.ascii.test(static_cast<std::uint8_t>(cp))) {
+        if (const fold_entry* const entry {find_fold_entry(cp)}) {
+          for (std::uint8_t i = 0; i < entry->count; ++i) {
+            add_partner(entry->partner[i]);
+          }
+        }
+      }
+    }
+    for (std::size_t i = 0; i < unicode_fold_table_size; ++i) {
+      const fold_entry& entry    {unicode_fold_table[i]};
+      bool              in_range {false};
+      for (const code_range& r : in.ranges) {
+        if (entry.cp >= r.lo && entry.cp <= r.hi) {
+          in_range = true;
+          break;
+        }
+      }
+      if (in_range) {
+        for (std::uint8_t k = 0; k < entry.count; ++k) {
+          add_partner(entry.partner[k]);
+        }
+      }
+    }
+    return out;
   }
 
   /*!

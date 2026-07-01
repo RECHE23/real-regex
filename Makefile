@@ -41,7 +41,9 @@ SCIFORGE_INCLUDE ?= ../sciforge/include
 # SciForge also owns the shared lint config (the MISRA base + uncrustify.cfg), in
 # its lint/ dir. Same sibling default; CI checks SciForge out alongside as ../sciforge.
 SCIFORGE_LINT ?= ../sciforge/lint
-FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp')
+# unicode_fold.hpp is generated (scripts/gen_unicode_fold.py owns its layout; the regen test pins it),
+# so it is excluded from the hand-written-code formatter.
+FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep -v 'include/real/unicode_fold.hpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
         lint misra fuzz fuzz-compat tsan doc doc-no-coverage format format-check full-local-gate clean \
