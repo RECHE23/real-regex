@@ -91,12 +91,32 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   // S2 net: regex_replace must match std::regex_replace — the empty-match TRAVERSAL is the new risk.
   // A nullable real-backed pattern routes to the lazy std backend (so it equals std by construction);
   // a non-nullable one runs the compat substitution on real's traversal, which must agree with std.
-  // The format exercises $&, $1, $`, $', $$ and a literal.
-  static const std::string fmt {"<$&|$1|$`|$'|$$x>"};
+  // S5b: the format is GENERATED from the input (not fixed) so it exercises $0, $N/$NN, $&, $`, $',
+  // $$, a lone trailing $, and literals — the branches that were coverage-discovered before.
+  std::string fmt;
+  for (const char c : subject) {
+    switch (static_cast<unsigned char>(c) % 12U) {
+      case 0: fmt += "$&"; break;
+      case 1: fmt += "$`"; break;
+      case 2: fmt += "$'"; break;
+      case 3: fmt += "$$"; break;
+      case 4: fmt += "$0"; break;  // platform-variant -> compat routes to std
+      case 5: fmt += "$1"; break;
+      case 6: fmt += "$2"; break;
+      case 7: fmt += "$15"; break; // multi-digit, usually out-of-range group
+      case 8: fmt += "$99"; break;
+      case 9: fmt += "$"; break;   // lone dollar
+      case 10: fmt += 'x'; break;  // literal
+      default: fmt += c; break;    // raw byte literal
+    }
+    if (fmt.size() > 96U) {
+      break;
+    }
+  }
   const std::string compat_out {real::compat::regex_replace(subject, compat, fmt)};
   const std::string std_out {std::regex_replace(subject, std_re, fmt)};
   if (compat_out != std_out) {
-    __builtin_trap(); // regex_replace divergence (format or empty-match traversal)
+    __builtin_trap(); // regex_replace divergence (format expansion or empty-match traversal)
   }
 
   // S2b net: the SEQUENCE of match spans from the iterator must equal std::sregex_iterator's — not
@@ -134,6 +154,30 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     }
     if (compat_tokens != std_tokens) {
       __builtin_trap(); // token-sequence divergence (split fields / trailing suffix derivation)
+    }
+  }
+
+  // S5b: a GENERATED field list — mixed -1/group/out-of-range selectors — must match
+  // std::sregex_token_iterator's token sequence (this is on libstdc++, the standard-conformant one).
+  {
+    static constexpr int menu[] {-1, 0, 1, 2, 3, 5};
+    std::vector<int>     fields;
+    const std::size_t    field_count {1U + (static_cast<std::size_t>(data[0]) % 3U)};
+    for (std::size_t k = 0; k < field_count; ++k) {
+      fields.push_back(menu[(static_cast<std::size_t>(data[1]) + k) % (sizeof(menu) / sizeof(int))]);
+    }
+    std::vector<token> compat_list;
+    for (real::compat::sregex_token_iterator it(subject.begin(), subject.end(), compat, fields), end;
+         it != end; ++it) {
+      compat_list.emplace_back(it->str(), it->matched);
+    }
+    std::vector<token> std_list;
+    for (std::sregex_token_iterator it(subject.begin(), subject.end(), std_re, fields), end;
+         it != end; ++it) {
+      std_list.emplace_back(it->str(), it->matched);
+    }
+    if (compat_list != std_list) {
+      __builtin_trap(); // token field-list divergence (mixed / out-of-range selectors)
     }
   }
 

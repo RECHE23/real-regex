@@ -624,7 +624,15 @@ namespace real::compat {
         return std::get<std::basic_regex<CharT, Traits>>(engine_);
       }
       if (!lazy_std_.has_value()) {
-        lazy_std_.emplace(pattern_.data(), pattern_.size(), detail::to_std(flags_));
+        try {
+          lazy_std_.emplace(pattern_.data(), pattern_.size(), detail::to_std(flags_));
+        }
+        catch (const std::regex_error& std_error) {
+          // A pattern real accepted but std cannot build (a real superset) reaches std only via a
+          // constraining flag / nullable replace-iterate. Surface it as a compat::regex_error, not a
+          // raw std one — R4-honest: an error, homogeneous with the ctor path, never a silent result.
+          throw regex_error(std_error);
+        }
       }
       return *lazy_std_;
     }
@@ -657,6 +665,17 @@ namespace real::compat {
           mark_count_ = compiled.group_count();
           nullable_   = compiled.raw_program().hints.empty_match_possible;
           engine_.template emplace<real::regex>(std::move(compiled));
+          if (nullable_) {
+            // A nullable real-backed pattern routes replace/iterate to std. Build that std eagerly
+            // here so the const replace/iterate op never mutates lazy_std_ under `const` (which would
+            // break std's guarantee that concurrent const ops on one object are safe). If std cannot
+            // build it (a nullable real-superset — rare), leave it lazy: search/match still run on
+            // real, and the wrapped error surfaces only if replace/iterate is actually used.
+            try {
+              (void)std_engine();
+            }
+            catch (const std::regex_error&) { /* deferred to first replace/iterate use */ }
+          }
         }
         catch (const real::regex_error&) {
           // real cannot represent it (backref / unbounded lookaround / POSIX class / non-ASCII in
@@ -976,14 +995,15 @@ namespace real::compat {
           ++i;
         }
         else if (next >= '0' && next <= '9') {
+          // ECMAScript / std: greedily take a second digit when present (`$12` -> group 12; `$015`
+          // -> group 01 == 1, then a literal '5'). The 2-digit value is used as-is; a reference to a
+          // group that does not exist expands to nothing (the digits are still consumed). ($0… is
+          // screened to std up front, so `next` here is 1-9.)
           std::size_t group    {static_cast<std::size_t>(next - '0')};
           std::size_t consumed {1};
           if (i + 2 < fmt.size() && fmt[i + 2] >= '0' && fmt[i + 2] <= '9') {
-            const std::size_t two_digit {(group * 10) + static_cast<std::size_t>(fmt[i + 2] - '0')};
-            if (two_digit < group_count) { // prefer the 2-digit group when it exists
-              group    = two_digit;
-              consumed = 2;
-            }
+            group    = (group * 10) + static_cast<std::size_t>(fmt[i + 2] - '0');
+            consumed = 2;
           }
           if (group >= 1 && group < group_count && m.start(group) != real::npos) {
             out.append(text.substr(m.start(group), m.end(group) - m.start(group)));

@@ -869,6 +869,17 @@ TEST(compat_replace_dollar_zero_and_sed_route_to_std)
   // mis-read it, so it routes to std.
   EXPECT_EQ(rc::regex_replace(subj, word, std::string("<&>"), rc::regex_constants::format_sed),
             std::regex_replace(subj, sword, std::string("<&>"), std::regex_constants::format_sed));
+
+  // Multi-digit $NN (fuzzer-found): `$` takes up to 2 digits greedily; a reference to a group that
+  // does not exist expands to empty (not a fall-back to $N + literal). Differential vs std.
+  const rc::regex   two(R"((a)(b))");
+  const std::regex  stwo(R"((a)(b))", std::regex::ECMAScript);
+  const std::string ab {"ab"};
+  for (const char* f : {"$15x", "$99", "$12", "$1x", "$3", "[$1|$2]", "x$1"}) {
+    EXPECT_EQ(rc::regex_replace(ab, two, std::string(f)), std::regex_replace(ab, stwo, std::string(f)));
+    // Also on a groupless pattern (every $N is out of range -> empty).
+    EXPECT_EQ(rc::regex_replace(subj, word, std::string(f)), std::regex_replace(subj, sword, std::string(f)));
+  }
 }
 
 TEST(compat_ready_after_failed_match)
@@ -895,4 +906,64 @@ TEST(compat_ready_after_failed_match)
   EXPECT(!rc::regex_search(subj2, m3, back));
   EXPECT(m3.ready());
   EXPECT_EQ(m3.size(), 0U);
+}
+
+TEST(compat_late_std_error_is_homogeneous)
+{
+  // A pattern real ACCEPTS but std REJECTS (a *real superset*) runs search/match on real. It reaches
+  // std only via a constraining flag / nullable replace-iterate, where the std build fails at runtime
+  // — that must surface as a compat::regex_error (homogeneous with the ctor path), never a raw
+  // std::regex_error and never a silent wrong result. The exact real-superset set is stdlib-dependent
+  // (libc++ rejects `\A`/`\a`; libstdc++ differs), so we find one at runtime.
+  const auto std_rejects {[](const std::string& p) {
+                            try {
+                              (void)std::regex(p, std::regex::ECMAScript);
+                              return false;
+                            }
+                            catch (const std::regex_error&) {
+                              return true;
+                            }
+                          }};
+  std::string super; // real-accepted (literal), std-rejected
+  for (const char* cand : {R"(\A)", R"(\Z)", R"(\a)"}) {
+    if (rc::regex(cand).uses_real() && std_rejects(cand)) {
+      super = cand;
+      break;
+    }
+  }
+  if (super.empty()) {
+    // No real-superset escape on this stdlib (libstdc++ accepts `\A`/`\Z`/`\a`; libc++ rejects them),
+    // so the late-std-throw path is not reachable here — nothing to assert. The wrap is exercised on
+    // the libc++ build (the coverage build), where such patterns exist.
+    return;
+  }
+
+  const rc::regex   re(super);
+  EXPECT(re.uses_real());
+  const std::string txt {"xAZy"};
+  EXPECT(rc::regex_search(txt, re)); // flag-free search runs on real, no std needed
+
+  bool       threw_compat {false};
+  rc::smatch m;
+  try {
+    (void)rc::regex_search(txt, m, re, rc::regex_constants::match_not_bol); // flag -> std -> throws
+  }
+  catch (const rc::regex_error&) {                                          // the compat type specifically (derives from std::regex_error)
+    threw_compat = true;
+  }
+  EXPECT(threw_compat);
+
+  // Nullable real-superset (super + `*`): the eager std build at ctor is swallowed (search still
+  // works on real), and replace surfaces the wrapped error only when actually used.
+  const rc::regex nullable_super(super + "*");
+  EXPECT(nullable_super.uses_real());
+  EXPECT(rc::regex_search(txt, nullable_super)); // real path, fine (nullable matches empty)
+  bool threw_compat2 {false};
+  try {
+    (void)rc::regex_replace(txt, nullable_super, std::string("x"));
+  }
+  catch (const rc::regex_error&) {
+    threw_compat2 = true;
+  }
+  EXPECT(threw_compat2);
 }

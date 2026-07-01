@@ -57,6 +57,24 @@ present; and a format containing **`$0`**, which is platform-variant (libstdc++ 
 strict-ECMAScript/MSVC = a literal `$0`) so `real` cannot pick one without risking a silent
 divergence.
 
+## Errors and thread-safety
+
+A pattern `real` accepts but `std` rejects (a *real superset*, e.g. `\A` = literal `A` on `real`,
+rejected by `std`) runs `search`/`match` on `real`. It reaches `std` only via a constraining match
+flag or a nullable `regex_replace`/iterator; if the `std` build then fails, the error surfaces as a
+`real::compat::regex_error` (which *is* a `std::regex_error`) — **homogeneous with the construction
+path, an error rather than a silent wrong result** (R4). This is a *late* throw: constructing the
+regex succeeds (it is valid for `real`), and the error appears only when the `std`-only operation is
+first invoked.
+
+Nullable real-backed patterns build their `std` engine **eagerly at construction** (they route
+replace/iterate to `std` anyway): this keeps those `const` operations from lazily mutating the cached
+`std` engine under `const`, preserving `std`'s guarantee that concurrent `const` operations on one
+object are safe. Measured cost: ~0.2–0.4 µs per nullable-regex construction (a cold path). A
+non-nullable real-backed pattern used with a constraining flag from multiple threads *simultaneously
+for the first time* still builds its `std` engine lazily — construct-then-share, or make a first
+flagged call, before sharing such a regex across threads.
+
 ## Behaviour after a failed match
 
 A failed `regex_search` / `regex_match` leaves the `match_results` **ready** (`ready() == true`,
