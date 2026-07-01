@@ -299,6 +299,25 @@ compilation error. Two denial-of-service vectors are closed structurally:
 pattern* (e.g. `a{1000}{1000}` unrolling) by the caps in config.hpp on program
 size, nesting depth, repeat and group counts.
 
+\section g_perf 10. Known performance characteristics
+
+Everything is linear in the subject length; the notes below are about *program size* — how many
+NFA instructions a pattern compiles to (a small constant per byte matched).
+
+- **ASCII, and non-cased patterns:** unchanged by `IGNORECASE`. `abc` is 3 byte ops; `[0-9]+` and
+  `[b-d]+` compile to the same program with or without `i`.
+- **Case folding (text-mode `i`):** a cased ASCII literal or class gains its Unicode fold partners.
+  A literal costs a few ops (`k+` is ~10 — it folds to `{k, K, Kelvin}`); a class costs one branch
+  per code-point range it accepts (`[a-z]+` ≈ 18, `[A-Za-z]+` ≈ 39). Folding a **range** pulls in the
+  partners of every cased member; the ranges are coalesced (sorted + merged) so the result stays
+  compact — `[a-é]+` is ~43 ops, `[à-ÿ]+` ~23, `[U+0080-U+FFFF]+` ~29. These are tens of ops, far
+  below the `max_program_size` cap in config.hpp, and the byte-class DFA collapses them to a handful
+  of states (7–12). A pattern that ever did approach the DFA-state cap degrades to the general Pike
+  VM (`dfa_error` → fallback), never to OOM.
+- **Compile time:** the generated `unicode_fold.hpp` orbit table (~2900 entries) adds ~20 ms to a
+  translation unit that includes `real/real.hpp`; a `static_regex` with `IGNORECASE` folds at
+  compile time (constexpr), which is the usual constexpr cost, not a runtime one.
+
 \section g_refs Further reading
 
 - \ref divergences — every intentional difference from Python `re`, with its rationale.

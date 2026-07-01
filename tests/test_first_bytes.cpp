@@ -23,6 +23,26 @@ TEST(first_bytes_icase_literal_folds_both_cases)
   EXPECT(!rx.unique_first_byte().has_value()); // two possible first bytes
 }
 
+// Probe 1b — CF2/CF3: an icase literal that folds to a NON-ASCII partner still carries that
+// partner's UTF-8 lead in the first-byte set (compute_first_bytes walks the folded bytecode), so the
+// prefilter keeps working across the boundary. 'k' folds to {k, K, Kelvin U+212A}. Pinned so a
+// regression in the folded first-byte set is localizable, and proven end to end with a haystack scan.
+TEST(first_bytes_icase_folds_to_nonascii_lead)
+{
+  const real::regex rx("k", real::flags::icase);
+  EXPECT(rx.has_first_byte_set());
+  EXPECT(rx.may_start_with('k'));
+  EXPECT(rx.may_start_with('K'));
+  EXPECT(rx.may_start_with(static_cast<char>(0xE2))); // Kelvin U+212A = E2 84 AA -> lead 0xE2
+  EXPECT(!rx.may_start_with('a'));
+  std::string hay(2000, 'x');
+  hay.replace(1000, 3, "\xE2\x84\xAA");               // Kelvin at byte 1000, in 2 KiB of noise
+  const auto m {rx.search(hay)};
+  EXPECT(m.matched());
+  EXPECT_EQ(m.start(), 1000U);
+  EXPECT_EQ(m.end(), 1003U);
+}
+
 // Probe 2 — a plain literal has a unique first byte; other bytes are rejected.
 TEST(first_bytes_plain_literal_is_unique)
 {

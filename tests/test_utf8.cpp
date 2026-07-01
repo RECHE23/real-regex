@@ -550,3 +550,20 @@ TEST(icase_unicode_folding_contract)
   EXPECT(fullmatches("a", "A", i));
   EXPECT(!fullmatches("a", e, i));
 }
+
+TEST(icase_range_fold_coalescing_membership)
+{
+  using real::flags;
+  const flags i {flags::icase};
+  // CF3 coalesced the fragmented fold of [a-é] (133 -> 43 ops) WITHOUT changing the accepted set.
+  // The membership contract (oracle: re.IGNORECASE) is unchanged across the dedupe/merge:
+  EXPECT(fullmatches("[a-é]", "É", i));                       // partner already inside the range
+  EXPECT(fullmatches("[a-é]", bytes({0xE2, 0x84, 0xAA}), i)); // Kelvin (k's partner), OUT of range
+  EXPECT(fullmatches("[a-é]", bytes({0xC3, 0xBE}), i));       // þ U+00FE (from Þ-fold) just above range
+  EXPECT(fullmatches("[a-é]", bytes({0xC5, 0xBF}), i));       // ſ U+017F (from s)
+  EXPECT(!fullmatches("[a-é]", bytes({0xC4, 0x80}), i));      // Ā U+0100 unrelated, just above -> no
+  EXPECT(!fullmatches("[a-é]", bytes({0xC3, 0xBF}), i));      // ÿ U+00FF (Ÿ not in the range) -> no
+  // Boundary: an ASCII range folds ASCII partners only; 0x7F and U+0080 never leak in.
+  EXPECT(!fullmatches("[a-z]", bytes({0x7F}), i));
+  EXPECT(!fullmatches("[a-z]", bytes({0xC2, 0x80}), i));      // U+0080
+}
