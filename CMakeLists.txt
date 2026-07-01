@@ -159,6 +159,12 @@ if(REAL_SANITIZE)
     target_compile_options(real_tests_bin PRIVATE
         -fsanitize=address,undefined -fno-omit-frame-pointer -g -O1)
     target_link_options(real_tests_bin PRIVATE -fsanitize=address,undefined)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        # libstdc++ <regex> _State std::function middle-end -Wmaybe-uninitialized FP under -O1.
+        # Scoped to the sanitize build (ASan/UBSan is its purpose); the normal build keeps
+        # -Werror=maybe-uninitialized on our code, so a real one is still caught there.
+        target_compile_options(real_tests_bin PRIVATE -Wno-error=maybe-uninitialized)
+    endif()
 endif()
 
 if(REAL_COVERAGE)

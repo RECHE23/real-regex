@@ -19,6 +19,9 @@
 namespace rc = real::compat;
 using namespace std::string_view_literals;
 
+// ptrdiff_t: position/length are ptrdiff_t; long narrows on MSVC-LLP64 under /WX.
+using span_pair = std::pair<std::ptrdiff_t, std::ptrdiff_t>;
+
 namespace {
 
   // Run real::compat and std::regex on (pattern, subject); assert identical verdict + whole-match
@@ -288,8 +291,8 @@ TEST(compat_match_flags)
 
   // Iterator: a constraining flag routes the iterator to std; the span sequence equals std's.
   const std::string                  it1 {"abc abc"};
-  std::vector<std::pair<long, long>> got;
-  std::vector<std::pair<long, long>> ref;
+  std::vector<span_pair>             got;
+  std::vector<span_pair>             ref;
   for (rc::sregex_iterator it(it1.begin(), it1.end(), word, mc::match_continuous), e; it != e; ++it) {
     got.emplace_back(it->position(0), it->length(0));
   }
@@ -414,8 +417,8 @@ TEST(compat_regex_iterator)
   };
   for (const auto& [pat, subj] : cases) {
     const rc::regex                    re(pat);
-    std::vector<std::pair<long, long>> got;
-    std::vector<std::pair<long, long>> ref;
+    std::vector<span_pair>             got;
+    std::vector<span_pair>             ref;
     for (rc::sregex_iterator it(subj.begin(), subj.end(), re), e; it != e; ++it) {
       got.emplace_back(it->position(0), it->length(0));
     }
@@ -450,8 +453,8 @@ TEST(compat_regex_iterator)
   // empty-match advance is ECMAScript's. The span sequence must still equal std::cregex_iterator's.
   const rc::regex digits(R"(\d*)");
   EXPECT(!digits.uses_real_traversal());
-  std::vector<std::pair<long, long>> cgot;
-  std::vector<std::pair<long, long>> cref;
+  std::vector<span_pair> cgot;
+  std::vector<span_pair> cref;
   for (rc::cregex_iterator it(cstr, cstr + 4, digits), e; it != e; ++it) {
     cgot.emplace_back(it->position(0), it->length(0));
   }
@@ -571,8 +574,8 @@ TEST(compat_wregex_always_std)
     EXPECT_EQ(wm.length(0), sm.length(0));
 
     // Iterator span sequence parity.
-    std::vector<std::pair<long, long>> wspans;
-    std::vector<std::pair<long, long>> sspans;
+    std::vector<span_pair> wspans;
+    std::vector<span_pair> sspans;
     for (rc::wsregex_iterator it(subj.begin(), subj.end(), wr), e; it != e; ++it) {
       wspans.emplace_back(it->position(0), it->length(0));
     }
