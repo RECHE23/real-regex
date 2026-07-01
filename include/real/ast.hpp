@@ -21,6 +21,7 @@
 #include "version.hpp"
 
 #include <cstdint>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -28,6 +29,7 @@
 #include "config.hpp"
 #include "program.hpp"
 #include "unicode_fold.hpp"
+#include "unicode_props.hpp"
 #include "utf8.hpp"
 
 namespace real::detail {
@@ -191,7 +193,8 @@ namespace real::detail {
         verbose_(has_flag(initial_flags, flags::verbose)),
         bytes_(has_flag(initial_flags, flags::bytes)),
         ecma_(has_flag(initial_flags, flags::ecma)),
-        icase_(has_flag(initial_flags, flags::icase))
+        icase_(has_flag(initial_flags, flags::icase)),
+        ascii_(has_flag(initial_flags, flags::ascii))
     {}
 
     /*!
@@ -220,6 +223,7 @@ namespace real::detail {
     bool             bytes_         {}; //!< In \ref flags::bytes mode, rejects code-point escapes (`\u`/`\U`).
     bool             ecma_          {}; //!< ECMAScript grammar: `\A \Z \< \>` are identity-escape literals, not anchors.
     bool             icase_         {}; //!< `re.I`: a cased literal is promoted to a foldable singleton class.
+    bool             ascii_         {}; //!< `re.A`: `\d \w \s` stay ASCII (no Unicode property ranges).
 
     /*!
      * \brief In verbose mode, consumes insignificant whitespace and `#` comments.
@@ -335,6 +339,26 @@ namespace real::detail {
       out.classes.push_back({.ascii = klass, .ranges = ranges});
       const auto index {static_cast<std::int32_t>(out.classes.size()) - 1};
       return add_node(out, {.kind = node_kind::klass, .negated = negated, .klass = index});
+    }
+
+    /*!
+     * \brief The non-ASCII (>= 0x80) code-point ranges of a Unicode property table (`\d`/`\s`/`\w`),
+     *        for a text-mode shorthand. In bytes or ASCII mode (`flags::ascii` == `re.A`) the shorthand
+     *        stays ASCII-only, so this returns nothing and the ASCII bitmap alone is used.
+     */
+    [[nodiscard]] constexpr std::vector<code_range> shorthand_ranges(std::span<const code_range> table) const
+    {
+      std::vector<code_range> out;
+      if (bytes_ || ascii_) {
+        return out;
+      }
+      for (const code_range& r : table) {
+        if (r.hi < 0x80U) {
+          continue; // wholly ASCII: already covered by the bitmap
+        }
+        out.push_back({.lo = r.lo < 0x80U ? 0x80U : r.lo, .hi = r.hi});
+      }
+      return out;
     }
 
     /*!
@@ -596,11 +620,8 @@ namespace real::detail {
           return flags::dotall;
         case 'x':
           return flags::verbose;
-        // 'a' (ASCII) is a recognized flag, accepted as a no-op because ASCII
-        // is already this library's semantics — intent distinct from an
-        // unrecognized letter, hence kept separate from default.
-        case 'a': // NOLINT(bugprone-branch-clone)
-          return flags::none;
+        case 'a': // ASCII mode: `\d \w \s \b` stay ASCII, icase folds ASCII only.
+          return flags::ascii;
         default:
           return flags::none;
       }
@@ -650,6 +671,9 @@ namespace real::detail {
       }
       if (has_flag(found, flags::icase)) {
         icase_ = true;   // a leading (?i) makes cased literals foldable, like the constructor flag
+      }
+      if (has_flag(found, flags::ascii)) {
+        ascii_ = true;   // a leading (?a) keeps the shorthands ASCII, like the constructor flag
       }
       return true;
     }
@@ -1096,11 +1120,11 @@ namespace real::detail {
       switch (peek()) {
         case 'd':
           ++pos_;
-          return add_class_node(out, digit_set(), false);
+          return add_class_node(out, digit_set(), false, shorthand_ranges(digit_ranges));
         case 'D':
           ++pos_;
-          return add_class_node(out, digit_set(), true);
-        case 'w':
+          return add_class_node(out, digit_set(), true, shorthand_ranges(digit_ranges));
+        case 'w': // W2: \w stays ASCII; the Unicode word table is wired in W3.
           ++pos_;
           return add_class_node(out, word_set(), false);
         case 'W':
@@ -1108,10 +1132,10 @@ namespace real::detail {
           return add_class_node(out, word_set(), true);
         case 's':
           ++pos_;
-          return add_class_node(out, space_set(), false);
+          return add_class_node(out, space_set(), false, shorthand_ranges(space_ranges));
         case 'S':
           ++pos_;
-          return add_class_node(out, space_set(), true);
+          return add_class_node(out, space_set(), true, shorthand_ranges(space_ranges));
         // `\A \Z \< \>` are REAL extensions (text-start/end, word-start/end). ECMAScript has no
         // such escapes — they are identity escapes (the literal character). Under the ecma flag
         // (the std-compat layer), emit the literal; otherwise keep REAL's anchor. `\b`/`\B` are
@@ -1176,11 +1200,14 @@ namespace real::detail {
      * \brief Parses one member inside a character class.
      * \param[in,out] klass The class being built; a set member (`\d` etc.) is
      *                   merged directly into it.
+     * \param[in,out] ranges The class's non-ASCII code-point ranges; a Unicode
+     *                   shorthand (`\d` `\s` in text mode) appends its ranges here.
      * \return A single byte (usable as a range endpoint), or -1 when the member
      *         was a whole set merged into \p klass.
      * \throws real::regex_error on a non-ASCII member or an unsupported escape.
      */
-    constexpr std::int32_t parse_class_item(char_class& klass)
+    constexpr std::int32_t parse_class_item(char_class&               klass,
+                                            std::vector<code_range>&  ranges)
     {
       const char ch {peek()};
       if (static_cast<std::uint8_t>(ch) >= 0x80) {
@@ -1206,17 +1233,25 @@ namespace real::detail {
       }
       switch (peek()) {
         case 'd':
-          ++pos_;
-          klass.merge(digit_set());
-          return -1;
-        case 'w':
+          {
+            ++pos_;
+            klass.merge(digit_set());
+            const std::vector<code_range> high {shorthand_ranges(digit_ranges)};
+            ranges.insert(ranges.end(), high.begin(), high.end());
+            return -1;
+          }
+        case 'w': // W2: \w in a class stays ASCII; the Unicode word table is wired in W3.
           ++pos_;
           klass.merge(word_set());
           return -1;
         case 's':
-          ++pos_;
-          klass.merge(space_set());
-          return -1;
+          {
+            ++pos_;
+            klass.merge(space_set());
+            const std::vector<code_range> high {shorthand_ranges(space_ranges)};
+            ranges.insert(ranges.end(), high.begin(), high.end());
+            return -1;
+          }
         case 'D':
         case 'W':
         case 'S':
@@ -1306,15 +1341,15 @@ namespace real::detail {
         }
         first = false;
         const std::size_t  item_pos     {pos_};
-        const std::int32_t range_start  {parse_class_item(klass)};
+        const std::int32_t range_start  {parse_class_item(klass, ranges)};
         if (range_start < 0) {
-          continue; // set item: nothing more to do
+          continue; // set item (e.g. \d): its bitmap and any Unicode ranges are already merged
         }
         // Possible range: 'x-y', where a trailing '-]' is a literal '-'.
         if (!eof() && peek() == '-' && pos_ + 1 < pattern_.size() &&
             pattern_[pos_ + 1] != ']') {
           ++pos_; // consume '-'
-          const std::int32_t range_end {parse_class_item(klass)};
+          const std::int32_t range_end {parse_class_item(klass, ranges)};
           if (range_end < 0 || range_end < range_start) {
             pos_ = item_pos;
             fail("bad character range");

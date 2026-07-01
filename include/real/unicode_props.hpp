@@ -14,6 +14,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 #include "program.hpp" // code_range
 
@@ -891,12 +892,11 @@ namespace real::detail {
 
   //! \brief Binary-searches a sorted, non-overlapping range table for \p cp. Returns a bool
   //!        (not a pointer into the table) so it stays constant-evaluable on every compiler.
-  constexpr bool cp_in_ranges(const code_range* ranges,
-                              std::size_t       count,
-                              char32_t          cp)
+  constexpr bool cp_in_ranges(std::span<const code_range> ranges,
+                              char32_t                    cp)
   {
     std::size_t lo {0};
-    std::size_t hi {count};
+    std::size_t hi {ranges.size()};
     while (lo < hi) {
       const std::size_t mid {lo + ((hi - lo) / 2)};
       if (ranges[mid].hi < cp) {
@@ -906,13 +906,13 @@ namespace real::detail {
         hi = mid;
       }
     }
-    return lo < count && cp >= ranges[lo].lo && cp <= ranges[lo].hi;
+    return lo < ranges.size() && cp >= ranges[lo].lo && cp <= ranges[lo].hi;
   }
 
   //! \brief Whether \p cp is a Unicode word / digit / whitespace code point (== re `\w`/`\d`/`\s`).
-  constexpr bool is_word_cp(char32_t cp) { return cp_in_ranges(word_ranges, word_ranges_size, cp); }
-  constexpr bool is_digit_cp(char32_t cp) { return cp_in_ranges(digit_ranges, digit_ranges_size, cp); }
-  constexpr bool is_space_cp(char32_t cp) { return cp_in_ranges(space_ranges, space_ranges_size, cp); }
+  constexpr bool is_word_cp(char32_t cp) { return cp_in_ranges(word_ranges, cp); }
+  constexpr bool is_digit_cp(char32_t cp) { return cp_in_ranges(digit_ranges, cp); }
+  constexpr bool is_space_cp(char32_t cp) { return cp_in_ranges(space_ranges, cp); }
 
 } // namespace real::detail
 

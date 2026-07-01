@@ -49,10 +49,12 @@ class TestCompile(unittest.TestCase):
         self.assertTrue(real.compile(r"[ ]", real.X).fullmatch(" "))  # literal in class
         self.assertTrue(real.compile(r"(?x) a b c").fullmatch("abc"))  # inline (?x)
 
-    def test_noop_flags_accepted(self):
-        """ASCII/A and UNICODE/U are accepted but have no effect."""
-        self.assertTrue(real.compile("a", real.A).match("a"))
+    def test_ascii_and_unicode_flags(self):
+        """A restricts \\d \\s (and folding) to ASCII; U is a no-op (Unicode is the default)."""
+        self.assertTrue(real.compile("a", real.A).match("a"))  # no effect on a plain literal
         self.assertTrue(real.compile("a", real.U).match("a"))
+        self.assertEqual(real.findall(r"\d", "٣5", real.A), ["5"])   # A: ASCII digits only
+        self.assertEqual(real.findall(r"\d", "٣5", real.U), ["٣", "5"])  # U: Unicode (default)
 
     def test_program_size_limit(self):
         """Patterns exceeding the compiled-program size cap raise real.error."""
@@ -317,7 +319,23 @@ class TestIntentionalDivergences(unittest.TestCase):
         self.assertIsNotNone(real.compile(r"é", real.I).fullmatch("é"))
         self.assertIsNotNone(real.compile(r"é", real.I).fullmatch("É"))
         self.assertIsNotNone(real.compile("k", real.I).fullmatch("K"))  # k <-> Kelvin
-        # The \w \d \s shorthands stay ASCII by design (the separate Unicode-word arc).
+        # \w stays ASCII for now; \d \s are Unicode -- see test_shorthands_d_s_are_unicode.
+
+    def test_shorthands_d_s_are_unicode(self):
+        # W2: \d \s are Unicode in str mode (like re); \w stays ASCII for now.
+        self.assertEqual(real.findall(r"\d", "a٣b5"), ["٣", "5"])  # Arabic-Indic digit + ASCII
+        self.assertIsNone(real.compile(r"\d").fullmatch("½"))       # No is not a \d digit
+        self.assertIsNotNone(real.compile(r"\s").fullmatch("\u00a0"))  # NBSP
+        self.assertIsNotNone(real.compile(r"\D").fullmatch("é"))
+        self.assertEqual(real.findall(r"[\d]+", "٣5.9"), ["٣5", "9"])
+        self.assertEqual(real.findall(r"\w", "٣"), [])              # \w still ASCII
+
+    def test_ascii_flag_reverts_shorthands(self):
+        # re.A keeps \d \s and folding ASCII in str mode; re.U is a no-op (Unicode is the default).
+        self.assertEqual(real.findall(r"\d", "a٣b5", real.A), ["5"])
+        self.assertIsNone(real.compile(r"\s", real.A).fullmatch("\u00a0"))  # NBSP not ASCII space
+        self.assertIsNotNone(real.compile("k", real.A | real.I).fullmatch("k"))  # ASCII fold still works
+        self.assertEqual(real.findall(r"\d", "٣5", real.U), ["٣", "5"])
 
     def test_hex_escape_is_byte_level(self):
         # \xHH for HH >= 0x80 matches the raw byte, not chr(HH): re str \xe9 matches U+00E9 (é),

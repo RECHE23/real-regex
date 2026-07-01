@@ -526,8 +526,8 @@ namespace real::detail {
     {
       class_def folded {tree_.classes[static_cast<std::size_t>(node.klass)]};
       if (has_flag(flags_, flags::icase)) {
-        if (has_flag(flags_, flags::bytes)) {
-          fold_ascii_case(folded.ascii);     // bytes: ASCII-only fold (compat-safe; a bytes class has no ranges)
+        if (has_flag(flags_, flags::bytes) || has_flag(flags_, flags::ascii)) {
+          fold_ascii_case(folded.ascii);     // bytes / ASCII mode (re.A): ASCII-only fold, no Unicode partners
         }
         else {
           folded = unicode_casefold(folded); // text: full Unicode fold of the whole class, both directions

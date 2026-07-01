@@ -32,8 +32,8 @@ namespace {
     CONSTEXPR_EXPECT(!real::regex("[a-z]").fullmatch("Q"));
     CONSTEXPR_EXPECT(real::regex("[^a]").fullmatch("é").matched());
     CONSTEXPR_EXPECT(!real::regex("[^a]").fullmatch("ab"));
-    CONSTEXPR_EXPECT(real::regex("\\d\\d").fullmatch("42").matched());
-    CONSTEXPR_EXPECT(real::regex("\\D").fullmatch("é").matched());
+    CONSTEXPR_EXPECT(real::regex("\\d\\d", real::flags::ascii).fullmatch("42").matched());
+    CONSTEXPR_EXPECT(real::regex("\\D", real::flags::ascii).fullmatch("é").matched());
     CONSTEXPR_EXPECT(real::regex(".").fullmatch("𝄞").matched());
     CONSTEXPR_EXPECT(!real::regex(".").fullmatch("\n"));
     CONSTEXPR_EXPECT(real::regex("a.c").fullmatch("aéc").matched());
@@ -53,7 +53,7 @@ namespace {
     CONSTEXPR_EXPECT(real::regex("a{2,4}").match("aaaaa").end() == 4);
     CONSTEXPR_EXPECT(real::regex("a{2,4}?").match("aaaaa").end() == 2);
     CONSTEXPR_EXPECT(!real::regex("a{3}").fullmatch("aa"));
-    CONSTEXPR_EXPECT(real::regex("\\d+").fullmatch("123").matched());
+    CONSTEXPR_EXPECT(real::regex("\\d+", real::flags::ascii).fullmatch("123").matched());
     CONSTEXPR_EXPECT(real::regex("a{").fullmatch("a{").matched());
     CONSTEXPR_EXPECT(real::regex("<.+?>").search("<a><b>").end() == 3);
     CONSTEXPR_EXPECT(real::regex("[0-9a-f]{8}").search("x a3f9c1d8 y").start() == 2);
@@ -67,12 +67,12 @@ namespace {
     CONSTEXPR_EXPECT(real::regex("a|ab").search("ab").end() == 1); // leftmost-first
     CONSTEXPR_EXPECT(real::regex("((a|b)|c)d").fullmatch("bd").matched());
     CONSTEXPR_EXPECT(real::regex("(foo|bar)*baz").fullmatch("barfoobaz").matched());
-    CONSTEXPR_EXPECT(real::regex("(\\d{4})-(\\d{2})").search("2026-06").start(1) == 0);
-    CONSTEXPR_EXPECT(real::regex("(\\d{4})-(\\d{2})").search("2026-06")[2] ==
+    CONSTEXPR_EXPECT(real::regex("(\\d{4})-(\\d{2})", real::flags::ascii).search("2026-06").start(1) == 0);
+    CONSTEXPR_EXPECT(real::regex("(\\d{4})-(\\d{2})", real::flags::ascii).search("2026-06")[2] ==
                      std::string_view("06"));
     CONSTEXPR_EXPECT(real::regex("(a)?b").fullmatch("b").start(1) == real::npos);
     CONSTEXPR_EXPECT(real::regex("(ab)+").fullmatch("abab").start(1) == 2);
-    CONSTEXPR_EXPECT(real::regex("(?P<y>\\d+)x").search("42x")["y"] == std::string_view("42"));
+    CONSTEXPR_EXPECT(real::regex("(?P<y>\\d+)x", real::flags::ascii).search("42x")["y"] == std::string_view("42"));
     CONSTEXPR_EXPECT(real::regex("(?:a|b)c").fullmatch("bc").matched());
     CONSTEXPR_EXPECT(real::regex("the|fox|dog").search("a dog").start() == 2); // alternation fast path
     CONSTEXPR_EXPECT(real::regex("a|ab").search("ab").end() == 1);             // leftmost-first
@@ -101,7 +101,7 @@ namespace {
   {
     std::size_t       count = 0;
     std::size_t       total = 0;
-    const real::regex digits("\\d+");
+    const real::regex digits("\\d+", real::flags::ascii);
     for (const auto& match : digits.find_iter("a1 bb22 c333")) {
       ++count;
       total += match.end() - match.start();
@@ -110,7 +110,7 @@ namespace {
     CONSTEXPR_EXPECT(total == 6);
     const real::regex xs("x*");
     CONSTEXPR_EXPECT(xs.find_all("axb").size() == 4); // Python spans
-    CONSTEXPR_EXPECT(real::regex("\\d+").replace("a1b22c", "#") == "a#b#c");
+    CONSTEXPR_EXPECT(real::regex("\\d+", real::flags::ascii).replace("a1b22c", "#") == "a#b#c");
     CONSTEXPR_EXPECT(real::regex("(\\w+)@(\\w+)").replace("bob@host", "$2:$1") == "host:bob");
     CONSTEXPR_EXPECT(real::regex("x*").replace("axb", "-") == "-a--b-");
     CONSTEXPR_EXPECT(real::regex(",").split("a,b,,c").size() == 4);

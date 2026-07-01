@@ -1,5 +1,6 @@
 // Character classes, escape sequences and the `.` metacharacter, including
 // the UTF-8 whole-codepoint guarantees of negated classes and dot.
+#include <string>
 #include <string_view>
 
 #include <sciforge/test/framework.hpp>
@@ -229,4 +230,59 @@ TEST(codepoint_class_fast_path)
   const char        bad[] {'a', static_cast<char>(0x80), 'b'};
   const std::string text(bad, sizeof bad);
   EXPECT_EQ(notcomma.find_all(text).size(), 2U); // "a" and "b", the 0x80 skipped
+}
+
+TEST(unicode_shorthand_d_s_text_mode)
+{
+  // W2: in text mode \d \s match Unicode (\w \b remain ASCII until W3/W4). Oracle is re: \d == Nd,
+  // \s == Unicode whitespace. \D \S are their complements over all code points.
+  EXPECT(real::regex("\\d").fullmatch("٣"));  // ARABIC-INDIC DIGIT THREE (Nd)
+  EXPECT(real::regex("\\d").fullmatch("９"));  // FULLWIDTH DIGIT NINE (Nd)
+  EXPECT(!real::regex("\\d").fullmatch("½")); // VULGAR FRACTION HALF (No) is not a \d digit
+  EXPECT(real::regex("\\d").fullmatch("7"));  // ASCII still matches
+  EXPECT(real::regex("\\s").fullmatch(" "));  // NBSP
+  EXPECT(real::regex("\\s").fullmatch(" "));  // LINE SEPARATOR
+  EXPECT(real::regex("\\s").fullmatch(" "));  // ASCII space still matches
+  EXPECT(!real::regex("\\s").fullmatch("é"));
+  // Negations: \D \S match any code point outside the (Unicode) set.
+  EXPECT(real::regex("\\D").fullmatch("é"));
+  EXPECT(!real::regex("\\D").fullmatch("٣"));
+  EXPECT(real::regex("\\S").fullmatch("é"));
+  EXPECT(!real::regex("\\S").fullmatch(" "));
+  // In a class: [\d] == \d, [^\d] == \D (Unicode ranges included).
+  EXPECT(real::regex("[\\d]").fullmatch("٣"));
+  EXPECT(real::regex("[^\\d]").fullmatch("é"));
+  EXPECT(!real::regex("[^\\d]").fullmatch("٣"));
+  EXPECT(real::regex("[\\d.]+").fullmatch("٣.5")); // Unicode digit mixed with a literal member
+  // icase is a no-op on \d \s (they are not cased).
+  EXPECT(real::regex("\\d", real::flags::icase).fullmatch("٣"));
+}
+
+TEST(unicode_shorthand_ascii_flag_reverts)
+{
+  using real::flags;
+  // flags::ascii (re.A) keeps \d \s ASCII even in text mode; \w unchanged.
+  EXPECT(!real::regex("\\d", flags::ascii).fullmatch("٣"));
+  EXPECT(real::regex("\\d", flags::ascii).fullmatch("7"));
+  EXPECT(!real::regex("\\s", flags::ascii).fullmatch(" "));
+  EXPECT(!real::regex("[\\d]", flags::ascii).fullmatch("٣"));
+  EXPECT(real::regex("(?a)\\d").fullmatch("7") && !real::regex("(?a)\\d").fullmatch("٣")); // inline (?a)
+  // The CPython "k == Kelvin" wart is intentionally NOT reproduced under ascii+icase: strict ASCII.
+  EXPECT(!real::regex("k", flags::ascii | flags::icase).fullmatch("K"));                   // Kelvin
+  EXPECT(real::regex("k", flags::ascii | flags::icase).fullmatch("K"));                    // ASCII fold still works
+  EXPECT(!real::regex("é", flags::ascii | flags::icase).fullmatch("É"));                   // no Unicode fold
+  // Bytes mode is unchanged (ASCII shorthands).
+  EXPECT(real::regex("\\d", flags::bytes).fullmatch("7"));
+}
+
+TEST(unicode_shorthand_lookbehind_budget)
+{
+  using real::flags;
+  // \d in text mode spans up to 4 bytes, so the fixed-width lookbehind budget (255 bytes) tightens:
+  // \d{63} == 252 bytes compiles, \d{64} == 256 is rejected. Under ascii, \d is 1 byte again.
+  const std::string h63  {std::string(63, '7') + "x"};
+  const std::string h255 {std::string(255, '7') + "x"};
+  EXPECT(real::regex("(?<=\\d{63})x").search(h63).matched());
+  EXPECT_THROWS(real::regex("(?<=\\d{64})x"), real::regex_error);
+  EXPECT(real::regex("(?<=\\d{255})x", flags::ascii).search(h255).matched());
 }

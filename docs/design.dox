@@ -164,7 +164,8 @@ A character class is a \ref real::detail::char_class — a **256-bit bitmap**
   b \in S \iff \big(\text{bits}[\,b \gg 6\,] \gg (b \,\&\, 63)\big) \,\&\, 1 .
 \f]
 
-\\d \\w \\s are ASCII by design; case folding is full Unicode for literals/classes
+\\d \\s are Unicode in text mode (via the generated `unicode_props.hpp` ranges), \\w is ASCII for
+now, and all shorthands are ASCII in bytes mode or under `flags::ascii`; case folding is full Unicode for literals/classes
 (text-mode `IGNORECASE`, via the generated `unicode_fold.hpp` orbits), ASCII for the
 shorthands. The payoff is alignment: a
 construct that matches a whole codepoint (`.`, a negated class) is compiled to
@@ -314,9 +315,23 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   below the `max_program_size` cap in config.hpp, and the byte-class DFA collapses them to a handful
   of states (7–12). A pattern that ever did approach the DFA-state cap degrades to the general Pike
   VM (`dfa_error` → fallback), never to OOM.
+- **Unicode shorthands (text-mode `\d \s`):** a Unicode shorthand expands to one branch per
+  code-point range it accepts, so it is far larger than its ASCII form. Measured program size
+  (instructions / interned classes), text vs `flags::ascii`: `\d+` 386/60 vs 5/1; `\s+` 43/14 vs 5/1;
+  `[\d.]+` 386/60 vs 5/1; `\D` 1108/128 vs 19/5 (a complement spans the gaps between digit ranges).
+  Consequences: the single-class scan-loop fast path does not apply (a Unicode `\d+` runs on the
+  general VM — still linear); the fixed-width lookbehind budget (255 bytes) tightens because `\d`
+  now spans up to 4 bytes (`(?<=\d{63})` compiles, `\d{64}` is rejected); and a `static_regex` over
+  a Unicode shorthand needs a raised constexpr budget (see below). Use `flags::ascii` (`re.A`) or an
+  explicit ASCII class (`[0-9]`) where the ASCII form suffices. This is the W2 baseline against which
+  the larger `\w` (771 ranges) will be judged.
 - **Compile time:** the generated `unicode_fold.hpp` orbit table (~2900 entries) adds ~20 ms to a
   translation unit that includes `real/real.hpp`; a `static_regex` with `IGNORECASE` folds at
-  compile time (constexpr), which is the usual constexpr cost, not a runtime one.
+  compile time (constexpr), which is the usual constexpr cost, not a runtime one. A `static_regex`
+  over a text-mode Unicode shorthand builds a large constexpr program: it exceeds clang's default
+  `-fconstexpr-steps` (~1M) and MSVC's `/constexpr:steps` (100k) — the test build raises both to
+  33 554 432 (GCC's default is already enough). Consumers using such patterns at compile time may
+  need the same flag; the dynamic `real::regex` at runtime is unaffected.
 
 \section g_refs Further reading
 

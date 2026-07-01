@@ -63,6 +63,12 @@ PATTERNS = [
     r"straße",
     r"σ+",
     r"MASSE",
+    # W2: \d \s are Unicode in text mode (\w \b still ASCII); oracle switches per pattern.
+    r"\s",
+    r"\S+",
+    r"\D",
+    r"[\d]+",
+    r"[^\d]",
 ]
 
 TEXTS = [
@@ -82,36 +88,42 @@ TEXTS = [
     "ababab abab",
     "a" * 200 + "b",
     "Kelvin K k ſ S s İ ı I i ß ẞ σ Σ ς masse maße",  # icase fold partners (Kelvin, long-s, dotted-i…)
+    "a٣b5 x y z ٠١٢ ９ é",  # Unicode digits (Arabic ٣, fullwidth ９) + spaces (NBSP, U+2028)
 ]
 
 FLAG_SETS = [
-    (0, re.ASCII),
-    (real.I, re.ASCII | re.IGNORECASE),  # icase oracle is refined per-pattern; see _icase_oracle
+    (0, re.ASCII),                       # oracle refined per-pattern (see _text_oracle)
+    (real.I, re.ASCII | re.IGNORECASE),  # idem
     (real.M, re.ASCII | re.MULTILINE),
     (real.S, re.ASCII | re.DOTALL),
 ]
 
-# Shorthands / boundaries (\w \W \d \D \s \S \b \B) stay ASCII under real.I -- a documented,
-# out-of-scope divergence (the "Unicode word/boundary" arc). So a pattern that uses one is compared
-# under re.ASCII|re.IGNORECASE (neutralising it); a pure literal/class/range pattern folds like
-# re.IGNORECASE (full Unicode case folding -- the icase arc's scope).
-_ASCII_SHORTHAND = re.compile(r"\\[wWdDsSbB]")
+# In text mode, \d \s are Unicode (W2) but \w \W \b \B are still ASCII (the Unicode-word arc, W3/W4).
+# So a pattern using an ASCII-only shorthand is compared under re.ASCII (neutralising it); a pattern
+# without one gets the full Unicode oracle. (The corpus has no pattern mixing \w/\b with \d/\s, so the
+# neutraliser never wrongly ASCII-izes a \d.)
+_ASCII_ONLY_SHORTHAND = re.compile(r"\\[wWbB]")
 
 
-def _icase_oracle(pattern):
-    return re.ASCII | re.IGNORECASE if _ASCII_SHORTHAND.search(pattern) else re.IGNORECASE
+def _text_oracle(pattern, base):
+    """The re flags to compare a text-mode real pattern against (base = 0 or re.IGNORECASE)."""
+    if _ASCII_ONLY_SHORTHAND.search(pattern):
+        return re.ASCII | base
+    return base  # Unicode: \d \s and case folding match re's default
 
 
 class TestParity(unittest.TestCase):
     """Compare real and Python re on a shared corpus."""
 
+    # The non-ASCII re base flags corresponding to each real text-mode flag set.
+    _BASE = {0: 0, real.I: re.IGNORECASE, real.M: re.MULTILINE, real.S: re.DOTALL}
+
     def for_all(self, check):
         """Run ``check`` against every pattern/text/flag combination."""
         for pattern in PATTERNS:
             for text in TEXTS:
-                for real_flags, re_flags in FLAG_SETS:
-                    if real_flags == real.I:
-                        re_flags = _icase_oracle(pattern)
+                for real_flags, _ in FLAG_SETS:
+                    re_flags = _text_oracle(pattern, self._BASE[real_flags])
                     with self.subTest(pattern=pattern, text=text[:20],
                                       flags=real_flags):
                         check(real.compile(pattern, real_flags),
@@ -185,7 +197,7 @@ class TestParity(unittest.TestCase):
         for pattern, unit in self.LARGE_UNITS:
             text = unit * (16 * 1024 // len(unit) + 1)  # ~16 KB: well past the threshold
             self.assertGreaterEqual(len(text.encode()), 8192)
-            p, r = real.compile(pattern), re.compile(pattern, re.ASCII)
+            p, r = real.compile(pattern), re.compile(pattern, _text_oracle(pattern, 0))
             with self.subTest(pattern=pattern, n=len(text)):
                 self.assertEqual(p.findall(text), r.findall(text))
                 self.assertEqual(p.split(text), r.split(text))
@@ -203,7 +215,7 @@ class TestParity(unittest.TestCase):
                 with self.subTest(pattern=pattern, text=text[:20]):
                     self.assertEqual(
                         real.compile(pattern).sub(repl, text),
-                        re.compile(pattern, re.ASCII).sub(repl, text))
+                        re.compile(pattern, _text_oracle(pattern, 0)).sub(repl, text))
 
     def test_subn_parity(self):
         """subn() returns the same (string, count) pair as re — pins the shared
@@ -213,12 +225,12 @@ class TestParity(unittest.TestCase):
                 with self.subTest(pattern=pattern, text=text[:20]):
                     self.assertEqual(
                         real.compile(pattern).subn(repl, text),
-                        re.compile(pattern, re.ASCII).subn(repl, text))
+                        re.compile(pattern, _text_oracle(pattern, 0)).subn(repl, text))
 
     def _assert_sub_parity(self, pattern, repl, text):
         """real.sub == re.sub, and if re rejects the template, REAL rejects it too."""
         rp = real.compile(pattern)
-        rr = re.compile(pattern, 0 if isinstance(pattern, bytes) else re.ASCII)
+        rr = re.compile(pattern, 0 if isinstance(pattern, bytes) else _text_oracle(pattern, 0))
         try:
             expected = rr.sub(repl, text)
         except re.error:
@@ -237,7 +249,7 @@ class TestParity(unittest.TestCase):
         for pattern, subject in str_cases:
             with self.subTest(pattern=pattern, kind="str"):
                 self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
-                                 self.match_facts(re.compile(pattern, re.ASCII).search(subject)))
+                                 self.match_facts(re.compile(pattern, _text_oracle(pattern, 0)).search(subject)))
         # \400 > 0o377 is an error in re; REAL rejects it too.
         with self.assertRaises(re.error):
             re.compile(r"\400")
@@ -278,7 +290,7 @@ class TestParity(unittest.TestCase):
         text = "word " * 3000  # ~15 KB, well past the 4 KB threshold
         for pattern, repl in [(r"\w+", r"<\g<0>>"), (r"(\w)(\w+)", r"\2\1"), (r"\s+", "_")]:
             with self.subTest(pattern=pattern):
-                rp, rr = real.compile(pattern), re.compile(pattern, re.ASCII)
+                rp, rr = real.compile(pattern), re.compile(pattern, _text_oracle(pattern, 0))
                 self.assertEqual(rp.sub(repl, text), rr.sub(repl, text))
                 self.assertEqual(rp.subn(repl, text), rr.subn(repl, text))
                 self.assertEqual(rp.sub(repl, text, 5), rr.sub(repl, text, 5))  # count cap
@@ -317,7 +329,7 @@ class TestParity(unittest.TestCase):
         for pattern, text, template in cases:
             with self.subTest(pattern=pattern, template=template):
                 pm, rm = (real.compile(pattern).search(text),
-                          re.compile(pattern, re.ASCII).search(text))
+                          re.compile(pattern, _text_oracle(pattern, 0)).search(text))
                 self.assertIsNotNone(pm)
                 self.assertIsNotNone(rm)
                 self.assertEqual(pm.expand(template), rm.expand(template))
@@ -326,7 +338,7 @@ class TestParity(unittest.TestCase):
         r"""A single template mixing \g<0>, \1 and a literal with backslashes."""
         pattern, text, template = r"(\w+)", "word", r"[\g<0>]=\1\\done"
         pm = real.compile(pattern).search(text)
-        rm = re.compile(pattern, re.ASCII).search(text)
+        rm = re.compile(pattern, _text_oracle(pattern, 0)).search(text)
         self.assertEqual(pm.expand(template), rm.expand(template))
 
     def test_expand_nonparticipating_group_parity(self):
@@ -336,7 +348,7 @@ class TestParity(unittest.TestCase):
         for template in [r"[\1][\2]", r"\g<2>", r"x\2y\1"]:
             with self.subTest(template=template):
                 pm = real.compile(pattern).search(text)
-                rm = re.compile(pattern, re.ASCII).search(text)
+                rm = re.compile(pattern, _text_oracle(pattern, 0)).search(text)
                 self.assertEqual(pm.expand(template), rm.expand(template))
 
     def test_expand_bytes_parity(self):
@@ -351,14 +363,14 @@ class TestParity(unittest.TestCase):
         match (byte offset != character offset)."""
         pattern, text, template = r"(\d+)-(\d+)", "café 12-34", r"\2-\1 [\g<0>]"
         pm = real.compile(pattern).search(text)
-        rm = re.compile(pattern, re.ASCII).search(text)
+        rm = re.compile(pattern, _text_oracle(pattern, 0)).search(text)
         self.assertIsNotNone(pm)
         self.assertEqual(pm.expand(template), rm.expand(template))
 
     def test_expand_from_search_and_finditer_parity(self):
         r"""expand works on a match from search AND from each finditer match."""
         pattern, text, template = r"(\w)(\d)", "a1 b2 c3", r"\2\1"
-        rp, rr = real.compile(pattern), re.compile(pattern, re.ASCII)
+        rp, rr = real.compile(pattern), re.compile(pattern, _text_oracle(pattern, 0))
         self.assertEqual(rp.search(text).expand(template),
                          rr.search(text).expand(template))
         self.assertEqual([m.expand(template) for m in rp.finditer(text)],
@@ -385,7 +397,7 @@ class TestParity(unittest.TestCase):
         finditer."""
         text = "café crème déjà 42 testé voilà"  # multi-byte chars shift later offsets
         pattern = r"\w+"
-        rp, rr = real.compile(pattern), re.compile(pattern, re.ASCII)
+        rp, rr = real.compile(pattern), re.compile(pattern, _text_oracle(pattern, 0))
 
         # .group() FIRST (the path that now skips char_spans), THEN the offsets.
         pm, rm = rp.search(text), rr.search(text)
@@ -520,7 +532,7 @@ class TestParity(unittest.TestCase):
             (r"\w+", "hello world", (3, 100)),    # endpos clamped
             (r"\w+", "hello world", (100, 200)),  # both clamped → no match
         ]:
-            rp, rr = real.compile(pattern), re.compile(pattern, re.ASCII)
+            rp, rr = real.compile(pattern), re.compile(pattern, _text_oracle(pattern, 0))
             for method in ("match", "search", "fullmatch"):
                 with self.subTest(pattern=pattern, args=args, method=method):
                     pm, rm = getattr(rp, method)(text, *args), getattr(rr, method)(text, *args)
@@ -597,7 +609,7 @@ class TestParity(unittest.TestCase):
     def test_lookahead_match_parity(self):
         """search/match/fullmatch with bounded lookahead == re (spans + groups)."""
         for pattern, text in self.LOOKAHEAD_CASES:
-            p, r = real.compile(pattern), re.compile(pattern, re.ASCII)
+            p, r = real.compile(pattern), re.compile(pattern, _text_oracle(pattern, 0))
             for method in ("search", "match", "fullmatch"):
                 with self.subTest(pattern=pattern, text=text, method=method):
                     self.assertEqual(self.match_facts(getattr(p, method)(text)),
@@ -606,7 +618,7 @@ class TestParity(unittest.TestCase):
     def test_lookahead_findall_finditer_parity(self):
         """findall/finditer with bounded lookahead == re (every match, every span)."""
         for pattern, text in self.LOOKAHEAD_CASES:
-            p, r = real.compile(pattern), re.compile(pattern, re.ASCII)
+            p, r = real.compile(pattern), re.compile(pattern, _text_oracle(pattern, 0))
             with self.subTest(pattern=pattern, text=text):
                 self.assertEqual(p.findall(text), r.findall(text))
                 self.assertEqual([m.span() for m in p.finditer(text)],
@@ -617,7 +629,7 @@ class TestParity(unittest.TestCase):
         byte length (café = 5 bytes), and offsets/results stay byte-for-byte with re."""
         for pattern, text in [(r"(?=café)\w+", "au café crème"),
                               (r"\w+(?=é)", "café déjà fin")]:
-            p, r = real.compile(pattern), re.compile(pattern, re.ASCII)
+            p, r = real.compile(pattern), re.compile(pattern, _text_oracle(pattern, 0))
             with self.subTest(pattern=pattern):
                 self.assertEqual(self.match_facts(p.search(text)),
                                  self.match_facts(r.search(text)))
@@ -644,7 +656,7 @@ class TestParity(unittest.TestCase):
     def test_lookbehind_match_parity(self):
         """search/match/fullmatch with bounded lookbehind == re (spans + groups)."""
         for pattern, text in self.LOOKBEHIND_CASES:
-            p, r = real.compile(pattern), re.compile(pattern, re.ASCII)
+            p, r = real.compile(pattern), re.compile(pattern, _text_oracle(pattern, 0))
             for method in ("search", "match", "fullmatch"):
                 with self.subTest(pattern=pattern, text=text, method=method):
                     self.assertEqual(self.match_facts(getattr(p, method)(text)),
@@ -653,7 +665,7 @@ class TestParity(unittest.TestCase):
     def test_lookbehind_findall_finditer_parity(self):
         """findall/finditer with bounded lookbehind == re (every match, every span)."""
         for pattern, text in self.LOOKBEHIND_CASES:
-            p, r = real.compile(pattern), re.compile(pattern, re.ASCII)
+            p, r = real.compile(pattern), re.compile(pattern, _text_oracle(pattern, 0))
             with self.subTest(pattern=pattern, text=text):
                 self.assertEqual(p.findall(text), r.findall(text))
                 self.assertEqual([m.span() for m in p.finditer(text)],
@@ -664,7 +676,7 @@ class TestParity(unittest.TestCase):
         codepoint (A9); character offsets must still match re."""
         for pattern, text in [(r"(?<=é)x", "café éx déjà"),
                               (r"(?<=\w)é", "aé bé .é")]:
-            p, r = real.compile(pattern), re.compile(pattern, re.ASCII)
+            p, r = real.compile(pattern), re.compile(pattern, _text_oracle(pattern, 0))
             with self.subTest(pattern=pattern):
                 self.assertEqual(self.match_facts(p.search(text)),
                                  self.match_facts(r.search(text)))
@@ -685,7 +697,7 @@ class TestParity(unittest.TestCase):
         for pattern, text in cases:
             with self.subTest(pattern=pattern, text=text):
                 pm = real.compile(pattern).match(text)
-                rm = re.compile(pattern, re.ASCII).match(text)
+                rm = re.compile(pattern, _text_oracle(pattern, 0)).match(text)
                 self.assertIsNotNone(pm)
                 self.assertEqual(pm.lastindex, rm.lastindex)
                 self.assertEqual(pm.lastgroup, rm.lastgroup)
@@ -714,7 +726,7 @@ class TestParity(unittest.TestCase):
         ]:
             with self.subTest(pattern=pattern):
                 self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
-                                 self.match_facts(re.compile(pattern, re.ASCII).search(subject)))
+                                 self.match_facts(re.compile(pattern, _text_oracle(pattern, 0)).search(subject)))
 
     def test_inline_comment_parity(self):
         r"""(?#...) is a comment in both engines: consumed to the first ')', emits nothing."""
@@ -724,7 +736,7 @@ class TestParity(unittest.TestCase):
         ]:
             with self.subTest(pattern=pattern):
                 self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
-                                 self.match_facts(re.compile(pattern, re.ASCII).search(subject)))
+                                 self.match_facts(re.compile(pattern, _text_oracle(pattern, 0)).search(subject)))
 
     def test_escape_parity_per_char(self):
         """real.escape agrees with re.escape on every ASCII char — proving the

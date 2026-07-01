@@ -69,11 +69,14 @@ TEST(nullable_patterns_disable_byte_skipping)
 
 TEST(class_loop_fast_path_activation)
 {
-  // \w+ / \d+ / [a-f]+ are matched by a plain scan loop. Greedy only, no
+  // \w+ / a single ASCII class / an ASCII \d+ are matched by a plain scan loop. Greedy only, no
   // captures: the lazy variant and grouped forms must stay on the VM.
-  EXPECT(hints_of("\\w+").greedy_class_loop >= 0);
+  EXPECT(hints_of("\\w+").greedy_class_loop >= 0);   // \w is still ASCII (W2)
   EXPECT(hints_of("[0-9a-f]+").greedy_class_loop >= 0);
-  EXPECT(hints_of("\\d+", real::flags::icase).greedy_class_loop >= 0);
+  EXPECT(hints_of("\\d+", real::flags::ascii | real::flags::icase).greedy_class_loop >= 0);
+  // In text mode \d+ is now a multi-branch Unicode automaton, not a single class, so the scan-loop
+  // fast path no longer applies (still linear on the general VM) -- a W2 consequence.
+  EXPECT_EQ(hints_of("\\d+").greedy_class_loop, -1);
   EXPECT_EQ(hints_of("\\w+?").greedy_class_loop, -1); // lazy: different result
   EXPECT_EQ(hints_of("(\\w)+").greedy_class_loop, -1);
   EXPECT_EQ(hints_of("\\w*").greedy_class_loop, -1);  // nullable

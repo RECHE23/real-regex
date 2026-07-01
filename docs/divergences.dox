@@ -31,10 +31,19 @@ literal is promoted to a foldable code point; a \\xHH or octal byte escape keeps
 **never folds** (\\xe9 under `IGNORECASE` does not match `É`) — the same deliberate byte-vs-code-point
 split described in the hex-escape section below.
 
-Still ASCII by design (a documented divergence, the separate "Unicode word/boundary" arc): the
-\\w \\W \\d \\D \\s \\S shorthands and the \\b \\B boundaries. `re` treats these as Unicode regardless
-of `IGNORECASE`; REAL keeps them ASCII. In **bytes mode** `IGNORECASE` folds ASCII only (byte-for-byte
-`std::regex<char>`), so the compat layer is unaffected.
+The \\d \\D \\s \\S shorthands are **Unicode** in text mode (matching `re`): `\\d` matches any
+`Nd` digit (Arabic ٣, fullwidth ９…), `\\s` any Unicode whitespace (NBSP, U+2028…). Still ASCII for
+now (the remaining part of the "Unicode word/boundary" arc): the \\w \\W shorthands and the
+\\b \\B boundaries. In **bytes mode** every shorthand stays ASCII (byte-for-byte `std::regex<char>`),
+and `IGNORECASE` folds ASCII only, so the compat layer is unaffected.
+
+\section div_ascii_flag ASCII mode (re.A) and the Kelvin fold wart
+
+`flags::ascii` (Python's `re.A`) forces \\d \\s and case folding back to ASCII in text mode, leaving
+`.`, explicit classes and UTF-8 literals code-point-aware — matching `re.A`. One deliberate divergence:
+CPython's `re.A | re.IGNORECASE` still folds `k`/`s` to their non-ASCII case pairs (Kelvin U+212A,
+long-s U+017F) — a documented CPython wart. REAL under `ascii | icase` folds **strictly** ASCII, so
+`k` does not match Kelvin and `é` does not match `É`, which is what `re.A` promises.
 
 \section div_hex \\xHH (HH ≥ 0x80) is byte-level
 

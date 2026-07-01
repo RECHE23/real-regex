@@ -6,8 +6,9 @@ A linear-time (ReDoS-safe) regex engine with an ``re``-compatible API:
     real.search(r"(\d{4})-(\d{2})", text)
     real.compile(r"\w+").findall(text)
 
-Supported flags: IGNORECASE/I, MULTILINE/M, DOTALL/S, VERBOSE/X (ASCII/A and
-UNICODE/U are accepted no-ops: classes are ASCII, text is Unicode). Bounded
+Supported flags: IGNORECASE/I, MULTILINE/M, DOTALL/S, VERBOSE/X, ASCII/A (like
+re.A: keeps \\d \\s and case folding ASCII in str mode). UNICODE/U stays a no-op
+(Unicode is the str-mode default). Bounded
 lookarounds — lookahead ``(?=...)``/``(?!...)`` and lookbehind ``(?<=...)``/``(?<!...)``
 — are supported in linear time (each sub-pattern must be length-bounded and is
 capture-free). The remaining ``re`` features raise :class:`real.error` at compile

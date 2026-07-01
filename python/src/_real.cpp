@@ -1645,6 +1645,10 @@ PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
     if ((py_flags & PYFLAG_VERBOSE) != 0) {
         compile_flags = compile_flags | real::flags::verbose;
     }
+    if ((py_flags & PYFLAG_ASCII) != 0) {
+        compile_flags = compile_flags | real::flags::ascii;  // re.A: keep \d \w \s and icase ASCII
+    }
+    // PYFLAG_UNICODE (re.U) stays a no-op: Unicode is already the str-mode default.
 
     real::regex* rx = nullptr;
     try {

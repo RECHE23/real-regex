@@ -152,8 +152,10 @@ coverage-html:
 
 # --- QA tools (wrappers; no compilation policy here) ----------------------
 
+# A static_regex over a text-mode Unicode shorthand (\d \s) builds a large constexpr program that
+# exceeds clang's default constexpr-steps budget; raise it here as the CMake test build does.
 lint:
-	@ls tests/*.cpp | xargs -P $(JOBS) -I{} clang-tidy {} -- $(CXXSTD) $(INCLUDES) -I$(SCIFORGE_INCLUDE)
+	@ls tests/*.cpp | xargs -P $(JOBS) -I{} clang-tidy {} -- $(CXXSTD) -fconstexpr-steps=33554432 $(INCLUDES) -I$(SCIFORGE_INCLUDE)
 
 # Analyzes the library's own headers through a synthetic translation unit that
 # includes the umbrella header and exercises the engine (so templates get

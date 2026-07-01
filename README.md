@@ -158,7 +158,8 @@ number here.
 | `\.` `\*` `\\` … | escaped metacharacter, matched literally |
 | `.` | any codepoint except `\n` |
 | `[abc]` `[a-z]` `[^abc]` `[é]` `[à-ÿ]` | character class, ASCII **and** non-ASCII code-point members / ranges (str mode); `[^…]` matches any code point outside the set |
-| `\d \D \w \W \s \S` | digit / word / space classes (ASCII sets, like Python's `re.ASCII`) |
+| `\d \D \s \S` | digit / space classes — Unicode in text mode (like `re`), ASCII in bytes mode or under `a` |
+| `\w \W` | word classes — ASCII for now (Unicode word/boundary arc in progress) |
 | `\n \t \r \f \v \a \0` `\xHH` | control and hex escapes |
 | `x*` `x+` `x?` | quantifiers (greedy; append `?` for lazy) |
 | `x{n}` `x{n,}` `x{,m}` `x{n,m}` | counted repetition (greedy or lazy; counts capped at 1000) |
@@ -169,7 +170,7 @@ number here.
 | `\A` `\Z` | strict text start / end |
 | `\b` `\B` | word boundary / non-boundary (ASCII word characters) |
 | `\<` `\>` | start / end of word (REAL extension, not in Python `re`) |
-| `(?imsx)` prefix | global flags: `i` case-insensitive (ASCII), `m` multiline, `s` dotall, `x` verbose (ignore unescaped whitespace and `#` comments outside classes) — also `real::flags` on the constructor |
+| `(?imsxa)` prefix | global flags: `i` case-insensitive (Unicode fold in text mode), `m` multiline, `s` dotall, `x` verbose (ignore unescaped whitespace and `#` comments outside classes), `a` ASCII (`re.A`: keep `\d \s` and folding ASCII) — also `real::flags` on the constructor |
 
 **Bounded lookarounds** match in linear time: lookahead `(?=...)`/`(?!...)` and lookbehind
 `(?<=...)`/`(?<!...)`. Each sub-pattern must be length-bounded (an unbounded sub such as
