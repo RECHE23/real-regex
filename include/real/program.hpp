@@ -127,6 +127,15 @@ namespace real {
 
   namespace detail {
 
+    //! \brief An inclusive code-point range `[lo, hi]`. Shared by character classes (ast.hpp) and the
+    //!        generated Unicode property / fold tables; lives here so those low-level headers need not
+    //!        pull in the parser.
+    struct code_range
+    {
+      std::uint32_t lo {}; //!< First code point (inclusive).
+      std::uint32_t hi {}; //!< Last code point (inclusive).
+    };
+
     /*!
      * \brief NFA instruction opcodes executed by the Pike VM.
      */

@@ -83,13 +83,6 @@ namespace real::detail {
     std::int32_t next      {-1};                 //!< Next sibling in the parent's child list.
   };
 
-  //! \brief An inclusive code-point range `[lo, hi]` (a non-ASCII character class member, `lo >= 0x80`).
-  struct code_range
-  {
-    std::uint32_t lo {}; //!< First code point (inclusive).
-    std::uint32_t hi {}; //!< Last code point (inclusive).
-  };
-
   //! \brief A parsed character class: its ASCII bitmap plus any non-ASCII code-point ranges. Bundling
   //!        the two (rather than parallel side tables) makes them impossible to desynchronize.
   struct class_def
