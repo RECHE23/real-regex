@@ -8,6 +8,11 @@
   The header pins the version it was built from (`unicode_fold_unidata_version`), asserted by
   `tests/test_unicode_fold.cpp` and by `python/tests/test_unicode_fold_regen.py`.
 
+**A regenerated table that changes any orbit is a BREAKING change for text-mode `icase` users** — the
+set of characters a cased literal or class matches would shift (e.g. a new case pair added in a later
+Unicode version). Treat a regen with orbit changes as a minor/breaking release, not a silent bump:
+call it out in the release notes, exactly like the CF2 arc did.
+
 ## How
 
 ```sh

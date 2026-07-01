@@ -170,6 +170,29 @@ TEST(compat_byte_class_matches_std)
   }
 }
 
+TEST(compat_icase_ascii_byte_escape_matches_std)
+{
+  // CF-fix: a `\xHH` escape with value < 0x80 is an ASCII character, so under icase it folds (ASCII
+  // fold, bytes path) exactly like std::basic_regex<char> -- `\x4b` == `K` matches k/K.
+  for (const char* pat : {R"(\x4b)", R"(hello)", R"([a-f]+)"}) {
+    const rc::regex re(pat, rc::regex_constants::icase);
+    EXPECT(re.uses_real());
+    const std::regex sre(pat, std::regex::ECMAScript | std::regex::icase);
+    for (const std::string& s : {std::string("k"), std::string("K"), std::string("HELLO"),
+                                 std::string("abcDEF"), std::string("xyz")}) {
+      rc::smatch  rm;
+      std::smatch sm;
+      const bool  rf {rc::regex_search(s, rm, re)};
+      const bool  sf {std::regex_search(s.cbegin(), s.cend(), sm, sre)};
+      EXPECT_EQ(rf, sf);
+      if (rf && sf) {
+        EXPECT_EQ(rm.position(0), sm.position(0));
+        EXPECT_EQ(rm.length(0), sm.length(0));
+      }
+    }
+  }
+}
+
 TEST(compat_libstdcxx_deviations_are_allowlisted)
 {
   // libstdc++ deviations from the ECMAScript spec; real::compat follows the spec (Option B).

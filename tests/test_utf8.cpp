@@ -567,3 +567,38 @@ TEST(icase_range_fold_coalescing_membership)
   EXPECT(!fullmatches("[a-z]", bytes({0x7F}), i));
   EXPECT(!fullmatches("[a-z]", bytes({0xC2, 0x80}), i));      // U+0080
 }
+
+TEST(icase_byte_escape_ascii_folds_by_provenance)
+{
+  using real::flags;
+  const flags       i      {flags::icase};
+  const std::string Kelvin {bytes({0xE2, 0x84, 0xAA})};
+  // CF-fix: a \xHH / octal escape with value < 0x80 is an ASCII character (byte == code point), so a
+  // cased one folds under icase exactly like a raw ASCII literal (\x4B == K == \113).
+  EXPECT(fullmatches("\\x4B", "k", i));
+  EXPECT(fullmatches("\\x4B", "K", i));
+  EXPECT(fullmatches("\\x4B", Kelvin, i)); // text mode: full Unicode fold
+  EXPECT(fullmatches("\\113", "k", i));    // octal 0113 == 'K'
+  EXPECT(fullmatches("\\113", Kelvin, i));
+  // bytes mode: ASCII fold only (no Kelvin), matching std::basic_regex<char>.
+  EXPECT(fullmatches("\\x4B", "k", flags::bytes | i));
+  EXPECT(!fullmatches("\\x4B", Kelvin, flags::bytes | i));
+  // A value >= 0x80 keeps byte provenance and is NEVER folded (the unchanged text-mode divergence).
+  EXPECT(!fullmatches("\\xE9", "É", i));
+  EXPECT(fullmatches("\\xE9", bytes({0xE9}), i));
+  // Non-cased escapes are zero-overhead byte literals.
+  EXPECT(fullmatches("\\x30", "0", i));
+  EXPECT(!fullmatches("\\x30", "1", i));
+}
+
+TEST(icase_directed_lookbehind_and_static)
+{
+  using real::flags;
+  const std::string Kelvin {bytes({0xE2, 0x84, 0xAA})};
+  // Negative lookbehind of a folded class: (?<![k])x is false right after Kelvin (Kelvin IS a k).
+  EXPECT(!searches("(?<![k])x", cat({Kelvin, "x"}), flags::icase));
+  EXPECT(searches("(?<![k])x", cat({"a", "x"}), flags::icase)); // but true after a non-k
+  // static_regex with a non-ASCII icase literal folds at compile time.
+  static_assert(real::static_regex<"(?i)café">().fullmatch("CAFÉ").matched());
+  EXPECT(real::static_regex<"(?i)café">().fullmatch("CAFÉ").matched());
+}

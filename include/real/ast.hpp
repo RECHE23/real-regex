@@ -1125,11 +1125,16 @@ namespace real::detail {
         // standard word boundaries in both and stay unchanged.
         case 'A':
           ++pos_;
-          if (ecma_) { return add_node(out, {.kind = node_kind::byte, .byte = 'A'}); }
+          // ecma: `\A` is the literal 'A' (Annex B identity escape); a cased letter, so it folds under icase.
+          if (ecma_) {
+            return emit_literal_codepoint(out, 'A');
+          }
           return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::text_start});
         case 'Z':
           ++pos_;
-          if (ecma_) { return add_node(out, {.kind = node_kind::byte, .byte = 'Z'}); }
+          if (ecma_) {
+            return emit_literal_codepoint(out, 'Z'); // ecma: literal 'Z', folds under icase
+          }
           return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::text_end});
         case 'b':
           ++pos_;
@@ -1139,11 +1144,15 @@ namespace real::detail {
           return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::not_word_boundary});
         case '<':
           ++pos_;
-          if (ecma_) { return add_node(out, {.kind = node_kind::byte, .byte = '<'}); }
+          if (ecma_) {
+            return emit_literal_codepoint(out, '<'); // ecma: literal '<' (non-cased -> a plain byte)
+          }
           return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::word_start});
         case '>':
           ++pos_;
-          if (ecma_) { return add_node(out, {.kind = node_kind::byte, .byte = '>'}); }
+          if (ecma_) {
+            return emit_literal_codepoint(out, '>'); // ecma: literal '>'
+          }
           return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::word_end});
         case 'u':
           ++pos_;
@@ -1158,6 +1167,12 @@ namespace real::detail {
             const std::int32_t byte_value {parse_byte_escape()};
             if (byte_value < 0) {
               fail("unsupported escape sequence");
+            }
+            // A `\xHH` / octal escape with value < 0x80 is an ASCII character (byte == code point): a
+            // cased one folds under icase like a raw ASCII literal (`\x4B` == `K`). A value >= 0x80
+            // keeps byte provenance and is never folded — the documented text-mode divergence.
+            if (byte_value < 0x80) {
+              return emit_literal_codepoint(out, byte_value);
             }
             return add_node(out, {.kind = node_kind::byte, .byte = static_cast<std::uint8_t>(byte_value)});
           }

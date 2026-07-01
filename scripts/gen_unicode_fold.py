@@ -19,7 +19,13 @@ import re._compiler as _compiler
 import sys
 import unicodedata
 
-_EXTRA_CASES = _compiler._EXTRA_CASES
+try:
+    _EXTRA_CASES = _compiler._EXTRA_CASES
+except AttributeError as exc:  # pragma: no cover - CPython-internal, can move between versions
+    sys.exit(
+        "gen_unicode_fold: re._compiler._EXTRA_CASES is gone (moved/removed in this CPython) -- "
+        "check CPython's re internals (Lib/re/_compiler.py / _casefix.py) for the fold extra-cases "
+        f"table and update this import. ({exc})")
 
 
 def cased_codepoints():
