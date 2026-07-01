@@ -44,7 +44,7 @@ SCIFORGE_LINT ?= ../sciforge/lint
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-        lint misra fuzz doc doc-no-coverage format format-check full-local-gate clean \
+        lint misra fuzz fuzz-compat doc doc-no-coverage format format-check full-local-gate clean \
         python python-test bench-python bench-fuzz bench-engines \
         version-check install install-smoke uninstall release help
 
@@ -60,6 +60,7 @@ help:
 	@echo "  make lint       clang-tidy over the test sources"
 	@echo "  make misra      MISRA C++:2023-oriented analysis"
 	@echo "  make fuzz       libFuzzer robustness fuzzing (Clang; FUZZ_TIME=secs)"
+	@echo "  make fuzz-compat  Differential fuzz: real::compat vs std::regex (Clang; FUZZ_TIME=secs)"
 	@echo "  make doc        Generate API reference (Doxygen) with embedded coverage"
 	@echo "  make doc-no-coverage  Generate API reference without coverage report"
 	@echo "  make format     Uncrustify, in place"
@@ -182,6 +183,15 @@ fuzz:
 	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_target.cpp -o $(FUZZ_DIR)/fuzz_target
 	$(FUZZ_DIR)/fuzz_target -max_total_time=$(FUZZ_TIME) -timeout=10 \
 	    $(FUZZ_DIR)/corpus fuzz/corpus
+
+# Differential fuzzer: real::compat vs std::regex (search/replace/iterate/token/match-flags). This
+# is the net that has caught every silent divergence in the compat layer, so it runs in CI too.
+fuzz-compat:
+	mkdir -p $(FUZZ_DIR)/corpus-compat
+	clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
+	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_compat.cpp -o $(FUZZ_DIR)/fuzz_compat
+	$(FUZZ_DIR)/fuzz_compat -max_total_time=$(FUZZ_TIME) -timeout=10 \
+	    $(FUZZ_DIR)/corpus-compat fuzz/corpus
 
 doc: coverage-html
 	mkdir -p $(BUILD)/doc

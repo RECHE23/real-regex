@@ -882,6 +882,42 @@ TEST(compat_replace_dollar_zero_and_sed_route_to_std)
   }
 }
 
+TEST(compat_replace_honors_match_flags)
+{
+  // S6-B1: regex_replace on a real-backed pattern must honor constraining match flags (route to std)
+  // — not silently ignore them. Differential vs std::regex_replace for each such flag.
+  namespace mc = rc::regex_constants;
+  namespace sc = std::regex_constants;
+  const rc::regex  word(R"(\w+)");
+  const std::regex sword(R"(\w+)", std::regex::ECMAScript);
+  EXPECT(word.uses_real_traversal()); // real-eligible; the flag (not the pattern) is what routes it
+
+  struct FlagPair
+  {
+    mc::match_flag_type r;
+    sc::match_flag_type s;
+  };
+  const std::vector<FlagPair> flags {
+    {.r = mc::match_not_bol, .s = sc::match_not_bol},
+    {.r = mc::match_not_eol, .s = sc::match_not_eol},
+    {.r = mc::match_continuous, .s = sc::match_continuous},
+    {.r = mc::match_prev_avail, .s = sc::match_prev_avail},
+    {.r = mc::match_not_null, .s = sc::match_not_null},
+    {.r = mc::match_not_bol | mc::match_not_eol, .s = sc::match_not_bol | sc::match_not_eol},
+  };
+  for (const std::string& subj : {std::string("ab cd ef"), std::string("^start end$")}) {
+    for (const FlagPair& f : flags) {
+      EXPECT_EQ(rc::regex_replace(subj, word, std::string("<$&>"), f.r),
+                std::regex_replace(subj, sword, std::string("<$&>"), f.s));
+    }
+    // format_first_only / format_no_copy DO stay on real; still equal to std.
+    EXPECT_EQ(rc::regex_replace(subj, word, std::string("<$&>"), mc::format_first_only),
+              std::regex_replace(subj, sword, std::string("<$&>"), sc::format_first_only));
+    EXPECT_EQ(rc::regex_replace(subj, word, std::string("<$&>"), mc::format_no_copy),
+              std::regex_replace(subj, sword, std::string("<$&>"), sc::format_no_copy));
+  }
+}
+
 TEST(compat_ready_after_failed_match)
 {
   // B6: after a failed search/match std leaves ready()==true, size()==0. Ours must too.
@@ -966,4 +1002,29 @@ TEST(compat_late_std_error_is_homogeneous)
     threw_compat2 = true;
   }
   EXPECT(threw_compat2);
+}
+
+TEST(compat_all_std_only_paths_throw_compat_error)
+{
+  // S6-S2: EVERY std-only construction path (POSIX-screen, wide/custom-traits) must throw a
+  // compat::regex_error on an invalid pattern — not a raw std::regex_error leaking out.
+  const auto throws_compat {[](auto make) {
+                              try {
+                                make();
+                              }
+                              catch (const rc::regex_error&) { // the compat type specifically (derives from std::regex_error)
+                                return true;
+                              }
+                              catch (...) {
+                                return false; // a non-compat throw is the bug this pins
+                              }
+                              return false;
+                            }};
+
+  // POSIX grammar screen -> emplace_std with an invalid pattern.
+  EXPECT(throws_compat([] { (void)rc::regex("(", rc::regex_constants::extended); }));
+  EXPECT(throws_compat([] { (void)rc::regex("a{", rc::regex_constants::extended); }));
+  // Wide / always-std path.
+  EXPECT(throws_compat([] { (void)rc::wregex(L"("); }));
+  EXPECT(throws_compat([] { (void)rc::wregex(L"[z-"); }));
 }

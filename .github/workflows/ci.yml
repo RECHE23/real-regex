@@ -41,6 +41,12 @@ jobs:
       - uses: actions/checkout@v6
       - name: Robustness fuzzing smoke run (libFuzzer + ASan/UBSan)
         run: make fuzz FUZZ_TIME=60 CXX=clang++
+      # The compat differential fuzzer (real::compat vs std::regex, on libstdc++) is the net that has
+      # caught every silent divergence in the compat layer — it must run in CI so regressions cannot
+      # slip past. Reproduce a finding locally with: make fuzz-compat FUZZ_TIME=<secs> (seed a crash
+      # by placing the reported input under build/fuzz/corpus-compat/).
+      - name: Compat differential fuzzing smoke run (real::compat vs std::regex)
+        run: make fuzz-compat FUZZ_TIME=60 CXX=clang++
 
   # Coverage gate: fail the build if line coverage drops below the floor (was advisory).
   coverage:

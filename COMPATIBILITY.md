@@ -51,11 +51,12 @@ the previous match, `$'` → the text to the end, `$N` / `$NN` → group N (matc
 are honoured. A non-nullable real-backed pattern runs the substitution on `real`'s linear traversal —
 measured **6–17× faster** than `std::regex_replace`; a nullable one falls back to `std`.
 
-Three replace inputs route the whole substitution to `std::regex_replace` (so compat == std):
-**`format_sed`** (POSIX replacement syntax the ECMAScript expander would mis-read), the flag being
-present; and a format containing **`$0`**, which is platform-variant (libstdc++ = the whole match,
-strict-ECMAScript/MSVC = a literal `$0`) so `real` cannot pick one without risking a silent
-divergence.
+The real expander honours only `format_first_only`, `format_no_copy` (and the `match_any` hint);
+**any other flag routes the whole substitution to `std::regex_replace`** (so compat == std) — a
+constraining match flag (`match_not_bol`, `match_continuous`, …, which the ECMAScript expander cannot
+apply) or **`format_sed`** (POSIX replacement syntax it would mis-read). A format containing **`$0`**
+also routes to std: `$0` is platform-variant (libstdc++ = the whole match, strict-ECMAScript/MSVC = a
+literal `$0`), so `real` cannot pick one without risking a silent divergence.
 
 ## Errors and thread-safety
 

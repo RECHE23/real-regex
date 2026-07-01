@@ -678,32 +678,40 @@ namespace real::compat {
           }
         }
         catch (const real::regex_error&) {
-          // real cannot represent it (backref / unbounded lookaround / POSIX class / non-ASCII in
-          // a class): fall back to std, which may accept it. Invalid for both rethrows as compat.
-          try {
-            emplace_std(sv, f);
-          }
-          catch (const std::regex_error& std_error) {
-            throw regex_error(std_error);
-          }
+          // real cannot represent it (backref / unbounded lookaround / POSIX class / non-ASCII in a
+          // class): fall back to std, which may accept it. Invalid for both throws compat::regex_error
+          // (emplace_std wraps).
+          emplace_std(sv, f);
         }
       }
       else {
         // wchar_t / char8/16/32 / custom traits: real is never eligible, so go straight to std. The
         // real::regex variant alternative stays dead for this CharT (never emplaced), and real's
         // char-only helpers are not instantiated. always-std => std parity by construction (R4).
-        engine_.template emplace<std::basic_regex<CharT, Traits>>(pattern.data(), pattern.size(),
-                                                                  detail::to_std(f));
-        mark_count_ = std::get<std::basic_regex<CharT, Traits>>(engine_).mark_count();
+        try {
+          engine_.template emplace<std::basic_regex<CharT, Traits>>(pattern.data(), pattern.size(),
+                                                                    detail::to_std(f));
+          mark_count_ = std::get<std::basic_regex<CharT, Traits>>(engine_).mark_count();
+        }
+        catch (const std::regex_error& std_error) {
+          throw regex_error(std_error); // homogeneous compat::regex_error on the wide/custom-traits path
+        }
       }
     }
 
     void emplace_std(std::string_view sv,
                      flag_type        f)
     {
-      auto& std_engine = engine_.template emplace<std::basic_regex<CharT, Traits>>(
-        sv.data(), sv.size(), detail::to_std(f));
-      mark_count_ = std_engine.mark_count();
+      try {
+        auto& std_engine = engine_.template emplace<std::basic_regex<CharT, Traits>>(
+          sv.data(), sv.size(), detail::to_std(f));
+        mark_count_ = std_engine.mark_count();
+      }
+      catch (const std::regex_error& std_error) {
+        // Every std-only build path throws a compat::regex_error, homogeneous with the rest of the
+        // layer (never a raw std::regex_error leaking out of a compat entry point).
+        throw regex_error(std_error);
+      }
     }
   };
 
@@ -727,6 +735,20 @@ namespace real::compat {
       constexpr unsigned non_constraining {static_cast<unsigned>(regex_constants::match_default)
                                            | static_cast<unsigned>(regex_constants::match_any)};
       return (static_cast<unsigned>(mf) & ~non_constraining) == 0U;
+    }
+
+    //! \brief Whether `regex_replace` can run its substitution on `real`. The real expander honors
+    //!        only `format_first_only` / `format_no_copy` (plus the `match_any` hint); ANY other bit —
+    //!        a constraining match flag (`not_bol`, `continuous`, …) OR `format_sed` (POSIX syntax) —
+    //!        would be silently ignored by the ECMAScript expander, so the whole substitution routes
+    //!        to `std`. (This subsumes the explicit `format_sed` screen; `$0` stays content-based.)
+    [[nodiscard]] inline bool replace_stays_real(regex_constants::match_flag_type f) noexcept
+    {
+      using namespace regex_constants;
+      constexpr unsigned honored {static_cast<unsigned>(match_default) | static_cast<unsigned>(match_any)
+                                  | static_cast<unsigned>(format_first_only)
+                                  | static_cast<unsigned>(format_no_copy)};
+      return (static_cast<unsigned>(f) & ~honored) == 0U;
     }
 
     //! \brief Maps compat match/format flags to `std::regex_constants` — exhaustive (the std path).
@@ -1035,10 +1057,11 @@ namespace real::compat {
       return std::regex_replace(s, re.std_engine(), fmt, detail::to_std_match(flags));
     }
     else {
-      // Route to std when: the pattern is not real-traversable (std/nullable), OR the replacement is
-      // sed syntax (format_sed — the ECMAScript expander would mis-read it), OR the format uses `$0`
-      // (platform-variant, see detail::format_forces_std). Only then does the real expander run.
-      if (!re.uses_real_traversal() || (flags & regex_constants::format_sed) != 0U
+      // Route to std when: the pattern is not real-traversable (std/nullable), OR a flag the real
+      // expander cannot honor is set (any constraining match flag or format_sed — see
+      // detail::replace_stays_real), OR the format uses `$0` (platform-variant, format_forces_std).
+      // Only then does the real expander run.
+      if (!re.uses_real_traversal() || !detail::replace_stays_real(flags)
           || detail::format_forces_std(std::string_view {fmt})) {
         return std::regex_replace(s, re.std_engine(), fmt, detail::to_std_match(flags));
       }
