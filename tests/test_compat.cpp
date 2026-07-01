@@ -6,11 +6,10 @@
 // the allowlisted libstdc++ deviations, where the compat (spec) behavior is pinned instead.
 //
 // Both backends are exercised (real-backed AND the std fallback) so coverage is honest.
-#include <atomic>
 #include <regex>
 #include <string>
 #include <string_view>
-#include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -742,31 +741,57 @@ TEST(compat_invalid_for_both_throws_compat_error)
   }
 }
 
+namespace {
+  // Deep sentinel differential: every observable of m[n] (first/second offsets, matched, position,
+  // length, str) must equal std's — std anchors an out-of-range / unmatched sub_match at the sequence
+  // END ({end, end, false}), so position == the full length, not 0. Comparing only .matched let the
+  // S7-fixed regression (a singular default sentinel, position 0) hide.
+  void expect_sentinel_matches_std(const rc::smatch&           m,
+                                   const std::smatch&          sm,
+                                   std::string::const_iterator cbegin,
+                                   std::size_t                 n)
+  {
+    EXPECT_EQ(m[n].matched, sm[n].matched);
+    EXPECT_EQ(std::distance(cbegin, m[n].first), std::distance(cbegin, sm[n].first));
+    EXPECT_EQ(std::distance(cbegin, m[n].second), std::distance(cbegin, sm[n].second));
+    EXPECT_EQ(m.position(n), sm.position(n));
+    EXPECT_EQ(m.length(n), sm.length(n));
+    EXPECT_EQ(m.str(n), sm.str(n));
+  }
+} // namespace
+
 TEST(compat_match_results_out_of_range)
 {
-  // B1: operator[]/position/length/str for n >= size() must be std-conformant (unmatched / 0 / ""),
-  // never out-of-bounds. A pattern with one group has size()==2 (whole + group 1).
-  const rc::regex   re(R"((\w)(\d)?)"); // group 2 is optional -> can be non-participating
-  rc::smatch        m;
-  const std::string subj {"a"};
-  EXPECT(rc::regex_search(subj, m, re));
-  EXPECT_EQ(m.size(), 3U); // whole + 2 groups
+  // S7-1: operator[]/position/length/str for n >= size() (and after a failed match) must be
+  // byte-for-byte std-conformant — the sentinel is {end, end, false}, so position is the full length.
+  const std::string subj {"hello"};    // length 5 -> a wrong position-0 sentinel is obvious
 
+  // (a) Successful multi-group match: in-range non-participating group + out-of-range indices.
+  const rc::regex  re(R"((\w)(\d)?)"); // group 2 optional -> non-participating on "h"
   const std::regex sre(R"((\w)(\d)?)", std::regex::ECMAScript);
+  rc::smatch       m;
   std::smatch      sm;
+  EXPECT(rc::regex_search(subj, m, re));
   EXPECT(std::regex_search(subj, sm, sre));
-
-  for (std::size_t n : {m.size(), m.size() + 1, m.size() + 5}) {
-    EXPECT(!m[n].matched);                      // out-of-range -> unmatched sub_match
-    EXPECT_EQ(m.position(n), 0);                // std-conformant sentinels
-    EXPECT_EQ(m.length(n), 0);
-    EXPECT(m.str(n).empty());
-    EXPECT_EQ(m[n].matched, sm[n].matched);     // matches std's out-of-range behaviour
-    EXPECT_EQ(m.length(n), sm.length(n));
+  EXPECT_EQ(m.size(), 3U);
+  expect_sentinel_matches_std(m, sm, subj.cbegin(), 2);            // non-participating in-range
+  for (const std::size_t n : {m.size(), m.size() + 1, m.size() + 5}) {
+    expect_sentinel_matches_std(m, sm, subj.cbegin(), n);         // out-of-range
+    EXPECT(m[n].first == subj.cend());                            // anchored at end, not singular
+    EXPECT(m[n].second == subj.cend());
   }
-  // A non-participating in-range group (group 2 here) is unmatched with length 0.
-  EXPECT(!m[2].matched);
-  EXPECT_EQ(m.length(2), 0);
+
+  // (b) After a FAILED search: m[0] and out-of-range indices are the same end-anchored sentinel.
+  const rc::regex  nore(R"((x)(y))");
+  const std::regex snore(R"((x)(y))", std::regex::ECMAScript);
+  rc::smatch       fm;
+  std::smatch      sfm;
+  EXPECT(!rc::regex_search(subj, fm, nore));
+  EXPECT(!std::regex_search(subj, sfm, snore));
+  for (const std::size_t n : {std::size_t {0}, std::size_t {1}, std::size_t {7}}) {
+    expect_sentinel_matches_std(fm, sfm, subj.cbegin(), n);
+    EXPECT(fm[n].first == subj.cend());
+  }
 }
 
 namespace {
@@ -799,6 +824,25 @@ TEST(compat_token_field_selectors)
   EXPECT(token_fields_agree(R"((\w)(\w))", "abcd", {1, 5}));   // mixed valid + out-of-range
   EXPECT(token_fields_agree(",", "a,b", {1, -1}));             // valid-group + split, WITH matches
   EXPECT(token_fields_agree(",", "a,b", {-1, 1}));             // split + group, order matters
+
+  // Deep token-OOB (via set_field's operator[]): the sub_match tokens for an out-of-range field {5}
+  // must match std byte-for-byte (first/second offsets + matched), not just str — the S7 sentinel.
+  {
+    const std::string                         subj {"abcd"};
+    const rc::regex                           rre(R"((\w)(\w))");
+    const std::regex                          sre(R"((\w)(\w))", std::regex::ECMAScript);
+    std::vector<std::tuple<long, long, bool>> got;
+    std::vector<std::tuple<long, long, bool>> ref;
+    for (rc::sregex_token_iterator it(subj.begin(), subj.end(), rre, 5), e; it != e; ++it) {
+      got.emplace_back(std::distance(subj.cbegin(), it->first), std::distance(subj.cbegin(), it->second),
+                       it->matched);
+    }
+    for (std::sregex_token_iterator it(subj.begin(), subj.end(), sre, 5), e; it != e; ++it) {
+      ref.emplace_back(std::distance(subj.cbegin(), it->first), std::distance(subj.cbegin(), it->second),
+                       it->matched);
+    }
+    EXPECT(got == ref);
+  }
 
   // NO-match + a list containing -1: the standard ([re.tokiter.cnstr] "one of the elements is -1")
   // yields exactly ONE whole-sequence token. libstdc++ conforms; libc++ has a bug (checks only
@@ -1056,37 +1100,11 @@ TEST(compat_iterator_equality_conformance)
   EXPECT(ta == ta_copy);
 }
 
-TEST(compat_std_engine_thread_safe)
-{
-  // S6-S4: std_engine() is built lazily under a static build mutex, so concurrent const operations
-  // that route to std (a constraining flag on a non-nullable pattern, and a nullable replace) on one
-  // shared regex object are race-free. (Run under TSan to prove; here it must at least not corrupt.)
-  const rc::regex          nonnull(R"(\w+)"); // non-nullable real-backed; a flag routes to std
-  const rc::regex          nullab(R"(\w*)");  // nullable real-backed; replace routes to std
-  std::atomic<int>         matches  {0};
-  std::atomic<int>         replaced {0};
-  std::vector<std::thread> threads;
-  threads.reserve(8);
-  for (int t = 0; t < 8; ++t) {
-    threads.emplace_back([&] {
-                           for (int i = 0; i < 200; ++i) {
-                             const std::string s {"hello world"};
-                             rc::smatch        m;
-                             if (rc::regex_search(s, m, nonnull, rc::regex_constants::match_not_bol)) {
-                               matches.fetch_add(1);
-                             }
-                             if (!rc::regex_replace(s, nullab, std::string("x")).empty()) {
-                               replaced.fetch_add(1);
-                             }
-                           }
-                         });
-  }
-  for (std::thread& th : threads) {
-    th.join();
-  }
-  EXPECT_EQ(matches.load(), 8 * 200); // every flagged search matched, no corruption
-  EXPECT_EQ(replaced.load(), 8 * 200);
-}
+// NB: the concurrent std_engine() thread-safety check (S6-S4) lives in tests/tsan_compat.cpp, run by
+// `make tsan` under ThreadSanitizer. It is kept out of this suite because test_static.cpp overrides a
+// non-atomic global operator-new counter (for the zero-allocation tests), which any concurrent
+// allocation here would race — a test-harness artifact, not a library race. The standalone target
+// links neither, so the check is clean and reproducible.
 
 TEST(compat_replace_and_token_depth)
 {

@@ -275,18 +275,20 @@ namespace real::compat {
     }
 
     //! \brief The sub-match for group \p n (group 0 is the whole match). Out-of-range `n` returns a
-    //!        reference to a static unmatched sub_match, exactly like `std::match_results::operator[]`
-    //!        (never out-of-bounds — a token selector `{2}`/`{5}` or a negative field relies on this).
+    //!        reference to an unmatched sub_match anchored at the sequence end `{last_, last_, false}`,
+    //!        exactly like `std::match_results::operator[]` (verified on libc++ and libstdc++) — never
+    //!        out-of-bounds. A token selector `{2}`/`{5}` or a negative field relies on this.
     const_reference operator[](size_type n) const
     {
-      static const value_type unmatched {};
-      return n < groups_.size() ? groups_[n] : unmatched;
+      return n < groups_.size() ? groups_[n] : unmatched_;
     }
 
-    //! \brief Start offset of group \p n relative to the start of the searched sequence (0 if out of range).
+    //! \brief Start offset of group \p n from the sequence start. For an out-of-range group `std`
+    //!        anchors the sub_match at the end, so the offset is the full sequence length.
     [[nodiscard]] difference_type position(size_type n = 0) const
     {
-      return n < groups_.size() ? std::distance(first_, groups_[n].first) : difference_type {0};
+      return n < groups_.size() ? std::distance(first_, groups_[n].first)
+                                : std::distance(first_, last_);
     }
 
     //! \brief Length of group \p n (0 if out of range or unmatched).
@@ -339,11 +341,12 @@ namespace real::compat {
     void reset(BidirIt first,
                BidirIt last)
     {
-      first_ = first;
-      last_  = last;
+      first_     = first;
+      last_      = last;
       groups_.clear();
-      prefix_ = suffix_ = value_type {.first = last, .second = last, .matched = false};
-      ready_  = false;
+      prefix_           = suffix_ = value_type {.first = last, .second = last, .matched = false};
+      unmatched_        = value_type {.first = last, .second = last, .matched = false};
+      ready_            = false;
     }
 
     //! \brief Marks a *ready but unmatched* result — after a failed search/match `std` leaves
@@ -413,12 +416,13 @@ namespace real::compat {
 
   private:
 
-    BidirIt                            first_  {};       //!< Start of the searched sequence.
-    BidirIt                            last_   {};       //!< End of the searched sequence.
-    std::vector<value_type, Alloc>     groups_;          //!< Group sub-matches (0 = whole match).
-    value_type                         prefix_ {};       //!< Unmatched prefix.
-    value_type                         suffix_ {};       //!< Unmatched suffix.
-    bool                               ready_  {false};  //!< Whether a match is stored.
+    BidirIt                            first_     {};      //!< Start of the searched sequence.
+    BidirIt                            last_      {};      //!< End of the searched sequence.
+    std::vector<value_type, Alloc>     groups_;            //!< Group sub-matches (0 = whole match).
+    value_type                         prefix_    {};      //!< Unmatched prefix.
+    value_type                         suffix_    {};      //!< Unmatched suffix.
+    value_type                         unmatched_ {};      //!< Sentinel for out-of-range operator[] (anchored at last_).
+    bool                               ready_     {false}; //!< Whether a match is stored.
   };
 
   using ssub_match  = sub_match<std::string::const_iterator>;  //!< Sub-match over a std::string.

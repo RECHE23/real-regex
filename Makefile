@@ -44,7 +44,7 @@ SCIFORGE_LINT ?= ../sciforge/lint
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-        lint misra fuzz fuzz-compat doc doc-no-coverage format format-check full-local-gate clean \
+        lint misra fuzz fuzz-compat tsan doc doc-no-coverage format format-check full-local-gate clean \
         python python-test bench-python bench-fuzz bench-engines \
         version-check install install-smoke uninstall release help
 
@@ -61,6 +61,7 @@ help:
 	@echo "  make misra      MISRA C++:2023-oriented analysis"
 	@echo "  make fuzz       libFuzzer robustness fuzzing (Clang; FUZZ_TIME=secs)"
 	@echo "  make fuzz-compat  Differential fuzz: real::compat vs std::regex (Clang; FUZZ_TIME=secs)"
+	@echo "  make tsan       ThreadSanitizer smoke of concurrent std_engine (Clang)"
 	@echo "  make doc        Generate API reference (Doxygen) with embedded coverage"
 	@echo "  make doc-no-coverage  Generate API reference without coverage report"
 	@echo "  make format     Uncrustify, in place"
@@ -183,6 +184,15 @@ fuzz:
 	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_target.cpp -o $(FUZZ_DIR)/fuzz_target
 	$(FUZZ_DIR)/fuzz_target -max_total_time=$(FUZZ_TIME) -timeout=10 \
 	    $(FUZZ_DIR)/corpus fuzz/corpus
+
+# ThreadSanitizer smoke: a standalone multi-threaded program (tests/tsan_compat.cpp) that hammers the
+# concurrent lazy std_engine() build on shared regex objects, proving the "concurrent const ops are
+# race-free" claim reproducibly. Standalone (no framework / test_static.cpp non-atomic op-new counter,
+# which would itself race). Clang feature; always uses Clang.
+tsan:
+	mkdir -p $(BUILD)
+	clang++ $(CXXSTD) -O1 -g $(INCLUDES) -fsanitize=thread tests/tsan_compat.cpp -o $(BUILD)/tsan_compat
+	$(BUILD)/tsan_compat
 
 # Differential fuzzer: real::compat vs std::regex (search/replace/iterate/token/match-flags). This
 # is the net that has caught every silent divergence in the compat layer, so it runs in CI too.

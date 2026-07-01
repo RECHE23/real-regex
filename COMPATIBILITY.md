@@ -73,10 +73,10 @@ wrong result).
 The `std` engine for a real-backed pattern is built lazily on demand under a **build mutex**, and the
 read is taken under the same lock, so concurrent `const` operations on one shared regex object are
 race-free for **both** nullable and non-nullable patterns — preserving `std`'s guarantee that
-concurrent `const` operations on one object are safe (verified under ThreadSanitizer). The build is
-per operation and cold relative to matching. (`std::once_flag` would be lighter but is non-copyable,
-and `basic_regex` must stay copyable like `std::regex`; the static mutex keeps the value semantics
-defaulted.)
+concurrent `const` operations on one object are safe (verified under ThreadSanitizer — `make tsan`,
+which also runs in CI). The build is per operation and cold relative to matching. (`std::once_flag`
+would be lighter but is non-copyable, and `basic_regex` must stay copyable like `std::regex`; the
+static mutex keeps the value semantics defaulted.)
 
 ## Behaviour after a failed match
 
