@@ -27,8 +27,8 @@ compat layer relies on to fall back to `std`.
 Under `IGNORECASE` in text (code-point) mode, REAL does full **Unicode simple case folding** for
 literals, classes and ranges — identical to `re.IGNORECASE`: `é` matches `É`, `[é]`/`[à-ÿ]` fold,
 `k` matches Kelvin (U+212A), `ß` matches `ẞ` (but not `ss` — simple, not full, folding). A cased
-literal is promoted to a foldable code point; a **`\xHH` / octal byte escape keeps byte provenance
-and never folds** (`\xe9` under `IGNORECASE` does not match `É`), the same deliberate byte-vs-code-point
+literal is promoted to a foldable code point; a `\xHH` or octal byte escape keeps byte provenance and
+**never folds** (`\xe9` under `IGNORECASE` does not match `É`) — the same deliberate byte-vs-code-point
 split as \ref div_hex.
 
 Still ASCII by design (a documented divergence, the separate "Unicode word/boundary" arc): the

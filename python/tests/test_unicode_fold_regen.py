@@ -14,13 +14,20 @@ import unittest
 
 _REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO, "scripts"))
-import gen_unicode_fold as gen  # noqa: E402
+try:
+    import gen_unicode_fold as gen  # noqa: E402
+    _GEN_IMPORT_ERROR = None
+except Exception as exc:  # noqa: BLE001 - the generator needs CPython 3.11+ (re._compiler._EXTRA_CASES)
+    gen = None
+    _GEN_IMPORT_ERROR = exc
 
 _HEADER = os.path.join(_REPO, "include", "real", "unicode_fold.hpp")
 
 
 class TestUnicodeFoldRegen(unittest.TestCase):
     def test_header_is_freshly_generated_and_re_faithful(self):
+        if gen is None:
+            self.skipTest(f"generator unavailable (needs CPython 3.11+): {_GEN_IMPORT_ERROR}")
         with open(_HEADER, encoding="utf-8") as f:
             committed = f.read()
         m = re.search(r'unicode_fold_unidata_version \{"([\d.]+)"\}', committed)
