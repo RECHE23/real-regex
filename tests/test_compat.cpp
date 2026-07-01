@@ -6,9 +6,11 @@
 // the allowlisted libstdc++ deviations, where the compat (spec) behavior is pinned instead.
 //
 // Both backends are exercised (real-backed AND the std fallback) so coverage is honest.
+#include <atomic>
 #include <regex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -1027,4 +1029,98 @@ TEST(compat_all_std_only_paths_throw_compat_error)
   // Wide / always-std path.
   EXPECT(throws_compat([] { (void)rc::wregex(L"("); }));
   EXPECT(throws_compat([] { (void)rc::wregex(L"[z-"); }));
+}
+
+TEST(compat_iterator_equality_conformance)
+{
+  // S6-S3: two non-end iterators are equal only for the same regex + sequence + current match — not
+  // for a coincidental same position/length (regex_iterator) or same current token (token_iterator).
+  const std::string s {"aa"};
+  const rc::regex   ra("a");
+  const rc::regex   rb("a"); // same pattern, DIFFERENT object
+
+  rc::sregex_iterator ia(s.begin(), s.end(), ra);
+  rc::sregex_iterator ia_copy(s.begin(), s.end(), ra);
+  rc::sregex_iterator ib(s.begin(), s.end(), rb);
+  EXPECT(ia == ia_copy);  // same regex + range + position
+  EXPECT(ia != ib);       // different regex object -> not equal despite identical position/length
+  ++ia_copy;
+  EXPECT(ia != ia_copy);  // advanced -> different position
+
+  // token_iterator: same current token but different field lists -> not equal.
+  rc::sregex_token_iterator ta(s.begin(), s.end(), ra, 0);
+  rc::sregex_token_iterator tb(s.begin(), s.end(), ra, std::vector<int> {0, -1});
+  EXPECT_EQ(ta->str(), tb->str()); // both yield group 0 == "a" first
+  EXPECT(ta != tb);                // but the field lists differ
+  rc::sregex_token_iterator ta_copy(s.begin(), s.end(), ra, 0);
+  EXPECT(ta == ta_copy);
+}
+
+TEST(compat_std_engine_thread_safe)
+{
+  // S6-S4: std_engine() is built lazily under a static build mutex, so concurrent const operations
+  // that route to std (a constraining flag on a non-nullable pattern, and a nullable replace) on one
+  // shared regex object are race-free. (Run under TSan to prove; here it must at least not corrupt.)
+  const rc::regex          nonnull(R"(\w+)"); // non-nullable real-backed; a flag routes to std
+  const rc::regex          nullab(R"(\w*)");  // nullable real-backed; replace routes to std
+  std::atomic<int>         matches  {0};
+  std::atomic<int>         replaced {0};
+  std::vector<std::thread> threads;
+  threads.reserve(8);
+  for (int t = 0; t < 8; ++t) {
+    threads.emplace_back([&] {
+                           for (int i = 0; i < 200; ++i) {
+                             const std::string s {"hello world"};
+                             rc::smatch        m;
+                             if (rc::regex_search(s, m, nonnull, rc::regex_constants::match_not_bol)) {
+                               matches.fetch_add(1);
+                             }
+                             if (!rc::regex_replace(s, nullab, std::string("x")).empty()) {
+                               replaced.fetch_add(1);
+                             }
+                           }
+                         });
+  }
+  for (std::thread& th : threads) {
+    th.join();
+  }
+  EXPECT_EQ(matches.load(), 8 * 200); // every flagged search matched, no corruption
+  EXPECT_EQ(replaced.load(), 8 * 200);
+}
+
+TEST(compat_replace_and_token_depth)
+{
+  // S6-S6: deeper differential coverage — complex formats x format_* combos, full token sequences,
+  // mark_count() on the fallback, multi-group patterns.
+  const rc::regex   multi(R"((\d{4})-(\d{2})-(\d{2}))");
+  const std::regex  smulti(R"((\d{4})-(\d{2})-(\d{2}))", std::regex::ECMAScript);
+  const std::string dates {"2026-06-30 and 1999-12-31"};
+  for (const char* f : {"[$3/$2/$1]", "$1$2$3", "<$&:$`|$'>", "$1-$1", "x"}) {
+    EXPECT_EQ(rc::regex_replace(dates, multi, std::string(f)),
+              std::regex_replace(dates, smulti, std::string(f)));
+    EXPECT_EQ(rc::regex_replace(dates, multi, std::string(f), rc::regex_constants::format_first_only),
+              std::regex_replace(dates, smulti, std::string(f), std::regex_constants::format_first_only));
+    EXPECT_EQ(rc::regex_replace(dates, multi, std::string(f), rc::regex_constants::format_no_copy),
+              std::regex_replace(dates, smulti, std::string(f), std::regex_constants::format_no_copy));
+  }
+
+  // Full token sequence over the multi-group pattern, fields {1,3} and {-1}.
+  for (const std::vector<int>& fields : {std::vector<int> {1, 3}, std::vector<int> {-1}}) {
+    std::vector<std::string> got;
+    std::vector<std::string> ref;
+    for (rc::sregex_token_iterator it(dates.begin(), dates.end(), multi, fields), e; it != e; ++it) {
+      got.push_back(it->str());
+    }
+    for (std::sregex_token_iterator it(dates.begin(), dates.end(), smulti, fields), e; it != e; ++it) {
+      ref.push_back(it->str());
+    }
+    EXPECT(got == ref);
+  }
+
+  // mark_count() must match std on BOTH backends (real-backed multi-group, and a std fallback).
+  EXPECT_EQ(multi.mark_count(), smulti.mark_count());
+  const rc::regex   backref(R"((a)\1(b))"); // backref -> std fallback
+  const std::regex  sbackref(R"((a)\1(b))", std::regex::ECMAScript);
+  EXPECT(!backref.uses_real());
+  EXPECT_EQ(backref.mark_count(), sbackref.mark_count());
 }

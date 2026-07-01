@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <iterator>
+#include <mutex>
 #include <optional>
 #include <regex>
 #include <string>
@@ -617,12 +618,22 @@ namespace real::compat {
       return uses_real() && !nullable_;
     }
 
-    //! \brief The `std::regex` for the std / lazy-std path (built once on demand for real+nullable).
+    //! \brief The `std::regex` for the std / lazy-std path (built once on demand for a real-backed
+    //!        pattern reached via a constraining flag / nullable replace-iterate / `$0`/sed replace).
+    //!
+    //! Thread-safe: `std::regex` guarantees concurrent `const` operations on one object are safe, but
+    //! this builds `lazy_std_` (a `mutable` member) on demand. A function-local static build mutex
+    //! serialises the build (and the read is taken under the same lock), so the guarantee holds for
+    //! nullable AND non-nullable real-backed patterns. `std::once_flag` would be lighter but is
+    //! non-copyable, and `basic_regex` must stay copyable (`std::regex` is); a static mutex keeps the
+    //! value semantics defaulted. The build is per operation, cold relative to matching.
     [[nodiscard]] const std::basic_regex<CharT, Traits>& std_engine() const
     {
       if (std::holds_alternative<std::basic_regex<CharT, Traits>>(engine_)) {
         return std::get<std::basic_regex<CharT, Traits>>(engine_);
       }
+      static std::mutex          build_mutex; // one per basic_regex<CharT, Traits> instantiation
+      const std::lock_guard      lock {build_mutex};
       if (!lazy_std_.has_value()) {
         try {
           lazy_std_.emplace(pattern_.data(), pattern_.size(), detail::to_std(flags_));
@@ -665,17 +676,10 @@ namespace real::compat {
           mark_count_ = compiled.group_count();
           nullable_   = compiled.raw_program().hints.empty_match_possible;
           engine_.template emplace<real::regex>(std::move(compiled));
-          if (nullable_) {
-            // A nullable real-backed pattern routes replace/iterate to std. Build that std eagerly
-            // here so the const replace/iterate op never mutates lazy_std_ under `const` (which would
-            // break std's guarantee that concurrent const ops on one object are safe). If std cannot
-            // build it (a nullable real-superset — rare), leave it lazy: search/match still run on
-            // real, and the wrapped error surfaces only if replace/iterate is actually used.
-            try {
-              (void)std_engine();
-            }
-            catch (const std::regex_error&) { /* deferred to first replace/iterate use */ }
-          }
+          // The std engine for a real-backed pattern (needed for a constraining flag or nullable
+          // replace/iterate) is built lazily and thread-safely by std_engine() under its build mutex,
+          // so no eager build is needed here (a real superset that std rejects surfaces the wrapped
+          // error only when the std-only operation is actually invoked; search/match stay on real).
         }
         catch (const real::regex_error&) {
           // real cannot represent it (backref / unbounded lookaround / POSIX class / non-ASCII in a
@@ -1214,7 +1218,10 @@ namespace real::compat {
       if (at_end_ || other.at_end_) {
         return at_end_ == other.at_end_;
       }
-      return match_.position(0) == other.match_.position(0)
+      // std-conformant: two non-end iterators are equal only for the same regex + sequence at the
+      // same current match (not just a coincidental same-position/length across different regexes).
+      return re_ == other.re_ && begin_ == other.begin_ && end_ == other.end_
+             && match_.position(0) == other.match_.position(0)
              && match_.length(0) == other.match_.length(0);
     }
 
@@ -1414,8 +1421,11 @@ namespace real::compat {
       if (at_end_ || other.at_end_) {
         return at_end_ == other.at_end_;
       }
-      return position_ == other.position_ && n_ == other.n_ && suffix_mode_ == other.suffix_mode_
-             && current_.first == other.current_.first && current_.second == other.current_.second;
+      // std-conformant: same underlying match walk, same field selectors, same field index / suffix
+      // state, same current token — not just a coincidental same current token across different lists.
+      return position_ == other.position_ && subs_ == other.subs_ && n_ == other.n_
+             && suffix_mode_ == other.suffix_mode_ && current_.first == other.current_.first
+             && current_.second == other.current_.second;
     }
 
     [[nodiscard]] bool operator!=(const regex_token_iterator& other) const

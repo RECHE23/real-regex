@@ -60,21 +60,23 @@ literal `$0`), so `real` cannot pick one without risking a silent divergence.
 
 ## Errors and thread-safety
 
-A pattern `real` accepts but `std` rejects (a *real superset*, e.g. `\A` = literal `A` on `real`,
-rejected by `std`) runs `search`/`match` on `real`. It reaches `std` only via a constraining match
-flag or a nullable `regex_replace`/iterator; if the `std` build then fails, the error surfaces as a
-`real::compat::regex_error` (which *is* a `std::regex_error`) — **homogeneous with the construction
-path, an error rather than a silent wrong result** (R4). This is a *late* throw: constructing the
-regex succeeds (it is valid for `real`), and the error appears only when the `std`-only operation is
-first invoked.
+Every compat entry point that can fail throws a **`real::compat::regex_error`** (which *is* a
+`std::regex_error`), never a raw `std` one — construction (POSIX/wide/custom-traits screens, the
+real→std fallback) and the lazy `std` build alike. A pattern `real` accepts but `std` rejects (a
+*real superset*, e.g. `\A` = literal `A` on `real`, rejected by `std`) runs `search`/`match` on
+`real`; it reaches `std` only via a constraining match flag or a nullable / `$0` / sed
+`regex_replace`, or an iterator routed to `std`. If that `std` build fails, the error is a **late but
+homogeneous** `compat::regex_error` — construction succeeded (the pattern is valid for `real`), and
+the error appears only when the `std`-only operation is first invoked (R4: an error, never a silent
+wrong result).
 
-Nullable real-backed patterns build their `std` engine **eagerly at construction** (they route
-replace/iterate to `std` anyway): this keeps those `const` operations from lazily mutating the cached
-`std` engine under `const`, preserving `std`'s guarantee that concurrent `const` operations on one
-object are safe. Measured cost: ~0.2–0.4 µs per nullable-regex construction (a cold path). A
-non-nullable real-backed pattern used with a constraining flag from multiple threads *simultaneously
-for the first time* still builds its `std` engine lazily — construct-then-share, or make a first
-flagged call, before sharing such a regex across threads.
+The `std` engine for a real-backed pattern is built lazily on demand under a **build mutex**, and the
+read is taken under the same lock, so concurrent `const` operations on one shared regex object are
+race-free for **both** nullable and non-nullable patterns — preserving `std`'s guarantee that
+concurrent `const` operations on one object are safe (verified under ThreadSanitizer). The build is
+per operation and cold relative to matching. (`std::once_flag` would be lighter but is non-copyable,
+and `basic_regex` must stay copyable like `std::regex`; the static mutex keeps the value semantics
+defaulted.)
 
 ## Behaviour after a failed match
 
