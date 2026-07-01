@@ -65,7 +65,10 @@ class deadline:
             signal.setitimer(signal.ITIMER_REAL, 0)
         return False
 
-_LITERALS = "abcABC012 _-."  # mix of word, space, digit, punctuation
+# Mix of word, space, digit, punctuation, plus raw 2/3/4-byte UTF-8 literals (é/€/😀): in
+# code-point mode these are single atoms, so a following quantifier spans the whole code point
+# (the U1 fix). re is the code-point oracle for the differential.
+_LITERALS = "abcABC012 _-.é€😀"
 _CLASSES = [r"\d", r"\D", r"\w", r"\W", r"\s", r"\S", ".",
             "[abc]", "[a-c]", "[^abc]", "[a-z0-9]", r"[\dx]"]
 _QUANTS = ["", "*", "+", "?", "??", "*?", "+?", "{2}", "{1,3}", "{2,}", "{0,2}"]
@@ -73,8 +76,8 @@ _QUANTS = ["", "*", "+", "?", "??", "*?", "+?", "{2}", "{1,3}", "{2,}", "{0,2}"]
 # else establishes a "looping context" whose body must always consume.
 _NONLOOP_QUANTS = ["", "?", "??"]
 # Tokens that always consume >= 1 character: the only things allowed directly
-# inside a looping quantifier, keeping every loop body non-nullable.
-_CONSUMING = [re.escape(c) for c in "abABC012_-"] + \
+# inside a looping quantifier, keeping every loop body non-nullable (incl. UTF-8 code points).
+_CONSUMING = [re.escape(c) for c in "abABC012_-é€😀"] + \
              [r"\d", r"\w", r"\s", ".", "[abc]", "[a-c]", "[^abc]", "[a-z0-9]"]
 _ANCHORS = ["^", "$", r"\b", r"\B", r"\A", r"\Z"]
 # Atoms allowed inside a (capture-free) lookaround sub-pattern: ASCII, single codepoint,
@@ -268,7 +271,7 @@ def random_text(rng):
     # *re*'s backtracking engine (REAL stays linear), and short input bounds
     # re's worst case to a few thousand steps so the differential never hangs.
     # (That same blowup is measured deliberately by the fuzz benchmark.)
-    alphabet = rng.choice(["abc012", "abcABC ", "a\nb c", _LITERALS, "café \tx"])
+    alphabet = rng.choice(["abc012", "abcABC ", "a\nb c", _LITERALS, "café \tx", "é€😀 aé€x"])
     return "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 10)))
 
 

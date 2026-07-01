@@ -23,6 +23,7 @@
 #include "charclass.hpp"
 #include "config.hpp"
 #include "program.hpp"
+#include "utf8.hpp"
 
 namespace real::detail {
 
@@ -411,9 +412,24 @@ namespace real::detail {
         case '\\':
           return parse_escape(out);
         default:
-          // Like Python: lone '{', ']' and '}' are ordinary characters.
-          ++pos_;
-          return add_node(out, {.kind = node_kind::byte, .byte = static_cast<std::uint8_t>(ch)});
+          {
+            // In code-point mode a raw non-ASCII byte begins a UTF-8 sequence: decode the WHOLE
+            // code point and emit it as one atom (the same emission as `\uHHHH`), so a following
+            // quantifier applies to the code point, not just its last byte (the é+ bug). A malformed
+            // sequence is a pattern error, not a silent literal. In bytes mode, and for ASCII, a raw
+            // byte stays a single byte node (so the compat layer's bytes|ecma path is unchanged).
+            if (!bytes_ && static_cast<std::uint8_t>(ch) >= 0x80U) {
+              const detail::decoded_codepoint decoded {detail::decode_codepoint_strict(pattern_, pos_)};
+              if (!decoded.valid) {
+                fail("invalid UTF-8 byte in pattern");
+              }
+              pos_ += decoded.length;
+              return emit_codepoint_utf8(out, static_cast<std::int32_t>(decoded.cp));
+            }
+            // Like Python: lone '{', ']' and '}' are ordinary characters.
+            ++pos_;
+            return add_node(out, {.kind = node_kind::byte, .byte = static_cast<std::uint8_t>(ch)});
+          }
       }
     }
 

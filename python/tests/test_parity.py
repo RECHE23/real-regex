@@ -33,6 +33,19 @@ PATTERNS = [
     r"colou?r",
     r"\A\w+",
     r"(a(b)?)c",
+    # UTF-8 literals in code-point mode: a raw multi-byte char is one atom, so the quantifier
+    # spans the whole code point (the é+ bug). re is the code-point oracle.
+    r"é+",
+    r"café",
+    r"résumé",
+    r"na.ve",
+    r"caf.",
+    r".{3}",
+    r"€+",
+    r"[a-z]é",
+    r"(é)(é)",
+    r"coûte",
+    r"😀+",
 ]
 
 TEXTS = [
@@ -47,6 +60,8 @@ TEXTS = [
     "csv,values,here,,empty",
     "color colour colouur",
     "café au lait, naïve résumé",  # non-ASCII subjects
+    "ça coûte €12, résumé 😀😀 ok",
+    "ééé and éé and é",
     "ababab abab",
     "a" * 200 + "b",
 ]
