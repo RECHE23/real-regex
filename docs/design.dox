@@ -319,6 +319,24 @@ so the bytes still had to be copied and only the per-element call overhead could
 regressed some small-slot alternations. Measured, under threshold, not a pure win → vetoed, so the
 slot snapshot stays a plain per-element loop.
 
+\subsection g_fixedgroups 7.2 Fixed-width concatenation with inner groups (D4b)
+
+The fixed-shape fast path (a straight-line run of one-byte-wide `byte`/`klass` ops) now tolerates
+capturing saves interleaved between the runs — `(\d{4})-(\d{2})-(\d{2})`, `(a)(b)`. Because every
+consuming op is one byte, each save sits at a **compile-time-constant offset** from the match start;
+once the single verifying walk has located `[s, e)`, one linear pass writes each group slot as
+`s + offset` — no re-match, no VM. The no-group run keeps its own tight loop (the save-skipping walk
+is a separate `if constexpr` instantiation, so there is no branch and no regression on it). Measured
+`find_iter` over 2&nbsp;MB: `(\d{4})-(\d{2})-(\d{2})` 39 → 308&nbsp;MB/s (**7.8×**, the ungrouped
+fixed shape runs 433).
+
+\note **Honest coverage.** This shape needs *fixed* widths, so what qualifies is **ASCII-mode
+shorthands** (`\d` under `re.A`) and **explicit classes** (`[0-9]`) — a bitmap, one byte each. A
+text-mode Unicode shorthand (`\d`, `\w`) is a `klass_cp` code-point predicate of *variable* width, so
+it does **not** qualify and stays on the general VM; likewise a variable count (`{n,m}`, `+`, `*`,
+`?`), a nested group, an alternation, or a lookaround. So `(\d{1,3}\.){3}\d{1,3}` (an IPv4-shaped
+pattern) is excluded by construction.
+
 \section g_map 8. Architecture map: who does what
 
 Headers form layers; a header only includes those below it (each file's Doxygen

@@ -303,32 +303,51 @@ namespace real::detail {
       }
     }
 
-    // "fixed shape": a straight-line run of byte/klass with no branches or
-    // assertions and no captures (exactly one leading and one trailing save).
-    // The whole match is fixed width, so one walk verifies it. Covers class{n}
-    // and mixed sequences such as \d{4}-\d{2}-\d{2}; pure literals are caught by
-    // the exact-literal path first. Negated classes and `.` expand to byte-level
-    // branches, so they never form this shape.
+    // "fixed shape": a straight-line run of fixed-width byte/klass consuming ops, possibly interleaved
+    // with capturing saves (D4b: (\d{4})-(\d{2})-(\d{2}), (a)(b)), with no branches or assertions. The
+    // whole match is fixed width, so one walk verifies it; because every width is fixed, each save sits
+    // at a compile-time-constant offset from the match start, so the fast path fills each group slot by
+    // that offset (no re-match). Covers class{n} and mixed sequences; pure literals hit the exact-literal
+    // path first. A klass_cp (Unicode shorthand, variable width), split/jump (alternation, {n,m}/+/*/?),
+    // `.` or a negated class (byte-level branches), and lookarounds all break the run, so they never form
+    // this shape -- ASCII / explicit-class fixed widths are what qualify.
     {
-      std::size_t  i          {};
-      std::int32_t lead_saves {};
-      while (i < code.size() && code[i].op == opcode::save) {
-        ++lead_saves;
-        ++i;
-      }
-      std::int32_t width {};
-      while (i < code.size() && (code[i].op == opcode::byte || code[i].op == opcode::klass)) {
-        ++width;
-        ++i;
-      }
-      std::int32_t trail_saves {};
-      while (i < code.size() && code[i].op == opcode::save) {
-        ++trail_saves;
-        ++i;
-      }
-      if (lead_saves == 1 && trail_saves == 1 && width >= 1 && i + 1 == code.size() &&
-          code[i].op == opcode::match) {
-        hints.fixed_shape = true;
+      std::size_t  i           {};
+      std::int32_t width       {};
+      std::int32_t open_groups {};  // capturing groups (slots >= 2) currently open, for the nesting guard
+      bool         closed      {};  // saw the closing save (slot 1)
+      bool         nested      {};  // a group opened inside another -- kept on the general VM (flat only)
+      if (i < code.size() && code[i].op == opcode::save && code[i].arg16 == 0) {
+        ++i; // opening save (slot 0)
+        while (i < code.size()) {
+          const opcode op {code[i].op};
+          if (op == opcode::byte || op == opcode::klass) {
+            ++width;
+            ++i;
+          }
+          else if (op == opcode::save) {
+            const std::int32_t slot {code[i].arg16};
+            if (slot == 1) {
+              closed = true;
+            }
+            else if (slot >= 2 && (slot % 2) == 0) { // an inner group's opening save
+              if (open_groups > 0) {
+                nested = true;
+              }
+              ++open_groups;
+            }
+            else if (slot >= 3) { // an inner group's closing save
+              --open_groups;
+            }
+            ++i;
+          }
+          else {
+            break; // any other op (split/jump/klass_cp/assert/lookaround) disqualifies the shape
+          }
+        }
+        if (width >= 1 && closed && !nested && i + 1 == code.size() && code[i].op == opcode::match) {
+          hints.fixed_shape = true;
+        }
       }
     }
 

@@ -565,6 +565,7 @@ namespace real::detail {
      * \param[in] s    Text offset to match from.
      * \return The end offset on a full match, or \ref npos on a mismatch.
      */
+    template <bool SkipSaves = false>
     [[nodiscard]] constexpr std::size_t match_byte_klass_run(std::string_view text,
                                                              std::size_t      pc,
                                                              std::size_t      s) const
@@ -572,6 +573,14 @@ namespace real::detail {
       std::size_t consumed {};
       while (pc < prog_.code.size()) {
         const instr& instruction {prog_.code[pc]};
+        if constexpr (SkipSaves) {
+          // D4b grouped fixed shape: interleaved capturing saves are epsilon here (slots filled
+          // separately). if constexpr keeps this branch out of the no-group tight loop entirely.
+          if (instruction.op == opcode::save) {
+            ++pc;
+            continue;
+          }
+        }
         if (instruction.op != opcode::byte && instruction.op != opcode::klass) {
           break;
         }
@@ -650,11 +659,27 @@ namespace real::detail {
                                    run_mode         mode,
                                    OutSlots&        out_slots)
     {
-      out_slots.assign(2, npos);
-      // The sequence starts after the single leading save (the detection in
-      // analyze_program requires exactly one) and runs to save 1.
-      const auto at = [&](std::size_t s) { return match_byte_klass_run(text, 1, s); };
+      // No inner groups (slot_count 2): a contiguous byte/klass run, the original tight path unchanged.
+      if (prog_.slot_count <= 2) {
+        out_slots.assign(2, npos);
+        const auto at {[&](std::size_t s) { return match_byte_klass_run<false>(text, 1, s); }};
+        if (mode != run_mode::search) {
+          const std::size_t match_end {at(start)};
+          if (match_end == npos || (mode == run_mode::full && match_end != text.size())) {
+            return false;
+          }
+          out_slots[0] = start;
+          out_slots[1] = match_end;
+          return true;
+        }
+        return fast_search(text, start, at, out_slots);
+      }
 
+      // Inner capturing groups (D4b): the run has interleaved saves, so the verify walk skips them
+      // (SkipSaves) and the group slots are filled from their constant offsets on success only (not per
+      // failed candidate). A separate body keeps the no-group loop above free of any grouping branch.
+      out_slots.assign(prog_.slot_count, npos);
+      const auto at {[&](std::size_t s) { return match_byte_klass_run<true>(text, 1, s); }};
       if (mode != run_mode::search) {
         const std::size_t match_end {at(start)};
         if (match_end == npos || (mode == run_mode::full && match_end != text.size())) {
@@ -662,9 +687,44 @@ namespace real::detail {
         }
         out_slots[0] = start;
         out_slots[1] = match_end;
+        fill_fixed_saves(start, out_slots);
         return true;
       }
-      return fast_search(text, start, at, out_slots);
+      if (!fast_search(text, start, at, out_slots)) {
+        return false;
+      }
+      fill_fixed_saves(out_slots[0], out_slots); // out_slots[0] is the winning match start
+      return true;
+    }
+
+    /*!
+     * \brief Fills the capturing-group slots of a fixed-shape match (D4b). Every consuming op is one
+     *        byte wide, so each save sits at a constant offset from the match start; a single linear
+     *        pass writes `slot = match_start + offset`. No-op when the pattern has no inner groups
+     *        (slot_count 2). Not a re-match: the bytes were already verified.
+     * \param[in]  match_start Byte offset where the match begins.
+     * \param[out] out_slots   Receives the group slots.
+     */
+    template <typename OutSlots>
+    constexpr void fill_fixed_saves(std::size_t match_start,
+                                    OutSlots&   out_slots) const
+    {
+      if (prog_.slot_count <= 2) {
+        return;
+      }
+      std::size_t offset {};
+      for (std::size_t pc {1}; pc < prog_.code.size(); ++pc) {
+        const instr& instruction {prog_.code[pc]};
+        if (instruction.op == opcode::byte || instruction.op == opcode::klass) {
+          ++offset;
+        }
+        else if (instruction.op == opcode::save) {
+          out_slots[static_cast<std::size_t>(instruction.arg16)] = match_start + offset;
+        }
+        else {
+          break; // reached match
+        }
+      }
     }
 
     /*!

@@ -427,3 +427,36 @@ TEST(enveloping_group_class_loop_fast_path)
   EXPECT(m3[1] == "42"sv && m3.start(1) == m3.start(0) && m3.end(1) == m3.end(0));
   EXPECT(!rw.search(s4)); // no word: no match, group unset
 }
+
+TEST(fixed_shape_internal_saves_fast_path)
+{
+  // D4b: a fixed-width byte/klass sequence with interleaved capturing saves ((\d{4})-(\d{2})-(\d{2}),
+  // (a)(b)) takes the fixed-shape fast path and fills each group slot from its constant offset.
+  EXPECT(hints_of("(\\d{4})-(\\d{2})-(\\d{2})", real::flags::ascii).fixed_shape);
+  EXPECT(hints_of("([0-9]{4})-([0-9]{2})").fixed_shape); // explicit classes: fixed width in text mode
+  EXPECT(hints_of("(a)(b)").fixed_shape);
+  EXPECT(hints_of("(\\d{4})x", real::flags::ascii).fixed_shape);
+  // Strictly excluded (stay on the general VM): a text \d is a variable-width code-point predicate, a
+  // variable count {n,m}/+/*/? is a split, a nested group, and an alternation.
+  EXPECT(!hints_of("(\\d{2})").fixed_shape);                                     // klass_cp: text shorthand, variable width
+  EXPECT(!hints_of("(\\d{1,3})", real::flags::ascii).fixed_shape);               // variable count
+  EXPECT(!hints_of("(\\d{1,3}\\.){3}\\d{1,3}", real::flags::ascii).fixed_shape); // ipv4 guard-rail
+  EXPECT(!hints_of("(\\w+)").fixed_shape);                                       // '+': that is D4a, not this shape
+  EXPECT(!hints_of("((\\d{2}))", real::flags::ascii).fixed_shape);               // nested groups
+  EXPECT(!hints_of("(\\d{2})|(x)", real::flags::ascii).fixed_shape);             // alternation
+  // The group slots equal the VM's, across the date shape, adjacent saves, a fixed+trailing shape, a
+  // near-miss (single-digit month), and no match.
+  const real::regex date {R"((\d{4})-(\d{2})-(\d{2}))", real::flags::ascii};
+  const std::string s1   {"x 2026-07-02 y"};
+  const auto        m1   {date.search(s1)};
+  EXPECT(m1.matched() && m1[1] == "2026"sv && m1[2] == "07"sv && m1[3] == "02"sv);
+  EXPECT(m1.start(1) == 2U && m1.end(1) == 6U && m1.start(3) == 10U && m1.end(3) == 12U);
+  const real::regex adj {"(\\d{2})(\\d{2})", real::flags::ascii};
+  const std::string s2  {"1234"};
+  const auto        m2  {adj.search(s2)};
+  EXPECT(m2[1] == "12"sv && m2[2] == "34"sv);
+  const std::string s3  {"2026-7-02"};      // single-digit month: {2} fails
+  EXPECT(!date.search(s3));
+  const std::string s4  {"end 2026-07-02"}; // match at end of text
+  EXPECT(date.search(s4).end(0) == s4.size());
+}
