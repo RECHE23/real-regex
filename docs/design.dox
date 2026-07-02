@@ -290,7 +290,7 @@ differential fuzzer that compares against Python's `re` over tens of thousands
 of generated patterns (it has caught real engine bugs, including an empty-match
 divergence and a UTF-8 boundary case).
 
-\subsection g_envgroup 7.1 Enveloping-group class loops (D4a)
+\subsection g_envgroup 7.1 Enveloping-group class loops
 
 A class loop wrapped in exactly one capturing group — `(\w+)`, `([a-z]+)`, `(\d+)`, `(\w)` — used
 to fall to the general VM (~28× slower) purely to fill the group's slots, even though its body
@@ -301,25 +301,26 @@ pair immediately inside the outer one and records the group slots; the scan loop
 one shared helper. Strictly scoped — a lazy body `(\w+?)`, a trailing atom `(\w+)x`, nesting
 `((\w+))`, a second group `(\w+)(\w+)`, and a non-capturing `(?:\w+)` all stay on the general VM.
 
-Two independent optimizations were measured on the general VM (`find_iter`, 2&nbsp;MB ASCII, min of
-7–9; devbox numbers, ratios are the point):
+Two candidate optimizations were measured on the general VM (`find_iter`, 2&nbsp;MB ASCII, min of
+7–9; ratios are the point). The enveloping-group scan loop shipped; a bulk-copy of the capture-slot
+snapshot did not clear its bar:
 
 | Optimization | Representative case | Before | After | Verdict |
 |---|---|---|---|---|
-| **D4a** enveloping-group scan loop | `(\w+)` | 31.5 MB/s | **751 MB/s (24×, ≈ the `\w+` fast path 825)** | shipped |
-| D4a | `([a-z]+)` | 32 | **660** | shipped |
-| D2a bulk-copy of the slot snapshot (`add_thread`) and reload (`load_working`) | `(a\|b\|c\|d)+` (slot 2) | 14.6 | 15.0 (+2.7%) | **vetoed** |
-| D2a | `(\w)(\w)(\w)(\w)+` (slot 10) | 19.1 | 20.2 (+5.7%) | vetoed |
-| D2a | `(abcd\|abc\|ab\|a)+` (slot 4) | 12.5 | 12.1 (−3%) | vetoed |
+| **Enveloping-group scan loop** | `(\w+)` | 31.5 MB/s | **751 MB/s (24×, ≈ the `\w+` fast path 825)** | shipped |
+| Enveloping-group scan loop | `([a-z]+)` | 32 | **660** | shipped |
+| Bulk block-copy of the slot snapshot (`add_thread`) and reload (`load_working`) | `(a\|b\|c\|d)+` (slot 2) | 14.6 | 15.0 (+2.7%) | **rejected** |
+| Bulk block-copy | `(\w)(\w)(\w)(\w)+` (slot 10) | 19.1 | 20.2 (+5.7%) | rejected |
+| Bulk block-copy | `(abcd\|abc\|ab\|a)+` (slot 4) | 12.5 | 12.1 (−3%) | rejected |
 
-D2a replaced the per-slot `push_back`/reload loops with a one-shot block append/copy. It cleared its
-target (+20–35%) on no case but a single high-thread × high-slot outlier (`((a|b)(c|d)(e|f))+`,
-+22%); the median was ~5% — exactly the `stl_construct` share the control profile attributed to it,
-so the bytes still had to be copied and only the per-element call overhead could go — and it even
-regressed some small-slot alternations. Measured, under threshold, not a pure win → vetoed, so the
-slot snapshot stays a plain per-element loop.
+The bulk-copy replaced the per-slot `push_back`/reload loops with a one-shot block append/copy. It
+cleared its target (+20–35%) on no case but a single high-thread × high-slot outlier
+(`((a|b)(c|d)(e|f))+`, +22%); the median was ~5% — exactly the `stl_construct` share the control
+profile attributed to it, so the bytes still had to be copied and only the per-element call overhead
+could go — and it even regressed some small-slot alternations. Measured, under threshold, not a pure
+win → rejected, so the slot snapshot stays a plain per-element loop.
 
-\subsection g_fixedgroups 7.2 Fixed-width concatenation with inner groups (D4b)
+\subsection g_fixedgroups 7.2 Fixed-width concatenation with inner groups
 
 The fixed-shape fast path (a straight-line run of one-byte-wide `byte`/`klass` ops) now tolerates
 capturing saves interleaved between the runs — `(\d{4})-(\d{2})-(\d{2})`, `(a)(b)`. Because every
@@ -337,7 +338,7 @@ it does **not** qualify and stays on the general VM; likewise a variable count (
 `?`), a nested group, an alternation, or a lookaround. So `(\d{1,3}\.){3}\d{1,3}` (an IPv4-shaped
 pattern) is excluded by construction.
 
-\subsection g_anchoredoracle 7.3 Retired: the anchored-oracle two-pass loop (D3)
+\subsection g_anchoredoracle 7.3 Retired: the anchored-oracle two-pass loop
 
 An idea for capture-heavy parsing patterns that the general VM handles slowly (5–40&nbsp;MB/s): use
 the existing `real::dfa` as a cheap boolean *oracle* — scan for the smallest position where any match
@@ -424,8 +425,8 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   general VM — still linear); the fixed-width lookbehind budget (255 bytes) tightens because `\d`
   now spans up to 4 bytes (`(?<=\d{63})` compiles, `\d{64}` is rejected); and a `static_regex` over
   a Unicode shorthand needs a raised constexpr budget (see below). Use `flags::ascii` (`re.A`) or an
-  explicit ASCII class (`[0-9]`) where the ASCII form suffices. This is the W2 baseline against which
-  the larger `\w` (771 ranges) will be judged.
+  explicit ASCII class (`[0-9]`) where the ASCII form suffices. The larger `\w` (771 ranges) only
+  sharpens this, as the throughput measurements below show.
 - **Match throughput scales with the class count — and this vetoed a naive Unicode `\w`.** In the
   byte-level Pike VM each thread is stepped one byte at a time and every alternative class branch is
   evaluated per position, so a large code-point class costs *O(number of classes)* per byte. Measured

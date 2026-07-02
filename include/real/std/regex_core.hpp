@@ -57,7 +57,7 @@ namespace real::compat {
       return static_cast<syntax_option_type>(static_cast<unsigned>(a) & static_cast<unsigned>(b));
     }
 
-    //! \brief Match-control flags. S1 carries the common subset; the rest arrive in a later slice.
+    //! \brief Match-control flags: the common subset.
     enum match_flag_type : unsigned
     {
       match_default    = 0,
@@ -104,8 +104,9 @@ namespace real::compat {
    * backreference). So the throwing path is exactly "std also rejected" — the exact std
    * `.code()` is preserved, and `what()` keeps std's detailed message.
    *
-   * (The fiche's §4 "map real::regex_error::kind() to a code" path is intentionally absent: the
-   * always-fall-back flow never propagates a real error directly — a real resource-limit rejection
+   * (An alternative — mapping `real::regex_error::kind()` to a code directly — is intentionally
+   * absent: the always-fall-back flow never propagates a real error directly — a real resource-limit
+   * rejection
    * must still try std, which may accept it, to stay ≡ std. Mapping real kinds would require a
    * no-fallback path, which would diverge from std. Revisit only if such a path is introduced.)
    */
@@ -223,7 +224,7 @@ namespace real::compat {
   /*!
    * \brief A `std::basic_regex`-compatible pattern, backed by `real` where proven, else `std`.
    *
-   * \tparam CharT  Character type (S1: `char`; other types route straight to `std`).
+   * \tparam CharT  Character type (`char`; other types route straight to `std`).
    * \tparam Traits Regex traits (std parity).
    */
   template <typename CharT = char, typename Traits = std::regex_traits<CharT>>
@@ -339,7 +340,7 @@ namespace real::compat {
         catch (const std::regex_error& std_error) {
           // A pattern real accepted but std cannot build (a real superset) reaches std only via a
           // constraining flag / nullable replace-iterate. Surface it as a compat::regex_error, not a
-          // raw std one — R4-honest: an error, homogeneous with the ctor path, never a silent result.
+          // raw std one: an error, homogeneous with the ctor path, never a silent result.
           throw regex_error(std_error);
         }
       }
@@ -389,7 +390,7 @@ namespace real::compat {
       else {
         // wchar_t / char8/16/32 / custom traits: real is never eligible, so go straight to std. The
         // real::regex variant alternative stays dead for this CharT (never emplaced), and real's
-        // char-only helpers are not instantiated. always-std => std parity by construction (R4).
+        // char-only helpers are not instantiated. always-std => std parity by construction.
         try {
           engine_.template emplace<std::basic_regex<CharT, Traits>>(pattern.data(), pattern.size(),
                                                                     detail::to_std(f));

@@ -167,7 +167,7 @@ number here.
 | `(?P<name>…)` `(?<name>…)` | named capturing group (Python and .NET styles) |
 | `^` `$` | line/text anchors (Python semantics: `$` also matches before a final `\n`) |
 | `\A` `\Z` | strict text start / end |
-| `\b` `\B` | word boundary / non-boundary (ASCII word characters) |
+| `\b` `\B` | word boundary / non-boundary (Unicode word characters in text mode, ASCII in bytes mode or under `a`) |
 | `\<` `\>` | start / end of word (REAL extension, not in Python `re`) |
 | `(?imsxa)` prefix | global flags: `i` case-insensitive (Unicode fold in text mode), `m` multiline, `s` dotall, `x` verbose (ignore unescaped whitespace and `#` comments outside classes), `a` ASCII (`re.A`: keep `\w \W \d \D \s \S \b \B \< \>` and icase folding ASCII, even in text mode) — also `real::flags` on the constructor |
 
@@ -189,13 +189,13 @@ class carries specific non-ASCII code points and ranges (`[é]`, `[à-ÿ]`, `[^�
 compiled to the canonical UTF-8 automaton (never an overlong or surrogate
 encoding); `[^…]`, `\D \W \S` and `.` also match non-ASCII code points. Under
 `IGNORECASE`, literals, classes and ranges do full **Unicode** case folding like
-`re` (`é` matches `É`, `k` matches Kelvin), while the `\d \w \s` shorthands and
-`\b` stay ASCII by design (the separate Unicode-word arc); a `\xHH` escape keeps
-byte provenance and never folds. In `bytes` mode a class is raw bytes (a non-ASCII
+`re` (`é` matches `É`, `k` matches Kelvin). The `\d \w \s` shorthands and `\b` are
+Unicode in text mode too (like `re`; ASCII under `re.A` / `flags::ascii`); a `\xHH`
+escape keeps byte provenance and never folds. In `bytes` mode a class is raw bytes (a non-ASCII
 member is a byte value, matching `std::basic_regex<char>`), and `IGNORECASE` folds
 ASCII only.
 
-> **Breaking / migration (UTF-8 arc).** In str (code-point) mode, non-ASCII pattern
+> **Breaking / migration (UTF-8 / code-point mode).** In str (code-point) mode, non-ASCII pattern
 > text now decodes to whole code points instead of independent bytes. If you relied on
 > the old byte behaviour:
 > - A raw non-ASCII **literal** is now one atom: `é+` matches `éé` (was: `+` on the

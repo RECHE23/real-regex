@@ -1,5 +1,5 @@
-// Unicode \w \d \s property tables (W1): the ranges + is_word_cp / is_digit_cp / is_space_cp, in
-// isolation (not yet wired into the parser/compiler/VM -- zero behaviour change). The ranges are
+// Unicode \w \d \s property tables: the ranges + is_word_cp / is_digit_cp / is_space_cp, tested in
+// isolation (independently of the parser/compiler/VM that consume them). The ranges are
 // validated against re at generation time; these contract tests are the standing second net, pinning
 // the category-derivation quirks (which make a naive Unicode-category derivation wrong), the range
 // boundaries, and the exact totals.

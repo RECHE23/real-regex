@@ -19,8 +19,8 @@
  * ECMAScript-`.` semantics align with `std::basic_regex<char>` (validated by a differential).
  *
  * Surface: `basic_regex` / `sub_match` / `match_results` / `regex_error`, `regex_search`,
- * `regex_match` (S1), `regex_replace` (S2a), `regex_iterator` / `regex_token_iterator` (S2b),
- * the full `match_flag_type` (S3), and `wregex` + POSIX grammars + `nosubs` (S4). `real` runs only
+ * `regex_match`, `regex_replace`, `regex_iterator` / `regex_token_iterator`, the full
+ * `match_flag_type`, and `wregex` + POSIX grammars + `nosubs`. `real` runs only
  * the `char` / default-traits / ECMAScript / every-group path (see `detail::real_eligible`); wide
  * `CharT`, custom traits, POSIX/`collate`, and `nosubs` are always `std`. `regex_replace`/iterators
  * route nullable patterns to `std::regex` (the empty-match traversal differs from ECMAScript, see

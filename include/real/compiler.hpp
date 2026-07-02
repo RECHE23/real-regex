@@ -150,7 +150,7 @@ namespace real::detail {
   /*!
    * \brief Expands a character class to its Unicode simple case-fold closure (text-mode `icase`).
    *
-   * The M2 algorithm — the fold acts on the WHOLE class, cross-boundary in both directions, before
+   * The fold acts on the WHOLE class, cross-boundary in both directions, before
    * negation:
    *   - **Bitmap (iterate-members-lookup):** each ASCII member (< 0x80) contributes its fold partners
    *     (ASCII partners re-enter the bitmap; non-ASCII partners like `k`↦Kelvin become code-point

@@ -67,12 +67,12 @@ class deadline:
         return False
 
 # Mix of word, space, digit, punctuation, plus raw 2/3/4-byte UTF-8 literals (é/€/😀): in
-# code-point mode these are single atoms, so a following quantifier spans the whole code point
-# (the U1 fix). re is the code-point oracle for the differential.
+# code-point mode these are single atoms, so a following quantifier spans the whole code point.
+# re is the code-point oracle for the differential.
 _LITERALS = "abcABC012 _-.é€😀"
 _CLASSES = [r"\d", r"\D", r"\w", r"\W", r"\s", r"\S", ".",
             "[abc]", "[a-c]", "[^abc]", "[a-z0-9]", r"[\dx]",
-            # UTF-8 classes (U2): specific code points / ranges / negation, code-point mode.
+            # UTF-8 classes: specific code points / ranges / negation, code-point mode.
             "[é]", "[éàü]", "[à-ÿ]", "[a-zé]", "[^é]", "[^à-ÿ]", "[Ā-ſ]"]
 _QUANTS = ["", "*", "+", "?", "??", "*?", "+?", "{2}", "{1,3}", "{2,}", "{0,2}"]
 # Quantifiers that cannot repeat (so cannot create a nullable loop). Anything

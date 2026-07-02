@@ -151,7 +151,7 @@ TEST(compat_corpus_backend_and_differential)
 
 TEST(compat_byte_class_matches_std)
 {
-  // Bloquant A (U2-fix): a bytes-path class member >= 0x80 is a RAW BYTE, exactly like
+  // A bytes-path class member >= 0x80 is a RAW BYTE, exactly like
   // std::basic_regex<char> — never a re-encoded UTF-8 code point. Each pattern stays on the real
   // backend and agrees with std::regex byte-for-byte on high-byte subjects.
   const auto raw {[](std::initializer_list<int> values) {
@@ -452,7 +452,7 @@ TEST(compat_regex_replace)
   }
 
   // Nullable pattern uses the lazy std backend for replace (the empty-match traversal differs).
-  EXPECT(rc::regex("a*").uses_real());            // real-backed for search/match (S1)
+  EXPECT(rc::regex("a*").uses_real());            // real-backed for search/match
   EXPECT(!rc::regex("a*").uses_real_traversal()); // but NOT for replace/iterate (nullable)
 
   // flags: format_first_only, format_no_copy.
@@ -838,8 +838,8 @@ namespace {
   // built from real's offsets (fill_from_real), not the local std — it anchors the sentinel at the
   // sequence END universally ({end, end, false}, position == length). std's sentinel is
   // platform-variant: libstdc++/libc++ anchor it at the end too, but MSVC leaves it singular
-  // (position 0). So this asserts compat's CHOSEN end-anchored behaviour DIRECTLY (the regression
-  // guard that caught the S7 singular-sentinel bug) and differs against std only on the invariants
+  // (position 0). So this asserts compat's CHOSEN end-anchored behaviour DIRECTLY (a regression
+  // guard against a singular-sentinel bug) and differs against std only on the invariants
   // that hold on every stdlib — .first/.second/.position are NOT compared against std.
   void expect_end_anchored_sentinel(const rc::smatch&           m,
                                     const std::smatch&          sm,
@@ -862,9 +862,9 @@ namespace {
 
 TEST(compat_match_results_out_of_range)
 {
-  // S7-1: operator[]/position/length/str for n >= size() (and after a failed match) must never be
+  // operator[]/position/length/str for n >= size() (and after a failed match) must never be
   // out-of-bounds and must be end-anchored ({end, end, false}, position == length). Asserted directly
-  // (regression guard for the S7 singular-sentinel bug); the std differential is invariant-only, since
+  // (regression guard against a singular-sentinel bug); the std differential is invariant-only, since
   // std's own OOB sentinel is platform-variant (end-anchored on libstdc++/libc++, singular on MSVC).
   const std::string subj   {"hello"};     // length 5 -> a wrong position-0 sentinel is obvious
   const std::size_t n_text {subj.size()};
@@ -917,7 +917,7 @@ namespace {
 
 TEST(compat_token_field_selectors)
 {
-  // B2: field selectors incl. out-of-range and mixed with -1 (no guessing — differential vs std).
+  // field selectors incl. out-of-range and mixed with -1 (no guessing — differential vs std).
   EXPECT(token_fields_agree(R"((\w)(\w))", "abcd", {2}));      // in-range group 2
   EXPECT(token_fields_agree(R"((\w)(\w))", "abcd", {1, 2}));   // list
   EXPECT(token_fields_agree(R"((\w)(\w))", "abcd", {5}));      // out-of-range -> unmatched tokens
@@ -926,7 +926,7 @@ TEST(compat_token_field_selectors)
   EXPECT(token_fields_agree(",", "a,b", {-1, 1}));             // split + group, order matters
 
   // Deep token-OOB (via set_field's operator[]): the sub_match tokens for an out-of-range field {5}
-  // must match std byte-for-byte (first/second offsets + matched), not just str — the S7 sentinel.
+  // must match std byte-for-byte (first/second offsets + matched), not just str — the OOB sentinel.
   {
     const std::string                         subj {"abcd"};
     const rc::regex                           rre(R"((\w)(\w))");
@@ -990,7 +990,7 @@ namespace {
 
 TEST(compat_rvalue_with_flags_rejected_at_compile_time)
 {
-  // B3: matching a temporary string with a match flag must be =delete'd (else the match_results
+  // matching a temporary string with a match flag must be =delete'd (else the match_results
   // would dangle). The lvalue form stays callable; the rvalue form is rejected.
   static_assert(FlagSearchable<std::string&>);    // lvalue: OK
   static_assert(!FlagSearchable<std::string &&>); // rvalue + flag: deleted
@@ -1001,7 +1001,7 @@ TEST(compat_rvalue_with_flags_rejected_at_compile_time)
 
 TEST(compat_replace_dollar_zero_and_sed_route_to_std)
 {
-  // B4: `$0` is platform-variant, so it routes to std (compat == std, never silently dropped).
+  // `$0` is platform-variant, so it routes to std (compat == std, never silently dropped).
   const rc::regex   word(R"(\w+)");
   EXPECT(word.uses_real_traversal()); // real-eligible: the screen (not the pattern) is what routes it
   const std::regex  sword(R"(\w+)", std::regex::ECMAScript);
@@ -1012,7 +1012,7 @@ TEST(compat_replace_dollar_zero_and_sed_route_to_std)
   EXPECT_EQ(rc::regex_replace(subj, word, std::string("<$$>")),
             std::regex_replace(subj, sword, std::string("<$$>")));
 
-  // B5: format_sed uses POSIX replacement syntax (`&` = whole match); the ECMAScript expander would
+  // format_sed uses POSIX replacement syntax (`&` = whole match); the ECMAScript expander would
   // mis-read it, so it routes to std.
   EXPECT_EQ(rc::regex_replace(subj, word, std::string("<&>"), rc::regex_constants::format_sed),
             std::regex_replace(subj, sword, std::string("<&>"), std::regex_constants::format_sed));
@@ -1031,7 +1031,7 @@ TEST(compat_replace_dollar_zero_and_sed_route_to_std)
 
 TEST(compat_replace_honors_match_flags)
 {
-  // S6-B1: regex_replace on a real-backed pattern must honor constraining match flags (route to std)
+  // regex_replace on a real-backed pattern must honor constraining match flags (route to std)
   // — not silently ignore them. Differential vs std::regex_replace for each such flag.
   namespace mc = rc::regex_constants;
   namespace sc = std::regex_constants;
@@ -1067,7 +1067,7 @@ TEST(compat_replace_honors_match_flags)
 
 TEST(compat_ready_after_failed_match)
 {
-  // B6: after a failed search/match std leaves ready()==true, size()==0. Ours must too.
+  // after a failed search/match std leaves ready()==true, size()==0. Ours must too.
   const rc::regex   re("abc"); // real-backed
   rc::smatch        m;
   const std::string subj {"zzz"};
@@ -1136,8 +1136,8 @@ TEST(compat_late_std_error_is_homogeneous)
   }
   EXPECT(threw_compat);
 
-  // Nullable real-superset (super + `*`): no std backend is built at construction (since S6b the
-  // std engine is lazy, per operation), so search still runs on real, and replace surfaces the
+  // Nullable real-superset (super + `*`): no std backend is built at construction (the
+  // std engine is lazy, built per operation), so search still runs on real, and replace surfaces the
   // wrapped error only when it actually builds and uses the std engine.
   const rc::regex nullable_super(super + "*");
   EXPECT(nullable_super.uses_real());
@@ -1154,7 +1154,7 @@ TEST(compat_late_std_error_is_homogeneous)
 
 TEST(compat_all_std_only_paths_throw_compat_error)
 {
-  // S6-S2: EVERY std-only construction path (POSIX-screen, wide/custom-traits) must throw a
+  // EVERY std-only construction path (POSIX-screen, wide/custom-traits) must throw a
   // compat::regex_error on an invalid pattern — not a raw std::regex_error leaking out.
   const auto throws_compat {[](auto make) {
                               try {
@@ -1179,7 +1179,7 @@ TEST(compat_all_std_only_paths_throw_compat_error)
 
 TEST(compat_iterator_equality_conformance)
 {
-  // S6-S3: two non-end iterators are equal only for the same regex + sequence + current match — not
+  // two non-end iterators are equal only for the same regex + sequence + current match — not
   // for a coincidental same position/length (regex_iterator) or same current token (token_iterator).
   const std::string s {"aa"};
   const rc::regex   ra("a");
@@ -1210,7 +1210,7 @@ TEST(compat_iterator_equality_conformance)
   EXPECT(ta == ta_copy);
 }
 
-// NB: the concurrent std_engine() thread-safety check (S6-S4) lives in tests/tsan_compat.cpp, run by
+// NB: the concurrent std_engine() thread-safety check lives in tests/tsan_compat.cpp, run by
 // `make tsan` under ThreadSanitizer. It is kept out of this suite because test_static.cpp overrides a
 // non-atomic global operator-new counter (for the zero-allocation tests), which any concurrent
 // allocation here would race — a test-harness artifact, not a library race. The standalone target
@@ -1218,7 +1218,7 @@ TEST(compat_iterator_equality_conformance)
 
 TEST(compat_replace_and_token_depth)
 {
-  // S6-S6: deeper differential coverage — complex formats x format_* combos, full token sequences,
+  // deeper differential coverage — complex formats x format_* combos, full token sequences,
   // mark_count() on the fallback, multi-group patterns.
   const rc::regex   multi(R"((\d{4})-(\d{2})-(\d{2}))");
   const std::regex  smulti(R"((\d{4})-(\d{2})-(\d{2}))", std::regex::ECMAScript);

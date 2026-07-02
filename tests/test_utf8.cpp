@@ -1,4 +1,4 @@
-// UTF-8 literals (arc UTF-8, U1): in code-point mode (the default, !flags::bytes) a raw multi-byte
+// UTF-8 literals: in code-point mode (the default, !flags::bytes) a raw multi-byte
 // character is decoded to one atom — the same emission as `\uHHHH` — so a following quantifier applies
 // to the whole code point, not just its last byte (the é+ bug). Malformed UTF-8 in the pattern is a
 // compile error, not a silent literal. flags::bytes keeps raw byte semantics (the compat layer relies
@@ -211,7 +211,7 @@ TEST(utf8_empty_match_advances_by_codepoint)
 
 TEST(utf8_character_classes)
 {
-  // U2: a character class carries specific non-ASCII code points, not "any non-ASCII".
+  // A character class carries specific non-ASCII code points, not "any non-ASCII".
   const std::string e    {"é"};
   const std::string a    {"à"};
   const std::string u    {"ü"};
@@ -300,7 +300,7 @@ TEST(utf8_class_security_and_malformed)
 
 TEST(utf8_bytes_mode_classes)
 {
-  // Bloquant A: in bytes mode a class member >= 0x80 (from \xHH) is a RAW BYTE in the bitmap, not a
+  // In bytes mode a class member >= 0x80 (from \xHH) is a RAW BYTE in the bitmap, not a
   // code point — so a bytes-mode class is byte-for-byte a std::basic_regex<char> class (compat relies
   // on it). The differential vs std::regex lives in test_compat.cpp.
   EXPECT(searches(R"([\xE9])", bytes({0xE9}), flags::bytes));         // the byte 0xE9
@@ -317,7 +317,7 @@ TEST(utf8_bytes_mode_classes)
 
 TEST(utf8_class_lookaround_width)
 {
-  // Bloquant B: a code-point class contributes its real byte width to a fixed-width lookaround (and
+  // A code-point class contributes its real byte width to a fixed-width lookaround (and
   // to the 255-byte cap), not 1. Before the fix [é] counted as 1 byte -> a false (?<![é]) match and a
   // bypassable cap.
   const std::string e {"é"};
@@ -555,7 +555,7 @@ TEST(icase_range_fold_coalescing_membership)
 {
   using real::flags;
   const flags i {flags::icase};
-  // CF3 coalesced the fragmented fold of [a-é] (133 -> 43 ops) WITHOUT changing the accepted set.
+  // The compiler coalesces the fragmented fold of [a-é] (133 -> 43 ops) WITHOUT changing the accepted set.
   // The membership contract (oracle: re.IGNORECASE) is unchanged across the dedupe/merge:
   EXPECT(fullmatches("[a-é]", "É", i));                       // partner already inside the range
   EXPECT(fullmatches("[a-é]", bytes({0xE2, 0x84, 0xAA}), i)); // Kelvin (k's partner), OUT of range

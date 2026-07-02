@@ -400,7 +400,7 @@ namespace real::detail {
 
     /*!
      * \brief Writes a class-loop fast-path result into \p out_slots: the whole-match span in slots
-     *        0/1, and — for a pattern wrapped in one capturing group (`(\w+)`, `([a-z]+)`, D4(a)) —
+     *        0/1, and — for a pattern wrapped in one capturing group (`(\w+)`, `([a-z]+)`) —
      *        the same span mirrored into the group's slots (its span equals the whole match by
      *        construction, so no re-match is needed). Sizes the slots to the program's slot count.
      */
@@ -489,7 +489,7 @@ namespace real::detail {
       const detail::cp_class&    cc       {prog_.cp_classes[cp_index]};
       const std::uint8_t* const  asc      {cp_ascii_table(cp_index)};
       // Membership of a non-ASCII code point (>= 0x80): a one-load page-bitmap test over the two-byte
-      // range (OPT-4), the range search only for CJK / astral code points beyond it. The page is built
+      // range, the range search only for CJK / astral code points beyond it. The page is built
       // lazily on the first non-ASCII code point, so a pure-ASCII scan never pays for it.
       const auto member_hi = [&](char32_t cp) -> bool {
                                if (cp <= cp_page_max) {
@@ -529,7 +529,7 @@ namespace real::detail {
       std::size_t match_end {match_start + first};
       if (prog_.hints.greedy_cp_class_plus) {
         while (match_end < text.size()) {
-          // Tight ASCII inner loop (OPT-1): a byte-indexed table lookup with no decode and no call,
+          // Tight ASCII inner loop: a byte-indexed table lookup with no decode and no call,
           // the same one-load trick the byte-NFA scan loop uses; only a non-ASCII lead decodes.
           const auto lead {static_cast<std::uint8_t>(text[match_end])};
           if (lead < 0x80U) {
@@ -574,7 +574,7 @@ namespace real::detail {
       while (pc < prog_.code.size()) {
         const instr& instruction {prog_.code[pc]};
         if constexpr (SkipSaves) {
-          // D4b grouped fixed shape: interleaved capturing saves are epsilon here (slots filled
+          // Grouped fixed shape: interleaved capturing saves are epsilon here (slots filled
           // separately). if constexpr keeps this branch out of the no-group tight loop entirely.
           if (instruction.op == opcode::save) {
             ++pc;
@@ -675,7 +675,7 @@ namespace real::detail {
         return fast_search(text, start, at, out_slots);
       }
 
-      // Inner capturing groups (D4b): the run has interleaved saves, so the verify walk skips them
+      // Inner capturing groups: the run has interleaved saves, so the verify walk skips them
       // (SkipSaves) and the group slots are filled from their constant offsets on success only (not per
       // failed candidate). A separate body keeps the no-group loop above free of any grouping branch.
       out_slots.assign(prog_.slot_count, npos);
@@ -698,7 +698,7 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Fills the capturing-group slots of a fixed-shape match (D4b). Every consuming op is one
+     * \brief Fills the capturing-group slots of a fixed-shape match. Every consuming op is one
      *        byte wide, so each save sits at a constant offset from the match start; a single linear
      *        pass writes `slot = match_start + offset`. No-op when the pattern has no inner groups
      *        (slot_count 2). Not a re-match: the bytes were already verified.
@@ -1066,7 +1066,7 @@ namespace real::detail {
       }
       const auto prev {static_cast<std::uint8_t>(text_[pos - 1])};
       // ASCII fast path: an ASCII byte is a whole one-byte code point, and is_word_cp agrees with
-      // is_ascii_word_byte on it — so the common case skips the back-decode entirely (OPT-1). Bytes /
+      // is_ascii_word_byte on it — so the common case skips the back-decode entirely. Bytes /
       // re.A always take this path.
       if (prev < 0x80U || !prog_.unicode_word) {
         return is_ascii_word_byte(prev);

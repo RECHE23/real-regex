@@ -303,7 +303,7 @@ class TestIntentionalDivergences(unittest.TestCase):
     """
 
     def test_character_class_non_ascii_members(self):
-        # U2: a str-mode class carries specific non-ASCII code points (was rejected before U2).
+        # A str-mode class carries specific non-ASCII code points.
         # The broad differential-vs-re lives in test_parity; here we pin the behaviour.
         self.assertIsNotNone(real.compile(r"[é]").fullmatch("é"))
         self.assertIsNone(real.compile(r"[é]").fullmatch("à"))      # a specific code point, not "any non-ASCII"
@@ -322,13 +322,13 @@ class TestIntentionalDivergences(unittest.TestCase):
         # \w stays ASCII for now; \d \s are Unicode -- see test_shorthands_d_s_are_unicode.
 
     def test_shorthands_d_s_are_unicode(self):
-        # W2: \d \s are Unicode in str mode (like re); \w stays ASCII for now.
+        # \d \s are Unicode in str mode (like re); \w stays ASCII for now.
         self.assertEqual(real.findall(r"\d", "a٣b5"), ["٣", "5"])  # Arabic-Indic digit + ASCII
         self.assertIsNone(real.compile(r"\d").fullmatch("½"))       # No is not a \d digit
         self.assertIsNotNone(real.compile(r"\s").fullmatch("\u00a0"))  # NBSP
         self.assertIsNotNone(real.compile(r"\D").fullmatch("é"))
         self.assertEqual(real.findall(r"[\d]+", "٣5.9"), ["٣5", "9"])
-        self.assertEqual(real.findall(r"\w+", "café"), ["café"])  # \w is Unicode (P1 klass_cp)
+        self.assertEqual(real.findall(r"\w+", "café"), ["café"])  # \w is Unicode (code-point-predicate match)
         self.assertEqual(real.findall(r"\w", "٣"), ["٣"])           # ٣ is a Unicode word char
 
     def test_ascii_flag_reverts_shorthands(self):
@@ -539,7 +539,7 @@ class TestUnicodeAndConstructs(unittest.TestCase):
                     real.compile(pattern)
 
     def test_non_ascii_class_member_accepted_in_str_mode(self):
-        # U2: a non-ASCII class member is accepted in str mode; bytes mode still rejects raw high bytes.
+        # A non-ASCII class member is accepted in str mode; bytes mode still rejects raw high bytes.
         self.assertIsNotNone(real.compile(r"[\u00e9]").search("é"))
         self.assertIsNotNone(real.compile(r"[é]").search("a café"))
         with self.assertRaises(real.error):
@@ -547,7 +547,7 @@ class TestUnicodeAndConstructs(unittest.TestCase):
 
     def test_icase_unicode_escape_folds(self):
         # \u00e9 (é) is a code-point literal, so under icase it folds like the raw é -- it matches É
-        # (Unicode case folding, CF2). A \xHH escape keeps byte provenance and does NOT fold.
+        # (Unicode case folding). A \xHH escape keeps byte provenance and does NOT fold.
         self.assertIsNotNone(real.compile(r"\u00e9", real.I).search("é"))
         self.assertIsNotNone(real.compile(r"\u00e9", real.I).search("É"))
         self.assertIsNone(real.compile(rb"\xe9", real.I).search(b"\xc9"))  # \xHH byte provenance: no fold

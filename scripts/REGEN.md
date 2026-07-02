@@ -35,7 +35,7 @@ behaviour** — call it out in the release notes, do not bump silently.
 **A regenerated table that changes any orbit is a BREAKING change for text-mode `icase` users** — the
 set of characters a cased literal or class matches would shift (e.g. a new case pair added in a later
 Unicode version). Treat a regen with orbit changes as a minor/breaking release, not a silent bump:
-call it out in the release notes, exactly like the CF2 arc did.
+call it out in the release notes.
 
 ## How
 

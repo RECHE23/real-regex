@@ -116,7 +116,7 @@ TEST(unicode_codepoint_escapes)
   EXPECT(real::regex("\\u20ac").fullmatch("€"sv));                // 3-byte: E2 82 AC
   EXPECT(real::regex("\\U0001F600").fullmatch("😀"sv));            // 4-byte: F0 9F 98 80
   EXPECT_EQ(real::regex("\\u00e9+").search("ééé"sv)[0], "ééé"sv); // quantifies the whole codepoint
-  // Inside a class (code-point mode, U2): ASCII members and non-ASCII code points are both members.
+  // Inside a class (code-point mode): ASCII members and non-ASCII code points are both members.
   EXPECT(real::regex("[\\u0041\\u0042]").fullmatch("B"));
   EXPECT(real::regex("[\\u00e9]").fullmatch("é"sv));              // é is a class member
   EXPECT(!real::regex("[\\u00e9]").fullmatch("à"sv));             // and only that code point
@@ -233,7 +233,7 @@ TEST(codepoint_class_fast_path)
 
 TEST(unicode_shorthand_d_s_text_mode)
 {
-  // W2: in text mode \d \s match Unicode (\w \b remain ASCII until W3/W4). Oracle is re: \d == Nd,
+  // In text mode \d \s match Unicode (\w \b were still ASCII at this stage). Oracle is re: \d == Nd,
   // \s == Unicode whitespace. \D \S are their complements over all code points.
   EXPECT(real::regex("\\d").fullmatch("٣"));  // ARABIC-INDIC DIGIT THREE (Nd)
   EXPECT(real::regex("\\d").fullmatch("９"));  // FULLWIDTH DIGIT NINE (Nd)
@@ -289,9 +289,9 @@ TEST(unicode_shorthand_lookbehind_budget)
 
 TEST(unicode_shorthand_in_class_text_mode)
 {
-  // P2: a shorthand inside a class is Unicode in text mode, and \W \D \S in a class are accepted
+  // A shorthand inside a class is Unicode in text mode, and \W \D \S in a class are accepted
   // (they were rejected before). Membership matches re; the identities [^\W]==\w etc hold.
-  EXPECT(real::regex("[\\w]").fullmatch("é"));  // é is a word char (was ASCII-only in P1)
+  EXPECT(real::regex("[\\w]").fullmatch("é"));  // é is a word char (was ASCII-only when \w was byte-level)
   EXPECT(real::regex("[\\w-]+").fullmatch("café-au"));
   EXPECT(real::regex("[\\d]").fullmatch("٣"));  // Arabic digit
   EXPECT(real::regex("[\\s]").fullmatch(" "));  // NBSP

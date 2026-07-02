@@ -398,7 +398,7 @@ TEST(exact_literal_fastpath_hint_and_results)
 
 TEST(enveloping_group_class_loop_fast_path)
 {
-  // D4(a): a class-loop / cp-class-loop wrapped in ONE capturing group ((\w+), ([a-z]+)) takes the
+  // A class-loop / cp-class-loop wrapped in ONE capturing group ((\w+), ([a-z]+)) takes the
   // scan-loop fast path, and the group's span equals the whole match (start(1)==start(0) etc). The
   // detection fires (greedy hint set with a group slot) only for that strict shape.
   EXPECT(hints_of("(\\w+)").greedy_cp_class >= 0 && hints_of("(\\w+)").greedy_group_start == 2);
@@ -430,7 +430,7 @@ TEST(enveloping_group_class_loop_fast_path)
 
 TEST(fixed_shape_internal_saves_fast_path)
 {
-  // D4b: a fixed-width byte/klass sequence with interleaved capturing saves ((\d{4})-(\d{2})-(\d{2}),
+  // A fixed-width byte/klass sequence with interleaved capturing saves ((\d{4})-(\d{2})-(\d{2}),
   // (a)(b)) takes the fixed-shape fast path and fills each group slot from its constant offset.
   EXPECT(hints_of("(\\d{4})-(\\d{2})-(\\d{2})", real::flags::ascii).fixed_shape);
   EXPECT(hints_of("([0-9]{4})-([0-9]{2})").fixed_shape); // explicit classes: fixed width in text mode
@@ -441,7 +441,7 @@ TEST(fixed_shape_internal_saves_fast_path)
   EXPECT(!hints_of("(\\d{2})").fixed_shape);                                     // klass_cp: text shorthand, variable width
   EXPECT(!hints_of("(\\d{1,3})", real::flags::ascii).fixed_shape);               // variable count
   EXPECT(!hints_of("(\\d{1,3}\\.){3}\\d{1,3}", real::flags::ascii).fixed_shape); // ipv4 guard-rail
-  EXPECT(!hints_of("(\\w+)").fixed_shape);                                       // '+': that is D4a, not this shape
+  EXPECT(!hints_of("(\\w+)").fixed_shape);                                       // '+': the class-loop path, not this fixed shape
   EXPECT(!hints_of("((\\d{2}))", real::flags::ascii).fixed_shape);               // nested groups
   EXPECT(!hints_of("(\\d{2})|(x)", real::flags::ascii).fixed_shape);             // alternation
   // The group slots equal the VM's, across the date shape, adjacent saves, a fixed+trailing shape, a

@@ -1,6 +1,6 @@
 """Guard: the committed unicode_fold.hpp is exactly what the generator produces (and re-validates).
 
-This is the CF1 double-filet alongside the C++ contract tests (and uses the shared _regen_guard): it
+This is the second safety net alongside the C++ contract tests (and uses the shared _regen_guard): it
 regenerates the orbit table in a temp file -- which re-runs the exhaustive validation against
 re.IGNORECASE -- and asserts byte-identity with include/real/unicode_fold.hpp. Skipped when the
 running Python's Unicode version differs from the header's pin (the generator is deterministic only

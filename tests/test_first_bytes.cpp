@@ -23,7 +23,7 @@ TEST(first_bytes_icase_literal_folds_both_cases)
   EXPECT(!rx.unique_first_byte().has_value()); // two possible first bytes
 }
 
-// Probe 1b — CF2/CF3: an icase literal that folds to a NON-ASCII partner still carries that
+// An icase literal that folds to a NON-ASCII partner still carries that
 // partner's UTF-8 lead in the first-byte set (compute_first_bytes walks the folded bytecode), so the
 // prefilter keeps working across the boundary. 'k' folds to {k, K, Kelvin U+212A}. Pinned so a
 // regression in the folded first-byte set is localizable, and proven end to end with a haystack scan.

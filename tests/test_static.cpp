@@ -71,7 +71,7 @@ namespace {
 
   constexpr real::static_regex<"(?i)héllo"> icase_rx;
   static_assert(icase_rx.fullmatch("HéLLO").matched()); // ASCII letters fold…
-  static_assert(icase_rx.fullmatch("HÉLLO").matched()); // …and the é folds too (Unicode icase, CF2)
+  static_assert(icase_rx.fullmatch("HÉLLO").matched()); // …and the é folds too (Unicode icase)
 
   // Exact sizing: the storage arrays have exactly the measured sizes, and the
   // type is stateless (all data is static constexpr).
@@ -163,7 +163,7 @@ TEST(static_regex_constexpr_iteration)
 
 TEST(static_regex_utf8_literals_and_classes_are_constexpr)
 {
-  // The UTF-8 arc (U1 atomic literals, U2 code-point classes) is fully constexpr: these patterns
+  // Atomic UTF-8 literals and code-point classes are fully constexpr: these patterns
   // compile at build time and match at compile time. Pinned so a later change cannot regress it.
   static_assert(real::static_regex<"é+">().search("ééé").matched());
   static_assert(real::static_regex<"[é]">().search("é").matched());

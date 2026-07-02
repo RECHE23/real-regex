@@ -1,4 +1,4 @@
-// Unicode simple case-fold orbits (CF1): the table + unicode_casefold, in isolation (not yet wired
+// Unicode simple case-fold orbits: the table + unicode_casefold, in isolation (not yet wired
 // into the compiler — this slice is zero behaviour change). The orbits are validated against
 // re.IGNORECASE at generation time; these contract tests are the standing second net, pinning the
 // canonical (and historically bug-prone) orbits and the cross-boundary / no-contamination behaviour.

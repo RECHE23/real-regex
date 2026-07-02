@@ -47,7 +47,7 @@ PATTERNS = [
     r"(é)(é)",
     r"coûte",
     r"😀+",
-    # UTF-8 character classes (U2): specific code points / ranges / negation, re the oracle.
+    # UTF-8 character classes: specific code points / ranges / negation, re the oracle.
     r"[é]",
     r"[éàü]",
     r"[à-ÿ]",
@@ -58,7 +58,7 @@ PATTERNS = [
     r"[éà]+",
     r"[Ā-ſ]+",
     r"gr[éè]ce",
-    # icase cross-boundary (CF2): ASCII literals/classes fold to non-ASCII partners under re.I.
+    # icase cross-boundary: ASCII literals/classes fold to non-ASCII partners under re.I.
     r"k",
     r"[ks]",
     r"straße",

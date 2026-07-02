@@ -70,7 +70,7 @@ TEST(word_start_and_word_end_anchors)
 
 TEST(unicode_word_boundaries)
 {
-  // P3: \b \B \< \> use Unicode word-ness in text mode (a code point ending/starting at the position).
+  // \b \B \< \> use Unicode word-ness in text mode (a code point ending/starting at the position).
   const std::string ete_phrase {"un été chaud"};
   const std::string cafe_hay   {"le café ici"};
   const std::string cafes      {"cafés"};
@@ -93,7 +93,7 @@ TEST(unicode_word_boundaries)
   EXPECT(real::regex("caf\\b", real::flags::ascii).search(ascii_hay).matched());
   const real::regex ascii_w   {"\\w+", real::flags::ascii};
   EXPECT_EQ(ascii_w.find_all(ascii_hay).size(), 2U); // "a", "caf" -- é splits the run under re.A
-  // Bytes mode: \b is byte-level too (unchanged from before P3).
+  // Bytes mode: \b is byte-level too (unchanged from the text-mode Unicode word-ness above).
   EXPECT(real::regex("caf\\b", real::flags::bytes).search(ascii_hay).matched());
 }
 

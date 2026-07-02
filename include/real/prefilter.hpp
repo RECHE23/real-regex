@@ -228,7 +228,7 @@ namespace real::detail {
     // semantics) and no capture groups.
     // "class+", optionally wrapped in exactly ONE capturing group: save 0, [group-start save,] klass,
     // split(back to the klass, exit), [group-end save,] save 1, match. Greedy only (the lazy variant
-    // differs). D4(a): an enveloping group ((\w+), ([a-z]+)) has span == the whole match by
+    // differs). An enveloping group ((\w+), ([a-z]+)) has span == the whole match by
     // construction, so the fast path mirrors the bounds into the group's slots -- no re-match.
     {
       std::size_t  p  {0};
@@ -304,7 +304,7 @@ namespace real::detail {
     }
 
     // "fixed shape": a straight-line run of fixed-width byte/klass consuming ops, possibly interleaved
-    // with capturing saves (D4b: (\d{4})-(\d{2})-(\d{2}), (a)(b)), with no branches or assertions. The
+    // with capturing saves ((\d{4})-(\d{2})-(\d{2}), (a)(b)), with no branches or assertions. The
     // whole match is fixed width, so one walk verifies it; because every width is fixed, each save sits
     // at a compile-time-constant offset from the match start, so the fast path fills each group slot by
     // that offset (no re-match). Covers class{n} and mixed sequences; pure literals hit the exact-literal

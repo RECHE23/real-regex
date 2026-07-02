@@ -1,4 +1,4 @@
-// The klass_cp opcode (P1): a text-mode Unicode shorthand (\w \d \s and negations) is a match-time
+// The klass_cp opcode: a text-mode Unicode shorthand (\w \d \s and negations) is a match-time
 // code-point predicate — decode one code point, test membership (ASCII bitmap / range bsearch), then
 // walk the continuation bytes through a computed skip into a [klass_cp][cont][cont][cont] chain. These
 // are the VM-invariant torture tests: capture priority across the skip, every code-point length 1-4,

@@ -1,4 +1,4 @@
-# `real::compat` — `std::regex` compatibility (S1: char, search/match) {#compat}
+# `real::compat` — `std::regex` compatibility {#compat}
 
 `real::compat` (header `<real/std/regex.hpp>`) is a drop-in for the `<regex>` surface on the
 `char` path. It runs your pattern on **`real`** — linear-time and ReDoS-safe — wherever that is
@@ -72,7 +72,7 @@ real→std fallback) and the lazy `std` build alike. A pattern `real` accepts bu
 `real`; it reaches `std` only via a constraining match flag or a nullable / `$0` / sed
 `regex_replace`, or an iterator routed to `std`. If that `std` build fails, the error is a **late but
 homogeneous** `compat::regex_error` — construction succeeded (the pattern is valid for `real`), and
-the error appears only when the `std`-only operation is first invoked (R4: an error, never a silent
+the error appears only when the `std`-only operation is first invoked (an error, never a silent
 wrong result).
 
 The `std` engine for a real-backed pattern is built lazily on demand under a **build mutex**, and the
@@ -158,7 +158,7 @@ have to police a mis-categorization. The fuzzer generates a random flag subset a
 
 `real` runs only the **`char` path with default traits, ECMAScript grammar, reporting every group**.
 Everything outside that is routed to `std::regex` by a compile-time gate (`real_eligible<CharT, Traits>`)
-plus the option screen — `real` is never even tried, so these are std by construction (R4 holds trivially):
+plus the option screen — `real` is never even tried, so these are std by construction:
 
 - **`wregex` / `wchar_t` (and `char8/16/32_t`, custom `Traits`)**: the gate is `constexpr`, so `real`'s
   char-only code (the byte `string_view`, `fill_from_real`, `next_real`) is **compiled out** for these
@@ -203,10 +203,11 @@ differential fuzzer (517 k iterations, zero remaining both-accept divergence):
 
 ## Boundaries / current scope
 
-- **S1**: `basic_regex<char>`, `sub_match`, `match_results` (+ `smatch`/`cmatch`), `regex_error`,
-  `regex_search`, `regex_match`. Empty-match traversal is *not* a fallback trigger for single
-  search/match; `regex_replace`/iterators (where empty-match traversal matters), the full
-  `match_flag_type`, `wregex`, and the POSIX grammar engines are later slices.
+- **Surface**: `basic_regex<char>`, `sub_match`, `match_results` (+ `smatch`/`cmatch`), `regex_error`,
+  `regex_search`, `regex_match`, `regex_replace`, the two iterators, the full `match_flag_type`,
+  `wregex`, and the POSIX grammar engines. Empty-match traversal is *not* a fallback trigger for single
+  `search`/`match` -- only for `regex_replace`/iterators, where the advance-after-empty-match rule
+  differs from ECMAScript.
 - `match_results` requires a **contiguous** iterator (a `std::deque` sequence is rejected at
   compile time): sub-matches are built from byte offsets.
 - Matching against an rvalue `std::string` is deleted (the result would dangle), as in `real`/`std`.
