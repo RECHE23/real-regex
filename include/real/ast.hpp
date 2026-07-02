@@ -445,6 +445,36 @@ namespace real::detail {
       return out;
     }
 
+    //! \brief The classification of a `\d \D \w \W \s \S` shorthand: its ASCII bitmap, its Unicode range
+    //!        table, and whether it is the negated (uppercase) form.
+    struct shorthand_spec
+    {
+      char_class                  set;     //!< The ASCII bitmap (digit / word / space set).
+      std::span<const code_range> ranges;  //!< The full Unicode range table (used in text mode).
+      bool                        negated; //!< True for the uppercase form (`\D \W \S`).
+    };
+
+    //! \brief Maps a shorthand letter to its \ref shorthand_spec. The single place the
+    //!        letter -> (set, range table, negation) fact lives; the atom ladder (parse_escape) and the
+    //!        class ladder (parse_class_item) share it, then each consumes the spec its own way (emit a
+    //!        class node vs merge into a class) -- the same shared-decode / divergent-use split as
+    //!        \ref decode_digit_escape.
+    [[nodiscard]] static constexpr shorthand_spec shorthand_class(char letter)
+    {
+      switch (letter) {
+        case 'd': return {.set = digit_set(), .ranges = digit_ranges, .negated = false};
+        case 'D': return {.set = digit_set(), .ranges = digit_ranges, .negated = true};
+        case 'w': return {.set = word_set(), .ranges = word_ranges, .negated = false};
+        case 'W': return {.set = word_set(), .ranges = word_ranges, .negated = true};
+        case 's': return {.set = space_set(), .ranges = space_ranges, .negated = false};
+        case 'S': return {.set = space_set(), .ranges = space_ranges, .negated = true};
+        default: break;
+      }
+      // Unreachable: both call sites dispatch only on the six shorthand letters (see parse_escape /
+      // parse_class_item). Kept as a structural fallback; never hit at run time (coverage-honest).
+      return {.set = space_set(), .ranges = space_ranges, .negated = true};
+    }
+
     /*!
      * \brief Parses `alternation := sequence ('|' sequence)*`.
      *
@@ -1206,23 +1236,15 @@ namespace real::detail {
         // predicate (klass_cp): O(decode + range bsearch) per position, independent of the range count.
         // In bytes / ASCII mode shorthand_ranges() is empty and the flag is off -> the ASCII byte-NFA.
         case 'd':
-          ++pos_;
-          return add_class_node(out, digit_set(), false, shorthand_ranges(digit_ranges), text_shorthand());
         case 'D':
-          ++pos_;
-          return add_class_node(out, digit_set(), true, shorthand_ranges(digit_ranges), text_shorthand());
         case 'w':
-          ++pos_;
-          return add_class_node(out, word_set(), false, shorthand_ranges(word_ranges), text_shorthand());
         case 'W':
-          ++pos_;
-          return add_class_node(out, word_set(), true, shorthand_ranges(word_ranges), text_shorthand());
         case 's':
-          ++pos_;
-          return add_class_node(out, space_set(), false, shorthand_ranges(space_ranges), text_shorthand());
-        case 'S':
-          ++pos_;
-          return add_class_node(out, space_set(), true, shorthand_ranges(space_ranges), text_shorthand());
+        case 'S': {
+            const shorthand_spec sc {shorthand_class(peek())};
+            ++pos_;
+            return add_class_node(out, sc.set, sc.negated, shorthand_ranges(sc.ranges), text_shorthand());
+          }
         // `\A \Z \< \>` are REAL extensions (text-start/end, word-start/end). ECMAScript has no
         // such escapes — they are identity escapes (the literal character). Under the ecma flag
         // (the std-compat layer), emit the literal; otherwise keep REAL's anchor. `\b`/`\B` are
@@ -1323,29 +1345,16 @@ namespace real::detail {
       }
       switch (peek()) {
         case 'd':
-          ++pos_;
-          merge_property(klass, ranges, digit_set(), digit_ranges, false, property_derived);
-          return -1;
-        case 'w':
-          ++pos_;
-          merge_property(klass, ranges, word_set(), word_ranges, false, property_derived);
-          return -1;
-        case 's':
-          ++pos_;
-          merge_property(klass, ranges, space_set(), space_ranges, false, property_derived);
-          return -1;
         case 'D':
-          ++pos_;
-          merge_property(klass, ranges, digit_set(), digit_ranges, true, property_derived);
-          return -1;
+        case 'w':
         case 'W':
-          ++pos_;
-          merge_property(klass, ranges, word_set(), word_ranges, true, property_derived);
-          return -1;
-        case 'S':
-          ++pos_;
-          merge_property(klass, ranges, space_set(), space_ranges, true, property_derived);
-          return -1;
+        case 's':
+        case 'S': {
+            const shorthand_spec sc {shorthand_class(peek())};
+            ++pos_;
+            merge_property(klass, ranges, sc.set, sc.ranges, sc.negated, property_derived);
+            return -1;
+          }
         case 'b':
           ++pos_;
           return 0x08; // backspace, only inside classes

@@ -20,7 +20,8 @@ ECMAScript-`$` (end-only), ECMAScript-`.` (excludes `\n` and `\r`) semantics lin
    layer falls back to `std::regex`, which may accept it. A pattern invalid for *both* throws
    `real::compat::regex_error` (a `std::regex_error`) carrying std's exact `.code()`.
 
-`regex.uses_real()` reports which backend won.
+`regex.uses_real()` reports which backend won; `regex.nullable()` reports whether the pattern can
+match empty (the state that routes `regex_replace`/iterators to `std` — see the traversal rows below).
 
 ## What runs on `real` (linear, ReDoS-safe)
 

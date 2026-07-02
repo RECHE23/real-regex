@@ -266,6 +266,17 @@ TEST(compat_backend_selection)
   EXPECT(rc::regex("[a-z]+\\d*").uses_real());
   EXPECT(rc::regex(R"((?=foo)\w+)").uses_real()); // lookahead is real-able
 
+  // The nullable() introspection accessor (sister of uses_real(); documented in COMPATIBILITY): a
+  // pattern that can match empty is nullable, so replace/iterate route to std -- uses_real_traversal()
+  // is real AND non-nullable.
+  const rc::regex non_null("a+b");
+  EXPECT(!non_null.nullable());
+  EXPECT(non_null.uses_real_traversal());        // real + non-nullable -> real traversal
+  const rc::regex can_be_empty("a*");
+  EXPECT(can_be_empty.uses_real());
+  EXPECT(can_be_empty.nullable());               // matches empty
+  EXPECT(!can_be_empty.uses_real_traversal());   // nullable -> replace/iterate defer to std
+
   // Backreference -> real rejects -> std fallback (std ECMAScript supports backrefs).
   const rc::regex back(R"((a)\1)");
   EXPECT(!back.uses_real());
@@ -755,6 +766,13 @@ TEST(compat_api_surface)
   EXPECT(whole.view() == "hello"sv);
   EXPECT(whole == std::string("hello"));        // operator==(sub_match,string)
   EXPECT_EQ(whole.compare(std::string("hello")), 0);
+  EXPECT_EQ(whole.compare(sm[1]), 0);           // compare(const sub_match&): sm[0] == sm[1] == "hello"
+  rc::smatch        two;
+  const std::string subj2 {"abc12"};
+  const rc::regex   twore("([a-z]+)(\\d+)");
+  EXPECT(rc::regex_search(subj2, two, twore));
+  EXPECT(two[1].compare(two[2]) > 0);           // "abc" > "12" (sub_match vs sub_match ordering)
+  EXPECT(two[2].compare(two[1]) < 0);
   const std::string converted = sm[1];          // operator string_type
   EXPECT_EQ(converted, "hello");
 
@@ -1118,8 +1136,9 @@ TEST(compat_late_std_error_is_homogeneous)
   }
   EXPECT(threw_compat);
 
-  // Nullable real-superset (super + `*`): the eager std build at ctor is swallowed (search still
-  // works on real), and replace surfaces the wrapped error only when actually used.
+  // Nullable real-superset (super + `*`): no std backend is built at construction (since S6b the
+  // std engine is lazy, per operation), so search still runs on real, and replace surfaces the
+  // wrapped error only when it actually builds and uses the std engine.
   const rc::regex nullable_super(super + "*");
   EXPECT(nullable_super.uses_real());
   EXPECT(rc::regex_search(txt, nullable_super)); // real path, fine (nullable matches empty)

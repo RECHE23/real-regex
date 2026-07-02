@@ -259,9 +259,6 @@ namespace real {
        * of the full Pike VM — the major win for "search for a fixed string".
        */
       std::uint8_t exact_literal_len {};
-
-      //! \brief True if the program contains a lookaround; forces the general VM (no DFA, no fast path).
-      bool has_lookaround {};
     };
 
     /*!

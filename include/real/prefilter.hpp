@@ -420,10 +420,13 @@ namespace real::detail {
     pattern_hints hints;
 
     // A lookaround forces the general Pike VM: no DFA, no fast path. Detected up front;
-    // the fast-path hints are cleared at the end so none can fire even partially.
+    // the fast-path hints are cleared at the end so none can fire even partially. This is a local,
+    // not a persisted hint: nothing past analyze_program ever reads it (the fast paths and the DFA
+    // gate on the individual hints this clears / on the program itself).
+    bool has_lookaround {false};
     for (const instr& in : code) {
       if (in.op == opcode::assert_lookaround) {
-        hints.has_lookaround = true;
+        has_lookaround = true;
         break;
       }
     }
@@ -440,7 +443,7 @@ namespace real::detail {
     // the sub-VM can evaluate the assertion. Clear every fast-path hint (belt-and-suspenders
     // — the structural detectors above already miss these shapes). The literal prefix /
     // first-byte set below stay valid (and sound) filters.
-    if (hints.has_lookaround) {
+    if (has_lookaround) {
       hints.greedy_class_loop     = -1;
       hints.exact_literal_len     = 0;
       hints.fixed_shape           = false;
