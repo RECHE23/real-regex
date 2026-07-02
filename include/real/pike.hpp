@@ -334,6 +334,27 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Byte-indexed membership table for a `cp_class`'s ASCII bitmap — the same one-load trick
+     *        as \ref class_table, for the `klass_cp` scan-loop fast path. Keyed negatively so it never
+     *        collides with a `class_table` key (a whole-pattern shorthand has no byte-NFA classes, so
+     *        the two never interleave for one pattern anyway).
+     * \param[in] cp_index Index into the program's `cp_classes`.
+     * \return Pointer to a 256-entry table: 1 where the byte (< 0x80) is a member.
+     */
+    constexpr const std::uint8_t* cp_ascii_table(std::size_t cp_index)
+    {
+      const std::int32_t key {-2 - static_cast<std::int32_t>(cp_index)};
+      if (state_.table_class != key) {
+        const char_class& klass {prog_.cp_classes[cp_index].ascii};
+        for (std::size_t b {0}; b < 256; ++b) {
+          state_.table[b] = klass.test(static_cast<std::uint8_t>(b)) ? 1U : 0U;
+        }
+        state_.table_class = key;
+      }
+      return state_.table.data();
+    }
+
+    /*!
      * \brief Fast path for a whole-pattern "class+".
      *
      * Matches a maximal run of class bytes with one scan loop — exactly the
@@ -402,8 +423,11 @@ namespace real::detail {
                                      run_mode         mode,
                                      OutSlots&        out_slots)
     {
-      const detail::cp_class& cc {prog_.cp_classes[static_cast<std::size_t>(prog_.hints.greedy_cp_class)]};
-      // Byte width of a matching code point at i, or 0 (no match / malformed).
+      const std::size_t          cp_index {static_cast<std::size_t>(prog_.hints.greedy_cp_class)};
+      const detail::cp_class&    cc       {prog_.cp_classes[cp_index]};
+      const std::uint8_t* const  asc      {cp_ascii_table(cp_index)};
+      // Byte width of a matching code point at i, or 0 (no match / malformed). The hot ASCII run is
+      // scanned inline below; this handles the non-ASCII decode and the leftmost-scan step.
       const auto width = [&](std::size_t i) -> std::size_t {
                            const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, i)};
                            return dc.valid && cp_class_matches(cc, dc.cp) ? dc.length : 0;
@@ -428,6 +452,16 @@ namespace real::detail {
       std::size_t match_end {match_start + first};
       if (prog_.hints.greedy_cp_class_plus) {
         while (match_end < text.size()) {
+          // Tight ASCII inner loop (OPT-1): a byte-indexed table lookup with no decode and no call,
+          // the same one-load trick the byte-NFA scan loop uses; only a non-ASCII lead decodes.
+          const auto lead {static_cast<std::uint8_t>(text[match_end])};
+          if (lead < 0x80U) {
+            if (asc[lead] == 0U) {
+              break;
+            }
+            ++match_end;
+            continue;
+          }
           const std::size_t w {width(match_end)};
           if (w == 0) {
             break;
@@ -894,8 +928,12 @@ namespace real::detail {
       if (pos == 0) {
         return false;
       }
-      if (!prog_.unicode_word) {
-        return is_ascii_word_byte(static_cast<std::uint8_t>(text_[pos - 1]));
+      const auto prev {static_cast<std::uint8_t>(text_[pos - 1])};
+      // ASCII fast path: an ASCII byte is a whole one-byte code point, and is_word_cp agrees with
+      // is_ascii_word_byte on it — so the common case skips the back-decode entirely (OPT-1). Bytes /
+      // re.A always take this path.
+      if (prev < 0x80U || !prog_.unicode_word) {
+        return is_ascii_word_byte(prev);
       }
       std::size_t i     {pos - 1};
       std::size_t steps {0};
@@ -917,8 +955,9 @@ namespace real::detail {
       if (pos >= text_.size()) {
         return false;
       }
-      if (!prog_.unicode_word) {
-        return is_ascii_word_byte(static_cast<std::uint8_t>(text_[pos]));
+      const auto here {static_cast<std::uint8_t>(text_[pos])};
+      if (here < 0x80U || !prog_.unicode_word) { // ASCII byte (or bytes / re.A): byte-level, no decode
+        return is_ascii_word_byte(here);
       }
       const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, pos)};
       return dc.valid && is_word_cp(dc.cp);
@@ -1017,10 +1056,6 @@ namespace real::detail {
             break;
           case opcode::klass_cp:
             if (pos < text_.size()) {
-              // Decode the whole code point once; membership is decided here. The thread still
-              // advances only one byte (to pos+1), entering the [klass_cp][cont][cont][cont] chain
-              // at a computed offset so the remaining len-1 bytes are walked by the plain `klass`
-              // continuation ops over the next steps — priority/dedup/generation stay unchanged.
               const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, pos)};
               if (dc.valid &&
                   cp_class_matches(prog_.cp_classes[instruction.arg16], dc.cp)) {
