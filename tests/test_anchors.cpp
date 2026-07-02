@@ -307,3 +307,23 @@ TEST(verbose_mode)
   EXPECT(real::regex("a b", real::flags::verbose).fullmatch("ab")); // constructor flag
   EXPECT(real::regex("(?ix) HELLO").fullmatch("hello"));            // combined with icase
 }
+
+TEST(unicode_word_boundary_malformed)
+{
+  // word_before back-decodes the code point ending at the position; a malformed or misaligned run on
+  // the left reads as non-word (REAL's documented internal policy -- re never sees malformed str).
+  // These pin the malformed branch (a lone continuation, a run past the 3-byte back-scan cap, a
+  // truncated lead, an overlong form) and the well-formed success path.
+  const std::string lone_cont  {"\x80z"};             // lone continuation then a word char
+  const std::string long_run   {"\x80\x80\x80\x80z"}; // > 3 continuation bytes (the back-scan cap)
+  const std::string trunc_lead {"\xC3z"};             // 2-byte lead with no continuation
+  const std::string overlong   {"\xC0\x80z"};         // overlong NUL then a word char
+  for (const std::string* s : {&lone_cont, &long_run, &trunc_lead, &overlong}) {
+    EXPECT(real::regex("\\bz").search(*s).matched()); // z (word) after a non-word run: a boundary
+  }
+  // Well-formed left side: a valid é ending exactly at the position is a word char, so there is no
+  // boundary between é and z (both word) -- exercises the success path (decode ends exactly at pos).
+  const std::string wellformed {"éz"};
+  EXPECT(!real::regex("é\\bz").search(wellformed)); // no boundary inside a word run
+  EXPECT(real::regex("\\Bz").search(wellformed).matched());
+}

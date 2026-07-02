@@ -418,6 +418,9 @@ namespace real::detail {
       if (match_start >= text.size()) {
         return false;
       }
+      // The first code point must match: this path is only chosen for `\w`/`\w+` (never nullable), so
+      // it reports a non-empty match or none — it can never produce the empty match `forbid_empty_until_`
+      // guards, which is why that state is not consulted here (see the fast-path dispatch in run()).
       const std::size_t first {width(match_start)};
       if (first == 0) {
         return false;
@@ -1064,11 +1067,12 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Tests a decoded code point against a `klass_cp` class: ASCII bitmap below 0x80, a
-     *        binary search of the class's range slice above, then `negated` applied (xor).
+     * \brief Tests a decoded code point against a `klass_cp` class: ASCII bitmap below 0x80, a binary
+     *        search of the class's range slice above. The class is already the effective set, so this
+     *        is a plain positive membership test.
      * \param[in] cc The code-point class (from `prog_.cp_classes`).
      * \param[in] cp The decoded code point.
-     * \return Whether \p cp is a member after negation.
+     * \return Whether \p cp is a member.
      */
     [[nodiscard]] constexpr bool cp_class_matches(const detail::cp_class& cc,
                                                   char32_t                cp) const
@@ -1092,7 +1096,7 @@ namespace real::detail {
         member = lo < static_cast<std::size_t>(cc.range_begin) + cc.range_count &&
                  cp >= prog_.cp_ranges[lo].lo && cp <= prog_.cp_ranges[lo].hi;
       }
-      return member != cc.negated;
+      return member;
     }
 
     /*!

@@ -363,28 +363,30 @@ namespace real::detail {
      *        negations) in text mode: a `klass_cp` over the interned code-point class, followed by a
      *        three-instruction continuation chain (`klass utf8_cont` ×3). At match time `klass_cp`
      *        decodes one code point and, on membership, enters the chain at a computed skip so the
-     *        remaining continuation bytes are walked one per step — see pike.hpp. The class is stored
-     *        un-negated with a `negated` flag applied at match time (no complement blow-up).
+     *        remaining continuation bytes are walked one per step — see pike.hpp. The class is the
+     *        already-effective set (the fold and any external negation were materialised by
+     *        \ref effective_class), so membership is a plain positive test.
      *
-     * \param[in,out] prog    The program being built.
-     * \param[in]     cd      The shorthand's class (ASCII bitmap + non-ASCII ranges), pre-negation.
-     * \param[in]     negated `\W` `\D` `\S`: membership is inverted at match time.
+     * \param[in,out] prog The program being built.
+     * \param[in]     cd   The effective code-point class (ASCII bitmap + non-ASCII ranges).
      */
     static constexpr void emit_klass_cp(dynamic_program& prog,
-                                        const class_def& cd,
-                                        bool             negated)
+                                        const class_def& cd)
     {
       std::size_t index {prog.cp_classes.size()};
       for (std::size_t i = 0; i < prog.cp_classes.size(); ++i) {
         const cp_class& existing {prog.cp_classes[i]};
-        if (existing.negated != negated || !(existing.ascii == cd.ascii) ||
-            existing.range_count != cd.ranges.size()) {
+        if (!(existing.ascii == cd.ascii) || existing.range_count != cd.ranges.size()) {
           continue;
         }
         bool same {true};
         for (std::uint32_t k = 0; k < existing.range_count; ++k) {
           const code_range& a {prog.cp_ranges[existing.range_begin + k]};
           if (a.lo != cd.ranges[k].lo || a.hi != cd.ranges[k].hi) {
+            // Two code-point classes with the SAME ASCII bitmap and range COUNT but different ranges:
+            // the interner must not merge them. In practice the shorthand classes (\w/\d/\s and their
+            // complements) have distinct bitmaps and counts, so this range mismatch is a defensive
+            // arm of the dedup, not hit by the current emitters (hence uncovered by the runtime report).
             same = false;
             break;
           }
@@ -404,8 +406,7 @@ namespace real::detail {
         }
         prog.cp_classes.push_back({.ascii       = cd.ascii,
                                    .range_begin = begin,
-                                   .range_count = static_cast<std::uint32_t>(cd.ranges.size()),
-                                   .negated     = negated});
+                                   .range_count = static_cast<std::uint32_t>(cd.ranges.size())});
       }
       emit(prog, {.op = opcode::klass_cp, .arg16 = static_cast<std::uint16_t>(index)});
       emit_klass(prog, utf8_cont_set()); // three continuation slots; klass_cp's skip picks the entry
@@ -597,7 +598,7 @@ namespace real::detail {
             // fold and the external negation, so the stored cp_class needs no negation flag -- this is
             // also what gives [^\W] == \w, [^\D] == \d, [^\S] == \s.
             if (tree_.classes[static_cast<std::size_t>(node.klass)].codepoint_predicate) {
-              emit_klass_cp(prog, effective_class(node), false);
+              emit_klass_cp(prog, effective_class(node));
               break;
             }
             const class_def eff {effective_class(node)};

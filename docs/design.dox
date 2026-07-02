@@ -185,6 +185,29 @@ because that structure only accepts well-formed sequences. Because class members
 stay ASCII, a delimiter byte never appears mid-sequence, which is what keeps the
 boundary guarantee.
 
+\subsection g_klass_cp Large code-point classes: the `klass_cp` skip-chain
+
+The byte-range expansion above is right for `.` and small classes, but a Unicode
+shorthand such as `\w` spans ~771 ranges — expanding it to byte alternatives is
+~5000 instructions and, worse, makes the Pike VM step *O(number of classes)* per
+byte (a 2000× slowdown for `\w+` on ASCII text). The `klass_cp` opcode
+(\ref real::detail::opcode) sidesteps both: it keeps the class as a range table and,
+at a position, decodes one code point and binary-searches it — *O(≤4 bytes + log
+ranges)*, independent of the class count.
+
+The subtlety is that `klass_cp` consumes 1–4 bytes but the VM only advances one byte
+per step. It is emitted as a fixed four-slot chain `[klass_cp][cont][cont][cont]`
+(the three `cont` are ordinary `klass utf8_cont` ops). `klass_cp` decides membership
+on the whole code point, then posts the thread to `pos + 1` — like any byte op —
+entering the chain at the computed offset `pc + 1 + (4 − len)`, so a `len`-byte code
+point walks exactly `len − 1` continuation ops over the next steps. This is a
+**structural** padding, not a semantic one: because the thread still advances in
+lock-step, one byte per step, thread priority, per-list dedup and the generation
+counter are all unchanged — the property that made the ring-buffer alternative
+unnecessary. A whole-pattern shorthand additionally takes a code-point scan-loop
+fast path (\ref g_fastpaths) that shares the same membership test, so the two paths
+cannot disagree.
+
 \section g_data 6. The data structures behind the speed
 
 *What you'll learn: the handful of structures that give top speed, minimal

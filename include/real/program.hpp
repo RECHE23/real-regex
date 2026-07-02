@@ -139,15 +139,14 @@ namespace real {
 
     //! \brief A match-time code-point class for the `klass_cp` opcode: an ASCII bitmap for code points
     //!        `< 0x80` plus a slice of sorted non-ASCII ranges (indexing the program's flat `cp_ranges`
-    //!        buffer), with `negated` applied at match time. Unlike the byte-NFA `klass`, the ranges are
-    //!        kept and binary-searched at match time — O(log ranges) per position, independent of the
-    //!        range count.
+    //!        buffer). It is the already-effective set (any `\W`/`[^…]` negation is materialised at
+    //!        compile time). Unlike the byte-NFA `klass`, the ranges are kept and binary-searched at
+    //!        match time — O(log ranges) per position, independent of the range count.
     struct cp_class
     {
-      char_class    ascii;          //!< Members `< 0x80` (pre-negation).
+      char_class    ascii;          //!< Members `< 0x80`.
       std::uint32_t range_begin {}; //!< First range in the program's `cp_ranges` buffer.
       std::uint32_t range_count {}; //!< Number of ranges belonging to this class.
-      bool          negated     {}; //!< `\W` `\D` `\S` / `[^…]`: membership is inverted at match time.
     };
 
     /*!

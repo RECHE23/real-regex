@@ -193,15 +193,11 @@ namespace real::detail {
           hints.first_bytes.merge(classes[instruction.arg16]);
           break;
         case opcode::klass_cp: {
-            // A code-point predicate: its ASCII members (or, when negated, a sound superset of the
-            // ASCII complement) plus every UTF-8 lead byte a non-ASCII member could begin with.
+            // A code-point predicate: its effective ASCII members (a `\W`-style complement is already
+            // materialised into the bitmap) plus every UTF-8 lead byte a non-ASCII member could begin
+            // with -- a sound superset of the possible first bytes.
             const cp_class& cc {cp_classes[static_cast<std::size_t>(instruction.arg16)]};
-            if (cc.negated) {
-              hints.first_bytes.set_range(0x00, 0x7F);
-            }
-            else {
-              hints.first_bytes.merge(cc.ascii);
-            }
+            hints.first_bytes.merge(cc.ascii);
             hints.first_bytes.merge(utf8_lead2_set());
             hints.first_bytes.merge(utf8_lead3_set());
             hints.first_bytes.merge(utf8_lead4_set());

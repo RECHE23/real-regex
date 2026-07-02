@@ -1,8 +1,9 @@
 """Parity suite: real and re must produce identical results on a corpus.
 
 Patterns avoid the single documented divergence (capture of a nullable
-loop's final empty iteration). The re oracle flags are chosen per pattern by
-_text_oracle: \\w \\d \\s are Unicode in text mode, \\b \\B stay ASCII.
+loop's final empty iteration). In str mode every shorthand and boundary is
+Unicode (\\w \\W \\d \\D \\s \\S \\b \\B), so the re oracle is the full Unicode
+default (no re.ASCII); bytes patterns are compared byte-for-byte.
 """
 
 import re

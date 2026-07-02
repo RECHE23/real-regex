@@ -10,8 +10,8 @@ deterministic unit test in CI; crank it up locally with environment vars:
 
 The pattern generator stays inside REAL's supported grammar and inside the
 subset where REAL and ``re`` agree by construction:
-  * the re oracle flags are chosen per pattern (\\w \\d \\s are Unicode in text
-    mode, \\b \\B stay ASCII); see _text-oracle logic in the flag selection;
+  * in str mode every shorthand and boundary is Unicode (\\w \\W \\d \\D \\s \\S
+    \\b \\B), so the re oracle is the full Unicode default (no re.ASCII);
   * a looping quantifier (``*`` ``+`` ``{m,n}`` …) only ever wraps a body
     that always consumes at least one character. Nullable loops — a repeat
     over something that can match empty, e.g. ``(a*)+`` or ``(?:\S??){2,}`` —

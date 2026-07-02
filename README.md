@@ -169,7 +169,7 @@ number here.
 | `\A` `\Z` | strict text start / end |
 | `\b` `\B` | word boundary / non-boundary (ASCII word characters) |
 | `\<` `\>` | start / end of word (REAL extension, not in Python `re`) |
-| `(?imsxa)` prefix | global flags: `i` case-insensitive (Unicode fold in text mode), `m` multiline, `s` dotall, `x` verbose (ignore unescaped whitespace and `#` comments outside classes), `a` ASCII (`re.A`: keep `\d \s` and folding ASCII) — also `real::flags` on the constructor |
+| `(?imsxa)` prefix | global flags: `i` case-insensitive (Unicode fold in text mode), `m` multiline, `s` dotall, `x` verbose (ignore unescaped whitespace and `#` comments outside classes), `a` ASCII (`re.A`: keep `\w \W \d \D \s \S \b \B \< \>` and icase folding ASCII, even in text mode) — also `real::flags` on the constructor |
 
 **Bounded lookarounds** match in linear time: lookahead `(?=...)`/`(?!...)` and lookbehind
 `(?<=...)`/`(?<!...)`. Each sub-pattern must be length-bounded (an unbounded sub such as

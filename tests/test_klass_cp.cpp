@@ -154,3 +154,35 @@ TEST(klass_cp_ascii_and_bytes_unchanged)
   EXPECT(real::regex("(?a)\\w+").fullmatch("abc"));
   EXPECT(!real::regex("(?a)\\w+").fullmatch(kEacute));
 }
+
+TEST(klass_cp_fast_path_equivalence)
+{
+  // The whole-pattern scan-loop fast path (\w+) and the general VM (a capture forces it off) share
+  // cp_class_matches, so they must agree -- including at the empty-match edge. Pins the gating.
+  const std::string subj {cat({"  ", kEacute, kArab3, "! "})};
+  const auto        fast {real::regex("\\w+").search(subj)};   // greedy_cp_class fast path
+  const auto        slow {real::regex("(\\w+)").search(subj)}; // capture -> general VM
+  EXPECT(fast.matched() && slow.matched());
+  EXPECT_EQ(fast[0], slow[0]);
+  // \w* is nullable: both paths yield the empty match at position 0 on a non-word start.
+  EXPECT_EQ(real::regex("\\w*").search(kEuro)[0], ""sv);
+  EXPECT_EQ(real::regex("(\\w*)").search(kEuro)[0], ""sv);
+}
+
+TEST(klass_cp_negative_lookbehind_at_multibyte_boundary)
+{
+  // (?<!\w)X: X only when NOT preceded by a word code point -- the lookbehind's klass_cp runs the
+  // per-start backward scan across a multi-byte boundary.
+  const std::string after_word    {cat({kEacute, "x"})}; // é (word) then x: lookbehind fails
+  const std::string after_nonword {cat({kEuro, "x"})};   // € (non-word) then x: lookbehind holds
+  EXPECT(!real::regex("(?<!\\w)x").search(after_word));
+  EXPECT(real::regex("(?<!\\w)x").search(after_nonword).matched());
+}
+
+TEST(klass_cp_static_regex_is_constexpr_and_correct)
+{
+  // A text-mode \w+ static_regex compiles at compile time (small program) and matches Unicode.
+  static_assert(real::static_regex<"\\w+">().search("café").matched());
+  static_assert(!real::static_regex<"\\w+">().fullmatch("a b"));
+  EXPECT(real::static_regex<"\\w+">().fullmatch("héllo").matched());
+}

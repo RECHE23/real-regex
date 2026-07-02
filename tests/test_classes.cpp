@@ -266,7 +266,8 @@ TEST(unicode_shorthand_ascii_flag_reverts)
   EXPECT(!real::regex("\\s", flags::ascii).fullmatch(" "));
   EXPECT(!real::regex("[\\d]", flags::ascii).fullmatch("٣"));
   EXPECT(real::regex("(?a)\\d").fullmatch("7") && !real::regex("(?a)\\d").fullmatch("٣")); // inline (?a)
-  // The CPython "k == Kelvin" wart is intentionally NOT reproduced under ascii+icase: strict ASCII.
+  // Under ascii+icase folding is strictly ASCII, matching re.A|re.IGNORECASE: k folds to K only, never
+  // to Kelvin (U+212A) -- re does the same (an earlier "CPython wart" note was a corrupted-probe error).
   EXPECT(!real::regex("k", flags::ascii | flags::icase).fullmatch("K"));                   // Kelvin
   EXPECT(real::regex("k", flags::ascii | flags::icase).fullmatch("K"));                    // ASCII fold still works
   EXPECT(!real::regex("é", flags::ascii | flags::icase).fullmatch("É"));                   // no Unicode fold
