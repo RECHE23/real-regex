@@ -1,4 +1,4 @@
-# `real::compat` — `std::regex` compatibility {#compat}
+# real::compat — std::regex compatibility {#compat}
 
 `real::compat` (header `<real/std/regex.hpp>`) is a drop-in for the `<regex>` surface on the
 `char` path. It runs your pattern on **`real`** — linear-time and ReDoS-safe — wherever that is
