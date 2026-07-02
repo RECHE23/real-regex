@@ -337,6 +337,37 @@ it does **not** qualify and stays on the general VM; likewise a variable count (
 `?`), a nested group, an alternation, or a lookaround. So `(\d{1,3}\.){3}\d{1,3}` (an IPv4-shaped
 pattern) is excluded by construction.
 
+\subsection g_anchoredoracle 7.3 Retired: the anchored-oracle two-pass loop (D3)
+
+An idea for capture-heavy parsing patterns that the general VM handles slowly (5–40&nbsp;MB/s): use
+the existing `real::dfa` as a cheap boolean *oracle* — scan for the smallest position where any match
+starts — then run the anchored Pike VM only there, for the exact spans and groups. Prototyped
+standalone (no engine change); the property-net was a clean **0 divergence** vs `find_iter` over acid
+cases plus ~9,600 random eligible patterns × texts (the `oracle ⇒ pike-match` assertion never fired),
+and on representative parsing text it hit the throughput target:
+
+| Pattern | Engine | Prototype | Speedup |
+|---|---|---|---|
+| `[a-z]+(::[a-z]+)+` (qualified name) | 34 MB/s | 143 | **4.2×** |
+| `([a-z]+):([0-9]+):([a-z]+)` (3 groups) | 26 | 139 | **5.3×** |
+| `const\|static\|volatile\|…` (keyword alt) | 206 | 284 | 1.4× (already fast-pathed) |
+| `"[^"]*"` (few false candidates) | 146 | 134 | 0.9× |
+
+**Why it was retired anyway.** The win is real only when there are *many* false candidates that are
+*costly to reject* — and rejecting them means the oracle re-scans the class run from **every** start,
+which is **O(n·k)**. On an adversarial long class run (`[a-z]+(::…)` over a 40&nbsp;KB run of `a`) the
+prototype collapsed to **0.02&nbsp;MB/s — ~1500× slower than the engine at that size, and quadratic
+from there** — while `find_iter` stayed flat at ~30&nbsp;MB/s (measured linear at 40/80/160&nbsp;KB).
+That is the exact worst case the linear-time Pike VM exists to forbid: the two-pass oracle trades away
+REAL's central ReDoS-safety guarantee for a constant-factor win on structured input. No constant-factor
+speedup justifies reintroducing quadratic time, even opt-in, so the approach is **shelved**. DFA build
+cost was negligible (≤0.1&nbsp;ms, one-shot).
+
+\note **Wake condition.** Revisit only with a *linear* oracle: a single streaming leftmost-longest DFA
+pass over the text (lexer-style, no per-position re-scan), rather than a per-position boolean probe.
+That is a different algorithm from the one prototyped here; until it exists, the general VM — linear by
+construction — stays the one match loop.
+
 \section g_map 8. Architecture map: who does what
 
 Headers form layers; a header only includes those below it (each file's Doxygen
