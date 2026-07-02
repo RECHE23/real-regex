@@ -399,6 +399,25 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Writes a class-loop fast-path result into \p out_slots: the whole-match span in slots
+     *        0/1, and — for a pattern wrapped in one capturing group (`(\w+)`, `([a-z]+)`, D4(a)) —
+     *        the same span mirrored into the group's slots (its span equals the whole match by
+     *        construction, so no re-match is needed). Sizes the slots to the program's slot count.
+     */
+    template <typename OutSlots>
+    constexpr void fill_span_slots(OutSlots&   out_slots,
+                                   std::size_t match_start,
+                                   std::size_t match_end) const
+    {
+      out_slots[0] = match_start;
+      out_slots[1] = match_end;
+      if (prog_.hints.greedy_group_start >= 0) {
+        out_slots[static_cast<std::size_t>(prog_.hints.greedy_group_start)] = match_start;
+        out_slots[static_cast<std::size_t>(prog_.hints.greedy_group_end)]   = match_end;
+      }
+    }
+
+    /*!
      * \brief Fast path for a whole-pattern "class+".
      *
      * Matches a maximal run of class bytes with one scan loop — exactly the
@@ -429,7 +448,7 @@ namespace real::detail {
         }
       }
       if (match_start >= text.size() || !in_class(match_start)) {
-        out_slots.assign(2, npos);
+        out_slots.assign(prog_.slot_count, npos);
         return false;
       }
       std::size_t match_end {match_start + 1};
@@ -437,12 +456,11 @@ namespace real::detail {
         ++match_end;
       }
       if (mode == run_mode::full && match_end != text.size()) {
-        out_slots.assign(2, npos);
+        out_slots.assign(prog_.slot_count, npos);
         return false;
       }
-      out_slots.assign(2, npos);
-      out_slots[0] = match_start;
-      out_slots[1] = match_end;
+      out_slots.assign(prog_.slot_count, npos);
+      fill_span_slots(out_slots, match_start, match_end);
       return true;
     }
 
@@ -491,7 +509,7 @@ namespace real::detail {
                            const bool m {dc.cp < 0x80U ? asc[dc.cp] != 0U : member_hi(dc.cp)};
                            return m ? dc.length : 0;
                          };
-      out_slots.assign(2, npos);
+      out_slots.assign(prog_.slot_count, npos);
       std::size_t match_start {start};
       if (mode == run_mode::search) {
         while (match_start < text.size() && width(match_start) == 0) {
@@ -531,8 +549,7 @@ namespace real::detail {
       if (mode == run_mode::full && match_end != text.size()) {
         return false;
       }
-      out_slots[0] = match_start;
-      out_slots[1] = match_end;
+      fill_span_slots(out_slots, match_start, match_end);
       return true;
     }
 

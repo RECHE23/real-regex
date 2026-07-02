@@ -395,3 +395,35 @@ TEST(exact_literal_fastpath_hint_and_results)
   EXPECT(m3.matched());
   EXPECT_EQ(m3.start(), 0U);
 }
+
+TEST(enveloping_group_class_loop_fast_path)
+{
+  // D4(a): a class-loop / cp-class-loop wrapped in ONE capturing group ((\w+), ([a-z]+)) takes the
+  // scan-loop fast path, and the group's span equals the whole match (start(1)==start(0) etc). The
+  // detection fires (greedy hint set with a group slot) only for that strict shape.
+  EXPECT(hints_of("(\\w+)").greedy_cp_class >= 0 && hints_of("(\\w+)").greedy_group_start == 2);
+  EXPECT(hints_of("([a-z]+)").greedy_class_loop >= 0 && hints_of("([a-z]+)").greedy_group_start == 2);
+  EXPECT(hints_of("(\\w)").greedy_cp_class >= 0 && hints_of("(\\w)").greedy_group_start == 2);
+  // Strictly excluded (must stay on the general VM): lazy, a trailing atom, nesting, a second group,
+  // and a non-capturing group is just the plain loop (no group slots).
+  EXPECT_EQ(hints_of("(\\w+?)").greedy_cp_class, -1);
+  EXPECT_EQ(hints_of("(\\w+)x").greedy_cp_class, -1);
+  EXPECT_EQ(hints_of("((\\w+))").greedy_cp_class, -1);
+  EXPECT_EQ(hints_of("(\\w+)(\\w+)").greedy_cp_class, -1);
+  EXPECT_EQ(hints_of("(?:\\w+)").greedy_group_start, std::int16_t {-1});
+  // The group span equals the whole match, across ascii / cp-class / a single code point / no match.
+  const real::regex rw {"(\\w+)"};
+  const real::regex ra {"([a-z]+)"};
+  const real::regex rd {"(\\d+)"};
+  const std::string s1 {"  héllo!"};
+  const std::string s2 {"  abc"};
+  const std::string s3 {"x 42 y"};
+  const std::string s4 {"   "};
+  const auto        m1 {rw.search(s1)};
+  EXPECT(m1.matched() && m1.start(1) == m1.start(0) && m1.end(1) == m1.end(0) && m1[1] == "héllo"sv);
+  const auto m2        {ra.search(s2)};
+  EXPECT(m2.start(1) == m2.start(0) && m2.end(1) == m2.end(0));
+  const auto m3        {rd.search(s3)};
+  EXPECT(m3[1] == "42"sv && m3.start(1) == m3.start(0) && m3.end(1) == m3.end(0));
+  EXPECT(!rw.search(s4)); // no word: no match, group unset
+}

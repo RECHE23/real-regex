@@ -226,26 +226,80 @@ namespace real::detail {
     // "class+" shape: save 0, klass, split(back to the klass, exit),
     // save 1, match -- greedy only (the lazy variant has different
     // semantics) and no capture groups.
-    if (code.size() == 5 && code[0].op == opcode::save && code[1].op == opcode::klass &&
-        code[2].op == opcode::split && code[2].primary_target == 1 && code[2].secondary_target == 3 &&
-        code[3].op == opcode::save && code[4].op == opcode::match) {
-      hints.greedy_class_loop = code[1].arg16;
+    // "class+", optionally wrapped in exactly ONE capturing group: save 0, [group-start save,] klass,
+    // split(back to the klass, exit), [group-end save,] save 1, match. Greedy only (the lazy variant
+    // differs). D4(a): an enveloping group ((\w+), ([a-z]+)) has span == the whole match by
+    // construction, so the fast path mirrors the bounds into the group's slots -- no re-match.
+    {
+      std::size_t  p  {0};
+      std::int16_t gs {-1};
+      if (p < code.size() && code[p].op == opcode::save) {
+        ++p;
+        if (p < code.size() && code[p].op == opcode::save) {
+          gs = static_cast<std::int16_t>(code[p].arg16);
+          ++p;
+        }
+        if (p + 1 < code.size() && code[p].op == opcode::klass && code[p + 1].op == opcode::split &&
+            code[p + 1].primary_target == static_cast<std::int32_t>(p) &&
+            code[p + 1].secondary_target == static_cast<std::int32_t>(p + 2)) {
+          const std::int32_t cls {code[p].arg16};
+          std::size_t        q   {p + 2};
+          std::int16_t       ge  {-1};
+          bool               ok  {gs < 0};
+          if (gs >= 0 && q < code.size() && code[q].op == opcode::save) {
+            ge = static_cast<std::int16_t>(code[q].arg16);
+            ++q;
+            ok = true;
+          }
+          if (ok && q + 1 < code.size() && code[q].op == opcode::save && code[q + 1].op == opcode::match &&
+              q + 2 == code.size()) {
+            hints.greedy_class_loop  = cls;
+            hints.greedy_group_start = gs;
+            hints.greedy_group_end   = ge;
+          }
+        }
+      }
     }
 
-    // Code-point class, optional greedy `+`: save 0, klass_cp, cont, cont, cont, [split back], save 1,
-    // match -- a Unicode shorthand (\w/\d/\s) run, scanned code point by code point without threads.
-    // The three `klass` continuations are the klass_cp skip chain; a `+` adds a split looping to the
-    // klass_cp. Greedy only, no captures.
-    if (code.size() >= 7 && code[0].op == opcode::save && code[1].op == opcode::klass_cp &&
-        code[2].op == opcode::klass && code[3].op == opcode::klass && code[4].op == opcode::klass) {
-      if (code.size() == 7 && code[5].op == opcode::save && code[6].op == opcode::match) {
-        hints.greedy_cp_class      = code[1].arg16;
-        hints.greedy_cp_class_plus = false;
-      }
-      else if (code.size() == 8 && code[5].op == opcode::split && code[5].primary_target == 1 &&
-               code[5].secondary_target == 6 && code[6].op == opcode::save && code[7].op == opcode::match) {
-        hints.greedy_cp_class      = code[1].arg16;
-        hints.greedy_cp_class_plus = true;
+    // Code-point class (klass_cp + its three `klass` continuations), optional greedy `+`, optionally
+    // wrapped in one capturing group: save 0, [group-start save,] klass_cp, klass, klass, klass,
+    // [split back,] [group-end save,] save 1, match. A \w/\d/\s run scanned code point by code point.
+    {
+      std::size_t  p  {0};
+      std::int16_t gs {-1};
+      if (p < code.size() && code[p].op == opcode::save) {
+        ++p;
+        if (p < code.size() && code[p].op == opcode::save) {
+          gs = static_cast<std::int16_t>(code[p].arg16);
+          ++p;
+        }
+        if (p + 3 < code.size() && code[p].op == opcode::klass_cp && code[p + 1].op == opcode::klass &&
+            code[p + 2].op == opcode::klass && code[p + 3].op == opcode::klass) {
+          const std::int32_t cp_idx  {code[p].arg16};
+          const std::size_t  loop_pc {p};
+          std::size_t        q       {p + 4};
+          bool               plus    {false};
+          if (q < code.size() && code[q].op == opcode::split &&
+              code[q].primary_target == static_cast<std::int32_t>(loop_pc) &&
+              code[q].secondary_target == static_cast<std::int32_t>(q + 1)) {
+            plus = true;
+            ++q;
+          }
+          std::int16_t ge {-1};
+          bool         ok {gs < 0};
+          if (gs >= 0 && q < code.size() && code[q].op == opcode::save) {
+            ge = static_cast<std::int16_t>(code[q].arg16);
+            ++q;
+            ok = true;
+          }
+          if (ok && q + 1 < code.size() && code[q].op == opcode::save && code[q + 1].op == opcode::match &&
+              q + 2 == code.size()) {
+            hints.greedy_cp_class      = cp_idx;
+            hints.greedy_cp_class_plus = plus;
+            hints.greedy_group_start   = gs;
+            hints.greedy_group_end     = ge;
+          }
+        }
       }
     }
 
