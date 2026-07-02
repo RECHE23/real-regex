@@ -248,6 +248,21 @@ non-empty match) and the scan then advances one whole codepoint.
 `find_iter`/`find_all` cannot be called on a temporary regex, and
 `match`/`search`/`split` cannot take a temporary `std::string`.
 
+### Drop-in for `std::regex`
+
+Already using `<regex>`? `real::compat` is a drop-in for the `<regex>` surface on the `char` path —
+swap the include and alias the namespace, and your code keeps compiling:
+
+```cpp
+#include <real/std/regex.hpp>   // was: #include <regex>
+namespace re = real::compat;    // then re::regex / re::smatch / re::regex_search / …
+```
+
+It runs your pattern on REAL — linear-time, ReDoS-safe — wherever that is provably identical to
+`std::regex`, and falls back to `std::regex` everywhere else: **behave identically, never a silent
+divergence**. See the [migration tour](https://reche23.github.io/real-regex/std_regex_dropin.html) and
+the full [`COMPATIBILITY.md`](https://github.com/RECHE23/real-regex/blob/main/COMPATIBILITY.md).
+
 ### Three memory modes
 
 ```cpp

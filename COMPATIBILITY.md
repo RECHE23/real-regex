@@ -1,8 +1,12 @@
-# `real::compat` — `std::regex` compatibility (S1: char, search/match)
+# `real::compat` — `std::regex` compatibility (S1: char, search/match) {#compat}
 
 `real::compat` (header `<real/std/regex.hpp>`) is a drop-in for the `<regex>` surface on the
 `char` path. It runs your pattern on **`real`** — linear-time and ReDoS-safe — wherever that is
 provably equivalent to `std::regex` (ECMAScript), and falls back to `std::regex` everywhere else.
+
+> New here? Start with the migration tour: [Drop-in for std::regex](@ref std_regex_dropin). This page
+> is the exhaustive per-feature reference; REAL's own differences from Python `re` are in
+> [the divergences page](@ref divergences).
 
 **The contract:** behave identically to the ECMAScript spec where `real` can prove it, and fall
 back to `std::regex` otherwise — *never a silent divergence*. The ECMAScript spec is the primary

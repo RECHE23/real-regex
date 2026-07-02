@@ -25,6 +25,9 @@
  * `CharT`, custom traits, POSIX/`collate`, and `nosubs` are always `std`. `regex_replace`/iterators
  * route nullable patterns to `std::regex` (the empty-match traversal differs from ECMAScript, see
  * `basic_regex::nullable`), and a constraining `match_flag` routes that operation to `std`.
+ *
+ * See the "Drop-in for std::regex" migration guide and the compatibility reference (COMPATIBILITY.md)
+ * in the rendered documentation.
  */
 #ifndef REAL_STD_REGEX_HPP
 #define REAL_STD_REGEX_HPP
