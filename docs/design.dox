@@ -325,6 +325,18 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   a Unicode shorthand needs a raised constexpr budget (see below). Use `flags::ascii` (`re.A`) or an
   explicit ASCII class (`[0-9]`) where the ASCII form suffices. This is the W2 baseline against which
   the larger `\w` (771 ranges) will be judged.
+- **Match throughput scales with the class count — and this vetoed a naive Unicode `\w`.** In the
+  byte-level Pike VM each thread is stepped one byte at a time and every alternative class branch is
+  evaluated per position, so a large code-point class costs *O(number of classes)* per byte. Measured
+  `find_all` throughput, text vs `flags::ascii` (200 KB subject): `\s+` (14 classes) 106 vs 319 MB/s
+  (≈3× slower — fine); `\d+` (60 classes) 1.9 vs 311 MB/s (≈163×); `\w+` (472 classes) **0.1 vs
+  344 MB/s (≈2280×)**. A Unicode `\w+` also compiles to ~5042 instructions (`\w{3,10}` ≈ 50 000,
+  `\w+@\w+\.\w+` ≈ 15 000) and costs ~0.9 ms/pattern to build. `\w` on the byte-NFA path is therefore
+  **unusable** for its dominant job (tokenising ASCII text), which vetoed wiring it that way. The fix
+  is architectural, outside the class pipeline: a match-time code-point-predicate opcode that decodes
+  one code point and binary-searches the range table (*O(≤4 bytes + log ranges)* per position,
+  independent of the class count), which also shrinks the program back to a handful of instructions.
+  `\d \s` (W2) carry the same cost at smaller scale and will move to the same opcode.
 - **Compile time:** the generated `unicode_fold.hpp` orbit table (~2900 entries) adds ~20 ms to a
   translation unit that includes `real/real.hpp`; a `static_regex` with `IGNORECASE` folds at
   compile time (constexpr), which is the usual constexpr cost, not a runtime one. A `static_regex`
