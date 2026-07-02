@@ -290,6 +290,35 @@ differential fuzzer that compares against Python's `re` over tens of thousands
 of generated patterns (it has caught real engine bugs, including an empty-match
 divergence and a UTF-8 boundary case).
 
+\subsection g_envgroup 7.1 Enveloping-group class loops (D4a)
+
+A class loop wrapped in exactly one capturing group — `(\w+)`, `([a-z]+)`, `(\d+)`, `(\w)` — used
+to fall to the general VM (~28× slower) purely to fill the group's slots, even though its body
+already qualified for a scan-loop fast path. But the group envelops the whole match, so by
+construction `start(1)==start(0)` and `end(1)==end(0)`: the fast path mirrors the whole-match span
+into the group slots with no re-match. The shape detection tolerates exactly one inner `save`/`save`
+pair immediately inside the outer one and records the group slots; the scan loops fill them through
+one shared helper. Strictly scoped — a lazy body `(\w+?)`, a trailing atom `(\w+)x`, nesting
+`((\w+))`, a second group `(\w+)(\w+)`, and a non-capturing `(?:\w+)` all stay on the general VM.
+
+Two independent optimizations were measured on the general VM (`find_iter`, 2&nbsp;MB ASCII, min of
+7–9; devbox numbers, ratios are the point):
+
+| Optimization | Representative case | Before | After | Verdict |
+|---|---|---|---|---|
+| **D4a** enveloping-group scan loop | `(\w+)` | 31.5 MB/s | **751 MB/s (24×, ≈ the `\w+` fast path 825)** | shipped |
+| D4a | `([a-z]+)` | 32 | **660** | shipped |
+| D2a bulk-copy of the slot snapshot (`add_thread`) and reload (`load_working`) | `(a\|b\|c\|d)+` (slot 2) | 14.6 | 15.0 (+2.7%) | **vetoed** |
+| D2a | `(\w)(\w)(\w)(\w)+` (slot 10) | 19.1 | 20.2 (+5.7%) | vetoed |
+| D2a | `(abcd\|abc\|ab\|a)+` (slot 4) | 12.5 | 12.1 (−3%) | vetoed |
+
+D2a replaced the per-slot `push_back`/reload loops with a one-shot block append/copy. It cleared its
+target (+20–35%) on no case but a single high-thread × high-slot outlier (`((a|b)(c|d)(e|f))+`,
++22%); the median was ~5% — exactly the `stl_construct` share the control profile attributed to it,
+so the bytes still had to be copied and only the per-element call overhead could go — and it even
+regressed some small-slot alternations. Measured, under threshold, not a pure win → vetoed, so the
+slot snapshot stays a plain per-element loop.
+
 \section g_map 8. Architecture map: who does what
 
 Headers form layers; a header only includes those below it (each file's Doxygen
