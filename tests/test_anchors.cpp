@@ -68,6 +68,35 @@ TEST(word_start_and_word_end_anchors)
   EXPECT_THROWS(real::regex("\\<?"), real::regex_error);
 }
 
+TEST(unicode_word_boundaries)
+{
+  // P3: \b \B \< \> use Unicode word-ness in text mode (a code point ending/starting at the position).
+  const std::string ete_phrase {"un été chaud"};
+  const std::string cafe_hay   {"le café ici"};
+  const std::string cafes      {"cafés"};
+  EXPECT_EQ(real::regex("\\b\\w+\\b").search(ete_phrase)[0], "un"sv);
+  EXPECT(real::regex("\\bété\\b").search(ete_phrase).matched()); // é is a word char both sides
+  EXPECT(real::regex("\\bcafé\\b").search(cafe_hay).matched());
+  EXPECT(!real::regex("\\bcafé\\b").search(cafes));              // 'é' then 's': no boundary inside
+  // A decomposed "é" (e + U+0301): the combining mark is non-word, so \be\b matches the base 'e'.
+  const std::string decomp2 {"e\xCC\x81 x"};                     // e + U+0301 (combining acute, non-word)
+  EXPECT(real::regex("\\be\\b").search(decomp2).matched());
+  EXPECT_EQ(real::regex("\\be\\b").search(decomp2).start(), 0U);
+  // \< \> follow the same word-ness.
+  const std::string phrase {"un été"};
+  EXPECT(real::regex("\\<été\\>").search(phrase).matched());
+  // \B is the negation: inside a Unicode word run.
+  const std::string cafe {"café"};
+  EXPECT_EQ(real::regex("\\B").search(cafe).start(), 1U); // between 'c' and 'a'
+  // ASCII mode: word-ness stays byte-level (é is non-word under re.A), so 'caf' then é is a boundary.
+  const std::string ascii_hay {"a caf\xC3\xA9"};
+  EXPECT(real::regex("caf\\b", real::flags::ascii).search(ascii_hay).matched());
+  const real::regex ascii_w   {"\\w+", real::flags::ascii};
+  EXPECT_EQ(ascii_w.find_all(ascii_hay).size(), 2U); // "a", "caf" -- é splits the run under re.A
+  // Bytes mode: \b is byte-level too (unchanged from before P3).
+  EXPECT(real::regex("caf\\b", real::flags::bytes).search(ascii_hay).matched());
+}
+
 TEST(icase_flag)
 {
   EXPECT(real::regex("hello", real::flags::icase).fullmatch("HeLLo"));

@@ -73,6 +73,9 @@ PATTERNS = [
     r"\w+",
     r"\W+",
     r"(\w+)\s+(\w+)",
+    r"\bété\b",
+    r"\b\w+\b",
+    r"\B\w",
 ]
 
 TEXTS = [
@@ -102,18 +105,11 @@ FLAG_SETS = [
     (real.S, re.ASCII | re.DOTALL),
 ]
 
-# In text mode \w \W \d \D \s \S are Unicode (W2 + P1's klass_cp); only the \b \B boundaries stay
-# ASCII (still to come). So a pattern using \b/\B is compared under re.ASCII (neutralising it); any
-# other gets the full Unicode oracle. (The corpus mixes neither \b with a Unicode shorthand, nor an
-# in-class \w -- in-class \w is still ASCII until the in-class slice, and is exercised separately.)
-_ASCII_ONLY_SHORTHAND = re.compile(r"\\[bB]")
-
-
-def _text_oracle(pattern, base):
+# In text (str) mode every shorthand and boundary is Unicode now (\w \W \d \D \s \S \b \B \< \>), and
+# case folding is full Unicode, so a str-mode real pattern is compared against re with no re.ASCII.
+def _text_oracle(pattern, base):  # noqa: ARG001 - pattern kept for call-site symmetry
     """The re flags to compare a text-mode real pattern against (base = 0 or re.IGNORECASE)."""
-    if _ASCII_ONLY_SHORTHAND.search(pattern):
-        return re.ASCII | base
-    return base  # Unicode: \d \s and case folding match re's default
+    return base  # full Unicode, matching re's str default
 
 
 class TestParity(unittest.TestCase):

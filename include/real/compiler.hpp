@@ -232,10 +232,11 @@ namespace real::detail {
       prog.names      = tree_.names;
       emit(prog, {.op = opcode::save, .arg16 = 0});
       emit_node(prog, tree_.root);
-      emit(prog, {.op = opcode::save, .arg16 = 1});
-      emit(prog, {.op = opcode::match});
-      prog.byte_mode  = has_flag(flags_, flags::bytes);
-      prog.hints      = analyze_program(prog.code, prog.classes, prog.cp_classes, prog.codepoint_mark_ascii, prog.codepoint_mark_offset);
+      emit(prog, {.op   = opcode::save, .arg16 = 1});
+      emit(prog, {.op   = opcode::match});
+      prog.byte_mode    = has_flag(flags_, flags::bytes);
+      prog.unicode_word = !has_flag(flags_, flags::bytes) && !has_flag(flags_, flags::ascii);
+      prog.hints        = analyze_program(prog.code, prog.classes, prog.cp_classes, prog.codepoint_mark_ascii, prog.codepoint_mark_offset);
       if (prog.code.size() > max_program_size) {
         throw regex_error("program too large", 0);
       }

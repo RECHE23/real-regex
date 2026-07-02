@@ -22,7 +22,7 @@ A malformed UTF-8 member in the pattern is a `real::regex_error`. In **bytes mod
 non-ASCII class member is rejected (raw byte semantics), which is what the `std::regex`
 compat layer relies on to fall back to `std`.
 
-\section div_icase Case folding: Unicode for literals/classes, ASCII for shorthands
+\section div_icase Unicode text-mode semantics: case folding, shorthands and boundaries
 
 Under `IGNORECASE` in text (code-point) mode, REAL does full **Unicode simple case folding** for
 literals, classes and ranges — identical to `re.IGNORECASE`: `é` matches `É`, `[é]`/`[à-ÿ]` fold,
@@ -33,10 +33,12 @@ split described in the hex-escape section below.
 
 The \\w \\W \\d \\D \\s \\S shorthands are **Unicode** in text mode (matching `re`): `\\w` matches any
 Unicode word code point (é, ٣, ², astral letters…), `\\d` any `Nd` digit (Arabic ٣, fullwidth ９…),
-`\\s` any Unicode whitespace (NBSP, U+2028…). This holds in or out of a character class (`[\\w]`, `[\\d.]`, and `[\\W]`/`[\\D]`/`[\\S]` — accepted as
-their Unicode complements, with `[^\\W]` == `\\w` etc). Still ASCII for now (the last part of the arc):
-the \\b \\B word boundaries. In **bytes mode** every shorthand stays ASCII (byte-for-byte
-`std::regex<char>`), and `IGNORECASE` folds ASCII only, so the compat layer is unaffected.
+`\\s` any Unicode whitespace (NBSP, U+2028…). This holds in or out of a character class (`[\\w]`, `[\\d.]`,
+and `[\\W]`/`[\\D]`/`[\\S]` — accepted as their Unicode complements, with `[^\\W]` == `\\w` etc). The
+`\\b \\B` word boundaries (and the `\\< \\>` word-start/end extensions) use the same Unicode word-ness,
+so `\\bété\\b` matches. In **bytes mode**, and under `flags::ascii` (`re.A`), every shorthand and
+boundary stays ASCII (byte-for-byte `std::regex<char>`), and `IGNORECASE` folds ASCII only, so the
+compat layer is unaffected.
 
 \section div_ascii_flag ASCII mode (re.A) and the Kelvin fold wart
 

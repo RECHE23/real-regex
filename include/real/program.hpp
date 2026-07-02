@@ -179,7 +179,7 @@ namespace real {
       text_end_or_final_newline, //!< `$` without multiline (Python semantics).
       line_start,                //!< `^` with multiline.
       line_end,                  //!< `$` with multiline.
-      word_boundary,             //!< `\b` (ASCII word characters).
+      word_boundary,             //!< `\b` (Unicode word-ness in text mode; ASCII in bytes / `re.A`).
       not_word_boundary,         //!< `\B`.
       word_start,                //!< `\<` (non-word/start on the left, word on the right).
       word_end,                  //!< `\>` (word on the left, non-word/end on the right).
@@ -284,15 +284,16 @@ namespace real {
      */
     struct program_view
     {
-      std::span<const instr>          code;           //!< The instruction stream (main + lookaround regions).
-      std::span<const char_class>     classes;        //!< Interned character classes.
-      std::span<const named_group>    names;          //!< Named capture groups.
-      std::span<const lookaround_sub> lookarounds;    //!< Bounded lookaround sub-programs (regions of \ref code).
-      std::span<const cp_class>       cp_classes;     //!< Match-time code-point classes (for `klass_cp`).
-      std::span<const code_range>     cp_ranges;      //!< Flat range buffer the `cp_class` slices index into.
-      std::uint16_t                   slot_count {2}; //!< `2 * (capture groups + 1)`.
-      bool                            byte_mode  {};  //!< \ref flags::bytes mode — positions are raw bytes.
-      pattern_hints                   hints;          //!< Search-acceleration hints.
+      std::span<const instr>          code;             //!< The instruction stream (main + lookaround regions).
+      std::span<const char_class>     classes;          //!< Interned character classes.
+      std::span<const named_group>    names;            //!< Named capture groups.
+      std::span<const lookaround_sub> lookarounds;      //!< Bounded lookaround sub-programs (regions of \ref code).
+      std::span<const cp_class>       cp_classes;       //!< Match-time code-point classes (for `klass_cp`).
+      std::span<const code_range>     cp_ranges;        //!< Flat range buffer the `cp_class` slices index into.
+      std::uint16_t                   slot_count   {2}; //!< `2 * (capture groups + 1)`.
+      bool                            byte_mode    {};  //!< \ref flags::bytes mode — positions are raw bytes.
+      bool                            unicode_word {};  //!< `\b \B \< \>` use Unicode word-ness (text mode, not bytes / `re.A`).
+      pattern_hints                   hints;            //!< Search-acceleration hints.
     };
 
     /*!
@@ -300,15 +301,16 @@ namespace real {
      */
     struct dynamic_program
     {
-      std::vector<instr>          code;           //!< The instruction stream (main program + lookaround sub-program regions).
-      std::vector<char_class>     classes;        //!< Interned character classes.
-      std::vector<named_group>    names;          //!< Named capture groups.
-      std::vector<lookaround_sub> lookarounds;    //!< Bounded lookaround sub-programs (regions of \ref code).
-      std::vector<cp_class>       cp_classes;     //!< Match-time code-point classes (for `klass_cp`).
-      std::vector<code_range>     cp_ranges;      //!< Flat range buffer the `cp_class` slices index into.
-      std::uint16_t               slot_count {2}; //!< `2 * (capture groups + 1)`.
-      bool                        byte_mode  {};  //!< \ref flags::bytes mode.
-      pattern_hints               hints;          //!< Search-acceleration hints.
+      std::vector<instr>          code;             //!< The instruction stream (main program + lookaround sub-program regions).
+      std::vector<char_class>     classes;          //!< Interned character classes.
+      std::vector<named_group>    names;            //!< Named capture groups.
+      std::vector<lookaround_sub> lookarounds;      //!< Bounded lookaround sub-programs (regions of \ref code).
+      std::vector<cp_class>       cp_classes;       //!< Match-time code-point classes (for `klass_cp`).
+      std::vector<code_range>     cp_ranges;        //!< Flat range buffer the `cp_class` slices index into.
+      std::uint16_t               slot_count   {2}; //!< `2 * (capture groups + 1)`.
+      bool                        byte_mode    {};  //!< \ref flags::bytes mode.
+      bool                        unicode_word {};  //!< `\b \B \< \>` use Unicode word-ness (text mode).
+      pattern_hints               hints;            //!< Search-acceleration hints.
 
       // Codepoint-class marker, set by `emit_codepoint_class` at emission so the
       // prefilter need not reverse-engineer the emitted block's bytecode shape.
@@ -320,15 +322,16 @@ namespace real {
        */
       [[nodiscard]] constexpr program_view view() const
       {
-        return {.code        = std::span<const instr>(code),
-                .classes     = std::span<const char_class>(classes),
-                .names       = std::span<const named_group>(names),
-                .lookarounds = std::span<const lookaround_sub>(lookarounds),
-                .cp_classes  = std::span<const cp_class>(cp_classes),
-                .cp_ranges   = std::span<const code_range>(cp_ranges),
-                .slot_count  = slot_count,
-                .byte_mode   = byte_mode,
-                .hints       = hints};
+        return {.code         = std::span<const instr>(code),
+                .classes      = std::span<const char_class>(classes),
+                .names        = std::span<const named_group>(names),
+                .lookarounds  = std::span<const lookaround_sub>(lookarounds),
+                .cp_classes   = std::span<const cp_class>(cp_classes),
+                .cp_ranges    = std::span<const code_range>(cp_ranges),
+                .slot_count   = slot_count,
+                .byte_mode    = byte_mode,
+                .unicode_word = unicode_word,
+                .hints        = hints};
       }
     };
   } // namespace detail

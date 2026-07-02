@@ -859,15 +859,16 @@ namespace real {
        */
       [[nodiscard]] constexpr program_view view() const
       {
-        return {.code        = code,
-                .classes     = classes,
-                .names       = names,
-                .lookarounds = {}, // static_regex rejects lookarounds at compile (always empty)
-                .cp_classes  = cp_classes,
-                .cp_ranges   = cp_ranges,
-                .slot_count  = slot_count,
-                .byte_mode   = has_flag(effective_flags, flags::bytes),
-                .hints       = hints};
+        return {.code         = code,
+                .classes      = classes,
+                .names        = names,
+                .lookarounds  = {}, // static_regex rejects lookarounds at compile (always empty)
+                .cp_classes   = cp_classes,
+                .cp_ranges    = cp_ranges,
+                .slot_count   = slot_count,
+                .byte_mode    = has_flag(effective_flags, flags::bytes),
+                .unicode_word = !has_flag(effective_flags, flags::bytes) && !has_flag(effective_flags, flags::ascii),
+                .hints        = hints};
       }
 
       /*!

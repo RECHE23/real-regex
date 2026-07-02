@@ -27,6 +27,7 @@
 #include "charclass.hpp"
 #include "prefilter.hpp"
 #include "program.hpp"
+#include "unicode_props.hpp"
 #include "utf8.hpp"
 
 namespace real::detail {
@@ -879,6 +880,48 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Word-ness of the code point **ending exactly at** \p pos — the left side of a `\b`/`\B`/
+     *        `\<`/`\>` boundary. False at the text start. In text mode it back-decodes the code point
+     *        (up to three continuation bytes to the lead) and requires the sequence to end exactly at
+     *        \p pos, so a malformed or misaligned run reads as non-word; bytes / `re.A` stay byte-level.
+     *        This is the shared frontier notion (the same decode that codepoint alignment uses).
+     */
+    [[nodiscard]] constexpr bool word_before(std::size_t pos) const
+    {
+      if (pos == 0) {
+        return false;
+      }
+      if (!prog_.unicode_word) {
+        return is_ascii_word_byte(static_cast<std::uint8_t>(text_[pos - 1]));
+      }
+      std::size_t i     {pos - 1};
+      std::size_t steps {0};
+      while (i > 0 && (static_cast<std::uint8_t>(text_[i]) & 0xC0U) == 0x80U && steps < 3) {
+        --i;
+        ++steps;
+      }
+      const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, i)};
+      if (!dc.valid || i + dc.length != pos) {
+        return false; // malformed, or the sequence does not end exactly at pos
+      }
+      return is_word_cp(dc.cp);
+    }
+
+    //! \brief Word-ness of the code point **starting at** \p pos — the right side of a boundary. False
+    //!        at the text end or on a malformed sequence; bytes / `re.A` stay byte-level.
+    [[nodiscard]] constexpr bool word_after(std::size_t pos) const
+    {
+      if (pos >= text_.size()) {
+        return false;
+      }
+      if (!prog_.unicode_word) {
+        return is_ascii_word_byte(static_cast<std::uint8_t>(text_[pos]));
+      }
+      const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, pos)};
+      return dc.valid && is_word_cp(dc.cp);
+    }
+
+    /*!
      * \brief Evaluates a zero-width assertion at \p pos in the current text.
      * \param[in] kind The assertion to evaluate.
      * \param[in] pos  The position at which to evaluate it.
@@ -909,16 +952,16 @@ namespace real::detail {
         case assert_kind::word_boundary:
         case assert_kind::not_word_boundary:
           {
-            const bool before {pos > 0 && is_ascii_word_byte(byte_at(pos - 1))};
-            const bool after  {pos < len && is_ascii_word_byte(byte_at(pos))};
+            const bool before {word_before(pos)};
+            const bool after  {word_after(pos)};
             result = (before != after) == (kind == assert_kind::word_boundary);
           }
           break;
         case assert_kind::word_start:
         case assert_kind::word_end:
           {
-            const bool before {pos > 0 && is_ascii_word_byte(byte_at(pos - 1))};
-            const bool after  {pos < len && is_ascii_word_byte(byte_at(pos))};
+            const bool before {word_before(pos)};
+            const bool after  {word_after(pos)};
             result = kind == assert_kind::word_start ? (!before && after) : (before && !after);
           }
           break;

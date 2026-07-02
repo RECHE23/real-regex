@@ -330,12 +330,9 @@ def match_facts(m, ngroups):
     return (m.span(),) + tuple(m.span(g) for g in range(1, ngroups + 1))
 
 
-# Under real.I the icase oracle is refined per pattern (see the loop): pure literals/classes fold
-# like re.IGNORECASE, ASCII shorthands stay ASCII, and byte-escapes are dropped from icase.
-# Text mode: \w \W \d \D \s \S are Unicode (W2 + P1/P2 klass_cp), in or out of a class; only \b \B stay
-# ASCII (P3). A pattern using \b/\B is compared under re.ASCII; otherwise the full Unicode oracle.
-_ASCII_ONLY_SHORTHAND = re.compile(r"\\[bB]")
-_UNICODE_SHORTHAND = re.compile(r"\\[wWdDsS]")
+# In text (str) mode every shorthand and boundary is Unicode (\w \W \d \D \s \S \b \B), in or out of a
+# class, so the re oracle is the full Unicode default -- no re.ASCII. A \xHH / octal byte-escape still
+# keeps byte provenance and never folds, so it is dropped from icase (no oracle agrees).
 _BYTE_ESCAPE = re.compile(r"\\x|\\[0-7]")
 
 # The real text-mode flag sets fuzzed, and the matching re base flags (without re.ASCII).
@@ -355,12 +352,6 @@ class TestDifferentialFuzz(unittest.TestCase):
         for _ in range(ITERS):
             gen = PatternGen(rng)
             pattern = gen.pattern()
-            # No single re oracle when \b/\B (ASCII) mixes with a Unicode shorthand, or when \w appears
-            # in a class (in-class \w is still ASCII until the in-class slice). Skip; each is exercised
-            # on its own elsewhere.
-            if _ASCII_ONLY_SHORTHAND.search(pattern) and _UNICODE_SHORTHAND.search(pattern):
-                skipped += 1
-                continue
             real_flags = rng.choice(_REAL_FLAG_SETS)
             base = _BASE_RE[real_flags]
             # A \xHH / octal byte-escape keeps byte provenance and never folds; re folds it under
@@ -368,8 +359,7 @@ class TestDifferentialFuzz(unittest.TestCase):
             if _BYTE_ESCAPE.search(pattern) and (real_flags & real.I):
                 real_flags &= ~real.I
                 base &= ~re.IGNORECASE
-            # \w \b stay ASCII (neutralise with re.ASCII); \d \s and case folding are Unicode.
-            re_flags = (re.ASCII | base) if _ASCII_ONLY_SHORTHAND.search(pattern) else base
+            re_flags = base  # full Unicode oracle: every shorthand/boundary is Unicode in str mode
             try:
                 rp = re.compile(pattern, re_flags)
             except re.error:
@@ -443,10 +433,7 @@ class TestDifferentialFuzz(unittest.TestCase):
         for _ in range(ITERS // 2):
             gen = PatternGen(rng)
             verbose = verbosify(gen.pattern(), rng)
-            if _ASCII_ONLY_SHORTHAND.search(verbose) and _UNICODE_SHORTHAND.search(verbose):
-                continue  # no single oracle (see test_random_patterns_match_re)
-            # \w \b stay ASCII; \d \s are Unicode -- neutralise the former only when present.
-            re_flags = re.VERBOSE | (re.ASCII if _ASCII_ONLY_SHORTHAND.search(verbose) else 0)
+            re_flags = re.VERBOSE  # full Unicode oracle (every shorthand/boundary is Unicode in str mode)
             try:
                 rp = re.compile(verbose, re_flags)
             except re.error:
