@@ -1,13 +1,13 @@
 /*!
- * \file std_compat_match.hpp
+ * \file std/regex_match.hpp
  * \brief std::regex-compatibility layer, part 2/3: `sub_match`, `match_results`, the shared runner,
  *        and the `regex_search` / `regex_match` / `regex_replace` free functions. Included via the
- *        `std_compat.hpp` umbrella.
+ *        `std/regex.hpp` umbrella.
  */
-#ifndef REAL_STD_COMPAT_MATCH_HPP
-#define REAL_STD_COMPAT_MATCH_HPP
+#ifndef REAL_STD_REGEX_MATCH_HPP
+#define REAL_STD_REGEX_MATCH_HPP
 
-#include "std_compat_core.hpp"
+#include "regex_core.hpp"
 
 #include <algorithm>
 #include <iterator>
@@ -703,4 +703,4 @@ namespace real::compat {
   // --- regex_iterator ----------------------------------------------------------------------
 } // namespace real::compat
 
-#endif // REAL_STD_COMPAT_MATCH_HPP
+#endif // REAL_STD_REGEX_MATCH_HPP

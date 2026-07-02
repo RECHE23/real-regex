@@ -1,12 +1,12 @@
 /*!
- * \file std_compat_iter.hpp
+ * \file std/regex_iter.hpp
  * \brief std::regex-compatibility layer, part 3/3: `regex_iterator` and `regex_token_iterator`.
- *        Included via the `std_compat.hpp` umbrella.
+ *        Included via the `std/regex.hpp` umbrella.
  */
-#ifndef REAL_STD_COMPAT_ITER_HPP
-#define REAL_STD_COMPAT_ITER_HPP
+#ifndef REAL_STD_REGEX_ITER_HPP
+#define REAL_STD_REGEX_ITER_HPP
 
-#include "std_compat_match.hpp"
+#include "regex_match.hpp"
 
 #include <iterator>
 
@@ -365,4 +365,4 @@ namespace real::compat {
   using wcregex_token_iterator = regex_token_iterator<const wchar_t*>;               //!< Over a wide C string (std).
 } // namespace real::compat
 
-#endif // REAL_STD_COMPAT_ITER_HPP
+#endif // REAL_STD_REGEX_ITER_HPP

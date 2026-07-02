@@ -12,7 +12,7 @@
 //
 // Build & run: clang++ -std=c++20 -O1 -g -Iinclude -fsanitize=thread tests/tsan_compat.cpp -o tsan && ./tsan
 
-#include <real/std_compat.hpp>
+#include <real/std/regex.hpp>
 
 #include <atomic>
 #include <cstdio>

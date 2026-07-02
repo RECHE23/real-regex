@@ -1,13 +1,13 @@
 /*!
- * \file std_compat_core.hpp
+ * \file std/regex_core.hpp
  * \brief std::regex-compatibility layer, part 1/3: the constants, the error type, the backend-routing
- *        screens, and `basic_regex`. Included via the `std_compat.hpp` umbrella — do not include the
- *        parts directly; `#include <real/std_compat.hpp>` stays the one public entry point.
+ *        screens, and `basic_regex`. Included via the `std/regex.hpp` umbrella — do not include the
+ *        parts directly; `#include <real/std/regex.hpp>` stays the one public entry point.
  */
-#ifndef REAL_STD_COMPAT_CORE_HPP
-#define REAL_STD_COMPAT_CORE_HPP
+#ifndef REAL_STD_REGEX_CORE_HPP
+#define REAL_STD_REGEX_CORE_HPP
 
-#include "version.hpp"
+#include <real/version.hpp>
 
 #include <cstddef>
 #include <mutex>
@@ -20,7 +20,7 @@
 #include <variant>
 #include <vector>
 
-#include "real.hpp"
+#include <real/real.hpp>
 
 namespace real::compat {
 
@@ -421,4 +421,4 @@ namespace real::compat {
   using wregex = basic_regex<wchar_t>; //!< The wide compat regex (always the std backend).
 } // namespace real::compat
 
-#endif // REAL_STD_COMPAT_CORE_HPP
+#endif // REAL_STD_REGEX_CORE_HPP

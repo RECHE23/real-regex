@@ -1,12 +1,12 @@
 /*!
- * \file std_compat.hpp
+ * \file std/regex.hpp
  * \brief `real::compat` — a `std::regex`-compatible drop-in (`<regex>` surface), char path.
  *
- * The umbrella header: it includes the three parts below; `#include <real/std_compat.hpp>` stays the
- * one public entry point and the whole `real::compat` API is unchanged. The split is purely
- * organizational — `std_compat_core.hpp` (constants, error, backend-routing screens, `basic_regex`),
- * `std_compat_match.hpp` (`sub_match`, `match_results`, the runner, and the `regex_search` /
- * `regex_match` / `regex_replace` free functions), and `std_compat_iter.hpp` (`regex_iterator`,
+ * The umbrella header: it includes the three parts below; `#include <real/std/regex.hpp>` is the one
+ * public entry point. The `real::compat` API is split purely organizationally —
+ * `std/regex_core.hpp` (constants, error, backend-routing screens, `basic_regex`),
+ * `std/regex_match.hpp` (`sub_match`, `match_results`, the runner, and the `regex_search` /
+ * `regex_match` / `regex_replace` free functions), and `std/regex_iter.hpp` (`regex_iterator`,
  * `regex_token_iterator`).
  *
  * Contract: behave identically to `std::regex` (ECMAScript) where `real` can prove it, and
@@ -26,11 +26,11 @@
  * route nullable patterns to `std::regex` (the empty-match traversal differs from ECMAScript, see
  * `basic_regex::nullable`), and a constraining `match_flag` routes that operation to `std`.
  */
-#ifndef REAL_STD_COMPAT_HPP
-#define REAL_STD_COMPAT_HPP
+#ifndef REAL_STD_REGEX_HPP
+#define REAL_STD_REGEX_HPP
 
-#include "std_compat_core.hpp"
-#include "std_compat_match.hpp"
-#include "std_compat_iter.hpp"
+#include "regex_core.hpp"
+#include "regex_match.hpp"
+#include "regex_iter.hpp"
 
-#endif // REAL_STD_COMPAT_HPP
+#endif // REAL_STD_REGEX_HPP

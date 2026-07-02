@@ -1,6 +1,6 @@
 # `real::compat` — `std::regex` compatibility (S1: char, search/match)
 
-`real::compat` (header `<real/std_compat.hpp>`) is a drop-in for the `<regex>` surface on the
+`real::compat` (header `<real/std/regex.hpp>`) is a drop-in for the `<regex>` surface on the
 `char` path. It runs your pattern on **`real`** — linear-time and ReDoS-safe — wherever that is
 provably equivalent to `std::regex` (ECMAScript), and falls back to `std::regex` everywhere else.
 

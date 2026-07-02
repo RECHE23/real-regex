@@ -42,10 +42,15 @@ class build_py_with_headers(build_py):
         here = os.path.dirname(os.path.abspath(__file__))
         src = os.path.join(here, "include", "real")
         dst = os.path.join(self.build_lib, "real", "include", "real")
-        os.makedirs(dst, exist_ok=True)
-        for name in sorted(os.listdir(src)):
-            if name.endswith(".hpp"):
-                shutil.copy2(os.path.join(src, name), os.path.join(dst, name))
+        # Walk recursively so subdirectories (real/std/) ship too, mirroring the tree — a flat
+        # os.listdir would silently drop real/std/regex*.hpp from the wheel.
+        for root, _dirs, files in os.walk(src):
+            rel = os.path.relpath(root, src)
+            out_dir = dst if rel == os.curdir else os.path.join(dst, rel)
+            os.makedirs(out_dir, exist_ok=True)
+            for name in sorted(files):
+                if name.endswith(".hpp"):
+                    shutil.copy2(os.path.join(root, name), os.path.join(out_dir, name))
 
 
 class abi3_wheel(bdist_wheel):
