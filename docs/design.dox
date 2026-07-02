@@ -362,10 +362,21 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   computed skip — *O(≤4 bytes + log ranges)* per position, independent of the class count. `\w+`,
   `\d+`, `\s+` each compile to **8 instructions** (from 5042 / 386 / 43), one interned class. A
   whole-pattern shorthand (optionally `+`) also takes a code-point scan-loop fast path (the analog of
-  the ASCII `class+` loop). Measured `find_all` throughput vs `flags::ascii` (2 MB subject): `\w+`
-  544 vs 748 MB/s (**76%**, up from 0.1), `\d+` 553 vs 746 MB/s (**74%**); a mixed-UTF-8 subject holds
-  ~210 MB/s. The tiny program also lets a text-mode `static_regex<"\\w+">` compile within the default
-  constexpr budgets again (no `-fconstexpr-steps` bump). In-class shorthands and `\b`/`\B` follow.
+  the ASCII `class+` loop). That loop uses the same tricks as the byte-NFA scan: an ASCII byte tests a
+  byte-indexed table (no decode), and a non-ASCII code point in the two-byte range `[U+0080, U+07FF]`
+  — where European text lives (Latin, Greek, Cyrillic, Hebrew, Arabic…) — tests a lazily-built page
+  bitmap in one load rather than a ~771-range search; only CJK / astral code points search. Measured
+  `find_all` throughput vs the `flags::ascii` ceiling (2 MB subject): `\w+` on ASCII text ~**88–90%**
+  of the ceiling (~890 vs ~1000 MB/s), on mixed accented text ~810 MB/s, on heavy non-ASCII ~330
+  MB/s. The tiny program also lets a text-mode `static_regex<"\\w+">` compile within the default
+  constexpr budgets again (no `-fconstexpr-steps` bump). `\b`/`\B` word-ness likewise takes an ASCII
+  shortcut (a byte below 0x80 is a whole code point, so it skips the back-decode), bringing `\b\w+\b`
+  back to exact parity with the byte-NFA `\b[a-z]+\b`.
+- **Assertions run on the general VM.** A pattern with `\b`/`\B` (or `^`/`$` in a way the fast paths
+  do not cover) cannot take a scan-loop, so it runs the general Pike VM, whose per-position cost
+  (thread lists, capture slots) is ~20 ns/byte regardless of the class — `\b\w+\b` and `\b[a-z]+\b`
+  measure the same. This is a pre-existing property of the VM, not specific to the Unicode shorthands;
+  cutting it (e.g. copy-on-write capture slots) is a general-VM optimisation, tracked separately.
 - **Compile time:** the generated `unicode_fold.hpp` orbit table (~2900 entries) adds ~20 ms to a
   translation unit that includes `real/real.hpp`; a `static_regex` with `IGNORECASE` folds at
   compile time (constexpr), which is the usual constexpr cost, not a runtime one. A `static_regex`
