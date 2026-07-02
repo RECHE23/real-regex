@@ -137,6 +137,19 @@ namespace real {
       std::uint32_t hi {}; //!< Last code point (inclusive).
     };
 
+    //! \brief A match-time code-point class for the `klass_cp` opcode: an ASCII bitmap for code points
+    //!        `< 0x80` plus a slice of sorted non-ASCII ranges (indexing the program's flat `cp_ranges`
+    //!        buffer), with `negated` applied at match time. Unlike the byte-NFA `klass`, the ranges are
+    //!        kept and binary-searched at match time — O(log ranges) per position, independent of the
+    //!        range count.
+    struct cp_class
+    {
+      char_class    ascii;          //!< Members `< 0x80` (pre-negation).
+      std::uint32_t range_begin {}; //!< First range in the program's `cp_ranges` buffer.
+      std::uint32_t range_count {}; //!< Number of ranges belonging to this class.
+      bool          negated     {}; //!< `\W` `\D` `\S` / `[^…]`: membership is inverted at match time.
+    };
+
     /*!
      * \brief NFA instruction opcodes executed by the Pike VM.
      */
@@ -144,6 +157,7 @@ namespace real {
     {
       byte,              //!< Consume one byte equal to arg8; fall through to pc+1.
       klass,             //!< Consume one byte in classes[arg16]; fall through to pc+1.
+      klass_cp,          //!< Consume one code point tested against cp_classes[arg16] (decode + range bsearch); enters a 3-instr continuation chain via a computed skip. See pike.hpp.
       split,             //!< Epsilon-branch to x (preferred) and y.
       jump,              //!< Epsilon-jump to x.
       save,              //!< Store current position in slot arg16; fall through (epsilon).
@@ -228,6 +242,8 @@ namespace real {
       std::int16_t         single_first          {-1}; //!< The unique possible first byte, or -1.
       char_class           first_bytes;                //!< All possible first bytes.
       std::int32_t         greedy_class_loop     {-1}; //!< Class index if the whole pattern is "class+", else -1.
+      std::int32_t         greedy_cp_class       {-1}; //!< cp_class index if the whole pattern is a code-point class `klass_cp` (optionally `+`), else -1.
+      bool                 greedy_cp_class_plus  {};   //!< The \ref greedy_cp_class pattern is a greedy `+` loop (vs a single code point).
       bool                 fixed_shape           {};   //!< Whole pattern is a fixed-width byte/klass sequence (no branches/asserts/captures).
       std::int32_t         codepoint_class_ascii {-1}; //!< ASCII-class index when the whole pattern is `.`/negated-class (optionally `+`), else -1.
       bool                 codepoint_class_plus  {};   //!< The \ref codepoint_class_ascii pattern is a greedy `+` loop (vs a single codepoint).
@@ -272,6 +288,8 @@ namespace real {
       std::span<const char_class>     classes;        //!< Interned character classes.
       std::span<const named_group>    names;          //!< Named capture groups.
       std::span<const lookaround_sub> lookarounds;    //!< Bounded lookaround sub-programs (regions of \ref code).
+      std::span<const cp_class>       cp_classes;     //!< Match-time code-point classes (for `klass_cp`).
+      std::span<const code_range>     cp_ranges;      //!< Flat range buffer the `cp_class` slices index into.
       std::uint16_t                   slot_count {2}; //!< `2 * (capture groups + 1)`.
       bool                            byte_mode  {};  //!< \ref flags::bytes mode — positions are raw bytes.
       pattern_hints                   hints;          //!< Search-acceleration hints.
@@ -286,6 +304,8 @@ namespace real {
       std::vector<char_class>     classes;        //!< Interned character classes.
       std::vector<named_group>    names;          //!< Named capture groups.
       std::vector<lookaround_sub> lookarounds;    //!< Bounded lookaround sub-programs (regions of \ref code).
+      std::vector<cp_class>       cp_classes;     //!< Match-time code-point classes (for `klass_cp`).
+      std::vector<code_range>     cp_ranges;      //!< Flat range buffer the `cp_class` slices index into.
       std::uint16_t               slot_count {2}; //!< `2 * (capture groups + 1)`.
       bool                        byte_mode  {};  //!< \ref flags::bytes mode.
       pattern_hints               hints;          //!< Search-acceleration hints.
@@ -304,6 +324,8 @@ namespace real {
                 .classes     = std::span<const char_class>(classes),
                 .names       = std::span<const named_group>(names),
                 .lookarounds = std::span<const lookaround_sub>(lookarounds),
+                .cp_classes  = std::span<const cp_class>(cp_classes),
+                .cp_ranges   = std::span<const code_range>(cp_ranges),
                 .slot_count  = slot_count,
                 .byte_mode   = byte_mode,
                 .hints       = hints};

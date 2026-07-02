@@ -31,11 +31,13 @@ literal is promoted to a foldable code point; a \\xHH or octal byte escape keeps
 **never folds** (\\xe9 under `IGNORECASE` does not match `É`) — the same deliberate byte-vs-code-point
 split described in the hex-escape section below.
 
-The \\d \\D \\s \\S shorthands are **Unicode** in text mode (matching `re`): `\\d` matches any
-`Nd` digit (Arabic ٣, fullwidth ９…), `\\s` any Unicode whitespace (NBSP, U+2028…). Still ASCII for
-now (the remaining part of the "Unicode word/boundary" arc): the \\w \\W shorthands and the
-\\b \\B boundaries. In **bytes mode** every shorthand stays ASCII (byte-for-byte `std::regex<char>`),
-and `IGNORECASE` folds ASCII only, so the compat layer is unaffected.
+The \\w \\W \\d \\D \\s \\S shorthands are **Unicode** in text mode (matching `re`): `\\w` matches any
+Unicode word code point (é, ٣, ², astral letters…), `\\d` any `Nd` digit (Arabic ٣, fullwidth ９…),
+`\\s` any Unicode whitespace (NBSP, U+2028…). Still ASCII for now (the remaining part of the arc): the
+\\b \\B word boundaries, and `\\w` `\\W` written **inside a character class** (`[\\w]` — the in-class
+word predicate is not yet wired; `[\\d]` and `[\\s]` in a class are already Unicode). In **bytes mode**
+every shorthand stays ASCII (byte-for-byte `std::regex<char>`), and `IGNORECASE` folds ASCII only, so
+the compat layer is unaffected.
 
 \section div_ascii_flag ASCII mode (re.A) and the Kelvin fold wart
 

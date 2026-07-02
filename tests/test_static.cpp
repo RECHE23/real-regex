@@ -75,10 +75,10 @@ namespace {
 
   // Exact sizing: the storage arrays have exactly the measured sizes, and the
   // type is stateless (all data is static constexpr).
-  using date_storage = real::detail::static_storage<"(\\d{4})-(\\d{2})", real::flags::ascii>;
+  using date_storage = real::detail::static_storage<"(\\d{4})-(\\d{2})">;
   static_assert(date_storage::slot_count == 6);
   static_assert(date_storage::code.size() == date_storage::code_size);
-  static_assert(date_storage::class_count == 1); // one interned digit class
+  static_assert(date_storage::cp_class_count == 1); // one interned \d code-point class (klass_cp)
   static_assert(sizeof(real::static_regex<"(\\d{4})-(\\d{2})">) == 1);
 
   // Invalid patterns are *compile errors* (uncomment to verify):

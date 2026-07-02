@@ -1,8 +1,8 @@
 """Parity suite: real and re must produce identical results on a corpus.
 
 Patterns avoid the single documented divergence (capture of a nullable
-loop's final empty iteration) and use re.ASCII so re's classes match REAL's
-ASCII class semantics.
+loop's final empty iteration). The re oracle flags are chosen per pattern by
+_text_oracle: \\w \\d \\s are Unicode in text mode, \\b \\B stay ASCII.
 """
 
 import re
@@ -63,12 +63,16 @@ PATTERNS = [
     r"straße",
     r"σ+",
     r"MASSE",
-    # W2: \d \s are Unicode in text mode (\w \b still ASCII); oracle switches per pattern.
+    # \w \d \s are Unicode in text mode (\b stays ASCII); oracle switches per pattern.
     r"\s",
     r"\S+",
     r"\D",
     r"[\d]+",
     r"[^\d]",
+    r"\w",
+    r"\w+",
+    r"\W+",
+    r"(\w+)\s+(\w+)",
 ]
 
 TEXTS = [
@@ -98,11 +102,11 @@ FLAG_SETS = [
     (real.S, re.ASCII | re.DOTALL),
 ]
 
-# In text mode, \d \s are Unicode (W2) but \w \W \b \B are still ASCII (the Unicode-word arc, W3/W4).
-# So a pattern using an ASCII-only shorthand is compared under re.ASCII (neutralising it); a pattern
-# without one gets the full Unicode oracle. (The corpus has no pattern mixing \w/\b with \d/\s, so the
-# neutraliser never wrongly ASCII-izes a \d.)
-_ASCII_ONLY_SHORTHAND = re.compile(r"\\[wWbB]")
+# In text mode \w \W \d \D \s \S are Unicode (W2 + P1's klass_cp); only the \b \B boundaries stay
+# ASCII (still to come). So a pattern using \b/\B is compared under re.ASCII (neutralising it); any
+# other gets the full Unicode oracle. (The corpus mixes neither \b with a Unicode shorthand, nor an
+# in-class \w -- in-class \w is still ASCII until the in-class slice, and is exercised separately.)
+_ASCII_ONLY_SHORTHAND = re.compile(r"\\[bB]")
 
 
 def _text_oracle(pattern, base):
@@ -301,7 +305,7 @@ class TestParity(unittest.TestCase):
         import threading
         text = "word " * 4000  # ~20 KB
         rp = real.compile(r"\w+")
-        expected = re.compile(r"\w+", re.ASCII).sub(r"<\g<0>>", text)
+        expected = re.compile(r"\w+").sub(r"<\g<0>>", text)
         results = [None] * 8
         def work(i):
             results[i] = rp.sub(r"<\g<0>>", text)
@@ -420,7 +424,7 @@ class TestParity(unittest.TestCase):
 
     def _cmp_region(self, pattern, text, pos, endpos, flags=0):
         """Assert real == re for match/search/fullmatch(text, pos, endpos)."""
-        re_flags = re.ASCII
+        re_flags = _text_oracle(pattern, 0)
         re_flags |= re.MULTILINE if (flags & real.M) else 0
         re_flags |= re.DOTALL if (flags & real.S) else 0
         re_flags |= re.IGNORECASE if (flags & real.I) else 0
@@ -486,7 +490,7 @@ class TestParity(unittest.TestCase):
 
     def _cmp_findall_finditer(self, pattern, text, pos, endpos, flags=0):
         """Assert real == re for findall and finditer(text, pos, endpos)."""
-        re_flags = re.ASCII | (re.MULTILINE if (flags & real.M) else 0)
+        re_flags = _text_oracle(pattern, 0) | (re.MULTILINE if (flags & real.M) else 0)
         rp, rr = real.compile(pattern, flags), re.compile(pattern, re_flags)
         with self.subTest(pattern=pattern, pos=pos, endpos=endpos, flags=flags):
             self.assertEqual(rp.findall(text, pos, endpos), rr.findall(text, pos, endpos))
@@ -547,7 +551,7 @@ class TestParity(unittest.TestCase):
     def test_finditer_match_pos_endpos_parity(self):
         """Matches from finditer(pos, endpos) carry the call's .pos/.endpos, not 0/len."""
         text = "foo bar baz qux"
-        rp, rr = real.compile(r"\w+"), re.compile(r"\w+", re.ASCII)
+        rp, rr = real.compile(r"\w+"), re.compile(r"\w+")
         pm, rm = list(rp.finditer(text, 4, 11)), list(rr.finditer(text, 4, 11))
         self.assertEqual([(m.pos, m.endpos) for m in pm], [(m.pos, m.endpos) for m in rm])
         self.assertTrue(pm and all(m.pos == 4 and m.endpos == 11 for m in pm))

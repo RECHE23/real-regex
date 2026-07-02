@@ -89,8 +89,9 @@ namespace real::detail {
   //!        the two (rather than parallel side tables) makes them impossible to desynchronize.
   struct class_def
   {
-    char_class              ascii;  //!< ASCII members as a bitmap (all 256 bytes in bytes mode); pre-negation.
-    std::vector<code_range> ranges; //!< Non-ASCII code-point ranges (code-point mode only; empty otherwise).
+    char_class              ascii;                    //!< ASCII members as a bitmap (all 256 bytes in bytes mode); pre-negation.
+    std::vector<code_range> ranges;                   //!< Non-ASCII code-point ranges (code-point mode only; empty otherwise).
+    bool                    codepoint_predicate {};   //!< Emit as a match-time `klass_cp` (a Unicode shorthand `\w`/`\d`/`\s` in text mode), not the byte-NFA.
   };
 
   /*!
@@ -329,14 +330,17 @@ namespace real::detail {
      * \param[in]     klass      The class bitmap as written (before negation).
      * \param[in]     negated Whether the class was written negated.
      * \param[in]     ranges  Non-ASCII code-point ranges of the class (code-point mode; empty otherwise).
+     * \param[in]     codepoint_predicate Emit as a match-time `klass_cp` (a text-mode Unicode shorthand),
+     *                   not the byte-NFA.
      * \return The index of the new node.
      */
     static constexpr std::int32_t add_class_node(ast&                           out,
                                                  const char_class&              klass,
                                                  bool                           negated,
-                                                 const std::vector<code_range>& ranges = {})
+                                                 const std::vector<code_range>& ranges              = {},
+                                                 bool                           codepoint_predicate = false)
     {
-      out.classes.push_back({.ascii = klass, .ranges = ranges});
+      out.classes.push_back({.ascii = klass, .ranges = ranges, .codepoint_predicate = codepoint_predicate});
       const auto index {static_cast<std::int32_t>(out.classes.size()) - 1};
       return add_node(out, {.kind = node_kind::klass, .negated = negated, .klass = index});
     }
@@ -346,6 +350,13 @@ namespace real::detail {
      *        for a text-mode shorthand. In bytes or ASCII mode (`flags::ascii` == `re.A`) the shorthand
      *        stays ASCII-only, so this returns nothing and the ASCII bitmap alone is used.
      */
+    //! \brief Whether a shorthand (`\d \w \s`) should be a text-mode Unicode code-point predicate:
+    //!        true in the default text mode, false in bytes mode or under `flags::ascii` (`re.A`).
+    [[nodiscard]] constexpr bool text_shorthand() const
+    {
+      return !bytes_ && !ascii_;
+    }
+
     [[nodiscard]] constexpr std::vector<code_range> shorthand_ranges(std::span<const code_range> table) const
     {
       std::vector<code_range> out;
@@ -1118,24 +1129,27 @@ namespace real::detail {
         fail("dangling backslash");
       }
       switch (peek()) {
+        // A bare shorthand in text mode (not bytes, not re.A) is emitted as a match-time code-point
+        // predicate (klass_cp): O(decode + range bsearch) per position, independent of the range count.
+        // In bytes / ASCII mode shorthand_ranges() is empty and the flag is off -> the ASCII byte-NFA.
         case 'd':
           ++pos_;
-          return add_class_node(out, digit_set(), false, shorthand_ranges(digit_ranges));
+          return add_class_node(out, digit_set(), false, shorthand_ranges(digit_ranges), text_shorthand());
         case 'D':
           ++pos_;
-          return add_class_node(out, digit_set(), true, shorthand_ranges(digit_ranges));
-        case 'w': // W2: \w stays ASCII; the Unicode word table is wired in W3.
+          return add_class_node(out, digit_set(), true, shorthand_ranges(digit_ranges), text_shorthand());
+        case 'w':
           ++pos_;
-          return add_class_node(out, word_set(), false);
+          return add_class_node(out, word_set(), false, shorthand_ranges(word_ranges), text_shorthand());
         case 'W':
           ++pos_;
-          return add_class_node(out, word_set(), true);
+          return add_class_node(out, word_set(), true, shorthand_ranges(word_ranges), text_shorthand());
         case 's':
           ++pos_;
-          return add_class_node(out, space_set(), false, shorthand_ranges(space_ranges));
+          return add_class_node(out, space_set(), false, shorthand_ranges(space_ranges), text_shorthand());
         case 'S':
           ++pos_;
-          return add_class_node(out, space_set(), true, shorthand_ranges(space_ranges));
+          return add_class_node(out, space_set(), true, shorthand_ranges(space_ranges), text_shorthand());
         // `\A \Z \< \>` are REAL extensions (text-start/end, word-start/end). ECMAScript has no
         // such escapes — they are identity escapes (the literal character). Under the ecma flag
         // (the std-compat layer), emit the literal; otherwise keep REAL's anchor. `\b`/`\B` are

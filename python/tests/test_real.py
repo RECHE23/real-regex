@@ -328,7 +328,8 @@ class TestIntentionalDivergences(unittest.TestCase):
         self.assertIsNotNone(real.compile(r"\s").fullmatch("\u00a0"))  # NBSP
         self.assertIsNotNone(real.compile(r"\D").fullmatch("é"))
         self.assertEqual(real.findall(r"[\d]+", "٣5.9"), ["٣5", "9"])
-        self.assertEqual(real.findall(r"\w", "٣"), [])              # \w still ASCII
+        self.assertEqual(real.findall(r"\w+", "café"), ["café"])  # \w is Unicode (P1 klass_cp)
+        self.assertEqual(real.findall(r"\w", "٣"), ["٣"])           # ٣ is a Unicode word char
 
     def test_ascii_flag_reverts_shorthands(self):
         # re.A keeps \d \s and folding ASCII in str mode; re.U is a no-op (Unicode is the default).

@@ -27,6 +27,7 @@
 #include "charclass.hpp"
 #include "prefilter.hpp"
 #include "program.hpp"
+#include "utf8.hpp"
 
 namespace real::detail {
 
@@ -217,6 +218,9 @@ namespace real::detail {
       if (prog_.hints.greedy_class_loop >= 0) {
         return run_class_loop(text, start, mode, out_slots);
       }
+      if (prog_.hints.greedy_cp_class >= 0) {
+        return run_cp_class_loop(text, start, mode, out_slots);
+      }
       if (prog_.hints.exact_literal_len > 0) {
         return run_exact_literal(text, start, mode, out_slots);
       }
@@ -371,6 +375,65 @@ namespace real::detail {
         return false;
       }
       out_slots.assign(2, npos);
+      out_slots[0] = match_start;
+      out_slots[1] = match_end;
+      return true;
+    }
+
+    /*!
+     * \brief Fast path for a whole-pattern code-point class `klass_cp`, optionally a greedy `+`.
+     *
+     * Scans code points directly against the class predicate (ASCII bitmap below 0x80, range binary
+     * search above), advancing by the code point's byte width, with no thread lists — the analog of
+     * \ref run_class_loop for a Unicode shorthand (`\w+`, `\d+`, `\s+`). A malformed sequence stops
+     * the run, exactly as the VM's `klass_cp` fails on it.
+     *
+     * \tparam OutSlots Output slot container.
+     * \param[in]  text      The subject text.
+     * \param[in]  start     Index to begin at.
+     * \param[in]  mode      Anchoring mode.
+     * \param[out] out_slots Receives the matched span on success.
+     * \return `true` if a non-empty run was found.
+     */
+    template <typename OutSlots>
+    constexpr bool run_cp_class_loop(std::string_view text,
+                                     std::size_t      start,
+                                     run_mode         mode,
+                                     OutSlots&        out_slots)
+    {
+      const detail::cp_class& cc {prog_.cp_classes[static_cast<std::size_t>(prog_.hints.greedy_cp_class)]};
+      // Byte width of a matching code point at i, or 0 (no match / malformed).
+      const auto width = [&](std::size_t i) -> std::size_t {
+                           const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, i)};
+                           return dc.valid && cp_class_matches(cc, dc.cp) ? dc.length : 0;
+                         };
+      out_slots.assign(2, npos);
+      std::size_t match_start {start};
+      if (mode == run_mode::search) {
+        while (match_start < text.size() && width(match_start) == 0) {
+          ++match_start;
+        }
+      }
+      if (match_start >= text.size()) {
+        return false;
+      }
+      const std::size_t first {width(match_start)};
+      if (first == 0) {
+        return false;
+      }
+      std::size_t match_end {match_start + first};
+      if (prog_.hints.greedy_cp_class_plus) {
+        while (match_end < text.size()) {
+          const std::size_t w {width(match_end)};
+          if (w == 0) {
+            break;
+          }
+          match_end += w;
+        }
+      }
+      if (mode == run_mode::full && match_end != text.size()) {
+        return false;
+      }
       out_slots[0] = match_start;
       out_slots[1] = match_end;
       return true;
@@ -906,6 +969,20 @@ namespace real::detail {
               add_thread(nlist, pc + 1, pos + 1);
             }
             break;
+          case opcode::klass_cp:
+            if (pos < text_.size()) {
+              // Decode the whole code point once; membership is decided here. The thread still
+              // advances only one byte (to pos+1), entering the [klass_cp][cont][cont][cont] chain
+              // at a computed offset so the remaining len-1 bytes are walked by the plain `klass`
+              // continuation ops over the next steps — priority/dedup/generation stay unchanged.
+              const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, pos)};
+              if (dc.valid &&
+                  cp_class_matches(prog_.cp_classes[instruction.arg16], dc.cp)) {
+                load_working(clist, base);
+                add_thread(nlist, pc + 1 + static_cast<std::int32_t>(4 - dc.length), pos + 1);
+              }
+            }
+            break;
           case opcode::match:
             if (mode == run_mode::full && pos != text_.size()) {
               break; // must consume the whole text: thread dies
@@ -941,6 +1018,38 @@ namespace real::detail {
       for (std::uint16_t s = 0; s < prog_.slot_count; ++s) {
         state_.working[s] = clist.slots[base + s];
       }
+    }
+
+    /*!
+     * \brief Tests a decoded code point against a `klass_cp` class: ASCII bitmap below 0x80, a
+     *        binary search of the class's range slice above, then `negated` applied (xor).
+     * \param[in] cc The code-point class (from `prog_.cp_classes`).
+     * \param[in] cp The decoded code point.
+     * \return Whether \p cp is a member after negation.
+     */
+    [[nodiscard]] constexpr bool cp_class_matches(const detail::cp_class& cc,
+                                                  char32_t                cp) const
+    {
+      bool member {};
+      if (cp < 0x80U) {
+        member = cc.ascii.test(static_cast<std::uint8_t>(cp));
+      }
+      else {
+        std::size_t lo {cc.range_begin};
+        std::size_t hi {static_cast<std::size_t>(cc.range_begin) + cc.range_count};
+        while (lo < hi) {
+          const std::size_t mid {lo + ((hi - lo) / 2)};
+          if (prog_.cp_ranges[mid].hi < cp) {
+            lo = mid + 1;
+          }
+          else {
+            hi = mid;
+          }
+        }
+        member = lo < static_cast<std::size_t>(cc.range_begin) + cc.range_count &&
+                 cp >= prog_.cp_ranges[lo].lo && cp <= prog_.cp_ranges[lo].hi;
+      }
+      return member != cc.negated;
     }
 
     /*!
@@ -1012,6 +1121,7 @@ namespace real::detail {
             break;
           case opcode::byte:
           case opcode::klass:
+          case opcode::klass_cp:
           case opcode::match:
             list.pcs.push_back(pc);
             for (std::uint16_t s = 0; s < prog_.slot_count; ++s) {
@@ -1067,8 +1177,16 @@ namespace real::detail {
         const auto byte_value {static_cast<std::uint8_t>(text_[p])};
         for (const std::int32_t pc : clist->pcs) {
           const instr& in      {prog_.code[static_cast<std::size_t>(pc)]};
-          // Parked pcs are only consuming ops; the ternary's else assumes klass (sub_add_thread
-          // parks nothing else). The assert makes that invariant explicit (no-op under NDEBUG).
+          if (in.op == opcode::klass_cp) {
+            // A code-point predicate inside the lookahead: decode once, then enter the continuation
+            // chain via the computed skip (same mechanism as the main VM's step).
+            const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, p)};
+            if (dc.valid && cp_class_matches(prog_.cp_classes[in.arg16], dc.cp)) {
+              sub_add_thread(*nlist, pc + 1 + static_cast<std::int32_t>(4 - dc.length), p + 1, matched);
+            }
+            continue;
+          }
+          // Otherwise the parked pc is a byte/klass; the ternary's else assumes klass.
           assert((in.op == opcode::byte || in.op == opcode::klass) && "lookaround parked a non-consuming op");
           const bool   consume {in.op == opcode::byte ? byte_value == in.arg8
                                                       : prog_.classes[in.arg16].test(byte_value)};
@@ -1144,8 +1262,15 @@ namespace real::detail {
         const auto byte_value {static_cast<std::uint8_t>(text_[p])};
         for (const std::int32_t pc : clist->pcs) {
           const instr& in      {prog_.code[static_cast<std::size_t>(pc)]};
-          // Parked pcs are only consuming ops; the ternary's else assumes klass (sub_add_thread
-          // parks nothing else). The assert makes that invariant explicit (no-op under NDEBUG).
+          if (in.op == opcode::klass_cp) {
+            const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, p)};
+            if (dc.valid && cp_class_matches(prog_.cp_classes[in.arg16], dc.cp)) {
+              sub_add_thread(*nlist, pc + 1 + static_cast<std::int32_t>(4 - dc.length), p + 1,
+                             last ? at_pos : sink);
+            }
+            continue;
+          }
+          // Otherwise the parked pc is a byte/klass; the ternary's else assumes klass.
           assert((in.op == opcode::byte || in.op == opcode::klass) && "lookaround parked a non-consuming op");
           const bool   consume {in.op == opcode::byte ? byte_value == in.arg8
                                                       : prog_.classes[in.arg16].test(byte_value)};
@@ -1219,6 +1344,7 @@ namespace real::detail {
             break;
           case opcode::byte:
           case opcode::klass:
+          case opcode::klass_cp:
             list.pcs.push_back(pc);
             break;
           case opcode::assert_lookaround:

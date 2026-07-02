@@ -158,8 +158,7 @@ number here.
 | `\.` `\*` `\\` … | escaped metacharacter, matched literally |
 | `.` | any codepoint except `\n` |
 | `[abc]` `[a-z]` `[^abc]` `[é]` `[à-ÿ]` | character class, ASCII **and** non-ASCII code-point members / ranges (str mode); `[^…]` matches any code point outside the set |
-| `\d \D \s \S` | digit / space classes — Unicode in text mode (like `re`), ASCII in bytes mode or under `a` |
-| `\w \W` | word classes — ASCII for now (Unicode word/boundary arc in progress) |
+| `\w \W \d \D \s \S` | word / digit / space classes — Unicode in text mode (like `re`), ASCII in bytes mode or under `a` |
 | `\n \t \r \f \v \a \0` `\xHH` | control and hex escapes |
 | `x*` `x+` `x?` | quantifiers (greedy; append `?` for lazy) |
 | `x{n}` `x{n,}` `x{,m}` `x{n,m}` | counted repetition (greedy or lazy; counts capped at 1000) |

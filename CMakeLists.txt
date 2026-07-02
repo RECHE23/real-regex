@@ -134,20 +134,14 @@ set_target_properties(real_tests_bin PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQ
 
 # Warnings-as-errors everywhere. IntelLLVM (icpx) and AppleClang accept the
 # Clang flag set; only MSVC differs.
-# A Unicode shorthand (\d \s, and \w in W3) in text mode compiles to a large code-point automaton,
-# so a static_regex / constexpr use of one needs a higher constexpr budget than the toolchain default
-# (clang ~1M steps, MSVC 100k; GCC's ~33M default is already enough). Raise it for the test target.
 if(MSVC)
     # /Zc:__cplusplus makes __cplusplus report 202002L. C4268/C4269 fire on the
     # constexpr static_regex fixtures in tests/test_static.cpp (false positives
     # for the stateless compile-time wrappers); scoped to the test target.
     target_compile_options(real_tests_bin PRIVATE
-        /W4 /WX /Zc:__cplusplus /EHsc /utf-8 /wd4268 /wd4269 /constexpr:steps33554432)
+        /W4 /WX /Zc:__cplusplus /EHsc /utf-8 /wd4268 /wd4269)
 else()
     target_compile_options(real_tests_bin PRIVATE -Wall -Wextra -Wpedantic -Werror)
-    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        target_compile_options(real_tests_bin PRIVATE -fconstexpr-steps=33554432)
-    endif()
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         # Test-only, GCC-only: -Warray-bounds reports a false positive on the
         # small_vec union when its heap state is not visible to the optimizer;

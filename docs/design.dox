@@ -164,8 +164,8 @@ A character class is a \ref real::detail::char_class — a **256-bit bitmap**
   b \in S \iff \big(\text{bits}[\,b \gg 6\,] \gg (b \,\&\, 63)\big) \,\&\, 1 .
 \f]
 
-\\d \\s are Unicode in text mode (via the generated `unicode_props.hpp` ranges), \\w is ASCII for
-now, and all shorthands are ASCII in bytes mode or under `flags::ascii`; case folding is full Unicode for literals/classes
+\\w \\d \\s are Unicode in text mode (via the generated `unicode_props.hpp` ranges and the `klass_cp`
+opcode), and ASCII in bytes mode or under `flags::ascii`; case folding is full Unicode for literals/classes
 (text-mode `IGNORECASE`, via the generated `unicode_fold.hpp` orbits), ASCII for the
 shorthands. The payoff is alignment: a
 construct that matches a whole codepoint (`.`, a negated class) is compiled to
@@ -332,11 +332,17 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   (≈3× slower — fine); `\d+` (60 classes) 1.9 vs 311 MB/s (≈163×); `\w+` (472 classes) **0.1 vs
   344 MB/s (≈2280×)**. A Unicode `\w+` also compiles to ~5042 instructions (`\w{3,10}` ≈ 50 000,
   `\w+@\w+\.\w+` ≈ 15 000) and costs ~0.9 ms/pattern to build. `\w` on the byte-NFA path is therefore
-  **unusable** for its dominant job (tokenising ASCII text), which vetoed wiring it that way. The fix
-  is architectural, outside the class pipeline: a match-time code-point-predicate opcode that decodes
-  one code point and binary-searches the range table (*O(≤4 bytes + log ranges)* per position,
-  independent of the class count), which also shrinks the program back to a handful of instructions.
-  `\d \s` (W2) carry the same cost at smaller scale and will move to the same opcode.
+  **unusable** for its dominant job (tokenising ASCII text), which vetoed wiring it that way.
+- **The `klass_cp` opcode is the fix (measured).** A text-mode Unicode shorthand emits a single
+  match-time code-point predicate: decode one code point, test membership (ASCII bitmap below 0x80, a
+  binary search of the range table above), apply negation, then walk the continuation bytes through a
+  computed skip — *O(≤4 bytes + log ranges)* per position, independent of the class count. `\w+`,
+  `\d+`, `\s+` each compile to **8 instructions** (from 5042 / 386 / 43), one interned class. A
+  whole-pattern shorthand (optionally `+`) also takes a code-point scan-loop fast path (the analog of
+  the ASCII `class+` loop). Measured `find_all` throughput vs `flags::ascii` (2 MB subject): `\w+`
+  544 vs 748 MB/s (**76%**, up from 0.1), `\d+` 553 vs 746 MB/s (**74%**); a mixed-UTF-8 subject holds
+  ~210 MB/s. The tiny program also lets a text-mode `static_regex<"\\w+">` compile within the default
+  constexpr budgets again (no `-fconstexpr-steps` bump). In-class shorthands and `\b`/`\B` follow.
 - **Compile time:** the generated `unicode_fold.hpp` orbit table (~2900 entries) adds ~20 ms to a
   translation unit that includes `real/real.hpp`; a `static_regex` with `IGNORECASE` folds at
   compile time (constexpr), which is the usual constexpr cost, not a runtime one. A `static_regex`

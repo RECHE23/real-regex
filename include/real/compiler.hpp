@@ -272,7 +272,7 @@ namespace real::detail {
       emit(prog, {.op = opcode::save, .arg16 = 1});
       emit(prog, {.op = opcode::match});
       prog.byte_mode  = has_flag(flags_, flags::bytes);
-      prog.hints      = analyze_program(prog.code, prog.classes, prog.codepoint_mark_ascii, prog.codepoint_mark_offset);
+      prog.hints      = analyze_program(prog.code, prog.classes, prog.cp_classes, prog.codepoint_mark_ascii, prog.codepoint_mark_offset);
       if (prog.code.size() > max_program_size) {
         throw regex_error("program too large", 0);
       }
@@ -392,6 +392,61 @@ namespace real::detail {
         prog.classes.push_back(klass);
       }
       emit(prog, {.op = opcode::klass, .arg16 = static_cast<std::uint16_t>(index)});
+    }
+
+    /*!
+     * \brief Emits a match-time code-point predicate for a Unicode shorthand (`\w \d \s` and their
+     *        negations) in text mode: a `klass_cp` over the interned code-point class, followed by a
+     *        three-instruction continuation chain (`klass utf8_cont` ×3). At match time `klass_cp`
+     *        decodes one code point and, on membership, enters the chain at a computed skip so the
+     *        remaining continuation bytes are walked one per step — see pike.hpp. The class is stored
+     *        un-negated with a `negated` flag applied at match time (no complement blow-up).
+     *
+     * \param[in,out] prog    The program being built.
+     * \param[in]     cd      The shorthand's class (ASCII bitmap + non-ASCII ranges), pre-negation.
+     * \param[in]     negated `\W` `\D` `\S`: membership is inverted at match time.
+     */
+    static constexpr void emit_klass_cp(dynamic_program& prog,
+                                        const class_def& cd,
+                                        bool             negated)
+    {
+      std::size_t index {prog.cp_classes.size()};
+      for (std::size_t i = 0; i < prog.cp_classes.size(); ++i) {
+        const cp_class& existing {prog.cp_classes[i]};
+        if (existing.negated != negated || !(existing.ascii == cd.ascii) ||
+            existing.range_count != cd.ranges.size()) {
+          continue;
+        }
+        bool same {true};
+        for (std::uint32_t k = 0; k < existing.range_count; ++k) {
+          const code_range& a {prog.cp_ranges[existing.range_begin + k]};
+          if (a.lo != cd.ranges[k].lo || a.hi != cd.ranges[k].hi) {
+            same = false;
+            break;
+          }
+        }
+        if (same) {
+          index = i;
+          break;
+        }
+      }
+      if (index == prog.cp_classes.size()) {
+        if (index > 0xFFFF) {
+          throw regex_error("too many code-point classes", 0);
+        }
+        const auto begin {static_cast<std::uint32_t>(prog.cp_ranges.size())};
+        for (const code_range& r : cd.ranges) {
+          prog.cp_ranges.push_back(r);
+        }
+        prog.cp_classes.push_back({.ascii       = cd.ascii,
+                                   .range_begin = begin,
+                                   .range_count = static_cast<std::uint32_t>(cd.ranges.size()),
+                                   .negated     = negated});
+      }
+      emit(prog, {.op = opcode::klass_cp, .arg16 = static_cast<std::uint16_t>(index)});
+      emit_klass(prog, utf8_cont_set()); // three continuation slots; klass_cp's skip picks the entry
+      emit_klass(prog, utf8_cont_set());
+      emit_klass(prog, utf8_cont_set());
     }
 
     // --- UTF-8 byte expansion --------------------------------------------
@@ -573,6 +628,14 @@ namespace real::detail {
           break;
         case node_kind::klass:
           {
+            // A text-mode Unicode shorthand (\w/\d/\s): a match-time code-point predicate, not the
+            // byte-NFA. The raw (pre-negation) class is used; negation is applied at match time, and
+            // these are not cased so icase never folds them.
+            const class_def& raw {tree_.classes[static_cast<std::size_t>(node.klass)]};
+            if (raw.codepoint_predicate) {
+              emit_klass_cp(prog, raw, node.negated);
+              break;
+            }
             const class_def eff {effective_class(node)};
             if (has_flag(flags_, flags::bytes) || eff.ranges.empty()) {
               // Bytes mode is a single 256-bit bitmap; a code-point class with no non-ASCII members is
