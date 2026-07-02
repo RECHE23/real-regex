@@ -355,7 +355,7 @@ and on representative parsing text it hit the throughput target:
 
 **Why it was retired anyway.** The win is real only when there are *many* false candidates that are
 *costly to reject* — and rejecting them means the oracle re-scans the class run from **every** start,
-which is **O(n·k)**. On an adversarial long class run (`[a-z]+(::…)` over a 40&nbsp;KB run of `a`) the
+which is **O(n·k)**. On an adversarial long class run (`[a-z]+(::[a-z]+)+` over a 40&nbsp;KB run of `a`) the
 prototype collapsed to **0.02&nbsp;MB/s — ~1500× slower than the engine at that size, and quadratic
 from there** — while `find_iter` stayed flat at ~30&nbsp;MB/s (measured linear at 40/80/160&nbsp;KB).
 That is the exact worst case the linear-time Pike VM exists to forbid: the two-pass oracle trades away
