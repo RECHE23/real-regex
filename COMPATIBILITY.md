@@ -27,14 +27,14 @@ ECMAScript-`$` (end-only), ECMAScript-`.` (excludes `\n` and `\r`) semantics lin
 `regex.uses_real()` reports which backend won; `regex.nullable()` reports whether the pattern can
 match empty (the state that routes `regex_replace`/iterators to `std` — see the traversal rows below).
 
-## What runs on `real` (linear, ReDoS-safe)
+## What runs on real (linear, ReDoS-safe)
 
 Literals, concatenation, alternation, `.` (ECMAScript), character classes & ranges, `\d \w \s`
 (+negations), `^ $ \b \B`, greedy/lazy quantifiers `* + ? {m,n}`, groups (capturing,
 non-capturing, named), **lookahead and lookbehind** (bounded — `real`'s ReDoS-safe lookaround),
 ASCII `icase`, `multiline`. Non-ASCII **literals** match byte-for-byte like `std::regex<char>`.
 
-## What falls back to `std::regex` (loses `real`'s ReDoS-safety)
+## What falls back to std::regex (loses real's ReDoS-safety)
 
 | Construct | Why | Treatment |
 |---|---|---|
@@ -48,7 +48,7 @@ ASCII `icase`, `multiline`. Non-ASCII **literals** match byte-for-byte like `std
 These patterns run on `std::regex` and therefore lose the linear-time guarantee — a documented,
 non-silent trade. Prefer ReDoS-safe equivalents for untrusted input.
 
-## `regex_replace`
+## regex_replace
 
 The replacement format is ECMAScript: `$$` → `$`, `$&` → the whole match, `` $` `` → the text since
 the previous match, `$'` → the text to the end, `$N` / `$NN` → group N (matching
@@ -92,7 +92,7 @@ so `position()` is the full sequence length and `length()` is `0`) — never out
 selector like `{2}`/`{5}` or a field `< -1` relies on this; a field `< -1` is undefined in `std`, and
 compat is *safe* there, yielding an unmatched token.
 
-## Platform-variant `std::regex` (MSVC vs libstdc++/libc++)
+## Platform-variant std::regex (MSVC vs libstdc++/libc++)
 
 `std::regex` is not identical across implementations, and a few of its behaviours are
 platform-variant. Where `real::compat` **wraps** `std` (a fallback pattern, a wide `CharT`, a
@@ -113,7 +113,7 @@ chooses the spec-reasonable behaviour, which may differ from a given `std` on th
   `std` and matches it. So the *construction* of such a pattern succeeds on Linux and throws a
   `real::compat::regex_error` on MSVC, exactly as the platform's `std::regex` does.
 
-## Iteration (`regex_iterator`)
+## Iteration (regex_iterator)
 
 `real::compat::regex_iterator` (with `sregex_iterator` / `cregex_iterator`) walks the non-overlapping
 matches like `std::regex_iterator`. Same per-operation routing as `regex_replace`: a non-nullable
@@ -134,7 +134,7 @@ which makes `-1` a splitter. After the last match a trailing `-1` field yields t
 asymmetry `std` pins); with `-1` and no match at all, the whole sequence is the single token. The
 fuzzer compares the `(str, matched)` token sequence for the `-1` and `0` fields.
 
-## Match flags (`match_flag_type`)
+## Match flags (match_flag_type)
 
 `regex_search` / `regex_match` and both iterators take an optional `match_flag_type` (default
 `match_default`). The rule is **honor-on-`real` or fall back to `std`, never accept-then-ignore**:
@@ -154,7 +154,7 @@ optimization left for later, not a hand-coded partition — the differential fuz
 have to police a mis-categorization. The fuzzer generates a random flag subset and compares
 `compat(mf)` vs `std(mf)` on search + match + iterate, which is what proves the partition.
 
-## Always-`std` parts of the surface (`wregex`, POSIX, `nosubs`)
+## Always-std parts of the surface (wregex, POSIX, nosubs)
 
 `real` runs only the **`char` path with default traits, ECMAScript grammar, reporting every group**.
 Everything outside that is routed to `std::regex` by a compile-time gate (`real_eligible<CharT, Traits>`)
@@ -173,7 +173,7 @@ plus the option screen — `real` is never even tried, so these are std by const
   structural both-accept divergence — so `nosubs` is screened to `std`. (Honoring it on `real` by
   truncating `match_results` to size 1 is a measured optimization for later, not a correctness need.)
 
-## Intentional divergences from libstdc++ `std::regex` (spec-correct)
+## Intentional divergences from libstdc++ std::regex (spec-correct)
 
 `real::compat` follows the **ECMAScript spec**; the following are libstdc++ deviations that the
 differential harness allowlists (the compat behavior is the spec behavior):
@@ -212,7 +212,7 @@ differential fuzzer (517 k iterations, zero remaining both-accept divergence):
   compile time): sub-matches are built from byte offsets.
 - Matching against an rvalue `std::string` is deleted (the result would dangle), as in `real`/`std`.
 
-## Performance (measured, `real` backend vs `std::regex`)
+## Performance (measured, real backend vs std::regex)
 
 `regex_search`, compat/std time ratio (`<1` = compat faster): email-validate **0.22**, date
 **0.13**, alternation **0.49**, long class scan **0.005**. ReDoS `(a+)+b` over `"a"*30` (no match):

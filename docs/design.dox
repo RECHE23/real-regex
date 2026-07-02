@@ -185,7 +185,7 @@ because that structure only accepts well-formed sequences. Because class members
 stay ASCII, a delimiter byte never appears mid-sequence, which is what keeps the
 boundary guarantee.
 
-\subsection g_klass_cp Large code-point classes: the `klass_cp` skip-chain
+\subsection g_klass_cp Large code-point classes: the klass_cp skip-chain
 
 The byte-range expansion above is right for `.` and small classes, but a Unicode
 shorthand such as `\w` spans ~771 ranges — expanding it to byte alternatives is

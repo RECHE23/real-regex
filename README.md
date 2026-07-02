@@ -248,7 +248,7 @@ non-empty match) and the scan then advances one whole codepoint.
 `find_iter`/`find_all` cannot be called on a temporary regex, and
 `match`/`search`/`split` cannot take a temporary `std::string`.
 
-### Drop-in for `std::regex`
+### Drop-in for std::regex
 
 Already using `<regex>`? `real::compat` is a drop-in for the `<regex>` surface on the `char` path —
 swap the include and alias the namespace, and your code keeps compiling:
