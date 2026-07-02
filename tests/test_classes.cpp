@@ -188,8 +188,7 @@ TEST(class_errors)
 {
   EXPECT_THROWS(real::regex("[abc"), real::regex_error);
   EXPECT_THROWS(real::regex("[z-a]"), real::regex_error);
-  EXPECT_THROWS(real::regex("[a-\\d]"), real::regex_error);
-  EXPECT_THROWS(real::regex("[\\D]"), real::regex_error);
+  EXPECT_THROWS(real::regex("[a-\\d]"), real::regex_error);                 // \d is not a range endpoint
   EXPECT_THROWS(real::regex("[é]", real::flags::bytes), real::regex_error); // non-ASCII class member: bytes mode only
   EXPECT_THROWS(real::regex("\\x4"), real::regex_error);
   EXPECT_THROWS(real::regex("\\xg0"), real::regex_error);
@@ -285,4 +284,38 @@ TEST(unicode_shorthand_lookbehind_budget)
   EXPECT(real::regex("(?<=\\d{63})x").search(h63).matched());
   EXPECT_THROWS(real::regex("(?<=\\d{64})x"), real::regex_error);
   EXPECT(real::regex("(?<=\\d{255})x", flags::ascii).search(h255).matched());
+}
+
+TEST(unicode_shorthand_in_class_text_mode)
+{
+  // P2: a shorthand inside a class is Unicode in text mode, and \W \D \S in a class are accepted
+  // (they were rejected before). Membership matches re; the identities [^\W]==\w etc hold.
+  EXPECT(real::regex("[\\w]").fullmatch("é"));  // é is a word char (was ASCII-only in P1)
+  EXPECT(real::regex("[\\w-]+").fullmatch("café-au"));
+  EXPECT(real::regex("[\\d]").fullmatch("٣"));  // Arabic digit
+  EXPECT(real::regex("[\\s]").fullmatch(" "));  // NBSP
+  // \W \D \S in a class (accepted, ~ complement).
+  EXPECT(real::regex("[\\W]").fullmatch("€"));  // € is a non-word code point
+  EXPECT(!real::regex("[\\W]").fullmatch("é")); // é is a word char, excluded from \W
+  EXPECT(real::regex("[\\D]").fullmatch("é"));  // é is a non-digit
+  EXPECT(!real::regex("[\\D]").fullmatch("٣")); // ٣ is a digit, excluded from \D
+  EXPECT(real::regex("[a\\W]").fullmatch("a")); // 'a' plus the non-word complement
+  EXPECT(real::regex("[a\\W]").fullmatch("€"));
+  // Identities: [^\W] == \w, [^\D] == \d, [^\S] == \s (ranges included).
+  EXPECT(real::regex("[^\\W]").fullmatch("é") && real::regex("\\w").fullmatch("é"));
+  EXPECT(real::regex("[^\\D]").fullmatch("٣") && real::regex("\\d").fullmatch("٣"));
+  EXPECT(!real::regex("[^\\W]").fullmatch("€"));      // € is non-word, so excluded from [^\W]==\w
+  // [\b] stays backspace (regression pin).
+  EXPECT(real::regex("[\\b]").fullmatch("\x08"sv));
+  // icase on an in-class property is a no-op on the property (word-ness is fold-closed).
+  EXPECT(real::regex("[\\w]", real::flags::icase).fullmatch("é"));
+}
+
+TEST(unicode_shorthand_in_class_ascii_bytes)
+{
+  using real::flags;
+  // Under ascii, an in-class \d stays ASCII; \W still matches non-ASCII (re.A \W matches é).
+  EXPECT(!real::regex("[\\d]", flags::ascii).fullmatch("٣"));
+  EXPECT(real::regex("[\\W]", flags::ascii).fullmatch("é")); // re.A \W matches é
+  EXPECT(real::regex("[\\w]", flags::bytes).fullmatch("a"));
 }

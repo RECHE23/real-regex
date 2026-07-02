@@ -140,43 +140,6 @@ namespace real::detail {
     return out;
   }
 
-  //! \brief Sorts \p ranges and merges overlapping / adjacent ones into a minimal, sorted set (the
-  //!        same set of code points, the fewest ranges). Used to keep a folded class from fragmenting.
-  constexpr std::vector<code_range> coalesce_ranges(std::vector<code_range> ranges)
-  {
-    std::sort(ranges.begin(), ranges.end(),
-              [](const code_range& a, const code_range& b) { return a.lo < b.lo; });
-    std::vector<code_range> merged;
-    for (const code_range& r : ranges) {
-      if (!merged.empty() && r.lo <= merged.back().hi + 1U) { // overlapping OR adjacent
-        merged.back().hi = merged.back().hi > r.hi ? merged.back().hi : r.hi;
-      }
-      else {
-        merged.push_back(r);
-      }
-    }
-    return merged;
-  }
-
-  //! \brief Complements a set of code-point ranges within `[0x80, 0x10FFFF]` (used by negated classes).
-  //!        Input ranges may be unsorted/overlapping; the gaps are returned sorted.
-  constexpr std::vector<code_range> complement_code_ranges(std::vector<code_range> ranges)
-  {
-    const std::vector<code_range> merged {coalesce_ranges(std::move(ranges))};
-    std::vector<code_range>       gaps;
-    std::uint32_t                 next   {0x80U};
-    for (const code_range& r : merged) {
-      if (r.lo > next) {
-        gaps.push_back({.lo = next, .hi = r.lo - 1U});
-      }
-      next = r.hi + 1U;
-    }
-    if (next <= 0x10FFFFU) {
-      gaps.push_back({.lo = next, .hi = 0x10FFFFU});
-    }
-    return gaps;
-  }
-
   //! \brief Whether \p ranges is exactly the whole non-ASCII space `[U+0080, U+10FFFF]` — the
   //!        "any non-ASCII code point" shape emitted by the compact \ref compiler::emit_codepoint_class.
   constexpr bool is_any_non_ascii(const std::vector<code_range>& ranges)
@@ -628,12 +591,12 @@ namespace real::detail {
           break;
         case node_kind::klass:
           {
-            // A text-mode Unicode shorthand (\w/\d/\s): a match-time code-point predicate, not the
-            // byte-NFA. The raw (pre-negation) class is used; negation is applied at match time, and
-            // these are not cased so icase never folds them.
-            const class_def& raw {tree_.classes[static_cast<std::size_t>(node.klass)]};
-            if (raw.codepoint_predicate) {
-              emit_klass_cp(prog, raw, node.negated);
+            // A text-mode class with a Unicode-shorthand contribution (\w/\d/\s, bare or in a class):
+            // a match-time code-point predicate, not the byte-NFA. effective_class materialises the
+            // fold and the external negation, so the stored cp_class needs no negation flag -- this is
+            // also what gives [^\W] == \w, [^\D] == \d, [^\S] == \s.
+            if (tree_.classes[static_cast<std::size_t>(node.klass)].codepoint_predicate) {
+              emit_klass_cp(prog, effective_class(node), false);
               break;
             }
             const class_def eff {effective_class(node)};
