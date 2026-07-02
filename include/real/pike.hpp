@@ -140,6 +140,17 @@ namespace real::detail {
      */
     std::int32_t                   table_class {-1};
     std::array<std::uint8_t, 256>  table       {}; //!< 1 where the byte is in \ref table_class.
+
+    /*!
+     * \brief Membership bitmap for a `cp_class` over the 2-byte UTF-8 range `[U+0080, U+07FF]`, and
+     *        the class it was built for. A `klass_cp` scan otherwise binary-searches ~771 ranges per
+     *        non-ASCII code point; European text lives almost entirely in this range (Latin, IPA,
+     *        Greek, Cyrillic, Hebrew, Arabic…), so a 240-byte bitmap answers it in one load. Built once
+     *        per class and reused across a `find_all`-style walk; code points beyond U+07FF (CJK,
+     *        astral) fall back to the range search.
+     */
+    std::int32_t                   cp_page_class {-1};
+    std::array<std::uint64_t, 30>  cp_page       {}; //!< 1 where the code point (U+0080..U+07FF) is a member.
   };
 
   /*!
@@ -354,6 +365,39 @@ namespace real::detail {
       return state_.table.data();
     }
 
+    //! \brief Highest code point covered by the `cp_page` bitmap (the 2-byte UTF-8 range).
+    static constexpr std::uint32_t cp_page_max {0x7FFU};
+
+    /*!
+     * \brief Builds (once, cached) and returns the `cp_class`'s membership bitmap over
+     *        `[U+0080, U+07FF]` — a one-load replacement for the range search on the common
+     *        two-byte code points (see \ref basic_pike_state::cp_page).
+     * \param[in] cp_index Index into the program's `cp_classes`.
+     * \return Pointer to the 30-word bitmap (bit `cp - 0x80`).
+     */
+    constexpr const std::uint64_t* cp_page_table(std::size_t cp_index)
+    {
+      const std::int32_t key {-2 - static_cast<std::int32_t>(cp_index)};
+      if (state_.cp_page_class != key) {
+        state_.cp_page.fill(0);
+        const detail::cp_class& cc {prog_.cp_classes[cp_index]};
+        for (std::uint32_t k {0}; k < cc.range_count; ++k) {
+          const detail::code_range& r {prog_.cp_ranges[cc.range_begin + k]};
+          if (r.lo > cp_page_max) {
+            break; // ranges are sorted: nothing more falls in the page
+          }
+          const std::uint32_t lo {r.lo < 0x80U ? 0x80U : r.lo};
+          const std::uint32_t hi {r.hi > cp_page_max ? cp_page_max : r.hi};
+          for (std::uint32_t c {lo}; c <= hi; ++c) {
+            const std::uint32_t bit {c - 0x80U};
+            state_.cp_page[bit >> 6U] |= std::uint64_t {1} << (bit & 63U);
+          }
+        }
+        state_.cp_page_class = key;
+      }
+      return state_.cp_page.data();
+    }
+
     /*!
      * \brief Fast path for a whole-pattern "class+".
      *
@@ -426,11 +470,26 @@ namespace real::detail {
       const std::size_t          cp_index {static_cast<std::size_t>(prog_.hints.greedy_cp_class)};
       const detail::cp_class&    cc       {prog_.cp_classes[cp_index]};
       const std::uint8_t* const  asc      {cp_ascii_table(cp_index)};
-      // Byte width of a matching code point at i, or 0 (no match / malformed). The hot ASCII run is
-      // scanned inline below; this handles the non-ASCII decode and the leftmost-scan step.
+      // Membership of a non-ASCII code point (>= 0x80): a one-load page-bitmap test over the two-byte
+      // range (OPT-4), the range search only for CJK / astral code points beyond it. The page is built
+      // lazily on the first non-ASCII code point, so a pure-ASCII scan never pays for it.
+      const auto member_hi = [&](char32_t cp) -> bool {
+                               if (cp <= cp_page_max) {
+                                 const std::uint64_t* const page {cp_page_table(cp_index)};
+                                 const std::uint32_t        bit  {static_cast<std::uint32_t>(cp) - 0x80U};
+                                 return ((page[bit >> 6U] >> (bit & 63U)) & std::uint64_t {1}) != 0U;
+                               }
+                               return cp_class_matches(cc, cp);
+                             };
+      // Byte width of a matching code point at i, or 0. Used for the leftmost-scan step and the first
+      // code point; the hot greedy run is scanned inline below.
       const auto width = [&](std::size_t i) -> std::size_t {
                            const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, i)};
-                           return dc.valid && cp_class_matches(cc, dc.cp) ? dc.length : 0;
+                           if (!dc.valid) {
+                             return 0;
+                           }
+                           const bool m {dc.cp < 0x80U ? asc[dc.cp] != 0U : member_hi(dc.cp)};
+                           return m ? dc.length : 0;
                          };
       out_slots.assign(2, npos);
       std::size_t match_start {start};
@@ -462,11 +521,11 @@ namespace real::detail {
             ++match_end;
             continue;
           }
-          const std::size_t w {width(match_end)};
-          if (w == 0) {
+          const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, match_end)};
+          if (!dc.valid || !member_hi(dc.cp)) {
             break;
           }
-          match_end += w;
+          match_end += dc.length;
         }
       }
       if (mode == run_mode::full && match_end != text.size()) {
