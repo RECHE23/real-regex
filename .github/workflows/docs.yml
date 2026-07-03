@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: RECHE23/sciforge
-          ref: v2026.6.2
+          ref: v2026.7.0
           path: sciforge
       - name: Install Doxygen, Graphviz, Clang and LLVM coverage tools
         run: sudo apt-get update && sudo apt-get install -y doxygen graphviz clang llvm
