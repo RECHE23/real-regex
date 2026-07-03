@@ -322,6 +322,26 @@ class TestIntentionalDivergences(unittest.TestCase):
         with self.assertRaises(re.error):
             re.compile(r"\N{U+0041}")                                       # re rejects it (name only)
 
+    def test_nullable_loop_final_iteration_capture(self):
+        r"""A */+ loop over a nullable body: re runs one final EMPTY iteration and captures it, while
+        REAL keeps the last CONSUMING iteration (the RE2 / Rust / Go convention). The overall match span
+        agrees; only the inner group differs. Double-pinned — both the re value and the REAL value, so a
+        change on either side is caught. See the div_empty_iteration_capture divergences section."""
+        forms = [
+            (r"(a*)*", "a", (1, 1), (0, 1)),
+            (r"(a*)+", "a", (1, 1), (0, 1)),
+            (r"(a|)*", "a", (1, 1), (0, 1)),
+            (r"()*", "", (0, 0), (-1, -1)),
+            (r"($)*", "", (0, 0), (-1, -1)),
+        ]
+        for pattern, subject, re_group, real_group in forms:
+            with self.subTest(pattern=pattern):
+                rm = re.search(pattern, subject)
+                lm = real.search(pattern, subject)
+                self.assertEqual(rm.span(), lm.span())    # the whole-match span is identical
+                self.assertEqual(rm.span(1), re_group)    # re captures the final empty iteration
+                self.assertEqual(lm.span(1), real_group)  # REAL keeps the last consuming one
+
     def test_icase_folds_unicode(self):
         # Text-mode icase does full Unicode simple case folding, like re.IGNORECASE: ASCII letters,
         # and non-ASCII code points, fold -- é matches É, and k matches Kelvin (U+212A).

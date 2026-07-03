@@ -66,12 +66,31 @@ also `re`'s since Python 3.11 (`re` < 3.11 had the opposite quirk for \\B on the
 string). The differential fuzzer therefore cannot use `re` as an oracle on an empty
 region and skips it; the assertions pin REAL's behaviour directly.
 
-\section div_nullable Capture of a nullable loop's final iteration
+\section div_empty_iteration_capture Capture of a nullable loop's final iteration
 
-For a nullable loop such as `(a*)*` on `"aa"`, REAL reports the last **non-empty**
-iteration for group 1 (`"aa"`) — like Perl and PCRE, which forbid repeating an empty
-match — whereas `re` reports the final **empty** iteration (`""`). Group 0 is identical
-in both.
+**The rule.** For a `*` or `+` loop whose body can match the empty string, `re` runs one final
+**empty** iteration after the last consuming one and records *its* (zero-width) capture for the group;
+REAL records the last **consuming** iteration instead. The overall match — group 0, and every match
+**span** — is identical in both; only the inner group's captured span differs.
+
+**The five verified forms** (search; `re` value ↦ REAL value for group 1):
+
+| Pattern | Input | `re` group 1 | REAL group 1 |
+| --- | --- | --- | --- |
+| `(a*)*` | `"a"` | `(1, 1)` | `(0, 1)` |
+| `(a*)+` | `"a"` | `(1, 1)` | `(0, 1)` |
+| `(a\|)*` | `"a"` | `(1, 1)` | `(0, 1)` |
+| `()*` | `""` | `(0, 0)` | *(unset)* |
+| `($)*` | `""` | `(0, 0)` | *(unset)* |
+
+**Lineage.** This is the linear-engine convention: **RE2, the Rust `regex` crate, and Go's `regexp`**
+share REAL's behaviour (they do not re-enter a loop on an empty match). `re` and PCRE, being
+backtrackers, take the extra empty step. REAL sits with the linear engines by design — the same family
+whose linear-time guarantee it shares.
+
+**When to revisit.** Only if a future goal is *exact* `re` capture parity for these degenerate loops,
+which would mean adding a trailing empty-iteration step purely to update a capture — a cost with no
+matching benefit for a linear engine. Pinned, both values, in `TestIntentionalDivergences`.
 
 \section div_rejected Rejected by design
 
