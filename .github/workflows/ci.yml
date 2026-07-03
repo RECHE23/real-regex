@@ -73,6 +73,8 @@ jobs:
           python-version: '3.14'
       - name: Install clang + cmake
         run: sudo apt-get update && sudo apt-get install -y clang cmake
+      - name: Install build deps (setuptools — not bundled on Python 3.12+)
+        run: python -m pip install --upgrade pip setuptools
       - name: Pin-drift lint (SciForge pins consistent)
         run: bash sciforge/tools/check-pins.sh real-regex
       - name: Build the abi3 extension
