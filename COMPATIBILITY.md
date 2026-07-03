@@ -31,7 +31,7 @@ raise a clear error rather than sitting on a roadmap.
 | Conditional groups `(?(id)…)`, recursion, callouts | **excluded by design** | non-regular control flow → ReDoS ([why](@ref div_rejected)) | — |
 | Unicode property classes `\p{…}` | **planned** | opt-in header (needs the Unicode tables; not in `re`) | opt-in |
 | `\N{NAME}` named characters | **supported** | binding resolves the name via `unicodedata` (no C++ table) | 2026.7 |
-| `\N{U+XXXX}` scalar form | **extension** (PCRE2-style) | the code-point path by scalar value; `re` rejects it | 2026.7 |
+| `\N{U+XXXX}` scalar form | **extension** (PCRE2-style) | uniform C++/Python surfaces; `re` knows only names ([more](@ref div_named_scalar)) | 2026.7 |
 | `\z` end-of-text anchor | **supported** | exact alias of `\Z` (Python 3.14's meaning) | 2026.7 |
 | Octal escapes in a class `[\1]` `[\12]` | **supported** | every `\digit` is octal in a class (no back-refs there) | 2026.7 |
 | Variable-width lookbehind `(?<=a|bb)` | **extension** | bounded → still linear; `re`/PCRE reject it ([more](@ref div_lookbehind)) | — |

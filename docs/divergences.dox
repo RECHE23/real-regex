@@ -92,6 +92,14 @@ name via `unicodedata` and the engine takes the resulting code point — so no t
 in C++. REAL additionally accepts the scalar form \\N{U+XXXX} directly (a PCRE2-style
 **extension**; `re` does not).
 
+\section div_named_scalar \\N{U+XXXX} scalar escape (a capability beyond re)
+
+REAL accepts the **scalar** form \\N{U+XXXX} (1–6 hex, a PCRE2-style spelling) as a code point,
+on **both** surfaces — the C++ engine and the Python binding — so the two are uniform. `re` knows
+\\N{...} only as a character *name* and rejects the U+ form (`undefined character name`). The *name*
+form \\N{NAME} is exact `re`-parity (the binding resolves it via `unicodedata`); only the scalar form
+is the extension. Pinned real-accepts / re-rejects in `TestIntentionalDivergences`.
+
 \section div_lookbehind Variable-width lookbehind (a capability beyond re)
 
 REAL accepts any **bounded** lookbehind, including variable-width alternations such as

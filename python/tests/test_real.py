@@ -1,5 +1,6 @@
 """Behavioral tests for the real module (API shape, types, errors)."""
 
+import re
 import unittest
 
 import real
@@ -311,6 +312,15 @@ class TestIntentionalDivergences(unittest.TestCase):
         self.assertIsNotNone(real.compile(r"[à-ÿ]").fullmatch("ê")) # a code-point range
         self.assertIsNone(real.compile(r"[^é]").fullmatch("é"))     # negation excludes é ...
         self.assertIsNotNone(real.compile(r"[^é]").fullmatch("à"))  # ... but matches other code points
+
+    def test_named_scalar_escape_is_a_superset(self):
+        r"""\N{U+XXXX} (the scalar form) is a REAL extension: the engine accepts it on both the C++
+        and Python surfaces, while re knows \N{...} only as a *name* and rejects U+XXXX. \N{NAME}
+        itself is exact re-parity (see the parity suite); this pins the intentional superset."""
+        self.assertIsNotNone(real.compile(r"\N{U+0041}").fullmatch("A"))   # REAL accepts the scalar form
+        self.assertIsNotNone(real.compile(r"\N{U+1F600}").fullmatch("😀"))  # incl. astral
+        with self.assertRaises(re.error):
+            re.compile(r"\N{U+0041}")                                       # re rejects it (name only)
 
     def test_icase_folds_unicode(self):
         # Text-mode icase does full Unicode simple case folding, like re.IGNORECASE: ASCII letters,
