@@ -623,12 +623,16 @@ namespace real::detail {
           }
         case node_kind::any:
           {
-            char_class head;
+            // dotall is read from this node's own scope (a scoped (?s:.) matches \n inside the island
+            // only); bytes and ecma are not scopable and stay global. A non-scoped node carries the
+            // global dotall, so its emitted class is byte-identical to before.
+            const flags node_flags {static_cast<flags>(node.effective_flags)};
+            char_class  head;
             head.set_range(0x00, 0x7F);
             if (has_flag(flags_, flags::bytes)) {
               head.set_range(0x80, 0xFF); // any raw byte
             }
-            if (!has_flag(flags_, flags::dotall)) {
+            if (!has_flag(node_flags, flags::dotall)) {
               char_class newline;
               newline.set('\n');
               if (has_flag(flags_, flags::ecma)) {
@@ -646,15 +650,15 @@ namespace real::detail {
           }
         case node_kind::anchor:
           {
-            // Word-boundary asserts (\b \B \< \>) carry a per-instruction FLIP bit: 1 when this node's
-            // word-ness differs from the program default (a scoped (?a:...) / (?-a:...) island), else 0.
-            // A non-scoped pattern is all-0 here, so its program is byte-identical to before. The flip
-            // is harmless for the other assert kinds, which ignore arg16.
-            const bool prog_unicode {!has_flag(flags_, flags::bytes) && !has_flag(flags_, flags::ascii)};
-            const bool node_unicode {!has_flag(flags_, flags::bytes)
-                                     && !has_flag(static_cast<flags>(node.effective_flags), flags::ascii)};
+            // The assert_kind for ^/$ follows this node's own multiline (a scoped (?m:...)); \b \B \< \>
+            // additionally carry a per-instruction FLIP bit: 1 when this node's word-ness differs from
+            // the program default (a scoped (?a:...) / (?-a:...) island), else 0. A non-scoped pattern
+            // is all-0 here and maps to the same assert_kinds, so its program is byte-identical.
+            const flags node_flags   {static_cast<flags>(node.effective_flags)};
+            const bool  prog_unicode {!has_flag(flags_, flags::bytes) && !has_flag(flags_, flags::ascii)};
+            const bool  node_unicode {!has_flag(flags_, flags::bytes) && !has_flag(node_flags, flags::ascii)};
             emit(prog, {.op    = opcode::assert_position,
-                        .arg8  = static_cast<std::uint8_t>(assert_kind_for(node.anchor)),
+                        .arg8  = static_cast<std::uint8_t>(assert_kind_for(node.anchor, node_flags)),
                         .arg16 = node_unicode != prog_unicode ? std::uint16_t {1} : std::uint16_t {0}});
           }
           break;
@@ -693,12 +697,18 @@ namespace real::detail {
      * `^` and `$` depend on the multiline flag; everything else maps
      * one-to-one.
      *
-     * \param[in] anchor The AST anchor kind.
+     * \param[in] anchor     The AST anchor kind.
+     * \param[in] node_flags The flag set in force at this anchor's scope; its `multiline` selects the
+     *                       line-relative vs absolute form of `^`/`$` (a scoped `(?m:...)`).
      * \return The assertion the engine should evaluate.
      */
-    [[nodiscard]] constexpr assert_kind assert_kind_for(anchor_kind anchor) const
+    [[nodiscard]] constexpr assert_kind assert_kind_for(anchor_kind anchor,
+                                                        flags       node_flags) const
     {
-      const bool  multiline {has_flag(flags_, flags::multiline)};
+      // multiline is read from the anchor node's own scope (a scoped (?m:^...$) is line-relative inside
+      // the island only); ecma is not scopable and stays global. A non-scoped node carries the global
+      // multiline, so `^`/`$` map to the same assert_kind as before — byte-identical.
+      const bool  multiline {has_flag(node_flags, flags::multiline)};
       assert_kind result    {};
       switch (anchor) {
         case anchor_kind::caret:

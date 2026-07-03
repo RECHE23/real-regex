@@ -354,11 +354,6 @@ class TestParity(unittest.TestCase):
             with self.subTest(pattern=pattern, kind="bytes"):
                 self.assertEqual(self.match_facts(real.compile(pattern).fullmatch(subject)),
                                  self.match_facts(re.compile(pattern).fullmatch(subject)))
-        # a scoped s/m is not yet supported — real rejects it (a documented, intentional gap)
-        for pending in [r"(?s:.)", r"(?m:^)", r"(?-s:.)"]:
-            with self.subTest(pattern=pending):
-                with self.assertRaises(real.error):
-                    real.compile(pending)
 
     def test_scoped_icase_ascii_parity(self):
         r"""(?i:...) and (?a:...) scope case-folding and the \w\d\s / \b tables. The crossings — a
@@ -390,11 +385,33 @@ class TestParity(unittest.TestCase):
             with self.subTest(pattern=pattern, kind="bytes"):
                 self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
                                  self.match_facts(re.compile(pattern).search(subject)))
-        # a scoped Unicode-mode pattern still rejects a DFA build cleanly (unchanged behaviour)
-        for pending in [r"(?s:.)", r"(?m:^)"]:
-            with self.subTest(pattern=pending):
-                with self.assertRaises(real.error):
-                    real.compile(pending)
+
+    def test_scoped_dotall_multiline_parity(self):
+        r"""(?s:...) scopes the dot (matches \n inside the island only); (?m:...) scopes ^/$ (line-
+        relative inside the island). \Z / \z ignore m — only $ moves. Crossings match re, str + bytes."""
+        cases = [
+            (r"(?s:.)", "\n", True), (r".", "\n", False),
+            (r"(?s:a.b)c.d", "a\nbcXd", True), (r"(?s:a.b)c.d", "a\nbc\nd", False),  # inner \n ok, outer not
+            (r"(?m:^b)", "a\nb", True), (r"^b", "a\nb", False),
+            (r"(?m:b$)", "b\nc", True), (r"b$", "b\nc", False),
+            (r"(?m:^b$)", "a\nb\nc", True),
+            (r"(?m:b\Z)", "b\nc", False), (r"(?m:c\Z)", "b\nc", True),  # \Z ignores m
+            (r"(?m:b\z)", "b\nc", False),                               # \z ignores m
+        ]
+        for pattern, subject, _expected in cases:
+            with self.subTest(pattern=pattern, subject=subject):
+                self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
+                                 self.match_facts(re.compile(pattern).search(subject)))
+        # negative islands inside an s/m-global pattern
+        self.assertEqual(bool(real.compile("(?-s:a.)", real.S).search("a\n")),
+                         bool(re.compile("(?-s:a.)", re.S).search("a\n")))
+        self.assertEqual(bool(real.compile("(?-m:^b)", real.M).search("a\nb")),
+                         bool(re.compile("(?-m:^b)", re.M).search("a\nb")))
+        # bytes mode: scoped dotall over raw bytes
+        for pattern, subject in [(rb"(?s:.)", b"\n"), (rb"(?m:^b)", b"a\nb")]:
+            with self.subTest(pattern=pattern, kind="bytes"):
+                self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
+                                 self.match_facts(re.compile(pattern).search(subject)))
 
     def test_sub_octal_and_group_escapes_parity(self):
         r"""Replacement digit escapes follow CPython: \0-prefixed and all-octal three-digit

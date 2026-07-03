@@ -7,8 +7,12 @@ test counts those reads in the parser and compiler and pins a per-flag ceiling: 
 
 - verbose_, icase_ and ascii_ are 0 now — scoped `(?x:...)`, `(?i:...)` and `(?a:...)` moved them
   entirely onto the scope stack / node bits. They must stay 0.
+- multiline and dotall are scoped too (via the anchor / dot nodes), but were never cached as parser
+  bool members, so they never appear here — nothing to drive down.
 - bytes_ and ecma_ are the intended residual: they are not scopable per pattern, so they stay global.
-  (multiline and dotall are not cached as parser members; they are scoped separately.)
+
+This is the **terminal** state of the ratchet: every scopable flag reads from the scope, and only the
+two non-scopable flags (bytes, ecma) remain as global members.
 
 If a ceiling needs to RISE, that means a new global flag read was added instead of going through the
 scope stack — which is exactly what this ratchet exists to prevent. Lower a ceiling when a change

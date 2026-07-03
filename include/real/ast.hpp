@@ -779,13 +779,6 @@ namespace real::detail {
       return letter == 'i' || letter == 'm' || letter == 's' || letter == 'a' || letter == 'x';
     }
 
-    //! \brief True if \p value carries a flag that is not yet scopable (multiline `m` / dotall `s`).
-    //!        Verbose (`x`), icase (`i`) and ascii (`a`) are honoured per scope; the rest are rejected.
-    static constexpr bool has_unsupported_scope_flag(flags value)
-    {
-      return has_flag(value, flags::multiline) || has_flag(value, flags::dotall);
-    }
-
     //! \brief \p value with \p bit cleared.
     static constexpr flags without(flags value,
                                    flags bit)
@@ -927,12 +920,9 @@ namespace real::detail {
             // parse_global_flags_prefix); anything else here is a misplaced global-flags group.
             fail("global flags not at the start of the expression");
           }
-          // Verbose (x), icase (i) and ascii (a) are honoured per scope; multiline (m) and dotall (s)
-          // are not scopable yet and keep the existing clean rejection. Verbose changes tokenization,
-          // while icase/ascii govern literal folding and the \w\d\s tables — all read from the scope.
-          if (has_unsupported_scope_flag(added) || has_unsupported_scope_flag(removed)) {
-            fail("scoped inline flags are not supported");
-          }
+          // Every inline flag (i m s x a) is honoured per scope: verbose changes tokenization, icase/
+          // ascii govern folding and the \w\d\s tables, dotall the dot, multiline the ^/$ anchors — all
+          // read from the scope stack. The added set is applied and the removed set cleared for the body.
           flag_scopes_.push_back(without(current_flags() | added, removed));
           scoped_flags = true; // group stays non-capturing (-1)
         }

@@ -1,6 +1,7 @@
-// Scoped inline flags: `(?x:...)`. Verbose is the one flag whose scope changes tokenization
-// (insignificant whitespace and `#` comments), so it is honoured per-scope from the flag-scope stack.
-// The other scoped flags (i/a/s/m) are still rejected until they are supported; this pins both.
+// Scoped inline flags `(?flags:...)` / `(?-flags:...)`. Each of the five flags is honoured per scope:
+// verbose (x) changes tokenization, icase (i) and ascii (a) drive folding and the \w\d\s / \b tables,
+// dotall (s) the dot, multiline (m) the ^/$ anchors. A scope reads from the flag-scope stack (parser)
+// and the per-node effective_flags (compiler). These tests pin the scoping and its boundaries.
 #include <string>
 
 #include <sciforge/test/framework.hpp>
@@ -40,15 +41,29 @@ TEST(global_x_with_scoped_minus_x)
   EXPECT(!real::regex("(?x)a (?-x:b c) d").fullmatch("abcd")); // the inner space is significant
 }
 
-TEST(scoped_dotall_and_multiline_are_still_rejected)
+TEST(scoped_dotall_selects_the_dot_per_node)
 {
-  // s (dotall) and m (multiline) are not scopable yet; x / i / a are, so a group mixing a supported
-  // flag with s or m is still rejected as a whole.
-  EXPECT_THROWS(real::regex("(?s:.)"), real::regex_error);
-  EXPECT_THROWS(real::regex("(?m:^)"), real::regex_error);
-  EXPECT_THROWS(real::regex("(?-s:.)"), real::regex_error);
-  EXPECT_THROWS(real::regex("(?i-s:a)"), real::regex_error); // i is fine, but the scoped -s is not
-  EXPECT_THROWS(real::regex("(?-:a)"), real::regex_error);   // a '-' with no flag after it
+  // (?s:.) matches \n inside the island; a . outside stays newline-excluding.
+  EXPECT(real::regex("(?s:.)").fullmatch("\n"));
+  EXPECT(!real::regex(".").fullmatch("\n"));
+  EXPECT(real::regex("(?s:a.b)").fullmatch("a\nb"));
+  EXPECT(!real::regex("(?s:a).").fullmatch("a\n")); // the trailing . is outside (?s:)
+}
+
+TEST(scoped_multiline_selects_the_anchors_per_node)
+{
+  // (?m:^ $) are line-relative inside the island; outside they are absolute. \Z / \z ignore m.
+  EXPECT(real::regex("(?m:^b)").search("a\nb").matched());
+  EXPECT(!real::regex("^b").search("a\nb").matched());
+  EXPECT(real::regex("(?m:b$)").search("b\nc").matched());
+  EXPECT(!real::regex("b$").search("b\nc").matched());
+  EXPECT(!real::regex("(?m:b\\Z)").search("b\nc").matched());                        // \Z is insensitive to m
+  EXPECT(!real::regex("(?-m:^b)", real::flags::multiline).search("a\nb").matched()); // negative island
+}
+
+TEST(a_dash_with_no_flag_is_still_an_error)
+{
+  EXPECT_THROWS(real::regex("(?-:a)"), real::regex_error); // a '-' with no flag after it
 }
 
 TEST(scoped_verbose_in_bytes_mode)

@@ -214,9 +214,9 @@ class PatternGen:
         return ("(?:" if self.rng.random() < 0.5 else "(") + inner + ")"
 
     def _scoped_flag_group(self, inner):
-        """Return a scoped inline-flags group over {i, a, x} — the flags REAL scopes — with an optional
-        negative part: e.g. ``(?i:...)``, ``(?a-i:...)``, ``(?-x:...)``. Nesting and negative islands
-        arise naturally from the recursion. Both engines apply these identically.
+        """Return a scoped inline-flags group over the five scopable flags {i, m, s, x, a}, with an
+        optional negative part: e.g. ``(?i:...)``, ``(?a-i:...)``, ``(?-x:...)``, ``(?ms:...)``. Nesting
+        and negative islands arise naturally from the recursion. Both engines apply these identically.
 
         Args:
             inner (str): The already-generated group body.
@@ -224,7 +224,7 @@ class PatternGen:
         Returns:
             str: A ``(?flags:...)`` / ``(?flags-flags:...)`` fragment.
         """
-        letters = "iax"
+        letters = "imsxa"
         added = "".join(c for c in letters if self.rng.random() < 0.5)
         removed = "".join(c for c in letters if c not in added and self.rng.random() < 0.4)
         if not added and not removed:
