@@ -1011,6 +1011,25 @@ namespace real::detail {
         const std::size_t nl {find_byte(text, pos - 1, '\n')};
         return nl == npos ? npos : nl + 1;
       }
+      if (hints.small_set_size >= 2) {
+        // Adaptive: probe a short window with the bitmap loop first (one test per byte — the baseline
+        // cost), so a near hit on dense text is found without paying the cascade's per-member memchr
+        // overhead. Only when the window is clean (the set bytes are sparse) does the vectorised cascade
+        // take over the long scan. The threshold is where measurement put the crossover.
+        constexpr std::size_t probe      {32};
+        const std::size_t     window_end {pos + probe < text.size() ? pos + probe : text.size()};
+        std::size_t           p          {pos};
+        while (p < window_end && !hints.first_bytes.test(static_cast<std::uint8_t>(text[p]))) {
+          ++p;
+        }
+        if (p < window_end) {
+          return p; // a near (dense) hit — the bitmap probe found it at baseline cost
+        }
+        if (window_end == text.size()) {
+          return npos;
+        }
+        return find_bytes_cascade(text, window_end, hints.small_set, hints.small_set_size);
+      }
       if (hints.first_bytes_valid) {
         while (pos < text.size() &&
                !hints.first_bytes.test(static_cast<std::uint8_t>(text[pos]))) {

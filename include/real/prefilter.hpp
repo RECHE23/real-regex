@@ -455,13 +455,28 @@ namespace real::detail {
       hints.single_first = static_cast<unsigned char>(hints.prefix[0]);
     }
     else if (hints.first_bytes_valid) {
-      int found {-1};
-      for (unsigned byte = 0; byte < 256 && found != -2; ++byte) {
+      // Enumerate the set, stopping once it exceeds four. A single member drives find_byte (one memchr);
+      // two-to-four members drive the memchr-cascade (small_set); five or more stay on the bitmap loop.
+      std::array<char, 4> members {};
+      int                 count   {0};
+      for (unsigned byte = 0; byte < 256; ++byte) {
         if (hints.first_bytes.test(static_cast<std::uint8_t>(byte))) {
-          found = found == -1 ? static_cast<int>(byte) : -2;
+          if (count < 4) {
+            members[static_cast<std::size_t>(count)] = static_cast<char>(byte);
+          }
+          ++count;
+          if (count > 4) {
+            break;
+          }
         }
       }
-      hints.single_first = found >= 0 ? static_cast<std::int16_t>(found) : std::int16_t {-1};
+      if (count == 1) {
+        hints.single_first = static_cast<std::int16_t>(static_cast<unsigned char>(members[0]));
+      }
+      else if (count >= 2 && count <= 4) {
+        hints.small_set      = members;
+        hints.small_set_size = static_cast<std::uint8_t>(count);
+      }
     }
     return hints;
   }
@@ -523,6 +538,56 @@ namespace real::detail {
       return npos;
     }
     return pos + off;
+  }
+
+  /*!
+   * \brief Index of the first byte in `text[pos..)` that belongs to a small (2..4) first-byte set.
+   *
+   * A cascade of `std::memchr` — one per set member — taking the minimum hit position. After each hit
+   * the scan window is narrowed to `[pos, best)`, so later members only search the shorter prefix and a
+   * near hit makes the remaining calls cheap. This beats the one-test-per-byte bitmap loop when the set
+   * is small: `memchr` is vectorised in libc, so even four sparse scans cover ground far faster than a
+   * scalar byte loop. During constant evaluation the plain member-wise scan runs instead (the home-made
+   * path — the same shape the bitmap loop takes).
+   *
+   * \param[in] text The subject text.
+   * \param[in] pos  Index to start scanning from.
+   * \param[in] set  The enumerated set members (first \p n valid).
+   * \param[in] n    Number of valid members (2..4).
+   * \return The least index at or after \p pos whose byte is in the set, else npos.
+   */
+  constexpr std::size_t find_bytes_cascade(std::string_view           text,
+                                           std::size_t                pos,
+                                           const std::array<char, 4>& set,
+                                           std::uint8_t               n)
+  {
+    if (pos >= text.size()) {
+      return npos;
+    }
+    if (!std::is_constant_evaluated()) {
+      const char* const base   {text.data()};
+      std::size_t       window {text.size() - pos}; // narrows to [pos, best) as hits are found
+      std::size_t       best   {npos};
+      for (std::uint8_t i = 0; i < n; ++i) {
+        const void* hit {std::memchr(base + pos, set[i], window)};
+        if (hit != nullptr) {
+          const std::size_t idx {static_cast<std::size_t>(static_cast<const char*>(hit) - base)};
+          if (idx < best) {
+            best   = idx;
+            window = idx - pos; // subsequent members need only search before the current best
+          }
+        }
+      }
+      return best;
+    }
+    for (std::size_t i = pos; i < text.size(); ++i) {
+      for (std::uint8_t j = 0; j < n; ++j) {
+        if (text[i] == set[j]) {
+          return i;
+        }
+      }
+    }
+    return npos;
   }
 } // namespace real::detail
 

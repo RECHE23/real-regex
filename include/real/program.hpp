@@ -240,6 +240,8 @@ namespace real {
       bool                 empty_match_possible  {};   //!< The pattern can match the empty string (the nullable gate; conservative: assertions/lookarounds pass through, so e.g. `^$` is flagged nullable).
       std::int16_t         single_first          {-1}; //!< The unique possible first byte, or -1.
       char_class           first_bytes;                //!< All possible first bytes.
+      std::array<char, 4>  small_set             {};   //!< The 2..4 possible first bytes, enumerated (the memchr-cascade set). Empty unless \ref small_set_size is set.
+      std::uint8_t         small_set_size        {};   //!< Number of valid members in \ref small_set — 0 when not a small set, else 2..4. Drives the memchr-cascade scan in place of the bitmap loop.
       std::int32_t         greedy_class_loop     {-1}; //!< Class index if the whole pattern is "class+", else -1.
       std::int32_t         greedy_cp_class       {-1}; //!< cp_class index if the whole pattern is a code-point class `klass_cp` (optionally `+`), else -1.
       bool                 greedy_cp_class_plus  {};   //!< The \ref greedy_cp_class pattern is a greedy `+` loop (vs a single code point).
