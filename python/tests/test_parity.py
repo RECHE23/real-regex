@@ -396,12 +396,15 @@ class TestParity(unittest.TestCase):
             (r"(?m:b$)", "b\nc", True), (r"b$", "b\nc", False),
             (r"(?m:^b$)", "a\nb\nc", True),
             (r"(?m:b\Z)", "b\nc", False), (r"(?m:c\Z)", "b\nc", True),  # \Z ignores m
-            (r"(?m:b\z)", "b\nc", False),                               # \z ignores m
         ]
         for pattern, subject, _expected in cases:
             with self.subTest(pattern=pattern, subject=subject):
                 self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
                                  self.match_facts(re.compile(pattern).search(subject)))
+        # \z is also insensitive to m (it is an exact alias of \Z). re only knows \z on 3.14+, so pin it
+        # against real's own \Z rather than re, to stay version-independent.
+        self.assertEqual(self.match_facts(real.compile(r"(?m:b\z)").search("b\nc")),
+                         self.match_facts(real.compile(r"(?m:b\Z)").search("b\nc")))
         # negative islands inside an s/m-global pattern
         self.assertEqual(bool(real.compile("(?-s:a.)", real.S).search("a\n")),
                          bool(re.compile("(?-s:a.)", re.S).search("a\n")))
