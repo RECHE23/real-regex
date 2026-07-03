@@ -72,18 +72,19 @@ namespace real::detail {
    */
   struct ast_node
   {
-    node_kind    kind      {node_kind::empty};   //!< Which fields below are meaningful.
-    std::uint8_t byte      {};                   //!< byte: the exact byte value.
-    anchor_kind  anchor    {anchor_kind::caret}; //!< anchor: the assertion kind.
-    bool         negated   {};                   //!< klass: written as `[^...]` / `\D` `\W` `\S`.
-    bool         lazy      {};                   //!< repeat: prefer the shortest expansion.
-    look_dir     direction {look_dir::ahead};    //!< lookaround: ahead `(?=`/`(?!` or behind `(?<=`/`(?<!`.
-    std::int32_t klass     {-1};                 //!< klass: index into \ref ast::classes.
-    std::int32_t min       {};                   //!< repeat: minimum count.
-    std::int32_t max       {-1};                 //!< repeat: maximum count (-1 = unbounded).
-    std::int32_t group     {-1};                 //!< group: capture number, -1 for `(?:...)`.
-    std::int32_t child     {-1};                 //!< First child (concat, repeat, alternation, group).
-    std::int32_t next      {-1};                 //!< Next sibling in the parent's child list.
+    node_kind    kind            {node_kind::empty};   //!< Which fields below are meaningful.
+    std::uint8_t byte            {};                   //!< byte: the exact byte value.
+    anchor_kind  anchor          {anchor_kind::caret}; //!< anchor: the assertion kind.
+    bool         negated         {};                   //!< klass: written as `[^...]` / `\D` `\W` `\S`.
+    bool         lazy            {};                   //!< repeat: prefer the shortest expansion.
+    look_dir     direction       {look_dir::ahead};    //!< lookaround: ahead `(?=`/`(?!` or behind `(?<=`/`(?<!`.
+    std::int32_t klass           {-1};                 //!< klass: index into \ref ast::classes.
+    std::int32_t min             {};                   //!< repeat: minimum count.
+    std::int32_t max             {-1};                 //!< repeat: maximum count (-1 = unbounded).
+    std::int32_t group           {-1};                 //!< group: capture number, -1 for `(?:...)`.
+    std::int32_t child           {-1};                 //!< First child (concat, repeat, alternation, group).
+    std::int32_t next            {-1};                 //!< Next sibling in the parent's child list.
+    std::uint8_t effective_flags {};                   //!< Flag set in force where this node was parsed (see \ref flags). Stamped from the scope stack; carried for scoped-flag semantics.
   };
 
   //! \brief A parsed character class: its ASCII bitmap plus any non-ASCII code-point ranges. Bundling
@@ -229,12 +230,15 @@ namespace real::detail {
     constexpr explicit parser(std::string_view pattern,
                               flags            initial_flags = flags::none)
       : pattern_(pattern),
-        verbose_(has_flag(initial_flags, flags::verbose)),
         bytes_(has_flag(initial_flags, flags::bytes)),
         ecma_(has_flag(initial_flags, flags::ecma)),
         icase_(has_flag(initial_flags, flags::icase)),
         ascii_(has_flag(initial_flags, flags::ascii))
-    {}
+    {
+      // The scope stack holds the flag set in force at each nesting level; the base is the
+      // constructor's flags. A scoped group (?flags:...) pushes a modified copy for its body.
+      flag_scopes_.push_back(initial_flags);
+    }
 
     /*!
      * \brief Parses the whole pattern.
@@ -254,26 +258,39 @@ namespace real::detail {
 
   private:
 
-    std::string_view pattern_;          //!< The pattern being parsed.
-    std::size_t      pos_           {}; //!< Current read offset into \ref pattern_.
-    std::int32_t     depth_         {}; //!< Current group nesting (see \ref max_nesting_depth).
-    bool             verbose_       {}; //!< `re.X`: skip unescaped whitespace and `#` comments outside classes.
-    bool             in_lookaround_ {}; //!< True while parsing a lookaround sub-pattern (rejects nesting).
-    bool             bytes_         {}; //!< In \ref flags::bytes mode, rejects code-point escapes (`\u`/`\U`).
-    bool             ecma_          {}; //!< ECMAScript grammar: `\A \Z \< \>` are identity-escape literals, not anchors.
-    bool             icase_         {}; //!< `re.I`: a cased literal is promoted to a foldable singleton class.
-    bool             ascii_         {}; //!< `re.A`: `\d \w \s` stay ASCII (no Unicode property ranges).
+    std::string_view   pattern_;          //!< The pattern being parsed.
+    std::size_t        pos_           {}; //!< Current read offset into \ref pattern_.
+    std::int32_t       depth_         {}; //!< Current group nesting (see \ref max_nesting_depth).
+    std::vector<flags> flag_scopes_;      //!< Stack of the flag set in force per nesting level; the top is current. Replaces a global `verbose_` read so a scoped `(?x:...)` is honoured (see \ref current_flags).
+    bool               in_lookaround_ {}; //!< True while parsing a lookaround sub-pattern (rejects nesting).
+    bool               bytes_         {}; //!< In \ref flags::bytes mode, rejects code-point escapes (`\u`/`\U`).
+    bool               ecma_          {}; //!< ECMAScript grammar: `\A \Z \< \>` are identity-escape literals, not anchors.
+    bool               icase_         {}; //!< `re.I`: a cased literal is promoted to a foldable singleton class.
+    bool               ascii_         {}; //!< `re.A`: `\d \w \s` stay ASCII (no Unicode property ranges).
+
+    //! \brief The flag set in force at the current nesting level (the scope-stack top).
+    [[nodiscard]] constexpr flags current_flags() const
+    {
+      return flag_scopes_.back();
+    }
+
+    //! \brief True when verbose mode (`re.X`) is in force here — read from the scope stack, so a
+    //!        scoped `(?x:...)` is honoured without a global flag read.
+    [[nodiscard]] constexpr bool is_verbose() const
+    {
+      return has_flag(current_flags(), flags::verbose);
+    }
 
     /*!
      * \brief In verbose mode, consumes insignificant whitespace and `#` comments.
      *
-     * No-op unless \ref verbose_. Called only between tokens outside character
+     * No-op unless \ref is_verbose. Called only between tokens outside character
      * classes; escaped whitespace (`\ `) is read as a literal by the escape
      * parser, never reaching here.
      */
     constexpr void skip_insignificant()
     {
-      if (!verbose_) {
+      if (!is_verbose()) {
         return;
       }
       while (!eof()) {
@@ -355,9 +372,12 @@ namespace real::detail {
      * \param[in]     node The node to append.
      * \return The index of the appended node.
      */
-    static constexpr std::int32_t add_node(ast&     out,
-                                           ast_node node)
+    constexpr std::int32_t add_node(ast&     out,
+                                    ast_node node)
     {
+      // Stamp the flag set in force where this node was parsed (from the scope stack). Carried for
+      // scoped-flag semantics; the compiler does not read it yet, so it does not change any program.
+      node.effective_flags = static_cast<std::uint8_t>(current_flags());
       out.nodes.push_back(node);
       return static_cast<std::int32_t>(out.nodes.size()) - 1;
     }
@@ -372,11 +392,11 @@ namespace real::detail {
      *                   not the byte-NFA.
      * \return The index of the new node.
      */
-    static constexpr std::int32_t add_class_node(ast&                           out,
-                                                 const char_class&              klass,
-                                                 bool                           negated,
-                                                 const std::vector<code_range>& ranges              = {},
-                                                 bool                           codepoint_predicate = false)
+    constexpr std::int32_t add_class_node(ast&                           out,
+                                          const char_class&              klass,
+                                          bool                           negated,
+                                          const std::vector<code_range>& ranges              = {},
+                                          bool                           codepoint_predicate = false)
     {
       out.classes.push_back({.ascii = klass, .ranges = ranges, .codepoint_predicate = codepoint_predicate});
       const auto index {static_cast<std::int32_t>(out.classes.size()) - 1};
@@ -751,6 +771,20 @@ namespace real::detail {
       return letter == 'i' || letter == 'm' || letter == 's' || letter == 'a' || letter == 'x';
     }
 
+    //! \brief True if \p value carries any flag other than verbose (`x`).
+    static constexpr bool has_non_verbose(flags value)
+    {
+      return (static_cast<unsigned>(value) & ~static_cast<unsigned>(flags::verbose)) != 0U;
+    }
+
+    //! \brief \p value with \p bit cleared.
+    static constexpr flags without(flags value,
+                                   flags bit)
+    {
+      return static_cast<flags>(
+        static_cast<std::uint8_t>(static_cast<unsigned>(value) & ~static_cast<unsigned>(bit)));
+    }
+
     /*!
      * \brief Consumes a leading `(?ims)` global-flags group, if present.
      *
@@ -781,7 +815,8 @@ namespace real::detail {
       }
       out.inline_flags = out.inline_flags | found;
       if (has_flag(found, flags::verbose)) {
-        verbose_ = true; // affects how the rest of the pattern is parsed
+        // A leading (?x) adds verbose to the base scope, affecting how the rest is parsed.
+        flag_scopes_.back() = flag_scopes_.back() | flags::verbose;
       }
       if (has_flag(found, flags::icase)) {
         icase_ = true;   // a leading (?i) makes cased literals foldable, like the constructor flag
@@ -816,8 +851,9 @@ namespace real::detail {
       if (++depth_ > max_nesting_depth) {
         fail("pattern nesting too deep");
       }
-      ++pos_; // consume '('
-      std::int32_t group {-1};
+      ++pos_;                            // consume '('
+      std::int32_t group        {-1};
+      bool         scoped_flags {false}; //!< A (?flags:...) group pushed a scope to pop after the body.
       if (accept('?')) {
         if (accept('#')) {
           // (?#...) comment: skip to the first ')' (a backslash is not special here, like re);
@@ -863,14 +899,46 @@ namespace real::detail {
         else if (!eof() && peek() == '(') {
           fail("conditional groups are not supported");
         }
-        else if (!eof() && is_flag_letter(peek())) {
+        else if (!eof() && (is_flag_letter(peek()) || peek() == '-')) {
+          // (?flags:...) / (?-flags:...) / (?flags-flags:...) — a scoped-flags group. Parse the
+          // added flags, an optional '-' and the removed flags.
+          flags added   {flags::none};
+          flags removed {flags::none};
           while (!eof() && is_flag_letter(peek())) {
+            added = added | flag_for_letter(peek());
             ++pos_;
           }
-          if (!eof() && peek() == ':') {
+          if (accept('-')) {
+            bool saw_negative {false};
+            while (!eof() && is_flag_letter(peek())) {
+              removed      = removed | flag_for_letter(peek());
+              saw_negative = true;
+              ++pos_;
+            }
+            if (!saw_negative) {
+              fail("missing flag after '-'");
+            }
+          }
+          if (!accept(':')) {
+            // An unscoped (?flags) is only legal at the very start of the pattern (consumed by
+            // parse_global_flags_prefix); anything else here is a misplaced global-flags group.
+            fail("global flags not at the start of the expression");
+          }
+          // Only verbose (x) is honoured as a scoped flag for now; a scoped i/a/s/m keeps the
+          // existing clean rejection until its own change. Verbose is the structurally separate
+          // case: it changes tokenization (whitespace / `#` comments), not a node's semantics.
+          if (has_non_verbose(added) || has_non_verbose(removed)) {
             fail("scoped inline flags are not supported");
           }
-          fail("global flags not at the start of the expression");
+          flags scope {current_flags()};
+          if (has_flag(added, flags::verbose)) {
+            scope = scope | flags::verbose;
+          }
+          if (has_flag(removed, flags::verbose)) {
+            scope = without(scope, flags::verbose);
+          }
+          flag_scopes_.push_back(scope);
+          scoped_flags = true; // group stays non-capturing (-1)
         }
         else {
           fail("unknown extension");
@@ -880,6 +948,9 @@ namespace real::detail {
         group = new_group(out, open_pos);
       }
       const std::int32_t body {parse_alternation(out)};
+      if (scoped_flags) {
+        flag_scopes_.pop_back(); // the scoped flags apply only to the body just parsed
+      }
       if (!accept(')')) {
         pos_ = open_pos;
         fail("missing ), unterminated subpattern");

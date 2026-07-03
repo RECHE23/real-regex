@@ -332,6 +332,34 @@ class TestParity(unittest.TestCase):
                 with self.assertRaises(real.error):
                     real.compile(bad)
 
+    def test_scoped_verbose_parity(self):
+        r"""(?x:...) scopes verbose mode: unescaped whitespace and #-comments are insignificant inside
+        the scope only. The boundaries — internal vs external space, comments, nesting, -x, a global
+        (?x) with a scoped island, bytes — all match re exactly."""
+        cases = [
+            (r"(?x:a )b", "ab", True), (r"(?x:a )b", "a b", False),
+            (r"(?x:a b)c d", "abc d", True), (r"(?x:a b)c d", "abcd", False),
+            ("(?x:a #comment\n b)d", "abd", True), ("(?x:a #comment\n b)d", "a b d", False),
+            (r"(?x:(?-x:a b))", "a b", True), (r"(?x:(?-x:a b))", "ab", False),
+            (r"(?-x:a(?x: b )c)", "abc", True), (r"(?-x:a(?x: b )c)", "a bc", False),
+            (r"(?x)a (?-x:b c) d", "ab cd", True), (r"(?x)a (?-x:b c) d", "abcd", False),
+            (r"(?x: a | b )", "a", True), (r"(?x: a | b )", "b", True),  # verbose across alternation
+        ]
+        for pattern, subject, _expected in cases:
+            with self.subTest(pattern=pattern, subject=subject):
+                self.assertEqual(self.match_facts(real.compile(pattern).fullmatch(subject)),
+                                 self.match_facts(re.compile(pattern).fullmatch(subject)))
+        # bytes mode scopes verbose identically
+        for pattern, subject in [(rb"(?x:a )b", b"ab"), (rb"(?x:a )b", b"a b")]:
+            with self.subTest(pattern=pattern, kind="bytes"):
+                self.assertEqual(self.match_facts(real.compile(pattern).fullmatch(subject)),
+                                 self.match_facts(re.compile(pattern).fullmatch(subject)))
+        # a scoped i/a/s/m is not yet supported — real rejects it (a documented, intentional gap)
+        for pending in [r"(?i:a)", r"(?s:.)", r"(?m:^)", r"(?a:\w)", r"(?-i:a)"]:
+            with self.subTest(pattern=pending):
+                with self.assertRaises(real.error):
+                    real.compile(pending)
+
     def test_sub_octal_and_group_escapes_parity(self):
         r"""Replacement digit escapes follow CPython: \0-prefixed and all-octal three-digit
         runs are octal escapes, the rest are group references. Parity with re on str and bytes,
