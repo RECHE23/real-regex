@@ -64,6 +64,20 @@ performance and `constexpr`-friendliness: there are no raw pointers to chase
 (cache-friendly) and no pointer-based ownership (so the whole tree is a literal
 value the compiler can build during compilation).
 
+**Scoped inline flags** (`(?i:…)`, `(?-x:…)`, `(?ms-i:…)`) are handled with a small
+**flag-scope stack** in the parser. The base of the stack is the constructor's flags
+(a leading `(?imsxa)` folds into it); entering a scoped group pushes a modified copy
+for its body and leaves pops it. The parser reads the current flags from the stack
+top — verbose changes tokenization there and then (insignificant whitespace and `#`
+comments), while every node it creates is **stamped with the flag set in force where
+it was parsed** (its `effective_flags`). The compiler then reads those per-node flags,
+not a global: a class folds under *its* node's `icase`, a `.` includes `\n` under *its*
+node's `dotall`, `^`/`$` pick their line-relative form from *its* node's `multiline`,
+and a word boundary carries its `ascii` word-ness. So one flag can be on for part of a
+pattern and off for another — the stack decides at parse time, the node bits carry the
+decision to compilation, and a pattern with no scoped group stamps every node identically
+and compiles byte-for-byte as before.
+
 \section g_compile 3. Compiling: AST → an NFA program (Thompson)
 
 \ref real::detail::compiler turns the tree into a flat *program* of

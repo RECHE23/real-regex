@@ -288,6 +288,29 @@ TEST(compat_backend_selection)
   // A POSIX grammar option forces the std backend up front.
   EXPECT(!rc::regex("a+", rc::regex_constants::extended).uses_real());
 
+  // Inline-flag groups: real accepts (?imsxa:...) with Python semantics, but ECMAScript has no inline
+  // flags, so compat routes them to std -- which rejects them, exactly as std::regex does. Compat stays
+  // ≡ std rather than silently applying re semantics. `(?:` `(?=` `(?<` are NOT flag groups and stay real.
+  for (const char* scoped : {"(?i:abc)", "(?-i:abc)", "(?ms:a.b)", "(?x: a b )", "(?a:\\w)"}) {
+    bool std_rejects {false};
+    try {
+      static_cast<void>(std::regex(scoped).mark_count());
+    }
+    catch (const std::regex_error&) {
+      std_rejects = true;
+    }
+    bool compat_rejects {false};
+    try {
+      const rc::regex r(scoped);
+      EXPECT(!r.uses_real()); // if std accepts it, compat used the std backend, not real
+    }
+    catch (const std::regex_error&) {
+      compat_rejects = true;
+    }
+    EXPECT_EQ(compat_rejects, std_rejects); // compat mirrors std exactly on inline-flag groups
+  }
+  EXPECT(rc::regex("(?:ab)+").uses_real()); // a non-capturing group is real-able (not a flag group)
+
   // `\0`+digit is screened to std (a both-accept divergence otherwise). std is platform-variant on
   // it (libstdc++/libc++ accept, MSVC-std rejects), so compat defers to the local std: throw iff std
   // throws; if both accept, it uses std (not real) and matches std.

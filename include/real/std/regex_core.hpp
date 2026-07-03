@@ -161,12 +161,23 @@ namespace real::compat {
     //! found this. (`\1`-`\9` already route to std via real's backreference rejection.)
     [[nodiscard]] inline bool pattern_forces_std(std::string_view p) noexcept
     {
+      const auto is_flag_or_dash = [](char c) {
+                                     return c == '-' || c == 'i' || c == 'm' || c == 's' || c == 'x' || c == 'a';
+                                   };
       for (std::size_t i = 0; i < p.size(); ++i) {
         if (p[i] == '\\') {
           if (i + 2 < p.size() && p[i + 1] == '0' && p[i + 2] >= '0' && p[i + 2] <= '9') {
             return true;
           }
           ++i; // consume the escaped character (so `\\0` is an escaped backslash, not `\0`)
+          continue;
+        }
+        // An inline-flags group `(?imsxa:...)` / `(?-...:...)` / a bare `(?imsxa)`: real accepts these
+        // (Python semantics), but ECMAScript has no inline flags, so std rejects them. Route to std so
+        // compat stays ≡ std — the char after `(?` is a flag letter or `-` only for a flag construct
+        // (`(?:` `(?=` `(?!` `(?<` `(?P` start with other characters). Over-routing here is safe.
+        if (p[i] == '(' && i + 2 < p.size() && p[i + 1] == '?' && is_flag_or_dash(p[i + 2])) {
+          return true;
         }
       }
       return false;

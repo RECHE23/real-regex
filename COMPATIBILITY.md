@@ -37,7 +37,8 @@ raise a clear error rather than sitting on a roadmap.
 | Variable-width lookbehind `(?<=a|bb)` | **extension** | bounded → still linear; `re`/PCRE reject it ([more](@ref div_lookbehind)) | — |
 | Word-edge anchors `\<` `\>` | **extension** | word-start / word-end; `re` has no such escape | — |
 | POSIX `[[:alpha:]]` classes | **supported** | exact `re`-parity: `re` reads them as a *literal* class (currently with a `FutureWarning`); REAL matches the same characters | — |
-| Free-spacing / DOTALL / MULTILINE / IGNORECASE | **supported** | `re` semantics (Python ≥ 3.11 inline-flag scoping) | — |
+| Global flags `i m s x a` (and `(?imsxa)` prefix) | **supported** | `re` semantics; `re.U` is a no-op, `re.L` excluded | — |
+| Scoped inline flags `(?imsxa:…)` / `(?-…:…)` / `(?…-…:…)` | **supported** | per-scope `i m s x a` (Python 3.11 semantics), exact `re`-parity in str and bytes | 2026.7 |
 
 ## How a pattern is routed
 
