@@ -66,6 +66,43 @@ namespace real {
     {}
 
     /*!
+     * \brief Engine-internal: re-run the search into this result's OWN slot buffer, reusing its
+     *        capacity. Not part of the public API.
+     *
+     * The match iterator holds one result and refreshes it in place each step. `vm.run` fills the slots
+     * via `assign`, which reuses the existing capacity, so a match-dense iteration allocates the slot
+     * vector once instead of once per match — the measured per-match cost (a fresh allocation is ~5x a
+     * reused one). A user-held copy of a previous match stays independent: copying a result deep-copies
+     * its slots, so refilling this one never disturbs it.
+     *
+     * \tparam Vm      The Pike VM type (kept a template to avoid a header cycle).
+     * \param[in] vm      The VM to run.
+     * \param[in] text    The searched text (borrowed).
+     * \param[in] pos     Start offset for the search.
+     * \param[in] mode    The run mode.
+     * \param[in] forbid  The empty-match forbid-until offset.
+     * \param[in] pattern The pattern text (for named-group resolution).
+     * \param[in] names   The regex's named-group table (borrowed).
+     * \return Whether a match occurred.
+     */
+    template <typename Vm>
+    constexpr bool engine_refill(Vm&                                  vm,
+                                 std::string_view                     text,
+                                 std::size_t                          pos,
+                                 detail::run_mode                     mode,
+                                 std::size_t                          forbid,
+                                 std::string_view                     pattern,
+                                 std::span<const detail::named_group> names)
+    {
+      const bool ok {vm.run(text, pos, mode, slots_, forbid)};
+      text_    = text;
+      matched_ = ok;
+      pattern_ = pattern;
+      names_   = names;
+      return ok;
+    }
+
+    /*!
      * \brief Returns `true` if the attempt matched.
      */
     [[nodiscard]] constexpr bool matched() const
@@ -295,16 +332,16 @@ namespace real {
         done_ = true;
         return;
       }
-      typename Storage::slot_storage slots;
-      detail::pike_vm                vm(prog_, state_);
-      if (!vm.run(text_, pos_, detail::run_mode::search, slots, forbid_empty_until_)) {
+      detail::pike_vm vm(prog_, state_);
+      // Refresh the one held result in place, reusing its slot buffer (no per-match allocation).
+      if (!current_.engine_refill(vm, text_, pos_, detail::run_mode::search, forbid_empty_until_,
+                                  pattern_, prog_.names)) {
         done_ = true;
         return;
       }
-      const std::size_t start {slots[0]};
-      const std::size_t end   {slots[1]};
-      current_ = value_type(text_, std::move(slots), true, pattern_, prog_.names);
-      pos_     = end;
+      const std::size_t start {current_.start(0)};
+      const std::size_t end   {current_.end(0)};
+      pos_ = end;
       if (end == start) {
         // CPython 3.7+: after an empty match, the next match may start at the
         // same position only if it is non-empty; another empty match there is

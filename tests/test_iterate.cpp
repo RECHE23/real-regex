@@ -178,3 +178,24 @@ TEST(find_iter_models_forward_iterator)
   ++it;
   EXPECT_EQ((*it)[0], "333"sv);
 }
+
+// The iterator refreshes one match in place across steps (reusing its slot buffer, the per-match diet),
+// so a saved COPY of an earlier match must stay independent of later ones. Collect every match by value
+// during iteration and check them all afterwards — the copies must not alias the reused buffer.
+TEST(find_iter_copies_survive_the_reused_buffer)
+{
+  const real::regex                                   rx("(\\w)(\\d+)");
+  auto                                                range {rx.find_iter("a1 b22 c333")};
+  std::vector<std::decay_t<decltype(*range.begin())>> saved;
+  for (const auto& match : range) {
+    saved.push_back(match); // a by-value copy — must own its slots
+  }
+  EXPECT_EQ(saved.size(), std::size_t {3});
+  EXPECT_EQ(saved[0][0], "a1"sv);
+  EXPECT_EQ(saved[0][1], "a"sv);
+  EXPECT_EQ(saved[0][2], "1"sv);
+  EXPECT_EQ(saved[1][0], "b22"sv);
+  EXPECT_EQ(saved[1][2], "22"sv);
+  EXPECT_EQ(saved[2][0], "c333"sv);
+  EXPECT_EQ(saved[2][2], "333"sv);
+}
