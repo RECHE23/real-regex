@@ -47,7 +47,7 @@ SCIFORGE_TOOLS ?= ../sciforge/tools
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep -vE 'include/real/unicode_(fold|props)\.hpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-        lint misra fuzz fuzz-compat tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
+        lint misra fuzz fuzz-compat exhaustive-compat tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
         python python-test bench-python bench-fuzz bench-engines \
         version-check install install-smoke uninstall release help
 
@@ -273,10 +273,25 @@ version-check:
 # GXX defaults to the CI GCC (g++-14); override with `make full-local-gate GXX=g++-13`. If it is
 # absent, the GCC leg is skipped with a warning (the g++-14 CI job is the backstop).
 GXX ?= g++-14
+# Exhaustive compat routing check: real::compat vs the LOCAL std::regex over the shared enumerator's
+# small tier-1 space (fuzz/exhaustive_compat.cpp). The oracle is the local std (compat's philosophy). The
+# Python enumerator emits patterns/inputs; the C++ runner consumes them. Passes when there is no SERIOUS
+# (span / accept-reject) divergence — a routing/screen bug. The nullable-loop group-capture class (real's
+# RE2/Rust/Go lineage vs std's empty-final iteration) is counted separately and reported. Tune the tier
+# with EC_K / EC_N; the default is the ~10 s PR tier, the nightly widens it.
+EC_K ?= 4
+EC_N ?= 6
+exhaustive-compat:
+	@mkdir -p $(BUILD)
+	@$(PYRUN) -c "from sciforge.corpus.exhaustive import enumerate_patterns as P, enumerate_inputs as I; open('$(BUILD)/ec_pats.txt','w').write(chr(10).join(P($(EC_K), tier=2))); open('$(BUILD)/ec_inps.txt','w').write(chr(10).join(I($(EC_N))))"
+	@$(CXX) $(CXXSTD) -O2 $(INCLUDES) fuzz/exhaustive_compat.cpp -o $(BUILD)/exhaustive_compat
+	@$(BUILD)/exhaustive_compat $(BUILD)/ec_pats.txt $(BUILD)/ec_inps.txt
+
 full-local-gate:
 	@$(MAKE) format-check
 	@$(MAKE) version-check
 	@$(MAKE) test
+	@$(MAKE) exhaustive-compat
 	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "full-local-gate: WARN — $(GXX) absent, GCC leg skipped (CI covers it)"; fi
 	@$(MAKE) sanitize
 	@$(MAKE) misra
