@@ -243,11 +243,22 @@ class PatternGen:
         """
         quant = self.rng.choice(_QUANTS)
         if quant not in _NONLOOP_QUANTS:
-            # Looping quantifier: the body must always consume, so wrap a bare
-            # consuming token only — never a group or an already-quantified
-            # atom (that is how nullable loops, the excluded divergence, arise).
+            # A looping quantifier. Occasionally build a NON-CAPTURING nullable loop — an empty
+            # alternation branch under * / + — the class that hid the greedy empty-preference span bug.
+            # Non-capturing keeps this a SPAN comparison (no group-capture divergence to exclude), so the
+            # differential catches a wrong loop span while the intentional capture divergence stays out.
+            if self.rng.random() < 0.15:
+                return "(?:" + self._nullable_alt(depth) + ")" + quant
+            # Otherwise the body must always consume: a bare consuming token only, never a group or an
+            # already-quantified atom (the OTHER way nullable loops — the capture divergence — arise).
             return self.rng.choice(_CONSUMING) + quant
         return self._atom(depth) + quant
+
+    def _nullable_alt(self, depth):
+        """Return an alternation with an empty branch (so the whole thing is nullable): ``|a`` / ``a|`` /
+        ``|a|b``. Used only inside a non-capturing group under a looping quantifier."""
+        body = self.rng.choice(["a", "b", "ab", "[ab]", "a[bc]"])
+        return self.rng.choice(["|" + body, body + "|", "|" + body + "|" + self.rng.choice("ab")])
 
     def _seq(self, depth):
         """Return a concatenated sequence of elements.
@@ -275,7 +286,11 @@ class PatternGen:
             str: An alternation pattern fragment.
         """
         n = self.rng.randint(1, 3)
-        return "|".join(self._seq(depth) for _ in range(n))
+        # With more than one branch, a branch may be EMPTY (the nullable-alternation class, e.g. `|a`):
+        # a quantified empty-first-branch group is where the greedy-loop empty-preference lives, and a
+        # generator that never emits it cannot exercise that path.
+        branches = ["" if n > 1 and self.rng.random() < 0.25 else self._seq(depth) for _ in range(n)]
+        return "|".join(branches)
 
     def pattern(self):
         """Generate a complete pattern, optionally surrounded by anchors.

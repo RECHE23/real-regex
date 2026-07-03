@@ -368,6 +368,10 @@ namespace real::detail {
     //! \brief Highest code point covered by the `cp_page` bitmap (the 2-byte UTF-8 range).
     static constexpr std::uint32_t cp_page_max {0x7FFU};
 
+    //! \brief Cap on how far a jump chain is followed to a loop head (empty-iteration exit routing);
+    //!        a loop join reaches its split in one hop, so this is a generous bound, never a hot cost.
+    static constexpr int max_loop_hops {8};
+
     /*!
      * \brief Builds (once, cached) and returns the `cp_class`'s membership bitmap over
      *        `[U+0080, U+07FF]` — a one-load replacement for the range search on the common
@@ -1313,21 +1317,26 @@ namespace real::detail {
         switch (instruction.op) {
           case opcode::jump:
             {
-              const std::int32_t target             {instruction.primary_target};
-              const instr&       target_instruction {prog_.code[static_cast<std::size_t>(target)]};
-              if (list.seen(target) && target_instruction.op == opcode::split) {
-                // A jump back to an already-entered split is a `*` loop iteration that matched EMPTY
-                // (the body made no progress). A greedy loop must EXIT there — keeping the empty
-                // iteration's priority — instead of re-looping (which the seen-guard would simply drop,
-                // letting a lower-priority consuming branch win). Route to the loop's exit branch. This
-                // makes `*` behave like `+`, whose end-split already sends an empty iteration to its
-                // exit via the same secondary target. (For a lazy loop the exit is the primary and is
-                // explored first, so the secondary pushed here is the already-seen loop branch — a
-                // harmless no-op.)
-                stack.push_back({.pc = target_instruction.secondary_target, .slot = 0, .restore_value = 0});
+              // A jump back to an already-entered loop split — directly, or through the loop's own
+              // already-seen join jump — is a `*` iteration that matched EMPTY (the body made no
+              // progress). A greedy loop must EXIT there, keeping the empty iteration's priority, rather
+              // than re-loop: the seen-guard would otherwise drop the empty thread, letting a
+              // lower-priority consuming branch win. Follow the chain of already-seen jumps to the loop
+              // head and, when it is a split, route to that split's exit (secondary). This makes `*`
+              // behave like `+` (whose end-split already sends an empty iteration to its exit), both at
+              // a seed and mid-run — one site, not two. (A lazy loop's exit is its primary, explored
+              // first, so the loop branch reached here is already seen and dedups — a no-op.)
+              std::int32_t head {instruction.primary_target};
+              for (int hops = 0; hops < max_loop_hops && list.seen(head)
+                   && prog_.code[static_cast<std::size_t>(head)].op == opcode::jump; ++hops) {
+                head = prog_.code[static_cast<std::size_t>(head)].primary_target;
+              }
+              const instr& head_instruction {prog_.code[static_cast<std::size_t>(head)]};
+              if (list.seen(head) && head_instruction.op == opcode::split) {
+                stack.push_back({.pc = head_instruction.secondary_target, .slot = 0, .restore_value = 0});
               }
               else {
-                stack.push_back({.pc = target, .slot = 0, .restore_value = 0});
+                stack.push_back({.pc = instruction.primary_target, .slot = 0, .restore_value = 0});
               }
             }
             break;
