@@ -12,7 +12,7 @@ jobs:
   # config. REAL has no dependency siblings; its one MISRA deviation (the SBO union)
   # lives in its Makefile's --checks, so nothing is passed here.
   lint:
-    uses: RECHE23/sciforge/.github/workflows/lint-cpp.yml@v2026.6.5
+    uses: RECHE23/sciforge/.github/workflows/lint-cpp.yml@v2026.7.0
     with:
       deps: '[]'
       sciforge-ref: v2026.7.0
@@ -26,7 +26,7 @@ jobs:
   # REAL is the public repo where contributor PRs warrant macOS coverage (the
   # private repos opt out, matching their pre-cat-B matrices).
   build:
-    uses: RECHE23/sciforge/.github/workflows/build-cpp.yml@v2026.6.5
+    uses: RECHE23/sciforge/.github/workflows/build-cpp.yml@v2026.7.0
     with:
       deps: '[]'
       sciforge-ref: v2026.7.0
@@ -97,7 +97,7 @@ jobs:
   # binding is a leaf (no dependency siblings); its exact prior coverage is
   # {linux, macOS, Windows} x {3.10, 3.14}, replicated by the platform toggles.
   python:
-    uses: RECHE23/sciforge/.github/workflows/python-cpp.yml@v2026.6.6
+    uses: RECHE23/sciforge/.github/workflows/python-cpp.yml@v2026.7.0
     with:
       python-versions: '["3.10","3.14"]'
       sciforge-ref: v2026.7.0
