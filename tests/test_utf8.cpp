@@ -7,23 +7,16 @@
 #include <string_view>
 
 #include <sciforge/test/framework.hpp>
+#include <sciforge/test/strings.hpp>
 #include "real/real.hpp"
 #include "real/utf8.hpp"
 
 using real::flags;
 using real::regex;
+using test::bytes; // a byte string from explicit byte values (boundary / malformed sequences)
+using test::cat;   // concatenate views without a chained operator+
 
 namespace {
-
-  // A byte string from explicit byte values (for boundary / malformed sequences).
-  std::string bytes(std::initializer_list<int> values)
-  {
-    std::string result;
-    for (const int value : values) {
-      result += static_cast<char>(value);
-    }
-    return result;
-  }
 
   // Whole-match byte length of the leftmost match, or std::string::npos if there is no match.
   std::size_t match_len(const std::string& pattern,
@@ -33,16 +26,6 @@ namespace {
     const regex r(pattern, f);
     const auto  m {r.search(text)};
     return m.matched() ? m.end(0) - m.start(0) : std::string::npos;
-  }
-
-  // Concatenate parts without a chained operator+ (which allocates intermediate temporaries).
-  std::string cat(std::initializer_list<std::string_view> parts)
-  {
-    std::string result;
-    for (const std::string_view part : parts) {
-      result.append(part);
-    }
-    return result;
   }
 
   // lvalue-safe wrappers (search/fullmatch delete the rvalue-string overload to avoid dangling).

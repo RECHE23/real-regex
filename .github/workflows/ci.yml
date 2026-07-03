@@ -15,7 +15,7 @@ jobs:
     uses: RECHE23/sciforge/.github/workflows/lint-cpp.yml@v2026.6.5
     with:
       deps: '[]'
-      sciforge-ref: v2026.6.5
+      sciforge-ref: v2026.7.0
       runner-mode: hosted
 
   # POSIX + CMake build via SciForge's reusable build spine, fully collapsed: the
@@ -29,7 +29,7 @@ jobs:
     uses: RECHE23/sciforge/.github/workflows/build-cpp.yml@v2026.6.5
     with:
       deps: '[]'
-      sciforge-ref: v2026.6.5
+      sciforge-ref: v2026.7.0
       runner-mode: hosted
       enable-macos: true
       enable-windows-msvc: true
@@ -100,7 +100,7 @@ jobs:
     uses: RECHE23/sciforge/.github/workflows/python-cpp.yml@v2026.6.6
     with:
       python-versions: '["3.10","3.14"]'
-      sciforge-ref: v2026.6.6
+      sciforge-ref: v2026.7.0
       deps: '[]'
       runner-mode: hosted
       enable-macos: true

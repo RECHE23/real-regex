@@ -8,30 +8,23 @@
 #include <string_view>
 
 #include <sciforge/test/framework.hpp>
+#include <sciforge/test/strings.hpp>
 #include "real/real.hpp"
 
 using namespace std::string_view_literals;
 
 namespace {
   // UTF-8 bytes of some code points used across lengths (string_view: no throwing static init).
-  constexpr std::string_view kKelvin {"\xE2\x84\xAA"};      // U+212A KELVIN SIGN (3 bytes), a word char
-  constexpr std::string_view kEuro   {"\xE2\x82\xAC"};      // U+20AC (3 bytes), NOT a word char
-  constexpr std::string_view kClef   {"\xF0\x9D\x84\x9E"};  // U+1D11E (4 bytes), NOT a word char
-  constexpr std::string_view kMathA  {"\xF0\x9D\x90\x80"};  // U+1D400 MATH BOLD CAPITAL A (4 bytes), word
-  constexpr std::string_view kEacute {"\xC3\xA9"};          // U+00E9 é (2 bytes), a word char
-  constexpr std::string_view kArab3  {"\xD9\xA3"};          // U+0663 ARABIC-INDIC THREE (2 bytes), word + digit
-  constexpr std::string_view kSuper2 {"\xC2\xB2"};          // U+00B2 SUPERSCRIPT TWO (2 bytes), word, NOT digit
-  constexpr std::string_view kCombAcc{"\xCC\x81"};          // U+0301 COMBINING ACUTE (2 bytes), NOT a word char
+  constexpr std::string_view kKelvin {"\xE2\x84\xAA"};     // U+212A KELVIN SIGN (3 bytes), a word char
+  constexpr std::string_view kEuro   {"\xE2\x82\xAC"};     // U+20AC (3 bytes), NOT a word char
+  constexpr std::string_view kClef   {"\xF0\x9D\x84\x9E"}; // U+1D11E (4 bytes), NOT a word char
+  constexpr std::string_view kMathA  {"\xF0\x9D\x90\x80"}; // U+1D400 MATH BOLD CAPITAL A (4 bytes), word
+  constexpr std::string_view kEacute {"\xC3\xA9"};         // U+00E9 é (2 bytes), a word char
+  constexpr std::string_view kArab3  {"\xD9\xA3"};         // U+0663 ARABIC-INDIC THREE (2 bytes), word + digit
+  constexpr std::string_view kSuper2 {"\xC2\xB2"};         // U+00B2 SUPERSCRIPT TWO (2 bytes), word, NOT digit
+  constexpr std::string_view kCombAcc{"\xCC\x81"};         // U+0301 COMBINING ACUTE (2 bytes), NOT a word char
 
-  // Concatenate parts into an owned std::string (the match API takes a string_view into it).
-  std::string cat(std::initializer_list<std::string_view> parts)
-  {
-    std::string out;
-    for (const std::string_view part : parts) {
-      out += part;
-    }
-    return out;
-  }
+  using test::cat;                                         // concatenate views into an owned std::string (the match API views into it)
 } // namespace
 
 TEST(klass_cp_lengths_1_to_4)

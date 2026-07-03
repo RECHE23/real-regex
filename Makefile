@@ -41,12 +41,13 @@ SCIFORGE_INCLUDE ?= ../sciforge/include
 # SciForge also owns the shared lint config (the MISRA base + uncrustify.cfg), in
 # its lint/ dir. Same sibling default; CI checks SciForge out alongside as ../sciforge.
 SCIFORGE_LINT ?= ../sciforge/lint
+SCIFORGE_TOOLS ?= ../sciforge/tools
 # unicode_fold.hpp and unicode_props.hpp are generated (their scripts own the layout; the regen tests
 # pin them), so they are excluded from the hand-written-code formatter.
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep -vE 'include/real/unicode_(fold|props)\.hpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-        lint misra fuzz fuzz-compat tsan doc doc-no-coverage format format-check full-local-gate clean \
+        lint misra fuzz fuzz-compat tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
         python python-test bench-python bench-fuzz bench-engines \
         version-check install install-smoke uninstall release help
 
@@ -280,9 +281,21 @@ full-local-gate:
 	@$(MAKE) sanitize
 	@$(MAKE) misra
 	@$(MAKE) doc-no-coverage
+	@$(MAKE) doc-check
 	@$(MAKE) python-test
 	@$(MAKE) lint | tee $(BUILD)/lint.log; ! grep -qE 'warning:|error:' $(BUILD)/lint.log
-	@echo "full-local-gate: ALL gates green (clang + $(GXX) when present, sanitize, MISRA, lint, doc, python, version-check)"
+	@echo "full-local-gate: ALL gates green (clang + $(GXX) when present, sanitize, MISRA, lint, doc, doc-check, python, version-check)"
+
+# doc-check builds the docs under the EXACT CI Doxygen (1.9.8, in Docker) via the shared SciForge tool,
+# so a warning the developer's newer local Doxygen tolerates cannot slip past to CI or a release (the
+# gate-hole that shipped a broken Docs build before). Skipped with a warning when Docker or the tool is
+# absent — visible, never a false green; the Docs CI job is the backstop.
+doc-check:
+	@if command -v docker >/dev/null 2>&1 && test -x $(SCIFORGE_TOOLS)/doxygen-check.sh; then \
+	   $(SCIFORGE_TOOLS)/doxygen-check.sh . Doxyfile; \
+	 else \
+	   echo "doc-check: WARN — Docker or $(SCIFORGE_TOOLS)/doxygen-check.sh absent, CI-Doxygen check skipped (the Docs CI job is the backstop)"; \
+	 fi
 
 bench-python: python
 	$(PYRUN) benchmarks/bench.py
