@@ -194,9 +194,10 @@ TEST(search_keeps_seeding_after_dead_assertions)
 TEST(flag_errors)
 {
   EXPECT_THROWS(real::regex("a(?i)b"), real::regex_error); // not at start
-  EXPECT_THROWS(real::regex("(?i:a)"), real::regex_error); // scoped: unsupported
+  EXPECT_THROWS(real::regex("(?s:.)"), real::regex_error); // scoped dotall: not yet supported
   EXPECT_THROWS(real::regex("(?u)a"), real::regex_error);  // unicode classes: unsupported
   EXPECT(real::regex("(?x) a b").fullmatch("ab"));         // verbose: supported
+  EXPECT(real::regex("(?i:a)").fullmatch("A"));            // scoped icase: supported
 }
 
 TEST(ecma_flag_dollar_end_only)

@@ -354,8 +354,44 @@ class TestParity(unittest.TestCase):
             with self.subTest(pattern=pattern, kind="bytes"):
                 self.assertEqual(self.match_facts(real.compile(pattern).fullmatch(subject)),
                                  self.match_facts(re.compile(pattern).fullmatch(subject)))
-        # a scoped i/a/s/m is not yet supported — real rejects it (a documented, intentional gap)
-        for pending in [r"(?i:a)", r"(?s:.)", r"(?m:^)", r"(?a:\w)", r"(?-i:a)"]:
+        # a scoped s/m is not yet supported — real rejects it (a documented, intentional gap)
+        for pending in [r"(?s:.)", r"(?m:^)", r"(?-s:.)"]:
+            with self.subTest(pattern=pending):
+                with self.assertRaises(real.error):
+                    real.compile(pending)
+
+    def test_scoped_icase_ascii_parity(self):
+        r"""(?i:...) and (?a:...) scope case-folding and the \w\d\s / \b tables. The crossings — a
+        scoped island beside its opposite in one pattern, nesting, ASCII and Unicode tables coexisting,
+        \b word-ness per scope — all match re exactly, in str and (where applicable) bytes."""
+        cases = [
+            # scoped icase folds within the island only
+            (r"(?i:é)X", "ÉX", True), (r"(?i:é)X", "éx", False),   # é folds, X stays cased
+            (r"(?i:k)", "K", True),                                # k -> Kelvin under scoped icase
+            (r"(?i:[k])", "K", True), (r"[k]", "K", False),        # scoped-icase class vs plain
+            (r"(?-i:K)", "K", True),                               # island of case-sensitivity ...
+            (r"(?i:(?-i:k)K)", "kK", True), (r"(?i:(?-i:k)K)", "KK", False),  # ... nested
+            # ascii scope selects the shorthand tables; both coexist in one pattern
+            (r"(?a:\w)", "é", False), (r"\w", "é", True),
+            (r"(?a:\w)\w", "aé", True),                            # ASCII then Unicode
+            (r"(?a:\d)", "٠", False), (r"\d", "٠", True),
+            # \b word-ness follows the scope
+            (r"(?a:\bx)", "éx", True), (r"\bx", "éx", False),
+        ]
+        for pattern, subject, _expected in cases:
+            with self.subTest(pattern=pattern, subject=subject):
+                self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
+                                 self.match_facts(re.compile(pattern).search(subject)))
+        # icase-global pattern with a negative island (the island turns folding off)
+        self.assertEqual(bool(real.compile("(?-i:K)", real.I).fullmatch("K")),
+                         bool(re.compile("(?-i:K)", re.I).fullmatch("K")))
+        # bytes mode: re accepts (?i:...) and folds ASCII only
+        for pattern, subject in [(rb"(?i:k)", b"K"), (rb"(?i:k)", b"\xe2\x84\xaa")]:  # K, Kelvin utf-8
+            with self.subTest(pattern=pattern, kind="bytes"):
+                self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
+                                 self.match_facts(re.compile(pattern).search(subject)))
+        # a scoped Unicode-mode pattern still rejects a DFA build cleanly (unchanged behaviour)
+        for pending in [r"(?s:.)", r"(?m:^)"]:
             with self.subTest(pattern=pending):
                 with self.assertRaises(real.error):
                     real.compile(pending)

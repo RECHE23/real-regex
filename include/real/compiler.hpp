@@ -544,9 +544,13 @@ namespace real::detail {
      */
     [[nodiscard]] constexpr class_def effective_class(const ast_node& node) const
     {
-      class_def folded {tree_.classes[static_cast<std::size_t>(node.klass)]};
-      if (has_flag(flags_, flags::icase)) {
-        if (has_flag(flags_, flags::bytes) || has_flag(flags_, flags::ascii)) {
+      // icase and ascii are read from the node's own scope (stamped by the parser from the flag-scope
+      // stack), so a scoped (?i:...) / (?a:...) folds and picks tables per scope. bytes is not scopable
+      // and stays global.
+      const flags node_flags {static_cast<flags>(node.effective_flags)};
+      class_def   folded     {tree_.classes[static_cast<std::size_t>(node.klass)]};
+      if (has_flag(node_flags, flags::icase)) {
+        if (has_flag(flags_, flags::bytes) || has_flag(node_flags, flags::ascii)) {
           fold_ascii_case(folded.ascii);     // bytes / ASCII mode (re.A): ASCII-only fold, no Unicode partners
         }
         else {
@@ -641,7 +645,18 @@ namespace real::detail {
             break;
           }
         case node_kind::anchor:
-          emit(prog, {.op = opcode::assert_position, .arg8 = static_cast<std::uint8_t>(assert_kind_for(node.anchor))});
+          {
+            // Word-boundary asserts (\b \B \< \>) carry a per-instruction FLIP bit: 1 when this node's
+            // word-ness differs from the program default (a scoped (?a:...) / (?-a:...) island), else 0.
+            // A non-scoped pattern is all-0 here, so its program is byte-identical to before. The flip
+            // is harmless for the other assert kinds, which ignore arg16.
+            const bool prog_unicode {!has_flag(flags_, flags::bytes) && !has_flag(flags_, flags::ascii)};
+            const bool node_unicode {!has_flag(flags_, flags::bytes)
+                                     && !has_flag(static_cast<flags>(node.effective_flags), flags::ascii)};
+            emit(prog, {.op    = opcode::assert_position,
+                        .arg8  = static_cast<std::uint8_t>(assert_kind_for(node.anchor)),
+                        .arg16 = node_unicode != prog_unicode ? std::uint16_t {1} : std::uint16_t {0}});
+          }
           break;
         case node_kind::concat:
           for (std::int32_t child = node.child; child != -1;

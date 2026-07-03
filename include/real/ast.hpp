@@ -231,9 +231,7 @@ namespace real::detail {
                               flags            initial_flags = flags::none)
       : pattern_(pattern),
         bytes_(has_flag(initial_flags, flags::bytes)),
-        ecma_(has_flag(initial_flags, flags::ecma)),
-        icase_(has_flag(initial_flags, flags::icase)),
-        ascii_(has_flag(initial_flags, flags::ascii))
+        ecma_(has_flag(initial_flags, flags::ecma))
     {
       // The scope stack holds the flag set in force at each nesting level; the base is the
       // constructor's flags. A scoped group (?flags:...) pushes a modified copy for its body.
@@ -265,8 +263,6 @@ namespace real::detail {
     bool               in_lookaround_ {}; //!< True while parsing a lookaround sub-pattern (rejects nesting).
     bool               bytes_         {}; //!< In \ref flags::bytes mode, rejects code-point escapes (`\u`/`\U`).
     bool               ecma_          {}; //!< ECMAScript grammar: `\A \Z \< \>` are identity-escape literals, not anchors.
-    bool               icase_         {}; //!< `re.I`: a cased literal is promoted to a foldable singleton class.
-    bool               ascii_         {}; //!< `re.A`: `\d \w \s` stay ASCII (no Unicode property ranges).
 
     //! \brief The flag set in force at the current nesting level (the scope-stack top).
     [[nodiscard]] constexpr flags current_flags() const
@@ -279,6 +275,18 @@ namespace real::detail {
     [[nodiscard]] constexpr bool is_verbose() const
     {
       return has_flag(current_flags(), flags::verbose);
+    }
+
+    //! \brief True when icase (`re.I`) is in force at the current scope (a scoped `(?i:...)` honoured).
+    [[nodiscard]] constexpr bool is_icase() const
+    {
+      return has_flag(current_flags(), flags::icase);
+    }
+
+    //! \brief True when ascii (`re.A`) is in force at the current scope (a scoped `(?a:...)` honoured).
+    [[nodiscard]] constexpr bool is_ascii_mode() const
+    {
+      return has_flag(current_flags(), flags::ascii);
     }
 
     /*!
@@ -412,7 +420,7 @@ namespace real::detail {
     //!        true in the default text mode, false in bytes mode or under `flags::ascii` (`re.A`).
     [[nodiscard]] constexpr bool text_shorthand() const
     {
-      return !bytes_ && !ascii_;
+      return !bytes_ && !is_ascii_mode();
     }
 
     /*!
@@ -453,7 +461,7 @@ namespace real::detail {
     [[nodiscard]] constexpr std::vector<code_range> shorthand_ranges(std::span<const code_range> table) const
     {
       std::vector<code_range> out;
-      if (bytes_ || ascii_) {
+      if (bytes_ || is_ascii_mode()) {
         return out;
       }
       for (const code_range& r : table) {
@@ -771,10 +779,11 @@ namespace real::detail {
       return letter == 'i' || letter == 'm' || letter == 's' || letter == 'a' || letter == 'x';
     }
 
-    //! \brief True if \p value carries any flag other than verbose (`x`).
-    static constexpr bool has_non_verbose(flags value)
+    //! \brief True if \p value carries a flag that is not yet scopable (multiline `m` / dotall `s`).
+    //!        Verbose (`x`), icase (`i`) and ascii (`a`) are honoured per scope; the rest are rejected.
+    static constexpr bool has_unsupported_scope_flag(flags value)
     {
-      return (static_cast<unsigned>(value) & ~static_cast<unsigned>(flags::verbose)) != 0U;
+      return has_flag(value, flags::multiline) || has_flag(value, flags::dotall);
     }
 
     //! \brief \p value with \p bit cleared.
@@ -814,16 +823,10 @@ namespace real::detail {
         return false;
       }
       out.inline_flags = out.inline_flags | found;
-      if (has_flag(found, flags::verbose)) {
-        // A leading (?x) adds verbose to the base scope, affecting how the rest is parsed.
-        flag_scopes_.back() = flag_scopes_.back() | flags::verbose;
-      }
-      if (has_flag(found, flags::icase)) {
-        icase_ = true;   // a leading (?i) makes cased literals foldable, like the constructor flag
-      }
-      if (has_flag(found, flags::ascii)) {
-        ascii_ = true;   // a leading (?a) keeps the shorthands ASCII, like the constructor flag
-      }
+      // A leading (?flags) group sets the base scope, so the rest of the pattern is parsed under it —
+      // verbose affects tokenization, icase/ascii affect literal folding and the \w\d\s tables. This
+      // mirrors the constructor flags, which seed the same base scope.
+      flag_scopes_.back() = flag_scopes_.back() | found;
       return true;
     }
 
@@ -924,20 +927,13 @@ namespace real::detail {
             // parse_global_flags_prefix); anything else here is a misplaced global-flags group.
             fail("global flags not at the start of the expression");
           }
-          // Only verbose (x) is honoured as a scoped flag for now; a scoped i/a/s/m keeps the
-          // existing clean rejection until its own change. Verbose is the structurally separate
-          // case: it changes tokenization (whitespace / `#` comments), not a node's semantics.
-          if (has_non_verbose(added) || has_non_verbose(removed)) {
+          // Verbose (x), icase (i) and ascii (a) are honoured per scope; multiline (m) and dotall (s)
+          // are not scopable yet and keep the existing clean rejection. Verbose changes tokenization,
+          // while icase/ascii govern literal folding and the \w\d\s tables — all read from the scope.
+          if (has_unsupported_scope_flag(added) || has_unsupported_scope_flag(removed)) {
             fail("scoped inline flags are not supported");
           }
-          flags scope {current_flags()};
-          if (has_flag(added, flags::verbose)) {
-            scope = scope | flags::verbose;
-          }
-          if (has_flag(removed, flags::verbose)) {
-            scope = without(scope, flags::verbose);
-          }
-          flag_scopes_.push_back(scope);
+          flag_scopes_.push_back(without(current_flags() | added, removed));
           scoped_flags = true; // group stays non-capturing (-1)
         }
         else {
@@ -1329,7 +1325,7 @@ namespace real::detail {
     constexpr std::int32_t emit_literal_codepoint(ast&         out,
                                                   std::int32_t cp)
     {
-      if (icase_) {
+      if (is_icase()) {
         const bool ascii_letter {(cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z')};
         if (ascii_letter) {
           char_class bitmap;

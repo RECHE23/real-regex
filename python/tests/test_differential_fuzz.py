@@ -209,7 +209,28 @@ class PatternGen:
             str: A group pattern fragment.
         """
         inner = self._alt(depth + 1)
+        if self.rng.random() < 0.15:
+            return self._scoped_flag_group(inner)
         return ("(?:" if self.rng.random() < 0.5 else "(") + inner + ")"
+
+    def _scoped_flag_group(self, inner):
+        """Return a scoped inline-flags group over {i, a, x} — the flags REAL scopes — with an optional
+        negative part: e.g. ``(?i:...)``, ``(?a-i:...)``, ``(?-x:...)``. Nesting and negative islands
+        arise naturally from the recursion. Both engines apply these identically.
+
+        Args:
+            inner (str): The already-generated group body.
+
+        Returns:
+            str: A ``(?flags:...)`` / ``(?flags-flags:...)`` fragment.
+        """
+        letters = "iax"
+        added = "".join(c for c in letters if self.rng.random() < 0.5)
+        removed = "".join(c for c in letters if c not in added and self.rng.random() < 0.4)
+        if not added and not removed:
+            added = self.rng.choice(letters)
+        spec = added + ("-" + removed if removed else "")
+        return "(?" + spec + ":" + inner + ")"
 
     def _element(self, depth):
         """Return an atom with a quantifier, avoiding nullable loop bodies.

@@ -908,7 +908,7 @@ namespace real::detail {
           out_slots[instruction.arg16] = cand + consumed;
         }
         else if (instruction.op == opcode::assert_position) {
-          if (!assertion_holds(static_cast<assert_kind>(instruction.arg8), cand + consumed)) {
+          if (!assertion_holds(static_cast<assert_kind>(instruction.arg8), cand + consumed, instruction.arg16 != 0U)) {
             out_slots.assign(prog_.slot_count, npos);
             return false;
           }
@@ -1059,16 +1059,17 @@ namespace real::detail {
      *        \p pos, so a malformed or misaligned run reads as non-word; bytes / `re.A` stay byte-level.
      *        This is the shared frontier notion (the same decode that codepoint alignment uses).
      */
-    [[nodiscard]] constexpr bool word_before(std::size_t pos) const
+    [[nodiscard]] constexpr bool word_before(std::size_t pos,
+                                             bool        ascii_word) const
     {
       if (pos == 0) {
         return false;
       }
       const auto prev {static_cast<std::uint8_t>(text_[pos - 1])};
       // ASCII fast path: an ASCII byte is a whole one-byte code point, and is_word_cp agrees with
-      // is_ascii_word_byte on it — so the common case skips the back-decode entirely. Bytes /
-      // re.A always take this path.
-      if (prev < 0x80U || !prog_.unicode_word) {
+      // is_ascii_word_byte on it — so the common case skips the back-decode entirely. Bytes / re.A —
+      // and a scoped (?a:...) — carry ascii_word from the assert instruction and always take this path.
+      if (prev < 0x80U || ascii_word) {
         return is_ascii_word_byte(prev);
       }
       std::size_t i     {pos - 1};
@@ -1086,13 +1087,14 @@ namespace real::detail {
 
     //! \brief Word-ness of the code point **starting at** \p pos — the right side of a boundary. False
     //!        at the text end or on a malformed sequence; bytes / `re.A` stay byte-level.
-    [[nodiscard]] constexpr bool word_after(std::size_t pos) const
+    [[nodiscard]] constexpr bool word_after(std::size_t pos,
+                                            bool        ascii_word) const
     {
       if (pos >= text_.size()) {
         return false;
       }
       const auto here {static_cast<std::uint8_t>(text_[pos])};
-      if (here < 0x80U || !prog_.unicode_word) { // ASCII byte (or bytes / re.A): byte-level, no decode
+      if (here < 0x80U || ascii_word) { // ASCII byte (or bytes / re.A / scoped (?a:)): byte-level, no decode
         return is_ascii_word_byte(here);
       }
       const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, pos)};
@@ -1103,11 +1105,18 @@ namespace real::detail {
      * \brief Evaluates a zero-width assertion at \p pos in the current text.
      * \param[in] kind The assertion to evaluate.
      * \param[in] pos  The position at which to evaluate it.
+     * \param[in] word_ness_flipped For a word assert (`\b \B \< \>`), whether this instruction flips
+     *            the program's default word-ness — set for a scoped `(?a:...)` / `(?-a:...)` island.
      * \return `true` if the assertion holds there.
      */
     [[nodiscard]] constexpr bool assertion_holds(assert_kind kind,
-                                                 std::size_t pos) const
+                                                 std::size_t pos,
+                                                 bool        word_ness_flipped) const
     {
+      // A word assert's word-ness is the program default (\ref program_view::unicode_word), flipped by
+      // the instruction's flip bit for a scoped (?a:...) / (?-a:...) island — so non-scoped programs
+      // keep flip == 0 and are byte-identical. ascii_word == unicode default matches iff not flipped.
+      const bool        ascii_word {prog_.unicode_word == word_ness_flipped};
       const std::size_t len {text_.size()};
       const auto        byte_at = [&](std::size_t i) { return static_cast<std::uint8_t>(text_[i]); };
       bool              result {};
@@ -1130,16 +1139,16 @@ namespace real::detail {
         case assert_kind::word_boundary:
         case assert_kind::not_word_boundary:
           {
-            const bool before {word_before(pos)};
-            const bool after  {word_after(pos)};
+            const bool before {word_before(pos, ascii_word)};
+            const bool after  {word_after(pos, ascii_word)};
             result = (before != after) == (kind == assert_kind::word_boundary);
           }
           break;
         case assert_kind::word_start:
         case assert_kind::word_end:
           {
-            const bool before {word_before(pos)};
-            const bool after  {word_after(pos)};
+            const bool before {word_before(pos, ascii_word)};
+            const bool after  {word_after(pos, ascii_word)};
             result = kind == assert_kind::word_start ? (!before && after) : (before && !after);
           }
           break;
@@ -1318,7 +1327,7 @@ namespace real::detail {
             stack.push_back({.pc              = pc + 1, .slot = 0, .restore_value = 0});
             break;
           case opcode::assert_position:
-            if (assertion_holds(static_cast<assert_kind>(instruction.arg8), pos)) {
+            if (assertion_holds(static_cast<assert_kind>(instruction.arg8), pos, instruction.arg16 != 0U)) {
               stack.push_back({.pc = pc + 1, .slot = 0, .restore_value = 0});
             }
             break;
@@ -1553,7 +1562,7 @@ namespace real::detail {
             stack.push_back({.pc = pc + 1, .slot = 0, .restore_value = 0});
             break;
           case opcode::assert_position:
-            if (assertion_holds(static_cast<assert_kind>(in.arg8), pos)) {
+            if (assertion_holds(static_cast<assert_kind>(in.arg8), pos, in.arg16 != 0U)) {
               stack.push_back({.pc = pc + 1, .slot = 0, .restore_value = 0});
             }
             break;
