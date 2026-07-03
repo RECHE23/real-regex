@@ -7,6 +7,7 @@ default (no re.ASCII); bytes patterns are compared byte-for-byte.
 """
 
 import re
+import sys
 import unittest
 
 import real
@@ -261,6 +262,75 @@ class TestParity(unittest.TestCase):
             with self.subTest(pattern=pattern, kind="bytes"):
                 self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
                                  self.match_facts(re.compile(pattern).search(subject)))
+
+    def test_z_anchor_parity(self):
+        r"""\z is an exact alias of \Z (end of text, no MULTILINE interaction) — Python 3.14
+        added it that way. Parity with re where re supports it (3.14+); always == \Z in REAL."""
+        for pattern, subject in [(r"a\z", "a"), (r"a\z", "a\n"), (r"a\z", "ab"),
+                                 (r"(?m)a\z", "a\na"), (r"a\Z", "a")]:
+            with self.subTest(pattern=pattern):
+                # \z always equals \Z in REAL, on str and bytes.
+                self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
+                                 self.match_facts(real.compile(pattern.replace(r"\z", r"\Z")).search(subject)))
+                if sys.version_info >= (3, 14):
+                    self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
+                                     self.match_facts(re.compile(pattern, _text_oracle(pattern, 0)).search(subject)))
+
+    def test_named_character_escape_parity(self):
+        r"""\N{NAME} resolves a Unicode character name (via the binding's unicodedata rewrite);
+        \N{U+XXXX} is REAL's scalar form. Parity with re on names; bytes rejects like re."""
+        for name, subject in [("LATIN SMALL LETTER A", "a"), ("BULLET", "•"),
+                              ("GREEK SMALL LETTER ALPHA", "α"), ("SNOWMAN", "☃")]:
+            pattern = r"\N{%s}" % name
+            with self.subTest(name=name):
+                self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
+                                 self.match_facts(re.compile(pattern).search(subject)))
+                # the binding rewrites the name to the same scalar the engine accepts directly.
+                scalar = r"\N{U+%04X}" % ord(subject)
+                self.assertTrue(real.compile(scalar).fullmatch(subject))
+        # in a class, for free (textual rewrite)
+        self.assertTrue(real.compile(r"[\N{BULLET}x]").fullmatch("•"))
+        # The rewrite is a backslash-parity state machine, not a look-at-previous-char: an odd run of
+        # backslashes before N{ is an escape, an even run is a literal backslash + N. Test 1/2/3 runs.
+        rewrite = real._rewrite_named_chars
+        self.assertEqual(rewrite(r"\N{BULLET}"), r"\N{U+2022}")       # 1 backslash: an escape, rewritten
+        self.assertEqual(rewrite(r"\\N{BULLET}"), r"\\N{BULLET}")     # 2: literal '\' + N{, untouched
+        self.assertEqual(rewrite(r"\\\N{BULLET}"), r"\\\N{U+2022}")   # 3: literal '\' + escape, rewritten
+        # Byte-identity of the fast path: a pattern with no \N is returned unchanged (same C++ program).
+        for untouched in [r"abc\d+", r"[\w-]{2,4}", r"\\N is a literal", r"(?P<x>A)"]:
+            self.assertEqual(rewrite(untouched), untouched)
+        # NB: the rewrite shifts byte offsets, so a compile error's position is measured in the rewritten
+        # pattern, not the original — an accepted, documented trade (no offset remap).
+        # an unknown name is a clean error, like re's "undefined character name ...".
+        with self.assertRaises(real.error):
+            real.compile(r"\N{NOT A REAL NAME}")
+        with self.assertRaises(re.error):
+            re.compile(r"\N{NOT A REAL NAME}")
+        # bytes patterns reject \N (no code-point meaning), matching re.
+        with self.assertRaises(real.error):
+            real.compile(rb"\N{U+0041}")
+        with self.assertRaises(re.error):
+            re.compile(rb"\N{LATIN SMALL LETTER A}")
+
+    def test_class_octal_escape_parity(self):
+        r"""Inside a class every \digit is octal — there are no back-references in a class (re's
+        rule): \1-\7 (one digit), \12 (two), \101 (three). str + bytes; \8/\9 and >0o377 error."""
+        str_cases = [(r"[\1]", "\x01"), (r"[\7]", "\x07"), (r"[\12]", "\n"), (r"[\101]", "A"),
+                     (r"[\18]", "\x01"), (r"[\18]", "8"), (r"[\0]", "\x00"), (r"[a\101b]", "A")]
+        for pattern, subject in str_cases:
+            with self.subTest(pattern=pattern, kind="str"):
+                self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
+                                 self.match_facts(re.compile(pattern, _text_oracle(pattern, 0)).search(subject)))
+        for pattern, subject in [(rb"[\1]", b"\x01"), (rb"[\12]", b"\n"), (rb"[\101]", b"A")]:
+            with self.subTest(pattern=pattern, kind="bytes"):
+                self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
+                                 self.match_facts(re.compile(pattern).search(subject)))
+        for bad in [r"[\8]", r"[\9]", r"[\400]"]:
+            with self.subTest(pattern=bad):
+                with self.assertRaises(re.error):
+                    re.compile(bad)
+                with self.assertRaises(real.error):
+                    real.compile(bad)
 
     def test_sub_octal_and_group_escapes_parity(self):
         r"""Replacement digit escapes follow CPython: \0-prefixed and all-octal three-digit

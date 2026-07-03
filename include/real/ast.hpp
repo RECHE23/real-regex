@@ -1136,6 +1136,71 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Decodes a `\N{U+XXXX}` named-code-point escape (1–6 hex digits) — the same code-point path
+     *        as `\u`/`\U`, spelled by its U+ scalar value. `re` writes `\N{NAME}` for the *name*; the
+     *        Python binding rewrites a name to this `U+XXXX` form before parsing, so the engine only ever
+     *        sees the scalar. A C++ caller writes `\N{U+XXXX}` directly.
+     *
+     * Rejected with clear messages: byte mode (no code-point meaning ≡ `re`'s `bad escape \N`), a missing
+     * or malformed `{U+…}`, a surrogate, or a value beyond U+10FFFF. The backslash and `N` are already
+     * consumed.
+     * \return The code point in `[0, 0x10FFFF]` (never a surrogate).
+     */
+    constexpr std::int32_t parse_named_codepoint()
+    {
+      if (bytes_) {
+        fail("\\N escapes are not allowed in bytes patterns");
+      }
+      if (eof() || peek() != '{') {
+        fail("expected '{' after \\N (\\N{U+XXXX})");
+      }
+      ++pos_; // consume '{'
+      if (eof() || peek() != 'U') {
+        fail("\\N{...} takes a U+XXXX code point; a character name is resolved by the Python binding");
+      }
+      ++pos_; // consume 'U'
+      if (eof() || peek() != '+') {
+        fail("expected '+' in \\N{U+XXXX}");
+      }
+      ++pos_; // consume '+'
+      std::int32_t value {};
+      int          count {};
+      while (!eof() && count < 6) {
+        const char   ch    {peek()};
+        std::int32_t digit {-1};
+        if (ch >= '0' && ch <= '9') {
+          digit = ch - '0';
+        }
+        else if (ch >= 'a' && ch <= 'f') {
+          digit = (ch - 'a') + 10;
+        }
+        else if (ch >= 'A' && ch <= 'F') {
+          digit = (ch - 'A') + 10;
+        }
+        if (digit < 0) {
+          break;
+        }
+        value = (value * 16) + digit;
+        ++pos_;
+        ++count;
+      }
+      if (count == 0) {
+        fail("expected 1 to 6 hex digits in \\N{U+XXXX}");
+      }
+      if (eof() || peek() != '}') {
+        fail("unterminated \\N{U+XXXX} (expected '}')");
+      }
+      ++pos_; // consume '}'
+      if (value >= 0xD800 && value <= 0xDFFF) {
+        fail("invalid \\N escape: surrogate code point");
+      }
+      if (value > 0x10FFFF) {
+        fail("invalid \\N escape: code point out of range");
+      }
+      return value;
+    }
+
+    /*!
      * \brief Emits a code point as its 1–4 UTF-8 bytes — the same byte-level form a literal
      *        multi-byte character produces — as a single atom (a byte node, or a concat).
      * \param[in,out] out The AST being built.
@@ -1262,6 +1327,14 @@ namespace real::detail {
             return emit_literal_codepoint(out, 'Z'); // ecma: literal 'Z', folds under icase
           }
           return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::text_end});
+        case 'z':
+          // `\z` is an exact alias of `\Z` (end of the text, no MULTILINE interaction) — Python 3.14
+          // added it with that meaning. Same anchor, so it is byte-identical to `\Z`.
+          ++pos_;
+          if (ecma_) {
+            return emit_literal_codepoint(out, 'z'); // ecma: literal 'z' (identity escape), folds under icase
+          }
+          return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::text_end});
         case 'b':
           ++pos_;
           return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::word_boundary});
@@ -1287,7 +1360,8 @@ namespace real::detail {
           ++pos_;
           return emit_literal_codepoint(out, parse_unicode_codepoint(true));
         case 'N':
-          fail("named Unicode escapes (\\N{...}) are not supported");
+          ++pos_;
+          return emit_literal_codepoint(out, parse_named_codepoint());
         default:
           {
             const std::int32_t byte_value {parse_byte_escape()};
@@ -1368,7 +1442,35 @@ namespace real::detail {
             return parse_unicode_codepoint(capital);
           }
         case 'N':
-          fail("named Unicode escapes (\\N{...}) are not supported");
+          ++pos_;
+          return parse_named_codepoint(); // \N{U+XXXX} is a valid class member (a code point)
+        case '0':
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7':
+          {
+            // Inside a class every `\digit` is octal — there are no back-references in a class (re's
+            // rule). Up to 3 octal digits; a value above 0o377 (255) is out of range, as in re. The
+            // first non-octal digit ends the escape, so `[\18]` is `\x01` then a literal '8'.
+            unsigned    value {};
+            std::size_t taken {};
+            while (taken < 3 && !eof() && peek() >= '0' && peek() <= '7') {
+              value = (value * 8U) + static_cast<unsigned>(peek() - '0');
+              ++pos_;
+              ++taken;
+            }
+            if (value > 0xFFU) {
+              fail("octal escape value out of range (\\0 to \\377)");
+            }
+            return static_cast<std::int32_t>(value);
+          }
+        case '8':
+        case '9':
+          fail("invalid escape (\\8 and \\9 are not octal and there are no back-references in a class)");
         default:
           {
             const std::int32_t byte_value {parse_byte_escape()};

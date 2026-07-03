@@ -7,6 +7,12 @@ listed here with its rationale, and each is pinned by a direct, version-independ
 assertion in `TestIntentionalDivergences` (python/tests/test_real.py) so the contract
 cannot drift silently.
 
+\note **Excluded by design — a closed door, not a missing feature.** Backreferences,
+recursion, and callouts are **not** on a roadmap: each makes matching super-linear and
+would reopen the ReDoS door this engine exists to close. Refusing them is the point of a
+linear-time engine, so they raise a clear `real::regex_error` rather than being "not yet
+supported". This is the one promise REAL will not trade for feature coverage.
+
 \tableofcontents
 
 \section div_ascii UTF-8 character classes (code-point mode)
@@ -74,11 +80,17 @@ Each of these raises a clear `real::regex_error`, for a reason worth keeping:
 - **Backreferences** (`(a)\1`, `(?P=name)`) — a backreference makes the language
   non-regular; supporting it would forfeit the linear-time, ReDoS-safe guarantee that is
   REAL's reason to exist.
-- **Named Unicode escapes** \\N{...} and **Unicode property classes** \\p{...} — both
-  need megabytes of Unicode tables, which would break the zero-dependency, one-include
-  design. (Unicode property classes are a candidate for a separate opt-in header, not a
-  core feature, and are not in standard `re` either.)
-- **Conditional groups** `(?(id)yes|no)` — non-regular control flow.
+- **Conditional groups** `(?(id)yes|no)`, **recursion**, and **callouts / subroutine
+  calls** — non-regular control flow, each super-linear in the worst case. Excluded for
+  the same ReDoS reason (see the note at the top of this page).
+
+**Planned, not rejected:** **Unicode property classes** \\p{...} are a candidate for a
+separate **opt-in** header (they need the Unicode category tables, which the core keeps
+out to stay zero-dependency and one-include). They are not in standard `re` either.
+**Named characters** \\N{NAME} are already supported — the Python binding resolves the
+name via `unicodedata` and the engine takes the resulting code point — so no table lives
+in C++. REAL additionally accepts the scalar form \\N{U+XXXX} directly (a PCRE2-style
+**extension**; `re` does not).
 
 \section div_lookbehind Variable-width lookbehind (a capability beyond re)
 

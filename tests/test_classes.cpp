@@ -320,3 +320,32 @@ TEST(unicode_shorthand_in_class_ascii_bytes)
   EXPECT(real::regex("[\\W]", flags::ascii).fullmatch("é")); // re.A \W matches é
   EXPECT(real::regex("[\\w]", flags::bytes).fullmatch("a"));
 }
+
+TEST(named_codepoint_escape)
+{
+  // \N{U+XXXX} is the code-point path spelled by scalar value (a *name* is resolved in the binding).
+  EXPECT(real::regex("\\N{U+0041}").fullmatch("A").matched());
+  EXPECT(real::regex("\\N{U+1F600}").fullmatch("\xF0\x9F\x98\x80").matched());                   // astral, 4 bytes
+  EXPECT(real::regex("[\\N{U+0041}b]").fullmatch("A").matched());                                // a class member, for free
+  EXPECT_THROWS(real::regex("\\N{name}"), real::regex_error);                                    // the engine takes only U+XXXX
+  EXPECT_THROWS(real::regex(std::string("\\N{U+0041}"), real::flags::bytes), real::regex_error); // bytes: no code point
+  EXPECT_THROWS(real::regex("\\N{U+D800}"), real::regex_error);                                  // a surrogate is rejected
+}
+
+TEST(octal_escapes_inside_a_class)
+{
+  // Inside a class every \digit is octal — there are no back-references in a class (re's rule).
+  const std::string b01(1, '\x01');
+  const std::string b07(1, '\x07');
+  const std::string nl("\n");
+  const std::string A("A");
+  const std::string eight("8");
+  EXPECT(real::regex("[\\1]").fullmatch(b01).matched());    // one octal digit
+  EXPECT(real::regex("[\\7]").fullmatch(b07).matched());
+  EXPECT(real::regex("[\\12]").fullmatch(nl).matched());    // two (0o12 == 10 == '\n')
+  EXPECT(real::regex("[\\101]").fullmatch(A).matched());    // three (0o101 == 65 == 'A')
+  EXPECT(real::regex("[\\18]").fullmatch(b01).matched());   // \1 then a literal '8'
+  EXPECT(real::regex("[\\18]").fullmatch(eight).matched());
+  EXPECT_THROWS(real::regex("[\\8]"), real::regex_error);   // 8/9 are not octal, no back-reference here
+  EXPECT_THROWS(real::regex("[\\400]"), real::regex_error); // above 0o377, out of range (like re)
+}

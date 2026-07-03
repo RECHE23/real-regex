@@ -362,10 +362,10 @@ class TestIntentionalDivergences(unittest.TestCase):
         self.assertEqual(m.group(1), "aa")
 
     def test_rejected_by_design(self):
-        # Each rejected for a documented reason (see the divergences page): backreferences
-        # would break linearity; \N{} / \p{} need megabytes of Unicode tables; conditional
-        # groups are non-regular.
-        for pattern in [r"(a)\1", r"(?P=name)", r"\N{BULLET}", r"(?(1)a|b)", r"\p{L}"]:
+        # Each rejected for a documented reason (see the divergences page): backreferences and
+        # conditional groups are non-regular (they would break linearity); \p{} needs the Unicode
+        # category tables and is a planned opt-in. (\N{NAME} is now supported — see the parity suite.)
+        for pattern in [r"(a)\1", r"(?P=name)", r"(?(1)a|b)", r"\p{L}"]:
             with self.subTest(pattern=pattern):
                 with self.assertRaises(real.error):
                     real.compile(pattern)
@@ -526,8 +526,10 @@ class TestUnicodeAndConstructs(unittest.TestCase):
     r"""\u / \U code-point escapes, (?#...) comments, and clean rejections."""
 
     def test_unicode_escape_rejections(self):
-        # str-mode \u / \U work (see parity tests); these forms are rejected with clear errors.
-        for pattern in [r"\uD800", r"\U00110000", r"\u00e", r"\U0001F60", r"\N{BULLET}"]:
+        # str-mode \u / \U / \N{U+XXXX} work (see parity tests); these malformed forms are rejected
+        # with clear errors — a surrogate, out of range, or incomplete hex.
+        for pattern in [r"\uD800", r"\U00110000", r"\u00e", r"\U0001F60",
+                        r"\N{U+D800}", r"\N{U+110000}", r"\N{U+}", r"\N{0041}"]:
             with self.subTest(pattern=pattern):
                 with self.assertRaises(real.error):
                     real.compile(pattern)

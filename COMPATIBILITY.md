@@ -13,6 +13,32 @@ back to `std::regex` otherwise — *never a silent divergence*. The ECMAScript s
 oracle; `std::regex` (libstdc++/libc++) is a secondary oracle whose known deviations from the spec
 are catalogued below (where `real`, following the spec, is the correct one).
 
+## Feature scorecard
+
+The public **status view** of REAL's regex features — the lines where REAL says something notable
+against a full feature matrix. Statuses: **supported** (parity with Python `re`), **extension**
+(REAL accepts it, `re` does not), **planned**, **excluded by design**. The *rationale* for each lives
+in the [divergences page](@ref divergences); this table is the single status source and links there —
+there is no competing table.
+
+**Excluded by design is a closed door, not a missing feature.** Backreferences, recursion, and callouts
+each make matching super-linear and would reopen the ReDoS door this engine exists to close — so they
+raise a clear error rather than sitting on a roadmap.
+
+| Feature | Status | Rationale | Since / target |
+| --- | --- | --- | --- |
+| Backreferences (`(a)\1`, `(?P=n)`) | **excluded by design** | non-regular → super-linear → ReDoS ([why](@ref div_rejected)) | — |
+| Conditional groups `(?(id)…)`, recursion, callouts | **excluded by design** | non-regular control flow → ReDoS ([why](@ref div_rejected)) | — |
+| Unicode property classes `\p{…}` | **planned** | opt-in header (needs the Unicode tables; not in `re`) | opt-in |
+| `\N{NAME}` named characters | **supported** | binding resolves the name via `unicodedata` (no C++ table) | 2026.7 |
+| `\N{U+XXXX}` scalar form | **extension** (PCRE2-style) | the code-point path by scalar value; `re` rejects it | 2026.7 |
+| `\z` end-of-text anchor | **supported** | exact alias of `\Z` (Python 3.14's meaning) | 2026.7 |
+| Octal escapes in a class `[\1]` `[\12]` | **supported** | every `\digit` is octal in a class (no back-refs there) | 2026.7 |
+| Variable-width lookbehind `(?<=a|bb)` | **extension** | bounded → still linear; `re`/PCRE reject it ([more](@ref div_lookbehind)) | — |
+| Word-edge anchors `\<` `\>` | **extension** | word-start / word-end; `re` has no such escape | — |
+| POSIX `[[:alpha:]]` classes | **supported** | exact `re`-parity: `re` reads them as a *literal* class (currently with a `FutureWarning`); REAL matches the same characters | — |
+| Free-spacing / DOTALL / MULTILINE / IGNORECASE | **supported** | `re` semantics (Python ≥ 3.11 inline-flag scoping) | — |
+
 ## How a pattern is routed
 
 A `real::compat::regex` is built with `flags::bytes | flags::ecma` so `real`'s byte-oriented,

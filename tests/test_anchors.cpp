@@ -327,3 +327,17 @@ TEST(unicode_word_boundary_malformed)
   EXPECT(!real::regex("é\\bz").search(wellformed)); // no boundary inside a word run
   EXPECT(real::regex("\\Bz").search(wellformed).matched());
 }
+
+TEST(z_is_an_exact_alias_of_capital_z)
+{
+  // \z is an exact alias of \Z: end of the text, no MULTILINE interaction (Python 3.14's meaning).
+  EXPECT(real::regex("a\\z").search("a").matched());
+  EXPECT(!real::regex("a\\z").search("ab").matched());
+  EXPECT(!real::regex("a\\z").search("a\nb").matched());
+  EXPECT(!real::regex("a\\z").search("a\n").matched()); // \Z/\z are the ABSOLUTE end (unlike $, not before \n)
+  // Byte-identical to \Z on the same inputs, MULTILINE included (neither is affected by it).
+  for (const auto* subject : {"a", "ab", "a\n", "a\nb", "a\na"}) {
+    EXPECT_EQ(real::regex("a\\z").search(subject).matched(), real::regex("a\\Z").search(subject).matched());
+    EXPECT_EQ(real::regex("(?m)a\\z").search(subject).matched(), real::regex("(?m)a\\Z").search(subject).matched());
+  }
+}
