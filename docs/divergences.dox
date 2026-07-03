@@ -73,15 +73,20 @@ region and skips it; the assertions pin REAL's behaviour directly.
 REAL records the last **consuming** iteration instead. The overall match — group 0, and every match
 **span** — is identical in both; only the inner group's captured span differs.
 
-**The five verified forms** (search; `re` value ↦ REAL value for group 1):
+This remains only for a loop whose body **consumes** on its last productive iteration (so the inner
+group captured that run). A loop whose body can only ever match empty (`()*`, `($)*`) now agrees with
+`re` — the greedy-loop empty-exit fix routes its empty iteration to the loop exit, applying that
+iteration's capture, exactly as `re` does.
 
-| Pattern | Input | `re` group 1 | REAL group 1 |
-| --- | --- | --- | --- |
-| `(a*)*` | `"a"` | `(1, 1)` | `(0, 1)` |
-| `(a*)+` | `"a"` | `(1, 1)` | `(0, 1)` |
-| `(a\|)*` | `"a"` | `(1, 1)` | `(0, 1)` |
-| `()*` | `""` | `(0, 0)` | *(unset)* |
-| `($)*` | `""` | `(0, 0)` | *(unset)* |
+**The verified forms** (search; `re` value ↦ REAL value for group 1):
+
+| Pattern | Input | `re` group 1 | REAL group 1 | |
+| --- | --- | --- | --- | --- |
+| `(a*)*` | `"a"` | `(1, 1)` | `(0, 1)` | diverges (consuming body) |
+| `(a*)+` | `"a"` | `(1, 1)` | `(0, 1)` | diverges (consuming body) |
+| `(a\|)*` | `"a"` | `(1, 1)` | `(0, 1)` | diverges (consuming body) |
+| `()*` | `""` | `(0, 0)` | `(0, 0)` | **now agrees with `re`** |
+| `($)*` | `""` | `(0, 0)` | `(0, 0)` | **now agrees with `re`** |
 
 **Lineage.** This is the linear-engine convention: **RE2, the Rust `regex` crate, and Go's `regexp`**
 share REAL's behaviour (they do not re-enter a loop on an empty match). `re` and PCRE, being

@@ -327,20 +327,26 @@ class TestIntentionalDivergences(unittest.TestCase):
         REAL keeps the last CONSUMING iteration (the RE2 / Rust / Go convention). The overall match span
         agrees; only the inner group differs. Double-pinned — both the re value and the REAL value, so a
         change on either side is caught. See the div_empty_iteration_capture divergences section."""
-        forms = [
+        # Still diverges — the body CONSUMES on its last iteration, so REAL keeps that span while re
+        # takes an extra empty step. Double-pinned (both values).
+        diverging = [
             (r"(a*)*", "a", (1, 1), (0, 1)),
             (r"(a*)+", "a", (1, 1), (0, 1)),
             (r"(a|)*", "a", (1, 1), (0, 1)),
-            (r"()*", "", (0, 0), (-1, -1)),
-            (r"($)*", "", (0, 0), (-1, -1)),
         ]
-        for pattern, subject, re_group, real_group in forms:
-            with self.subTest(pattern=pattern):
+        for pattern, subject, re_group, real_group in diverging:
+            with self.subTest(pattern=pattern, kind="diverges"):
                 rm = re.search(pattern, subject)
                 lm = real.search(pattern, subject)
                 self.assertEqual(rm.span(), lm.span())    # the whole-match span is identical
                 self.assertEqual(rm.span(1), re_group)    # re captures the final empty iteration
                 self.assertEqual(lm.span(1), real_group)  # REAL keeps the last consuming one
+        # Now AGREES with re — a body that can only match empty: the greedy-loop empty-exit fix applies
+        # the empty iteration's capture, exactly like re.
+        for pattern, subject in [(r"()*", ""), (r"($)*", "")]:
+            with self.subTest(pattern=pattern, kind="now-parity"):
+                self.assertEqual(real.search(pattern, subject).span(1),
+                                 re.search(pattern, subject).span(1))
 
     def test_icase_folds_unicode(self):
         # Text-mode icase does full Unicode simple case folding, like re.IGNORECASE: ASCII letters,

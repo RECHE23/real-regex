@@ -1312,7 +1312,24 @@ namespace real::detail {
         const instr& instruction {prog_.code[static_cast<std::size_t>(pc)]};
         switch (instruction.op) {
           case opcode::jump:
-            stack.push_back({.pc = instruction.primary_target, .slot = 0, .restore_value = 0});
+            {
+              const std::int32_t target             {instruction.primary_target};
+              const instr&       target_instruction {prog_.code[static_cast<std::size_t>(target)]};
+              if (list.seen(target) && target_instruction.op == opcode::split) {
+                // A jump back to an already-entered split is a `*` loop iteration that matched EMPTY
+                // (the body made no progress). A greedy loop must EXIT there — keeping the empty
+                // iteration's priority — instead of re-looping (which the seen-guard would simply drop,
+                // letting a lower-priority consuming branch win). Route to the loop's exit branch. This
+                // makes `*` behave like `+`, whose end-split already sends an empty iteration to its
+                // exit via the same secondary target. (For a lazy loop the exit is the primary and is
+                // explored first, so the secondary pushed here is the already-seen loop branch — a
+                // harmless no-op.)
+                stack.push_back({.pc = target_instruction.secondary_target, .slot = 0, .restore_value = 0});
+              }
+              else {
+                stack.push_back({.pc = target, .slot = 0, .restore_value = 0});
+              }
+            }
             break;
           case opcode::split:
             // primary_target is preferred: push secondary first so primary pops (explores) first.
