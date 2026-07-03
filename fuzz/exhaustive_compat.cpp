@@ -92,12 +92,29 @@ int main(int argc, char** argv)
   long long total {0};
   long long agree {0};
   long long divergences {0};
-  long long groups_only {0}; //!< accept + match + whole-span + replace agree; only a group span differs.
+  long long tolerated {0}; //!< The documented nullable-loop capture class (exact signature).
   int       shown {0};
 
-  const auto groups_only_diff = [](const observable& a, const observable& b) {
-    return a.accepts == b.accepts && a.matched == b.matched && a.pos == b.pos && a.len == b.len
-           && a.replaced == b.replaced && a.groups != b.groups;
+  // The ONLY tolerated divergence: the nullable-loop group capture. Its exact signature (mirroring
+  // sciforge.corpus.is_empty_iteration_capture) — accept / match / whole-span / replace all agree, and
+  // every group where they differ has the LOCAL std capture ZERO-WIDTH (the empty final iteration real
+  // does not take). Any other groups-only difference is a real routing/screen bug, not this class.
+  const auto is_empty_iteration_signature = [](const observable& compat, const observable& local) {
+    if (compat.accepts != local.accepts || compat.matched != local.matched || compat.pos != local.pos
+        || compat.len != local.len || compat.replaced != local.replaced
+        || compat.groups.size() != local.groups.size()) {
+      return false;
+    }
+    bool differs {false};
+    for (std::size_t i {0}; i < compat.groups.size(); ++i) {
+      if (compat.groups[i] != local.groups[i]) {
+        differs = true;
+        if (local.groups[i].second != 0) { // std's differing group is NOT zero-width -> not this class
+          return false;
+        }
+      }
+    }
+    return differs;
   };
 
   const auto compat_search = [](const std::string& s, rc::smatch& m, const rc::regex& e) {
@@ -123,8 +140,8 @@ int main(int argc, char** argv)
       }
       else {
         ++divergences;
-        if (groups_only_diff(compat, local)) {
-          ++groups_only;
+        if (is_empty_iteration_signature(compat, local)) {
+          ++tolerated;
         }
         else if (shown < 25) {
           static_cast<void>(std::fprintf(stderr,
@@ -139,9 +156,9 @@ int main(int argc, char** argv)
     }
   }
 
-  const long long serious {divergences - groups_only};
+  const long long serious {divergences - tolerated};
   static_cast<void>(std::printf("exhaustive-compat: %lld cases, agree=%lld, divergences=%lld "
-              "(groups-only capture=%lld, serious span/accept=%lld)\n",
-              total, agree, divergences, groups_only, serious));
-  return serious == 0 ? 0 : 1; // groups-only is the documented nullable-loop capture class (triage)
+                                "(documented nullable-loop capture=%lld, serious=%lld)\n",
+                                total, agree, divergences, tolerated, serious));
+  return serious == 0 ? 0 : 1; // only the documented nullable-loop capture signature is tolerated
 }

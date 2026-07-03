@@ -93,9 +93,19 @@ share REAL's behaviour (they do not re-enter a loop on an empty match). `re` and
 backtrackers, take the extra empty step. REAL sits with the linear engines by design — the same family
 whose linear-time guarantee it shares.
 
-**When to revisit.** Only if a future goal is *exact* `re` capture parity for these degenerate loops,
-which would mean adding a trailing empty-iteration step purely to update a capture — a cost with no
-matching benefit for a linear engine. Pinned, both values, in `TestIntentionalDivergences`.
+**It also touches the compat contract.** The same group-capture difference shows up under
+`real::compat` against the local `std::regex` (ECMAScript is a backtracker too). The exhaustive compat
+check measures it — 4 548 cases out of 3.2 M in the tier-1 space — and tolerates *only* this exact
+signature (whole match identical, the differing group is `std`'s zero-width empty-final iteration),
+failing on any other divergence. It is documented, not routed to `std`, on purpose: routing nested
+nullable quantifiers to a backtracker would forfeit the linearity `real::compat` exists to keep. See
+`COMPATIBILITY.md`.
+
+**When to revisit.** Only if a future goal is *exact* `re`/`std` capture parity for these degenerate
+loops, which would mean adding a trailing empty-iteration step purely to update a capture — a cost with
+no matching benefit for a linear engine, and none that would justify handing catastrophic-backtracking
+patterns to a backtracking fallback. Pinned, both values, in `TestIntentionalDivergences`; the compat
+side is guarded by the exhaustive-compat gate's exact-signature discriminator.
 
 \section div_rejected Rejected by design
 

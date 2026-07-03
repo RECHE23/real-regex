@@ -75,6 +75,25 @@ ASCII `icase`, `multiline`. Non-ASCII **literals** match byte-for-byte like `std
 These patterns run on `std::regex` and therefore lose the linear-time guarantee — a documented,
 non-silent trade. Prefer ReDoS-safe equivalents for untrusted input.
 
+## The one tolerated divergence: nullable-loop group capture
+
+There is exactly **one** place a real-backed pattern's observable differs from the local `std::regex`,
+and it is documented rather than routed away. For a `*`/`+` loop whose body can match empty and captures
+(`(a*)*`, `(.*)*`, `(a|)*`), `real` records the last **consuming** iteration for the group while
+`std::regex` (ECMAScript, a backtracker) records an extra **empty final** iteration. The whole match —
+and every match **span** — is **identical**; only the inner group's captured span differs, and the `re`
+value is always a zero-width capture at the loop's end. This is the same behaviour documented against
+Python `re` (see [the divergences page](@ref div_empty_iteration_capture)); the linear engines **RE2,
+the Rust `regex` crate, and Go's `regexp` share it**.
+
+**Why it is kept, not screened to std.** Routing this class to `std::regex` would hand exactly the
+textbook catastrophic-backtracking patterns — nested nullable quantifiers — to a backtracking engine,
+which is the one thing `real::compat` exists to avoid. Linearity is kept **deliberately**; the price is
+a group-capture span that matches the linear-engine family instead of the backtracker. The exhaustive
+compat check measures this precisely (4 548 cases out of 3.2 M in the tier-1 space) and **fails on any
+divergence outside this exact signature** — a whole-match agreement with only an empty-final-iteration
+group difference — so no *other* silent divergence can hide behind it.
+
 ## regex_replace
 
 The replacement format is ECMAScript: `$$` → `$`, `$&` → the whole match, `` $` `` → the text since
