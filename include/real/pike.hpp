@@ -205,6 +205,8 @@ namespace real::detail {
      * On success fills \p out_slots with byte offsets (npos for unset capture
      * slots; slots 0/1 are the whole match).
      *
+     * \tparam Cascade  Select the OPT-C memchr-cascade class-run variant (chosen once by the caller from
+     *                  stop_set_size, never per match). Off = the pre-OPT-C hot path, byte for byte.
      * \tparam OutSlots Output slot container (resized to the program's slot count).
      * \param[in]  text               The subject text.
      * \param[in]  start              Index to begin matching/searching from.
@@ -216,7 +218,7 @@ namespace real::detail {
      *             re-yielding it — CPython 3.7+ rule). 0 means no restriction.
      * \return `true` if a match was found.
      */
-    template <typename OutSlots>
+    template <bool Cascade = false, typename OutSlots>
     constexpr bool run(std::string_view text,
                        std::size_t      start,
                        run_mode         mode,
@@ -228,7 +230,11 @@ namespace real::detail {
       // Fast paths only fire for patterns that always consume (literal /
       // class+), which can never produce the empty match the flag guards.
       if (prog_.hints.greedy_class_loop >= 0) {
-        return run_class_loop(text, start, mode, out_slots);
+        // OPT-C: the memchr-cascade instantiation (Cascade) is selected ONCE by the caller (a whole
+        // find_iter/search) from stop_set_size, never per match — so when it is off this run is byte-for-
+        // byte the pre-OPT-C per-byte loop and the hot path pays nothing. The caller only sets Cascade
+        // when stop_set_size >= 1, so the cascade tail always has real stop bytes.
+        return run_class_loop<Cascade>(text, start, mode, out_slots);
       }
       if (prog_.hints.greedy_cp_class >= 0) {
         return run_cp_class_loop(text, start, mode, out_slots);
@@ -372,6 +378,11 @@ namespace real::detail {
     //!        a loop join reaches its split in one hop, so this is a generous bound, never a hot cost.
     static constexpr int max_loop_hops {8};
 
+    //! \brief Accepted-byte count after which a `class+` run switches from the per-byte advance to a
+    //!        memchr-cascade to the next stop byte (OPT-C). Below it a run pays nothing extra, so a
+    //!        stop-dense stream of short runs stays at baseline cost; the crossover is measured.
+    static constexpr std::size_t cascade_run_threshold {32};
+
     /*!
      * \brief Builds (once, cached) and returns the `cp_class`'s membership bitmap over
      *        `[U+0080, U+07FF]` — a one-load replacement for the range search on the common
@@ -421,12 +432,25 @@ namespace real::detail {
       }
     }
 
+    //! \brief OPT-C run tail: the next stop byte at or after \p from, or the text end. Kept in its own
+    //!        function so the memchr-cascade never inlines into \ref run_class_loop's hot per-byte loop
+    //!        (that bloat measurably slowed stop-dense short runs). Reached only once a run has already
+    //!        passed \ref cascade_run_threshold accepted bytes, so the out-of-line call is free.
+    [[nodiscard]] constexpr std::size_t run_cascade_stop(std::string_view text,
+                                                         std::size_t      from) const
+    {
+      const std::size_t stop {
+        find_bytes_cascade(text, from, prog_.hints.stop_set.data(), prog_.hints.stop_set_size)};
+      return stop == npos ? text.size() : stop;
+    }
+
     /*!
      * \brief Fast path for a whole-pattern "class+".
      *
      * Matches a maximal run of class bytes with one scan loop — exactly the
      * VM's greedy result, with no thread lists.
      *
+     * \tparam Cascade  Take the OPT-C memchr-cascade run tail (chosen once per walk from stop_set_size).
      * \tparam OutSlots Output slot container.
      * \param[in]  text      The subject text.
      * \param[in]  start     Index to begin at.
@@ -434,7 +458,7 @@ namespace real::detail {
      * \param[out] out_slots Receives the (start, end) span on success.
      * \return `true` if a non-empty run was found.
      */
-    template <typename OutSlots>
+    template <bool Cascade, typename OutSlots>
     constexpr bool run_class_loop(std::string_view text,
                                   std::size_t      start,
                                   run_mode         mode,
@@ -455,9 +479,34 @@ namespace real::detail {
         out_slots.assign(prog_.slot_count, npos);
         return false;
       }
+      // OPT-C: this is a byte-wise run whose accepted set may have a small complement (the STOP bytes).
+      // Only the Cascade instantiation carries the memchr-cascade; it advances per byte until a run
+      // passes a 32-byte threshold — a genuinely long run — then jumps to the next stop by a cascade, so
+      // a stop-dense stream of short runs stays on the per-byte path. The constant-evaluation guard is a
+      // per-call property, hoisted out of the loop; at compile time the plain loop runs. The common
+      // classes (`[a-z]+`, `\d+`) compile to the pristine per-byte loop with none of the cascade code.
+      // Sound because run_class_loop never validates UTF-8 (the OPT-C perimeter pin, test_utf8.cpp).
       std::size_t match_end {match_start + 1};
-      while (match_end < text.size() && in_class(match_end)) {
-        ++match_end;
+      if constexpr (Cascade) {
+        if (!std::is_constant_evaluated()) {
+          while (match_end < text.size() && in_class(match_end)) {
+            ++match_end;
+            if (match_end - match_start == cascade_run_threshold) {
+              match_end = run_cascade_stop(text, match_end);
+              break;
+            }
+          }
+        }
+        else {
+          while (match_end < text.size() && in_class(match_end)) {
+            ++match_end;
+          }
+        }
+      }
+      else {
+        while (match_end < text.size() && in_class(match_end)) {
+          ++match_end;
+        }
       }
       if (mode == run_mode::full && match_end != text.size()) {
         out_slots.assign(prog_.slot_count, npos);
@@ -1028,7 +1077,7 @@ namespace real::detail {
         if (window_end == text.size()) {
           return npos;
         }
-        return find_bytes_cascade(text, window_end, hints.small_set, hints.small_set_size);
+        return find_bytes_cascade(text, window_end, hints.small_set.data(), hints.small_set_size);
       }
       if (hints.first_bytes_valid) {
         while (pos < text.size() &&

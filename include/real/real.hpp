@@ -75,6 +75,7 @@ namespace real {
      * reused one). A user-held copy of a previous match stays independent: copying a result deep-copies
      * its slots, so refilling this one never disturbs it.
      *
+     * \tparam Cascade Select the OPT-C memchr-cascade class-run variant (chosen once per walk).
      * \tparam Vm      The Pike VM type (kept a template to avoid a header cycle).
      * \param[in] vm      The VM to run.
      * \param[in] text    The searched text (borrowed).
@@ -85,7 +86,7 @@ namespace real {
      * \param[in] names   The regex's named-group table (borrowed).
      * \return Whether a match occurred.
      */
-    template <typename Vm>
+    template <bool Cascade, typename Vm>
     constexpr bool engine_refill(Vm&                                  vm,
                                  std::string_view                     text,
                                  std::size_t                          pos,
@@ -94,7 +95,7 @@ namespace real {
                                  std::string_view                     pattern,
                                  std::span<const detail::named_group> names)
     {
-      const bool ok {vm.run(text, pos, mode, slots_, forbid)};
+      const bool ok {vm.template run<Cascade>(text, pos, mode, slots_, forbid)};
       text_    = text;
       matched_ = ok;
       pattern_ = pattern;
@@ -260,7 +261,8 @@ namespace real {
         pattern_(pattern),
         text_(text),
         pos_(start),
-        done_(false)
+        done_(false),
+        cascade_(prog.hints.stop_set_size >= 1) // decided ONCE per walk, never per match
     {
       advance();
     }
@@ -320,6 +322,7 @@ namespace real {
     std::size_t                  pos_                {};     //!< Current scan offset.
     std::size_t                  forbid_empty_until_ {};     //!< Empty-match guard (see pike.hpp).
     bool                         done_               {true}; //!< True once exhausted.
+    bool                         cascade_            {};     //!< OPT-C: chosen once — run the memchr-cascade class-run variant for this whole walk.
     value_type                   current_;                   //!< The current match.
     typename Storage::state_type state_;                     //!< VM scratch, reused across the walk.
 
@@ -333,9 +336,15 @@ namespace real {
         return;
       }
       detail::pike_vm vm(prog_, state_);
-      // Refresh the one held result in place, reusing its slot buffer (no per-match allocation).
-      if (!current_.engine_refill(vm, text_, pos_, detail::run_mode::search, forbid_empty_until_,
-                                  pattern_, prog_.names)) {
+      // Refresh the one held result in place, reusing its slot buffer (no per-match allocation). The
+      // Cascade choice is the iterator's compile-time-dispatched cascade_, fixed once at construction, so
+      // the common (non-cascade) walk runs the pre-OPT-C hot path unchanged.
+      const bool ok {cascade_
+                     ? current_.template engine_refill<true>(vm, text_, pos_, detail::run_mode::search,
+                                                             forbid_empty_until_, pattern_, prog_.names)
+                     : current_.template engine_refill<false>(vm, text_, pos_, detail::run_mode::search,
+                                                              forbid_empty_until_, pattern_, prog_.names)};
+      if (!ok) {
         done_ = true;
         return;
       }
@@ -949,7 +958,10 @@ namespace real {
       typename Storage::slot_storage slots;
       const detail::program_view     prog    {program_.view()};
       detail::pike_vm                vm(prog, state);
-      const bool                     matched {vm.run(text.substr(0, end), pos, mode, slots)};
+      // OPT-C Cascade is chosen once here (a single search), never in the per-byte scan.
+      const bool matched {prog.hints.stop_set_size >= 1
+                          ? vm.template run<true>(text.substr(0, end), pos, mode, slots)
+                          : vm.template run<false>(text.substr(0, end), pos, mode, slots)};
       return {text, std::move(slots), matched, pattern(), prog.names};
     }
   };

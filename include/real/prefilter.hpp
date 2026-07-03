@@ -478,6 +478,31 @@ namespace real::detail {
         hints.small_set_size = static_cast<std::uint8_t>(count);
       }
     }
+
+    // OPT-C: for a whole-pattern `class+` run (run_class_loop — a byte-wise scan), record the STOP
+    // bytes (the complement of the accepted set) when there are at most six of them, so the run can
+    // advance by a memchr-cascade to the next stop instead of testing every byte. The stops are derived
+    // from the class table and do NOT enter the compiled program, so byte-identity is unaffected.
+    if (hints.greedy_class_loop >= 0) {
+      const char_class&   accepted   {classes[static_cast<std::size_t>(hints.greedy_class_loop)]};
+      std::array<char, 6> stops      {};
+      int                 stop_count {0};
+      for (unsigned byte = 0; byte < 256; ++byte) {
+        if (!accepted.test(static_cast<std::uint8_t>(byte))) {
+          if (stop_count < 6) {
+            stops[static_cast<std::size_t>(stop_count)] = static_cast<char>(byte);
+          }
+          ++stop_count;
+          if (stop_count > 6) {
+            break;
+          }
+        }
+      }
+      if (stop_count >= 1 && stop_count <= 6) {
+        hints.stop_set      = stops;
+        hints.stop_set_size = static_cast<std::uint8_t>(stop_count);
+      }
+    }
     return hints;
   }
 
@@ -552,14 +577,14 @@ namespace real::detail {
    *
    * \param[in] text The subject text.
    * \param[in] pos  Index to start scanning from.
-   * \param[in] set  The enumerated set members (first \p n valid).
+   * \param[in] set  Pointer to the enumerated set members (first \p n valid).
    * \param[in] n    Number of valid members (2..4).
    * \return The least index at or after \p pos whose byte is in the set, else npos.
    */
-  constexpr std::size_t find_bytes_cascade(std::string_view           text,
-                                           std::size_t                pos,
-                                           const std::array<char, 4>& set,
-                                           std::uint8_t               n)
+  constexpr std::size_t find_bytes_cascade(std::string_view text,
+                                           std::size_t      pos,
+                                           const char*      set,
+                                           std::uint8_t     n)
   {
     if (pos >= text.size()) {
       return npos;

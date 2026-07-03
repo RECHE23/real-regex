@@ -261,6 +261,12 @@ namespace real {
        * of the full Pike VM — the major win for "search for a fixed string".
        */
       std::uint8_t exact_literal_len {};
+
+      //! \brief For a whole-pattern `class+` run whose accepted set has a small (<= 6-byte) complement:
+      //!        the STOP bytes (the complement), driving the memchr-cascade run scan (OPT-C). Empty
+      //!        unless \ref stop_set_size is set. Placed last so it never shifts the hot fields' offsets.
+      std::array<char, 6> stop_set      {};
+      std::uint8_t        stop_set_size {}; //!< Members in \ref stop_set — 0 when the complement is too large, else 1..6.
     };
 
     /*!
