@@ -47,7 +47,7 @@ SCIFORGE_TOOLS ?= ../sciforge/tools
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep -vE 'include/real/unicode_(fold|props)\.hpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-        lint misra fuzz fuzz-compat exhaustive-compat tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
+        lint misra fuzz fuzz-compat exhaustive-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
         python python-test bench-python bench-fuzz bench-engines \
         version-check install install-smoke uninstall release help
 
@@ -287,9 +287,16 @@ exhaustive-compat:
 	@$(CXX) $(CXXSTD) -O2 $(INCLUDES) fuzz/exhaustive_compat.cpp -o $(BUILD)/exhaustive_compat
 	@$(BUILD)/exhaustive_compat $(BUILD)/ec_pats.txt $(BUILD)/ec_inps.txt
 
+# Pin-drift lint: fail if this repo's workflows pin more than one SciForge version (the shared
+# tools/check-pins.sh, owned by SciForge). Skipped with a warning when the sibling tool is absent.
+check-pins:
+	@if test -x $(SCIFORGE_TOOLS)/check-pins.sh; then $(SCIFORGE_TOOLS)/check-pins.sh .; \
+	 else echo "check-pins: WARN — $(SCIFORGE_TOOLS)/check-pins.sh absent, skipped (CI covers it)"; fi
+
 full-local-gate:
 	@$(MAKE) format-check
 	@$(MAKE) version-check
+	@$(MAKE) check-pins
 	@$(MAKE) test
 	@$(MAKE) exhaustive-compat
 	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "full-local-gate: WARN — $(GXX) absent, GCC leg skipped (CI covers it)"; fi

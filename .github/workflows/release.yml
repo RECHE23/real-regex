@@ -14,7 +14,7 @@ jobs:
   # artifacts. Inputs carry REAL's exact cibuildwheel config. Publishing stays below,
   # in this repo, so the OIDC identity matches the PyPI trusted-publisher.
   build:
-    uses: RECHE23/sciforge/.github/workflows/build-wheels.yml@v2026.6.7
+    uses: RECHE23/sciforge/.github/workflows/build-wheels.yml@v2026.7.2
     with:
       wheel-os: '["ubuntu-latest","ubuntu-24.04-arm","macos-latest","windows-latest"]'
       cibw-archs-macos: "x86_64 arm64"

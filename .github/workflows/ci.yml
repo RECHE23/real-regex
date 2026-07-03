@@ -12,10 +12,10 @@ jobs:
   # config. REAL has no dependency siblings; its one MISRA deviation (the SBO union)
   # lives in its Makefile's --checks, so nothing is passed here.
   lint:
-    uses: RECHE23/sciforge/.github/workflows/lint-cpp.yml@v2026.7.0
+    uses: RECHE23/sciforge/.github/workflows/lint-cpp.yml@v2026.7.2
     with:
       deps: '[]'
-      sciforge-ref: v2026.7.0
+      sciforge-ref: v2026.7.2
       runner-mode: hosted
 
   # POSIX + CMake build via SciForge's reusable build spine, fully collapsed: the
@@ -26,10 +26,10 @@ jobs:
   # REAL is the public repo where contributor PRs warrant macOS coverage (the
   # private repos opt out, matching their pre-cat-B matrices).
   build:
-    uses: RECHE23/sciforge/.github/workflows/build-cpp.yml@v2026.7.0
+    uses: RECHE23/sciforge/.github/workflows/build-cpp.yml@v2026.7.2
     with:
       deps: '[]'
-      sciforge-ref: v2026.7.0
+      sciforge-ref: v2026.7.2
       runner-mode: hosted
       enable-macos: true
       enable-windows-msvc: true
@@ -52,6 +52,36 @@ jobs:
       - name: ThreadSanitizer smoke (concurrent std_engine)
         run: make tsan CXX=clang++
 
+  # Public conformance + exhaustive nets, promoted from the local gate now that the corpus/enumerator
+  # substrate is pinnable. The rust-regex + Fowler corpora differential against Python re, and the
+  # exhaustive real::compat-vs-std routing check (only the documented nullable-loop capture tolerated).
+  # Both consume the SciForge substrate, so SciForge is checked out as a sibling at the pinned tag. Also
+  # runs the pin-drift lint on this repo's own workflows. The PR tier is ~1 min.
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: real-regex
+      - uses: actions/checkout@v6
+        with:
+          repository: RECHE23/sciforge
+          ref: v2026.7.2
+          path: sciforge
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install clang + cmake
+        run: sudo apt-get update && sudo apt-get install -y clang cmake
+      - name: Pin-drift lint (SciForge pins consistent)
+        run: bash sciforge/tools/check-pins.sh real-regex
+      - name: Build the abi3 extension
+        run: make -C real-regex python
+      - name: Public conformance suites (rust-regex + Fowler, vs Python re)
+        run: python3 real-regex/tests/corpora/run_conformance.py
+      - name: Exhaustive compat routing check (real::compat vs std::regex)
+        run: make -C real-regex exhaustive-compat
+
   # Coverage gate: fail the build if line coverage drops below the floor (was advisory).
   coverage:
     runs-on: ubuntu-latest
@@ -62,7 +92,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: RECHE23/sciforge
-          ref: v2026.7.0
+          ref: v2026.7.2
           path: sciforge
       - name: Install clang + llvm
         run: sudo apt-get update && sudo apt-get install -y clang llvm
@@ -84,7 +114,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: RECHE23/sciforge
-          ref: v2026.7.0
+          ref: v2026.7.2
           path: sciforge
       - name: Install pkg-config + cmake + clang
         run: sudo apt-get update && sudo apt-get install -y pkg-config cmake clang
@@ -97,10 +127,10 @@ jobs:
   # binding is a leaf (no dependency siblings); its exact prior coverage is
   # {linux, macOS, Windows} x {3.10, 3.14}, replicated by the platform toggles.
   python:
-    uses: RECHE23/sciforge/.github/workflows/python-cpp.yml@v2026.7.0
+    uses: RECHE23/sciforge/.github/workflows/python-cpp.yml@v2026.7.2
     with:
       python-versions: '["3.10","3.14"]'
-      sciforge-ref: v2026.7.0
+      sciforge-ref: v2026.7.2
       deps: '[]'
       runner-mode: hosted
       enable-macos: true
