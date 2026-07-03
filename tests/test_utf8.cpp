@@ -281,6 +281,24 @@ TEST(utf8_class_security_and_malformed)
   EXPECT_THROWS(real::regex("[é]", flags::bytes), real::regex_error);
 }
 
+// Perimeter pin for a stop-byte scan optimization (OPT-C, C-0): a TEXT-mode class/dot RUN validates
+// UTF-8 structure — it stops at a malformed sequence even when that sequence lies BEFORE the class's
+// stop byte. So scanning straight to the stop byte (e.g. memchr for the closing quote) would overshoot
+// the malformed run and is UNSOUND in text mode. A bytes-mode run is byte-permissive and runs through.
+// This fixes the perimeter of any such optimization to bytes mode.
+TEST(utf8_text_run_stops_at_malformed_before_the_stop_byte)
+{
+  // ab | é(C3 A9) | cd | malformed(C3 41) | ef | " (index 10) | tail
+  const std::string s {cat({"ab", bytes({0xC3, 0xA9}), "cd", bytes({0xC3, 0x41}), "ef\"tail"})};
+  // Text mode: the run consumes ab+é+cd (0..5) then stops at the malformed C3 41 — NOT at the quote.
+  EXPECT_EQ(match_len("[^\"]*", s), std::size_t {6});
+  EXPECT_EQ(match_len(".*", s), std::size_t {6});
+  // ASCII mode changes \w/\d/\s semantics only, not the UTF-8 validation of the run: still stops at 6.
+  EXPECT_EQ(match_len("[^\"]*", s, flags::ascii), std::size_t {6});
+  // Bytes mode is byte-permissive: every byte != '"' matches, so the run reaches the quote at index 10.
+  EXPECT_EQ(match_len("[^\"]*", s, flags::bytes), std::size_t {10});
+}
+
 TEST(utf8_bytes_mode_classes)
 {
   // In bytes mode a class member >= 0x80 (from \xHH) is a RAW BYTE in the bitmap, not a
