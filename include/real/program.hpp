@@ -295,18 +295,23 @@ namespace real {
      * The spans point into storage that must outlive the view (the owning regex
      * object). Both the dynamic and static storage policies expose one of these.
      */
+    //! \brief The per-regex immutable lazy-DFA/one-pass cache (defined in onepass.hpp; a forward declaration
+    //!        keeps this low-level header independent of it). A dynamic storage owns one and points its view
+    //!        at it, so the byte-program and one-pass table are built once per regex, not per find_iter.
+    struct regex_immutables;
     struct program_view
     {
-      std::span<const instr>          code;             //!< The instruction stream (main + lookaround regions).
-      std::span<const char_class>     classes;          //!< Interned character classes.
-      std::span<const named_group>    names;            //!< Named capture groups.
-      std::span<const lookaround_sub> lookarounds;      //!< Bounded lookaround sub-programs (regions of \ref code).
-      std::span<const cp_class>       cp_classes;       //!< Match-time code-point classes (for `klass_cp`).
-      std::span<const code_range>     cp_ranges;        //!< Flat range buffer the `cp_class` slices index into.
-      std::uint16_t                   slot_count   {2}; //!< `2 * (capture groups + 1)`.
-      bool                            byte_mode    {};  //!< \ref flags::bytes mode — positions are raw bytes.
-      bool                            unicode_word {};  //!< `\b \B \< \>` use Unicode word-ness (text mode, not bytes / `re.A`).
-      pattern_hints                   hints;            //!< Search-acceleration hints.
+      std::span<const instr>          code;                   //!< The instruction stream (main + lookaround regions).
+      std::span<const char_class>     classes;                //!< Interned character classes.
+      std::span<const named_group>    names;                  //!< Named capture groups.
+      std::span<const lookaround_sub> lookarounds;            //!< Bounded lookaround sub-programs (regions of \ref code).
+      std::span<const cp_class>       cp_classes;             //!< Match-time code-point classes (for `klass_cp`).
+      std::span<const code_range>     cp_ranges;              //!< Flat range buffer the `cp_class` slices index into.
+      std::uint16_t                   slot_count   {2};       //!< `2 * (capture groups + 1)`.
+      bool                            byte_mode    {};        //!< \ref flags::bytes mode — positions are raw bytes.
+      bool                            unicode_word {};        //!< `\b \B \< \>` use Unicode word-ness (text mode, not bytes / `re.A`).
+      pattern_hints                   hints;                  //!< Search-acceleration hints.
+      regex_immutables*               immut        {nullptr}; //!< Per-regex DFA/one-pass cache (dynamic storage only; else null).
     };
 
     /*!

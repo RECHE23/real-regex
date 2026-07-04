@@ -20,8 +20,11 @@
 #ifndef REAL_ONEPASS_HPP
 #define REAL_ONEPASS_HPP
 
+#include <algorithm>
 #include <array>
 #include <bit>
+#include <mutex>
+#include <optional>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -66,11 +69,18 @@ namespace real::detail {
   {
   public:
 
-    static constexpr std::uint32_t no_node   {0xFFFFFFFFU}; //!< "No node yet" sentinel in the pc->node map.
-    static constexpr std::size_t   max_nodes {65000};       //!< Node cap (RE2's), a memory/So-DoS bound.
-    static constexpr std::size_t   max_slots {10};          //!< Slot-pointer cap: group 0 + four user groups.
+    static constexpr std::uint32_t no_node          {0xFFFFFFFFU};  //!< "No node yet" sentinel in the pc->node map.
+    static constexpr std::size_t   max_nodes        {65000};        //!< Node cap (RE2's), a memory/DoS bound.
+    static constexpr std::size_t   max_slots        {10};           //!< Slot-pointer cap: group 0 + four user groups.
+    static constexpr std::size_t   minimize_buckets {4096};         //!< Hash buckets for the Moore-refinement dedup.
+    static constexpr std::size_t   max_table_bytes  {8U << 20};     //!< Table-memory cap (~8 MB): larger declines to the VM.
 
-    explicit constexpr onepass(const byte_program& bp)
+    //! \param[in] bp        The byte-program to classify.
+    //! \param[in] max_bytes Table-memory cap; larger tables decline. Defaults to \ref max_table_bytes; a
+    //!                      smaller value is a test hook to exercise the cap without a huge pattern.
+    explicit constexpr onepass(const byte_program&  bp,
+                               std::size_t          max_bytes = max_table_bytes)
+      : max_bytes_ {max_bytes}
     {
       if (!bp.eligible) {
         bail("the byte-program is itself ineligible (a position assertion or lookaround)");
@@ -198,16 +208,19 @@ namespace real::detail {
       classes_ = bp.classes;
       alpha_   = compute_lazy_alphabet(bp.code, bp.classes);
 
-      // A representative byte per class: all bytes of a class satisfy the same predicates, so testing one
-      // decides the whole class. rep[c] is the first byte mapped to class c.
-      rep_.assign(alpha_.count, 0);
-      std::vector<char> seen_cls(alpha_.count, 0);
-      for (unsigned b = 0; b < 256U; ++b) {
-        const std::uint8_t c {alpha_.of[b]};
-        if (seen_cls[c] == 0) {
-          seen_cls[c] = 1;
-          rep_[c]     = static_cast<std::uint8_t>(b);
+      // For each interned char-class, the byte-classes it consumes — so a `klass` instruction writes only
+      // those edges instead of scanning the whole alphabet. Computed once here (O(classes x 256)) rather
+      // than per instruction (which was O(nodes x classes) and dominated a Unicode \w build).
+      class_cover_.assign(classes_.size(), {});
+      for (std::size_t i = 0; i < classes_.size(); ++i) {
+        std::vector<std::uint16_t>& cover {class_cover_[i]};
+        for (unsigned b = 0; b < 256U; ++b) {
+          if (classes_[i].test(static_cast<std::uint8_t>(b))) {
+            cover.push_back(alpha_.of[b]);
+          }
         }
+        std::ranges::sort(cover);
+        cover.erase(std::ranges::unique(cover).begin(), cover.end());
       }
 
       std::size_t max_slot {0};
@@ -235,17 +248,111 @@ namespace real::detail {
           return;
         }
       }
+      if (!eligible_) {
+        return;
+      }
+      minimize(); // (i) collapse equivalent nodes (the byte-program's trie sharing, lost in the flood, recovered)
+      // (ii) memory cap: even minimized, a pathological table declines to the Pike VM rather than bloat the regex.
+      std::size_t bytes {0};
+      for (const onepass_node& nd : nodes_) {
+        bytes += nd.edge.capacity() * sizeof(onepass_edge);
+      }
+      if (bytes > max_bytes_) {
+        bail("one-pass table too large after minimization (MB)", static_cast<std::int32_t>(bytes >> 20));
+      }
     }
 
-    //! \brief Whether instruction \p in consumes a byte of class \p cls (tested via the class representative).
-    [[nodiscard]] constexpr bool consumes_class(const instr&  in,
-                                                std::uint16_t cls) const
+    //! \brief Moore partition refinement of the one-pass automaton: merge nodes that are behaviourally
+    //!        identical (same accept + match captures, and for every byte-class the same edge — target
+    //!        partition AND capture mask). The one-pass graph has cycles (`\w+` loops), so bottom-up
+    //!        hash-consing is not enough; refinement to a fixpoint is. Merged nodes have identical capture
+    //!        masks by construction, so captures are unchanged. The dense per-node edge table is preserved,
+    //!        so `extract`'s O(1) lookup is unchanged — the whole point of not going sparse.
+    constexpr void minimize()
     {
-      const std::uint8_t b {rep_[cls]};
-      if (in.op == opcode::byte) {
-        return static_cast<std::uint8_t>(in.arg8) == b;
+      const std::size_t          n       {nodes_.size()};
+      std::vector<std::uint32_t> cls(n, 0);
+      std::uint32_t              classes {0};
+      while (true) {
+        std::vector<std::vector<std::uint64_t>> sigs(n);
+        for (std::size_t i = 0; i < n; ++i) {
+          std::vector<std::uint64_t>& s {sigs[i]};
+          s.push_back(cls[i]);
+          s.push_back(nodes_[i].matches ? 1U : 0U);
+          s.push_back(nodes_[i].match_cap_mask);
+          for (const onepass_edge& e : nodes_[i].edge) {
+            s.push_back(e.assigned ? static_cast<std::uint64_t>(cls[e.next]) + 1U : 0U);
+            s.push_back(e.cap_mask);
+          }
+        }
+        std::vector<std::uint32_t>              next_cls(n, 0);
+        std::vector<std::vector<std::uint32_t>> buckets(minimize_buckets);
+        std::uint32_t                           next {0};
+        for (std::size_t i = 0; i < n; ++i) {
+          std::vector<std::uint32_t>& bucket {buckets[sig_hash(sigs[i]) % minimize_buckets]};
+          std::uint32_t               id     {no_node};
+          for (const std::uint32_t j : bucket) {
+            if (sigs[j] == sigs[i]) {
+              id = next_cls[j];
+              break;
+            }
+          }
+          if (id == no_node) {
+            next_cls[i] = next++;
+            bucket.push_back(static_cast<std::uint32_t>(i));
+          }
+          else {
+            next_cls[i] = id;
+          }
+        }
+        cls = std::move(next_cls);
+        if (next == classes) {
+          break; // fixpoint: the partition stopped refining
+        }
+        classes = next;
       }
-      return in.op == opcode::klass && classes_[in.arg16].test(b);
+
+      // Rebuild with one node per class, the start (old node 0) renumbered to node 0.
+      std::vector<std::int32_t> rep(classes, -1);
+      for (std::size_t i = 0; i < n; ++i) {
+        if (rep[cls[i]] < 0) {
+          rep[cls[i]] = static_cast<std::int32_t>(i);
+        }
+      }
+      std::vector<std::uint32_t> class_id(classes, no_node);
+      class_id[cls[0]] = 0;
+      std::uint32_t assigned {1};
+      for (std::uint32_t c = 0; c < classes; ++c) {
+        if (class_id[c] == no_node) {
+          class_id[c] = assigned++;
+        }
+      }
+      std::vector<onepass_node> merged(classes);
+      for (std::uint32_t c = 0; c < classes; ++c) {
+        const onepass_node& r  {nodes_[static_cast<std::size_t>(rep[c])]};
+        onepass_node&       nn {merged[class_id[c]]};
+        nn.matches        = r.matches;
+        nn.match_cap_mask = r.match_cap_mask;
+        nn.edge.assign(alpha_.count, onepass_edge {});
+        for (std::uint16_t x = 0; x < alpha_.count; ++x) {
+          if (r.edge[x].assigned) {
+            nn.edge[x] = onepass_edge {.next     = class_id[cls[r.edge[x].next]],
+                                       .cap_mask = r.edge[x].cap_mask,
+                                       .assigned = true};
+          }
+        }
+      }
+      nodes_ = std::move(merged);
+    }
+
+    //! \brief FNV-1a hash of a partition signature (for the constexpr-friendly bucket dedup).
+    static constexpr std::size_t sig_hash(const std::vector<std::uint64_t>& v)
+    {
+      std::size_t h {1469598103934665603ULL};
+      for (const std::uint64_t x : v) {
+        h = (h ^ static_cast<std::size_t>(x)) * 1099511628211ULL;
+      }
+      return h;
     }
 
     //! \brief Walk the epsilon-closure from \p pc, writing this node's edges. \p on_path detects epsilon
@@ -270,16 +377,30 @@ namespace real::detail {
         case opcode::klass: {
             const std::uint32_t next {node_of(pc + 1, queue)};
             onepass_node&       node {nodes_[node_id]};
-            for (std::uint16_t cls = 0; cls < alpha_.count; ++cls) {
-              if (!consumes_class(in, cls)) {
-                continue;
-              }
-              onepass_edge& slot {node.edge[cls]};
-              if (slot.assigned && (slot.next != next || slot.cap_mask != cap_mask)) {
-                bail("byte-class conflict: not one-pass", static_cast<std::int32_t>(node_id), cls, pc);
+            // Only the byte-classes this instruction actually consumes (one for `byte`, a precomputed few
+            // for `klass`) — never a scan over the whole alphabet, which made the build O(nodes x classes)
+            // and dominated a Unicode \w find_iter.
+            const auto write_edge {[&](std::uint16_t cls) {
+                                     onepass_edge& slot {node.edge[cls]};
+                                     if (slot.assigned && (slot.next != next || slot.cap_mask != cap_mask)) {
+                                       bail("byte-class conflict: not one-pass", static_cast<std::int32_t>(node_id),
+                                            cls, pc);
+                                       return false;
+                                     }
+                                     slot = onepass_edge {.next = next, .cap_mask = cap_mask, .assigned = true};
+                                     return true;
+                                   }};
+            if (in.op == opcode::byte) {
+              if (!write_edge(alpha_.of[static_cast<std::uint8_t>(in.arg8)])) {
                 return;
               }
-              slot = onepass_edge {.next = next, .cap_mask = cap_mask, .assigned = true};
+            }
+            else {
+              for (const std::uint16_t cls : class_cover_[in.arg16]) {
+                if (!write_edge(cls)) {
+                  return;
+                }
+              }
             }
             break; // a consuming instruction ends this epsilon path
           }
@@ -310,18 +431,57 @@ namespace real::detail {
       on_path[static_cast<std::size_t>(pc)] = 0; // backtrack: only a cycle bails, a diamond is fine
     }
 
-    std::span<const instr>      code_;
-    std::span<const char_class> classes_;
-    lazy_byte_alphabet          alpha_;
-    std::vector<std::uint8_t>   rep_;         //!< class -> a representative byte.
-    std::vector<std::uint32_t>  pc_to_node_;  //!< pc -> node id (or no_node).
-    std::vector<onepass_node>   nodes_;
-    std::size_t                 slot_count_ {0};
-    std::int32_t                bail_node_  {-1};
-    std::int32_t                bail_class_ {-1};
-    std::int32_t                bail_pc_    {-1};
-    bool                        eligible_   {true};
-    std::string                 bail_reason_;
+    std::span<const instr>                  code_;
+    std::span<const char_class>             classes_;
+    lazy_byte_alphabet                      alpha_;
+    std::vector<std::vector<std::uint16_t>> class_cover_; //!< char-class index -> the byte-classes it consumes.
+    std::vector<std::uint32_t>              pc_to_node_;  //!< pc -> node id (or no_node).
+    std::vector<onepass_node>               nodes_;
+    std::size_t                             slot_count_ {0};
+    std::size_t                             max_bytes_  {max_table_bytes};
+    std::int32_t                            bail_node_  {-1};
+    std::int32_t                            bail_class_ {-1};
+    std::int32_t                            bail_pc_    {-1};
+    bool                                    eligible_   {true};
+    std::string                             bail_reason_;
+  };
+
+  //! \brief The per-regex immutable cache the router shares across every find_iter on a regex: the byte-
+  //!        program (klass_cp expanded to the deterministic trie) and, when the pattern is one-pass, the
+  //!        extractor table. Built exactly once, under \ref once, so a const regex used from many threads
+  //!        (the binding shares the compiled object across GIL-released calls) builds it race-free. The
+  //!        mutable DFA transition caches stay per-iterator — they warm per scan and would need a lock here.
+  struct regex_immutables
+  {
+    byte_program           byte_prog; //!< klass_cp-expanded byte program (empty until built).
+    std::optional<onepass> op_table;  //!< one-pass extractor, present iff the pattern is one-pass.
+    std::once_flag         once;      //!< guards the one-time build.
+
+    // A copied regex is an independent regex: it gets its own fresh, unbuilt cache rather than sharing
+    // (std::once_flag is not copyable anyway). Copy/move reset rather than transfer — the built state is a
+    // pure runtime accelerator, cheap to rebuild.
+    regex_immutables() = default;
+    regex_immutables(const regex_immutables& /*other*/) noexcept
+    {}
+
+    regex_immutables(regex_immutables&& /*other*/) noexcept
+    {}
+
+    // Assignment keeps this object's own (fresh) cache — it deliberately copies/moves nothing, which is
+    // inherently self-assignment-safe (there is no state to guard). NOLINT: the empty body is the contract.
+    // NOLINTNEXTLINE(cert-oop54-cpp)
+    regex_immutables& operator=(const regex_immutables& /*other*/) noexcept
+    {
+      return *this;
+    }
+
+    // NOLINTNEXTLINE(cert-oop54-cpp)
+    regex_immutables& operator=(regex_immutables&& /*other*/) noexcept
+    {
+      return *this;
+    }
+
+    ~regex_immutables() = default;
   };
 } // namespace real::detail
 

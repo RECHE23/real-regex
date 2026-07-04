@@ -714,10 +714,8 @@ namespace real {
       {
         lookaround_scratch         lookaround;            //!< Isolated sub-scratch for bounded lookaround evaluation.
         capture_pool               pool;                  //!< OPT D1: copy-on-write capture blocks (heap-backed).
-        byte_program               dfa_byte_prog;         //!< OPT lazy-DFA: the klass_cp-expanded program the DFAs span into.
         std::optional<lazy_dfa>    fwd_dfa;               //!< OPT lazy-DFA: forward pass (cache persists across a find_iter).
         std::optional<reverse_dfa> rev_dfa;               //!< OPT lazy-DFA: the reverse start-finder.
-        std::optional<onepass>     op_table;              //!< OPT onepass: single-pass capture extractor (Tier A), when the pattern is one-pass.
         std::vector<std::size_t>   op_slots;              //!< OPT onepass: reusable slot scratch for extract (no per-match alloc).
         const void*                dfa_program {nullptr}; //!< The program the DFAs were built for.
       };
@@ -725,6 +723,11 @@ namespace real {
       std::string     pattern_text;                  //!< The original pattern text.
       dynamic_program program;                       //!< The compiled program.
       flags           effective_flags {flags::none}; //!< Constructor flags merged with any (?ims).
+
+      //! \brief Per-regex lazy-DFA/one-pass cache, built once (thread-safe) and shared by every search on
+      //!        this regex — not rebuilt per find_iter. `mutable`: a const regex fills it on first routed
+      //!        search. Copy/move reset it (a copied regex rebuilds its own; see \ref detail::regex_immutables).
+      mutable detail::regex_immutables immut_ {};
 
       /*!
        * \brief Parses and compiles \p pattern with flags \p compile_flags.
@@ -748,7 +751,9 @@ namespace real {
        */
       [[nodiscard]] constexpr program_view view() const
       {
-        return program.view();
+        program_view pv {program.view()};
+        pv.immut = &immut_; // the router builds/uses the per-regex cache through the view
+        return pv;
       }
 
       /*!

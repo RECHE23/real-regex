@@ -287,3 +287,61 @@ TEST(onepass_extract_slots_identical_to_pike)
   }
   EXPECT(checked >= 30U);
 }
+
+#include <atomic>
+#include <thread>
+
+TEST(onepass_per_regex_cache_is_thread_safe)
+{
+  // The per-regex immutable cache (byte-program + one-pass table) is built once under std::call_once. Many
+  // threads sharing ONE const regex — the binding releases the GIL and shares the compiled object — must all
+  // get correct results with no race on the build. Stress: N threads each run find_iter repeatedly on the
+  // same instance; every run must see the same match count. (ASan/UBSan run this; TSan/valgrind on the
+  // devbox is the dedicated race detector.)
+  const real::regex rx {"(\\w+)@(\\w+)"}; // one-pass; routes; cache built lazily on the first routed search
+  std::string       text;
+  for (int i = 0; i < 2000; ++i) {
+    text += "aa@bb cc@dd ee@ff "; // past the routing threshold, many matches
+  }
+  std::size_t expected {0};
+  for (const auto& m : rx.find_iter(text)) {
+    (void) m;
+    ++expected;
+  }
+
+  constexpr int            n_threads {8};
+  constexpr int            n_iters   {50};
+  std::atomic<int>         good      {0};
+  std::vector<std::thread> threads;
+  threads.reserve(n_threads);
+  for (int t = 0; t < n_threads; ++t) {
+    threads.emplace_back([&] {
+                           for (int it = 0; it < n_iters; ++it) {
+                             std::size_t n {0};
+                             for (const auto& m : rx.find_iter(text)) {
+                               (void) m;
+                               ++n;
+                             }
+                             if (n == expected) {
+                               good.fetch_add(1, std::memory_order_relaxed);
+                             }
+                           }
+                         });
+  }
+  for (std::thread& th : threads) {
+    th.join();
+  }
+  EXPECT_EQ(good.load(), n_threads * n_iters); // every run on every thread agreed
+}
+
+TEST(onepass_table_memory_cap_declines)
+{
+  // (ii) The table-memory cap declines a table that would bloat the regex, falling back to the Pike VM. The
+  // flagship's minimized table is ~1.8 MB; a 64 KB cap (test hook) forces the decline, and the same pattern
+  // under the real ~8 MB cap stays one-pass.
+  const byte_program bp {byte_prog("(\\w+)@(\\w+)")};
+  EXPECT(onepass(bp).eligible());                             // real cap (~8 MB): one-pass
+  const onepass capped  {bp, std::size_t {64} << 10};         // 64 KB cap
+  EXPECT(!capped.eligible());
+  EXPECT(!capped.bail_reason().empty());                      // a reason, not a bare bool
+}

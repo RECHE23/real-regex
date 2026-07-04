@@ -26,6 +26,7 @@
 
 #include "charclass.hpp"
 #include "prefilter.hpp"
+#include <mutex>
 #include <optional>
 
 #include "lazy_dfa.hpp"
@@ -284,10 +285,8 @@ namespace real::detail {
   {
     lookaround_scratch         lookaround;            //!< Isolated sub-scratch for bounded lookaround evaluation.
     capture_pool               pool;                  //!< OPT D1: copy-on-write capture blocks (heap-backed).
-    byte_program               dfa_byte_prog;         //!< OPT lazy-DFA: the klass_cp-expanded program the DFAs span into.
     std::optional<lazy_dfa>    fwd_dfa;               //!< OPT lazy-DFA: forward pass (built lazily, cache persists across a find_iter).
     std::optional<reverse_dfa> rev_dfa;               //!< OPT lazy-DFA: the reverse start-finder.
-    std::optional<onepass>     op_table;              //!< OPT onepass: single-pass capture extractor (Tier A), when the pattern is one-pass.
     std::vector<std::size_t>   op_slots;              //!< OPT onepass: reusable slot scratch for extract (no per-match alloc).
     const void*                dfa_program {nullptr}; //!< The program the DFAs were built for (rebuild if it changes).
   };
@@ -388,13 +387,10 @@ namespace real::detail {
             const std::size_t abs_end   {start + match_end};
             const std::size_t abs_start {state_.rev_dfa->reverse_start(text, abs_end, start)};
             // OPT onepass (Tier A): a one-pass pattern fills captures in a single pass over [s, e] with no
-            // thread lists. Otherwise the window-Pike runs the general loop there. Both give the same slots.
-            // The table is built on first use (a no-match scan reaches neither this point nor its cost).
-            if (!state_.op_table.has_value()) {
-              state_.op_table.emplace(state_.dfa_byte_prog);
-            }
-            if (state_.op_table->eligible()
-                && state_.op_table->extract(text, abs_start, abs_end, state_.op_slots)) {
+            // thread lists (the shared per-regex table). Otherwise the window-Pike runs the general loop
+            // there. Both give the same slots.
+            if (prog_.immut->op_table.has_value() && prog_.immut->op_table->eligible()
+                && prog_.immut->op_table->extract(text, abs_start, abs_end, state_.op_slots)) {
               out_slots.assign(prog_.slot_count, npos);
               for (std::size_t i = 0; i < state_.op_slots.size() && i < prog_.slot_count; ++i) {
                 out_slots[i] = state_.op_slots[i];
@@ -510,18 +506,30 @@ namespace real::detail {
     //!        flag itself. Instantiated only for the dynamic state (the one carrying the optionals).
     void ensure_lazy_dfa()
     {
+      detail::regex_immutables* const immut {prog_.immut};
+      if (immut == nullptr) {
+        return; // no per-regex cache (not the dynamic storage) — the caller keeps the VM
+      }
+      // The byte-program and one-pass table are immutable and per-regex: build them exactly once, race-free,
+      // shared by every find_iter on this regex (not rebuilt per iterator).
+      std::call_once(immut->once, [&] {
+                       immut->byte_prog = build_byte_program(prog_); // expands klass_cp; ineligible if assert/lookaround
+                       if (immut->byte_prog.eligible) {
+                         immut->op_table.emplace(immut->byte_prog); // one-pass extractor (Tier A) when the pattern qualifies
+                       }
+                     });
+      // The DFA transition caches are mutable (warm per scan): they stay per-iterator, spanning the shared
+      // byte-program, rebuilt only if this state is now bound to a different program.
       const auto* const program {static_cast<const void*>(prog_.code.data())};
       if (state_.dfa_program != program) {
-        state_.dfa_byte_prog = build_byte_program(prog_); // expands klass_cp; ineligible if assert/lookaround
-        if (state_.dfa_byte_prog.eligible) {
-          state_.fwd_dfa.emplace(state_.dfa_byte_prog.code, state_.dfa_byte_prog.classes);
-          state_.rev_dfa.emplace(state_.dfa_byte_prog.code, state_.dfa_byte_prog.classes);
+        if (immut->byte_prog.eligible) {
+          state_.fwd_dfa.emplace(immut->byte_prog.code, immut->byte_prog.classes);
+          state_.rev_dfa.emplace(immut->byte_prog.code, immut->byte_prog.classes);
         }
         else {
           state_.fwd_dfa.reset();
           state_.rev_dfa.reset();
         }
-        state_.op_table.reset(); // built lazily on first extraction — a no-match scan never pays for it
         state_.dfa_program = program;
       }
     }
