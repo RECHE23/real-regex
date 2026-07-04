@@ -16,10 +16,12 @@
 #ifndef REAL_LAZY_DFA_HPP
 #define REAL_LAZY_DFA_HPP
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -175,6 +177,57 @@ namespace real::detail {
     [[nodiscard]] const counters& stats() const
     {
       return stats_;
+    }
+
+    /*!
+     * \brief The end offset of the leftmost-first match in \p text (`kFirstMatch`), or \ref real::npos.
+     *
+     * The forward pass the contract in the design guide (§7.6) specifies: an unanchored priority-ordered
+     * closure that seeds a fresh thread at every position (at the lowest priority) until a match is found,
+     * then reports the end of the **highest-priority** thread that reaches `match` — a lower-priority accept
+     * is suppressed while a higher one lives. It is a single left-to-right pass over the ordered PC-sets, so
+     * it is linear per search regardless of how the state space would explode under memoization. Eligible
+     * programs only (an ineligible one returns \ref real::npos; the caller keeps the Pike VM). No captures:
+     * this reports the end; the windowed Pike pass fills the span and applies the empty-match rule.
+     */
+    [[nodiscard]] std::size_t forward_end(std::string_view text) const
+    {
+      if (!eligible_) {
+        return npos;
+      }
+      std::vector<char>         seen(code_.size(), 0);
+      std::vector<std::int32_t> state;
+      close_into(0, state, seen); // the seed at position 0
+      std::size_t best_end {npos};
+      bool        matched  {false};
+      std::size_t pos      {0};
+      while (true) {
+        for (std::size_t i = 0; i < state.size(); ++i) {
+          if (code_[static_cast<std::size_t>(state[i])].op == opcode::match) {
+            best_end = pos;
+            matched  = true;
+            state.resize(i); // priority-cut: drop the accept and every lower-priority thread after it
+            break;
+          }
+        }
+        if (pos >= text.size() || (state.empty() && matched)) {
+          break;
+        }
+        const std::uint8_t        byte {static_cast<std::uint8_t>(text[pos])};
+        std::vector<std::int32_t> next;
+        std::fill(seen.begin(), seen.end(), static_cast<char>(0));
+        for (const std::int32_t pc : state) {
+          if (consumes(pc, byte)) {
+            close_into(pc + 1, next, seen);
+          }
+        }
+        if (!matched) {
+          close_into(0, next, seen); // unanchored: re-seed at the lowest priority, only before a match
+        }
+        state = std::move(next);
+        ++pos;
+      }
+      return best_end;
     }
 
     //! \brief Whether \p state accepts here (its ordered set contains a `match` PC).

@@ -90,3 +90,57 @@ TEST(lazy_dfa_alphabet_is_compressed)
   // one class for [a-z], one for everything else: an alphabet of 2, not 256.
   EXPECT_EQ(dfa.num_classes(), std::uint16_t {2});
 }
+
+// The forward pass (kFirstMatch): its reported end must equal the Pike VM's match end, for eligible
+// patterns. The two acids distinguish kFirstMatch from the naive earliest-end and from longest-match.
+static std::size_t pike_end(const char       * pat,
+                            const std::string& text)
+{
+  const auto m {real::regex(pat).search(text)};
+  return m.matched() ? m.end() : real::npos;
+}
+
+static std::size_t dfa_end(const char       * pat,
+                           const std::string& text)
+{
+  const auto st {dynamic_storage::compile(pat, real::flags::none)};
+  return lazy_dfa(st.program.code, st.program.classes).forward_end(text);
+}
+
+TEST(lazy_dfa_forward_pass_matches_pike_on_the_acids)
+{
+  EXPECT_EQ(dfa_end("a|ab", "ab"), pike_end("a|ab", "ab"));             // 1, not the longest 2
+  EXPECT_EQ(dfa_end("a|ab", "ab"), std::size_t {1});
+  EXPECT_EQ(dfa_end("aabaa|b", "aabaa"), pike_end("aabaa|b", "aabaa")); // 5, not the earlier-ending 3
+  EXPECT_EQ(dfa_end("aabaa|b", "aabaa"), std::size_t {5});
+  EXPECT_EQ(dfa_end("aabaa|b", "zzaabaa"), std::size_t {7});
+}
+
+TEST(lazy_dfa_forward_pass_differential_vs_pike)
+{
+  // eligible byte/class patterns only (no assertions / klass_cp / lookarounds)
+  const char* pats[] {
+    "a|ab", "ab|a", "aabaa|b", "a*b", "(a|b)+c", "[a-c]+", "a(b|c)*d", "x?y?z", "a+a+",
+    "(ab|a)(b|)", "a*a*b", "[0-9]+[.][0-9]+", "foo|foobar", "(a|)+b"};
+  const char* texts[] {
+    "", "a", "b", "ab", "ba", "aabaa", "abcabc", "xyz", "aaa", "abcd", "1.5", "foobar", "aaab", "cc"};
+  std::size_t checked {0};
+  for (const char* p : pats) {
+    for (const char* t : texts) {
+      const std::string s {t};
+      EXPECT_EQ(dfa_end(p, s), pike_end(p, s));
+      ++checked;
+    }
+  }
+  EXPECT(checked >= 190U);
+}
+
+TEST(lazy_dfa_forward_pass_is_linear_under_state_explosion)
+{
+  // a state-exploding pattern: the forward pass is one left-to-right sweep, so its work is linear in the
+  // text — never the per-position re-derivation that would be quadratic.
+  const auto        st  {dynamic_storage::compile("(a|b)*a(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)", real::flags::none)};
+  const lazy_dfa    dfa {st.program.code, st.program.classes};
+  const std::string big(20000, 'a');
+  EXPECT(dfa.forward_end(big) != real::npos); // completes (linearly); the assertion is that it returns
+}

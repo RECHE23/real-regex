@@ -458,6 +458,38 @@ win). Correctness is the value model's, exactly: 3.2&nbsp;M differential cases a
 Σ-invariant is asserted at every run's end (and holds down to constexpr evaluation), and Valgrind is clean
 on the capture-heavy loops.
 
+\subsection g_lazydfa 7.6 In progress: the lazy-DFA forward pass (the contract)
+
+The word-boundary and multi-group capture rows of the rust duel (section&nbsp;E of BENCHMARKS.md) are what a
+*lazy DFA* would close: rust answers a match's span by running a byte-at-a-time DFA that never touches its
+capture machinery, while REAL's Pike VM always tracks slots. The plan is a two-pass split — a forward DFA
+finds the match *end*, then the Pike VM runs only inside the window `[start, end)` to fill the captures —
+so the DFA carries the throughput and the Pike VM remains the single source of match semantics.
+
+This subsection is the **contract the forward pass must satisfy**, written before it is wired in
+(\ref real::detail::lazy_dfa is the inert scaffolding today). For every *eligible* pattern (no position
+assertion, no `klass_cp`, no lookaround — those keep the general VM) and every text:
+
+- **Boundary equivalence.** `span(pike) = (s, e)` **iff** the forward pass reports end `e` and the
+  start-finder reports `s`. The forward pass is `kFirstMatch`, **not** earliest-end and **not**
+  longest-match: its DFA states are the Pike thread list's program counters *in priority order*; at a
+  leftmost start it reports the end of the **highest-priority** thread that reaches `match`, and a
+  lower-priority accept is **suppressed** while any higher-priority thread is still alive. (This is why it
+  cannot be `real::dfa`, whose sets are unordered: `a|ab` on `"ab"` must be `a` (0,1), and `aabaa|b` on
+  `"aabaa"` must be `aabaa` (0,5), not the earlier-ending `b` (2,3). Both are pinned acids.)
+- **Empty matches.** The CPython&nbsp;3.7+ `finditer` rule carries across the two passes: after an empty
+  match the next may not be empty at the same position (`forbid_empty_until_`, UTF-8-aligned), enforced on
+  the same slot-0 comparison the Pike loop already uses — the forward pass reports the end, the Pike window
+  applies the rule.
+- **Linearity under thrash — the fallback is per-scan.** When the state cache exceeds its budget it is
+  flushed; two flushes within one search trip a *thrash* flag, and the engine abandons the DFA and finishes
+  **that one search** on the Pike VM. It never re-derives the automaton from every start position — the
+  `O(n·k)` two-pass trap. One forward pass or one Pike pass, per search, always linear.
+
+The `kFirstMatch` boundary rule was validated out-of-engine against the Pike VM (the two acids, a
+198k-case alternation differential, and mixed/nullable adversarials) before any of this was written; the
+in-repo property-net asserts it at each step from here on.
+
 \section g_map 8. Architecture map: who does what
 
 Headers form layers; a header only includes those below it (each file's Doxygen
