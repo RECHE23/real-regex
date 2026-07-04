@@ -50,6 +50,7 @@ namespace real::detail {
     std::vector<char_class> classes;
     bool                    eligible       {true};  //!< Representable by the byte DFAs / Tier-A one-pass.
     bool                    has_assertions {false}; //!< A Tier-B build kept `assert_position` ops (else stripped/declined).
+    bool                    unicode_word   {false}; //!< Program default word-ness for `\b \B \< \>` (Tier-B edge conditions).
   };
 
   //! \brief One node of a minimal deterministic UTF-8 trie for a code-point class. Its transitions are byte
@@ -271,14 +272,15 @@ namespace real::detail {
                                          bool                keep_assertions = false)
   {
     byte_program bp;
+    bp.unicode_word = prog.unicode_word;
     for (const instr& in : prog.code) {
       if (in.op == opcode::assert_lookaround) {
         bp.eligible = false; // no byte automaton can carry a bounded lookaround (Tier-B stops at assertions)
         return bp;
       }
       if (in.op == opcode::assert_position) {
-        if (!keep_assertions) {
-          bp.eligible = false; // Tier-A: no byte-DFA can carry a position assertion
+        if (!keep_assertions || in.arg16 != 0) {
+          bp.eligible = false; // Tier-A declines any assertion; Tier-B declines a word-ness-flipped one (scoped (?a:))
           return bp;
         }
         bp.has_assertions = true; // Tier-B: kept, to become an edge condition in the one-pass table

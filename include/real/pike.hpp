@@ -1395,27 +1395,7 @@ namespace real::detail {
     [[nodiscard]] constexpr bool word_before(std::size_t pos,
                                              bool        ascii_word) const
     {
-      if (pos == 0) {
-        return false;
-      }
-      const auto prev {static_cast<std::uint8_t>(text_[pos - 1])};
-      // ASCII fast path: an ASCII byte is a whole one-byte code point, and is_word_cp agrees with
-      // is_ascii_word_byte on it — so the common case skips the back-decode entirely. Bytes / re.A —
-      // and a scoped (?a:...) — carry ascii_word from the assert instruction and always take this path.
-      if (prev < 0x80U || ascii_word) {
-        return is_ascii_word_byte(prev);
-      }
-      std::size_t i     {pos - 1};
-      std::size_t steps {0};
-      while (i > 0 && (static_cast<std::uint8_t>(text_[i]) & 0xC0U) == 0x80U && steps < 3) {
-        --i;
-        ++steps;
-      }
-      const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, i)};
-      if (!dc.valid || i + dc.length != pos) {
-        return false; // malformed, or the sequence does not end exactly at pos
-      }
-      return is_word_cp(dc.cp);
+      return real::detail::word_before(text_, pos, ascii_word); // shared free function (assert_eval.hpp)
     }
 
     //! \brief Word-ness of the code point **starting at** \p pos — the right side of a boundary. False
@@ -1423,15 +1403,7 @@ namespace real::detail {
     [[nodiscard]] constexpr bool word_after(std::size_t pos,
                                             bool        ascii_word) const
     {
-      if (pos >= text_.size()) {
-        return false;
-      }
-      const auto here {static_cast<std::uint8_t>(text_[pos])};
-      if (here < 0x80U || ascii_word) { // ASCII byte (or bytes / re.A / scoped (?a:)): byte-level, no decode
-        return is_ascii_word_byte(here);
-      }
-      const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, pos)};
-      return dc.valid && is_word_cp(dc.cp);
+      return real::detail::word_after(text_, pos, ascii_word); // shared free function (assert_eval.hpp)
     }
 
     /*!
@@ -1449,44 +1421,8 @@ namespace real::detail {
       // A word assert's word-ness is the program default (\ref program_view::unicode_word), flipped by
       // the instruction's flip bit for a scoped (?a:...) / (?-a:...) island — so non-scoped programs
       // keep flip == 0 and are byte-identical. ascii_word == unicode default matches iff not flipped.
-      const bool        ascii_word {prog_.unicode_word == word_ness_flipped};
-      const std::size_t len {text_.size()};
-      const auto        byte_at = [&](std::size_t i) { return static_cast<std::uint8_t>(text_[i]); };
-      bool              result {};
-      switch (kind) {
-        case assert_kind::text_start:
-          result = pos == 0;
-          break;
-        case assert_kind::text_end:
-          result = pos == len;
-          break;
-        case assert_kind::text_end_or_final_newline:
-          result = pos == len || (pos + 1 == len && byte_at(pos) == '\n');
-          break;
-        case assert_kind::line_start:
-          result = pos == 0 || byte_at(pos - 1) == '\n';
-          break;
-        case assert_kind::line_end:
-          result = pos == len || byte_at(pos) == '\n';
-          break;
-        case assert_kind::word_boundary:
-        case assert_kind::not_word_boundary:
-          {
-            const bool before {word_before(pos, ascii_word)};
-            const bool after  {word_after(pos, ascii_word)};
-            result = (before != after) == (kind == assert_kind::word_boundary);
-          }
-          break;
-        case assert_kind::word_start:
-        case assert_kind::word_end:
-          {
-            const bool before {word_before(pos, ascii_word)};
-            const bool after  {word_after(pos, ascii_word)};
-            result = kind == assert_kind::word_start ? (!before && after) : (before && !after);
-          }
-          break;
-      }
-      return result;
+      const bool ascii_word {prog_.unicode_word == word_ness_flipped};
+      return real::detail::assertion_holds(kind, text_, pos, ascii_word); // shared free function
     }
 
     /*!

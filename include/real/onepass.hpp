@@ -31,6 +31,7 @@
 #include <string_view>
 #include <vector>
 
+#include "assert_eval.hpp"
 #include "lazy_dfa.hpp"
 #include "program.hpp"
 
@@ -41,18 +42,20 @@ namespace real::detail {
   //!        a different edge is the one-pass conflict — the pattern is then rejected.
   struct onepass_edge
   {
-    std::uint32_t next     {0};     //!< Next node id (valid only when \ref assigned).
-    std::uint64_t cap_mask {0};     //!< Bit i set => write the current position into slot i on this edge.
-    bool          assigned {false}; //!< Whether this byte-class has an edge from this node.
+    std::uint32_t next        {0};     //!< Next node id (valid only when \ref assigned).
+    std::uint64_t cap_mask    {0};     //!< Bit i set => write the current position into slot i on this edge.
+    std::uint32_t assert_mask {0};     //!< Bit k (an \ref assert_kind) set => that assertion must hold at the position to take this edge (Tier-B).
+    bool          assigned    {false}; //!< Whether this byte-class has an edge from this node.
   };
 
   //! \brief A one-pass node: one edge per byte-class, plus whether the run may end here and with what
   //!        captures. Nodes are the points the automaton can be in *between* byte reads.
   struct onepass_node
   {
-    std::vector<onepass_edge> edge;                   //!< Indexed by byte-class.
-    bool                      matches        {false}; //!< Reaching `match` from here (via epsilon).
-    std::uint64_t             match_cap_mask {0};     //!< Slots written when the match is taken.
+    std::vector<onepass_edge> edge;                      //!< Indexed by byte-class.
+    bool                      matches           {false}; //!< Reaching `match` from here (via epsilon).
+    std::uint64_t             match_cap_mask    {0};     //!< Slots written when the match is taken.
+    std::uint32_t             match_assert_mask {0};     //!< Assertions that must hold at the end for the match (Tier-B).
   };
 
   /*!
@@ -80,14 +83,11 @@ namespace real::detail {
     //!                      smaller value is a test hook to exercise the cap without a huge pattern.
     explicit constexpr onepass(const byte_program&  bp,
                                std::size_t          max_bytes = max_table_bytes)
-      : max_bytes_ {max_bytes}
+      : max_bytes_ {max_bytes},
+        ascii_word_ {!bp.unicode_word} // word-ness mode for \b \B \< \> in edge conditions (Tier-B)
     {
       if (!bp.eligible) {
-        bail("the byte-program is itself ineligible (a position assertion or lookaround)");
-        return;
-      }
-      if (bp.has_assertions) {
-        bail("Tier-B one-pass (assertions as edge conditions) is not yet built"); // lifted once the runtime evaluates the edge conditions
+        bail("the byte-program is itself ineligible (a lookaround, or a word-ness-flipped assertion)");
         return;
       }
       build(bp);
@@ -161,6 +161,9 @@ namespace real::detail {
         if (!edge.assigned) {
           return false;                                             // no outgoing edge for this byte — the span does not match
         }
+        if (edge.assert_mask != 0 && !asserts_hold(edge.assert_mask, text, pos)) {
+          return false;                                             // an assertion on this edge does not hold here (Tier-B)
+        }
         for (std::uint64_t m = edge.cap_mask; m != 0; m &= m - 1) {
           out[static_cast<std::size_t>(std::countr_zero(m))] = pos; // saves crossed before this byte take pos
         }
@@ -169,8 +172,25 @@ namespace real::detail {
       if (!nodes_[node].matches) {
         return false;                                           // reached e but not at an accept
       }
+      if (nodes_[node].match_assert_mask != 0 && !asserts_hold(nodes_[node].match_assert_mask, text, e)) {
+        return false;                                           // an end assertion ($, \b, \Z…) does not hold at e
+      }
       for (std::uint64_t m = nodes_[node].match_cap_mask; m != 0; m &= m - 1) {
         out[static_cast<std::size_t>(std::countr_zero(m))] = e; // saves crossed to the match take e
+      }
+      return true;
+    }
+
+    //! \brief Whether every assertion in \p mask (a set of \ref assert_kind bits) holds at \p pos in \p text.
+    [[nodiscard]] bool asserts_hold(std::uint32_t    mask,
+                                    std::string_view text,
+                                    std::size_t      pos) const
+    {
+      for (std::uint32_t m = mask; m != 0; m &= m - 1) {
+        const auto kind {static_cast<assert_kind>(std::countr_zero(m))};
+        if (!assertion_holds(kind, text, pos, ascii_word_)) {
+          return false;
+        }
       }
       return true;
     }
@@ -247,7 +267,7 @@ namespace real::detail {
         const std::int32_t pc {queue.back()};
         queue.pop_back();
         std::vector<char> on_path(bp.code.size(), 0);
-        build_edges(pc, 0, on_path, pc_to_node_[static_cast<std::size_t>(pc)], queue);
+        build_edges(pc, 0, 0, on_path, pc_to_node_[static_cast<std::size_t>(pc)], queue);
         if (nodes_.size() > max_nodes) {
           bail("node cap exceeded", static_cast<std::int32_t>(nodes_.size()));
           return;
@@ -285,9 +305,11 @@ namespace real::detail {
           s.push_back(cls[i]);
           s.push_back(nodes_[i].matches ? 1U : 0U);
           s.push_back(nodes_[i].match_cap_mask);
+          s.push_back(nodes_[i].match_assert_mask);
           for (const onepass_edge& e : nodes_[i].edge) {
             s.push_back(e.assigned ? static_cast<std::uint64_t>(cls[e.next]) + 1U : 0U);
             s.push_back(e.cap_mask);
+            s.push_back(e.assert_mask);
           }
         }
         std::vector<std::uint32_t>              next_cls(n, 0);
@@ -336,14 +358,16 @@ namespace real::detail {
       for (std::uint32_t c = 0; c < classes; ++c) {
         const onepass_node& r  {nodes_[static_cast<std::size_t>(rep[c])]};
         onepass_node&       nn {merged[class_id[c]]};
-        nn.matches        = r.matches;
-        nn.match_cap_mask = r.match_cap_mask;
+        nn.matches           = r.matches;
+        nn.match_cap_mask    = r.match_cap_mask;
+        nn.match_assert_mask = r.match_assert_mask;
         nn.edge.assign(alpha_.count, onepass_edge {});
         for (std::uint16_t x = 0; x < alpha_.count; ++x) {
           if (r.edge[x].assigned) {
-            nn.edge[x] = onepass_edge {.next     = class_id[cls[r.edge[x].next]],
-                                       .cap_mask = r.edge[x].cap_mask,
-                                       .assigned = true};
+            nn.edge[x] = onepass_edge {.next        = class_id[cls[r.edge[x].next]],
+                                       .cap_mask    = r.edge[x].cap_mask,
+                                       .assert_mask = r.edge[x].assert_mask,
+                                       .assigned    = true};
           }
         }
       }
@@ -366,6 +390,7 @@ namespace real::detail {
     //!        cycles (a nullable loop => not one-pass). \p cap_mask accumulates the slots crossed so far.
     constexpr void build_edges(std::int32_t               pc,
                                std::uint64_t              cap_mask,
+                               std::uint32_t              assert_mask,
                                std::vector<char>&         on_path,
                                std::uint32_t              node_id,
                                std::vector<std::int32_t>& queue)
@@ -389,12 +414,17 @@ namespace real::detail {
             // and dominated a Unicode \w find_iter.
             const auto write_edge {[&](std::uint16_t cls) {
                                      onepass_edge& slot {node.edge[cls]};
-                                     if (slot.assigned && (slot.next != next || slot.cap_mask != cap_mask)) {
+                                     if (slot.assigned
+                                         && (slot.next != next || slot.cap_mask != cap_mask
+                                             || slot.assert_mask != assert_mask)) {
                                        bail("byte-class conflict: not one-pass", static_cast<std::int32_t>(node_id),
                                             cls, pc);
                                        return false;
                                      }
-                                     slot = onepass_edge {.next = next, .cap_mask = cap_mask, .assigned = true};
+                                     slot = onepass_edge {.next        = next,
+                                                          .cap_mask    = cap_mask,
+                                                          .assert_mask = assert_mask,
+                                                          .assigned    = true};
                                      return true;
                                    }};
             if (in.op == opcode::byte) {
@@ -413,26 +443,32 @@ namespace real::detail {
           }
         case opcode::match: {
             onepass_node& node {nodes_[node_id]};
-            if (node.matches && node.match_cap_mask != cap_mask) {
+            if (node.matches && (node.match_cap_mask != cap_mask || node.match_assert_mask != assert_mask)) {
               bail("second distinct match: not one-pass", static_cast<std::int32_t>(node_id));
               return;
             }
-            node.matches        = true;
-            node.match_cap_mask = cap_mask;
+            node.matches           = true;
+            node.match_cap_mask    = cap_mask;
+            node.match_assert_mask = assert_mask;
             break;
           }
         case opcode::split:
-          build_edges(in.primary_target, cap_mask, on_path, node_id, queue);
-          build_edges(in.secondary_target, cap_mask, on_path, node_id, queue);
+          build_edges(in.primary_target, cap_mask, assert_mask, on_path, node_id, queue);
+          build_edges(in.secondary_target, cap_mask, assert_mask, on_path, node_id, queue);
           break;
         case opcode::jump:
-          build_edges(in.primary_target, cap_mask, on_path, node_id, queue);
+          build_edges(in.primary_target, cap_mask, assert_mask, on_path, node_id, queue);
           break;
         case opcode::save:
-          build_edges(pc + 1, cap_mask | (std::uint64_t {1} << in.arg16), on_path, node_id, queue);
+          build_edges(pc + 1, cap_mask | (std::uint64_t {1} << in.arg16), assert_mask, on_path, node_id, queue);
+          break;
+        case opcode::assert_position:
+          // Tier-B: the assertion becomes a condition on whatever edge (or match) this epsilon path reaches.
+          // The build_byte_program Tier-B pass already rejected a word-ness-flipped assert, so arg16 is 0.
+          build_edges(pc + 1, cap_mask, assert_mask | (std::uint32_t {1} << in.arg8), on_path, node_id, queue);
           break;
         default:
-          bail("unexpected op in byte-program (assertions/lookaround/klass_cp should be absent)");
+          bail("unexpected op in byte-program (lookaround/klass_cp should be absent)");
           return;
       }
       on_path[static_cast<std::size_t>(pc)] = 0; // backtrack: only a cycle bails, a diamond is fine
@@ -446,6 +482,7 @@ namespace real::detail {
     std::vector<onepass_node>               nodes_;
     std::size_t                             slot_count_ {0};
     std::size_t                             max_bytes_  {max_table_bytes};
+    bool                                    ascii_word_ {true};
     std::int32_t                            bail_node_  {-1};
     std::int32_t                            bail_class_ {-1};
     std::int32_t                            bail_pc_    {-1};

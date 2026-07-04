@@ -355,10 +355,9 @@ TEST(onepass_table_memory_cap_declines)
 
 TEST(tier_b_byte_program_keeps_assertions)
 {
-  // Tier-B (keep_assertions) preserves assert_position ops so the one-pass table can later carry them as
-  // edge conditions; Tier-A (default) still declines them, and a bounded lookaround declines in both. The
-  // one-pass runtime does not yet consume assertions, so it declines a has_assertions program (the runtime, once it
-  // the guard). Foundation slice: the two-population eligibility, before the edge-condition runtime.
+  // Tier-B (keep_assertions) preserves assert_position ops so the one-pass table carries them as edge
+  // conditions; Tier-A (default) still declines them, a bounded lookaround declines in both, and a
+  // word-ness-flipped assertion (scoped (?a:)) declines in Tier-B. The two-population eligibility.
   const byte_program anchored {tier_b_prog("^foo$")};
   EXPECT(anchored.eligible);
   EXPECT(anchored.has_assertions);
@@ -374,5 +373,79 @@ TEST(tier_b_byte_program_keeps_assertions)
   EXPECT(plain.eligible);
   EXPECT(!plain.has_assertions);
 
-  EXPECT(!real::detail::onepass(anchored).eligible()); // the runtime declines Tier-B until it evaluates edge conditions
+  EXPECT(real::detail::onepass(anchored).eligible());      // ^foo$ is one-pass via Tier-B edge conditions
+  EXPECT(real::detail::onepass(boundary).eligible());      // \bfoo\b too
+}
+
+TEST(onepass_tier_b_slots_identical_to_pike)
+{
+  // Population B: patterns carrying assertions (\b ^ $ \A \Z), the Tier-B one-pass. For every Pike match
+  // [s, e] the Tier-B single pass over the FULL text (its edge/match conditions read the s-1 / e context
+  // outside the span) must give byte-identical group slots — word boundaries, line/text anchors (with and
+  // without multiline), and CRLF / text-border positions.
+  struct tier_b_case
+  {
+    const char* pat;
+    real::flags f;
+  };
+  const tier_b_case cases[] {
+    {.pat = R"(\bfoo\b)", .f = real::flags::none},      {.pat = R"(\b(\w+)\b)", .f = real::flags::none},
+    {.pat = R"(\bfoo)", .f = real::flags::none},        {.pat = R"(foo\b)", .f = real::flags::none},
+    {.pat = R"(\b(\d+)\b)", .f = real::flags::none},    {.pat = R"((\w+)\b)", .f = real::flags::none},
+    {.pat = R"(^(\w+))", .f = real::flags::multiline},  {.pat = R"((\w+)$)", .f = real::flags::multiline},
+    {.pat = R"(^abc)", .f = real::flags::none},         {.pat = R"(abc$)", .f = real::flags::none},
+    {.pat = R"(^(\w+)$)", .f = real::flags::multiline}, {.pat = R"(\A(\w+))", .f = real::flags::none},
+  };
+  const char* texts[] {
+    "", "foo bar foo", "xfooy foo baz", "hello world", "line1\nfoo\nbar baz", "  abc  ",
+    "abc", "a\r\nfoo\r\nb", "123 foo 456", "\nfoo\n", "foobar foo", "word",
+  };
+  std::size_t checked {0};
+  for (const tier_b_case& c : cases) {
+    const auto    st {dynamic_storage::compile(c.pat, c.f)};
+    const auto    bp {build_byte_program(st.program.view(), /*keep_assertions=*/ true)};
+    const onepass op {bp};
+    EXPECT(op.eligible()); // every case above is one-pass under Tier-B
+    if (!op.eligible()) {
+      continue;
+    }
+    const real::regex rx {c.pat, c.f};
+    for (const char* t : texts) {
+      const std::string text {t};
+      for (const auto& m : rx.find_iter(text)) {
+        std::vector<std::size_t> slots;
+        EXPECT(op.extract(text, m.start(), m.end(), slots));
+        for (std::size_t g = 0; g < m.size(); ++g) {
+          const std::size_t ps {m[g].data() != nullptr ? m.start(g) : real::npos};
+          const std::size_t pe {m[g].data() != nullptr ? m.end(g) : real::npos};
+          EXPECT_EQ(slots[2 * g], ps);
+          EXPECT_EQ(slots[(2 * g) + 1], pe);
+        }
+        ++checked;
+      }
+    }
+  }
+  EXPECT(checked >= 20U);
+}
+
+TEST(onepass_tier_b_rejects_when_assertion_fails)
+{
+  // The edge / match conditions must REJECT a span whose bytes match but whose assertion does not hold —
+  // the zero-width semantics the slot-differential (which only feeds valid spans) never exercises. This is
+  // the teeth for the assertion evaluation: break asserts_hold and these bite.
+  const onepass boundary {tier_b_prog("\\bfoo\\b")};
+  EXPECT(boundary.eligible());
+  std::vector<std::size_t> slots;
+  EXPECT(boundary.extract("foo", 0, 3, slots));   // \b holds at 0 and 3
+  EXPECT(!boundary.extract("xfoo", 1, 4, slots)); // leading \b fails: 'x' and 'f' are both word chars
+  EXPECT(!boundary.extract("foox", 0, 3, slots)); // trailing \b fails: 'o' and 'x' are both word chars
+
+  const onepass head {tier_b_prog("^foo")};
+  EXPECT(head.eligible());
+  EXPECT(head.extract("foo", 0, 3, slots));        // ^ (text_start) holds at 0
+  EXPECT(!head.extract("xfoo", 1, 4, slots));      // ^ fails at position 1
+
+  const onepass tail {tier_b_prog("foo\\b")};
+  EXPECT(tail.extract("foo bar", 0, 3, slots));    // trailing \b holds before the space
+  EXPECT(!tail.extract("food", 0, 3, slots));      // trailing \b fails: 'o' and 'd' both word chars
 }
