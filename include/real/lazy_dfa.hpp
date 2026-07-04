@@ -8,7 +8,7 @@
  * match boundary the Pike VM would. It reuses only the byte-class idea (an alphabet smaller than 256), not
  * that engine's subset construction.
  *
- * \note The forward pass (`forward_end`), the reverse start-finder (\ref reverse_dfa) and the byte-program
+ * \note The forward pass (`forward_end`), the reverse start-finder (`reverse_dfa`) and the byte-program
  *       that makes a Unicode `klass_cp` DFA-representable are wired into the matcher: pike.hpp routes an
  *       eligible search through them (forward end + reverse start, then the Pike VM on the located window).
  *       Dynamic only: the cache is mutable, so it never participates in constant evaluation.
@@ -28,6 +28,15 @@
 #include "utf8_ranges.hpp"
 
 namespace real::detail {
+
+  //! \brief Test seam: force the matcher off the lazy-DFA route onto the pure Pike VM, so a differential can
+  //!        assert that routed and unrouted searches give identical results within one binary. Not for
+  //!        production use — the routing is transparent by contract, and this only exists to prove it.
+  inline bool& lazy_dfa_route_disabled()
+  {
+    static bool disabled {false};
+    return disabled;
+  }
 
   //! \brief A byte-level program derived from a Pike program for the DFA passes: every `klass_cp` construct
   //!        is expanded into UTF-8 byte-range split/klass chains, so the whole thing is byte-transition-only

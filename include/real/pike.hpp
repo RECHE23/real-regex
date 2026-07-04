@@ -372,8 +372,8 @@ namespace real::detail {
         // forbid_empty_until_ != 0 means the iterator just yielded an empty match and the next may not be
         // empty at the same spot; forward_end does not model that rule, so those searches stay on the Pike
         // VM (which does). Empty-matching patterns thus alternate DFA/VM across a find_iter; all others route.
-        if (!std::is_constant_evaluated() && mode == run_mode::search && forbid_empty_until_ == 0
-            && text.size() - start >= lazy_dfa_min_input) {
+        if (!std::is_constant_evaluated() && !lazy_dfa_route_disabled() && mode == run_mode::search
+            && forbid_empty_until_ == 0 && text.size() - start >= lazy_dfa_min_input) {
           ensure_lazy_dfa();
           if (state_.fwd_dfa.has_value() && state_.rev_dfa.has_value() && state_.fwd_dfa->eligible()
               && !state_.fwd_dfa->thrashing()) {

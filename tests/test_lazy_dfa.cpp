@@ -280,3 +280,76 @@ TEST(lazy_dfa_routing_klass_cp_unicode_default)
   }
   EXPECT_EQ(n, 500U);
 }
+
+// L3 — the routing veto: on inputs long enough to route, an eligible search must give byte-for-byte the
+// same result as the pure Pike VM. A test seam forces the VM path, and we compare the full contract —
+// every find_iter match's span and all its group substrings, plus region (pos/endpos) searches — across a
+// spread of eligible patterns and large dense/sparse/no-match/Unicode/long-run subjects.
+static std::string routing_signature(const real::regex& rx,
+                                     const std::string& text)
+{
+  std::string sig;
+  for (const auto& m : rx.find_iter(text)) {
+    sig += std::to_string(m.start());
+    sig += ',';
+    sig += std::to_string(m.end());
+    for (std::size_t g = 0; g < m.size(); ++g) {
+      sig += '|';
+      sig += std::string {m[g]};
+    }
+    sig += ';';
+  }
+  return sig;
+}
+
+TEST(lazy_dfa_routing_full_differential_vs_pure_pike)
+{
+  // A spread of eligible patterns (byte classes and Unicode \w \d \s; no assertions/lookarounds).
+  const char* const pats[] {
+    R"([a-z]+)", R"(\w+)", R"((\w+)@(\w+))", R"(([a-z0-9]+)@([a-z0-9]+))", R"(\d+[.]\d+)",
+    R"([A-Za-z]+[0-9]*)", R"((\w+)\s+(\w+))", R"(a[bc]*d)", R"(\d+)", R"((a|bb|ccc)+)",
+    R"([^ ]+)", R"(\s+)", R"(\w+\d)"};
+
+  std::vector<std::string> texts;
+  auto                     repeat {[](const std::string& unit, int n) {
+                                     std::string t;
+                                     for (int i = 0; i < n; ++i) {
+                                       t += unit;
+                                     }
+                                     return t;
+                                   }};
+  texts.emplace_back(repeat("the quick brown fox 42 jumps a@b c9@d ", 300));                                           // dense mixed
+  texts.emplace_back(repeat(".......... ---- ::: no atsign here ", 300));                                              // sparse / no @ (no-match for @ pats)
+  texts.emplace_back(static_cast<std::size_t>(3000), 'z');                                                             // one long run
+  texts.emplace_back(repeat("caf\xC3\xA9 R\xC3\x89SUM\xC3\x89 na\xC3\xAFve \xCE\xB1\xCE\xB2\xCE\xB3 12.5 x@y ", 300)); // Unicode
+  texts.emplace_back(repeat("aaaaaaaaaa bbbbb 999 ", 200));                                                            // long runs
+
+  for (const char* const pat : pats) {
+    const real::regex rx {pat};
+    for (const std::string& t : texts) {
+      const std::string routed {routing_signature(rx, t)};
+      real::detail::lazy_dfa_route_disabled() = true;
+      const std::string pike   {routing_signature(rx, t)};
+      real::detail::lazy_dfa_route_disabled() = false;
+      EXPECT_EQ(routed, pike);
+
+      // region searches: pos/endpos must route identically too
+      for (const std::size_t pos : {std::size_t {0}, std::size_t {7}, std::size_t {600}}) {
+        for (const std::size_t endpos : {t.size(), t.size() / 2}) {
+          if (pos > endpos) {
+            continue;
+          }
+          const auto rm {rx.search(t, pos, endpos)};
+          real::detail::lazy_dfa_route_disabled() = true;
+          const auto pm {rx.search(t, pos, endpos)};
+          real::detail::lazy_dfa_route_disabled() = false;
+          EXPECT_EQ(rm.matched(), pm.matched());
+          if (rm.matched() && pm.matched()) {
+            EXPECT_EQ(rm.start(), pm.start());
+            EXPECT_EQ(rm.end(), pm.end());
+          }
+        }
+      }
+    }
+  }
+}

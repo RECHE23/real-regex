@@ -239,12 +239,50 @@ Two rows carry a caveat, not a verdict:
   memchr on the rare byte, then its fast digit verify). The `\d{4}-…` row above keeps the class scan: text
   Unicode `\d` is a variable-width `klass_cp`, so the `-` is not at a byte-fixed offset and the hint soundly
   declines — a `re.ASCII` `\d` or an explicit class gets it.
-- The **word-boundary and capture rows are what the lazy-DFA arc (in progress) targets** — a `kFirstMatch`
-  forward DFA gives the match end, and a windowed Pike pass captures inside it, so these rows are where
-  REAL expects to close most of the gap. They are recorded here at their pre-arc cost, deliberately.
+- The **capture rows are what the lazy-DFA arc targeted** — the rows above are recorded at their pre-arc
+  cost, deliberately; §E.1 measures the arc's delivered result and the gap that survives it.
 
-Reproduce: `benchmarks/duel/` — a rust binary (`regex = "1"`, pinned in its `Cargo.lock`), a REAL binary,
-and `run_duel.py` (the corpus and the table above). Dev-tooling; not wired into any gate.
+### E.1 The lazy-DFA arc: what it bought, and the gap that remains
+
+The `kFirstMatch` forward DFA and its reverse start-finder now route eligible searches — byte and Unicode
+`\w \d \s` patterns, no assertions or lookarounds — through a two-pass scheme: the DFAs locate the match
+span capture-free, and the Pike VM runs only on that window for the groups. First, against REAL's *own*
+pre-arc Pike VM, on `(\w+)@(\w+)` (default flags, 1 MB, best of 12):
+
+| subject | REAL routed | REAL pure Pike | the arc bought |
+| --- | ---: | ---: | :--- |
+| no-match (no `@`) | 5.6 | 39.4 | **7.0×** |
+| sparse (rare `@`) | 6.5 | 39.4 | **6.0×** |
+| dense (every token an email) | 34.3 | 44.9 | 1.3× |
+
+No-match and sparse subjects — the common shape in validation and log scanning — get a real 6–7×: the DFA
+rejects or skips at ~5–6 ns/B where the VM ground at ~40. The dense subject barely moves, and the
+three-column comparison against rust says why (same `(\w+)@(\w+)`, rust `captures_iter` touches every group):
+
+| subject | REAL routed | rust `find_iter` (spans) | rust `captures_iter` (apples-to-apples) |
+| --- | ---: | ---: | ---: |
+| no-match | 5.6 | 0.013 | 0.013 |
+| sparse | 6.5 | 0.11 | 0.29 |
+| dense | 33.4 | 2.25 | 6.95 |
+
+rust's `find_iter` answers *spans* without running its capture machinery — the asymmetry §E flagged — but
+its `captures_iter`, groups fully extracted, is the honest comparable, and it is still 4.8× ahead on the
+dense row (and far more on the sparse and no-match ones). Two mechanisms REAL has not built account for the
+survivors, both named follow-ups rather than mysteries:
+
+- **Dense extraction.** rust writes capture slots in a single deterministic pass — a *one-pass* engine, for
+  patterns whose state×byte transition is unique, and `(\w+)@(\w+)` qualifies — instead of the Pike thread
+  lists REAL's windowed pass still runs. **The dense-extraction floor is the span extractor, not the DFA:**
+  a one-pass-style extractor on the already-located window is the identified follow-up.
+- **No-match / sparse.** rust `memchr`es the required inner literal `@` — at a *variable* offset, which
+  REAL's fixed-offset rare-byte hint cannot cover — and verifies around each hit, never scanning the
+  non-matching stretches. A variable-offset inner-literal prefilter is the other identified follow-up.
+
+The arc closed the gap between REAL and its own VM on the no-match/sparse axis; it did not close the gap to
+rust's multi-engine architecture, and the two engines that would are named here, not implied.
+
+Reproduce: `benchmarks/duel/` — a rust binary (`regex = "1"`, pinned in its `Cargo.lock`; `find`/`captures`
+modes), a REAL binary, and `run_duel.py` (the corpus and the §E table). Dev-tooling; not wired into any gate.
 
 ## Methodology & reproduction
 
