@@ -286,29 +286,44 @@ modes), a REAL binary, and `run_duel.py` (the corpus and the §E table). Dev-too
 
 ### E.2 The one-pass arc: engine parity, and the machinery that now bounds it
 
-§E.1's first follow-up was a one-pass span extractor. It is built. A pattern is *one-pass* when at most one
-thread crosses any byte (RE2's `onepass.cc`); its captures then fill in a single left-to-right pass with no
-thread lists. A deterministic UTF-8 trie made the default-flags Unicode `\w \d \s` one-pass (they were not
-before — a naive range alternation shared lead bytes), so the flagship `(\w+)@(\w+)` qualifies, and the
-router now fills captures with the one-pass pass instead of the windowed Pike VM.
+§E.1's first follow-up was a one-pass capture extractor. It is built, and the arc is complete. A pattern is
+*one-pass* when at most one thread crosses any byte (RE2's `onepass.cc`); its captures then fill in a single
+left-to-right pass with no thread lists. A deterministic UTF-8 trie made the default-flags Unicode `\w \d \s`
+one-pass (they were not before — a naive range alternation shared lead bytes), so the flagship `(\w+)@(\w+)`
+qualifies, and the router fills its captures with the one-pass pass instead of the windowed Pike VM.
 
-On the flagship dense find_iter it moves **33.4 → 17.1 ns/B (1.9×)**. Attributing that 17.1 is the point:
+The result on the flagship dense find_iter — the whole `(\w+)@(\w+)` loop, groups fully extracted:
 
-| component of the routed dense find_iter | ns/B |
-| --- | ---: |
-| forward + reverse DFA (locate `[s, e]`) | 4.2 |
-| + one-pass capture extraction | **6.7** (the matching *core*) |
-| + find_iter machinery (Match build, per-advance) | 17.1 (the full loop) |
-| rust `captures_iter`, full | 7.1 |
+| flagship dense find_iter | ns/B | vs. the §E.1 window-Pike |
+| --- | ---: | ---: |
+| window-Pike baseline (§E.1) | 33.4 | 1× |
+| **one-pass arc, final** | **8.0** | **4.2×** |
+| rust `captures_iter` (apples-to-apples) | 7.0 | REAL is **1.14×** |
 
-The one-pass pass replaced the windowed Pike VM on its own line — ~19 → ~2.5 ns/B, 7.6× — and the matching
-**core is 6.7 ns/B, at parity with rust's whole `captures_iter` (7.1)**. The engine is no longer the gap.
-What remains is ~10 ns/B of REAL's own find_iter machinery — the per-match `Match` construction and
-per-advance re-entry — which rust does in ~0.4. **So the dense-capture floor is now the find_iter
-machinery, not the extractor** (the one that §E.1 named): a per-match diet that would serve every pattern,
-not just one-pass ones, is the identified follow-up. One-pass touches neither the sparse nor the no-match
-gap (those stay §E.1's inner-literal-prefilter follow-up); it closed the extractor gap and relocated the
-dense one.
+The no-match scan on the same pattern is **2.9 ns/B**. §E.1 measured this line at 4.8× behind rust's
+`captures_iter`; it is now within **1.14× — engine parity.** Four findings, in the order the attribution
+surfaced them (each measured before it was fixed — the profiler moved the target every time):
+
+1. **The extractor itself** took the matching *core* to parity: the one-pass pass replaced the windowed Pike
+   VM on its own line (~19 → ~2.5 ns/B). The core (locate `[s,e]` + extract) is ~6.7 ns/B, at rust's whole
+   `captures_iter`. The engine stopped being the gap here; the rest was machinery REAL redid per iteration.
+2. **The immutable machinery was rebuilt per find_iter** — the byte-program, the one-pass table, and the
+   byte-class alphabet, each derived afresh for every iterator. They moved into a per-regex cache built once
+   under `std::call_once` (thread-safe, ThreadSanitizer-verified on a shared regex; the mutable DFA caches
+   stay per-iterator). A **Moore partition refinement** shrinks the one-pass table where the byte-trie's
+   sharing was lost in the flood-fill (the flagship: 2508 → 660 nodes, 6.3 → 1.8 MB) with no throughput cost.
+3. **The DFA transition tables were nested vectors** (two loads per byte). Flattened to `state*stride + class`
+   (one load) they took the scan itself down, and the no-match line with it (3.6 → 2.7).
+4. **The find_iter dispatch repeated per-match invariants** — a VM that copied the program view every advance,
+   a `call_once` load on the hot path, a result re-binding its unchanged context. Setting each once took the
+   last stretch to ~8.0.
+
+**Honesty.** One-pass touches neither the sparse nor the no-match-prefilter gap — those remain §E.1's
+inner-literal-prefilter follow-up. Two named, measured follow-ups survive this arc: the residual find_iter
+dispatch (the dense line straddles 8.0 rather than clearing it; the remaining ~1 ns/B is per-match iterator
+overhead, shared by every pattern) and **Tier-B assertions** — patterns with `^ $ \b` and the direct
+`match`/`fullmatch` entry points do not yet route through the one-pass pass. The arc closed the extractor gap
+§E.1 named and brought the dense-capture line to rust parity; what remains is bounded and named.
 
 ## Methodology & reproduction
 
