@@ -383,6 +383,48 @@ pass over the text (lexer-style, no per-position re-scan), rather than a per-pos
 That is a different algorithm from the one prototyped here; until it exists, the general VM — linear by
 construction — stays the one match loop.
 
+\subsection g_flattrace 7.4 Retired: the flattened epsilon-trace
+
+The general VM's hot inner loop is `add_thread` — the epsilon-closure walk that, from a program counter,
+follows `split`/`jump`/`save`/assertion edges (a stack-driven DFS in priority order) until it reaches the
+consuming instructions, snapshotting capture slots for each. An idea to shrink it, RE2-style: when the
+closure from a program counter is a **tree** (acyclic, every pc reached once), linearise it *once*, at
+compile, into a flat side-table and interpret that — no DFS stack, no per-node opcode dispatch, just a
+forward scan with a seen-check per node and save/close bracketing. A cycle (an empty loop such as
+`(a*)*`) or a re-convergence keeps the DFS walk.
+
+**The mechanism was proven, not asserted.** A `REAL_TRACE_ORACLE` build ran *both* walks at every seed and
+asserted identical output (the same threads, order, and slots) — the DFS is the oracle. Over the whole
+test corpus and the exhaustive differential fuzzer this held for **3&nbsp;218&nbsp;434 cases at 0
+divergence**; a deliberately corrupted flatten aborted it (teeth-verified). So correctness was never the
+question — only whether it pays.
+
+**Why it was retired anyway — it does not pay, and the terrain says why.** Two measurements settle it:
+
+- *Seed closures (implemented, measured).* Flattening the closure from pc&nbsp;0 — called at every search
+  position — moved throughput by **~0&nbsp;%** (+0.1&nbsp;/+0.5&nbsp;/+1.7&nbsp;% on `\d{1,3}(\.\d{1,3}){3}`,
+  `(a|b)+`, `\b\w+\b`; noise). A seed closure is **3–7 nodes** — it stops at the first consuming
+  instruction — so the stack and dispatch it removes were already a sliver of the per-position cost.
+- *General closures (probed, not built).* A build-local classifier tallied, by walk-nodes, what the
+  post-consumption closures are on the representative capture-heavy loads. The result was **100&nbsp;%
+  tree** — maximally flatten-able, and (a bonus) needing no dynamic loop-back routing, since the hot loops
+  are `+`-style split-backs the seen-check already dedups; the empty-loop cases that *would* need it
+  classify as re-convergent and keep the DFS. But those tree closures are **3.3–8.5 nodes each** — the
+  same size regime the seed already measured at ~0&nbsp;%. The closure walk is ~a fifth to a third of total
+  runtime, spread across *many tiny* closures, and a flatten only removes their stack-and-dispatch part
+  (~40&nbsp;% of that) — an **8–12&nbsp;% ceiling**, below the bar that would justify a permanent second
+  interpreter in the match loop.
+
+That interpreter is the real cost: dead weight the oracle would force every future engine change to keep
+byte-for-byte correct, bought for noise. The purity rule wins — the DFS closure walk, one code path, stays
+the only one.
+
+\note **Wake condition.** Revisit if a workload appears whose closures are *large* trees — deep
+alternations or long fixed-width concatenations that stay acyclic, so each closure is tens of nodes rather
+than a handful. There the stack-and-dispatch elimination has something to remove. The mechanism, the
+oracle harness, and the tree/loop-back/DAG classifier are specified above and were shown correct at
+3.2&nbsp;M cases; reviving them is one slice, not a redesign.
+
 \section g_map 8. Architecture map: who does what
 
 Headers form layers; a header only includes those below it (each file's Doxygen
