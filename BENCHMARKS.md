@@ -199,6 +199,48 @@ lexer's per-mode dispatch it runs ≈20× the per-rule scan on a rule set where 
 share leading bytes (measured in SciLex, which consumes it through `dfa_modes`).
 Patterns with a zero-width assertion no DFA can represent throw `real::dfa_error`.
 
+## E. REAL vs the rust `regex` crate
+
+The rust `regex` crate (a lazy-DFA engine with literal prefilters) is REAL's closest peer on the
+linear-time-guarantee axis. This duel is honest about where REAL loses: the same patterns run through both
+engines over the same corpora, `find_iter` over ~1 MB, best of 15 batches, match counts cross-checked
+equal. `rust regex 1.12.4` (`find_iter` on `regex::bytes`), REAL 2026.7.11, Apple M1 Pro, both `-O3`/LTO.
+
+| case | REAL ns/B | rust ns/B | winner |
+| --- | ---: | ---: | :--- |
+| class `[a-z]+` | 2.466 | 3.138 | **REAL 1.3×** |
+| digits `[0-9]+` | 2.982 | 8.039 | **REAL 2.7×** |
+| fields `[^,]+` | 3.086 | 2.791 | rust 1.1× |
+| alternation `fox\|dog\|cat` | 1.365 | 0.876 | rust 1.6× |
+| literal `dog` | 0.728 | 0.274 | rust 2.7× |
+| ident `(\w+)_(\w+)` | 59.865 | 4.662 | rust 12.8× |
+| word-boundary `\b\w+\b` | 41.531 | 2.671 | rust 15.5× |
+| email `(\w+)@(\w+)` | 44.551 | 1.806 | rust 24.7× |
+| date (no-match) `\d{4}-\d{2}-\d{2}` | 0.450 | 0.012 | rust 36.6× |
+
+REAL's SWAR class-loop fast paths win the single-class ASCII scans (`[a-z]+`, `[0-9]+`). rust wins
+everything a lazy DFA does well: **word-boundary and multi-group capture** rows, where REAL falls back to
+the general Pike VM (which tracks capture slots even for span iteration), and the **literal / alternation**
+rows, where its Teddy/memchr prefilters beat REAL's cascade.
+
+On the capture rows the comparison is not symmetric, and the asymmetry is the point: rust's `find_iter`
+answers match *spans* without ever running its capture machinery (its lazy DFA), while REAL's Pike VM
+always tracks its slots. That gap is the architecture gap itself — it is exactly what the lazy-DFA arc
+targets (a `kFirstMatch` DFA for the span, a windowed Pike pass only where captures are actually read).
+
+Two rows carry a caveat, not a verdict:
+
+- The **date row is a no-match scan** — the corpus contains *no* `yyyy-mm-dd`, so both engines only reject.
+  rust's required-literal prefilter jumps on the fixed `-` and rejects in ~0 time; REAL grinds digit-first
+  candidates. This is a **prefilter gap, not a capture cost**, addressable on its own (a rare-required-byte
+  hint) without the DFA.
+- The **word-boundary and capture rows are what the lazy-DFA arc (in progress) targets** — a `kFirstMatch`
+  forward DFA gives the match end, and a windowed Pike pass captures inside it, so these rows are where
+  REAL expects to close most of the gap. They are recorded here at their pre-arc cost, deliberately.
+
+Reproduce: `benchmarks/duel/` — a rust binary (`regex = "1"`, pinned in its `Cargo.lock`), a REAL binary,
+and `run_duel.py` (the corpus and the table above). Dev-tooling; not wired into any gate.
+
 ## Methodology & reproduction
 
 - **Goal.** A competitive snapshot *and* a same-machine regression tripwire — not a
