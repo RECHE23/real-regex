@@ -549,6 +549,14 @@ follow-up above), and assertion-bearing or direct `match`/`fullmatch` patterns (
 stay on the sound windowed VM). Routed one-pass is byte-identical to the pure VM: the differential in
 `tests/test_onepass.cpp` proves slot-for-slot equality against the Pike engine.
 
+**A portability rule the arc cemented.** The engine headers use no `std::hash` and no
+`std::unordered_map`/`set`. Their hashing goes through an out-of-line libc++ symbol (`__hash_memory` on
+LLVM 19+) that a mismatched *compiled-with-recent-headers* / *linked-against-older-libc++* pair fails to
+resolve at load time — a toolchain-drift class that is invisible on the machine that built it. Every cache
+and hash-cons here uses an in-house FNV over bucket-vectors instead (the lazy-DFA pc-set cache, the one-pass
+minimizer, the UTF-8 trie memo), which also keeps them literal types for `constexpr`. The standing rule:
+**no `std::hash` or `std::unordered_*` in `include/real/`.**
+
 \section g_map 8. Architecture map: who does what
 
 Headers form layers; a header only includes those below it (each file's Doxygen

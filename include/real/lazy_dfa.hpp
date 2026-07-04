@@ -23,7 +23,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 #include "program.hpp"
@@ -112,8 +111,37 @@ namespace real::detail {
     }
     struct builder
     {
-      std::vector<utf8_trie_node>&                   nodes;
-      std::unordered_map<std::string, std::int32_t>& memo;
+      std::vector<utf8_trie_node>&            nodes;
+      std::vector<std::vector<std::int32_t>>& memo; // hash-cons index: FNV(trans) bucket -> node ids. The
+                                                    // engine headers avoid std::hash / std::unordered_map,
+                                                    // whose out-of-line libc++ symbols (e.g. __hash_memory)
+                                                    // drift across toolchains; an in-house FNV over the
+                                                    // transitions hash-conses with no string key per node.
+
+      static constexpr std::uint64_t hash_trans(const std::vector<std::pair<utf8_byte_range, std::int32_t>>& trans)
+      {
+        std::uint64_t h {1469598103934665603ULL};
+        for (const std::pair<utf8_byte_range, std::int32_t>& t : trans) {
+          h = (h ^ t.first.lo) * 1099511628211ULL;
+          h = (h ^ t.first.hi) * 1099511628211ULL;
+          h = (h ^ static_cast<std::uint32_t>(t.second)) * 1099511628211ULL;
+        }
+        return h;
+      }
+
+      static bool trans_equal(const std::vector<std::pair<utf8_byte_range, std::int32_t>>& a,
+                              const std::vector<std::pair<utf8_byte_range, std::int32_t>>& b)
+      {
+        if (a.size() != b.size()) {
+          return false;
+        }
+        for (std::size_t i = 0; i < a.size(); ++i) {
+          if (a[i].first.lo != b[i].first.lo || a[i].first.hi != b[i].first.hi || a[i].second != b[i].second) {
+            return false;
+          }
+        }
+        return true;
+      }
 
       std::int32_t build(const std::vector<std::vector<utf8_byte_range>>& in) // all non-empty sequences
       {
@@ -154,26 +182,21 @@ namespace real::detail {
           node.trans.emplace_back(utf8_byte_range {.lo = static_cast<std::uint8_t>(lo), .hi = static_cast<std::uint8_t>(hi)}, child);
         }
 
-        std::string sig;
-        for (const std::pair<utf8_byte_range, std::int32_t>& t : node.trans) {
-          sig.push_back(static_cast<char>(t.first.lo));
-          sig.push_back(static_cast<char>(t.first.hi));
-          for (unsigned s = 0; s < 32U; s += 8U) {
-            sig.push_back(static_cast<char>((static_cast<std::uint32_t>(t.second) >> s) & 0xFFU));
+        std::vector<std::int32_t>& bucket {memo[hash_trans(node.trans) % memo.size()]};
+        for (const std::int32_t existing : bucket) {
+          if (trans_equal(nodes[static_cast<std::size_t>(existing)].trans, node.trans)) {
+            return existing; // an identical suffix sub-trie already exists (Daciuk sharing)
           }
-        }
-        const auto it {memo.find(sig)};
-        if (it != memo.end()) {
-          return it->second;
         }
         const auto id {static_cast<std::int32_t>(nodes.size())};
         nodes.push_back(std::move(node));
-        memo.emplace(std::move(sig), id);
+        bucket.push_back(id);
         return id;
       }
     };
-    std::unordered_map<std::string, std::int32_t> memo;
-    builder                                       b {trie.nodes, memo};
+    constexpr std::size_t                  trie_memo_buckets {1024}; // chained buckets, sized for the bounded trie
+    std::vector<std::vector<std::int32_t>> memo(trie_memo_buckets);
+    builder                                b                 {trie.nodes, memo};
     trie.root = b.build(seqs);
     return trie;
   }
