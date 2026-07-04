@@ -477,6 +477,15 @@ assertion, no `klass_cp`, no lookaround — those keep the general VM) and every
   lower-priority accept is **suppressed** while any higher-priority thread is still alive. (This is why it
   cannot be `real::dfa`, whose sets are unordered: `a|ab` on `"ab"` must be `a` (0,1), and `aabaa|b` on
   `"aabaa"` must be `aabaa` (0,5), not the earlier-ending `b` (2,3). Both are pinned acids.)
+- **The start-finder is reverse-`kLongest`.** Given the end `e`, `s` is the *smallest* start with a match on
+  `[s, e]` — equivalently, the **longest match read backward** from `e`. It runs the *inverted* program (its
+  edges transposed, its consuming bytes kept) as a second cached DFA over the text scanned right-to-left
+  from `e`, recording an accept every time it reaches the original start and continuing while any thread
+  lives; the **last** accept (the furthest back) is `s`, bounded left by the search's resume point (never
+  before it). Crucially this pass needs **no priority ordering** — priority is a forward concern only, so
+  its states are plain unordered sets and its rule is longest, not first (RE2's reverse DFA is the same).
+  The acid: `a*b` on `"aaab"` has `e = 4`; the reverse must give `s = 0` (a reverse-*first* would stop after
+  the `b` at `s = 3` — wrong). Reverse eligibility equals forward eligibility (the same ops are refused).
 - **Empty matches.** The CPython&nbsp;3.7+ `finditer` rule carries across the two passes: after an empty
   match the next may not be empty at the same position (`forbid_empty_until_`, UTF-8-aligned), enforced on
   the same slot-0 comparison the Pike loop already uses — the forward pass reports the end, the Pike window

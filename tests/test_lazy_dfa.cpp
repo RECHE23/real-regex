@@ -10,6 +10,7 @@
 
 using real::detail::dynamic_storage;
 using real::detail::lazy_dfa;
+using real::detail::reverse_dfa;
 
 TEST(lazy_dfa_eligibility)
 {
@@ -143,4 +144,52 @@ TEST(lazy_dfa_forward_pass_is_linear_under_state_explosion)
   lazy_dfa          dfa {st.program.code, st.program.classes, /*budget=*/ 4}; // tiny budget: force cache thrash
   const std::string big(20000, 'a');
   EXPECT(dfa.forward_end(big) != real::npos);                                 // completes (linearly) even while the cache flushes under thrash
+}
+
+// The reverse pass finds the start of the match ending at e (reverse-kLongest). Full spans (s,e) from the
+// two DFA passes must equal the Pike VM span, for eligible patterns.
+static std::pair<std::size_t, std::size_t> dfa_span(const char       * pat,
+                                                    const std::string& text)
+{
+  const auto        st  {dynamic_storage::compile(pat, real::flags::none)};
+  lazy_dfa          fwd {st.program.code, st.program.classes};
+  const std::size_t e   {fwd.forward_end(text)};
+  if (e == real::npos) {
+    return {real::npos, real::npos};
+  }
+  reverse_dfa       rev {st.program.code, st.program.classes};
+  const std::size_t s   {rev.reverse_start(text, e, 0)};
+  return {s, e};
+}
+
+static std::pair<std::size_t, std::size_t> pike_span(const char       * pat,
+                                                     const std::string& text)
+{
+  const auto m {real::regex(pat).search(text)};
+  return m.matched() ? std::pair {m.start(), m.end()} : std::pair {real::npos, real::npos};
+}
+
+TEST(reverse_dfa_kLongest_acid)
+{
+  // a*b on "aaab": fwd e = 4; the reverse must give s = 0 (longest backward), not s = 3 (a reverse-first).
+  EXPECT_EQ(dfa_span("a*b", "aaab"), (std::pair<std::size_t, std::size_t> {0, 4}));
+  EXPECT_EQ(dfa_span("a*b", "aaab"), pike_span("a*b", "aaab"));
+}
+
+TEST(reverse_dfa_full_span_differential_vs_pike)
+{
+  const char* pats[] {
+    "a|ab", "ab|a", "aabaa|b", "a*b", "(a|b)+c", "[a-c]+", "a(b|c)*d", "x?y?z", "a+a+",
+    "(ab|a)(b|)", "a*a*b", "[0-9]+[.][0-9]+", "foo|foobar", "(a|)+b", "a*", "(a+)(a+)"};
+  const char* texts[] {
+    "", "a", "b", "ab", "ba", "aabaa", "abcabc", "xyz", "aaa", "abcd", "1.5", "foobar", "aaab", "cc", "aaaa"};
+  std::size_t checked {0};
+  for (const char* p : pats) {
+    for (const char* t : texts) {
+      const std::string s {t};
+      EXPECT_EQ(dfa_span(p, s), pike_span(p, s));
+      ++checked;
+    }
+  }
+  EXPECT(checked >= 200U);
 }

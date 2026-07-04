@@ -8,7 +8,7 @@
  * match boundary the Pike VM would. It reuses only the byte-class idea (an alphabet smaller than 256), not
  * that engine's subset construction.
  *
- * \note The \ref lazy_dfa::forward_end "forward pass" and its memoized transition cache are functional and
+ * \note The `forward_end` and its memoized transition cache are functional and
  *       pinned against the Pike VM (the two acids, a differential, and a teeth-verified priority cut), but
  *       nothing in the matcher **routes** through this yet — the windowed two-pass that uses it is a later
  *       slice. Dynamic only: the cache is mutable, so it never participates in constant evaluation.
@@ -295,7 +295,7 @@ namespace real::detail {
     std::uint32_t cut(std::uint32_t state,
                       std::uint32_t m)
     {
-      // Copy the prefix element-by-element before interning, which may reallocate state_pcs_ (the L0
+      // Copy the prefix element-by-element before interning, which may reallocate state_pcs_ (the intern
       // dangling-ref trap). A loop rather than an iterator-range copy — the latter trips a g++ false
       // -Werror=free-nonheap-object here.
       std::vector<std::int32_t> prefix;
@@ -470,6 +470,228 @@ namespace real::detail {
     counters    stats_     {};
     std::size_t evictions_ {0};
     bool        thrashing_ {false};
+  };
+
+  /*!
+   * \brief The start-finder companion to lazy_dfa. Given a match end, it finds the leftmost start (the design
+   *        guide §7.6 contract). It runs the *inverted* program — the forward program's edges transposed,
+   *        its consuming bytes kept — as a cached DFA over the text scanned right-to-left from the end,
+   *        recording an accept each time it reaches the original start (`reverse-kLongest`: the furthest-back
+   *        accept is the start). It needs no priority ordering — its states are plain unordered (sorted) PC
+   *        sets and its rule is longest — so it is simpler than the forward pass. Dynamic only.
+   */
+  class reverse_dfa
+  {
+  public:
+
+    static constexpr std::uint32_t dead_state    {0};
+    static constexpr std::uint32_t no_transition {0xFFFFFFFFU};
+    static constexpr std::size_t   state_budget  {4096};
+
+    explicit reverse_dfa(std::span<const instr>      code,
+                         std::span<const char_class> classes,
+                         std::size_t                 budget = state_budget)
+      : code_ {code}, classes_ {classes}, alpha_ {compute_lazy_alphabet(code, classes)}, budget_ {budget}
+    {
+      eligible_ = compute_eligibility(code);
+      // Transpose the program: rev_eps_[x] = the pcs with a forward epsilon edge to x; rev_consume_[x] = the
+      // consuming pcs whose successor is x (a byte/klass at pc goes to pc+1).
+      rev_eps_.assign(code.size(), {});
+      rev_consume_.assign(code.size(), {});
+      for (std::int32_t pc = 0; pc < static_cast<std::int32_t>(code.size()); ++pc) {
+        const instr& in {code[static_cast<std::size_t>(pc)]};
+        switch (in.op) {
+          case opcode::byte:
+          case opcode::klass:
+            rev_consume_[static_cast<std::size_t>(pc) + 1].push_back(pc);
+            break;
+          case opcode::split:
+            rev_eps_[static_cast<std::size_t>(in.primary_target)].push_back(pc);
+            rev_eps_[static_cast<std::size_t>(in.secondary_target)].push_back(pc);
+            break;
+          case opcode::jump:
+            rev_eps_[static_cast<std::size_t>(in.primary_target)].push_back(pc);
+            break;
+          case opcode::save:
+            rev_eps_[static_cast<std::size_t>(pc) + 1].push_back(pc);
+            break;
+          case opcode::match:
+            match_pc_ = pc; // the reverse start
+            break;
+          default:
+            break;
+        }
+      }
+      flush();
+    }
+
+    [[nodiscard]] bool eligible() const
+    {
+      return eligible_;
+    }
+
+    /*!
+     * \brief The leftmost start of the match ending at \p e, not before \p resume. Scans the text backward
+     *        from \p e over the inverted program, keeping the furthest-back position that reaches the
+     *        program start (reverse-`kLongest`). Precondition: a match ends at \p e; eligible programs only.
+     */
+    [[nodiscard]] std::size_t reverse_start(std::string_view text,
+                                            std::size_t      e,
+                                            std::size_t      resume)
+    {
+      std::uint32_t state {start_state_}; // rev-closure of the forward `match`
+      std::size_t   best  {npos};
+      std::size_t   pos   {e};
+      while (true) {
+        if (state_has_start_[state] != 0) {
+          best = pos; // reached the original start: [pos, e] matches; kLongest keeps the smallest pos
+        }
+        if (pos <= resume || state == dead_state) {
+          break;
+        }
+        --pos;
+        state = step(state, static_cast<std::uint8_t>(text[pos]));
+      }
+      return best;
+    }
+
+  private:
+
+    void rev_closure(std::vector<std::int32_t>& set,
+                     std::vector<char>&         seen) const
+    {
+      std::vector<std::int32_t> stack {set};
+      while (!stack.empty()) {
+        const std::int32_t pc {stack.back()};
+        stack.pop_back();
+        for (const std::int32_t pred : rev_eps_[static_cast<std::size_t>(pc)]) {
+          if (seen[static_cast<std::size_t>(pred)] == 0) {
+            seen[static_cast<std::size_t>(pred)] = 1;
+            set.push_back(pred);
+            stack.push_back(pred);
+          }
+        }
+      }
+      std::sort(set.begin(), set.end()); // unordered: a canonical (sorted) key, no priority
+    }
+
+    std::uint32_t step(std::uint32_t state,
+                       std::uint8_t  byte)
+    {
+      const std::uint8_t  cls    {alpha_.of[byte]};
+      const std::uint32_t cached {state_trans_[state][cls]};
+      if (cached != no_transition) {
+        return cached;
+      }
+      const std::vector<std::int32_t> pcs {state_pcs_[state]}; // copy: intern may realloc
+      std::vector<std::int32_t>       next;
+      std::vector<char>               seen(code_.size(), 0);
+      for (const std::int32_t pc : pcs) {
+        for (const std::int32_t pred : rev_consume_[static_cast<std::size_t>(pc)]) {
+          if (consumes(pred, byte) && seen[static_cast<std::size_t>(pred)] == 0) {
+            seen[static_cast<std::size_t>(pred)] = 1;
+            next.push_back(pred);
+          }
+        }
+      }
+      rev_closure(next, seen);
+      const std::uint32_t result {intern(next)};
+      state_trans_[state][cls] = result;
+      return result;
+    }
+
+    [[nodiscard]] bool consumes(std::int32_t pc,
+                                std::uint8_t byte) const
+    {
+      const instr& in {code_[static_cast<std::size_t>(pc)]};
+      if (in.op == opcode::byte) {
+        return static_cast<std::uint8_t>(in.arg8) == byte;
+      }
+      return in.op == opcode::klass && classes_[in.arg16].test(byte);
+    }
+
+    static bool compute_eligibility(std::span<const instr> code)
+    {
+      for (const instr& in : code) {
+        if (in.op == opcode::assert_position || in.op == opcode::assert_lookaround
+            || in.op == opcode::klass_cp) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    std::uint32_t intern(const std::vector<std::int32_t>& pcs)
+    {
+      if (pcs.empty()) {
+        return dead_state;
+      }
+      const auto it {cache_.find(pcs)};
+      if (it != cache_.end()) {
+        return it->second;
+      }
+      if (state_pcs_.size() >= budget_) {
+        flush();
+      }
+      const auto id {static_cast<std::uint32_t>(state_pcs_.size())};
+      state_pcs_.push_back(pcs);
+      state_trans_.emplace_back(alpha_.count, no_transition);
+      bool has_start {false};
+      for (const std::int32_t pc : pcs) {
+        if (pc == 0) { // pc 0 is the program's save-0 start
+          has_start = true;
+          break;
+        }
+      }
+      state_has_start_.push_back(has_start ? 1 : 0);
+      cache_.emplace(pcs, id);
+      return id;
+    }
+
+    void flush()
+    {
+      state_pcs_.clear();
+      state_trans_.clear();
+      state_has_start_.clear();
+      cache_.clear();
+      state_pcs_.emplace_back();                          // dead state 0
+      state_trans_.emplace_back(alpha_.count, dead_state);
+      state_has_start_.push_back(0);
+      std::vector<std::int32_t> start;
+      std::vector<char>         seen(code_.size(), 0);
+      if (match_pc_ >= 0) {
+        seen[static_cast<std::size_t>(match_pc_)] = 1;
+        start.push_back(match_pc_);
+        rev_closure(start, seen);
+      }
+      start_state_ = intern(start);
+    }
+
+    struct pc_set_hash
+    {
+      std::size_t operator()(const std::vector<std::int32_t>& v) const
+      {
+        std::size_t h {1469598103934665603ULL};
+        for (const std::int32_t x : v) {
+          h = (h ^ static_cast<std::size_t>(static_cast<std::uint32_t>(x))) * 1099511628211ULL;
+        }
+        return h;
+      }
+    };
+
+    std::span<const instr>                                                    code_;
+    std::span<const char_class>                                               classes_;
+    lazy_byte_alphabet                                                        alpha_;
+    bool                                                                      eligible_    {false};
+    std::int32_t                                                              match_pc_    {-1};
+    std::uint32_t                                                             start_state_ {0};
+    std::size_t                                                               budget_      {state_budget};
+    std::vector<std::vector<std::int32_t>>                                    rev_eps_;         //!< transposed epsilon edges.
+    std::vector<std::vector<std::int32_t>>                                    rev_consume_;     //!< transposed consuming edges (the pred consuming pcs).
+    std::vector<std::vector<std::int32_t>>                                    state_pcs_;
+    std::vector<std::vector<std::uint32_t>>                                   state_trans_;
+    std::vector<char>                                                         state_has_start_; //!< state -> reaches the program start (an accept).
+    std::unordered_map<std::vector<std::int32_t>, std::uint32_t, pc_set_hash> cache_;
   };
 } // namespace real::detail
 
