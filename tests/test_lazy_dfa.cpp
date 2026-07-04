@@ -219,3 +219,64 @@ TEST(lazy_dfa_routing_matches_pike_on_large_input)
   // search from a resume point routes the same
   EXPECT_EQ(rx.search(text, 20, text.size()).start(), 27U); // matches at 3,15,27,...; first >= 20 is 27
 }
+
+// L2.5: klass_cp (\w \d \s in text mode) becomes DFA-eligible via a byte-program that expands each into its
+// UTF-8 byte-range sub-automaton. The two DFA passes over that byte-program must give the same spans as the
+// Pike VM — including non-ASCII word characters (é, α), whose multi-byte encodings the expansion recognises.
+static std::pair<std::size_t, std::size_t> byte_dfa_span(const char       * pat,
+                                                         const std::string& text)
+{
+  const auto st {dynamic_storage::compile(pat, real::flags::none)};
+  const auto bp {real::detail::build_byte_program(st.program.view())};
+  if (!bp.eligible) {
+    return {12345U, 12345U}; // sentinel: not expected here
+  }
+  lazy_dfa          fwd {bp.code, bp.classes};
+  const std::size_t e   {fwd.forward_end(text)};
+  if (e == real::npos) {
+    return {real::npos, real::npos};
+  }
+  reverse_dfa       rev {bp.code, bp.classes};
+  const std::size_t s   {rev.reverse_start(text, e, 0)};
+  return {s, e};
+}
+
+TEST(byte_program_klass_cp_differential_vs_pike)
+{
+  const auto st {dynamic_storage::compile("\\w+", real::flags::none)};
+  EXPECT(real::detail::build_byte_program(st.program.view()).eligible); // \w is now DFA-eligible via the byte-program
+
+  const char* pats[]  {R"(\w+)", R"(\d+)", R"((\w+)@(\w+))", R"(\w+\s\w+)", R"(\d+[.]\d+)", R"(\w*)", R"(a\w+b)", R"(\s+)"};
+  const char* texts[] {
+    "", "hello", "caf\xC3\xA9", "a\xC3\xA9""9_ b", "12.5", "x@y", "  ", "na\xC3\xAFve word",
+    "\xCE\xB1\xCE\xB2\xCE\xB3""42"};
+  std::size_t checked {0};
+  for (const char* p : pats) {
+    for (const char* t : texts) {
+      const std::string s {t};
+      EXPECT_EQ(byte_dfa_span(p, s), pike_span(p, s));
+      ++checked;
+    }
+  }
+  EXPECT(checked >= 70U);
+}
+
+// L2.5 end-to-end: a default-flags klass_cp pattern (\w) routes through the byte-program, and the windowed
+// Pike still yields correct groups — including a non-ASCII word character (é) whose 2-byte encoding the
+// byte-program recognises and whose bytes land inside a capture group.
+TEST(lazy_dfa_routing_klass_cp_unicode_default)
+{
+  const real::regex rx {"(\\w+)@(\\w+)"}; // default flags: \w is klass_cp, routed via the byte-program
+  std::string       text;
+  for (int i = 0; i < 500; ++i) {
+    text += "-- caf\xC3\xA9@world ok "; // "café@world" once per period, well past the routing threshold
+  }
+  std::size_t n {0};
+  for (const auto& m : rx.find_iter(text)) {
+    EXPECT_EQ(m[0], std::string_view {"caf\xC3\xA9@world"});
+    EXPECT_EQ(m[1], std::string_view {"caf\xC3\xA9"}); // café — the 2-byte é is inside group 1
+    EXPECT_EQ(m[2], std::string_view {"world"});
+    ++n;
+  }
+  EXPECT_EQ(n, 500U);
+}

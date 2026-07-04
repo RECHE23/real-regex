@@ -714,6 +714,7 @@ namespace real {
       {
         lookaround_scratch         lookaround;            //!< Isolated sub-scratch for bounded lookaround evaluation.
         capture_pool               pool;                  //!< OPT D1: copy-on-write capture blocks (heap-backed).
+        byte_program               dfa_byte_prog;         //!< OPT lazy-DFA: the klass_cp-expanded program the DFAs span into.
         std::optional<lazy_dfa>    fwd_dfa;               //!< OPT lazy-DFA: forward pass (cache persists across a find_iter).
         std::optional<reverse_dfa> rev_dfa;               //!< OPT lazy-DFA: the reverse start-finder.
         const void*                dfa_program {nullptr}; //!< The program the DFAs were built for.

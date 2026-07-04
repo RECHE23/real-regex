@@ -8,10 +8,10 @@
  * match boundary the Pike VM would. It reuses only the byte-class idea (an alphabet smaller than 256), not
  * that engine's subset construction.
  *
- * \note The `forward_end` and its memoized transition cache are functional and
- *       pinned against the Pike VM (the two acids, a differential, and a teeth-verified priority cut), but
- *       nothing in the matcher **routes** through this yet — the windowed two-pass that uses it is a later
- *       slice. Dynamic only: the cache is mutable, so it never participates in constant evaluation.
+ * \note The forward pass (`forward_end`), the reverse start-finder (\ref reverse_dfa) and the byte-program
+ *       that makes a Unicode `klass_cp` DFA-representable are wired into the matcher: pike.hpp routes an
+ *       eligible search through them (forward end + reverse start, then the Pike VM on the located window).
+ *       Dynamic only: the cache is mutable, so it never participates in constant evaluation.
  */
 #ifndef REAL_LAZY_DFA_HPP
 #define REAL_LAZY_DFA_HPP
@@ -25,8 +25,125 @@
 #include <vector>
 
 #include "program.hpp"
+#include "utf8_ranges.hpp"
 
 namespace real::detail {
+
+  //! \brief A byte-level program derived from a Pike program for the DFA passes: every `klass_cp` construct
+  //!        is expanded into UTF-8 byte-range split/klass chains, so the whole thing is byte-transition-only
+  //!        and a forward DFA can represent it. The Pike program itself is untouched (byte-identity); this
+  //!        is a private recognition view the DFAs own. `eligible` is false when an op no DFA can represent
+  //!        (a position assertion or a lookaround) is present — the caller then keeps the Pike VM.
+  struct byte_program
+  {
+    std::vector<instr>      code;
+    std::vector<char_class> classes;
+    bool                    eligible {true};
+  };
+
+  //! \brief The UTF-8 byte-range branches recognising one code-point class: an optional ASCII step plus,
+  //!        per non-ASCII range, one branch per canonical byte-sequence (each a chain of byte-range steps).
+  inline std::vector<std::vector<char_class>> klass_cp_branches(const cp_class&             cc,
+                                                                std::span<const code_range> cp_ranges)
+  {
+    std::vector<std::vector<char_class>> branches;
+    if (!cc.ascii.empty()) {
+      branches.push_back({cc.ascii}); // one byte < 0x80, tested against the ASCII bitmap
+    }
+    for (std::uint32_t k = 0; k < cc.range_count; ++k) {
+      const code_range& range {cp_ranges[cc.range_begin + k]};
+      for (const utf8_byte_seq& seq : utf8_range_sequences(range.lo, range.hi)) {
+        std::vector<char_class> branch;
+        for (std::size_t j = 0; j < seq.length; ++j) {
+          char_class step;
+          step.set_range(seq.parts[j].lo, seq.parts[j].hi);
+          branch.push_back(step);
+        }
+        branches.push_back(branch);
+      }
+    }
+    return branches;
+  }
+
+  //! \brief The instruction count a \ref klass_cp_branches expansion emits: every branch is its steps plus a
+  //!        converging jump, and every branch but the last is fronted by a split.
+  inline std::size_t klass_cp_expansion_size(const std::vector<std::vector<char_class>>& branches)
+  {
+    std::size_t n {0};
+    for (const std::vector<char_class>& b : branches) {
+      n += b.size() + 1; // the byte-range steps + one jump to the continuation
+    }
+    return n + (branches.empty() ? 0 : branches.size() - 1); // a split fronts every branch but the last
+  }
+
+  /*!
+   * \brief Builds the byte-level DFA program for \p prog (see \ref byte_program). A `klass_cp` at P (a four-
+   *        instruction construct: the op plus three `utf8_cont` continuation slots) is replaced by the byte
+   *        alternation recognising its code-point class, converging on the mapped P+4; every other op is
+   *        copied with its branch targets remapped. Two passes: the first sizes the expansions to build the
+   *        old→new pc map, the second emits.
+   */
+  inline byte_program build_byte_program(const program_view& prog)
+  {
+    byte_program bp;
+    for (const instr& in : prog.code) {
+      if (in.op == opcode::assert_position || in.op == opcode::assert_lookaround) {
+        bp.eligible = false; // no byte-DFA can carry a position assertion or a lookaround
+        return bp;
+      }
+    }
+    bp.classes.assign(prog.classes.begin(), prog.classes.end()); // original classes keep their indices
+
+    const std::size_t          n   {prog.code.size()};
+    std::vector<std::int32_t>  map(n + 1, 0);                    // old pc -> new pc (n = the one-past end)
+    std::size_t                cur {0};
+    for (std::size_t pc = 0; pc < n; ++pc) {
+      map[pc] = static_cast<std::int32_t>(cur);
+      if (prog.code[pc].op == opcode::klass_cp) {
+        const auto branches {klass_cp_branches(prog.cp_classes[prog.code[pc].arg16], prog.cp_ranges)};
+        cur        += klass_cp_expansion_size(branches);
+        map[pc + 1] = map[pc + 2] = map[pc + 3] = static_cast<std::int32_t>(cur); // continuation slots absorbed
+        pc         += 3;                                                          // skip the construct's tail
+      }
+      else {
+        ++cur;
+      }
+    }
+    map[n] = static_cast<std::int32_t>(cur);
+
+    const auto remap {[&](std::int32_t t) {
+                        return (t >= 0 && static_cast<std::size_t>(t) <= n) ? map[static_cast<std::size_t>(t)] : t;
+                      }};
+    for (std::size_t pc = 0; pc < n; ++pc) {
+      const instr& in {prog.code[pc]};
+      if (in.op == opcode::klass_cp) {
+        const auto         branches {klass_cp_branches(prog.cp_classes[in.arg16], prog.cp_ranges)};
+        const std::int32_t after    {map[pc + 4]}; // where a thread lands after the whole construct
+        for (std::size_t i = 0; i < branches.size(); ++i) {
+          const auto         base {static_cast<std::int32_t>(bp.code.size())};
+          const std::int32_t len  {static_cast<std::int32_t>(branches[i].size())};
+          if (i + 1 < branches.size()) {
+            bp.code.push_back({.op               = opcode::split,
+                               .primary_target   = base + 1,         // this branch's first step
+                               .secondary_target = base + 2 + len}); // the next branch's split/first step
+          }
+          for (const char_class& step : branches[i]) {
+            bp.code.push_back({.op = opcode::klass, .arg16 = static_cast<std::uint16_t>(bp.classes.size())});
+            bp.classes.push_back(step);
+          }
+          bp.code.push_back({.op = opcode::jump, .primary_target = after});
+        }
+        pc += 3;
+      }
+      else {
+        instr out {in};
+        out.primary_target   = remap(in.primary_target);
+        out.secondary_target = remap(in.secondary_target);
+        bp.code.push_back(out);
+      }
+    }
+    return bp;
+  }
 
   /*!
    * \brief Byte-class alphabet over a Pike program: bytes that satisfy exactly the same `byte`/`klass`
@@ -254,9 +371,9 @@ namespace real::detail {
       while (true) {
         const std::uint32_t midx {state_match_idx_[state]};
         if (midx != no_match_idx) {
-          best_end = pos;              // the highest-priority accept lives at index midx; a higher thread may extend it
+          best_end = pos;               // the highest-priority accept lives at index midx; a higher thread may extend it
           matched  = true;
-          state    = cut(state, midx); // drop the accept and every lower-priority thread after it
+          state    = cut_cached(state); // drop the accept and every lower-priority thread after it (memoized)
           if (state == dead_state) {
             break; // nothing higher-priority survives to extend the match
           }
@@ -355,6 +472,24 @@ namespace real::detail {
         prefix.push_back(state_pcs_[state][i]);
       }
       return intern(prefix);
+    }
+
+    //! \brief The priority-cut of \p state at its own accept, memoized. `cut` is O(state size) — it rebuilds
+    //!        and re-interns the prefix — and a Unicode `klass_cp` byte-program makes states thousands of PCs
+    //!        wide, so recomputing it once per match (per find_iter step) dominated. Cached per state, it is
+    //!        computed once and then O(1). The state's accept index is fixed, so the cut is deterministic.
+    std::uint32_t cut_cached(std::uint32_t state)
+    {
+      const std::uint32_t memo {state_cut_[state]};
+      if (memo != no_transition) {
+        return memo;
+      }
+      const std::size_t   flushes_before {stats_.flushes};
+      const std::uint32_t result         {cut(state, state_match_idx_[state])}; // intern may flush/realloc
+      if (stats_.flushes == flushes_before) {
+        state_cut_[state] = result; // no flush: `state` is still valid, memoise the edge
+      }
+      return result;
     }
 
     static constexpr bool compute_eligibility(std::span<const instr> code)
@@ -458,6 +593,7 @@ namespace real::detail {
       }
       state_match_idx_.push_back(match_idx);
       state_match_.push_back(match_idx != no_match_idx ? 1 : 0);
+      state_cut_.push_back(no_transition); // the priority-cut result, memoized lazily on first use
       cache_.insert(pcs, id);
       return id;
     }
@@ -479,6 +615,7 @@ namespace real::detail {
       state_trans_seeded_.clear();
       state_match_.clear();
       state_match_idx_.clear();
+      state_cut_.clear();
       cache_.clear();
       // state 0 = dead (empty, self-looping), state 1 = start (closure of pc 0).
       state_pcs_.emplace_back();
@@ -486,6 +623,7 @@ namespace real::detail {
       state_trans_seeded_.emplace_back(alpha_.count, dead_state);
       state_match_.push_back(0);
       state_match_idx_.push_back(no_match_idx);
+      state_cut_.push_back(no_transition);
       std::vector<std::int32_t> start;
       std::vector<char>         seen(code_.size(), 0);
       close_into(0, start, seen);
@@ -503,6 +641,7 @@ namespace real::detail {
     std::vector<std::vector<std::uint32_t>>                                   state_trans_seeded_; //!< state id -> [class] -> next, re-seeding (pre-match).
     std::vector<char>                                                         state_match_;        //!< state id -> accepts here.
     std::vector<std::uint32_t>                                                state_match_idx_;    //!< state id -> index of its first accept, or no_match_idx.
+    std::vector<std::uint32_t>                                                state_cut_;          //!< state id -> memoized priority-cut result (no_transition = not yet computed).
     pc_set_cache                                                              cache_;
 
     std::size_t budget_    {state_budget};

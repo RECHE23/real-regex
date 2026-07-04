@@ -283,6 +283,7 @@ namespace real::detail {
   {
     lookaround_scratch         lookaround;            //!< Isolated sub-scratch for bounded lookaround evaluation.
     capture_pool               pool;                  //!< OPT D1: copy-on-write capture blocks (heap-backed).
+    byte_program               dfa_byte_prog;         //!< OPT lazy-DFA: the klass_cp-expanded program the DFAs span into.
     std::optional<lazy_dfa>    fwd_dfa;               //!< OPT lazy-DFA: forward pass (built lazily, cache persists across a find_iter).
     std::optional<reverse_dfa> rev_dfa;               //!< OPT lazy-DFA: the reverse start-finder.
     const void*                dfa_program {nullptr}; //!< The program the DFAs were built for (rebuild if it changes).
@@ -495,8 +496,15 @@ namespace real::detail {
     {
       const auto* const program {static_cast<const void*>(prog_.code.data())};
       if (state_.dfa_program != program) {
-        state_.fwd_dfa.emplace(prog_.code, prog_.classes);
-        state_.rev_dfa.emplace(prog_.code, prog_.classes);
+        state_.dfa_byte_prog = build_byte_program(prog_); // expands klass_cp; ineligible if assert/lookaround
+        if (state_.dfa_byte_prog.eligible) {
+          state_.fwd_dfa.emplace(state_.dfa_byte_prog.code, state_.dfa_byte_prog.classes);
+          state_.rev_dfa.emplace(state_.dfa_byte_prog.code, state_.dfa_byte_prog.classes);
+        }
+        else {
+          state_.fwd_dfa.reset();
+          state_.rev_dfa.reset();
+        }
         state_.dfa_program = program;
       }
     }
