@@ -26,6 +26,9 @@
 
 #include "charclass.hpp"
 #include "prefilter.hpp"
+#include <optional>
+
+#include "lazy_dfa.hpp"
 #include "program.hpp"
 #include "unicode_props.hpp"
 #include "utf8.hpp"
@@ -278,8 +281,11 @@ namespace real::detail {
    */
   struct pike_state : basic_pike_state<thread_list, std::vector<eps_entry>>
   {
-    lookaround_scratch lookaround; //!< Isolated sub-scratch for bounded lookaround evaluation.
-    capture_pool       pool;       //!< OPT D1: copy-on-write capture blocks (heap-backed).
+    lookaround_scratch         lookaround;            //!< Isolated sub-scratch for bounded lookaround evaluation.
+    capture_pool               pool;                  //!< OPT D1: copy-on-write capture blocks (heap-backed).
+    std::optional<lazy_dfa>    fwd_dfa;               //!< OPT lazy-DFA: forward pass (built lazily, cache persists across a find_iter).
+    std::optional<reverse_dfa> rev_dfa;               //!< OPT lazy-DFA: the reverse start-finder.
+    const void*                dfa_program {nullptr}; //!< The program the DFAs were built for (rebuild if it changes).
   };
 
   /*!
@@ -355,6 +361,47 @@ namespace real::detail {
       if (prog_.hints.fixed_alternation) {
         return run_alternation(text, start, mode, out_slots);
       }
+      // OPT lazy-DFA: for an eligible pattern on a large enough input, a forward DFA finds the match end
+      // (capture-free, ~12x a Pike no-match scan) and a reverse DFA its start; the Pike VM then runs only on
+      // the [s, e] window for the captures and the empty-match rule (the DFA supplies the span, nothing
+      // else). Ineligible patterns, a tripped thrash flag, small inputs, and non-search modes stay on the VM.
+      if constexpr (requires(State & s) {
+        s.fwd_dfa;
+      }) {
+        // forbid_empty_until_ != 0 means the iterator just yielded an empty match and the next may not be
+        // empty at the same spot; forward_end does not model that rule, so those searches stay on the Pike
+        // VM (which does). Empty-matching patterns thus alternate DFA/VM across a find_iter; all others route.
+        if (!std::is_constant_evaluated() && mode == run_mode::search && forbid_empty_until_ == 0
+            && text.size() - start >= lazy_dfa_min_input) {
+          ensure_lazy_dfa();
+          if (state_.fwd_dfa.has_value() && state_.rev_dfa.has_value() && state_.fwd_dfa->eligible()
+              && !state_.fwd_dfa->thrashing()) {
+            const std::size_t match_end {state_.fwd_dfa->forward_end(text.substr(start))};
+            if (match_end == npos) {
+              out_slots.assign(prog_.slot_count, npos);
+              return false; // the forward DFA rejected the whole suffix at DFA speed
+            }
+            const std::size_t abs_end   {start + match_end};
+            const std::size_t abs_start {state_.rev_dfa->reverse_start(text, abs_end, start)};
+            // Window-Pike: the general loop on [abs_start, abs_end], where the match lives.
+            return run_general<Cascade>(text.substr(0, abs_end), abs_start, mode, out_slots);
+          }
+        }
+      }
+      return run_general<Cascade>(text, start, mode, out_slots);
+    }
+
+    /*!
+     * \brief The general Pike VM search loop (the match semantics), factored so the lazy-DFA routing can run
+     *        it on the `[s, e]` window a two-pass DFA has located, and so the direct path can call it too.
+     */
+    template <bool Cascade = false, typename OutSlots>
+    constexpr bool run_general(std::string_view text,
+                               std::size_t      start,
+                               run_mode         mode,
+                               OutSlots&        out_slots)
+    {
+      text_ = text;
       const std::size_t code_size {prog_.code.size()};
       auto*             clist     {&state_.lists[0]};
       auto*             nlist     {&state_.lists[1]};
@@ -435,6 +482,24 @@ namespace real::detail {
      * \brief The concrete thread-list type taken from the bound `State`.
      */
     using list_type = std::remove_reference_t<decltype(std::declval<State&>().lists[0])>;
+
+    //! \brief Below this input length the lazy-DFA routing is skipped (the two-pass setup does not amortise
+    //!        on a short subject — the Pike VM goes direct). A measured, documented threshold.
+    static constexpr std::size_t lazy_dfa_min_input {512};
+
+    //! \brief Build the forward/reverse DFAs into the reusable state on first eligible use, or rebuild them
+    //!        if the state is now bound to a different program (its `code` pointer changed). The cache then
+    //!        persists across a whole find_iter (where it pays), and forward_end resets its per-search thrash
+    //!        flag itself. Instantiated only for the dynamic state (the one carrying the optionals).
+    void ensure_lazy_dfa()
+    {
+      const auto* const program {static_cast<const void*>(prog_.code.data())};
+      if (state_.dfa_program != program) {
+        state_.fwd_dfa.emplace(prog_.code, prog_.classes);
+        state_.rev_dfa.emplace(prog_.code, prog_.classes);
+        state_.dfa_program = program;
+      }
+    }
 
     //! \brief The capture-block pool type of the bound `State` (OPT D1) — heap-backed for dynamic,
     //!        compile-sized static_vec for static. The one capture-slot mechanism, both storages.

@@ -193,3 +193,29 @@ TEST(reverse_dfa_full_span_differential_vs_pike)
   }
   EXPECT(checked >= 200U);
 }
+
+// End-to-end: the lazy-DFA ROUTING (forward end + reverse start + windowed Pike) must give the same spans
+// AND groups as the pure Pike VM, on inputs long enough to cross the routing threshold. A periodic input
+// has a known match structure; we check the count, a sampled span, and its groups.
+TEST(lazy_dfa_routing_matches_pike_on_large_input)
+{
+  const real::regex rx {"([a-z]+)@([a-z]+)", real::flags::ascii}; // eligible: byte classes only
+  std::string       text;
+  for (int i = 0; i < 400; ++i) {
+    text += "xy ab@cd zz "; // one match "ab@cd" per 11-byte period, well past the 512-byte threshold
+  }
+  std::size_t n {0};
+  for (const auto& m : rx.find_iter(text)) {
+    EXPECT_EQ(m[0], std::string_view {"ab@cd"});
+    EXPECT_EQ(m[1], std::string_view {"ab"});
+    EXPECT_EQ(m[2], std::string_view {"cd"});
+    EXPECT_EQ(m.start(), (n * 12U) + 3U); // "xy " is 3 bytes, then the match
+    ++n;
+  }
+  EXPECT_EQ(n, 400U);
+  // a no-match large input must reject (routed) and yield nothing
+  const std::string none(6000, 'z');
+  EXPECT(!rx.search(none));
+  // search from a resume point routes the same
+  EXPECT_EQ(rx.search(text, 20, text.size()).start(), 27U); // matches at 3,15,27,...; first >= 20 is 27
+}

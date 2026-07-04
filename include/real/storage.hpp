@@ -712,8 +712,11 @@ namespace real {
                                               std::vector<std::uint64_t>>,
                             small_vec<eps_entry, 32>>
       {
-        lookaround_scratch lookaround; //!< Isolated sub-scratch for bounded lookaround evaluation.
-        capture_pool       pool;       //!< OPT D1: copy-on-write capture blocks (heap-backed).
+        lookaround_scratch         lookaround;            //!< Isolated sub-scratch for bounded lookaround evaluation.
+        capture_pool               pool;                  //!< OPT D1: copy-on-write capture blocks (heap-backed).
+        std::optional<lazy_dfa>    fwd_dfa;               //!< OPT lazy-DFA: forward pass (cache persists across a find_iter).
+        std::optional<reverse_dfa> rev_dfa;               //!< OPT lazy-DFA: the reverse start-finder.
+        const void*                dfa_program {nullptr}; //!< The program the DFAs were built for.
       };
 
       std::string     pattern_text;                  //!< The original pattern text.

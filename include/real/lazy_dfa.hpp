@@ -16,12 +16,12 @@
 #ifndef REAL_LAZY_DFA_HPP
 #define REAL_LAZY_DFA_HPP
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 #include "program.hpp"
@@ -41,8 +41,8 @@ namespace real::detail {
 
   //! \brief Partition 0..255 by the program's consuming predicates (every `klass` test, every `byte`
   //!        literal). Bytes with an identical signature collapse to one class.
-  inline lazy_byte_alphabet compute_lazy_alphabet(std::span<const instr>      code,
-                                                  std::span<const char_class> classes)
+  inline constexpr lazy_byte_alphabet compute_lazy_alphabet(std::span<const instr>      code,
+                                                            std::span<const char_class> classes)
   {
     std::vector<char_class>    class_preds;
     std::vector<std::uint16_t> literal_preds;
@@ -96,6 +96,57 @@ namespace real::detail {
   }
 
   /*!
+   * \brief A tiny open-chaining hash set of interned PC-set state ids, keyed by their pc-set. Replaces a
+   *        `std::unordered_map` so the DFAs stay **literal types** (a constexpr `real::regex` embeds one in
+   *        its scratch state); all-`std::vector` storage is constexpr-constructible in C++20. Maps a
+   *        candidate pc-set to its existing state id, or \ref not_found, comparing against the owner's pcs.
+   */
+  struct pc_set_cache
+  {
+    static constexpr std::size_t   bucket_count {2048};
+    static constexpr std::uint32_t not_found    {0xFFFFFFFFU};
+
+    std::vector<std::vector<std::uint32_t>> buckets;
+
+    constexpr pc_set_cache()
+      : buckets(bucket_count)
+    {}
+
+    static constexpr std::size_t hash(const std::vector<std::int32_t>& v)
+    {
+      std::size_t h {1469598103934665603ULL};
+      for (const std::int32_t x : v) {
+        h = (h ^ static_cast<std::size_t>(static_cast<std::uint32_t>(x))) * 1099511628211ULL;
+      }
+      return h;
+    }
+
+    [[nodiscard]] constexpr std::uint32_t find(const std::vector<std::int32_t>&               pcs,
+                                               const std::vector<std::vector<std::int32_t>>&  state_pcs) const
+    {
+      for (const std::uint32_t id : buckets[hash(pcs) % bucket_count]) {
+        if (state_pcs[id] == pcs) {
+          return id;
+        }
+      }
+      return not_found;
+    }
+
+    constexpr void insert(const std::vector<std::int32_t>& pcs,
+                          std::uint32_t                    id)
+    {
+      buckets[hash(pcs) % bucket_count].push_back(id);
+    }
+
+    constexpr void clear()
+    {
+      for (std::vector<std::uint32_t>& b : buckets) {
+        b.clear();
+      }
+    }
+  };
+
+  /*!
    * \brief A lazy priority-preserving forward DFA over a Pike program (the kFirstMatch forward pass).
    *
    * A DFA state is the ordered epsilon-closure of a set of program counters (the Pike thread list's PCs,
@@ -137,12 +188,12 @@ namespace real::detail {
      * \param[in] budget  Cached states before a flush; defaults to \ref state_budget. A smaller value is a
      *                    test hook to exercise eviction and thrash without a state-exploding pattern.
      */
-    explicit lazy_dfa(std::span<const instr>      code,
-                      std::span<const char_class> classes,
-                      std::size_t                 budget = state_budget)
-      : code_ {code}, classes_ {classes}, alpha_ {compute_lazy_alphabet(code, classes)}, budget_ {budget}
+    explicit constexpr lazy_dfa(std::span<const instr>      code,
+                                std::span<const char_class> classes,
+                                std::size_t                 budget = state_budget)
+      : code_ {code}, classes_ {classes}, alpha_ {compute_lazy_alphabet(code, classes)}, eligible_ {compute_eligibility(code)},
+        budget_ {budget}
     {
-      eligible_ = compute_eligibility(code);
       flush();                 // seeds the dead state (0) and the start state (1)
     }
 
@@ -306,7 +357,7 @@ namespace real::detail {
       return intern(prefix);
     }
 
-    static bool compute_eligibility(std::span<const instr> code)
+    static constexpr bool compute_eligibility(std::span<const instr> code)
     {
       for (const instr& in : code) {
         if (in.op == opcode::assert_position || in.op == opcode::assert_lookaround
@@ -337,9 +388,9 @@ namespace real::detail {
 
     //! \brief Append the ordered epsilon-closure of \p pc to \p out (split priority; save/jump crossed),
     //!        collecting the consuming and `match` PCs. Uses \p seen to dedup within this closure.
-    void close_into(std::int32_t               pc,
-                    std::vector<std::int32_t>& out,
-                    std::vector<char>&         seen) const
+    constexpr void close_into(std::int32_t               pc,
+                              std::vector<std::int32_t>& out,
+                              std::vector<char>&         seen) const
     {
       if (pc < 0 || static_cast<std::size_t>(pc) >= code_.size()) {
         return;
@@ -376,14 +427,14 @@ namespace real::detail {
     }
 
     //! \brief Intern an ordered pc-set into a state id (cached). Flushes the cache when the budget is hit.
-    std::uint32_t intern(const std::vector<std::int32_t>& pcs)
+    constexpr std::uint32_t intern(const std::vector<std::int32_t>& pcs)
     {
       if (pcs.empty()) {
         return dead_state;
       }
-      const auto it {cache_.find(pcs)};
-      if (it != cache_.end()) {
-        return it->second;
+      const std::uint32_t found {cache_.find(pcs, state_pcs_)};
+      if (found != pc_set_cache::not_found) {
+        return found;
       }
       if (state_pcs_.size() >= budget_) {
         flush();
@@ -392,7 +443,7 @@ namespace real::detail {
       return intern_fresh(pcs);
     }
 
-    std::uint32_t intern_fresh(const std::vector<std::int32_t>& pcs)
+    constexpr std::uint32_t intern_fresh(const std::vector<std::int32_t>& pcs)
     {
       const auto id {static_cast<std::uint32_t>(state_pcs_.size())};
       state_pcs_.push_back(pcs);
@@ -407,12 +458,12 @@ namespace real::detail {
       }
       state_match_idx_.push_back(match_idx);
       state_match_.push_back(match_idx != no_match_idx ? 1 : 0);
-      cache_.emplace(pcs, id);
+      cache_.insert(pcs, id);
       return id;
     }
 
     //! \brief Empty the cache back to the dead + start states (the eviction: bounded memory).
-    void flush()
+    constexpr void flush()
     {
       const bool first {state_pcs_.empty()};
       if (!first) {
@@ -441,18 +492,6 @@ namespace real::detail {
       start_state_ = intern_fresh(start);
     }
 
-    struct pc_set_hash
-    {
-      std::size_t operator()(const std::vector<std::int32_t>& v) const
-      {
-        std::size_t h {1469598103934665603ULL};
-        for (const std::int32_t x : v) {
-          h = (h ^ static_cast<std::size_t>(static_cast<std::uint32_t>(x))) * 1099511628211ULL;
-        }
-        return h;
-      }
-    };
-
     std::span<const instr>      code_;
     std::span<const char_class> classes_;
     lazy_byte_alphabet          alpha_;
@@ -464,7 +503,7 @@ namespace real::detail {
     std::vector<std::vector<std::uint32_t>>                                   state_trans_seeded_; //!< state id -> [class] -> next, re-seeding (pre-match).
     std::vector<char>                                                         state_match_;        //!< state id -> accepts here.
     std::vector<std::uint32_t>                                                state_match_idx_;    //!< state id -> index of its first accept, or no_match_idx.
-    std::unordered_map<std::vector<std::int32_t>, std::uint32_t, pc_set_hash> cache_;
+    pc_set_cache                                                              cache_;
 
     std::size_t budget_    {state_budget};
     counters    stats_     {};
@@ -488,12 +527,12 @@ namespace real::detail {
     static constexpr std::uint32_t no_transition {0xFFFFFFFFU};
     static constexpr std::size_t   state_budget  {4096};
 
-    explicit reverse_dfa(std::span<const instr>      code,
-                         std::span<const char_class> classes,
-                         std::size_t                 budget = state_budget)
-      : code_ {code}, classes_ {classes}, alpha_ {compute_lazy_alphabet(code, classes)}, budget_ {budget}
+    explicit constexpr reverse_dfa(std::span<const instr>      code,
+                                   std::span<const char_class> classes,
+                                   std::size_t                 budget = state_budget)
+      : code_ {code}, classes_ {classes}, alpha_ {compute_lazy_alphabet(code, classes)}, eligible_ {compute_eligibility(code)},
+        budget_ {budget}
     {
-      eligible_ = compute_eligibility(code);
       // Transpose the program: rev_eps_[x] = the pcs with a forward epsilon edge to x; rev_consume_[x] = the
       // consuming pcs whose successor is x (a byte/klass at pc goes to pc+1).
       rev_eps_.assign(code.size(), {});
@@ -557,8 +596,8 @@ namespace real::detail {
 
   private:
 
-    void rev_closure(std::vector<std::int32_t>& set,
-                     std::vector<char>&         seen) const
+    constexpr void rev_closure(std::vector<std::int32_t>& set,
+                               std::vector<char>&         seen) const
     {
       std::vector<std::int32_t> stack {set};
       while (!stack.empty()) {
@@ -610,7 +649,7 @@ namespace real::detail {
       return in.op == opcode::klass && classes_[in.arg16].test(byte);
     }
 
-    static bool compute_eligibility(std::span<const instr> code)
+    static constexpr bool compute_eligibility(std::span<const instr> code)
     {
       for (const instr& in : code) {
         if (in.op == opcode::assert_position || in.op == opcode::assert_lookaround
@@ -621,14 +660,14 @@ namespace real::detail {
       return true;
     }
 
-    std::uint32_t intern(const std::vector<std::int32_t>& pcs)
+    constexpr std::uint32_t intern(const std::vector<std::int32_t>& pcs)
     {
       if (pcs.empty()) {
         return dead_state;
       }
-      const auto it {cache_.find(pcs)};
-      if (it != cache_.end()) {
-        return it->second;
+      const std::uint32_t found {cache_.find(pcs, state_pcs_)};
+      if (found != pc_set_cache::not_found) {
+        return found;
       }
       if (state_pcs_.size() >= budget_) {
         flush();
@@ -644,11 +683,11 @@ namespace real::detail {
         }
       }
       state_has_start_.push_back(has_start ? 1 : 0);
-      cache_.emplace(pcs, id);
+      cache_.insert(pcs, id);
       return id;
     }
 
-    void flush()
+    constexpr void flush()
     {
       state_pcs_.clear();
       state_trans_.clear();
@@ -667,18 +706,6 @@ namespace real::detail {
       start_state_ = intern(start);
     }
 
-    struct pc_set_hash
-    {
-      std::size_t operator()(const std::vector<std::int32_t>& v) const
-      {
-        std::size_t h {1469598103934665603ULL};
-        for (const std::int32_t x : v) {
-          h = (h ^ static_cast<std::size_t>(static_cast<std::uint32_t>(x))) * 1099511628211ULL;
-        }
-        return h;
-      }
-    };
-
     std::span<const instr>                                                    code_;
     std::span<const char_class>                                               classes_;
     lazy_byte_alphabet                                                        alpha_;
@@ -691,7 +718,7 @@ namespace real::detail {
     std::vector<std::vector<std::int32_t>>                                    state_pcs_;
     std::vector<std::vector<std::uint32_t>>                                   state_trans_;
     std::vector<char>                                                         state_has_start_; //!< state -> reaches the program start (an accept).
-    std::unordered_map<std::vector<std::int32_t>, std::uint32_t, pc_set_hash> cache_;
+    pc_set_cache                                                              cache_;
   };
 } // namespace real::detail
 
