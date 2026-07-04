@@ -103,6 +103,30 @@ namespace real {
       return ok;
     }
 
+    //! \brief Binds the invariant context (subject, pattern, named groups) once. For an iterator that refills
+    //!        the same result many times, these never change within a walk — set them here, not per match.
+    constexpr void bind_context(std::string_view                     text,
+                                std::string_view                     pattern,
+                                std::span<const detail::named_group> names)
+    {
+      text_    = text;
+      pattern_ = pattern;
+      names_   = names;
+    }
+
+    //! \brief Per-match refill for an iterator whose context is already bound via \ref bind_context runs the
+    //!        VM and records only the outcome (the invariant fields are already set), the find_iter hot path.
+    template <bool Cascade, typename Vm>
+    constexpr bool engine_refill_hot(Vm&              vm,
+                                     std::string_view text,
+                                     std::size_t      pos,
+                                     detail::run_mode mode,
+                                     std::size_t      forbid)
+    {
+      matched_ = vm.template run<Cascade>(text, pos, mode, slots_, forbid);
+      return matched_;
+    }
+
     /*!
      * \brief Returns `true` if the attempt matched.
      */
@@ -264,6 +288,7 @@ namespace real {
         done_(false),
         cascade_(prog.hints.stop_set_size >= 1) // decided ONCE per walk, never per match
     {
+      current_.bind_context(text_, pattern_, prog_.names); // invariant across the walk — set once, not per match
       advance();
     }
 
@@ -340,10 +365,10 @@ namespace real {
       // Cascade choice is the iterator's compile-time-dispatched cascade_, fixed once at construction, so
       // the common (non-cascade) walk runs the pre-OPT-C hot path unchanged.
       const bool ok {cascade_
-                     ? current_.template engine_refill<true>(vm, text_, pos_, detail::run_mode::search,
-                                                             forbid_empty_until_, pattern_, prog_.names)
-                     : current_.template engine_refill<false>(vm, text_, pos_, detail::run_mode::search,
-                                                              forbid_empty_until_, pattern_, prog_.names)};
+                     ? current_.template engine_refill_hot<true>(vm, text_, pos_, detail::run_mode::search,
+                                                                 forbid_empty_until_)
+                     : current_.template engine_refill_hot<false>(vm, text_, pos_, detail::run_mode::search,
+                                                                  forbid_empty_until_)};
       if (!ok) {
         done_ = true;
         return;

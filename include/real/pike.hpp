@@ -304,8 +304,8 @@ namespace real::detail {
      * \param[in]     prog  The compiled program to execute.
      * \param[in,out] state Reusable scratch (borrowed; must outlive the VM).
      */
-    constexpr pike_vm(program_view prog,
-                      State&       state)
+    constexpr pike_vm(const program_view& prog,
+                      State&              state)
       : prog_(prog),
         state_(state)
     {}
@@ -375,7 +375,9 @@ namespace real::detail {
         // VM (which does). Empty-matching patterns thus alternate DFA/VM across a find_iter; all others route.
         if (!std::is_constant_evaluated() && !lazy_dfa_route_disabled() && mode == run_mode::search
             && forbid_empty_until_ == 0 && text.size() - start >= lazy_dfa_min_input) {
-          ensure_lazy_dfa();
+          if (state_.dfa_program != static_cast<const void*>(prog_.code.data())) {
+            ensure_lazy_dfa(); // once per iterator, not per match — skips the call_once atomic load on the hot path
+          }
           if (state_.fwd_dfa.has_value() && state_.rev_dfa.has_value() && state_.fwd_dfa->eligible()
               && !state_.fwd_dfa->thrashing()) {
             const std::size_t match_end {state_.fwd_dfa->forward_end(text.substr(start))};
@@ -471,9 +473,9 @@ namespace real::detail {
 
   private:
 
-    program_view     prog_;  //!< The program being executed.
-    State&           state_; //!< Borrowed reusable scratch state.
-    std::string_view text_;  //!< The subject text for the current run.
+    const program_view& prog_;  //!< The program being executed (borrowed; a stable lvalue that outlives the VM).
+    State&              state_; //!< Borrowed reusable scratch state.
+    std::string_view    text_;  //!< The subject text for the current run.
 
     /*!
      * \brief Reject empty matches whose start is below this offset.

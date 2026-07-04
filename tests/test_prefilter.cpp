@@ -179,14 +179,16 @@ TEST(hints_never_change_results)
     auto       without    = with;
     without.program.hints = {};
     for (const auto& text : texts) {
-      real::detail::pike_state s1;
-      real::detail::pike_state s2;
-      std::vector<std::size_t> r1;
-      std::vector<std::size_t> r2;
-      real::detail::pike_vm    vm1(with.view(), s1);
-      real::detail::pike_vm    vm2(without.view(), s2);
-      const bool               m1 = vm1.run(text, 0, real::detail::run_mode::search, r1);
-      const bool               m2 = vm2.run(text, 0, real::detail::run_mode::search, r2);
+      real::detail::pike_state         s1;
+      real::detail::pike_state         s2;
+      std::vector<std::size_t>         r1;
+      std::vector<std::size_t>         r2;
+      const real::detail::program_view pv1 {with.view()};    // the VM borrows the view — keep it alive
+      const real::detail::program_view pv2 {without.view()};
+      real::detail::pike_vm            vm1(pv1, s1);
+      real::detail::pike_vm            vm2(pv2, s2);
+      const bool                       m1 = vm1.run(text, 0, real::detail::run_mode::search, r1);
+      const bool                       m2 = vm2.run(text, 0, real::detail::run_mode::search, r2);
       EXPECT_EQ(m1, m2);
       EXPECT(r1 == r2);
     }
