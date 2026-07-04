@@ -299,6 +299,30 @@ TEST(utf8_text_run_stops_at_malformed_before_the_stop_byte)
   EXPECT_EQ(match_len("[^\"]*", s, flags::bytes), std::size_t {10});
 }
 
+// The SWAR fast path for a code-point-class run (`[^"]+` / `.+` in text mode) must reproduce the
+// scalar path exactly — above all it must still STOP at malformed UTF-8 (the C-0 property), and it must
+// land word boundaries right (the 8-byte SWAR stride), whether a high byte falls at the run start, just
+// before the stop, or after a cluster. `+` (not `*`) so the whole-pattern code-point-class fast path is
+// what runs.
+TEST(utf8_codepoint_run_swar_matches_the_scalar_path)
+{
+  // ab | é | cd | malformed C3 41 | ef | " (index 10) : the run stops at the malformed C3 41 (len 6).
+  const std::string mal {cat({"ab", bytes({0xC3, 0xA9}), "cd", bytes({0xC3, 0x41}), "ef\"tail"})};
+  EXPECT_EQ(match_len("[^\"]+", mal), std::size_t {6});
+  EXPECT_EQ(match_len(".+", mal), std::size_t {6});
+  // A high byte immediately before the stop, and at the run start.
+  EXPECT_EQ(match_len("[^\"]+", cat({"aaa", bytes({0xC3, 0xA9}), "\"x"})), std::size_t {5});
+  EXPECT_EQ(match_len("[^\"]+", cat({bytes({0xC3, 0xA9}), "\"z"})), std::size_t {2});
+  // ASCII-run lengths across the 8-byte SWAR stride boundaries.
+  for (const std::size_t n : {std::size_t {7}, std::size_t {8}, std::size_t {9}, std::size_t {15},
+                              std::size_t {16}, std::size_t {17}, std::size_t {64}, std::size_t {65}}) {
+    EXPECT_EQ(match_len("[^\"]+", std::string(n, 'a') + "\""), n);
+  }
+  // A stop right after a multi-byte cluster, and a search that skips leading stops.
+  EXPECT_EQ(match_len("[^\"]+", cat({"a", bytes({0xC3, 0xA9}), "\"q"})), std::size_t {3});
+  EXPECT_EQ(match_len("[^\"]+", "\"\"aaa\"z"), std::size_t {3});
+}
+
 TEST(utf8_bytes_mode_classes)
 {
   // In bytes mode a class member >= 0x80 (from \xHH) is a RAW BYTE in the bitmap, not a

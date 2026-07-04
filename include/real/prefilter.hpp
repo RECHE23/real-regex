@@ -503,6 +503,32 @@ namespace real::detail {
         hints.stop_set_size = static_cast<std::uint8_t>(stop_count);
       }
     }
+    // OPT-C-1b: a whole-pattern code-point-class run (`.`/`[^x]` in text/ascii mode) accepts EVERY valid
+    // code point >= 0x80 — run_codepoint_class validates the UTF-8 structure but not membership above
+    // ASCII — so once its ASCII complement is small the run can be SWAR-accelerated soundly: memchr the
+    // ASCII stops for an upper bound, high-bit-scan the ASCII stretches, and drop to code-point
+    // validation only across a non-ASCII cluster (so malformed UTF-8 still stops the run, unchanged). The
+    // stops here are only the ASCII bytes the class rejects.
+    else if (hints.codepoint_class_ascii >= 0) {
+      const char_class&   accepted   {classes[static_cast<std::size_t>(hints.codepoint_class_ascii)]};
+      std::array<char, 6> stops      {};
+      int                 stop_count {0};
+      for (unsigned byte = 0; byte < 0x80; ++byte) {
+        if (!accepted.test(static_cast<std::uint8_t>(byte))) {
+          if (stop_count < 6) {
+            stops[static_cast<std::size_t>(stop_count)] = static_cast<char>(byte);
+          }
+          ++stop_count;
+          if (stop_count > 6) {
+            break;
+          }
+        }
+      }
+      if (stop_count >= 1 && stop_count <= 6) {
+        hints.stop_set      = stops;
+        hints.stop_set_size = static_cast<std::uint8_t>(stop_count);
+      }
+    }
     return hints;
   }
 
@@ -613,6 +639,52 @@ namespace real::detail {
       }
     }
     return npos;
+  }
+
+  /*!
+   * \brief Index of the first byte `>= 0x80` in `text[pos, end)`, or \p end if the range is pure ASCII.
+   *
+   * A SWAR scan for the high bit: load eight bytes at a time (a `memcpy` into a `std::uint64_t`, so it is
+   * alignment- and aliasing-safe) and test `& 0x8080…`; a clear word skips eight ASCII bytes at once. On
+   * a hit the eight bytes are re-checked scalarly (endianness-free, and only for the one straddling
+   * word); the head/tail run scalar. During constant evaluation the plain scalar loop runs.
+   *
+   * \param[in] text The subject text.
+   * \param[in] pos  Start of the range.
+   * \param[in] end  Exclusive end of the range (`<= text.size()`).
+   * \return The least index in `[pos, end)` whose byte is `>= 0x80`, else \p end.
+   */
+  constexpr std::size_t first_high_byte(std::string_view text,
+                                        std::size_t      pos,
+                                        std::size_t      end)
+  {
+    if (!std::is_constant_evaluated()) {
+      const char* const base {text.data()};
+      std::size_t       i    {pos};
+      for (; i + 8 <= end; i += 8) {
+        std::uint64_t word {};
+        std::memcpy(&word, base + i, 8);
+        if ((word & 0x8080808080808080ULL) != 0U) {
+          for (std::size_t b = 0; b < 8; ++b) {
+            if (static_cast<std::uint8_t>(base[i + b]) >= 0x80U) {
+              return i + b;
+            }
+          }
+        }
+      }
+      for (; i < end; ++i) {
+        if (static_cast<std::uint8_t>(base[i]) >= 0x80U) {
+          return i;
+        }
+      }
+      return end;
+    }
+    for (std::size_t i = pos; i < end; ++i) {
+      if (static_cast<std::uint8_t>(text[i]) >= 0x80U) {
+        return i;
+      }
+    }
+    return end;
   }
 } // namespace real::detail
 

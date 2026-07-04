@@ -246,7 +246,8 @@ namespace real::detail {
         return run_fixed_shape(text, start, mode, out_slots);
       }
       if (prog_.hints.codepoint_class_ascii >= 0) {
-        return run_codepoint_class(text, start, mode, out_slots);
+        // OPT-C-1b: the SWAR variant (Cascade) is chosen once per walk, like the class-loop cascade.
+        return run_codepoint_class<Cascade>(text, start, mode, out_slots);
       }
       if (prog_.hints.fixed_alternation) {
         return run_alternation(text, start, mode, out_slots);
@@ -796,7 +797,7 @@ namespace real::detail {
      * \param[out] out_slots Receives the matched span on success.
      * \return `true` if at least one codepoint matched.
      */
-    template <typename OutSlots>
+    template <bool Cascade, typename OutSlots>
     constexpr bool run_codepoint_class(std::string_view text,
                                        std::size_t      start,
                                        run_mode         mode,
@@ -843,12 +844,49 @@ namespace real::detail {
       }
       std::size_t match_end {match_start + first_width};
       if (prog_.hints.codepoint_class_plus) {
-        while (match_end < text.size()) {
-          const std::size_t codepoint_width {width(match_end)};
-          if (codepoint_width == 0) {
-            break;
+        const auto scalar_scan = [&]() {
+                                   while (match_end < text.size()) {
+                                     const std::size_t codepoint_width {width(match_end)};
+                                     if (codepoint_width == 0) {
+                                       break;
+                                     }
+                                     match_end += codepoint_width;
+                                   }
+                                 };
+        if constexpr (Cascade) {
+          if (!std::is_constant_evaluated()) {
+            // OPT-C-1b SWAR: the next ASCII stop bounds the whole run (an ASCII byte can never lie inside
+            // a multi-byte cluster), so memchr it ONCE. Then walk [match_end, p1): the high-bit scan
+            // skips ASCII stretches eight bytes at a time, and only a non-ASCII cluster drops to code-
+            // point validation. A pure-ASCII stretch to the stop is exact (ASCII text == bytes); a
+            // malformed sequence still stops the run via width() == 0 — the C-0 property, preserved.
+            const std::size_t stop      {find_bytes_cascade(text, match_end, prog_.hints.stop_set.data(),
+                                                            prog_.hints.stop_set_size)};
+            const std::size_t p1        {stop == npos ? text.size() : stop};
+            bool              malformed {false};
+            while (match_end < p1) {
+              const std::size_t high {first_high_byte(text, match_end, p1)};
+              if (high == p1) {
+                break; // the rest of [match_end, p1) is pure ASCII
+              }
+              match_end = high; // validate the non-ASCII cluster at `high`
+              const std::size_t w {width(match_end)};
+              if (w == 0) {
+                malformed = true;
+                break;
+              }
+              match_end += w;
+            }
+            if (!malformed) {
+              match_end = p1; // the whole run up to the stop / text end is accepted
+            }
           }
-          match_end += codepoint_width;
+          else {
+            scalar_scan();
+          }
+        }
+        else {
+          scalar_scan();
         }
       }
       if (mode == run_mode::full && match_end != text.size()) {
