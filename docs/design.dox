@@ -458,7 +458,7 @@ win). Correctness is the value model's, exactly: 3.2&nbsp;M differential cases a
 Σ-invariant is asserted at every run's end (and holds down to constexpr evaluation), and Valgrind is clean
 on the capture-heavy loops.
 
-\subsection g_lazydfa 7.6 In progress: the lazy-DFA forward pass (the contract)
+\subsection g_lazydfa 7.6 Delivered: the lazy-DFA two-pass route (the contract, and what it bought)
 
 The word-boundary and multi-group capture rows of the rust duel (section&nbsp;E of BENCHMARKS.md) are what a
 *lazy DFA* would close: rust answers a match's span by running a byte-at-a-time DFA that never touches its
@@ -498,6 +498,31 @@ assertion, no `klass_cp`, no lookaround — those keep the general VM) and every
 The `kFirstMatch` boundary rule was validated out-of-engine against the Pike VM (the two acids, a
 198k-case alternation differential, and mixed/nullable adversarials) before any of this was written; the
 in-repo property-net asserts it at each step from here on.
+
+**What it is wired to (and what a Unicode class costs).** `pike.hpp` routes an eligible search — after the
+fast paths, at run time, in search mode, past a measured input threshold — through the two passes: the
+forward DFA finds the end, the reverse finds the start, the Pike VM runs only on that `[s, e]` window for
+the groups and the empty-match rule. Eligibility is *no position assertion and no lookaround*; a Unicode
+`\w \d \s` (`klass_cp`) is made representable by expanding it, via the shared `utf8_range_sequences`, into a
+byte-range sub-automaton in a **byte-program** the DFAs own — the Pike program stays byte-identical. That
+byte-program is large (a `\w` is thousands of instructions), which surfaced one trap worth recording: the
+priority cut is `O(state size)`, so on those wide states it must be **memoized per state** or it dominates
+(it did: 499 → 33 ns/B on dense `(\w+)@(\w+)`).
+
+**The bilan — what the arc bought, measured (`(\w+)@(\w+)`, default flags).** Against REAL's own pre-arc
+Pike VM: no-match **7.0×**, sparse **6.0×**, dense **1.3×**. The no-match and sparse subjects — validation,
+log scanning — are the real win; the DFA rejects or skips at ~5–6 ns/B where the VM ground at ~40. The
+dense-extraction row barely moves, and the three-column duel against the rust crate (BENCHMARKS.md §E.1)
+says why and names the two engines REAL has not built, both **parked follow-ups**:
+
+- **A one-pass extractor on the located window.** The dense floor is the *span extractor*, not the DFA:
+  rust writes capture slots in a single deterministic pass for patterns whose state×byte transition is
+  unique (`(\w+)@(\w+)` qualifies), where REAL's window still runs Pike thread lists. *Wake condition:*
+  dense-capture throughput becomes a target. *Protocol: read the RE2 / rust `onepass` source first, then
+  write the acceptance test — the lesson from this arc.*
+- **A variable-offset inner-literal prefilter.** rust `memchr`es the required `@` at a variable offset and
+  verifies around each hit; REAL's rare-byte hint only covers a *fixed* offset. *Wake condition:*
+  no-match/sparse on patterns with a required inner literal becomes a target beyond the current 6–7×.
 
 \section g_map 8. Architecture map: who does what
 
