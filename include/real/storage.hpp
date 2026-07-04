@@ -716,7 +716,6 @@ namespace real {
         capture_pool               pool;                  //!< OPT D1: copy-on-write capture blocks (heap-backed).
         std::optional<lazy_dfa>    fwd_dfa;               //!< OPT lazy-DFA: forward pass (cache persists across a find_iter).
         std::optional<reverse_dfa> rev_dfa;               //!< OPT lazy-DFA: the reverse start-finder.
-        std::vector<std::size_t>   op_slots;              //!< OPT onepass: reusable slot scratch for extract (no per-match alloc).
         const void*                dfa_program {nullptr}; //!< The program the DFAs were built for.
       };
 

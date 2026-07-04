@@ -454,11 +454,16 @@ namespace real::detail {
      * \param[in] budget  Cached states before a flush; defaults to \ref state_budget. A smaller value is a
      *                    test hook to exercise eviction and thrash without a state-exploding pattern.
      */
+    //! \param[in] shared_alpha A precomputed alphabet the caller shares per regex, or null to compute it here.
+    //!        Recomputing is O(256 x classes) and a Unicode byte-program has thousands, so the router passes
+    //!        the shared one rather than paying it on every scan.
     explicit constexpr lazy_dfa(std::span<const instr>      code,
                                 std::span<const char_class> classes,
-                                std::size_t                 budget = state_budget)
-      : code_ {code}, classes_ {classes}, alpha_ {compute_lazy_alphabet(code, classes)}, eligible_ {compute_eligibility(code)},
-        budget_ {budget}
+                                std::size_t                 budget       = state_budget,
+                                const lazy_byte_alphabet*   shared_alpha = nullptr)
+      : code_ {code}, classes_ {classes},
+        alpha_ {shared_alpha != nullptr ? *shared_alpha : compute_lazy_alphabet(code, classes)},
+        eligible_ {compute_eligibility(code)}, budget_ {budget}
     {
       flush();                 // seeds the dead state (0) and the start state (1)
     }
@@ -817,9 +822,11 @@ namespace real::detail {
 
     explicit constexpr reverse_dfa(std::span<const instr>      code,
                                    std::span<const char_class> classes,
-                                   std::size_t                 budget = state_budget)
-      : code_ {code}, classes_ {classes}, alpha_ {compute_lazy_alphabet(code, classes)}, eligible_ {compute_eligibility(code)},
-        budget_ {budget}
+                                   std::size_t                 budget       = state_budget,
+                                   const lazy_byte_alphabet*   shared_alpha = nullptr)
+      : code_ {code}, classes_ {classes},
+        alpha_ {shared_alpha != nullptr ? *shared_alpha : compute_lazy_alphabet(code, classes)},
+        eligible_ {compute_eligibility(code)}, budget_ {budget}
     {
       // Transpose the program: rev_eps_[x] = the pcs with a forward epsilon edge to x; rev_consume_[x] = the
       // consuming pcs whose successor is x (a byte/klass at pc goes to pc+1).

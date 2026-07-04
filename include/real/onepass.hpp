@@ -140,10 +140,11 @@ namespace real::detail {
      * \param[in]  e    Match end (the run must accept here).
      * \param[out] out  Capture slots, sized to \ref slot_count.
      */
-    [[nodiscard]] bool extract(std::string_view          text,
-                               std::size_t               s,
-                               std::size_t               e,
-                               std::vector<std::size_t>& out) const
+    template <typename OutSlots>
+    [[nodiscard]] bool extract(std::string_view text,
+                               std::size_t      s,
+                               std::size_t      e,
+                               OutSlots&        out) const
     {
       if (!eligible_) {
         return false;
@@ -454,6 +455,7 @@ namespace real::detail {
   struct regex_immutables
   {
     byte_program           byte_prog; //!< klass_cp-expanded byte program (empty until built).
+    lazy_byte_alphabet     alphabet;  //!< byte-class alphabet of byte_prog (shared by both DFAs, else recomputed per scan).
     std::optional<onepass> op_table;  //!< one-pass extractor, present iff the pattern is one-pass.
     std::once_flag         once;      //!< guards the one-time build.
 
