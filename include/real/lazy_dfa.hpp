@@ -1,6 +1,6 @@
 /*!
  * \file lazy_dfa.hpp
- * \brief A lazy, priority-preserving forward DFA over the Pike program (the inert scaffolding).
+ * \brief A lazy, priority-preserving forward DFA over the Pike program (the kFirstMatch forward pass + cache).
  *
  * DISTINCT from \ref real::dfa (`<real/dfa.hpp>`): that one is a capture-free *maximal-munch* recognizer
  * over unordered NFA-state sets (a lexer's rule dispatch). This one memoizes the *leftmost-first* Pike
@@ -8,15 +8,14 @@
  * match boundary the Pike VM would. It reuses only the byte-class idea (an alphabet smaller than 256), not
  * that engine's subset construction.
  *
- * \note **This scaffolding is INERT.** The state cache, the budget/eviction policy, the thrash detector
- *       and the counters are built and exercised by tests, but nothing in the matcher routes through this
- *       yet — the forward pass and its differential property-net against Pike arrive when it is wired in.
- *       Dynamic only: the cache is mutable, so it never participates in constant evaluation.
+ * \note The \ref lazy_dfa::forward_end "forward pass" and its memoized transition cache are functional and
+ *       pinned against the Pike VM (the two acids, a differential, and a teeth-verified priority cut), but
+ *       nothing in the matcher **routes** through this yet — the windowed two-pass that uses it is a later
+ *       slice. Dynamic only: the cache is mutable, so it never participates in constant evaluation.
  */
 #ifndef REAL_LAZY_DFA_HPP
 #define REAL_LAZY_DFA_HPP
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -97,7 +96,7 @@ namespace real::detail {
   }
 
   /*!
-   * \brief A lazy priority-preserving forward DFA over a Pike program (inert scaffolding).
+   * \brief A lazy priority-preserving forward DFA over a Pike program (the kFirstMatch forward pass).
    *
    * A DFA state is the ordered epsilon-closure of a set of program counters (the Pike thread list's PCs,
    * in split priority). \ref step transitions on a byte by consuming it from each PC and re-closing, then
@@ -118,6 +117,7 @@ namespace real::detail {
 
     static constexpr std::uint32_t dead_state     {0};           //!< The empty state: every transition from it stays here.
     static constexpr std::uint32_t no_transition  {0xFFFFFFFFU}; //!< A not-yet-computed cached transition.
+    static constexpr std::uint32_t no_match_idx   {0xFFFFFFFFU}; //!< A state whose ordered set holds no accept.
     static constexpr std::size_t   state_budget   {4096};        //!< Cached states before a flush (the memory cap).
     static constexpr std::size_t   thrash_flushes {2};           //!< Flushes within one scan that trip \ref thrashing.
 
@@ -190,41 +190,32 @@ namespace real::detail {
      * programs only (an ineligible one returns \ref real::npos; the caller keeps the Pike VM). No captures:
      * this reports the end; the windowed Pike pass fills the span and applies the empty-match rule.
      */
-    [[nodiscard]] std::size_t forward_end(std::string_view text) const
+    [[nodiscard]] std::size_t forward_end(std::string_view text)
     {
       if (!eligible_) {
         return npos;
       }
-      std::vector<char>         seen(code_.size(), 0);
-      std::vector<std::int32_t> state;
-      close_into(0, state, seen); // the seed at position 0
-      std::size_t best_end {npos};
-      bool        matched  {false};
-      std::size_t pos      {0};
+      begin_scan();
+      std::uint32_t state    {start_state_}; // the seed at position 0 (a re-seeding state)
+      std::size_t   best_end {npos};
+      bool          matched  {false};
+      std::size_t   pos      {0};
       while (true) {
-        for (std::size_t i = 0; i < state.size(); ++i) {
-          if (code_[static_cast<std::size_t>(state[i])].op == opcode::match) {
-            best_end = pos;
-            matched  = true;
-            state.resize(i); // priority-cut: drop the accept and every lower-priority thread after it
-            break;
+        const std::uint32_t midx {state_match_idx_[state]};
+        if (midx != no_match_idx) {
+          best_end = pos;              // the highest-priority accept lives at index midx; a higher thread may extend it
+          matched  = true;
+          state    = cut(state, midx); // drop the accept and every lower-priority thread after it
+          if (state == dead_state) {
+            break; // nothing higher-priority survives to extend the match
           }
         }
-        if (pos >= text.size() || (state.empty() && matched)) {
+        if (pos >= text.size() || state == dead_state) {
           break;
         }
-        const std::uint8_t        byte {static_cast<std::uint8_t>(text[pos])};
-        std::vector<std::int32_t> next;
-        std::fill(seen.begin(), seen.end(), static_cast<char>(0));
-        for (const std::int32_t pc : state) {
-          if (consumes(pc, byte)) {
-            close_into(pc + 1, next, seen);
-          }
-        }
-        if (!matched) {
-          close_into(0, next, seen); // unanchored: re-seed at the lowest priority, only before a match
-        }
-        state = std::move(next);
+        const std::uint8_t byte {static_cast<std::uint8_t>(text[pos])};
+        // pre-match transitions re-seed (unanchored search continues); post-match ones do not (leftmost).
+        state = matched ? step(state, byte) : step_seeded(state, byte);
         ++pos;
       }
       return best_end;
@@ -268,6 +259,52 @@ namespace real::detail {
     }
 
   private:
+
+    //! \brief Like \ref step, but re-seeds: the unanchored-search variant appends pc 0's closure at the
+    //!        lowest priority, so a fresh thread starts at every position until a match is found. Cached in
+    //!        its own transition row (the pre-match state family).
+    std::uint32_t step_seeded(std::uint32_t state,
+                              std::uint8_t  byte)
+    {
+      const std::uint8_t  cls    {alpha_.of[byte]};
+      const std::uint32_t cached {state_trans_seeded_[state][cls]};
+      if (cached != no_transition) {
+        ++stats_.hits;
+        return cached;
+      }
+      ++stats_.misses;
+      const std::vector<std::int32_t> pcs {state_pcs_[state]}; // copy: intern() below may realloc state_pcs_
+      std::vector<std::int32_t>       next;
+      std::vector<char>               seen(code_.size(), 0);
+      for (const std::int32_t pc : pcs) {
+        if (consumes(pc, byte)) {
+          close_into(pc + consumed_width(pc), next, seen);
+        }
+      }
+      close_into(0, next, seen); // re-seed at the lowest priority (deduped against the advanced threads)
+      const std::size_t   flushes_before {stats_.flushes};
+      const std::uint32_t result         {intern(next)};
+      if (stats_.flushes == flushes_before) {
+        state_trans_seeded_[state][cls] = result;
+      }
+      return result;
+    }
+
+    //! \brief The priority-cut at an accept: intern the prefix of \p state's ordered pc-set before index
+    //!        \p m (dropping the accept and every lower-priority thread). Returns \ref dead_state if empty.
+    std::uint32_t cut(std::uint32_t state,
+                      std::uint32_t m)
+    {
+      // Copy the prefix element-by-element before interning, which may reallocate state_pcs_ (the L0
+      // dangling-ref trap). A loop rather than an iterator-range copy — the latter trips a g++ false
+      // -Werror=free-nonheap-object here.
+      std::vector<std::int32_t> prefix;
+      prefix.reserve(m);
+      for (std::uint32_t i = 0; i < m; ++i) {
+        prefix.push_back(state_pcs_[state][i]);
+      }
+      return intern(prefix);
+    }
 
     static bool compute_eligibility(std::span<const instr> code)
     {
@@ -360,14 +397,16 @@ namespace real::detail {
       const auto id {static_cast<std::uint32_t>(state_pcs_.size())};
       state_pcs_.push_back(pcs);
       state_trans_.emplace_back(alpha_.count, no_transition);
-      bool match {false};
-      for (const std::int32_t pc : pcs) {
-        if (code_[static_cast<std::size_t>(pc)].op == opcode::match) {
-          match = true;
+      state_trans_seeded_.emplace_back(alpha_.count, no_transition);
+      std::uint32_t match_idx {no_match_idx};
+      for (std::size_t i = 0; i < pcs.size(); ++i) {
+        if (code_[static_cast<std::size_t>(pcs[i])].op == opcode::match) {
+          match_idx = static_cast<std::uint32_t>(i); // the highest-priority accept in this state
           break;
         }
       }
-      state_match_.push_back(match ? 1 : 0);
+      state_match_idx_.push_back(match_idx);
+      state_match_.push_back(match_idx != no_match_idx ? 1 : 0);
       cache_.emplace(pcs, id);
       return id;
     }
@@ -386,12 +425,16 @@ namespace real::detail {
       }
       state_pcs_.clear();
       state_trans_.clear();
+      state_trans_seeded_.clear();
       state_match_.clear();
+      state_match_idx_.clear();
       cache_.clear();
       // state 0 = dead (empty, self-looping), state 1 = start (closure of pc 0).
       state_pcs_.emplace_back();
       state_trans_.emplace_back(alpha_.count, dead_state);
+      state_trans_seeded_.emplace_back(alpha_.count, dead_state);
       state_match_.push_back(0);
+      state_match_idx_.push_back(no_match_idx);
       std::vector<std::int32_t> start;
       std::vector<char>         seen(code_.size(), 0);
       close_into(0, start, seen);
@@ -416,9 +459,11 @@ namespace real::detail {
     bool                        eligible_    {false};
     std::uint32_t               start_state_ {0};
 
-    std::vector<std::vector<std::int32_t>>                                    state_pcs_;   //!< state id -> ordered pc-set.
-    std::vector<std::vector<std::uint32_t>>                                   state_trans_; //!< state id -> [class] -> next (no_transition = lazy).
-    std::vector<char>                                                         state_match_; //!< state id -> accepts here.
+    std::vector<std::vector<std::int32_t>>                                    state_pcs_;          //!< state id -> ordered pc-set.
+    std::vector<std::vector<std::uint32_t>>                                   state_trans_;        //!< state id -> [class] -> next, unseeded (post-match).
+    std::vector<std::vector<std::uint32_t>>                                   state_trans_seeded_; //!< state id -> [class] -> next, re-seeding (pre-match).
+    std::vector<char>                                                         state_match_;        //!< state id -> accepts here.
+    std::vector<std::uint32_t>                                                state_match_idx_;    //!< state id -> index of its first accept, or no_match_idx.
     std::unordered_map<std::vector<std::int32_t>, std::uint32_t, pc_set_hash> cache_;
 
     std::size_t budget_    {state_budget};

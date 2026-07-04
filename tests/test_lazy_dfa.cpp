@@ -1,7 +1,7 @@
-// The inert lazy-DFA cache frame. Nothing routes matching through lazy_dfa yet —
-// these tests drive it directly to pin the machinery: the byte-class alphabet, the priority-ordered subset
-// construction, the lazy transition cache (hit/miss), the bounded eviction (flush), and the thrash detector.
-// The forward-pass semantics and their differential net against Pike arrive when it is wired in.
+// The lazy-DFA forward pass and its cache frame, driven directly (nothing routes matching through it yet).
+// These pin the machinery: the byte-class alphabet, the priority-ordered subset construction, the memoized
+// transition cache (hit/miss), the bounded eviction (flush) + thrash detector, and the kFirstMatch forward
+// pass itself — its reported end differential against the Pike VM, with a teeth-verified priority cut.
 #include <utility>
 
 #include <sciforge/test/framework.hpp>
@@ -140,7 +140,7 @@ TEST(lazy_dfa_forward_pass_is_linear_under_state_explosion)
   // a state-exploding pattern: the forward pass is one left-to-right sweep, so its work is linear in the
   // text — never the per-position re-derivation that would be quadratic.
   const auto        st  {dynamic_storage::compile("(a|b)*a(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)", real::flags::none)};
-  const lazy_dfa    dfa {st.program.code, st.program.classes};
+  lazy_dfa          dfa {st.program.code, st.program.classes, /*budget=*/ 4}; // tiny budget: force cache thrash
   const std::string big(20000, 'a');
-  EXPECT(dfa.forward_end(big) != real::npos); // completes (linearly); the assertion is that it returns
+  EXPECT(dfa.forward_end(big) != real::npos);                                 // completes (linearly) even while the cache flushes under thrash
 }
