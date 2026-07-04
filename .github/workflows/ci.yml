@@ -35,6 +35,22 @@ jobs:
       enable-windows-msvc: true
       enable-arm: true
 
+  # Win32 narrowing guard. The CMake/MSVC matrix in `build` runs on x64, where size_t is 64-bit, so a
+  # 64-bit literal brace-initialised into a size_t (the C2397 class that slipped into v2026.7.13) compiles
+  # clean there — that is the gate-hole. Compiling the engine headers 32-bit (`-m32`) makes size_t 32-bit,
+  # turning that narrowing back into the hard error it is on Win32. Syntax-only, so it is fast and needs no
+  # 32-bit runtime; -Werror promotes the narrowing warning to the failure it must be.
+  win32-narrowing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install 32-bit g++ multilib
+        run: sudo apt-get update && sudo apt-get install -y g++-multilib
+      - name: Syntax-only the engine headers with a 32-bit size_t
+        run: |
+          printf '#include "real/real.hpp"\n#include "real/dfa.hpp"\nint main() {}\n' > win32_tu.cpp
+          g++ -std=c++20 -m32 -Werror -Iinclude -fsyntax-only win32_tu.cpp
+
   fuzz:
     runs-on: ubuntu-latest
     steps:

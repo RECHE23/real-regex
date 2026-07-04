@@ -346,14 +346,16 @@ namespace real::detail {
       nodes_ = std::move(merged);
     }
 
-    //! \brief FNV-1a hash of a partition signature (for the constexpr-friendly bucket dedup).
+    //! \brief FNV-1a hash of a partition signature (for the constexpr-friendly bucket dedup). Accumulates in
+    //!        a fixed 64-bit width and truncates only at the return, so a 32-bit `size_t` (Win32) never sees
+    //!        a narrowing brace-init of the 64-bit offset basis.
     static constexpr std::size_t sig_hash(const std::vector<std::uint64_t>& v)
     {
-      std::size_t h {1469598103934665603ULL};
+      std::uint64_t h {1469598103934665603ULL};
       for (const std::uint64_t x : v) {
-        h = (h ^ static_cast<std::size_t>(x)) * 1099511628211ULL;
+        h = (h ^ x) * 1099511628211ULL;
       }
-      return h;
+      return static_cast<std::size_t>(h);
     }
 
     //! \brief Walk the epsilon-closure from \p pc, writing this node's edges. \p on_path detects epsilon
