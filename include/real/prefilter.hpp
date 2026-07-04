@@ -400,6 +400,118 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Approximate static frequency of a byte in mixed English + source text (occurrences per 10000;
+   *        higher = more common). No text is ever scanned — this only ranks candidate prefilter bytes
+   *        against one another. Punctuation like `-` `@` `.` is far rarer than any letter, digit or space,
+   *        which is the whole point: a required rare byte makes a far more selective `memchr` target than a
+   *        common first-byte class.
+   */
+  constexpr std::uint16_t byte_frequency(std::uint8_t b)
+  {
+    constexpr std::array<std::uint16_t, 26> lower {
+      650, 150, 300, 350, 1000, 200, 180, 450, 550, 15, 80, 350, 250,
+      550, 600, 170, 10, 450, 500, 700, 250, 100, 200, 15, 180, 8};
+    if (b >= 'a' && b <= 'z') {
+      return lower[b - 'a'];
+    }
+    if (b >= 'A' && b <= 'Z') {
+      return static_cast<std::uint16_t>((lower[b - 'A'] / 6) + 3);
+    }
+    if (b >= '0' && b <= '9') {
+      return 120;
+    }
+    switch (b) {
+      case ' ':                          return 1500;
+      case '.':                          return 120;
+      case '\n': case ',':               return 100;
+      case '/':                          return 60;
+      case '(': case ')': case '_':      return 50;
+      case '"': case '\'':               return 45;
+      case '\t': case '=': case '-':     return 40;
+      case ':':                          return 35;
+      case '>': case '<':                return 30;
+      case ';': case '*':                return 25;
+      case '{': case '}':                return 22;
+      case '[': case ']': case '+':      return 20;
+      case '?': case '!': case '|':      return 15;
+      case '%':                          return 12;
+      case '&':                          return 10;
+      case '#': case '\\': case '$':     return 8;
+      case '~': case '@': case '^': case '`': return 3;
+      default:                           return 1; // control and high bytes: assume very rare
+    }
+  }
+
+  /*!
+   * \brief Finds a *required* literal byte at a FIXED offset that is statically far rarer than the
+   *        pattern's first-byte set, and records it (\ref pattern_hints::rare_byte / rare_offset) so the
+   *        search can `memchr` that one byte instead of scanning a common first-byte class per byte.
+   *
+   * Walks the leading FIXED-WIDTH shape from the start: `save`/`assert_position` are crossed (no width),
+   * `byte` and `klass` each advance the byte offset by exactly one, and any `byte` is a candidate. It stops
+   * at the first variable-width or branching op — `klass_cp` (a code point is 1–4 bytes, so offsets past it
+   * are not fixed), `split`, `jump`, `match`. The chosen byte must be below an absolute rarity threshold
+   * and several times rarer than the first-byte set, or the existing first-byte scan already suffices. The
+   * hint only filters candidate starts; the VM still verifies, so it is always sound.
+   */
+  constexpr void extract_rare_byte(std::span<const instr> code,
+                                   pattern_hints&         hints)
+  {
+    if (hints.anchored_start || hints.prefix_size >= 2) {
+      return; // anchored needs no scan; a literal prefix is already a stronger filter
+    }
+    std::size_t   pc         {0};
+    std::size_t   offset     {0};
+    std::int16_t  best_byte  {-1};
+    std::uint8_t  best_off   {0};
+    std::uint16_t best_freq  {0xFFFFU};
+    while (pc < code.size() && offset <= 0xFFU) {
+      const opcode op {code[pc].op};
+      if (op == opcode::save || op == opcode::assert_position) {
+        ++pc;
+        continue;
+      }
+      if (op == opcode::byte) {
+        const auto freq {byte_frequency(static_cast<std::uint8_t>(code[pc].arg8))};
+        if (freq < best_freq) {
+          best_freq = freq;
+          best_byte = static_cast<std::int16_t>(static_cast<std::uint8_t>(code[pc].arg8));
+          best_off  = static_cast<std::uint8_t>(offset);
+        }
+        ++offset;
+        ++pc;
+      }
+      else if (op == opcode::klass) {
+        ++offset; // a byte class consumes exactly one byte: the offset stays fixed
+        ++pc;
+      }
+      else {
+        break; // klass_cp (variable width) / split / jump / match: the offset is no longer fixed
+      }
+    }
+    if (best_byte < 0) {
+      return;
+    }
+    // Effective commonness of the current first-byte filter: a single byte's frequency, or the sum over a
+    // class (a class is only as selective as the total traffic it stops on).
+    std::uint32_t first_freq {0};
+    if (hints.single_first >= 0) {
+      first_freq = byte_frequency(static_cast<std::uint8_t>(hints.single_first));
+    }
+    else {
+      for (int b = 0; b < 256; ++b) {
+        if (hints.first_bytes.test(static_cast<std::uint8_t>(b))) {
+          first_freq += byte_frequency(static_cast<std::uint8_t>(b));
+        }
+      }
+    }
+    if (best_freq < 100U && static_cast<std::uint32_t>(best_freq) * 4U < first_freq) {
+      hints.rare_byte   = best_byte;
+      hints.rare_offset = best_off;
+    }
+  }
+
+  /*!
    * \brief Walks a compiled program once to derive its search hints.
    * \param[in] code           The instruction stream.
    * \param[in] classes        The interned character classes referenced by \p code.
@@ -529,6 +641,11 @@ namespace real::detail {
         hints.stop_set_size = static_cast<std::uint8_t>(stop_count);
       }
     }
+
+    // OPT: a required rare literal byte at a fixed offset (e.g. the `-` in `[0-9]{4}-[0-9]{2}-[0-9]{2}`)
+    // gives a single-byte memchr target far more selective than the first-byte class. Computed last, so it
+    // can compare against the finalized first-byte hints. Sound: it only filters candidate starts.
+    extract_rare_byte(code, hints);
     return hints;
   }
 

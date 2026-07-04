@@ -1204,6 +1204,17 @@ namespace real::detail {
       if (hints.prefix_size >= 2) {
         return find_prefix(text, pos, std::string_view(hints.prefix.data(), hints.prefix_size));
       }
+      if (hints.rare_byte >= 0) {
+        // A required rare byte sits `rare_offset` into every match: memchr it (SIMD), then back up to the
+        // candidate start. Far more selective than scanning a common first-byte class per byte. The VM
+        // still verifies the candidate, so a false back-up is simply rejected there.
+        const std::size_t from {pos + hints.rare_offset};
+        if (from > text.size()) {
+          return npos;
+        }
+        const std::size_t hit {find_byte(text, from, static_cast<char>(hints.rare_byte))};
+        return hit == npos ? npos : hit - hints.rare_offset;
+      }
       if (hints.single_first >= 0) {
         return find_byte(text, pos, static_cast<char>(hints.single_first));
       }

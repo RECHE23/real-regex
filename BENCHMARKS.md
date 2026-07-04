@@ -231,9 +231,14 @@ targets (a `kFirstMatch` DFA for the span, a windowed Pike pass only where captu
 Two rows carry a caveat, not a verdict:
 
 - The **date row is a no-match scan** — the corpus contains *no* `yyyy-mm-dd`, so both engines only reject.
-  rust's required-literal prefilter jumps on the fixed `-` and rejects in ~0 time; REAL grinds digit-first
-  candidates. This is a **prefilter gap, not a capture cost**, addressable on its own (a rare-required-byte
-  hint) without the DFA.
+  rust's required-literal prefilter jumps on the fixed `-`; REAL, scanning the first-byte digit class per
+  byte, grinds. This is a **prefilter gap, not a capture cost** — and now a closed one for fixed-width
+  shapes: a *rare-required-byte* hint makes REAL `memchr` the same `-`. For the explicit-class
+  `[0-9]{4}-[0-9]{2}-[0-9]{2}` it drops the no-match scan from **0.449 → 0.023 ns/B** (within 1.8× of rust,
+  from 37×), and on a corpus with sparse real dates REAL now *beats* rust **1.78×** (0.91 vs 1.63 ns/B —
+  memchr on the rare byte, then its fast digit verify). The `\d{4}-…` row above keeps the class scan: text
+  Unicode `\d` is a variable-width `klass_cp`, so the `-` is not at a byte-fixed offset and the hint soundly
+  declines — a `re.ASCII` `\d` or an explicit class gets it.
 - The **word-boundary and capture rows are what the lazy-DFA arc (in progress) targets** — a `kFirstMatch`
   forward DFA gives the match end, and a windowed Pike pass captures inside it, so these rows are where
   REAL expects to close most of the gap. They are recorded here at their pre-arc cost, deliberately.

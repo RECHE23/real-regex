@@ -267,6 +267,13 @@ namespace real {
       //!        unless \ref stop_set_size is set. Placed last so it never shifts the hot fields' offsets.
       std::array<char, 6> stop_set      {};
       std::uint8_t        stop_set_size {}; //!< Members in \ref stop_set — 0 when the complement is too large, else 1..6.
+
+      //! \brief A *required* literal byte at a fixed offset from the match start that is statically rarer
+      //!        than the pattern's first-byte set (OPT: the date `-` at offset 4). The search jumps by
+      //!        `memchr`-ing this one byte (SIMD) and back-verifies from `found - rare_offset`, instead of
+      //!        the per-byte first-byte bitmap loop on a common class. -1 when no such byte was found.
+      std::int16_t rare_byte   {-1};
+      std::uint8_t rare_offset {}; //!< The fixed byte offset of \ref rare_byte from the match start.
     };
 
     /*!

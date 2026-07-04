@@ -460,3 +460,31 @@ TEST(fixed_shape_internal_saves_fast_path)
   const std::string s4  {"end 2026-07-02"}; // match at end of text
   EXPECT(date.search(s4).end(0) == s4.size());
 }
+
+// OPT rare-byte-at-fixed-offset: a required rare literal (the `-`/`@`) drives a memchr scan, backing up to
+// the candidate start. The prefilter only filters — the VM verifies — so it must never miss a match nor
+// invent one, at any position. These are the teeth for that soundness.
+TEST(rare_byte_prefilter_finds_every_match)
+{
+  const real::regex date {"[0-9]{4}-[0-9]{2}-[0-9]{2}", real::flags::ascii};
+  // matches at the very start, mid-text, back-to-back, and flush against the end
+  EXPECT_EQ(date.search("2026-07-04 tail").start(), 0U);
+  EXPECT_EQ(date.search("head 2026-07-04").end(), 15U);
+  {
+    const std::string run {"1111-11-112222-22-22"}; // two dates, no separator
+    std::size_t       n   {0};
+    for (const auto& m : date.find_iter(run)) {
+      (void)m;
+      ++n;
+    }
+    EXPECT_EQ(n, 2U);
+  }
+  // the rare byte present but the surrounding shape wrong -> the VM rejects (no false positive)
+  EXPECT(!date.search("ab-cd-ef 12-34-56 xx--yy"));
+  EXPECT(!date.search("--------"));
+  // a rare byte after a fixed run: the `@` at offset 3
+  const real::regex tag {"[0-9]{3}@[a-z]+", real::flags::ascii};
+  EXPECT_EQ(tag.search("xx 123@abc yy")[0], "123@abc"sv);
+  EXPECT(!tag.search("12@abc"));           // only two digits before @
+  EXPECT(!tag.search("no at-sign here"));  // the rare byte absent -> instant reject
+}
