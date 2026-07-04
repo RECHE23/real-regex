@@ -29,6 +29,7 @@
 #include <optional>
 
 #include "lazy_dfa.hpp"
+#include "onepass.hpp"
 #include "program.hpp"
 #include "unicode_props.hpp"
 #include "utf8.hpp"
@@ -286,6 +287,8 @@ namespace real::detail {
     byte_program               dfa_byte_prog;         //!< OPT lazy-DFA: the klass_cp-expanded program the DFAs span into.
     std::optional<lazy_dfa>    fwd_dfa;               //!< OPT lazy-DFA: forward pass (built lazily, cache persists across a find_iter).
     std::optional<reverse_dfa> rev_dfa;               //!< OPT lazy-DFA: the reverse start-finder.
+    std::optional<onepass>     op_table;              //!< OPT onepass: single-pass capture extractor (Tier A), when the pattern is one-pass.
+    std::vector<std::size_t>   op_slots;              //!< OPT onepass: reusable slot scratch for extract (no per-match alloc).
     const void*                dfa_program {nullptr}; //!< The program the DFAs were built for (rebuild if it changes).
   };
 
@@ -384,7 +387,20 @@ namespace real::detail {
             }
             const std::size_t abs_end   {start + match_end};
             const std::size_t abs_start {state_.rev_dfa->reverse_start(text, abs_end, start)};
-            // Window-Pike: the general loop on [abs_start, abs_end], where the match lives.
+            // OPT onepass (Tier A): a one-pass pattern fills captures in a single pass over [s, e] with no
+            // thread lists. Otherwise the window-Pike runs the general loop there. Both give the same slots.
+            // The table is built on first use (a no-match scan reaches neither this point nor its cost).
+            if (!state_.op_table.has_value()) {
+              state_.op_table.emplace(state_.dfa_byte_prog);
+            }
+            if (state_.op_table->eligible()
+                && state_.op_table->extract(text, abs_start, abs_end, state_.op_slots)) {
+              out_slots.assign(prog_.slot_count, npos);
+              for (std::size_t i = 0; i < state_.op_slots.size() && i < prog_.slot_count; ++i) {
+                out_slots[i] = state_.op_slots[i];
+              }
+              return true;
+            }
             return run_general<Cascade>(text.substr(0, abs_end), abs_start, mode, out_slots);
           }
         }
@@ -505,6 +521,7 @@ namespace real::detail {
           state_.fwd_dfa.reset();
           state_.rev_dfa.reset();
         }
+        state_.op_table.reset(); // built lazily on first extraction — a no-match scan never pays for it
         state_.dfa_program = program;
       }
     }

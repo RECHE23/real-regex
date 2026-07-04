@@ -717,6 +717,8 @@ namespace real {
         byte_program               dfa_byte_prog;         //!< OPT lazy-DFA: the klass_cp-expanded program the DFAs span into.
         std::optional<lazy_dfa>    fwd_dfa;               //!< OPT lazy-DFA: forward pass (cache persists across a find_iter).
         std::optional<reverse_dfa> rev_dfa;               //!< OPT lazy-DFA: the reverse start-finder.
+        std::optional<onepass>     op_table;              //!< OPT onepass: single-pass capture extractor (Tier A), when the pattern is one-pass.
+        std::vector<std::size_t>   op_slots;              //!< OPT onepass: reusable slot scratch for extract (no per-match alloc).
         const void*                dfa_program {nullptr}; //!< The program the DFAs were built for.
       };
 

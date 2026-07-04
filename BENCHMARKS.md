@@ -284,6 +284,32 @@ rust's multi-engine architecture, and the two engines that would are named here,
 Reproduce: `benchmarks/duel/` — a rust binary (`regex = "1"`, pinned in its `Cargo.lock`; `find`/`captures`
 modes), a REAL binary, and `run_duel.py` (the corpus and the §E table). Dev-tooling; not wired into any gate.
 
+### E.2 The one-pass arc: engine parity, and the machinery that now bounds it
+
+§E.1's first follow-up was a one-pass span extractor. It is built. A pattern is *one-pass* when at most one
+thread crosses any byte (RE2's `onepass.cc`); its captures then fill in a single left-to-right pass with no
+thread lists. A deterministic UTF-8 trie made the default-flags Unicode `\w \d \s` one-pass (they were not
+before — a naive range alternation shared lead bytes), so the flagship `(\w+)@(\w+)` qualifies, and the
+router now fills captures with the one-pass pass instead of the windowed Pike VM.
+
+On the flagship dense find_iter it moves **33.4 → 17.1 ns/B (1.9×)**. Attributing that 17.1 is the point:
+
+| component of the routed dense find_iter | ns/B |
+| --- | ---: |
+| forward + reverse DFA (locate `[s, e]`) | 4.2 |
+| + one-pass capture extraction | **6.7** (the matching *core*) |
+| + find_iter machinery (Match build, per-advance) | 17.1 (the full loop) |
+| rust `captures_iter`, full | 7.1 |
+
+The one-pass pass replaced the windowed Pike VM on its own line — ~19 → ~2.5 ns/B, 7.6× — and the matching
+**core is 6.7 ns/B, at parity with rust's whole `captures_iter` (7.1)**. The engine is no longer the gap.
+What remains is ~10 ns/B of REAL's own find_iter machinery — the per-match `Match` construction and
+per-advance re-entry — which rust does in ~0.4. **So the dense-capture floor is now the find_iter
+machinery, not the extractor** (the one that §E.1 named): a per-match diet that would serve every pattern,
+not just one-pass ones, is the identified follow-up. One-pass touches neither the sparse nor the no-match
+gap (those stay §E.1's inner-literal-prefilter follow-up); it closed the extractor gap and relocated the
+dense one.
+
 ## Methodology & reproduction
 
 - **Goal.** A competitive snapshot *and* a same-machine regression tripwire — not a

@@ -70,7 +70,7 @@ namespace real::detail {
     static constexpr std::size_t   max_nodes {65000};       //!< Node cap (RE2's), a memory/So-DoS bound.
     static constexpr std::size_t   max_slots {10};          //!< Slot-pointer cap: group 0 + four user groups.
 
-    explicit onepass(const byte_program& bp)
+    explicit constexpr onepass(const byte_program& bp)
     {
       if (!bp.eligible) {
         bail("the byte-program is itself ineligible (a position assertion or lookaround)");
@@ -162,15 +162,24 @@ namespace real::detail {
 
   private:
 
-    void bail(std::string reason)
+    //! \brief Reject as not one-pass, recording a category and the offending node / byte-class / pc (kept as
+    //!        integers rather than formatted into the string so the whole builder stays constexpr — a
+    //!        constexpr `real::regex` embeds an (empty) one-pass table in its literal state).
+    constexpr void bail(const char*  reason,
+                        std::int32_t node  = -1,
+                        std::int32_t klass = -1,
+                        std::int32_t pc    = -1)
     {
       eligible_    = false;
-      bail_reason_ = std::move(reason);
+      bail_reason_ = reason;
+      bail_node_   = node;
+      bail_class_  = klass;
+      bail_pc_     = pc;
     }
 
     //! \brief Get-or-create the node whose entry pc is \p pc, enqueueing a fresh one for the flood.
-    std::uint32_t node_of(std::int32_t               pc,
-                          std::vector<std::int32_t>& queue)
+    constexpr std::uint32_t node_of(std::int32_t               pc,
+                                    std::vector<std::int32_t>& queue)
     {
       std::uint32_t& id {pc_to_node_[static_cast<std::size_t>(pc)]};
       if (id == no_node) {
@@ -183,7 +192,7 @@ namespace real::detail {
       return id;
     }
 
-    void build(const byte_program& bp)
+    constexpr void build(const byte_program& bp)
     {
       code_    = bp.code;
       classes_ = bp.classes;
@@ -209,8 +218,7 @@ namespace real::detail {
       }
       slot_count_ = max_slot + 1;
       if (slot_count_ > max_slots) {
-        bail("too many capture slots (" + std::to_string(slot_count_) + " > " + std::to_string(max_slots)
-             + "): the general Pike VM keeps these");
+        bail("too many capture slots: the general Pike VM keeps these", static_cast<std::int32_t>(slot_count_));
         return;
       }
 
@@ -223,15 +231,15 @@ namespace real::detail {
         std::vector<char> on_path(bp.code.size(), 0);
         build_edges(pc, 0, on_path, pc_to_node_[static_cast<std::size_t>(pc)], queue);
         if (nodes_.size() > max_nodes) {
-          bail("node cap exceeded (" + std::to_string(nodes_.size()) + ")");
+          bail("node cap exceeded", static_cast<std::int32_t>(nodes_.size()));
           return;
         }
       }
     }
 
     //! \brief Whether instruction \p in consumes a byte of class \p cls (tested via the class representative).
-    [[nodiscard]] bool consumes_class(const instr&  in,
-                                      std::uint16_t cls) const
+    [[nodiscard]] constexpr bool consumes_class(const instr&  in,
+                                                std::uint16_t cls) const
     {
       const std::uint8_t b {rep_[cls]};
       if (in.op == opcode::byte) {
@@ -242,17 +250,17 @@ namespace real::detail {
 
     //! \brief Walk the epsilon-closure from \p pc, writing this node's edges. \p on_path detects epsilon
     //!        cycles (a nullable loop => not one-pass). \p cap_mask accumulates the slots crossed so far.
-    void build_edges(std::int32_t               pc,
-                     std::uint64_t              cap_mask,
-                     std::vector<char>&         on_path,
-                     std::uint32_t              node_id,
-                     std::vector<std::int32_t>& queue)
+    constexpr void build_edges(std::int32_t               pc,
+                               std::uint64_t              cap_mask,
+                               std::vector<char>&         on_path,
+                               std::uint32_t              node_id,
+                               std::vector<std::int32_t>& queue)
     {
       if (!eligible_) {
         return;
       }
       if (on_path[static_cast<std::size_t>(pc)] != 0) {
-        bail("epsilon cycle (a nullable loop) at pc " + std::to_string(pc) + ": not one-pass");
+        bail("epsilon cycle (a nullable loop): not one-pass", -1, -1, pc);
         return;
       }
       on_path[static_cast<std::size_t>(pc)] = 1;
@@ -268,8 +276,7 @@ namespace real::detail {
               }
               onepass_edge& slot {node.edge[cls]};
               if (slot.assigned && (slot.next != next || slot.cap_mask != cap_mask)) {
-                bail("byte-class conflict at node " + std::to_string(node_id) + ", class "
-                     + std::to_string(cls) + " (pc " + std::to_string(pc) + "): not one-pass");
+                bail("byte-class conflict: not one-pass", static_cast<std::int32_t>(node_id), cls, pc);
                 return;
               }
               slot = onepass_edge {.next = next, .cap_mask = cap_mask, .assigned = true};
@@ -279,7 +286,7 @@ namespace real::detail {
         case opcode::match: {
             onepass_node& node {nodes_[node_id]};
             if (node.matches && node.match_cap_mask != cap_mask) {
-              bail("second distinct match at node " + std::to_string(node_id) + ": not one-pass");
+              bail("second distinct match: not one-pass", static_cast<std::int32_t>(node_id));
               return;
             }
             node.matches        = true;
@@ -310,6 +317,9 @@ namespace real::detail {
     std::vector<std::uint32_t>  pc_to_node_;  //!< pc -> node id (or no_node).
     std::vector<onepass_node>   nodes_;
     std::size_t                 slot_count_ {0};
+    std::int32_t                bail_node_  {-1};
+    std::int32_t                bail_class_ {-1};
+    std::int32_t                bail_pc_    {-1};
     bool                        eligible_   {true};
     std::string                 bail_reason_;
   };
