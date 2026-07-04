@@ -21,7 +21,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "program.hpp"
@@ -50,47 +52,196 @@ namespace real::detail {
     bool                    eligible {true};
   };
 
-  //! \brief The UTF-8 byte-range branches recognising one code-point class: an optional ASCII step plus,
-  //!        per non-ASCII range, one branch per canonical byte-sequence (each a chain of byte-range steps).
-  inline std::vector<std::vector<char_class>> klass_cp_branches(const cp_class&             cc,
-                                                                std::span<const code_range> cp_ranges)
+  //! \brief One node of a minimal deterministic UTF-8 trie for a code-point class. Its transitions are byte
+  //!        ranges that are pairwise **disjoint**, so at most one edge matches any byte — that determinism is
+  //!        what makes the byte-program one-pass-friendly. `child >= 0` is a node id; `child == -1` is accept
+  //!        (a code point ends here — the run continues at the construct's successor).
+  struct utf8_trie_node
   {
-    std::vector<std::vector<char_class>> branches;
-    if (!cc.ascii.empty()) {
-      branches.push_back({cc.ascii}); // one byte < 0x80, tested against the ASCII bitmap
-    }
-    for (std::uint32_t k = 0; k < cc.range_count; ++k) {
-      const code_range& range {cp_ranges[cc.range_begin + k]};
-      for (const utf8_byte_seq& seq : utf8_range_sequences(range.lo, range.hi)) {
-        std::vector<char_class> branch;
-        for (std::size_t j = 0; j < seq.length; ++j) {
-          char_class step;
-          step.set_range(seq.parts[j].lo, seq.parts[j].hi);
-          branch.push_back(step);
+    std::vector<std::pair<utf8_byte_range, std::int32_t>> trans;
+  };
+
+  //! \brief A minimal deterministic UTF-8 trie for a code-point class. `root == -1` means the class is empty.
+  struct utf8_trie
+  {
+    std::vector<utf8_trie_node> nodes;
+    std::int32_t                root {-1};
+  };
+
+  /*!
+   * \brief Builds the minimal deterministic trie recognising a code-point class's UTF-8 byte sequences.
+   *
+   * The naive expansion emits one alternation branch per UTF-8 range, and different ranges can share a lead
+   * byte with different continuations — two threads then cross that lead byte, which is byte-level
+   * non-determinism (a Unicode `\w` is thus never one-pass). This instead splits overlapping ranges into
+   * disjoint per-node transitions and hash-conses identical suffix sub-tries (Daciuk), yielding a
+   * deterministic automaton: it makes Unicode `\w \d \s` one-pass, and shrinks the byte-program dramatically
+   * (a `\w` collapses from thousands of instructions to a few hundred shared nodes, which the lazy DFA also
+   * profits from).
+   */
+  inline utf8_trie build_utf8_trie(const cp_class&             cc,
+                                   std::span<const code_range> cp_ranges)
+  {
+    std::vector<std::vector<utf8_byte_range>> seqs;
+    for (int b = 0; b < 0x80;) { // ASCII: each contiguous run of set bits is a one-byte sequence
+      if (cc.ascii.test(static_cast<std::uint8_t>(b))) {
+        const int lo {b};
+        while (b < 0x80 && cc.ascii.test(static_cast<std::uint8_t>(b))) {
+          ++b;
         }
-        branches.push_back(branch);
+        seqs.push_back({utf8_byte_range {.lo = static_cast<std::uint8_t>(lo), .hi = static_cast<std::uint8_t>(b - 1)}});
+      }
+      else {
+        ++b;
       }
     }
-    return branches;
+    for (std::uint32_t k = 0; k < cc.range_count; ++k) { // non-ASCII: canonical byte-range sequences
+      const code_range& r {cp_ranges[cc.range_begin + k]};
+      for (const utf8_byte_seq& s : utf8_range_sequences(r.lo, r.hi)) {
+        std::vector<utf8_byte_range> seq;
+        for (std::size_t j = 0; j < s.length; ++j) {
+          seq.push_back(s.parts[j]);
+        }
+        seqs.push_back(std::move(seq));
+      }
+    }
+
+    utf8_trie trie;
+    if (seqs.empty()) {
+      return trie;
+    }
+    struct builder
+    {
+      std::vector<utf8_trie_node>&                   nodes;
+      std::unordered_map<std::string, std::int32_t>& memo;
+
+      std::int32_t build(const std::vector<std::vector<utf8_byte_range>>& in) // all non-empty sequences
+      {
+        std::vector<int> bounds;
+        for (const std::vector<utf8_byte_range>& s : in) {
+          bounds.push_back(s[0].lo);
+          bounds.push_back(s[0].hi + 1);
+        }
+        std::sort(bounds.begin(), bounds.end());
+        bounds.erase(std::unique(bounds.begin(), bounds.end()), bounds.end());
+
+        utf8_trie_node node;
+        for (std::size_t i = 0; i + 1 < bounds.size(); ++i) {
+          const int                                 lo        {bounds[i]};
+          const int                                 hi        {bounds[i + 1] - 1};
+          std::vector<std::vector<utf8_byte_range>> tails;
+          bool                                      all_empty {true};
+          for (const std::vector<utf8_byte_range>& s : in) {
+            if (s[0].lo <= lo && hi <= s[0].hi) { // this disjoint interval sits inside sequence s's first range
+              std::vector<utf8_byte_range> tail(s.begin() + 1, s.end());
+              all_empty = all_empty && tail.empty();
+              tails.push_back(std::move(tail));
+            }
+          }
+          if (tails.empty()) {
+            continue;
+          }
+          std::int32_t child {-1};
+          if (!all_empty) { // UTF-8 is prefix-free, so within one interval the tails share a length
+            std::vector<std::vector<utf8_byte_range>> nonempty;
+            for (std::vector<utf8_byte_range>& t : tails) {
+              if (!t.empty()) {
+                nonempty.push_back(std::move(t));
+              }
+            }
+            child = build(nonempty);
+          }
+          node.trans.emplace_back(utf8_byte_range {.lo = static_cast<std::uint8_t>(lo), .hi = static_cast<std::uint8_t>(hi)}, child);
+        }
+
+        std::string sig;
+        for (const std::pair<utf8_byte_range, std::int32_t>& t : node.trans) {
+          sig.push_back(static_cast<char>(t.first.lo));
+          sig.push_back(static_cast<char>(t.first.hi));
+          for (unsigned s = 0; s < 32U; s += 8U) {
+            sig.push_back(static_cast<char>((static_cast<std::uint32_t>(t.second) >> s) & 0xFFU));
+          }
+        }
+        const auto it {memo.find(sig)};
+        if (it != memo.end()) {
+          return it->second;
+        }
+        const auto id {static_cast<std::int32_t>(nodes.size())};
+        nodes.push_back(std::move(node));
+        memo.emplace(std::move(sig), id);
+        return id;
+      }
+    };
+    std::unordered_map<std::string, std::int32_t> memo;
+    builder                                       b {trie.nodes, memo};
+    trie.root = b.build(seqs);
+    return trie;
   }
 
-  //! \brief The instruction count a \ref klass_cp_branches expansion emits: every branch is its steps plus a
-  //!        converging jump, and every branch but the last is fronted by a split.
-  inline std::size_t klass_cp_expansion_size(const std::vector<std::vector<char_class>>& branches)
+  //! \brief The instruction count \ref emit_utf8_trie writes: an empty class is one dead `klass`; otherwise
+  //!        each node is a split-guarded chain of `k` byte ranges (`3k - 1` instructions).
+  inline std::size_t utf8_trie_emit_size(const utf8_trie& trie)
   {
-    std::size_t n {0};
-    for (const std::vector<char_class>& b : branches) {
-      n += b.size() + 1; // the byte-range steps + one jump to the continuation
+    if (trie.root < 0) {
+      return 1;
     }
-    return n + (branches.empty() ? 0 : branches.size() - 1); // a split fronts every branch but the last
+    std::size_t n {0};
+    for (const utf8_trie_node& node : trie.nodes) {
+      n += (3 * node.trans.size()) - 1;
+    }
+    return n;
+  }
+
+  //! \brief Emits \p trie into \p bp as a deterministic split/klass/jump fragment; accept edges jump to
+  //!        \p after (the construct's successor). The root is emitted first, so the fragment's entry is its
+  //!        base pc. Disjoint ranges mean at most one branch matches any byte.
+  inline void emit_utf8_trie(byte_program&    bp,
+                             const utf8_trie& trie,
+                             std::int32_t     after)
+  {
+    if (trie.root < 0) {
+      bp.code.push_back({.op = opcode::klass, .arg16 = static_cast<std::uint16_t>(bp.classes.size())});
+      bp.classes.emplace_back(); // matches no byte: the run dies (an empty class matches nothing)
+      return;
+    }
+    const auto                 base  {static_cast<std::int32_t>(bp.code.size())};
+    std::vector<std::int32_t>  order {trie.root}; // root first, so the entry pc is `base`
+    for (std::int32_t i = 0; i < static_cast<std::int32_t>(trie.nodes.size()); ++i) {
+      if (i != trie.root) {
+        order.push_back(i);
+      }
+    }
+    std::vector<std::int32_t> node_pc(trie.nodes.size(), 0);
+    std::int32_t              off {base};
+    for (const std::int32_t id : order) {
+      node_pc[static_cast<std::size_t>(id)] = off;
+      off                                  += (3 * static_cast<std::int32_t>(trie.nodes[static_cast<std::size_t>(id)].trans.size())) - 1;
+    }
+    for (const std::int32_t id : order) {
+      const utf8_trie_node& node {trie.nodes[static_cast<std::size_t>(id)]};
+      const auto            k    {static_cast<std::int32_t>(node.trans.size())};
+      for (std::int32_t j = 0; j < k; ++j) {
+        const auto&        edge   {node.trans[static_cast<std::size_t>(j)]};
+        const std::int32_t target {edge.second < 0 ? after : node_pc[static_cast<std::size_t>(edge.second)]};
+        const auto         here   {static_cast<std::int32_t>(bp.code.size())};
+        if (j + 1 < k) {
+          bp.code.push_back({.op = opcode::split, .primary_target = here + 1, .secondary_target = here + 3});
+        }
+        char_class cc;
+        cc.set_range(edge.first.lo, edge.first.hi);
+        bp.code.push_back({.op = opcode::klass, .arg16 = static_cast<std::uint16_t>(bp.classes.size())});
+        bp.classes.push_back(cc);
+        bp.code.push_back({.op = opcode::jump, .primary_target = target});
+      }
+    }
   }
 
   /*!
    * \brief Builds the byte-level DFA program for \p prog (see \ref byte_program). A `klass_cp` at P (a four-
-   *        instruction construct: the op plus three `utf8_cont` continuation slots) is replaced by the byte
-   *        alternation recognising its code-point class, converging on the mapped P+4; every other op is
-   *        copied with its branch targets remapped. Two passes: the first sizes the expansions to build the
-   *        old→new pc map, the second emits.
+   *        instruction construct: the op plus three `utf8_cont` continuation slots) is replaced by the
+   *        deterministic UTF-8 trie recognising its code-point class (\ref build_utf8_trie), converging on
+   *        the mapped P+4; every other op is copied with its branch targets remapped. Two passes: the first
+   *        builds each trie and sizes it to form the old→new pc map, the second emits.
    */
   inline byte_program build_byte_program(const program_view& prog)
   {
@@ -103,14 +254,15 @@ namespace real::detail {
     }
     bp.classes.assign(prog.classes.begin(), prog.classes.end()); // original classes keep their indices
 
-    const std::size_t          n   {prog.code.size()};
-    std::vector<std::int32_t>  map(n + 1, 0);                    // old pc -> new pc (n = the one-past end)
-    std::size_t                cur {0};
+    const std::size_t         n {prog.code.size()};
+    std::vector<std::int32_t> map(n + 1, 0);                     // old pc -> new pc (n = the one-past end)
+    std::vector<utf8_trie>    tries(n);                          // the trie for each klass_cp pc (built once, reused when emitting)
+    std::size_t               cur {0};
     for (std::size_t pc = 0; pc < n; ++pc) {
       map[pc] = static_cast<std::int32_t>(cur);
       if (prog.code[pc].op == opcode::klass_cp) {
-        const auto branches {klass_cp_branches(prog.cp_classes[prog.code[pc].arg16], prog.cp_ranges)};
-        cur        += klass_cp_expansion_size(branches);
+        tries[pc]   = build_utf8_trie(prog.cp_classes[prog.code[pc].arg16], prog.cp_ranges);
+        cur        += utf8_trie_emit_size(tries[pc]);
         map[pc + 1] = map[pc + 2] = map[pc + 3] = static_cast<std::int32_t>(cur); // continuation slots absorbed
         pc         += 3;                                                          // skip the construct's tail
       }
@@ -126,22 +278,7 @@ namespace real::detail {
     for (std::size_t pc = 0; pc < n; ++pc) {
       const instr& in {prog.code[pc]};
       if (in.op == opcode::klass_cp) {
-        const auto         branches {klass_cp_branches(prog.cp_classes[in.arg16], prog.cp_ranges)};
-        const std::int32_t after    {map[pc + 4]}; // where a thread lands after the whole construct
-        for (std::size_t i = 0; i < branches.size(); ++i) {
-          const auto         base {static_cast<std::int32_t>(bp.code.size())};
-          const std::int32_t len  {static_cast<std::int32_t>(branches[i].size())};
-          if (i + 1 < branches.size()) {
-            bp.code.push_back({.op               = opcode::split,
-                               .primary_target   = base + 1,         // this branch's first step
-                               .secondary_target = base + 2 + len}); // the next branch's split/first step
-          }
-          for (const char_class& step : branches[i]) {
-            bp.code.push_back({.op = opcode::klass, .arg16 = static_cast<std::uint16_t>(bp.classes.size())});
-            bp.classes.push_back(step);
-          }
-          bp.code.push_back({.op = opcode::jump, .primary_target = after});
-        }
+        emit_utf8_trie(bp, tries[pc], map[pc + 4]);
         pc += 3;
       }
       else {
