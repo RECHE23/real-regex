@@ -260,19 +260,40 @@ TEST(prefilter_find_prefix_candidate_before_pos)
 
 TEST(literal_prefilter_throughput_smoke)
 {
-  // 8 MB miss: must run at memchr-like speed, far beyond VM stepping.
-  std::string text(8 << 20, 'a');
-  text += "needle";
-  const real::regex  rx("needle\\d?");
-  const auto         begin     = std::chrono::steady_clock::now();
-  auto               match     = rx.search(text);
-  for (int i = 1; i < 20; ++i) {
-    match = rx.search(text);
-  }
-  const auto elapsed = std::chrono::steady_clock::now() - begin;
-  EXPECT(match.matched());
-  EXPECT_EQ(match.start(), static_cast<std::size_t>(8 << 20));
-  EXPECT(elapsed < std::chrono::seconds(2)); // 160 MB scanned in total
+  // The literal prefilter must scan a miss in O(n) — memchr speed — not the O(n²) a per-position rescan
+  // would cost. An absolute wall-clock bound is machine- and instrumentation-dependent (the coverage and
+  // sanitize builds run 5-20x slower than a bare native one), so this is a *scaling* test instead: an
+  // 8x-longer miss must take on the order of 8x longer, never ~64x. Both measurements run the identical
+  // instrumented code, so however slow the build is cancels in the ratio; only an O(n²) regression blows
+  // it past the margin. Best-of-3 per size damps shared-runner noise.
+  const real::regex rx {"needle\\d?$"}; // $ keeps it off the lazy-DFA route -> the prefilter path (test intent)
+  const auto        best_of {[&](std::size_t n) {
+                               std::string text(n, 'a');
+                               text += "needle";
+                               const auto once {[&] {
+                                                  const auto begin {std::chrono::steady_clock::now()};
+                                                  bool       ok {true};
+                                                  for (int i = 0; i < 10; ++i) {
+                                                    ok = ok && rx.search(text).matched();
+                                                  }
+                                                  EXPECT(ok);
+                                                  return std::chrono::steady_clock::now() - begin;
+                                                }};
+                               auto best {once()};
+                               for (int k = 0; k < 2; ++k) {
+                                 best = std::min(best, once());
+                               }
+                               return best;
+                             }};
+
+  const auto small        {best_of(1 << 20)}; // 1 MB miss
+  const auto large        {best_of(8 << 20)}; // 8 MB miss — 8x the bytes
+
+  const std::string check {std::string(8 << 20, 'a') + "needle"};
+  EXPECT_EQ(rx.search(check).start(), static_cast<std::size_t>(8 << 20));
+  // O(n) makes large ~8x small; an O(n²) regression makes it ~64x. A 25x margin bites the quadratic while
+  // absorbing the constant per-search overhead and any residual noise.
+  EXPECT(large.count() < small.count() * 25);
 }
 
 TEST(prefilter_works_in_constexpr_too)
