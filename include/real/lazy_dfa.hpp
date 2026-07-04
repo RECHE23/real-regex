@@ -557,7 +557,7 @@ namespace real::detail {
                        std::uint8_t  byte)
     {
       const std::uint8_t  cls    {alpha_.of[byte]};
-      const std::uint32_t cached {state_trans_[state][cls]};   // by value: intern() below may realloc
+      const std::uint32_t cached {trans_[(static_cast<std::size_t>(state) * alpha_.count) + cls]};   // by value: intern() below may realloc
       if (cached != no_transition) {
         ++stats_.hits;
         return cached;
@@ -573,7 +573,7 @@ namespace real::detail {
       const std::size_t   flushes_before {stats_.flushes};
       const std::uint32_t result         {intern(next)}; // may grow/flush the tables — do not hold a reference
       if (stats_.flushes == flushes_before) {
-        state_trans_[state][cls] = result;   // no flush: `state` is still valid, so cache the edge
+        trans_[(static_cast<std::size_t>(state) * alpha_.count) + cls] = result;   // no flush: `state` is still valid, so cache the edge
       }
       // On a flush mid-step the caller's `state` id is stale; `result` is a fresh post-flush id, and the
       // caller re-seeds. (An eventual forward pass falls back to Pike once \ref thrashing trips.)
@@ -589,7 +589,7 @@ namespace real::detail {
                               std::uint8_t  byte)
     {
       const std::uint8_t  cls    {alpha_.of[byte]};
-      const std::uint32_t cached {state_trans_seeded_[state][cls]};
+      const std::uint32_t cached {trans_seeded_[(static_cast<std::size_t>(state) * alpha_.count) + cls]};
       if (cached != no_transition) {
         ++stats_.hits;
         return cached;
@@ -607,7 +607,7 @@ namespace real::detail {
       const std::size_t   flushes_before {stats_.flushes};
       const std::uint32_t result         {intern(next)};
       if (stats_.flushes == flushes_before) {
-        state_trans_seeded_[state][cls] = result;
+        trans_seeded_[(static_cast<std::size_t>(state) * alpha_.count) + cls] = result;
       }
       return result;
     }
@@ -736,8 +736,8 @@ namespace real::detail {
     {
       const auto id {static_cast<std::uint32_t>(state_pcs_.size())};
       state_pcs_.push_back(pcs);
-      state_trans_.emplace_back(alpha_.count, no_transition);
-      state_trans_seeded_.emplace_back(alpha_.count, no_transition);
+      trans_.insert(trans_.end(), alpha_.count, no_transition);
+      trans_seeded_.insert(trans_seeded_.end(), alpha_.count, no_transition);
       std::uint32_t match_idx {no_match_idx};
       for (std::size_t i = 0; i < pcs.size(); ++i) {
         if (code_[static_cast<std::size_t>(pcs[i])].op == opcode::match) {
@@ -765,16 +765,16 @@ namespace real::detail {
         }
       }
       state_pcs_.clear();
-      state_trans_.clear();
-      state_trans_seeded_.clear();
+      trans_.clear();
+      trans_seeded_.clear();
       state_match_.clear();
       state_match_idx_.clear();
       state_cut_.clear();
       cache_.clear();
       // state 0 = dead (empty, self-looping), state 1 = start (closure of pc 0).
       state_pcs_.emplace_back();
-      state_trans_.emplace_back(alpha_.count, dead_state);
-      state_trans_seeded_.emplace_back(alpha_.count, dead_state);
+      trans_.insert(trans_.end(), alpha_.count, dead_state);
+      trans_seeded_.insert(trans_seeded_.end(), alpha_.count, dead_state);
       state_match_.push_back(0);
       state_match_idx_.push_back(no_match_idx);
       state_cut_.push_back(no_transition);
@@ -791,8 +791,8 @@ namespace real::detail {
     std::uint32_t               start_state_ {0};
 
     std::vector<std::vector<std::int32_t>>                                    state_pcs_;          //!< state id -> ordered pc-set.
-    std::vector<std::vector<std::uint32_t>>                                   state_trans_;        //!< state id -> [class] -> next, unseeded (post-match).
-    std::vector<std::vector<std::uint32_t>>                                   state_trans_seeded_; //!< state id -> [class] -> next, re-seeding (pre-match).
+    std::vector<std::uint32_t>                                                trans_;              //!< flat [state*stride + class] -> next, unseeded (post-match); stride = alpha_.count.
+    std::vector<std::uint32_t>                                                trans_seeded_;       //!< flat [state*stride + class] -> next, re-seeding (pre-match).
     std::vector<char>                                                         state_match_;        //!< state id -> accepts here.
     std::vector<std::uint32_t>                                                state_match_idx_;    //!< state id -> index of its first accept, or no_match_idx.
     std::vector<std::uint32_t>                                                state_cut_;          //!< state id -> memoized priority-cut result (no_transition = not yet computed).
@@ -913,7 +913,7 @@ namespace real::detail {
                        std::uint8_t  byte)
     {
       const std::uint8_t  cls    {alpha_.of[byte]};
-      const std::uint32_t cached {state_trans_[state][cls]};
+      const std::uint32_t cached {trans_[(static_cast<std::size_t>(state) * alpha_.count) + cls]};
       if (cached != no_transition) {
         return cached;
       }
@@ -930,7 +930,7 @@ namespace real::detail {
       }
       rev_closure(next, seen);
       const std::uint32_t result {intern(next)};
-      state_trans_[state][cls] = result;
+      trans_[(static_cast<std::size_t>(state) * alpha_.count) + cls] = result;
       return result;
     }
 
@@ -969,7 +969,7 @@ namespace real::detail {
       }
       const auto id {static_cast<std::uint32_t>(state_pcs_.size())};
       state_pcs_.push_back(pcs);
-      state_trans_.emplace_back(alpha_.count, no_transition);
+      trans_.insert(trans_.end(), alpha_.count, no_transition);
       bool has_start {false};
       for (const std::int32_t pc : pcs) {
         if (pc == 0) { // pc 0 is the program's save-0 start
@@ -985,11 +985,11 @@ namespace real::detail {
     constexpr void flush()
     {
       state_pcs_.clear();
-      state_trans_.clear();
+      trans_.clear();
       state_has_start_.clear();
       cache_.clear();
       state_pcs_.emplace_back();                          // dead state 0
-      state_trans_.emplace_back(alpha_.count, dead_state);
+      trans_.insert(trans_.end(), alpha_.count, dead_state);
       state_has_start_.push_back(0);
       std::vector<std::int32_t> start;
       std::vector<char>         seen(code_.size(), 0);
@@ -1011,7 +1011,7 @@ namespace real::detail {
     std::vector<std::vector<std::int32_t>>                                    rev_eps_;         //!< transposed epsilon edges.
     std::vector<std::vector<std::int32_t>>                                    rev_consume_;     //!< transposed consuming edges (the pred consuming pcs).
     std::vector<std::vector<std::int32_t>>                                    state_pcs_;
-    std::vector<std::vector<std::uint32_t>>                                   state_trans_;
+    std::vector<std::uint32_t>                                                trans_;           //!< flat [state*stride + class] -> next.
     std::vector<char>                                                         state_has_start_; //!< state -> reaches the program start (an accept).
     pc_set_cache                                                              cache_;
   };
