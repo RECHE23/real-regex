@@ -29,6 +29,13 @@ namespace {
     return build_byte_program(st.program.view());
   }
 
+  byte_program tier_b_prog(const char* pat,
+                           real::flags f = real::flags::none)
+  {
+    const auto st {dynamic_storage::compile(pat, f)};
+    return build_byte_program(st.program.view(), /*keep_assertions=*/ true);
+  }
+
   bool is_one_pass(const char* pat,
                    real::flags f = real::flags::none)
   {
@@ -344,4 +351,28 @@ TEST(onepass_table_memory_cap_declines)
   const onepass capped  {bp, std::size_t {64} << 10};         // 64 KB cap
   EXPECT(!capped.eligible());
   EXPECT(!capped.bail_reason().empty());                      // a reason, not a bare bool
+}
+
+TEST(tier_b_byte_program_keeps_assertions)
+{
+  // Tier-B (keep_assertions) preserves assert_position ops so the one-pass table can later carry them as
+  // edge conditions; Tier-A (default) still declines them, and a bounded lookaround declines in both. The
+  // one-pass runtime does not yet consume assertions, so it declines a has_assertions program (the runtime, once it
+  // the guard). Foundation slice: the two-population eligibility, before the edge-condition runtime.
+  const byte_program anchored {tier_b_prog("^foo$")};
+  EXPECT(anchored.eligible);
+  EXPECT(anchored.has_assertions);
+
+  const byte_program boundary {tier_b_prog("\\bfoo\\b")};
+  EXPECT(boundary.eligible);
+  EXPECT(boundary.has_assertions);
+
+  EXPECT(!byte_prog("^foo$").eligible);                    // Tier-A declines a position assertion
+  EXPECT(!tier_b_prog("foo(?=bar)").eligible);             // a bounded lookaround declines even in Tier-B
+
+  const byte_program plain {tier_b_prog("(\\w+)@(\\w+)")}; // no assertions: unchanged under keep_assertions
+  EXPECT(plain.eligible);
+  EXPECT(!plain.has_assertions);
+
+  EXPECT(!real::detail::onepass(anchored).eligible()); // the runtime declines Tier-B until it evaluates edge conditions
 }

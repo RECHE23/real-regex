@@ -86,6 +86,10 @@ namespace real::detail {
         bail("the byte-program is itself ineligible (a position assertion or lookaround)");
         return;
       }
+      if (bp.has_assertions) {
+        bail("Tier-B one-pass (assertions as edge conditions) is not yet built"); // lifted once the runtime evaluates the edge conditions
+        return;
+      }
       build(bp);
     }
 

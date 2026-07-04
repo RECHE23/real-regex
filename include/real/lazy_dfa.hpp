@@ -48,7 +48,8 @@ namespace real::detail {
   {
     std::vector<instr>      code;
     std::vector<char_class> classes;
-    bool                    eligible {true};
+    bool                    eligible       {true};  //!< Representable by the byte DFAs / Tier-A one-pass.
+    bool                    has_assertions {false}; //!< A Tier-B build kept `assert_position` ops (else stripped/declined).
   };
 
   //! \brief One node of a minimal deterministic UTF-8 trie for a code-point class. Its transitions are byte
@@ -266,13 +267,21 @@ namespace real::detail {
    *        the mapped P+4; every other op is copied with its branch targets remapped. Two passes: the first
    *        builds each trie and sizes it to form the old→new pc map, the second emits.
    */
-  inline byte_program build_byte_program(const program_view& prog)
+  inline byte_program build_byte_program(const program_view& prog,
+                                         bool                keep_assertions = false)
   {
     byte_program bp;
     for (const instr& in : prog.code) {
-      if (in.op == opcode::assert_position || in.op == opcode::assert_lookaround) {
-        bp.eligible = false; // no byte-DFA can carry a position assertion or a lookaround
+      if (in.op == opcode::assert_lookaround) {
+        bp.eligible = false; // no byte automaton can carry a bounded lookaround (Tier-B stops at assertions)
         return bp;
+      }
+      if (in.op == opcode::assert_position) {
+        if (!keep_assertions) {
+          bp.eligible = false; // Tier-A: no byte-DFA can carry a position assertion
+          return bp;
+        }
+        bp.has_assertions = true; // Tier-B: kept, to become an edge condition in the one-pass table
       }
     }
     bp.classes.assign(prog.classes.begin(), prog.classes.end()); // original classes keep their indices
