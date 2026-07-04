@@ -248,3 +248,42 @@ TEST(onepass_independent_thread_count_verifier)
     }
   }
 }
+
+TEST(onepass_extract_slots_identical_to_pike)
+{
+  // OP1, population A (one-pass, no assertions — the spans the L2c router produces). For every Pike match
+  // [s, e] the one-pass single pass over the FULL text must give byte-identical group slots. (Population B —
+  // patterns carrying assertions like \b or ^…$ — is Tier B / OP2b: the byte-program the builder uses is
+  // assert-free, so the table cannot carry an assertion yet.)
+  const char* pats[] {
+    R"((\w+)@(\w+))", R"((\d+)-(\d+))", R"(([a-z]+):([0-9]+))", R"(\w+)", R"(([a-z0-9]+)@([a-z0-9]+))",
+    R"((\d+)-(\d+)-(\d+))", R"([A-Za-z]+)", R"((\w+) (\w+))", R"(x*yx*)", R"(([^ ]+))", R"((\w)(\w)(\w))"};
+  const char* texts[] {
+    "", "abc@def x9@y0", "12-34-56 and 7-8-9", "caf\xC3\xA9@r\xC3\xA9sum\xC3\xA9 ok", "  spaced   words  ",
+    "port:8080 host:443", "aaa bbb ccc", "xxyxx zz xyx", "one two three", "a@b"};
+  std::size_t checked {0};
+  for (const char* pat : pats) {
+    const auto    st {dynamic_storage::compile(pat, real::flags::none)};
+    const auto    bp {build_byte_program(st.program.view())};
+    const onepass op {bp};
+    if (!op.eligible()) {
+      continue;
+    }
+    const real::regex rx {pat};
+    for (const char* t : texts) {
+      const std::string text {t};
+      for (const auto& m : rx.find_iter(text)) {
+        std::vector<std::size_t> slots;
+        EXPECT(op.extract(text, m.start(), m.end(), slots));
+        for (std::size_t g = 0; g < m.size(); ++g) {
+          const std::size_t ps {m[g].data() != nullptr ? m.start(g) : real::npos};
+          const std::size_t pe {m[g].data() != nullptr ? m.end(g) : real::npos};
+          EXPECT_EQ(slots[2 * g], ps);
+          EXPECT_EQ(slots[(2 * g) + 1], pe);
+        }
+        ++checked;
+      }
+    }
+  }
+  EXPECT(checked >= 30U);
+}

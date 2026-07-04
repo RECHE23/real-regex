@@ -21,9 +21,11 @@
 #define REAL_ONEPASS_HPP
 
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "lazy_dfa.hpp"
@@ -102,10 +104,60 @@ namespace real::detail {
       return nodes_;
     }
 
-    //! \brief The byte-class of \p byte, for a runtime that walks this table (a later slice).
+    //! \brief The byte-class of \p byte, for a runtime that walks this table.
     [[nodiscard]] std::uint8_t class_of(std::uint8_t byte) const
     {
       return alpha_.of[byte];
+    }
+
+    //! \brief The number of capture slots (group 0 start/end plus each group's).
+    [[nodiscard]] std::size_t slot_count() const
+    {
+      return slot_count_;
+    }
+
+    /*!
+     * \brief Fills \p out with the capture slots of the one-pass match on `text[s, e)` — the single left-to-
+     *        right pass the whole arc is for, no thread lists. \p text is the **full** subject (never a
+     *        substring: assertions look at `s - 1` and `e`). Anchored at \p s; this is *fullmatch-on-span*
+     *        (the span the router located): it consumes to \p e and requires the run to accept exactly there.
+     *        `\ref real::npos` marks a slot no edge wrote. Returns `false` (leaving \p out unspecified) if the
+     *        pattern is ineligible or the span does not in fact match — which the caller has already ruled
+     *        out for a router-supplied span.
+     *
+     * \param[in]  text The full subject.
+     * \param[in]  s    Match start (anchor).
+     * \param[in]  e    Match end (the run must accept here).
+     * \param[out] out  Capture slots, sized to \ref slot_count.
+     */
+    [[nodiscard]] bool extract(std::string_view          text,
+                               std::size_t               s,
+                               std::size_t               e,
+                               std::vector<std::size_t>& out) const
+    {
+      if (!eligible_) {
+        return false;
+      }
+      out.assign(slot_count_, npos);
+      std::uint32_t node {0}; // node 0 is the start (the closure of pc 0)
+      for (std::size_t pos = s; pos < e; ++pos) {
+        const std::uint8_t  cls  {alpha_.of[static_cast<std::uint8_t>(text[pos])]};
+        const onepass_edge& edge {nodes_[node].edge[cls]};
+        if (!edge.assigned) {
+          return false;                                             // no outgoing edge for this byte — the span does not match
+        }
+        for (std::uint64_t m = edge.cap_mask; m != 0; m &= m - 1) {
+          out[static_cast<std::size_t>(std::countr_zero(m))] = pos; // saves crossed before this byte take pos
+        }
+        node = edge.next;
+      }
+      if (!nodes_[node].matches) {
+        return false;                                           // reached e but not at an accept
+      }
+      for (std::uint64_t m = nodes_[node].match_cap_mask; m != 0; m &= m - 1) {
+        out[static_cast<std::size_t>(std::countr_zero(m))] = e; // saves crossed to the match take e
+      }
+      return true;
     }
 
   private:
@@ -155,8 +207,9 @@ namespace real::detail {
           max_slot = std::max(max_slot, static_cast<std::size_t>(in.arg16));
         }
       }
-      if (max_slot + 1 > max_slots) {
-        bail("too many capture slots (" + std::to_string(max_slot + 1) + " > " + std::to_string(max_slots)
+      slot_count_ = max_slot + 1;
+      if (slot_count_ > max_slots) {
+        bail("too many capture slots (" + std::to_string(slot_count_) + " > " + std::to_string(max_slots)
              + "): the general Pike VM keeps these");
         return;
       }
@@ -219,7 +272,7 @@ namespace real::detail {
                      + std::to_string(cls) + " (pc " + std::to_string(pc) + "): not one-pass");
                 return;
               }
-              slot = onepass_edge {next, cap_mask, true};
+              slot = onepass_edge {.next = next, .cap_mask = cap_mask, .assigned = true};
             }
             break; // a consuming instruction ends this epsilon path
           }
@@ -256,7 +309,8 @@ namespace real::detail {
     std::vector<std::uint8_t>   rep_;         //!< class -> a representative byte.
     std::vector<std::uint32_t>  pc_to_node_;  //!< pc -> node id (or no_node).
     std::vector<onepass_node>   nodes_;
-    bool                        eligible_ {true};
+    std::size_t                 slot_count_ {0};
+    bool                        eligible_   {true};
     std::string                 bail_reason_;
   };
 } // namespace real::detail
