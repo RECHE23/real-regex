@@ -44,7 +44,15 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment_retry.outputs.page_url }}
     steps:
+      # actions/deploy-pages intermittently fails with a transient "try again later" from the Pages
+      # deployment API (seen ~4× on release version-bump commits, where the built docs are unchanged).
+      # Try once, then retry once on failure — the retry has cleared it every time.
       - id: deployment
+        uses: actions/deploy-pages@v5
+        continue-on-error: true
+      - name: Retry Pages deploy (the transient API flake)
+        if: steps.deployment.outcome == 'failure'
+        id: deployment_retry
         uses: actions/deploy-pages@v5
