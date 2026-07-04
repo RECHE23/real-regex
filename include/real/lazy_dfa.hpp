@@ -240,11 +240,14 @@ namespace real::detail {
 
     static constexpr std::size_t hash(const std::vector<std::int32_t>& v)
     {
-      std::size_t h {1469598103934665603ULL};
+      // FNV-1a computed in a fixed 64-bit accumulator, truncated to size_t on return: the 64-bit
+      // offset-basis brace-initialised straight into size_t narrows (an error) where size_t is 32-bit
+      // (win32). Truncating a full FNV-64 keeps a well-distributed hash without width-specific constants.
+      std::uint64_t h {1469598103934665603ULL};
       for (const std::int32_t x : v) {
-        h = (h ^ static_cast<std::size_t>(static_cast<std::uint32_t>(x))) * 1099511628211ULL;
+        h = (h ^ static_cast<std::uint64_t>(static_cast<std::uint32_t>(x))) * 1099511628211ULL;
       }
-      return h;
+      return static_cast<std::size_t>(h);
     }
 
     [[nodiscard]] constexpr std::uint32_t find(const std::vector<std::int32_t>&               pcs,
