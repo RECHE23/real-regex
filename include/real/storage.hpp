@@ -710,10 +710,10 @@ namespace real {
                             basic_thread_list<small_vec<std::int32_t, 64>,
                                               small_vec<std::size_t, 256>,
                                               std::vector<std::uint64_t>>,
-                            small_vec<std::size_t, 64>,
                             small_vec<eps_entry, 32>>
       {
         lookaround_scratch lookaround; //!< Isolated sub-scratch for bounded lookaround evaluation.
+        capture_pool       pool;       //!< OPT D1: copy-on-write capture blocks (heap-backed).
       };
 
       std::string     pattern_text;                  //!< The original pattern text.
@@ -841,18 +841,29 @@ namespace real {
        * \brief Capture-slot container: fixed-capacity, no heap.
        */
       using slot_storage = static_vec<std::size_t, slot_count>;
+      // OPT D1: worst-case live capture blocks — every reference (a DFS stack frame or a thread in either
+      // list) could point to a distinct block; freed blocks recycle through the pool's free list, so the
+      // pool never grows past this. The stack is (3*code_size)+4, each list up to code_size threads.
+      static constexpr std::size_t max_blocks {(5 * code_size) + 8};
+
       /*!
        * \brief VM scratch state, all fixed-capacity (zero heap).
        *
        * The epsilon DFS stack is bounded because each pc is processed once and
-       * pushes at most two explore entries plus one restore entry.
+       * pushes at most two explore entries plus one restore entry. OPT D1: capture slots live in a
+       * copy-on-write \ref basic_capture_pool (a thread carries one block index, not a slot run), sized
+       * for the worst-case block count above — the same zero-heap, compile-sized discipline.
        */
-      using state_type = basic_pike_state<
-        basic_thread_list<static_vec<std::int32_t, code_size>,
-                          static_vec<std::size_t, code_size * slot_count>,
-                          static_vec<std::uint64_t, code_size>>,
-        static_vec<std::size_t, slot_count>,
-        static_vec<eps_entry, (3 * code_size) + 4>>;
+      struct state_type : basic_pike_state<
+                            basic_thread_list<static_vec<std::int32_t, code_size>,
+                                              static_vec<std::size_t, code_size>,
+                                              static_vec<std::uint64_t, code_size>>,
+                            static_vec<eps_entry, (3 * code_size) + 4>>
+      {
+        basic_capture_pool<static_vec<std::size_t, max_blocks * slot_count>,
+                           static_vec<std::int32_t, max_blocks>,
+                           static_vec<std::uint32_t, max_blocks>> pool; //!< COW capture blocks (zero heap).
+      };
 
       /*!
        * \brief Returns a non-owning view of the compile-time program.

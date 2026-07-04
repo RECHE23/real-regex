@@ -43,19 +43,123 @@ namespace real::detail {
   };
 
   /*!
-   * \brief One entry on the epsilon-closure DFS stack.
-   *
-   * Two kinds: explore a program counter (`pc >= 0`), or restore a
-   * capture slot to its previous value once the subtree it covered is done
-   * (`pc == -1`). This mutates one working slot array in place rather
-   * than copying all slots per branch.
+   * \brief One frame on the epsilon-closure DFS stack (OPT D1): a program counter to explore, plus the
+   *        capture block the branch carries. The block travels with the branch — a `split` shares it and a
+   *        `save` copies it on write — so there is no slot-restore entry and no shared working array.
    */
   struct eps_entry
   {
-    std::int32_t  pc;            //!< pc to explore, or -1 for a slot-restore entry.
-    std::uint16_t slot;          //!< Slot to restore (restore entries).
-    std::size_t   restore_value; //!< Value to restore the slot to.
+    std::int32_t  pc;    //!< The program counter to explore.
+    std::uint32_t block; //!< Index of the capture block this branch carries (into the capture pool).
   };
+
+  /*!
+   * \brief Copy-on-write pool of capture blocks (OPT D1) — the one capture-slot mechanism for both storages.
+   *
+   * A per-thread value model would snapshot all `slot_count` capture values every time a thread is stepped
+   * or emitted — a fifth to a third of match time on capture-heavy loads. Instead, a thread references a
+   * *block* by index; forks (`split`) share a block (refcount++), and a `save` — the ONE write — detaches
+   * it first if shared (\ref cow_write). No value-journal, no per-thread copy.
+   *
+   * Block 0 is the canonical all-`npos` block: every seed shares it (a permanent sentinel ref keeps it
+   * alive), so seeding a position costs one incref, not an allocation — the first `save` COWs off it. The
+   * pool is trivially-copyable indices with a free list; no RAII handles (they would run destructors in
+   * the SBO / static thread lists, which run none — the reserve the review named).
+   */
+  template <typename DataVec, typename RefVec, typename FreeVec>
+  struct basic_capture_pool
+  {
+    DataVec       data;                            //!< Flat slot storage: block b's slots at [b*width, b*width+width).
+    RefVec        refcount;                        //!< Live references per block (non-atomic — the VM is single-threaded).
+    FreeVec       free_list;                       //!< Recycled block indices (refcount hit 0).
+    std::uint16_t width                       {0}; //!< slot_count (values per block).
+
+    static constexpr std::uint32_t npos_block {0}; //!< Canonical all-`npos` block, shared by every seed.
+
+    //! \brief Reset for a new match run: block 0 = all-`npos`, held by a permanent sentinel ref. The
+    //!        storage grows by \ref allocate (heap for dynamic; a compile-sized static_vec for static,
+    //!        whose capacity bounds the live-block count and so is never exceeded).
+    constexpr void reset(std::uint16_t slot_count)
+    {
+      width = slot_count;
+      data.assign(slot_count, npos);
+      refcount.assign(1, 1); // block 0, sentinel refcount 1 (never freed)
+      free_list.clear();
+    }
+
+    //! \brief Pointer to block \p b's `width` slots. Invalidated by any \ref allocate that grows `data`.
+    [[nodiscard]] constexpr std::size_t* slots(std::uint32_t b)
+    {
+      return &data[static_cast<std::size_t>(b) * width];
+    }
+
+    //! \brief A fresh block with refcount 1 (a recycled index if available, else a grown one).
+    [[nodiscard]] constexpr std::uint32_t allocate()
+    {
+      if (!free_list.empty()) {
+        const std::uint32_t b {free_list.back()};
+        free_list.pop_back();
+        refcount[b] = 1;
+        return b;
+      }
+      const auto b {static_cast<std::uint32_t>(refcount.size())};
+      refcount.push_back(1);
+      for (std::uint16_t s = 0; s < width; ++s) {
+        data.push_back(npos);
+      }
+      return b;
+    }
+
+    constexpr void incref(std::uint32_t b)
+    {
+      ++refcount[b];
+    }
+
+    constexpr void decref(std::uint32_t b)
+    {
+      if (--refcount[b] == 0) {
+        free_list.push_back(b);
+      }
+    }
+
+    //! \brief Write `slots(b)[slot] = value`, detaching first if \p b is shared. Returns the block that now
+    //!        holds the write (a fresh private copy when shared, else \p b). The one place a block mutates.
+    [[nodiscard]] constexpr std::uint32_t cow_write(std::uint32_t b,
+                                                    std::uint16_t slot,
+                                                    std::size_t   value)
+    {
+      if (refcount[b] > 1) {
+        const std::uint32_t        b2  {allocate()}; // may grow data — recompute both pointers after
+        std::size_t* const         dst {slots(b2)};
+        const std::size_t* const   src {slots(b)};
+        for (std::uint16_t s = 0; s < width; ++s) {
+          dst[s] = src[s];
+        }
+        dst[slot] = value;
+        decref(b);
+        return b2;
+      }
+      slots(b)[slot] = value;
+      return b;
+    }
+
+    //! \brief Sum of all live refcounts — the debug Σ-invariant checks this equals the references the VM
+    //!        actually holds (list blocks + stack frames), catching a leaked or double-freed block.
+    [[nodiscard]] constexpr long long total_refs() const
+    {
+      long long sum {0};
+      for (std::size_t b = 0; b < refcount.size(); ++b) {
+        // free blocks sit at refcount 0; the sentinel block 0 carries its permanent +1.
+        sum += refcount[b] > 0 ? refcount[b] : 0;
+      }
+      return sum;
+    }
+  };
+
+  //! \brief The dynamic-storage capture pool: heap vectors, grows on demand.
+  using capture_pool = basic_capture_pool<std::vector<std::size_t>,
+                                          std::vector<std::int32_t>,
+                                          std::vector<std::uint32_t>>;
 
   /*!
    * \brief One priority-ordered list of NFA threads (leftmost-greedy semantics).
@@ -117,14 +221,12 @@ namespace real::detail {
    * two thread lists are flipped by index, never swapped.
    *
    * \tparam ThreadList The thread-list type (a \ref basic_thread_list).
-   * \tparam WorkVec    Container for the working capture slots.
    * \tparam EpsVec     Container for the epsilon-closure stack.
    */
-  template <typename ThreadList, typename WorkVec, typename EpsVec>
+  template <typename ThreadList, typename EpsVec>
   struct basic_pike_state
   {
     ThreadList lists[2]; //!< Current and next thread lists (flipped by index).
-    WorkVec    working;  //!< Capture slots along the current DFS path.
     EpsVec     stack;    //!< Epsilon-closure DFS stack.
 
     /*!
@@ -174,9 +276,10 @@ namespace real::detail {
   /*!
    * \brief VM scratch state for the dynamic storage mode, plus the lookaround sub-scratch.
    */
-  struct pike_state : basic_pike_state<thread_list, std::vector<std::size_t>, std::vector<eps_entry>>
+  struct pike_state : basic_pike_state<thread_list, std::vector<eps_entry>>
   {
     lookaround_scratch lookaround; //!< Isolated sub-scratch for bounded lookaround evaluation.
+    capture_pool       pool;       //!< OPT D1: copy-on-write capture blocks (heap-backed).
   };
 
   /*!
@@ -257,8 +360,8 @@ namespace real::detail {
       auto*             nlist     {&state_.lists[1]};
       clist->reset(code_size);
       nlist->reset(code_size);
-      state_.working.assign(prog_.slot_count, npos);
       out_slots.assign(prog_.slot_count, npos);
+      state_.pool.reset(prog_.slot_count); // OPT D1: fresh COW pool (block 0 = all-npos, per this run)
 
       bool        matched {};
       std::size_t pos     {start};
@@ -279,10 +382,10 @@ namespace real::detail {
           clist->reset(code_size);
         }
         if (seeding && seed_viable(text, pos, start)) {
-          // A fresh thread must not inherit capture slots left in the
-          // scratch by previously stepped threads.
-          state_.working.assign(prog_.slot_count, npos);
-          add_thread(*clist, 0, pos);
+          // OPT D1: a seed shares the canonical all-npos block (one incref, no allocation); the first save
+          // in its closure copies-on-write off it, so block 0 is never mutated.
+          state_.pool.incref(pool_type::npos_block);
+          add_thread(*clist, 0, pos, pool_type::npos_block);
         }
         if (clist->pcs.empty()) {
           // The seed itself may die in the closure (failed assertion):
@@ -299,9 +402,15 @@ namespace real::detail {
         auto* swap {clist};
         clist = nlist;
         nlist = swap;
+        cow_release_blocks(*nlist); // OPT D1: the old clist was consumed by step — drop its block refs
         nlist->reset(code_size);
         ++pos;
       }
+      cow_release_blocks(*clist); // OPT D1: drain both surviving lists on exit (the leak class the review named)
+      cow_release_blocks(*nlist);
+      // Σ-invariant: after a full drain only the canonical npos block's sentinel ref remains. A leaked
+      // block (missing decref) or a double-free (underflow) breaks it. Debug/sanitize builds only.
+      assert(state_.pool.total_refs() == 1 && "OPT-D1 capture-block refcount leak or imbalance");
       return matched;
     }
 
@@ -326,6 +435,10 @@ namespace real::detail {
      * \brief The concrete thread-list type taken from the bound `State`.
      */
     using list_type = std::remove_reference_t<decltype(std::declval<State&>().lists[0])>;
+
+    //! \brief The capture-block pool type of the bound `State` (OPT D1) — heap-backed for dynamic,
+    //!        compile-sized static_vec for static. The one capture-slot mechanism, both storages.
+    using pool_type = std::remove_reference_t<decltype(std::declval<State&>().pool)>;
 
     /*!
      * \brief Returns a flat 256-byte membership table for class \p class_index.
@@ -1291,22 +1404,19 @@ namespace real::detail {
     {
       const std::uint16_t slot_count {prog_.slot_count};
       for (std::size_t i = 0; i < clist.pcs.size(); ++i) {
-        const std::int32_t pc {clist.pcs[i]};
+        const std::int32_t pc          {clist.pcs[i]};
         const instr&       instruction {prog_.code[static_cast<std::size_t>(pc)]};
-        const std::size_t  base {i * slot_count};
         switch (instruction.op) {
           case opcode::byte:
             if (pos < text_.size() &&
                 static_cast<std::uint8_t>(text_[pos]) == instruction.arg8) {
-              load_working(clist, base);
-              add_thread(nlist, pc + 1, pos + 1);
+              advance_thread(clist, nlist, i, pc + 1, pos + 1);
             }
             break;
           case opcode::klass:
             if (pos < text_.size() &&
                 prog_.classes[instruction.arg16].test(static_cast<std::uint8_t>(text_[pos]))) {
-              load_working(clist, base);
-              add_thread(nlist, pc + 1, pos + 1);
+              advance_thread(clist, nlist, i, pc + 1, pos + 1);
             }
             break;
           case opcode::klass_cp:
@@ -1314,25 +1424,29 @@ namespace real::detail {
               const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, pos)};
               if (dc.valid &&
                   cp_class_matches(prog_.cp_classes[instruction.arg16], dc.cp)) {
-                load_working(clist, base);
-                add_thread(nlist, pc + 1 + static_cast<std::int32_t>(4 - dc.length), pos + 1);
+                advance_thread(clist, nlist, i,
+                               pc + 1 + static_cast<std::int32_t>(4 - dc.length), pos + 1);
               }
             }
             break;
           case opcode::match:
-            if (mode == run_mode::full && pos != text_.size()) {
-              break; // must consume the whole text: thread dies
+            {
+              if (mode == run_mode::full && pos != text_.size()) {
+                break; // must consume the whole text: thread dies
+              }
+              // The winning thread's capture slots — its COW block.
+              const std::size_t* const won {thread_slots(clist, i)};
+              // Reject an empty match forbidden at this position; a lower-priority
+              // thread may still consume a byte and win a non-empty match here.
+              if (pos == won[0] && won[0] < forbid_empty_until_) {
+                break;
+              }
+              for (std::uint16_t s = 0; s < slot_count; ++s) {
+                out_slots[s] = won[s];
+              }
+              matched = true;
+              return; // drop lower-priority threads
             }
-            // Reject an empty match forbidden at this position; a lower-priority
-            // thread may still consume a byte and win a non-empty match here.
-            if (pos == clist.slots[base] && clist.slots[base] < forbid_empty_until_) {
-              break;
-            }
-            for (std::uint16_t s = 0; s < slot_count; ++s) {
-              out_slots[s] = clist.slots[base + s];
-            }
-            matched = true;
-            return; // drop lower-priority threads
           case opcode::split:
           case opcode::jump:
           case opcode::save:
@@ -1344,16 +1458,29 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Loads a thread's saved slots into the working slot array.
-     * \param[in] clist The list holding the thread.
-     * \param[in] base  Flattened offset of the thread's slots in `clist.slots`.
+     * \brief Advances thread \p i of \p clist by one consumed byte, seeding its continuation's closure into
+     *        \p nlist (OPT D1). The closure takes its own reference on the thread's capture block — no slot
+     *        copy; the block is shared until a `save` copies it on write.
      */
-    constexpr void load_working(const list_type& clist,
-                                std::size_t      base)
+    constexpr void advance_thread(list_type&   clist,
+                                  list_type&   nlist,
+                                  std::size_t  i,
+                                  std::int32_t next_pc,
+                                  std::size_t  next_pos)
     {
-      for (std::uint16_t s = 0; s < prog_.slot_count; ++s) {
-        state_.working[s] = clist.slots[base + s];
-      }
+      const std::uint32_t block {static_cast<std::uint32_t>(clist.slots[i])};
+      state_.pool.incref(block); // the new closure holds its own ref (paired with cow_release_blocks)
+      add_thread(nlist, next_pc, next_pos, block);
+    }
+
+    /*!
+     * \brief Pointer to thread \p i's `slot_count` capture values — its COW block's slots (OPT D1). Used by
+     *        the `match` case to read out the winner.
+     */
+    [[nodiscard]] constexpr const std::size_t* thread_slots(list_type&  clist,
+                                                            std::size_t i)
+    {
+      return state_.pool.slots(static_cast<std::uint32_t>(clist.slots[i]));
     }
 
     /*!
@@ -1390,32 +1517,37 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Adds \p pc0 and its whole epsilon closure to \p list.
+     * \brief Adds \p pc0 and its whole epsilon closure to \p list — the one closure walk (OPT D1). Each
+     *        DFS frame carries a capture-block index (in `eps_entry::block`) rather than mutating a
+     *        shared working array, so capture state is copy-on-write and there are no slot-restore entries:
      *
-     * Threads are added in DFS (priority) order; the current `working` slots
-     * are snapshotted into the list for each consuming thread. Saves and
-     * assertions are handled during the closure walk.
+     * - a frame popped from the stack **owns one reference** to its block;
+     * - `split` shares (incref: one ref → the two pushed frames), `jump` transfers it;
+     * - `save` — the ONLY write — copies-on-write first if the block is shared (\ref capture_pool::cow_write);
+     * - a failed assertion or an already-seen pc **releases** the ref (decref);
+     * - a consuming/accept leaf **transfers** it into the thread list (one block handle per thread).
      *
-     * \param[in,out] list The thread list to populate.
-     * \param[in]     pc0  The program counter to seed from.
-     * \param[in]     pos  The current input position (for `save` / assertions).
+     * \param[in,out] list          The thread list to populate (its `slots` hold one block index per pc).
+     * \param[in]     pc0           The program counter to seed from.
+     * \param[in]     pos           The current input position.
+     * \param[in]     initial_block The block the walk starts on — the caller passes an already-owned ref.
      */
-    constexpr void add_thread(list_type&   list,
-                              std::int32_t pc0,
-                              std::size_t  pos)
+    constexpr void add_thread(list_type&    list,
+                              std::int32_t  pc0,
+                              std::size_t   pos,
+                              std::uint32_t initial_block)
     {
+      auto& pool  {state_.pool};
       auto& stack {state_.stack};
       stack.clear();
-      stack.push_back({.pc = pc0, .slot = 0, .restore_value = 0});
+      stack.push_back({.pc = pc0, .block = initial_block});
       while (!stack.empty()) {
-        const auto entry {stack.back()};
+        const auto          entry {stack.back()};
         stack.pop_back();
-        if (entry.pc < 0) {
-          state_.working[entry.slot] = entry.restore_value;
-          continue;
-        }
-        const std::int32_t pc {entry.pc};
+        const std::int32_t  pc    {entry.pc};
+        const std::uint32_t block {entry.block}; // this frame owns 1 ref
         if (list.seen(pc)) {
+          pool.decref(block);
           continue;
         }
         list.mark_seen(pc);
@@ -1423,59 +1555,52 @@ namespace real::detail {
         switch (instruction.op) {
           case opcode::jump:
             {
-              // A jump back to an already-entered loop split — directly, or through the loop's own
-              // already-seen join jump — is a `*` iteration that matched EMPTY (the body made no
-              // progress). A greedy loop must EXIT there, keeping the empty iteration's priority, rather
-              // than re-loop: the seen-guard would otherwise drop the empty thread, letting a
-              // lower-priority consuming branch win. Follow the chain of already-seen jumps to the loop
-              // head and, when it is a split, route to that split's exit (secondary). This makes `*`
-              // behave like `+` (whose end-split already sends an empty iteration to its exit), both at
-              // a seed and mid-run — one site, not two. (A lazy loop's exit is its primary, explored
-              // first, so the loop branch reached here is already seen and dedups — a no-op.)
+              // Identical FIX-1/2 loop-exit routing as add_thread; only the ref travels along.
               std::int32_t head {instruction.primary_target};
               for (int hops = 0; hops < max_loop_hops && list.seen(head)
                    && prog_.code[static_cast<std::size_t>(head)].op == opcode::jump; ++hops) {
                 head = prog_.code[static_cast<std::size_t>(head)].primary_target;
               }
-              const instr& head_instruction {prog_.code[static_cast<std::size_t>(head)]};
-              if (list.seen(head) && head_instruction.op == opcode::split) {
-                stack.push_back({.pc = head_instruction.secondary_target, .slot = 0, .restore_value = 0});
-              }
-              else {
-                stack.push_back({.pc = instruction.primary_target, .slot = 0, .restore_value = 0});
-              }
+              const instr&       head_instruction {prog_.code[static_cast<std::size_t>(head)]};
+              const std::int32_t target           {list.seen(head) && head_instruction.op == opcode::split
+                                         ? head_instruction.secondary_target
+                                         : instruction.primary_target};
+              stack.push_back({.pc = target, .block = block}); // transfer the ref
             }
             break;
           case opcode::split:
-            // primary_target is preferred: push secondary first so primary pops (explores) first.
-            stack.push_back({.pc = instruction.secondary_target, .slot = 0, .restore_value = 0});
-            stack.push_back({.pc = instruction.primary_target, .slot = 0, .restore_value = 0});
+            pool.incref(block); // one held ref -> two pushed frames
+            stack.push_back({.pc = instruction.secondary_target, .block = block});
+            stack.push_back({.pc = instruction.primary_target, .block = block});
             break;
           case opcode::save:
-            stack.push_back({.pc              = -1,
-                             .slot            = instruction.arg16,
-                             .restore_value   = state_.working[instruction.arg16]});
-            state_.working[instruction.arg16] = pos;
-            stack.push_back({.pc              = pc + 1, .slot = 0, .restore_value = 0});
+            {
+              // The one write: copy-on-write off the block if shared, then record pos in the slot.
+              const std::uint32_t written {pool.cow_write(block, instruction.arg16, pos)};
+              stack.push_back({.pc = pc + 1, .block = written});
+            }
             break;
           case opcode::assert_position:
             if (assertion_holds(static_cast<assert_kind>(instruction.arg8), pos, instruction.arg16 != 0U)) {
-              stack.push_back({.pc = pc + 1, .slot = 0, .restore_value = 0});
+              stack.push_back({.pc = pc + 1, .block = block});
+            }
+            else {
+              pool.decref(block); // thread dies here
             }
             break;
           case opcode::assert_lookaround:
-            // Epsilon: the thread proceeds only if the bounded sub-pattern holds here,
-            // evaluated on the isolated sub-scratch. Dynamic only — the static state has
-            // no `lookaround` member and static_regex rejects lookarounds at compile, so
-            // this is `if constexpr`-elided (zero footprint for static_regex).
-            // (intentionally uncovered: llvm-cov reports 0 on the `if constexpr`-false
-            // instantiations; the dynamic instantiation that runs lookaround_holds is covered.)
             if constexpr (requires(State & s) {
             s.lookaround;
           }) {
               if (lookaround_holds(instruction.arg16, pos)) {
-                stack.push_back({.pc = pc + 1, .slot = 0, .restore_value = 0});
+                stack.push_back({.pc = pc + 1, .block = block});
               }
+              else {
+                pool.decref(block);
+              }
+            }
+            else {
+              pool.decref(block); // unreachable (this walk is instantiated only for the pool-bearing state)
             }
             break;
           case opcode::byte:
@@ -1483,11 +1608,21 @@ namespace real::detail {
           case opcode::klass_cp:
           case opcode::match:
             list.pcs.push_back(pc);
-            for (std::uint16_t s = 0; s < prog_.slot_count; ++s) {
-              list.slots.push_back(state_.working[s]);
-            }
+            list.slots.push_back(block); // transfer the ref to the thread: one block handle per pc
             break;
         }
+      }
+    }
+
+    /*!
+     * \brief Releases the block references a list's threads hold (OPT D1), before the list is reset or the
+     *        run returns. This is the one decref site paired with the incref at each step→closure boundary
+     *        — the classic double-free locus, kept single.
+     */
+    constexpr void cow_release_blocks(list_type& list)
+    {
+      for (std::size_t i = 0; i < list.pcs.size(); ++i) {
+        state_.pool.decref(static_cast<std::uint32_t>(list.slots[i]));
       }
     }
 
@@ -1671,7 +1806,7 @@ namespace real::detail {
     {
       auto& stack {state_.lookaround.stack};
       stack.clear();
-      stack.push_back({.pc = pc0, .slot = 0, .restore_value = 0});
+      stack.push_back({.pc = pc0, .block = 0});
       while (!stack.empty()) {
         const std::int32_t pc {stack.back().pc};
         stack.pop_back();
@@ -1682,20 +1817,20 @@ namespace real::detail {
         const instr& in {prog_.code[static_cast<std::size_t>(pc)]};
         switch (in.op) {
           case opcode::jump:
-            stack.push_back({.pc = in.primary_target, .slot = 0, .restore_value = 0});
+            stack.push_back({.pc = in.primary_target, .block = 0});
             break;
           case opcode::split:
-            stack.push_back({.pc = in.secondary_target, .slot = 0, .restore_value = 0});
-            stack.push_back({.pc = in.primary_target, .slot = 0, .restore_value = 0});
+            stack.push_back({.pc = in.secondary_target, .block = 0});
+            stack.push_back({.pc = in.primary_target, .block = 0});
             break;
           case opcode::save:
             // intentionally uncovered: a capture-free sub emits no `save`; kept as an
             // epsilon arm for completeness should the emission ever change.
-            stack.push_back({.pc = pc + 1, .slot = 0, .restore_value = 0});
+            stack.push_back({.pc = pc + 1, .block = 0});
             break;
           case opcode::assert_position:
             if (assertion_holds(static_cast<assert_kind>(in.arg8), pos, in.arg16 != 0U)) {
-              stack.push_back({.pc = pc + 1, .slot = 0, .restore_value = 0});
+              stack.push_back({.pc = pc + 1, .block = 0});
             }
             break;
           case opcode::match:

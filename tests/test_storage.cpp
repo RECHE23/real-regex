@@ -175,7 +175,7 @@ TEST(small_vec_of_eps_entry_spills)
   // ~3·code_size, so it spills well past 255 on a large program.
   real::detail::small_vec<real::detail::eps_entry, 32> stack;
   for (int i = 0; i < 300; ++i) {
-    stack.push_back({.pc = i, .slot = 0, .restore_value = 0});
+    stack.push_back({.pc = i, .block = 0});
   }
   EXPECT_EQ(stack.size(), 300U);
   EXPECT_EQ(stack.back().pc, 299);

@@ -425,6 +425,39 @@ than a handful. There the stack-and-dispatch elimination has something to remove
 oracle harness, and the tree/loop-back/DAG classifier are specified above and were shown correct at
 3.2&nbsp;M cases; reviving them is one slice, not a redesign.
 
+\subsection g_cowcaptures 7.5 Delivered: copy-on-write capture blocks
+
+The other half of `add_thread`'s cost is *capture slots*. The value model snapshots all `slot_count`
+capture values per thread — once when a thread is stepped, once per thread emitted into the next list —
+which profiling put at a fifth to a third of match time on capture-carrying patterns. The blocks threads
+carry are, however, mostly identical: forks share a common past and diverge only where a group boundary is
+crossed. So a thread now holds a capture *block by index* into a small refcounted pool
+(\ref real::detail::basic_capture_pool): a `split` shares the block (increment), and a `save` — the one
+write — copies it first only if it is shared (\ref real::detail::basic_capture_pool::cow_write). Block 0
+is a canonical all-`npos` block every seed shares, so seeding a position is one increment, not an
+allocation. There is no per-thread slot copy and no value-restore journal at all — a branch's block simply
+travels with it and is released when the branch dies, which replaced the previous mutate-and-restore
+closure machinery: **one capture mechanism, and `static_regex` (compile-sized, zero-heap) shares it too**,
+its pool a `static_vec` bounded by the worst-case live-block count.
+
+Measured (`find_iter`, versus the value model), the gain scales with how many groups a pattern captures:
+
+| Pattern | groups | Speedup |
+|---|---|---|
+| `\w+`, `[a-z]+` (no groups) | 0 | ~1.0× (within the ±2% noise) |
+| `(\w+)=(\w+)`, `(\w+)@(\w+)` | 2 | 1.0–1.10× |
+| `(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})` | 4 | **1.29×** |
+| `(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})` | 6 | **1.67×** |
+
+So it pays for multi-group *extraction* — dates, log lines, `scanf`-style records — and is flat where
+there is little to share. It is not a universal speedup: the single- and two-group families measure
+1.0–1.13×, so the arc's combined 1.5× ambition is not reached on low-capture patterns, and the honest
+positioning is *"scales with group count."* The cost is `static_regex` state size — the worst-case block
+pool roughly doubles it (a documented trade for the one-mechanism engine and for static's share of the
+win). Correctness is the value model's, exactly: 3.2&nbsp;M differential cases agree, a refcount
+Σ-invariant is asserted at every run's end (and holds down to constexpr evaluation), and Valgrind is clean
+on the capture-heavy loops.
+
 \section g_map 8. Architecture map: who does what
 
 Headers form layers; a header only includes those below it (each file's Doxygen
