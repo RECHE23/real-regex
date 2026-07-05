@@ -47,7 +47,7 @@ SCIFORGE_TOOLS ?= ../sciforge/tools
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep -vE 'include/real/unicode/unicode_(fold|props)\.hpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-        lint misra fuzz fuzz-compat exhaustive-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
+        lint misra fuzz fuzz-compat fuzz-capi exhaustive-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
         python python-test bench-python bench-fuzz bench-engines bench-duel \
         version-check install install-smoke uninstall release help capi-test crate-vendor crate-publish-check crate-test check-layers
 
@@ -154,7 +154,7 @@ coverage-html:
 # --- QA tools (wrappers; no compilation policy here) ----------------------
 
 lint:
-	@find tests -name '*.cpp' | xargs -P $(JOBS) -I{} clang-tidy {} -- $(CXXSTD) $(INCLUDES) -I$(SCIFORGE_INCLUDE)
+	@find tests -name '*.cpp' | xargs -P $(JOBS) -I{} clang-tidy {} -- $(CXXSTD) $(INCLUDES) -Ibindings/c -I$(SCIFORGE_INCLUDE)
 
 # Analyzes the library's own headers through a synthetic translation unit that
 # includes the umbrella header and exercises the engine (so templates get
@@ -205,6 +205,14 @@ fuzz-compat:
 	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_compat.cpp -o $(FUZZ_DIR)/fuzz_compat
 	$(FUZZ_DIR)/fuzz_compat -max_total_time=$(FUZZ_TIME) -timeout=10 \
 	    $(FUZZ_DIR)/corpus-compat fuzz/corpus
+
+# libFuzzer over the C ABI shim (bindings/c) — real_capi.cpp compiled under -fsanitize=fuzzer,address,undefined,
+# so the raw-pointer binding surface is both fuzzed and sanitized. FUZZ_TIME=secs.
+fuzz-capi:
+	mkdir -p $(FUZZ_DIR)/corpus-capi
+	clang++ $(CXXSTD) -O1 -g $(INCLUDES) -Ibindings/c \
+	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_capi.cpp -o $(FUZZ_DIR)/fuzz_capi
+	$(FUZZ_DIR)/fuzz_capi -max_total_time=$(FUZZ_TIME) -timeout=10 $(FUZZ_DIR)/corpus-capi
 
 doc: coverage-html
 	mkdir -p $(BUILD)/doc

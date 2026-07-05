@@ -130,6 +130,10 @@ add_executable(real_tests_bin ${REAL_TEST_SOURCES})
 target_link_libraries(real_tests_bin PRIVATE real::real)
 # The harness include path comes from SciForge, not from a local tests/ copy.
 target_include_directories(real_tests_bin PRIVATE "${SCIFORGE_INCLUDE_DIR}")
+# The C ABI shim is compiled into the test binary (tests/bindings/test_capi.cpp drives it) so real_capi.cpp is
+# covered by the coverage floor and run under ASan/UBSan in the sanitize build — the same nets as the engine.
+target_sources(real_tests_bin PRIVATE bindings/c/real_capi.cpp)
+target_include_directories(real_tests_bin PRIVATE bindings/c)
 set_target_properties(real_tests_bin PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 # Warnings-as-errors everywhere. IntelLLVM (icpx) and AppleClang accept the

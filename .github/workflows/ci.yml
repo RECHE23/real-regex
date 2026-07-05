@@ -63,6 +63,10 @@ jobs:
       # by placing the reported input under build/fuzz/corpus-compat/).
       - name: Compat differential fuzzing smoke run (real::compat vs std::regex)
         run: make fuzz-compat FUZZ_TIME=60 CXX=clang++
+      # The C ABI shim (bindings/c) — the raw-pointer surface every non-C++ binding sits on — fuzzed under
+      # ASan/UBSan. It had no direct fuzzing until the FFI-safety audit; this is the net for that surface.
+      - name: C ABI shim fuzzing smoke run (real_compile / find_iter / iter_next)
+        run: make fuzz-capi FUZZ_TIME=60 CXX=clang++
       # ThreadSanitizer proof that concurrent const operations on one shared regex are race-free
       # (std_engine's lazy build under a mutex). Reproduce locally with: make tsan.
       - name: ThreadSanitizer smoke (concurrent std_engine)
