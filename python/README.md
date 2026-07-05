@@ -38,9 +38,14 @@ case-folding follow `re` in text mode.
 
 ## Not `re`, on purpose
 
-The unsupported constructs (backreferences, Unicode property classes `\p{…}`) raise `re.error` rather than
-diverge silently, and a few semantics differ deliberately (e.g. a nullable loop's final empty capture). The
-full list is in [COMPATIBILITY.md](https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md).
+**Strict by default — every accepted pattern is guaranteed linear.** The unsupported constructs
+(backreferences, conditionals, Unicode property classes `\p{…}`) raise `real.error` rather than silently
+falling back to a backtracking engine, so a compiled pattern is a ReDoS-safety guarantee, not a maybe. Opt
+into delegating those to the standard library `re` per call with `real.compile(pat, fallback=True)` (or
+module-wide with `real.fallback = True`) — it may accept them, at the cost of the linear-time guarantee for
+that pattern; `Pattern.engine` (`"real"` or `"re"`) always tells you which backend you got. A few semantics
+differ deliberately (e.g. a nullable loop's final empty capture). Full list:
+[COMPATIBILITY.md](https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md).
 
 The wheel also ships the header-only C++ library — `real.get_include()` returns its path, so the same engine
 is available to C++ via `#include <real/real.hpp>`. Source, benchmarks and the C++ API:

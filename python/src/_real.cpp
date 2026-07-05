@@ -1417,6 +1417,11 @@ PyObject* Pattern_subn(PyObject* self, PyObject* args, PyObject* kwargs) {
 PyObject* Pattern_get_pattern(PyObject* self, void*) {
     return Py_NewRef(as_pattern(self)->pattern_obj);
 }
+PyObject* Pattern_get_engine(PyObject* /*self*/, void*) {
+    // A natively compiled pattern always runs on the linear real engine. The fallback proxy (Python side,
+    // policy=fallback) reports "re" instead — so pattern.engine tells the backend in either policy.
+    return PyUnicode_FromString("real");
+}
 PyObject* Pattern_get_flags(PyObject* self, void*) {
     return PyLong_FromUnsignedLong(as_pattern(self)->py_flags);
 }
@@ -1531,6 +1536,7 @@ PyMethodDef pattern_methods[] = {
 
 PyGetSetDef pattern_getset[] = {
     {"pattern", Pattern_get_pattern, nullptr, "The pattern string or bytes used for compilation.", nullptr},
+    {"engine", Pattern_get_engine, nullptr, "The backend: \"real\" (linear, ReDoS-safe) or \"re\" (fallback).", nullptr},
     {"flags", Pattern_get_flags, nullptr, "The compilation flags as passed to compile().", nullptr},
     {"groups", Pattern_get_groups, nullptr, "Number of capturing groups (excluding group 0).", nullptr},
     {"groupindex", Pattern_get_groupindex, nullptr, "Mapping from group name to group number.",
