@@ -7,6 +7,18 @@ hicpp and misc modules. The scope is REAL's own headers (`--header-filter` selec
 code is checked). Every check left disabled in the profile is a deliberate,
 justified deviation, documented here.
 
+## Scope: the C ABI shim (`bindings/c`) is excluded
+
+The analysis covers `include/real/` — the engine. `bindings/c/real_capi.cpp` (the C ABI shim) is deliberately
+outside it. A C ABI is structurally at odds with MISRA C++: it deals in opaque handles (`real_regex*` /
+`real_iter*` over incomplete types), raw pointer parameters, caller-owned C-string buffers, and
+`reinterpret_cast` across the language boundary — precisely the constructs MISRA restricts, and precisely what
+a C ABI *must* expose to be callable from C, Rust and beyond. Holding the shim to the engine's profile would
+mean suppressing those rules one by one — noise, not safety. The shim earns its safety a different way: it is
+compiled into the instrumented test binary (run under ASan + UBSan, coverage-visible), fuzzed
+(`make fuzz-capi`), and every entry point catches so no C++ exception crosses into C. An assumed, documented
+deviation — not a silent gap.
+
 ## Active-member deviation
 
 ### `cppcoreguidelines-pro-type-union-access`
