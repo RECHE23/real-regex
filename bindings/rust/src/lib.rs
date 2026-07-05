@@ -33,6 +33,63 @@ extern "C" {
     fn real_iter_free(iter: *mut RealIter);
 }
 
+const DIVERGENCES_URL: &str = "https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md";
+
+/// Why a pattern failed to compile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Error {
+    /// A syntax error in the pattern, with the engine's message and (when known) the byte position.
+    Syntax { msg: String, pos: Option<usize> },
+    /// A construct REAL does not support linearly (`\p{…}`, a backreference, an unbounded lookaround, …).
+    /// `hint` points at the divergences page and the `fallback` feature — the error sells its own solution.
+    Unsupported { construct: String, hint: String },
+}
+
+impl Error {
+    /// Whether this is an unsupported-construct error (rather than a syntax error).
+    pub fn is_unsupported(&self) -> bool {
+        matches!(self, Error::Unsupported { .. })
+    }
+
+    // Parse the engine's "regex_error at N: message" and classify it. A construct REAL knows it does not
+    // implement (an unsupported escape/class, a backreference) becomes Unsupported with a solution hint.
+    fn from_engine(raw: &str) -> Error {
+        let body = raw.strip_prefix("regex_error").unwrap_or(raw).trim_start();
+        let (pos, msg) = match body.strip_prefix("at ").and_then(|r| r.split_once(':')) {
+            Some((n, rest)) => (n.trim().parse::<usize>().ok(), rest.trim().to_string()),
+            None => (None, body.trim_start_matches(':').trim().to_string()),
+        };
+        let lower = msg.to_ascii_lowercase();
+        let unsupported = lower.contains("unsupported")
+            || lower.contains("backreference")
+            || lower.contains("not supported")
+            || lower.contains("does not support");
+        if unsupported {
+            Error::Unsupported {
+                construct: msg,
+                hint: format!(
+                    "unsupported by REAL — see {DIVERGENCES_URL} ; enable the `fallback` feature to delegate \
+                     this pattern to the regex crate (forfeiting the linear-time guarantee for it)"
+                ),
+            }
+        } else {
+            Error::Syntax { msg, pos }
+        }
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::Syntax { msg, pos: Some(p) } => write!(f, "syntax error at {p}: {msg}"),
+            Error::Syntax { msg, pos: None } => write!(f, "syntax error: {msg}"),
+            Error::Unsupported { construct, hint } => write!(f, "{construct} ({hint})"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
 // Group metadata, shared cheaply (Arc) by the Regex and every Captures it produces — this is what lets
 // Captures carry a single lifetime, like the regex crate.
 struct GroupInfo {
@@ -41,7 +98,7 @@ struct GroupInfo {
 }
 
 // Compile a pattern (as raw bytes) and precompute its group names. Shared by the str and bytes APIs.
-fn compile_handle(pattern: &[u8], flags: u32) -> Result<(*mut RealRegex, usize, Arc<GroupInfo>), String> {
+fn compile_handle(pattern: &[u8], flags: u32) -> Result<(*mut RealRegex, usize, Arc<GroupInfo>), Error> {
     let mut err = [0u8; 256];
     let handle = unsafe {
         real_compile(pattern.as_ptr() as *const c_char, pattern.len(), flags,
@@ -49,7 +106,7 @@ fn compile_handle(pattern: &[u8], flags: u32) -> Result<(*mut RealRegex, usize, 
     };
     if handle.is_null() {
         let end = err.iter().position(|&b| b == 0).unwrap_or(err.len());
-        return Err(String::from_utf8_lossy(&err[..end]).into_owned());
+        return Err(Error::from_engine(&String::from_utf8_lossy(&err[..end])));
     }
     let ngroups = unsafe { real_group_count(handle) };
     let mut names = Vec::with_capacity(ngroups);
@@ -85,13 +142,13 @@ unsafe impl Sync for Regex {}
 impl Regex {
     /// Compile `pattern`. Returns the engine's error message if the pattern is invalid or cannot be run
     /// linearly (the strict policy).
-    pub fn new(pattern: &str) -> Result<Regex, String> {
+    pub fn new(pattern: &str) -> Result<Regex, Error> {
         Regex::with_flags(pattern, 0)
     }
 
     /// Compile with a `real::flags` bitmask (icase=1, multiline=2, dotall=4, bytes=8, verbose=16, ecma=32,
     /// ascii=64). Prefer [`RegexBuilder`] for readable options.
-    pub fn with_flags(pattern: &str, flags: u32) -> Result<Regex, String> {
+    pub fn with_flags(pattern: &str, flags: u32) -> Result<Regex, Error> {
         let (handle, ngroups, groups) = compile_handle(pattern.as_bytes(), flags)?;
         Ok(Regex { handle, ngroups, pattern: pattern.to_string(), groups })
     }
@@ -415,7 +472,7 @@ impl RegexBuilder {
     }
 
     /// Compile the configured pattern.
-    pub fn build(&self) -> Result<Regex, String> {
+    pub fn build(&self) -> Result<Regex, Error> {
         Regex::with_flags(&self.pattern, self.flags)
     }
 }
@@ -608,7 +665,7 @@ impl<'t> Iterator for SplitN<'_, 't> {
 /// be valid UTF-8). Patterns compile in REAL's raw-byte mode (`\w \d \s \b` are ASCII); every other method
 /// mirrors the top-level string API. Group 0 is the whole match; spans are byte offsets.
 pub mod bytes {
-    use super::{compile_handle, real_find_iter, real_find_iter_at, real_free, GroupInfo,
+    use super::{compile_handle, real_find_iter, real_find_iter_at, real_free, Error, GroupInfo,
                 RawSpans, RealRegex, FLAG_ASCII, FLAG_DOTALL, FLAG_ICASE, FLAG_MULTILINE, FLAG_VERBOSE};
     use std::borrow::Cow;
     use std::marker::PhantomData;
@@ -631,12 +688,12 @@ pub mod bytes {
 
     impl Regex {
         /// Compile `pattern` (given as text) in byte mode.
-        pub fn new(pattern: &str) -> Result<Regex, String> {
+        pub fn new(pattern: &str) -> Result<Regex, Error> {
             Regex::with_flags(pattern.as_bytes(), 0)
         }
 
         /// Compile a raw-byte pattern with extra `real::flags` (byte mode is always on).
-        pub fn with_flags(pattern: &[u8], flags: u32) -> Result<Regex, String> {
+        pub fn with_flags(pattern: &[u8], flags: u32) -> Result<Regex, Error> {
             let (handle, ngroups, groups) = compile_handle(pattern, flags | FLAG_BYTES)?;
             Ok(Regex { handle, ngroups, pattern: pattern.to_vec(), groups })
         }
@@ -972,7 +1029,7 @@ pub mod bytes {
         /// Accepted for API compatibility; a no-op (REAL has fixed complexity caps).
         pub fn size_limit(&mut self, _bytes: usize) -> &mut RegexBuilder { self }
         /// Compile.
-        pub fn build(&self) -> Result<Regex, String> {
+        pub fn build(&self) -> Result<Regex, Error> {
             Regex::with_flags(&self.pattern, self.flags)
         }
     }
