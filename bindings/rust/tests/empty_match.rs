@@ -12,6 +12,21 @@ const EMPTY_CAPABLE: &[(&str, &str)] = &[
     (r"(x?)", "axbx"),
     (r"\b", "one two"),
     (r"$", "a\nb"),           // end anchors
+    // Empty-PRIORITY alternations: a leftmost empty branch matches empty at p, and re then re-tries a
+    // non-empty at p that rust's finder never returns (it advances past the empty). The RD.3 fuzzer's class.
+    (r"|x", "x"),
+    (r"x|", "xyx"),
+    (r"a||b", "ab"),
+    (r"(?:|x)", "xx"),
+    ("|\u{1}", "\u{1}"),      // the minimized 4-byte fuzzer artifact: |\x01 on \x01
+    // Empty-STAR: a nullable loop over an empty-first branch. rust visits positions the re-stream never does
+    // (`(?:|ab)*` on "abab": rust yields empties at 1 and 3; re advances by its own wider (0,2)/(2,4) matches
+    // and skips them). No filter over re's stream can ADD those — RD.3-fix-v2 drives the search by position.
+    (r"(?:|ab)*", "abab"),
+    (r"(a?)*", "aa"),
+    (r"(|a)+", "aa"),
+    (r"(?:|ab)*", "abcabc"), // an interior non-match between the ab runs
+    ("(?:|\u{e9})*", "\u{e9}\u{e9}"), // non-ASCII: empty steps must advance a full codepoint (\u00e9 = 2 bytes)
 ];
 
 #[test]

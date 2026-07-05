@@ -32,11 +32,14 @@ method is verified against the `regex` crate by a differential test suite.
 
 A drop-in mirrors semantics, not just signatures. The known differences:
 
-- **Empty-match iteration — resolved.** REAL's engine follows Python `re`'s rule (3.7+: an empty match
-  adjacent to a previous non-empty match is kept), but the crate adapts iteration to rust's rule at the
-  wrapper — an empty match whose end equals the previous match's end is skipped, exactly as
-  `regex-automata`'s `util::iter::Searcher::try_advance` does. So `find_iter` / `split` / `replace_all` match
-  the `regex` crate.
+- **Empty-match iteration — resolved.** REAL's engine follows Python `re`'s rule (3.7+, which keeps empty
+  matches and, after one, re-tries a non-empty match at the same spot); the crate instead **drives the search
+  by position**, exactly as `regex-automata`'s `util::iter::Searcher` does — find the leftmost match from a
+  position, advance to its end, and step one codepoint past an empty match adjacent to the previous end before
+  re-searching. Driving (not filtering re's stream) is necessary because rust visits positions re never does
+  (`(?:|ab)*` on "abab": rust yields empties at 1 and 3). To keep this free for the common case, the wrapper
+  stays on the cheap engine iterator until the first empty match, then switches to driving — so patterns that
+  never match empty pay nothing. `find_iter` / `split` / `replace_all` match the `regex` crate.
 - **`shortest_match` — residual.** REAL is leftmost-**first** (like `regex`), but this returns the leftmost
   match's *greedy* end, whereas `regex` returns the earliest position at which a match completes (`a+` on
   `"aaa"`: REAL `3`, `regex` `1`). A true earliest-completion mode (a `first-accept` stop in the forward

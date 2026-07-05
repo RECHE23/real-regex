@@ -249,7 +249,7 @@ impl Regex {
         };
         // A null cursor means the engine failed to construct the iterator (never dereference it).
         assert!(!iter.is_null(), "real-regex: engine iteration failed");
-        SpanCursor::Real(RawSpans { iter, ngroups: self.ngroups, buf: vec![0usize; 2 * self.ngroups], last_end: None, _re: PhantomData })
+        SpanCursor::Real(RawSpans { iter, handle: self.handle, text: text.as_bytes(), ngroups: self.ngroups, buf: vec![0usize; 2 * self.ngroups], last_end: None, drive_pos: None, utf8: true, _re: PhantomData })
     }
 
     fn caps_from<'t>(&self, text: &'t str, spans: Vec<Option<(usize, usize)>>) -> Captures<'t> {
@@ -332,21 +332,33 @@ impl std::fmt::Debug for Regex {
 
 // The low-level cursor: yields one match's full span vector at a time.
 struct RawSpans<'r, 't> {
-    iter: *mut RealIter,
+    iter: *mut RealIter,           // fast-mode iterator (re's stream); abandoned once we switch to driving
+    handle: *const RealRegex,      // for drive mode: re-search from a position with real_find_iter_at
+    text: &'t [u8],                // the haystack (drive-mode search pointer + codepoint stepping)
     ngroups: usize,
-    buf: Vec<usize>,        // reused span buffer (2*ngroups), refilled per match — never reallocated
-    last_end: Option<usize>, // end of the last YIELDED match — for the rust empty-match iteration rule
-    _re: PhantomData<(&'r (), &'t ())>, // lifetime-only marker — reused by the str and bytes APIs
+    buf: Vec<usize>,               // reused span buffer (2*ngroups), refilled per match — never reallocated
+    last_end: Option<usize>,       // end of the last YIELDED match — for the empty-adjacent rule
+    drive_pos: Option<usize>,      // None = fast mode; Some(p) = driving the search from position p
+    utf8: bool,                    // step by one codepoint (str) vs one byte (bytes) past an empty match
+    _re: PhantomData<&'r ()>,      // ties the borrowed handle to the Regex's lifetime
 }
 
 impl RawSpans<'_, '_> {
-    // Advance to the next match, applying the rust empty-match rule (regex-automata's
-    // util::iter::Searcher::try_advance): an empty match whose end equals the previous yielded match's end is
-    // skipped. REAL's engine yields the re-superset (3.7+ keeps such an empty), so filtering it here adapts
-    // iteration to rust's contract without touching the engine. The reused buffer then holds every group span,
-    // and the whole-match span (group 0) is returned — so iterating allocates nothing per match;
-    // group_spans() materializes the Vec only when a Captures needs the groups.
+    // Advance to the next match, reproducing rust's iteration exactly (regex-automata's util::iter::Searcher).
+    // rust DRIVES the search by position: it finds the leftmost match from `input.start`, sets the next start
+    // to that match's end, and on an empty match adjacent to the previous end it steps the start forward by
+    // one codepoint and re-searches. A filter over REAL's re-ordered stream cannot reproduce this — rust
+    // visits positions the re-stream never does (`(?:|ab)*` on "abab": rust yields empties at 1 and 3, which
+    // re, advancing by its own wider matches, skips). So we drive too, via real_find_iter_at.
+    //
+    // But driving allocates an iterator per step, which would undo the span-0 fast path. Since re and rust
+    // diverge ONLY at empty matches (a non-empty leftmost match is identical for both, and both advance to its
+    // end), we stay on the cheap re-iterator until the FIRST empty match, then switch to driving from rust's
+    // current position. Patterns that never match empty (the throughput-critical ones) never switch.
     fn advance(&mut self) -> Option<(usize, usize)> {
+        if self.drive_pos.is_some() {
+            return self.drive_advance();
+        }
         loop {
             let got = unsafe { real_iter_next(self.iter, self.buf.as_mut_ptr()) };
             match got {
@@ -356,14 +368,65 @@ impl RawSpans<'_, '_> {
                 -1 => panic!("real-regex: engine iteration failed"),
                 _ => {
                     let (s0, e0) = (self.buf[0], self.buf[1]); // group 0 always participates
-                    if s0 == e0 && Some(e0) == self.last_end {
-                        continue; // empty match adjacent to the previous match end -> skip (rust's rule)
+                    if s0 == e0 {
+                        // First empty match: re and rust's advancement diverge here. Switch to driving the
+                        // search by position, resuming from rust's current start (the last yielded end).
+                        self.drive_pos = Some(self.last_end.unwrap_or(0));
+                        return self.drive_advance();
                     }
                     self.last_end = Some(e0);
                     return Some((s0, e0));
                 }
             }
         }
+    }
+
+    // The leftmost match at or after `pos` (unanchored), filling `buf` with its groups. Each call spins up a
+    // one-shot iterator — only reached in drive mode, i.e. for empty-capable patterns.
+    fn search_at(&mut self, pos: usize) -> Option<(usize, usize)> {
+        if pos > self.text.len() {
+            return None;
+        }
+        let it = unsafe {
+            real_find_iter_at(self.handle, self.text.as_ptr() as *const c_char, self.text.len(), pos)
+        };
+        assert!(!it.is_null(), "real-regex: engine iteration failed");
+        let got = unsafe { real_iter_next(it, self.buf.as_mut_ptr()) };
+        unsafe { real_iter_free(it) };
+        match got {
+            0 => None,
+            -1 => panic!("real-regex: engine iteration failed"),
+            _ => Some((self.buf[0], self.buf[1])),
+        }
+    }
+
+    // Bytes to step past position `pos` when skipping an empty match — one codepoint in str mode (so the next
+    // search stays on a char boundary, as rust's UTF-8 Input does), one byte in bytes mode.
+    fn step_len(&self, pos: usize) -> usize {
+        if !self.utf8 || pos >= self.text.len() {
+            return 1;
+        }
+        match self.text[pos] {
+            b if b < 0x80 => 1,
+            b if b < 0xE0 => 2,
+            b if b < 0xF0 => 3,
+            _ => 4,
+        }
+    }
+
+    // One step of rust's position-driven iteration: find from drive_pos; if that match is empty and adjacent
+    // to the previous yielded end, step forward one codepoint and re-search once (handle_overlapping_empty_
+    // match); then yield it and set the next start to its end.
+    fn drive_advance(&mut self) -> Option<(usize, usize)> {
+        let pos = self.drive_pos.expect("drive_advance in fast mode");
+        let mut m = self.search_at(pos)?;
+        if m.0 == m.1 && Some(m.1) == self.last_end {
+            let next = m.1 + self.step_len(m.1);
+            m = self.search_at(next)?;
+        }
+        self.last_end = Some(m.1);
+        self.drive_pos = Some(m.1);
+        Some(m)
     }
 
     // The full group-span vector of the current match (call after advance() returned Some). Allocates once.
@@ -875,7 +938,7 @@ pub mod bytes {
             };
             // A null cursor means the engine failed to construct the iterator (never dereference it).
             assert!(!iter.is_null(), "real-regex: engine iteration failed");
-            RawSpans { iter, ngroups: self.ngroups, buf: vec![0usize; 2 * self.ngroups], last_end: None, _re: PhantomData }
+            RawSpans { iter, handle: self.handle, text, ngroups: self.ngroups, buf: vec![0usize; 2 * self.ngroups], last_end: None, drive_pos: None, utf8: false, _re: PhantomData }
         }
 
         fn caps_from<'t>(&self, text: &'t [u8], spans: Vec<Option<(usize, usize)>>) -> Captures<'t> {
