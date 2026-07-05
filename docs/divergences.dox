@@ -139,4 +139,14 @@ is the extension. Pinned real-accepts / re-rejects in `TestIntentionalDivergence
 REAL accepts any **bounded** lookbehind, including variable-width alternations such as
 `(?<=a|bb)`, which `re` and PCRE reject as non-fixed-width. The bound keeps the scan
 linear; see \ref design for how the lookbehind sub-VM works.
+
+\section div_rust The Rust binding vs the `regex` crate
+
+The `real-regex` Rust crate mirrors the [`regex`](https://docs.rs/regex) crate's API. Its divergences are on a
+different axis (crate-vs-`regex`, not REAL-vs-`re`) and are documented on the crate itself
+(`bindings/rust/README.md` — the docs.rs landing page): the empty-match iteration rule (adapted to rust's at
+the wrapper, so `find_iter`/`split` match `regex`), `shortest_match` (leftmost-first greedy end vs earliest
+completion — a parked `first-accept` engine follow-up, see \ref g_followups), the `\p{}` gap (rejected as
+`Error::Unsupported`, or delegated via the opt-in `fallback` feature; full support is planned), `RegexSet`
+(not offered), and the bounded lookarounds as a **positive** divergence (a superset `regex` and RE2 lack).
 */
