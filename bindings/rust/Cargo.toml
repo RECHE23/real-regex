@@ -28,3 +28,8 @@ cc = "1"
 
 [dev-dependencies]
 regex = "1"
+criterion = "0.5"
+
+[[bench]]
+name = "engines"
+harness = false

@@ -357,6 +357,24 @@ capture cost too. It trails only where already named: the assertion-bearing `\b\
 byte-program has assertions, so the search DFA declines and the Pike VM runs the window), the non-one-pass
 `(\w+)_(\w+)` (the `_` conflict), and the no-match date (the inner-literal-prefilter follow-up).
 
+### E.4 The `real-regex` crate, measured natively (criterion)
+
+§E.1–E.3 time the REAL **engine** (C++, in `real_bench`) against rust. `make bench-rust` (criterion, in
+`bindings/rust/benches/`) times the published **crate** against the `regex` crate — both in-process Rust, so
+this pair has no cross-process FFI asymmetry to correct for. It measures something different, and honestly
+less flattering: the crate is a thin Rust wrapper over the C ABI, and it **pays its own binding overhead**.
+
+On the same corpus the pure-Rust `regex` crate leads on raw throughput — `[a-z]+` ≈ 3.4×, `[0-9]+` ≈ 1.9× —
+and the gap **scales with the match count**, which points straight at the cost: the wrapper's cursor
+allocates a fresh span vector **per match** (`RawSpans`), so a match-dense scan pays many small allocations
+the pure-Rust engine does not. The difference between the engine (E.3, competitive-to-faster) and the crate
+here is exactly that binding cost, quantified for the record.
+
+So the crate's pitch is **not** raw speed against `regex`; it is the linear-time / ReDoS-safe guarantee and
+the **bounded lookarounds `regex` cannot compile at all**, delivered through a `regex`-shaped API. Closing the
+crate-vs-engine gap — reusing the span buffer and a span-0-only fast path for `find_iter` — is a named
+follow-up (design.dox §8.1).
+
 ## Methodology & reproduction
 
 - **Goal.** A competitive snapshot *and* a same-machine regression tripwire — not a

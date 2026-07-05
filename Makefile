@@ -48,7 +48,7 @@ FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
         lint misra fuzz fuzz-compat fuzz-capi fuzz-rust exhaustive-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
-        python python-test bench-python bench-fuzz bench-engines bench-duel \
+        python python-test bench-python bench-fuzz bench-engines bench-duel bench-rust \
         version-check install install-smoke uninstall release help capi-test crate-vendor crate-publish-check crate-test check-layers
 
 .DEFAULT_GOAL := help
@@ -388,6 +388,11 @@ bench-fuzz: python
 bench-duel:
 	@c++ $(CXXSTD) -O2 $(INCLUDES) benchmarks/duel/real_bench.cpp -o benchmarks/duel/real_bench
 	@$(PYTHON) benchmarks/duel/run_duel.py
+
+# Native rust benchmark: the real-regex crate vs the regex crate (criterion, in-process). Dev-only; long.
+# Regenerates the BENCHMARKS §E.4 "measured natively" rows.
+bench-rust:
+	cd bindings/rust && cargo bench --bench engines
 
 # Multi-engine C++ throughput benchmark (REAL vs std::regex vs PCRE2 vs RE2).
 # Optional engines are compiled in only when pkg-config locates them.
