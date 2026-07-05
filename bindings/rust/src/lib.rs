@@ -119,7 +119,7 @@ impl Regex {
                 Some(s) => real_find_iter_at(self.handle, text.as_ptr() as *const c_char, text.len(), s),
             }
         };
-        RawSpans { iter, ngroups: self.ngroups, _re: PhantomData }
+        RawSpans { iter, ngroups: self.ngroups, last_end: None, _re: PhantomData }
     }
 
     fn caps_from<'t>(&self, text: &'t str, spans: Vec<Option<(usize, usize)>>) -> Captures<'t> {
@@ -166,9 +166,11 @@ impl Regex {
         CaptureMatches { raw: self.raw(text, None), re: self, text }
     }
 
-    /// The end offset of the leftmost match (a match exists iff this is `Some`). **Divergence:** REAL is a
-    /// leftmost-longest engine, so this returns the *longest* leftmost match's end, not the shortest as the
-    /// regex crate does — use it as an `is_match` that also reports where the match ends.
+    /// The end offset of the leftmost match (a match exists iff this is `Some`). **Divergence:** like the
+    /// regex crate, REAL is leftmost-**first**, but this returns the leftmost match's *greedy* end, whereas
+    /// the regex crate returns the earliest position at which a match completes (e.g. `a+` on `"aaa"`: REAL
+    /// 3, regex 1). A true earliest-completion mode is a parked follow-up (a `first-accept` stop in the
+    /// forward pass). Use this as an `is_match` that also reports where the leftmost match ends.
     pub fn shortest_match(&self, text: &str) -> Option<usize> {
         self.raw(text, None).next().map(|s| s[0].unwrap().1)
     }
@@ -190,11 +192,13 @@ impl std::fmt::Debug for Regex {
 struct RawSpans<'r, 't> {
     iter: *mut RealIter,
     ngroups: usize,
+    last_end: Option<usize>, // end of the last YIELDED match — for the rust empty-match iteration rule
     _re: PhantomData<(&'r (), &'t ())>, // lifetime-only marker — reused by the str and bytes APIs
 }
 
 impl RawSpans<'_, '_> {
-    fn next(&mut self) -> Option<Vec<Option<(usize, usize)>>> {
+    // One raw yield from the engine iterator (which follows re's empty-match rule).
+    fn engine_next(&mut self) -> Option<Vec<Option<(usize, usize)>>> {
         let mut spans = vec![0usize; 2 * self.ngroups];
         let got = unsafe { real_iter_next(self.iter, spans.as_mut_ptr()) };
         if got == 0 {
@@ -208,6 +212,22 @@ impl RawSpans<'_, '_> {
                 })
                 .collect(),
         )
+    }
+
+    // The rust empty-match rule, applied at the wrapper (regex-automata util::iter::Searcher::try_advance):
+    // an empty match whose end equals the previous yielded match's end is skipped. REAL's engine yields the
+    // re-superset (3.7+: it keeps such an empty), so filtering it here adapts the iteration to rust's
+    // contract without touching the engine. split/replace inherit this through the same cursor.
+    fn next(&mut self) -> Option<Vec<Option<(usize, usize)>>> {
+        loop {
+            let spans = self.engine_next()?;
+            let (s0, e0) = spans[0].expect("group 0 always participates");
+            if s0 == e0 && Some(e0) == self.last_end {
+                continue; // empty match adjacent to the previous match end -> skip (rust's rule)
+            }
+            self.last_end = Some(e0);
+            return Some(spans);
+        }
     }
 }
 
@@ -643,7 +663,7 @@ pub mod bytes {
                     Some(s) => real_find_iter_at(self.handle, text.as_ptr() as *const c_char, text.len(), s),
                 }
             };
-            RawSpans { iter, ngroups: self.ngroups, _re: PhantomData }
+            RawSpans { iter, ngroups: self.ngroups, last_end: None, _re: PhantomData }
         }
 
         fn caps_from<'t>(&self, text: &'t [u8], spans: Vec<Option<(usize, usize)>>) -> Captures<'t> {

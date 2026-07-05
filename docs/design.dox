@@ -606,6 +606,10 @@ Recorded, not scheduled — deliberate next steps the current design leaves room
   currently lives inline in the routing; extracting it would let the router and the tests name it directly.
 - **A one-pass *search* (spans-only).** The one-pass table can locate matches unanchored, not only extract
   captures on a located window — a future `real::regex` search path, not a new public automaton.
+- **An earliest-completion (`first-accept`) mode.** The forward pass currently runs to the greedy end of the
+  leftmost match; stopping at the first accepting state (priority ignored) would give a true "shortest match"
+  end — what the rust `regex` crate's `shortest_match` returns. Small, and it would let the Rust binding drop
+  the one residual `shortest_match` divergence. Parked.
 - **Docs split and a no-`friend`-across-tier rule.** Splitting the Doxygen tree into `reference/` and
   `internals/`, and forbidding cross-tier `friend` (the layering gate sees includes, not friendship), are
   smaller hygiene follow-ups.
