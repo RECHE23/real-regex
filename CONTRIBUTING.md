@@ -55,9 +55,21 @@ the crate's first publish is the current calendar version, not a `0.0.1` placeho
 in mind:
 
 - **crates.io is immutable.** A published version can only be *yanked* (hidden from new resolves), never
-  deleted or overwritten. So a crate publish happens only *after* the matching release is live and verified —
-  `cargo publish` from `bindings/rust` (token in `~/.cargo/credentials.toml`), by hand, once the tag has
-  shipped. Never publish a version you have not already released.
+  deleted or overwritten. So a crate publish happens only *after* the matching release is live and verified,
+  by hand, once the tag has shipped. Never publish a version you have not already released. The flow, with the
+  dry-run as its gate:
+
+  ```
+  make crate-publish-check          # vendors include/ + bindings/c into the crate, then cargo publish
+                                     # --dry-run COMPILES the packaged tarball — the real gate
+  cd bindings/rust && cargo publish  # token in ~/.cargo/credentials.toml
+  ```
+
+  The dry-run is load-bearing: `cargo package --list` shows the vendored files but does not build them, so
+  only `--dry-run` proves the crate compiles standalone (nothing off crates.io can reach `../../include`). The
+  engine sources are vendored into `bindings/rust/vendor/` (git-ignored; carried into the package by the
+  `include = [… "vendor/**"]` whitelist in `Cargo.toml`) — regenerate them with `make crate-vendor`, never
+  edit them by hand.
 - **A breaking change mid-year bumps the year (the major).** SemVer consumers pin with a caret (`^2026.7`),
   which treats a minor/patch bump as non-breaking. REAL grows without breaking by principle; if a genuinely
   breaking change ever ships mid-year, bump the *year* so the caret protects downstream, rather than slipping

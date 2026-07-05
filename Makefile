@@ -49,7 +49,7 @@ FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
         lint misra fuzz fuzz-compat exhaustive-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
         python python-test bench-python bench-fuzz bench-engines bench-duel \
-        version-check install install-smoke uninstall release help capi-test crate-prepare crate-test check-layers
+        version-check install install-smoke uninstall release help capi-test crate-vendor crate-publish-check crate-test check-layers
 
 .DEFAULT_GOAL := help
 
@@ -304,11 +304,17 @@ capi-test:
 
 # Populate the crate's vendored engine sources so `cargo package`/`publish` builds standalone off crates.io
 # (the in-tree `crate-test` builds against the sibling headers directly, no vendoring needed).
-crate-prepare:
+crate-vendor:
 	rm -rf bindings/rust/vendor
 	mkdir -p bindings/rust/vendor/include bindings/rust/vendor/c
 	cp -R include/real bindings/rust/vendor/include/
 	cp bindings/c/real_capi.h bindings/c/real_capi.cpp bindings/rust/vendor/c/
+
+# The publish gate. Snapshots the engine into vendor/, then lets `cargo publish --dry-run` COMPILE the packaged
+# tarball -- which `cargo package --list` does NOT: the list showed vendor/ present, but only the dry-run's
+# build proves the crate compiles standalone (no ../../include reachable off crates.io). Run before publish.
+crate-publish-check: crate-vendor
+	cd bindings/rust && cargo publish --dry-run --allow-dirty
 
 crate-test:
 	rm -rf bindings/rust/vendor
