@@ -618,6 +618,14 @@ Recorded, not scheduled — deliberate next steps the current design leaves room
 - **Docs split and a no-`friend`-across-tier rule.** Splitting the Doxygen tree into `reference/` and
   `internals/`, and forbidding cross-tier `friend` (the layering gate sees includes, not friendship), are
   smaller hygiene follow-ups.
+- **Module hygiene in the recent code.** A handful of small dedups deferred out of the bindings-fortification
+  work: one shared `detail::fnv1a` (the FNV-1a accumulator is written three times — onepass, the lazy-DFA
+  hash-cons, and the trie memo); factoring the twice-written `compute_eligibility`; dropping the one-pass
+  builder's write-only diagnostic breadcrumbs (`bail_node_` / `bail_class_` / `bail_pc_` — the `bail` reason
+  is read, the location fields are not); deciding `consumed_width`'s fate (inline it or document it as an
+  extension point); and unifying the `std::ranges` style (only `onepass.hpp` dissents). Plus the Rust
+  `bindings/rust/src/lib.rs` split into `ffi` / `error` / `iter` / `builder` / `replace` / `bytes` modules,
+  so the str/bytes parity gap is visible in review rather than a manual diff.
 
 \section g_safety 9. Compile time and safety
 
