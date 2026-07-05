@@ -68,13 +68,7 @@ impl Error {
             None => (None, body.trim_start_matches(':').trim().to_string()),
         };
         if code == REAL_ERR_UNSUPPORTED {
-            Error::Unsupported {
-                construct: msg,
-                hint: format!(
-                    "unsupported by REAL — see {DIVERGENCES_URL} ; enable the `fallback` feature to delegate \
-                     this pattern to the regex crate (forfeiting the linear-time guarantee for it)"
-                ),
-            }
+            unsupported_construct(&msg)
         } else {
             Error::Syntax { msg, pos }
         }
@@ -100,8 +94,67 @@ struct GroupInfo {
     by_name: HashMap<String, usize>,  // name -> group index
 }
 
+// The standard unsupported-construct error, hint included (shared by the engine path and the pre-scan below).
+fn unsupported_construct(construct: &str) -> Error {
+    Error::Unsupported {
+        construct: construct.to_string(),
+        hint: format!(
+            "unsupported by REAL — see {DIVERGENCES_URL} ; enable the `fallback` feature to delegate this \
+             pattern to the regex crate (forfeiting the linear-time guarantee for it)"
+        ),
+    }
+}
+
+// Rust's regex crate parses nested character classes (`[a[b]]` = union) and the class set operators `&&`,
+// `--`, `~~`; Python `re` — REAL's model — treats `[` as a literal inside a class, so `[a[b]]` parses to two
+// different classes (and two match sets). Rather than implement rust's class algebra, the crate declines such
+// patterns up front with a hint (the `fallback` feature then delegates them, and `regex` does support them).
+// Returns the offending construct, or None. Escapes (`\[`, `\-`, `\\`) are respected. `\p{…}` is a separate
+// arc; here we only spot the class-set syntax.
+fn nested_class_syntax(pattern: &[u8]) -> Option<&'static str> {
+    let mut i = 0;
+    let mut in_class = false;
+    let mut class_pos = 0usize; // members seen in the current class (0 = just after `[` / `[^`)
+    while i < pattern.len() {
+        let b = pattern[i];
+        if b == b'\\' {
+            i += 2; // skip the escaped byte — an escaped `[` is a literal, never a nested class
+            if in_class {
+                class_pos += 1;
+            }
+            continue;
+        }
+        if !in_class {
+            if b == b'[' {
+                in_class = true;
+                class_pos = 0;
+                if pattern.get(i + 1) == Some(&b'^') {
+                    i += 1; // negation; the first real member is still class_pos 0
+                }
+            }
+        } else if b == b']' {
+            if class_pos == 0 {
+                class_pos += 1; // a `]` right after `[` is a literal member, not the close
+            } else {
+                in_class = false;
+            }
+        } else if b == b'[' {
+            return Some("nested character class");
+        } else if matches!(b, b'&' | b'-' | b'~') && pattern.get(i + 1) == Some(&b) {
+            return Some("character-class set operation");
+        } else {
+            class_pos += 1;
+        }
+        i += 1;
+    }
+    None
+}
+
 // Compile a pattern (as raw bytes) and precompute its group names. Shared by the str and bytes APIs.
 fn compile_handle(pattern: &[u8], flags: u32) -> Result<(*mut RealRegex, usize, Arc<GroupInfo>), Error> {
+    if let Some(construct) = nested_class_syntax(pattern) {
+        return Err(unsupported_construct(construct)); // rust-only class syntax REAL would parse differently
+    }
     let mut err = [0u8; 256];
     let mut code: i32 = 0;
     let handle = unsafe {

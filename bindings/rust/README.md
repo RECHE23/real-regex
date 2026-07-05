@@ -52,6 +52,11 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   `fallback` feature and `RegexBuilder::new(pat).fallback(true)` to delegate such a pattern to the `regex`
   crate (per pattern, forfeiting the linear-time guarantee — `engine()` reports it). Full `\p{}` support in
   the linear engine is planned.
+- **Class set notation — declined (rust-only syntax).** Nested character classes (`[a[b]]` = union) and the
+  set operators `&&` / `--` / `~~` are `regex`-crate syntax; Python `re` — REAL's model — reads `[` as a
+  literal inside a class, so the two would parse the same pattern differently. The crate declines these up
+  front with `Error::Unsupported` (never a silent mis-match); escaped forms (`[\[]`) and ordinary ranges stay
+  accepted. `fallback` delegates them to `regex`. Planned alongside `\p{}` as drop-in-completeness features.
 - **`RegexSet` — not offered.** Multi-pattern set matching is not part of this version.
 - **Bounded lookarounds — a *positive* divergence.** REAL supports bounded lookahead `(?=…)` / `(?!…)` and
   lookbehind `(?<=…)` / `(?<!…)` in linear time. The `regex` crate and RE2 support neither. This is a
