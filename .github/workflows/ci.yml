@@ -100,6 +100,22 @@ jobs:
       - name: Exhaustive compat routing check (real::compat vs std::regex)
         run: make -C real-regex exhaustive-compat
 
+  # Language bindings (bindings/): the C ABI shim and the real-regex Rust crate. Linux coverage for the
+  # cross-platform pieces the local macOS gate builds — the shim's C++-driver link and the crate's cc-build.
+  # cargo is preinstalled on the GitHub Ubuntu image. crate-test runs the differential oracle vs the regex crate.
+  bindings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: real-regex
+      - name: Install clang + cmake
+        run: sudo apt-get update && sudo apt-get install -y clang cmake
+      - name: C ABI shim smoke
+        run: make -C real-regex capi-test
+      - name: Rust crate — differential vs the regex crate
+        run: make -C real-regex crate-test
+
   # Coverage gate: fail the build if line coverage drops below the floor (was advisory).
   coverage:
     runs-on: ubuntu-latest
