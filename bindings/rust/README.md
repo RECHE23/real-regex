@@ -63,8 +63,9 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   documented superset, not a gap.
 - **A known upstream `regex` leftmost-first violation.** REAL's differential fuzzer found a case where the
   `regex` crate (1.12.x) is wrong and REAL agrees with Python `re`: on `A|.AA` over `"\n#AA"`, the leftmost
-  match is `[1,4)` (it begins with `.`), but the crate's literal-prefilter resume skips it. Repro and analysis
-  in `fuzz/known_rust_bugs/`; the differential fuzzer skips the class so it does not read as a REAL bug.
+  match is `[1,4)` (it begins with `.`), but the crate's reverse-suffix optimization skips it. Fixed upstream in
+  [rust-lang/regex#1373](https://github.com/rust-lang/regex/pull/1373) (found by REAL's fuzzer); repro + analysis
+  in `fuzz/known_rust_bugs/`, and the differential fuzzer skips the class so it does not read as a REAL bug.
 
 ## The fallback feature
 
