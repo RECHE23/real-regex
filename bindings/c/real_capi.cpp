@@ -4,6 +4,7 @@
  */
 #include "real_capi.h"
 
+#include <algorithm>
 #include <cstring>
 #include <exception>
 #include <new>
@@ -30,11 +31,15 @@ struct real_iter
 extern "C" {
 
 namespace {
+  // Copy `what` into `errbuf` (NUL-terminated, truncating). memcpy + explicit NUL rather than strncpy: MSVC
+  // deprecates strncpy (C4996) and memcpy is not on that list, so this needs no _CRT_SECURE_NO_WARNINGS — the
+  // house no-suppression style holds at the shim too.
   void write_err(char* errbuf, size_t errbuf_len, const char* what)
   {
     if (errbuf != nullptr && errbuf_len > 0) {
-      std::strncpy(errbuf, what, errbuf_len - 1);
-      errbuf[errbuf_len - 1] = '\0';
+      const size_t n = std::min(std::strlen(what), errbuf_len - 1);
+      std::memcpy(errbuf, what, n);
+      errbuf[n] = '\0';
     }
   }
 }

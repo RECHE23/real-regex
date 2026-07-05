@@ -73,3 +73,24 @@ TEST(capi_error_codes_and_null_iter)
   std::vector<std::size_t> spans(2);
   EXPECT(real_iter_next(nullptr, spans.data()) == -1);
 }
+
+TEST(capi_defensive_paths)
+{
+  // Null errbuf and null code are tolerated (the guarded branches in real_compile / write_err).
+  EXPECT(real_compile("(", 1, 0, nullptr, 0, nullptr) == nullptr);
+
+  // errbuf truncation: a tiny buffer receives a NUL-terminated prefix, never an overrun.
+  char tiny[4] = {'x', 'x', 'x', 'x'};
+  int  code    = 0;
+  EXPECT(real_compile("(", 1, 0, tiny, sizeof tiny, &code) == nullptr);
+  EXPECT(tiny[3] == '\0' && std::strlen(tiny) <= 3);
+  EXPECT(code == REAL_ERR_SYNTAX);
+
+  // real_group_name reports the full length but truncates into a small buffer, terminated.
+  real_regex* named = compile("(?P<longname>\\w+)", 0, code);
+  EXPECT(named != nullptr);
+  char nb[4];
+  EXPECT(real_group_name(named, 1, nb, sizeof nb) == 8); // "longname" is 8 chars
+  EXPECT(std::strlen(nb) == 3 && nb[3] == '\0');         // truncated prefix, terminated
+  real_free(named);
+}
