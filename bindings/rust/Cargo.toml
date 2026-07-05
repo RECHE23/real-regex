@@ -8,7 +8,10 @@ repository = "https://github.com/RECHE23/real-regex"
 readme = "README.md"
 keywords = ["regex", "redos", "linear-time", "lookaround"]
 categories = ["text-processing"]
-# Package the vendored engine sources so the crate builds standalone on crates.io.
+# Package the vendored engine sources so the crate builds standalone on crates.io. Tests (tests/**) are
+# deliberately not packaged — they need the `regex` dev-dependency as a differential oracle and are not part
+# of the published API; `cargo publish` noting "ignoring test ... not included" is expected, not a warning to
+# fix. They run in CI (the bindings / bindings-cross jobs) against the in-tree sources.
 include = ["src/**/*.rs", "build.rs", "Cargo.toml", "README.md", "vendor/**"]
 
 [features]

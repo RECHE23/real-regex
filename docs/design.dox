@@ -575,6 +575,9 @@ the build on any upward include, so the layering is a fact, not a comment. Low t
 - **root** — the public `real.hpp` / `dfa.hpp`, and `storage.hpp`, the assembly `real::regex` drives
 - **`std/`** — the `std::regex`-compatibility drop-in (`real::compat`): `regex.hpp` and its parts, built
   on the public `real::regex` (root tier). `tools/check_layers.py` ranks it with root.
+- **`bindings/`** is outside the engine tiers — the C ABI shim, the abi3 Python binding and the Rust
+  crate. The C shim is source-only (compiled into consumers, not installed as a library); see
+  `bindings/README.md` for the CMake-position rationale.
   (it orchestrates parse → compile → store, so it depends on every tier below).
 
 | Header               | Key types / functions | Role |

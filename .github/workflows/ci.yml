@@ -122,6 +122,23 @@ jobs:
       - name: Rust crate — packaging dry-run (builds the vendored crate standalone)
         run: make -C real-regex crate-publish-check
 
+  # The C shim + Rust crate on macOS (ARM) and Windows (MSVC), via cargo directly: build.rs cc-compiles the
+  # shim with the platform C++ compiler, so a platform issue in real_capi.h/.cpp or the crate — a __declspec,
+  # a calling convention, a C4996-class deprecation — is caught here, not by a user. cargo and the platform
+  # toolchain are preinstalled on the GitHub images; no make (the recipes are Unix-shell).
+  bindings-cross:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: crate build + differential tests (default)
+        run: cargo test --manifest-path bindings/rust/Cargo.toml
+      - name: crate build + differential tests (fallback)
+        run: cargo test --manifest-path bindings/rust/Cargo.toml --features fallback
+
   # Coverage gate: fail the build if line coverage drops below the floor (was advisory).
   coverage:
     runs-on: ubuntu-latest
