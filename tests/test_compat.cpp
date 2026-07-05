@@ -66,6 +66,49 @@ namespace {
     }
     return true;
   }
+
+  // As \ref agree but via regex_match — whole-sequence anchored, the surface the direct one-pass routing
+  // accelerates. Same verdict + per-group span required against std::regex_match.
+  bool agree_match(const std::string& pat,
+                   const std::string& subj)
+  {
+    rc::regex  rre;
+    std::regex sre;
+    try {
+      rre = rc::regex(pat);
+    }
+    catch (const std::exception&) {
+      return false;
+    }
+    try {
+      sre = std::regex(pat, std::regex::ECMAScript);
+    }
+    catch (const std::exception&) {
+      return false;
+    }
+    rc::smatch  rm;
+    std::smatch sm;
+    const bool  rf {rc::regex_match(subj, rm, rre)};
+    const bool  sf {std::regex_match(subj, sm, sre)};
+    if (rf != sf) {
+      return false;
+    }
+    if (!rf) {
+      return true;
+    }
+    if (rm.size() != sm.size()) {
+      return false;
+    }
+    for (std::size_t g = 0; g < rm.size(); ++g) {
+      if (rm[g].matched != sm[g].matched) {
+        return false;
+      }
+      if (rm[g].matched && (rm.position(g) != sm.position(g) || rm.length(g) != sm.length(g))) {
+        return false;
+      }
+    }
+    return true;
+  }
 } // namespace
 
 // A generic, application-neutral corpus of common idioms — forms only, exercising BOTH backends.
@@ -1274,4 +1317,30 @@ TEST(compat_replace_and_token_depth)
   const std::regex  sbackref(R"((a)\1(b))", std::regex::ECMAScript);
   EXPECT(!backref.uses_real());
   EXPECT_EQ(backref.mark_count(), sbackref.mark_count());
+}
+
+TEST(compat_regex_match_differential_vs_std)
+{
+  // regex_match (whole-sequence anchored) is the surface the direct one-pass routing accelerates — the harness
+  // above only exercises regex_search. Multi-group, Tier-B (^…$, \b, \A…\Z) and plain patterns must agree
+  // span-for-span with std::regex_match, matching and non-matching alike.
+  struct match_case
+  {
+    const char* pat;
+    const char* subj;
+  };
+  const match_case ok[] {
+    {.pat = R"((\w+)@(\w+))", .subj = "john@example"}, {.pat = R"((\d+)-(\d+)-(\d+))", .subj = "2026-07-04"},
+    {.pat = R"(\w+)", .subj = "identifier"},           {.pat = R"(([a-z]+):([0-9]+))", .subj = "port:8080"},
+    {.pat = R"(^(\w+)$)", .subj = "ident_42"},         {.pat = R"(\b(\w+)\b)", .subj = "word"},
+    {.pat = R"((\w+)\.(\w+)\.(\w+))", .subj = "a.b.c"}, {.pat = R"([A-Z][a-z]+)", .subj = "Hello"},
+    {.pat = R"(^(\d+)$)", .subj = "12345"},            {.pat = R"(([^ ]+) ([^ ]+))", .subj = "two words"},
+  };
+  const char* non_matching[] {"has spaces here", "trailing ", "", "a@b@c", "x"};
+  for (const match_case& m : ok) {
+    EXPECT(agree_match(m.pat, m.subj));
+    for (const char* nm : non_matching) {
+      EXPECT(agree_match(m.pat, nm)); // whole-sequence anchored: a partial match must fail both engines alike
+    }
+  }
 }

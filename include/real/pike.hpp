@@ -370,6 +370,17 @@ namespace real::detail {
       if constexpr (requires(State & s) {
         s.fwd_dfa;
       }) {
+        // Direct anchored routing: a full-match's window is exactly [start, text.size()] — no search, no DFA.
+        // A one-pass pattern (Tier A, or Tier B now that assertions are edge conditions) fills its captures in
+        // a single pass over that window; extract returns false (and we fall to the VM) if it does not one-pass
+        // or the span does not in fact match there. Only the immutables are needed, so no DFA build is paid.
+        if (!std::is_constant_evaluated() && !lazy_dfa_route_disabled() && mode == run_mode::full) {
+          ensure_immutables();
+          if (prog_.immut != nullptr && prog_.immut->op_table.has_value() && prog_.immut->op_table->eligible()
+              && prog_.immut->op_table->extract(text, start, text.size(), out_slots)) {
+            return true;
+          }
+        }
         // forbid_empty_until_ != 0 means the iterator just yielded an empty match and the next may not be
         // empty at the same spot; forward_end does not model that rule, so those searches stay on the Pike
         // VM (which does). Empty-matching patterns thus alternate DFA/VM across a find_iter; all others route.
@@ -501,22 +512,37 @@ namespace real::detail {
     //!        if the state is now bound to a different program (its `code` pointer changed). The cache then
     //!        persists across a whole find_iter (where it pays), and forward_end resets its per-search thrash
     //!        flag itself. Instantiated only for the dynamic state (the one carrying the optionals).
+    //! \brief Build the per-regex immutables once, race-free: the Tier-A byte-program the DFAs run over (and
+    //!        its shared alphabet), plus the one-pass extractor. The extractor is built Tier-B (assertions
+    //!        kept as edge conditions), so one table serves both the search window (Tier-A patterns have
+    //!        empty assertion masks) and direct anchored match/fullmatch (Tier-B patterns). Needs no DFA, so
+    //!        the anchored path can call this without paying the DFA build.
+    void ensure_immutables()
+    {
+      detail::regex_immutables* const immut {prog_.immut};
+      if (immut == nullptr) {
+        return;                                                      // no per-regex cache (not the dynamic storage) — the caller keeps the VM
+      }
+      std::call_once(immut->once, [&] {
+                       immut->byte_prog = build_byte_program(prog_); // Tier-A: ineligible if assert/lookaround
+                       if (immut->byte_prog.eligible) {
+                         immut->alphabet =
+                           compute_lazy_alphabet(immut->byte_prog.code, immut->byte_prog.classes); // shared by both DFAs
+                       }
+                       const byte_program tier_b {build_byte_program(prog_, /*keep_assertions=*/ true)};
+                       if (tier_b.eligible) {
+                         immut->op_table.emplace(tier_b); // one-pass extractor: Tier-A window + Tier-B anchored
+                       }
+                     });
+    }
+
     void ensure_lazy_dfa()
     {
       detail::regex_immutables* const immut {prog_.immut};
       if (immut == nullptr) {
         return; // no per-regex cache (not the dynamic storage) — the caller keeps the VM
       }
-      // The byte-program and one-pass table are immutable and per-regex: build them exactly once, race-free,
-      // shared by every find_iter on this regex (not rebuilt per iterator).
-      std::call_once(immut->once, [&] {
-                       immut->byte_prog = build_byte_program(prog_); // expands klass_cp; ineligible if assert/lookaround
-                       if (immut->byte_prog.eligible) {
-                         immut->alphabet =
-                           compute_lazy_alphabet(immut->byte_prog.code, immut->byte_prog.classes); // shared by both DFAs
-                         immut->op_table.emplace(immut->byte_prog);                                // one-pass extractor (Tier A) when the pattern qualifies
-                       }
-                     });
+      ensure_immutables();
       // The DFA transition caches are mutable (warm per scan): they stay per-iterator, spanning the shared
       // byte-program, rebuilt only if this state is now bound to a different program.
       const auto* const program {static_cast<const void*>(prog_.code.data())};

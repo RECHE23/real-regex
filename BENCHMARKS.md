@@ -318,12 +318,19 @@ surfaced them (each measured before it was fixed — the profiler moved the targ
    a `call_once` load on the hot path, a result re-binding its unchanged context. Setting each once took the
    last stretch to ~8.0.
 
+**Anchored matching (Tier B).** The direct `match` / `fullmatch` entry points — and, through the std-compat
+layer, `real::compat::regex_match` (the `std::regex` drop-in) — now route through the one-pass pass too, for
+assertion-bearing patterns as well: `^ $ \b \B \A \Z` become edge conditions the extractor evaluates
+(Brüggemann-Klein's one-unambiguous automata carry empty-width conditions on their transitions). A one-pass
+`regex_match` with submatches — `(\w+)@(\w+)`, `^(\w+)$`, `\b(\w+)\b` — extracts **4–5× faster** than the
+Pike VM it replaces. The one exception, deliberately declined to the VM (never wrong), is two edges on one
+byte-class whose assertion masks differ (`\bx|\Bx` — RE2's `kImpossible` refinement), a bounded follow-up.
+
 **Honesty.** One-pass touches neither the sparse nor the no-match-prefilter gap — those remain §E.1's
-inner-literal-prefilter follow-up. Two named, measured follow-ups survive this arc: the residual find_iter
-dispatch (the dense line straddles 8.0 rather than clearing it; the remaining ~1 ns/B is per-match iterator
-overhead, shared by every pattern) and **Tier-B assertions** — patterns with `^ $ \b` and the direct
-`match`/`fullmatch` entry points do not yet route through the one-pass pass. The arc closed the extractor gap
-§E.1 named and brought the dense-capture line to rust parity; what remains is bounded and named.
+inner-literal-prefilter follow-up, and the residual find_iter dispatch (the dense line straddles 8.0 rather
+than clearing it; ~1 ns/B of per-match iterator overhead, shared by every pattern) is the other named
+follow-up. The arc closed the extractor gap §E.1 named, brought the dense-capture line to rust parity, and
+carried anchored matching — the std-compat surface — onto the same one-pass path.
 
 ## Methodology & reproduction
 

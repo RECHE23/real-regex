@@ -449,3 +449,47 @@ TEST(onepass_tier_b_rejects_when_assertion_fails)
   EXPECT(tail.extract("foo bar", 0, 3, slots));    // trailing \b holds before the space
   EXPECT(!tail.extract("food", 0, 3, slots));      // trailing \b fails: 'o' and 'd' both word chars
 }
+
+TEST(onepass_fullmatch_routed_equals_pike)
+{
+  // Direct anchored routing: fullmatch of a one-pass pattern (Tier A, or Tier B via edge conditions) must
+  // give the same verdict and slots routed (the single-pass extract over [start, end]) as on the pure Pike
+  // VM. The seam toggles the route so both run in one binary.
+  struct fm_case
+  {
+    const char* pat;
+    real::flags f;
+  };
+  const fm_case cases[] {
+    {.pat = R"((\w+)@(\w+))", .f = real::flags::none},
+    {.pat = R"((\d+)-(\d+)-(\d+))", .f = real::flags::none},
+    {.pat = R"(\w+)", .f = real::flags::none},
+    {.pat = R"(^(\w+)$)", .f = real::flags::multiline},
+    {.pat = R"(\b(\w+)\b)", .f = real::flags::none},
+    {.pat = R"(^abc)", .f = real::flags::none},
+    {.pat = R"(([a-z]+):([0-9]+))", .f = real::flags::none},
+    {.pat = R"(\A(\d+)\Z)", .f = real::flags::none},
+  };
+  const char* subjects[] {
+    "john@example", "2026-07-04", "ident_42", "abc", "hello world", "no match here", "", "port:8080", "12345",
+  };
+  for (const fm_case& c : cases) {
+    const real::regex rx {c.pat, c.f};
+    for (const char* s : subjects) {
+      const std::string subj {s};
+      real::detail::lazy_dfa_route_disabled() = false;
+      const auto routed      {rx.fullmatch(subj)};
+      real::detail::lazy_dfa_route_disabled() = true;
+      const auto pike        {rx.fullmatch(subj)};
+      real::detail::lazy_dfa_route_disabled() = false;
+      EXPECT_EQ(routed.matched(), pike.matched());
+      if (routed.matched() && pike.matched()) {
+        EXPECT_EQ(routed.size(), pike.size());
+        for (std::size_t g = 0; g < routed.size(); ++g) {
+          EXPECT_EQ(routed.start(g), pike.start(g));
+          EXPECT_EQ(routed.end(g), pike.end(g));
+        }
+      }
+    }
+  }
+}
