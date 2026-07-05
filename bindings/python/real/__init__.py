@@ -147,7 +147,7 @@ def get_include():
     packaged = os.path.join(here, "include")
     if os.path.isdir(os.path.join(packaged, "real")):
         return packaged
-    return os.path.normpath(os.path.join(here, os.pardir, os.pardir, "include"))
+    return os.path.normpath(os.path.join(here, os.pardir, os.pardir, os.pardir, "include"))
 
 
 def get_config():

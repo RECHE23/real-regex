@@ -1,6 +1,6 @@
 # Python distribution for REAL. Built from the repository root so the sdist
 # is self-contained: it carries the C++ headers in include/ alongside the
-# binding in python/. The C++ library itself is header-only and needs none
+# binding in bindings/python/. The C++ library itself is header-only and needs none
 # of this — see the Makefile and CMakeLists.txt for the C++ workflows.
 [build-system]
 requires = ["setuptools>=68", "sciforge-build>=2026.6.8"]
@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 name = "real-regex"
 version = "2026.7.16"
 description = "REAL — linear-time (ReDoS-safe) regex engine with an re-compatible API"
-readme = "python/README.md"
+readme = "bindings/python/README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -33,10 +33,10 @@ Repository = "https://github.com/RECHE23/real-regex"
 Documentation = "https://reche23.github.io/real-regex/"
 Issues = "https://github.com/RECHE23/real-regex/issues"
 
-# The `real` package lives under python/; the C++ binding source under
-# python/src; the headers it compiles against under include/ (root).
+# The `real` package lives under bindings/python/; the C++ binding source under
+# bindings/python/src; the headers it compiles against under include/ (root).
 [tool.setuptools]
-package-dir = { "" = "python" }
+package-dir = { "" = "bindings/python" }
 packages = ["real"]
 
 [tool.setuptools.package-data]
@@ -46,7 +46,7 @@ real = ["*.so", "*.pyd", "py.typed"]
 [tool.cibuildwheel]
 build = "cp310-*"
 build-frontend = "build"
-test-command = "python -m unittest discover -s {project}/python/tests"
+test-command = "python -m unittest discover -s {project}/bindings/python/tests"
 
 [tool.cibuildwheel.macos]
 environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }

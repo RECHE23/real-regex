@@ -12,7 +12,7 @@ import unicodedata
 
 def repo_root():
     """The repository root (three levels up from python/tests/)."""
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 
 def assert_regenerates_byte_identical(test_case, header_path, version_const, regen_to):

@@ -1,8 +1,8 @@
 # Make the sdist self-contained: carry the C++ headers the binding compiles
 # against and the binding source, plus the project docs.
 graft include
-recursive-include python/src *.cpp
-recursive-include python/tests *.py
-include python/real/py.typed
+recursive-include bindings/python/src *.cpp
+recursive-include bindings/python/tests *.py
+include bindings/python/real/py.typed
 include README.md LICENSE
-include python/README.md
+include bindings/python/README.md

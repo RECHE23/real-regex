@@ -77,7 +77,7 @@ setup(
     ext_modules=[
         Extension(
             "real._real",
-            sources=["python/src/_real.cpp"],
+            sources=["bindings/python/src/_real.cpp"],
             include_dirs=["include", _sciforge_include()],
             extra_compile_args=compile_args,
             define_macros=[("Py_LIMITED_API", "0x030A0000")],

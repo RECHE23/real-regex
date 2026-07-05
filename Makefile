@@ -20,11 +20,11 @@ JOBS   ?= $(shell sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
 # benches import it only when run (make bench-*), and it is never shipped in the wheel.
 SCIFORGE_PYTHON ?= ../sciforge/python
 
-# Run Python against the in-place build under python/, ahead of any installed
+# Run Python against the in-place build under bindings/python/, ahead of any installed
 # copy (PYTHONPATH precedes site-packages, so an editable install elsewhere
 # cannot shadow the freshly built extension). The SciForge sibling is appended so the
 # benches can `import sciforge.bench` (the shared stats/schema substrate).
-PYRUN := PYTHONPATH=$(CURDIR)/python:$(abspath $(SCIFORGE_PYTHON)) $(PYTHON)
+PYRUN := PYTHONPATH=$(CURDIR)/bindings/python:$(abspath $(SCIFORGE_PYTHON)) $(PYTHON)
 
 # Forward CMAKE_CXX_COMPILER only when CXX is set on the command line;
 # otherwise CMake selects the platform default.
@@ -238,13 +238,13 @@ HEADERS := $(shell find include/real -name '*.hpp')
 
 python: $(BUILD)/py_ext.stamp
 
-$(BUILD)/py_ext.stamp: python/src/_real.cpp $(HEADERS)
+$(BUILD)/py_ext.stamp: bindings/python/src/_real.cpp $(HEADERS)
 	SCIFORGE_INCLUDE=$(SCIFORGE_INCLUDE) $(PYTHON) setup.py -q build_ext --inplace --force
 	@mkdir -p $(BUILD)
 	@touch $@
 
 python-test: python
-	$(PYRUN) -m unittest discover -s python/tests
+	$(PYRUN) -m unittest discover -s bindings/python/tests
 
 # Version-consistency gate: pyproject.toml is the single source of truth — `make
 # release` bumps __init__.py from it, CMakeLists.txt derives it. Asserts the three
@@ -252,7 +252,7 @@ python-test: python
 # invariant the CMake 2026.6.6-vs-.8 drift violated.
 version-check:
 	@py=$$(sed -nE 's/^version = "([0-9][0-9.]*)"/\1/p' pyproject.toml); \
-	 ini=$$(sed -nE 's/^__version__ = "([0-9][0-9.]*)"/\1/p' python/real/__init__.py); \
+	 ini=$$(sed -nE 's/^__version__ = "([0-9][0-9.]*)"/\1/p' bindings/python/real/__init__.py); \
 	 lit=$$(sed -nE 's/^project\([A-Za-z_]+ VERSION ([0-9][0-9.]*).*/\1/p' CMakeLists.txt); \
 	 if [ -z "$$py" ]; then echo "version-check: no version found in pyproject.toml"; exit 1; fi; \
 	 if [ "$$py" != "$$ini" ]; then echo "version-check: DRIFT pyproject=$$py vs __init__=$$ini"; exit 1; fi; \
@@ -443,15 +443,15 @@ release:
 	 version="$$year.$$month.$$patch"; \
 	 echo "Releasing v$$version"; \
 	 sed -i.bak -E "s/^version = \".*\"/version = \"$$version\"/" pyproject.toml && rm -f pyproject.toml.bak; \
-	 sed -i.bak -E "s/^__version__ = \".*\"/__version__ = \"$$version\"/" python/real/__init__.py && rm -f python/real/__init__.py.bak; \
+	 sed -i.bak -E "s/^__version__ = \".*\"/__version__ = \"$$version\"/" bindings/python/real/__init__.py && rm -f bindings/python/real/__init__.py.bak; \
 	 vmaj=$$(echo "$$version" | cut -d. -f1); vmin=$$(echo "$$version" | cut -d. -f2); vpat=$$(echo "$$version" | cut -d. -f3); \
 	 sed -i.bak -E "s/^#define REAL_VERSION_MAJOR .*/#define REAL_VERSION_MAJOR $$vmaj/; \
 	                s/^#define REAL_VERSION_MINOR .*/#define REAL_VERSION_MINOR $$vmin/; \
 	                s/^#define REAL_VERSION_PATCH .*/#define REAL_VERSION_PATCH $$vpat/" include/real/version.hpp && rm -f include/real/version.hpp.bak; \
-	 git add pyproject.toml python/real/__init__.py include/real/version.hpp; \
+	 git add pyproject.toml bindings/python/real/__init__.py include/real/version.hpp; \
 	 git commit -m "release: v$$version"; \
 	 git tag "v$$version"; \
 	 git push origin HEAD "v$$version"
 
 clean:
-	rm -rf $(BUILD) python/build python/real/*.so python/*.egg-info *.egg-info dist
+	rm -rf $(BUILD) bindings/python/build bindings/python/real/*.so bindings/python/*.egg-info *.egg-info dist

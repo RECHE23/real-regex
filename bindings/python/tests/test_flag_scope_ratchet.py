@@ -37,7 +37,7 @@ def _strip_comments(src):
 
 
 def _count_reads():
-    include_dir = pathlib.Path(__file__).resolve().parents[2] / "include" / "real"
+    include_dir = pathlib.Path(__file__).resolve().parents[3] / "include" / "real"
     counts = dict.fromkeys(_FLAGS, 0)
     for name in _HEADERS:
         code = _strip_comments((include_dir / name).read_text())
