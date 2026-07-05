@@ -17,6 +17,9 @@ use std::ops::Index;
 use std::os::raw::c_char;
 use std::sync::Arc;
 
+/// The crate's version (CalVer, shared with the C++ engine and the Python wheel).
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 // Opaque C handles.
 enum RealRegex {}
 enum RealIter {}

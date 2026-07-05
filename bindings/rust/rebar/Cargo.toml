@@ -1,0 +1,18 @@
+# A rebar (https://github.com/BurntSushi/rebar) engine runner for the real-regex crate. Standalone: it speaks
+# rebar's KLV protocol itself (no rebar-crate dependency), so it plugs into a rebar checkout via engines.toml
+# without building rebar. Dev-only, never published.
+[package]
+name = "real-regex-rebar"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[[bin]]
+name = "real-regex-rebar"
+path = "src/main.rs"
+
+[dependencies.real-regex]
+path = ".."
+
+# Standalone workspace so `cargo test` on the parent crate ignores this.
+[workspace]
