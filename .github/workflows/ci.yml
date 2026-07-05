@@ -139,6 +139,21 @@ jobs:
       - name: crate build + differential tests (fallback)
         run: cargo test --manifest-path bindings/rust/Cargo.toml --features fallback
 
+  # The third differential fuzzer: real-regex vs the regex crate (cargo-fuzz, nightly). A short smoke here;
+  # the long run is on the devbox. re/std/rust are now all covered by a differential fuzzer.
+  fuzz-rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install clang (the shim's cc-build)
+        run: sudo apt-get update && sudo apt-get install -y clang
+      - name: Install nightly + cargo-fuzz
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cargo install cargo-fuzz --locked
+      - name: Differential fuzz smoke (real-regex vs the regex crate)
+        run: cd bindings/rust && cargo +nightly fuzz run differential -- -max_total_time=45 -timeout=10
+
   # Coverage gate: fail the build if line coverage drops below the floor (was advisory).
   coverage:
     runs-on: ubuntu-latest

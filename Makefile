@@ -47,7 +47,7 @@ SCIFORGE_TOOLS ?= ../sciforge/tools
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep -vE 'include/real/unicode/unicode_(fold|props)\.hpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-        lint misra fuzz fuzz-compat fuzz-capi exhaustive-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
+        lint misra fuzz fuzz-compat fuzz-capi fuzz-rust exhaustive-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
         python python-test bench-python bench-fuzz bench-engines bench-duel \
         version-check install install-smoke uninstall release help capi-test crate-vendor crate-publish-check crate-test check-layers
 
@@ -221,6 +221,12 @@ fuzz-capi:
 	clang++ $(CXXSTD) -O1 -g $(INCLUDES) -Ibindings/c \
 	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_capi.cpp -o $(FUZZ_DIR)/fuzz_capi
 	$(FUZZ_DIR)/fuzz_capi -max_total_time=$(FUZZ_TIME) -timeout=10 $(FUZZ_DIR)/corpus-capi
+
+# The third differential fuzzer: the real-regex crate vs the regex crate (cargo-fuzz / libFuzzer, nightly —
+# dev-only). Raw bytes -> (pattern, text); every pattern both engines accept must agree on spans/captures/
+# replace/split. The long run is on the devbox; this is the local/CI smoke. Needs: rustup nightly + cargo-fuzz.
+fuzz-rust:
+	cd bindings/rust && cargo +nightly fuzz run differential -- -max_total_time=$(FUZZ_TIME) -timeout=10
 
 doc: coverage-html
 	mkdir -p $(BUILD)/doc

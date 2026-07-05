@@ -1,0 +1,30 @@
+# cargo-fuzz workspace for the real-regex crate — the third differential fuzzer (re ✓, std ✓, rust ✓).
+# Requires nightly (cargo-fuzz / libFuzzer are a nightly feature); dev-only, never published.
+[package]
+name = "real-regex-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+regex = "1"
+
+[dependencies.real-regex]
+path = ".."
+
+[[bin]]
+name = "differential"
+path = "fuzz_targets/differential.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1
+
+# Standalone workspace so `cargo test` on the parent crate ignores this nested fuzz package.
+[workspace]

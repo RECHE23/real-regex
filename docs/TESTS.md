@@ -4,8 +4,14 @@ REAL is tested four ways, each catching what the others cannot:
 
 - **Unit + parity tests** (`tests/`, `bindings/python/tests/`) — behaviour pinned directly, and a differential
   corpus run against Python `re` across every API.
-- **A randomized differential fuzzer** (`bindings/python/tests/test_differential_fuzz.py`) — thousands of random
-  patterns compared to `re`, including nullable loops and scoped flags.
+- **Three differential fuzzers**, one per external engine REAL is measured against:
+  - vs Python **`re`** — `bindings/python/tests/test_differential_fuzz.py`, thousands of random patterns
+    (nullable loops, scoped flags) compared to `re`.
+  - vs **`std::regex`** — `fuzz/fuzz_compat.cpp` (libFuzzer + ASan/UBSan), the `real::compat` drop-in against
+    libstdc++'s `std::regex`; the net that has caught every silent compat divergence.
+  - vs the Rust **`regex`** crate — `bindings/rust/fuzz/` (cargo-fuzz, nightly), the `real-regex` crate against
+    `regex` on spans / captures / replace / split. The C ABI shim has its own robustness fuzzer
+    (`fuzz/fuzz_capi.cpp`).
 - **An exhaustive small-space enumeration** (`sciforge.corpus.exhaustive`) — every pattern up to *k*
   constructs over a tiny alphabet crossed with every short input, differential against `re`.
 - **Public conformance suites** — the vendored rust-regex and Fowler/AT&T corpora, below.
