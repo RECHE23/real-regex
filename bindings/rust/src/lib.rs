@@ -38,6 +38,9 @@ extern "C" {
 
 const DIVERGENCES_URL: &str = "https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md";
 const REAL_ERR_UNSUPPORTED: i32 = 2; // must match REAL_ERR_UNSUPPORTED in real_capi.h
+// real::flags::dollar_endonly — `$` (no multiline) matches only at the very end, never before a final `\n`.
+// The crate compiles every pattern with it, so `$` carries rust's `\z` semantics instead of Python re's.
+const DOLLAR_ENDONLY: u32 = 128;
 
 /// Why a pattern failed to compile.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,7 +105,7 @@ fn compile_handle(pattern: &[u8], flags: u32) -> Result<(*mut RealRegex, usize, 
     let mut err = [0u8; 256];
     let mut code: i32 = 0;
     let handle = unsafe {
-        real_compile(pattern.as_ptr() as *const c_char, pattern.len(), flags,
+        real_compile(pattern.as_ptr() as *const c_char, pattern.len(), flags | DOLLAR_ENDONLY,
                      err.as_mut_ptr() as *mut c_char, err.len(), &mut code)
     };
     if handle.is_null() {

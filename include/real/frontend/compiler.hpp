@@ -614,12 +614,13 @@ namespace real::detail {
           result = multiline ? assert_kind::line_start : assert_kind::text_start;
           break;
         case anchor_kind::dollar:
-          // Default (Python): `$` matches at end OR just before a final `\n`. With the
-          // ecma flag, `$` (no multiline) matches only at the very end (ECMAScript `$`).
+          // Default (Python): `$` matches at end OR just before a final `\n`. With the ecma OR dollar_endonly
+          // flag, `$` (no multiline) matches only at the very end — ECMAScript / Rust (`\z`) semantics.
           result = multiline
                    ? assert_kind::line_end
-                   : (has_flag(flags_, flags::ecma) ? assert_kind::text_end
-                                                    : assert_kind::text_end_or_final_newline);
+                   : (has_flag(flags_, flags::ecma) || has_flag(flags_, flags::dollar_endonly)
+                        ? assert_kind::text_end
+                        : assert_kind::text_end_or_final_newline);
           break;
         case anchor_kind::text_start:
           result = assert_kind::text_start;

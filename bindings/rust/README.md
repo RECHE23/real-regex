@@ -40,6 +40,9 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   (`(?:|ab)*` on "abab": rust yields empties at 1 and 3). To keep this free for the common case, the wrapper
   stays on the cheap engine iterator until the first empty match, then switches to driving — so patterns that
   never match empty pay nothing. `find_iter` / `split` / `replace_all` match the `regex` crate.
+- **`$` anchor — resolved.** Python `re`'s `$` (no multiline) matches at the end **or** just before a final
+  `\n`; rust's is end-only. The crate compiles every pattern with the engine's `dollar_endonly` flag, so `$`
+  is end-only — `a$` on `"a\n"` finds nothing, like `regex`. `(?m)$` (line-relative) is identical in both.
 - **`shortest_match` — residual.** REAL is leftmost-**first** (like `regex`), but this returns the leftmost
   match's *greedy* end, whereas `regex` returns the earliest position at which a match completes (`a+` on
   `"aaa"`: REAL `3`, `regex` `1`). A true earliest-completion mode (a `first-accept` stop in the forward
