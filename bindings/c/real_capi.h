@@ -26,11 +26,20 @@ real_regex* real_compile(const char* pattern, size_t len, uint32_t flags, char* 
  * real_iter_next must hold 2 * this many size_t. */
 size_t real_group_count(const real_regex* re);
 
+/* Write the name of capture group `group` (NUL-terminated) into `buf`, and return the name's length. A group
+ * with no name (including group 0) writes an empty string and returns 0. `buf` may be NULL to query the
+ * length only. */
+size_t real_group_name(const real_regex* re, size_t group, char* buf, size_t buflen);
+
 void real_free(real_regex* re);
 
 /* Iterate the non-overlapping matches over [text, text+len). Both `re` and the text buffer must outlive the
  * returned iterator. Returns NULL only on allocation failure. */
 real_iter* real_find_iter(const real_regex* re, const char* text, size_t len);
+
+/* Like real_find_iter, but the search starts at byte offset `start` (the region [start, len)). Anchors see
+ * `start` as the region start, matching the engine's pos semantics. */
+real_iter* real_find_iter_at(const real_regex* re, const char* text, size_t len, size_t start);
 
 /* Advance to the next match. On a match, fills `spans` with 2 * real_group_count(re) offsets
  * (start0, end0, start1, end1, …); an unset group is (SIZE_MAX, SIZE_MAX). Returns 1 on a match, 0 at the

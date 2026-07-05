@@ -30,6 +30,23 @@ int main(void) {
   assert(bad == NULL);
   assert(strlen(err) > 0); /* a message was reported */
 
+  /* group names + find-at */
+  const char* npat = "(?P<user>\\w+)@(?P<host>\\w+)";
+  real_regex* named = real_compile(npat, strlen(npat), 0, err, sizeof err);
+  assert(named != NULL);
+  char name[64];
+  assert(real_group_name(named, 0, name, sizeof name) == 0 && name[0] == '\0'); /* group 0 unnamed */
+  assert(real_group_name(named, 1, name, sizeof name) == 4 && strcmp(name, "user") == 0);
+  assert(real_group_name(named, 2, name, sizeof name) == 4 && strcmp(name, "host") == 0);
+
+  const char* nt = "a@b cd@ef";
+  real_iter* at = real_find_iter_at(named, nt, strlen(nt), 4); /* search from offset 4: skips a@b */
+  size_t ns[6];
+  assert(real_iter_next(at, ns) == 1 && ns[0] == 4 && ns[1] == 9); /* cd@ef */
+  assert(real_iter_next(at, ns) == 0);
+  real_iter_free(at);
+  real_free(named);
+
   printf("capi-test: OK\n");
   return 0;
 }

@@ -55,6 +55,24 @@ size_t real_group_count(const real_regex* re)
   return re->rx.group_count() + 1; // group_count() excludes group 0
 }
 
+size_t real_group_name(const real_regex* re, size_t group, char* buf, size_t buflen)
+{
+  for (const auto& [name, number] : re->rx.named_groups()) {
+    if (number == group) {
+      if (buf != nullptr && buflen > 0) {
+        const size_t n {name.size() < (buflen - 1) ? name.size() : (buflen - 1)};
+        std::memcpy(buf, name.data(), n);
+        buf[n] = '\0';
+      }
+      return name.size();
+    }
+  }
+  if (buf != nullptr && buflen > 0) {
+    buf[0] = '\0';
+  }
+  return 0; // unnamed (or group 0 / out of range)
+}
+
 void real_free(real_regex* re)
 {
   delete re;
@@ -64,6 +82,17 @@ real_iter* real_find_iter(const real_regex* re, const char* text, size_t len)
 {
   try {
     auto range = re->rx.find_iter(std::string_view(text, len));
+    return new real_iter {range.begin(), range.end()};
+  }
+  catch (...) {
+    return nullptr;
+  }
+}
+
+real_iter* real_find_iter_at(const real_regex* re, const char* text, size_t len, size_t start)
+{
+  try {
+    auto range = re->rx.find_iter(std::string_view(text, len), start, len);
     return new real_iter {range.begin(), range.end()};
   }
   catch (...) {

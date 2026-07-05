@@ -12,8 +12,8 @@ lookaround) is rejected at compile time, never silently made non-linear.
 use real_regex::Regex;
 
 let re = Regex::new(r"(\w+)@(\w+)").unwrap();
-for m in re.find_iter("a@b cd@ef") {
-    println!("{:?} / {:?}", m.get(1), m.get(2));
+for caps in re.captures_iter("a@b cd@ef") {
+    println!("{:?} / {:?}", &caps[1], &caps[2]);
 }
 ```
 
