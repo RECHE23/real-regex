@@ -511,3 +511,17 @@ TEST(rare_byte_prefilter_finds_every_match)
   EXPECT(!tag.search("12@abc"));           // only two digits before @
   EXPECT(!tag.search("no at-sign here"));  // the rare byte absent -> instant reject
 }
+
+TEST(find_literal_memmem_wrapper)
+{
+  using real::detail::find_literal;
+  constexpr auto no = real::npos;
+  EXPECT(find_literal("a@b", 0, "@") == 1);               // single byte -> memchr path
+  EXPECT(find_literal("xx key= yy", 0, "key=") == 3);     // multi-byte
+  EXPECT(find_literal("hello", 0, "xyz") == no);          // absent
+  EXPECT(find_literal("a@b@c", 2, "@") == 3);             // from an offset
+  EXPECT(find_literal("kekey=", 0, "key=") == 2);         // lead matches, tail fails, then a real hit
+  EXPECT(find_literal("ab", 0, "abc") == no);             // literal longer than the text
+  EXPECT(find_literal("abc", 1, "") == 1);                // empty literal -> pos
+  EXPECT(find_literal("x\xC3\xA9y", 0, "\xC3\xA9") == 1); // non-ASCII bytes in the literal
+}
