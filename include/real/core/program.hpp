@@ -299,6 +299,16 @@ namespace real {
       //!        the per-byte first-byte bitmap loop on a common class. -1 when no such byte was found.
       std::int16_t rare_byte   {-1};
       std::uint8_t rare_offset {}; //!< The fixed byte offset of \ref rare_byte from the match start.
+
+      //! \brief A *required inner literal* every match must contain (the memmem candidate the inner-literal
+      //!        prefilter scans for), and how many top-level children precede it — the prefix the prefilter
+      //!        reverse-matches from a candidate back to the match start. `inner_literal_len == 0` = none;
+      //!        `inner_literal_prefix == 0` = the literal is at the head (reverse is the identity), `-1` = it
+      //!        is nested with no clean prefix boundary. Filled at compile from the AST (raw bytes, so \ref
+      //!        pattern_hints — a core type — need not know the frontend literal type). Not yet routed on.
+      std::array<std::uint8_t, 16> inner_literal        {};
+      std::uint8_t                 inner_literal_len    {};
+      std::int32_t                 inner_literal_prefix {-1};
     };
 
     /*!

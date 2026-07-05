@@ -30,6 +30,7 @@
 #include "real/core/charclass.hpp"
 #include "real/core/config.hpp"
 #include "real/engine/prefilter.hpp"
+#include "real/frontend/inner_literal.hpp"
 #include "real/core/program.hpp"
 #include "real/unicode/unicode_fold.hpp"
 #include "real/automata/utf8_ranges.hpp"
@@ -136,6 +137,12 @@ namespace real::detail {
       prog.byte_mode    = has_flag(flags_, flags::bytes);
       prog.unicode_word = !has_flag(flags_, flags::bytes) && !has_flag(flags_, flags::ascii);
       prog.hints        = analyze_program(prog.code, prog.classes, prog.cp_classes, prog.codepoint_mark_ascii, prog.codepoint_mark_offset);
+      // The required inner literal + its prefix boundary (a single AST walk). Recorded for the inner-literal
+      // search path; not yet routed on. Kept off the program code, so byte-identity is untouched.
+      const inner_literal il {extract_inner_literal(tree_)};
+      prog.hints.inner_literal        = il.bytes;
+      prog.hints.inner_literal_len    = il.len;
+      prog.hints.inner_literal_prefix = il.prefix_child_count;
       if (prog.code.size() > max_program_size) {
         throw regex_error("program too large", 0);
       }

@@ -4,6 +4,7 @@
 #include <sciforge/test/framework.hpp>
 
 #include <real/frontend/inner_literal.hpp>
+#include <real/frontend/compiler.hpp>
 
 #include <cstring>
 #include <string_view>
@@ -64,4 +65,21 @@ TEST(inner_literal_prefix_boundary)
   EXPECT(extract(R"(key=(\w+))").prefix_child_count == 0);         // literal at head -> empty prefix
   EXPECT(extract(R"(@\w+)").prefix_child_count == 0);              // head literal: reverse must return s = candidate
   EXPECT(extract(R"((foo)bar)").prefix_child_count == -1);         // literal opens inside a group -> no clean boundary
+}
+
+
+TEST(inner_literal_stored_in_hints)
+{
+  // IL.2 foundation: the extraction is recorded in pattern_hints at compile (the search path's input).
+  const real::detail::dynamic_program p1 {real::detail::compile(real::detail::parse(R"(\d{4}-\d{2})", real::flags::none), real::flags::none)};
+  EXPECT(p1.hints.inner_literal_len == 1 && p1.hints.inner_literal[0] == static_cast<std::uint8_t>('-'));
+  EXPECT(p1.hints.inner_literal_prefix == 1);
+
+  const real::detail::dynamic_program p2 {real::detail::compile(real::detail::parse(R"((\w+)@(\w+))", real::flags::none), real::flags::none)};
+  EXPECT(p2.hints.inner_literal_len == 1 && p2.hints.inner_literal[0] == static_cast<std::uint8_t>('@'));
+  EXPECT(p2.hints.inner_literal_prefix == 1);
+
+  // No required literal -> empty hint.
+  const real::detail::dynamic_program p3 {real::detail::compile(real::detail::parse(R"(\w+)", real::flags::none), real::flags::none)};
+  EXPECT(p3.hints.inner_literal_len == 0);
 }
