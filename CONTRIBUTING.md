@@ -40,6 +40,11 @@ Run it before every push. Individual steps (`make test`, `make lint`, `make cove
   width and truncate at the boundary.
 - **Public API is stable.** `<real/real.hpp>` and the opt-in `<real/dfa.hpp>` are the only supported include
   paths; internal headers say so at the top and may move.
+- **Moving OR deleting a path? Grep `.github/` first.** The local gate does not run every CI workflow, and the
+  reusable SciForge workflows reference consumer paths by convention (e.g. `cmake/smoke/` is the find_package
+  smoke that `build-cpp.yml` configures). A relocation or deletion that greps only source/docs will pass the
+  local gate and only fail in CI — this bit a `python/` move once and a `cmake/smoke/` delete once. Grep
+  `.github/` (and the SciForge reusable workflows) for the path before you commit.
 
 ## Releases
 
