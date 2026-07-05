@@ -338,3 +338,249 @@ impl<'t> Iterator for CaptureMatches<'_, 't> {
         self.raw.next().map(|s| self.re.caps_from(self.text, s))
     }
 }
+
+// ── Flags (real::flags bits) ────────────────────────────────────────────────────────────────────────────
+const FLAG_ICASE: u32 = 1;
+const FLAG_MULTILINE: u32 = 2;
+const FLAG_DOTALL: u32 = 4;
+const FLAG_VERBOSE: u32 = 16;
+const FLAG_ASCII: u32 = 64;
+
+/// A builder for a [`Regex`] with readable options — the mirror of `regex::RegexBuilder`.
+pub struct RegexBuilder {
+    pattern: String,
+    flags: u32,
+}
+
+impl RegexBuilder {
+    /// Start building from `pattern`.
+    pub fn new(pattern: &str) -> RegexBuilder {
+        RegexBuilder { pattern: pattern.to_string(), flags: 0 }
+    }
+
+    fn set(&mut self, bit: u32, yes: bool) -> &mut RegexBuilder {
+        if yes { self.flags |= bit } else { self.flags &= !bit }
+        self
+    }
+
+    /// Case-insensitive matching (ASCII; REAL's icase). Maps to `(?i)`.
+    pub fn case_insensitive(&mut self, yes: bool) -> &mut RegexBuilder {
+        self.set(FLAG_ICASE, yes)
+    }
+
+    /// `^`/`$` match at line boundaries. Maps to `(?m)`.
+    pub fn multi_line(&mut self, yes: bool) -> &mut RegexBuilder {
+        self.set(FLAG_MULTILINE, yes)
+    }
+
+    /// `.` matches newlines. Maps to `(?s)`.
+    pub fn dot_matches_new_line(&mut self, yes: bool) -> &mut RegexBuilder {
+        self.set(FLAG_DOTALL, yes)
+    }
+
+    /// Verbose mode — insignificant whitespace and `#` comments. Maps to `(?x)`.
+    pub fn ignore_whitespace(&mut self, yes: bool) -> &mut RegexBuilder {
+        self.set(FLAG_VERBOSE, yes)
+    }
+
+    /// Unicode mode. `true` (the default) keeps REAL's Unicode str semantics; `false` restricts `\w \d \s \b`
+    /// and case folding to ASCII (REAL's `ascii` flag), mirroring `regex`'s `unicode(false)`.
+    pub fn unicode(&mut self, yes: bool) -> &mut RegexBuilder {
+        self.set(FLAG_ASCII, !yes)
+    }
+
+    /// Accepted for API compatibility with `regex`; REAL enforces its own fixed complexity caps, so this is a
+    /// no-op (there is no per-pattern memory budget to set).
+    pub fn size_limit(&mut self, _bytes: usize) -> &mut RegexBuilder {
+        self
+    }
+
+    /// Compile the configured pattern.
+    pub fn build(&self) -> Result<Regex, String> {
+        Regex::with_flags(&self.pattern, self.flags)
+    }
+}
+
+// ── Replace ─────────────────────────────────────────────────────────────────────────────────────────────
+use std::borrow::Cow;
+
+/// A replacement value for [`Regex::replace`] and friends — a `&str`/`String` template (with `$0`, `$1`,
+/// `$name`, `${name}` expansion and `$$` for a literal `$`), a [`NoExpand`] literal, or a closure
+/// `FnMut(&Captures) -> impl AsRef<str>`.
+pub trait Replacer {
+    /// Append the replacement for `caps` to `dst`.
+    fn replace_append(&mut self, caps: &Captures, dst: &mut String);
+}
+
+/// A literal replacement, with no `$` expansion (mirrors `regex::NoExpand`).
+pub struct NoExpand<'a>(pub &'a str);
+
+impl Replacer for NoExpand<'_> {
+    fn replace_append(&mut self, _caps: &Captures, dst: &mut String) {
+        dst.push_str(self.0);
+    }
+}
+
+impl Replacer for &str {
+    fn replace_append(&mut self, caps: &Captures, dst: &mut String) {
+        expand(caps, self, dst);
+    }
+}
+
+impl Replacer for String {
+    fn replace_append(&mut self, caps: &Captures, dst: &mut String) {
+        expand(caps, self, dst);
+    }
+}
+
+impl<F, T> Replacer for F
+where
+    F: FnMut(&Captures) -> T,
+    T: AsRef<str>,
+{
+    fn replace_append(&mut self, caps: &Captures, dst: &mut String) {
+        dst.push_str((*self)(caps).as_ref());
+    }
+}
+
+// Expand a `$`-template against caps. $$ -> $, $N / ${N} -> group N, $name / ${name} -> named group; an
+// unknown group expands to nothing, as regex does. A `$` with no valid name following stays literal.
+fn expand(caps: &Captures, template: &str, dst: &mut String) {
+    let mut rest = template;
+    while let Some(i) = rest.find('$') {
+        dst.push_str(&rest[..i]);
+        rest = &rest[i + 1..];
+        if let Some(stripped) = rest.strip_prefix('$') {
+            dst.push('$');
+            rest = stripped;
+            continue;
+        }
+        let (name, after) = if let Some(braced) = rest.strip_prefix('{') {
+            match braced.find('}') {
+                Some(j) => (&braced[..j], &braced[j + 1..]),
+                None => {
+                    dst.push('$');
+                    ("", rest)
+                }
+            }
+        } else {
+            let end = rest.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(rest.len());
+            (&rest[..end], &rest[end..])
+        };
+        rest = after;
+        if name.is_empty() {
+            dst.push('$');
+            continue;
+        }
+        let m = match name.parse::<usize>() {
+            Ok(n) => caps.get(n),
+            Err(_) => caps.name(name),
+        };
+        if let Some(m) = m {
+            dst.push_str(m.as_str());
+        }
+    }
+    dst.push_str(rest);
+}
+
+impl Regex {
+    /// Replace the leftmost match in `text` with `rep`. If there is no match, `text` is returned unchanged
+    /// (borrowed).
+    pub fn replace<'t, R: Replacer>(&self, text: &'t str, rep: R) -> Cow<'t, str> {
+        self.replacen(text, 1, rep)
+    }
+
+    /// Replace every non-overlapping match in `text` with `rep`.
+    pub fn replace_all<'t, R: Replacer>(&self, text: &'t str, rep: R) -> Cow<'t, str> {
+        self.replacen(text, 0, rep)
+    }
+
+    /// Replace at most `limit` matches (`0` means all).
+    pub fn replacen<'t, R: Replacer>(&self, text: &'t str, limit: usize, mut rep: R) -> Cow<'t, str> {
+        let mut out: Option<String> = None;
+        let mut last = 0;
+        for (i, caps) in self.captures_iter(text).enumerate() {
+            if limit != 0 && i >= limit {
+                break;
+            }
+            let m = caps.get(0).unwrap();
+            let dst = out.get_or_insert_with(|| String::with_capacity(text.len()));
+            dst.push_str(&text[last..m.start()]);
+            rep.replace_append(&caps, dst);
+            last = m.end();
+        }
+        match out {
+            Some(mut dst) => {
+                dst.push_str(&text[last..]);
+                Cow::Owned(dst)
+            }
+            None => Cow::Borrowed(text),
+        }
+    }
+
+    /// Iterate the substrings of `text` delimited by matches (leading/trailing empties included), mirroring
+    /// `regex::Regex::split`.
+    pub fn split<'r, 't>(&'r self, text: &'t str) -> Split<'r, 't> {
+        Split { text, it: self.find_iter(text), last: 0, done: false }
+    }
+
+    /// Like [`split`](Regex::split), but yielding at most `limit` substrings (the last is the unsplit
+    /// remainder). `limit == 0` yields nothing.
+    pub fn splitn<'r, 't>(&'r self, text: &'t str, limit: usize) -> SplitN<'r, 't> {
+        SplitN { inner: self.split(text), limit, n: 0 }
+    }
+}
+
+/// Iterator of the pieces between matches, from [`Regex::split`].
+pub struct Split<'r, 't> {
+    text: &'t str,
+    it: Matches<'r, 't>,
+    last: usize,
+    done: bool,
+}
+
+impl<'t> Iterator for Split<'_, 't> {
+    type Item = &'t str;
+    fn next(&mut self) -> Option<&'t str> {
+        if self.done {
+            return None;
+        }
+        match self.it.next() {
+            Some(m) => {
+                let piece = &self.text[self.last..m.start()];
+                self.last = m.end();
+                Some(piece)
+            }
+            None => {
+                self.done = true;
+                Some(&self.text[self.last..])
+            }
+        }
+    }
+}
+
+/// Iterator of at most `limit` pieces, from [`Regex::splitn`].
+pub struct SplitN<'r, 't> {
+    inner: Split<'r, 't>,
+    limit: usize,
+    n: usize,
+}
+
+impl<'t> Iterator for SplitN<'_, 't> {
+    type Item = &'t str;
+    fn next(&mut self) -> Option<&'t str> {
+        if self.n >= self.limit {
+            return None;
+        }
+        self.n += 1;
+        if self.n == self.limit {
+            // Last allowed piece: the unsplit remainder from the current cursor to the end.
+            if self.inner.done {
+                return None;
+            }
+            self.inner.done = true;
+            return Some(&self.inner.text[self.inner.last..]);
+        }
+        self.inner.next()
+    }
+}
