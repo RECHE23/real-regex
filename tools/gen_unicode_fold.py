@@ -11,7 +11,7 @@ but `str.lower` expands to 'i' + combining dot) using `re` as the oracle, and fi
 every cased code point against `re` exhaustively. The script aborts on any mismatch.
 
 Deterministic: for a fixed CPython Unicode version the output is byte-identical. Regenerate after a
-CPython Unicode-data bump (see scripts/REGEN.md); the emitted `unicode_fold_unidata_version` is
+CPython Unicode-data bump (see tools/REGEN.md); the emitted `unicode_fold_unidata_version` is
 asserted at compile time against the build's unicodedata, and the contract tests are a second net.
 """
 import re

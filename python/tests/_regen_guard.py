@@ -47,4 +47,4 @@ def assert_regenerates_byte_identical(test_case, header_path, version_const, reg
         os.unlink(tmp.name)
     test_case.assertEqual(
         regenerated, committed,
-        f"{os.path.relpath(header_path, repo_root())} is stale -- regenerate it with its scripts/gen_*.py")
+        f"{os.path.relpath(header_path, repo_root())} is stale -- regenerate it with its tools/gen_*.py")

@@ -12,7 +12,7 @@ import unittest
 
 from _regen_guard import assert_regenerates_byte_identical, repo_root
 
-sys.path.insert(0, os.path.join(repo_root(), "scripts"))
+sys.path.insert(0, os.path.join(repo_root(), "tools"))
 try:
     import gen_unicode_fold as gen  # noqa: E402
     _GEN_IMPORT_ERROR = None

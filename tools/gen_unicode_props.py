@@ -6,13 +6,13 @@ Source of truth: CPython's own `re`, so REAL's Unicode-shorthand semantics are i
 code point in [0, 0x10FFFF] minus the surrogate block we ask `re.fullmatch(r'\\w'/'\\d'/'\\s', chr(cp))`
 and coalesce the matches into sorted inclusive ranges.
 
-Two safety nets, like scripts/gen_unicode_fold.py:
+Two safety nets, like tools/gen_unicode_fold.py:
   1. the construction IS the oracle;
   2. a full second pass re-checks every code point: `in_ranges(cp) == bool(re.fullmatch(...))`,
      and the script ABORTS on any mismatch (a range-building bug can't slip through);
   3. the total code-point counts are asserted against the known Unicode-16 values.
 
-Deterministic per CPython Unicode version; regenerate after a data bump (see scripts/REGEN.md). Only
+Deterministic per CPython Unicode version; regenerate after a data bump (see tools/REGEN.md). Only
 the public `re` and `unicodedata` are used (no private internals), so this is robust across versions.
 """
 import re

@@ -129,6 +129,6 @@ TEST(unicode_casefold_ranges_cross_boundary_both_ways)
 TEST(unicode_fold_unidata_version_is_pinned)
 {
   // Pin the Unicode version the committed table was generated from. A CPython Unicode-data bump
-  // that changes the orbits must regenerate the header (scripts/gen_unicode_fold.py) and update this.
+  // that changes the orbits must regenerate the header (tools/gen_unicode_fold.py) and update this.
   EXPECT(std::string_view(real::detail::unicode_fold_unidata_version) == "16.0.0");
 }

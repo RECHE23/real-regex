@@ -30,6 +30,21 @@ real/       real.hpp, dfa.hpp, version.hpp, storage.hpp     the public API + the
 The full tier contract is [design.dox §8](design.dox). The public include paths — `<real/real.hpp>` and the
 opt-in `<real/dfa.hpp>` — are stable; the rest are internal.
 
+## Repository map
+
+```
+include/real/   the header-only engine, partitioned into dependency tiers (see above)
+python/         the abi3 binding (real/ package, src/ extension, tests/, README = the PyPI page)
+tests/          the C++ suite, mirroring the engine tiers ({core,unicode,engine,automata,frontend,compat}/)
+fuzz/           the libFuzzer harnesses (robustness, and the real::compat-vs-std differential)
+tools/          dev tooling: the codegen (Unicode tables), check_layers.py (the layering gate)
+benchmarks/     the throughput/ReDoS benches and the REAL-vs-rust duel (duel/)
+cmake/          the installed CMake package config (find_package(real) support)
+docs/           this documentation (design.dox, BENCHMARKS, COMPATIBILITY, TESTS, MISRA, release-notes/)
+examples/       small runnable programs, including the ReDoS demo
+.github/        CI and release workflows
+```
+
 ## Contributing & releases
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the build, the sibling checkouts and the gate. The GitHub
