@@ -11,6 +11,15 @@ categories = ["text-processing"]
 # Package the vendored engine sources so the crate builds standalone on crates.io.
 include = ["src/**/*.rs", "build.rs", "Cargo.toml", "README.md", "vendor/**"]
 
+[features]
+# Delegate a pattern REAL cannot run linearly (\p{...}, a backreference, an unbounded lookaround) to the
+# regex crate, per pattern, via RegexBuilder::fallback(true). Off by default: the crate stays strict and
+# dependency-light. Enabling it forfeits the linear-time / ReDoS-safe guarantee for the delegated patterns.
+fallback = ["dep:regex"]
+
+[dependencies]
+regex = { version = "1", optional = true }
+
 [build-dependencies]
 cc = "1"
 

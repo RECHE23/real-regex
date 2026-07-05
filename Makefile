@@ -318,7 +318,7 @@ crate-publish-check: crate-vendor
 
 crate-test:
 	rm -rf bindings/rust/vendor
-	cd bindings/rust && cargo test --quiet
+	cd bindings/rust && cargo test --quiet && cargo test --quiet --features fallback
 
 
 check-layers:

@@ -126,12 +126,23 @@ fn compile_handle(pattern: &[u8], flags: u32) -> Result<(*mut RealRegex, usize, 
     Ok((handle, ngroups, Arc::new(GroupInfo { names, by_name })))
 }
 
+/// Which engine backs a compiled pattern — observable via [`Regex::engine`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Engine {
+    /// REAL's linear-time, ReDoS-safe engine.
+    Real,
+    /// The regex crate (only when the `fallback` feature delegated this pattern) — not ReDoS-safe.
+    Fallback,
+}
+
 /// A compiled pattern.
 pub struct Regex {
-    handle: *mut RealRegex,
-    ngroups: usize, // capture slots per match, including group 0
+    handle: *mut RealRegex, // null when a fallback backend is in use
+    ngroups: usize,         // capture slots per match, including group 0
     pattern: String,
     groups: Arc<GroupInfo>,
+    #[cfg(feature = "fallback")]
+    fallback: Option<regex::Regex>, // Some when delegated to the regex crate
 }
 
 // The handle is an owned heap object with no interior mutability observable from Rust; sharing a &Regex
@@ -150,7 +161,57 @@ impl Regex {
     /// ascii=64). Prefer [`RegexBuilder`] for readable options.
     pub fn with_flags(pattern: &str, flags: u32) -> Result<Regex, Error> {
         let (handle, ngroups, groups) = compile_handle(pattern.as_bytes(), flags)?;
-        Ok(Regex { handle, ngroups, pattern: pattern.to_string(), groups })
+        Ok(Regex {
+            handle,
+            ngroups,
+            pattern: pattern.to_string(),
+            groups,
+            #[cfg(feature = "fallback")]
+            fallback: None,
+        })
+    }
+
+    /// Which engine backs this pattern — [`Engine::Real`] (linear, ReDoS-safe) or [`Engine::Fallback`] (the
+    /// regex crate, when the `fallback` feature delegated it). Always `Real` unless the feature is used.
+    pub fn engine(&self) -> Engine {
+        #[cfg(feature = "fallback")]
+        if self.fallback.is_some() {
+            return Engine::Fallback;
+        }
+        Engine::Real
+    }
+
+    // Delegate a pattern REAL cannot run linearly to the regex crate (only reachable via the `fallback`
+    // feature + RegexBuilder::fallback(true)). The wrapper keeps our own types over regex's results.
+    #[cfg(feature = "fallback")]
+    fn build_fallback(pattern: &str, flags: u32) -> Result<Regex, Error> {
+        let fb = regex::RegexBuilder::new(pattern)
+            .case_insensitive(flags & FLAG_ICASE != 0)
+            .multi_line(flags & FLAG_MULTILINE != 0)
+            .dot_matches_new_line(flags & FLAG_DOTALL != 0)
+            .ignore_whitespace(flags & FLAG_VERBOSE != 0)
+            .unicode(flags & FLAG_ASCII == 0)
+            .build()
+            .map_err(|e| Error::Syntax { msg: e.to_string(), pos: None })?;
+        let ngroups = fb.captures_len();
+        let mut names = Vec::with_capacity(ngroups);
+        let mut by_name = HashMap::new();
+        for (i, n) in fb.capture_names().enumerate() {
+            match n {
+                Some(name) => {
+                    by_name.insert(name.to_string(), i);
+                    names.push(Some(name.to_string()));
+                }
+                None => names.push(None),
+            }
+        }
+        Ok(Regex {
+            handle: std::ptr::null_mut(),
+            ngroups,
+            pattern: pattern.to_string(),
+            groups: Arc::new(GroupInfo { names, by_name }),
+            fallback: Some(fb),
+        })
     }
 
     /// The original pattern string.
@@ -169,14 +230,22 @@ impl Regex {
         self.groups.names.iter().map(|o| o.as_deref())
     }
 
-    fn raw<'r, 't>(&'r self, text: &'t str, start: Option<usize>) -> RawSpans<'r, 't> {
+    fn raw<'r, 't>(&'r self, text: &'t str, start: Option<usize>) -> SpanCursor<'r, 't> {
+        #[cfg(feature = "fallback")]
+        if let Some(fb) = &self.fallback {
+            return SpanCursor::Fallback {
+                it: fb.captures_iter(text),
+                ngroups: self.ngroups,
+                min_start: start.unwrap_or(0),
+            };
+        }
         let iter = unsafe {
             match start {
                 None => real_find_iter(self.handle, text.as_ptr() as *const c_char, text.len()),
                 Some(s) => real_find_iter_at(self.handle, text.as_ptr() as *const c_char, text.len(), s),
             }
         };
-        RawSpans { iter, ngroups: self.ngroups, last_end: None, _re: PhantomData }
+        SpanCursor::Real(RawSpans { iter, ngroups: self.ngroups, last_end: None, _re: PhantomData })
     }
 
     fn caps_from<'t>(&self, text: &'t str, spans: Vec<Option<(usize, usize)>>) -> Captures<'t> {
@@ -229,13 +298,19 @@ impl Regex {
     /// 3, regex 1). A true earliest-completion mode is a parked follow-up (a `first-accept` stop in the
     /// forward pass). Use this as an `is_match` that also reports where the leftmost match ends.
     pub fn shortest_match(&self, text: &str) -> Option<usize> {
+        #[cfg(feature = "fallback")]
+        if let Some(fb) = &self.fallback {
+            return fb.shortest_match(text); // the regex backend gives true earliest-completion
+        }
         self.raw(text, None).next().map(|s| s[0].unwrap().1)
     }
 }
 
 impl Drop for Regex {
     fn drop(&mut self) {
-        unsafe { real_free(self.handle) }
+        if !self.handle.is_null() {
+            unsafe { real_free(self.handle) } // null when a fallback backend is in use
+        }
     }
 }
 
@@ -291,6 +366,32 @@ impl RawSpans<'_, '_> {
 impl Drop for RawSpans<'_, '_> {
     fn drop(&mut self) {
         unsafe { real_iter_free(self.iter) }
+    }
+}
+
+// Unifies the two backends behind one span stream: REAL's cursor (with the empty-match filter) or, under the
+// fallback feature, the regex crate's capture iterator (already rust-correct, converted to span vectors).
+enum SpanCursor<'r, 't> {
+    Real(RawSpans<'r, 't>),
+    #[cfg(feature = "fallback")]
+    Fallback { it: regex::CaptureMatches<'r, 't>, ngroups: usize, min_start: usize },
+}
+
+impl SpanCursor<'_, '_> {
+    fn next(&mut self) -> Option<Vec<Option<(usize, usize)>>> {
+        match self {
+            SpanCursor::Real(r) => r.next(),
+            #[cfg(feature = "fallback")]
+            SpanCursor::Fallback { it, ngroups, min_start } => loop {
+                let caps = it.next()?;
+                if caps.get(0).unwrap().start() < *min_start {
+                    continue; // for the *_at variants: skip matches before the requested start
+                }
+                return Some(
+                    (0..*ngroups).map(|g| caps.get(g).map(|m| (m.start(), m.end()))).collect(),
+                );
+            },
+        }
     }
 }
 
@@ -390,7 +491,7 @@ impl Index<&str> for Captures<'_> {
 
 /// Iterator over whole-match spans, from [`Regex::find_iter`].
 pub struct Matches<'r, 't> {
-    raw: RawSpans<'r, 't>,
+    raw: SpanCursor<'r, 't>,
     text: &'t str,
 }
 
@@ -403,7 +504,7 @@ impl<'t> Iterator for Matches<'_, 't> {
 
 /// Iterator over capture groups, from [`Regex::captures_iter`].
 pub struct CaptureMatches<'r, 't> {
-    raw: RawSpans<'r, 't>,
+    raw: SpanCursor<'r, 't>,
     re: &'r Regex,
     text: &'t str,
 }
@@ -426,16 +527,32 @@ const FLAG_ASCII: u32 = 64;
 pub struct RegexBuilder {
     pattern: String,
     flags: u32,
+    #[cfg(feature = "fallback")]
+    fallback: bool,
 }
 
 impl RegexBuilder {
     /// Start building from `pattern`.
     pub fn new(pattern: &str) -> RegexBuilder {
-        RegexBuilder { pattern: pattern.to_string(), flags: 0 }
+        RegexBuilder {
+            pattern: pattern.to_string(),
+            flags: 0,
+            #[cfg(feature = "fallback")]
+            fallback: false,
+        }
     }
 
     fn set(&mut self, bit: u32, yes: bool) -> &mut RegexBuilder {
         if yes { self.flags |= bit } else { self.flags &= !bit }
+        self
+    }
+
+    /// Delegate this pattern to the regex crate if REAL cannot run it linearly (requires the `fallback`
+    /// feature). Off by default — the crate stays strict. A delegated pattern reports
+    /// [`Engine::Fallback`](crate::Engine) and forfeits the linear-time guarantee.
+    #[cfg(feature = "fallback")]
+    pub fn fallback(&mut self, yes: bool) -> &mut RegexBuilder {
+        self.fallback = yes;
         self
     }
 
@@ -473,7 +590,16 @@ impl RegexBuilder {
 
     /// Compile the configured pattern.
     pub fn build(&self) -> Result<Regex, Error> {
-        Regex::with_flags(&self.pattern, self.flags)
+        match Regex::with_flags(&self.pattern, self.flags) {
+            Ok(re) => Ok(re),
+            Err(e) => {
+                #[cfg(feature = "fallback")]
+                if self.fallback && e.is_unsupported() {
+                    return Regex::build_fallback(&self.pattern, self.flags);
+                }
+                Err(e)
+            }
+        }
     }
 }
 
