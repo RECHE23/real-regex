@@ -26,3 +26,20 @@ literal-prefilter that decides where the leftmost match starts. We read `regex`'
 writing ours *because* this exact trap is easy to fall into; the upstream crate fell into a sibling of it.
 Our loop keeps leftmost correct by bounding the reverse at the previous literal's end and confirming forward,
 gated by a routed==core differential.
+
+## 2. Literal-branch prefilter resume (`regex` 1.x) — the same class, a literal branch
+
+Bug 1's skip (`|.` / `|[`) matched only when the branch after `|` began with `.` or `[`. The fuzzer then found
+the same leftmost violation with a branch that begins with a **literal byte**, which that substring check let
+through:
+
+| pattern | haystack | Python `re` | REAL | `regex` |
+| --- | --- | --- | --- | --- |
+| `\0*\0\|\u{8}\u{c}\0\0` | `"\0\0\0\|~\u{8}\u{c}\0\0\0"` | `[(0,3),(5,9),(9,10)]` | `[(0,3),(5,9),(9,10)]` | `[(0,3),(7,10)]` ✗ |
+
+**Anatomy.** After the match `[0,3)`, the leftmost match from position 3 is the second branch `\u{8}\u{c}\0\0`
+at `[5,9)`. The `regex` crate's prefilter, built from the first branch's `\0`, resumes at the `\0` run starting
+at 7 and reports `[7,10)` — skipping `[5,9)` entirely. Same root as bug 1 (a literal prefilter deciding the
+leftmost start over a top-level alternation), just triggered by a literal-starting branch. The skip is now
+`has_top_level_alternation(pattern)` — the top-level `|` is the trigger, independent of the branch's first
+token. REAL and Python `re` agree on `[(0,3),(5,9),(9,10)]`.
