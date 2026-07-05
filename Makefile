@@ -49,7 +49,7 @@ FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
         lint misra fuzz fuzz-compat exhaustive-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
         python python-test bench-python bench-fuzz bench-engines bench-duel \
-        version-check install install-smoke uninstall release help capi-test check-layers
+        version-check install install-smoke uninstall release help capi-test crate-prepare crate-test check-layers
 
 .DEFAULT_GOAL := help
 
@@ -263,7 +263,9 @@ version-check:
 	 vpat=$$(sed -nE 's/^#define REAL_VERSION_PATCH ([0-9]+).*/\1/p' include/real/version.hpp); \
 	 hdr="$$vmaj.$$vmin.$$vpat"; \
 	 if [ "$$hdr" != "$$py" ]; then echo "version-check: DRIFT version.hpp=$$hdr vs pyproject=$$py"; exit 1; fi; \
-	 echo "version-check: $$py (pyproject = __init__ = CMake-derived = version.hpp)"
+	 crate=$$(sed -nE 's/^version = "([0-9][0-9.]*)"/\1/p' bindings/rust/Cargo.toml | head -1); \
+	 if [ "$$crate" != "$$py" ]; then echo "version-check: DRIFT Cargo.toml=$$crate vs pyproject=$$py"; exit 1; fi; \
+	 echo "version-check: $$py (pyproject = __init__ = CMake-derived = version.hpp = Cargo.toml)"
 
 # Every pass/fail gate this machine owns, in one command — the canonical pre-push check
 # and, like the SciLang-era libraries, the macOS gate of record. REAL holds its own
@@ -300,6 +302,19 @@ capi-test:
 	c++ $(BUILD)/test_capi.o $(BUILD)/real_capi.o -o $(BUILD)/capi_test   # C++ driver links the right stdlib
 	$(BUILD)/capi_test
 
+# Populate the crate's vendored engine sources so `cargo package`/`publish` builds standalone off crates.io
+# (the in-tree `crate-test` builds against the sibling headers directly, no vendoring needed).
+crate-prepare:
+	rm -rf bindings/rust/vendor
+	mkdir -p bindings/rust/vendor/include bindings/rust/vendor/c
+	cp -R include/real bindings/rust/vendor/include/
+	cp bindings/c/real_capi.h bindings/c/real_capi.cpp bindings/rust/vendor/c/
+
+crate-test:
+	rm -rf bindings/rust/vendor
+	cd bindings/rust && cargo test --quiet
+
+
 check-layers:
 	@python3 tools/check_layers.py
 
@@ -308,6 +323,7 @@ full-local-gate:
 	@$(MAKE) version-check
 	@$(MAKE) check-layers
 	@$(MAKE) capi-test
+	@$(MAKE) crate-test
 	@$(MAKE) check-pins
 	@$(MAKE) test
 	@$(MAKE) exhaustive-compat

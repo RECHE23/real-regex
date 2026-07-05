@@ -1,0 +1,18 @@
+[package]
+name = "real-regex"
+version = "2026.7.16"
+edition = "2021"
+description = "Linear-time, ReDoS-safe regular expressions with bounded lookarounds — Rust bindings to the REAL C++ engine."
+license = "MIT"
+repository = "https://github.com/RECHE23/real-regex"
+readme = "README.md"
+keywords = ["regex", "redos", "linear-time", "lookaround"]
+categories = ["text-processing"]
+# Package the vendored engine sources so the crate builds standalone on crates.io.
+include = ["src/**/*.rs", "build.rs", "Cargo.toml", "README.md", "vendor/**"]
+
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]
+regex = "1"

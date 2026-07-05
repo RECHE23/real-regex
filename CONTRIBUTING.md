@@ -46,3 +46,19 @@ Run it before every push. Individual steps (`make test`, `make lint`, `make cove
 Calendar-versioned (`YEAR.MONTH.patch`). The GitHub releases page is the changelog — there is no separate
 `CHANGELOG` file. Releases push the branch first, let CI go green, then tag (option-B): the tag's annotation
 becomes the release notes, and the tagged commit is what CI already validated.
+
+The version is single-sourced from `pyproject.toml` and `make version-check` asserts every surface agrees:
+`python/real/__init__.py`, the CMake-derived C++ `version.hpp`, and the Rust crate's `bindings/rust/Cargo.toml`.
+
+**The Rust crate (`real-regex` on crates.io).** It carries the same CalVer — the CalVer is valid SemVer, so
+the crate's first publish is the current calendar version, not a `0.0.1` placeholder. Two consequences to keep
+in mind:
+
+- **crates.io is immutable.** A published version can only be *yanked* (hidden from new resolves), never
+  deleted or overwritten. So a crate publish happens only *after* the matching release is live and verified —
+  `cargo publish` from `bindings/rust` (token in `~/.cargo/credentials.toml`), by hand, once the tag has
+  shipped. Never publish a version you have not already released.
+- **A breaking change mid-year bumps the year (the major).** SemVer consumers pin with a caret (`^2026.7`),
+  which treats a minor/patch bump as non-breaking. REAL grows without breaking by principle; if a genuinely
+  breaking change ever ships mid-year, bump the *year* so the caret protects downstream, rather than slipping
+  a break through a minor bump.

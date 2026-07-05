@@ -34,6 +34,7 @@ opt-in `<real/dfa.hpp>` — are stable; the rest are internal.
 
 ```
 include/real/   the header-only engine, partitioned into dependency tiers (see above)
+bindings/       language bindings — c/ (the C ABI shim) and rust/ (the real-regex crate)
 python/         the abi3 binding (real/ package, src/ extension, tests/, README = the PyPI page)
 tests/          the C++ suite, mirroring the engine tiers ({core,unicode,engine,automata,frontend,compat}/)
 fuzz/           the libFuzzer harnesses (robustness, and the real::compat-vs-std differential)
