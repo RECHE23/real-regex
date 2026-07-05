@@ -48,7 +48,7 @@ Calendar-versioned (`YEAR.MONTH.patch`). The GitHub releases page is the changel
 becomes the release notes, and the tagged commit is what CI already validated.
 
 The version is single-sourced from `pyproject.toml` and `make version-check` asserts every surface agrees:
-`python/real/__init__.py`, the CMake-derived C++ `version.hpp`, and the Rust crate's `bindings/rust/Cargo.toml`.
+`bindings/python/real/__init__.py`, the CMake-derived C++ `version.hpp`, and the Rust crate's `bindings/rust/Cargo.toml`.
 
 **The Rust crate (`real-regex` on crates.io).** It carries the same CalVer — the CalVer is valid SemVer, so
 the crate's first publish is the current calendar version, not a `0.0.1` placeholder. Two consequences to keep

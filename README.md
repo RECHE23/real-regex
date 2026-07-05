@@ -307,7 +307,7 @@ required C++ standard.
 **Releasing.** Run `make release`. It computes the next calendar version
 `YYYY.M.PATCH` — the patch resets each month, the first release of a month is
 `.0` (PEP 440 drops leading zeros, so `2026.6.1`, never `2026.06.001`) — bumps
-it in `pyproject.toml` and `python/real/__init__.py`, then commits, tags and
+it in `pyproject.toml` and `bindings/python/real/__init__.py`, then commits, tags and
 pushes. The tag drives `release.yml`, which checks the tag matches the version,
 builds abi3 wheels (`cibuildwheel`, Linux/macOS/Windows) and the sdist, and
 publishes to PyPI via Trusted Publishing (OIDC, no stored secret). The pushed

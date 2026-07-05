@@ -573,6 +573,8 @@ the build on any upward include, so the layering is a fact, not a comment. Low t
 - **`frontend/`** — `ast.hpp` (recursive-descent parser) and `compiler.hpp` (Thompson construction); they
   consume the runtime's `prefilter` and `utf8_ranges`, so they sit above it.
 - **root** — the public `real.hpp` / `dfa.hpp`, and `storage.hpp`, the assembly `real::regex` drives
+- **`std/`** — the `std::regex`-compatibility drop-in (`real::compat`): `regex.hpp` and its parts, built
+  on the public `real::regex` (root tier). `tools/check_layers.py` ranks it with root.
   (it orchestrates parse → compile → store, so it depends on every tier below).
 
 | Header               | Key types / functions | Role |

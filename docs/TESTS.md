@@ -2,9 +2,9 @@
 
 REAL is tested four ways, each catching what the others cannot:
 
-- **Unit + parity tests** (`tests/`, `python/tests/`) — behaviour pinned directly, and a differential
+- **Unit + parity tests** (`tests/`, `bindings/python/tests/`) — behaviour pinned directly, and a differential
   corpus run against Python `re` across every API.
-- **A randomized differential fuzzer** (`python/tests/test_differential_fuzz.py`) — thousands of random
+- **A randomized differential fuzzer** (`bindings/python/tests/test_differential_fuzz.py`) — thousands of random
   patterns compared to `re`, including nullable loops and scoped flags.
 - **An exhaustive small-space enumeration** (`sciforge.corpus.exhaustive`) — every pattern up to *k*
   constructs over a tiny alphabet crossed with every short input, differential against `re`.

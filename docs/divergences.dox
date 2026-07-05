@@ -4,7 +4,7 @@
 REAL targets parity with Python's `re`, and a randomized differential fuzzer plus a
 large parity corpus enforce it. A handful of behaviours diverge **on purpose**; each is
 listed here with its rationale, and each is pinned by a direct, version-independent
-assertion in `TestIntentionalDivergences` (python/tests/test_real.py) so the contract
+assertion in `TestIntentionalDivergences` (bindings/python/tests/test_real.py) so the contract
 cannot drift silently.
 
 \note **Excluded by design — a closed door, not a missing feature.** Backreferences,

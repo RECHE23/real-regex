@@ -25,6 +25,7 @@ engine/  +  pike.hpp, prefilter.hpp, assert_eval.hpp        the runtime — one 
 automata/   lazy_dfa.hpp, onepass.hpp, utf8_ranges.hpp        onepass -> assert_eval within it)
 frontend/   ast.hpp, compiler.hpp                           the parser/compiler (they use the runtime)
 real/       real.hpp, dfa.hpp, version.hpp, storage.hpp     the public API + the assembly it drives
+std/        regex.hpp (+ its parts)                        the std::regex-compatibility drop-in (real::compat)
 ```
 
 The full tier contract is [design.dox §8](design.dox). The public include paths — `<real/real.hpp>` and the
@@ -34,8 +35,7 @@ opt-in `<real/dfa.hpp>` — are stable; the rest are internal.
 
 ```
 include/real/   the header-only engine, partitioned into dependency tiers (see above)
-bindings/       language bindings — c/ (the C ABI shim) and rust/ (the real-regex crate)
-python/         the abi3 binding (real/ package, src/ extension, tests/, README = the PyPI page)
+bindings/       language bindings — c/ (the C ABI shim), python/ (the abi3 binding + PyPI page), rust/ (the real-regex crate)
 tests/          the C++ suite, mirroring the engine tiers ({core,unicode,engine,automata,frontend,compat}/)
 fuzz/           the libFuzzer harnesses (robustness, and the real::compat-vs-std differential)
 tools/          dev tooling: the codegen (Unicode tables), check_layers.py (the layering gate)

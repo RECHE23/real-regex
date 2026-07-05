@@ -30,7 +30,7 @@ behaviour** — call it out in the release notes, do not bump silently.
 
 - After a CPython upgrade that bumps the bundled Unicode data version (`unicodedata.unidata_version`).
   The header pins the version it was built from (`unicode_fold_unidata_version`), asserted by
-  `tests/test_unicode_fold.cpp` and by `python/tests/test_unicode_fold_regen.py`.
+  `tests/test_unicode_fold.cpp` and by `bindings/python/tests/test_unicode_fold_regen.py`.
 
 **A regenerated table that changes any orbit is a BREAKING change for text-mode `icase` users** — the
 set of characters a cased literal or class matches would shift (e.g. a new case pair added in a later
