@@ -17,7 +17,7 @@ import sys
 
 import re
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "python"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "bindings" / "python"))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3] / "sciforge" / "python"))
 
 import real

@@ -166,6 +166,8 @@ jobs:
       python-versions: '["3.10","3.14"]'
       sciforge-ref: v2026.7.2
       deps: '[]'
+      # The binding moved under bindings/python/; override the reusable workflow's python/tests default.
+      test-cmd: 'python -m unittest discover -s bindings/python/tests'
       runner-mode: hosted
       enable-macos: true
       enable-windows: true
