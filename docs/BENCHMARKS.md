@@ -387,18 +387,23 @@ forward. The line went from **201× rust to parity**:
 
 | duel row (find_iter, captures) | REAL ns/B | rust ns/B | ratio |
 | --- | --- | --- | --- |
-| `\d{4}-\d{2}-\d{2}` — no match | 0.020 | 0.013 | **1.6×** (was ~201×) |
-| `\d{4}-\d{2}-\d{2}` — sparse | 0.33 | 0.08 | 4.2× |
-| `(\w+)@(\w+)` — sparse | 0.88 | 0.12 | 7.2× |
-| `key=(\w+)` | 2.72 | 1.43 | 1.9× |
-| `[a-z]+` · `[0-9]+` · `[^,]+` (regression check) | 2.4 / 3.0 / 3.0 | 12 / 17 / 9 | REAL 5.0× / 5.8× / 3.1× |
+| `\d{4}-\d{2}-\d{2}` — no match | 0.023 | 0.012 | **1.9×** (was ~201×) |
+| `\d{4}-\d{2}-\d{2}` — sparse | 0.31 | 0.08 | 4.1× |
+| `(\w+)@(\w+)` — dense | 5.5 | 5.4 | 1.0× (parity) |
+| `(\w+)@(\w+)` — sparse | 0.82 | 0.12 | 6.7× |
+| `key=(\w+)` | 1.15 | 1.44 | **REAL 1.3×** |
+| `[a-z]+` · `[0-9]+` · `[^,]+` (regression check) | 2.2 / 2.8 / 3.0 | 12 / 17 / 9 | REAL 5.4× / 6.1× / 3.1× |
+| `dog` (literal, regression check) | 0.72 | 0.57 | 1.3× (unchanged) |
 
 The no-match line is the headline: a haystack the literal never appears in now costs a single memmem (the
-reverse DFA is built lazily, only on the first candidate), landing at **1.6× rust** — the V0 target of ≤2× met.
-The sparse and `key=` rows carry the per-match reverse+confirm cost, so they trail rust's tighter loop but sit
-in the 2–7× band, far from the old 201×. Crucially the class/digit/field rows are **unchanged** (REAL still
-5–6× ahead) — the route only fires for patterns with a required inner literal, and the exhaustive corpus
-confirms it is byte-identical to the core search (serious=0 with the route on, 3.21M cases).
+reverse DFA is built lazily, only on the first candidate), landing at **1.9× rust** — the V0 target of ≤2× met.
+Two placements make the rest hold up across the *whole* matrix, not just the flagship. The route sits **after**
+the literal / class-loop fast paths, so an exact literal like `dog` keeps its own path (0.72, unchanged). And
+the per-candidate confirm reuses the **forward DFA + one-pass extract** (the dense laddering §7.7 built), not a
+raw Pike pass — so `(\w+)@(\w+)` dense lands at **parity** (better than before the route, since the reverse
+already supplied the start, skipping the reverse DFA) and `key=` at **REAL 1.3×**. The class / digit / field
+rows are unchanged (the route only fires for a required inner literal), and the exhaustive corpus confirms it
+byte-identical to the core (serious=0 with the route on, 3.21M cases).
 
 ## Methodology & reproduction
 

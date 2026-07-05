@@ -346,11 +346,26 @@ namespace real::detail {
     {
       text_               = text;
       forbid_empty_until_ = forbid_empty_until;
+      // Fast paths only fire for patterns that always consume (literal /
+      // class+), which can never produce the empty match the flag guards.
+      if (prog_.hints.greedy_class_loop >= 0) {
+        // OPT-C: the memchr-cascade instantiation (Cascade) is selected ONCE by the caller (a whole
+        // find_iter/search) from stop_set_size, never per match — so when it is off this run is byte-for-
+        // byte the pre-OPT-C per-byte loop and the hot path pays nothing. The caller only sets Cascade
+        // when stop_set_size >= 1, so the cascade tail always has real stop bytes.
+        return run_class_loop<Cascade>(text, start, mode, out_slots);
+      }
+      if (prog_.hints.greedy_cp_class >= 0) {
+        return run_cp_class_loop(text, start, mode, out_slots);
+      }
+      if (prog_.hints.exact_literal_len > 0) {
+        return run_exact_literal(text, start, mode, out_slots);
+      }
       // OPT inner-literal: memmem a required inner literal and reverse/confirm the match around it — the
       // most selective prefilter for a pattern whose match does not begin with a literal (the date `-`, the
-      // `@`). Placed first: a memchr skip to a rare byte beats scanning every position with a shape fast path
-      // or the DFA. Search mode, runtime, dynamic-only (needs the prefix sub-program). On a linearity guard it
-      // abandons and falls through to the fast paths below.
+      // `@`). Placed AFTER the literal / class-loop fast paths (an exact-literal `dog` must keep its own path)
+      // but BEFORE the fixed-shape / DFA scans it beats. Search mode, runtime, dynamic-only. On a linearity
+      // guard it abandons and falls through to the scans below.
       if constexpr (requires(State & s) {
         s.il_prefix_rev;
       }) {
@@ -370,21 +385,6 @@ namespace real::detail {
             state_.il_abandoned = true; // a linearity guard tripped: stay on the core for the rest of this haystack
           }
         }
-      }
-      // Fast paths only fire for patterns that always consume (literal /
-      // class+), which can never produce the empty match the flag guards.
-      if (prog_.hints.greedy_class_loop >= 0) {
-        // OPT-C: the memchr-cascade instantiation (Cascade) is selected ONCE by the caller (a whole
-        // find_iter/search) from stop_set_size, never per match — so when it is off this run is byte-for-
-        // byte the pre-OPT-C per-byte loop and the hot path pays nothing. The caller only sets Cascade
-        // when stop_set_size >= 1, so the cascade tail always has real stop bytes.
-        return run_class_loop<Cascade>(text, start, mode, out_slots);
-      }
-      if (prog_.hints.greedy_cp_class >= 0) {
-        return run_cp_class_loop(text, start, mode, out_slots);
-      }
-      if (prog_.hints.exact_literal_len > 0) {
-        return run_exact_literal(text, start, mode, out_slots);
       }
       if (prog_.hints.fixed_shape) {
         return run_fixed_shape(text, start, mode, out_slots);
@@ -525,6 +525,50 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Confirm a match anchored at \p s: find its end with the forward DFA and fill captures with the
+     *        one-pass table — the same fast laddering the lazy-DFA route uses (§7.6/7.7), so the inner-literal
+     *        confirm is not a raw Pike pass. Falls back to the anchored Pike when the pattern is not
+     *        DFA/one-pass eligible, or when the forward DFA's leftmost match does not in fact begin at \p s
+     *        (then the anchored Pike returns false and the caller advances). \p stop reports how far the confirm
+     *        reached, for the linearity backstop. Returns true and fills \p out_slots on a match at \p s.
+     */
+    template <typename OutSlots>
+    bool confirm_at(std::string_view text,
+                    std::size_t      s,
+                    OutSlots&        out_slots,
+                    std::size_t&     stop)
+    {
+      stop = s;
+      if constexpr (requires(State & st) {
+        st.fwd_dfa;
+      }) {
+        if (!lazy_dfa_route_disabled()) {
+          if (state_.dfa_program != static_cast<const void*>(prog_.code.data())) {
+            ensure_lazy_dfa();
+          }
+          if (state_.fwd_dfa.has_value() && state_.fwd_dfa->eligible() && !state_.fwd_dfa->thrashing()) {
+            const std::size_t match_end {state_.fwd_dfa->forward_end(text.substr(s))};
+            if (match_end == npos) {
+              stop = text.size();
+              out_slots.assign(prog_.slot_count, npos);
+              return false; // the forward DFA rejects the whole suffix
+            }
+            const std::size_t e {s + match_end};
+            stop = e;
+            ensure_immutables();
+            if (prog_.immut != nullptr && prog_.immut->op_table.has_value() && prog_.immut->op_table->eligible()
+                && prog_.immut->op_table->extract(text, s, e, out_slots)) {
+              return true; // one-pass filled the captures for [s, e] anchored at s
+            }
+            // Not one-pass, or the DFA's leftmost match did not begin at s: the anchored window Pike decides.
+            return run_general<false>(text.substr(0, e), s, run_mode::prefix, out_slots, &stop);
+          }
+        }
+      }
+      return run_general<false>(text, s, run_mode::prefix, out_slots, &stop);
+    }
+
+    /*!
      * \brief The inner-literal search: memmem a required literal, reverse-match the prefix to the match start,
      *        forward-confirm — the reverse-inner protocol (regex-automata's `ReverseInner`). On a match fills
      *        `out_slots` and returns true; on none returns false. Sets \p abandon (and returns false) when a
@@ -588,7 +632,7 @@ namespace real::detail {
         }
         else {
           std::size_t stop {s};
-          if (run_general<false>(text, s, run_mode::prefix, out_slots, &stop)) {
+          if (confirm_at(text, s, out_slots, stop)) {
             return true;          // confirmed: out_slots holds [s, e]
           }
           if (stop > min_pre_start) {
