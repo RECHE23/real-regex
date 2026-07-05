@@ -8,8 +8,8 @@ OUTPUT_DIRECTORY       = build/doc
 OUTPUT_LANGUAGE        = English
 
 # --- what to document ------------------------------------------------------
-INPUT                  = include/real README.md BENCHMARKS.md COMPATIBILITY.md docs/
-FILE_PATTERNS          = *.hpp *.dox
+INPUT                  = include/real README.md docs/
+FILE_PATTERNS          = *.hpp *.dox *.md
 RECURSIVE              = YES
 USE_MDFILE_AS_MAINPAGE = README.md
 EXTRACT_ALL            = YES

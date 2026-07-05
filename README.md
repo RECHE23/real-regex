@@ -44,7 +44,7 @@ REAL gives you **both**: linear-time, ReDoS-safe matching *with* bounded lookaro
 
 ¹ part of the C++ standard library. ² for the supported subset (no backreferences, etc.).
 Throughput is qualitative — exact multipliers and methodology are in
-[`BENCHMARKS.md`](https://github.com/RECHE23/real-regex/blob/main/BENCHMARKS.md).
+[`BENCHMARKS.md`](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md).
 
 **Every other engine that has lookarounds backtracks** (ReDoS-unsafe), and every linear-time
 engine drops them — **REAL is the only one with both**: bounded lookarounds *and* linear-time,
@@ -62,7 +62,7 @@ The classic catastrophic-backtracking pattern `(a+)+b` over `"a"×N` (no `b`, so
 | Python `re` | n = 24 | **1118 ms** — and climbing exponentially |
 
 REAL and RE2 stay linear; the backtracking engines refuse or blow up at trivially small
-inputs. These figures are from [`BENCHMARKS.md` §C](https://github.com/RECHE23/real-regex/blob/main/BENCHMARKS.md); they depend on the
+inputs. These figures are from [`BENCHMARKS.md` §C](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md); they depend on the
 platform, pattern and input, so reproduce them locally with `make bench-engines` rather than
 trusting a number here.
 
@@ -138,17 +138,20 @@ The Homebrew formula consumes the library via CMake `find_package(real)`,
 `pkg-config --cflags real`, or `-I"$(brew --prefix real-regex)/include"` — see the
 [tap README](https://github.com/RECHE23/homebrew-sci) for usage.
 
-## Documentation & benchmarks
+## Documentation
 
-- **API reference** (Doxygen, with embedded coverage): <https://reche23.github.io/real-regex/>
-- **Benchmarks** — a measured baseline with the exact machine and engine versions:
-  [`BENCHMARKS.md`](https://github.com/RECHE23/real-regex/blob/main/BENCHMARKS.md)
+- **API reference & design** (Doxygen — "How REAL Works", the internals tour): <https://reche23.github.io/real-regex/>
+- **Performance** — the measured baseline, with the machine and engine versions and the rust-crate duel:
+  [`docs/BENCHMARKS.md`](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md)
+- **Compatibility** (`re` and `std::regex`) — the supported subset and every intentional divergence:
+  [`docs/COMPATIBILITY.md`](https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md)
+- **Tests & conformance** — the differential harnesses and the coverage/gate policy:
+  [`docs/TESTS.md`](https://github.com/RECHE23/real-regex/blob/main/docs/TESTS.md)
+- **Python** — `pip install real-regex`, the `re` drop-in: [on PyPI](https://pypi.org/project/real-regex/).
 
-`make bench-python` compares throughput against Python's `re`, and
-`make bench-engines` compares against `std::regex`, PCRE2 and RE2 in one C++
-process (each engine's match counts are checked equal). Figures depend on the
-platform, pattern and input; reproduce them locally rather than trusting a
-number here.
+`make bench-python` compares throughput against Python's `re`, and `make bench-engines` against `std::regex`,
+PCRE2 and RE2 in one C++ process (match counts checked equal). Figures depend on the platform, pattern and
+input — reproduce them locally rather than trusting a number here. The GitHub releases page is the changelog.
 
 ## Supported syntax
 
@@ -171,53 +174,17 @@ number here.
 | `\<` `\>` | start / end of word (REAL extension, not in Python `re`) |
 | `(?imsxa)` prefix | global flags: `i` case-insensitive (Unicode fold in text mode), `m` multiline, `s` dotall, `x` verbose (ignore unescaped whitespace and `#` comments outside classes), `a` ASCII (`re.A`: keep `\w \W \d \D \s \S \b \B \< \>` and icase folding ASCII, even in text mode) — also `real::flags` on the constructor |
 
-**Bounded lookarounds** match in linear time: lookahead `(?=...)`/`(?!...)` and lookbehind
-`(?<=...)`/`(?<!...)`. Each sub-pattern must be length-bounded (an unbounded sub such as
-`(?=a*)` is rejected) and is capture-free — groups inside a lookaround do not participate
-in the result, a deliberate divergence from `re`. Lookbehind accepts any bounded
-sub-pattern, including variable-width alternations such as `(?<=a|bb)`, which `re` and PCRE
-reject as non-fixed-width. `static_regex` does not accept lookarounds yet.
+**Bounded lookarounds** match in linear time — REAL's differentiator: lookahead `(?=…)`/`(?!…)` and
+lookbehind `(?<=…)`/`(?<!…)`, each length-bounded and capture-free (variable-width lookbehind such as
+`(?<=a|bb)` is accepted, beyond `re`/PCRE's fixed-width limit). Unsupported syntax — backreferences,
+atomic/possessive groups, Unicode property classes — is rejected with `real::regex_error`, never a silent
+divergence.
 
-Unsupported syntax is rejected with `real::regex_error` rather than silently
-diverging. Not yet: backreferences, atomic/possessive groups, Unicode property classes,
-Unicode case folding.
-
-**Unicode model:** matching is UTF-8 byte-based, but every construct consumes
-whole codepoints (multi-byte sequences compile to byte-level alternatives), so
-match boundaries never split a character. In str (code-point) mode a character
-class carries specific non-ASCII code points and ranges (`[é]`, `[à-ÿ]`, `[^é]`),
-compiled to the canonical UTF-8 automaton (never an overlong or surrogate
-encoding); `[^…]`, `\D \W \S` and `.` also match non-ASCII code points. Under
-`IGNORECASE`, literals, classes and ranges do full **Unicode** case folding like
-`re` (`é` matches `É`, `k` matches Kelvin). The `\d \w \s` shorthands and `\b` are
-Unicode in text mode too (like `re`; ASCII under `re.A` / `flags::ascii`); a `\xHH`
-escape keeps byte provenance and never folds. In `bytes` mode a class is raw bytes (a non-ASCII
-member is a byte value, matching `std::basic_regex<char>`), and `IGNORECASE` folds
-ASCII only.
-
-> **Breaking / migration (UTF-8 / code-point mode).** In str (code-point) mode, non-ASCII pattern
-> text now decodes to whole code points instead of independent bytes. If you relied on
-> the old byte behaviour:
-> - A raw non-ASCII **literal** is now one atom: `é+` matches `éé` (was: `+` on the
->   last byte only). Use `bytes` mode for byte semantics.
-> - A **character class** accepts non-ASCII members and ranges: `[é]`, `[à-ÿ]`, `[^é]`
->   (was: a compile error). `[^é]` now means "any code point except é", not "any byte".
-> - `\xHH` is **context-dependent**: outside a class it is still the raw byte `0xHH`;
->   *inside* a str-mode class `[\xHH]` (HH ≥ 0x80) it is the code point `U+00HH`.
-> - `bytes` mode is unchanged (raw bytes throughout) and remains a byte-for-byte
->   `std::basic_regex<char>` drop-in.
-
-**Divergence from Python:** when a *nullable* loop body ends with an empty
-iteration — e.g. `(a*)*` on `"aa"` — Python captures that final empty
-iteration (`''`); REAL, like Perl/PCRE, keeps the last non-empty one (`"aa"`).
-Group 0 is identical either way.
-
-Matching is linear in the input length: a Thompson NFA simulation (Pike VM)
-with marked states, so a pattern such as `(a+)+b` cannot trigger exponential
-backtracking. A literal prefilter and several whole-pattern fast paths
-(literals, fixed-width sequences, `.`/negated-class runs, alternations of
-straight-line branches) keep the constant factor low without leaving the
-linear-time guarantee.
+Matching is UTF-8 code-point-aware: classes and `.` accept non-ASCII (`[é]`, `[à-ÿ]`), `\w \d \s \b` and
+`IGNORECASE` are Unicode in text mode (ASCII under `flags::ascii` / `re.A`), and no match boundary splits a
+character. The full Unicode model, the code-point-mode migration notes, and every intentional divergence
+from `re` (e.g. nullable-loop empty captures) are in
+[`COMPATIBILITY.md`](https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md).
 
 ## C++ API
 
@@ -261,7 +228,7 @@ namespace re = real::compat;    // then re::regex / re::smatch / re::regex_searc
 It runs your pattern on REAL — linear-time, ReDoS-safe — wherever that is provably identical to
 `std::regex`, and falls back to `std::regex` everywhere else: **behave identically, never a silent
 divergence**. See the [migration tour](https://reche23.github.io/real-regex/std_regex_dropin.html) and
-the full [`COMPATIBILITY.md`](https://github.com/RECHE23/real-regex/blob/main/COMPATIBILITY.md).
+the full [`COMPATIBILITY.md`](https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md).
 
 ### Three memory modes
 

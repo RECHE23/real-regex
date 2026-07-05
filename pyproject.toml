@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 name = "real-regex"
 version = "2026.7.14"
 description = "REAL — linear-time (ReDoS-safe) regex engine with an re-compatible API"
-readme = "README.md"
+readme = "python/README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]

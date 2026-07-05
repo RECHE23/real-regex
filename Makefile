@@ -166,7 +166,7 @@ lint:
 # The MISRA profile is the shared base owned by SciForge (lint/clang-tidy-misra);
 # REAL's one extra deviation — the SBO union in storage.hpp — is appended on the
 # command line with --checks (which appends to the config's Checks), not by forking
-# the shared file. See MISRA.md.
+# the shared file. See docs/MISRA.md.
 misra:
 	mkdir -p $(BUILD)
 	printf '#include <real/real.hpp>\nint main(){ try { const real::regex r("a"); return r.search("a") ? 0 : 1; } catch (...) { return 2; } }\n' > $(BUILD)/misra_tu.cpp
