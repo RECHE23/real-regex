@@ -171,6 +171,22 @@ namespace real::detail {
     st.best.prefix_child_count = st.best_top;
     return st.best;
   }
+
+  //! \brief Build the prefix sub-AST: the first \p count top-level concat children (\p count >= 1). Copies the
+  //!        tree and truncates the root concat's child chain after the count-th child — the later children
+  //!        become unreferenced and are simply never reached when it is compiled.
+  inline ast build_prefix_ast(const ast&   tree,
+                              std::int32_t count)
+  {
+    ast             prefix {tree};
+    const ast_node& root   {prefix.nodes[static_cast<std::size_t>(prefix.root)]};
+    std::int32_t    c      {root.child};
+    for (std::int32_t i = 0; i + 1 < count; ++i) {
+      c = prefix.nodes[static_cast<std::size_t>(c)].next;
+    }
+    prefix.nodes[static_cast<std::size_t>(c)].next = -1; // truncate after the count-th top-level child
+    return prefix;
+  }
 } // namespace real::detail
 
 #endif // REAL_FRONTEND_INNER_LITERAL_HPP

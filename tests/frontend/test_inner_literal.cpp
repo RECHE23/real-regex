@@ -83,3 +83,17 @@ TEST(inner_literal_stored_in_hints)
   const real::detail::dynamic_program p3 {real::detail::compile(real::detail::parse(R"(\w+)", real::flags::none), real::flags::none)};
   EXPECT(p3.hints.inner_literal_len == 0);
 }
+
+TEST(inner_literal_prefix_program_stored)
+{
+  // IL.2 Stage A: at (dynamic) compile, the prefix sub-program is compiled and stored for the reverse
+  // start-finder — populated when there is a top-level prefix, empty for a head literal or no literal.
+  const real::detail::dynamic_program p1 {real::detail::compile(real::detail::parse(R"(\\d{4}-\\d{2})", real::flags::none), real::flags::none)};
+  EXPECT(!p1.prefix_code.empty()); // prefix = \d{4}
+
+  const real::detail::dynamic_program p2 {real::detail::compile(real::detail::parse(R"(@\\w+)", real::flags::none), real::flags::none)};
+  EXPECT(p2.prefix_code.empty());  // head literal (count 0): reverse is the identity, no prefix program
+
+  const real::detail::dynamic_program p3 {real::detail::compile(real::detail::parse(R"(\\w+)", real::flags::none), real::flags::none)};
+  EXPECT(p3.prefix_code.empty());  // no required literal
+}

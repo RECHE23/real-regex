@@ -22,22 +22,6 @@
 
 namespace real::detail {
 
-  //! \brief Build the prefix sub-AST: the first \p count top-level concat children (\p count >= 1). It copies
-  //!        the tree and truncates the root concat's child chain after the count-th child — the later children
-  //!        become unreferenced and are simply never reached by \ref compile.
-  inline ast build_prefix_ast(const ast&   tree,
-                              std::int32_t count)
-  {
-    ast          prefix {tree};
-    ast_node&    root   {prefix.nodes[static_cast<std::size_t>(prefix.root)]};
-    std::int32_t c      {root.child};
-    for (std::int32_t i = 0; i + 1 < count; ++i) {
-      c = prefix.nodes[static_cast<std::size_t>(c)].next;
-    }
-    prefix.nodes[static_cast<std::size_t>(c)].next = -1; // truncate after the count-th top-level child
-    return prefix;
-  }
-
   //! \brief The match start for a literal candidate at \p h: reverse-match the prefix (the first \p count
   //!        top-level children) ending at \p h, bounded below by \p min_start. \p count == 0 means the literal
   //!        is at the head, so the reverse is the identity (the match starts at the candidate). Returns \ref

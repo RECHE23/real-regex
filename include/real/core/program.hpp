@@ -360,6 +360,8 @@ namespace real {
       std::vector<lookaround_sub> lookarounds;      //!< Bounded lookaround sub-programs (regions of \ref code).
       std::vector<cp_class>       cp_classes;       //!< Match-time code-point classes (for `klass_cp`).
       std::vector<code_range>     cp_ranges;        //!< Flat range buffer the `cp_class` slices index into.
+      std::vector<instr>          prefix_code;      //!< IL: the inner-literal prefix sub-program (the part before the literal), for the reverse start-finder. Empty unless there is a required literal with a top-level prefix. Dynamic-only (not built during constant evaluation).
+      std::vector<char_class>     prefix_classes;   //!< IL: classes for \ref prefix_code.
       std::uint16_t               slot_count   {2}; //!< `2 * (capture groups + 1)`.
       bool                        byte_mode    {};  //!< \ref flags::bytes mode.
       bool                        unicode_word {};  //!< `\b \B \< \>` use Unicode word-ness (text mode).

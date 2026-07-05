@@ -896,7 +896,18 @@ namespace real::detail {
   constexpr dynamic_program compile(const ast& tree,
                                     flags      compile_flags)
   {
-    return compiler(tree, compile_flags).compile();
+    dynamic_program prog {compiler(tree, compile_flags).compile()};
+    // IL: compile the inner-literal prefix sub-program (the part before the literal) for the reverse
+    // start-finder. Dynamic-only — a static_regex compiles in a constant-evaluated context and keeps the core
+    // search, sidestepping the constexpr budget of a second compile (the "dynamic-only if it would blow the
+    // budget" choice, taken up front). The prefix program is a subset, so this does not recurse into itself.
+    if (!std::is_constant_evaluated() && prog.hints.inner_literal_prefix >= 1) {
+      const dynamic_program pp {
+        compiler(build_prefix_ast(tree, prog.hints.inner_literal_prefix), compile_flags).compile()};
+      prog.prefix_code    = pp.code;
+      prog.prefix_classes = pp.classes;
+    }
+    return prog;
   }
 } // namespace real::detail
 
