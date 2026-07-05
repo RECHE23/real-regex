@@ -544,26 +544,8 @@ namespace real::detail {
       for (std::size_t i = 0; i < prog_.hints.inner_literal_len; ++i) {
         lit_buf[i] = static_cast<char>(prog_.hints.inner_literal[i]);
       }
-      const std::string_view lit      {lit_buf.data(), prog_.hints.inner_literal_len};
-      const std::int32_t     boundary {prog_.hints.inner_literal_prefix};
-
-      // Build the prefix reverse DFA once per program (boundary 0 = head literal: the reverse is the identity,
-      // s = h). Cached in the state so a find_iter builds it once, not per match.
-      if (boundary >= 1 && state_.il_prefix_for != static_cast<const void*>(prog_.prefix_code.data())) {
-        program_view pv {};
-        pv.code             = prog_.prefix_code;
-        pv.classes          = prog_.prefix_classes;
-        pv.cp_classes       = prog_.prefix_cp_classes;
-        pv.cp_ranges        = prog_.prefix_cp_ranges;
-        pv.unicode_word     = prog_.unicode_word;
-        state_.il_prefix_bp = build_byte_program(pv);
-        if (!state_.il_prefix_bp.eligible) {
-          abandon = true; // the prefix is not byte-DFA-eligible — let the core VM handle this pattern
-          return false;
-        }
-        state_.il_prefix_rev.emplace(state_.il_prefix_bp.code, state_.il_prefix_bp.classes);
-        state_.il_prefix_for = static_cast<const void*>(prog_.prefix_code.data());
-      }
+      const std::string_view lit        {lit_buf.data(), prog_.hints.inner_literal_len};
+      const std::int32_t     boundary   {prog_.hints.inner_literal_prefix};
 
       std::size_t       pos             {start};
       const std::size_t min_match_start {start}; // reverse floor = this search's start (the finditer resume); never advances mid-call
@@ -579,8 +561,27 @@ namespace real::detail {
           return false;
         }
         std::size_t s {h}; // boundary 0 = head literal: the reverse is the identity
-        if (boundary >= 1 && state_.il_prefix_rev.has_value()) {
-          s = state_.il_prefix_rev->reverse_start(text, h, min_match_start);
+        if (boundary >= 1) {
+          // Build the prefix reverse DFA lazily, on the first candidate: a no-match haystack (the literal
+          // never appears) pays only the memmem, never a reverse it would not use. Cached (once per program).
+          if (state_.il_prefix_for != static_cast<const void*>(prog_.prefix_code.data())) {
+            program_view pv {};
+            pv.code             = prog_.prefix_code;
+            pv.classes          = prog_.prefix_classes;
+            pv.cp_classes       = prog_.prefix_cp_classes;
+            pv.cp_ranges        = prog_.prefix_cp_ranges;
+            pv.unicode_word     = prog_.unicode_word;
+            state_.il_prefix_bp = build_byte_program(pv);
+            if (!state_.il_prefix_bp.eligible) {
+              abandon = true; // the prefix is not byte-DFA-eligible — let the core VM handle this pattern
+              return false;
+            }
+            state_.il_prefix_rev.emplace(state_.il_prefix_bp.code, state_.il_prefix_bp.classes);
+            state_.il_prefix_for = static_cast<const void*>(prog_.prefix_code.data());
+          }
+          if (state_.il_prefix_rev.has_value()) {
+            s = state_.il_prefix_rev->reverse_start(text, h, min_match_start);
+          }
         }
         if (s == npos) {
           pos = h + 1; // the prefix reaches no start within [min_match_start, h] -> next candidate

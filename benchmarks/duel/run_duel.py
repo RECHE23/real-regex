@@ -18,6 +18,14 @@ CSV = "alpha,bravo,charlie,delta,echo,foxtrot," * N
 EMAILS = "contact john.doe@example.com or jane@corp.io today " * N
 NODATE = "no dates here just plain english words running along " * N  # date pattern finds NOTHING
 MIXED = "id_42 name_foo val_7 key_bar ok_9 " * N
+# Sparse corpora: the pattern DOES match, but rarely — mostly non-matching filler with an occasional hit. This
+# is where the inner-literal prefilter earns its keep (memmem the rare `-` / `@` skips the filler at memchr
+# speed instead of scanning it a class-byte at a time). Versioned here so the row is reproducible, not anecdotal.
+DATE_SPARSE = ("plain english words with no date on this line just running along " * 15
+               + "then on 2026-07-04 a date finally appears ") * (N // 15)
+EMAIL_SPARSE = ("just plain words on this line with no address to be found here at all " * 15
+                + "reach jane@corp.io if you must ") * (N // 15)
+KV = "config alpha beta gamma key=val host=web port=99 mode=on delta epsilon " * N  # key= flagship
 
 CASES = [
     # (label, pattern, text) — chosen to span REAL's fast-path strengths and rust's DFA/prefilter strengths
@@ -30,6 +38,10 @@ CASES = [
     (r"email `(\w+)@(\w+)`",    r"(\w+)@(\w+)",                  EMAILS),
     (r"ident `(\w+)_(\w+)`",    r"(\w+)_(\w+)",                  MIXED),
     (r"date no-match `\d{4}-\d{2}-\d{2}`", r"\d{4}-\d{2}-\d{2}", NODATE),
+    # Inner-literal prefilter rows (IL.2) — the sparse-match cases + the key= flagship.
+    (r"date sparse `\d{4}-\d{2}-\d{2}`", r"\d{4}-\d{2}-\d{2}", DATE_SPARSE),
+    (r"email sparse `(\w+)@(\w+)`",      r"(\w+)@(\w+)",       EMAIL_SPARSE),
+    (r"key= `key=(\w+)`",                r"key=(\w+)",         KV),
 ]
 
 

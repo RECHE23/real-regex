@@ -377,6 +377,29 @@ allocation cost. Either way the pitch is not raw speed but the linear-time / ReD
 **bounded lookarounds `regex` cannot compile at all**, delivered through a `regex`-shaped API. The numbers are
 noisy and machine-dependent (criterion reports CIs); reproduce with `make bench-rust`.
 
+### E.5 The inner-literal prefilter (IL.2): closing the biggest gap line
+
+The duel's worst line was a pattern whose match does **not** begin with a literal — the date
+`\d{4}-\d{2}-\d{2}`. REAL scanned every position where a digit could start a match; the `regex` crate memmem'd
+the rare `-` and skipped the rest. The inner-literal prefilter (`make bench-duel`) gives REAL the same move: it
+extracts a required inner literal, scans for it, reverse-matches the prefix to the match start, and confirms
+forward. The line went from **201× rust to parity**:
+
+| duel row (find_iter, captures) | REAL ns/B | rust ns/B | ratio |
+| --- | --- | --- | --- |
+| `\d{4}-\d{2}-\d{2}` — no match | 0.020 | 0.013 | **1.6×** (was ~201×) |
+| `\d{4}-\d{2}-\d{2}` — sparse | 0.33 | 0.08 | 4.2× |
+| `(\w+)@(\w+)` — sparse | 0.88 | 0.12 | 7.2× |
+| `key=(\w+)` | 2.72 | 1.43 | 1.9× |
+| `[a-z]+` · `[0-9]+` · `[^,]+` (regression check) | 2.4 / 3.0 / 3.0 | 12 / 17 / 9 | REAL 5.0× / 5.8× / 3.1× |
+
+The no-match line is the headline: a haystack the literal never appears in now costs a single memmem (the
+reverse DFA is built lazily, only on the first candidate), landing at **1.6× rust** — the V0 target of ≤2× met.
+The sparse and `key=` rows carry the per-match reverse+confirm cost, so they trail rust's tighter loop but sit
+in the 2–7× band, far from the old 201×. Crucially the class/digit/field rows are **unchanged** (REAL still
+5–6× ahead) — the route only fires for patterns with a required inner literal, and the exhaustive corpus
+confirms it is byte-identical to the core search (serious=0 with the route on, 3.21M cases).
+
 ## Methodology & reproduction
 
 - **Goal.** A competitive snapshot *and* a same-machine regression tripwire — not a

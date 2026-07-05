@@ -516,9 +516,9 @@ dense-extraction row barely moves, and the three-column duel against the rust cr
 says why and names the two engines REAL has not built, both **parked follow-ups**:
 
 - **A one-pass extractor on the located window** — *delivered*, see \ref g_onepass below.
-- **A variable-offset inner-literal prefilter.** rust `memchr`es the required `@` at a variable offset and
-  verifies around each hit; REAL's rare-byte hint only covers a *fixed* offset. *Wake condition:*
-  no-match/sparse on patterns with a required inner literal becomes a target beyond the current 6–7×.
+- **A variable-offset inner-literal prefilter** — *delivered*, see \ref g_innerlit below. rust `memchr`es the
+  required `@` at a variable offset and verifies around each hit; REAL's rare-byte hint only covered a *fixed*
+  offset. This closed the biggest remaining gap line (the date, 201× → 1.6× of rust).
 
 \subsection g_onepass 7.7 Delivered: one-pass capture extraction (dense to rust parity)
 
@@ -556,6 +556,43 @@ resolve at load time — a toolchain-drift class that is invisible on the machin
 and hash-cons here uses an in-house FNV over bucket-vectors instead (the lazy-DFA pc-set cache, the one-pass
 minimizer, the UTF-8 trie memo), which also keeps them literal types for `constexpr`. The standing rule:
 **no `std::hash` or `std::unordered_*` in `include/real/`.**
+
+\subsection g_innerlit 7.8 Delivered: the inner-literal prefilter route (the date, decapitated)
+
+The gap §7.6 named — a pattern whose match does not *begin* with a literal, so no prefix/rare-byte hint helps,
+but a rare literal sits *inside* it (the date's `-`, the email's `@`). The route mirrors the `regex` crate's
+`ReverseInner`, read before it was written:
+
+1. **Extract** (\ref real::detail::extract_inner_literal, a pure walk of the AST). The maximal guaranteed byte
+   run, most-selective wins, with a soundness invariant — every byte kept is in *every* match, so an
+   alternation, an optional, a lookaround or an anchor makes it decline. It also records the **prefix
+   boundary**: how many top-level children precede the literal (0 = at the head, reverse is the identity).
+2. **Compile the prefix** (dynamic-only, guarded by `!is_constant_evaluated`) into its own byte-program stored
+   on the program; a static_regex keeps the core search, sidestepping the constexpr budget.
+3. **The loop** (`pike_vm::run_inner_literal`): `memmem` the literal → reverse-match the prefix to the match
+   start (the same `reverse_dfa` the lazy-DFA uses, on the prefix program) → forward-confirm anchored at the
+   start (`run_mode::prefix`, no re-search) → on failure, resume the scan past the literal hit.
+
+The payoff: the date `\d{4}-\d{2}-\d{2}` on a no-match haystack went from **201× rust to 1.6×** — a single
+`memmem`, the reverse DFA built lazily only when a candidate is actually found (BENCHMARKS.md §E.5).
+
+Two traps and one lesson worth recording:
+
+- **The reverse DFA holds *spans* into its byte-program.** That program was first a local destroyed after the
+  build — a use-after-free giving `npos` for every match. It now lives in the VM state, as the lazy-DFA's does
+  in its immutables.
+- **The dynamic VM uses `storage.hpp`'s own state type, not `pike_state`.** The route was silently inert (its
+  `if constexpr (requires …)` false) until the cache fields landed there.
+- **The reverse bound must advance only on a yield, never mid-search.** Advancing it per candidate (to the
+  previous literal's end) bounds the next reverse too tightly and misses a leftmost match whose start precedes
+  a failed candidate — `((.))a`, which the exhaustive corpus flagged with 22440 divergences. **The linearity
+  guard is the forward backstop (a candidate before the last confirm's forward reach abandons the scan to the
+  core), not the reverse bound.** It read as a missing quality heuristic; it was a one-line wiring bug. (rust's
+  own reverse-suffix optimization had a sibling leftmost bug, found by REAL's differential fuzzer:
+  [rust-lang/regex#1373](https://github.com/rust-lang/regex/pull/1373) — the symmetry is instructive.)
+
+Parked follow-ups, named: an **alternation-sibling** extraction (a literal common to every top-level branch,
+`foo|foobar`), and a **multi-literal** set (memmem-of-several) for patterns with no single required literal.
 
 \section g_map 8. Architecture map: who does what
 
