@@ -38,6 +38,9 @@ TEST(inner_literal_routed_equals_core)
     {.pat = R"(a\d+X)",             .text = "aX a1X aa12X 12X a123Xzz X aXX"}, // literal X, prefix a\d+ (overlap)
     {.pat = R"(\d{4}-\d{2})",       .text = "9999-99 12-3456-78 no 0000-00"},
     {.pat = R"(GET /\w+ )",         .text = "GET /a POST /b GET /home x GET / y GET /ok "},
+    {.pat = R"(((.))a)",             .text = "aaaab aabaa baaaa aXaya"},       // the exhaustive-flagged weak/adjacent literal
+    {.pat = R"((a?)a)",              .text = "aaa baa aXa aaaa"},              // adjacent literal, optional prefix
+    {.pat = R"(.+@)",                .text = "aaaa@x bb@ c@d@e no @"},         // greedy prefix: reverse must not over-bound
   };
   for (const testcase& tc : cases) {
     real::detail::inner_literal_route_disabled() = true;

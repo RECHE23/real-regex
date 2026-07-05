@@ -565,9 +565,9 @@ namespace real::detail {
         state_.il_prefix_for = static_cast<const void*>(prog_.prefix_code.data());
       }
 
-      std::size_t pos             {start};
-      std::size_t min_match_start {start}; // reverse floor (previous literal end) — guard 1
-      std::size_t min_pre_start   {start}; // literal-scan floor (last confirm's reach) — guard 2 (backstop)
+      std::size_t       pos             {start};
+      const std::size_t min_match_start {start}; // reverse floor = this search's start (the finditer resume); never advances mid-call
+      std::size_t       min_pre_start   {start}; // literal-scan floor (last confirm's reach) — the linearity backstop
       while (true) {
         const std::size_t h {find_literal(text, pos, lit)};
         if (h == npos) {
@@ -595,7 +595,12 @@ namespace real::detail {
           }
           pos = h + 1;
         }
-        min_match_start = h + lit.size(); // guard 1: the next reverse cannot cross this literal's end
+        // min_match_start does NOT advance within a call: it advances only on a YIELD (the finditer's next
+        // start). Advancing it per candidate (to the previous literal's end) would bound the next reverse too
+        // tightly and miss a leftmost match whose start precedes a failed candidate — e.g. `((.))a` on "aaaab",
+        // where the "a" at 0 fails but the match [0,2) is found from the "a" at 1 only if the reverse may still
+        // reach 0. The min_pre_start backstop (a candidate before the last confirm's forward reach) keeps it
+        // linear instead.
       }
     }
 

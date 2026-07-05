@@ -42,15 +42,13 @@ namespace real::detail {
     return disabled;
   }
 
-  //! \brief The inner-literal search route (IL.2). OFF by default while a correctness gate is finished: the
-  //!        `min_match_start` reverse bound can miss a leftmost match for a weak or adjacent literal (e.g.
-  //!        `((.))a`, which the exhaustive corpus flagged), the way rust's meta engine avoids `ReverseInner`
-  //!        without a quality heuristic. The machinery is complete and, for a selective literal, gives a large
-  //!        win (the date scans at 0.06 ns/byte vs 2.9 core); flip this to enable it in benchmarks and its
-  //!        routed==core differential until the gate lands.
+  //! \brief Test seam: force the matcher off the inner-literal search route (IL.2) onto the core search, so a
+  //!        differential can assert routed and unrouted searches agree. Not for production use — the route is
+  //!        transparent by contract (its reverse bound never advances mid-search, so it cannot miss a leftmost
+  //!        match), and this only exists to prove it.
   inline bool& inner_literal_route_disabled()
   {
-    static bool disabled {true};
+    static bool disabled {false};
     return disabled;
   }
 
