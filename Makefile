@@ -132,12 +132,20 @@ coverage: coverage-build
 
 # Minimum line coverage enforced by `coverage-check` (the CI gate). `make coverage` itself
 # stays advisory for local iteration; CI fails the build if a change drops below the floor.
+# The floor measures the engine's reachable logic. The C ABI shim (bindings/c/real_capi.cpp) is excluded from
+# the FLOOR — not from the report (`make coverage` still shows it): it is a thin boundary of defensive
+# exception catch-alls ("no C++ exception crosses into C") that are unreachable by construction (the engine's
+# only exception type, real::regex_error, is caught by a specific handler), so they cannot be line-covered by
+# a test. That surface is guarded instead by the sanitize build and the fuzz-capi target, which exercise it at
+# runtime. llvm-cov has no per-line exclusion, so the exclusion is per-file.
 COV_FLOOR := 95.0
+COV_FLOOR_IGNORE := bindings/c
 
 coverage-check: coverage-build
 	@pct=$$($(LLVM_COV) report $(COV_DIR)/real_tests_bin -instr-profile=$(COV_DIR)/tests.profdata \
+	        -ignore-filename-regex='$(COV_FLOOR_IGNORE)' \
 	        | awk '$$1 == "TOTAL" { gsub(/%/, "", $$10); print $$10 }'); \
-	  echo "Line coverage: $$pct% (floor $(COV_FLOOR)%)"; \
+	  echo "Line coverage: $$pct% (floor $(COV_FLOOR)%, engine logic; bindings/c guarded by sanitize+fuzz)"; \
 	  awk -v p="$$pct" -v f="$(COV_FLOOR)" 'BEGIN { exit !(p + 0 >= f + 0) }' || \
 	    { echo "FAIL: line coverage $$pct% is below the $(COV_FLOOR)% floor"; exit 1; }
 
