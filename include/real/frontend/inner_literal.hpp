@@ -61,7 +61,7 @@ namespace real::detail {
     constexpr std::uint32_t score_run(std::span<const std::uint8_t> run)
     {
       std::uint32_t s {0};
-      for (std::uint8_t b : run) {
+      for (const std::uint8_t b : run) {
         s += static_cast<std::uint32_t>(2000U - byte_frequency(b));
       }
       return s;
