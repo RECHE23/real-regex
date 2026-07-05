@@ -8,7 +8,7 @@
 #include <string_view>
 
 #include <sciforge/test/framework.hpp>
-#include "real/unicode_props.hpp"
+#include "real/unicode/unicode_props.hpp"
 
 using real::detail::code_range;
 using real::detail::digit_ranges;

@@ -9,7 +9,7 @@
 #ifndef REAL_CONFIG_HPP
 #define REAL_CONFIG_HPP
 
-#include "version.hpp"
+#include "real/version.hpp"
 
 #include <cstddef>
 #include <cstdint>

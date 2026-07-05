@@ -10,7 +10,7 @@
 #ifndef REAL_PROGRAM_HPP
 #define REAL_PROGRAM_HPP
 
-#include "version.hpp"
+#include "real/version.hpp"
 
 #include <array>
 #include <cstdint>
@@ -20,7 +20,7 @@
 #include <string>
 #include <vector>
 
-#include "charclass.hpp"
+#include "real/core/charclass.hpp"
 
 namespace real {
 

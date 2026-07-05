@@ -25,8 +25,8 @@
 #include <string_view>
 #include <vector>
 
-#include "program.hpp"
-#include "utf8_ranges.hpp"
+#include "real/core/program.hpp"
+#include "real/automata/utf8_ranges.hpp"
 
 namespace real::detail {
 

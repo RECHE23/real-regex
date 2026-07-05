@@ -24,7 +24,7 @@
 #ifndef REAL_DFA_HPP
 #define REAL_DFA_HPP
 
-#include "version.hpp"
+#include "real/version.hpp"
 
 #include <array>
 #include <cstddef>
@@ -37,8 +37,8 @@
 #include <string_view>
 #include <vector>
 
-#include "config.hpp"
-#include "real.hpp"
+#include "real/core/config.hpp"
+#include "real/real.hpp"
 
 namespace real {
 

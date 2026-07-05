@@ -9,7 +9,7 @@
 #include <sciforge/test/framework.hpp>
 #include <sciforge/test/strings.hpp>
 #include "real/real.hpp"
-#include "real/utf8.hpp"
+#include "real/unicode/utf8.hpp"
 
 using real::flags;
 using real::regex;

@@ -44,7 +44,7 @@ SCIFORGE_LINT ?= ../sciforge/lint
 SCIFORGE_TOOLS ?= ../sciforge/tools
 # unicode_fold.hpp and unicode_props.hpp are generated (their scripts own the layout; the regen tests
 # pin them), so they are excluded from the hand-written-code formatter.
-FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep -vE 'include/real/unicode_(fold|props)\.hpp')
+FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep -vE 'include/real/unicode/unicode_(fold|props)\.hpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
         lint misra fuzz fuzz-compat exhaustive-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
@@ -234,7 +234,7 @@ format-check:
 # header-only engine the .cpp #includes, so a header-only change would leave a stale .so.
 # Gate the rebuild on the headers through a stamp, and pass --force so the recompile
 # actually happens when a header changed (build_ext would otherwise skip it).
-HEADERS := $(wildcard include/real/*.hpp)
+HEADERS := $(shell find include/real -name '*.hpp')
 
 python: $(BUILD)/py_ext.stamp
 
@@ -293,9 +293,13 @@ check-pins:
 	@if test -x $(SCIFORGE_TOOLS)/check-pins.sh; then $(SCIFORGE_TOOLS)/check-pins.sh .; \
 	 else echo "check-pins: WARN — $(SCIFORGE_TOOLS)/check-pins.sh absent, skipped (CI covers it)"; fi
 
+check-layers:
+	@python3 tools/check_layers.py
+
 full-local-gate:
 	@$(MAKE) format-check
 	@$(MAKE) version-check
+	@$(MAKE) check-layers
 	@$(MAKE) check-pins
 	@$(MAKE) test
 	@$(MAKE) exhaustive-compat

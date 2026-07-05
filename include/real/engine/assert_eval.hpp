@@ -15,10 +15,10 @@
 #include <cstdint>
 #include <string_view>
 
-#include "charclass.hpp"
-#include "program.hpp"
-#include "unicode_props.hpp"
-#include "utf8.hpp"
+#include "real/core/charclass.hpp"
+#include "real/core/program.hpp"
+#include "real/unicode/unicode_props.hpp"
+#include "real/unicode/utf8.hpp"
 
 namespace real::detail {
 

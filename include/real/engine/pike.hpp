@@ -14,7 +14,7 @@
 #ifndef REAL_PIKE_HPP
 #define REAL_PIKE_HPP
 
-#include "version.hpp"
+#include "real/version.hpp"
 
 #include <array>
 #include <cassert>
@@ -24,16 +24,16 @@
 #include <utility>
 #include <vector>
 
-#include "charclass.hpp"
-#include "prefilter.hpp"
+#include "real/core/charclass.hpp"
+#include "real/engine/prefilter.hpp"
 #include <mutex>
 #include <optional>
 
-#include "lazy_dfa.hpp"
-#include "onepass.hpp"
-#include "program.hpp"
-#include "unicode_props.hpp"
-#include "utf8.hpp"
+#include "real/automata/lazy_dfa.hpp"
+#include "real/automata/onepass.hpp"
+#include "real/core/program.hpp"
+#include "real/unicode/unicode_props.hpp"
+#include "real/unicode/utf8.hpp"
 
 namespace real::detail {
 

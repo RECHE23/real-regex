@@ -12,7 +12,7 @@
 #ifndef REAL_UNICODE_FOLD_HPP
 #define REAL_UNICODE_FOLD_HPP
 
-#include "version.hpp"
+#include "real/version.hpp"
 
 #include <cstddef>
 #include <cstdint>

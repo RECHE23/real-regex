@@ -190,7 +190,7 @@ def emit(orbits, path):
 
 
 def main():
-    out = sys.argv[1] if len(sys.argv) > 1 else "include/real/unicode_fold.hpp"
+    out = sys.argv[1] if len(sys.argv) > 1 else "include/real/unicode/unicode_fold.hpp"
     cased = cased_codepoints()
     orbits = build_orbits(cased)
     validate(orbits, cased)

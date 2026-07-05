@@ -6,7 +6,7 @@
 
 #include <sciforge/test/framework.hpp>
 #include "real/real.hpp"
-#include "real/lazy_dfa.hpp"
+#include "real/automata/lazy_dfa.hpp"
 
 using real::detail::dynamic_storage;
 using real::detail::lazy_dfa;

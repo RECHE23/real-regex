@@ -10,13 +10,13 @@
 #ifndef REAL_UNICODE_PROPS_HPP
 #define REAL_UNICODE_PROPS_HPP
 
-#include "version.hpp"
+#include "real/version.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <span>
 
-#include "program.hpp" // code_range
+#include "real/core/program.hpp" // code_range
 
 namespace real::detail {
 

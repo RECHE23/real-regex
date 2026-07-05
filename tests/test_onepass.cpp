@@ -11,8 +11,8 @@
 
 #include <sciforge/test/framework.hpp>
 #include "real/real.hpp"
-#include "real/lazy_dfa.hpp"
-#include "real/onepass.hpp"
+#include "real/automata/lazy_dfa.hpp"
+#include "real/automata/onepass.hpp"
 
 using real::detail::build_byte_program;
 using real::detail::build_utf8_trie;

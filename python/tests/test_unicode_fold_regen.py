@@ -20,7 +20,7 @@ except Exception as exc:  # noqa: BLE001 - the generator needs CPython 3.11+ (re
     gen = None
     _GEN_IMPORT_ERROR = exc
 
-_HEADER = os.path.join(repo_root(), "include", "real", "unicode_fold.hpp")
+_HEADER = os.path.join(repo_root(), "include", "real", "unicode", "unicode_fold.hpp")
 
 
 def _regenerate(path):

@@ -7,7 +7,7 @@
 #include <string_view>
 
 #include <sciforge/test/framework.hpp>
-#include "real/compiler.hpp"
+#include "real/frontend/compiler.hpp"
 
 using real::detail::class_def;
 using real::detail::code_range;

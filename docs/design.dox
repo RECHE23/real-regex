@@ -559,21 +559,34 @@ minimizer, the UTF-8 trie memo), which also keeps them literal types for `conste
 
 \section g_map 8. Architecture map: who does what
 
-Headers form layers; a header only includes those below it (each file's Doxygen
-*include graph* shows this).
+The headers under `include/real/` are partitioned into dependency tiers, and a header may include only from
+its own tier or a lower one. The rule is executable — `tools/check_layers.py` (the `check-layers` gate) fails
+the build on any upward include, so the layering is a fact, not a comment. Low to high:
 
-| Header          | Key types / functions                                   | Role |
-|-----------------|---------------------------------------------------------|------|
-| `config.hpp`    | `max_program_size`, `max_nesting_depth`, …              | The resource caps (see \ref g_safety). |
-| `charclass.hpp` | \ref real::detail::char_class; `digit_set`…; `utf8_*_set` | The byte-set bitmap, the ASCII sets, the shared UTF-8 sets. |
-| `utf8.hpp`      | `codepoint_advance`                                     | Step one whole codepoint (only to advance past an empty match). |
-| `program.hpp`   | \ref real::detail::opcode, \ref real::detail::instr, \ref real::flags, \ref real::detail::pattern_hints, \ref real::detail::program_view | The compiled program's vocabulary and a non-owning view of it. |
-| `ast.hpp`       | \ref real::detail::ast_node, \ref real::detail::ast, \ref real::detail::parser | Recursive-descent parser → index-pool syntax tree. |
-| `compiler.hpp`  | \ref real::detail::compiler                             | Thompson construction with atomic offset patching. |
-| `prefilter.hpp` | `analyze_program`, `find_byte`, `find_prefix`           | Search hints, candidate skipping, fast-path shape recognition. |
-| `pike.hpp`      | \ref real::detail::pike_vm, \ref real::detail::basic_thread_list, \ref real::detail::basic_pike_state | The engine: thread lists, scratch, run loop, fast paths. |
-| `storage.hpp`   | \ref real::detail::dynamic_storage, \ref real::detail::static_storage, \ref real::detail::small_vec, \ref real::fixed_string | Where the program and scratch live: heap, or exact constexpr arrays. |
-| `real.hpp`      | \ref real::regex, \ref real::static_regex, \ref real::basic_match_result | The public API: match/search, iteration, replace, split. |
+- **`core/`** — the IR and primitives: `program.hpp` (opcodes, `instr`, `program_view`, `code_range`),
+  `charclass.hpp` (the byte-set bitmap), `config.hpp` (the resource caps).
+- **`unicode/`** — `utf8.hpp` (codepoint decode), `unicode_props.hpp` / `unicode_fold.hpp` (the generated
+  property and case-fold tables). *Above* core: the tables index the IR's `code_range`.
+- **`engine/` + `automata/`** — one runtime tier: `pike.hpp` (the VM), `prefilter.hpp`, `assert_eval.hpp`,
+  and `lazy_dfa.hpp` / `onepass.hpp` / `utf8_ranges.hpp`. `pike` ↔ `onepass` is a deliberate mutual
+  dependency, allowed within the tier and forbidden across it.
+- **`frontend/`** — `ast.hpp` (recursive-descent parser) and `compiler.hpp` (Thompson construction); they
+  consume the runtime's `prefilter` and `utf8_ranges`, so they sit above it.
+- **root** — the public `real.hpp` / `dfa.hpp`, and `storage.hpp`, the assembly `real::regex` drives
+  (it orchestrates parse → compile → store, so it depends on every tier below).
+
+| Header               | Key types / functions | Role |
+|----------------------|-----------------------|------|
+| `core/config.hpp`    | `max_program_size`, `max_nesting_depth`, … | The resource caps (see \ref g_safety). |
+| `core/charclass.hpp` | \ref real::detail::char_class; `digit_set`…; `utf8_*_set` | The byte-set bitmap, the ASCII sets, the shared UTF-8 sets. |
+| `core/program.hpp`   | \ref real::detail::opcode, \ref real::detail::instr, \ref real::flags, \ref real::detail::pattern_hints, \ref real::detail::program_view | The compiled program's vocabulary and a non-owning view of it. |
+| `unicode/utf8.hpp`   | `codepoint_advance` | Step one whole codepoint (only to advance past an empty match). |
+| `frontend/ast.hpp`   | \ref real::detail::ast_node, \ref real::detail::ast, \ref real::detail::parser | Recursive-descent parser → index-pool syntax tree. |
+| `frontend/compiler.hpp` | \ref real::detail::compiler | Thompson construction with atomic offset patching. |
+| `engine/prefilter.hpp` | `analyze_program`, `find_byte`, `find_prefix` | Search hints, candidate skipping, fast-path shape recognition. |
+| `engine/pike.hpp`    | \ref real::detail::pike_vm, \ref real::detail::basic_thread_list, \ref real::detail::basic_pike_state | The engine: thread lists, scratch, run loop, fast paths. |
+| `storage.hpp`        | \ref real::detail::dynamic_storage, \ref real::detail::static_storage, \ref real::detail::small_vec, \ref real::fixed_string | Where the program and scratch live: heap, or exact constexpr arrays. |
+| `real.hpp`           | \ref real::regex, \ref real::static_regex, \ref real::basic_match_result | The public API: match/search, iteration, replace, split. |
 
 One parse → compile → execute pipeline, parameterized on a storage policy,
 backs all three memory modes (no second hierarchy): \ref

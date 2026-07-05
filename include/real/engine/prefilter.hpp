@@ -12,7 +12,7 @@
 #ifndef REAL_PREFILTER_HPP
 #define REAL_PREFILTER_HPP
 
-#include "version.hpp"
+#include "real/version.hpp"
 
 #include <cstdint>
 #include <cstring>
@@ -21,8 +21,8 @@
 #include <type_traits>
 #include <vector>
 
-#include "charclass.hpp"
-#include "program.hpp"
+#include "real/core/charclass.hpp"
+#include "real/core/program.hpp"
 
 namespace real::detail {
 

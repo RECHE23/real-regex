@@ -9,7 +9,7 @@
 #ifndef REAL_CHARCLASS_HPP
 #define REAL_CHARCLASS_HPP
 
-#include "version.hpp"
+#include "real/version.hpp"
 
 #include <array>
 #include <cstddef>

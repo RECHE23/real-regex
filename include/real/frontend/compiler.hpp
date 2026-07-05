@@ -17,19 +17,19 @@
 #ifndef REAL_COMPILER_HPP
 #define REAL_COMPILER_HPP
 
-#include "version.hpp"
+#include "real/version.hpp"
 
 #include <algorithm>
 #include <cstdint>
 #include <vector>
 
-#include "ast.hpp"
-#include "charclass.hpp"
-#include "config.hpp"
-#include "prefilter.hpp"
-#include "program.hpp"
-#include "unicode_fold.hpp"
-#include "utf8_ranges.hpp"
+#include "real/frontend/ast.hpp"
+#include "real/core/charclass.hpp"
+#include "real/core/config.hpp"
+#include "real/engine/prefilter.hpp"
+#include "real/core/program.hpp"
+#include "real/unicode/unicode_fold.hpp"
+#include "real/automata/utf8_ranges.hpp"
 
 namespace real::detail {
 

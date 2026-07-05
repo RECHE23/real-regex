@@ -46,7 +46,7 @@ def file_header(*, filename, brief, generator, doc_lines, guard, includes, versi
         f"#ifndef {guard}",
         f"#define {guard}",
         "",
-        '#include "version.hpp"',
+        '#include "real/version.hpp"',
         "",
     ]
     out += includes

@@ -113,7 +113,7 @@ def emit(tables, path):
             "#include <cstdint>",
             "#include <span>",
             "",
-            '#include "program.hpp" // code_range',
+            '#include "real/core/program.hpp" // code_range',
         ],
         version_kind="tables",
         version_const="unicode_props_unidata_version")
@@ -153,7 +153,7 @@ def emit(tables, path):
 
 
 def main():
-    dest = sys.argv[1] if len(sys.argv) > 1 else "include/real/unicode_props.hpp"
+    dest = sys.argv[1] if len(sys.argv) > 1 else "include/real/unicode/unicode_props.hpp"
     try:
         tables = {name: build_ranges(pat) for name, pat in _PATTERNS.items()}
     except Exception as exc:  # noqa: BLE001 - surface any re/unicodedata API change clearly

@@ -23,7 +23,7 @@ import pathlib
 import re
 import unittest
 
-_HEADERS = ["ast.hpp", "compiler.hpp"]
+_HEADERS = ["frontend/ast.hpp", "frontend/compiler.hpp"]
 _FLAGS = ["icase_", "ascii_", "bytes_", "ecma_", "verbose_"]
 
 # The current ceiling per flag member (code occurrences, comments stripped). Monotonic: only lower it.

@@ -15,7 +15,7 @@ from _regen_guard import assert_regenerates_byte_identical, repo_root
 sys.path.insert(0, os.path.join(repo_root(), "scripts"))
 import gen_unicode_props as gen  # noqa: E402
 
-_HEADER = os.path.join(repo_root(), "include", "real", "unicode_props.hpp")
+_HEADER = os.path.join(repo_root(), "include", "real", "unicode", "unicode_props.hpp")
 
 
 def _regenerate(path):

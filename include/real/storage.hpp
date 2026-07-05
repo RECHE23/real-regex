@@ -14,7 +14,7 @@
 #ifndef REAL_STORAGE_HPP
 #define REAL_STORAGE_HPP
 
-#include "version.hpp"
+#include "real/version.hpp"
 
 #include <array>
 #include <cassert>
@@ -24,10 +24,10 @@
 #include <string>
 #include <string_view>
 
-#include "ast.hpp"
-#include "compiler.hpp"
-#include "pike.hpp"
-#include "program.hpp"
+#include "real/frontend/ast.hpp"
+#include "real/frontend/compiler.hpp"
+#include "real/engine/pike.hpp"
+#include "real/core/program.hpp"
 
 namespace real {
 

@@ -7,7 +7,7 @@
 #ifndef REAL_REAL_HPP
 #define REAL_REAL_HPP
 
-#include "version.hpp"
+#include "real/version.hpp"
 
 #include <iterator>
 #include <optional>
@@ -17,10 +17,10 @@
 #include <utility>
 #include <vector>
 
-#include "pike.hpp"
-#include "program.hpp"
-#include "storage.hpp"
-#include "utf8.hpp"
+#include "real/engine/pike.hpp"
+#include "real/core/program.hpp"
+#include "real/storage.hpp"
+#include "real/unicode/utf8.hpp"
 
 namespace real {
 

@@ -31,9 +31,9 @@
 #include <string_view>
 #include <vector>
 
-#include "assert_eval.hpp"
-#include "lazy_dfa.hpp"
-#include "program.hpp"
+#include "real/engine/assert_eval.hpp"
+#include "real/automata/lazy_dfa.hpp"
+#include "real/core/program.hpp"
 
 namespace real::detail {
 

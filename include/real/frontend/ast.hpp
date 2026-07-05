@@ -18,7 +18,7 @@
 #ifndef REAL_AST_HPP
 #define REAL_AST_HPP
 
-#include "version.hpp"
+#include "real/version.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -26,12 +26,12 @@
 #include <string_view>
 #include <vector>
 
-#include "charclass.hpp"
-#include "config.hpp"
-#include "program.hpp"
-#include "unicode_fold.hpp"
-#include "unicode_props.hpp"
-#include "utf8.hpp"
+#include "real/core/charclass.hpp"
+#include "real/core/config.hpp"
+#include "real/core/program.hpp"
+#include "real/unicode/unicode_fold.hpp"
+#include "real/unicode/unicode_props.hpp"
+#include "real/unicode/utf8.hpp"
 
 namespace real::detail {
 
