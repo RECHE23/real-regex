@@ -17,10 +17,19 @@ extern "C" {
 typedef struct real_regex real_regex;   /* a compiled pattern */
 typedef struct real_iter  real_iter;    /* a match cursor over one subject */
 
+/* Error classification written to real_compile's `code` out-param: a stable, machine-readable tag so a
+ * binding classifies a rejection without matching on the message text. */
+enum {
+  REAL_ERR_NONE = 0,        /* success */
+  REAL_ERR_SYNTAX = 1,      /* the pattern is malformed */
+  REAL_ERR_UNSUPPORTED = 2  /* well-formed but beyond REAL's linear engine (backreference, \p{...}, …) */
+};
+
 /* Compile [pattern, pattern+len). `flags` is a bitmask of real::flags (icase=1, multiline=2, dotall=4,
- * bytes=8, verbose=16, ecma=32, ascii=64). Returns NULL on error, filling `errbuf` (NUL-terminated) if
- * given. The returned handle must be freed with real_free. */
-real_regex* real_compile(const char* pattern, size_t len, uint32_t flags, char* errbuf, size_t errbuf_len);
+ * bytes=8, verbose=16, ecma=32, ascii=64). Returns NULL on error, filling `errbuf` (NUL-terminated) and (if
+ * non-NULL) `code` with one of the REAL_ERR_* values. The returned handle must be freed with real_free. */
+real_regex* real_compile(const char* pattern, size_t len, uint32_t flags,
+                         char* errbuf, size_t errbuf_len, int* code);
 
 /* Number of capture-span slots per match: (capturing groups + 1) for group 0. The `spans` buffer passed to
  * real_iter_next must hold 2 * this many size_t. */
@@ -34,16 +43,17 @@ size_t real_group_name(const real_regex* re, size_t group, char* buf, size_t buf
 void real_free(real_regex* re);
 
 /* Iterate the non-overlapping matches over [text, text+len). Both `re` and the text buffer must outlive the
- * returned iterator. Returns NULL only on allocation failure. */
+ * returned iterator. Returns NULL if the iterator could not be constructed (allocation failure, or the engine
+ * reporting an internal error) — the caller MUST check for NULL and must not call real_iter_next on it. */
 real_iter* real_find_iter(const real_regex* re, const char* text, size_t len);
 
 /* Like real_find_iter, but the search starts at byte offset `start` (the region [start, len)). Anchors see
- * `start` as the region start, matching the engine's pos semantics. */
+ * `start` as the region start, matching the engine's pos semantics. Same NULL contract as real_find_iter. */
 real_iter* real_find_iter_at(const real_regex* re, const char* text, size_t len, size_t start);
 
-/* Advance to the next match. On a match, fills `spans` with 2 * real_group_count(re) offsets
- * (start0, end0, start1, end1, …); an unset group is (SIZE_MAX, SIZE_MAX). Returns 1 on a match, 0 at the
- * end. */
+/* Advance to the next match. On a match (return 1), fills `spans` with 2 * real_group_count(re) offsets
+ * (start0, end0, start1, end1, …); an unset group is (SIZE_MAX, SIZE_MAX). Returns 0 at the end of iteration,
+ * and -1 on an internal engine error or a NULL iterator (no C++ exception ever crosses this boundary). */
 int real_iter_next(real_iter* iter, size_t* spans);
 
 void real_iter_free(real_iter* iter);

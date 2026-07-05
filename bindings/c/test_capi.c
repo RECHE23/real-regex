@@ -7,8 +7,9 @@
 
 int main(void) {
   char err[256] = {0};
+  int code = REAL_ERR_NONE;
   const char* pat = "(\\w+)@(\\w+)";
-  real_regex* re = real_compile(pat, strlen(pat), 0, err, sizeof err);
+  real_regex* re = real_compile(pat, strlen(pat), 0, err, sizeof err, &code);
   assert(re != NULL);
   assert(real_group_count(re) == 3); /* group 0 + two groups */
 
@@ -26,13 +27,20 @@ int main(void) {
   real_iter_free(it);
   real_free(re);
 
-  real_regex* bad = real_compile("(", 1, 0, err, sizeof err);
+  real_regex* bad = real_compile("(", 1, 0, err, sizeof err, &code);
   assert(bad == NULL);
-  assert(strlen(err) > 0); /* a message was reported */
+  assert(strlen(err) > 0);            /* a message was reported */
+  assert(code == REAL_ERR_SYNTAX);    /* an unbalanced paren is a syntax error */
+
+  /* the structured code classifies unsupported constructs (the drift test: \p{} stays unsupported even if
+     the message wording changes) */
+  real_regex* unsup = real_compile("\\p{L}+", 5, 0, err, sizeof err, &code);
+  assert(unsup == NULL);
+  assert(code == REAL_ERR_UNSUPPORTED);
 
   /* group names + find-at */
   const char* npat = "(?P<user>\\w+)@(?P<host>\\w+)";
-  real_regex* named = real_compile(npat, strlen(npat), 0, err, sizeof err);
+  real_regex* named = real_compile(npat, strlen(npat), 0, err, sizeof err, &code);
   assert(named != NULL);
   char name[64];
   assert(real_group_name(named, 0, name, sizeof name) == 0 && name[0] == '\0'); /* group 0 unnamed */

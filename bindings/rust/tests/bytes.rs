@@ -61,3 +61,18 @@ fn named_lookup_and_builder_agree() {
     let std = regex::bytes::RegexBuilder::new(r"abc").unicode(false).case_insensitive(true).build().unwrap();
     assert_eq!(re.is_match(b"ABC"), std.is_match(b"ABC"));
 }
+
+#[test]
+fn splitn_is_match_at_captures_at_agree() {
+    let re = Regex::new(r"\d+").unwrap();
+    let std = oracle(r"\d+");
+    let text = b"a1b22c333d";
+    for n in [0usize, 1, 2, 3] {
+        assert_eq!(re.splitn(text, n).collect::<Vec<_>>(), std.splitn(text, n).collect::<Vec<_>>(), "splitn {n}");
+    }
+    assert_eq!(re.is_match_at(text, 3), std.is_match_at(text, 3));
+    let re2 = Regex::new(r"(\w)(\d+)").unwrap();
+    let std2 = oracle(r"(\w)(\d+)");
+    assert_eq!(re2.captures_at(text, 2).and_then(|c| c.get(2).map(|m| (m.start(), m.end()))),
+               std2.captures_at(text, 2).and_then(|c| c.get(2).map(|m| (m.start(), m.end()))));
+}

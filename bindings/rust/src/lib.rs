@@ -23,7 +23,7 @@ enum RealIter {}
 
 extern "C" {
     fn real_compile(pattern: *const c_char, len: usize, flags: u32,
-                    errbuf: *mut c_char, errbuf_len: usize) -> *mut RealRegex;
+                    errbuf: *mut c_char, errbuf_len: usize, code: *mut i32) -> *mut RealRegex;
     fn real_group_count(re: *const RealRegex) -> usize;
     fn real_group_name(re: *const RealRegex, group: usize, buf: *mut c_char, buflen: usize) -> usize;
     fn real_free(re: *mut RealRegex);
@@ -34,6 +34,7 @@ extern "C" {
 }
 
 const DIVERGENCES_URL: &str = "https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md";
+const REAL_ERR_UNSUPPORTED: i32 = 2; // must match REAL_ERR_UNSUPPORTED in real_capi.h
 
 /// Why a pattern failed to compile.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,20 +52,16 @@ impl Error {
         matches!(self, Error::Unsupported { .. })
     }
 
-    // Parse the engine's "regex_error at N: message" and classify it. A construct REAL knows it does not
-    // implement (an unsupported escape/class, a backreference) becomes Unsupported with a solution hint.
-    fn from_engine(raw: &str) -> Error {
+    // Build an Error from the engine's message and its structured code (REAL_ERR_*). The classification comes
+    // from the code the C ABI reports — never from matching on the message text, so a reworded engine message
+    // cannot silently change whether a pattern is treated as unsupported.
+    fn from_engine(raw: &str, code: i32) -> Error {
         let body = raw.strip_prefix("regex_error").unwrap_or(raw).trim_start();
         let (pos, msg) = match body.strip_prefix("at ").and_then(|r| r.split_once(':')) {
             Some((n, rest)) => (n.trim().parse::<usize>().ok(), rest.trim().to_string()),
             None => (None, body.trim_start_matches(':').trim().to_string()),
         };
-        let lower = msg.to_ascii_lowercase();
-        let unsupported = lower.contains("unsupported")
-            || lower.contains("backreference")
-            || lower.contains("not supported")
-            || lower.contains("does not support");
-        if unsupported {
+        if code == REAL_ERR_UNSUPPORTED {
             Error::Unsupported {
                 construct: msg,
                 hint: format!(
@@ -100,13 +97,14 @@ struct GroupInfo {
 // Compile a pattern (as raw bytes) and precompute its group names. Shared by the str and bytes APIs.
 fn compile_handle(pattern: &[u8], flags: u32) -> Result<(*mut RealRegex, usize, Arc<GroupInfo>), Error> {
     let mut err = [0u8; 256];
+    let mut code: i32 = 0;
     let handle = unsafe {
         real_compile(pattern.as_ptr() as *const c_char, pattern.len(), flags,
-                     err.as_mut_ptr() as *mut c_char, err.len())
+                     err.as_mut_ptr() as *mut c_char, err.len(), &mut code)
     };
     if handle.is_null() {
         let end = err.iter().position(|&b| b == 0).unwrap_or(err.len());
-        return Err(Error::from_engine(&String::from_utf8_lossy(&err[..end])));
+        return Err(Error::from_engine(&String::from_utf8_lossy(&err[..end]), code));
     }
     let ngroups = unsafe { real_group_count(handle) };
     let mut names = Vec::with_capacity(ngroups);
@@ -245,6 +243,8 @@ impl Regex {
                 Some(s) => real_find_iter_at(self.handle, text.as_ptr() as *const c_char, text.len(), s),
             }
         };
+        // A null cursor means the engine failed to construct the iterator (never dereference it).
+        assert!(!iter.is_null(), "real-regex: engine iteration failed");
         SpanCursor::Real(RawSpans { iter, ngroups: self.ngroups, last_end: None, _re: PhantomData })
     }
 
@@ -333,17 +333,21 @@ impl RawSpans<'_, '_> {
     fn engine_next(&mut self) -> Option<Vec<Option<(usize, usize)>>> {
         let mut spans = vec![0usize; 2 * self.ngroups];
         let got = unsafe { real_iter_next(self.iter, spans.as_mut_ptr()) };
-        if got == 0 {
-            return None;
+        match got {
+            0 => None,
+            // -1 is an internal engine error (or a null cursor). A linear search never "fails to match" — the
+            // rust contract is compile -> Result, then matching is infallible — so we surface it, never a
+            // silent empty result.
+            -1 => panic!("real-regex: engine iteration failed"),
+            _ => Some(
+                (0..self.ngroups)
+                    .map(|g| {
+                        let (a, b) = (spans[2 * g], spans[2 * g + 1]);
+                        if a == usize::MAX { None } else { Some((a, b)) }
+                    })
+                    .collect(),
+            ),
         }
-        Some(
-            (0..self.ngroups)
-                .map(|g| {
-                    let (a, b) = (spans[2 * g], spans[2 * g + 1]);
-                    if a == usize::MAX { None } else { Some((a, b)) }
-                })
-                .collect(),
-        )
     }
 
     // The rust empty-match rule, applied at the wrapper (regex-automata util::iter::Searcher::try_advance):
@@ -846,6 +850,8 @@ pub mod bytes {
                     Some(s) => real_find_iter_at(self.handle, text.as_ptr() as *const c_char, text.len(), s),
                 }
             };
+            // A null cursor means the engine failed to construct the iterator (never dereference it).
+            assert!(!iter.is_null(), "real-regex: engine iteration failed");
             RawSpans { iter, ngroups: self.ngroups, last_end: None, _re: PhantomData }
         }
 
@@ -873,14 +879,30 @@ pub mod bytes {
             Matches { raw: self.raw(text, None), text }
         }
 
+        /// Whether the pattern matches at or after byte offset `start`.
+        pub fn is_match_at(&self, text: &[u8], start: usize) -> bool {
+            self.raw(text, Some(start)).next().is_some()
+        }
+
         /// The capture groups of the leftmost match, or `None`.
         pub fn captures<'t>(&self, text: &'t [u8]) -> Option<Captures<'t>> {
             self.raw(text, None).next().map(|s| self.caps_from(text, s))
         }
 
+        /// Like [`captures`](Regex::captures), searching from byte offset `start`.
+        pub fn captures_at<'t>(&self, text: &'t [u8], start: usize) -> Option<Captures<'t>> {
+            self.raw(text, Some(start)).next().map(|s| self.caps_from(text, s))
+        }
+
         /// Iterate the capture groups of each match.
         pub fn captures_iter<'r, 't>(&'r self, text: &'t [u8]) -> CaptureMatches<'r, 't> {
             CaptureMatches { raw: self.raw(text, None), re: self, text }
+        }
+
+        /// The end offset of the leftmost match. Same divergence as the string API's
+        /// [`shortest_match`](crate::Regex::shortest_match) — the leftmost match's greedy end.
+        pub fn shortest_match(&self, text: &[u8]) -> Option<usize> {
+            self.raw(text, None).next().map(|s| s[0].unwrap().1)
         }
 
         /// Replace the leftmost match with `rep` (a `&[u8]`/`Vec<u8>` template with `$`-expansion, or a
@@ -920,6 +942,12 @@ pub mod bytes {
         /// Iterate the pieces of `text` delimited by matches.
         pub fn split<'r, 't>(&'r self, text: &'t [u8]) -> Split<'r, 't> {
             Split { text, it: self.find_iter(text), last: 0, done: false }
+        }
+
+        /// Like [`split`](Regex::split), but yielding at most `limit` pieces (the last is the unsplit
+        /// remainder). `limit == 0` yields nothing.
+        pub fn splitn<'r, 't>(&'r self, text: &'t [u8], limit: usize) -> SplitN<'r, 't> {
+            SplitN { inner: self.split(text), limit, n: 0 }
         }
     }
 
@@ -1044,6 +1072,31 @@ pub mod bytes {
                     Some(&self.text[self.last..])
                 }
             }
+        }
+    }
+
+    /// Iterator of at most `limit` pieces, from [`Regex::splitn`].
+    pub struct SplitN<'r, 't> {
+        inner: Split<'r, 't>,
+        limit: usize,
+        n: usize,
+    }
+
+    impl<'t> Iterator for SplitN<'_, 't> {
+        type Item = &'t [u8];
+        fn next(&mut self) -> Option<&'t [u8]> {
+            if self.n >= self.limit {
+                return None;
+            }
+            self.n += 1;
+            if self.n == self.limit {
+                if self.inner.done {
+                    return None;
+                }
+                self.inner.done = true;
+                return Some(&self.inner.text[self.inner.last..]);
+            }
+            self.inner.next()
         }
     }
 

@@ -115,6 +115,8 @@ jobs:
         run: make -C real-regex capi-test
       - name: Rust crate — differential vs the regex crate
         run: make -C real-regex crate-test
+      - name: Rust crate — packaging dry-run (builds the vendored crate standalone)
+        run: make -C real-regex crate-publish-check
 
   # Coverage gate: fail the build if line coverage drops below the floor (was advisory).
   coverage:

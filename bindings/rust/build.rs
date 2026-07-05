@@ -1,12 +1,14 @@
 // Compiles the header-only REAL engine + the C ABI shim into a static lib the crate links.
-// Uses the vendored copy when packaged (crates.io), the sibling repo when built in-tree.
+// In-tree (the monorepo) always uses the LIVE sibling sources; the vendored copy is used only when packaged
+// (off crates.io, where the sibling does not exist). Checking the sibling first — not vendor/ first — means a
+// stale vendor/ left by `make crate-vendor` can never silently shadow the live shim during development.
 use std::path::Path;
 
 fn main() {
-    let (include, capi) = if Path::new("vendor/include").exists() {
-        ("vendor/include", "vendor/c")
+    let (include, capi) = if Path::new("../../include/real").exists() {
+        ("../../include", "../c") // in-tree: the live sibling sources
     } else {
-        ("../../include", "../c") // in-tree dev build
+        ("vendor/include", "vendor/c") // packaged: the vendored copy
     };
     println!("cargo:rerun-if-changed={capi}/real_capi.cpp");
     println!("cargo:rerun-if-changed={capi}/real_capi.h");

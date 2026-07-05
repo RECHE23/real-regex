@@ -330,6 +330,7 @@ full-local-gate:
 	@$(MAKE) check-layers
 	@$(MAKE) capi-test
 	@$(MAKE) crate-test
+	@$(MAKE) crate-publish-check
 	@$(MAKE) check-pins
 	@$(MAKE) test
 	@$(MAKE) exhaustive-compat

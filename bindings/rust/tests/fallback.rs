@@ -45,3 +45,9 @@ fn without_fallback_flag_still_rejects() {
     assert!(e.is_unsupported());
     assert!(Regex::new(r"\p{L}+").is_err()); // Regex::new is always strict
 }
+
+#[test]
+fn backreference_stays_error_even_with_fallback() {
+    // The regex crate has no backreferences either, so delegating one still fails — fallback is not magic.
+    assert!(RegexBuilder::new(r"(\w+)\1").fallback(true).build().is_err());
+}
