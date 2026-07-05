@@ -49,7 +49,7 @@ FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
         lint misra fuzz fuzz-compat exhaustive-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
         python python-test bench-python bench-fuzz bench-engines bench-duel \
-        version-check install install-smoke uninstall release help
+        version-check install install-smoke uninstall release help capi-test check-layers
 
 .DEFAULT_GOAL := help
 
@@ -293,6 +293,13 @@ check-pins:
 	@if test -x $(SCIFORGE_TOOLS)/check-pins.sh; then $(SCIFORGE_TOOLS)/check-pins.sh .; \
 	 else echo "check-pins: WARN — $(SCIFORGE_TOOLS)/check-pins.sh absent, skipped (CI covers it)"; fi
 
+capi-test:
+	@mkdir -p $(BUILD)
+	c++ $(CXXSTD) -O2 $(INCLUDES) -c bindings/c/real_capi.cpp -o $(BUILD)/real_capi.o
+	cc -Ibindings/c -c bindings/c/test_capi.c -o $(BUILD)/test_capi.o
+	c++ $(BUILD)/test_capi.o $(BUILD)/real_capi.o -o $(BUILD)/capi_test   # C++ driver links the right stdlib
+	$(BUILD)/capi_test
+
 check-layers:
 	@python3 tools/check_layers.py
 
@@ -300,6 +307,7 @@ full-local-gate:
 	@$(MAKE) format-check
 	@$(MAKE) version-check
 	@$(MAKE) check-layers
+	@$(MAKE) capi-test
 	@$(MAKE) check-pins
 	@$(MAKE) test
 	@$(MAKE) exhaustive-compat
