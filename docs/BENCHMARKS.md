@@ -19,35 +19,38 @@ answer is not a benchmark win.
 
 | | |
 | --- | --- |
-| Machine | Apple M1 Pro (`arm64`), Darwin 23.6.0 |
-| C++ compiler | Apple clang 16.0.0, flags `-O2 -std=c++20` |
-| Engines | REAL `2026.6.6` (§A–D baseline) · `2026.7.14` (§E one-pass arc), `std::regex` (libc++), PCRE2 10.47 (JIT), RE2 11.0.0 |
-| Python | CPython 3.14.3, `re` (stdlib) vs REAL 2026.6.6 (abi3 binding) |
-| Method | median of repeated batches; match counts checked equal across engines |
-| As of | §A–D: measured 2026-06-17 on `2026.6.6`. §E (the one-pass arc) re-measured on `2026.7.14`. The suite is re-measured per release; reproduce with the `bench-*` targets. |
+| Version | REAL `2026.7.16` — every section below re-measured on it, 2026-07-05 |
+| Machines | devbox (`x86-64`, g++ 13) for §A / §C · Apple M1 Pro (`arm64`, Apple clang 16) for §B / §E |
+| Engines | `std::regex`, PCRE2 10.47 **(JIT enabled — the harness prints `PCRE2_CONFIG_JIT = 1`, x86-64)**, RE2 11.0.0 |
+| Python | CPython 3.14, `re` (stdlib) vs the published REAL `2026.7.16` abi3 wheel |
+| Method | median of repeated batches, paired, with a bootstrap CI; match counts checked equal across engines; **non-cherry-picked** — the losses show |
 
 ## A. C++ engine throughput
 
 Each engine compiles the pattern once, then counts all non-overlapping matches over
 the same corpus; only the scan is timed. `ns/B` is nanoseconds per corpus byte (lower
 is better). `(x)` is *engine_time / REAL_time* — **> 1 means REAL is faster**. Match
-counts agreed across all four engines on every case (ASCII-class semantic parity).
+counts agreed across all four engines on every case.
 
 | case | REAL ns/B | std::regex | PCRE2-JIT | RE2 |
 | --- | ---: | ---: | ---: | ---: |
-| words `[a-z]+` | 6.012 | 92.583 (15.40×) | 2.389 (0.40×) | 14.233 (2.37×) |
-| alternation `the\|fox\|dog` | 2.765 | 117.280 (42.42×) | 1.584 (0.57×) | 6.266 (2.27×) |
-| hex `[0-9a-f]{8}` | 2.368 | 84.057 (35.50×) | 1.254 (0.53×) | 3.425 (1.45×) |
-| digits `[0-9]+` | 3.012 | 83.135 (27.60×) | 1.438 (0.48×) | 8.410 (2.79×) |
-| date `{4}-{2}-{2}` | 1.812 | 73.057 (40.31×) | 0.391 (0.22×) | 3.485 (1.92×) |
-| fields `[^,]+` | 6.535 | 75.696 (11.58×) | 1.922 (0.29×) | 11.025 (1.69×) |
-| literal | 0.909 | 30.914 (34.01×) | 0.486 (0.53×) | 1.364 (1.50×) |
+| words `[a-z]+` (1 MB) | 3.29 | 29.14 (8.9×) | 6.39 (**1.94×**) | 28.36 (8.6×) |
+| digits `[0-9]+` | 2.08 | 24.50 (11.8×) | 3.61 (**1.73×**) | 16.96 (8.2×) |
+| fields `[^,]+` | 4.57 | 25.72 (5.6×) | 5.06 (**1.11×**) | 23.10 (5.1×) |
+| date `{4}-{2}-{2}` | 0.66 | 18.24 (27.6×) | 0.61 (0.93× ≈) | 4.10 (6.2×) |
+| alternation `the\|fox\|dog` | 2.71 | 29.93 (11.0×) | 2.23 (0.82×) | 10.46 (3.9×) |
+| literal | 0.77 | 15.04 (19.5×) | 0.58 (0.75×) | 2.39 (3.1×) |
+| hex `[0-9a-f]{8}` | 3.61 | 20.48 (5.7×) | 1.81 (0.50×) | 4.09 (1.1×) |
+| lookahead `[a-z]+(?=[a-z])` | 114.7 | 77.74 (0.68×) | 7.22 (0.06×) | unsupported |
 
-**Reading.** REAL beats `std::regex` by **11–42×** and RE2 by **~1.5–2.8×** across the
-board. It is **slower than PCRE2 with its JIT** (0.22–0.57×) — expected and honest:
-PCRE2-JIT emits native machine code per pattern, whereas REAL is a header-only
-*constexpr* Pike VM with no runtime code generation. REAL trades that last constant
-factor for being compile-time-evaluable, dependency-free, and linear-time guaranteed.
+**Reading.** REAL beats `std::regex` by **5.6–27.6×** and RE2 by **1.1–8.6×** across the board. The headline
+shift since the earlier baseline: **REAL now out-runs PCRE2's JIT on class scans** — `[a-z]+` **1.94×**,
+`[0-9]+` **1.73×**, `[^,]+` **1.11×**, and level on the rare-byte date (0.93×) — where it previously trailed.
+(The JIT is genuinely on: the harness reports `PCRE2_CONFIG_JIT = 1`.) PCRE2-JIT still leads on straight-line
+literal / alternation / hex (0.50–0.82×), emitting native code per pattern where REAL is a header-only
+constexpr Pike VM. And the **lookahead line is deliberately honest**: at 0.06× vs PCRE2, REAL pays dearly to
+do a bounded lookaround *in linear time* — a feature RE2 and the rust crate cannot do at all (§follow-up: the
+lookaround VM path is not one of the fast paths).
 
 ## B. Python binding vs re
 
@@ -55,28 +58,29 @@ factor for being compile-time-evaluable, dependency-free, and linear-time guaran
 
 | case | `re` | REAL | ratio |
 | --- | ---: | ---: | ---: |
-| literal · hit @1MB | 693.6 µs | 473.6 µs | 1.46× |
-| literal · miss @1MB | 686.9 µs | 467.0 µs | 1.47× |
-| literal · anchored miss @1MB | 180 ns | 135 ns | 1.33× |
-| date · search @100KB | 1.16 ms | 89.8 µs | **12.96×** |
-| date · findall @100KB | 1.24 ms | 594.4 µs | 2.09× |
-| hex ids · findall | 276.4 µs | 181.4 µs | 1.52× |
-| emails · findall groups | 1.60 ms | 4.99 ms | **0.32×** |
-| words · findall @100KB | 1.51 ms | 842.4 µs | 1.80× |
-| digits · findall @100KB | 1.14 ms | 106.5 µs | **10.70×** |
-| alternation · findall @100KB | 805.2 µs | 386.1 µs | 2.09× |
-| sub spaces @100KB | 2.22 ms | 605.3 µs | 3.67× |
-| sub dates with refs | 1.23 ms | 559.6 µs | 2.20× |
-| split commas @100KB | 78.8 µs | 88.6 µs | **0.89×** |
-| line starts · findall (multiline) | 447.6 µs | 15.5 µs | **28.87×** |
-| compile (no cache) | 23.1 µs | 1.5 µs | **15.83×** |
-| `(a+)+b` · re n=24 / REAL n=10k | 1118.52 ms | 500.4 µs | **2235×** (ReDoS) |
+| digits · sparse findall @100KB | 1.52 ms | 159.3 µs | **9.56×** |
+| word starts · findall (multiline) | 589.8 µs | 19.7 µs | **29.92×** |
+| sub · spaces @100KB | 3.03 ms | 626.5 µs | 4.83× |
+| date · findall groups | 1.63 ms | 474.2 µs | 3.42× |
+| sub · dates with refs | 1.64 ms | 477.3 µs | 3.42× |
+| date · search @100KB | 1.52 ms | 464.3 µs | 3.28× |
+| alternation · findall @100KB | 1.07 ms | 526.6 µs | 2.03× |
+| hex ids · findall | 333.9 µs | 188.2 µs | 1.78× |
+| words · dense findall @100KB | 2.07 ms | 1.36 ms | 1.53× |
+| literal · hit @1MB | 927.3 µs | 634.5 µs | 1.46× |
+| non-space · Unicode findall | 2.35 ms | 1.92 ms | 1.24× |
+| emails · findall groups | 1.98 ms | 1.87 ms | **1.07× ↑** (was 0.32×) |
+| literal · anchored miss @1MB | 239 ns | 279 ns | **0.86×** |
+| split · commas @100KB | 101.9 µs | 437.6 µs | **0.24×** |
+| `(a+)+b` · re n=24 / REAL n=10k | 1397.76 ms | 46.0 µs | **30408×** (ReDoS) |
 
-**Geometric-mean speedup over `re`: 2.47×** (PASS). Two of the fourteen key cases are
-*slower* than `re`: **emails with groups (0.32×)** and **comma split (0.89×)** —
-high-volume `findall`/`split` on "easy" patterns where CPython's C engine has a lower
-per-match constant. REAL's edge widens on anchored search, compilation, and anything
-pathological; the two losses are an accepted trade for linear-time safety.
+**Geometric-mean speedup over `re`: 2.06× (CI [1.37, 3.12] clears 1.0 — PASS).** The headline change since
+the last refresh: **emails-with-groups flipped from a 0.32× loss to a 1.07× win** — the one-pass capture
+extractor now pays for the dense group case the binding used to lose. Two cases remain *slower* than `re`:
+**comma split (0.24×)** and **anchored miss (0.86×)** — high-volume `split` / tiny anchored matches where
+CPython's C engine has the lower per-match constant. REAL's edge widens on sparse/rare-byte scans, sub, and
+anything pathological (`(a+)+b`: 30408× — `re` blows up, REAL stays linear); the two losses are an accepted
+trade for linear-time safety.
 
 ### finditer memory — lazy iteration
 
@@ -181,10 +185,10 @@ The catastrophic backtracking case `(a+)+b` over `"a"×N` (no `b`, so no match):
 
 | engine | input | time |
 | --- | --- | ---: |
-| REAL | N = 100 000 | 5.949 ms (**linear**) |
-| RE2 | N = 100 000 | 0.217 ms (**linear**) |
-| `std::regex` | N = 22 | *refused* — "complexity … exceeded a pre-set level" |
-| Python `re` | n = 24 | 1118.52 ms (and climbing exponentially) |
+| REAL | N = 100 000 | **0.521 ms** (linear) |
+| RE2 | N = 100 000 | 0.162 ms (linear) |
+| `std::regex` (libstdc++) | N = 26 | 4107 ms (backtracks; libc++ instead *refuses* at "complexity exceeded") |
+| Python `re` | n = 24 | 1397.76 ms (and climbing exponentially) |
 
 REAL and RE2 stay linear; the backtracking engines (`std::regex`, `re`) either refuse
 or blow up at trivially small inputs. This is the property REAL is built to guarantee.
@@ -331,6 +335,27 @@ inner-literal-prefilter follow-up, and the residual find_iter dispatch (the dens
 than clearing it; ~1 ns/B of per-match iterator overhead, shared by every pattern) is the other named
 follow-up. The arc closed the extractor gap §E.1 named, brought the dense-capture line to rust parity, and
 carried anchored matching — the std-compat surface — onto the same one-pass path.
+
+### E.3 The broader duel (apples-to-apples, both engines extracting captures)
+
+`make bench-duel` runs the same patterns through both engines with **rust in `captures_iter` mode** — the
+fair comparison, since REAL's `find_iter` always builds the full Match. (An earlier harness timed rust's
+`find_iter`, spans only, which under-charged rust and flattered its lead; fixed.) The corrected picture, on
+`2026.7.16`:
+
+| pattern | REAL ns/B | rust ns/B | |
+| --- | ---: | ---: | --- |
+| `[a-z]+` | 2.9 | 15.5 | **REAL 5.3×** |
+| `[0-9]+` | 3.6 | 22.4 | **REAL 6.1×** |
+| `[^,]+` | 3.7 | 12.2 | **REAL 3.3×** |
+| `(\w+)@(\w+)` | 9.5 | 7.0 | rust 1.4× (≈ the §E.2 parity) |
+| literal / alternation | | | rust 1.1–1.3× |
+| `\b\w+\b` search · `(\w+)_(\w+)` · date no-match | | | rust 3.6× / 2.1× / 208× |
+
+REAL **beats rust's `captures_iter`** on the capture-dense class/digit/field scans — rust pays a per-match
+capture cost too. It trails only where already named: the assertion-bearing `\b\w+\b` *search* (its
+byte-program has assertions, so the search DFA declines and the Pike VM runs the window), the non-one-pass
+`(\w+)_(\w+)` (the `_` conflict), and the no-match date (the inner-literal-prefilter follow-up).
 
 ## Methodology & reproduction
 

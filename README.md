@@ -40,10 +40,12 @@ REAL gives you **both**: linear-time, ReDoS-safe matching *with* bounded lookaro
 | Header-only, zero-dependency  | ✅ | ✅¹ | ❌ | ❌ | — |
 | Constexpr (compile-time match)| ✅ | ❌ | ❌ | ❌ | ❌ |
 | Drop-in Python `re`           | ✅² | ❌ | ❌ | ❌ | ✅ |
-| Raw throughput                | fast | slow | ≈ REAL | **fastest** | slow |
+| Raw throughput                | fast³ | slow | slower | fast | slow |
 
 ¹ part of the C++ standard library. ² for the supported subset (no backreferences, etc.).
-Throughput is qualitative — exact multipliers and methodology are in
+³ **5–28× over `std::regex`, and REAL now beats PCRE2-JIT on class scans** (`[a-z]+` 1.9×, `[0-9]+` 1.7×) and
+the rust `regex` crate on capture-dense extraction (`[a-z]+` 5.3×); PCRE2-JIT still leads on straight-line
+literals/alternation. Exact multipliers, machines and methodology are in
 [`docs/BENCHMARKS.md`](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md).
 
 **Every other engine that has lookarounds backtracks** (ReDoS-unsafe), and every linear-time
@@ -56,10 +58,10 @@ The classic catastrophic-backtracking pattern `(a+)+b` over `"a"×N` (no `b`, so
 
 | engine | input | time |
 | --- | --- | ---: |
-| **REAL** | N = 100 000 | **5.9 ms** — linear |
-| RE2 | N = 100 000 | 0.2 ms — linear |
-| `std::regex` | N = 22 | *refused* — "complexity … exceeded a pre-set level" |
-| Python `re` | n = 24 | **1118 ms** — and climbing exponentially |
+| **REAL** | N = 100 000 | **0.52 ms** — linear |
+| RE2 | N = 100 000 | 0.16 ms — linear |
+| `std::regex` | N = 26 | **4107 ms** (libstdc++ backtracks; libc++ *refuses* at "complexity … exceeded") |
+| Python `re` | n = 24 | **1398 ms** — and climbing exponentially |
 
 REAL and RE2 stay linear; the backtracking engines refuse or blow up at trivially small
 inputs. These figures are from [`docs/BENCHMARKS.md` §C](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md); they depend on the
