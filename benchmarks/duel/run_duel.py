@@ -33,11 +33,12 @@ CASES = [
 ]
 
 
-def run(binary, pattern, text):
+def run(binary, pattern, text, mode=None):
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
         f.write(text)
         path = f.name
-    out = subprocess.run([binary, pattern, path], capture_output=True, text=True).stdout.split()
+    cmd = [binary, pattern, path] + ([mode] if mode else [])
+    out = subprocess.run(cmd, capture_output=True, text=True).stdout.split()
     return float(out[0]) if out[0] != "unsupported" else None, int(out[1])
 
 
@@ -46,7 +47,9 @@ def main():
     rows = []
     for label, pat, text in CASES:
         rr, rc = run(REAL, pat, text)
-        ur, uc = run(RUST, pat, text)
+        # rust in "captures" mode: it extracts every group, the apples-to-apples with REAL's find_iter,
+        # which always builds the full Match. The default "find" (spans only) would flatter rust unfairly.
+        ur, uc = run(RUST, pat, text, mode="captures")
         agree = (rc == uc)
         if rr is None or ur is None:
             verdict = "REAL-only" if ur is None else "rust-only"
