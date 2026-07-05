@@ -594,6 +594,22 @@ real::detail::dynamic_storage (heap, sized once) and \ref
 real::detail::static_storage (compile-time, exact arrays — including the hybrid
 compile-time-pattern / runtime-text mode).
 
+\subsection g_followups 8.1 Named follow-ups
+
+Recorded, not scheduled — deliberate next steps the current design leaves room for:
+
+- **A public-API-surface check.** The layering gate (\ref g_map) governs *includes*; a sibling check could
+  govern the *exposed surface* — assert that only the documented headers introduce names into `namespace
+  real` (not `real::detail`), so the public API cannot grow by accident. The most durable extension of the
+  layering philosophy.
+- **`automata/immutables.hpp`.** The per-regex immutable cache (byte-program, alphabet, one-pass table)
+  currently lives inline in the routing; extracting it would let the router and the tests name it directly.
+- **A one-pass *search* (spans-only).** The one-pass table can locate matches unanchored, not only extract
+  captures on a located window — a future `real::regex` search path, not a new public automaton.
+- **Docs split and a no-`friend`-across-tier rule.** Splitting the Doxygen tree into `reference/` and
+  `internals/`, and forbidding cross-tier `friend` (the layering gate sees includes, not friendship), are
+  smaller hygiene follow-ups.
+
 \section g_safety 9. Compile time and safety
 
 Every stage above is `constexpr`, so `real::static_regex` is parsed, compiled

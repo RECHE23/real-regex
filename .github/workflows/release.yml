@@ -46,11 +46,23 @@ jobs:
       contents: write   # create the Release for the tag
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # fetch the annotated-tag object so its message can be read below
       - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
-      - name: Create the GitHub Release (auto notes + wheel/sdist assets)
-        run: gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag dist/*
+      # The tag's own annotation is the release notes — write it once (git tag -a … -m/-F at release),
+      # and it appears verbatim on the Releases page, no `gh release edit` afterwards. A lightweight tag
+      # (empty annotation) falls back to GitHub's auto-generated notes.
+      - name: Create the GitHub Release (annotated-tag notes + wheel/sdist assets)
+        run: |
+          notes="$(git for-each-ref "refs/tags/${GITHUB_REF_NAME}" --format='%(contents)')"
+          if [ -n "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then
+            printf '%s\n' "$notes" > "${RUNNER_TEMP}/notes.md"
+            gh release create "${GITHUB_REF_NAME}" --notes-file "${RUNNER_TEMP}/notes.md" --verify-tag dist/*
+          else
+            gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag dist/*
+          fi
         env:
           GH_TOKEN: ${{ github.token }}
