@@ -75,6 +75,31 @@ ASCII `icase`, `multiline`. Non-ASCII **literals** match byte-for-byte like `std
 These patterns run on `std::regex` and therefore lose the linear-time guarantee — a documented,
 non-silent trade. Prefer ReDoS-safe equivalents for untrusted input.
 
+## The drop-in policy: strict (default) vs fallback
+
+Falling back to `std::regex` reintroduces backtracking — the ReDoS the library exists to avoid — on exactly
+the patterns you can least audit. So the default is **strict**, not silent fallback:
+
+```cpp
+real::compat::regex a(R"((\w+)\1)");                            // strict (default): THROWS
+//   regex_error, code == error_complexity, "real::compat (strict policy): … backreference …"
+real::compat::regex b(R"((\w+)\1)", real::compat::regex_constants::ECMAScript,
+                      real::compat::policy::fallback);          // opt-in: delegates to std::regex
+```
+
+- **`policy::strict`** (the default) — a pattern the linear engine cannot represent is **rejected** with
+  `regex_error` / `error_complexity` and a REAL-identifiable message. Every accepted pattern is then a
+  linear-time, ReDoS-safe guarantee. A pattern that is invalid for *both* engines still reports `std`'s own
+  error code, so a syntax error stays a syntax error — a true `std::regex` drop-in there.
+- **`policy::fallback`** — restores the old behaviour: an ineligible pattern is delegated to `std::regex`
+  (which may accept it, forfeiting the linear-time guarantee for that pattern). The choice is explicit and
+  per-`regex`.
+- **Observability.** `regex::uses_real()` / `uses_fallback()` and `regex::policy()` always tell you which
+  engine backs a pattern — no silent surprise either way.
+
+The Python binding follows the same policy (`real.compile(pat, fallback=True)`, or the module-level
+`real.fallback`), with the same default: strict.
+
 ## The one tolerated divergence: nullable-loop group capture
 
 There is exactly **one** place a real-backed pattern's observable differs from the local `std::regex`,

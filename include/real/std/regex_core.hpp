@@ -102,25 +102,30 @@ namespace real::compat {
   /*!
    * \brief `std::regex_error`-compatible exception.
    *
-   * A pattern reaches this only when it is invalid for **both** backends: real is always tried
-   * first and, on rejection, falls back to std (which may accept what real cannot, e.g. a
-   * backreference). So the throwing path is exactly "std also rejected" — the exact std
-   * `.code()` is preserved, and `what()` keeps std's detailed message.
-   *
-   * (An alternative — mapping `real::regex_error::kind()` to a code directly — is intentionally
-   * absent: the always-fall-back flow never propagates a real error directly — a real resource-limit
-   * rejection
-   * must still try std, which may accept it, to stay ≡ std. Mapping real kinds would require a
-   * no-fallback path, which would diverge from std. Revisit only if such a path is introduced.)
+   * Thrown on two paths, both preserving the `std::regex_error` contract:
+   * - **Invalid for both backends** (a syntax error): real rejects, and so does std — the exact std
+   *   `.code()` is preserved and `what()` keeps std's message, so a syntax error is byte-for-byte `std`.
+   * - **Strict-policy rejection** (\ref policy): a pattern real cannot represent linearly but std *could*
+   *   (a backreference, an unbounded lookaround, a POSIX class) — `code()` is `error_complexity` and
+   *   `what()` carries a REAL-identifiable message. Under `policy::fallback` this path delegates to std
+   *   instead of throwing, so the only thrown case there is the invalid-for-both one above.
    */
   class regex_error : public std::regex_error
   {
   public:
 
-    //! \brief From a std backend error (the only reachable path); keeps std's exact code.
+    //! \brief From a std backend error (the fallback path); keeps std's exact code.
     explicit regex_error(const std::regex_error& error)
       : std::regex_error(error.code()),
         message_(error.what())
+    {}
+
+    //! \brief With an explicit code and message — the strict-policy rejection of a pattern REAL cannot
+    //!        represent linearly (`error_complexity`), carrying a REAL-identifiable message.
+    regex_error(std::regex_constants::error_type code,
+                std::string                      message)
+      : std::regex_error(code),
+        message_(std::move(message))
     {}
 
     [[nodiscard]] const char* what() const noexcept override
@@ -131,6 +136,16 @@ namespace real::compat {
   private:
 
     std::string message_; //!< The originating error's detailed message.
+  };
+
+  //! \brief The drop-in policy for a pattern the linear engine cannot represent (backreferences, an
+  //!        unbounded lookaround, a POSIX class, …). `strict` (the default) rejects it, so every accepted
+  //!        pattern is a linear-time, ReDoS-safe guarantee; `fallback` delegates it to `std::regex`, which
+  //!        may accept it but **forfeits the linear-time guarantee** for that pattern.
+  enum class policy : std::uint8_t
+  {
+    strict,   //!< Reject an ineligible pattern (throws `regex_error` with `error_complexity`). The default.
+    fallback, //!< Delegate an ineligible pattern to `std::regex` (backtracking — not ReDoS-safe).
   };
 
   namespace detail {
@@ -253,29 +268,37 @@ namespace real::compat {
     basic_regex() = default;                                 // the variant default-constructs to an empty std regex
 
     explicit basic_regex(const CharT* pattern,
-                         flag_type    f = regex_constants::ECMAScript)
+                         flag_type    f   = regex_constants::ECMAScript,
+                         policy       pol = policy::strict)
     {
+      policy_ = pol;
       assign(std::basic_string_view<CharT>(pattern), f);
     }
 
     explicit basic_regex(const string_type& pattern,
-                         flag_type          f = regex_constants::ECMAScript)
+                         flag_type          f   = regex_constants::ECMAScript,
+                         policy             pol = policy::strict)
     {
+      policy_ = pol;
       assign(std::basic_string_view<CharT>(pattern), f);
     }
 
     basic_regex(const CharT* pattern,
                 std::size_t  len,
-                flag_type    f = regex_constants::ECMAScript)
+                flag_type    f   = regex_constants::ECMAScript,
+                policy       pol = policy::strict)
     {
+      policy_ = pol;
       assign(std::basic_string_view<CharT>(pattern, len), f);
     }
 
     template <typename It>
     basic_regex(It        begin,
                 It        end,
-                flag_type f = regex_constants::ECMAScript)
+                flag_type f   = regex_constants::ECMAScript,
+                policy    pol = policy::strict)
     {
+      policy_ = pol;
       const string_type pattern(begin, end);
       assign(std::basic_string_view<CharT>(pattern), f);
     }
@@ -300,12 +323,26 @@ namespace real::compat {
       std::swap(mark_count_, other.mark_count_);
       std::swap(nullable_, other.nullable_);
       std::swap(lazy_std_, other.lazy_std_);
+      std::swap(policy_, other.policy_);
     }
 
     //! \brief True if this regex is backed by the `real` engine (vs the std fallback).
     [[nodiscard]] bool uses_real() const noexcept
     {
       return std::holds_alternative<real::regex>(engine_);
+    }
+
+    //! \brief True if this regex fell back to `std::regex` (a `policy::fallback` regex on an ineligible
+    //!        pattern) — so this pattern is *not* linear-time / ReDoS-safe. Always false under `strict`.
+    [[nodiscard]] bool uses_fallback() const noexcept
+    {
+      return !uses_real();
+    }
+
+    //! \brief The drop-in policy this regex was constructed with.
+    [[nodiscard]] compat::policy policy() const noexcept
+    {
+      return policy_;
     }
 
     //! \brief Access the active backend (engine-facing; used by the free functions).
@@ -364,12 +401,13 @@ namespace real::compat {
   private:
 
     // std backend first so the variant is default-constructible (real::regex has no default ctor).
-    std::variant<std::basic_regex<CharT, Traits>, real::regex>          engine_;
-    string_type                                                         pattern_;       //!< Original pattern (for the lazy std build).
-    flag_type                                                           flags_      {regex_constants::ECMAScript};
-    std::size_t                                                         mark_count_ {};
-    bool                                                                nullable_   {}; //!< empty_match_possible (real-backed).
-    mutable std::optional<std::basic_regex<CharT, Traits>>              lazy_std_;      //!< Lazy std for nullable replace/iterate.
+    std::variant<std::basic_regex<CharT, Traits>, real::regex>           engine_;
+    string_type                                                          pattern_;                     //!< Original pattern (for the lazy std build).
+    flag_type                                                            flags_      {regex_constants::ECMAScript};
+    std::size_t                                                          mark_count_ {};
+    bool                                                                 nullable_   {};               //!< empty_match_possible (real-backed).
+    mutable std::optional<std::basic_regex<CharT, Traits>>               lazy_std_;                    //!< Lazy std for nullable replace/iterate.
+    compat::policy                                                       policy_     {policy::strict}; //!< strict rejects ineligible, fallback delegates to std.
 
     void assign(std::basic_string_view<CharT> pattern,
                 flag_type                     f)
@@ -381,7 +419,9 @@ namespace real::compat {
       if constexpr (detail::real_eligible<CharT, Traits>) {
         const std::string_view sv {pattern.data(), pattern.size()};
         if (detail::grammar_forces_std(f) || detail::pattern_forces_std(sv)) {
-          emplace_std(sv, f);
+          reject_or_fallback(sv, f, "the pattern uses a construct the linear engine does not represent "
+                             "(a backreference, an unbounded lookaround, a POSIX class, or a "
+                             "grammar that forces std)");
           return;
         }
         try {
@@ -394,11 +434,11 @@ namespace real::compat {
           // so no eager build is needed here (a real superset that std rejects surfaces the wrapped
           // error only when the std-only operation is actually invoked; search/match stay on real).
         }
-        catch (const real::regex_error&) {
+        catch (const real::regex_error& real_error) {
           // real cannot represent it (backref / unbounded lookaround / POSIX class / non-ASCII in a
-          // class): fall back to std, which may accept it. Invalid for both throws compat::regex_error
-          // (emplace_std wraps).
-          emplace_std(sv, f);
+          // class). strict rejects; fallback delegates to std (which may accept it). Invalid for both
+          // throws compat::regex_error (emplace_std wraps).
+          reject_or_fallback(sv, f, real_error.what());
         }
       }
       else {
@@ -414,6 +454,34 @@ namespace real::compat {
           throw regex_error(std_error); // homogeneous compat::regex_error on the wide/custom-traits path
         }
       }
+    }
+
+    //! \brief The policy branch for a pattern the linear engine cannot represent: `strict` throws
+    //!        `regex_error` with `error_complexity` and a REAL-identifiable message; `fallback` delegates
+    //!        it to `std::regex`.
+    void reject_or_fallback(std::string_view   sv,
+                            flag_type          f,
+                            const std::string& reason)
+    {
+      if (policy_ == policy::strict) {
+        // Distinguish "real cannot represent it, but the pattern is valid" (std accepts) from "invalid for
+        // both" (a syntax error). The first is a capability limit -> error_complexity; the second is a bad
+        // pattern -> std's own code, so a syntax error still reports as a syntax error, exactly like std.
+        if constexpr (detail::real_eligible<CharT, Traits>) {
+          try {
+            const std::basic_regex<CharT, Traits> probe(sv.data(), sv.size(), detail::to_std(f));
+            static_cast<void>(probe);     // std accepts it: a real-only limitation, fall through to the throw below
+          }
+          catch (const std::regex_error& std_error) {
+            throw regex_error(std_error); // invalid for both -> std's exact code (drop-in ≡ std)
+          }
+        }
+        throw regex_error(std::regex_constants::error_complexity,
+                          "real::compat (strict policy): this pattern requires a non-linear (backtracking) "
+                          "engine — " + reason + ". Construct with policy::fallback to delegate it to "
+                          "std::regex, forfeiting the linear-time / ReDoS-safe guarantee for it.");
+      }
+      emplace_std(sv, f);
     }
 
     void emplace_std(std::string_view sv,

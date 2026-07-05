@@ -32,7 +32,7 @@ namespace {
     rc::regex  rre;
     std::regex sre;
     try {
-      rre = rc::regex(pat);
+      rre = rc::regex(pat, rc::regex_constants::ECMAScript, rc::policy::fallback);
     }
     catch (const std::exception&) {
       return false;
@@ -75,7 +75,7 @@ namespace {
     rc::regex  rre;
     std::regex sre;
     try {
-      rre = rc::regex(pat);
+      rre = rc::regex(pat, rc::regex_constants::ECMAScript, rc::policy::fallback);
     }
     catch (const std::exception&) {
       return false;
@@ -173,7 +173,7 @@ TEST(compat_corpus_backend_and_differential)
 {
   std::size_t fallback_count {0};
   for (const Entry& e : corpus()) {
-    const rc::regex re(e.pattern);
+    const rc::regex re(e.pattern, rc::regex_constants::ECMAScript, rc::policy::fallback);
     EXPECT_EQ(re.uses_real(), e.backend == Backend::real); // pins the expected backend
     if (re.uses_real()) {
       // No fallback: this case agrees with std (both spec-aligned here).
@@ -290,10 +290,10 @@ namespace {
                           }
                         }};
     const bool std_rejects    {rejects([&] { (void)std::regex(pat, std::regex::ECMAScript); })};
-    const bool compat_rejects {rejects([&] { (void)rc::regex(pat); })};
+    const bool compat_rejects {rejects([&] { (void)rc::regex(pat, rc::regex_constants::ECMAScript, rc::policy::fallback); })};
     EXPECT_EQ(compat_rejects, std_rejects); // throws iff std throws (== the local std)
     if (!std_rejects) {
-      const rc::regex re(pat);
+      const rc::regex re(pat, rc::regex_constants::ECMAScript, rc::policy::fallback);
       EXPECT(!re.uses_real()); // screened to std, not real
       const std::string nul {std::string("a") + '\0' + "0b"};
       EXPECT_EQ(rc::regex_search(nul, re),
@@ -321,7 +321,7 @@ TEST(compat_backend_selection)
   EXPECT(!can_be_empty.uses_real_traversal());   // nullable -> replace/iterate defer to std
 
   // Backreference -> real rejects -> std fallback (std ECMAScript supports backrefs).
-  const rc::regex back(R"((a)\1)");
+  const rc::regex back(R"((a)\1)", rc::regex_constants::ECMAScript, rc::policy::fallback);
   EXPECT(!back.uses_real());
   rc::smatch        m;
   const std::string subj {"aa"};
@@ -329,7 +329,7 @@ TEST(compat_backend_selection)
   EXPECT_EQ(m.length(0), 2);
 
   // A POSIX grammar option forces the std backend up front.
-  EXPECT(!rc::regex("a+", rc::regex_constants::extended).uses_real());
+  EXPECT(!rc::regex("a+", rc::regex_constants::extended, rc::policy::fallback).uses_real());
 
   // Inline-flag groups: real accepts (?imsxa:...) with Python semantics, but ECMAScript has no inline
   // flags, so compat routes them to std -- which rejects them, exactly as std::regex does. Compat stays
@@ -344,7 +344,7 @@ TEST(compat_backend_selection)
     }
     bool compat_rejects {false};
     try {
-      const rc::regex r(scoped);
+      const rc::regex r(scoped, rc::regex_constants::ECMAScript, rc::policy::fallback);
       EXPECT(!r.uses_real()); // if std accepts it, compat used the std backend, not real
     }
     catch (const std::regex_error&) {
@@ -537,7 +537,7 @@ TEST(compat_regex_replace)
   EXPECT_EQ(sink, std::string("a+b+c"));
 
   // Std-backed pattern (backref) routes regex_replace to std::regex_replace.
-  const rc::regex back(R"((a)\1)");
+  const rc::regex back(R"((a)\1)", rc::regex_constants::ECMAScript, rc::policy::fallback);
   EXPECT(!back.uses_real());
   EXPECT_EQ(rc::regex_replace(std::string("aa b aa"), back, "X"), std::string("X b X"));
 
@@ -754,7 +754,7 @@ TEST(compat_nosubs_routes_to_std)
 {
   // nosubs makes std report only group 0; real reports every group -> a structural divergence,
   // so nosubs routes to std. Verify the backend AND that m.size()==1 exactly like std.
-  const rc::regex re(R"((\w+)@(\w+))", rc::regex_constants::nosubs);
+  const rc::regex re(R"((\w+)@(\w+))", rc::regex_constants::nosubs, rc::policy::fallback);
   EXPECT(!re.uses_real()); // forced to std by the option screen
 
   rc::smatch        m;
@@ -785,7 +785,7 @@ TEST(compat_posix_grammars_route_to_std)
     {.pattern = "a+b", .subject = "aaab", .ropt = rcc::extended, .sopt = std::regex_constants::extended},
   };
   for (const Case& c : cases) {
-    const rc::regex re(c.pattern, c.ropt);
+    const rc::regex re(c.pattern, c.ropt, rc::policy::fallback);
     EXPECT(!re.uses_real()); // POSIX grammar -> std
     const std::regex  sre(c.pattern, c.sopt);
     rc::smatch        m;
@@ -1148,7 +1148,7 @@ TEST(compat_ready_after_failed_match)
   EXPECT_EQ(m2.size(), 0U);
 
   // Same on the std backend (a fallback pattern).
-  const rc::regex   back(R"((a)\1)"); // backref -> std
+  const rc::regex   back(R"((a)\1)", rc::regex_constants::ECMAScript, rc::policy::fallback); // backref -> std
   EXPECT(!back.uses_real());
   rc::smatch        m3;
   const std::string subj2 {"xyz"};
@@ -1313,7 +1313,7 @@ TEST(compat_replace_and_token_depth)
 
   // mark_count() must match std on BOTH backends (real-backed multi-group, and a std fallback).
   EXPECT_EQ(multi.mark_count(), smulti.mark_count());
-  const rc::regex   backref(R"((a)\1(b))"); // backref -> std fallback
+  const rc::regex   backref(R"((a)\1(b))", rc::regex_constants::ECMAScript, rc::policy::fallback); // backref -> std fallback
   const std::regex  sbackref(R"((a)\1(b))", std::regex::ECMAScript);
   EXPECT(!backref.uses_real());
   EXPECT_EQ(backref.mark_count(), sbackref.mark_count());
@@ -1343,4 +1343,41 @@ TEST(compat_regex_match_differential_vs_std)
       EXPECT(agree_match(m.pat, nm)); // whole-sequence anchored: a partial match must fail both engines alike
     }
   }
+}
+
+TEST(compat_strict_policy_default_and_observability)
+{
+  // strict is the default: a pattern the linear engine cannot represent but std COULD (a backreference) is
+  // rejected with error_complexity + a REAL-identifiable message, not silently delegated to a backtracking
+  // engine. A pattern invalid for BOTH still reports std's own code (drop-in equal to std). fallback (opt-in)
+  // restores delegation, and the choice is always observable.
+  bool threw {false};
+  try {
+    (void) rc::regex(R"((\w+)\1)"); // strict default
+  }
+  catch (const std::regex_error& e) {
+    threw = true;
+    EXPECT_EQ(e.code(), std::regex_constants::error_complexity);
+    EXPECT(std::string(e.what()).find("real::compat") != std::string::npos); // REAL-identifiable
+  }
+  EXPECT(threw);
+
+  const rc::regex fb(R"((\w+)\1)", rc::regex_constants::ECMAScript, rc::policy::fallback);
+  EXPECT(fb.uses_fallback());                        // fallback: delegated to std
+  EXPECT(fb.policy() == rc::policy::fallback);       // observable
+  EXPECT(!fb.uses_real());
+
+  const rc::regex ok(R"((\w+)@(\w+))");              // eligible: strict stays on real
+  EXPECT(ok.uses_real());
+  EXPECT(ok.policy() == rc::policy::strict);
+
+  bool bad {false};                                   // invalid for both: std's own code, not error_complexity
+  try {
+    (void) rc::regex("(");
+  }
+  catch (const std::regex_error& e) {
+    bad = true;
+    EXPECT(e.code() != std::regex_constants::error_complexity);
+  }
+  EXPECT(bad);
 }
