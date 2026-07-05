@@ -626,10 +626,6 @@ Recorded, not scheduled — deliberate next steps the current design leaves room
   extension point); and unifying the `std::ranges` style (only `onepass.hpp` dissents). Plus the Rust
   `bindings/rust/src/lib.rs` split into `ffi` / `error` / `iter` / `builder` / `replace` / `bytes` modules,
   so the str/bytes parity gap is visible in review rather than a manual diff.
-- **Crate throughput: kill the per-match allocation.** The Rust wrapper's `RawSpans` cursor allocates
-  a fresh span vector per match, which the native criterion bench (BENCHMARKS §E.4) shows costs the
-  crate 2–3x against the pure-Rust `regex` crate on match-dense scans. Reuse one span buffer across
-  matches, and add a span-0-only fast path for `find_iter` (which needs no group vector at all).
 
 \section g_safety 9. Compile time and safety
 

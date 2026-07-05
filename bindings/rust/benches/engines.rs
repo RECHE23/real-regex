@@ -27,15 +27,28 @@ fn bench(c: &mut Criterion) {
     for &(name, pat) in CASES {
         let re = real_regex::Regex::new(pat).unwrap();
         let rx = regex::Regex::new(pat).unwrap();
-        let mut group = c.benchmark_group(name);
-        group.throughput(Throughput::Bytes(text.len() as u64));
-        group.bench_with_input(BenchmarkId::new("real", name), &text, |b, t| {
+
+        // find: whole-match spans (the span-0 fast path — allocates nothing per match).
+        let mut find = c.benchmark_group(format!("find/{name}"));
+        find.throughput(Throughput::Bytes(text.len() as u64));
+        find.bench_with_input(BenchmarkId::new("real", name), &text, |b, t| {
+            b.iter(|| black_box(re.find_iter(t).count()))
+        });
+        find.bench_with_input(BenchmarkId::new("regex", name), &text, |b, t| {
+            b.iter(|| black_box(rx.find_iter(t).count()))
+        });
+        find.finish();
+
+        // captures: materializes every group (the crate still allocates the group vector per match).
+        let mut caps = c.benchmark_group(format!("captures/{name}"));
+        caps.throughput(Throughput::Bytes(text.len() as u64));
+        caps.bench_with_input(BenchmarkId::new("real", name), &text, |b, t| {
             b.iter(|| black_box(re.captures_iter(t).count()))
         });
-        group.bench_with_input(BenchmarkId::new("regex", name), &text, |b, t| {
+        caps.bench_with_input(BenchmarkId::new("regex", name), &text, |b, t| {
             b.iter(|| black_box(rx.captures_iter(t).count()))
         });
-        group.finish();
+        caps.finish();
     }
 }
 

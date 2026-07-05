@@ -238,6 +238,7 @@ impl Regex {
                 it: fb.captures_iter(text),
                 ngroups: self.ngroups,
                 min_start: start.unwrap_or(0),
+                cur: Vec::new(),
             };
         }
         let iter = unsafe {
@@ -248,7 +249,7 @@ impl Regex {
         };
         // A null cursor means the engine failed to construct the iterator (never dereference it).
         assert!(!iter.is_null(), "real-regex: engine iteration failed");
-        SpanCursor::Real(RawSpans { iter, ngroups: self.ngroups, last_end: None, _re: PhantomData })
+        SpanCursor::Real(RawSpans { iter, ngroups: self.ngroups, buf: vec![0usize; 2 * self.ngroups], last_end: None, _re: PhantomData })
     }
 
     fn caps_from<'t>(&self, text: &'t str, spans: Vec<Option<(usize, usize)>>) -> Captures<'t> {
@@ -257,22 +258,22 @@ impl Regex {
 
     /// Whether the pattern matches anywhere in `text`.
     pub fn is_match(&self, text: &str) -> bool {
-        self.raw(text, None).next().is_some()
+        self.raw(text, None).advance().is_some()
     }
 
     /// Like [`is_match`](Regex::is_match), searching from byte offset `start`.
     pub fn is_match_at(&self, text: &str, start: usize) -> bool {
-        self.raw(text, Some(start)).next().is_some()
+        self.raw(text, Some(start)).advance().is_some()
     }
 
     /// The leftmost match's whole-match span, or `None`.
     pub fn find<'t>(&self, text: &'t str) -> Option<Match<'t>> {
-        self.raw(text, None).next().map(|s| Match::from_span(text, s[0]))
+        self.raw(text, None).advance().map(|(a, b)| Match { text, start: a, end: b })
     }
 
     /// Like [`find`](Regex::find), searching from byte offset `start`.
     pub fn find_at<'t>(&self, text: &'t str, start: usize) -> Option<Match<'t>> {
-        self.raw(text, Some(start)).next().map(|s| Match::from_span(text, s[0]))
+        self.raw(text, Some(start)).advance().map(|(a, b)| Match { text, start: a, end: b })
     }
 
     /// Iterate the non-overlapping whole-match spans in `text`.
@@ -282,12 +283,18 @@ impl Regex {
 
     /// The capture groups of the leftmost match, or `None`.
     pub fn captures<'t>(&self, text: &'t str) -> Option<Captures<'t>> {
-        self.raw(text, None).next().map(|s| self.caps_from(text, s))
+        {
+            let mut c = self.raw(text, None);
+            c.advance().map(|_| self.caps_from(text, c.group_spans()))
+        }
     }
 
     /// Like [`captures`](Regex::captures), searching from byte offset `start`.
     pub fn captures_at<'t>(&self, text: &'t str, start: usize) -> Option<Captures<'t>> {
-        self.raw(text, Some(start)).next().map(|s| self.caps_from(text, s))
+        {
+            let mut c = self.raw(text, Some(start));
+            c.advance().map(|_| self.caps_from(text, c.group_spans()))
+        }
     }
 
     /// Iterate the capture groups of each non-overlapping match in `text`.
@@ -305,7 +312,7 @@ impl Regex {
         if let Some(fb) = &self.fallback {
             return fb.shortest_match(text); // the regex backend gives true earliest-completion
         }
-        self.raw(text, None).next().map(|s| s[0].unwrap().1)
+        self.raw(text, None).advance().map(|(_, e)| e)
     }
 }
 
@@ -327,46 +334,46 @@ impl std::fmt::Debug for Regex {
 struct RawSpans<'r, 't> {
     iter: *mut RealIter,
     ngroups: usize,
+    buf: Vec<usize>,        // reused span buffer (2*ngroups), refilled per match — never reallocated
     last_end: Option<usize>, // end of the last YIELDED match — for the rust empty-match iteration rule
     _re: PhantomData<(&'r (), &'t ())>, // lifetime-only marker — reused by the str and bytes APIs
 }
 
 impl RawSpans<'_, '_> {
-    // One raw yield from the engine iterator (which follows re's empty-match rule).
-    fn engine_next(&mut self) -> Option<Vec<Option<(usize, usize)>>> {
-        let mut spans = vec![0usize; 2 * self.ngroups];
-        let got = unsafe { real_iter_next(self.iter, spans.as_mut_ptr()) };
-        match got {
-            0 => None,
-            // -1 is an internal engine error (or a null cursor). A linear search never "fails to match" — the
-            // rust contract is compile -> Result, then matching is infallible — so we surface it, never a
-            // silent empty result.
-            -1 => panic!("real-regex: engine iteration failed"),
-            _ => Some(
-                (0..self.ngroups)
-                    .map(|g| {
-                        let (a, b) = (spans[2 * g], spans[2 * g + 1]);
-                        if a == usize::MAX { None } else { Some((a, b)) }
-                    })
-                    .collect(),
-            ),
+    // Advance to the next match, applying the rust empty-match rule (regex-automata's
+    // util::iter::Searcher::try_advance): an empty match whose end equals the previous yielded match's end is
+    // skipped. REAL's engine yields the re-superset (3.7+ keeps such an empty), so filtering it here adapts
+    // iteration to rust's contract without touching the engine. The reused buffer then holds every group span,
+    // and the whole-match span (group 0) is returned — so iterating allocates nothing per match;
+    // group_spans() materializes the Vec only when a Captures needs the groups.
+    fn advance(&mut self) -> Option<(usize, usize)> {
+        loop {
+            let got = unsafe { real_iter_next(self.iter, self.buf.as_mut_ptr()) };
+            match got {
+                0 => return None,
+                // -1 is an internal engine error (or a null cursor). A linear search never "fails to match" —
+                // the rust contract is compile -> Result, then matching is infallible — so we surface it.
+                -1 => panic!("real-regex: engine iteration failed"),
+                _ => {
+                    let (s0, e0) = (self.buf[0], self.buf[1]); // group 0 always participates
+                    if s0 == e0 && Some(e0) == self.last_end {
+                        continue; // empty match adjacent to the previous match end -> skip (rust's rule)
+                    }
+                    self.last_end = Some(e0);
+                    return Some((s0, e0));
+                }
+            }
         }
     }
 
-    // The rust empty-match rule, applied at the wrapper (regex-automata util::iter::Searcher::try_advance):
-    // an empty match whose end equals the previous yielded match's end is skipped. REAL's engine yields the
-    // re-superset (3.7+: it keeps such an empty), so filtering it here adapts the iteration to rust's
-    // contract without touching the engine. split/replace inherit this through the same cursor.
-    fn next(&mut self) -> Option<Vec<Option<(usize, usize)>>> {
-        loop {
-            let spans = self.engine_next()?;
-            let (s0, e0) = spans[0].expect("group 0 always participates");
-            if s0 == e0 && Some(e0) == self.last_end {
-                continue; // empty match adjacent to the previous match end -> skip (rust's rule)
-            }
-            self.last_end = Some(e0);
-            return Some(spans);
-        }
+    // The full group-span vector of the current match (call after advance() returned Some). Allocates once.
+    fn group_spans(&self) -> Vec<Option<(usize, usize)>> {
+        (0..self.ngroups)
+            .map(|g| {
+                let (a, b) = (self.buf[2 * g], self.buf[2 * g + 1]);
+                if a == usize::MAX { None } else { Some((a, b)) }
+            })
+            .collect()
     }
 }
 
@@ -381,23 +388,41 @@ impl Drop for RawSpans<'_, '_> {
 enum SpanCursor<'r, 't> {
     Real(RawSpans<'r, 't>),
     #[cfg(feature = "fallback")]
-    Fallback { it: regex::CaptureMatches<'r, 't>, ngroups: usize, min_start: usize },
+    Fallback {
+        it: regex::CaptureMatches<'r, 't>,
+        ngroups: usize,
+        min_start: usize,
+        cur: Vec<Option<(usize, usize)>>, // current match's groups, reused across advances
+    },
 }
 
 impl SpanCursor<'_, '_> {
-    fn next(&mut self) -> Option<Vec<Option<(usize, usize)>>> {
+    // Advance to the next match; return its whole-match span (group 0). The group spans are then available via
+    // group_spans() — for the Real backend from the reused buffer (no per-match allocation), so find_iter /
+    // is_match / split never materialize a group vector; only captures_iter does.
+    fn advance(&mut self) -> Option<(usize, usize)> {
         match self {
-            SpanCursor::Real(r) => r.next(),
+            SpanCursor::Real(r) => r.advance(),
             #[cfg(feature = "fallback")]
-            SpanCursor::Fallback { it, ngroups, min_start } => loop {
+            SpanCursor::Fallback { it, ngroups, min_start, cur } => loop {
                 let caps = it.next()?;
-                if caps.get(0).unwrap().start() < *min_start {
+                let m0 = caps.get(0).unwrap();
+                if m0.start() < *min_start {
                     continue; // for the *_at variants: skip matches before the requested start
                 }
-                return Some(
-                    (0..*ngroups).map(|g| caps.get(g).map(|m| (m.start(), m.end()))).collect(),
-                );
+                cur.clear();
+                cur.extend((0..*ngroups).map(|g| caps.get(g).map(|m| (m.start(), m.end()))));
+                return Some((m0.start(), m0.end()));
             },
+        }
+    }
+
+    // The full group-span vector of the current match (after advance() returned Some).
+    fn group_spans(&self) -> Vec<Option<(usize, usize)>> {
+        match self {
+            SpanCursor::Real(r) => r.group_spans(),
+            #[cfg(feature = "fallback")]
+            SpanCursor::Fallback { cur, .. } => cur.clone(),
         }
     }
 }
@@ -411,11 +436,6 @@ pub struct Match<'t> {
 }
 
 impl<'t> Match<'t> {
-    fn from_span(text: &'t str, span: Option<(usize, usize)>) -> Match<'t> {
-        let (start, end) = span.expect("group 0 always participates in a match");
-        Match { text, start, end }
-    }
-
     /// The start byte offset.
     pub fn start(&self) -> usize {
         self.start
@@ -505,7 +525,7 @@ pub struct Matches<'r, 't> {
 impl<'t> Iterator for Matches<'_, 't> {
     type Item = Match<'t>;
     fn next(&mut self) -> Option<Match<'t>> {
-        self.raw.next().map(|s| Match::from_span(self.text, s[0]))
+        self.raw.advance().map(|(a, b)| Match { text: self.text, start: a, end: b })
     }
 }
 
@@ -519,7 +539,7 @@ pub struct CaptureMatches<'r, 't> {
 impl<'t> Iterator for CaptureMatches<'_, 't> {
     type Item = Captures<'t>;
     fn next(&mut self) -> Option<Captures<'t>> {
-        self.raw.next().map(|s| self.re.caps_from(self.text, s))
+        self.raw.advance().map(|_| self.re.caps_from(self.text, self.raw.group_spans()))
     }
 }
 
@@ -855,7 +875,7 @@ pub mod bytes {
             };
             // A null cursor means the engine failed to construct the iterator (never dereference it).
             assert!(!iter.is_null(), "real-regex: engine iteration failed");
-            RawSpans { iter, ngroups: self.ngroups, last_end: None, _re: PhantomData }
+            RawSpans { iter, ngroups: self.ngroups, buf: vec![0usize; 2 * self.ngroups], last_end: None, _re: PhantomData }
         }
 
         fn caps_from<'t>(&self, text: &'t [u8], spans: Vec<Option<(usize, usize)>>) -> Captures<'t> {
@@ -864,17 +884,17 @@ pub mod bytes {
 
         /// Whether the pattern matches anywhere in `text`.
         pub fn is_match(&self, text: &[u8]) -> bool {
-            self.raw(text, None).next().is_some()
+            self.raw(text, None).advance().is_some()
         }
 
         /// The leftmost whole match, or `None`.
         pub fn find<'t>(&self, text: &'t [u8]) -> Option<Match<'t>> {
-            self.raw(text, None).next().map(|s| Match::at(text, s[0]))
+            self.raw(text, None).advance().map(|(a, b)| Match { text, start: a, end: b })
         }
 
         /// Like [`find`](Regex::find), searching from byte offset `start`.
         pub fn find_at<'t>(&self, text: &'t [u8], start: usize) -> Option<Match<'t>> {
-            self.raw(text, Some(start)).next().map(|s| Match::at(text, s[0]))
+            self.raw(text, Some(start)).advance().map(|(a, b)| Match { text, start: a, end: b })
         }
 
         /// Iterate whole matches.
@@ -884,17 +904,23 @@ pub mod bytes {
 
         /// Whether the pattern matches at or after byte offset `start`.
         pub fn is_match_at(&self, text: &[u8], start: usize) -> bool {
-            self.raw(text, Some(start)).next().is_some()
+            self.raw(text, Some(start)).advance().is_some()
         }
 
         /// The capture groups of the leftmost match, or `None`.
         pub fn captures<'t>(&self, text: &'t [u8]) -> Option<Captures<'t>> {
-            self.raw(text, None).next().map(|s| self.caps_from(text, s))
+            {
+                let mut c = self.raw(text, None);
+                c.advance().map(|_| self.caps_from(text, c.group_spans()))
+            }
         }
 
         /// Like [`captures`](Regex::captures), searching from byte offset `start`.
         pub fn captures_at<'t>(&self, text: &'t [u8], start: usize) -> Option<Captures<'t>> {
-            self.raw(text, Some(start)).next().map(|s| self.caps_from(text, s))
+            {
+                let mut c = self.raw(text, Some(start));
+                c.advance().map(|_| self.caps_from(text, c.group_spans()))
+            }
         }
 
         /// Iterate the capture groups of each match.
@@ -905,7 +931,7 @@ pub mod bytes {
         /// The end offset of the leftmost match. Same divergence as the string API's
         /// [`shortest_match`](crate::Regex::shortest_match) — the leftmost match's greedy end.
         pub fn shortest_match(&self, text: &[u8]) -> Option<usize> {
-            self.raw(text, None).next().map(|s| s[0].unwrap().1)
+            self.raw(text, None).advance().map(|(_, e)| e)
         }
 
         /// Replace the leftmost match with `rep` (a `&[u8]`/`Vec<u8>` template with `$`-expansion, or a
@@ -969,10 +995,6 @@ pub mod bytes {
     }
 
     impl<'t> Match<'t> {
-        fn at(text: &'t [u8], span: Option<(usize, usize)>) -> Match<'t> {
-            let (start, end) = span.expect("group 0 always participates");
-            Match { text, start, end }
-        }
         /// The start byte offset.
         pub fn start(&self) -> usize { self.start }
         /// The end byte offset.
@@ -1032,7 +1054,7 @@ pub mod bytes {
     impl<'t> Iterator for Matches<'_, 't> {
         type Item = Match<'t>;
         fn next(&mut self) -> Option<Match<'t>> {
-            self.raw.next().map(|s| Match::at(self.text, s[0]))
+            self.raw.advance().map(|(a, b)| Match { text: self.text, start: a, end: b })
         }
     }
 
@@ -1046,7 +1068,7 @@ pub mod bytes {
     impl<'t> Iterator for CaptureMatches<'_, 't> {
         type Item = Captures<'t>;
         fn next(&mut self) -> Option<Captures<'t>> {
-            self.raw.next().map(|s| self.re.caps_from(self.text, s))
+            self.raw.advance().map(|_| self.re.caps_from(self.text, self.raw.group_spans()))
         }
     }
 
