@@ -54,3 +54,14 @@ TEST(inner_literal_bytes_mode)
   // Literals are bytes, so the extraction works identically in bytes mode.
   EXPECT(is_lit(extract(R"((\w+)@(\w+))", real::flags::bytes), "@"));
 }
+
+TEST(inner_literal_prefix_boundary)
+{
+  // IL.1 boundary: how many top-level children precede the literal (the sub-pattern the prefix-reverse matches
+  // from a candidate back to the match start). 0 = literal at head (reverse is identity, start = candidate).
+  EXPECT(extract(R"(\d{4}-\d{2}-\d{2})").prefix_child_count == 1); // prefix = \d{4}
+  EXPECT(extract(R"((\w+)@(\w+))").prefix_child_count == 1);       // prefix = (\w+)
+  EXPECT(extract(R"(key=(\w+))").prefix_child_count == 0);         // literal at head -> empty prefix
+  EXPECT(extract(R"(@\w+)").prefix_child_count == 0);              // head literal: reverse must return s = candidate
+  EXPECT(extract(R"((foo)bar)").prefix_child_count == -1);         // literal opens inside a group -> no clean boundary
+}
