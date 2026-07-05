@@ -21,10 +21,10 @@ answer is not a benchmark win.
 | --- | --- |
 | Machine | Apple M1 Pro (`arm64`), Darwin 23.6.0 |
 | C++ compiler | Apple clang 16.0.0, flags `-O2 -std=c++20` |
-| Engines | REAL 2026.6.6, `std::regex` (libc++), PCRE2 10.47 (JIT), RE2 11.0.0 |
+| Engines | REAL `2026.6.6` (§A–D baseline) · `2026.7.14` (§E one-pass arc), `std::regex` (libc++), PCRE2 10.47 (JIT), RE2 11.0.0 |
 | Python | CPython 3.14.3, `re` (stdlib) vs REAL 2026.6.6 (abi3 binding) |
 | Method | median of repeated batches; match counts checked equal across engines |
-| As of | 2026-06-17 — the code published as `2026.6.6` (2026-06-18) |
+| As of | §A–D: measured 2026-06-17 on `2026.6.6`. §E (the one-pass arc) re-measured on `2026.7.14`. The suite is re-measured per release; reproduce with the `bench-*` targets. |
 
 ## A. C++ engine throughput
 
@@ -342,7 +342,9 @@ carried anchored matching — the std-compat surface — onto the same one-pass 
   table degrades gracefully to REAL-vs-`std::regex` on a bare machine). `make
   bench-python` builds the abi3 binding and runs `benchmarks/bench.py` against the
   interpreter's own `re`. A third target, `make bench-fuzz`, runs the same comparison
-  over randomly fuzzed `(pattern, text)` pairs.
+  over randomly fuzzed `(pattern, text)` pairs. `make bench-duel` generates the §E
+  REAL-vs-rust table (`benchmarks/duel/`, ns/byte with match counts cross-checked; the
+  rust harness needs a Rust toolchain).
 - **Equality first.** Both harnesses verify identical results (and per-engine match
   counts) before timing, so a divergence shows up as a correctness failure, not a
   misleading speed number.

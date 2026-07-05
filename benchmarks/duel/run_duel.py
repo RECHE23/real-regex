@@ -2,11 +2,12 @@
 """REAL-vs-rust duel: the same patterns over the same corpora through both engines, ns/byte and match-count
 cross-checked, non-cherry-picked. Emits a Markdown table (paste into BENCHMARKS.md). The date row is a
 deliberate no-match scan (no yyyy-mm-dd in its corpus): a prefilter gap, not captures."""
+import pathlib
 import subprocess
 import sys
 import tempfile
 
-HERE = "/Users/rchenard/Projects/real-regex/benchmarks/duel"
+HERE = str(pathlib.Path(__file__).resolve().parent)
 REAL = f"{HERE}/real_bench"
 RUST = f"{HERE}/rust_bench/target/release/rust_bench"
 N = 20000  # corpus repetitions

@@ -11,6 +11,10 @@
  * run time (the tables are heap-allocated once and then immutable), and is the
  * accelerated rule-dispatch path SciLex opts into.
  *
+ * \note NOT the internal `real::detail::lazy_dfa` (`automata/lazy_dfa.hpp`): that one is a private,
+ *       *priority-preserving* forward DFA that finds a single pattern's match boundary for the Pike route.
+ *       This `real::dfa` is a public, capture-free *maximal-munch* recognizer over a whole rule set.
+ *
  * Scope: a pattern is DFA-able iff its program holds no zero-width assertion other
  * than a leading `\A`/`^` (a no-op under anchored scanning). A pattern with any
  * other assertion (`$`, `\b`, multiline `^`/`$`, …) is **not** representable as a

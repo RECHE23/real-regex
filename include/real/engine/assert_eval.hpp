@@ -11,6 +11,9 @@
 #ifndef REAL_ASSERT_EVAL_HPP
 #define REAL_ASSERT_EVAL_HPP
 
+// Internal — do not include directly.
+// Users: #include <real/real.hpp> (or the documented opt-ins <real/dfa.hpp>, <real/std/regex.hpp>).
+
 #include <cstddef>
 #include <cstdint>
 #include <string_view>

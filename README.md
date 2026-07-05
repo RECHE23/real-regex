@@ -44,7 +44,7 @@ REAL gives you **both**: linear-time, ReDoS-safe matching *with* bounded lookaro
 
 ¹ part of the C++ standard library. ² for the supported subset (no backreferences, etc.).
 Throughput is qualitative — exact multipliers and methodology are in
-[`BENCHMARKS.md`](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md).
+[`docs/BENCHMARKS.md`](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md).
 
 **Every other engine that has lookarounds backtracks** (ReDoS-unsafe), and every linear-time
 engine drops them — **REAL is the only one with both**: bounded lookarounds *and* linear-time,
@@ -62,7 +62,7 @@ The classic catastrophic-backtracking pattern `(a+)+b` over `"a"×N` (no `b`, so
 | Python `re` | n = 24 | **1118 ms** — and climbing exponentially |
 
 REAL and RE2 stay linear; the backtracking engines refuse or blow up at trivially small
-inputs. These figures are from [`BENCHMARKS.md` §C](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md); they depend on the
+inputs. These figures are from [`docs/BENCHMARKS.md` §C](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md); they depend on the
 platform, pattern and input, so reproduce them locally with `make bench-engines` rather than
 trusting a number here.
 
@@ -184,7 +184,7 @@ Matching is UTF-8 code-point-aware: classes and `.` accept non-ASCII (`[é]`, `[
 `IGNORECASE` are Unicode in text mode (ASCII under `flags::ascii` / `re.A`), and no match boundary splits a
 character. The full Unicode model, the code-point-mode migration notes, and every intentional divergence
 from `re` (e.g. nullable-loop empty captures) are in
-[`COMPATIBILITY.md`](https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md).
+[`docs/COMPATIBILITY.md`](https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md).
 
 ## C++ API
 
@@ -228,7 +228,7 @@ namespace re = real::compat;    // then re::regex / re::smatch / re::regex_searc
 It runs your pattern on REAL — linear-time, ReDoS-safe — wherever that is provably identical to
 `std::regex`, and falls back to `std::regex` everywhere else: **behave identically, never a silent
 divergence**. See the [migration tour](https://reche23.github.io/real-regex/std_regex_dropin.html) and
-the full [`COMPATIBILITY.md`](https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md).
+the full [`docs/COMPATIBILITY.md`](https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md).
 
 ### Three memory modes
 

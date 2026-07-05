@@ -12,8 +12,9 @@ its generated tables index the IR's code_range):
     core                    the IR and primitives: program, config, charclass
     unicode                 UTF-8 decode + the generated property/fold tables (use the IR)
     engine, automata        the runtime: the Pike VM, storage-free scratch, prefilter, assert eval,
-                            the lazy DFAs and one-pass extractor. ONE tier — pike <-> onepass is a
-                            deliberate mutual dependency, allowed within a tier, forbidden across.
+                            the lazy DFAs and one-pass extractor. ONE tier: pike -> onepass is one-way
+                            (onepass never includes pike) — a cross-reference allowed within the tier,
+                            forbidden across tiers.
     frontend                the parser and compiler (they consume the runtime's prefilter / utf8_ranges)
     root                    the public headers (real.hpp, dfa.hpp) and the storage assembly they drive
 
@@ -37,7 +38,12 @@ def main() -> int:
     violations = []
     for path in sorted(root.rglob("*.hpp")):
         from_layer = layer_of.get(path.stem, "root")
-        for m in INCLUDE.finditer(path.read_text()):
+        for line in path.read_text().splitlines():
+            if line.lstrip().startswith("//"):
+                continue  # a commented include (e.g. the "Users: #include ..." banner) is not a real edge
+            m = INCLUDE.search(line)
+            if not m:
+                continue
             to_layer = m.group(1) or "root"
             base = m.group(2)
             if base == "version":

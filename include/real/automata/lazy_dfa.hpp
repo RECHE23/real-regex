@@ -16,6 +16,9 @@
 #ifndef REAL_LAZY_DFA_HPP
 #define REAL_LAZY_DFA_HPP
 
+// Internal — do not include directly.
+// Users: #include <real/real.hpp> (or the documented opt-ins <real/dfa.hpp>, <real/std/regex.hpp>).
+
 #include <algorithm>
 #include <array>
 #include <cstddef>

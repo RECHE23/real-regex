@@ -10,6 +10,9 @@
 #ifndef REAL_PROGRAM_HPP
 #define REAL_PROGRAM_HPP
 
+// Internal — do not include directly.
+// Users: #include <real/real.hpp> (or the documented opt-ins <real/dfa.hpp>, <real/std/regex.hpp>).
+
 #include "real/version.hpp"
 
 #include <array>

@@ -20,6 +20,9 @@
 #ifndef REAL_ONEPASS_HPP
 #define REAL_ONEPASS_HPP
 
+// Internal — do not include directly.
+// Users: #include <real/real.hpp> (or the documented opt-ins <real/dfa.hpp>, <real/std/regex.hpp>).
+
 #include <algorithm>
 #include <array>
 #include <bit>

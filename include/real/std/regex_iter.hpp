@@ -6,6 +6,9 @@
 #ifndef REAL_STD_REGEX_ITER_HPP
 #define REAL_STD_REGEX_ITER_HPP
 
+// Internal — do not include directly.
+// Users: #include <real/real.hpp> (or the documented opt-ins <real/dfa.hpp>, <real/std/regex.hpp>).
+
 #include "regex_match.hpp"
 
 #include <iterator>

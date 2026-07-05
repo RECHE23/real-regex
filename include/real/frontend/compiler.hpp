@@ -17,6 +17,9 @@
 #ifndef REAL_COMPILER_HPP
 #define REAL_COMPILER_HPP
 
+// Internal — do not include directly.
+// Users: #include <real/real.hpp> (or the documented opt-ins <real/dfa.hpp>, <real/std/regex.hpp>).
+
 #include "real/version.hpp"
 
 #include <algorithm>

@@ -568,8 +568,8 @@ the build on any upward include, so the layering is a fact, not a comment. Low t
 - **`unicode/`** — `utf8.hpp` (codepoint decode), `unicode_props.hpp` / `unicode_fold.hpp` (the generated
   property and case-fold tables). *Above* core: the tables index the IR's `code_range`.
 - **`engine/` + `automata/`** — one runtime tier: `pike.hpp` (the VM), `prefilter.hpp`, `assert_eval.hpp`,
-  and `lazy_dfa.hpp` / `onepass.hpp` / `utf8_ranges.hpp`. `pike` ↔ `onepass` is a deliberate mutual
-  dependency, allowed within the tier and forbidden across it.
+  and `lazy_dfa.hpp` / `onepass.hpp` / `utf8_ranges.hpp`. One tier because they interdepend — `pike` →
+  `onepass`, and `onepass` → `assert_eval` — a dependency allowed within the tier and forbidden across it.
 - **`frontend/`** — `ast.hpp` (recursive-descent parser) and `compiler.hpp` (Thompson construction); they
   consume the runtime's `prefilter` and `utf8_ranges`, so they sit above it.
 - **root** — the public `real.hpp` / `dfa.hpp`, and `storage.hpp`, the assembly `real::regex` drives
