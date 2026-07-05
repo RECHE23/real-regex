@@ -904,8 +904,10 @@ namespace real::detail {
     if (!std::is_constant_evaluated() && prog.hints.inner_literal_prefix >= 1) {
       const dynamic_program pp {
         compiler(build_prefix_ast(tree, prog.hints.inner_literal_prefix), compile_flags).compile()};
-      prog.prefix_code    = pp.code;
-      prog.prefix_classes = pp.classes;
+      prog.prefix_code       = pp.code;
+      prog.prefix_classes    = pp.classes;
+      prog.prefix_cp_classes = pp.cp_classes;
+      prog.prefix_cp_ranges  = pp.cp_ranges;
     }
     return prog;
   }

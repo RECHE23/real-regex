@@ -342,6 +342,10 @@ namespace real {
       std::span<const lookaround_sub> lookarounds;            //!< Bounded lookaround sub-programs (regions of \ref code).
       std::span<const cp_class>       cp_classes;             //!< Match-time code-point classes (for `klass_cp`).
       std::span<const code_range>     cp_ranges;              //!< Flat range buffer the `cp_class` slices index into.
+      std::span<const instr>          prefix_code;            //!< IL: inner-literal prefix sub-program (the reverse start-finder). Empty unless there is a required literal with a top-level prefix. Dynamic-only.
+      std::span<const char_class>     prefix_classes;         //!< IL: classes for \ref prefix_code.
+      std::span<const cp_class>       prefix_cp_classes;      //!< IL: code-point classes for \ref prefix_code.
+      std::span<const code_range>     prefix_cp_ranges;       //!< IL: flat range buffer for \ref prefix_cp_classes.
       std::uint16_t                   slot_count   {2};       //!< `2 * (capture groups + 1)`.
       bool                            byte_mode    {};        //!< \ref flags::bytes mode — positions are raw bytes.
       bool                            unicode_word {};        //!< `\b \B \< \>` use Unicode word-ness (text mode, not bytes / `re.A`).
@@ -354,18 +358,20 @@ namespace real {
      */
     struct dynamic_program
     {
-      std::vector<instr>          code;             //!< The instruction stream (main program + lookaround sub-program regions).
-      std::vector<char_class>     classes;          //!< Interned character classes.
-      std::vector<named_group>    names;            //!< Named capture groups.
-      std::vector<lookaround_sub> lookarounds;      //!< Bounded lookaround sub-programs (regions of \ref code).
-      std::vector<cp_class>       cp_classes;       //!< Match-time code-point classes (for `klass_cp`).
-      std::vector<code_range>     cp_ranges;        //!< Flat range buffer the `cp_class` slices index into.
-      std::vector<instr>          prefix_code;      //!< IL: the inner-literal prefix sub-program (the part before the literal), for the reverse start-finder. Empty unless there is a required literal with a top-level prefix. Dynamic-only (not built during constant evaluation).
-      std::vector<char_class>     prefix_classes;   //!< IL: classes for \ref prefix_code.
-      std::uint16_t               slot_count   {2}; //!< `2 * (capture groups + 1)`.
-      bool                        byte_mode    {};  //!< \ref flags::bytes mode.
-      bool                        unicode_word {};  //!< `\b \B \< \>` use Unicode word-ness (text mode).
-      pattern_hints               hints;            //!< Search-acceleration hints.
+      std::vector<instr>          code;              //!< The instruction stream (main program + lookaround sub-program regions).
+      std::vector<char_class>     classes;           //!< Interned character classes.
+      std::vector<named_group>    names;             //!< Named capture groups.
+      std::vector<lookaround_sub> lookarounds;       //!< Bounded lookaround sub-programs (regions of \ref code).
+      std::vector<cp_class>       cp_classes;        //!< Match-time code-point classes (for `klass_cp`).
+      std::vector<code_range>     cp_ranges;         //!< Flat range buffer the `cp_class` slices index into.
+      std::vector<instr>          prefix_code;       //!< IL: the inner-literal prefix sub-program (the part before the literal), for the reverse start-finder. Empty unless there is a required literal with a top-level prefix. Dynamic-only (not built during constant evaluation).
+      std::vector<char_class>     prefix_classes;    //!< IL: classes for \ref prefix_code.
+      std::vector<cp_class>       prefix_cp_classes; //!< IL: code-point classes (klass_cp) for \ref prefix_code.
+      std::vector<code_range>     prefix_cp_ranges;  //!< IL: flat range buffer for \ref prefix_cp_classes.
+      std::uint16_t               slot_count   {2};  //!< `2 * (capture groups + 1)`.
+      bool                        byte_mode    {};   //!< \ref flags::bytes mode.
+      bool                        unicode_word {};   //!< `\b \B \< \>` use Unicode word-ness (text mode).
+      pattern_hints               hints;             //!< Search-acceleration hints.
 
       // Codepoint-class marker, set by `emit_codepoint_class` at emission so the
       // prefilter need not reverse-engineer the emitted block's bytecode shape.
@@ -377,16 +383,20 @@ namespace real {
        */
       [[nodiscard]] constexpr program_view view() const
       {
-        return {.code         = std::span<const instr>(code),
-                .classes      = std::span<const char_class>(classes),
-                .names        = std::span<const named_group>(names),
-                .lookarounds  = std::span<const lookaround_sub>(lookarounds),
-                .cp_classes   = std::span<const cp_class>(cp_classes),
-                .cp_ranges    = std::span<const code_range>(cp_ranges),
-                .slot_count   = slot_count,
-                .byte_mode    = byte_mode,
-                .unicode_word = unicode_word,
-                .hints        = hints};
+        return {.code              = std::span<const instr>(code),
+                .classes           = std::span<const char_class>(classes),
+                .names             = std::span<const named_group>(names),
+                .lookarounds       = std::span<const lookaround_sub>(lookarounds),
+                .cp_classes        = std::span<const cp_class>(cp_classes),
+                .cp_ranges         = std::span<const code_range>(cp_ranges),
+                .prefix_code       = std::span<const instr>(prefix_code),
+                .prefix_classes    = std::span<const char_class>(prefix_classes),
+                .prefix_cp_classes = std::span<const cp_class>(prefix_cp_classes),
+                .prefix_cp_ranges  = std::span<const code_range>(prefix_cp_ranges),
+                .slot_count        = slot_count,
+                .byte_mode         = byte_mode,
+                .unicode_word      = unicode_word,
+                .hints             = hints};
       }
     };
   } // namespace detail

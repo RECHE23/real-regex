@@ -42,6 +42,18 @@ namespace real::detail {
     return disabled;
   }
 
+  //! \brief The inner-literal search route (IL.2). OFF by default while a correctness gate is finished: the
+  //!        `min_match_start` reverse bound can miss a leftmost match for a weak or adjacent literal (e.g.
+  //!        `((.))a`, which the exhaustive corpus flagged), the way rust's meta engine avoids `ReverseInner`
+  //!        without a quality heuristic. The machinery is complete and, for a selective literal, gives a large
+  //!        win (the date scans at 0.06 ns/byte vs 2.9 core); flip this to enable it in benchmarks and its
+  //!        routed==core differential until the gate lands.
+  inline bool& inner_literal_route_disabled()
+  {
+    static bool disabled {true};
+    return disabled;
+  }
+
   //! \brief A byte-level program derived from a Pike program for the DFA passes: every `klass_cp` construct
   //!        is expanded into UTF-8 byte-range split/klass chains, so the whole thing is byte-transition-only
   //!        and a forward DFA can represent it. The Pike program itself is untouched (byte-identity); this

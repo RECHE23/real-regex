@@ -286,11 +286,16 @@ namespace real::detail {
    */
   struct pike_state : basic_pike_state<thread_list, std::vector<eps_entry>>
   {
-    lookaround_scratch         lookaround;            //!< Isolated sub-scratch for bounded lookaround evaluation.
-    capture_pool               pool;                  //!< OPT D1: copy-on-write capture blocks (heap-backed).
-    std::optional<lazy_dfa>    fwd_dfa;               //!< OPT lazy-DFA: forward pass (built lazily, cache persists across a find_iter).
-    std::optional<reverse_dfa> rev_dfa;               //!< OPT lazy-DFA: the reverse start-finder.
-    const void*                dfa_program {nullptr}; //!< The program the DFAs were built for (rebuild if it changes).
+    lookaround_scratch         lookaround;              //!< Isolated sub-scratch for bounded lookaround evaluation.
+    capture_pool               pool;                    //!< OPT D1: copy-on-write capture blocks (heap-backed).
+    std::optional<lazy_dfa>    fwd_dfa;                 //!< OPT lazy-DFA: forward pass (built lazily, cache persists across a find_iter).
+    std::optional<reverse_dfa> rev_dfa;                 //!< OPT lazy-DFA: the reverse start-finder.
+    const void*                dfa_program {nullptr};   //!< The program the DFAs were built for (rebuild if it changes).
+    byte_program               il_prefix_bp;            //!< IL: the prefix byte-program the reverse DFA spans into (must outlive it).
+    std::optional<reverse_dfa> il_prefix_rev;           //!< IL: the inner-literal prefix reverse DFA (built once per program).
+    const void*                il_prefix_for {nullptr}; //!< IL: the prefix program \ref il_prefix_rev was built for.
+    const void*                il_text       {nullptr}; //!< IL: the haystack \ref il_abandoned refers to (reset the flag when it changes).
+    bool                       il_abandoned  {false};   //!< IL: a linearity guard tripped on this haystack — stay on the core.
   };
 
   /*!
@@ -341,6 +346,31 @@ namespace real::detail {
     {
       text_               = text;
       forbid_empty_until_ = forbid_empty_until;
+      // OPT inner-literal: memmem a required inner literal and reverse/confirm the match around it — the
+      // most selective prefilter for a pattern whose match does not begin with a literal (the date `-`, the
+      // `@`). Placed first: a memchr skip to a rare byte beats scanning every position with a shape fast path
+      // or the DFA. Search mode, runtime, dynamic-only (needs the prefix sub-program). On a linearity guard it
+      // abandons and falls through to the fast paths below.
+      if constexpr (requires(State & s) {
+        s.il_prefix_rev;
+      }) {
+        if (!std::is_constant_evaluated() && !inner_literal_route_disabled() && mode == run_mode::search
+            && prog_.hints.inner_literal_len > 0 && prog_.hints.inner_literal_prefix >= 0
+            && (prog_.hints.inner_literal_prefix == 0 || !prog_.prefix_code.empty())) {
+          if (state_.il_text != static_cast<const void*>(text.data())) {
+            state_.il_abandoned = false; // a fresh haystack: re-enable the route and re-evaluate its guards
+            state_.il_text      = static_cast<const void*>(text.data());
+          }
+          if (!state_.il_abandoned) {
+            bool       abandon {false};
+            const bool matched {run_inner_literal(text, start, out_slots, abandon)};
+            if (!abandon) {
+              return matched;
+            }
+            state_.il_abandoned = true; // a linearity guard tripped: stay on the core for the rest of this haystack
+          }
+        }
+      }
       // Fast paths only fire for patterns that always consume (literal /
       // class+), which can never produce the empty match the flag guards.
       if (prog_.hints.greedy_class_loop >= 0) {
@@ -366,6 +396,11 @@ namespace real::detail {
       if (prog_.hints.fixed_alternation) {
         return run_alternation(text, start, mode, out_slots);
       }
+      // OPT inner-literal: memmem a required literal and reverse/confirm the match around it — for patterns
+      // whose match need not begin with a literal (a leading class/quantifier), so no prefix skip applies but
+      // a rarer INNER literal does (the date `-`, the `@`). Search mode, runtime, dynamic-only (it needs the
+      // prefix sub-program). Placed before the DFA: a memchr skip to a rare byte beats a per-byte DFA scan.
+      // On a linearity guard it abandons and falls through to the DFA / core VM below.
       // OPT lazy-DFA: for an eligible pattern on a large enough input, a forward DFA finds the match end
       // (capture-free, ~12x a Pike no-match scan) and a reverse DFA its start; the Pike VM then runs only on
       // the [s, e] window for the captures and the empty-match rule (the DFA supplies the span, nothing
@@ -423,7 +458,8 @@ namespace real::detail {
     constexpr bool run_general(std::string_view text,
                                std::size_t      start,
                                run_mode         mode,
-                               OutSlots&        out_slots)
+                               OutSlots&        out_slots,
+                               std::size_t*     forward_stop = nullptr) // IL: how far the forward scan reached
     {
       text_ = text;
       const std::size_t code_size {prog_.code.size()};
@@ -482,7 +518,85 @@ namespace real::detail {
       // Σ-invariant: after a full drain only the canonical npos block's sentinel ref remains. A leaked
       // block (missing decref) or a double-free (underflow) breaks it. Debug/sanitize builds only.
       assert(state_.pool.total_refs() == 1 && "OPT-D1 capture-block refcount leak or imbalance");
+      if (forward_stop != nullptr) {
+        *forward_stop = pos; // the position the forward scan reached — IL's min_pre_start on a failed confirm
+      }
       return matched;
+    }
+
+    /*!
+     * \brief The inner-literal search: memmem a required literal, reverse-match the prefix to the match start,
+     *        forward-confirm — the reverse-inner protocol (regex-automata's `ReverseInner`). On a match fills
+     *        `out_slots` and returns true; on none returns false. Sets \p abandon (and returns false) when a
+     *        linearity guard trips, so the caller retries the whole search on the core VM. Search mode only,
+     *        runtime only (the reverse DFA is not constexpr). Two guards keep it linear: the reverse is bounded
+     *        below by `min_match_start` (the previous literal's end), and a literal starting before
+     *        `min_pre_start` (the last confirm's forward reach) abandons the scan.
+     */
+    template <typename OutSlots>
+    bool run_inner_literal(std::string_view text,
+                           std::size_t      start,
+                           OutSlots&        out_slots,
+                           bool&            abandon)
+    {
+      abandon = false;
+      std::array<char, 16> lit_buf {}; // copy the literal into char storage (no pointer cast to appease both lints)
+      for (std::size_t i = 0; i < prog_.hints.inner_literal_len; ++i) {
+        lit_buf[i] = static_cast<char>(prog_.hints.inner_literal[i]);
+      }
+      const std::string_view lit      {lit_buf.data(), prog_.hints.inner_literal_len};
+      const std::int32_t     boundary {prog_.hints.inner_literal_prefix};
+
+      // Build the prefix reverse DFA once per program (boundary 0 = head literal: the reverse is the identity,
+      // s = h). Cached in the state so a find_iter builds it once, not per match.
+      if (boundary >= 1 && state_.il_prefix_for != static_cast<const void*>(prog_.prefix_code.data())) {
+        program_view pv {};
+        pv.code             = prog_.prefix_code;
+        pv.classes          = prog_.prefix_classes;
+        pv.cp_classes       = prog_.prefix_cp_classes;
+        pv.cp_ranges        = prog_.prefix_cp_ranges;
+        pv.unicode_word     = prog_.unicode_word;
+        state_.il_prefix_bp = build_byte_program(pv);
+        if (!state_.il_prefix_bp.eligible) {
+          abandon = true; // the prefix is not byte-DFA-eligible — let the core VM handle this pattern
+          return false;
+        }
+        state_.il_prefix_rev.emplace(state_.il_prefix_bp.code, state_.il_prefix_bp.classes);
+        state_.il_prefix_for = static_cast<const void*>(prog_.prefix_code.data());
+      }
+
+      std::size_t pos             {start};
+      std::size_t min_match_start {start}; // reverse floor (previous literal end) — guard 1
+      std::size_t min_pre_start   {start}; // literal-scan floor (last confirm's reach) — guard 2 (backstop)
+      while (true) {
+        const std::size_t h {find_literal(text, pos, lit)};
+        if (h == npos) {
+          out_slots.assign(prog_.slot_count, npos);
+          return false;   // no more candidates -> no match in [start, end)
+        }
+        if (h < min_pre_start) {
+          abandon = true; // guard 2: the scan is regressing into confirmed territory -> retry on the core
+          return false;
+        }
+        std::size_t s {h}; // boundary 0 = head literal: the reverse is the identity
+        if (boundary >= 1 && state_.il_prefix_rev.has_value()) {
+          s = state_.il_prefix_rev->reverse_start(text, h, min_match_start);
+        }
+        if (s == npos) {
+          pos = h + 1; // the prefix reaches no start within [min_match_start, h] -> next candidate
+        }
+        else {
+          std::size_t stop {s};
+          if (run_general<false>(text, s, run_mode::prefix, out_slots, &stop)) {
+            return true;          // confirmed: out_slots holds [s, e]
+          }
+          if (stop > min_pre_start) {
+            min_pre_start = stop; // the failed forward's reach bounds future candidates
+          }
+          pos = h + 1;
+        }
+        min_match_start = h + lit.size(); // guard 1: the next reverse cannot cross this literal's end
+      }
     }
 
   private:
