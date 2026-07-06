@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "real/std/regex.hpp"
+#include "real/automata/lazy_dfa.hpp" // inner_literal_guard_disabled (exercise the route on small inputs)
 
 namespace rc = real::compat;
 
@@ -88,6 +89,11 @@ int main(int argc, char** argv)
   }
   const std::vector<std::string> patterns {read_lines(argv[1])};
   const std::vector<std::string> inputs {read_lines(argv[2])};
+
+  // The corpus inputs are tiny — below the inner-literal route's small-haystack guard — so without this the
+  // route would abandon to the core on every case and this screen would never actually exercise it. Force the
+  // guard off: the route's correctness (its whole point here) is what must agree with std across the space.
+  real::detail::inner_literal_guard_disabled() = true;
 
   long long total {0};
   long long agree {0};

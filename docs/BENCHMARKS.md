@@ -421,5 +421,14 @@ byte-identical to the core (serious=0 with the route on, 3.21M cases).
 - **Equality first.** Both harnesses verify identical results (and per-engine match
   counts) before timing, so a divergence shows up as a correctness failure, not a
   misleading speed number.
-- **Not gated.** These targets are excluded from `full-local-gate` on purpose: a noisy
-  wall-time measurement must never turn a clean build red.
+- **Not gated.** These *absolute-throughput* targets are excluded from `full-local-gate`
+  on purpose: a noisy wall-time measurement must never turn a clean build red.
+- **Matrices sweep sizes.** A hot-path optimisation's cost or benefit can invert across
+  the haystack size (a per-search setup that amortises on 2 MB can dominate 16 KB) and
+  across match density — so a bench that measures one slice hides a regression in another.
+  The inner-literal route's veto is therefore a **4-D matrix**, `benchmarks/matrix4d/`
+  (`make bench-matrix`; pattern × size {16 KB…2 MB} × match/no-match × density). Unlike the
+  absolute benches it **is** gated (`make matrix-gate`, a fast subset in `full-local-gate`):
+  it compares the route to the core *on the same machine* — a ratio, robust to noise — and
+  exits non-zero on any cell where the route regresses the core or gates a no-match search.
+  Every future hot-path arc is measured against the full matrix before it ships.

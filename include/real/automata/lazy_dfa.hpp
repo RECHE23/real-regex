@@ -52,6 +52,17 @@ namespace real::detail {
     return disabled;
   }
 
+  //! \brief Test seam: force the inner-literal small-haystack guard off, so the route fires on any size. In
+  //!        production the guard keeps the route off a haystack too small for its per-iterator reverse cache to
+  //!        amortize (it would else be slower than the core). The correctness suites (the exhaustive compat run,
+  //!        the routed==core differential) use tiny inputs, so they set this to exercise the route itself rather
+  //!        than the core it would otherwise fall back to. Not for production use.
+  inline bool& inner_literal_guard_disabled()
+  {
+    static bool disabled {false};
+    return disabled;
+  }
+
   //! \brief A byte-level program derived from a Pike program for the DFA passes: every `klass_cp` construct
   //!        is expanded into UTF-8 byte-range split/klass chains, so the whole thing is byte-transition-only
   //!        and a forward DFA can represent it. The Pike program itself is untouched (byte-identity); this

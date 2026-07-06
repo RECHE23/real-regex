@@ -42,6 +42,9 @@ TEST(inner_literal_routed_equals_core)
     {.pat = R"((a?)a)",              .text = "aaa baa aXa aaaa"},              // adjacent literal, optional prefix
     {.pat = R"(.+@)",                .text = "aaaa@x bb@ c@d@e no @"},         // greedy prefix: reverse must not over-bound
   };
+  // These inputs are tiny (< the small-haystack guard's floor), so the guard would send the routed run back to
+  // the core and the comparison would be trivially true. Disable it: the point is to exercise the route.
+  real::detail::inner_literal_guard_disabled() = true;
   for (const testcase& tc : cases) {
     real::detail::inner_literal_route_disabled() = true;
     const auto core   {spans(tc.pat, tc.text)};
@@ -50,6 +53,7 @@ TEST(inner_literal_routed_equals_core)
     EXPECT(core == routed);
   }
   real::detail::inner_literal_route_disabled() = false;
+  real::detail::inner_literal_guard_disabled() = false;
 }
 
 

@@ -48,7 +48,7 @@ FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
         lint misra fuzz fuzz-compat fuzz-capi fuzz-rust exhaustive-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
-        python python-test bench-python bench-fuzz bench-engines bench-duel bench-rust \
+        python python-test bench-python bench-fuzz bench-engines bench-duel bench-rust bench-matrix matrix-gate \
         version-check install install-smoke uninstall release help capi-test crate-vendor crate-publish-check crate-test check-layers
 
 .DEFAULT_GOAL := help
@@ -356,6 +356,7 @@ full-local-gate:
 	@$(MAKE) check-pins
 	@$(MAKE) test
 	@$(MAKE) exhaustive-compat
+	@$(MAKE) matrix-gate
 	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "full-local-gate: WARN — $(GXX) absent, GCC leg skipped (CI covers it)"; fi
 	@$(MAKE) sanitize
 	@$(MAKE) misra
@@ -388,6 +389,20 @@ bench-fuzz: python
 bench-duel:
 	@c++ $(CXXSTD) -O2 $(INCLUDES) benchmarks/duel/real_bench.cpp -o benchmarks/duel/real_bench
 	@$(PYTHON) benchmarks/duel/run_duel.py
+
+# The 4-D veto matrix (pattern x size x match/no-match x density): a COMMITTED regression gate for the
+# inner-literal route, born from repeated fixes that each missed a dimension. Mechanical verdict, non-zero exit
+# on a red cell. `bench-matrix` is the full matrix (for an arc's veto); `matrix-gate` (in full-local-gate) is a
+# fast 64 KB subset.
+bench-matrix:
+	@mkdir -p $(BUILD)
+	@c++ $(CXXSTD) -O2 $(INCLUDES) benchmarks/matrix4d/matrix4d.cpp -o $(BUILD)/matrix4d
+	@$(BUILD)/matrix4d
+
+matrix-gate:
+	@mkdir -p $(BUILD)
+	@c++ $(CXXSTD) -O2 $(INCLUDES) benchmarks/matrix4d/matrix4d.cpp -o $(BUILD)/matrix4d
+	@$(BUILD)/matrix4d --short
 
 # Native rust benchmark: the real-regex crate vs the regex crate (criterion, in-process). Dev-only; long.
 # Regenerates the BENCHMARKS §E.4 "measured natively" rows.

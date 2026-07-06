@@ -290,8 +290,7 @@ namespace real::detail {
     capture_pool               pool;                    //!< OPT D1: copy-on-write capture blocks (heap-backed).
     std::optional<lazy_dfa>    fwd_dfa;                 //!< OPT lazy-DFA: forward pass (built lazily, cache persists across a find_iter).
     std::optional<reverse_dfa> rev_dfa;                 //!< OPT lazy-DFA: the reverse start-finder.
-    const void*                dfa_program {nullptr};   //!< The program the DFAs were built for (rebuild if it changes).
-    byte_program               il_prefix_bp;            //!< IL: the prefix byte-program the reverse DFA spans into (must outlive it).
+    const void*                dfa_program   {nullptr}; //!< The program the DFAs were built for (rebuild if it changes).
     std::optional<reverse_dfa> il_prefix_rev;           //!< IL: the inner-literal prefix reverse DFA (built once per program).
     const void*                il_prefix_for {nullptr}; //!< IL: the prefix program \ref il_prefix_rev was built for.
     const void*                il_text       {nullptr}; //!< IL: the haystack \ref il_abandoned refers to (reset the flag when it changes).
@@ -372,6 +371,9 @@ namespace real::detail {
         if (!std::is_constant_evaluated() && !inner_literal_route_disabled() && mode == run_mode::search
             && prog_.hints.inner_literal_len > 0 && prog_.hints.inner_literal_prefix >= 0
             && (prog_.hints.inner_literal_prefix == 0 || !prog_.prefix_code.empty())) {
+          // No size guard: on a no-match haystack the route is memmem-only (the reverse setup is lazy, built on
+          // the first candidate, never here), so it wins at every size; and the prefix byte-program is a
+          // per-regex immutable (built once, amortized by any later use — the lazy-DFA warmup's own contract).
           if (state_.il_text != static_cast<const void*>(text.data())) {
             state_.il_abandoned = false; // a fresh haystack: re-enable the route and re-evaluate its guards
             state_.il_text      = static_cast<const void*>(text.data());
@@ -594,11 +596,25 @@ namespace real::detail {
       std::size_t       pos             {start};
       const std::size_t min_match_start {start}; // reverse floor = this search's start (the finditer resume); never advances mid-call
       std::size_t       min_pre_start   {start}; // literal-scan floor (last confirm's reach) — the linearity backstop
+      bool              first_candidate {true};
       while (true) {
         const std::size_t h {find_literal(text, pos, lit)};
         if (h == npos) {
           out_slots.assign(prog_.slot_count, npos);
-          return false;   // no more candidates -> no match in [start, end)
+          return false;   // no more candidates (no-match): memmem-only — the guard below was never reached
+        }
+        if (first_candidate) {
+          first_candidate = false;
+          // Small-haystack guard, decided ONCE at the first candidate (per-scan, made sticky by the caller's
+          // il_abandoned). It therefore applies only to a haystack that HAS a match — a no-match scan returns
+          // above, memmem-only, and is never gated (its huge win is safe by construction). Below the
+          // prefix-scaled threshold the reverse DFA's per-iterator cache does not amortize, so the core (the
+          // pre-IL baseline, with its own one-pass/lazy-DFA) is faster: hand it the whole scan.
+          ensure_immutables();
+          if (!inner_literal_guard_disabled() && prog_.immut != nullptr && text.size() < prog_.immut->il_min_haystack) {
+            abandon = true;
+            return false;
+          }
         }
         if (h < min_pre_start) {
           abandon = true; // guard 2: the scan is regressing into confirmed territory -> retry on the core
@@ -606,22 +622,17 @@ namespace real::detail {
         }
         std::size_t s {h}; // boundary 0 = head literal: the reverse is the identity
         if (boundary >= 1) {
-          // Build the prefix reverse DFA lazily, on the first candidate: a no-match haystack (the literal
-          // never appears) pays only the memmem, never a reverse it would not use. Cached (once per program).
-          if (state_.il_prefix_for != static_cast<const void*>(prog_.prefix_code.data())) {
-            program_view pv {};
-            pv.code             = prog_.prefix_code;
-            pv.classes          = prog_.prefix_classes;
-            pv.cp_classes       = prog_.prefix_cp_classes;
-            pv.cp_ranges        = prog_.prefix_cp_ranges;
-            pv.unicode_word     = prog_.unicode_word;
-            state_.il_prefix_bp = build_byte_program(pv);
-            if (!state_.il_prefix_bp.eligible) {
-              abandon = true; // the prefix is not byte-DFA-eligible — let the core VM handle this pattern
-              return false;
-            }
-            state_.il_prefix_rev.emplace(state_.il_prefix_bp.code, state_.il_prefix_bp.classes);
-            state_.il_prefix_for = static_cast<const void*>(prog_.prefix_code.data());
+          // The prefix's byte program lives in the per-regex immutables — built once (call_once, already done
+          // by the first-candidate guard above), not per find_iter; the expensive klass_cp expansion is what a
+          // small-input regex must not pay repeatedly. The reverse DFA that spans it is a cheap per-iterator
+          // wrapper, (re)created when this iterator binds a new program.
+          if (prog_.immut == nullptr || !prog_.immut->il_prefix_prog.eligible) {
+            abandon = true; // no per-regex cache, or the prefix is not byte-DFA-eligible — let the core VM handle it
+            return false;
+          }
+          if (state_.il_prefix_for != static_cast<const void*>(prog_.immut->il_prefix_prog.code.data())) {
+            state_.il_prefix_rev.emplace(prog_.immut->il_prefix_prog.code, prog_.immut->il_prefix_prog.classes);
+            state_.il_prefix_for = static_cast<const void*>(prog_.immut->il_prefix_prog.code.data());
           }
           if (state_.il_prefix_rev.has_value()) {
             s = state_.il_prefix_rev->reverse_start(text, h, min_match_start);
@@ -699,6 +710,25 @@ namespace real::detail {
                        const byte_program tier_b {build_byte_program(prog_, /*keep_assertions=*/ true)};
                        if (tier_b.eligible) {
                          immut->op_table.emplace(tier_b); // one-pass extractor: Tier-A window + Tier-B anchored
+                       }
+                       if (!prog_.prefix_code.empty()) {  // IL: expand the inner-literal prefix once per regex (not per find_iter)
+                         program_view pv {};
+                         pv.code                = prog_.prefix_code;
+                         pv.classes             = prog_.prefix_classes;
+                         pv.cp_classes          = prog_.prefix_cp_classes;
+                         pv.cp_ranges           = prog_.prefix_cp_ranges;
+                         pv.unicode_word        = prog_.unicode_word;
+                         immut->il_prefix_prog  = build_byte_program(pv);
+                         // The reverse DFA's per-iterator cache re-warms per find_iter; below a size scaled by
+                         // the prefix byte-program (its cache size) that cost does not amortize on a haystack
+                         // that HAS candidates, and the core is faster. Measured crossover (route on vs core):
+                         // ~158 KB for the email \w+ (3436 instr, dense — the harder density), <64 KB for the
+                         // date \d{4} (1031 instr). N = size * 64, clamped [64 KB, 512 KB] — ~40% above the
+                         // email crossover (220 KB) so the mid-size win at 256 KB+ is kept, while every size
+                         // below stays on the core. Checked ONLY after the first memmem hit (see
+                         // run_inner_literal), so no-match — memmem-only, a win at every size — is never gated.
+                         const std::size_t sz {immut->il_prefix_prog.code.size()};
+                         immut->il_min_haystack = std::min<std::size_t>(512UL * 1024, std::max<std::size_t>(64UL * 1024, sz * 64));
                        }
                      });
     }
