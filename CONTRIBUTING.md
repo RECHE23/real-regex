@@ -65,7 +65,7 @@ in mind:
   dry-run as its gate:
 
   ```
-  make crate-publish-check          # vendors include/ + bindings/c into the crate, then cargo publish
+  make rust-publish-check          # vendors include/ + bindings/c into the crate, then cargo publish
                                      # --dry-run COMPILES the packaged tarball — the real gate
   cd bindings/rust && cargo publish  # token in ~/.cargo/credentials.toml
   ```
@@ -73,7 +73,7 @@ in mind:
   The dry-run is load-bearing: `cargo package --list` shows the vendored files but does not build them, so
   only `--dry-run` proves the crate compiles standalone (nothing off crates.io can reach `../../include`). The
   engine sources are vendored into `bindings/rust/vendor/` (git-ignored; carried into the package by the
-  `include = [… "vendor/**"]` whitelist in `Cargo.toml`) — regenerate them with `make crate-vendor`, never
+  `include = [… "vendor/**"]` whitelist in `Cargo.toml`) — regenerate them with `make rust-vendor`, never
   edit them by hand.
 - **A breaking change mid-year bumps the year (the major).** SemVer consumers pin with a caret (`^2026.7`),
   which treats a minor/patch bump as non-breaking. REAL grows without breaking by principle; if a genuinely

@@ -61,7 +61,7 @@ jobs:
       - name: Vendor the engine and publish
         if: steps.exists.outputs.already == 'false'
         run: |
-          make crate-vendor
+          make rust-vendor
           cd bindings/rust && cargo publish --allow-dirty --token "$CARGO_REGISTRY_TOKEN"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}

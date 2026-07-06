@@ -16,7 +16,7 @@ outside it. A C ABI is structurally at odds with MISRA C++: it deals in opaque h
 a C ABI *must* expose to be callable from C, Rust and beyond. Holding the shim to the engine's profile would
 mean suppressing those rules one by one — noise, not safety. The shim earns its safety a different way: it is
 compiled into the instrumented test binary (run under ASan + UBSan, coverage-visible), fuzzed
-(`make fuzz-capi`), and every entry point catches so no C++ exception crosses into C. An assumed, documented
+(`make c-fuzz`), and every entry point catches so no C++ exception crosses into C. An assumed, documented
 deviation — not a silent gap.
 
 ## Active-member deviation

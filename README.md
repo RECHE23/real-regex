@@ -151,7 +151,7 @@ The Homebrew formula consumes the library via CMake `find_package(real)`,
   [`docs/TESTS.md`](https://github.com/RECHE23/real-regex/blob/main/docs/TESTS.md)
 - **Python** — `pip install real-regex`, the `re` drop-in: [on PyPI](https://pypi.org/project/real-regex/).
 
-`make bench-python` compares throughput against Python's `re`, and `make bench-engines` against `std::regex`,
+`make python-bench` compares throughput against Python's `re`, and `make bench-engines` against `std::regex`,
 PCRE2 and RE2 in one C++ process (match counts checked equal). Figures depend on the platform, pattern and
 input — reproduce them locally rather than trusting a number here. The GitHub releases page is the changelog.
 
@@ -286,7 +286,7 @@ real.compile(rb"[^;]+").findall(raw)       # bytes patterns: raw-byte semantics
 
 `str` matching is UTF-8 with character indices in `start/end/span`; `bytes`
 patterns get `re`'s exact raw-byte semantics. Unsupported `re` features raise
-`real.error` at compile time. Build with `make python && make python-test`.
+`real.error` at compile time. Build with `make python-build && make python-test`.
 
 `pip install real-regex` installs one `cp310-abi3` wheel per platform
 (CPython 3.10+; the self-contained sdist compiles where no wheel matches).

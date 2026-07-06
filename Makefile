@@ -47,9 +47,9 @@ SCIFORGE_TOOLS ?= ../sciforge/tools
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep -vE 'include/real/unicode/unicode_(fold|props)\.hpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-        lint misra fuzz fuzz-compat fuzz-capi fuzz-rust exhaustive-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
-        python python-test bench-python bench-fuzz bench-engines bench-duel bench-rust bench-matrix matrix-gate \
-        version-check install install-smoke uninstall release help capi-test crate-vendor crate-publish-check crate-test check-layers
+        lint misra fuzz fuzz-compat exhaustive-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
+        bench-engines bench-duel bench-matrix matrix-gate \
+        version-check install install-smoke uninstall release help check-layers
 
 .DEFAULT_GOAL := help
 
@@ -71,12 +71,12 @@ help:
 	@echo "  make format-check  Uncrustify, dry-run, exits non-zero on diff"
 	@echo "  make clean      Remove build artifacts"
 	@echo ""
-	@echo "  make python       Build the abi3 Python extension in place"
-	@echo "  make python-test  Run the Python test suites"
 	@echo "  make version-check  Assert pyproject = __init__ = CMake-derived version"
 	@echo "  make full-local-gate  Every pass/fail gate in one command (the macOS gate of record)"
-	@echo "  make bench-python Comparative benchmark vs Python re"
-	@echo "  make bench-fuzz   Randomized comparative benchmark over fuzzed input"
+	@echo "  make bench-duel   REAL vs the regex crate, ns/byte (needs a Rust toolchain)"
+	@echo ""
+	@echo "  Per-binding targets: make {python,c,rust}-<target> (build/test/bench/fuzz/...)"
+	@echo "    see: make python-help | make c-help | make rust-help"
 	@echo "  make bench-engines  C++ throughput vs std::regex/PCRE2/RE2 (if present)"
 	@echo "  make install      Install the Python package (pip)"
 	@echo "  make uninstall    Uninstall the Python package (pip)"
@@ -136,7 +136,7 @@ coverage: coverage-build
 # the FLOOR — not from the report (`make coverage` still shows it): it is a thin boundary of defensive
 # exception catch-alls ("no C++ exception crosses into C") that are unreachable by construction (the engine's
 # only exception type, real::regex_error, is caught by a specific handler), so they cannot be line-covered by
-# a test. That surface is guarded instead by the sanitize build and the fuzz-capi target, which exercise it at
+# a test. That surface is guarded instead by the sanitize build and the c-fuzz target, which exercises it at
 # runtime. llvm-cov has no per-line exclusion, so the exclusion is per-file.
 COV_FLOOR := 95.0
 COV_FLOOR_IGNORE := bindings/c
@@ -189,6 +189,16 @@ misra:
 FUZZ_TIME ?= 30
 FUZZ_DIR  := $(BUILD)/fuzz
 
+# Per-binding delegation. Each binding owns a standardized Makefile (bindings/{python,c,rust}/Makefile);
+# `make python-test`, `make c-fuzz`, `make rust-vendor` ... forward to it, and `make <binding>-help` lists a
+# binding's targets. This is THE form — there are no duplicate root targets for the binding work.
+python-%:
+	@$(MAKE) -C bindings/python $*
+c-%:
+	@$(MAKE) -C bindings/c $*
+rust-%:
+	@$(MAKE) -C bindings/rust $*
+
 fuzz:
 	mkdir -p $(FUZZ_DIR)/corpus
 	clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
@@ -213,20 +223,6 @@ fuzz-compat:
 	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_compat.cpp -o $(FUZZ_DIR)/fuzz_compat
 	$(FUZZ_DIR)/fuzz_compat -max_total_time=$(FUZZ_TIME) -timeout=10 \
 	    $(FUZZ_DIR)/corpus-compat fuzz/corpus
-
-# libFuzzer over the C ABI shim (bindings/c) — real_capi.cpp compiled under -fsanitize=fuzzer,address,undefined,
-# so the raw-pointer binding surface is both fuzzed and sanitized. FUZZ_TIME=secs.
-fuzz-capi:
-	mkdir -p $(FUZZ_DIR)/corpus-capi
-	clang++ $(CXXSTD) -O1 -g $(INCLUDES) -Ibindings/c \
-	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_capi.cpp -o $(FUZZ_DIR)/fuzz_capi
-	$(FUZZ_DIR)/fuzz_capi -max_total_time=$(FUZZ_TIME) -timeout=10 $(FUZZ_DIR)/corpus-capi
-
-# The third differential fuzzer: the real-regex crate vs the regex crate (cargo-fuzz / libFuzzer, nightly —
-# dev-only). Raw bytes -> (pattern, text); every pattern both engines accept must agree on spans/captures/
-# replace/split. The long run is on the devbox; this is the local/CI smoke. Needs: rustup nightly + cargo-fuzz.
-fuzz-rust:
-	cd bindings/rust && cargo +nightly fuzz run differential -- -max_total_time=$(FUZZ_TIME) -timeout=10
 
 doc: coverage-html
 	mkdir -p $(BUILD)/doc
@@ -257,16 +253,6 @@ format-check:
 # Gate the rebuild on the headers through a stamp, and pass --force so the recompile
 # actually happens when a header changed (build_ext would otherwise skip it).
 HEADERS := $(shell find include/real -name '*.hpp')
-
-python: $(BUILD)/py_ext.stamp
-
-$(BUILD)/py_ext.stamp: bindings/python/src/_real.cpp $(HEADERS)
-	SCIFORGE_INCLUDE=$(SCIFORGE_INCLUDE) $(PYTHON) setup.py -q build_ext --inplace --force
-	@mkdir -p $(BUILD)
-	@touch $@
-
-python-test: python
-	$(PYRUN) -m unittest discover -s bindings/python/tests
 
 # Version-consistency gate: pyproject.toml is the single source of truth — `make
 # release` bumps __init__.py from it, CMakeLists.txt derives it. Asserts the three
@@ -317,31 +303,6 @@ check-pins:
 	@if test -x $(SCIFORGE_TOOLS)/check-pins.sh; then $(SCIFORGE_TOOLS)/check-pins.sh .; \
 	 else echo "check-pins: WARN — $(SCIFORGE_TOOLS)/check-pins.sh absent, skipped (CI covers it)"; fi
 
-capi-test:
-	@mkdir -p $(BUILD)
-	c++ $(CXXSTD) -O2 $(INCLUDES) -c bindings/c/real_capi.cpp -o $(BUILD)/real_capi.o
-	cc -Ibindings/c -c bindings/c/test_capi.c -o $(BUILD)/test_capi.o
-	c++ $(BUILD)/test_capi.o $(BUILD)/real_capi.o -o $(BUILD)/capi_test   # C++ driver links the right stdlib
-	$(BUILD)/capi_test
-
-# Populate the crate's vendored engine sources so `cargo package`/`publish` builds standalone off crates.io
-# (the in-tree `crate-test` builds against the sibling headers directly, no vendoring needed).
-crate-vendor:
-	rm -rf bindings/rust/vendor
-	mkdir -p bindings/rust/vendor/include bindings/rust/vendor/c
-	cp -R include/real bindings/rust/vendor/include/
-	cp bindings/c/real_capi.h bindings/c/real_capi.cpp bindings/rust/vendor/c/
-
-# The publish gate. Snapshots the engine into vendor/, then lets `cargo publish --dry-run` COMPILE the packaged
-# tarball -- which `cargo package --list` does NOT: the list showed vendor/ present, but only the dry-run's
-# build proves the crate compiles standalone (no ../../include reachable off crates.io). Run before publish.
-crate-publish-check: crate-vendor
-	cd bindings/rust && cargo publish --dry-run --allow-dirty
-
-crate-test:
-	rm -rf bindings/rust/vendor
-	cd bindings/rust && cargo test --quiet && cargo test --quiet --features fallback
-
 
 check-layers:
 	@python3 tools/check_layers.py
@@ -350,9 +311,9 @@ full-local-gate:
 	@$(MAKE) format-check
 	@$(MAKE) version-check
 	@$(MAKE) check-layers
-	@$(MAKE) capi-test
-	@$(MAKE) crate-test
-	@$(MAKE) crate-publish-check
+	@$(MAKE) c-test
+	@$(MAKE) rust-test
+	@$(MAKE) rust-publish-check
 	@$(MAKE) check-pins
 	@$(MAKE) test
 	@$(MAKE) exhaustive-compat
@@ -377,12 +338,6 @@ doc-check:
 	   echo "doc-check: WARN — Docker or $(SCIFORGE_TOOLS)/doxygen-check.sh absent, CI-Doxygen check skipped (the Docs CI job is the backstop)"; \
 	 fi
 
-bench-python: python
-	$(PYRUN) benchmarks/bench.py
-
-bench-fuzz: python
-	$(PYRUN) benchmarks/fuzz_bench.py
-
 # REAL-vs-rust duel: the §E table generator (ns/byte, match-count cross-checked, non-cherry-picked).
 # Builds the REAL harness; the rust harness needs a Rust toolchain (cargo build --release in
 # benchmarks/duel/rust_bench). Manual, not a CI gate.
@@ -403,11 +358,6 @@ matrix-gate:
 	@mkdir -p $(BUILD)
 	@c++ $(CXXSTD) -O2 $(INCLUDES) benchmarks/matrix4d/matrix4d.cpp -o $(BUILD)/matrix4d
 	@$(BUILD)/matrix4d --short
-
-# Native rust benchmark: the real-regex crate vs the regex crate (criterion, in-process). Dev-only; long.
-# Regenerates the BENCHMARKS §E.4 "measured natively" rows.
-bench-rust:
-	cd bindings/rust && cargo bench --bench engines
 
 # Multi-engine C++ throughput benchmark (REAL vs std::regex vs PCRE2 vs RE2).
 # Optional engines are compiled in only when pkg-config locates them.

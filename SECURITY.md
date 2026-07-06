@@ -41,7 +41,7 @@ REAL ships as three artifacts, all built from one engine. Reports are welcome on
 - **The abi3 Python wheel** (`real-regex` on PyPI) — the CPython binding. A crash, a memory error, or a
   divergence that breaks the ReDoS guarantee through the Python surface.
 - **The `real-regex` Rust crate** (crates.io) — a safe wrapper over the C ABI shim (`bindings/c`). The shim
-  is the raw-pointer boundary; it is fuzzed under ASan/UBSan (`make fuzz-capi`) and run under the sanitizers,
+  is the raw-pointer boundary; it is fuzzed under ASan/UBSan (`make c-fuzz`) and run under the sanitizers,
   but a soundness hole in the safe API (a use-after-free, a boundary the wrapper does not uphold) is in scope.
 
 The engine, the shim and the bindings share a version; a fix ships to all affected surfaces in the next

@@ -66,7 +66,7 @@ jobs:
       # The C ABI shim (bindings/c) — the raw-pointer surface every non-C++ binding sits on — fuzzed under
       # ASan/UBSan. It had no direct fuzzing until the FFI-safety audit; this is the net for that surface.
       - name: C ABI shim fuzzing smoke run (real_compile / find_iter / iter_next)
-        run: make fuzz-capi FUZZ_TIME=60 CXX=clang++
+        run: make c-fuzz FUZZ_TIME=60 CXX=clang++
       # ThreadSanitizer proof that concurrent const operations on one shared regex are race-free
       # (std_engine's lazy build under a mutex). Reproduce locally with: make tsan.
       - name: ThreadSanitizer smoke (concurrent std_engine)
@@ -106,7 +106,7 @@ jobs:
 
   # Language bindings (bindings/): the C ABI shim and the real-regex Rust crate. Linux coverage for the
   # cross-platform pieces the local macOS gate builds — the shim's C++-driver link and the crate's cc-build.
-  # cargo is preinstalled on the GitHub Ubuntu image. crate-test runs the differential oracle vs the regex crate.
+  # cargo is preinstalled on the GitHub Ubuntu image. rust-test runs the differential oracle vs the regex crate.
   bindings:
     runs-on: ubuntu-latest
     steps:
@@ -116,11 +116,11 @@ jobs:
       - name: Install clang + cmake
         run: sudo apt-get update && sudo apt-get install -y clang cmake
       - name: C ABI shim smoke
-        run: make -C real-regex capi-test
+        run: make -C real-regex c-test
       - name: Rust crate — differential vs the regex crate
-        run: make -C real-regex crate-test
+        run: make -C real-regex rust-test
       - name: Rust crate — packaging dry-run (builds the vendored crate standalone)
-        run: make -C real-regex crate-publish-check
+        run: make -C real-regex rust-publish-check
 
   # The C shim + Rust crate on macOS (ARM) and Windows (MSVC), via cargo directly: build.rs cc-compiles the
   # shim with the platform C++ compiler, so a platform issue in real_capi.h/.cpp or the crate — a __declspec,
@@ -152,7 +152,7 @@ jobs:
           rustup toolchain install nightly --profile minimal
           cargo install cargo-fuzz --locked
       - name: Differential fuzz smoke (real-regex vs the regex crate)
-        run: cd bindings/rust && cargo +nightly fuzz run differential -- -max_total_time=45 -timeout=10
+        run: make -C real-regex rust-fuzz FUZZ_TIME=45
 
   # Coverage gate: fail the build if line coverage drops below the floor (was advisory).
   coverage:

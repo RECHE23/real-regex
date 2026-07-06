@@ -11,7 +11,7 @@ It is informational only. Neither benchmark is invoked by `full-local-gate`, and
 neither can fail a build — wall-time is noisy and hardware-dependent, so absolute
 figures and cross-machine comparison are explicitly **not** the goal.
 
-Reproduce with **`make bench-engines`** (C++, in-process) and **`make bench-python`**
+Reproduce with **`make bench-engines`** (C++, in-process) and **`make python-bench`**
 (binding vs `re`). Both check result/match-count equality before timing — a fast wrong
 answer is not a benchmark win.
 
@@ -359,7 +359,7 @@ byte-program has assertions, so the search DFA declines and the Pike VM runs the
 
 ### E.4 The `real-regex` crate, measured natively (criterion)
 
-§E.1–E.3 time the REAL **engine** (C++, in `real_bench`) against rust. `make bench-rust` (criterion, in
+§E.1–E.3 time the REAL **engine** (C++, in `real_bench`) against rust. `make rust-bench` (criterion, in
 `bindings/rust/benches/`) times the published **crate** against the `regex` crate — both in-process Rust, so
 this pair has no cross-process FFI asymmetry to correct for. It measures the wrapper's own cost, in two
 operations:
@@ -375,7 +375,7 @@ operations:
 So on span throughput the crate is competitive; on full capture extraction it pays a bounded, understood
 allocation cost. Either way the pitch is not raw speed but the linear-time / ReDoS-safe guarantee and the
 **bounded lookarounds `regex` cannot compile at all**, delivered through a `regex`-shaped API. The numbers are
-noisy and machine-dependent (criterion reports CIs); reproduce with `make bench-rust`.
+noisy and machine-dependent (criterion reports CIs); reproduce with `make rust-bench`.
 
 ### E.5 The inner-literal prefilter (IL.2): closing the biggest gap line
 
@@ -412,10 +412,10 @@ byte-identical to the core (serious=0 with the route on, 3.21M cases).
   a single case that jumps well outside run-to-run noise after a change is the signal.
 - **Reproduce.** `make bench-engines` builds `benchmarks/bench_engines.cpp` with
   `-I include` and compiles in PCRE2/RE2 **only when `pkg-config` locates them** (so the
-  table degrades gracefully to REAL-vs-`std::regex` on a bare machine). `make
-  bench-python` builds the abi3 binding and runs `benchmarks/bench.py` against the
-  interpreter's own `re`. A third target, `make bench-fuzz`, runs the same comparison
-  over randomly fuzzed `(pattern, text)` pairs. `make bench-duel` generates the §E
+  table degrades gracefully to REAL-vs-`std::regex` on a bare machine). `make python-bench`
+  builds the abi3 binding and runs `benchmarks/bench.py` against the interpreter's own `re`,
+  then the fuzzed-corpus variant `benchmarks/fuzz_bench.py` over randomly fuzzed `(pattern,
+  text)` pairs. `make bench-duel` generates the §E
   REAL-vs-rust table (`benchmarks/duel/`, ns/byte with match counts cross-checked; the
   rust harness needs a Rust toolchain).
 - **Equality first.** Both harnesses verify identical results (and per-engine match
