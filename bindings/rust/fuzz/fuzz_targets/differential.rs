@@ -82,6 +82,50 @@ fn has_top_level_alternation(pattern: &str) -> bool {
     false
 }
 
+/// Whether `pattern` has an alternation `|` with an EMPTY branch on either side — `(|`, `|)`, `||`, or at the
+/// pattern boundary, ANYWHERE (not just top-level). Same upstream regex-crate leftmost-first bug class as
+/// `has_top_level_alternation` (#1373), re-found a third time through an empty first branch inside a group
+/// (`.(|\x02;)().\0`), which the top-level check misses. Non-empty in-group alternations (`(a|b)`) stay
+/// differentiated — the coverage loss is bounded to empty-branch alternations.
+fn has_empty_alternation_branch(pattern: &str) -> bool {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut in_class = false;
+    let mut i = 0;
+    let mut prev: Option<char> = None; // last structural char (None = start); an escaped/class token is Some('L')
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\\' {
+            i += 2;
+            prev = Some('L');
+            continue;
+        }
+        if in_class {
+            if c == ']' {
+                in_class = false;
+            }
+            prev = Some('L');
+            i += 1;
+            continue;
+        }
+        if c == '[' {
+            in_class = true;
+            prev = Some('L');
+            i += 1;
+            continue;
+        }
+        if c == '|' {
+            let before_empty = matches!(prev, None | Some('(') | Some('|'));
+            let after_empty = matches!(chars.get(i + 1).copied(), None | Some(')') | Some('|'));
+            if before_empty || after_empty {
+                return true;
+            }
+        }
+        prev = Some(c);
+        i += 1;
+    }
+    false
+}
+
 fuzz_target!(|data: &[u8]| {
     if data.is_empty() {
         return;
@@ -104,6 +148,11 @@ fuzz_target!(|data: &[u8]| {
     // std and re differentials and the 3.2M-case exhaustive; this only removes the rust-only bug class. See
     // fuzz/known_rust_bugs/.
     if has_top_level_alternation(pattern) {
+        return;
+    }
+    // The same #1373 leftmost bug, re-found through an EMPTY alternation branch inside a group (`(|...`), which
+    // the top-level check above misses. See known_rust_bugs/ §3.
+    if has_empty_alternation_branch(pattern) {
         return;
     }
 

@@ -43,3 +43,17 @@ at 7 and reports `[7,10)` — skipping `[5,9)` entirely. Same root as bug 1 (a l
 leftmost start over a top-level alternation), just triggered by a literal-starting branch. The skip is now
 `has_top_level_alternation(pattern)` — the top-level `|` is the trigger, independent of the branch's first
 token. REAL and Python `re` agree on `[(0,3),(5,9),(9,10)]`.
+
+## 3. Empty-branch alternation, inside a group — the same #1373 class, a third door
+
+The differential fuzzer found the same leftmost-first violation a third time, now through an alternation with an
+**empty branch inside a group** — the minimized pattern is `.(|\x02;)().\0` (the group `(|\x02;)` opens with an
+empty branch). REAL agrees with Python `re`; the `regex` crate does not (the devbox arbiter confirmed re == REAL
+exactly, so the leftmost match at the earlier start must win). The upstream issue
+[rust-lang/regex#1373](https://github.com/rust-lang/regex/pull/1373) documents only the top-level form; this
+extends it to an empty branch anywhere.
+
+The `has_top_level_alternation` skip (§1/§2) only catches a top-level `|`, so the differential now also skips
+`has_empty_alternation_branch` — a `|` with an empty branch on either side (`(|`, `|)`, `||`, or at the pattern
+boundary), wherever it sits. Non-empty in-group alternations (`(a|b)`) stay differentiated; the coverage loss is
+bounded to empty-branch alternations. Reproducer pinned as `corpus/differential/rd3_empty_branch_alternation_in_group`.
