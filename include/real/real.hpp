@@ -971,12 +971,14 @@ namespace real {
      * \param[in] pos    Byte offset to start matching at.
      * \param[in] endpos Byte offset of the exclusive region end; \ref npos = end of text.
      * \param[in] mode   The anchoring mode.
+     * \param[in] sem    Match semantics: leftmost-first (default) or the experimental leftmost-longest.
      * \return The match result, with offsets absolute in \p text.
      */
-    [[nodiscard]] constexpr result_type run(std::string_view text,
-                                            std::size_t      pos,
-                                            std::size_t      endpos,
-                                            detail::run_mode mode) const
+    [[nodiscard]] constexpr result_type run(std::string_view        text,
+                                            std::size_t             pos,
+                                            std::size_t             endpos,
+                                            detail::run_mode        mode,
+                                            match_semantics         sem = match_semantics::first) const
     {
       const std::size_t              end {endpos < text.size() ? endpos : text.size()};
       typename Storage::state_type   state;
@@ -985,9 +987,24 @@ namespace real {
       detail::pike_vm                vm(prog, state);
       // OPT-C Cascade is chosen once here (a single search), never in the per-byte scan.
       const bool matched {prog.hints.stop_set_size >= 1
-                          ? vm.template run<true>(text.substr(0, end), pos, mode, slots)
-                          : vm.template run<false>(text.substr(0, end), pos, mode, slots)};
+                          ? vm.template run<true>(text.substr(0, end), pos, mode, slots, 0, sem)
+                          : vm.template run<false>(text.substr(0, end), pos, mode, slots, 0, sem)};
       return {text, std::move(slots), matched, pattern(), prog.names};
+    }
+
+  public:
+
+    /*!
+     * \brief EXPERIMENTAL, opt-in: a single leftmost-**longest** search (POSIX / RE2 `set_longest_match`), the
+     *        default leftmost-first semantics left untouched. Among matches at the leftmost start it returns the
+     *        longest; a lazy quantifier therefore behaves greedily, and captures are the leftmost-first thread's
+     *        at that longest bound (not POSIX submatch). Runs on the general Pike loop (the first-match DFA /
+     *        inner-literal fast paths are bypassed). A prototype for the `match_semantics` arc — not yet a stable
+     *        API, no iteration/replace variants.
+     */
+    [[nodiscard]] result_type search_longest(std::string_view text) const
+    {
+      return run(text, 0, npos, detail::run_mode::search, match_semantics::longest);
     }
   };
 
