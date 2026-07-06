@@ -267,7 +267,9 @@ TEST(literal_prefilter_throughput_smoke)
   // sanitize builds run 5-20x slower than a bare native one), so this is a *scaling* test instead: an
   // 8x-longer miss must take on the order of 8x longer, never ~64x. Both measurements run the identical
   // instrumented code, so however slow the build is cancels in the ratio; only an O(n²) regression blows
-  // it past the margin. Best-of-3 per size damps shared-runner noise.
+  // it past the margin. Best-of-5 per size damps shared-runner noise (a g++-14 CI runner once perturbed the
+  // 1 MB min enough to blow the ratio; the min-of-5 is harder to knock off a clean run — the 25x anti-O(n^2)
+  // margin stays put, since real scaling is ~8x with tight spread, not something to loosen for noise).
   const real::regex rx {"needle\\d?$"}; // $ keeps it off the lazy-DFA route -> the prefilter path (test intent)
   const auto        best_of {[&](std::size_t n) {
                                std::string text(n, 'a');
@@ -282,7 +284,7 @@ TEST(literal_prefilter_throughput_smoke)
                                                   return std::chrono::steady_clock::now() - begin;
                                                 }};
                                auto best {once()};
-                               for (int k = 0; k < 2; ++k) {
+                               for (int k = 0; k < 4; ++k) { // best of 5
                                  best = std::min(best, once());
                                }
                                return best;
