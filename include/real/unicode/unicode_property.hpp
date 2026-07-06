@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string_view>
 
 #include "real/core/program.hpp"          // code_range
 #include "real/unicode/unicode_props.hpp" // cp_in_ranges (contract-neutral binary search)
@@ -6677,6 +6678,96 @@ namespace real::detail {
   constexpr bool is_gc_cp(gc_property prop, char32_t cp)
   {
     return cp_in_ranges(gc_property_ranges[static_cast<std::size_t>(prop)], cp);
+  }
+
+  //! \brief A loose-normalized (lowercase, no _/-/space) General_Category name and its property.
+  struct gc_alias_entry { std::string_view name; gc_property prop; };
+
+  //! \brief Short codes (`Lu`) and long names (`Uppercase_Letter`), loose-keyed; for the `\p{...}` parser.
+  inline constexpr gc_alias_entry gc_aliases[] {
+    {"c", gc_property::C},
+    {"cc", gc_property::Cc},
+    {"cf", gc_property::Cf},
+    {"closepunctuation", gc_property::Pe},
+    {"cn", gc_property::Cn},
+    {"co", gc_property::Co},
+    {"connectorpunctuation", gc_property::Pc},
+    {"control", gc_property::Cc},
+    {"currencysymbol", gc_property::Sc},
+    {"dashpunctuation", gc_property::Pd},
+    {"decimalnumber", gc_property::Nd},
+    {"enclosingmark", gc_property::Me},
+    {"finalpunctuation", gc_property::Pf},
+    {"format", gc_property::Cf},
+    {"initialpunctuation", gc_property::Pi},
+    {"l", gc_property::L},
+    {"letter", gc_property::L},
+    {"letternumber", gc_property::Nl},
+    {"lineseparator", gc_property::Zl},
+    {"ll", gc_property::Ll},
+    {"lm", gc_property::Lm},
+    {"lo", gc_property::Lo},
+    {"lowercaseletter", gc_property::Ll},
+    {"lt", gc_property::Lt},
+    {"lu", gc_property::Lu},
+    {"m", gc_property::M},
+    {"mark", gc_property::M},
+    {"mathsymbol", gc_property::Sm},
+    {"mc", gc_property::Mc},
+    {"me", gc_property::Me},
+    {"mn", gc_property::Mn},
+    {"modifierletter", gc_property::Lm},
+    {"modifiersymbol", gc_property::Sk},
+    {"n", gc_property::N},
+    {"nd", gc_property::Nd},
+    {"nl", gc_property::Nl},
+    {"no", gc_property::No},
+    {"nonspacingmark", gc_property::Mn},
+    {"number", gc_property::N},
+    {"openpunctuation", gc_property::Ps},
+    {"other", gc_property::C},
+    {"otherletter", gc_property::Lo},
+    {"othernumber", gc_property::No},
+    {"otherpunctuation", gc_property::Po},
+    {"othersymbol", gc_property::So},
+    {"p", gc_property::P},
+    {"paragraphseparator", gc_property::Zp},
+    {"pc", gc_property::Pc},
+    {"pd", gc_property::Pd},
+    {"pe", gc_property::Pe},
+    {"pf", gc_property::Pf},
+    {"pi", gc_property::Pi},
+    {"po", gc_property::Po},
+    {"privateuse", gc_property::Co},
+    {"ps", gc_property::Ps},
+    {"punctuation", gc_property::P},
+    {"s", gc_property::S},
+    {"sc", gc_property::Sc},
+    {"separator", gc_property::Z},
+    {"sk", gc_property::Sk},
+    {"sm", gc_property::Sm},
+    {"so", gc_property::So},
+    {"spaceseparator", gc_property::Zs},
+    {"spacingmark", gc_property::Mc},
+    {"symbol", gc_property::S},
+    {"titlecaseletter", gc_property::Lt},
+    {"unassigned", gc_property::Cn},
+    {"uppercaseletter", gc_property::Lu},
+    {"z", gc_property::Z},
+    {"zl", gc_property::Zl},
+    {"zp", gc_property::Zp},
+    {"zs", gc_property::Zs},
+  };
+
+  //! \brief Resolve a loose-normalized General_Category name to its property, or `count` if unknown.
+  constexpr gc_property resolve_gc(std::string_view loose)
+  {
+    for (const gc_alias_entry& a : gc_aliases) {
+      if (a.name == loose) {
+        return a.prop;
+      }
+    }
+    return gc_property::count;
   }
 
 } // namespace real::detail

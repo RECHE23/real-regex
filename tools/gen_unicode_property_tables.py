@@ -35,6 +35,24 @@ _CATEGORIES = ["Lu", "Ll", "Lt", "Lm", "Lo", "Mn", "Mc", "Me", "Nd", "Nl", "No",
 # The seven top-level groups: a group is every category whose first letter matches (C excludes Cs, as above).
 _GROUPS = ["L", "M", "N", "P", "S", "Z", "C"]
 
+# Long-name aliases (UCD PropertyValueAliases for General_Category) — the parser accepts both the short code
+# (`\p{Lu}`) and the long alias (`\p{Uppercase_Letter}`), loose-matched (case- and _/-/space-insensitive).
+_GC_LONG = {
+    "Lu": "Uppercase_Letter", "Ll": "Lowercase_Letter", "Lt": "Titlecase_Letter", "Lm": "Modifier_Letter",
+    "Lo": "Other_Letter", "L": "Letter", "Mn": "Nonspacing_Mark", "Mc": "Spacing_Mark", "Me": "Enclosing_Mark",
+    "M": "Mark", "Nd": "Decimal_Number", "Nl": "Letter_Number", "No": "Other_Number", "N": "Number",
+    "Pc": "Connector_Punctuation", "Pd": "Dash_Punctuation", "Ps": "Open_Punctuation", "Pe": "Close_Punctuation",
+    "Pi": "Initial_Punctuation", "Pf": "Final_Punctuation", "Po": "Other_Punctuation", "P": "Punctuation",
+    "Sm": "Math_Symbol", "Sc": "Currency_Symbol", "Sk": "Modifier_Symbol", "So": "Other_Symbol", "S": "Symbol",
+    "Zs": "Space_Separator", "Zl": "Line_Separator", "Zp": "Paragraph_Separator", "Z": "Separator",
+    "Cc": "Control", "Cf": "Format", "Co": "Private_Use", "Cn": "Unassigned", "C": "Other",
+}
+
+
+def _loose(name):
+    """UAX44-LM3-ish loose match key: lowercase, drop spaces / underscores / hyphens."""
+    return name.lower().replace("_", "").replace("-", "").replace(" ", "")
+
 
 def _category(cp):
     return unicodedata.category(chr(cp))
@@ -109,6 +127,7 @@ def _emit(tables, path):
             "#include <cstddef>",
             "#include <cstdint>",
             "#include <span>",
+            "#include <string_view>",
             "",
             '#include "real/core/program.hpp"          // code_range',
             '#include "real/unicode/unicode_props.hpp" // cp_in_ranges (contract-neutral binary search)',
@@ -130,6 +149,30 @@ def _emit(tables, path):
     out += ["  constexpr bool is_gc_cp(gc_property prop, char32_t cp)"]
     out += ["  {"]
     out += ["    return cp_in_ranges(gc_property_ranges[static_cast<std::size_t>(prop)], cp);"]
+    out += ["  }", ""]
+    # loose-key -> property alias table (short code + long name), for the \p{...} parser. No std::hash: a small
+    # sorted array with a linear resolve at parse time (never a hot path).
+    aliases = []
+    for name in _CATEGORIES + _GROUPS:
+        aliases.append((_loose(name), name))
+        if name in _GC_LONG:
+            aliases.append((_loose(_GC_LONG[name]), name))
+    aliases.sort()
+    out += ["  //! \\brief A loose-normalized (lowercase, no _/-/space) General_Category name and its property."]
+    out += ["  struct gc_alias_entry { std::string_view name; gc_property prop; };", ""]
+    out += ["  //! \\brief Short codes (`Lu`) and long names (`Uppercase_Letter`), loose-keyed; for the `\\p{...}` parser."]
+    out += ["  inline constexpr gc_alias_entry gc_aliases[] {"]
+    out += [f'    {{"{key}", gc_property::{name}}},' for key, name in aliases]
+    out += ["  };", ""]
+    out += ["  //! \\brief Resolve a loose-normalized General_Category name to its property, or `count` if unknown."]
+    out += ["  constexpr gc_property resolve_gc(std::string_view loose)"]
+    out += ["  {"]
+    out += ["    for (const gc_alias_entry& a : gc_aliases) {"]
+    out += ["      if (a.name == loose) {"]
+    out += ["        return a.prop;"]
+    out += ["      }"]
+    out += ["    }"]
+    out += ["    return gc_property::count;"]
     out += ["  }", ""]
     out += common.file_footer("REAL_UNICODE_PROPERTY_HPP")
     total_ranges = sum(len(tables[n]) for n in props)

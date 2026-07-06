@@ -28,6 +28,11 @@ _LINE = re.compile(r"^([0-9A-Fa-f]{4,6})(?:\.\.([0-9A-Fa-f]{4,6}))?\s*;\s*(\w+)"
 _VERSION = re.compile(r"^#\s*Scripts-([0-9.]+)\.txt")
 
 
+def _loose(name):
+    """UAX44-LM3-ish loose match key: lowercase, drop spaces / underscores / hyphens."""
+    return name.lower().replace("_", "").replace("-", "").replace(" ", "")
+
+
 def _parse_scripts_txt(path):
     """Parse Scripts.txt into a sorted, coalesced list of (lo, hi, script_name), and the data version string."""
     version = None
@@ -123,6 +128,7 @@ def _emit(entries, version, path):
         includes=[
             "#include <cstddef>",
             "#include <cstdint>",
+            "#include <string_view>",
         ],
         version_kind="tables",
         version_const="unicode_script_unidata_version")
@@ -158,6 +164,22 @@ def _emit(entries, version, path):
     out += ["  }", ""]
     out += ["  //! \\brief Whether \\p cp belongs to Script \\p sc (== the UCD)."]
     out += ["  constexpr bool is_script_cp(script sc, char32_t cp) { return script_of(cp) == sc; }", ""]
+    out += ["  //! \\brief A loose-normalized (lowercase, no _/-/space) Script name and its value."]
+    out += ["  struct script_alias_entry { std::string_view name; script sc; };", ""]
+    out += ["  //! \\brief Script names, loose-keyed; for the `\\p{sc=...}` parser."]
+    out += ["  inline constexpr script_alias_entry script_aliases[] {"]
+    out += [f'    {{"{_loose(n)}", script::{n}}},' for n in names]
+    out += ["  };", ""]
+    out += ["  //! \\brief Resolve a loose-normalized Script name to its value, or `count` if unknown."]
+    out += ["  constexpr script resolve_script(std::string_view loose)"]
+    out += ["  {"]
+    out += ["    for (const script_alias_entry& a : script_aliases) {"]
+    out += ["      if (a.name == loose) {"]
+    out += ["        return a.sc;"]
+    out += ["      }"]
+    out += ["    }"]
+    out += ["    return script::count;"]
+    out += ["  }", ""]
     out += common.file_footer("REAL_UNICODE_SCRIPT_HPP")
     common.write_lines(path, out, f"wrote {path}: {len(enum)} scripts, {len(entries)} ranges, Scripts {version}")
 
