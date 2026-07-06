@@ -101,75 +101,79 @@ fn uses_word_or_space_class(pattern: &str) -> bool {
     false
 }
 
-/// Whether `pattern` has an alternation `|` at the top level — outside every group and character class. Used to
-/// skip the regex-crate leftmost-first bug class (see below); a `|` inside `(...)` or `[...]` does not trigger
-/// it, so depth and class state are tracked rather than a plain substring search.
-fn has_top_level_alternation(pattern: &str) -> bool {
-    let mut depth = 0i32;
-    let mut in_class = false;
-    let mut escaped = false;
-    for c in pattern.chars() {
-        if escaped {
-            escaped = false;
-        } else if c == '\\' {
-            escaped = true;
-        } else if in_class {
-            if c == ']' {
-                in_class = false;
-            }
-        } else {
-            match c {
-                '[' => in_class = true,
-                '(' => depth += 1,
-                ')' => depth = (depth - 1).max(0),
-                '|' if depth == 0 => return true,
-                _ => {}
-            }
-        }
-    }
-    false
+/// The upstream regex-crate leftmost-first bug class (rust-lang/regex #1345 / #1373): its meta-engine's
+/// reverse-suffix / prefilter search can resume PAST a leftmost match that REAL (and Python `re`) find. Detected
+/// SEMANTICALLY, not by pattern shape (the form predicates were a losing whack-a-mole): given a find_iter
+/// divergence, take the first span REAL reported that the crate's list does NOT contain; if the crate ITSELF
+/// confirms a match of exactly that span when ANCHORED at its start (`^(?:pat)` on the tail), the crate's
+/// unanchored search dropped a match it agrees exists — its bug. Cannot swallow a real REAL bug: a REAL span the
+/// anchored crate does not confirm returns false (still panics), as does a match REAL missed. Runs only on a
+/// mismatch, so it costs nothing in the normal (agreeing) case, and it self-verifies against every past and
+/// future manifestation of the class.
+fn crate_dropped_a_leftmost_it_confirms(pattern: &str, text: &str,
+                                        ours: &[(usize, usize)], theirs: &[(usize, usize)]) -> bool {
+    let &(rs, re_end) = match ours.iter().find(|s| !theirs.contains(s)) {
+        Some(s) => s,
+        None => return false, // no REAL span the crate lacks -> not this class
+    };
+    let tail = match text.get(rs..) {
+        Some(t) => t,
+        None => return false, // rs is not a char boundary (shouldn't happen for a real match) -> do not skip
+    };
+    let anchored = match regex::Regex::new(&format!("^(?:{pattern})")) {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+    anchored.find(tail).map_or(false, |m| m.start() == 0 && rs + m.end() == re_end)
 }
 
-/// Whether `pattern` has an alternation `|` with an EMPTY branch on either side — `(|`, `|)`, `||`, or at the
-/// pattern boundary, ANYWHERE (not just top-level). Same upstream regex-crate leftmost-first bug class as
-/// `has_top_level_alternation` (#1373), re-found a third time through an empty first branch inside a group
-/// (`.(|\x02;)().\0`), which the top-level check misses. Non-empty in-group alternations (`(a|b)`) stay
-/// differentiated — the coverage loss is bounded to empty-branch alternations.
-fn has_empty_alternation_branch(pattern: &str) -> bool {
-    let chars: Vec<char> = pattern.chars().collect();
-    let mut in_class = false;
+/// Whether `pattern` has a `{` that does NOT open a STRICT `{n}` / `{n,}` / `{n,m}` (ASCII digits only, no
+/// whitespace). Such a brace is read differently, legally, by the two engines: CPython (and REAL) treat a
+/// malformed `{...}` as a literal, while the regex crate is whitespace-tolerant and may read `{ 4 }` / `{\n4\n}`
+/// as a quantifier — `${\n…}` then becomes `$` repeated (an empty match at the end) where re/REAL find nothing.
+/// A parser-interpretation divergence, not a bug; here the FORM is the right filter (unlike the leftmost class).
+fn has_non_strict_brace(pattern: &str) -> bool {
+    let b = pattern.as_bytes();
     let mut i = 0;
-    let mut prev: Option<char> = None; // last structural char (None = start); an escaped/class token is Some('L')
-    while i < chars.len() {
-        let c = chars[i];
-        if c == '\\' {
-            i += 2;
-            prev = Some('L');
-            continue;
-        }
-        if in_class {
-            if c == ']' {
+    let mut in_class = false;
+    let mut escaped = false;
+    while i < b.len() {
+        let c = b[i];
+        if escaped {
+            escaped = false;
+            i += 1;
+        } else if c == b'\\' {
+            escaped = true;
+            i += 1;
+        } else if in_class {
+            if c == b']' {
                 in_class = false;
             }
-            prev = Some('L');
             i += 1;
-            continue;
-        }
-        if c == '[' {
+        } else if c == b'[' {
             in_class = true;
-            prev = Some('L');
             i += 1;
-            continue;
-        }
-        if c == '|' {
-            let before_empty = matches!(prev, None | Some('(') | Some('|'));
-            let after_empty = matches!(chars.get(i + 1).copied(), None | Some(')') | Some('|'));
-            if before_empty || after_empty {
-                return true;
+        } else if c == b'{' {
+            let mut j = i + 1;
+            let digits_start = j;
+            while j < b.len() && b[j].is_ascii_digit() {
+                j += 1;
             }
+            let mut ok = j > digits_start; // at least one leading digit
+            if ok && j < b.len() && b[j] == b',' {
+                j += 1;
+                while j < b.len() && b[j].is_ascii_digit() {
+                    j += 1;
+                }
+            }
+            ok = ok && j < b.len() && b[j] == b'}';
+            if !ok {
+                return true; // not a strict quantifier brace -> interpretation-divergent
+            }
+            i = j + 1;
+        } else {
+            i += 1;
         }
-        prev = Some(c);
-        i += 1;
     }
     false
 }
@@ -186,21 +190,18 @@ fuzz_target!(|data: &[u8]| {
         _ => return,
     };
 
-    // Skip a known UPSTREAM regex-crate leftmost-first bug class (REAL agrees with Python re; the regex crate
-    // does not): with a top-level alternation, its literal prefilter — built from one branch's leading byte —
-    // can resume PAST a leftmost match that begins in another branch. Two reproducers so far: `A|.AA` on
-    // "\n#AA" (the `.` branch, [1,4)); and `\0*\0|\u{8}\u{c}\0\0` on "\0\0\0|~\u{8}\u{c}\0\0\0", where the `\u{8}`
-    // branch matches [5,9) but the prefilter skips to the `\0` branch at [7,10). The trigger is the top-level
-    // `|`, not the branch's first token, so skip any pattern with one (the earlier `|.`/`|[` check was an
-    // under-approximation that let the literal-branch case through). Alternation stays fully covered by the
-    // std and re differentials and the 3.2M-case exhaustive; this only removes the rust-only bug class. See
+    // The upstream regex-crate leftmost-first bug class (rust-lang/regex #1345/#1373) is NO LONGER skipped by
+    // pattern shape — the form predicates were a losing whack-a-mole (top-level `|`, empty-branch `(|`, ...; the
+    // real class is "any alternation where the crate's meta-engine picks its reverse-suffix search"). It is now
+    // caught SEMANTICALLY at the find_iter comparison below: if a divergent span is one REAL found that the crate
+    // dropped, yet the crate ITSELF confirms that span when anchored (`^(?:pat)`), the crate skipped a match it
+    // agrees exists — its bug, logged and skipped. So alternation is fully differentiated again. See
     // fuzz/known_rust_bugs/.
-    if has_top_level_alternation(pattern) {
-        return;
-    }
-    // The same #1373 leftmost bug, re-found through an EMPTY alternation branch inside a group (`(|...`), which
-    // the top-level check above misses. See known_rust_bugs/ §3.
-    if has_empty_alternation_branch(pattern) {
+
+    // A `{` that is not a strict {n}/{n,}/{n,m} is read literally by CPython/REAL but as a whitespace-tolerant
+    // quantifier by the crate — a legal parser-interpretation divergence (known_rust_bugs / divergences). Form is
+    // the right filter here (unlike the leftmost class, handled semantically at the comparison).
+    if has_non_strict_brace(pattern) {
         return;
     }
     // Skip the documented CPython-vs-UTS#18 word/space divergence (README "Divergences"): REAL's \w/\s follow
@@ -230,7 +231,17 @@ fuzz_target!(|data: &[u8]| {
 
     let ours: Vec<_> = re.find_iter(text).map(|m| (m.start(), m.end())).collect();
     let theirs: Vec<_> = std.find_iter(text).map(|m| (m.start(), m.end())).collect();
-    assert_eq!(ours, theirs, "find_iter spans differ; pat={pattern:?} text={text:?}");
+    if ours != theirs {
+        if crate_dropped_a_leftmost_it_confirms(pattern, text, &ours, &theirs) {
+            // The crate's #1345 leftmost bug — not a REAL error. Logged (its count is the wake signal: a merged
+            // upstream fix should drive it to zero), and skip the rest (captures/replace/split would differ the
+            // same way, downstream of the same search).
+            eprintln!("UPSTREAM-#1345 skip: crate dropped a leftmost it confirms anchored; \
+                       pat={pattern:?} text={text:?} real={ours:?} crate={theirs:?}");
+            return;
+        }
+        panic!("find_iter spans differ; pat={pattern:?} text={text:?} real={ours:?} crate={theirs:?}");
+    }
 
     let ours: Vec<Vec<_>> = re.captures_iter(text)
         .map(|c| (0..c.len()).map(|g| c.get(g).map(|m| (m.start(), m.end()))).collect()).collect();

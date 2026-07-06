@@ -66,6 +66,11 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   crate uses Unicode **simple CaseFolding**, which keeps ı apart. Two code points, one contract each — both
   correct. The differential fuzzer masks exactly this set (`ICASE_FOLD_DELTAS`, computed by asking both
   engines), the twin of the `\w`/`\s` mask; `fallback` gives byte-for-byte crate folding.
+- **A malformed `{…}` — literal, not a quantifier.** A `{` that does not open a strict `{n}` / `{n,}` / `{n,m}`
+  (ASCII digits only) is a **literal brace** in REAL, matching Python `re`. The `regex` crate is
+  whitespace-tolerant, so `{ 2 }` / `{\n4\n}` are quantifiers to it — `${\n…}` becomes `$` repeated (an empty
+  match) where re/REAL find nothing. A legal parser-interpretation difference, both correct for their contract;
+  the differential fuzzer skips a non-strict-brace pattern by form.
 - **`shortest_match` — residual.** REAL is leftmost-**first** (like `regex`), but this returns the leftmost
   match's *greedy* end, whereas `regex` returns the earliest position at which a match completes (`a+` on
   `"aaa"`: REAL `3`, `regex` `1`). A true earliest-completion mode (a `first-accept` stop in the forward

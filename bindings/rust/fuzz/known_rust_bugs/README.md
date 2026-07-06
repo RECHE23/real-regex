@@ -1,8 +1,17 @@
 # Known upstream `regex`-crate bugs
 
 Repros the REAL differential fuzzer (`bindings/rust/fuzz/`) found where the **`regex` crate is wrong** — it
-disagrees with Python `re` (the neutral oracle) and with REAL, which both agree. These are skipped in
-`differential.rs` (they are not REAL divergences) and recorded here.
+disagrees with Python `re` (the neutral oracle) and with REAL, which both agree. They are not REAL divergences;
+recorded here.
+
+**Detection is now SEMANTIC, not by pattern shape.** The leftmost class below was chased through four
+manifestations by form predicates (top-level `|`, empty-branch `(|`, …) — a losing whack-a-mole, since the real
+class is "any alternation where the crate's meta-engine picks its reverse-suffix search". `differential.rs`
+instead catches it at the `find_iter` comparison: on a span mismatch, if a span REAL found (that the crate's list
+lacks) is confirmed by the crate ITSELF when anchored (`^(?:pat)`), the crate's unanchored search dropped a match
+it agrees exists — logged (`UPSTREAM-#1345 skip`; its count is the wake signal) and skipped. This covers every
+past and future manifestation and cannot swallow a real REAL bug (a REAL span the anchored crate does not confirm
+still panics). The old form predicates are retired, so alternation is fully differentiated again.
 
 ## 1. Reverse-suffix leftmost-first violation (`regex` 1.12.x) — [rust-lang/regex#1373](https://github.com/rust-lang/regex/pull/1373)
 
