@@ -52,12 +52,14 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   | `\w` | marks `\p{M}` — Mn 2020, Mc 468, Me 13; Join_Control ZWNJ/ZWJ (2); connectors `\p{Pc}` beyond `_` (9); Other_Alphabetic symbols `\p{So}` (130) | numeric-other `\p{No}` — 915 (superscripts, subscripts, fractions: CPython's `str.isalnum`) |
   | `\s` | — | `U+001C`–`U+001F` (4, the file/group/record/unit separators — CPython's `str.isspace`) |
 
-  `\d` (both `\p{Nd}`) is **identical**. These `\w`/`\s` differences are intentional (REAL matches `re`,
-  asserted by a REAL/`re` differential and the 3.2M-case exhaustive); for byte-for-byte `regex` parity, use the
-  `fallback` feature. The counts are reproducible with the committed probe (`fuzz/unicode_probe/`), which
-  re-dumps them on any Unicode bump; the differential fuzzer skips a `\w`/`\b`/`\s` pattern whose text carries a
-  delta code point (the delta set is computed from both engines, so it tracks the probe automatically), so the
-  divergence does not read as a REAL bug.
+  `\d` (both `\p{Nd}`) is **identical**. The `\w` delta also flows through every word-boundary assertion —
+  `\b`, `\B`, and the `\<` / `\>` word-start/end extensions all use the same word-set — so `\bété` or `\<foo`
+  on text with a combining mark or a `\p{No}` will differ from the `regex` crate the same way. These `\w`/`\s`
+  differences are intentional (REAL matches `re`, asserted by a REAL/`re` differential and the 3.2M-case
+  exhaustive); for byte-for-byte `regex` parity, use the `fallback` feature. The counts are reproducible with
+  the committed probe (`fuzz/unicode_probe/`), which re-dumps them on any Unicode bump; the differential fuzzer
+  skips a `\w`/`\b`/`\<`/`\s`-family pattern whose text carries a delta code point (the delta set is computed
+  from both engines, so it tracks the probe automatically), so the divergence does not read as a REAL bug.
 - **`shortest_match` — residual.** REAL is leftmost-**first** (like `regex`), but this returns the leftmost
   match's *greedy* end, whereas `regex` returns the earliest position at which a match completes (`a+` on
   `"aaa"`: REAL `3`, `regex` `1`). A true earliest-completion mode (a `first-accept` stop in the forward

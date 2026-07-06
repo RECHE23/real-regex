@@ -34,14 +34,15 @@ static WORD_SPACE_DELTAS: LazyLock<HashSet<char>> = LazyLock::new(|| {
     set
 });
 
-/// Whether `pattern` uses a `\w`/`\s`-family shorthand (`\w \W \s \S \b \B`) — `\d`/`\D` are identical in both
+/// Whether `pattern` uses a word/space-dependent shorthand (`\w \W \s \S \b \B \< \>` — all
+/// derive from the same word/space sets, so any of them diverges on a delta code point) — `\d`/`\D` are identical in both
 /// engines, so they do not need the delta skip. A backslash-escape scan; a `\b` inside a class (backspace) is a
 /// harmless over-approximation.
 fn uses_word_or_space_class(pattern: &str) -> bool {
     let mut escaped = false;
     for c in pattern.chars() {
         if escaped {
-            if matches!(c, 'w' | 'W' | 's' | 'S' | 'b' | 'B') {
+            if matches!(c, 'w' | 'W' | 's' | 'S' | 'b' | 'B' | '<' | '>') {
                 return true;
             }
             escaped = false;
@@ -108,7 +109,7 @@ fuzz_target!(|data: &[u8]| {
 
     // Skip the documented CPython-vs-UTS#18 word/space divergence (README "Divergences"): REAL's \w/\s follow
     // Python re, the regex crate follows UTS#18, and they disagree on a fixed set of code points. When a
-    // \w/\W/\s/\S/\b/\B pattern meets a text carrying one, the two legitimately differ — not a REAL bug (the
+    // \w/\W/\s/\S/\b/\B/\</\> pattern meets a text carrying one, the two legitimately differ — not a REAL bug (the
     // REAL/re differential and the 3.2M-case exhaustive assert REAL's side).
     if uses_word_or_space_class(pattern) && text.chars().any(|c| WORD_SPACE_DELTAS.contains(&c)) {
         return;

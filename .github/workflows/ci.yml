@@ -98,7 +98,7 @@ jobs:
       - name: Pin-drift lint (SciForge pins consistent)
         run: bash sciforge/tools/check-pins.sh real-regex
       - name: Build the abi3 extension
-        run: make -C real-regex python
+        run: make -C real-regex python-build
       - name: Public conformance suites (rust-regex + Fowler, vs Python re)
         run: python3 real-regex/tests/corpora/run_conformance.py
       - name: Exhaustive compat routing check (real::compat vs std::regex)
@@ -152,7 +152,7 @@ jobs:
           rustup toolchain install nightly --profile minimal
           cargo install cargo-fuzz --locked
       - name: Differential fuzz smoke (real-regex vs the regex crate)
-        run: make -C real-regex rust-fuzz FUZZ_TIME=45
+        run: make rust-fuzz FUZZ_TIME=45  # this job checks out into the CWD (no real-regex/ subdir)
 
   # Coverage gate: fail the build if line coverage drops below the floor (was advisory).
   coverage:

@@ -48,3 +48,15 @@ fn space_class_follows_cpython_not_uts18() {
     assert!(!space('a'));
     assert!(!space('_'));
 }
+
+#[test]
+fn word_boundary_assertions_inherit_the_word_set() {
+    // `\b` `\B` `\<` `\>` derive from the same word-set as `\w`, so they diverge on the same code points — a
+    // second door the differential fuzzer found (via `\<`). U+05A2 (Hebrew accent, Mn) is a word char for UTS#18
+    // (the `regex` crate) but not for CPython/REAL, so a word run breaks at it in REAL. In "a\u{05A2}b" (bytes:
+    // a=0, U+05A2=1..3, b=3) REAL's `\<` (word-start) fires before 'a' AND 'b'; the `regex` crate, treating the
+    // Mn as a word char, fires only before 'a'.
+    let starts: Vec<_> = Regex::new(r"\<").unwrap().find_iter("a\u{05A2}b").map(|m| m.start()).collect();
+    assert_eq!(starts, vec![0, 3], "REAL: word-start before 'a' and before 'b' (the Mn is not a word char)");
+    assert!(!word('\u{05A2}'), "U+05A2 (Mn): not \\w in CPython/REAL — the root of the \\< divergence");
+}
