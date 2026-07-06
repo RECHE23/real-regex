@@ -17,18 +17,19 @@ use std::sync::LazyLock;
 /// table). Computed by asking BOTH engines, so it needs no hardcoded category table and self-updates with the
 /// Unicode version. Built once; `fuzz/unicode_probe/` is the committed, category-annotated audit of the same set.
 static WORD_SPACE_DELTAS: LazyLock<HashSet<char>> = LazyLock::new(|| {
-    let rw = regex::Regex::new(r"^\w$").unwrap();
-    let ow = real_regex::Regex::new(r"^\w$").unwrap();
-    let rs = regex::Regex::new(r"^\s$").unwrap();
-    let os = real_regex::Regex::new(r"^\s$").unwrap();
+    // Built once, by SCAN not per scalar: one string of every code point, one find_iter per engine per class.
+    // (The per-scalar `is_match` form did 1.1M x 2 FFI round-trips and timed the fuzzer out on its first \s
+    // input; each `\w`/`\s` is a one-char match, so find_iter over the whole string yields the matched set.)
+    let all: String = (0u32..=0x0010_FFFF).filter_map(char::from_u32).collect();
+    let rust_set = |pat: &str| -> HashSet<char> {
+        regex::Regex::new(pat).unwrap().find_iter(&all).map(|m| m.as_str().chars().next().unwrap()).collect()
+    };
+    let real_set = |pat: &str| -> HashSet<char> {
+        real_regex::Regex::new(pat).unwrap().find_iter(&all).map(|m| m.as_str().chars().next().unwrap()).collect()
+    };
     let mut set = HashSet::new();
-    for cp in 0u32..=0x0010_FFFF {
-        if let Some(c) = char::from_u32(cp) {
-            let s = c.to_string();
-            if rw.is_match(&s) != ow.is_match(&s) || rs.is_match(&s) != os.is_match(&s) {
-                set.insert(c);
-            }
-        }
+    for pat in [r"\w", r"\s"] {
+        set.extend(rust_set(pat).symmetric_difference(&real_set(pat)));
     }
     set
 });
