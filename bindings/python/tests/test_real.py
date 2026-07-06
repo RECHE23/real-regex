@@ -420,6 +420,15 @@ class TestIntentionalDivergences(unittest.TestCase):
         self.assertTrue(real.compile(r"\pN").fullmatch("7"))          # single-letter form
         self.assertTrue(real.compile(r"(?a)\p{L}").fullmatch("é"))    # (?a) does not restrict \p{}
         self.assertEqual([m.group() for m in real.compile(r"\p{L}+").finditer("ab cd")], ["ab", "cd"])
+        # inside a class, with negation and an enclosing [^...] on top (P2)
+        self.assertTrue(real.compile(r"[\p{L}\d_]").fullmatch("5"))
+        self.assertTrue(real.compile(r"[\P{L}]").fullmatch("3"))
+        self.assertIsNone(real.compile(r"[\P{L}]").fullmatch("A"))
+        self.assertTrue(real.compile(r"[^\P{L}]").fullmatch("A"))    # double negation == [\p{L}]
+        # icase membership-then-fold — \p{Lu} folds to include lowercase; \P{Lu} folds then negates (P2)
+        self.assertTrue(real.compile(r"(?i)\p{Lu}").fullmatch("a"))
+        self.assertTrue(real.compile(r"(?i)\p{Lu}").fullmatch("K"))  # KELVIN folds to k
+        self.assertIsNone(real.compile(r"(?i)\P{Lu}").fullmatch("a"))
 
     def test_lookbehind_variable_width_accepted(self):
         # A bounded variable-width lookbehind is ACCEPTED -- beyond re/PCRE, which require a

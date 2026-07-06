@@ -1,8 +1,8 @@
 // Parser + matching for `\p{...}` / `\P{...}` / `\pX` Unicode property classes (General_Category and Script).
 // The tables and their UCD oracles live in tests/unicode/; here we exercise the parser wiring: name resolution
 // (short codes, long names, gc=/sc= prefixes, loose matching), negation, the `(?a)`-does-not-restrict rule, the
-// bytes-mode rejection, named errors, and matching across engines. In-class \p{}, negation inside a class, and
-// icase folding are later slices (P2), so they are not covered here.
+// bytes-mode rejection, named errors, matching across engines, and — as of P2 — in-class \p{} with negation
+// (plus the enclosing [^...] on top) and icase membership-then-fold (pinned against the UCD oracle).
 #include <string>
 #include <string_view>
 
@@ -90,4 +90,41 @@ TEST(unicode_property_bytes_mode_rejects)
 {
   EXPECT_THROWS(real::regex(R"(\p{L})", real::flags::bytes), real::regex_error);
   EXPECT_THROWS(real::regex(R"(\pL)", real::flags::bytes), real::regex_error);
+  EXPECT_THROWS(real::regex(R"([\p{L}])", real::flags::bytes), real::regex_error); // in a class too
+}
+
+TEST(unicode_property_inside_a_class)
+{
+  EXPECT(real::regex(R"([\p{L}\d_])").fullmatch("5"));  // a property mixes with \d and a literal
+  EXPECT(real::regex(R"([\p{L}\d_])").fullmatch("A"));
+  EXPECT(real::regex(R"([\p{L}\d_])").fullmatch("é"));
+  EXPECT(!real::regex(R"([\p{L}\d_])").fullmatch("-"));
+  EXPECT(real::regex(R"([\p{Nd}])").fullmatch("٣")); // Arabic-indic digit, non-ASCII
+  // negation inside a class, and the enclosing [^...] negating on top
+  EXPECT(real::regex(R"([\P{L}])").fullmatch("3"));
+  EXPECT(!real::regex(R"([\P{L}])").fullmatch("A"));
+  EXPECT(!real::regex(R"([\P{L}])").fullmatch("é"));
+  EXPECT(real::regex(R"([^\p{L}])").fullmatch("3"));
+  EXPECT(!real::regex(R"([^\p{L}])").fullmatch("A"));
+  EXPECT(real::regex(R"([^\P{L}])").fullmatch("A")); // double negation == [\p{L}]
+  EXPECT(!real::regex(R"([^\P{L}])").fullmatch("3"));
+}
+
+TEST(unicode_property_icase_membership_then_fold)
+{
+  // Under IGNORECASE the property class folds by the existing pipeline (membership then fold) — no special
+  // code. Each expectation was verified against the `regex` module (the UCD icase oracle), not decreed:
+  // \p{Lu} folds to include every code point whose simple case-fold lands on an uppercase letter.
+  EXPECT(real::regex(R"((?i)\p{Lu})").fullmatch("a"));   // ascii lower folds in
+  EXPECT(real::regex(R"((?i)\p{Lu})").fullmatch("k"));   // k
+  EXPECT(real::regex(R"((?i)\p{Lu})").fullmatch("K"));   // KELVIN SIGN folds to k
+  EXPECT(real::regex(R"((?i)\p{Lu})").fullmatch("σ"));   // Greek small sigma
+  EXPECT(real::regex(R"((?i)\p{Lu})").fullmatch("ς"));   // Greek final sigma
+  EXPECT(real::regex(R"((?i)\p{Lu})").fullmatch("ı"));   // dotless i -> I
+  EXPECT(real::regex(R"((?i)\p{Lu})").fullmatch("İ"));   // capital I with dot (already Lu)
+  // \P{Lu} folds THEN negates: a code point folding to an uppercase letter is excluded, so both A and a fail.
+  EXPECT(!real::regex(R"((?i)\P{Lu})").fullmatch("A"));
+  EXPECT(!real::regex(R"((?i)\P{Lu})").fullmatch("a"));
+  // the same holds in a class
+  EXPECT(real::regex(R"((?i)[\p{Lu}])").fullmatch("a"));
 }

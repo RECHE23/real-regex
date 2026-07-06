@@ -594,15 +594,10 @@ namespace real::detail {
       fail_unsupported("unsupported Unicode property in \\p{...} (only General_Category and Script are built in)");
     }
 
-    /*!
-     * \brief Parses `\p{Name}` / `\P{Name}` / `\pX` (outside a class) into a negatable Unicode code-point class
-     *        (`klass_cp`), reusing the same match-time mechanism as `\w`. Text mode only: rejected in bytes mode,
-     *        and — unlike `\w` — `flags::ascii` (`re.A`) does NOT restrict it (a Unicode property is always
-     *        Unicode). In-class `\p{}`, negation inside a class, and icase folding are later slices. `pos_` is on
-     *        the letter after `\`; `negated` distinguishes `\P` from `\p`.
-     */
-    constexpr std::int32_t parse_unicode_property(ast& out,
-                                                  bool negated)
+    //! \brief Rejects bytes mode, consumes the `p`/`P` and the `{Name}` (or single letter), and resolves it to
+    //!        the property's code-point ranges. Shared by the out-of-class atom and the in-class merge. On entry
+    //!        `pos_` is on the `p`/`P`; on return it is just past the name.
+    constexpr std::vector<code_range> parse_property_table()
     {
       // Read bytes-mode from the scope stack, not the global `bytes_` member (the flag-scope ratchet): bytes is
       // never scoped, so this equals `bytes_` while keeping the parser's global-read count flat.
@@ -633,21 +628,72 @@ namespace real::detail {
       if (name.empty()) {
         fail("empty Unicode property name in \\p{}");
       }
-      const std::vector<code_range> table {resolve_property(name)};
-      char_class                    ascii;
+      return resolve_property(name);
+    }
+
+    //! \brief Splits a property's ranges into its ASCII bitmap (< 0x80) and its non-ASCII ranges. Unconditional:
+    //!        unlike `\w`, `flags::ascii` (`re.A`) does not restrict a Unicode property, so both parts are always
+    //!        used (bytes mode having already been rejected).
+    constexpr void property_ascii_high(const std::vector<code_range>& table,
+                                       char_class&                    ascii,
+                                       std::vector<code_range>&       high) const
+    {
       for (char32_t c = 0; c < 0x80U; ++c) {
         if (cp_in_ranges(table, c)) {
           ascii.set(static_cast<std::uint8_t>(c));
         }
       }
-      std::vector<code_range> high;
       for (const code_range& r : table) {
         if (r.hi < 0x80U) {
           continue; // wholly ASCII: already in the bitmap
         }
         high.push_back({.lo = r.lo < 0x80U ? 0x80U : r.lo, .hi = r.hi});
       }
+    }
+
+    /*!
+     * \brief Parses `\p{Name}` / `\P{Name}` / `\pX` (outside a class) into a negatable Unicode code-point class
+     *        (`klass_cp`), reusing the same match-time mechanism as `\w`. Negation is the class-node flag, as for
+     *        `\W`. `pos_` is on the letter after `\`; `negated` distinguishes `\P` from `\p`.
+     */
+    constexpr std::int32_t parse_unicode_property(ast& out,
+                                                  bool negated)
+    {
+      const std::vector<code_range> table {parse_property_table()};
+      char_class                    ascii;
+      std::vector<code_range>       high;
+      property_ascii_high(table, ascii, high);
       return add_class_node(out, ascii, negated, high, /*codepoint_predicate=*/ true);
+    }
+
+    /*!
+     * \brief Merges a `\p{Name}` / `\P{Name}` property into the character class being built (the in-class form) —
+     *        the un-gated twin of \ref merge_property — `flags::ascii` never restricts it, so it always uses the
+     *        property's own non-ASCII ranges. A negated `\P{...}` merges the complement (the inverted ASCII bitmap
+     *        plus the gaps between the non-ASCII ranges), exactly as `\W` negates in a class; an enclosing
+     *        `[^...]` then negates the whole class on top (so `[^\P{L}]` == `[\p{L}]`). bytes mode is already
+     *        rejected by \ref parse_property_table.
+     */
+    constexpr void merge_unicode_property(char_class&                    klass,
+                                          std::vector<code_range>&       ranges,
+                                          const std::vector<code_range>& table,
+                                          bool                           negated,
+                                          bool&                          property_derived) const
+    {
+      char_class              ascii;
+      std::vector<code_range> high;
+      property_ascii_high(table, ascii, high);
+      if (negated) {
+        ascii.invert_ascii();
+        klass.merge(ascii);
+        const std::vector<code_range> comp {complement_code_ranges(high)};
+        ranges.insert(ranges.end(), comp.begin(), comp.end());
+      }
+      else {
+        klass.merge(ascii);
+        ranges.insert(ranges.end(), high.begin(), high.end());
+      }
+      property_derived = true;
     }
 
     /*!
@@ -1635,6 +1681,14 @@ namespace real::detail {
             const shorthand_spec sc {shorthand_class(peek())};
             ++pos_;
             merge_property(klass, ranges, sc.set, sc.ranges, sc.negated, property_derived);
+            return -1;
+          }
+        // `\p{Name}` / `\P{Name}` / `\pX` inside a class — a Unicode General_Category / Script property member.
+        case 'p':
+        case 'P': {
+            const bool                    negated {peek() == 'P'};
+            const std::vector<code_range> table   {parse_property_table()};
+            merge_unicode_property(klass, ranges, table, negated, property_derived);
             return -1;
           }
         case 'b':
