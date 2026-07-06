@@ -29,7 +29,7 @@ raise a clear error rather than sitting on a roadmap.
 | --- | --- | --- | --- |
 | Backreferences (`(a)\1`, `(?P=n)`) | **excluded by design** | non-regular → super-linear → ReDoS ([why](@ref div_rejected)) | — |
 | Conditional groups `(?(id)…)`, recursion, callouts | **excluded by design** | non-regular control flow → ReDoS ([why](@ref div_rejected)) | — |
-| Unicode property classes `\p{…}` | **planned** | opt-in header (needs the Unicode tables; not in `re`) | opt-in |
+| Unicode property classes `\p{…}` | **supported** (General_Category + Script) | native, linear `klass_cp`; a superset of `re` (which rejects `\p`); binary properties like `\p{Alphabetic}` stay `unsupported` | 2026.7 |
 | `\N{NAME}` named characters | **supported** | binding resolves the name via `unicodedata` (no C++ table) | 2026.7 |
 | `\N{U+XXXX}` scalar form | **extension** (PCRE2-style) | uniform C++/Python surfaces; `re` knows only names ([more](@ref div_named_scalar)) | 2026.7 |
 | `\z` end-of-text anchor | **supported** | exact alias of `\Z` (Python 3.14's meaning) | 2026.7 |

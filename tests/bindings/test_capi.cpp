@@ -65,8 +65,8 @@ TEST(capi_error_codes_and_null_iter)
   int code = 0;
   EXPECT(compile("(", 0, code) == nullptr);
   EXPECT(code == REAL_ERR_SYNTAX);                 // malformed
-  EXPECT(compile("\\p{L}", 0, code) == nullptr);
-  EXPECT(code == REAL_ERR_UNSUPPORTED);            // well-formed but unsupported
+  EXPECT(compile("(?P=g)", 0, code) == nullptr);
+  EXPECT(code == REAL_ERR_UNSUPPORTED);            // well-formed but unsupported (named backreference)
   EXPECT(compile("(\\w+)\\1", 0, code) == nullptr);
   EXPECT(code == REAL_ERR_UNSUPPORTED);            // backreference
   // a null iterator is reported, never dereferenced

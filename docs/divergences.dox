@@ -119,10 +119,9 @@ Each of these raises a clear `real::regex_error`, for a reason worth keeping:
   calls** — non-regular control flow, each super-linear in the worst case. Excluded for
   the same ReDoS reason (see the note at the top of this page).
 
-**Planned, not rejected:** **Unicode property classes** \\p{...} are a candidate for a
-separate **opt-in** header (they need the Unicode category tables, which the core keeps
-out to stay zero-dependency and one-include). They are not in standard `re` either.
-**Named characters** \\N{NAME} are already supported — the Python binding resolves the
+**A superset of `re`:** **Unicode property classes** \\p{...} are now built in for
+**General_Category** and **Script** (see \\ref div_property), which standard `re` rejects
+outright. **Named characters** \\N{NAME} are also supported — the Python binding resolves the
 name via `unicodedata` and the engine takes the resulting code point — so no table lives
 in C++. REAL additionally accepts the scalar form \\N{U+XXXX} directly (a PCRE2-style
 **extension**; `re` does not).
@@ -134,6 +133,19 @@ on **both** surfaces — the C++ engine and the Python binding — so the two ar
 \\N{...} only as a character *name* and rejects the U+ form (`undefined character name`). The *name*
 form \\N{NAME} is exact `re`-parity (the binding resolves it via `unicodedata`); only the scalar form
 is the extension. Pinned real-accepts / re-rejects in `TestIntentionalDivergences`.
+
+\section div_property Unicode property classes \\p{...} (a capability beyond re)
+
+REAL builds in **General_Category** (\\p{L}, \\p{Lu}, \\p{Nd}, and the groups \\p{L}..\\p{C}) and
+**Script** (\\p{sc=Greek}, \\p{Script=Latin}), with short codes, the UCD long names (\\p{Letter}),
+`gc=` / `sc=` prefixes, loose matching (UAX44-LM3), the single-letter form \\pL, and negation \\P{...} — on
+**both** the C++ engine and the Python binding. Standard `re` rejects \\p entirely (a `bad escape` error), so
+accepting it is a **superset**: it cannot break re-compatible code (which could never use \\p). The class
+matches as a linear code-point predicate (the same `klass_cp` mechanism as `\w`), so it stays ReDoS-safe, and
+`flags::ascii` (`re.A`) does **not** restrict it — a Unicode property is always Unicode. The tables are pinned
+to a Unicode version and validated exhaustively against the UCD (the regen guards). Binary properties
+(\\p{Alphabetic}, \\p{White_Space}) and other namespaces are **not** built in yet: they raise `unsupported`
+(the Rust binding can delegate them via its `fallback` feature). Pinned in the property and parity suites.
 
 \section div_lookbehind Variable-width lookbehind (a capability beyond re)
 
@@ -147,7 +159,8 @@ The `real-regex` Rust crate mirrors the [`regex`](https://docs.rs/regex) crate's
 different axis (crate-vs-`regex`, not REAL-vs-`re`) and are documented on the crate itself
 (`bindings/rust/README.md` — the docs.rs landing page): the empty-match iteration rule (adapted to rust's at
 the wrapper, so `find_iter`/`split` match `regex`), `shortest_match` (leftmost-first greedy end vs earliest
-completion — a parked `first-accept` engine follow-up, see \ref g_followups), the `\p{}` gap (rejected as
-`Error::Unsupported`, or delegated via the opt-in `fallback` feature; full support is planned), `RegexSet`
+completion — a parked `first-accept` engine follow-up, see \ref g_followups), the \\p{} coverage
+(\\p{Gc} / \\p{sc} run natively now; binary and other-namespace properties raise `Error::Unsupported` or are
+delegated via the opt-in `fallback` feature), `RegexSet`
 (not offered), and the bounded lookarounds as a **positive** divergence (a superset `regex` and RE2 lack).
 */

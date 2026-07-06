@@ -398,13 +398,28 @@ class TestIntentionalDivergences(unittest.TestCase):
         self.assertEqual(m.group(1), "aa")
 
     def test_rejected_by_design(self):
-        # Each rejected for a documented reason (see the divergences page): backreferences and
-        # conditional groups are non-regular (they would break linearity); \p{} needs the Unicode
-        # category tables and is a planned opt-in. (\N{NAME} is now supported — see the parity suite.)
-        for pattern in [r"(a)\1", r"(?P=name)", r"(?(1)a|b)", r"\p{L}"]:
+        # Each rejected for a documented reason (see the divergences page): backreferences and conditional
+        # groups are non-regular (they would break linearity). \p{Gc} and \p{sc=...} are now supported (see
+        # test_unicode_property_classes); a binary property like \p{Alphabetic} is not yet tabulated, so it
+        # stays rejected. (\N{NAME} is now supported — see the parity suite.)
+        for pattern in [r"(a)\1", r"(?P=name)", r"(?(1)a|b)", r"\p{Alphabetic}"]:
             with self.subTest(pattern=pattern):
                 with self.assertRaises(real.error):
                     real.compile(pattern)
+
+    def test_unicode_property_classes(self):
+        # \p{General_Category} and \p{sc=Script} are a documented SUPERSET of stdlib re (which rejects \p
+        # entirely with "bad escape \p"). GC and Script only in this version; (?a) does not restrict them.
+        self.assertTrue(real.compile(r"\p{L}").fullmatch("é"))
+        self.assertIsNone(real.compile(r"\p{L}").fullmatch("3"))
+        self.assertTrue(real.compile(r"\p{Lu}").fullmatch("A"))
+        self.assertIsNone(real.compile(r"\p{Lu}").fullmatch("a"))
+        self.assertTrue(real.compile(r"\P{L}").fullmatch("3"))
+        self.assertTrue(real.compile(r"\p{sc=Greek}").fullmatch("α"))
+        self.assertTrue(real.compile(r"\p{Letter}").fullmatch("Z"))  # long alias
+        self.assertTrue(real.compile(r"\pN").fullmatch("7"))          # single-letter form
+        self.assertTrue(real.compile(r"(?a)\p{L}").fullmatch("é"))    # (?a) does not restrict \p{}
+        self.assertEqual([m.group() for m in real.compile(r"\p{L}+").finditer("ab cd")], ["ab", "cd"])
 
     def test_lookbehind_variable_width_accepted(self):
         # A bounded variable-width lookbehind is ACCEPTED -- beyond re/PCRE, which require a

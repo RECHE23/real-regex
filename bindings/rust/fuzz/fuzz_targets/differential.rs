@@ -126,6 +126,25 @@ fn has_empty_alternation_branch(pattern: &str) -> bool {
     false
 }
 
+/// Whether `pattern` contains a `\p` / `\P` Unicode-property escape (an unescaped backslash then p/P). REAL runs
+/// `\p{Gc}`/`\p{sc}` on its own pinned Unicode data, which may differ from the regex crate's version, so these
+/// are excluded from the differential (their correctness is asserted by the UCD regen guards instead).
+fn has_unicode_property_class(pattern: &str) -> bool {
+    let bytes = pattern.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'\\' {
+            if bytes[i + 1] == b'p' || bytes[i + 1] == b'P' {
+                return true;
+            }
+            i += 2; // an escaped byte cannot start a new escape
+            continue;
+        }
+        i += 1;
+    }
+    false
+}
+
 fuzz_target!(|data: &[u8]| {
     if data.is_empty() {
         return;
@@ -155,6 +174,12 @@ fuzz_target!(|data: &[u8]| {
     if has_empty_alternation_branch(pattern) {
         return;
     }
+    // REAL now runs \p{Gc}/\p{sc} natively (Unicode 16.0.0), while the regex crate ships its own Unicode version;
+    // a version skew would make them differ on newly (un)assigned code points — not a REAL bug. The \p{} tables
+    // carry their own exhaustive UCD oracle (the regen guards), so skip \p{}/\P{} from this differential.
+    if has_unicode_property_class(pattern) {
+        return;
+    }
 
     // Skip the documented CPython-vs-UTS#18 word/space divergence (README "Divergences"): REAL's \w/\s follow
     // Python re, the regex crate follows UTS#18, and they disagree on a fixed set of code points. When a
@@ -166,7 +191,7 @@ fuzz_target!(|data: &[u8]| {
 
     let re = match real_regex::Regex::new(pattern) {
         Ok(r) => r,
-        Err(_) => return, // real rejects (invalid, or unsupported: \p{}, lookaround, backref)
+        Err(_) => return, // real rejects (invalid, or unsupported: a lookaround, a backref, a binary \p property)
     };
     let std = match regex::Regex::new(pattern) {
         Ok(r) => r,

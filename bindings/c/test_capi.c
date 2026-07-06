@@ -32,9 +32,9 @@ int main(void) {
   assert(strlen(err) > 0);            /* a message was reported */
   assert(code == REAL_ERR_SYNTAX);    /* an unbalanced paren is a syntax error */
 
-  /* the structured code classifies unsupported constructs (the drift test: \p{} stays unsupported even if
-     the message wording changes) */
-  real_regex* unsup = real_compile("\\p{L}+", 5, 0, err, sizeof err, &code);
+  /* the structured code classifies unsupported constructs (well-formed but beyond the linear engine — a named
+     backreference here; \p{...} property classes are now supported, so they are no longer an example) */
+  real_regex* unsup = real_compile("(?P=g)", 6, 0, err, sizeof err, &code);
   assert(unsup == NULL);
   assert(code == REAL_ERR_UNSUPPORTED);
 

@@ -65,10 +65,12 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   `"aaa"`: REAL `3`, `regex` `1`). A true earliest-completion mode (a `first-accept` stop in the forward
   pass) is a planned engine follow-up; until then, use `shortest_match` as an `is_match` that also reports
   where the leftmost match ends.
-- **Unicode property classes `\p{…}` — not yet.** REAL rejects them with `Error::Unsupported`. Enable the
-  `fallback` feature and `RegexBuilder::new(pat).fallback(true)` to delegate such a pattern to the `regex`
-  crate (per pattern, forfeiting the linear-time guarantee — `engine()` reports it). Full `\p{}` support in
-  the linear engine is planned.
+- **Unicode property classes `\p{…}` — General_Category and Script, natively.** `\p{L}`, `\p{Lu}`, `\p{Nd}`,
+  the groups `\p{L}`..`\p{C}`, and `\p{sc=Greek}` / `\p{Script=Latin}` (short codes, long names, `gc=`/`sc=`
+  prefixes, loose matching, negation `\P{…}`) run on REAL's linear engine — `engine()` reports `Real`. Binary
+  properties (`\p{Alphabetic}`, `\p{White_Space}`) and other namespaces raise `Error::Unsupported`; enable the
+  `fallback` feature and `RegexBuilder::new(pat).fallback(true)` to delegate *those* to the `regex` crate (per
+  pattern, forfeiting the linear-time guarantee — `engine()` reports `Fallback`).
 - **Class set notation — declined (rust-only syntax).** Nested character classes (`[a[b]]` = union) and the
   set operators `&&` / `--` / `~~` are `regex`-crate syntax; Python `re` — REAL's model — reads `[` as a
   literal inside a class, so the two would parse the same pattern differently. The crate declines these up
