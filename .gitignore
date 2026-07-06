@@ -18,3 +18,4 @@ build/doc/
 
 # Stray compiler default output (scratch builds)
 a.out
+bindings/rust/fuzz/unicode_probe/target/

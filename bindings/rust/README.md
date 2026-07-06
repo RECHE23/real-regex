@@ -43,6 +43,20 @@ A drop-in mirrors semantics, not just signatures. The known differences:
 - **`$` anchor — resolved.** Python `re`'s `$` (no multiline) matches at the end **or** just before a final
   `\n`; rust's is end-only. The crate compiles every pattern with the engine's `dollar_endonly` flag, so `$`
   is end-only — `a$` on `"a\n"` finds nothing, like `regex`. `(?m)$` (line-relative) is identical in both.
+- **`\w` word semantics — CPython, not UTS#18.** REAL's engine defines `\w` (and `\b`, which inherits it) the
+  way Python `re` does — its contract — which is not the UTS#18 definition the `regex` crate uses. The
+  difference is **bidirectional**, each including code points the other omits (measured over all 1,112,064
+  scalars):
+
+  | | code points `regex` matches but REAL does not (UTS#18 ⊃) | code points REAL matches but `regex` does not (CPython ⊃) |
+  | --- | --- | --- |
+  | `\w` | marks `\p{M}` — Mn 2020, Mc 468, Me 13; Join_Control ZWNJ/ZWJ (2); connectors `\p{Pc}` beyond `_` (9); Other_Alphabetic symbols `\p{So}` (130) | numeric-other `\p{No}` — 915 (superscripts, subscripts, fractions: CPython's `str.isalnum`) |
+
+  `\d` (both `\p{Nd}`) and `\s` (both Unicode White_Space) are **identical** to `regex`. This `\w` difference is
+  intentional (REAL matches `re`, asserted by a REAL/`re` differential and the 3.2M-case exhaustive); for
+  byte-for-byte `regex` parity on `\w`, use the `fallback` feature. The counts are reproducible with the
+  committed probe (`fuzz/unicode_probe/`), which re-dumps them on any Unicode bump; the differential fuzzer
+  skips a `\w`/`\b` pattern whose text carries a delta code point, so it does not read as a REAL bug.
 - **`shortest_match` — residual.** REAL is leftmost-**first** (like `regex`), but this returns the leftmost
   match's *greedy* end, whereas `regex` returns the earliest position at which a match completes (`a+` on
   `"aaa"`: REAL `3`, `regex` `1`). A true earliest-completion mode (a `first-accept` stop in the forward

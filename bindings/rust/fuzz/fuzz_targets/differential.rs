@@ -9,6 +9,47 @@
 //! the regex crate rejects. Non-UTF-8 splits are skipped (the str API needs UTF-8; the bytes API is future).
 #![no_main]
 use libfuzzer_sys::fuzz_target;
+use std::collections::HashSet;
+use std::sync::LazyLock;
+
+/// Code points where REAL's `\w`/`\s` (Python `re` semantics — its contract) and the `regex` crate's (UTS#18)
+/// disagree: marks `\p{M}`, `\p{No}`, `U+001C`-`U+001F`, Join_Control, and more (see the README divergence
+/// table). Computed by asking BOTH engines, so it needs no hardcoded category table and self-updates with the
+/// Unicode version. Built once; `fuzz/unicode_probe/` is the committed, category-annotated audit of the same set.
+static WORD_SPACE_DELTAS: LazyLock<HashSet<char>> = LazyLock::new(|| {
+    let rw = regex::Regex::new(r"^\w$").unwrap();
+    let ow = real_regex::Regex::new(r"^\w$").unwrap();
+    let rs = regex::Regex::new(r"^\s$").unwrap();
+    let os = real_regex::Regex::new(r"^\s$").unwrap();
+    let mut set = HashSet::new();
+    for cp in 0u32..=0x0010_FFFF {
+        if let Some(c) = char::from_u32(cp) {
+            let s = c.to_string();
+            if rw.is_match(&s) != ow.is_match(&s) || rs.is_match(&s) != os.is_match(&s) {
+                set.insert(c);
+            }
+        }
+    }
+    set
+});
+
+/// Whether `pattern` uses a `\w`/`\s`-family shorthand (`\w \W \s \S \b \B`) — `\d`/`\D` are identical in both
+/// engines, so they do not need the delta skip. A backslash-escape scan; a `\b` inside a class (backspace) is a
+/// harmless over-approximation.
+fn uses_word_or_space_class(pattern: &str) -> bool {
+    let mut escaped = false;
+    for c in pattern.chars() {
+        if escaped {
+            if matches!(c, 'w' | 'W' | 's' | 'S' | 'b' | 'B') {
+                return true;
+            }
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        }
+    }
+    false
+}
 
 /// Whether `pattern` has an alternation `|` at the top level — outside every group and character class. Used to
 /// skip the regex-crate leftmost-first bug class (see below); a `|` inside `(...)` or `[...]` does not trigger
@@ -61,6 +102,14 @@ fuzz_target!(|data: &[u8]| {
     // std and re differentials and the 3.2M-case exhaustive; this only removes the rust-only bug class. See
     // fuzz/known_rust_bugs/.
     if has_top_level_alternation(pattern) {
+        return;
+    }
+
+    // Skip the documented CPython-vs-UTS#18 word/space divergence (README "Divergences"): REAL's \w/\s follow
+    // Python re, the regex crate follows UTS#18, and they disagree on a fixed set of code points. When a
+    // \w/\W/\s/\S/\b/\B pattern meets a text carrying one, the two legitimately differ — not a REAL bug (the
+    // REAL/re differential and the 3.2M-case exhaustive assert REAL's side).
+    if uses_word_or_space_class(pattern) && text.chars().any(|c| WORD_SPACE_DELTAS.contains(&c)) {
         return;
     }
 

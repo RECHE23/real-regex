@@ -1,0 +1,13 @@
+# Reproducible audit of REAL's \w/\s/\d (Python re semantics) vs the regex crate's (UTS#18). Standalone and
+# manual — `cargo run --release` in this directory re-dumps the per-category deltas; run it on a Unicode bump.
+[package]
+name    = "unicode-probe"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+regex      = "1"
+real-regex = { path = "../.." }
+
+[workspace]
