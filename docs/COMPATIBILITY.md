@@ -46,7 +46,11 @@ A `real::compat::regex` is built with `flags::bytes | flags::ecma` so `real`'s b
 ECMAScript-`$` (end-only), ECMAScript-`.` (excludes `\n` and `\r`) semantics line up with
 `std::basic_regex<char>`. Routing:
 
-1. **A POSIX grammar** (`basic`/`extended`/`awk`/`grep`/`egrep`) or `collate` → `std::regex` up front.
+0. **POSIX `extended` (ERE)** → translated to REAL and run on the **linear engine with leftmost-longest
+   bounds** (the POSIX semantics), when the pattern translates; otherwise `std::regex`. `regex.posix_longest()`
+   reports this. (Its `regex_replace`/iterators still delegate to `std` for now — POSIX-correct bounds, pending a
+   longest `find_iter`.)
+1. **Another POSIX grammar** (`basic`/`awk`/`grep`/`egrep`) or `collate` → `std::regex` up front.
 2. Otherwise `real` is tried. If it **rejects** the pattern (a feature it cannot represent), the
    layer falls back to `std::regex`, which may accept it. A pattern invalid for *both* throws
    `real::compat::regex_error` (a `std::regex_error`) carrying std's exact `.code()`.
@@ -60,6 +64,9 @@ Literals, concatenation, alternation, `.` (ECMAScript), character classes & rang
 (+negations), `^ $ \b \B`, greedy/lazy quantifiers `* + ? {m,n}`, groups (capturing,
 non-capturing, named), **lookahead and lookbehind** (bounded — `real`'s ReDoS-safe lookaround),
 ASCII `icase`, `multiline`. Non-ASCII **literals** match byte-for-byte like `std::regex<char>`.
+The **POSIX `extended` (ERE) grammar** also runs here — translated to REAL and matched with leftmost-longest
+(POSIX) bounds via `search_longest`, so `(a+)+b` and friends cannot be ReDoS'd even under an ERE grammar (`std`
+would backtrack). POSIX classes `[[:alpha:]]`…`[[:xdigit:]]` become their C-locale ASCII ranges.
 
 ## What falls back to std::regex (loses real's ReDoS-safety)
 
@@ -68,7 +75,7 @@ ASCII `icase`, `multiline`. Non-ASCII **literals** match byte-for-byte like `std
 | Backreferences `\1`, `(?P=n)` | `real` does not implement them | `real` rejects → std fallback (std supports them) |
 | **Raw** non-ASCII bytes inside a class `[é]` | `real`'s bytes path rejects raw high bytes in `[...]` (a `\xHH` escape does *not* — `[\x80-\xff]` stays on `real` as a byte class, matching `std::regex<char>`) | clean rejection → std fallback |
 | Unbounded / oversized lookaround | exceeds `real`'s bounded-lookaround cap | `real` rejects → std fallback |
-| POSIX grammars, `collate` | `real` is ECMAScript-only | screened to std up front |
+| POSIX `basic`/`awk`/`grep`/`egrep`, `collate` | not yet translated to `real` (`extended` is — see above) | screened to std up front |
 | `\0` followed by a digit (`\00`, `\012`) | `real` reads a legacy octal escape (Annex B); libstdc++ reads `\0`=NUL then a literal digit — strict ECMAScript makes it a syntax error, so neither is the spec answer | screened to std up front (a both-accept divergence otherwise; the fuzzer found it) |
 | **Nullable patterns in `regex_replace`/iterators** | empty-match *traversal* (advance-after-empty-match) differs between `real` (Python) and ECMAScript | a real-backed pattern that can match empty (`a*`, `(x)?`) routes those operations to a lazily-built `std::regex` — **per operation**, so `search`/`match` keep `real`'s ReDoS-safety even for nullable-ReDoS like `(a*)*` |
 

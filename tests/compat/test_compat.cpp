@@ -328,8 +328,10 @@ TEST(compat_backend_selection)
   EXPECT(rc::regex_search(subj, m, back)); // fallback path produces the match
   EXPECT_EQ(m.length(0), 2);
 
-  // A POSIX grammar option forces the std backend up front.
-  EXPECT(!rc::regex("a+", rc::regex_constants::extended, rc::policy::fallback).uses_real());
+  // POSIX extended (ERE) now takes REAL's linear engine when the pattern translates; the other POSIX
+  // grammars (basic/awk/grep/egrep) still force the std backend up front.
+  EXPECT(rc::regex("a+", rc::regex_constants::extended, rc::policy::fallback).uses_real());
+  EXPECT(!rc::regex(R"(\(a\)+)", rc::regex_constants::basic, rc::policy::fallback).uses_real());
 
   // Inline-flag groups: real accepts (?imsxa:...) with Python semantics, but ECMAScript has no inline
   // flags, so compat routes them to std -- which rejects them, exactly as std::regex does. Compat stays
@@ -768,25 +770,27 @@ TEST(compat_nosubs_routes_to_std)
   EXPECT_EQ(m.length(0), sm.length(0));
 }
 
-TEST(compat_posix_grammars_route_to_std)
+TEST(compat_posix_grammars_bounds_equal_std)
 {
   namespace rcc = rc::regex_constants;
-  // grammar_forces_std routes POSIX grammars + collate to std up front; confirm the differential.
+  // extended (ERE) now runs on REAL's linear engine (leftmost-longest bounds); basic/awk/grep/egrep still
+  // delegate to std. Either backend, the bounds equal the std oracle; `expect_real` pins which one each takes.
   struct Case
   {
     std::string                              pattern;
     std::string                              subject;
     rcc::syntax_option_type                  ropt;
     std::regex_constants::syntax_option_type sopt;
+    bool                                     expect_real;
   };
   const std::vector<Case> cases {
-    {.pattern = "[[:digit:]]+", .subject = "abc123", .ropt = rcc::extended, .sopt = std::regex_constants::extended},
-    {.pattern = R"(\(ab\)*)", .subject = "ababab", .ropt = rcc::basic, .sopt = std::regex_constants::basic},
-    {.pattern = "a+b", .subject = "aaab", .ropt = rcc::extended, .sopt = std::regex_constants::extended},
+    {.pattern = "[[:digit:]]+", .subject = "abc123", .ropt = rcc::extended, .sopt = std::regex_constants::extended, .expect_real = true},
+    {.pattern = R"(\(ab\)*)", .subject = "ababab", .ropt = rcc::basic, .sopt = std::regex_constants::basic, .expect_real = false},
+    {.pattern = "a+b", .subject = "aaab", .ropt = rcc::extended, .sopt = std::regex_constants::extended, .expect_real = true},
   };
   for (const Case& c : cases) {
     const rc::regex re(c.pattern, c.ropt, rc::policy::fallback);
-    EXPECT(!re.uses_real()); // POSIX grammar -> std
+    EXPECT_EQ(re.uses_real(), c.expect_real); // extended -> REAL (linear); basic -> std
     const std::regex  sre(c.pattern, c.sopt);
     rc::smatch        m;
     std::smatch       sm;

@@ -220,6 +220,98 @@ namespace real::compat {
       return false;
     }
 
+    //! \brief A POSIX bracket-class name to its ASCII (C-locale) range content, appended inside a `[...]` during
+    //!        ERE translation. Empty for an unknown name (the caller then falls back to std).
+    inline std::string posix_class_ranges(std::string_view name)
+    {
+      if (name == "alpha") { return "A-Za-z"; }
+      if (name == "digit") { return "0-9"; }
+      if (name == "alnum") { return "0-9A-Za-z"; }
+      if (name == "upper") { return "A-Z"; }
+      if (name == "lower") { return "a-z"; }
+      if (name == "xdigit") { return "0-9A-Fa-f"; }
+      if (name == "space") { return "\\t\\n\\x0b\\f\\r "; }
+      if (name == "blank") { return "\\t "; }
+      if (name == "cntrl") { return "\\x00-\\x1f\\x7f"; }
+      if (name == "print") { return "\\x20-\\x7e"; }
+      if (name == "graph") { return "\\x21-\\x7e"; }
+      if (name == "punct") { return "!-/:-@\\[-`{-~"; }
+      return {};
+    }
+
+    //! \brief Translates a POSIX **extended** (ERE) pattern to an equivalent REAL (ECMAScript-ish) pattern, or
+    //!        `nullopt` when it uses a construct the two grammars read differently (an ECMAScript shorthand
+    //!        `\d\w\s\b` — undefined/literal in ERE; an ambiguous `{`; an unknown/collating `[[:…:]]`/`[.x.]`).
+    //!        POSIX classes become ASCII ranges (C locale); the common productions pass through, since REAL reads
+    //!        them like ERE. On `nullopt` the caller keeps the std backend. Validated by a bounds differential.
+    [[nodiscard]] inline std::optional<std::string> translate_ere(std::string_view p)
+    {
+      std::string       out;
+      std::size_t       i {0};
+      const std::size_t n {p.size()};
+      while (i < n) {
+        const char c {p[i]};
+        if (c == '\\') {
+          if (i + 1 >= n) { return std::nullopt; } // trailing backslash
+          const char d {p[i + 1]};
+          if (std::string_view {".[]{}()*+?|^$\\"}.find(d) != std::string_view::npos) {
+            out += '\\';
+            out += d;
+            i   += 2;
+            continue; // an escaped metacharacter is a literal in both grammars
+          }
+          return std::nullopt; // \d, \w, \b, … — no ERE meaning; fall back to std
+        }
+        if (c == '[') {
+          std::string cls {'['};
+          i += 1;
+          if (i < n && p[i] == '^') { cls += '^'; i += 1; }
+          if (i < n && p[i] == ']') { cls += ']'; i += 1; } // a leading literal ] (POSIX)
+          while (i < n && p[i] != ']') {
+            if (p[i] == '[' && i + 1 < n && p[i + 1] == ':') {
+              const std::size_t close  {p.find(":]", i + 2)};
+              if (close == std::string_view::npos) { return std::nullopt; }
+              const std::string ranges {posix_class_ranges(p.substr(i + 2, close - (i + 2)))};
+              if (ranges.empty()) { return std::nullopt; }
+              cls += ranges;
+              i    = close + 2;
+            }
+            else if (p[i] == '[' && i + 1 < n && (p[i + 1] == '.' || p[i + 1] == '=')) {
+              return std::nullopt; // collating [.x.] / equivalence [=x=]
+            }
+            else {
+              cls += p[i];
+              i   += 1;
+            }
+          }
+          if (i >= n) { return std::nullopt; } // unterminated class
+          cls += ']';
+          i   += 1;
+          out += cls;
+          continue;
+        }
+        if (c == '{') {
+          // keep only a strict interval {n}/{n,}/{n,m}; an ambiguous `{` is literal in POSIX (it diverges).
+          std::size_t       j  {i + 1};
+          const std::size_t ds {j};
+          while (j < n && p[j] >= '0' && p[j] <= '9') { ++j; }
+          bool ok              {j > ds};
+          if (ok && j < n && p[j] == ',') {
+            ++j;
+            while (j < n && p[j] >= '0' && p[j] <= '9') { ++j; }
+          }
+          ok = ok && j < n && p[j] == '}';
+          if (!ok) { return std::nullopt; }
+          out += p.substr(i, (j + 1) - i);
+          i    = j + 1;
+          continue;
+        }
+        out += c; // common production (. * + ? | ( ) ^ $ literal) — read alike
+        i   += 1;
+      }
+      return out;
+    }
+
     //! \brief Maps compat options to real::flags (always with bytes|ecma for std-char alignment).
     inline real::flags to_real(regex_constants::syntax_option_type f) noexcept
     {
@@ -322,6 +414,7 @@ namespace real::compat {
       std::swap(flags_, other.flags_);
       std::swap(mark_count_, other.mark_count_);
       std::swap(nullable_, other.nullable_);
+      std::swap(posix_longest_, other.posix_longest_);
       std::swap(lazy_std_, other.lazy_std_);
       std::swap(policy_, other.policy_);
     }
@@ -362,10 +455,20 @@ namespace real::compat {
       return nullable_;
     }
 
-    //! \brief Whether replace/iterate run on the `real` traversal (real-backed AND non-nullable).
+    //! \brief Whether this is a POSIX-ERE pattern routed to REAL: `search`/`match` must use leftmost-**longest**
+    //!        bounds (the POSIX semantics), not the default leftmost-first. Set only for a translated `extended`.
+    [[nodiscard]] bool posix_longest() const noexcept
+    {
+      return posix_longest_;
+    }
+
+    //! \brief Whether replace/iterate run on the `real` traversal (real-backed AND non-nullable). A POSIX-ERE
+    //!        pattern is excluded for now: its `search`/`match` run linearly with longest bounds, but its
+    //!        replace/iterate still delegate to std (POSIX-correct bounds, not yet linear) until a longest
+    //!        `find_iter` lands — the std path uses `std::regex(pattern, extended)`, so the bounds still agree.
     [[nodiscard]] bool uses_real_traversal() const noexcept
     {
-      return uses_real() && !nullable_;
+      return uses_real() && !nullable_ && !posix_longest_;
     }
 
     //! \brief The `std::regex` for the std / lazy-std path (built once on demand for a real-backed
@@ -402,12 +505,13 @@ namespace real::compat {
 
     // std backend first so the variant is default-constructible (real::regex has no default ctor).
     std::variant<std::basic_regex<CharT, Traits>, real::regex>           engine_;
-    string_type                                                          pattern_;                     //!< Original pattern (for the lazy std build).
-    flag_type                                                            flags_      {regex_constants::ECMAScript};
-    std::size_t                                                          mark_count_ {};
-    bool                                                                 nullable_   {};               //!< empty_match_possible (real-backed).
-    mutable std::optional<std::basic_regex<CharT, Traits>>               lazy_std_;                    //!< Lazy std for nullable replace/iterate.
-    compat::policy                                                       policy_     {policy::strict}; //!< strict rejects ineligible, fallback delegates to std.
+    string_type                                                          pattern_;                        //!< Original pattern (for the lazy std build).
+    flag_type                                                            flags_         {regex_constants::ECMAScript};
+    std::size_t                                                          mark_count_    {};
+    bool                                                                 nullable_      {};               //!< empty_match_possible (real-backed).
+    bool                                                                 posix_longest_ {};               //!< POSIX ERE on REAL: search uses leftmost-longest bounds.
+    mutable std::optional<std::basic_regex<CharT, Traits>>               lazy_std_;                       //!< Lazy std for nullable replace/iterate.
+    compat::policy                                                       policy_        {policy::strict}; //!< strict rejects ineligible, fallback delegates to std.
 
     void assign(std::basic_string_view<CharT> pattern,
                 flag_type                     f)
@@ -415,9 +519,33 @@ namespace real::compat {
       flags_   = f;
       pattern_ = string_type(pattern);
       lazy_std_.reset();
-      nullable_ = false;
+      nullable_      = false;
+      posix_longest_ = false;
       if constexpr (detail::real_eligible<CharT, Traits>) {
         const std::string_view sv {pattern.data(), pattern.size()};
+        // PX1a: POSIX Extended (ERE) on the linear engine. When the grammar is exactly `extended` (no other
+        // grammar bit, no collate / nosubs) and the pattern translates, run it on REAL with leftmost-LONGEST
+        // bounds — the POSIX semantics, via search_longest — instead of delegating to std's backtracker. A
+        // `nullopt` or a real reject falls through to the std path below (the fallback lives; nothing breaks).
+        const bool ere_only {(f & regex_constants::extended) != regex_constants::ECMAScript
+                             && (f & (regex_constants::basic | regex_constants::awk | regex_constants::grep
+                                      | regex_constants::egrep | regex_constants::collate
+                                      | regex_constants::nosubs)) == regex_constants::ECMAScript};
+        if (ere_only && !detail::pattern_forces_std(sv)) {
+          if (const std::optional<std::string> translated {detail::translate_ere(sv)}) {
+            try {
+              real::regex compiled(*translated, detail::to_real(f));
+              mark_count_    = compiled.group_count();
+              nullable_      = compiled.raw_program().hints.empty_match_possible;
+              posix_longest_ = true;
+              engine_.template emplace<real::regex>(std::move(compiled));
+              return;
+            }
+            catch (const real::regex_error&) {
+              // translated but real cannot represent it -> fall through to the std path
+            }
+          }
+        }
         if (detail::grammar_forces_std(f) || detail::pattern_forces_std(sv)) {
           reject_or_fallback(sv, f, "the pattern uses a construct the linear engine does not represent "
                              "(a backreference, an unbounded lookaround, a POSIX class, or a "

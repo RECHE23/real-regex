@@ -380,7 +380,10 @@ namespace real::compat {
           const std::string_view sv     {std::to_address(first),
                                          static_cast<std::size_t>(std::distance(first, last))};
           const real::regex&     engine {std::get<real::regex>(re.engine())};
-          const auto             result {anchored ? engine.fullmatch(sv) : engine.search(sv)};
+          // POSIX ERE routes an unanchored search to leftmost-LONGEST bounds (re.posix_longest()); a whole-
+          // sequence match (fullmatch) has one candidate, so longest == first there.
+          const auto             result {anchored ? engine.fullmatch(sv)
+                                         : (re.posix_longest() ? engine.search_longest(sv) : engine.search(sv))};
           if (!result.matched()) {
             m.set_ready_no_match(); // std leaves ready()==true, size()==0 on a failed match
             return false;
@@ -415,7 +418,8 @@ namespace real::compat {
           const std::string_view sv     {std::to_address(first),
                                          static_cast<std::size_t>(std::distance(first, last))};
           const real::regex&     engine {std::get<real::regex>(re.engine())};
-          return anchored ? engine.fullmatch(sv).matched() : engine.search(sv).matched();
+          return anchored ? engine.fullmatch(sv).matched()
+                 : (re.posix_longest() ? engine.search_longest(sv) : engine.search(sv)).matched();
         }
       }
       const std::basic_regex<CharT, Traits>& std_engine {re.std_engine()};
