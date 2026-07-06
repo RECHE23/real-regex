@@ -5,8 +5,10 @@
 //! input to a committed reproducer.
 //!
 //! Filtered out (not comparable): a pattern real-regex rejects — an invalid one, or one it cannot run
-//! linearly (\p{...}, a bounded lookaround real accepts but regex does not, a backreference); and any pattern
-//! the regex crate rejects. Non-UTF-8 splits are skipped (the str API needs UTF-8; the bytes API is future).
+//! linearly (a bounded lookaround real accepts but regex does not, a backreference); and any pattern the regex
+//! crate rejects. `\p{Gc}`/`\p{sc}` ARE compared now (both Unicode 16.0.0); two documented divergence classes
+//! are masked by name — the \w/\s UTS#18 set and the icase Turkish-I fold set. Non-UTF-8 splits are skipped (the
+//! str API needs UTF-8; the bytes API is future).
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 use std::collections::HashSet;
@@ -33,6 +35,52 @@ static WORD_SPACE_DELTAS: LazyLock<HashSet<char>> = LazyLock::new(|| {
     }
     set
 });
+
+/// Code points where REAL's icase folding (Python `re`'s equivalences, via upper/lower — its contract) and the
+/// `regex` crate's (Unicode simple CaseFolding) disagree: the Turkish dotless/dotted I (U+0131 ı, U+0130 İ) fold
+/// with I/i in `re` but stand apart in CaseFolding, and any similar case entry. Both engines are correct for
+/// their contract (verified: stdlib `re.fullmatch("(?i)I","ı")` is True; see the README divergence note). When an
+/// icase pattern meets one of these, the two legitimately differ — not a REAL bug. Computed by asking BOTH
+/// engines over the cased letters, so it self-updates with the Unicode version and needs no hardcoded list.
+static ICASE_FOLD_DELTAS: LazyLock<HashSet<char>> = LazyLock::new(|| {
+    let all: String = (0u32..=0x0010_FFFF).filter_map(char::from_u32).collect();
+    let rust_set = |pat: &str| -> HashSet<char> {
+        regex::Regex::new(pat).unwrap().find_iter(&all).map(|m| m.as_str().chars().next().unwrap()).collect()
+    };
+    let real_set = |pat: &str| -> HashSet<char> {
+        real_regex::Regex::new(pat).unwrap().find_iter(&all).map(|m| m.as_str().chars().next().unwrap()).collect()
+    };
+    let mut set = HashSet::new();
+    // the cased classes under icase: a fold that differs shows up as a class-membership difference here
+    for pat in [r"(?i)\p{Lu}", r"(?i)\p{Ll}", r"(?i)\p{Lt}"] {
+        set.extend(rust_set(pat).symmetric_difference(&real_set(pat)));
+    }
+    set
+});
+
+/// Whether `pattern` turns icase on — an inline `(?i` / `(?mi` / `(?im:` flag group whose `i` is not cancelled by
+/// a `-`. Used to gate the ICASE_FOLD_DELTAS skip (the fold divergence only bites under icase). An
+/// over-approximation is harmless (it only skips more).
+fn is_icase(pattern: &str) -> bool {
+    let b = pattern.as_bytes();
+    let mut i = 0;
+    while i + 1 < b.len() {
+        if b[i] == b'(' && b[i + 1] == b'?' {
+            let mut j = i + 2;
+            let mut negate = false;
+            while j < b.len() && matches!(b[j], b'i' | b'm' | b's' | b'x' | b'a' | b'u' | b'L' | b'-') {
+                match b[j] {
+                    b'-' => negate = true,
+                    b'i' if !negate => return true,
+                    _ => {}
+                }
+                j += 1;
+            }
+        }
+        i += 1;
+    }
+    false
+}
 
 /// Whether `pattern` uses a word/space-dependent shorthand (`\w \W \s \S \b \B \< \>` — all
 /// derive from the same word/space sets, so any of them diverges on a delta code point) — `\d`/`\D` are identical in both
@@ -126,25 +174,6 @@ fn has_empty_alternation_branch(pattern: &str) -> bool {
     false
 }
 
-/// Whether `pattern` contains a `\p` / `\P` Unicode-property escape (an unescaped backslash then p/P). REAL runs
-/// `\p{Gc}`/`\p{sc}` on its own pinned Unicode data, which may differ from the regex crate's version, so these
-/// are excluded from the differential (their correctness is asserted by the UCD regen guards instead).
-fn has_unicode_property_class(pattern: &str) -> bool {
-    let bytes = pattern.as_bytes();
-    let mut i = 0;
-    while i + 1 < bytes.len() {
-        if bytes[i] == b'\\' {
-            if bytes[i + 1] == b'p' || bytes[i + 1] == b'P' {
-                return true;
-            }
-            i += 2; // an escaped byte cannot start a new escape
-            continue;
-        }
-        i += 1;
-    }
-    false
-}
-
 fuzz_target!(|data: &[u8]| {
     if data.is_empty() {
         return;
@@ -174,18 +203,19 @@ fuzz_target!(|data: &[u8]| {
     if has_empty_alternation_branch(pattern) {
         return;
     }
-    // REAL now runs \p{Gc}/\p{sc} natively (Unicode 16.0.0), while the regex crate ships its own Unicode version;
-    // a version skew would make them differ on newly (un)assigned code points — not a REAL bug. The \p{} tables
-    // carry their own exhaustive UCD oracle (the regen guards), so skip \p{}/\P{} from this differential.
-    if has_unicode_property_class(pattern) {
-        return;
-    }
-
     // Skip the documented CPython-vs-UTS#18 word/space divergence (README "Divergences"): REAL's \w/\s follow
     // Python re, the regex crate follows UTS#18, and they disagree on a fixed set of code points. When a
     // \w/\W/\s/\S/\b/\B/\</\> pattern meets a text carrying one, the two legitimately differ — not a REAL bug (the
     // REAL/re differential and the 3.2M-case exhaustive assert REAL's side).
     if uses_word_or_space_class(pattern) && text.chars().any(|c| WORD_SPACE_DELTAS.contains(&c)) {
+        return;
+    }
+    // Skip the documented CPython-vs-Unicode-CaseFolding icase divergence: under (?i) REAL folds the Turkish
+    // dotless/dotted I (U+0131/U+0130) with I/i — Python `re`'s equivalence via upper/lower — while the regex
+    // crate keeps them apart (simple CaseFolding). When an icase pattern meets one of those code points the two
+    // legitimately differ, both correct for their contract. \p{} itself is now fully compared (both Unicode
+    // 16.0.0; the exhaustive per-property proof is tests/property_differential.rs).
+    if is_icase(pattern) && text.chars().any(|c| ICASE_FOLD_DELTAS.contains(&c)) {
         return;
     }
 

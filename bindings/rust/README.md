@@ -60,6 +60,12 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   the committed probe (`fuzz/unicode_probe/`), which re-dumps them on any Unicode bump; the differential fuzzer
   skips a `\w`/`\b`/`\<`/`\s`-family pattern whose text carries a delta code point (the delta set is computed
   from both engines, so it tracks the probe automatically), so the divergence does not read as a REAL bug.
+- **Case-insensitive folding — CPython, not simple CaseFolding.** Under `(?i)`, REAL follows Python `re`'s
+  equivalences (via `str.upper`/`lower`), so the Turkish **dotless/dotted I** fold with I/i: `(?i)I` matches
+  ı (U+0131) and İ (U+0130), and `(?i)\p{Lu}` therefore matches ı — exactly as stdlib `re` does. The `regex`
+  crate uses Unicode **simple CaseFolding**, which keeps ı apart. Two code points, one contract each — both
+  correct. The differential fuzzer masks exactly this set (`ICASE_FOLD_DELTAS`, computed by asking both
+  engines), the twin of the `\w`/`\s` mask; `fallback` gives byte-for-byte crate folding.
 - **`shortest_match` — residual.** REAL is leftmost-**first** (like `regex`), but this returns the leftmost
   match's *greedy* end, whereas `regex` returns the earliest position at which a match completes (`a+` on
   `"aaa"`: REAL `3`, `regex` `1`). A true earliest-completion mode (a `first-accept` stop in the forward

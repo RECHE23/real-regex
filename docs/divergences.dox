@@ -47,6 +47,14 @@ so `\\bété\\b` matches. In **bytes mode**, and under `flags::ascii` (`re.A`), 
 boundary stays ASCII (byte-for-byte `std::regex<char>`), and `IGNORECASE` folds ASCII only, so the
 compat layer is unaffected.
 
+Case-insensitive matching follows **CPython's** equivalences (via `str.upper`/`lower`), so the Turkish
+**dotless/dotted I** fold with I/i — `(?i)I` matches ı (U+0131) and İ (U+0130), exactly as stdlib `re` does
+(`re.fullmatch("(?i)I", "ı")` is True) and as `(?i)\\p{Lu}` therefore matches ı. Unicode **simple CaseFolding**
+— used by RE2 and the Rust `regex` crate — keeps ı apart instead. This is one code point (two, with İ) where the
+two conventions differ; **both engines are correct for their contract** (REAL for `re`-parity, the crate for
+UTS#18 folding). The Rust binding's differential masks exactly this set (its `ICASE_FOLD_DELTAS`, computed by
+asking both engines), the twin of the `\\w`/`\\s` mask above.
+
 \section div_hex \\xHH (HH ≥ 0x80) is byte-level
 
 \\xHH matches the raw byte `0xHH`, not the codepoint `chr(HH)`. On a str pattern `re`

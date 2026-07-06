@@ -128,3 +128,16 @@ TEST(unicode_property_icase_membership_then_fold)
   // the same holds in a class
   EXPECT(real::regex(R"((?i)[\p{Lu}])").fullmatch("a"));
 }
+
+TEST(unicode_property_icase_grid)
+{
+  // The seven-answer grid — each icase/negation edge, verified against the oracle (stdlib re / the regex
+  // module) and pinned so the contract cannot drift. All match except the fold-then-negate \P{Lu} on 'a'.
+  EXPECT(real::regex(R"((?i)\p{Lu})").fullmatch("é"));  // 1. é folds to É (Lu)
+  EXPECT(real::regex(R"((?i)\p{Lu})").fullmatch("Σ"));  // 2. capital sigma — already Lu
+  EXPECT(real::regex(R"((?i)\p{Lu})").fullmatch("ς"));  // 3. final sigma folds to Σ
+  EXPECT(real::regex(R"((?i)\p{Lu})").fullmatch("K"));  // 4. KELVIN — already Lu
+  EXPECT(!real::regex(R"((?i)\P{Lu})").fullmatch("a")); // 5. fold-then-negate: a -> A (Lu) is excluded
+  EXPECT(real::regex(R"((?i)\p{Lu})").fullmatch("ı"));  // 6. Turkish dotless-i folds with I (== re, != crate)
+  EXPECT(real::regex(R"([^\P{L}])").fullmatch("A"));    // 7. double negation == [\p{L}]
+}

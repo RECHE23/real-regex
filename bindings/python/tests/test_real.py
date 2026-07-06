@@ -428,6 +428,7 @@ class TestIntentionalDivergences(unittest.TestCase):
         # icase membership-then-fold — \p{Lu} folds to include lowercase; \P{Lu} folds then negates (P2)
         self.assertTrue(real.compile(r"(?i)\p{Lu}").fullmatch("a"))
         self.assertTrue(real.compile(r"(?i)\p{Lu}").fullmatch("K"))  # KELVIN folds to k
+        self.assertTrue(real.compile(r"(?i)\p{Lu}").fullmatch("ı"))  # Turkish dotless-i folds with I, like re
         self.assertIsNone(real.compile(r"(?i)\P{Lu}").fullmatch("a"))
 
     def test_lookbehind_variable_width_accepted(self):
