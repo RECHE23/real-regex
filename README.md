@@ -33,19 +33,24 @@ REAL gives you **both**: linear-time, ReDoS-safe matching *with* bounded lookaro
 
 ## How it compares
 
-| | **REAL** | std::regex | RE2 / Rust | PCRE2-JIT | Python re |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Linear-time, ReDoS-safe       | ✅ | ❌ | ✅ | ❌ | ❌ |
-| Lookarounds                   | ✅ | ✅ | ❌ | ✅ | ✅ |
-| Header-only, zero-dependency  | ✅ | ✅¹ | ❌ | ❌ | — |
-| Constexpr (compile-time match)| ✅ | ❌ | ❌ | ❌ | ❌ |
-| Drop-in Python `re`           | ✅² | ❌ | ❌ | ❌ | ✅ |
-| Raw throughput                | fast³ | slow | slower | fast | slow |
+| | **REAL** | std::regex | RE2 | Rust `regex` | PCRE2-JIT | Python re |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Linear-time, ReDoS-safe       | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Lookarounds                   | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ |
+| Header-only, zero-dependency  | ✅ | ✅¹ | ❌ | ❌ | ❌ | — |
+| Constexpr (compile-time match)| ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Drop-in Python `re`           | ✅² | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Raw throughput                | fast³ | 5–28× slower⁴ | 3–9× slower | mixed⁵ | fast | slow |
 
 ¹ part of the C++ standard library. ² for the supported subset (no backreferences, etc.).
-³ **5–28× over `std::regex`, and REAL now beats PCRE2-JIT on class scans** (`[a-z]+` 1.9×, `[0-9]+` 1.7×) and
-the rust `regex` crate on capture-dense extraction (`[a-z]+` 5.3×); PCRE2-JIT still leads on straight-line
-literals/alternation. Exact multipliers, machines and methodology are in
+³ REAL now beats PCRE2-JIT on class scans (`[a-z]+` **1.9×**, `[0-9]+` **1.7×**); PCRE2-JIT still leads on
+straight-line literals / alternation.
+⁴ backtracking — **4.1 s where REAL takes 0.5 ms** on a `(a+)+b`-style input: the ReDoS-safety property,
+quantified, not an adjective.
+⁵ not one verdict: REAL leads class scans (**5–6×**) and dense-capture extraction (**3–6×**); the crate leads
+straight-line literal / alternation (1.1–1.3×) and word-boundary; no-match is ≈ parity (1.6×). The per-line
+duel is in §E.
+Exact multipliers, machines and methodology are in
 [`docs/BENCHMARKS.md`](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md).
 
 **Every other engine that has lookarounds backtracks** (ReDoS-unsafe), and every linear-time
