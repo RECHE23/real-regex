@@ -39,7 +39,8 @@ split described in the hex-escape section below.
 
 The \\w \\W \\d \\D \\s \\S shorthands are **Unicode** in text mode (matching `re`): `\\w` matches any
 Unicode word code point (é, ٣, ², astral letters…), `\\d` any `Nd` digit (Arabic ٣, fullwidth ９…),
-`\\s` any Unicode whitespace (NBSP, U+2028…). This holds in or out of a character class (`[\\w]`, `[\\d.]`,
+`\\s` exactly Python `re`'s whitespace — Unicode White_Space (NBSP, U+2028…) **plus** the four separators
+`U+001C`–`U+001F` that `re` (via `str.isspace`) adds and Unicode does not. This holds in or out of a character class (`[\\w]`, `[\\d.]`,
 and `[\\W]`/`[\\D]`/`[\\S]` — accepted as their Unicode complements, with `[^\\W]` == `\\w` etc). The
 `\\b \\B` word boundaries (and the `\\< \\>` word-start/end extensions) use the same Unicode word-ness,
 so `\\bété\\b` matches. In **bytes mode**, and under `flags::ascii` (`re.A`), every shorthand and

@@ -320,7 +320,8 @@ def random_text(rng):
     # re's worst case to a few thousand steps so the differential never hangs.
     # (That same blowup is measured deliberately by the fuzz benchmark.)
     alphabet = rng.choice(["abc012", "abcABC ", "a\nb c", _LITERALS, "café \tx", "é€😀 aé€x",
-                           "٣٥9 x y z ９０"])  # Unicode digits + NBSP/U+2028 for \d \s
+                           "٣٥9 x y z ９０",
+                           "x\x1c\x1d\x1e\x1f\x0b\x0c y\tz"])  # + control chars: FS/GS/RS/US are \s in re (the class the alphabet never had)
     return "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 10)))
 
 

@@ -5,8 +5,42 @@
 
 #include <sciforge/test/framework.hpp>
 #include "real/real.hpp"
+#include "real/core/charclass.hpp"
+#include "real/unicode/unicode_props.hpp"
 
 using namespace std::string_view_literals;
+
+// Drift-guard: the hand-written ASCII bitsets (`word_set`/`digit_set`/`space_set`, tier-1 core) must agree
+// EXACTLY with the oracle-generated code-point ranges (`is_*_cp`, tier-2 unicode, built from `re.fullmatch`)
+// over the whole ASCII range. Core cannot include the generated tables (a layer violation), so the two are
+// separate sources of truth; this pins them. The `\s` set once dropped U+001C-U+001F — which Python `re`
+// matches and `space_ranges` lists — and this test would have caught that regression at build time.
+TEST(ascii_shorthands_match_generated_ranges)
+{
+  using namespace real::detail;
+  for (unsigned c = 0; c < 128; ++c) {
+    const auto     b  {static_cast<std::uint8_t>(c)};
+    const char32_t cp {c};
+    EXPECT(word_set().test(b) == is_word_cp(cp));
+    EXPECT(digit_set().test(b) == is_digit_cp(cp));
+    EXPECT(space_set().test(b) == is_space_cp(cp));
+  }
+}
+
+TEST(space_matches_cpython_file_separators)
+{
+  // Python re's `\s` matches U+001C-U+001F (str.isspace); pin the four across `\s`, `\S`, `[\s]`, `[^\s]` — the
+  // regression the ASCII set once carried, at the matching level (not just the class definition).
+  for (char sep = 0x1C; sep <= 0x1F; ++sep) {
+    const std::string s(1, sep);
+    EXPECT(real::regex(R"(\s)").fullmatch(s));
+    EXPECT(!real::regex(R"(\S)").fullmatch(s));
+    EXPECT(real::regex(R"([\s])").fullmatch(s));
+    EXPECT(!real::regex(R"([^\s])").fullmatch(s));
+  }
+  EXPECT(real::regex(R"(\s)").fullmatch(" "sv));  // ordinary whitespace still matches
+  EXPECT(!real::regex(R"(\s)").fullmatch("a"sv)); // a letter does not
+}
 
 TEST(simple_class_and_ranges)
 {
