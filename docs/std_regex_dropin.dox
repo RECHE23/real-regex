@@ -6,9 +6,11 @@ pattern on REAL — linear-time and ReDoS-safe — wherever that is provably ide
 ECMAScript default and all five POSIX grammars (`basic`/`extended`/`awk`/`grep`/`egrep`) when the pattern
 translates, falling back to `std::regex` everywhere else. The contract in one sentence:
 **behave identically to `std::regex`, never a silent divergence.** And the payoff: under the default
-strict policy every accepted pattern runs on REAL's linear engine — so it is, to our knowledge, the only
-`std::regex`-compatible layer where **even the POSIX grammars cannot be ReDoS'd** (`(a+)+b` under `egrep`
-is linear where a `std::regex` drop-in blows up).
+strict policy every accepted pattern runs each `regex_search` / `regex_match` in time linear in the input
+— **no accepted pattern can make matching super-linear**, across all five POSIX grammars, where a
+`std::regex` drop-in blows up exponentially on `(a+)+b`. (`regex_replace` and the iterators compose O(n)
+such operations — quadratic worst-case, inherent to any linear engine, but never exponential; a nullable
+pattern's replace/iteration delegates to std. See @ref compat.)
 
 \section dropin_migrate The migration
 

@@ -6,12 +6,19 @@ provably equivalent to `std::regex`: the ECMAScript default, **and all five POSI
 (`basic`/`extended`/`awk`/`grep`/`egrep`) when the pattern translates. It falls back to `std::regex`
 everywhere else.
 
-**Even the POSIX grammars cannot be ReDoS'd.** Under the default `policy::strict`, every pattern the layer
-*accepts* runs on `real`'s linear engine — one it cannot run linearly is **rejected**, never silently made
-non-linear. `policy::fallback` instead delegates such a pattern to `std::regex` (backtracking — the linear
-guarantee is forfeited for it, and `uses_real()` reports `false`). So `(a+)+b` under an `egrep` grammar is
-linear where a `std::regex` drop-in blows up — this is, to our knowledge, the only `std::regex`-compatible
-layer where that holds across the POSIX grammars, and it is pinned by the Fowler/AT&T conformance gate.
+**No accepted pattern can make matching super-linear — across all five POSIX grammars.** Under the default
+`policy::strict`, every accepted pattern executes each `regex_search` / `regex_match` in time **linear in
+the input** — REAL's ReDoS-safety guarantee, now covering the POSIX grammars, not just the ECMAScript
+default. A pattern the linear engine cannot represent is **rejected**, never silently made non-linear;
+`policy::fallback` instead delegates it to `std::regex` (backtracking — the guarantee forfeited, and
+`uses_real()` reports `false`). So `(a+)+b` under an `egrep` grammar runs `regex_search` in microseconds
+where a `std::regex` drop-in blows up exponentially — pinned by the Fowler/AT&T conformance gate.
+
+`regex_replace` and the iterators *compose* up to O(n) such operations, so their worst-case total is
+**quadratic** — inherent to repeated scanning on any linear engine (RE2 and the Rust `regex` crate
+included), not a REAL limitation — but **never exponential** when running on REAL. A **nullable** pattern's
+replace/iteration delegates to `std::regex` (correct results, not ReDoS-safe): iterating a nullable is
+O(n²) even on a linear engine, so REAL cannot promise linear there and does not pretend to.
 
 > New here? Start with the migration tour: [Drop-in for std::regex](@ref std_regex_dropin). This page
 > is the exhaustive per-feature reference; REAL's own differences from Python `re` are in

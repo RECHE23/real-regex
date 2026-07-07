@@ -140,8 +140,10 @@ namespace real::compat {
 
   //! \brief The drop-in policy for a pattern the linear engine cannot represent (backreferences, an
   //!        unbounded lookaround, a POSIX class, …). `strict` (the default) rejects it, so every accepted
-  //!        pattern is a linear-time, ReDoS-safe guarantee; `fallback` delegates it to `std::regex`, which
-  //!        may accept it but **forfeits the linear-time guarantee** for that pattern.
+  //!        pattern executes each `regex_search`/`regex_match` in time linear in the input — the ReDoS-safety
+  //!        guarantee (replace/iterate compose O(n) such operations: quadratic worst-case on any linear
+  //!        engine, never exponential); `fallback` delegates it to `std::regex`, which may accept it but
+  //!        **forfeits the guarantee** for that pattern.
   enum class policy : std::uint8_t
   {
     strict,   //!< Reject an ineligible pattern (throws `regex_error` with `error_complexity`). The default.
@@ -687,10 +689,10 @@ namespace real::compat {
       return posix_longest_;
     }
 
-    //! \brief Whether replace/iterate run on the `real` traversal (real-backed AND non-nullable). A POSIX-ERE
-    //!        pattern is included on the same terms as any other real-backed pattern: its replace/iterate run on
-    //!        `find_iter_longest` (leftmost-longest bounds — see the consumers). Nullable still delegates to std
-    //!        (the empty-match traversal differs), exactly as on the ECMAScript path.
+    //! \brief Whether replace/iterate run on the `real` traversal (real-backed AND non-nullable). A nullable
+    //!        pattern delegates replace/iterate to std (the empty-match traversal differs; and iterating a
+    //!        nullable pattern whose per-position match cost is O(n) is O(n²) on any linear engine, so routing
+    //!        it buys correctness but not a linear guarantee — see the nullable note in COMPATIBILITY.md).
     [[nodiscard]] bool uses_real_traversal() const noexcept
     {
       return uses_real() && !nullable_;

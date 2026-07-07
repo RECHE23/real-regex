@@ -111,3 +111,17 @@ TEST(posix_all_five_grammars_are_redos_safe)
     EXPECT(!rc::regex_search(s, m, re)); // completes with no match — a backtracker would hang here
   }
 }
+
+TEST(posix_nullable_search_is_linear_replace_delegates)
+{
+  // The per-operation title, pinned: for the nullable counter-example, matching is linear on REAL (the strong
+  // guarantee), but replace/iterate delegate to std — iterating a nullable is O(n²) on ANY linear engine, so
+  // REAL does not promise linear there and does not pretend to.
+  const rc::regex   re {"((a+)+b)?", rc::regex_constants::extended};
+  EXPECT(re.posix_longest());         // regex_search / regex_match run on REAL's linear engine
+  EXPECT(!re.uses_real_traversal());  // but replace / iterators delegate to std (nullable)
+  const std::string s(100000, 'a');   // 100k 'a', no trailing 'b'
+  rc::smatch        m;
+  EXPECT(rc::regex_search(s, m, re)); // linear: completes at once where std blows up exponentially
+  EXPECT(m.length(0) == 0);           // the leftmost match is the empty `?` branch
+}
