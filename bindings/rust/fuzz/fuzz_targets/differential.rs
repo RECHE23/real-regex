@@ -178,6 +178,39 @@ fn has_non_strict_brace(pattern: &str) -> bool {
     false
 }
 
+/// Whether the pattern has an empty alternation branch — a `|` with nothing on one side (`(|`, `|)`, `||`, or
+/// a `|` at the pattern edge). Inside a repetition this is the div_empty_first_branch_loop class where REAL,
+/// `re`, and the crate diverge three ways; `re` is the arbiter. Conservative — any empty branch counts (a
+/// false positive only skips more), mirroring the C++ `has_empty_alternation_branch` the POSIX translators use.
+fn has_empty_alternation_branch(pattern: &str) -> bool {
+    let b = pattern.as_bytes();
+    let mut i = 0;
+    let mut in_class = false;
+    let mut escaped = false;
+    while i < b.len() {
+        let c = b[i];
+        if escaped {
+            escaped = false;
+        } else if c == b'\\' {
+            escaped = true;
+        } else if in_class {
+            if c == b']' {
+                in_class = false;
+            }
+        } else if c == b'[' {
+            in_class = true;
+        } else if c == b'|' {
+            let left_empty = i == 0 || b[i - 1] == b'(' || b[i - 1] == b'|';
+            let right_empty = i + 1 >= b.len() || b[i + 1] == b')' || b[i + 1] == b'|';
+            if left_empty || right_empty {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
 fuzz_target!(|data: &[u8]| {
     if data.is_empty() {
         return;
@@ -217,6 +250,15 @@ fuzz_target!(|data: &[u8]| {
     // legitimately differ, both correct for their contract. \p{} itself is now fully compared (both Unicode
     // 16.0.0; the exhaustive per-property proof is tests/property_differential.rs).
     if is_icase(pattern) && text.chars().any(|c| ICASE_FOLD_DELTAS.contains(&c)) {
+        return;
+    }
+    // Skip the documented empty-alternation-branch loop divergence (README "Divergences" +
+    // div_empty_first_branch_loop): an empty branch inside a repetition makes REAL, Python `re`, and the crate
+    // each do a DIFFERENT thing under find_iter's forced-non-empty retry — REAL consumes maximally, `re` exits
+    // through the empty branch, the crate goes all-empty (or drops the trailing empty). `re` is REAL's arbiter
+    // here, not the crate (its own bugs on this family are in the README "Divergences" entry), so a REAL-vs-crate
+    // difference is not a REAL bug.
+    if has_empty_alternation_branch(pattern) {
         return;
     }
 

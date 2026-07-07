@@ -18,7 +18,10 @@ subset where REAL and ``re`` agree by construction:
     are implementation-defined territory where Python, PCRE, RE2 and Rust all
     disagree (capture of the final empty iteration, and match extent under
     ``finditer``); REAL follows Perl/PCRE-style semantics. They are excluded
-    from the compared subset, not generated inside a loop.
+    from the compared subset, not generated inside a loop. The empty-first-branch
+    case (``(|a)*`` — REAL, re and the Rust crate each differ) is pinned
+    deterministically in ``TestIntentionalDivergences`` and documented as
+    ``div_empty_first_branch_loop``, so this random generator need not cover it.
 Everything else — spans and every group span — is compared exactly.
 """
 

@@ -71,6 +71,15 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   whitespace-tolerant, so `{ 2 }` / `{\n4\n}` are quantifiers to it — `${\n…}` becomes `$` repeated (an empty
   match) where re/REAL find nothing. A legal parser-interpretation difference, both correct for their contract;
   the differential fuzzer skips a non-strict-brace pattern by form.
+- **Empty-alternation-branch loops — a three-way corner.** For an empty-first-branch repetition (`(|a)*`)
+  under `find_iter`'s forced-non-empty step, REAL, the `regex` crate, and Python `re` each produce a
+  *different* span sequence on `"aa"`: REAL consumes maximally (`(0,0)(0,2)(2,2)`), the crate goes all-empty
+  (`(0,0)(1,1)(2,2)`) or drops the trailing empty (`(a|)*` → loses the final `(2,2)`), and `re` steps out
+  through the empty branch (`(0,0)(0,1)(1,1)(1,2)(2,2)`). REAL's exact behaviour and why it is not "fixed"
+  (a fix would rework the star-loop termination that underlies every quantifier) are pinned in the C++
+  divergences page (`div_empty_first_branch_loop`); the differential fuzzer skips the class by form
+  (`has_empty_alternation_branch`), since the crate is not a reliable oracle for it — Python `re` is. A
+  single `find` / `captures` agrees.
 - **`shortest_match` — residual.** REAL is leftmost-**first** (like `regex`), but this returns the leftmost
   match's *greedy* end, whereas `regex` returns the earliest position at which a match completes (`a+` on
   `"aaa"`: REAL `3`, `regex` `1`). A true earliest-completion mode (a `first-accept` stop in the forward

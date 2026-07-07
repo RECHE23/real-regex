@@ -348,6 +348,31 @@ class TestIntentionalDivergences(unittest.TestCase):
                 self.assertEqual(real.search(pattern, subject).span(1),
                                  re.search(pattern, subject).span(1))
 
+    def test_empty_first_branch_loop_span_forced_non_empty(self):
+        r"""An unbounded */+ loop whose body's FIRST alternative is empty and a later one consumes
+        ((|a)*): under a forced-non-empty retry (finditer/sub), re exits the loop through the empty
+        branch (shortest non-empty match) while REAL consumes maximally. Only the finditer span sequence
+        differs -- search/match/fullmatch, and the empty-LAST and bounded forms, are in parity.
+        Double-pinned (both sequences). See the div_empty_first_branch_loop divergences section; the
+        regex crate does a third thing, so re is the arbiter, never the crate."""
+        diverging = [
+            (r"(|a)*", "aa", [(0, 0), (0, 1), (1, 1), (1, 2), (2, 2)], [(0, 0), (0, 2), (2, 2)]),
+            (r"(|a)+", "aa", [(0, 0), (0, 1), (1, 1), (1, 2), (2, 2)], [(0, 0), (0, 2), (2, 2)]),
+            (r"(a||b)*", "ab", [(0, 1), (1, 1), (1, 2), (2, 2)], [(0, 2), (2, 2)]),
+        ]
+        for pattern, subject, re_spans, real_spans in diverging:
+            with self.subTest(pattern=pattern, kind="diverges"):
+                self.assertEqual([m.span() for m in re.finditer(pattern, subject)], re_spans)
+                self.assertEqual([m.span() for m in real.finditer(pattern, subject)], real_spans)
+        # Green witnesses: single-match is in parity, and the empty-LAST + bounded forms agree fully.
+        for pattern, subject in [(r"(|a)*", "aa"), (r"(|a)+", "aa")]:
+            with self.subTest(pattern=pattern, kind="single-match-parity"):
+                self.assertEqual(real.search(pattern, subject).span(), re.search(pattern, subject).span())
+        for pattern, subject in [(r"(a|)*", "aa"), (r"(|a){2}", "aa"), (r"(|a){1,3}", "aa")]:
+            with self.subTest(pattern=pattern, kind="parity"):
+                self.assertEqual([m.span() for m in real.finditer(pattern, subject)],
+                                 [m.span() for m in re.finditer(pattern, subject)])
+
     def test_icase_folds_unicode(self):
         # Text-mode icase does full Unicode simple case folding, like re.IGNORECASE: ASCII letters,
         # and non-ASCII code points, fold -- é matches É, and k matches Kelvin (U+212A).
