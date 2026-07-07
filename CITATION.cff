@@ -1,12 +1,12 @@
 cff-version: 1.2.0
 message: "If you use REAL, please cite it using this metadata."
 title: "REAL — Regular Expression Algorithmic Library"
-abstract: "A header-only C++20 regular-expression engine with linear-time, ReDoS-safe matching and bounded lookarounds, plus a drop-in re-compatible Python binding."
+abstract: "A header-only C++20 regular-expression engine with linear-time, ReDoS-safe matching and bounded lookarounds, a drop-in re-compatible Python binding, a Rust crate, and a std::regex-compatible layer that covers the POSIX grammars linearly."
 authors:
   - given-names: René
     family-names: Chenard
     email: rene.chenard.1@ulaval.ca
-version: "2026.6.18"
-date-released: "2026-06-28"
+version: "2026.7.25"
+date-released: "2026-07-07"
 repository-code: "https://github.com/RECHE23/real-regex"
 license: MIT
