@@ -80,29 +80,30 @@ both ISAs, on the exact same tree (`16ff722`, checksummed both ends).
 
 | case | `re` | REAL | ratio |
 | --- | ---: | ---: | ---: |
-| digits · sparse findall @100KB | 1.52 ms | 159.3 µs | **9.56×** |
-| word starts · findall (multiline) | 589.8 µs | 19.7 µs | **29.92×** |
-| sub · spaces @100KB | 3.03 ms | 626.5 µs | 4.83× |
-| date · findall groups | 1.63 ms | 474.2 µs | 3.42× |
-| sub · dates with refs | 1.64 ms | 477.3 µs | 3.42× |
-| date · search @100KB | 1.52 ms | 464.3 µs | 3.28× |
-| alternation · findall @100KB | 1.07 ms | 526.6 µs | 2.03× |
-| hex ids · findall | 333.9 µs | 188.2 µs | 1.78× |
-| words · dense findall @100KB | 2.07 ms | 1.36 ms | 1.53× |
-| literal · hit @1MB | 927.3 µs | 634.5 µs | 1.46× |
-| non-space · Unicode findall | 2.35 ms | 1.92 ms | 1.24× |
-| emails · findall groups | 1.98 ms | 1.87 ms | **1.07× ↑** (was 0.32×) |
-| literal · anchored miss @1MB | 239 ns | 279 ns | **0.86×** |
-| split · commas @100KB | 101.9 µs | 437.6 µs | **0.24×** |
+| word starts · findall (multiline) | 584.4 µs | 19.5 µs | **30.16×** |
+| digits · sparse findall @100KB | 1.50 ms | 156.6 µs | **9.60×** |
+| date · findall groups | 1.61 ms | 194.9 µs | **8.25× ↑** (was 3.42×) |
+| date · search @100KB | 1.51 ms | 192.6 µs | **7.84× ↑** (was 3.28×) |
+| sub · dates with refs | 1.64 ms | 212.7 µs | **7.71× ↑** (was 3.42×) |
+| sub · spaces @100KB | 2.99 ms | 621.3 µs | 4.82× |
+| alternation · findall @100KB | 1.06 ms | 518.3 µs | 2.05× |
+| hex ids · findall | 330.5 µs | 192.2 µs | 1.73× |
+| words · dense findall @100KB | 2.05 ms | 1.37 ms | 1.48× |
+| literal · hit @1MB | 920.5 µs | 634.1 µs | 1.45× |
+| non-space · Unicode findall | 2.33 ms | 1.89 ms | 1.22× |
+| emails · findall groups | 1.96 ms | 1.82 ms | 1.09× |
+| literal · anchored miss @1MB | 236 ns | 281 ns | **0.84×** |
+| split · commas @100KB | 102.2 µs | 421.7 µs | **0.24×** |
 | `(a+)+b` · re n=24 / REAL n=10k | 1397.76 ms | 46.0 µs | **30408×** (ReDoS) |
 
-**Geometric-mean speedup over `re`: 2.06× (CI [1.37, 3.12] clears 1.0 — PASS).** The headline change since
-the last refresh: **emails-with-groups flipped from a 0.32× loss to a 1.07× win** — the one-pass capture
-extractor now pays for the dense group case the binding used to lose. Two cases remain *slower* than `re`:
-**comma split (0.24×)** and **anchored miss (0.86×)** — high-volume `split` / tiny anchored matches where
-CPython's C engine has the lower per-match constant. REAL's edge widens on sparse/rare-byte scans, sub, and
-anything pathological (`(a+)+b`: 30408× — `re` blows up, REAL stays linear); the two losses are an accepted
-trade for linear-time safety.
+**Geometric-mean speedup over `re`: 2.34× (CI [1.51, 3.76] clears 1.0 — PASS).** The headline change since
+the 2026.7.16 baseline: the **`\d{n}` quantifier / capture path roughly doubled** — date search 3.28 → **7.84×**,
+date findall-groups 3.42 → **8.25×**, sub-with-dates 3.42 → **7.71×** — while emails-with-groups holds its
+earlier flip to a win (1.09×). Two cases remain *slower* than `re`: **comma split (0.24×)** and **anchored
+miss (0.84×)** — high-volume `split` / tiny anchored matches where CPython's C engine has the lower per-match
+constant. REAL's edge widens on sparse/rare-byte scans, sub, and anything pathological (`(a+)+b`: 30408× —
+`re` blows up, REAL stays linear; on a fuzzed corpus `re` hit 85 catastrophic blow-ups, REAL none); the two
+losses are an accepted trade for linear-time safety.
 
 ### finditer memory — lazy iteration
 

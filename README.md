@@ -40,11 +40,12 @@ REAL gives you **both**: linear-time, ReDoS-safe matching *with* bounded lookaro
 | Header-only, zero-dependency  | ✅ | ✅¹ | ❌ | ❌ | ❌ | — |
 | Constexpr (compile-time match)| ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Drop-in Python `re`           | ✅² | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Raw throughput                | fast³ | 5–28× slower⁴ | 3–9× slower | mixed⁵ | fast | slow |
+| Raw throughput                | fast³ | 6–55× slower⁴ | 1.2–9× slower | mixed⁵ | fast | slow |
 
 ¹ part of the C++ standard library. ² for the supported subset (no backreferences, etc.).
-³ REAL now beats PCRE2-JIT on class scans (`[a-z]+` **1.9×**, `[0-9]+` **1.7×**); PCRE2-JIT still leads on
-straight-line literals / alternation.
+³ REAL-vs-PCRE2-JIT on class scans is **ISA-dependent**: on **x86-64** REAL leads (`[a-z]+` **1.9×**,
+`[0-9]+` **1.9×**), on **arm64** PCRE2's JIT retakes them (0.86–0.92×) — same engine, same version, purely the
+JIT's per-ISA codegen (§A). PCRE2-JIT leads straight-line literals / alternation / quantifiers on both.
 ⁴ backtracking — **4.1 s where REAL takes 0.5 ms** on a `(a+)+b`-style input: the ReDoS-safety property,
 quantified, not an adjective.
 ⁵ not one verdict: REAL leads class scans (**5–6×**) and dense-capture extraction (**3–6×**); the crate leads
