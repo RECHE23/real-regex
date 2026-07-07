@@ -19,38 +19,60 @@ answer is not a benchmark win.
 
 | | |
 | --- | --- |
-| Version | REAL `2026.7.16` — every section below re-measured on it, 2026-07-05 |
-| Machines | devbox (`x86-64`, g++ 13) for §A / §C · Apple M1 Pro (`arm64`, Apple clang 16) for §B / §E |
-| Engines | `std::regex`, PCRE2 10.47 **(JIT enabled — the harness prints `PCRE2_CONFIG_JIT = 1`, x86-64)**, RE2 11.0.0 |
-| Python | CPython 3.14, `re` (stdlib) vs the published REAL `2026.7.16` abi3 wheel |
-| Method | median of repeated batches, paired, with a bootstrap CI; match counts checked equal across engines; **non-cherry-picked** — the losses show |
+| Version | REAL `2026.7.25` (`16ff722`, checksummed both ends) — §A re-measured per-ISA on it, 2026-07-07 |
+| Machines | §A on **two ISAs**: devbox (`x86-64`, g++ 13.3) *and* Apple M1 Pro (`arm64`, Apple clang 16). §B / §E on M1 Pro |
+| Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (built from source on x86-64 to pin the exact version); RE2 (10.0 on x86-64, 11.0 on arm64 — version-differs-by-leg, uncontested given the margins) |
+| Python | CPython 3.14, `re` (stdlib) vs the REAL `2026.7.25` abi3 wheel (§B) |
+| Method | median of N ≥ 15 paired batches, bootstrap CI; match counts checked equal across engines; **non-cherry-picked** — the losses show. **Ratios are the durable content; absolute ns/B track the host, meaningful only under this stamp** |
 
-## A. C++ engine throughput
+## A. C++ engine throughput — and the PCRE2 story is ISA-dependent
 
-Each engine compiles the pattern once, then counts all non-overlapping matches over
-the same corpus; only the scan is timed. `ns/B` is nanoseconds per corpus byte (lower
-is better). `(x)` is *engine_time / REAL_time* — **> 1 means REAL is faster**. Match
-counts agreed across all four engines on every case.
+Each engine compiles the pattern once, then counts all non-overlapping matches over the same corpus; only
+the scan is timed. `ns/B` is nanoseconds per corpus byte (lower is better). `(x)` is *engine_time /
+REAL_time* — **> 1 means REAL is faster**. Match counts agreed across all four engines on every case, on
+both ISAs, on the exact same tree (`16ff722`, checksummed both ends).
+
+**x86-64** — devbox, g++ 13.3, N = 30, PCRE2 10.47-JIT, RE2 10.0:
 
 | case | REAL ns/B | std::regex | PCRE2-JIT | RE2 |
 | --- | ---: | ---: | ---: | ---: |
-| words `[a-z]+` (1 MB) | 3.29 | 29.14 (8.9×) | 6.39 (**1.94×**) | 28.36 (8.6×) |
-| digits `[0-9]+` | 2.08 | 24.50 (11.8×) | 3.61 (**1.73×**) | 16.96 (8.2×) |
-| fields `[^,]+` | 4.57 | 25.72 (5.6×) | 5.06 (**1.11×**) | 23.10 (5.1×) |
-| date `{4}-{2}-{2}` | 0.66 | 18.24 (27.6×) | 0.61 (0.93× ≈) | 4.10 (6.2×) |
-| alternation `the\|fox\|dog` | 2.71 | 29.93 (11.0×) | 2.23 (0.82×) | 10.46 (3.9×) |
-| literal | 0.77 | 15.04 (19.5×) | 0.58 (0.75×) | 2.39 (3.1×) |
-| hex `[0-9a-f]{8}` | 3.61 | 20.48 (5.7×) | 1.81 (0.50×) | 4.09 (1.1×) |
-| lookahead `[a-z]+(?=[a-z])` | 114.7 | 77.74 (0.68×) | 7.22 (0.06×) | unsupported |
+| words `[a-z]+` | 3.34 | 8.9× | **1.93×** | 8.5× |
+| digits `[0-9]+` | 1.89 | 12.9× | **1.93×** | 9.0× |
+| fields `[^,]+` | 4.51 | 5.6× | **1.10×** | 5.1× |
+| alternation `the\|fox\|dog` | 3.08 | 9.8× | 0.73× | 3.4× |
+| date `{4}-{2}-{2}` | 2.98 | 6.1× | 0.22× | 1.4× |
+| hex `[0-9a-f]{8}` | 3.33 | 6.2× | 0.59× | 1.2× |
+| literal | 0.77 | 19.6× | 0.76× | 3.1× |
+| lookahead `[a-z]+(?=[a-z])` | 113.3 | 0.68× | 0.06× | unsupported |
 
-**Reading.** REAL beats `std::regex` by **5.6–27.6×** and RE2 by **1.1–8.6×** across the board. The headline
-shift since the earlier baseline: **REAL now out-runs PCRE2's JIT on class scans** — `[a-z]+` **1.94×**,
-`[0-9]+` **1.73×**, `[^,]+` **1.11×**, and level on the rare-byte date (0.93×) — where it previously trailed.
-(The JIT is genuinely on: the harness reports `PCRE2_CONFIG_JIT = 1`.) PCRE2-JIT still leads on straight-line
-literal / alternation / hex (0.50–0.82×), emitting native code per pattern where REAL is a header-only
-constexpr Pike VM. And the **lookahead line is deliberately honest**: at 0.06× vs PCRE2, REAL pays dearly to
-do a bounded lookaround *in linear time* — a feature RE2 and the rust crate cannot do at all (§follow-up: the
-lookaround VM path is not one of the fast paths).
+**arm64** — Apple M1 Pro, Apple clang 16, N = 15, PCRE2 10.47-JIT, RE2 11.0:
+
+| case | REAL ns/B | std::regex | PCRE2-JIT | RE2 |
+| --- | ---: | ---: | ---: | ---: |
+| words `[a-z]+` | 2.70 | 34.3× | **0.86×** | 5.2× |
+| digits `[0-9]+` | 1.56 | 53.3× | **0.92×** | 5.7× |
+| fields `[^,]+` | 3.06 | 24.5× | **0.61×** | 3.6× |
+| alternation `the\|fox\|dog` | 2.07 | 54.9× | 0.78× | 3.0× |
+| date `{4}-{2}-{2}` | 2.07 | 35.1× | 0.19× | 1.7× |
+| hex `[0-9a-f]{8}` | 2.49 | 32.5× | 0.52× | 1.4× |
+| literal | 0.63 | 49.4× | 0.76× | 2.2× |
+| lookahead `[a-z]+(?=[a-z])` | 60.5 | 2.6× | 0.06× | unsupported |
+
+**Reading — what is robust, and what depends on the ISA.**
+
+- **REAL ≫ `std::regex`**, always: 5.6–19.6× on x86-64, 24–55× on arm64 (libc++'s `std::regex` falls even
+  further behind on arm64). Never below 5.6×.
+- **REAL > RE2**, always: 1.2–9.0× on x86-64, 1.4–5.7× on arm64.
+- **REAL vs PCRE2-JIT flips with the ISA on class scans** — the honest headline. On **x86-64** REAL out-runs
+  PCRE2's JIT on `[a-z]+` (1.93×), `[0-9]+` (1.93×), `[^,]+` (1.10×); on **arm64** the JIT retakes them
+  (0.86×, 0.92×, 0.61×). *Same engine, same PCRE2 version (10.47), same corpus, same tree* — the difference
+  is purely the JIT's per-ISA code quality. On both ISAs PCRE2 leads the straight-line literal / alternation /
+  quantifier cases (0.19–0.78×).
+- **The lookahead line is about safety, not raw speed** — stated plainly. REAL does a **bounded lookaround in
+  linear time**; PCRE2 does it ~16× faster but by **backtracking** (so PCRE2 is itself ReDoS-able on a crafted
+  lookaround), and **RE2 and the rust crate cannot do it at all** (`unsupported`). On throughput REAL trails
+  here (arm64 2.6× vs std; on x86-64 std is ~1.45× *faster* than REAL) — the value is the guarantee, not the
+  ns/B.
 
 ## B. Python binding vs re
 
