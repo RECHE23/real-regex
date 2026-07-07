@@ -89,3 +89,25 @@ TEST(posix_egrep_is_redos_safe_and_declines_cleanly)
   EXPECT(!d::translate_ere("a\\d", /*awk=*/ true).has_value());
   EXPECT(!d::translate_posix("ab\n\na", ff::grep).has_value()); // blank middle branch -> std
 }
+
+TEST(posix_all_five_grammars_are_redos_safe)
+{
+  // Every POSIX grammar's pathological pattern runs in LINEAR time on REAL; std::regex would blow up
+  // catastrophically (libstdc++ exponential backtracking, libc++ a complexity throw). std's behaviour is
+  // DOCUMENTED, not executed here — running it would hang or throw. The proof is that these all COMPLETE on a
+  // large non-matching input: a backtracker cannot. Each routes to REAL (posix_longest) and returns no match.
+  namespace ff = rc::regex_constants;
+  const std::string s(50000, 'a'); // 50k 'a', no trailing 'b' — the ReDoS trigger
+  struct tc { const char* pat; ff::syntax_option_type g; };
+  const tc cases[] {
+    {.pat = "(a+)+b", .g = ff::extended}, {.pat = R"(\(a*\)*b)", .g = ff::basic},
+    {.pat = "(a+)+b", .g = ff::awk}, {.pat = R"(\(a*\)*b)", .g = ff::grep},
+    {.pat = "(a+)+b", .g = ff::egrep},
+  };
+  for (const tc& c : cases) {
+    const rc::regex re {c.pat, c.g};
+    EXPECT(re.posix_longest());          // ran on REAL's linear engine, not delegated to std
+    rc::smatch m;
+    EXPECT(!rc::regex_search(s, m, re)); // completes with no match — a backtracker would hang here
+  }
+}

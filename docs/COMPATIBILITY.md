@@ -2,7 +2,16 @@
 
 `real::compat` (header `<real/std/regex.hpp>`) is a drop-in for the `<regex>` surface on the
 `char` path. It runs your pattern on **`real`** — linear-time and ReDoS-safe — wherever that is
-provably equivalent to `std::regex` (ECMAScript), and falls back to `std::regex` everywhere else.
+provably equivalent to `std::regex`: the ECMAScript default, **and all five POSIX grammars**
+(`basic`/`extended`/`awk`/`grep`/`egrep`) when the pattern translates. It falls back to `std::regex`
+everywhere else.
+
+**Even the POSIX grammars cannot be ReDoS'd.** Under the default `policy::strict`, every pattern the layer
+*accepts* runs on `real`'s linear engine — one it cannot run linearly is **rejected**, never silently made
+non-linear. `policy::fallback` instead delegates such a pattern to `std::regex` (backtracking — the linear
+guarantee is forfeited for it, and `uses_real()` reports `false`). So `(a+)+b` under an `egrep` grammar is
+linear where a `std::regex` drop-in blows up — this is, to our knowledge, the only `std::regex`-compatible
+layer where that holds across the POSIX grammars, and it is pinned by the Fowler/AT&T conformance gate.
 
 > New here? Start with the migration tour: [Drop-in for std::regex](@ref std_regex_dropin). This page
 > is the exhaustive per-feature reference; REAL's own differences from Python `re` are in

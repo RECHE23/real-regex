@@ -2,9 +2,13 @@
 \page std_regex_dropin Drop-in for std::regex
 
 `real::compat` is a drop-in replacement for the `<regex>` surface on the `char` path. It runs your
-pattern on REAL — linear-time and ReDoS-safe — wherever that is provably identical to `std::regex`
-(ECMAScript), and falls back to `std::regex` everywhere else. The contract in one sentence:
-**behave identically to `std::regex`, never a silent divergence.**
+pattern on REAL — linear-time and ReDoS-safe — wherever that is provably identical to `std::regex`: the
+ECMAScript default and all five POSIX grammars (`basic`/`extended`/`awk`/`grep`/`egrep`) when the pattern
+translates, falling back to `std::regex` everywhere else. The contract in one sentence:
+**behave identically to `std::regex`, never a silent divergence.** And the payoff: under the default
+strict policy every accepted pattern runs on REAL's linear engine — so it is, to our knowledge, the only
+`std::regex`-compatible layer where **even the POSIX grammars cannot be ReDoS'd** (`(a+)+b` under `egrep`
+is linear where a `std::regex` drop-in blows up).
 
 \section dropin_migrate The migration
 
