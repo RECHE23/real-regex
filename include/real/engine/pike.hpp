@@ -1952,11 +1952,61 @@ namespace real::detail {
     [[nodiscard]] constexpr bool lookaround_holds(std::uint16_t sub_id,
                                                   std::size_t   pos)
     {
-      const lookaround_sub& sub     {prog_.lookarounds[sub_id]};
-      const bool            matched {sub.direction == look_dir::behind
-                                       ? lookbehind_matches(sub, pos)
-                                       : lookahead_matches(sub, pos)};
+      const lookaround_sub& sub {prog_.lookarounds[sub_id]};
+      // L1 peephole: a single-width body compiles to exactly [one consuming op; match] (code_length 2). Test it
+      // directly, skipping the sub-VM scaffolding (~37 ns/eval — a ~4x win on the common single-class assertion,
+      // P0-measured). Negation is over the RESULT (applied below), so an empty / boundary position flips right.
+      if (sub.code_length == 2) {
+        const instr& body   {prog_.code[static_cast<std::size_t>(sub.code_offset)]};
+        const bool   direct {body.op == opcode::byte || body.op == opcode::klass
+                             || (body.op == opcode::klass_cp && !prog_.byte_mode)};
+        if (direct) {
+          const bool matched {sub.direction == look_dir::behind ? single_class_behind(body, pos)
+                                                                : single_class_ahead(body, pos)};
+          return sub.negative ? !matched : matched;
+        }
+      }
+      const bool matched {sub.direction == look_dir::behind ? lookbehind_matches(sub, pos)
+                                                            : lookahead_matches(sub, pos)};
       return sub.negative ? !matched : matched;
+    }
+
+    //! \brief L1 peephole — does the single consuming op \p body match the code point / byte AT \p pos (ahead)?
+    //!        Mirrors the per-op logic of \ref lookahead_matches for a one-instruction sub-program.
+    [[nodiscard]] constexpr bool single_class_ahead(const instr& body,
+                                                    std::size_t  pos)
+    {
+      if (pos >= text_.size()) {
+        return false; // nothing ahead: the body cannot match — (?=…) false / (?!…) true (negated by the caller)
+      }
+      if (body.op == opcode::klass_cp) {
+        const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, pos)};
+        return dc.valid && cp_class_matches(prog_.cp_classes[body.arg16], dc.cp);
+      }
+      const auto b {static_cast<std::uint8_t>(text_[pos])};
+      return body.op == opcode::byte ? b == body.arg8 : prog_.classes[body.arg16].test(b);
+    }
+
+    //! \brief L1 peephole — does \p body match the code point / byte ending EXACTLY at \p pos (behind)?
+    //!        The defining lookbehind trap: the match must END at \p pos, so the code point is the one whose
+    //!        aligned start s gives `s + length == pos` (byte mode: `pos - 1`).
+    [[nodiscard]] constexpr bool single_class_behind(const instr& body,
+                                                     std::size_t  pos)
+    {
+      if (pos == 0) {
+        return false; // nothing behind: (?<=…) false / (?<!…) true (negated by the caller)
+      }
+      if (body.op == opcode::klass_cp) {
+        std::size_t s {pos - 1};
+        while (s > 0 && (static_cast<std::uint8_t>(text_[s]) & 0xC0U) == 0x80U) {
+          --s; // recede over UTF-8 continuation bytes to the code point's aligned start
+        }
+        const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, s)};
+        return dc.valid && s + static_cast<std::size_t>(dc.length) == pos
+               && cp_class_matches(prog_.cp_classes[body.arg16], dc.cp);
+      }
+      const auto b {static_cast<std::uint8_t>(text_[pos - 1])};
+      return body.op == opcode::byte ? b == body.arg8 : prog_.classes[body.arg16].test(b);
     }
 
     /*!
