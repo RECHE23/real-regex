@@ -277,12 +277,59 @@ namespace real::compat {
       return true;
     }
 
-    //! \brief Translates a POSIX **extended** (ERE) pattern to an equivalent REAL (ECMAScript-ish) pattern, or
-    //!        `nullopt` when it uses a construct the two grammars read differently (an ECMAScript shorthand
-    //!        `\d\w\s\b` — undefined/literal in ERE; an ambiguous `{`; an unknown/collating `[[:…:]]`/`[.x.]`).
-    //!        POSIX classes become ASCII ranges (C locale); the common productions pass through, since REAL reads
-    //!        them like ERE. On `nullopt` the caller keeps the std backend. Validated by a bounds differential.
-    [[nodiscard]] inline std::optional<std::string> translate_ere(std::string_view p)
+    //! \brief Appends the REAL translation of an awk C-escape at \p i (which points at the backslash),
+    //!        advancing \p i; returns false to decline (→ std). awk's escapes beyond ERE: `\b` is BACKSPACE
+    //!        (0x08) — **not** a word boundary, the inverse of the ERE decline — `\a`=BEL, `\n\t\r\f\v` the usual
+    //!        controls, `\/` and `\"` literals, and a 1-to-3-digit octal `\ddd` (both std libraries agree; an
+    //!        overflow > 0377 declines). Emitted as `\xHH` so REAL matches the exact byte.
+    [[nodiscard]] inline bool append_awk_escape(std::string_view p,
+                                                std::size_t&     i,
+                                                std::string&     out)
+    {
+      const std::size_t n {p.size()};
+      const char        d {p[i + 1]};
+      const auto        emit_hex {[&out](unsigned v) {
+                                    constexpr std::string_view hex {"0123456789abcdef"};
+                                    out += "\\x";
+                                    out += hex[(v >> 4U) & 0xFU];
+                                    out += hex[v & 0xFU];
+                                  }};
+      switch (d) {
+        case 'b': emit_hex(0x08U); i += 2; return true; // BACKSPACE, not a word boundary
+        case 'a': emit_hex(0x07U); i += 2; return true;
+        case 'n': emit_hex(0x0AU); i += 2; return true;
+        case 't': emit_hex(0x09U); i += 2; return true;
+        case 'r': emit_hex(0x0DU); i += 2; return true;
+        case 'f': emit_hex(0x0CU); i += 2; return true;
+        case 'v': emit_hex(0x0BU); i += 2; return true;
+        case '/': out                += '/'; i += 2; return true; // an escaped delimiter -> a literal slash
+        case '"': out                += '"'; i += 2; return true; // a literal quote
+        default: break;
+      }
+      if (d >= '0' && d <= '7') {
+        unsigned    val    {0};
+        std::size_t k      {i + 1};
+        std::size_t digits {0};
+        while (k < n && digits < 3 && p[k] >= '0' && p[k] <= '7') {
+          val = (val * 8U) + static_cast<unsigned>(p[k] - '0');
+          ++k;
+          ++digits;
+        }
+        if (val > 0xFFU) { return false; } // an octal overflow (> 0377) -> std
+        emit_hex(val);
+        i = k;
+        return true;
+      }
+      return false; // `\d` `\w` `\s` … — no awk meaning; decline
+    }
+
+    //! \brief Translates a POSIX **extended** (ERE) — or, with \p awk, an **awk** — pattern to an equivalent REAL
+    //!        pattern, or `nullopt` when it uses a construct the two grammars read differently (an ECMAScript
+    //!        shorthand `\d\w\s` — undefined/literal in ERE; an ambiguous `{`; an unknown/collating `[[:…:]]`).
+    //!        awk adds the C-escapes (see \ref append_awk_escape). POSIX classes become ASCII ranges (C locale);
+    //!        the common productions pass through, since REAL reads them like ERE. Validated by a bounds differential.
+    [[nodiscard]] inline std::optional<std::string> translate_ere(std::string_view p,
+                                                                  bool             awk = false)
     {
       std::string       out;
       std::size_t       i {0};
@@ -298,6 +345,7 @@ namespace real::compat {
             i   += 2;
             continue; // an escaped metacharacter is a literal in both grammars
           }
+          if (awk && append_awk_escape(p, i, out)) { continue; } // awk C-escapes (\b=BS, \n, octal, …)
           return std::nullopt; // \d, \w, \b, … — no ERE meaning; fall back to std
         }
         if (c == '[') {
@@ -404,11 +452,38 @@ namespace real::compat {
       return out;
     }
 
+    //! \brief grep / egrep: a newline in the pattern is a top-level alternation of the lines (grep = BRE lines,
+    //!        egrep = ERE lines). Each line is translated by \p translate_line and the results are joined with
+    //!        `|` — correct precedence by construction, since `|` is the lowest, and each line's `^`/`$` stay
+    //!        branch-relative. A line that declines, or an empty line (a blank branch — a std edge best left to
+    //!        std), declines the whole pattern.
+    template <typename LineFn>
+    [[nodiscard]] inline std::optional<std::string> translate_newline_alt(std::string_view p,
+                                                                          LineFn           translate_line)
+    {
+      std::string out;
+      std::size_t start {0};
+      bool        first {true};
+      while (true) {
+        const std::size_t      nl          {p.find('\n', start)};
+        const std::string_view line        {p.substr(start, (nl == std::string_view::npos ? p.size() : nl) - start)};
+        if (line.empty()) { return std::nullopt; } // a blank branch -> std
+        const std::optional<std::string> t {translate_line(line)};
+        if (!t) { return std::nullopt; }
+        if (!first) { out += '|'; }
+        out  += *t;
+        first = false;
+        if (nl == std::string_view::npos) { break; }
+        start = nl + 1;
+      }
+      return out;
+    }
+
     //! \brief Dispatches a single POSIX grammar to its translator, or `nullopt` (→ std). Exactly one grammar bit
-    //!        must be set, and neither `collate` nor `nosubs` (which force std). `extended` → ERE, `basic` → BRE;
-    //!        `awk`/`grep`/`egrep` are not yet translated (they return `nullopt`, staying on std).
-    [[nodiscard]] inline std::optional<std::string> translate_posix(std::string_view                         p,
-                                                                    regex_constants::syntax_option_type      f)
+    //!        must be set, and neither `collate` nor `nosubs` (which force std). `extended` → ERE, `basic` → BRE,
+    //!        `awk` → ERE + C-escapes, `grep` → BRE lines joined by `|`, `egrep` → ERE lines joined by `|`.
+    [[nodiscard]] inline std::optional<std::string> translate_posix(std::string_view                    p,
+                                                                    regex_constants::syntax_option_type f)
     {
       using namespace regex_constants;
       if ((f & (collate | nosubs)) != ECMAScript) { return std::nullopt; }
@@ -421,7 +496,9 @@ namespace real::compat {
       if (grammars != 1) { return std::nullopt; } // ECMAScript (0), or a mix — not a single POSIX grammar
       if ((f & extended) != ECMAScript) { return translate_ere(p); }
       if ((f & basic) != ECMAScript) { return translate_bre(p); }
-      return std::nullopt; // awk / grep / egrep — PX1b tranche 2
+      if ((f & awk) != ECMAScript) { return translate_ere(p, /*awk=*/ true); }
+      if ((f & grep) != ECMAScript) { return translate_newline_alt(p, [](std::string_view l) { return translate_bre(l); }); }
+      return translate_newline_alt(p, [](std::string_view l) { return translate_ere(l); }); // egrep
     }
 
     //! \brief Maps compat options to real::flags (always with bytes|ecma for std-char alignment).

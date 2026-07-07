@@ -46,15 +46,18 @@ A `real::compat::regex` is built with `flags::bytes | flags::ecma` so `real`'s b
 ECMAScript-`$` (end-only), ECMAScript-`.` (excludes `\n` and `\r`) semantics line up with
 `std::basic_regex<char>`. Routing:
 
-0. **POSIX `extended` (ERE) or `basic` (BRE)** → translated to REAL and run on the **linear engine with
-   leftmost-longest bounds** (the POSIX semantics), when the pattern translates; otherwise `std::regex`.
-   `regex.posix_longest()` reports this. **All** operations are linear for a translated **non-nullable** pattern
-   — `search`/`match` via `search_longest`, `regex_replace`/iterators via `find_iter_longest`; a nullable one
-   (`x*`, `a*`) keeps `search` on REAL but delegates its replace/iterate to `std` (POSIX-correct bounds, the
-   empty-match traversal differs — the same exclusion as the ECMAScript path). BRE declines (→ std) on a
-   backreference `\1`-`\9`, std's residual value; the other constructs translate (`\(`/`\)` group, `\{n\}`
-   quantify, bare `( ) { } | + ?` are literals).
-1. **Another POSIX grammar** (`awk`/`grep`/`egrep`) or `collate` → `std::regex` up front.
+0. **Any single POSIX grammar** — `extended` (ERE), `basic` (BRE), `awk`, `grep`, `egrep` — → translated to
+   REAL and run on the **linear engine with leftmost-longest bounds** (the POSIX semantics), when the pattern
+   translates; otherwise `std::regex`. `regex.posix_longest()` reports this. **All** operations are linear for a
+   translated **non-nullable** pattern — `search`/`match` via `search_longest`, `regex_replace`/iterators via
+   `find_iter_longest`; a nullable one (`x*`, `a*`) keeps `search` on REAL but delegates its replace/iterate to
+   `std` (POSIX-correct bounds, the empty-match traversal differs — the same exclusion as the ECMAScript path).
+   Each grammar's shape is honoured: BRE `\(`/`\)` group and `\{n\}` quantify while bare `( ) { } | + ?` are
+   literals; awk adds the C-escapes (`\b` is **backspace**, plus `\n\t\r\f\v\a`, `\/`, and octal `\ddd`); grep
+   (BRE) and egrep (ERE) read a newline as a top-level alternation of the lines. A construct only the
+   backtracker runs — a BRE/grep backreference `\1`-`\9`, an ECMAScript-ism, a corner the two std libraries
+   read differently (a medial BRE `^`/`$`) — declines to `std`, never a silent wrong-match.
+1. **`collate` or `nosubs`** → `std::regex` up front.
 2. Otherwise `real` is tried. If it **rejects** the pattern (a feature it cannot represent), the
    layer falls back to `std::regex`, which may accept it. A pattern invalid for *both* throws
    `real::compat::regex_error` (a `std::regex_error`) carrying std's exact `.code()`.
@@ -79,7 +82,7 @@ would backtrack). POSIX classes `[[:alpha:]]`…`[[:xdigit:]]` become their C-lo
 | Backreferences `\1`, `(?P=n)` | `real` does not implement them | `real` rejects → std fallback (std supports them) |
 | **Raw** non-ASCII bytes inside a class `[é]` | `real`'s bytes path rejects raw high bytes in `[...]` (a `\xHH` escape does *not* — `[\x80-\xff]` stays on `real` as a byte class, matching `std::regex<char>`) | clean rejection → std fallback |
 | Unbounded / oversized lookaround | exceeds `real`'s bounded-lookaround cap | `real` rejects → std fallback |
-| POSIX `awk`/`grep`/`egrep`, `collate` | not yet translated to `real` (`extended`/`basic` are — see above) | screened to std up front |
+| `collate` or `nosubs` | locale-sensitive ranges / group-hiding — outside `real`'s model | screened to std up front (the five POSIX grammars themselves translate — see above) |
 | A BRE backreference `\1`-`\9` | `real` does not implement backreferences | translator declines → std fallback (std backtracks them) |
 | `\0` followed by a digit (`\00`, `\012`) | `real` reads a legacy octal escape (Annex B); libstdc++ reads `\0`=NUL then a literal digit — strict ECMAScript makes it a syntax error, so neither is the spec answer | screened to std up front (a both-accept divergence otherwise; the fuzzer found it) |
 | **Nullable patterns in `regex_replace`/iterators** | empty-match *traversal* (advance-after-empty-match) differs between `real` (Python) and ECMAScript | a real-backed pattern that can match empty (`a*`, `(x)?`) routes those operations to a lazily-built `std::regex` — **per operation**, so `search`/`match` keep `real`'s ReDoS-safety even for nullable-ReDoS like `(a*)*` |
@@ -250,8 +253,10 @@ plus the option screen — `real` is never even tried, so these are std by const
   `wssub_match`/`wcsub_match`, `wsregex_iterator`/`wcregex_iterator`,
   `wsregex_token_iterator`/`wcregex_token_iterator`; `regex_search`/`regex_match`/`regex_replace` are
   templated on `CharT` and dispatch the wide path to `std`.
-- **POSIX grammars** (`basic`/`extended`/`awk`/`grep`/`egrep`) and **`collate`**: screened to `std` up
-  front (`real` is ECMAScript-only).
+- **POSIX grammars** (`basic`/`extended`/`awk`/`grep`/`egrep`): translated to REAL and run on the linear
+  engine with leftmost-longest bounds when the pattern translates (see the routing above); an untranslatable
+  construct (a backreference, an ECMAScript-ism, a std-library-divergent corner) declines to `std`. **`collate`**
+  is screened to `std` up front (locale-sensitive ranges are outside `real`'s model).
 - **`nosubs`**: `std` answers it by exposing only group 0, while `real` always reports every group — a
   structural both-accept divergence — so `nosubs` is screened to `std`. (Honoring it on `real` by
   truncating `match_results` to size 1 is a measured optimization for later, not a correctness need.)
