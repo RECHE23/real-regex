@@ -257,7 +257,10 @@ fuzz_target!(|data: &[u8]| {
     // each do a DIFFERENT thing under find_iter's forced-non-empty retry — REAL consumes maximally, `re` exits
     // through the empty branch, the crate goes all-empty (or drops the trailing empty). `re` is REAL's arbiter
     // here, not the crate (its own bugs on this family are in the README "Divergences" entry), so a REAL-vs-crate
-    // difference is not a REAL bug.
+    // difference is not a REAL bug. DEFENSIVE, not load-bearing: this binding's drive-mode never forces the
+    // non-empty retry (it uses the crate-style advance rule), so REAL == crate through the binding today and no
+    // seed bites this skip — the deterministic guard is the REAL-vs-re Python test (TestIntentionalDivergences,
+    // where CPython's rule manifests the divergence). The mask guards a future drive-rule or crate change.
     if has_empty_alternation_branch(pattern) {
         return;
     }
