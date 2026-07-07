@@ -277,7 +277,9 @@ version-check:
 	 if [ "$$cff" != "$$py" ]; then echo "version-check: DRIFT CITATION.cff=$$cff vs pyproject=$$py (it drifted for ~10 releases unchecked)"; exit 1; fi; \
 	 rme=$$(sed -nE 's/.*GIT_TAG v([0-9][0-9.]*).*/\1/p' README.md | head -1); \
 	 if [ -n "$$rme" ] && [ "$$rme" != "$$py" ]; then echo "version-check: DRIFT README FetchContent GIT_TAG=$$rme vs pyproject=$$py"; exit 1; fi; \
-	 echo "version-check: $$py (pyproject = __init__ = CMake-derived = version.hpp = Cargo.toml = CITATION.cff = README)"
+	 bench=$$(sed -nE 's/.*REAL `([0-9][0-9.]+)`.*/\1/p' docs/BENCHMARKS.md | head -1); \
+	 if [ -n "$$bench" ] && [ "$$bench" != "$$py" ]; then echo "version-check: WARN — docs/BENCHMARKS.md is stamped against REAL $$bench, current is $$py; benchmarks may be stale (re-run 'make bench-engines' / 'make bench', or proceed knowingly)"; fi; \
+	 echo "version-check: $$py (pyproject = __init__ = CMake-derived = version.hpp = Cargo.toml = CITATION.cff = README; bench-stamp = $$bench)"
 
 # Every pass/fail gate this machine owns, in one command — the canonical pre-push check
 # and, like the SciLang-era libraries, the macOS gate of record. REAL holds its own
