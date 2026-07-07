@@ -663,7 +663,10 @@ namespace real::compat {
       const bool             no_copy    {(flags & regex_constants::format_no_copy) != 0U};
       std::size_t            last_end   {0};
       bool                   done       {false};
-      for (const auto& match : engine.find_iter(s)) {
+      // POSIX ERE iterates with leftmost-longest bounds (find_iter_longest); the ECMAScript default keeps
+      // leftmost-first. Both yield the same match type, so the range-for binds either.
+      const auto matches {re.posix_longest() ? engine.find_iter_longest(text) : engine.find_iter(text)};
+      for (const auto& match : matches) {
         if (done) {
           break;
         }

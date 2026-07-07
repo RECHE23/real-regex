@@ -59,3 +59,25 @@ TEST(match_semantics_longest_captures_are_winning_thread)
   EXPECT(n[1] == "aaa"sv); // greedy first group
   EXPECT(n[2] == "a"sv);
 }
+
+TEST(match_semantics_find_iter_longest)
+{
+  // The iteration twin of search_longest: each occurrence is leftmost-longest, not leftmost-first.
+  const real::regex   re       {"a|ab"};
+  const std::size_t   starts[] {0, 4, 8};
+  const std::size_t   ends[]   {2, 6, 10}; // the longer branch at each occurrence
+  std::size_t         i        {0};
+  for (const auto& m : re.find_iter_longest("ab xab yab")) {
+    EXPECT(i < 3);
+    EXPECT(m.start() == starts[i] && m.end() == ends[i]);
+    ++i;
+  }
+  EXPECT(i == 3);
+  // first mode (find_iter) is unchanged: each occurrence is the shorter, leftmost-first branch.
+  const std::size_t first_ends[] {1, 5, 9};
+  i = 0;
+  for (const auto& m : re.find_iter("ab xab yab")) {
+    EXPECT(m.start() == starts[i] && m.end() == first_ends[i]);
+    ++i;
+  }
+}

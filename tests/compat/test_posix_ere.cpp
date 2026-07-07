@@ -71,3 +71,56 @@ TEST(posix_ere_is_leftmost_longest_not_first)
   EXPECT(rc::regex_search("ab", m, real_re));
   EXPECT(m.position(0) == 0 && m.length(0) == 2); // longest, per POSIX
 }
+
+TEST(posix_ere_iteration_equals_std)
+{
+  // The full sequence of match bounds under iteration equals std::sregex_iterator over std::regex(extended) —
+  // each occurrence is leftmost-longest, driven on REAL's linear engine.
+  struct testcase { const char* pat; const char* text; };
+  const testcase cases[] {
+    {.pat = "a|ab", .text = "ab xab yab"}, {.pat = "(ab|a)(c|bc)", .text = "abc abbc"},
+    {.pat = "[[:digit:]]+", .text = "a12 b345 c6"}, {.pat = "aa*|a", .text = "aa aaa a"},
+  };
+  for (const testcase& c : cases) {
+    const std::string s       {c.text};
+    const rc::regex   real_re {c.pat, rc::regex_constants::extended};
+    const std::regex  std_re  {c.pat, std::regex::extended};
+    EXPECT(real_re.posix_longest() && real_re.uses_real_traversal()); // teeth: iterate on REAL, not std
+    auto ri                   {rc::sregex_iterator(s.begin(), s.end(), real_re)};
+    auto si                   {std::sregex_iterator(s.begin(), s.end(), std_re)};
+    for (; ri != rc::sregex_iterator() && si != std::sregex_iterator(); ++ri, ++si) {
+      EXPECT_EQ(ri->position(0), si->position(0));
+      EXPECT_EQ(ri->length(0), si->length(0));
+    }
+    EXPECT_EQ(ri == rc::sregex_iterator(), si == std::sregex_iterator()); // same count
+  }
+}
+
+TEST(posix_ere_nullable_iteration_delegates_to_std_but_matches)
+{
+  // A nullable ERE (`x*` can match empty) keeps its search on REAL-longest, but its iterate/replace delegate to
+  // std (the empty-match traversal differs, exactly as on the ECMAScript path) — bounds still equal std.
+  const std::string s       {"xxxy xx"};
+  const rc::regex   real_re {"x*y|x*", rc::regex_constants::extended};
+  const std::regex  std_re  {"x*y|x*", std::regex::extended};
+  EXPECT(real_re.posix_longest() && !real_re.uses_real_traversal()); // search on REAL, iterate on std
+  auto ri                   {rc::sregex_iterator(s.begin(), s.end(), real_re)};
+  auto si                   {std::sregex_iterator(s.begin(), s.end(), std_re)};
+  for (; ri != rc::sregex_iterator() && si != std::sregex_iterator(); ++ri, ++si) {
+    EXPECT_EQ(ri->position(0), si->position(0));
+    EXPECT_EQ(ri->length(0), si->length(0));
+  }
+  EXPECT_EQ(ri == rc::sregex_iterator(), si == std::sregex_iterator());
+}
+
+TEST(posix_ere_replace_equals_std)
+{
+  const std::string s       {"ab xab yab 12"};
+  const rc::regex   real_re {"a|ab|[[:digit:]]+", rc::regex_constants::extended};
+  const std::regex  std_re  {"a|ab|[[:digit:]]+", std::regex::extended};
+  EXPECT(real_re.uses_real_traversal()); // teeth: replace runs on REAL
+  EXPECT_EQ(rc::regex_replace(s, real_re, std::string("<$&>")),
+            std::regex_replace(s, std_re, std::string("<$&>")));
+  EXPECT_EQ(rc::regex_replace(s, real_re, std::string("X"), rc::regex_constants::format_first_only),
+            std::regex_replace(s, std_re, std::string("X"), std::regex_constants::format_first_only));
+}

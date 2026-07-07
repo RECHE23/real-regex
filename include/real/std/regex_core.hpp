@@ -463,12 +463,12 @@ namespace real::compat {
     }
 
     //! \brief Whether replace/iterate run on the `real` traversal (real-backed AND non-nullable). A POSIX-ERE
-    //!        pattern is excluded for now: its `search`/`match` run linearly with longest bounds, but its
-    //!        replace/iterate still delegate to std (POSIX-correct bounds, not yet linear) until a longest
-    //!        `find_iter` lands — the std path uses `std::regex(pattern, extended)`, so the bounds still agree.
+    //!        pattern is included on the same terms as any other real-backed pattern: its replace/iterate run on
+    //!        `find_iter_longest` (leftmost-longest bounds — see the consumers). Nullable still delegates to std
+    //!        (the empty-match traversal differs), exactly as on the ECMAScript path.
     [[nodiscard]] bool uses_real_traversal() const noexcept
     {
-      return uses_real() && !nullable_ && !posix_longest_;
+      return uses_real() && !nullable_;
     }
 
     //! \brief The `std::regex` for the std / lazy-std path (built once on demand for a real-backed

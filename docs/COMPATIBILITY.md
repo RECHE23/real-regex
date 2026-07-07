@@ -48,8 +48,10 @@ ECMAScript-`$` (end-only), ECMAScript-`.` (excludes `\n` and `\r`) semantics lin
 
 0. **POSIX `extended` (ERE)** → translated to REAL and run on the **linear engine with leftmost-longest
    bounds** (the POSIX semantics), when the pattern translates; otherwise `std::regex`. `regex.posix_longest()`
-   reports this. (Its `regex_replace`/iterators still delegate to `std` for now — POSIX-correct bounds, pending a
-   longest `find_iter`.)
+   reports this. **All** operations are linear for a translated **non-nullable** ERE — `search`/`match` via
+   `search_longest`, `regex_replace`/iterators via `find_iter_longest`; a nullable ERE (`x*`) keeps `search` on
+   REAL but delegates its replace/iterate to `std` (POSIX-correct bounds, the empty-match traversal differs —
+   the same exclusion as the ECMAScript path).
 1. **Another POSIX grammar** (`basic`/`awk`/`grep`/`egrep`) or `collate` → `std::regex` up front.
 2. Otherwise `real` is tried. If it **rejects** the pattern (a feature it cannot represent), the
    layer falls back to `std::regex`, which may accept it. A pattern invalid for *both* throws
