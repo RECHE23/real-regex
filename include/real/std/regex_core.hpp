@@ -324,14 +324,43 @@ namespace real::compat {
       return false; // `\d` `\w` `\s` … — no awk meaning; decline
     }
 
+    //! \brief Whether \p p has an **empty alternation branch** — a `|` with nothing on one side: `(|`, `|)`,
+    //!        `||`, or a `|` at the pattern start or end. Two reasons this matters: (a) `std::regex` **rejects**
+    //!        these in the POSIX grammars, so translating one would make compat over-accept vs std; (b) REAL's
+    //!        leftmost-first star semantics over an empty-first branch (`(|a)*`) diverge from re / std on
+    //!        repetition. Conservative — a `|` merely adjacent to a group boundary or the pattern edge counts,
+    //!        an escaped `\|` or a `|` inside a class does not — because a false positive only costs linear
+    //!        coverage (safe) while a false negative is a silent divergence (forbidden).
+    [[nodiscard]] inline bool has_empty_alternation_branch(std::string_view p)
+    {
+      bool in_class {false};
+      for (std::size_t i = 0; i < p.size(); ++i) {
+        const char c {p[i]};
+        if (c == '\\') { ++i; continue; } // skip the escaped character
+        if (in_class) {
+          if (c == ']') { in_class = false; }
+          continue;
+        }
+        if (c == '[') { in_class = true; continue; }
+        if (c == '|') {
+          const bool left_empty  {i == 0 || p[i - 1] == '(' || p[i - 1] == '|'};
+          const bool right_empty {i + 1 >= p.size() || p[i + 1] == ')' || p[i + 1] == '|'};
+          if (left_empty || right_empty) { return true; }
+        }
+      }
+      return false;
+    }
+
     //! \brief Translates a POSIX **extended** (ERE) — or, with \p awk, an **awk** — pattern to an equivalent REAL
     //!        pattern, or `nullopt` when it uses a construct the two grammars read differently (an ECMAScript
-    //!        shorthand `\d\w\s` — undefined/literal in ERE; an ambiguous `{`; an unknown/collating `[[:…:]]`).
+    //!        shorthand `\d\w\s` — undefined/literal in ERE; an ambiguous `{`; an unknown/collating `[[:…:]]`;
+    //!        an empty alternation branch, which std rejects — see \ref has_empty_alternation_branch).
     //!        awk adds the C-escapes (see \ref append_awk_escape). POSIX classes become ASCII ranges (C locale);
     //!        the common productions pass through, since REAL reads them like ERE. Validated by a bounds differential.
     [[nodiscard]] inline std::optional<std::string> translate_ere(std::string_view p,
                                                                   bool             awk = false)
     {
+      if (has_empty_alternation_branch(p)) { return std::nullopt; } // std rejects these in POSIX -> keep ≡ std
       std::string       out;
       std::size_t       i {0};
       const std::size_t n {p.size()};
