@@ -35,6 +35,8 @@ TEST(posix_ere_bounds_equal_std_and_route_to_real)
     {.pat = "[[:alpha:]]+", .text = "ab12"}, {.pat = "[[:digit:]]+", .text = "xx42yy"},
     {.pat = "[[:alpha:]][[:digit:]]", .text = "a9"}, {.pat = "[[:upper:]]+", .text = "aBCd"},
     {.pat = "[[:space:]]", .text = "a b"}, {.pat = "[[:alnum:]_]+", .text = "a_9-z"},
+    {.pat = "a[]]b", .text = "a]b"},     // a leading `]` is a literal class member (POSIX) — the Fowler b4 fix
+    {.pat = "a[^]b]c", .text = "adc"},   // a leading `]` after `^`, in a negated class
   };
   for (const testcase& c : cases) {
     const rc::regex  real_re {c.pat, rc::regex_constants::extended};

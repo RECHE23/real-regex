@@ -15,12 +15,14 @@ TEST(posix_bre_bounds_equal_std_and_route_to_real)
   struct testcase { const char* pat; const char* text; };
   const testcase cases[] {
     {.pat = R"(\(ab\)*)", .text = "ababab"}, {.pat = R"(a\{2,3\})", .text = "aaaa"},
-    {.pat = "a|b", .text = "a|b"},                                // | is a LITERAL in BRE
-    {.pat = "a+b", .text = "a+b"},                                // + is a literal
-    {.pat = "a?b", .text = "a?b"},                                // ? is a literal
-    {.pat = "^ab", .text = "ab"}, {.pat = "ab$", .text = "ab"},   // ends: anchors (libs agree)
+    {.pat = "a|b", .text = "a|b"},                              // | is a LITERAL in BRE
+    {.pat = "a+b", .text = "a+b"},                              // + is a literal
+    {.pat = "a?b", .text = "a?b"},                              // ? is a literal
+    {.pat = "^ab", .text = "ab"}, {.pat = "ab$", .text = "ab"}, // ends: anchors (libs agree)
     {.pat = "[[:digit:]]*", .text = "42x"}, {.pat = R"(a\{2\}b)", .text = "aab"},
     {.pat = "a.c", .text = "axc"},
+    {.pat = "a[]]b", .text = "a]b"},                            // a leading `]` is a literal class member (POSIX) — the Fowler b4 fix
+    {.pat = "a[^]b]c", .text = "adc"},                          // a leading `]` after `^`
   };
   for (const testcase& c : cases) {
     const rc::regex  real_re {c.pat, rc::regex_constants::basic};

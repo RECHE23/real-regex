@@ -252,7 +252,8 @@ namespace real::compat {
       std::string       cls {'['};
       i += 1;
       if (i < n && p[i] == '^') { cls += '^'; i += 1; }
-      if (i < n && p[i] == ']') { cls += ']'; i += 1; } // a leading literal ] (POSIX)
+      if (i < n && p[i] == ']') { cls += "\\]"; i += 1; } // a leading `]` is a literal member in POSIX — escape
+                                                          // it for REAL, where a bare `[]` opens an empty class
       while (i < n && p[i] != ']') {
         if (p[i] == '[' && i + 1 < n && p[i + 1] == ':') {
           const std::size_t close  {p.find(":]", i + 2)};
