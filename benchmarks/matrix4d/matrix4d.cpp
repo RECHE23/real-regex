@@ -87,6 +87,11 @@ namespace {
     const real::regex date    {R"(\d{4}-\d{2}-\d{2})"};
     const real::regex literal {R"(dog)"};    // no inner literal: sentinel, route never fires (IL == core)
     const real::regex klass   {R"([a-z]+)"}; // class loop: sentinel
+    const real::regex hexid   {R"(id=[0-9a-f]{8})"}; // offset-0 literal PREFIX: must stay on find_prefix, NOT the
+                                                     // IL route — the density-blind hole of the original veto
+                                                     // (c6c5616 routed it here and cost 3.3x on dense corpora).
+                                                     // routes=false: core (route-off) IS the fast find_prefix,
+                                                     // so a re-regression trips assertion 1 (route-on > core).
     struct row
     {
       const char*        name;
@@ -104,6 +109,8 @@ namespace {
       {"date  dense  ", &date, "date 2026-07-04 x ", false, true},
       {"date  sparse ", &date, sparse_date, false, true},
       {"date  nomatch", &date, words, true, true},
+      {"hexid dense  ", &hexid, "log id=abc12345 x ", false, false}, // the c6c5616 shape: a hit every ~18 B
+      {"hexid nomatch", &hexid, words, true, false},
     };
     if (!short_mode) {
       rows.push_back({"email 5word  ", &email, "one two jane@corp.io four five ", false, true});

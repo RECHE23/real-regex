@@ -374,8 +374,12 @@ namespace real::detail {
       }) {
         if (!std::is_constant_evaluated() && !inner_literal_route_disabled() && mode == run_mode::search
             && sem_ == match_semantics::first // longest semantics need the general loop (these routes are kFirstMatch)
-            && prog_.hints.inner_literal_len > 0 && prog_.hints.inner_literal_prefix >= 0
-            && (prog_.hints.inner_literal_prefix == 0 || !prog_.prefix_code.empty())) {
+            && prog_.hints.inner_literal_len > 0 && prog_.hints.inner_literal_prefix >= 1
+            && !prog_.prefix_code.empty()) {
+          // A required literal at offset 0 (a match that DOES begin with a literal) is a *prefix*, not an inner
+          // literal — it keeps the faster find_prefix path. Only a genuine inner literal (offset >= 1, for which
+          // the compiler built a `prefix_code` for the reverse-confirm) takes this route; the old
+          // `inner_literal_prefix == 0` clause routed prefixes here too and cost ~3.3x on dense corpora.
           // No size guard: on a no-match haystack the route is memmem-only (the reverse setup is lazy, built on
           // the first candidate, never here), so it wins at every size; and the prefix byte-program is a
           // per-regex immutable (built once, amortized by any later use — the lazy-DFA warmup's own contract).

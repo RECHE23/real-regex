@@ -35,12 +35,13 @@ TEST(inner_literal_routed_equals_core)
     {.pat = R"(key=(\w+))",         .text = "key=val key=x notkey= key=z end key="},
     {.pat = R"(\w+@)",              .text = "ab@ cd@ @ orphan@ ef@ trailing no"},
     {.pat = R"(@\w+)",              .text = "@a @bc @ @def head @"},
-    {.pat = R"(a\d+X)",             .text = "aX a1X aa12X 12X a123Xzz X aXX"}, // literal X, prefix a\d+ (overlap)
+    {.pat = R"(a\d+X)",             .text = "aX a1X aa12X 12X a123Xzz X aXX"},                      // literal X, prefix a\d+ (overlap)
     {.pat = R"(\d{4}-\d{2})",       .text = "9999-99 12-3456-78 no 0000-00"},
     {.pat = R"(GET /\w+ )",         .text = "GET /a POST /b GET /home x GET / y GET /ok "},
-    {.pat = R"(((.))a)",             .text = "aaaab aabaa baaaa aXaya"},       // the exhaustive-flagged weak/adjacent literal
-    {.pat = R"((a?)a)",              .text = "aaa baa aXa aaaa"},              // adjacent literal, optional prefix
-    {.pat = R"(.+@)",                .text = "aaaa@x bb@ c@d@e no @"},         // greedy prefix: reverse must not over-bound
+    {.pat = R"(((.))a)",             .text = "aaaab aabaa baaaa aXaya"},                            // the exhaustive-flagged weak/adjacent literal
+    {.pat = R"((a?)a)",              .text = "aaa baa aXa aaaa"},                                   // adjacent literal, optional prefix
+    {.pat = R"(.+@)",                .text = "aaaa@x bb@ c@d@e no @"},                              // greedy prefix: reverse must not over-bound
+    {.pat = R"(id=[0-9a-f]{8})",     .text = "id=abc12345 id=00000000 x id=deadbeef no id= id=zz"}, // offset-0 literal
   };
   // These inputs are tiny (< the small-haystack guard's floor), so the guard would send the routed run back to
   // the core and the comparison would be trivially true. Disable it: the point is to exercise the route.
