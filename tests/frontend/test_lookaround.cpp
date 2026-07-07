@@ -47,6 +47,27 @@ TEST(lookahead_assertion_inside_sub)
   EXPECT_EQ(rx.search("a foo bar")[0], "foo"sv);
 }
 
+// --- L1 peephole correctness traps: single-width assertion bodies, pinned against the re oracle BEFORE the
+//     compile-time peephole exists. The sub-VM path gets each right today; the L1 direct-test opcode must too.
+TEST(l1_trap_negation_is_over_the_result_not_the_class)
+{
+  // (?=[a-z]) at end-of-text is FALSE (no char to test); (?![a-z]) at end-of-text is TRUE (the body cannot
+  // match, so its negation holds). A peephole that negated the CLASS instead of the assertion RESULT flips both.
+  EXPECT_EQ(real::regex("[a-z]+(?=[a-z])").search("abc")[0], "ab"sv);  // lookahead fails at end -> run stops short
+  EXPECT_EQ(real::regex("[a-z]+(?![a-z])").search("abc")[0], "abc"sv); // negative holds at end -> whole run
+  EXPECT(!real::regex("a(?=b)").search("a"sv));                        // (?=b) with no next byte -> no match
+  EXPECT(real::regex("a(?!b)").search("a"sv));                         // (?!b) with no next byte -> match
+}
+
+TEST(l1_trap_lookbehind_at_start_of_text)
+{
+  // (?<=x) at position 0 is FALSE (nothing behind); (?<!x) at position 0 is TRUE.
+  EXPECT(!real::regex("(?<=x)y").search("y"sv));                 // start of text -> behind fails
+  EXPECT_EQ(real::regex("(?<!x)y").search("y"sv)[0], "y"sv);     // start of text -> negative behind holds
+  EXPECT_EQ(real::regex("(?<=x)y").search("ay xy").start(), 4U); // only the 'y' preceded by 'x'
+  EXPECT_EQ(real::regex("(?<!x)y").search("xy ay").start(), 4U); // only the 'y' NOT preceded by 'x'
+}
+
 TEST(lookahead_does_not_corrupt_main_captures)
 {
   // Isolation (behavioral): evaluating the lookahead must not disturb the main thread's
