@@ -340,6 +340,11 @@ namespace real::compat {
         if (c == '\\') {
           if (i + 1 >= n) { return std::nullopt; } // trailing backslash
           const char d {p[i + 1]};
+          // `\]` / `\}` OUTSIDE a class are undefined in POSIX and the std libraries disagree — libc++ rejects
+          // `\]` but accepts `\}`, libstdc++ rejects both, AT&T matches — so decline (≡ its own std per platform,
+          // the same rule as the medial `^`/`$`). Ironically REAL was AT&T-conformant here, but the drop-in
+          // contract is ≡-std, not ≡-AT&T. (Inside a class, `\]` is handled by translate_bracket, unaffected.)
+          if (d == ']' || d == '}') { return std::nullopt; }
           if (std::string_view {".[]{}()*+?|^$\\"}.find(d) != std::string_view::npos) {
             out += '\\';
             out += d;
@@ -410,6 +415,7 @@ namespace real::compat {
             at_start = false;
             continue;
           }
+          if (d == ']' || d == '}') { return std::nullopt; } // `\]` / `\}` outside a class: undefined, std-divergent
           if (std::string_view {".[]*\\^$"}.find(d) != std::string_view::npos) {
             out      += '\\'; // an escaped metacharacter is a literal in both grammars
             out      += d;

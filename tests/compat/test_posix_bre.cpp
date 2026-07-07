@@ -68,6 +68,8 @@ TEST(posix_bre_declines_backref_and_ecmascript_isms)
   EXPECT(!d::translate_bre("*ab").has_value());         // leading * is a literal in POSIX -> decline
   EXPECT(!d::translate_bre("a^b").has_value());         // medial ^ — libstdc++/libc++ disagree -> decline
   EXPECT(!d::translate_bre("a$b").has_value());         // medial $ — same disagreement -> decline
+  EXPECT(!d::translate_bre("a\\]b").has_value());       // `\]` outside a class: undefined, std-divergent -> std
+  EXPECT(!d::translate_bre("a\\}b").has_value());       // `\}` likewise
   EXPECT(d::translate_bre(R"(\(ab\)*)").has_value());   // group + quantifier
   EXPECT(d::translate_bre("a|b").has_value());          // | literal -> \|
   EXPECT(d::translate_bre("[[:alpha:]]+").has_value()); // POSIX class ('+' here is a literal)

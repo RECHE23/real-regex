@@ -59,6 +59,8 @@ TEST(posix_ere_untranslatable_returns_nullopt)
   EXPECT(!d::translate_ere("a{").has_value());
   EXPECT(!d::translate_ere("[[:foo:]]").has_value());
   EXPECT(!d::translate_ere("[[.a.]]").has_value());
+  EXPECT(!d::translate_ere("a\\]b").has_value()); // `\]` outside a class: undefined, std libs disagree -> std
+  EXPECT(!d::translate_ere("a\\}b").has_value()); // `\}` likewise (libc++ accepts, libstdc++ rejects)
   // and it accepts the translatable ones (a strict brace, a POSIX class, common productions)
   EXPECT(d::translate_ere("a{2,3}").has_value());
   EXPECT(d::translate_ere("[[:alpha:]]+").has_value());
