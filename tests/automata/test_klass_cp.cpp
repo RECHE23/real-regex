@@ -179,3 +179,31 @@ TEST(klass_cp_static_regex_is_constexpr_and_correct)
   static_assert(!real::static_regex<"\\w+">().fullmatch("a b"));
   EXPECT(real::static_regex<"\\w+">().fullmatch("héllo").matched());
 }
+
+TEST(klass_cp_mixed_members_union_regardless_of_order)
+{
+  // KLASS-MIX regression (P1, shipped v2026.7.3): a non-ASCII member — a literal, a range, or a second
+  // predicate — that FOLLOWS a code-point predicate in a class must union into it, not be lost. The bug:
+  // members accumulated in parse order but klass_cp binary-searches them, so a member landing below the
+  // predicate's ranges was silently missed ([\dЩ] failed while [Щ\d] worked). Matrix: order x member-type,
+  // pinned against Python re (which the crate co-arbitrated).
+  const auto hit = [](std::string_view pat, std::string_view cp) {
+                     const std::string p {pat};
+                     const std::string s {cp};
+                     return real::regex(p).search(s).matched();
+                   };
+  // predicate then a non-ASCII literal (é = U+00E9: a word char, not a digit) — either order must match é
+  EXPECT(hit(cat({"[\\d", kEacute, "]"}), kEacute));              // [\dé]  (the order that used to lose é)
+  EXPECT(hit(cat({"[", kEacute, "\\d]"}), kEacute));              // [é\d]  (the witness that always worked)
+  EXPECT(hit(cat({"[\\d", kEacute, "]"}), kArab3));               // the \d part still matches a digit (U+0663)
+  EXPECT(!hit(cat({"[\\d", kEacute, "]"}), kEuro));               // a non-member stays out (U+20AC)
+  // predicate then a range that starts BELOW the predicate's non-ASCII ranges (é=U+00E9 .. €=U+20AC)
+  EXPECT(hit(cat({"[\\d", kEacute, "-", kEuro, "]"}), kCombAcc)); // U+0301 is inside é..€ — matched via the range
+  EXPECT(!hit(cat({"[\\d", kEacute, "-", kEuro, "]"}), kClef));   // U+1D11E is above the range — stays out
+  // two predicates, each direction — the union must cover both halves
+  EXPECT(hit("[\\w\\W]", kEuro));                                 // \W supplies the non-word U+20AC
+  EXPECT(hit("[\\w\\W]", kEacute));                               // \w supplies é
+  EXPECT(hit("[\\p{L}\\p{N}]", kArab3));                          // \p{N} supplies the Nd digit U+0663
+  EXPECT(hit("[\\p{N}\\p{L}]", kEacute));                         // \p{L} supplies é, predicate order reversed
+  EXPECT(hit("[\\p{L}\\p{N}]", kSuper2));                         // U+00B2 is No (a \p{N}) — must match
+}
