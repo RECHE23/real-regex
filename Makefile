@@ -47,7 +47,7 @@ SCIFORGE_TOOLS ?= ../sciforge/tools
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep -vE 'include/real/unicode/unicode_(fold|props|property|script)\.hpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-        lint misra fuzz fuzz-compat exhaustive-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
+        lint misra fuzz fuzz-compat exhaustive-compat fowler-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
         bench-engines bench-duel bench-matrix matrix-gate \
         version-check install install-smoke uninstall release help check-layers
 
@@ -297,6 +297,15 @@ exhaustive-compat:
 	@$(CXX) $(CXXSTD) -O2 $(INCLUDES) fuzz/exhaustive_compat.cpp -o $(BUILD)/exhaustive_compat
 	@$(BUILD)/exhaustive_compat $(BUILD)/ec_pats.txt $(BUILD)/ec_inps.txt
 
+# The Fowler / AT&T POSIX conformance of the compat layer: the three vendored testregex corpora through
+# real::compat vs the local std, three-way-arbitrated against the corpus's POSIX expectation and bucketed.
+# Hard invariants (lib-stable): b3 == b4 == std_only == 0, the b1 perfect count, and the per-file parsed-case
+# counts (a "no silent caps" pin). See fuzz/fowler_compat.cpp.
+fowler-compat:
+	@mkdir -p $(BUILD)
+	@$(CXX) $(CXXSTD) -O2 $(INCLUDES) fuzz/fowler_compat.cpp -o $(BUILD)/fowler_compat
+	@$(BUILD)/fowler_compat tests/corpora/fowler
+
 # Pin-drift lint: fail if this repo's workflows pin more than one SciForge version (the shared
 # tools/check-pins.sh, owned by SciForge). Skipped with a warning when the sibling tool is absent.
 check-pins:
@@ -317,6 +326,7 @@ full-local-gate:
 	@$(MAKE) check-pins
 	@$(MAKE) test
 	@$(MAKE) exhaustive-compat
+	@$(MAKE) fowler-compat
 	@$(MAKE) matrix-gate
 	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "full-local-gate: WARN — $(GXX) absent, GCC leg skipped (CI covers it)"; fi
 	@$(MAKE) sanitize
