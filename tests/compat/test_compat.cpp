@@ -328,10 +328,11 @@ TEST(compat_backend_selection)
   EXPECT(rc::regex_search(subj, m, back)); // fallback path produces the match
   EXPECT_EQ(m.length(0), 2);
 
-  // POSIX extended (ERE) now takes REAL's linear engine when the pattern translates; the other POSIX
-  // grammars (basic/awk/grep/egrep) still force the std backend up front.
+  // POSIX extended (ERE) and basic (BRE) take REAL's linear engine when the pattern translates; a construct
+  // only the backtracker runs (a BRE backreference) and awk/grep/egrep still force std up front.
   EXPECT(rc::regex("a+", rc::regex_constants::extended, rc::policy::fallback).uses_real());
-  EXPECT(!rc::regex(R"(\(a\)+)", rc::regex_constants::basic, rc::policy::fallback).uses_real());
+  EXPECT(rc::regex(R"(\(a\)+)", rc::regex_constants::basic, rc::policy::fallback).uses_real());   // \(a\) group + literal +
+  EXPECT(!rc::regex(R"(\(a\)\1)", rc::regex_constants::basic, rc::policy::fallback).uses_real()); // backref -> std
 
   // Inline-flag groups: real accepts (?imsxa:...) with Python semantics, but ECMAScript has no inline
   // flags, so compat routes them to std -- which rejects them, exactly as std::regex does. Compat stays
@@ -773,8 +774,9 @@ TEST(compat_nosubs_routes_to_std)
 TEST(compat_posix_grammars_bounds_equal_std)
 {
   namespace rcc = rc::regex_constants;
-  // extended (ERE) now runs on REAL's linear engine (leftmost-longest bounds); basic/awk/grep/egrep still
-  // delegate to std. Either backend, the bounds equal the std oracle; `expect_real` pins which one each takes.
+  // extended (ERE) and basic (BRE) now run on REAL's linear engine when translatable (leftmost-longest bounds);
+  // a BRE backref and awk/grep/egrep still delegate to std. Either backend, the bounds equal the std oracle;
+  // `expect_real` pins which one each case takes.
   struct Case
   {
     std::string                              pattern;
@@ -785,7 +787,8 @@ TEST(compat_posix_grammars_bounds_equal_std)
   };
   const std::vector<Case> cases {
     {.pattern = "[[:digit:]]+", .subject = "abc123", .ropt = rcc::extended, .sopt = std::regex_constants::extended, .expect_real = true},
-    {.pattern = R"(\(ab\)*)", .subject = "ababab", .ropt = rcc::basic, .sopt = std::regex_constants::basic, .expect_real = false},
+    {.pattern = R"(\(ab\)*)", .subject = "ababab", .ropt = rcc::basic, .sopt = std::regex_constants::basic, .expect_real = true},
+    {.pattern = R"(\(a\)\1)", .subject = "aa", .ropt = rcc::basic, .sopt = std::regex_constants::basic, .expect_real = false}, // BRE backref -> std
     {.pattern = "a+b", .subject = "aaab", .ropt = rcc::extended, .sopt = std::regex_constants::extended, .expect_real = true},
   };
   for (const Case& c : cases) {

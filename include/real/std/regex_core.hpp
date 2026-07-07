@@ -239,6 +239,44 @@ namespace real::compat {
       return {};
     }
 
+    //! \brief Translates a POSIX bracket expression `[...]` — identical syntax in BRE and ERE, so shared by both
+    //!        translators. POSIX classes (`[[:alpha:]]`) become ASCII ranges; other members pass through. \p i
+    //!        must point at the opening `[`; on success it advances past the `]` and appends the class to \p out.
+    //!        Returns false (the caller then declines to std) on an unterminated class or an unknown / collating
+    //!        `[[:foo:]]` / `[.x.]` / `[=x=]`.
+    [[nodiscard]] inline bool translate_bracket(std::string_view p,
+                                                std::size_t&     i,
+                                                std::string&     out)
+    {
+      const std::size_t n   {p.size()};
+      std::string       cls {'['};
+      i += 1;
+      if (i < n && p[i] == '^') { cls += '^'; i += 1; }
+      if (i < n && p[i] == ']') { cls += ']'; i += 1; } // a leading literal ] (POSIX)
+      while (i < n && p[i] != ']') {
+        if (p[i] == '[' && i + 1 < n && p[i + 1] == ':') {
+          const std::size_t close  {p.find(":]", i + 2)};
+          if (close == std::string_view::npos) { return false; }
+          const std::string ranges {posix_class_ranges(p.substr(i + 2, close - (i + 2)))};
+          if (ranges.empty()) { return false; }
+          cls += ranges;
+          i    = close + 2;
+        }
+        else if (p[i] == '[' && i + 1 < n && (p[i + 1] == '.' || p[i + 1] == '=')) {
+          return false; // collating [.x.] / equivalence [=x=]
+        }
+        else {
+          cls += p[i];
+          i   += 1;
+        }
+      }
+      if (i >= n) { return false; } // unterminated class
+      cls += ']';
+      i   += 1;
+      out += cls;
+      return true;
+    }
+
     //! \brief Translates a POSIX **extended** (ERE) pattern to an equivalent REAL (ECMAScript-ish) pattern, or
     //!        `nullopt` when it uses a construct the two grammars read differently (an ECMAScript shorthand
     //!        `\d\w\s\b` — undefined/literal in ERE; an ambiguous `{`; an unknown/collating `[[:…:]]`/`[.x.]`).
@@ -263,31 +301,7 @@ namespace real::compat {
           return std::nullopt; // \d, \w, \b, … — no ERE meaning; fall back to std
         }
         if (c == '[') {
-          std::string cls {'['};
-          i += 1;
-          if (i < n && p[i] == '^') { cls += '^'; i += 1; }
-          if (i < n && p[i] == ']') { cls += ']'; i += 1; } // a leading literal ] (POSIX)
-          while (i < n && p[i] != ']') {
-            if (p[i] == '[' && i + 1 < n && p[i + 1] == ':') {
-              const std::size_t close  {p.find(":]", i + 2)};
-              if (close == std::string_view::npos) { return std::nullopt; }
-              const std::string ranges {posix_class_ranges(p.substr(i + 2, close - (i + 2)))};
-              if (ranges.empty()) { return std::nullopt; }
-              cls += ranges;
-              i    = close + 2;
-            }
-            else if (p[i] == '[' && i + 1 < n && (p[i + 1] == '.' || p[i + 1] == '=')) {
-              return std::nullopt; // collating [.x.] / equivalence [=x=]
-            }
-            else {
-              cls += p[i];
-              i   += 1;
-            }
-          }
-          if (i >= n) { return std::nullopt; } // unterminated class
-          cls += ']';
-          i   += 1;
-          out += cls;
+          if (!translate_bracket(p, i, out)) { return std::nullopt; }
           continue;
         }
         if (c == '{') {
@@ -310,6 +324,104 @@ namespace real::compat {
         i   += 1;
       }
       return out;
+    }
+
+    //! \brief Translates a POSIX **basic** (BRE) pattern to an equivalent REAL pattern, or `nullopt`. BRE differs
+    //!        from ERE: `\(` `\)` group and `\{n\}` quantify, while bare `( ) { } | + ?` are LITERALS (escaped for
+    //!        REAL); `*` at an expression start and `^`/`$` off the ends are literals too. Declines (→ std) on a
+    //!        backreference `\1`-`\9` (std's residual value), an ECMAScript-ism, a non-strict `\{`, an unknown /
+    //!        collating class, or a POSIX-undefined corner (`^`/`$`/`*` at a subexpression boundary).
+    [[nodiscard]] inline std::optional<std::string> translate_bre(std::string_view p)
+    {
+      std::string       out;
+      std::size_t       i        {0};
+      const std::size_t n        {p.size()};
+      bool              at_start {true}; // pattern start or just after `\(` — where `*` is literal and `^` anchors
+      while (i < n) {
+        const char c {p[i]};
+        if (c == '\\') {
+          if (i + 1 >= n) { return std::nullopt; }                          // trailing backslash
+          const char d {p[i + 1]};
+          if (d == '(') { out += '('; i += 2; at_start = true;  continue; } // \( -> group open
+          if (d == ')') { out += ')'; i += 2; at_start = false; continue; } // \) -> group close
+          if (d == '{') {                                                   // \{n\} / \{n,\} / \{n,m\} interval
+            std::size_t       j  {i + 2};
+            const std::size_t ds {j};
+            while (j < n && p[j] >= '0' && p[j] <= '9') { ++j; }
+            bool ok              {j > ds};
+            if (ok && j < n && p[j] == ',') {
+              ++j;
+              while (j < n && p[j] >= '0' && p[j] <= '9') { ++j; }
+            }
+            if (!ok || j + 1 >= n || p[j] != '\\' || p[j + 1] != '}') { return std::nullopt; } // not a strict \{...\}
+            out     += '{';
+            out     += p.substr(i + 2, j - (i + 2));
+            out     += '}';
+            i        = j + 2;
+            at_start = false;
+            continue;
+          }
+          if (std::string_view {".[]*\\^$"}.find(d) != std::string_view::npos) {
+            out      += '\\'; // an escaped metacharacter is a literal in both grammars
+            out      += d;
+            i        += 2;
+            at_start  = false;
+            continue;
+          }
+          return std::nullopt; // \1-\9 backref, \d\w\s\b, \+ \? \| (not BRE), stray \} -> decline
+        }
+        if (c == '(' || c == ')' || c == '{' || c == '}' || c == '|' || c == '+' || c == '?') {
+          out      += '\\';    // bare, these are literals in BRE -> escape for REAL
+          out      += c;
+          i        += 1;
+          at_start  = false;
+          continue;
+        }
+        if (c == '^') {
+          if (i == 0) { out += '^'; i += 1; at_start = false; continue; } // anchor at the pattern head (libs agree)
+          return std::nullopt; // a medial `^` is a POSIX literal, but libstdc++ reads it as an anchor while
+                               // libc++ reads it as a literal — decline so compat stays ≡ its own std
+        }
+        if (c == '$') {
+          if (i + 1 == n) { out += '$'; i += 1; at_start = false; continue; } // anchor at the tail (libs agree)
+          return std::nullopt; // a medial `$` — the same libstdc++/libc++ disagreement; decline to std
+        }
+        if (c == '*') {
+          if (at_start) { return std::nullopt; } // a leading `*` is a literal in POSIX BRE -> decline (rare)
+          out += '*';                            // quantifier
+          i   += 1;
+          continue;
+        }
+        if (c == '[') {
+          if (!translate_bracket(p, i, out)) { return std::nullopt; }
+          at_start = false;
+          continue;
+        }
+        out      += c; // `.` and ordinary literals — read alike
+        i        += 1;
+        at_start  = false;
+      }
+      return out;
+    }
+
+    //! \brief Dispatches a single POSIX grammar to its translator, or `nullopt` (→ std). Exactly one grammar bit
+    //!        must be set, and neither `collate` nor `nosubs` (which force std). `extended` → ERE, `basic` → BRE;
+    //!        `awk`/`grep`/`egrep` are not yet translated (they return `nullopt`, staying on std).
+    [[nodiscard]] inline std::optional<std::string> translate_posix(std::string_view                         p,
+                                                                    regex_constants::syntax_option_type      f)
+    {
+      using namespace regex_constants;
+      if ((f & (collate | nosubs)) != ECMAScript) { return std::nullopt; }
+      int grammars {0};
+      if ((f & basic) != ECMAScript) { ++grammars; }
+      if ((f & extended) != ECMAScript) { ++grammars; }
+      if ((f & awk) != ECMAScript) { ++grammars; }
+      if ((f & grep) != ECMAScript) { ++grammars; }
+      if ((f & egrep) != ECMAScript) { ++grammars; }
+      if (grammars != 1) { return std::nullopt; } // ECMAScript (0), or a mix — not a single POSIX grammar
+      if ((f & extended) != ECMAScript) { return translate_ere(p); }
+      if ((f & basic) != ECMAScript) { return translate_bre(p); }
+      return std::nullopt; // awk / grep / egrep — PX1b tranche 2
     }
 
     //! \brief Maps compat options to real::flags (always with bytes|ecma for std-char alignment).
@@ -523,16 +635,13 @@ namespace real::compat {
       posix_longest_ = false;
       if constexpr (detail::real_eligible<CharT, Traits>) {
         const std::string_view sv {pattern.data(), pattern.size()};
-        // PX1a: POSIX Extended (ERE) on the linear engine. When the grammar is exactly `extended` (no other
-        // grammar bit, no collate / nosubs) and the pattern translates, run it on REAL with leftmost-LONGEST
-        // bounds — the POSIX semantics, via search_longest — instead of delegating to std's backtracker. A
-        // `nullopt` or a real reject falls through to the std path below (the fallback lives; nothing breaks).
-        const bool ere_only {(f & regex_constants::extended) != regex_constants::ECMAScript
-                             && (f & (regex_constants::basic | regex_constants::awk | regex_constants::grep
-                                      | regex_constants::egrep | regex_constants::collate
-                                      | regex_constants::nosubs)) == regex_constants::ECMAScript};
-        if (ere_only && !detail::pattern_forces_std(sv)) {
-          if (const std::optional<std::string> translated {detail::translate_ere(sv)}) {
+        // PX1a/PX1b: a single POSIX grammar (extended -> ERE, basic -> BRE; awk/grep/egrep next) on the linear
+        // engine when the pattern translates — run it on REAL with leftmost-LONGEST bounds (the POSIX semantics,
+        // via search_longest / find_iter_longest) instead of delegating to std's backtracker. A `nullopt` (a
+        // wrong grammar mix, or an untranslatable construct) or a real reject falls through to the std path below;
+        // the fallback lives, and nothing that used to reach std stops reaching it.
+        if (!detail::pattern_forces_std(sv)) {
+          if (const std::optional<std::string> translated {detail::translate_posix(sv, f)}) {
             try {
               real::regex compiled(*translated, detail::to_real(f));
               mark_count_    = compiled.group_count();

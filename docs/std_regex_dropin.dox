@@ -60,12 +60,12 @@ A pattern that unexpectedly falls to `std` — and so loses the linear-time guar
 
 Some surfaces are always the `std::regex` backend by construction — they sit outside REAL's proven
 envelope, so compat runs `std` to stay a faithful drop-in: `wregex` and any non-`char` `CharT` or
-custom traits; the POSIX grammars `basic`, `awk`, `grep`, `egrep` and `collate`; and `nosubs`. (POSIX
-`extended` (ERE) is the exception — it translates to REAL and runs on the linear engine with
-leftmost-longest bounds; see `real::compat::detail::translate_ere`.) There is deliberately no switch to
-force REAL on the always-std set — forcing it could diverge, which the contract forbids. If you need
-REAL's linear guarantee for such a pattern, rewrite it into the ECMAScript subset REAL accepts, then let
-`uses_real()` confirm it.
+custom traits; the POSIX grammars `awk`, `grep`, `egrep` and `collate`; and `nosubs`. (POSIX `extended`
+(ERE) and `basic` (BRE) are the exception — a translatable pattern runs on REAL's linear engine with
+leftmost-longest bounds; see `real::compat::detail::translate_posix`. A BRE backreference still delegates
+to std.) There is deliberately no switch to force REAL on the always-std set — forcing it could diverge,
+which the contract forbids. If you need REAL's linear guarantee for such a pattern, rewrite it into the
+ECMAScript subset REAL accepts, then let `uses_real()` confirm it.
 
 \section dropin_more The full catalogue
 
