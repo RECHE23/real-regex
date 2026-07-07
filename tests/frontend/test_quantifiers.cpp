@@ -163,3 +163,44 @@ TEST(pathological_pattern_stays_linear)
   const auto elapsed = std::chrono::steady_clock::now() - start;
   EXPECT(elapsed < std::chrono::seconds(2));
 }
+
+TEST(scan_verify_tail_lengths_pin_the_simd_offbyone)
+{
+  // The candidate-scan (next_candidate) and fixed-shape verify are the target of a future SIMD (16-byte block)
+  // rewrite. The off-by-one that class of code always risks is a tail shorter than a block: pin the exact match
+  // count at every tail length 0..33 against the scalar oracle, so a SIMD scan that mishandles the last < 16
+  // bytes is caught here, before it ships (the exact prototype bug the fiche flagged).
+  const real::regex hex {"[0-9a-f]{8}"};
+  for (std::size_t len = 0; len <= 33; ++len) {
+    std::string t;
+    for (std::size_t i = 0; i < len; ++i) {
+      t += "0123456789abcdef"[i % 16];
+    }
+    std::size_t n {0};
+    for (const auto& m : hex.find_iter(t)) {
+      (void) m;
+      ++n;
+    }
+    EXPECT_EQ(n, len / 8); // non-overlapping {8} on all-hex text: exactly floor(len/8), the tail bytes excluded
+  }
+  const real::regex alt {"the|fox|dog"};
+  std::string       a;
+  for (int i = 0; i < 1000; ++i) {
+    a += "the fox dog ";
+  }
+  std::size_t na {0};
+  for (const auto& m : alt.find_iter(a)) {
+    (void) m;
+    ++na;
+  }
+  EXPECT_EQ(na, 3000U);
+  for (std::size_t len = 0; len <= 33; ++len) {
+    const std::string t {std::string(len, 'x') + "dog"}; // a match ending at every tail/block boundary
+    std::size_t       n {0};
+    for (const auto& m : alt.find_iter(t)) {
+      (void) m;
+      ++n;
+    }
+    EXPECT_EQ(n, 1U);
+  }
+}
