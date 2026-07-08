@@ -23,9 +23,15 @@
 #include <cassert>
 #include <cstdint>
 #include <string_view>
+#include <bit>
+#include <cstring>
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+#if defined(__ARM_NEON)
+#  include <arm_neon.h> // NEON mask-carried candidate scan (aarch64 floor); scalar stays for constexpr / other ISAs
+#endif
 
 #include "real/core/charclass.hpp"
 #include "real/engine/prefilter.hpp"
@@ -1408,6 +1414,60 @@ namespace real::detail {
         out_slots[1] = match_end;
         return true;
       }
+#if defined(__ARM_NEON)
+      // L-SIMD v2: mask-carried search. Scan a 16-byte block for any branch first-byte, then verify every
+      // candidate the mask marks (in order — leftmost-first) with match_at before advancing to the next block.
+      // The mask survives across candidates within the block, which is where the win lives. Scalar tail (< 16).
+      if (!std::is_constant_evaluated() && prog_.hints.small_set_size >= 2 && prog_.hints.small_set_size <= 8) {
+        const std::size_t           cnt {prog_.hints.small_set_size};
+        std::array<std::uint8_t, 8> mem {};
+        for (std::size_t i = 0; i < cnt; ++i) {
+          mem[i] = static_cast<std::uint8_t>(prog_.hints.small_set[i]);
+        }
+        const std::size_t sz  {text.size()};
+        std::size_t       pos {start};
+        for (; pos + 16 <= sz; pos += 16) {
+          std::array<std::uint8_t, 16> buf {};
+          std::memcpy(buf.data(), text.data() + pos, 16); // MISRA-clean byte load (no pointer type-pun)
+          const uint8x16_t blk             {vld1q_u8(buf.data())};
+          uint8x16_t       eq              {vdupq_n_u8(0)};
+          for (std::size_t i = 0; i < cnt; ++i) {
+            eq = vorrq_u8(eq, vceqq_u8(blk, vdupq_n_u8(mem[i])));
+          }
+          std::uint64_t mask {vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(eq), 4)), 0)};
+          while (mask != 0) {
+            const std::size_t tz   {static_cast<std::size_t>(std::countr_zero(mask)) & 63U}; // < 64: shift is defined
+            const std::size_t lane {tz >> 2};
+            const std::size_t me   {match_at(pos + lane, false)};
+            if (me != npos) {
+              out_slots[0] = pos + lane;
+              out_slots[1] = me;
+              return true;
+            }
+            mask &= ~(static_cast<std::uint64_t>(0xF) << tz); // clear this lane's nibble, keep the rest
+          }
+        }
+        for (; pos < sz; ++pos) { // scalar tail: the last < 16 bytes (the net pins this boundary)
+          const std::uint8_t b      {static_cast<std::uint8_t>(text[pos])};
+          bool               member {false};
+          for (std::size_t i = 0; i < cnt; ++i) {
+            if (b == mem[i]) {
+              member = true;
+              break;
+            }
+          }
+          if (member) {
+            const std::size_t me {match_at(pos, false)};
+            if (me != npos) {
+              out_slots[0] = pos;
+              out_slots[1] = me;
+              return true;
+            }
+          }
+        }
+        return false;
+      }
+#endif
       return fast_search(text, start, [&](std::size_t match_start) { return match_at(match_start, false); }, out_slots);
     }
 
