@@ -529,6 +529,16 @@ namespace real::detail {
             }
             const std::size_t abs_end   {start + match_end};
             const std::size_t abs_start {state_.rev_dfa->reverse_start(text, abs_end, start)};
+            // OPT bounds-only (A1): a GROUPLESS pattern ([a-z][a-z]+ — slot_count <= 2, group 0 only) has
+            // no captures beyond the span itself, so the one-pass extractor's per-op table walk buys
+            // nothing here — it exists to fill group slots this pattern does not have. The forward+reverse
+            // DFA pair already IS the whole match's span; skip straight to it.
+            if (prog_.slot_count <= 2) {
+              out_slots.assign(2, npos);
+              out_slots[0] = abs_start;
+              out_slots[1] = abs_end;
+              return true;
+            }
             // OPT onepass (Tier A): a one-pass pattern fills captures in a single pass over [s, e] with no
             // thread lists (the shared per-regex table). Otherwise the window-Pike runs the general loop
             // there. Both give the same slots. prog_.immut is non-null whenever fwd_dfa/rev_dfa hold a
