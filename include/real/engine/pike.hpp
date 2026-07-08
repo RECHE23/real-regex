@@ -29,14 +29,9 @@
 #include <utility>
 #include <vector>
 
-#if defined(__ARM_NEON)
-#  include <arm_neon.h>  // NEON mask-carried candidate scan (aarch64 floor); scalar stays for constexpr / other ISAs
-#elif defined(__SSE2__)
-#  include <emmintrin.h> // SSE2 mask-carried candidate scan (x86-64 floor)
-#endif
-
 #include "real/core/charclass.hpp"
 #include "real/engine/prefilter.hpp"
+#include "real/engine/simd.hpp" // the ISA-exclusive intrinsics behind the mask-carried scans below
 #include <mutex>
 #include <optional>
 
@@ -49,29 +44,6 @@
 namespace real::detail {
 
 #if defined(__ARM_NEON)
-  //! \brief Nibble-packed (4 bits/lane, 0xF = in-range) membership mask of \p buf against a HOMOGENEOUS
-  //!        fixed shape's shared <= 2-range set (\ref pattern_hints::fixed_shape_lo0 etc., see
-  //!        prefilter.hpp's `class_range_count`). Shared by both the coarse candidate scan and the
-  //!        per-candidate verify in \ref simd_fixed_shape_scan (the SAME set applies at every position).
-  inline std::uint64_t simd_range_good_nibmask16(const std::uint8_t*  buf,
-                                                 const pattern_hints& hints)
-  {
-    const uint8x16_t blk    {vld1q_u8(buf)};
-    const uint8x16_t lo0v   {vdupq_n_u8(hints.fixed_shape_lo0)};
-    const uint8x16_t hi0v   {vdupq_n_u8(hints.fixed_shape_hi0)};
-    const uint8x16_t lo1v   {vdupq_n_u8(hints.fixed_shape_lo1)};
-    const uint8x16_t hi1v   {vdupq_n_u8(hints.fixed_shape_hi1)};
-    const uint8x16_t below0 {vcltq_u8(blk, lo0v)};
-    const uint8x16_t above0 {vcgtq_u8(blk, hi0v)};
-    const uint8x16_t below1 {vcltq_u8(blk, lo1v)};
-    const uint8x16_t above1 {vcgtq_u8(blk, hi1v)};
-    const uint8x16_t out0   {vorrq_u8(below0, above0)}; // not in range0
-    const uint8x16_t out1   {vorrq_u8(below1, above1)}; // not in range1 (always true when absent)
-    const uint8x16_t bad    {vandq_u8(out0, out1)};     // fails both -- this lane mismatches
-    const uint8x16_t good   {vmvnq_u8(bad)};
-    return vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(good), 4)), 0);
-  }
-
   /*!
    * \brief L-SIMD v3.1: fused scan+verify for a HOMOGENEOUS fixed shape (every position accepts the
    *        identical <= 2-range set — \ref pattern_hints::fixed_shape_simd_len > 0).
@@ -84,6 +56,12 @@ namespace real::detail {
    * carries where the next candidate is). A fresh mask is still loaded at each *candidate* (not each
    * byte), which is what makes the shift-reuse sound: the low `simd_len` bits of a mask loaded AT a
    * candidate are exactly that candidate's verify.
+   *
+   * The intrinsics themselves (\ref simd_range_good_nibmask16) live in simd.hpp; this function is the
+   * decision/loop logic — eligibility already decided by the caller, the block-boundary guard, the
+   * skip-after-failure math, the tail hand-off — which is the SAME C++ on every ISA and is what the
+   * ordinary test suite exercises, regardless of which SIMD leg compiled (see simd.hpp's file comment
+   * and the Makefile's `COV_FLOOR_IGNORE`).
    *
    * A free function (not a `pike_vm<Storage>` member, not templated on `OutSlots` or `Storage`) so it
    * compiles once regardless of how many `run_fixed_shape` instantiations exist (one per distinct
@@ -113,7 +91,8 @@ namespace real::detail {
     while (pos + 16 <= sz) {
       std::array<std::uint8_t, 16> blk {};
       std::memcpy(blk.data(), text.data() + pos, 16); // MISRA-clean byte load (no pointer type-pun)
-      const std::uint64_t m            {simd_range_good_nibmask16(blk.data(), hints)};
+      const std::uint64_t m            {simd_range_good_nibmask16(blk.data(), hints.fixed_shape_lo0, hints.fixed_shape_hi0,
+                                                                  hints.fixed_shape_lo1, hints.fixed_shape_hi1)};
       if (m == 0U) {
         pos += 16; // no candidate anywhere in this window -- skip the whole block, one compare paid
         continue;
@@ -148,33 +127,8 @@ namespace real::detail {
   }
 
 #elif defined(__SSE2__)
-  //! \brief SSE2 leg of \ref simd_range_good_nibmask16 (x86-64 floor): a plain 1-bit/lane membership
-  //!        mask (movemask gives this natively, so no nibble packing is needed on this ISA).
-  inline std::uint32_t simd_range_good_mask16(const std::uint8_t*  buf,
-                                              const pattern_hints& hints)
-  {
-    __m128i blk {};
-    std::memcpy(&blk, buf, 16); // MISRA-clean byte load (no pointer type-pun)
-    // SSE2 has no unsigned byte compare: bias both operands by XOR 0x80 first (an exact bijection
-    // [0,255] -> [-128,127]) so signed cmplt/cmpgt on the biased values match the unsigned order.
-    const __m128i bias   {_mm_set1_epi8(static_cast<char>(0x80))};
-    blk = _mm_xor_si128(blk, bias);
-    const __m128i lo0v   {_mm_xor_si128(_mm_set1_epi8(static_cast<char>(hints.fixed_shape_lo0)), bias)};
-    const __m128i hi0v   {_mm_xor_si128(_mm_set1_epi8(static_cast<char>(hints.fixed_shape_hi0)), bias)};
-    const __m128i lo1v   {_mm_xor_si128(_mm_set1_epi8(static_cast<char>(hints.fixed_shape_lo1)), bias)};
-    const __m128i hi1v   {_mm_xor_si128(_mm_set1_epi8(static_cast<char>(hints.fixed_shape_hi1)), bias)};
-    const __m128i below0 {_mm_cmplt_epi8(blk, lo0v)};
-    const __m128i above0 {_mm_cmpgt_epi8(blk, hi0v)};
-    const __m128i below1 {_mm_cmplt_epi8(blk, lo1v)};
-    const __m128i above1 {_mm_cmpgt_epi8(blk, hi1v)};
-    const __m128i out0   {_mm_or_si128(below0, above0)};
-    const __m128i out1   {_mm_or_si128(below1, above1)};
-    const __m128i bad    {_mm_and_si128(out0, out1)};
-    return (~static_cast<std::uint32_t>(_mm_movemask_epi8(bad))) & 0xFFFFU;
-  }
-
-  //! \brief L-SIMD v3.1 fused scan+verify, SSE2 leg — same contract and structure as \ref
-  //!        simd_fixed_shape_scan (NEON), a plain 1-bit/lane mask instead of a nibble-packed one.
+  //! \brief L-SIMD v3.1 fused scan+verify, SSE2 leg — same contract, structure and split (intrinsics in
+  //!        simd.hpp, decision/loop logic here) as \ref simd_fixed_shape_scan (NEON).
   inline std::size_t simd_fixed_shape_scan(std::string_view      text,
                                            std::size_t           start,
                                            const pattern_hints&  hints,
@@ -187,7 +141,8 @@ namespace real::detail {
     while (pos + 16 <= sz) {
       std::array<std::uint8_t, 16> blk {};
       std::memcpy(blk.data(), text.data() + pos, 16); // MISRA-clean byte load (no pointer type-pun)
-      const std::uint32_t m            {simd_range_good_mask16(blk.data(), hints)};
+      const std::uint32_t m            {simd_range_good_mask16(blk.data(), hints.fixed_shape_lo0, hints.fixed_shape_hi0,
+                                                               hints.fixed_shape_lo1, hints.fixed_shape_hi1)};
       if (m == 0U) {
         pos += 16; // no candidate anywhere in this window -- skip the whole block, one compare paid
         continue;
@@ -1627,12 +1582,7 @@ namespace real::detail {
         for (; pos + 16 <= sz; pos += 16) {
           std::array<std::uint8_t, 16> buf {};
           std::memcpy(buf.data(), text.data() + pos, 16); // MISRA-clean byte load (no pointer type-pun)
-          const uint8x16_t blk             {vld1q_u8(buf.data())};
-          uint8x16_t       eq              {vdupq_n_u8(0)};
-          for (std::size_t i = 0; i < cnt; ++i) {
-            eq = vorrq_u8(eq, vceqq_u8(blk, vdupq_n_u8(mem[i])));
-          }
-          std::uint64_t mask {vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(eq), 4)), 0)};
+          std::uint64_t mask               {simd_small_set_nibmask16(buf.data(), mem.data(), cnt)};
           while (mask != 0) {
             const std::size_t tz   {static_cast<std::size_t>(std::countr_zero(mask)) & 63U}; // < 64: shift is defined
             const std::size_t lane {tz >> 2};
@@ -1675,13 +1625,9 @@ namespace real::detail {
         const std::size_t sz  {text.size()};
         std::size_t       pos {start};
         for (; pos + 16 <= sz; pos += 16) {
-          __m128i blk {};
-          std::memcpy(&blk, text.data() + pos, 16); // MISRA-clean byte load (no pointer type-pun)
-          __m128i eq  {_mm_setzero_si128()};
-          for (std::size_t i = 0; i < cnt; ++i) {
-            eq = _mm_or_si128(eq, _mm_cmpeq_epi8(blk, _mm_set1_epi8(static_cast<char>(mem[i]))));
-          }
-          auto mask {static_cast<std::uint32_t>(_mm_movemask_epi8(eq))};
+          std::array<std::uint8_t, 16> buf {};
+          std::memcpy(buf.data(), text.data() + pos, 16); // MISRA-clean byte load (no pointer type-pun)
+          std::uint32_t mask               {simd_small_set_mask16(buf.data(), mem.data(), cnt)};
           while (mask != 0U) {
             const std::size_t lane {static_cast<std::size_t>(std::countr_zero(mask))}; // 1 bit per lane, direct
             const std::size_t me   {match_at(pos + lane, false)};
