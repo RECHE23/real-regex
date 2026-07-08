@@ -209,18 +209,31 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     for (std::size_t k = 0; k < field_count; ++k) {
       fields.push_back(menu[(static_cast<std::size_t>(data[1]) + k) % (sizeof(menu) / sizeof(int))]);
     }
-    std::vector<token> compat_list;
-    for (real::compat::sregex_token_iterator it(subject.begin(), subject.end(), compat, fields), end;
-         it != end; ++it) {
-      compat_list.emplace_back(it->str(), it->matched);
-    }
-    std::vector<token> std_list;
-    for (std::sregex_token_iterator it(subject.begin(), subject.end(), std_re, fields), end;
-         it != end; ++it) {
-      std_list.emplace_back(it->str(), it->matched);
-    }
-    if (compat_list != std_list) {
-      __builtin_trap(); // token field-list divergence (mixed / out-of-range selectors)
+    // libc++-vs-libstdc++ divergence, isolated with std::regex alone (real::compat/REAL absent from the
+    // repro -- e.g. "a" against "xxx" with fields {0,-1}): on a subject with ZERO matches, a MULTI-element
+    // field list containing -1 yields the whole subject as one unmatched token on libstdc++ (what compat
+    // targets) but an EMPTY sequence on libc++. The single-element {-1} case (the S2b-2 net above) agrees
+    // on both ISAs -- only the multi-element list's no-match fallback differs, so only that cell is
+    // skipped; every field list on a subject that DOES match is unaffected and still compared.
+    if (!(fields.size() > 1 && !sf && [&] {
+          for (const int f : fields) {
+            if (f == -1) { return true; }
+          }
+          return false;
+        }())) {
+      std::vector<token> compat_list;
+      for (real::compat::sregex_token_iterator it(subject.begin(), subject.end(), compat, fields), end;
+           it != end; ++it) {
+        compat_list.emplace_back(it->str(), it->matched);
+      }
+      std::vector<token> std_list;
+      for (std::sregex_token_iterator it(subject.begin(), subject.end(), std_re, fields), end;
+           it != end; ++it) {
+        std_list.emplace_back(it->str(), it->matched);
+      }
+      if (compat_list != std_list) {
+        __builtin_trap(); // token field-list divergence (mixed / out-of-range selectors)
+      }
     }
   }
 

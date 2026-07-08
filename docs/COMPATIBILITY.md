@@ -236,6 +236,16 @@ which makes `-1` a splitter. After the last match a trailing `-1` field yields t
 asymmetry `std` pins); with `-1` and no match at all, the whole sequence is the single token. The
 fuzzer compares the `(str, matched)` token sequence for the `-1` and `0` fields.
 
+**Multi-element field list, no match at all — platform-variant.** The "whole sequence is the single
+token" fallback above is itself not universal once the field list has more than one element (e.g.
+`{0, -1}`, `{3, 5, -1}`): libstdc++ still yields that one whole-input token whenever `-1` appears
+anywhere in the list; libc++ yields it **only** when the list is literally `{-1}` alone — any longer
+list, on a subject with zero matches, gives libc++ an **empty** sequence instead. `real::compat`
+follows libstdc++ (its build/verification oracle, matching this project's CI); the differential fuzzer
+(`fuzz_compat.cpp`'s S5b check) skips comparing that one cell — multi-element list AND zero matches AND
+`-1` present — rather than asserting a libc++ behaviour `real::compat` was never built to match. Every
+other cell (a subject that DOES match, or a single-element list) is unaffected and still compared.
+
 ## Match flags (match_flag_type)
 
 `regex_search` / `regex_match` and both iterators take an optional `match_flag_type` (default
