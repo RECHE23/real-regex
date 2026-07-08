@@ -204,3 +204,22 @@ TEST(scan_verify_tail_lengths_pin_the_simd_offbyone)
     EXPECT_EQ(n, 1U);
   }
 }
+
+TEST(hex_verify_simd_skip_finds_the_match_past_a_failing_candidate)
+{
+  // The homogeneous SIMD verify (run_fixed_shape, fiche ITEM-2) skips to c + z + 1 -- past the first
+  // failing lane -- when a candidate fails partway through, then resumes via next_candidate. Pin that a
+  // real match past such a failing candidate is still found: "1234567g" looks hex for 7 bytes then
+  // breaks at position 7 (z == 7), landing the next candidate exactly on the genuine match "89abcdef"
+  // that follows, with a non-hex tail so no second match is possible.
+  const real::regex   hex  {"[0-9a-f]{8}"};
+  const std::string   text {"1234567g89abcdefXXXXXXXX"};
+  std::size_t         n    {0};
+  std::string         found;
+  for (const auto& m : hex.find_iter(text)) {
+    found = std::string(m[0]);
+    ++n;
+  }
+  EXPECT_EQ(n, 1U);
+  EXPECT_EQ(found, std::string("89abcdef"));
+}
