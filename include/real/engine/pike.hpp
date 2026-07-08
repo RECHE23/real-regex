@@ -49,83 +49,176 @@
 namespace real::detail {
 
 #if defined(__ARM_NEON)
+  //! \brief Nibble-packed (4 bits/lane, 0xF = in-range) membership mask of \p buf against a HOMOGENEOUS
+  //!        fixed shape's shared <= 2-range set (\ref pattern_hints::fixed_shape_lo0 etc., see
+  //!        prefilter.hpp's `class_range_count`). Shared by both the coarse candidate scan and the
+  //!        per-candidate verify in \ref simd_fixed_shape_scan (the SAME set applies at every position).
+  inline std::uint64_t simd_range_good_nibmask16(const std::uint8_t*  buf,
+                                                 const pattern_hints& hints)
+  {
+    const uint8x16_t blk    {vld1q_u8(buf)};
+    const uint8x16_t lo0v   {vdupq_n_u8(hints.fixed_shape_lo0)};
+    const uint8x16_t hi0v   {vdupq_n_u8(hints.fixed_shape_hi0)};
+    const uint8x16_t lo1v   {vdupq_n_u8(hints.fixed_shape_lo1)};
+    const uint8x16_t hi1v   {vdupq_n_u8(hints.fixed_shape_hi1)};
+    const uint8x16_t below0 {vcltq_u8(blk, lo0v)};
+    const uint8x16_t above0 {vcgtq_u8(blk, hi0v)};
+    const uint8x16_t below1 {vcltq_u8(blk, lo1v)};
+    const uint8x16_t above1 {vcgtq_u8(blk, hi1v)};
+    const uint8x16_t out0   {vorrq_u8(below0, above0)}; // not in range0
+    const uint8x16_t out1   {vorrq_u8(below1, above1)}; // not in range1 (always true when absent)
+    const uint8x16_t bad    {vandq_u8(out0, out1)};     // fails both -- this lane mismatches
+    const uint8x16_t good   {vmvnq_u8(bad)};
+    return vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(good), 4)), 0);
+  }
+
   /*!
-   * \brief L-SIMD v3 core: verifies 16 bytes at \p buf against a HOMOGENEOUS fixed shape (every
-   *        position accepts the identical <= 2-range set — \ref pattern_hints::fixed_shape_simd_len,
-   *        see prefilter.hpp's `class_range_count`).
+   * \brief L-SIMD v3.1: fused scan+verify for a HOMOGENEOUS fixed shape (every position accepts the
+   *        identical <= 2-range set — \ref pattern_hints::fixed_shape_simd_len > 0).
    *
-   * A free function (not a `pike_vm<Storage>` member, not templated on `OutSlots`) so it compiles
-   * once regardless of how many `run_fixed_shape` instantiations call it (one per distinct
-   * `static_regex` pattern, for the compile-time storage) — keeping run_fixed_shape's per-instantiation
-   * body a thin loop around this shared verify.
+   * Mirrors the two-level structure of the ceil_simd.cpp hex prototype: an outer loop skips whole
+   * 16-byte windows with no candidate at all (one compare per 16 bytes — the coarse scan), and an inner
+   * loop that, once a candidate is found, verifies it and — on a mismatch — finds the NEXT candidate by
+   * shifting the mask it just computed rather than a fresh scalar scan (`next_candidate` is not called
+   * at all here: the same homogeneous set is every position's first-byte set, so the good-mask already
+   * carries where the next candidate is). A fresh mask is still loaded at each *candidate* (not each
+   * byte), which is what makes the shift-reuse sound: the low `simd_len` bits of a mask loaded AT a
+   * candidate are exactly that candidate's verify.
    *
-   * \param[in]  buf   16 bytes read from the candidate position (the caller's MISRA-clean memcpy load).
-   * \param[in]  hints The pattern's hints (`fixed_shape_lo0/hi0/lo1/hi1/simd_len`).
-   * \param[out] skip  On a mismatch, the sound skip amount (`z + 1`, the first failing lane past the
-   *                   candidate) — unset on a match.
-   * \return `true` if all `fixed_shape_simd_len` low lanes are in range (a match at this candidate).
+   * A free function (not a `pike_vm<Storage>` member, not templated on `OutSlots` or `Storage`) so it
+   * compiles once regardless of how many `run_fixed_shape` instantiations exist (one per distinct
+   * `static_regex` pattern for the compile-time storage, none of which run at runtime) — keeping
+   * run_fixed_shape's own per-instantiation body a thin call-and-branch (the 53c2de4 lesson: inlining
+   * this directly into run_fixed_shape multiplied it across every consteval-only instantiation and
+   * dropped coverage-check below the floor).
+   *
+   * \param[in]  text        The subject text.
+   * \param[in]  start       Offset to begin scanning from.
+   * \param[in]  hints       The pattern's hints (`fixed_shape_lo0/hi0/lo1/hi1/simd_len`).
+   * \param[out] resume_from On no match, where the scalar tail (`fast_search`/`next_candidate`) should
+   *                         resume from — unset on a match.
+   * \return The match start offset, or \ref npos if the SIMD scan found no match (< 16 bytes remaining
+   *         from some point on, or no candidate byte left at all).
    */
-  inline bool simd_fixed_shape_verify16(const std::uint8_t * buf,
-                                        const pattern_hints& hints,
-                                        std::size_t&         skip)
+  inline std::size_t simd_fixed_shape_scan(std::string_view      text,
+                                           std::size_t           start,
+                                           const pattern_hints&  hints,
+                                           std::size_t&          resume_from)
   {
     const std::size_t   simd_len {hints.fixed_shape_simd_len};
     const std::uint64_t low_nib  {simd_len >= 16 ? ~std::uint64_t {0}
                                                   : (std::uint64_t {1} << (4U * simd_len)) - 1U};
-    const uint8x16_t blk         {vld1q_u8(buf)};
-    const uint8x16_t lo0v        {vdupq_n_u8(hints.fixed_shape_lo0)};
-    const uint8x16_t hi0v        {vdupq_n_u8(hints.fixed_shape_hi0)};
-    const uint8x16_t lo1v        {vdupq_n_u8(hints.fixed_shape_lo1)};
-    const uint8x16_t hi1v        {vdupq_n_u8(hints.fixed_shape_hi1)};
-    const uint8x16_t below0      {vcltq_u8(blk, lo0v)};
-    const uint8x16_t above0      {vcgtq_u8(blk, hi0v)};
-    const uint8x16_t below1      {vcltq_u8(blk, lo1v)};
-    const uint8x16_t above1      {vcgtq_u8(blk, hi1v)};
-    const uint8x16_t out0        {vorrq_u8(below0, above0)}; // not in range0
-    const uint8x16_t out1        {vorrq_u8(below1, above1)}; // not in range1 (always true when absent)
-    const uint8x16_t bad         {vandq_u8(out0, out1)};     // fails both -- this lane mismatches
-    std::uint64_t    nib         {vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(bad), 4)), 0)};
-    nib &= low_nib;                                          // only the L positions the shape actually covers
-    if (nib == 0U) {
-      return true;
+    const std::size_t sz         {text.size()};
+    std::size_t       pos        {start};
+    while (pos + 16 <= sz) {
+      std::array<std::uint8_t, 16> blk {};
+      std::memcpy(blk.data(), text.data() + pos, 16); // MISRA-clean byte load (no pointer type-pun)
+      const std::uint64_t m            {simd_range_good_nibmask16(blk.data(), hints)};
+      if (m == 0U) {
+        pos += 16; // no candidate anywhere in this window -- skip the whole block, one compare paid
+        continue;
+      }
+      std::size_t c {pos + (static_cast<std::size_t>(std::countr_zero(m)) >> 2)};
+      // Chain through every candidate this SAME loaded window can still verify -- shifting m (no
+      // reload) as long as the candidate's own simd_len-byte window fits inside [pos, pos + 16). Once a
+      // candidate's verify would read past what m covers, stop the chain and reload fresh AT it (the
+      // block-boundary case): m's shifted bits beyond what it actually covers are zero-filled, which
+      // would read as "not in range" and risk a false negative on the verify -- never a false skip,
+      // since z (the failing-lane search) only ever inspects the guaranteed-real low simd_len bits.
+      while (c + simd_len <= pos + 16) {
+        const std::uint64_t shifted  {m >> (4U * (c - pos))};
+        const std::uint64_t low_part {shifted & low_nib};
+        if (low_part == low_nib) {
+          resume_from = c;
+          return c; // all simd_len low lanes are in range -- a match at c
+        }
+        const std::uint64_t fails {(~low_part) & low_nib};
+        const std::size_t   z     {static_cast<std::size_t>(std::countr_zero(fails)) >> 2}; // first failing lane
+        const std::uint64_t nx    {shifted >> (4U * (z + 1U))};                             // reuse m -- no rescan: shift past the failed candidate
+        if (nx == 0U) {
+          c += z + 1U; // no further candidate visible in the still-loaded window -- reload from here
+          break;
+        }
+        c += z + 1U + (static_cast<std::size_t>(std::countr_zero(nx)) >> 2); // next candidate, same loaded mask
+      }
+      pos = c; // either the next window to coarse-scan, or the exact candidate that needs a fresh load
     }
-    const std::size_t tz {static_cast<std::size_t>(std::countr_zero(nib)) & 63U}; // < 64: shift is defined
-    skip = (tz >> 2) + 1;
-    return false;
+    resume_from = pos;
+    return npos;
   }
 
 #elif defined(__SSE2__)
-  //! \brief SSE2 leg of \ref simd_fixed_shape_verify16 (x86-64 floor) — same contract, free function for
-  //!        the same reason (one compiled body regardless of instantiation count).
-  inline bool simd_fixed_shape_verify16(const std::uint8_t * buf,
-                                        const pattern_hints& hints,
-                                        std::size_t&         skip)
+  //! \brief SSE2 leg of \ref simd_range_good_nibmask16 (x86-64 floor): a plain 1-bit/lane membership
+  //!        mask (movemask gives this natively, so no nibble packing is needed on this ISA).
+  inline std::uint32_t simd_range_good_mask16(const std::uint8_t*  buf,
+                                              const pattern_hints& hints)
+  {
+    __m128i blk {};
+    std::memcpy(&blk, buf, 16); // MISRA-clean byte load (no pointer type-pun)
+    // SSE2 has no unsigned byte compare: bias both operands by XOR 0x80 first (an exact bijection
+    // [0,255] -> [-128,127]) so signed cmplt/cmpgt on the biased values match the unsigned order.
+    const __m128i bias   {_mm_set1_epi8(static_cast<char>(0x80))};
+    blk = _mm_xor_si128(blk, bias);
+    const __m128i lo0v   {_mm_xor_si128(_mm_set1_epi8(static_cast<char>(hints.fixed_shape_lo0)), bias)};
+    const __m128i hi0v   {_mm_xor_si128(_mm_set1_epi8(static_cast<char>(hints.fixed_shape_hi0)), bias)};
+    const __m128i lo1v   {_mm_xor_si128(_mm_set1_epi8(static_cast<char>(hints.fixed_shape_lo1)), bias)};
+    const __m128i hi1v   {_mm_xor_si128(_mm_set1_epi8(static_cast<char>(hints.fixed_shape_hi1)), bias)};
+    const __m128i below0 {_mm_cmplt_epi8(blk, lo0v)};
+    const __m128i above0 {_mm_cmpgt_epi8(blk, hi0v)};
+    const __m128i below1 {_mm_cmplt_epi8(blk, lo1v)};
+    const __m128i above1 {_mm_cmpgt_epi8(blk, hi1v)};
+    const __m128i out0   {_mm_or_si128(below0, above0)};
+    const __m128i out1   {_mm_or_si128(below1, above1)};
+    const __m128i bad    {_mm_and_si128(out0, out1)};
+    return (~static_cast<std::uint32_t>(_mm_movemask_epi8(bad))) & 0xFFFFU;
+  }
+
+  //! \brief L-SIMD v3.1 fused scan+verify, SSE2 leg — same contract and structure as \ref
+  //!        simd_fixed_shape_scan (NEON), a plain 1-bit/lane mask instead of a nibble-packed one.
+  inline std::size_t simd_fixed_shape_scan(std::string_view      text,
+                                           std::size_t           start,
+                                           const pattern_hints&  hints,
+                                           std::size_t&          resume_from)
   {
     const std::size_t   simd_len {hints.fixed_shape_simd_len};
     const std::uint32_t low_mask {simd_len >= 16 ? 0xFFFFU : (std::uint32_t {1} << simd_len) - 1U};
-    // SSE2 has no unsigned byte compare: bias both operands by XOR 0x80 first (an exact bijection
-    // [0,255] -> [-128,127]) so signed cmplt/cmpgt on the biased values match the unsigned order.
-    __m128i blk             {};
-    std::memcpy(&blk, buf, 16); // MISRA-clean byte load (no pointer type-pun)
-    const __m128i bias      {_mm_set1_epi8(static_cast<char>(0x80))};
-    blk = _mm_xor_si128(blk, bias);
-    const __m128i lo0v      {_mm_xor_si128(_mm_set1_epi8(static_cast<char>(hints.fixed_shape_lo0)), bias)};
-    const __m128i hi0v      {_mm_xor_si128(_mm_set1_epi8(static_cast<char>(hints.fixed_shape_hi0)), bias)};
-    const __m128i lo1v      {_mm_xor_si128(_mm_set1_epi8(static_cast<char>(hints.fixed_shape_lo1)), bias)};
-    const __m128i hi1v      {_mm_xor_si128(_mm_set1_epi8(static_cast<char>(hints.fixed_shape_hi1)), bias)};
-    const __m128i below0    {_mm_cmplt_epi8(blk, lo0v)};
-    const __m128i above0    {_mm_cmpgt_epi8(blk, hi0v)};
-    const __m128i below1    {_mm_cmplt_epi8(blk, lo1v)};
-    const __m128i above1    {_mm_cmpgt_epi8(blk, hi1v)};
-    const __m128i out0      {_mm_or_si128(below0, above0)};
-    const __m128i out1      {_mm_or_si128(below1, above1)};
-    const __m128i bad       {_mm_and_si128(out0, out1)};
-    const auto    fail_mask {static_cast<std::uint32_t>(_mm_movemask_epi8(bad)) & low_mask};
-    if (fail_mask == 0U) {
-      return true;
+    const std::size_t   sz       {text.size()};
+    std::size_t         pos      {start};
+    while (pos + 16 <= sz) {
+      std::array<std::uint8_t, 16> blk {};
+      std::memcpy(blk.data(), text.data() + pos, 16); // MISRA-clean byte load (no pointer type-pun)
+      const std::uint32_t m            {simd_range_good_mask16(blk.data(), hints)};
+      if (m == 0U) {
+        pos += 16; // no candidate anywhere in this window -- skip the whole block, one compare paid
+        continue;
+      }
+      std::size_t c {pos + static_cast<std::size_t>(std::countr_zero(m))};
+      // Chain through every candidate this SAME loaded window can still verify -- shifting m (no
+      // reload) as long as the candidate's own simd_len-byte window fits inside [pos, pos + 16). Once a
+      // candidate's verify would read past what m covers, stop the chain and reload fresh AT it (the
+      // block-boundary case): m's shifted bits beyond what it actually covers are zero-filled, which
+      // would read as "not in range" and risk a false negative on the verify -- never a false skip,
+      // since z (the failing-lane search) only ever inspects the guaranteed-real low simd_len bits.
+      while (c + simd_len <= pos + 16) {
+        const std::uint32_t shifted  {m >> (c - pos)};
+        const std::uint32_t low_part {shifted & low_mask};
+        if (low_part == low_mask) {
+          resume_from = c;
+          return c; // all simd_len low lanes are in range -- a match at c
+        }
+        const std::uint32_t fails {(~low_part) & low_mask};
+        const std::size_t   z     {static_cast<std::size_t>(std::countr_zero(fails))}; // first failing lane
+        const std::uint32_t nx    {shifted >> (z + 1U)};                               // reuse m -- no rescan: shift past the failed candidate
+        if (nx == 0U) {
+          c += z + 1U; // no further candidate visible in the still-loaded window -- reload from here
+          break;
+        }
+        c += z + 1U + static_cast<std::size_t>(std::countr_zero(nx)); // next candidate, same loaded mask
+      }
+      pos = c; // either the next window to coarse-scan, or the exact candidate that needs a fresh load
     }
-    skip = static_cast<std::size_t>(std::countr_zero(fail_mask)) + 1;
-    return false;
+    resume_from = pos;
+    return npos;
   }
 
 #endif
@@ -1276,38 +1369,24 @@ namespace real::detail {
           return true;
         }
 #if defined(__ARM_NEON) || defined(__SSE2__)
-        // L-SIMD v3: hex-verify. For a HOMOGENEOUS fixed shape (every position accepts the identical
-        // <= 2-range set -- fixed_shape_simd_len > 0, see prefilter.hpp's class_range_count), verify all
-        // L positions of a candidate in one 16-byte compare (\ref simd_fixed_shape_verify16, a free
-        // function so run_fixed_shape's own per-instantiation body stays this thin loop) instead of L
-        // scalar byte tests. next_candidate still drives the coarse scan (its first-byte bitmap is the
-        // SAME set as every position, so it never skips a viable start) -- the SIMD verify only replaces
-        // match_byte_klass_run's per-byte walk. On a mismatch the sound skip past the first failing lane
-        // (next_candidate then resumes the cheap bitmap scan from there) is the free function's contract:
-        // since every position requires the same set, a byte that fails position z also fails position
-        // (z-k) at any candidate c+k, so no candidate before the skip amount can match either. Scalar
-        // tail (< 16 bytes remaining, or no more candidates) falls through to the existing
-        // fast_search/next_candidate walk.
+        // L-SIMD v3.1: hex scan+verify, fused. For a HOMOGENEOUS fixed shape (every position accepts
+        // the identical <= 2-range set -- fixed_shape_simd_len > 0, see prefilter.hpp's
+        // class_range_count), \ref simd_fixed_shape_scan does the whole candidate scan AND verify itself
+        // (mirroring the ceil_simd.cpp hex prototype): it does not call next_candidate at all -- the
+        // 53c2de4 cut did, and profiling showed the scalar bitmap scan (a 16-member class is outside the
+        // small_set memchr-cascade) became the new bottleneck. A free function so run_fixed_shape's own
+        // per-instantiation body stays this thin call-and-branch. Scalar tail (< 16 bytes remaining, or
+        // no more candidates) falls through to the existing fast_search/next_candidate walk from
+        // wherever the SIMD scan left off.
         if (!std::is_constant_evaluated() && prog_.hints.fixed_shape_simd_len >= 1) {
-          const std::size_t simd_len {prog_.hints.fixed_shape_simd_len};
-          const std::size_t sz       {text.size()};
-          std::size_t       pos      {start};
-          while (true) {
-            pos = next_candidate(text, pos, start);
-            if (pos >= sz || pos + 16 > sz) {
-              break; // no further candidate, or too close to the end for a full block (npos included: pos >= sz)
-            }
-            std::array<std::uint8_t, 16> buf {};
-            std::memcpy(buf.data(), text.data() + pos, 16); // MISRA-clean byte load (no pointer type-pun)
-            std::size_t skip                 {};
-            if (simd_fixed_shape_verify16(buf.data(), prog_.hints, skip)) {
-              out_slots[0] = pos;
-              out_slots[1] = pos + simd_len;
-              return true;
-            }
-            pos += skip;
+          std::size_t       resume {};
+          const std::size_t found  {simd_fixed_shape_scan(text, start, prog_.hints, resume)};
+          if (found != npos) {
+            out_slots[0] = found;
+            out_slots[1] = found + prog_.hints.fixed_shape_simd_len;
+            return true;
           }
-          return fast_search(text, pos, at, out_slots); // scalar tail
+          return fast_search(text, resume, at, out_slots); // scalar tail
         }
 #endif
         return fast_search(text, start, at, out_slots);
