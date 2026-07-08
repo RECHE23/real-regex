@@ -616,6 +616,21 @@ namespace real::detail {
      * loop for one logical search calls \ref begin_scan itself, ONCE, before the loop -- resetting the
      * thrash flag per CANDIDATE rather than per search would mask real thrashing across the loop.
      *
+     * The lean munch (A3): once find_iter has warmed a search up, the small state set a pattern like
+     * `[a-z][a-z]+` actually visits is already fully cached -- every (state, class) transition and every
+     * state's priority-cut already sit in \ref trans_ / \ref state_cut_. \ref step and \ref cut_cached
+     * exist to COMPUTE and cache those on a miss; paying their call overhead plus the "is this already
+     * built?" branch on every byte, when the answer is essentially always yes post-warm-up, is exactly
+     * the residual cost profiling pinned here (step + cut_cached + this function itself). So the loop
+     * below inlines the two lookups directly -- a flat class-then-transition read per byte, an
+     * accept check against a local, no function call at all in the common case -- and falls back to the
+     * real (state-building, cache-filling, flush-aware) \ref step / \ref cut_cached only on an actual
+     * miss, which is rare once the small state set has been visited once. Same states, same tables, same
+     * memoization \ref step / \ref cut_cached would have produced -- this is a leaner READ of them, not a
+     * different automaton. One accounting gap: the inlined hits do not increment \ref counters::hits
+     * (that counter is a step()/cut_cached()-callers' bookkeeping aid, not behavior -- \ref thrashing
+     * and \ref flush only ever move on an actual miss, which still goes through the real functions).
+     *
      * \param[in] text  The subject text.
      * \param[in] start Offset to anchor the match at (must be `<= text.size()`).
      */
@@ -625,14 +640,16 @@ namespace real::detail {
       if (!eligible_) {
         return npos;
       }
-      std::uint32_t state    {start_state_};
-      std::size_t   best_end {npos};
-      std::size_t   pos      {start};
+      std::uint32_t       state    {start_state_};
+      std::size_t         best_end {npos};
+      std::size_t         pos      {start};
+      const std::uint16_t count    {alpha_.count};
       while (true) {
         const std::uint32_t midx {state_match_idx_[state]};
         if (midx != no_match_idx) {
-          best_end = pos;               // the highest-priority accept lives at index midx; a higher thread may extend it
-          state    = cut_cached(state); // drop the accept and every lower-priority thread after it (memoized)
+          best_end = pos;                                           // the highest-priority accept lives at index midx; a higher thread may extend it
+          const std::uint32_t cut {state_cut_[state]};
+          state = (cut != no_transition) ? cut : cut_cached(state); // already-memoized cut, or build + memoize it
           if (state == dead_state) {
             break; // nothing higher-priority survives to extend the match
           }
@@ -640,8 +657,10 @@ namespace real::detail {
         if (pos >= text.size() || state == dead_state) {
           break;
         }
-        const std::uint8_t byte {static_cast<std::uint8_t>(text[pos])};
-        state = step(state, byte); // anchored: never re-seed -- a match starts at `start` or not at all
+        const std::uint8_t  byte  {static_cast<std::uint8_t>(text[pos])};
+        const std::uint8_t  cls   {alpha_.of[byte]};
+        const std::uint32_t trans {trans_[(static_cast<std::size_t>(state) * count) + cls]};
+        state = (trans != no_transition) ? trans : step(state, byte); // anchored: never re-seed -- a match starts at `start` or not at all
         ++pos;
       }
       return best_end;
