@@ -30,7 +30,9 @@
 #include <vector>
 
 #if defined(__ARM_NEON)
-#  include <arm_neon.h> // NEON mask-carried candidate scan (aarch64 floor); scalar stays for constexpr / other ISAs
+#  include <arm_neon.h>  // NEON mask-carried candidate scan (aarch64 floor); scalar stays for constexpr / other ISAs
+#elif defined(__SSE2__)
+#  include <emmintrin.h> // SSE2 mask-carried candidate scan (x86-64 floor)
 #endif
 
 #include "real/core/charclass.hpp"
@@ -1448,6 +1450,54 @@ namespace real::detail {
           }
         }
         for (; pos < sz; ++pos) { // scalar tail: the last < 16 bytes (the net pins this boundary)
+          const std::uint8_t b      {static_cast<std::uint8_t>(text[pos])};
+          bool               member {false};
+          for (std::size_t i = 0; i < cnt; ++i) {
+            if (b == mem[i]) {
+              member = true;
+              break;
+            }
+          }
+          if (member) {
+            const std::size_t me {match_at(pos, false)};
+            if (me != npos) {
+              out_slots[0] = pos;
+              out_slots[1] = me;
+              return true;
+            }
+          }
+        }
+        return false;
+      }
+#elif defined(__SSE2__)
+      if (!std::is_constant_evaluated() && prog_.hints.small_set_size >= 2 && prog_.hints.small_set_size <= 8) {
+        const std::size_t           cnt {prog_.hints.small_set_size};
+        std::array<std::uint8_t, 8> mem {};
+        for (std::size_t i = 0; i < cnt; ++i) {
+          mem[i] = static_cast<std::uint8_t>(prog_.hints.small_set[i]);
+        }
+        const std::size_t sz  {text.size()};
+        std::size_t       pos {start};
+        for (; pos + 16 <= sz; pos += 16) {
+          __m128i blk {};
+          std::memcpy(&blk, text.data() + pos, 16); // MISRA-clean byte load (no pointer type-pun)
+          __m128i eq  {_mm_setzero_si128()};
+          for (std::size_t i = 0; i < cnt; ++i) {
+            eq = _mm_or_si128(eq, _mm_cmpeq_epi8(blk, _mm_set1_epi8(static_cast<char>(mem[i]))));
+          }
+          auto mask {static_cast<std::uint32_t>(_mm_movemask_epi8(eq))};
+          while (mask != 0U) {
+            const std::size_t lane {static_cast<std::size_t>(std::countr_zero(mask))}; // 1 bit per lane, direct
+            const std::size_t me   {match_at(pos + lane, false)};
+            if (me != npos) {
+              out_slots[0] = pos + lane;
+              out_slots[1] = me;
+              return true;
+            }
+            mask &= mask - 1U; // clear the lowest set bit
+          }
+        }
+        for (; pos < sz; ++pos) {
           const std::uint8_t b      {static_cast<std::uint8_t>(text[pos])};
           bool               member {false};
           for (std::size_t i = 0; i < cnt; ++i) {
