@@ -207,11 +207,13 @@ TEST(scan_verify_tail_lengths_pin_the_simd_offbyone)
 
 TEST(hex_verify_simd_skip_finds_the_match_past_a_failing_candidate)
 {
-  // The homogeneous SIMD verify (run_fixed_shape, fiche ITEM-2) skips to c + z + 1 -- past the first
-  // failing lane -- when a candidate fails partway through, then resumes via next_candidate. Pin that a
-  // real match past such a failing candidate is still found: "1234567g" looks hex for 7 bytes then
-  // breaks at position 7 (z == 7), landing the next candidate exactly on the genuine match "89abcdef"
-  // that follows, with a non-hex tail so no second match is possible.
+  // The homogeneous SIMD scan+verify (run_fixed_shape, fiche ITEM-2/2b, simd_fixed_shape_scan) skips
+  // past the first failing lane when a candidate fails partway through, reusing the ALREADY-loaded
+  // mask (no reload, no next_candidate call) to jump straight to the next candidate it marks. Pin that
+  // a real match past such a failing candidate is still found this way: "1234567g" looks hex for 7
+  // bytes then breaks at position 7, and the SAME 16-byte block's mask already marks "89abcdef" right
+  // after it (both fit in one loaded window) -- the chain-reuse path, not a reload. Non-hex tail so no
+  // second match is possible.
   const real::regex   hex  {"[0-9a-f]{8}"};
   const std::string   text {"1234567g89abcdefXXXXXXXX"};
   std::size_t         n    {0};
@@ -222,4 +224,45 @@ TEST(hex_verify_simd_skip_finds_the_match_past_a_failing_candidate)
   }
   EXPECT_EQ(n, 1U);
   EXPECT_EQ(found, std::string("89abcdef"));
+}
+
+TEST(hex_verify_simd_skips_a_whole_candidate_free_block)
+{
+  // simd_fixed_shape_scan's coarse scan: a 16-byte window with NOT ONE hex-eligible byte is skipped in
+  // a single compare (m == 0 -> pos += 16), rather than being walked candidate by candidate. Pin that
+  // the real match in the NEXT window is still found after such a skip.
+  const real::regex  hex  {"[0-9a-f]{8}"};
+  const std::string  text {std::string(16, 'X') + "a3f9c1d8" + std::string(8, 'X')};
+  const auto         m    {hex.search(text)};
+  EXPECT(static_cast<bool>(m));
+  EXPECT_EQ(m.start(), 16U);
+  EXPECT_EQ(m.end(), 24U);
+  EXPECT_EQ(m[0], std::string_view("a3f9c1d8"));
+}
+
+TEST(hex_verify_simd_exhausts_a_window_with_no_further_candidate)
+{
+  // A candidate that fails with no OTHER hex-eligible byte anywhere else in the still-loaded 16-byte
+  // window (nx == 0): the chain cannot continue for free, so the scan reloads fresh from just past the
+  // failing lane instead -- which then coarse-skips the candidate-free rest of the text (m == 0). Only
+  // byte 0 is hex-eligible in 32 bytes, so no match should be found anywhere.
+  const real::regex hex  {"[0-9a-f]{8}"};
+  const std::string text {"a" + std::string(31, 'X')};
+  EXPECT(!hex.search(text));
+}
+
+TEST(alternation_simd_mask_continues_to_the_second_candidate_in_a_block)
+{
+  // run_alternation's mask-carried search (c460df3/eb826c1): when the block's first marked candidate
+  // fails match_at (byte 0 is a first-byte-set member but no branch matches there), the SAME loaded
+  // mask carries the block's OTHER candidates -- the bit is cleared and the loop continues within it,
+  // no rescan. "t" (a the|fox|dog first byte) at position 0 doesn't start any branch; "fox" follows
+  // later in the same 16-byte block and is the real match.
+  const real::regex  alt  {"the|fox|dog"};
+  const std::string  text {"t" + std::string(11, 'x') + "fox" + std::string(5, 'x')};
+  const auto         m    {alt.search(text)};
+  EXPECT(static_cast<bool>(m));
+  EXPECT_EQ(m.start(), 12U);
+  EXPECT_EQ(m.end(), 15U);
+  EXPECT_EQ(m[0], std::string_view("fox"));
 }
