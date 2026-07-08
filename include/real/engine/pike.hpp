@@ -43,32 +43,30 @@
 
 namespace real::detail {
 
-#if defined(__ARM_NEON)
+#if defined(__ARM_NEON) || defined(__SSE2__)
   /*!
-   * \brief L-SIMD v3.1: fused scan+verify for a HOMOGENEOUS fixed shape (every position accepts the
+   * \brief L-SIMD v3.2: fused scan+verify for a HOMOGENEOUS fixed shape (every position accepts the
    *        identical <= 2-range set — \ref pattern_hints::fixed_shape_simd_len > 0).
    *
    * Mirrors the two-level structure of the ceil_simd.cpp hex prototype: an outer loop skips whole
    * 16-byte windows with no candidate at all (one compare per 16 bytes — the coarse scan), and an inner
    * loop that, once a candidate is found, verifies it and — on a mismatch — finds the NEXT candidate by
-   * shifting the mask it just computed rather than a fresh scalar scan (`next_candidate` is not called
-   * at all here: the same homogeneous set is every position's first-byte set, so the good-mask already
-   * carries where the next candidate is). A fresh mask is still loaded at each *candidate* (not each
-   * byte), which is what makes the shift-reuse sound: the low `simd_len` bits of a mask loaded AT a
-   * candidate are exactly that candidate's verify.
+   * reusing the mask it just computed (via \ref next_set_lane) rather than a fresh scalar scan
+   * (`next_candidate` is not called at all here: the same homogeneous set is every position's
+   * first-byte set, so the good-mask already carries where the next candidate is). A fresh mask is
+   * still loaded at each *candidate* (not each byte), which is what makes the reuse sound: the low
+   * `simd_len` lanes of a mask loaded AT a candidate are exactly that candidate's verify.
    *
-   * The intrinsics themselves (\ref simd_range_good_nibmask16) live in simd.hpp; this function is the
+   * Written ONCE against simd.hpp's uniform mask_t interface (\ref load_range_mask, \ref empty, \ref
+   * first_lane, \ref window_all_set, \ref first_clear_lane, \ref next_set_lane) — no `#if` ISA branch
+   * of its own. The intrinsics behind those primitives are ISA-exclusive by construction and live in
+   * simd.hpp (excluded from the coverage floor for exactly that reason); this function is the
    * decision/loop logic — eligibility already decided by the caller, the block-boundary guard, the
    * skip-after-failure math, the tail hand-off — which is the SAME C++ on every ISA and is what the
-   * ordinary test suite exercises, regardless of which SIMD leg compiled (see simd.hpp's file comment
-   * and the Makefile's `COV_FLOOR_IGNORE`).
-   *
-   * A free function (not a `pike_vm<Storage>` member, not templated on `OutSlots` or `Storage`) so it
-   * compiles once regardless of how many `run_fixed_shape` instantiations exist (one per distinct
-   * `static_regex` pattern for the compile-time storage, none of which run at runtime) — keeping
-   * run_fixed_shape's own per-instantiation body a thin call-and-branch (the 53c2de4 lesson: inlining
-   * this directly into run_fixed_shape multiplied it across every consteval-only instantiation and
-   * dropped coverage-check below the floor).
+   * ordinary test suite exercises, regardless of which SIMD leg compiled. (The first cut of this
+   * function still had a `#if NEON ... #elif SSE2 ...` pair of near-identical loop bodies — dead
+   * weight structurally uncoverable on the other ISA's CI runner, the actual coverage-check deficit;
+   * this rewrite is the real fix, not another test chasing the symptom.)
    *
    * \param[in]  text        The subject text.
    * \param[in]  start       Offset to begin scanning from.
@@ -83,92 +81,37 @@ namespace real::detail {
                                            const pattern_hints&  hints,
                                            std::size_t&          resume_from)
   {
-    const std::size_t   simd_len {hints.fixed_shape_simd_len};
-    const std::uint64_t low_nib  {simd_len >= 16 ? ~std::uint64_t {0}
-                                                  : (std::uint64_t {1} << (4U * simd_len)) - 1U};
-    const std::size_t sz         {text.size()};
-    std::size_t       pos        {start};
+    const std::size_t L   {hints.fixed_shape_simd_len};
+    const std::size_t sz  {text.size()};
+    std::size_t       pos {start};
     while (pos + 16 <= sz) {
       std::array<std::uint8_t, 16> blk {};
       std::memcpy(blk.data(), text.data() + pos, 16); // MISRA-clean byte load (no pointer type-pun)
-      const std::uint64_t m            {simd_range_good_nibmask16(blk.data(), hints.fixed_shape_lo0, hints.fixed_shape_hi0,
-                                                                  hints.fixed_shape_lo1, hints.fixed_shape_hi1)};
-      if (m == 0U) {
+      const mask_t m                   {load_range_mask(blk.data(), hints.fixed_shape_lo0, hints.fixed_shape_hi0,
+                                                        hints.fixed_shape_lo1, hints.fixed_shape_hi1)};
+      if (empty(m)) {
         pos += 16; // no candidate anywhere in this window -- skip the whole block, one compare paid
         continue;
       }
-      std::size_t c {pos + (static_cast<std::size_t>(std::countr_zero(m)) >> 2)};
-      // Chain through every candidate this SAME loaded window can still verify -- shifting m (no
-      // reload) as long as the candidate's own simd_len-byte window fits inside [pos, pos + 16). Once a
+      std::size_t c {pos + first_lane(m)};
+      // Chain through every candidate this SAME loaded window can still verify -- reusing m (no
+      // reload) as long as the candidate's own L-lane window fits inside [pos, pos + 16). Once a
       // candidate's verify would read past what m covers, stop the chain and reload fresh AT it (the
-      // block-boundary case): m's shifted bits beyond what it actually covers are zero-filled, which
-      // would read as "not in range" and risk a false negative on the verify -- never a false skip,
-      // since z (the failing-lane search) only ever inspects the guaranteed-real low simd_len bits.
-      while (c + simd_len <= pos + 16) {
-        const std::uint64_t shifted  {m >> (4U * (c - pos))};
-        const std::uint64_t low_part {shifted & low_nib};
-        if (low_part == low_nib) {
+      // block-boundary case): querying m past what it actually covers is never attempted (the loop
+      // condition below guards it), so there is no risk of a false negative OR a false skip.
+      while (c + L <= pos + 16) {
+        const std::size_t start_lane {c - pos};
+        if (window_all_set(m, start_lane, L)) {
           resume_from = c;
-          return c; // all simd_len low lanes are in range -- a match at c
+          return c; // all L lanes from start_lane are in range -- a match at c
         }
-        const std::uint64_t fails {(~low_part) & low_nib};
-        const std::size_t   z     {static_cast<std::size_t>(std::countr_zero(fails)) >> 2}; // first failing lane
-        const std::uint64_t nx    {shifted >> (4U * (z + 1U))};                             // reuse m -- no rescan: shift past the failed candidate
-        if (nx == 0U) {
-          c += z + 1U; // no further candidate visible in the still-loaded window -- reload from here
+        const std::size_t z   {first_clear_lane(m, start_lane, L)}; // absolute lane of the first failing byte
+        const std::size_t nxt {next_set_lane(m, z + 1U)};           // reuse m -- no rescan: the next candidate lane
+        if (nxt >= 16U) {
+          c = pos + z + 1U; // no further candidate visible in the still-loaded window -- reload from here
           break;
         }
-        c += z + 1U + (static_cast<std::size_t>(std::countr_zero(nx)) >> 2); // next candidate, same loaded mask
-      }
-      pos = c; // either the next window to coarse-scan, or the exact candidate that needs a fresh load
-    }
-    resume_from = pos;
-    return npos;
-  }
-
-#elif defined(__SSE2__)
-  //! \brief L-SIMD v3.1 fused scan+verify, SSE2 leg — same contract, structure and split (intrinsics in
-  //!        simd.hpp, decision/loop logic here) as \ref simd_fixed_shape_scan (NEON).
-  inline std::size_t simd_fixed_shape_scan(std::string_view      text,
-                                           std::size_t           start,
-                                           const pattern_hints&  hints,
-                                           std::size_t&          resume_from)
-  {
-    const std::size_t   simd_len {hints.fixed_shape_simd_len};
-    const std::uint32_t low_mask {simd_len >= 16 ? 0xFFFFU : (std::uint32_t {1} << simd_len) - 1U};
-    const std::size_t   sz       {text.size()};
-    std::size_t         pos      {start};
-    while (pos + 16 <= sz) {
-      std::array<std::uint8_t, 16> blk {};
-      std::memcpy(blk.data(), text.data() + pos, 16); // MISRA-clean byte load (no pointer type-pun)
-      const std::uint32_t m            {simd_range_good_mask16(blk.data(), hints.fixed_shape_lo0, hints.fixed_shape_hi0,
-                                                               hints.fixed_shape_lo1, hints.fixed_shape_hi1)};
-      if (m == 0U) {
-        pos += 16; // no candidate anywhere in this window -- skip the whole block, one compare paid
-        continue;
-      }
-      std::size_t c {pos + static_cast<std::size_t>(std::countr_zero(m))};
-      // Chain through every candidate this SAME loaded window can still verify -- shifting m (no
-      // reload) as long as the candidate's own simd_len-byte window fits inside [pos, pos + 16). Once a
-      // candidate's verify would read past what m covers, stop the chain and reload fresh AT it (the
-      // block-boundary case): m's shifted bits beyond what it actually covers are zero-filled, which
-      // would read as "not in range" and risk a false negative on the verify -- never a false skip,
-      // since z (the failing-lane search) only ever inspects the guaranteed-real low simd_len bits.
-      while (c + simd_len <= pos + 16) {
-        const std::uint32_t shifted  {m >> (c - pos)};
-        const std::uint32_t low_part {shifted & low_mask};
-        if (low_part == low_mask) {
-          resume_from = c;
-          return c; // all simd_len low lanes are in range -- a match at c
-        }
-        const std::uint32_t fails {(~low_part) & low_mask};
-        const std::size_t   z     {static_cast<std::size_t>(std::countr_zero(fails))}; // first failing lane
-        const std::uint32_t nx    {shifted >> (z + 1U)};                               // reuse m -- no rescan: shift past the failed candidate
-        if (nx == 0U) {
-          c += z + 1U; // no further candidate visible in the still-loaded window -- reload from here
-          break;
-        }
-        c += z + 1U + static_cast<std::size_t>(std::countr_zero(nx)); // next candidate, same loaded mask
+        c = pos + nxt; // next candidate, same loaded mask
       }
       pos = c; // either the next window to coarse-scan, or the exact candidate that needs a fresh load
     }
@@ -1567,10 +1510,14 @@ namespace real::detail {
         out_slots[1] = match_end;
         return true;
       }
-#if defined(__ARM_NEON)
-      // L-SIMD v2: mask-carried search. Scan a 16-byte block for any branch first-byte, then verify every
-      // candidate the mask marks (in order — leftmost-first) with match_at before advancing to the next block.
-      // The mask survives across candidates within the block, which is where the win lives. Scalar tail (< 16).
+#if defined(__ARM_NEON) || defined(__SSE2__)
+      // L-SIMD v2.1: mask-carried search. Scan a 16-byte block for any branch first-byte, then verify
+      // every candidate the mask marks (in order — leftmost-first) with match_at before advancing to
+      // the next block. The mask survives across candidates within the block (\ref clear_first, no
+      // reload), which is where the win lives. Written ONCE against simd.hpp's uniform mask_t interface
+      // — no `#if` ISA branch of its own (the first cut had a NEON/SSE2 pair of near-identical loop
+      // bodies, dead weight on whichever ISA a given CI runner isn't; see simd_fixed_shape_scan's
+      // comment for the same fix applied there). Scalar tail (< 16, the net-0-33 pins this boundary).
       if (!std::is_constant_evaluated() && prog_.hints.small_set_size >= 2 && prog_.hints.small_set_size <= 8) {
         const std::size_t           cnt {prog_.hints.small_set_size};
         std::array<std::uint8_t, 8> mem {};
@@ -1582,64 +1529,19 @@ namespace real::detail {
         for (; pos + 16 <= sz; pos += 16) {
           std::array<std::uint8_t, 16> buf {};
           std::memcpy(buf.data(), text.data() + pos, 16); // MISRA-clean byte load (no pointer type-pun)
-          std::uint64_t mask               {simd_small_set_nibmask16(buf.data(), mem.data(), cnt)};
-          while (mask != 0) {
-            const std::size_t tz   {static_cast<std::size_t>(std::countr_zero(mask)) & 63U}; // < 64: shift is defined
-            const std::size_t lane {tz >> 2};
+          mask_t mask                      {load_members_mask(buf.data(), mem.data(), cnt)};
+          while (!empty(mask)) {
+            const std::size_t lane {first_lane(mask)};
             const std::size_t me   {match_at(pos + lane, false)};
             if (me != npos) {
               out_slots[0] = pos + lane;
               out_slots[1] = me;
               return true;
             }
-            mask &= ~(static_cast<std::uint64_t>(0xF) << tz); // clear this lane's nibble, keep the rest
+            mask = clear_first(mask);
           }
         }
         for (; pos < sz; ++pos) { // scalar tail: the last < 16 bytes (the net pins this boundary)
-          const std::uint8_t b      {static_cast<std::uint8_t>(text[pos])};
-          bool               member {false};
-          for (std::size_t i = 0; i < cnt; ++i) {
-            if (b == mem[i]) {
-              member = true;
-              break;
-            }
-          }
-          if (member) {
-            const std::size_t me {match_at(pos, false)};
-            if (me != npos) {
-              out_slots[0] = pos;
-              out_slots[1] = me;
-              return true;
-            }
-          }
-        }
-        return false;
-      }
-#elif defined(__SSE2__)
-      if (!std::is_constant_evaluated() && prog_.hints.small_set_size >= 2 && prog_.hints.small_set_size <= 8) {
-        const std::size_t           cnt {prog_.hints.small_set_size};
-        std::array<std::uint8_t, 8> mem {};
-        for (std::size_t i = 0; i < cnt; ++i) {
-          mem[i] = static_cast<std::uint8_t>(prog_.hints.small_set[i]);
-        }
-        const std::size_t sz  {text.size()};
-        std::size_t       pos {start};
-        for (; pos + 16 <= sz; pos += 16) {
-          std::array<std::uint8_t, 16> buf {};
-          std::memcpy(buf.data(), text.data() + pos, 16); // MISRA-clean byte load (no pointer type-pun)
-          std::uint32_t mask               {simd_small_set_mask16(buf.data(), mem.data(), cnt)};
-          while (mask != 0U) {
-            const std::size_t lane {static_cast<std::size_t>(std::countr_zero(mask))}; // 1 bit per lane, direct
-            const std::size_t me   {match_at(pos + lane, false)};
-            if (me != npos) {
-              out_slots[0] = pos + lane;
-              out_slots[1] = me;
-              return true;
-            }
-            mask &= mask - 1U; // clear the lowest set bit
-          }
-        }
-        for (; pos < sz; ++pos) {
           const std::uint8_t b      {static_cast<std::uint8_t>(text[pos])};
           bool               member {false};
           for (std::size_t i = 0; i < cnt; ++i) {
