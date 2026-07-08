@@ -215,6 +215,65 @@ namespace real::detail {
     hints.empty_match_possible = empty_match_possible;
   }
 
+  //! \brief IL-fusion cap (compiler.hpp, `pattern_hints::il_fused_eligible`): the largest total width
+  //!        (prefix + literal + suffix) that takes the fused arithmetic verify instead of the
+  //!        reverse/forward-DFA route. A generous bound for the emails/dates/keys the route targets,
+  //!        not a hard architectural limit -- kept narrow deliberately (scope, predictability).
+  inline constexpr std::int32_t il_fused_max_width {32};
+
+  /*!
+   * \brief Total consuming width (in bytes) of a straight-line byte/klass program: `save 0`, an
+   *        interleaved byte/klass/save sequence with no nested capturing groups, `save 1`, `match` --
+   *        the same shape `detect_fast_shapes`'s `fixed_shape` check recognizes, factored out so a
+   *        SEPARATE complete program (e.g. the inner-literal prefix sub-program, compiled on its own
+   *        AST) can be measured the same way without re-deriving the walk.
+   *
+   * \param[in] code A complete instruction stream (`save 0` ... `save 1`, `match`).
+   * \return The number of `byte`/`klass` ops consumed, or -1 if \p code is not this shape.
+   */
+  constexpr std::int32_t fixed_run_width(std::span<const instr> code)
+  {
+    std::size_t  i           {};
+    std::int32_t width       {};
+    std::int32_t open_groups {};
+    bool         closed      {};
+    bool         nested      {};
+    if (i >= code.size() || code[i].op != opcode::save || code[i].arg16 != 0) {
+      return -1;
+    }
+    ++i;
+    while (i < code.size()) {
+      const opcode op {code[i].op};
+      if (op == opcode::byte || op == opcode::klass) {
+        ++width;
+        ++i;
+      }
+      else if (op == opcode::save) {
+        const std::int32_t slot {code[i].arg16};
+        if (slot == 1) {
+          closed = true;
+        }
+        else if (slot >= 2 && (slot % 2) == 0) {
+          if (open_groups > 0) {
+            nested = true;
+          }
+          ++open_groups;
+        }
+        else if (slot >= 3) {
+          --open_groups;
+        }
+        ++i;
+      }
+      else {
+        break;
+      }
+    }
+    if (width >= 1 && closed && !nested && i + 1 == code.size() && code[i].op == opcode::match) {
+      return width;
+    }
+    return -1;
+  }
+
   /*!
    * \brief Reports \p klass as up to two contiguous byte ranges.
    *

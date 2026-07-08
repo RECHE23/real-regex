@@ -531,8 +531,11 @@ namespace real::detail {
             const std::size_t abs_start {state_.rev_dfa->reverse_start(text, abs_end, start)};
             // OPT onepass (Tier A): a one-pass pattern fills captures in a single pass over [s, e] with no
             // thread lists (the shared per-regex table). Otherwise the window-Pike runs the general loop
-            // there. Both give the same slots.
-            if (prog_.immut->op_table.has_value() && prog_.immut->op_table->eligible()
+            // there. Both give the same slots. prog_.immut is non-null whenever fwd_dfa/rev_dfa hold a
+            // value (both are set only by ensure_lazy_dfa, which builds on ensure_immutables' own
+            // null-guarded fill) -- the explicit check here just makes that invariant visible to the
+            // analyzer (confirm_at, below, already spells it out the same way).
+            if (prog_.immut != nullptr && prog_.immut->op_table.has_value() && prog_.immut->op_table->eligible()
                 && prog_.immut->op_table->extract(text, abs_start, abs_end, out_slots)) {
               return true; // extract filled out_slots directly — no intermediate buffer or copy
             }
@@ -717,7 +720,16 @@ namespace real::detail {
           return false;
         }
         std::size_t s {h}; // boundary 0 = head literal: the reverse is the identity
-        if (boundary >= 1) {
+        if (boundary >= 1 && prog_.hints.il_fused_eligible) {
+          // IL-FUSION: the whole pattern (prefix + literal + suffix) is a plain fixed-width byte/klass
+          // sequence (prog_.hints.fixed_shape, checked at compile time -- compiler.hpp's il_fused_eligible
+          // wiring), so the match start is pure arithmetic: no reverse DFA. Bounds-guarded both ways -- a
+          // hit closer to the text start than the prefix's width, or whose only possible start falls
+          // below the reverse floor, has no valid candidate here (mirrors reverse_start returning npos).
+          const std::size_t prefix_w {prog_.hints.il_fused_prefix_width};
+          s = (h >= prefix_w && h - prefix_w >= min_match_start) ? h - prefix_w : npos;
+        }
+        else if (boundary >= 1) {
           // The prefix's byte program lives in the per-regex immutables — built once (call_once, already done
           // by the first-candidate guard above), not per find_iter; the expensive klass_cp expansion is what a
           // small-input regex must not pay repeatedly. The reverse DFA that spans it is a cheap per-iterator
@@ -736,6 +748,28 @@ namespace real::detail {
         }
         if (s == npos) {
           pos = h + 1; // the prefix reaches no start within [min_match_start, h] -> next candidate
+        }
+        else if (prog_.hints.il_fused_eligible) {
+          // The fused verify: one match_byte_klass_run pass over the WHOLE span (prefix + literal +
+          // suffix, all byte/klass ops by construction) -- no forward DFA, no one-pass extraction. A
+          // fixed-width match has every save at a compile-time-constant offset from the start, exactly
+          // like run_fixed_shape's own grouped path, so fill_fixed_saves (no re-match) fills captures.
+          const std::size_t match_end {prog_.slot_count <= 2 ? match_byte_klass_run<false>(text, 1, s)
+                                                              : match_byte_klass_run<true>(text, 1, s)};
+          if (match_end != npos) {
+            out_slots.assign(prog_.slot_count, npos);
+            out_slots[0] = s;
+            out_slots[1] = match_end;
+            if (prog_.slot_count > 2) {
+              fill_fixed_saves(s, out_slots);
+            }
+            return true;
+          }
+          // min_pre_start intentionally not advanced here: match_byte_klass_run reports pass/fail only,
+          // not how far it got, so there is no sound tighter floor to claim (and none is needed for
+          // linearity -- the fused verify is a hard-bounded O(il_fused_max_width) check per candidate,
+          // not the reverse/forward-DFA cost the guard was built to bound).
+          pos = h + 1;
         }
         else {
           std::size_t stop {s};

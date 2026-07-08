@@ -328,6 +328,17 @@ namespace real {
       std::uint8_t fixed_shape_lo1      {1}; //!< lo1 > hi1 (default 1 > 0) encodes "no second range".
       std::uint8_t fixed_shape_hi1      {};
       std::uint8_t fixed_shape_simd_len {};  //!< The run length (1..16) when eligible, else 0.
+
+      //! \brief IL-fusion (`run_inner_literal`): when the inner-literal route applies
+      //!        (`inner_literal_prefix >= 1`) AND the WHOLE pattern is \ref fixed_shape AND its total
+      //!        width is small (see `il_fused_max_width`), the byte-width of the PREFIX (everything
+      //!        before the literal) -- so a memmem hit's match start is pure arithmetic (`hit -
+      //!        il_fused_prefix_width`) and the whole span verifies in one `match_byte_klass_run` pass:
+      //!        no reverse DFA, no forward DFA, no one-pass extraction. \ref il_fused_eligible is false
+      //!        (prefix width unset) for a variable-width neighbor, a `klass_cp`, or an oversized run --
+      //!        the existing reverse-DFA/forward-DFA/one-pass route stays exactly as it was for those.
+      bool         il_fused_eligible     {};
+      std::uint8_t il_fused_prefix_width {};
     };
 
     /*!
