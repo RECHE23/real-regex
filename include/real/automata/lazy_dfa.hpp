@@ -601,6 +601,52 @@ namespace real::detail {
       return best_end;
     }
 
+    /*!
+     * \brief The end offset of the leftmost-first match ANCHORED at \p start in \p text, or \ref
+     *        real::npos.
+     *
+     * Identical walk to \ref forward_end except it never re-seeds: a single thread is seeded once, at
+     * \p start (\ref step, never \ref step_seeded), so a match must begin exactly there. The caller
+     * already knows \p start is a valid candidate (a prefilter hit) -- this skips the reverse pass
+     * \ref forward_end normally needs to recover the start, since there is nothing left to recover.
+     * Eligible programs only (an ineligible one returns \ref real::npos; the caller keeps the Pike VM).
+     * No captures: this reports the end only, exactly like \ref forward_end.
+     *
+     * Does NOT call \ref begin_scan (unlike \ref forward_end): a caller trying several candidates in a
+     * loop for one logical search calls \ref begin_scan itself, ONCE, before the loop -- resetting the
+     * thrash flag per CANDIDATE rather than per search would mask real thrashing across the loop.
+     *
+     * \param[in] text  The subject text.
+     * \param[in] start Offset to anchor the match at (must be `<= text.size()`).
+     */
+    [[nodiscard]] std::size_t anchored_end(std::string_view text,
+                                           std::size_t      start)
+    {
+      if (!eligible_) {
+        return npos;
+      }
+      std::uint32_t state    {start_state_};
+      std::size_t   best_end {npos};
+      std::size_t   pos      {start};
+      while (true) {
+        const std::uint32_t midx {state_match_idx_[state]};
+        if (midx != no_match_idx) {
+          best_end = pos;               // the highest-priority accept lives at index midx; a higher thread may extend it
+          state    = cut_cached(state); // drop the accept and every lower-priority thread after it (memoized)
+          if (state == dead_state) {
+            break; // nothing higher-priority survives to extend the match
+          }
+        }
+        if (pos >= text.size() || state == dead_state) {
+          break;
+        }
+        const std::uint8_t byte {static_cast<std::uint8_t>(text[pos])};
+        state = step(state, byte); // anchored: never re-seed -- a match starts at `start` or not at all
+        ++pos;
+      }
+      return best_end;
+    }
+
     //! \brief Whether \p state accepts here (its ordered set contains a `match` PC).
     [[nodiscard]] bool is_match(std::uint32_t state) const
     {

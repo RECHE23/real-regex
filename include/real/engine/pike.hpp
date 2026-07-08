@@ -522,6 +522,46 @@ namespace real::detail {
           }
           if (state_.fwd_dfa.has_value() && state_.rev_dfa.has_value() && state_.fwd_dfa->eligible()
               && !state_.fwd_dfa->thrashing()) {
+            // A2: anchored-from-candidate. When the pattern has a sound first-byte prefilter, the
+            // reverse DFA pass is pure overhead: next_candidate already knows where a match COULD start,
+            // so anchored_end (no re-seed) tests each candidate directly and a hit's start is the
+            // candidate itself -- zero reverse_dfa. A miss ("false candidate": a valid first byte whose
+            // pattern does not actually continue to match, e.g. [a-z][0-9]+ on "aaaa") advances to the
+            // NEXT candidate, not the next byte -- next_candidate re-scans from there. Leftmost-first by
+            // construction: candidates are tried strictly left to right, and a candidate is only ever
+            // skipped once its own anchored walk has proven no match starts there (the same argument the
+            // SIMD fast paths use for their skip-after-failure). One begin_scan for the whole candidate
+            // loop, not one per candidate: a per-search thrash decision, not a per-candidate one.
+            if (prog_.hints.first_bytes_valid) {
+              state_.fwd_dfa->begin_scan();
+              std::size_t c {start};
+              while (true) {
+                c = next_candidate(text, c, start);
+                if (c > text.size()) {
+                  out_slots.assign(prog_.slot_count, npos);
+                  return false; // no further candidate -- the prefilter itself is exhaustive
+                }
+                const std::size_t match_end {state_.fwd_dfa->anchored_end(text, c)};
+                if (match_end != npos) {
+                  if (prog_.slot_count <= 2) {
+                    out_slots.assign(2, npos);
+                    out_slots[0] = c;
+                    out_slots[1] = match_end;
+                    return true;
+                  }
+                  if (prog_.immut != nullptr && prog_.immut->op_table.has_value()
+                      && prog_.immut->op_table->eligible()
+                      && prog_.immut->op_table->extract(text, c, match_end, out_slots)) {
+                    return true;
+                  }
+                  return run_general<Cascade>(text.substr(0, match_end), c, mode, out_slots);
+                }
+                ++c; // false candidate: past it, one candidate at a time (bounded by the pattern's own
+                     // reach, exactly as run_fixed_shape/run_alternation/run_inner_literal already skip)
+              }
+            }
+            // No sound first-byte prefilter (e.g. .*x): the unanchored forward pass plus a reverse
+            // recovery is the route that applies -- there is no candidate to anchor on.
             const std::size_t match_end {state_.fwd_dfa->forward_end(text.substr(start))};
             if (match_end == npos) {
               out_slots.assign(prog_.slot_count, npos);
