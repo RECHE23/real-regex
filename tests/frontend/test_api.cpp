@@ -154,6 +154,31 @@ TEST(small_vec_grown_result_copy_exercises_heap_copy)
   EXPECT(m3[39] == "x");
 }
 
+TEST(regex_copy_assignment_resets_and_rebuilds_the_immutables_cache)
+{
+  // basic_regex has no custom copy-assignment operator; the compiler-generated one member-wise assigns
+  // dynamic_storage, which in turn assigns detail::regex_immutables (its mutable lazy-DFA/one-pass cache)
+  // via regex_immutables::operator=(const&) -- deliberately a no-op (each regex keeps its OWN, independent,
+  // lazily-rebuilt cache rather than inheriting the source's already-built one). Warm both regexes' caches
+  // first (a routed search builds it via std::call_once), THEN copy-assign, and confirm the destination
+  // still matches correctly afterward -- the reset must not corrupt anything the fresh build depends on.
+  real::regex a {R"((\w+)@(\w+))"};
+  real::regex b {R"((\d+)-(\d+))"};
+  std::string long_text;
+  for (int i = 0; i < 50; ++i) {
+    long_text += "aa@bb 12-34 "; // past the routing threshold, warms each regex's own immutables cache
+  }
+  (void) a.search(long_text);
+  (void) b.search(long_text);
+
+  a = b; // copy-assignment (not construction): exercises regex_immutables::operator=(const&)
+
+  const auto m {a.search("99-88")};
+  EXPECT(m.matched());
+  EXPECT_EQ(m[1], "99");
+  EXPECT_EQ(m[2], "88");
+}
+
 // --- Program size limit (config.hpp + compiler guard, #1+#3) ---------------
 // Prevents the validated DoS: 24-char nested bounded quant pattern expanding
 // via unroll to ~GB allocation / millions of NFA instrs. We cap at 256Ki

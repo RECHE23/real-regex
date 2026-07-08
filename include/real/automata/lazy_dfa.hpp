@@ -804,6 +804,13 @@ namespace real::detail {
                               std::vector<std::int32_t>& out,
                               std::vector<char>&         seen) const
     {
+      // Structurally unreachable through the only two callers (step/step_seeded, both private): every pc
+      // they pass is either 0 (the program start) or pc+1 of a consuming instruction's own valid pc, and a
+      // well-formed program never ends on a byte/klass op with nothing after it (a `match` always follows
+      // eventually) -- so pc+1 never runs off the end in practice. Kept as the defensive bound close_into's
+      // OWN recursion-turned-stack-loop below also relies on (a split/jump target is trusted, not re-
+      // checked, past this point); testing it would need a hand-crafted malformed program, not a pattern
+      // the compiler can produce.
       if (pc < 0 || static_cast<std::size_t>(pc) >= code_.size()) {
         return;
       }
@@ -1046,8 +1053,16 @@ namespace real::detail {
         }
       }
       rev_closure(next, seen);
-      const std::uint32_t result {intern(next)};
-      trans_[(static_cast<std::size_t>(state) * alpha_.count) + cls] = result;
+      // Same trap lazy_dfa::step guards against: intern() may flush() mid-call (state_pcs_/trans_ cleared
+      // and rebuilt from scratch), which makes `state` -- the CALLER's index, captured before this call --
+      // stale for the now-reset trans_. Only cache the edge back into trans_[state] when no flush happened
+      // this call; a flush means the caller re-seeds anyway (reverse_start reads the RETURNED state, always
+      // fresh), so the cache write is simply skipped rather than landing on a wrong or out-of-bounds slot.
+      const std::size_t   flushes_before {flushes_};
+      const std::uint32_t result         {intern(next)};
+      if (flushes_ == flushes_before) {
+        trans_[(static_cast<std::size_t>(state) * alpha_.count) + cls] = result;
+      }
       return result;
     }
 
@@ -1101,6 +1116,7 @@ namespace real::detail {
 
     constexpr void flush()
     {
+      ++flushes_;
       state_pcs_.clear();
       trans_.clear();
       state_has_start_.clear();
@@ -1125,6 +1141,7 @@ namespace real::detail {
     std::int32_t                                                              match_pc_    {-1};
     std::uint32_t                                                             start_state_ {0};
     std::size_t                                                               budget_      {state_budget};
+    std::size_t                                                               flushes_     {0}; //!< bumped by flush(); step()'s stale-state guard against a mid-call reset.
     std::vector<std::vector<std::int32_t>>                                    rev_eps_;         //!< transposed epsilon edges.
     std::vector<std::vector<std::int32_t>>                                    rev_consume_;     //!< transposed consuming edges (the pred consuming pcs).
     std::vector<std::vector<std::int32_t>>                                    state_pcs_;

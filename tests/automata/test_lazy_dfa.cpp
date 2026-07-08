@@ -24,6 +24,41 @@ TEST(lazy_dfa_eligibility)
   EXPECT(!lazy_dfa(uni.program.code, uni.program.classes).eligible());           // klass_cp: variable-width
 }
 
+TEST(build_byte_program_handles_empty_unicode_class)
+{
+  // [^\p{L}\P{L}] negates the UNION of a property and its own complement -- every scalar is either a
+  // letter or not one, so the union is everything and the negation is empty. It still compiles (an empty
+  // class is not a parse error, just unmatchable): build_utf8_trie's `seqs` is empty for it, so the trie
+  // has no root, and build_byte_program's three per-klass_cp steps (build_utf8_trie, utf8_trie_emit_size,
+  // emit_utf8_trie) each take their own "no root" branch instead of walking/sizing/emitting trie nodes
+  // that do not exist -- a single dead `klass` (matches no byte) is emitted in their place.
+  const auto st           {dynamic_storage::compile(R"([^\p{L}\P{L}])", real::flags::none)};
+  bool       has_klass_cp {false};
+  for (const real::detail::instr& in : st.program.code) {
+    if (in.op == real::detail::opcode::klass_cp) {
+      has_klass_cp = true;
+    }
+  }
+  EXPECT(has_klass_cp);
+  const auto bp {real::detail::build_byte_program(st.program.view())};
+  EXPECT(bp.eligible);                                         // empty is not ineligible -- just a class that can never accept
+
+  const real::regex rx {R"([^\p{L}\P{L}])"};
+  EXPECT(!rx.search("hello world 123 caf\xC3\xA9").matched()); // provably empty: nothing anywhere matches
+}
+
+TEST(lazy_dfa_ineligible_forward_and_anchored_end_decline)
+{
+  // pike.hpp's own routing never calls forward_end/anchored_end on an ineligible instance (eligible() is
+  // checked first, and the Pike VM is kept otherwise) -- both functions guard it themselves too, driven
+  // directly here the same way lazy_dfa_eligibility above drives eligible() directly.
+  const auto uni {dynamic_storage::compile("\\w", real::flags::none)};
+  lazy_dfa   dfa {uni.program.code, uni.program.classes};
+  EXPECT(!dfa.eligible());
+  EXPECT_EQ(dfa.forward_end("hello"), real::npos);
+  EXPECT_EQ(dfa.anchored_end("hello", 0), real::npos);
+}
+
 TEST(lazy_dfa_transitions_a_literal)
 {
   const auto st   {dynamic_storage::compile("abc", real::flags::none)};
@@ -90,6 +125,36 @@ TEST(lazy_dfa_alphabet_is_compressed)
   const lazy_dfa dfa {st.program.code, st.program.classes};
   // one class for [a-z], one for everything else: an alphabet of 2, not 256.
   EXPECT_EQ(dfa.num_classes(), std::uint16_t {2});
+}
+
+TEST(reverse_dfa_eligibility)
+{
+  // reverse_dfa's constructor transposes the WHOLE program regardless of eligibility (eligible() is a
+  // flag read afterward, not a construction gate) -- an assert_position op still has to land somewhere in
+  // the transpose switch, and the only case left for it is the default (ineligible ops carry no reverse
+  // edge of their own). Mirrors lazy_dfa_eligibility above, for the reverse pass.
+  const auto  plain  {dynamic_storage::compile("[a-z]+", real::flags::none)};
+  reverse_dfa rplain {plain.program.code, plain.program.classes};
+  EXPECT(rplain.eligible());
+
+  const auto  asserted  {dynamic_storage::compile("\\bfoo", real::flags::none)};
+  reverse_dfa rasserted {asserted.program.code, asserted.program.classes};
+  EXPECT(!rasserted.eligible()); // \b: position assertion -- the transpose switch's default case
+}
+
+TEST(reverse_dfa_eviction_flushes)
+{
+  // The reverse pass's own cache is bounded the same way the forward pass's is (state_budget, a
+  // constructor test hook here too) -- (a|b)*a(a|b){6} run backward from many different end positions
+  // forces enough distinct reverse states to exceed a tiny budget, driving both the empty-pcs "no live
+  // thread" branch and the flush-on-overflow branch of intern().
+  const auto  st         {dynamic_storage::compile("(a|b)*a(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)", real::flags::none)};
+  reverse_dfa rdfa       {st.program.code, st.program.classes, /*budget=*/ 4};
+  EXPECT(rdfa.eligible());
+  const std::string text {"abababababababababababab"};
+  for (std::size_t e = text.size(); e > 0; --e) {
+    (void) rdfa.reverse_start(text, e, 0);
+  }
 }
 
 // The forward pass (kFirstMatch): its reported end must equal the Pike VM's match end, for eligible

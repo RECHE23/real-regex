@@ -353,6 +353,69 @@ TEST(onepass_table_memory_cap_declines)
   EXPECT(!capped.bail_reason().empty());                      // a reason, not a bare bool
 }
 
+TEST(onepass_node_cap_declines)
+{
+  // (i) The node-count cap (RE2's, 65000) declines a table with too many one-pass states, the same shape
+  // as the memory cap above but for node count directly rather than the bytes it serializes to -- a 65000-
+  // node pattern is impractical to construct organically, so node_cap (a constructor test hook, mirroring
+  // max_bytes) forces the decline on an ordinary pattern instead.
+  const byte_program bp {byte_prog("(\\w+)@(\\w+)")};
+  EXPECT(onepass(bp).eligible());                    // real cap (65000 nodes): one-pass
+  const onepass capped  {bp, onepass::max_table_bytes, /*node_cap=*/ std::size_t {2}};
+  EXPECT(!capped.eligible());
+  EXPECT(!capped.bail_reason().empty());
+}
+
+TEST(onepass_ineligible_construction_and_extract)
+{
+  // The byte-program can itself be ineligible before onepass ever walks it (a lookaround, present in
+  // Tier-A where it is never stripped -- only Tier-B's keep_assertions=true handles plain assertions, and
+  // a lookaround declines in both tiers). Construction must bail immediately with that specific reason,
+  // and extract() on the resulting (never-built) table must decline rather than read unbuilt state.
+  const byte_program bp {byte_prog("foo(?=bar)")};
+  EXPECT(!bp.eligible);
+  const onepass op      {bp};
+  EXPECT(!op.eligible());
+  EXPECT_EQ(op.bail_reason(), std::string {"the byte-program is itself ineligible (a lookaround, or a word-ness-flipped assertion)"});
+  std::vector<std::size_t> slots;
+  EXPECT(!op.extract("foobar", 0, 3, slots)); // ineligible: declines rather than reading an unbuilt table
+}
+
+TEST(onepass_trivial_accessors)
+{
+  // The introspection accessors a runtime walking this table by hand would use -- unexercised by extract()
+  // itself (which reads the same tables internally), so pinned directly here.
+  const byte_program  bp {byte_prog("(\\d+)-(\\d+)")};
+  const onepass       op {bp};
+  EXPECT(op.eligible());
+  EXPECT(op.node_count() > 0U);
+  EXPECT(op.num_classes() > 0U);
+  EXPECT_EQ(op.nodes().size(), op.node_count());
+  EXPECT_EQ(op.class_of(static_cast<std::uint8_t>('5')), op.class_of(static_cast<std::uint8_t>('7'))); // both digits: same class
+  EXPECT_EQ(op.slot_count(), std::size_t {6});                                                         // group 0 (start/end) + two user groups
+}
+
+TEST(onepass_epsilon_cycle_and_second_distinct_match_decline)
+{
+  // Two more not-one-pass shapes beyond the canonical fixtures above: a nullable loop (an epsilon cycle --
+  // the loop body can match empty, so the closure revisits its own start with nothing consumed) and a
+  // node reachable via two epsilon-only paths that disagree on which captures are set (a nested optional
+  // group: taking the outer skip vs. the outer-yes+inner-skip path both reach match with no bytes
+  // consumed, but with different capture masks).
+  EXPECT(!is_one_pass("(a*)*"));
+  {
+    const byte_program  bp {byte_prog("(a*)*")};
+    const onepass       op {bp};
+    EXPECT_EQ(op.bail_reason(), std::string {"epsilon cycle (a nullable loop): not one-pass"});
+  }
+  EXPECT(!is_one_pass("(a?)?"));
+  {
+    const byte_program  bp {byte_prog("(a?)?")};
+    const onepass       op {bp};
+    EXPECT_EQ(op.bail_reason(), std::string {"second distinct match: not one-pass"});
+  }
+}
+
 TEST(tier_b_byte_program_keeps_assertions)
 {
   // Tier-B (keep_assertions) preserves assert_position ops so the one-pass table carries them as edge
