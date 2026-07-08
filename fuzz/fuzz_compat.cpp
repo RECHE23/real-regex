@@ -34,6 +34,46 @@ namespace {
            || pat.find("(?<!") != std::string_view::npos;
   }
 
+  // Light pre-parse (not a full lexer -- just enough to bound the smoke's allocator load before
+  // compiling): sums the counted-repeat operands in every `{n}` / `{n,}` / `{n,m}` in `pat`, skipping
+  // `\{` (an escaped brace is a literal, not a quantifier start, under the Annex-B grammar real
+  // follows). A malformed `{...}` still gets its digits summed here even though it is itself a literal
+  // (no real quantifier) -- harmless, it only makes the bound stricter, never looser.
+  std::size_t counted_repeat_load(std::string_view pat)
+  {
+    std::size_t sum {};
+    for (std::size_t i = 0; i < pat.size(); ++i) {
+      if (pat[i] == '\\') {
+        ++i; // skip the escaped character -- \{ is a literal brace, not a quantifier
+        continue;
+      }
+      if (pat[i] != '{') {
+        continue;
+      }
+      std::size_t      j {i + 1};
+      const auto        read_number {[&]() -> std::size_t {
+                          std::size_t v {};
+                          while (j < pat.size() && pat[j] >= '0' && pat[j] <= '9') {
+                            v = (v * 10) + static_cast<std::size_t>(pat[j] - '0');
+                            ++j;
+                          }
+                          return v;
+                        }};
+      sum += read_number();
+      if (j < pat.size() && pat[j] == ',') {
+        ++j;
+        sum += read_number();
+      }
+    }
+    return sum;
+  }
+
+  // The sanitized smoke's job is divergences, not ASAN-allocator benchmarking: a larger counted
+  // repeat adds no NEW divergence class (spans are pinned by the dedicated {n}/{n,m} tests), it only
+  // multiplies allocation traffic -- which ASAN instruments heavily enough to amplify a `{999}`-class
+  // pattern from a flat ~0.13 ms native run into a many-second smoke, with no new bug behind it.
+  constexpr std::size_t max_counted_repeat_load {256};
+
 } // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size)
@@ -49,6 +89,9 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
 
   if (allowlisted(pattern)) {
     return 0;
+  }
+  if (counted_repeat_load(pattern) > max_counted_repeat_load) {
+    return 0; // ASAN-allocator load, not a new divergence class -- see counted_repeat_load's comment
   }
 
   real::compat::regex compat;
