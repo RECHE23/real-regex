@@ -58,6 +58,11 @@ int real_iter_next(real_iter* iter, size_t* spans);
 
 void real_iter_free(real_iter* iter);
 
+/* Count non-overlapping matches in [text, text+len) without materialising match objects
+ * (matching-only; takes the trailing-LA class+ fast path when eligible). Returns the count, or
+ * (size_t)-1 on error / null re. */
+size_t real_count_matches(const real_regex* re, const char* text, size_t len);
+
 /* --- multi-pattern set (which-matched; Stage-1 N-walks) --------------------- */
 
 typedef struct real_regex_set real_regex_set;

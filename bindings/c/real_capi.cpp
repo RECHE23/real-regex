@@ -163,6 +163,19 @@ void real_iter_free(real_iter* iter)
   delete iter;
 }
 
+size_t real_count_matches(const real_regex* re, const char* text, size_t len)
+{
+  if (re == nullptr || text == nullptr) {
+    return static_cast<size_t>(-1);
+  }
+  try {
+    return re->rx.count_matches(std::string_view(text, len));
+  }
+  catch (...) {
+    return static_cast<size_t>(-1);
+  }
+}
+
 real_regex_set* real_set_compile(const char* const* patterns, const size_t* lens, size_t n,
                                  uint32_t flags, char* errbuf, size_t errbuf_len, int* code)
 {

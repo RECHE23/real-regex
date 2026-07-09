@@ -35,6 +35,7 @@ extern "C" {
     fn real_find_iter_at(re: *const RealRegex, text: *const c_char, len: usize, start: usize) -> *mut RealIter;
     fn real_iter_next(iter: *mut RealIter, spans: *mut usize) -> i32;
     fn real_iter_free(iter: *mut RealIter);
+    fn real_count_matches(re: *const RealRegex, text: *const c_char, len: usize) -> usize;
     fn real_set_compile(patterns: *const *const c_char, lens: *const usize, n: usize, flags: u32,
                         errbuf: *mut c_char, errbuf_len: usize, code: *mut i32) -> *mut RealRegexSet;
     fn real_set_size(set: *const RealRegexSet) -> usize;
@@ -376,6 +377,23 @@ impl Regex {
             return fb.shortest_match(text); // the regex backend gives true earliest-completion
         }
         self.raw(text, None).advance().map(|(_, e)| e)
+    }
+
+    /// Count non-overlapping matches without materialising match objects (matching-only).
+    ///
+    /// Prefer this over counting [`find_iter`](Regex::find_iter) when only the count matters, and for
+    /// trailing-lookahead class+ patterns where the fast path lives here (not on find_iter). Parity:
+    /// `re.count_matches(t) == re.find_iter(t).count()`.
+    pub fn count_matches(&self, text: &str) -> usize {
+        #[cfg(feature = "fallback")]
+        if let Some(fb) = &self.fallback {
+            return fb.find_iter(text).count();
+        }
+        let n = unsafe {
+            real_count_matches(self.handle, text.as_ptr() as *const c_char, text.len())
+        };
+        assert_ne!(n, usize::MAX, "real-regex: count_matches failed");
+        n
     }
 }
 
