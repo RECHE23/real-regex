@@ -128,6 +128,8 @@ list(FILTER REAL_TEST_SOURCES EXCLUDE REGEX "tests/compat/tsan_compat\\.cpp$")
 # case-insensitive generators (Visual Studio).
 add_executable(real_tests_bin ${REAL_TEST_SOURCES})
 target_link_libraries(real_tests_bin PRIVATE real::real)
+# Test-only prefilter work counter (O(n) smoke); never defined for production/wheel builds.
+target_compile_definitions(real_tests_bin PRIVATE REAL_TEST_INSTRUMENT=1)
 # The harness include path comes from SciForge, not from a local tests/ copy.
 target_include_directories(real_tests_bin PRIVATE "${SCIFORGE_INCLUDE_DIR}")
 # The C ABI shim is compiled into the test binary (tests/bindings/test_capi.cpp drives it) so real_capi.cpp is

@@ -285,46 +285,30 @@ TEST(prefilter_find_prefix_candidate_before_pos)
 
 TEST(literal_prefilter_throughput_smoke)
 {
-  // The literal prefilter must scan a miss in O(n) — memchr speed — not the O(n²) a per-position rescan
-  // would cost. An absolute wall-clock bound is machine- and instrumentation-dependent (the coverage and
-  // sanitize builds run 5-20x slower than a bare native one), so this is a *scaling* test instead: an
-  // 8x-longer miss must take on the order of 8x longer, never ~64x. Both measurements run the identical
-  // instrumented code, so however slow the build is cancels in the ratio; only an O(n²) regression blows
-  // it past the margin.
-  //
-  // Timing is median-of-7 after a discarded warmup (not min-of-5): on shared CI runners a lucky-short
-  // 1 MB sample under min() once blew large/small past 25× while scaling was still O(n). Median damps
-  // that without loosening the anti-quadratic bound. Real O(n) stays ~8× with tight spread.
-  const real::regex rx {"needle\\d?$"}; // $ keeps it off the lazy-DFA route -> the prefilter path (test intent)
-  const auto        timed {[&](std::size_t n) {
-                             std::string text(n, 'a');
-                             text += "needle";
-                             const auto once {[&] {
-                                                const auto begin {std::chrono::steady_clock::now()};
-                                                bool       ok {true};
-                                                for (int i = 0; i < 10; ++i) {
-                                                  ok = ok && rx.search(text).matched();
-                                                }
-                                                EXPECT(ok);
-                                                return std::chrono::steady_clock::now() - begin;
-                                              }};
-                             (void) once(); // warmup — discard (shared-runner first-sample noise)
-                             std::array<std::chrono::steady_clock::duration, 7> samples {};
-                             for (auto& s : samples) {
-                               s = once();
-                             }
-                             std::ranges::sort(samples);
-                             return samples[samples.size() / 2]; // median
-                           }};
+  // The literal prefilter must scan a miss in O(n), not O(n²) per-position rescan.
+  // Wall-clock ratios flaked twice on shared CI (median-of-7 still saw runner noise). Work is
+  // now a compile-gated deterministic counter (REAL_TEST_INSTRUMENT on the test binary only):
+  // each find_prefix / find_byte bills remaining haystack once; O(n) → large/small ≈ 8×,
+  // quadratic restart → ≈ 64×. Margin 25× unchanged — no deserrage, noise-immune.
+  const real::regex rx {"needle\\d?$"}; // $ keeps it off the lazy-DFA route → prefilter path
+  const auto        work {[&](std::size_t n) -> std::uint64_t {
+                            std::string text(n, 'a');
+                            text += "needle";
+                            real::detail::prefilter_work_units() = 0;
+                            EXPECT(rx.search(text).matched());
+                            return real::detail::prefilter_work_units();
+                          }};
 
-  const auto small        {timed(1 << 20)}; // 1 MB miss
-  const auto large        {timed(8 << 20)}; // 8 MB miss — 8x the bytes
+  (void) work(1 << 10);                      // warmup (first-call path setup); discarded
+  const std::uint64_t small {work(1 << 20)}; // 1 MB miss
+  const std::uint64_t large {work(8 << 20)}; // 8 MB miss — 8× the bytes
 
-  const std::string check {std::string(8 << 20, 'a') + "needle"};
+  const std::string check   {std::string(8 << 20, 'a') + "needle"};
   EXPECT_EQ(rx.search(check).start(), static_cast<std::size_t>(8 << 20));
-  // O(n) makes large ~8x small; an O(n²) regression makes it ~64x. A 25x margin bites the quadratic while
-  // absorbing the constant per-search overhead and any residual noise.
-  EXPECT(large.count() < small.count() * 25);
+  // O(n) → ~8×; O(n²) → ~64×. 25× bites quadratic, absorbs constant per-search overhead.
+  EXPECT(large < small * 25);
+  // Determinism pin: re-run large — same work count (not wall time).
+  EXPECT_EQ(work(8 << 20), large);
 }
 
 TEST(prefilter_works_in_constexpr_too)

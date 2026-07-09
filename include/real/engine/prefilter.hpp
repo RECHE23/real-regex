@@ -29,6 +29,24 @@
 
 namespace real::detail {
 
+  //! \brief Prefilter work counter for the O(n) vs O(n²) smoke test.
+  //!        Always declared (clang-tidy / tests see the symbol). Billing is a no-op unless
+  //!        \c REAL_TEST_INSTRUMENT is defined on the test binary — wheel/prod pay nothing.
+  inline std::uint64_t& prefilter_work_units() noexcept
+  {
+    static std::uint64_t units {0};
+    return units;
+  }
+
+  inline void prefilter_note_scan(std::size_t n) noexcept
+  {
+#if defined(REAL_TEST_INSTRUMENT)
+    prefilter_work_units() += static_cast<std::uint64_t>(n);
+#else
+    (void) n;
+#endif
+  }
+
   /*!
    * \brief True if \p kind is `\b` or `\B` (the only position asserts B1 wraps on fast paths).
    * \param[in] kind Assertion kind from `assert_position`.
@@ -1009,6 +1027,10 @@ namespace real::detail {
       return npos;
     }
     if (!std::is_constant_evaluated()) {
+#if defined(REAL_TEST_INSTRUMENT)
+      // Bill remaining haystack once per call — O(n) path bills ~once; per-pos restart → O(n²) total.
+      prefilter_note_scan(text.size() - pos);
+#endif
       const void* hit {std::memchr(text.data() + pos, byte, text.size() - pos)};
       return hit == nullptr
              ? npos
@@ -1078,6 +1100,13 @@ namespace real::detail {
     }
     if (pos >= text.size()) {
       return npos;
+    }
+    if (!std::is_constant_evaluated()) {
+#if defined(REAL_TEST_INSTRUMENT)
+      // Bill remaining haystack once per call. Correct O(n) literal miss → ~1× size;
+      // per-position restart of find_prefix → sum(N..1) ≈ N²/2 (smoke margin 25×).
+      prefilter_note_scan(text.size() - pos);
+#endif
     }
     const auto off {text.substr(pos).find(prefix)};
     if (off == std::string_view::npos) {
