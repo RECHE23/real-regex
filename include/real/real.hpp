@@ -616,7 +616,7 @@ namespace real {
      *       fast path is intentionally not taken here — the range's return type is
      *       fixed at compile time so pure `[a-z]+` codegen stays pristine. For the
      *       LA-fast route use \ref count_matches, \ref find_all, \ref search,
-     *       \ref match, or \ref sub (once-per-walk dispatch). Correctness is
+     *       \ref match, or \ref replace (once-per-walk dispatch). Correctness is
      *       identical; only throughput differs on eligible patterns.
      *
      * \param[in] text The subject text (must outlive the range).
@@ -1102,7 +1102,7 @@ namespace real {
       typename Storage::slot_storage slots;
       const detail::program_view     prog    {program_.view()};
       detail::pike_vm                vm(prog, state);
-      const auto subject {text.substr(0, end)};
+      const auto                     subject {text.substr(0, end)};
       // P3c cold: trailing-LA outside pike_vm::run (keeps pure class-loop run() pre-P3c-sized).
       // if constexpr: static_storage has no lookaround scratch / rejects LA at compile.
       bool matched {};

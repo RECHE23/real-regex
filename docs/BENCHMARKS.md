@@ -79,7 +79,7 @@ both ISAs, on the same 2026.7.26 tree (see the Version row for the two legs' exa
   ReDoS-able on a crafted lookaround), and **RE2 and the rust crate cannot do it at all** (`unsupported`).
   The §A table above is a **pre-P3c stamp** (general-VM order, ~50–90 ns/B). After P3c, the trailing-LA
   class+ shape (`[a-z]+(?=[a-z])`) takes a once-per-walk monomorphic fast path on **matching-only**
-  surfaces: `count_matches` / `search` / `match` / `sub` / `find_all` (~8 ns/B on x86 matching-only —
+  surfaces: `count_matches` / `search` / `match` / `replace` / `find_all` (~8 ns/B on x86 matching-only —
   ~11× the general VM). **`find_iter` / Python `finditer` deliberately stay on the pure monomorphic
   walk** (return type fixed at compile time so pure `[a-z]+` does not regress) and therefore do **not**
   get that win — correctness identical, throughput not. Benches must use `count_matches` (matching-only,

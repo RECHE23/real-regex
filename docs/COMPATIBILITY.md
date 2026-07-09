@@ -101,11 +101,11 @@ taken by every API:
 | Surface | Trailing-LA fast path? | Why |
 | --- | --- | --- |
 | `count_matches` | **yes** | once-per-walk dispatch; matching-only (no Match vector) |
-| `find_all` / `search` / `match` / `sub` | **yes** | same dispatch; `find_all` still pays vector cost at high match counts |
+| `find_all` / `search` / `match` / `replace` (Python `sub`) | **yes** | same dispatch; `find_all` still pays vector cost at high match counts |
 | `find_iter` (and Python `finditer`) | **no** — general VM | return type is pure-monomorphic (`TrailingLA=false`) so pure `[a-z]+` codegen stays pristine |
 
 Correctness is identical across the table; only throughput differs. Prefer `count_matches` (or
-`search`/`match`/`sub`) when the shape is eligible and raw scan speed matters. Multi-engine benches
+`search`/`match`/`replace`) when the shape is eligible and raw scan speed matters. Multi-engine benches
 must count via `count_matches` (matching-only), not `find_all().size()` — the Match vector can dominate
 and is not comparable to engines that only count.
 

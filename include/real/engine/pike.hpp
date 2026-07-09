@@ -1154,6 +1154,7 @@ namespace real::detail {
     }
 
   public:
+
     /*!
      * \brief Trailing-lookaround class+ (P3c): body scan + longest end where lookaround holds.
      *
