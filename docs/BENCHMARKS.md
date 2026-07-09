@@ -122,18 +122,31 @@ TABLE B — extraction non-overlapping (counts equal REAL/RE2):
 - **Architectural gap:** single-pass engines (RE2::Set, Hyperscan) stay **flat** in N; pure N-walks
   **degrade** hard (e.g. ~421 → 41 MB/s from N=32 → 256 on arm64). Stage-2 fused which-matched
   is **flat** and closes most of that gap.
-- **Stage-2 fused (same host/harness, arm64 M1, `benchmarks/s2a_measure.cpp`, RE2::Set on):**
+- **Stage-2 fused + Arc I first-byte skip** (same host/harness, arm64 M1,
+  `benchmarks/s2a_measure.cpp`, RE2::Set on). Two corpora: **dense** log-like (matches every
+  line) and **sparse** realistic (generic text, rare hits — where prefix-accel matters).
 
-  | N | fused which_matched | pure N-walks | RE2::Set | sets |
-  | ---: | ---: | ---: | ---: | ---: |
-  | 32 | ~400 MB/s | ~421 | ~456 | equal |
-  | 64 | ~401 | ~181 | ~441 | equal |
-  | 128 | ~399 | ~85 | ~442 | equal |
-  | 256 | ~396 | ~41 | ~443 | equal |
+  **SPARSE** (first-byte skip's happy path):
 
-  Fused is **~4–10×** pure N-walks at large N, **flat ~400 MB/s**. vs RE2::Set same-host: ~0.9×
-  (competitive, **not** a claim of beating RE2::Set). `regex_set` routes fused when
-  `eligible.size() ≥ 56` (calibrated crossover), else N-walks; lookarounds stay N-walk.
+  | N | fused+skip | fused no-skip | pure N-walks | RE2::Set | sets |
+  | ---: | ---: | ---: | ---: | ---: | ---: |
+  | 64 | **~569 MB/s** | ~402 | ~45 | ~460 | equal |
+  | 128 | **~560** | ~402 | ~21 | ~457 | equal |
+  | 256 | **~553** | ~402 | ~10 | ~460 | equal |
+
+  **DENSE** (skip still helps modestly):
+
+  | N | fused+skip | fused no-skip | pure N-walks | RE2::Set | sets |
+  | ---: | ---: | ---: | ---: | ---: | ---: |
+  | 64 | ~438 MB/s | ~399 | ~178 | ~452 | equal |
+  | 128 | ~434 | ~389 | ~83 | ~454 | equal |
+  | 256 | ~432 | ~385 | ~40 | ~455 | equal |
+
+  Fused stays **flat** in N (~4–50× pure N-walks at large N). **Skip vs no-skip:** ~+40% sparse,
+  ~+10–12% dense (teeth-verify). **vs RE2::Set same-host:** sparse **~1.2× ahead** (claim
+  measured); dense still **~0.95–0.97×** (quasi-parité, not a rout). `regex_set` routes fused when
+  `eligible.size() ≥ 56` (calibrated crossover), else N-walks; lookarounds stay N-walk. Skip is
+  off when any rule lacks a sound `first_bytes` set (empty-match / can start anywhere).
 - **Incumbent for this product shape is RE2::Set**, not Hyperscan. « Faster than Hyperscan » is not
   a product goal; HS is another corner (thousands of literals / streaming).
 - **At small N** pure N-walks remain competitive (sometimes faster than fused).

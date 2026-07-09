@@ -370,6 +370,14 @@ namespace real {
       std::size_t                   num_states {0};
       std::size_t                   rule_count {0};
       bool                          unanchored {false}; //!< Built for which-matched mid-stream restart.
+      //! Set-level first-byte skip for \ref dfa::which_matched (Arc I): union of each rule's
+      //! \c first_bytes. Disabled if any rule has \c first_bytes_valid == false (empty match /
+      //! can start anywhere). Applied only when the walk is in \ref start (no partial in flight).
+      bool                          skip_first_enabled  {false};
+      char_class                    skip_first_bytes;         //!< Union of rule first-bytes (valid iff enabled).
+      std::int16_t                  skip_single_first   {-1}; //!< Unique union member, else -1.
+      std::array<char, 4>           skip_small_set      {};   //!< 2..4 union members for memchr-cascade.
+      std::uint8_t                  skip_small_set_size {0};  //!< 0, or 2..4.
     };
 
     inline constexpr std::uint32_t dfa_no_rule {std::numeric_limits<std::uint32_t>::max()};
@@ -526,6 +534,46 @@ namespace real {
         }
       }
       out.start = static_cast<std::uint32_t>(block[out.start]);
+
+      // Arc I: set-level first-byte union for which_matched skip (unanchored only).
+      // Any rule without a sound first-byte set disables the skip (correctness).
+      if (unanchored && !programs.empty()) {
+        bool                  ok {true};
+        char_class            uni;
+        for (const program_view& prog : programs) {
+          if (!prog.hints.first_bytes_valid) {
+            ok = false;
+            break;
+          }
+          uni.merge(prog.hints.first_bytes);
+        }
+        if (ok && !uni.empty()) {
+          out.skip_first_enabled = true;
+          out.skip_first_bytes   = uni;
+          std::array<char, 4> members  {};
+          std::uint8_t        count    {0};
+          bool                overflow {false};
+          for (unsigned b = 0; b < 256U; ++b) {
+            if (!uni.test(static_cast<std::uint8_t>(b))) {
+              continue;
+            }
+            if (count < 4U) {
+              members[count] = static_cast<char>(b);
+            }
+            else {
+              overflow = true;
+            }
+            ++count;
+          }
+          if (count == 1U) {
+            out.skip_single_first = static_cast<std::int16_t>(static_cast<std::uint8_t>(members[0]));
+          }
+          else if (!overflow && count >= 2U && count <= 4U) {
+            out.skip_small_set      = members;
+            out.skip_small_set_size = count;
+          }
+        }
+      }
       return out;
     }
   } // namespace detail
@@ -614,8 +662,14 @@ namespace real {
      * \ref rule_count in construction order. Early-exits when every pattern has hit.
      * Empty matches are excluded (only states that accepted after consuming a byte
      * contribute, via post-move accept masks).
+     *
+     * \param[in] text            Subject text.
+     * \param[in] first_byte_skip When true (default), fast-forward over bytes that cannot
+     *                            start any rule while the walk is in the start state (Arc I
+     *                            pure opt). Pass false to disable for equivalence tests.
      */
-    [[nodiscard]] std::vector<bool> which_matched(std::string_view text) const
+    [[nodiscard]] std::vector<bool> which_matched(std::string_view text,
+                                                  bool             first_byte_skip = true) const
     {
       std::vector<bool> hit(tables_.rule_count, false);
       if (tables_.rule_count == 0 || tables_.mask_words == 0) {
@@ -626,10 +680,56 @@ namespace real {
       const std::size_t          nc      {tables_.num_classes};
       const std::size_t          mw      {tables_.mask_words};
       std::size_t                pending {tables_.rule_count};
-      for (std::size_t i = 0; i < text.size(); ++i) {
+      const bool                 do_skip {first_byte_skip && tables_.skip_first_enabled};
+      for (std::size_t i = 0; i < text.size();) {
+        // Arc I: at start (no partial in flight), jump to the next set-first-byte candidate.
+        if (do_skip && state == tables_.start) {
+          const auto b0 {static_cast<std::uint8_t>(text[i])};
+          if (!tables_.skip_first_bytes.test(b0)) {
+            std::size_t next {i};
+            if (tables_.skip_single_first >= 0) {
+              next = detail::find_byte(text, i, static_cast<char>(tables_.skip_single_first));
+            }
+            else if (tables_.skip_small_set_size >= 2U) {
+              // Same adaptive probe→cascade as pike next_candidate (dense near-hit cheap).
+              constexpr std::size_t probe      {32};
+              const std::size_t     window_end {i + probe < text.size() ? i + probe : text.size()};
+              std::size_t           p          {i};
+              while (p < window_end &&
+                     !tables_.skip_first_bytes.test(static_cast<std::uint8_t>(text[p]))) {
+                ++p;
+              }
+              if (p < window_end) {
+                next = p;
+              }
+              else if (window_end == text.size()) {
+                next = npos;
+              }
+              else {
+                next = detail::find_bytes_cascade(text, window_end, tables_.skip_small_set.data(),
+                                                  tables_.skip_small_set_size);
+              }
+            }
+            else {
+              while (next < text.size() &&
+                     !tables_.skip_first_bytes.test(static_cast<std::uint8_t>(text[next]))) {
+                ++next;
+              }
+              if (next >= text.size()) {
+                next = npos;
+              }
+            }
+            if (next == npos || next >= text.size()) {
+              break;
+            }
+            i = next;
+            // state remains start; fall through and consume text[i].
+          }
+        }
         const auto        byte {static_cast<std::uint8_t>(text[i])};
         const std::size_t cls  {tables_.byte_class[byte]};
         state = tables_.trans[(static_cast<std::size_t>(state) * nc) + cls];
+        ++i;
         // Most states accept nothing — skip the mask-OR on the common path.
         if (state >= tables_.any_accept.size() || tables_.any_accept[state] == 0) {
           continue;
@@ -659,6 +759,12 @@ namespace real {
         hit[r] = ((acc[r >> 6U] >> (r & 63U)) & 1U) != 0;
       }
       return hit;
+    }
+
+    //! \brief True if set-level first-byte skip is armed for which_matched (Arc I).
+    [[nodiscard]] bool has_first_byte_skip() const noexcept
+    {
+      return tables_.skip_first_enabled;
     }
 
     //! \brief True if this DFA was built with mid-stream restart (which-matched mode).

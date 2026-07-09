@@ -1,5 +1,6 @@
-// S2c measure: fused which_matched vs pure N-walks vs RE2::Set (same host/harness).
-// Not a CI gate. Build: c++ -O2 -Iinclude [-DHAVE_RE2 $(pkg-config --cflags --libs re2)] s2a_measure.cpp
+// Arc I measure: fused which_matched (+ optional first-byte skip) vs pure N-walks vs RE2::Set.
+// Not a CI gate. Build:
+//   c++ -O2 -Iinclude [-DHAVE_RE2 $(pkg-config --cflags --libs re2)] benchmarks/s2a_measure.cpp
 #include <chrono>
 #include <cstdio>
 #include <string>
@@ -13,7 +14,7 @@
 #  include <re2/set.h>
 #endif
 
-static std::string corpus(std::size_t bytes)
+static std::string corpus_dense(std::size_t bytes)
 {
   static const char* u =
     "2026-06-13 12:04:55 error id=a3f9c1d8 GET /api/x 200 from 10.0.2.15 user=bob q=42\n"
@@ -21,6 +22,27 @@ static std::string corpus(std::size_t bytes)
   std::string s;
   while (s.size() < bytes) {
     s += u;
+  }
+  s.resize(bytes);
+  return s;
+}
+
+// Sparse-realistic: generic English-ish text, rare log-like hits (skip's happy path).
+static std::string corpus_sparse(std::size_t bytes)
+{
+  static const char* pad =
+    "the quick brown fox jumps over the lazy dog and then runs through the field again. ";
+  static const char* hit =
+    "error id=a3f9c1d8 GET user=bob q=42\n";
+  std::string s;
+  s.reserve(bytes);
+  std::size_t n {0};
+  while (s.size() + 200 < bytes) {
+    s += pad;
+    ++n;
+    if ((n % 40) == 0) {
+      s += hit; // occasional real hits so sets are non-empty
+    }
   }
   s.resize(bytes);
   return s;
@@ -56,34 +78,33 @@ static double best_ms(F&& f, int r)
   return b;
 }
 
-int main()
+static void run_regime(const char* name, const std::string& text)
 {
-  const std::string text {corpus(1u << 20)};
-  const double      MB   {text.size() / 1e6};
-  const auto        P    {present()};
-  std::printf("S2c measure | corpus %.2f MB | best-of-7 MB/s | same-host\n", MB);
-  std::printf("engines: fused which_matched | pure N-walks search | RE2::Set%s\n\n",
+  const double MB {text.size() / 1e6};
+  const auto   P  {present()};
+  std::printf("\n=== %s | corpus %.2f MB | best-of-7 MB/s | same-host ===\n", name, MB);
+  std::printf("engines: fused+skip | fused-no-skip | pure N-walks | RE2::Set%s\n",
 #if defined(HAVE_RE2)
               " (on)"
 #else
               " (off)"
 #endif
   );
-  std::printf("%4s | %8s | %12s | %12s | %12s | correct?\n", "N", "states", "fused", "Nwalks",
-              "RE2::Set");
-  // Regime where fused path is used (eligible ≥ 56); also N=32 for reference.
+  std::printf("%4s | %8s | %10s | %10s | %10s | %10s | correct?\n", "N", "states", "fused+skip",
+              "fused-nosk", "Nwalks", "RE2::Set");
+
   for (const int N : {32, 64, 128, 256}) {
     std::vector<std::string> pats {P};
     for (int i = static_cast<int>(P.size()); i < N; ++i) {
       pats.push_back("SEV" + std::to_string(i) + "|tr" + std::to_string(i) + "x");
     }
     std::vector<real::regex> rx;
+    rx.reserve(pats.size());
     for (const auto& p : pats) {
       rx.emplace_back(p);
     }
     real::dfa fused {std::span<const real::regex>(rx), real::dfa_mode::which_matched};
 
-    // Pure N-walks (not regex_set — that would take the fused path for large N).
     auto pure_nwalks = [&] {
       std::size_t c {0};
       for (const auto& re : rx) {
@@ -94,14 +115,19 @@ int main()
       return c;
     };
 
-    const auto fhit = fused.which_matched(text);
+    const auto f_skip   {fused.which_matched(text, true)};
+    const auto f_noskip {fused.which_matched(text, false)};
+    bool       ok_skip  {f_skip.size() == f_noskip.size()};
+    for (std::size_t i = 0; ok_skip && i < f_skip.size(); ++i) {
+      ok_skip = f_skip[i] == f_noskip[i];
+    }
     std::size_t nwalk_n {0};
     {
       std::size_t c {0};
       for (std::size_t i = 0; i < rx.size(); ++i) {
         const bool h {static_cast<bool>(rx[i].search(text))};
-        if (h != fhit[i]) {
-          nwalk_n = static_cast<std::size_t>(-1); // mismatch sentinel
+        if (h != f_skip[i]) {
+          nwalk_n = static_cast<std::size_t>(-1);
           break;
         }
         if (h) {
@@ -112,12 +138,17 @@ int main()
         nwalk_n = c;
       }
     }
-    const bool ok_real {nwalk_n != static_cast<std::size_t>(-1)};
+    const bool ok_real {ok_skip && nwalk_n != static_cast<std::size_t>(-1)};
 
     volatile std::size_t sink {0};
-    const double         tf {best_ms(
+    const double         t_skip {best_ms(
       [&] {
-        sink += fused.which_matched(text).size();
+        sink += fused.which_matched(text, true).size();
+      },
+      7)};
+    const double t_nosk {best_ms(
+      [&] {
+        sink += fused.which_matched(text, false).size();
       },
       7)};
     const double tn {best_ms(
@@ -147,22 +178,30 @@ int main()
         re2_n = m.size();
       },
       7)};
-    // Count fused hits for set-size compare.
     std::size_t f_n {0};
-    for (bool b : fhit) {
+    for (bool b : f_skip) {
       if (b) {
         ++f_n;
       }
     }
     const bool ok {ok_real && f_n == re2_n};
-    std::printf("%4d | %8zu | %8.0f MB/s | %8.0f MB/s | %8.0f MB/s | %s (set %zu/%zu)\n", N,
-                fused.state_count(), MB / (tf / 1e3), MB / (tn / 1e3), MB / (tr / 1e3),
-                ok ? "OK" : "**MISMATCH**", f_n, re2_n);
+    std::printf("%4d | %8zu | %8.0f MB/s | %8.0f MB/s | %8.0f MB/s | %8.0f MB/s | %s (set %zu/%zu skip=%d)\n",
+                N, fused.state_count(), MB / (t_skip / 1e3), MB / (t_nosk / 1e3), MB / (tn / 1e3),
+                MB / (tr / 1e3), ok ? "OK" : "**MISMATCH**", f_n, re2_n,
+                static_cast<int>(fused.has_first_byte_skip()));
 #else
-    std::printf("%4d | %8zu | %8.0f MB/s | %8.0f MB/s | %8s | %s\n", N, fused.state_count(),
-                MB / (tf / 1e3), MB / (tn / 1e3), "n/a", ok_real ? "OK" : "**MISMATCH**");
+    std::printf("%4d | %8zu | %8.0f MB/s | %8.0f MB/s | %8.0f MB/s | %8s | %s (skip=%d)\n", N,
+                fused.state_count(), MB / (t_skip / 1e3), MB / (t_nosk / 1e3), MB / (tn / 1e3), "n/a",
+                ok_real ? "OK" : "**MISMATCH**", static_cast<int>(fused.has_first_byte_skip()));
 #endif
     (void) sink;
   }
+}
+
+int main()
+{
+  std::printf("Arc I measure | fused first-byte skip vs no-skip | same-host\n");
+  run_regime("DENSE log-like", corpus_dense(1u << 20));
+  run_regime("SPARSE realistic", corpus_sparse(1u << 20));
   return 0;
 }

@@ -111,3 +111,56 @@ TEST(which_matched_state_count_bounded_log_patterns)
   EXPECT(d.state_count() < 65536U);
   EXPECT(d.state_count() > 0U);
 }
+
+// Arc I: first-byte skip is a pure opt — avec == sans == N×search on sparse/dense/edge.
+TEST(which_matched_first_byte_skip_equals_oracle)
+{
+  const auto               raw {present_log()};
+  std::vector<real::regex> pats;
+  pats.reserve(raw.size());
+  for (const auto& p : raw) {
+    pats.emplace_back(p);
+  }
+  const real::dfa d {std::span<const real::regex>(pats), real::dfa_mode::which_matched};
+  EXPECT(d.has_first_byte_skip()); // all present_log rules have sound first_bytes
+
+  const std::string dense =
+    "2026-06-13 12:04:55 error id=a3f9c1d8 GET /api/x from 10.0.2.15 user=bob q=42\n"
+    "plain line\n";
+  // Sparse: long generic text, rare hits at the end (skip's happy path).
+  std::string sparse;
+  sparse.reserve(8000);
+  for (int i = 0; i < 100; ++i) {
+    sparse += "the quick brown fox jumps over the lazy dog once more today\n";
+  }
+  sparse += "error id=deadbeef GET user=alice q=7\n";
+
+  // Named buffer: dense+sparse must outlive the string_view (temporary would dangle → ASan UAF).
+  const std::string                   dense_plus_sparse {dense + sparse};
+  const std::vector<std::string_view> corpora           {
+    dense, sparse, "", "zzz", "error", dense_plus_sparse,
+  };
+  for (const auto text : corpora) {
+    const auto with_skip {d.which_matched(text, true)};
+    const auto no_skip   {d.which_matched(text, false)};
+    const auto ora       {nwalk_which(pats, text)};
+    EXPECT_EQ(with_skip.size(), no_skip.size());
+    EXPECT_EQ(with_skip.size(), ora.size());
+    for (std::size_t i = 0; i < with_skip.size(); ++i) {
+      EXPECT_EQ(static_cast<int>(with_skip[i]), static_cast<int>(no_skip[i]));
+      EXPECT_EQ(static_cast<int>(with_skip[i]), static_cast<int>(ora[i]));
+    }
+  }
+}
+
+TEST(which_matched_skip_disabled_when_nullable_rule)
+{
+  // Empty-match-possible rule ⇒ first_bytes_valid false on that rule ⇒ set skip off.
+  std::vector<real::regex> pats;
+  pats.emplace_back("needle");
+  pats.emplace_back("a*"); // nullable
+  const real::dfa d {std::span<const real::regex>(pats), real::dfa_mode::which_matched};
+  EXPECT(!d.has_first_byte_skip());
+  const auto hit    {d.which_matched("xx needle yy")};
+  EXPECT(hit[0]);
+}
