@@ -19,11 +19,11 @@ answer is not a benchmark win.
 
 | | |
 | --- | --- |
-| Version | REAL `2026.7.26` (x86-64 leg `62ee8fd`, arm64 leg `9237a89` — no engine-code change between the two, only the fuzz-harness fix and the version bump; checksummed both ends) — §A re-measured per-ISA on it, 2026-07-08 |
-| Machines | §A on **two ISAs**: devbox (`x86-64`, g++ 13.3) *and* Apple M1 Pro (`arm64`, Apple clang 16). §B / §E on M1 Pro |
-| Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (built from source on x86-64 to pin the exact version); RE2 (10.0 on x86-64, 11.0 on arm64 — version-differs-by-leg, uncontested given the margins) |
+| Version | REAL `2026.7.29` — §multi-pattern added this train (Stage-1 `regex_set`); §A absolute ns/B still the dual-ISA 2026.7.26 campaign (ratios durable; re-run `make bench-engines` on both ISAs to refresh absolutes) |
+| Machines | §A on **two ISAs**: devbox (`x86-64`, g++ 13.3) *and* Apple M1 Pro (`arm64`, Apple clang 16). §B / §E on M1 Pro. §multi-pattern measured on **x86-64 devbox** (g++ 13.3, RE2 + Hyperscan 5.4) |
+| Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (built from source on x86-64 to pin the exact version); RE2 (10.0 on x86-64, 11.0 on arm64 — version-differs-by-leg, uncontested given the margins). Multi-pattern: RE2::Set, Hyperscan (optional) |
 | Python | CPython 3.14, `re` (stdlib) vs the REAL `2026.7.25` abi3 wheel (§B — not re-measured this train; §B/§E are outside this restamp's scope) |
-| Method | median of N ≥ 15 paired batches (x86-64 N = 30, arm64 N = 15), bootstrap CI; match counts checked equal across engines; **non-cherry-picked** — the losses show. **Ratios are the durable content; absolute ns/B track the host, meaningful only under this stamp** |
+| Method | §A: median of N ≥ 15 paired batches (x86-64 N = 30, arm64 N = 15), bootstrap CI; match counts equal. §multi-pattern: best-of-7, equal set/count asserts, `make bench-multipattern`. **Ratios / shapes are durable; absolute ns/B and MB/s track the host** |
 
 ## A. C++ engine throughput — and the SIMD candidate arc closes part of the PCRE2 gap
 
@@ -85,6 +85,50 @@ both ISAs, on the same 2026.7.26 tree (see the Version row for the two legs' exa
   get that win — correctness identical, throughput not. Benches must use `count_matches` (matching-only,
   equitable with PCRE2/RE2 counters); `find_all().size()` is confounded by Match-vector cost. Re-stamp
   §A after the P3c train before treating the lookahead row as competitive copy.
+
+## Multi-pattern — which-matched + extraction (Stage-1 `regex_set`)
+
+Reproduce with **`make bench-multipattern`** (RE2 and Hyperscan optional via pkg-config). Informational
+only — not a CI gate. Absolute MB/s track the host; the durable content is the **shape** and the
+equal-set / equal-count asserts.
+
+**Semantics (round-3, equal counts):**
+
+| Table | Question | Engines | Forced full scan? |
+| --- | --- | --- | --- |
+| **A — filtre / IDS** | which-matched (which patterns hit ≥ once) | REAL N-walks (`regex_set`), RE2::Set, Hyperscan `SINGLEMATCH` | yes — 8 present + (N−8) absent |
+| **B — extraction** | all non-overlapping matches | REAL `count_matches` N-walks, RE2 `FindAndConsume` N-walks | inherent (present patterns only) |
+
+**x86-64 devbox** (g++ 13.3, RE2, Hyperscan 5.4, 1 MiB log-like corpus, best-of-7 MB/s, higher is better):
+
+TABLE A — which-matched (sets equal when all engines compile):
+
+| N | HS single | RE2::Set | REAL N-walks |
+| ---: | ---: | ---: | ---: |
+| 16 | ~336 | ~440 | **~559** (fastest) |
+| 32 | ~320 | ~452 | ~195 |
+| 64 | ~380 | ~451 | ~83 |
+| 128 | ~380 | ~452 | ~39 |
+
+TABLE B — extraction non-overlapping (counts equal REAL/RE2):
+
+| N | REAL N-walks | RE2 N-walks |
+| ---: | ---: | ---: |
+| 4 | ~160 | ~70 |
+| 8 | ~107 | ~41 |
+
+**Reading — capacity first, speed second:**
+
+- **Architectural gap:** single-pass engines (RE2::Set, Hyperscan) stay **flat** in N; REAL Stage-1
+  N-walks **degrade** (559 → 39 MB/s from N=16 → 128). That is the Stage-2 fused single-pass arc —
+  **measured-not-promised**, not a 7.29 claim.
+- **Incumbent for this product shape is RE2::Set (~450 MB/s)**, not Hyperscan. « Faster than
+  Hyperscan » is not a product goal; HS is another corner (thousands of literals / streaming).
+- **At small N (≤ ~24)** REAL N-walks are already competitive (fastest at N=16 on this corpus).
+- **Extraction:** REAL per-pattern `count_matches` beats RE2 N-walks ~2.5× on the present-pattern table.
+- **Bounded lookarounds** are in REAL's set (RE2::Set cannot compile them) — a feature differentiator
+  beyond throughput.
+- `real::dfa` is **not** this API (maximal-munch one-winner for lexers).
 
 ## B. Python binding vs re
 

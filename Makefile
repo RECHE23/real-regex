@@ -48,7 +48,7 @@ FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
         lint misra fuzz fuzz-compat exhaustive-compat fowler-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
-        bench-engines bench-duel bench-matrix matrix-gate \
+        bench-engines bench-multipattern bench-duel bench-matrix matrix-gate \
         version-check install install-smoke uninstall release help check-layers
 
 .DEFAULT_GOAL := help
@@ -78,6 +78,7 @@ help:
 	@echo "  Per-binding targets: make {python,c,rust}-<target> (build/test/bench/fuzz/...)"
 	@echo "    see: make python-help | make c-help | make rust-help"
 	@echo "  make bench-engines  C++ throughput vs std::regex/PCRE2/RE2 (if present)"
+	@echo "  make bench-multipattern  multi-pattern which-matched / extraction (RE2/HS optional)"
 	@echo "  make install      Install the Python package (pip)"
 	@echo "  make uninstall    Uninstall the Python package (pip)"
 	@echo "  make release      Cut a calendar-versioned release (tag + push)"
@@ -423,6 +424,20 @@ bench-engines:
 	 echo "engines: REAL std::regex$${flags:+ +optional}"; \
 	 c++ -std=c++20 -O2 -DBENCH_FLAGS='"-O2"' -DBENCH_COMMIT="\"$$commit\"" $(INCLUDES) -I$(SCIFORGE_INCLUDE) benchmarks/bench_engines.cpp $$flags -o $(BUILD)/bench_engines
 	$(PYRUN) benchmarks/bench_engines.py $(BUILD)/bench_engines
+
+# Multi-pattern which-matched (TABLE A) + extraction count (TABLE B). Informational only —
+# not a CI gate. RE2 and Hyperscan optional via pkg-config (libhs / hyperscan names vary).
+bench-multipattern:
+	@mkdir -p $(BUILD)
+	@flags=""; \
+	 if pkg-config --exists re2; then flags="$$flags -DHAVE_RE2 $$(pkg-config --cflags --libs re2)"; fi; \
+	 if pkg-config --exists libhs; then flags="$$flags -DHAVE_HS $$(pkg-config --cflags --libs libhs)"; \
+	 elif pkg-config --exists libhyperscan; then flags="$$flags -DHAVE_HS $$(pkg-config --cflags --libs libhyperscan)"; \
+	 elif [ -f /usr/include/hs/hs.h ] || [ -f /usr/local/include/hs/hs.h ] || [ -f /opt/homebrew/include/hs/hs.h ]; then \
+	   flags="$$flags -DHAVE_HS -lhs"; fi; \
+	 echo "mp_bench flags:$$flags"; \
+	 c++ -std=c++20 -O2 $(INCLUDES) benchmarks/mp_bench.cpp $$flags -o $(BUILD)/mp_bench
+	@$(BUILD)/mp_bench
 
 # Proves the *system* install end to end, the exact packager path: install REAL to a temp prefix
 # with -DBUILD_TESTING=OFF (noarch LIBDIR=lib, no SciForge — the library stands alone), then
