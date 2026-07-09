@@ -895,6 +895,43 @@ PyObject* Pattern_findall(PyObject* self, PyObject* args, PyObject* kwargs) {
     return out;
 }
 
+// Matching-only count: once-per-walk TrailingLA dispatch when eligible (see
+// real::regex::count_matches). No Match / Python objects are materialised — the
+// path Python callers need for trailing-LA class+ throughput (finditer stays pure).
+PyObject* Pattern_count_matches(PyObject* self, PyObject* args, PyObject* kwargs) {
+    PatternObject* pat = as_pattern(self);
+    PyObject* string = nullptr;
+    Py_ssize_t pos = 0;
+    Py_ssize_t endpos = PY_SSIZE_T_MAX;
+    static const char* const keywords[] = {"string", "pos", "endpos", nullptr};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|nn", const_cast<char**>(keywords),
+                                     &string, &pos, &endpos)) {
+        return nullptr;
+    }
+    subject_view sv;
+    if (get_subject(pat, string, &sv) < 0) {
+        return nullptr;
+    }
+    const Py_ssize_t char_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
+    pos = std::clamp(pos, Py_ssize_t {0}, char_len);
+    endpos = std::clamp(endpos, Py_ssize_t {0}, char_len);
+    const std::size_t pos_byte = char_to_byte(sv, pos);
+    const std::size_t end_byte = char_to_byte(sv, endpos);
+    const std::size_t scan_len = pos_byte < end_byte ? end_byte - pos_byte : 0;
+    try {
+        std::size_t n = 0;
+        if (scan_len >= static_cast<std::size_t>(gil_release_min_bytes)) {
+            const GilRelease unlocked;
+            n = pat->rx->count_matches(sv.view(), pos_byte, end_byte);
+        } else {
+            n = pat->rx->count_matches(sv.view(), pos_byte, end_byte);
+        }
+        return PyLong_FromSize_t(n);
+    } catch (...) {
+        return set_cpp_error();
+    }
+}
+
 PyObject* MatchIterator_iter(PyObject* self) {
     return Py_NewRef(self);
 }
@@ -1490,6 +1527,20 @@ PyMethodDef pattern_methods[] = {
      "    endpos (int): Where the string is treated as ending; matches stop there.\n\n"
      "Returns:\n"
      "    list: List of strings, bytes, or tuples depending on groups."},
+    {"count_matches", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_count_matches)),
+     METH_VARARGS | METH_KEYWORDS,
+     "count_matches(string, pos=0, endpos=sys.maxsize)\n"
+     "Count non-overlapping matches in [pos, endpos) without building Match objects.\n\n"
+     "Matching-only: uses the trailing-LA class+ fast path when eligible (unlike\n"
+     "finditer, which stays on the pure monomorphic walk). Prefer this over\n"
+     "len(findall(...)) or sum(1 for _ in finditer(...)) for throughput.\n\n"
+     "Args:\n"
+     "    string (str or bytes): Text to search.\n"
+     "    pos (int): Where to start. Character offset for str, byte offset for bytes.\n"
+     "        Not a slice: \\A and ^ (without MULTILINE) still fail at pos > 0.\n"
+     "    endpos (int): Where the string is treated as ending; counting stops there.\n\n"
+     "Returns:\n"
+     "    int: Number of non-overlapping matches."},
     {"finditer", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_finditer)),
      METH_VARARGS | METH_KEYWORDS,
      "finditer(string, pos=0, endpos=sys.maxsize)\n"

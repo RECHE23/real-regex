@@ -180,6 +180,26 @@ class TestModuleFunctions(unittest.TestCase):
         self.assertEqual(real.findall(r"(\d)\d", "12 34"), ["1", "3"])
         self.assertEqual(real.findall(r"(a)|(b)", "ab"), [("a", ""), ("", "b")])
 
+    def test_count_matches(self):
+        """count_matches agrees with findall / finditer without materialising Match objects."""
+        self.assertEqual(real.count_matches(r"\d+", "a1 b22 c333"), 3)
+        self.assertEqual(real.count_matches(r"[a-z]+", "abc def"), 2)
+        # Trailing-LA class+: same count as finditer (fast path on count_matches only).
+        la = r"[a-z]+(?=[a-z])"
+        text = "abc def ghi"
+        self.assertEqual(real.count_matches(la, text),
+                         sum(1 for _ in real.finditer(la, text)))
+        self.assertEqual(real.count_matches(la, "abc def"), 2)  # [0,2) [4,6)
+        p = real.compile(r"\d+")
+        self.assertEqual(p.count_matches("1 22 333"), 3)
+        self.assertEqual(p.count_matches("1 22 333", pos=2), 2)  # from "22 333"
+        # endpos=4 → region "1 22"; matches "1" and "22"
+        self.assertEqual(p.count_matches("1 22 333", endpos=4), 2)
+        self.assertEqual(p.count_matches("1 22 333", endpos=4),
+                         len(p.findall("1 22 333", endpos=4)))
+        # Module-level and Pattern both exposed.
+        self.assertTrue(hasattr(real, "count_matches"))
+        self.assertTrue(hasattr(p, "count_matches"))
     def test_finditer_and_split(self):
         """finditer yields Match objects and split respects maxsplit."""
         spans = [m.span() for m in real.finditer(r"x*", "axb")]

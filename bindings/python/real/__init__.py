@@ -24,9 +24,9 @@ import unicodedata
 from real._real import Match, Pattern, compile as _compile_core, error
 
 __all__ = [
-    "compile", "match", "fullmatch", "search", "findall", "finditer",
-    "split", "sub", "subn", "escape", "purge", "error", "Pattern", "Match",
-    "A", "ASCII", "I", "IGNORECASE", "M", "MULTILINE", "S", "DOTALL",
+    "compile", "match", "fullmatch", "search", "findall", "count_matches",
+    "finditer", "split", "sub", "subn", "escape", "purge", "error", "Pattern",
+    "Match", "A", "ASCII", "I", "IGNORECASE", "M", "MULTILINE", "S", "DOTALL",
     "X", "VERBOSE", "U", "UNICODE", "NOFLAG", "get_include", "get_config",
 ]
 
@@ -109,6 +109,10 @@ class _FallbackPattern:
 
     def findall(self, string, *args, **kwargs):
         return self._p.findall(string, *args, **kwargs)
+
+    def count_matches(self, string, *args, **kwargs):
+        # re has no count_matches; count finditer without materialising a list.
+        return sum(1 for _ in self._p.finditer(string, *args, **kwargs))
 
     def sub(self, repl, string, count=0):
         return self._p.sub(repl, string, count)
@@ -328,6 +332,25 @@ def findall(pattern, string, flags=0):
         list: List of strings, tuples, or groups depending on the pattern.
     """
     return compile(pattern, flags).findall(string)
+
+
+def count_matches(pattern, string, flags=0):
+    """Count non-overlapping matches without building Match objects.
+
+    Matching-only counter (C++ ``regex::count_matches``). Prefer this over
+    ``len(findall(...))`` or counting ``finditer`` when only the count matters,
+    and for trailing-lookahead class+ patterns where the fast path lives on
+    this surface (not on ``finditer``).
+
+    Args:
+        pattern (str or bytes): Regular expression pattern.
+        string (str or bytes): Text to search.
+        flags (int, optional): Compilation flags. Defaults to 0.
+
+    Returns:
+        int: Number of non-overlapping matches.
+    """
+    return compile(pattern, flags).count_matches(string)
 
 
 def finditer(pattern, string, flags=0):
