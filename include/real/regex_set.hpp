@@ -1,23 +1,27 @@
 /*!
  * \file regex_set.hpp
- * \brief `real::regex_set` — multi-pattern which-matched set (Stage-1 MVP).
+ * \brief `real::regex_set` — multi-pattern which-matched set.
  *
- * A set of patterns answered with **which-matched** semantics (RE2::Set / rust
- * `RegexSet`): which members match the subject at least once. This is **not**
- * \ref real::dfa (maximal-munch lexer: one winner at the cursor). The MVP is
- * N independent walks with per-pattern early-exit — never N × count_matches and
- * never `real::dfa::match`.
+ * Which-matched semantics (RE2::Set / rust `RegexSet`): which members match the
+ * subject at least once. **Not** \ref real::dfa munch (one winner at the cursor).
  *
- * Include this header explicitly; \c real.hpp does not pull it in (same opt-in
- * style as \c dfa.hpp).
+ * **Stage-2 N-hybrid (internal):** when enough patterns are DFA-eligible, a fused
+ * unanchored multi-accept DFA (\ref dfa_mode::which_matched) scans once for those
+ * members; ineligible patterns (lookaround, Unicode \\w/\\d/\\s, …) and small sets
+ * use per-pattern \ref regex::search (Stage-1). The public bitset is always in
+ * **construction order** — fused rule indices are remapped via an eligible→orig map.
+ *
+ * Include this header explicitly; \c real.hpp does not pull it in.
  */
 #ifndef REAL_REGEX_SET_HPP
 #define REAL_REGEX_SET_HPP
 
+#include "real/dfa.hpp"
 #include "real/real.hpp"
 
 #include <cstddef>
 #include <initializer_list>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -35,18 +39,23 @@ namespace real {
    * the individual \ref regex if groups are needed.
    *
    * Bitset order is the construction order: index 0 is the first pattern, etc.
-   *
-   * \note Stage-1 implementation: N independent \ref regex::search walks with
-   *       per-pattern early-exit. A future fused single-pass may replace the
-   *       walk without changing this public contract.
    */
   class regex_set
   {
   public:
 
     /*!
+     * \brief Minimum DFA-eligible count to build a fused single-pass.
+     *
+     * Calibrated on log-like patterns (1 MiB corpus, M1, best-of-5): fused which_matched
+     * beats Stage-1 N-walks for eligible.count ≥ ~56 (still N-walks-faster at 48).
+     * Heuristic — re-measure with \c benchmarks/s2a_measure.cpp when retuning.
+     */
+    static constexpr std::size_t fused_min_eligible {56};
+
+    /*!
      * \brief Compiles every pattern in \p patterns (construction order = bitset order).
-     * \param[in] patterns Pattern texts; must be non-empty for a useful set (empty is allowed).
+     * \param[in] patterns Pattern texts; empty set is allowed.
      * \param[in] compile_flags Flags applied to every pattern (same as \ref regex).
      * \throws regex_error if any pattern fails to compile.
      */
@@ -54,18 +63,11 @@ namespace real {
                        flags                             compile_flags = flags::none)
       : flags_(compile_flags)
     {
-      members_.reserve(patterns.size());
-      for (const std::string_view pat : patterns) {
-        members_.emplace_back(pat, compile_flags); // throws regex_error on failure
-      }
+      build_from_views(patterns);
     }
 
     /*!
      * \brief Convenience: compile from a contiguous array of string views.
-     * \param[in] patterns Pattern texts.
-     * \param[in] n        Number of patterns.
-     * \param[in] compile_flags Flags applied to every pattern.
-     * \throws regex_error if any pattern fails to compile.
      */
     regex_set(const std::string_view* patterns,
               std::size_t             n,
@@ -75,12 +77,7 @@ namespace real {
     {}
 
     /*!
-     * \brief Brace-init / inline list: \c regex_set{"a", "b", R"(\\d+)"} .
-     *
-     * String literals convert to \c string_view; construction order = bitset order.
-     * \param[in] patterns Pattern texts.
-     * \param[in] compile_flags Flags applied to every pattern.
-     * \throws regex_error if any pattern fails to compile.
+     * \brief Brace-init: \c regex_set{"a", "b", R"(\\d+)"} .
      */
     regex_set(std::initializer_list<std::string_view> patterns,
               flags                                   compile_flags = flags::none)
@@ -90,18 +87,17 @@ namespace real {
 
     /*!
      * \brief Compile from owning strings (e.g. \c std::vector<std::string>).
-     * \param[in] patterns Pattern texts (views borrowed only during construction).
-     * \param[in] compile_flags Flags applied to every pattern.
-     * \throws regex_error if any pattern fails to compile.
      */
     explicit regex_set(std::span<const std::string> patterns,
                        flags                        compile_flags = flags::none)
       : flags_(compile_flags)
     {
-      members_.reserve(patterns.size());
+      std::vector<std::string_view> views;
+      views.reserve(patterns.size());
       for (const std::string& pat : patterns) {
-        members_.emplace_back(pat, compile_flags);
+        views.emplace_back(pat);
       }
+      build_from_views(views);
     }
 
     //! \brief Number of patterns in the set (bitset length).
@@ -122,23 +118,46 @@ namespace real {
       return flags_;
     }
 
+    //! \brief True when a fused single-pass DFA is active (eligible.count ≥ threshold).
+    [[nodiscard]] bool uses_fused() const noexcept
+    {
+      return fused_.has_value();
+    }
+
+    //! \brief Count of DFA-eligible members (fused subset size when uses_fused).
+    [[nodiscard]] std::size_t eligible_count() const noexcept
+    {
+      return eligible_orig_.size();
+    }
+
     /*!
      * \brief True if **any** pattern matches the subject at least once.
      *
      * Stops at the first matching pattern (any-match early exit). Region
      * semantics match \ref regex::search — \p endpos truncates the view; \p pos
      * is the start offset (not a slice).
-     *
-     * \param[in] text   Subject text.
-     * \param[in] pos    Byte start offset.
-     * \param[in] endpos Exclusive end; \ref npos = end of text.
      */
     [[nodiscard]] bool is_match(std::string_view text,
                                 std::size_t      pos    = 0,
                                 std::size_t      endpos = npos) const
     {
-      for (const regex& re : members_) {
-        if (re.search(text, pos, endpos)) {
+      // Region or no fused path: pure N-walks (any-stop).
+      if (!fused_ || pos != 0 || endpos != npos) {
+        for (const regex& re : members_) {
+          if (re.search(text, pos, endpos)) {
+            return true;
+          }
+        }
+        return false;
+      }
+      // Fused path: any fused bit or any ineligible hit.
+      for (bool b : fused_->which_matched(text)) {
+        if (b) {
+          return true;
+        }
+      }
+      for (const std::size_t oi : ineligible_orig_) {
+        if (members_[oi].search(text)) {
           return true;
         }
       }
@@ -148,23 +167,37 @@ namespace real {
     /*!
      * \brief Which patterns match at least once (construction-order bitset).
      *
-     * For each pattern, \ref regex::search runs until the first match of that
-     * pattern (per-pattern early exit), then the next pattern. Never full-scan
-     * counts. Index \c i is true iff pattern \c i matched.
-     *
-     * \param[in] text   Subject text.
-     * \param[in] pos    Byte start offset.
-     * \param[in] endpos Exclusive end; \ref npos = end of text.
-     * \return A vector of length \ref size(); order = construction order.
+     * Index \c i is true iff pattern \c i matched. Fused eligible bits are remapped
+     * to original construction indices; ineligibles use per-pattern search.
      */
     [[nodiscard]] std::vector<bool> matches(std::string_view text,
                                             std::size_t      pos    = 0,
                                             std::size_t      endpos = npos) const
     {
       std::vector<bool> hit(members_.size(), false);
-      for (std::size_t i = 0; i < members_.size(); ++i) {
-        if (members_[i].search(text, pos, endpos)) {
-          hit[i] = true;
+      if (members_.empty()) {
+        return hit;
+      }
+      // Region: DFA which_matched is whole-subject mid-stream restart — use N-walks.
+      if (!fused_ || pos != 0 || endpos != npos) {
+        for (std::size_t i = 0; i < members_.size(); ++i) {
+          if (members_[i].search(text, pos, endpos)) {
+            hit[i] = true;
+          }
+        }
+        return hit;
+      }
+      // Eligible: single-pass fused (indices 0..E-1) → map to construction order.
+      const auto fbits {fused_->which_matched(text)};
+      for (std::size_t k = 0; k < fbits.size() && k < eligible_orig_.size(); ++k) {
+        if (fbits[k]) {
+          hit[eligible_orig_[k]] = true;
+        }
+      }
+      // Ineligible: individual search (lookaround / klass_cp / …).
+      for (const std::size_t oi : ineligible_orig_) {
+        if (members_[oi].search(text)) {
+          hit[oi] = true;
         }
       }
       return hit;
@@ -172,17 +205,16 @@ namespace real {
 
     /*!
      * \brief Indices of patterns that match (construction order, ascending).
-     *
-     * Equivalent to collecting every \c i where \ref matches is true.
      */
     [[nodiscard]] std::vector<std::size_t> which(std::string_view text,
                                                  std::size_t      pos    = 0,
                                                  std::size_t      endpos = npos) const
     {
       std::vector<std::size_t> ids;
-      ids.reserve(members_.size());
-      for (std::size_t i = 0; i < members_.size(); ++i) {
-        if (members_[i].search(text, pos, endpos)) {
+      const auto               hit {matches(text, pos, endpos)};
+      ids.reserve(hit.size());
+      for (std::size_t i = 0; i < hit.size(); ++i) {
+        if (hit[i]) {
           ids.push_back(i);
         }
       }
@@ -191,8 +223,6 @@ namespace real {
 
     /*!
      * \brief Access the compiled pattern at construction index \p i.
-     * \param[in] i Pattern index in `[0, size())`.
-     * \return The member regex (for capture re-runs after which-matched).
      */
     [[nodiscard]] const regex& operator[](std::size_t i) const
     {
@@ -201,8 +231,46 @@ namespace real {
 
   private:
 
-    std::vector<regex> members_;
-    flags              flags_ {flags::none};
+    void build_from_views(std::span<const std::string_view> patterns)
+    {
+      members_.reserve(patterns.size());
+      for (const std::string_view pat : patterns) {
+        members_.emplace_back(pat, flags_); // throws regex_error on failure
+      }
+      if (members_.empty()) {
+        return;
+      }
+      // Partition DFA-eligible vs ineligible (try single-pattern munch DFA).
+      std::vector<regex> eligible_rx;
+      eligible_rx.reserve(members_.size());
+      eligible_orig_.reserve(members_.size());
+      ineligible_orig_.reserve(members_.size());
+      for (std::size_t i = 0; i < members_.size(); ++i) {
+        try {
+          const real::dfa probe {std::span<const regex> {&members_[i], 1}};
+          (void) probe;
+          eligible_rx.push_back(members_[i]);
+          eligible_orig_.push_back(i);
+        }
+        catch (const dfa_error&) {
+          ineligible_orig_.push_back(i);
+        }
+      }
+      // Build fused only when enough eligibles to beat N-walks (calibrated threshold).
+      if (eligible_rx.size() >= fused_min_eligible) {
+        fused_.emplace(std::span<const regex> {eligible_rx}, dfa_mode::which_matched);
+      }
+      else {
+        eligible_orig_.clear(); // fused inactive: all members use N-walks
+        ineligible_orig_.clear();
+      }
+    }
+
+    std::vector<regex>          members_;
+    flags                       flags_ {flags::none};
+    std::optional<dfa>          fused_;           //!< Present when eligible ≥ threshold.
+    std::vector<std::size_t>    eligible_orig_;   //!< fused rule k → construction index.
+    std::vector<std::size_t>    ineligible_orig_; //!< construction indices needing search.
   };
 } // namespace real
 
