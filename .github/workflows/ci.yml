@@ -6,12 +6,65 @@ on:
     paths-ignore: ['**.md', 'docs/**']   # doc-only pushes don't need the full matrix
   pull_request:
 
+# One active CI run per ref: a new push cancels the previous (fail-fast across pushes).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # Cheap preflight (seconds–1 min): format, version, layers, pins, Doxygen.
+  # If any of these fail, the multi-OS matrix / fuzz / coverage never start.
+  # Order matches full-local-gate: fast high-signal checks first (doc included).
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: real-regex
+      - uses: actions/checkout@v6
+        with:
+          repository: RECHE23/sciforge
+          ref: v2026.7.2
+          path: sciforge
+      - name: Install doxygen + build tools
+        run: sudo apt-get update && sudo apt-get install -y doxygen graphviz cmake build-essential
+      # Same Uncrustify 0.82 pin as lint-cpp (cached — cold build once, then ~instant).
+      - name: Cache Uncrustify 0.82.0
+        id: uncrustify
+        uses: actions/cache@v5
+        with:
+          path: ~/.local/bin/uncrustify
+          key: uncrustify-0.82.0-${{ runner.os }}-preflight
+      - name: Build Uncrustify 0.82.0
+        if: steps.uncrustify.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o /tmp/uc.tgz https://github.com/uncrustify/uncrustify/releases/download/uncrustify-0.82.0/uncrustify-0.82.0.tar.gz
+          tar -xzf /tmp/uc.tgz -C /tmp
+          cmake -S /tmp/uncrustify-uncrustify-0.82.0 -B /tmp/uc-build && cmake --build /tmp/uc-build -j
+          mkdir -p "$HOME/.local/bin" && cp /tmp/uc-build/uncrustify "$HOME/.local/bin/"
+      - name: preflight (format → version → layers → pins → doc)
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          LINT="$GITHUB_WORKSPACE/sciforge/lint"
+          TOOLS="$GITHUB_WORKSPACE/sciforge/tools"
+          echo "── format-check"
+          make -C real-regex format-check SCIFORGE_LINT="$LINT"
+          echo "── version-check"
+          make -C real-regex version-check
+          echo "── check-layers"
+          make -C real-regex check-layers
+          echo "── check-pins"
+          make -C real-regex check-pins SCIFORGE_TOOLS="$TOOLS"
+          echo "── doc-no-coverage (Doxygen WARN_AS_ERROR)"
+          make -C real-regex doc-no-coverage
+
   # Lint (format + MISRA) via SciForge's reusable spine: it pins clang-tidy-18 and
   # runs this repo's own `make format-check` / `make misra` against the shared lint/
   # config. REAL has no dependency siblings; its one MISRA deviation (the SBO union)
   # lives in its Makefile's --checks, so nothing is passed here.
   lint:
+    needs: preflight
     uses: RECHE23/sciforge/.github/workflows/lint-cpp.yml@v2026.7.2
     with:
       deps: '[]'
@@ -26,6 +79,7 @@ jobs:
   # REAL is the public repo where contributor PRs warrant macOS coverage (the
   # private repos opt out, matching their pre-cat-B matrices).
   build:
+    needs: preflight
     uses: RECHE23/sciforge/.github/workflows/build-cpp.yml@v2026.7.2
     with:
       deps: '[]'
@@ -41,6 +95,7 @@ jobs:
   # turning that narrowing back into the hard error it is on Win32. Syntax-only, so it is fast and needs no
   # 32-bit runtime; -Werror promotes the narrowing warning to the failure it must be.
   win32-narrowing:
+    needs: preflight
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -48,10 +103,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y g++-multilib
       - name: Syntax-only the engine headers with a 32-bit size_t
         run: |
+          set -euo pipefail
           printf '#include "real/real.hpp"\n#include "real/dfa.hpp"\nint main() {}\n' > win32_tu.cpp
           g++ -std=c++20 -m32 -Werror -Iinclude -fsyntax-only win32_tu.cpp
 
   fuzz:
+    needs: preflight
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -78,6 +135,7 @@ jobs:
   # Both consume the SciForge substrate, so SciForge is checked out as a sibling at the pinned tag. Also
   # runs the pin-drift lint on this repo's own workflows. The PR tier is ~1 min.
   conformance:
+    needs: preflight
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -108,6 +166,7 @@ jobs:
   # cross-platform pieces the local macOS gate builds — the shim's C++-driver link and the crate's cc-build.
   # cargo is preinstalled on the GitHub Ubuntu image. rust-test runs the differential oracle vs the regex crate.
   bindings:
+    needs: preflight
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -127,8 +186,9 @@ jobs:
   # a calling convention, a C4996-class deprecation — is caught here, not by a user. cargo and the platform
   # toolchain are preinstalled on the GitHub images; no make (the recipes are Unix-shell).
   bindings-cross:
+    needs: preflight
     strategy:
-      fail-fast: false
+      fail-fast: true   # one OS red cancels the other — fix and re-run, don't burn the sibling
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -142,6 +202,7 @@ jobs:
   # The third differential fuzzer: real-regex vs the regex crate (cargo-fuzz, nightly). A short smoke here;
   # the long run is on the devbox. re/std/rust are now all covered by a differential fuzzer.
   fuzz-rust:
+    needs: preflight
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -156,6 +217,7 @@ jobs:
 
   # Coverage gate: fail the build if line coverage drops below the floor (was advisory).
   coverage:
+    needs: preflight
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -178,6 +240,7 @@ jobs:
   # SciForge is a sibling so REAL's top-level configure resolves the test harness (the install
   # itself is harness-free).
   install-smoke:
+    needs: preflight
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -199,6 +262,7 @@ jobs:
   # binding is a leaf (no dependency siblings); its exact prior coverage is
   # {linux, macOS, Windows} x {3.10, 3.14}, replicated by the platform toggles.
   python:
+    needs: preflight
     uses: RECHE23/sciforge/.github/workflows/python-cpp.yml@v2026.7.2
     with:
       python-versions: '["3.10","3.14"]'
