@@ -6,6 +6,7 @@
 #include <string_view>
 
 #include <sciforge/test/framework.hpp>
+#include "real/automata/lazy_dfa.hpp" // trailing_la_route_disabled
 #include "real/real.hpp"
 
 using namespace std::string_view_literals;
@@ -203,4 +204,63 @@ TEST(lookaround_in_bytes_mode)
   // so (?<=\xC3) holds right before it.
   EXPECT(real::regex(R"((?<=\xC3)\xA9)", flags::bytes).search("é"sv));
   EXPECT(!real::regex(R"((?<=\xC3)\xA9)", flags::bytes).search("a\xA9"sv)); // 0xA9 not preceded by 0xC3
+}
+
+// --- P3c trailing-LA class+ route: body keeps the class-loop scan; lookaround is an end-condition.
+//     Differential against the pure Pike VM (trailing_la_route_disabled) proves transparency.
+TEST(trailing_la_class_loop_flagship_spans)
+{
+  // Bench-engines case: [a-z]+(?=[a-z]) — greedy run stops one short when the next byte is a letter.
+  const real::regex rx(R"([a-z]+(?=[a-z]))");
+  EXPECT_EQ(rx.search("abc")[0], "ab"sv);
+  EXPECT(!rx.search("a"sv)); // single letter: no end where (?=[a-z]) holds
+  EXPECT_EQ(rx.search("ab")[0], "a"sv);
+  const auto all {rx.find_all("the quick")};
+  EXPECT_EQ(all.size(), 2U);
+  EXPECT_EQ(all[0][0], "th"sv);
+  EXPECT_EQ(all[1][0], "quic"sv);
+  // Negative trailing LA: the maximal run itself holds when next is NOT in the class.
+  EXPECT_EQ(real::regex(R"([a-z]+(?![a-z]))").search("abc def")[0], "abc"sv);
+  EXPECT_EQ(real::regex(R"([0-9]+(?![0-9]))").search("123 45x")[0], "123"sv);
+}
+
+TEST(trailing_la_class_loop_routed_equals_core)
+{
+  using real::detail::trailing_la_route_disabled;
+  const char* patterns[] = {
+    R"([a-z]+(?=[a-z]))",  R"([a-z]+(?![a-z]))", R"([0-9]+(?![0-9]))",
+    R"([a-z]+(?=z))",      R"([a-z]+(?=[a-z]{2}))", R"([a-f]+(?=[0-9]))",
+  };
+  const char* texts[] = {
+    "the quick brown fox alpha", "abcz xyz abz zz", "123 45x 6",
+    "abcde xy zzz", "aaa bbb c", "the the the quick", "", "a", "ab",
+  };
+  for (const char* p : patterns) {
+    const real::regex rx(p);
+    for (const char* t : texts) {
+      trailing_la_route_disabled() = false;
+      const auto routed {rx.find_all(t)};
+      trailing_la_route_disabled() = true;
+      const auto core   {rx.find_all(t)};
+      trailing_la_route_disabled() = false;
+      EXPECT_EQ(routed.size(), core.size());
+      for (std::size_t i = 0; i < routed.size(); ++i) {
+        EXPECT_EQ(routed[i].start(), core[i].start());
+        EXPECT_EQ(routed[i].end(), core[i].end());
+      }
+    }
+  }
+}
+
+TEST(trailing_la_class_loop_modes)
+{
+  const real::regex pos(R"([a-z]+(?=[a-z]))");
+  const real::regex neg(R"([a-z]+(?![a-z]))");
+  // prefix (match): only from the start
+  EXPECT_EQ(pos.match("abc")[0], "ab"sv);
+  EXPECT(!pos.match(" abc"));     // not at start
+  // fullmatch: whole string must be the match span
+  EXPECT(!pos.fullmatch("abc"));  // LA at end fails for positive self-class
+  EXPECT(neg.fullmatch("abc"));   // negative holds at end-of-text
+  EXPECT(!neg.fullmatch("abc ")); // trailing space not in body
 }

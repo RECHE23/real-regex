@@ -339,6 +339,14 @@ namespace real {
       //!        the existing reverse-DFA/forward-DFA/one-pass route stays exactly as it was for those.
       bool         il_fused_eligible     {};
       std::uint8_t il_fused_prefix_width {};
+
+      //! \brief Trailing lookaround on a groupless greedy `class+` body (`[a-z]+(?=[a-z])`,
+      //!        `[0-9]+(?![0-9])`, …). Index into lookarounds; -1 = not this shape.
+      //!        \ref trailing_la_class holds the body's class index. Intentionally does **not** set
+      //!        \ref greedy_class_loop (left −1) so the pure class+ call site stays a single compare —
+      //!        zero overhead on the daily `[a-z]+` path (x86: sharing greedy_class_loop regressed it −20 %).
+      std::int16_t trailing_lookaround {-1};
+      std::int32_t trailing_la_class   {-1}; //!< Class index for \ref trailing_lookaround body; −1 if unset.
     };
 
     /*!

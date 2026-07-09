@@ -84,6 +84,27 @@ TEST(class_loop_fast_path_activation)
   EXPECT_EQ(hints_of("\\w+x").greedy_class_loop, -1);
 }
 
+TEST(trailing_lookaround_class_loop_activation)
+{
+  // P3c: trailing-LA arms trailing_lookaround + trailing_la_class only — greedy_class_loop stays
+  // −1 so the pure [a-z]+ call site remains a single compare (x86 −20 % when it shared the gate).
+  EXPECT(hints_of("[a-z]+(?=[a-z])").trailing_lookaround >= 0);
+  EXPECT(hints_of("[a-z]+(?=[a-z])").trailing_la_class >= 0);
+  EXPECT_EQ(hints_of("[a-z]+(?=[a-z])").greedy_class_loop, -1);
+  EXPECT(hints_of("[a-z]+(?![a-z])").trailing_lookaround >= 0);
+  EXPECT(hints_of("[0-9]+(?![0-9])").trailing_lookaround >= 0);
+  EXPECT(hints_of("[a-z]+(?=[a-z]{2})").trailing_lookaround >= 0); // multi-op LA sub still eligible
+  // Pure class+ still on the original gate only:
+  EXPECT(hints_of("[a-z]+").greedy_class_loop >= 0);
+  EXPECT_EQ(hints_of("[a-z]+").trailing_lookaround, -1);
+  // Declines (general VM):
+  EXPECT_EQ(hints_of("(?=[a-z])[a-z]+").trailing_lookaround, -1);  // leading
+  EXPECT_EQ(hints_of("(?=[a-z])[a-z]+").greedy_class_loop, -1);
+  EXPECT_EQ(hints_of("(a+)(?=b)").trailing_lookaround, -1);        // capturing group
+  EXPECT_EQ(hints_of("foo(?=bar)").trailing_lookaround, -1);       // literal body, not class+
+  EXPECT_EQ(hints_of("\\d+(?=px)").trailing_lookaround, -1);       // klass_cp body (text-mode \\d)
+}
+
 TEST(class_loop_fast_path_results_match_python_semantics)
 {
   const real::regex rx("\\w+");

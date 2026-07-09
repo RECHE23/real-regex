@@ -63,6 +63,15 @@ namespace real::detail {
     return disabled;
   }
 
+  //! \brief Test seam: force the matcher off the trailing-lookaround class+ route onto the pure Pike VM, so a
+  //!        differential can assert routed and unrouted searches agree. Not for production use — the route is
+  //!        transparent by contract (same leftmost-first spans as the general loop on the eligible shape).
+  inline bool& trailing_la_route_disabled()
+  {
+    static bool disabled {false};
+    return disabled;
+  }
+
   //! \brief A byte-level program derived from a Pike program for the DFA passes: every `klass_cp` construct
   //!        is expanded into UTF-8 byte-range split/klass chains, so the whole thing is byte-transition-only
   //!        and a forward DFA can represent it. The Pike program itself is untouched (byte-identity); this

@@ -432,6 +432,9 @@ namespace real::detail {
       sem_                = sem;
       // Fast paths only fire for patterns that always consume (literal /
       // class+), which can never produce the empty match the flag guards.
+      // P3c trailing-LA is NOT dispatched here — it lives outside pike_vm::run (real.hpp /
+      // find_iter) so this function stays pre-P3c-sized and keeps inlining into find_iter
+      // (x86: +16–20 % when cold code bloated run() past the inline threshold).
       if (sem_ == match_semantics::first && prog_.hints.greedy_class_loop >= 0) {
         // OPT-C: the memchr-cascade instantiation (Cascade) is selected ONCE by the caller (a whole
         // find_iter/search) from stop_set_size, never per match — so when it is off this run is byte-for-
@@ -1075,6 +1078,11 @@ namespace real::detail {
      * Matches a maximal run of class bytes with one scan loop — exactly the
      * VM's greedy result, with no thread lists.
      *
+     * This function is the no-LA path only (pre-P3c shape). Trailing-lookaround
+     * class+ is dispatched outside \ref run (see real.hpp / find_iter) into
+     * \ref run_class_loop_trailing_la. always_inline: must stay in the find_iter
+     * body on x86 (out-of-line call cost ~16 % over 42k matches).
+     *
      * \tparam Cascade  Take the OPT-C memchr-cascade run tail (chosen once per walk from stop_set_size).
      * \tparam OutSlots Output slot container.
      * \param[in]  text      The subject text.
@@ -1084,6 +1092,9 @@ namespace real::detail {
      * \return `true` if a non-empty run was found.
      */
     template <bool Cascade, typename OutSlots>
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((always_inline))
+#endif
     constexpr bool run_class_loop(std::string_view text,
                                   std::size_t      start,
                                   run_mode         mode,
@@ -1140,6 +1151,116 @@ namespace real::detail {
       out_slots.assign(prog_.slot_count, npos);
       fill_span_slots(out_slots, match_start, match_end);
       return true;
+    }
+
+  public:
+    /*!
+     * \brief Trailing-lookaround class+ (P3c): body scan + longest end where lookaround holds.
+     *
+     * Cold, noinline: must not share a function body or inlining unit with
+     * \ref run_class_loop (the daily [a-z]+ path). Invoked from real.hpp / find_iter
+     * **outside** \ref run so pure class-loop run() stays pre-P3c-sized. Dynamic-only.
+     */
+    template <bool Cascade, typename OutSlots>
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline, cold))
+#endif
+    bool run_class_loop_trailing_la(std::string_view text,
+                                    std::size_t      start,
+                                    run_mode         mode,
+                                    OutSlots&        out_slots)
+    {
+      // Static storage has no lookaround scratch and never arms trailing_lookaround.
+      if constexpr (!requires(State & st) {
+        st.lookaround;
+      }) {
+        out_slots.assign(prog_.slot_count, npos);
+        return false;
+      }
+      else {
+        text_ = text; // lookaround_holds reads text_ (callers are outside run())
+        const std::uint8_t* const tbl =
+          class_table(static_cast<std::size_t>(prog_.hints.trailing_la_class));
+        const auto in_class = [&](std::size_t i) {
+                                return tbl[static_cast<std::uint8_t>(text[i])] != 0U;
+                              };
+        const auto scan_end = [&](std::size_t match_start) -> std::size_t {
+                                std::size_t match_end {match_start + 1};
+                                if constexpr (Cascade) {
+                                  if (!std::is_constant_evaluated()) {
+                                    while (match_end < text.size() && in_class(match_end)) {
+                                      ++match_end;
+                                      if (match_end - match_start == cascade_run_threshold) {
+                                        match_end = run_cascade_stop(text, match_end);
+                                        break;
+                                      }
+                                    }
+                                    return match_end;
+                                  }
+                                }
+                                while (match_end < text.size() && in_class(match_end)) {
+                                  ++match_end;
+                                }
+                                return match_end;
+                              };
+
+        const auto sub_id {static_cast<std::uint16_t>(prog_.hints.trailing_lookaround)};
+        const auto try_ends = [&](std::size_t ms, std::size_t me) -> bool {
+                                for (std::size_t e = me; e > ms; --e) {
+                                  if (lookaround_holds(sub_id, e)) {
+                                    out_slots.assign(prog_.slot_count, npos);
+                                    fill_span_slots(out_slots, ms, e);
+                                    return true;
+                                  }
+                                }
+                                return false;
+                              };
+
+        if (mode == run_mode::full) {
+          if (start >= text.size() || !in_class(start)) {
+            out_slots.assign(prog_.slot_count, npos);
+            return false;
+          }
+          const std::size_t match_end {scan_end(start)};
+          if (match_end != text.size() || !lookaround_holds(sub_id, match_end)) {
+            out_slots.assign(prog_.slot_count, npos);
+            return false;
+          }
+          out_slots.assign(prog_.slot_count, npos);
+          fill_span_slots(out_slots, start, match_end);
+          return true;
+        }
+
+        if (mode == run_mode::prefix) {
+          if (start >= text.size() || !in_class(start)) {
+            out_slots.assign(prog_.slot_count, npos);
+            return false;
+          }
+          if (try_ends(start, scan_end(start))) {
+            return true;
+          }
+          out_slots.assign(prog_.slot_count, npos);
+          return false;
+        }
+
+        std::size_t pos {start};
+        while (pos < text.size()) {
+          std::size_t match_start {pos};
+          while (match_start < text.size() && !in_class(match_start)) {
+            ++match_start;
+          }
+          if (match_start >= text.size()) {
+            break;
+          }
+          const std::size_t match_end {scan_end(match_start)};
+          if (try_ends(match_start, match_end)) {
+            return true;
+          }
+          pos = match_end;
+        }
+        out_slots.assign(prog_.slot_count, npos);
+        return false;
+      }
     }
 
     /*!
