@@ -2,6 +2,8 @@
 // historically, silent mis-selection was the worst kind of bug: everything
 // correct, just slow), equivalence tests (hints never change results), and
 // a throughput smoke test.
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <string>
 #include <string_view>
@@ -288,31 +290,35 @@ TEST(literal_prefilter_throughput_smoke)
   // sanitize builds run 5-20x slower than a bare native one), so this is a *scaling* test instead: an
   // 8x-longer miss must take on the order of 8x longer, never ~64x. Both measurements run the identical
   // instrumented code, so however slow the build is cancels in the ratio; only an O(n²) regression blows
-  // it past the margin. Best-of-5 per size damps shared-runner noise (a g++-14 CI runner once perturbed the
-  // 1 MB min enough to blow the ratio; the min-of-5 is harder to knock off a clean run — the 25x anti-O(n^2)
-  // margin stays put, since real scaling is ~8x with tight spread, not something to loosen for noise).
+  // it past the margin.
+  //
+  // Timing is median-of-7 after a discarded warmup (not min-of-5): on shared CI runners a lucky-short
+  // 1 MB sample under min() once blew large/small past 25× while scaling was still O(n). Median damps
+  // that without loosening the anti-quadratic bound. Real O(n) stays ~8× with tight spread.
   const real::regex rx {"needle\\d?$"}; // $ keeps it off the lazy-DFA route -> the prefilter path (test intent)
-  const auto        best_of {[&](std::size_t n) {
-                               std::string text(n, 'a');
-                               text += "needle";
-                               const auto once {[&] {
-                                                  const auto begin {std::chrono::steady_clock::now()};
-                                                  bool       ok {true};
-                                                  for (int i = 0; i < 10; ++i) {
-                                                    ok = ok && rx.search(text).matched();
-                                                  }
-                                                  EXPECT(ok);
-                                                  return std::chrono::steady_clock::now() - begin;
-                                                }};
-                               auto best {once()};
-                               for (int k = 0; k < 4; ++k) { // best of 5
-                                 best = std::min(best, once());
-                               }
-                               return best;
-                             }};
+  const auto        timed {[&](std::size_t n) {
+                             std::string text(n, 'a');
+                             text += "needle";
+                             const auto once {[&] {
+                                                const auto begin {std::chrono::steady_clock::now()};
+                                                bool       ok {true};
+                                                for (int i = 0; i < 10; ++i) {
+                                                  ok = ok && rx.search(text).matched();
+                                                }
+                                                EXPECT(ok);
+                                                return std::chrono::steady_clock::now() - begin;
+                                              }};
+                             (void) once(); // warmup — discard (shared-runner first-sample noise)
+                             std::array<std::chrono::steady_clock::duration, 7> samples {};
+                             for (auto& s : samples) {
+                               s = once();
+                             }
+                             std::sort(samples.begin(), samples.end());
+                             return samples[samples.size() / 2]; // median
+                           }};
 
-  const auto small        {best_of(1 << 20)}; // 1 MB miss
-  const auto large        {best_of(8 << 20)}; // 8 MB miss — 8x the bytes
+  const auto small        {timed(1 << 20)}; // 1 MB miss
+  const auto large        {timed(8 << 20)}; // 8 MB miss — 8x the bytes
 
   const std::string check {std::string(8 << 20, 'a') + "needle"};
   EXPECT_EQ(rx.search(check).start(), static_cast<std::size_t>(8 << 20));
