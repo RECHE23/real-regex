@@ -2,6 +2,7 @@
 // Oracle primary: N × regex::search (self-consistent; works for lookarounds RE2 rejects).
 // Secondary RE2::Set cross-check lives in the multi-pattern bench (optional dep), not here —
 // so the unit suite stays free of RE2 link requirements.
+#include <algorithm>
 #include <span>
 #include <string>
 #include <string_view>
@@ -32,12 +33,9 @@ namespace {
 
   bool any_of(const std::vector<bool>& hit)
   {
-    for (bool b : hit) {
-      if (b) {
-        return true;
-      }
-    }
-    return false;
+    return std::ranges::any_of(hit, [](bool b) {
+                                 return b;
+                               });
   }
 } // namespace
 
