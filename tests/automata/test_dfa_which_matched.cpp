@@ -41,6 +41,7 @@ TEST(which_matched_equals_nwalk_search)
 {
   const auto               raw {present_log()};
   std::vector<real::regex> pats;
+  pats.reserve(raw.size());
   for (const auto& p : raw) {
     pats.emplace_back(p);
   }
@@ -101,6 +102,7 @@ TEST(which_matched_state_count_bounded_log_patterns)
     raw.push_back("SEV" + std::to_string(i) + "|trace" + std::to_string(i));
   }
   std::vector<real::regex> pats;
+  pats.reserve(raw.size());
   for (const auto& p : raw) {
     pats.emplace_back(p);
   }

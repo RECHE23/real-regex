@@ -313,7 +313,7 @@ TEST(literal_prefilter_throughput_smoke)
                              for (auto& s : samples) {
                                s = once();
                              }
-                             std::sort(samples.begin(), samples.end());
+                             std::ranges::sort(samples);
                              return samples[samples.size() / 2]; // median
                            }};
 

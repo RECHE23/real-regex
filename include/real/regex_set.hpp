@@ -6,9 +6,9 @@
  * subject at least once. **Not** \ref real::dfa munch (one winner at the cursor).
  *
  * **Stage-2 N-hybrid (internal):** when enough patterns are DFA-eligible, a fused
- * unanchored multi-accept DFA (\ref dfa_mode::which_matched) scans once for those
+ * unanchored multi-accept DFA (`dfa_mode::which_matched`) scans once for those
  * members; ineligible patterns (lookaround, Unicode \\w/\\d/\\s, …) and small sets
- * use per-pattern \ref regex::search (Stage-1). The public bitset is always in
+ * use per-pattern `regex::search` (Stage-1). The public bitset is always in
  * **construction order** — fused rule indices are remapped via an eligible→orig map.
  *
  * Include this header explicitly; \c real.hpp does not pull it in.

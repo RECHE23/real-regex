@@ -364,6 +364,7 @@ namespace real {
       std::vector<std::uint32_t>    accept;         //!< accept[state] = rule index, or NO_RULE (munch).
       //! accept_mask[state * mask_words + w] — full which-matched bitset per state (word-packed).
       std::vector<std::uint64_t>    accept_mask;
+      std::vector<std::uint8_t>     any_accept;     //!< any_accept[state] != 0 if mask has any bit (skip mask-OR).
       std::size_t                   mask_words {0}; //!< Words per state in accept_mask.
       std::uint32_t                 start      {0};
       std::size_t                   num_states {0};
@@ -509,13 +510,17 @@ namespace real {
       out.trans.reserve(num_blocks * nc);
       out.accept.reserve(num_blocks);
       out.accept_mask.assign(num_blocks * mw, 0);
+      out.any_accept.assign(num_blocks, 0);
       for (std::size_t b = 0; b < num_blocks; ++b) {
         const std::size_t  rep   {static_cast<std::size_t>(rep_of_block[b])};
         const std::int64_t min_r {dfa_mask_min_rule(mask_pre[rep])};
         out.accept.push_back(min_r < 0 ? dfa_no_rule : static_cast<std::uint32_t>(min_r));
+        bool any                 {false};
         for (std::size_t w = 0; w < mw; ++w) {
           out.accept_mask[(b * mw) + w] = mask_pre[rep][w];
+          any                           = any || (mask_pre[rep][w] != 0);
         }
+        out.any_accept[b] = any ? 1 : 0;
         for (std::size_t c = 0; c < nc; ++c) {
           out.trans.push_back(static_cast<std::uint32_t>(block[trans_pre[(rep * nc) + c]]));
         }
@@ -526,7 +531,7 @@ namespace real {
   } // namespace detail
 
   /*!
-   * \brief Build mode for \ref dfa.
+   * \brief Build mode for \c real::dfa.
    *
    * \c munch — maximal-munch at the cursor (lexer; default, SciLex).
    * \c which_matched — unanchored multi-accept single-pass (Stage-2 RegexSet fused).
@@ -538,8 +543,8 @@ namespace real {
   };
 
   /*!
-   * \brief A multi-rule DFA: maximal-munch (\ref dfa_mode::munch) or which-matched
-   *        unanchored scan (\ref dfa_mode::which_matched).
+   * \brief A multi-rule DFA: maximal-munch (\c dfa_mode::munch) or which-matched
+   *        unanchored scan (\c dfa_mode::which_matched).
    *
    * Built once (heap-allocated tables), then immutable and cheap to copy-share.
    * \ref match is the lexer munch. \ref which_matched is Stage-2 multi-accept
@@ -625,6 +630,10 @@ namespace real {
         const auto        byte {static_cast<std::uint8_t>(text[i])};
         const std::size_t cls  {tables_.byte_class[byte]};
         state = tables_.trans[(static_cast<std::size_t>(state) * nc) + cls];
+        // Most states accept nothing — skip the mask-OR on the common path.
+        if (state >= tables_.any_accept.size() || tables_.any_accept[state] == 0) {
+          continue;
+        }
         const std::size_t base {static_cast<std::size_t>(state) * mw};
         for (std::size_t w = 0; w < mw; ++w) {
           const std::uint64_t m {tables_.accept_mask[base + w]};

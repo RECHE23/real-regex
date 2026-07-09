@@ -43,6 +43,7 @@ namespace {
       owned.push_back("SEV" + std::to_string(i) + "|tr" + std::to_string(i) + "x");
     }
     std::vector<std::string_view> views;
+    views.reserve(owned.size());
     for (const auto& s : owned) {
       views.emplace_back(s);
     }
@@ -89,7 +90,7 @@ TEST(hybrid_interleaved_eligible_ineligible_map)
   for (std::size_t i = 0; elig < real::regex_set::fused_min_eligible || i < 4; ++i) {
     if (i % 2 == 1 && i < 8) {
       // Ineligible lookbehind (DFA rejects).
-      owned.push_back(R"((?<=id=)[a-f0-9]{8})");
+      owned.emplace_back(R"((?<=id=)[a-f0-9]{8})");
     }
     else {
       if (elig < base.size()) {
@@ -101,6 +102,7 @@ TEST(hybrid_interleaved_eligible_ineligible_map)
       ++elig;
     }
   }
+  views.reserve(owned.size());
   for (const auto& s : owned) {
     views.emplace_back(s);
   }
@@ -137,6 +139,7 @@ TEST(hybrid_region_falls_back_to_nwalks)
   const auto reg  = set.matches(text, 0, 10); // only "zzzz 2026"
   // Oracle for region
   std::vector<bool> ora;
+  ora.reserve(views.size());
   for (const auto p : views) {
     ora.push_back(static_cast<bool>(real::regex(p).search(text, 0, 10)));
   }

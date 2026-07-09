@@ -119,16 +119,28 @@ TABLE B — extraction non-overlapping (counts equal REAL/RE2):
 
 **Reading — capacity first, speed second:**
 
-- **Architectural gap:** single-pass engines (RE2::Set, Hyperscan) stay **flat** in N; REAL Stage-1
-  N-walks **degrade** (559 → 39 MB/s from N=16 → 128). That is the Stage-2 fused single-pass arc —
-  **measured-not-promised**, not a 7.29 claim.
-- **Incumbent for this product shape is RE2::Set (~450 MB/s)**, not Hyperscan. « Faster than
-  Hyperscan » is not a product goal; HS is another corner (thousands of literals / streaming).
-- **At small N (≤ ~24)** REAL N-walks are already competitive (fastest at N=16 on this corpus).
+- **Architectural gap:** single-pass engines (RE2::Set, Hyperscan) stay **flat** in N; pure N-walks
+  **degrade** hard (e.g. ~421 → 41 MB/s from N=32 → 256 on arm64). Stage-2 fused which-matched
+  is **flat** and closes most of that gap.
+- **Stage-2 fused (same host/harness, arm64 M1, `benchmarks/s2a_measure.cpp`, RE2::Set on):**
+
+  | N | fused which_matched | pure N-walks | RE2::Set | sets |
+  | ---: | ---: | ---: | ---: | ---: |
+  | 32 | ~400 MB/s | ~421 | ~456 | equal |
+  | 64 | ~401 | ~181 | ~441 | equal |
+  | 128 | ~399 | ~85 | ~442 | equal |
+  | 256 | ~396 | ~41 | ~443 | equal |
+
+  Fused is **~4–10×** pure N-walks at large N, **flat ~400 MB/s**. vs RE2::Set same-host: ~0.9×
+  (competitive, **not** a claim of beating RE2::Set). `regex_set` routes fused when
+  `eligible.size() ≥ 56` (calibrated crossover), else N-walks; lookarounds stay N-walk.
+- **Incumbent for this product shape is RE2::Set**, not Hyperscan. « Faster than Hyperscan » is not
+  a product goal; HS is another corner (thousands of literals / streaming).
+- **At small N** pure N-walks remain competitive (sometimes faster than fused).
 - **Extraction:** REAL per-pattern `count_matches` beats RE2 N-walks ~2.5× on the present-pattern table.
 - **Bounded lookarounds** are in REAL's set (RE2::Set cannot compile them) — a feature differentiator
   beyond throughput.
-- `real::dfa` is **not** this API (maximal-munch one-winner for lexers).
+- `real::dfa` munch is **not** this API (lexer one-winner); Stage-2 uses `dfa_mode::which_matched`.
 
 ## B. Python binding vs re
 
