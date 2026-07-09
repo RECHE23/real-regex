@@ -612,6 +612,13 @@ namespace real {
      * C++20 range-for (the range initializer's temporaries die before the loop
      * body), so that misuse is a compile error (deleted rvalue overloads).
      *
+     * \note Pure monomorphic walk (`TrailingLA = false`). The trailing-LA class+
+     *       fast path is intentionally not taken here — the range's return type is
+     *       fixed at compile time so pure `[a-z]+` codegen stays pristine. For the
+     *       LA-fast route use \ref count_matches, \ref find_all, \ref search,
+     *       \ref match, or \ref sub (once-per-walk dispatch). Correctness is
+     *       identical; only throughput differs on eligible patterns.
+     *
      * \param[in] text The subject text (must outlive the range).
      * \return A \ref basic_match_range usable directly in a range-for.
      */
@@ -680,10 +687,49 @@ namespace real {
                                                        std::size_t = npos) const&& = delete;
 
     /*!
+     * \brief Count non-overlapping matches without allocating result objects.
+     *
+     * Matching-only counter: once-per-walk dispatch (cascade_ model) — pure
+     * monomorphic walk for ordinary patterns; TrailingLA monomorphic walk when
+     * the trailing-lookaround class+ hint is set. Fair for multi-engine benches
+     * (unlike \ref find_all, which builds a vector of Match objects and can
+     * dominate high-cardinality scans). Prefer this over counting \ref find_iter
+     * when measuring trailing-LA throughput — \ref find_iter stays pure by design.
+     *
+     * \param[in] text The subject text.
+     * \return The number of non-overlapping matches.
+     */
+    [[nodiscard]] constexpr std::size_t count_matches(std::string_view text) const
+    {
+      std::size_t n {};
+      if constexpr (requires(typename Storage::state_type & st) {
+        st.lookaround;
+      }) {
+        const auto prog {program_.view()};
+        if (prog.hints.trailing_lookaround >= 0
+            && (std::is_constant_evaluated() || !detail::trailing_la_route_disabled())) {
+          for (const result_type& match :
+               basic_match_range<Storage, /*TrailingLA=*/ true> {prog, pattern(), text}) {
+            (void) match;
+            ++n;
+          }
+          return n;
+        }
+      }
+      for (const result_type& match : find_iter(text)) {
+        (void) match;
+        ++n;
+      }
+      return n;
+    }
+
+    /*!
      * \brief All matches, eagerly (like Python `re.findall` but full results).
      *
      * Lvalue-only for the same reason as \ref find_iter (results reference this
-     * regex's name table).
+     * regex's name table). Once-per-walk TrailingLA dispatch when eligible (same
+     * route as \ref count_matches); vector construction cost is on top of the
+     * scan — high match counts can dominate ns/B.
      *
      * \param[in] text The subject text (must outlive the results).
      * \return A vector of match results.
@@ -691,8 +737,7 @@ namespace real {
     [[nodiscard]] constexpr std::vector<result_type> find_all(std::string_view text) const&
     {
       std::vector<result_type> result;
-      // Fix-4: once-per-walk dispatch (cascade_ model). Pure monomorphic walk has zero LA
-      // code; trailing-LA monomorphic walk keeps the 12× path. Never branch per match.
+      // Same once-per-walk dispatch as count_matches (vector cost is on top of the scan).
       if constexpr (requires(typename Storage::state_type & st) {
         st.lookaround;
       }) {

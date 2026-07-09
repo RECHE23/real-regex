@@ -91,6 +91,24 @@ The **POSIX `extended` (ERE) grammar** also runs here — translated to REAL and
 (POSIX) bounds via `search_longest`, so `(a+)+b` and friends cannot be ReDoS'd even under an ERE grammar (`std`
 would backtrack). POSIX classes `[[:alpha:]]`…`[[:xdigit:]]` become their C-locale ASCII ranges.
 
+### Native API — trailing-LA throughput surfaces (not a correctness split)
+
+Bounded lookaround is always **correct and linear** on every public match API. A narrow class of
+patterns — trailing-ahead lookaround on a groupless class+ body, e.g. `[a-z]+(?=[a-z])` — also has a
+**once-per-walk monomorphic fast path** (the class-loop body, LA as end-scan). That path is **not**
+taken by every API:
+
+| Surface | Trailing-LA fast path? | Why |
+| --- | --- | --- |
+| `count_matches` | **yes** | once-per-walk dispatch; matching-only (no Match vector) |
+| `find_all` / `search` / `match` / `sub` | **yes** | same dispatch; `find_all` still pays vector cost at high match counts |
+| `find_iter` (and Python `finditer`) | **no** — general VM | return type is pure-monomorphic (`TrailingLA=false`) so pure `[a-z]+` codegen stays pristine |
+
+Correctness is identical across the table; only throughput differs. Prefer `count_matches` (or
+`search`/`match`/`sub`) when the shape is eligible and raw scan speed matters. Multi-engine benches
+must count via `count_matches` (matching-only), not `find_all().size()` — the Match vector can dominate
+and is not comparable to engines that only count.
+
 ## What falls back to std::regex (loses real's ReDoS-safety)
 
 | Construct | Why | Treatment |

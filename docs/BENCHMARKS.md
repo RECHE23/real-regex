@@ -74,12 +74,17 @@ both ISAs, on the same 2026.7.26 tree (see the Version row for the two legs' exa
   the JIT retakes all three (0.89×, 0.93×, 0.62×). *Same engine, same PCRE2 version (10.47), same corpus,
   same tree* — the difference is purely the JIT's per-ISA code quality. PCRE2 still leads `date` and
   `literal` on both ISAs (0.19–0.81×) — untouched ground.
-- **The lookahead line is about safety, not raw speed** — stated plainly. REAL does a **bounded lookaround in
-  linear time**; PCRE2 does it faster but by **backtracking** (so PCRE2 is itself ReDoS-able on a crafted
-  lookaround), and **RE2 and the rust crate cannot do it at all** (`unsupported`). On throughput REAL trails
-  here, and **the loss is written down, not smoothed over**: PCRE2 is still **0.07–0.08×** REAL's time on both
-  ISAs (REAL ~12–14× slower) even after this train's 18–28% peephole win; `std::regex` is ahead on x86-64
-  (0.84×) and behind on arm64 (REAL 3.30× faster) — the value is the guarantee, not the ns/B.
+- **The lookahead line is about safety first; raw speed is API-dependent** — stated plainly. REAL does a
+  **bounded lookaround in linear time**; PCRE2 does it faster but by **backtracking** (so PCRE2 is itself
+  ReDoS-able on a crafted lookaround), and **RE2 and the rust crate cannot do it at all** (`unsupported`).
+  The §A table above is a **pre-P3c stamp** (general-VM order, ~50–90 ns/B). After P3c, the trailing-LA
+  class+ shape (`[a-z]+(?=[a-z])`) takes a once-per-walk monomorphic fast path on **matching-only**
+  surfaces: `count_matches` / `search` / `match` / `sub` / `find_all` (~8 ns/B on x86 matching-only —
+  ~11× the general VM). **`find_iter` / Python `finditer` deliberately stay on the pure monomorphic
+  walk** (return type fixed at compile time so pure `[a-z]+` does not regress) and therefore do **not**
+  get that win — correctness identical, throughput not. Benches must use `count_matches` (matching-only,
+  equitable with PCRE2/RE2 counters); `find_all().size()` is confounded by Match-vector cost. Re-stamp
+  §A after the P3c train before treating the lookahead row as competitive copy.
 
 ## B. Python binding vs re
 

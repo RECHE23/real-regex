@@ -132,12 +132,9 @@ std::string corpus_csv()
 std::size_t real_count(const std::string& pat, const std::string& text)
 {
   const real::regex rx(pat);
-  std::size_t       n {};
-  for (const auto& m : rx.find_iter(text)) {
-    (void) m;
-    ++n;
-  }
-  return n;
+  // Matching-only (no Match vector) — equitable with std/pcre2/re2 counters.
+  // Once-per-walk TrailingLA monomorphic path when eligible (P3c).
+  return rx.count_matches(text);
 }
 
 std::size_t std_count(const std::string& pat, const std::string& text)
