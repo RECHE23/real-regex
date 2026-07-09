@@ -248,6 +248,49 @@ namespace real {
       return best;
     }
 
+    //! \brief Word count for a which-matched bitset over \p rule_count rules.
+    [[nodiscard]] inline std::size_t dfa_mask_words(std::size_t rule_count) noexcept
+    {
+      return (rule_count + 63U) / 64U;
+    }
+
+    //! \brief Bitset of ALL accepting rule indices in \p set (which-matched; word-packed).
+    //!        Empty vector when no rule accepts (or rule_count == 0).
+    inline std::vector<std::uint64_t> dfa_accept_mask_of(const dfa_nfa& nfa,
+                                                         const dfa_set& set)
+    {
+      std::vector<std::uint64_t> mask(dfa_mask_words(nfa.rule_count), 0);
+      for (std::size_t pc = 0; pc < nfa.code.size(); ++pc) {
+        if (!dfa_test_bit(set, pc) || nfa.accept_rule[pc] < 0) {
+          continue;
+        }
+        const auto r {static_cast<std::size_t>(nfa.accept_rule[pc])};
+        if (r < nfa.rule_count) {
+          mask[r >> 6U] |= (std::uint64_t {1} << (r & 63U));
+        }
+      }
+      return mask;
+    }
+
+    //! \brief Smallest rule index set in \p mask, or -1 if empty (munch tag derivation).
+    inline std::int64_t dfa_mask_min_rule(const std::vector<std::uint64_t>& mask)
+    {
+      for (std::size_t w = 0; w < mask.size(); ++w) {
+        if (mask[w] == 0) {
+          continue;
+        }
+        // ctz of the lowest set bit
+        std::uint64_t x {mask[w]};
+        std::size_t   b {0};
+        while ((x & 1U) == 0U) {
+          x >>= 1U;
+          ++b;
+        }
+        return static_cast<std::int64_t>((w << 6U) + b);
+      }
+      return -1;
+    }
+
     //! \brief Computes byte-equivalence classes: two bytes are equivalent iff they
     //!        satisfy the same consuming predicates (every klass test and every byte
     //!        literal). Reduces the alphabet so the DFA is built over classes, not 256.
@@ -317,84 +360,113 @@ namespace real {
     {
       std::array<std::uint8_t, 256> byte_class  {};
       std::size_t                   num_classes {0};
-      std::vector<std::uint32_t>    trans;   //!< [state*num_classes + cls] -> next state (0 = dead).
-      std::vector<std::uint32_t>    accept;  //!< accept[state] = rule index, or NO_RULE.
+      std::vector<std::uint32_t>    trans;          //!< [state*num_classes + cls] -> next state (0 = dead).
+      std::vector<std::uint32_t>    accept;         //!< accept[state] = rule index, or NO_RULE (munch).
+      //! accept_mask[state * mask_words + w] — full which-matched bitset per state (word-packed).
+      std::vector<std::uint64_t>    accept_mask;
+      std::size_t                   mask_words {0}; //!< Words per state in accept_mask.
       std::uint32_t                 start      {0};
       std::size_t                   num_states {0};
       std::size_t                   rule_count {0};
+      bool                          unanchored {false}; //!< Built for which-matched mid-stream restart.
     };
 
     inline constexpr std::uint32_t dfa_no_rule {std::numeric_limits<std::uint32_t>::max()};
 
-    //! \brief Subset construction over byte-classes, then Moore minimization
-    //!        (initial partition by accept tag, so distinct rule tags never merge).
-    //! \param[in] programs  The flattened NFA programs.
-    //! \param[in] state_cap Maximum DFA states before \ref dfa_error (a test hook; the
-    //!                      default is the production cap \ref max_dfa_states).
+    //! \brief Subset construction over byte-classes, then Moore minimization.
+    //!
+    //! Initial partition keys on the **full accept mask** (which-matched), not only the
+    //! min-rule munch tag — two states with the same earliest rule but different accept
+    //! sets must not merge. \p unanchored unions mid-stream pattern starts into every
+    //! post-move set (self-restart) so a single scan can discover matches at any offset.
+    //!
+    //! \param[in] programs   The flattened NFA programs.
+    //! \param[in] state_cap  Maximum DFA states before \ref dfa_error.
+    //! \param[in] unanchored Mid-stream restart for which-matched (Stage-2); munch uses false.
     inline dfa_tables dfa_build(std::span<const program_view> programs,
-                                std::size_t                   state_cap = max_dfa_states)
+                                std::size_t                   state_cap  = max_dfa_states,
+                                bool                          unanchored = false)
     {
       const dfa_nfa          nfa {dfa_flatten(programs)};
       const dfa_byte_classes bc  {dfa_compute_classes(nfa)};
       const std::size_t      nc  {bc.count};
+      const std::size_t      mw  {dfa_mask_words(nfa.rule_count)};
       dfa_tables             out;
       out.byte_class  = bc.of;
       out.num_classes = nc;
       out.rule_count  = nfa.rule_count;
+      out.mask_words  = mw;
+      out.unanchored  = unanchored;
 
-      std::vector<dfa_set>       sets;       // sets[s] = the NFA state set of DFA state s
-      std::vector<std::int64_t>  accept_pre; // accept of each pre-min state
-      const auto                 find_or_add {[&](dfa_set s) -> std::uint32_t { // by value: a definite object
-                                                for (std::size_t i = 0; i < sets.size(); ++i) {
-                                                  if (sets[i] == s) { return static_cast<std::uint32_t>(i); }
-                                                }
-                                                // False positive: `nfa` and `s` are live locals bound by
-                                                // const-ref; the analyzer mis-models the std::vector here.
-                                                // NOLINTNEXTLINE(clang-analyzer-core.NonNullParamChecker)
-                                                const std::int64_t acc {dfa_accept_of(nfa, s)};
-                                                sets.push_back(std::move(s));
-                                                accept_pre.push_back(acc);
-                                                if (sets.size() > state_cap) { // bound the 2^NFA worst case
-                                                  throw dfa_error("DFA state count exceeded max_dfa_states; "
-                                                                  "pattern is too complex for a DFA");
-                                                }
-                                                return static_cast<std::uint32_t>(sets.size() - 1);
-                                              }};
-
-      const std::size_t words {(nfa.code.size() + 63U) / 64U};
-      sets.emplace_back(words, 0); // state 0 = dead (empty set)
-      accept_pre.push_back(-1);
-      std::vector<std::uint32_t> entry_seeds;
+      std::vector<dfa_set>                    sets;     // sets[s] = NFA PCs of DFA state s
+      std::vector<std::vector<std::uint64_t>> mask_pre; // full accept mask per pre-min state
+      std::vector<std::uint32_t>              entry_seeds;
       for (const std::size_t e : nfa.entry) {
         entry_seeds.push_back(static_cast<std::uint32_t>(e));
       }
-      out.start = find_or_add(dfa_closure(nfa, entry_seeds, true)); // offset 0: text_start holds
+      const dfa_set restart_mid {dfa_closure(nfa, entry_seeds, false)}; // mid-stream pattern starts
 
-      std::vector<std::uint32_t> trans_pre;                         // [s*nc + c]
-      for (std::size_t s = 0; s < sets.size(); ++s) { // sets grows as states are discovered
+      const auto complete {[&](dfa_set s) {
+                             if (!unanchored) {
+                               return s;
+                             }
+                             // Union mid-stream pattern entries so every position can start a match.
+                             for (std::size_t w = 0; w < s.size() && w < restart_mid.size(); ++w) {
+                               s[w] |= restart_mid[w];
+                             }
+                             return s;
+                           }};
+
+      const auto find_or_add {[&](dfa_set s) -> std::uint32_t {
+                                for (std::size_t i = 0; i < sets.size(); ++i) {
+                                  if (sets[i] == s) {
+                                    return static_cast<std::uint32_t>(i);
+                                  }
+                                }
+                                // False positive: live locals; analyzer mis-models the vector.
+                                // NOLINTNEXTLINE(clang-analyzer-core.NonNullParamChecker)
+                                auto mask {dfa_accept_mask_of(nfa, s)};
+                                sets.push_back(std::move(s));
+                                mask_pre.push_back(std::move(mask));
+                                if (sets.size() > state_cap) {
+                                  throw dfa_error("DFA state count exceeded max_dfa_states; "
+                                                  "pattern is too complex for a DFA");
+                                }
+                                return static_cast<std::uint32_t>(sets.size() - 1);
+                              }};
+
+      const std::size_t words {(nfa.code.size() + 63U) / 64U};
+      sets.emplace_back(words, 0); // state 0 = dead (empty set)
+      mask_pre.push_back(std::vector<std::uint64_t>(mw, 0));
+      // Offset 0: text_start holds. Unanchored still starts here (anchors see pos 0).
+      out.start = find_or_add(dfa_closure(nfa, entry_seeds, true));
+
+      std::vector<std::uint32_t> trans_pre; // [s*nc + c]
+      for (std::size_t s = 0; s < sets.size(); ++s) {
         for (std::size_t c = 0; c < nc; ++c) {
-          trans_pre.push_back(find_or_add(dfa_move(nfa, sets[s], bc.rep[c])));
+          trans_pre.push_back(find_or_add(complete(dfa_move(nfa, sets[s], bc.rep[c]))));
         }
       }
       const std::size_t n_pre {sets.size()};
 
-      // Moore partition refinement; initial block by accept tag.
-      std::vector<std::int64_t> block(n_pre, 0);
+      // Moore: initial partition by FULL accept mask (not min-rule alone).
+      std::vector<std::int64_t>               block(n_pre, 0);
+      std::vector<std::vector<std::uint64_t>> mask_keys;
       for (std::size_t s = 0; s < n_pre; ++s) {
-        block[s] = accept_pre[s] < 0 ? 0 : accept_pre[s] + 1;
-      }
-      std::size_t num_blocks {0};
-      {
-        std::vector<std::int64_t> seen;
-        for (std::size_t s = 0; s < n_pre; ++s) {
-          bool found {false};
-          for (const std::int64_t b : seen) {
-            if (b == block[s]) { found = true; break; }
+        std::int64_t id {-1};
+        for (std::size_t i = 0; i < mask_keys.size(); ++i) {
+          if (mask_keys[i] == mask_pre[s]) {
+            id = static_cast<std::int64_t>(i);
+            break;
           }
-          if (!found) { seen.push_back(block[s]); }
         }
-        num_blocks = seen.size();
+        if (id < 0) {
+          id = static_cast<std::int64_t>(mask_keys.size());
+          mask_keys.push_back(mask_pre[s]);
+        }
+        block[s] = id;
       }
+      std::size_t num_blocks {mask_keys.size()};
       for (bool changed = true; changed;) {
         changed = false;
         std::vector<std::vector<std::int64_t>> sigs;
@@ -408,7 +480,10 @@ namespace real {
           }
           std::int64_t id {-1};
           for (std::size_t i = 0; i < sigs.size(); ++i) {
-            if (sigs[i] == sig) { id = static_cast<std::int64_t>(i); break; }
+            if (sigs[i] == sig) {
+              id = static_cast<std::int64_t>(i);
+              break;
+            }
           }
           if (id < 0) {
             id = static_cast<std::int64_t>(sigs.size());
@@ -423,18 +498,24 @@ namespace real {
         }
       }
 
-      // Emit minimized tables: one state per block, fields from a representative.
       out.num_states = num_blocks;
       std::vector<std::int64_t> rep_of_block(num_blocks, -1);
       for (std::size_t s = 0; s < n_pre; ++s) {
         std::int64_t& slot {rep_of_block[static_cast<std::size_t>(block[s])]};
-        if (slot < 0) { slot = static_cast<std::int64_t>(s); }
+        if (slot < 0) {
+          slot = static_cast<std::int64_t>(s);
+        }
       }
       out.trans.reserve(num_blocks * nc);
       out.accept.reserve(num_blocks);
+      out.accept_mask.assign(num_blocks * mw, 0);
       for (std::size_t b = 0; b < num_blocks; ++b) {
-        const std::size_t rep {static_cast<std::size_t>(rep_of_block[b])};
-        out.accept.push_back(accept_pre[rep] < 0 ? dfa_no_rule : static_cast<std::uint32_t>(accept_pre[rep]));
+        const std::size_t  rep   {static_cast<std::size_t>(rep_of_block[b])};
+        const std::int64_t min_r {dfa_mask_min_rule(mask_pre[rep])};
+        out.accept.push_back(min_r < 0 ? dfa_no_rule : static_cast<std::uint32_t>(min_r));
+        for (std::size_t w = 0; w < mw; ++w) {
+          out.accept_mask[(b * mw) + w] = mask_pre[rep][w];
+        }
         for (std::size_t c = 0; c < nc; ++c) {
           out.trans.push_back(static_cast<std::uint32_t>(block[trans_pre[(rep * nc) + c]]));
         }
@@ -445,11 +526,24 @@ namespace real {
   } // namespace detail
 
   /*!
-   * \brief A maximal-munch DFA over an ordered set of patterns.
+   * \brief Build mode for \ref dfa.
+   *
+   * \c munch — maximal-munch at the cursor (lexer; default, SciLex).
+   * \c which_matched — unanchored multi-accept single-pass (Stage-2 RegexSet fused).
+   */
+  enum class dfa_mode : std::uint8_t
+  {
+    munch          = 0, //!< One winner at the start of the subject (existing contract).
+    which_matched  = 1, //!< Mid-stream restart; full accept-mask per state for which-matched.
+  };
+
+  /*!
+   * \brief A multi-rule DFA: maximal-munch (\ref dfa_mode::munch) or which-matched
+   *        unanchored scan (\ref dfa_mode::which_matched).
    *
    * Built once (heap-allocated tables), then immutable and cheap to copy-share.
-   * \ref match returns the longest match at the cursor, breaking ties toward the
-   * earliest pattern — the lexer's maximal munch, in one pass over the input.
+   * \ref match is the lexer munch. \ref which_matched is Stage-2 multi-accept
+   * (only valid when built with \ref dfa_mode::which_matched).
    */
   class dfa
   {
@@ -458,19 +552,24 @@ namespace real {
     /*!
      * \brief Builds the DFA from compiled programs (the embedder path).
      * \param[in] programs The patterns' programs, in priority order (see \ref regex::raw_program).
+     * \param[in] mode     Munch (default) or which-matched unanchored multi-accept.
      * \throws real::dfa_error if any program holds a non-head zero-width assertion.
      */
-    explicit dfa(std::span<const detail::program_view> programs)
-      : tables_(detail::dfa_build(programs))
+    explicit dfa(std::span<const detail::program_view> programs,
+                 dfa_mode                              mode = dfa_mode::munch)
+      : tables_(detail::dfa_build(programs, detail::max_dfa_states, mode == dfa_mode::which_matched))
     {}
 
     /*!
      * \brief Builds the DFA from regexes (a convenience over \ref regex::raw_program).
      * \param[in] patterns The patterns, in priority order; they must outlive this call.
+     * \param[in] mode     Munch (default) or which-matched.
      * \throws real::dfa_error if any pattern holds a non-head zero-width assertion.
      */
-    explicit dfa(std::span<const regex> patterns)
-      : dfa(views_of(patterns))
+    explicit dfa(std::span<const regex> patterns,
+                 dfa_mode               mode = dfa_mode::munch)
+      : dfa(views_of(patterns),
+            mode)
     {}
 
     /*!
@@ -501,6 +600,62 @@ namespace real {
         }
       }
       return best;
+    }
+
+    /*!
+     * \brief Which patterns match the subject at least once (single-pass).
+     *
+     * Requires a build with \ref dfa_mode::which_matched. Returns a bitset of length
+     * \ref rule_count in construction order. Early-exits when every pattern has hit.
+     * Empty matches are excluded (only states that accepted after consuming a byte
+     * contribute, via post-move accept masks).
+     */
+    [[nodiscard]] std::vector<bool> which_matched(std::string_view text) const
+    {
+      std::vector<bool> hit(tables_.rule_count, false);
+      if (tables_.rule_count == 0 || tables_.mask_words == 0) {
+        return hit;
+      }
+      std::vector<std::uint64_t> acc(tables_.mask_words, 0);
+      std::uint32_t              state   {tables_.start};
+      const std::size_t          nc      {tables_.num_classes};
+      const std::size_t          mw      {tables_.mask_words};
+      std::size_t                pending {tables_.rule_count};
+      for (std::size_t i = 0; i < text.size(); ++i) {
+        const auto        byte {static_cast<std::uint8_t>(text[i])};
+        const std::size_t cls  {tables_.byte_class[byte]};
+        state = tables_.trans[(static_cast<std::size_t>(state) * nc) + cls];
+        const std::size_t base {static_cast<std::size_t>(state) * mw};
+        for (std::size_t w = 0; w < mw; ++w) {
+          const std::uint64_t m {tables_.accept_mask[base + w]};
+          const std::uint64_t neu {m & ~acc[w]};
+          if (neu == 0) {
+            continue;
+          }
+          acc[w] |= m;
+          // Count newly set bits for early-exit.
+          std::uint64_t x {neu};
+          while (x != 0) {
+            x &= x - 1U;
+            if (pending > 0) {
+              --pending;
+            }
+          }
+        }
+        if (pending == 0) {
+          break;
+        }
+      }
+      for (std::size_t r = 0; r < tables_.rule_count; ++r) {
+        hit[r] = ((acc[r >> 6U] >> (r & 63U)) & 1U) != 0;
+      }
+      return hit;
+    }
+
+    //! \brief True if this DFA was built with mid-stream restart (which-matched mode).
+    [[nodiscard]] bool is_unanchored() const noexcept
+    {
+      return tables_.unanchored;
     }
 
     //! \brief The number of states in the minimized automaton (includes the dead state).
