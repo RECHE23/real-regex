@@ -347,6 +347,16 @@ namespace real {
       //!        zero overhead on the daily `[a-z]+` path (x86: sharing greedy_class_loop regressed it −20 %).
       std::int16_t trailing_lookaround {-1};
       std::int32_t trailing_la_class   {-1}; //!< Class index for \ref trailing_lookaround body; −1 if unset.
+
+      //! \brief Optional leading/trailing word-boundary wrap on fixed_shape / fixed_alternation /
+      //!        exact_literal (Arc II B1). 0 = none; 1 = `\b` (\ref assert_kind::word_boundary);
+      //!        2 = `\B` (\ref assert_kind::not_word_boundary). Verified in O(1) at the match
+      //!        start/end after the body fast-path accepts a candidate.
+      std::uint8_t wb_lead  {};
+      std::uint8_t wb_trail {};
+      //! \brief First consuming (byte/klass) or branch pc for fixed_shape / alternation after
+      //!        save 0 and an optional lead `\b`/`\B`. Default 1 (no lead wrap).
+      std::uint8_t body_pc {1};
     };
 
     /*!

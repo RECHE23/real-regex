@@ -1399,6 +1399,41 @@ namespace real::detail {
       return s + consumed;
     }
 
+    //! \brief Arc II B1: O(1) lead/trail `\b`/`\B` check at match [s, e).
+    [[nodiscard]] constexpr bool wb_boundaries_ok(std::size_t s,
+                                                  std::size_t e) const
+    {
+      if (prog_.hints.wb_lead != 0) {
+        const assert_kind k {prog_.hints.wb_lead == 2 ? assert_kind::not_word_boundary
+                                                      : assert_kind::word_boundary};
+        if (!assertion_holds(k, s, false)) {
+          return false;
+        }
+      }
+      if (prog_.hints.wb_trail != 0) {
+        const assert_kind k {prog_.hints.wb_trail == 2 ? assert_kind::not_word_boundary
+                                                       : assert_kind::word_boundary};
+        if (!assertion_holds(k, e, false)) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    //! \brief Fixed-shape body match from \ref pattern_hints::body_pc, then B1 `\b`/`\B` wrap.
+    template <bool SkipSaves>
+    [[nodiscard]] constexpr std::size_t match_fixed_body_wb(std::string_view text,
+                                                            std::size_t      s) const
+    {
+      const std::size_t body_pc {prog_.hints.body_pc == 0 ? std::size_t {1}
+                                                          : static_cast<std::size_t>(prog_.hints.body_pc)};
+      const std::size_t e       {match_byte_klass_run<SkipSaves>(text, body_pc, s)};
+      if (e == npos || !wb_boundaries_ok(s, e)) {
+        return npos;
+      }
+      return e;
+    }
+
     /*!
      * \brief Leftmost search by scanning candidate positions (first-byte hints).
      *
@@ -1462,7 +1497,9 @@ namespace real::detail {
       // No inner groups (slot_count 2): a contiguous byte/klass run, the original tight path unchanged.
       if (prog_.slot_count <= 2) {
         out_slots.assign(2, npos);
-        const auto at {[&](std::size_t s) { return match_byte_klass_run<false>(text, 1, s); }};
+        const auto at {[&](std::size_t s) {
+                         return match_fixed_body_wb</*SkipSaves=*/ false>(text, s);
+                       }};
         if (mode != run_mode::search) {
           const std::size_t match_end {at(start)};
           if (match_end == npos || (mode == run_mode::full && match_end != text.size())) {
@@ -1481,16 +1518,24 @@ namespace real::detail {
         // small_set memchr-cascade) became the new bottleneck. A free function so run_fixed_shape's own
         // per-instantiation body stays this thin call-and-branch. Scalar tail (< 16 bytes remaining, or
         // no more candidates) falls through to the existing fast_search/next_candidate walk from
-        // wherever the SIMD scan left off.
+        // wherever the SIMD scan left off. Lead/trail `\b` rejections re-enter the scan past the miss.
         if (!std::is_constant_evaluated() && prog_.hints.fixed_shape_simd_len >= 1) {
-          std::size_t       resume {};
-          const std::size_t found  {simd_fixed_shape_scan(text, start, prog_.hints, resume)};
-          if (found != npos) {
-            out_slots[0] = found;
-            out_slots[1] = found + prog_.hints.fixed_shape_simd_len;
-            return true;
+          std::size_t pos {start};
+          while (pos < text.size()) {
+            std::size_t       resume {};
+            const std::size_t found  {simd_fixed_shape_scan(text, pos, prog_.hints, resume)};
+            if (found == npos) {
+              return fast_search(text, resume, at, out_slots); // scalar tail
+            }
+            const std::size_t e {found + prog_.hints.fixed_shape_simd_len};
+            if (wb_boundaries_ok(found, e)) {
+              out_slots[0] = found;
+              out_slots[1] = e;
+              return true;
+            }
+            pos = found + 1; // body matched but `\b` failed — try next candidate
           }
-          return fast_search(text, resume, at, out_slots); // scalar tail
+          return false;
         }
 #endif
         return fast_search(text, start, at, out_slots);
@@ -1500,7 +1545,9 @@ namespace real::detail {
       // (SkipSaves) and the group slots are filled from their constant offsets on success only (not per
       // failed candidate). A separate body keeps the no-group loop above free of any grouping branch.
       out_slots.assign(prog_.slot_count, npos);
-      const auto at {[&](std::size_t s) { return match_byte_klass_run<true>(text, 1, s); }};
+      const auto at {[&](std::size_t s) {
+                       return match_fixed_body_wb</*SkipSaves=*/ true>(text, s);
+                     }};
       if (mode != run_mode::search) {
         const std::size_t match_end {at(start)};
         if (match_end == npos || (mode == run_mode::full && match_end != text.size())) {
@@ -1690,14 +1737,17 @@ namespace real::detail {
 
       // First branch that matches at \p s (and, for full, spans to the end). The
       // branches are read from the split chain in source order (highest priority
-      // first), mirroring the VM's thread priority.
+      // first), mirroring the VM's thread priority. body_pc skips a lead `\b`.
       const auto match_at = [&](std::size_t match_start, bool require_full) -> std::size_t {
-                              std::size_t pc {1};
+                              std::size_t pc {prog_.hints.body_pc == 0
+                                                ? std::size_t {1}
+                                                : static_cast<std::size_t>(prog_.hints.body_pc)};
                               while (true) {
                                 const bool        is_split  {code[pc].op == opcode::split};
                                 const std::size_t branch    {is_split ? static_cast<std::size_t>(code[pc].primary_target) : pc};
                                 const std::size_t match_end {match_byte_klass_run(text, branch, match_start)};
-                                if (match_end != npos && (!require_full || match_end == text.size())) {
+                                if (match_end != npos && wb_boundaries_ok(match_start, match_end) &&
+                                    (!require_full || match_end == text.size())) {
                                   return match_end;
                                 }
                                 if (!is_split) {

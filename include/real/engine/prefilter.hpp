@@ -30,32 +30,86 @@
 namespace real::detail {
 
   /*!
-   * \brief Tests whether the whole program is an alternation of straight-line
-   *        branches (e.g. `the|fox|dog`).
+   * \brief True if \p kind is `\b` or `\B` (the only position asserts B1 wraps on fast paths).
+   * \param[in] kind Assertion kind from `assert_position`.
+   */
+  [[nodiscard]] constexpr bool is_word_boundary_kind(assert_kind kind) noexcept
+  {
+    return kind == assert_kind::word_boundary || kind == assert_kind::not_word_boundary;
+  }
+
+  /*!
+   * \brief Encodes \p kind as a wb_lead/wb_trail hint value (1 = `\b`, 2 = `\B`); 0 if not a word boundary.
+   * \param[in] kind Assertion kind from `assert_position`.
+   */
+  [[nodiscard]] constexpr std::uint8_t wb_hint_of(assert_kind kind) noexcept
+  {
+    if (kind == assert_kind::word_boundary) {
+      return 1;
+    }
+    if (kind == assert_kind::not_word_boundary) {
+      return 2;
+    }
+    return 0;
+  }
+
+  /*!
+   * \brief Alternation of straight-line byte/klass branches, optionally wrapped in `\b`/`\B`.
    *
-   * Layout: save 0, a chain of `split` nodes whose `primary_target` is a branch
-   * of byte/klass ending in `jump` to the shared exit and whose `secondary_target`
-   * is the next split, the last branch falling through to save 1, match. Captures, assertions, nested
-   * branches and empty branches all disqualify it.
+   * Layout: `save 0`, optional lead word-boundary assert, split chain of branches, optional trail
+   * word-boundary assert, `save 1`, `match`. Branch jumps target the first instruction after the
+   * last branch (trail assert or save 1). Captures other than group 0, nested branches, empty
+   * branches, and non-wb assertions all disqualify.
    *
-   * \param[in] code The instruction stream.
+   * \param[in]  code          The instruction stream.
+   * \param[out] out_wb_lead   Optional; receives lead wb hint (0/1/2).
+   * \param[out] out_wb_trail  Optional; receives trail wb hint (0/1/2).
+   * \param[out] out_body_pc   Optional; receives first branch/split pc after lead wrap.
    * \return `true` if the program has that shape with at least two branches.
    */
-  constexpr bool is_fixed_alternation(std::span<const instr> code)
+  constexpr bool is_fixed_alternation(std::span<const instr> code,
+                                      std::uint8_t*          out_wb_lead  = nullptr,
+                                      std::uint8_t*          out_wb_trail = nullptr,
+                                      std::uint8_t*          out_body_pc  = nullptr)
   {
     const std::size_t code_size {code.size()};
-    if (code_size < 7 || code[0].op != opcode::save || code[code_size - 2].op != opcode::save ||
-        code[code_size - 1].op != opcode::match) {
+    if (code_size < 7 || code[0].op != opcode::save || code[code_size - 1].op != opcode::match ||
+        code[code_size - 2].op != opcode::save || code[code_size - 2].arg16 != 1) {
       return false;
     }
-    const std::size_t exit     {code_size - 2};
-    std::size_t       pc       {1};
-    std::int32_t      branches {};
+    std::uint8_t  wb_lead  {0};
+    std::uint8_t  wb_trail {0};
+    std::size_t   body     {1};
+    std::size_t   exit_pc  {code_size - 2}; // save 1
+    // Optional trail \b/\B immediately before save 1.
+    if (exit_pc >= 2 && code[exit_pc - 1].op == opcode::assert_position) {
+      const auto k {static_cast<assert_kind>(code[exit_pc - 1].arg8)};
+      if (!is_word_boundary_kind(k)) {
+        return false;
+      }
+      wb_trail = wb_hint_of(k);
+      exit_pc  = exit_pc - 1; // branches jump to the trail assert (or previously to save 1)
+    }
+    // Optional lead \b/\B immediately after save 0.
+    if (body < exit_pc && code[body].op == opcode::assert_position) {
+      const auto k {static_cast<assert_kind>(code[body].arg8)};
+      if (!is_word_boundary_kind(k)) {
+        return false;
+      }
+      wb_lead = wb_hint_of(k);
+      ++body;
+    }
+    if (body >= exit_pc) {
+      return false;
+    }
+    std::size_t  pc       {body};
+    std::int32_t branches {};
     while (true) {
       const bool   is_split     {code[pc].op == opcode::split};
       std::size_t  branch_end   {is_split ? static_cast<std::size_t>(code[pc].primary_target) : pc};
       std::int32_t branch_width {};
-      while (branch_end < exit && (code[branch_end].op == opcode::byte || code[branch_end].op == opcode::klass)) {
+      while (branch_end < exit_pc &&
+             (code[branch_end].op == opcode::byte || code[branch_end].op == opcode::klass)) {
         ++branch_end;
         ++branch_width;
       }
@@ -65,18 +119,30 @@ namespace real::detail {
       ++branches;
       if (is_split) {
         // A non-final branch ends with `jump exit`; continue at the split's y.
-        if (branch_end >= exit || code[branch_end].op != opcode::jump ||
-            code[branch_end].primary_target != static_cast<std::int32_t>(exit)) {
+        if (branch_end >= exit_pc || code[branch_end].op != opcode::jump ||
+            code[branch_end].primary_target != static_cast<std::int32_t>(exit_pc)) {
           return false;
         }
         pc = static_cast<std::size_t>(code[pc].secondary_target);
-        if (pc >= exit) {
+        if (pc >= exit_pc) {
           return false;
         }
       }
       else {
-        // The final branch falls straight through to the exit (save 1).
-        return branch_end == exit && branches >= 2;
+        // The final branch falls straight through to the exit (trail assert or save 1).
+        if (branch_end == exit_pc && branches >= 2) {
+          if (out_wb_lead != nullptr) {
+            *out_wb_lead = wb_lead;
+          }
+          if (out_wb_trail != nullptr) {
+            *out_wb_trail = wb_trail;
+          }
+          if (out_body_pc != nullptr) {
+            *out_body_pc = static_cast<std::uint8_t>(body);
+          }
+          return true;
+        }
+        return false;
       }
     }
   }
@@ -127,26 +193,56 @@ namespace real::detail {
     }
 
     if (hints.prefix_size > 0) {
-      bool has_inter_or_trailing_assert {};
-      bool seen_byte                    {};
-      for (std::size_t i = 0; i < code.size() && !has_inter_or_trailing_assert; ++i) {
+      // Leading asserts were crossed above. Allow only word-boundary asserts after the last
+      // prefix byte (B1: `\bLIT\b` / `LIT\b`); any other trailing/inter assert stays on the VM.
+      bool         blocking_assert {};
+      bool         seen_byte       {};
+      std::uint8_t trail_wb        {};
+      std::uint8_t lead_wb         {};
+      // Lead \b/\B: first assert_position before any byte (after saves).
+      for (std::size_t i = 0; i < code.size(); ++i) {
+        if (code[i].op == opcode::byte) {
+          break;
+        }
+        if (code[i].op == opcode::assert_position) {
+          const auto k {static_cast<assert_kind>(code[i].arg8)};
+          if (is_word_boundary_kind(k)) {
+            lead_wb = wb_hint_of(k);
+          }
+          else {
+            // Non-wb lead (e.g. ^) — exact_literal still ok via replay; no wb_lead hint.
+            lead_wb = 0;
+          }
+          break; // only the first lead assert matters for the wrap hint
+        }
+      }
+      for (std::size_t i = 0; i < code.size() && !blocking_assert; ++i) {
         if (code[i].op == opcode::byte) {
           seen_byte = true;
         }
         else if (seen_byte && code[i].op == opcode::assert_position) {
-          has_inter_or_trailing_assert = true;
+          const auto k {static_cast<assert_kind>(code[i].arg8)};
+          if (is_word_boundary_kind(k) && trail_wb == 0) {
+            trail_wb = wb_hint_of(k); // single trailing wb allowed
+          }
+          else {
+            blocking_assert = true;   // inter-assert, second trail, or non-wb trail
+          }
         }
         else if (seen_byte && code[i].op == opcode::match) {
           break;
         }
       }
-      if (!has_inter_or_trailing_assert) {
+      if (!blocking_assert) {
         std::size_t q {prefix_pc};
-        while (q < code.size() && code[q].op == opcode::save) {
+        while (q < code.size() &&
+               (code[q].op == opcode::save || code[q].op == opcode::assert_position)) {
           ++q;
         }
         if (q < code.size() && code[q].op == opcode::match) {
           hints.exact_literal_len = hints.prefix_size;
+          hints.wb_lead           = lead_wb;
+          hints.wb_trail          = trail_wb;
         }
       }
     }
@@ -452,26 +548,44 @@ namespace real::detail {
     }
 
     // "fixed shape": a straight-line run of fixed-width byte/klass consuming ops, possibly interleaved
-    // with capturing saves ((\d{4})-(\d{2})-(\d{2}), (a)(b)), with no branches or assertions. The
-    // whole match is fixed width, so one walk verifies it; because every width is fixed, each save sits
-    // at a compile-time-constant offset from the match start, so the fast path fills each group slot by
-    // that offset (no re-match). Covers class{n} and mixed sequences; pure literals hit the exact-literal
-    // path first. A klass_cp (Unicode shorthand, variable width), split/jump (alternation, {n,m}/+/*/?),
-    // `.` or a negated class (byte-level branches), and lookarounds all break the run, so they never form
-    // this shape -- ASCII / explicit-class fixed widths are what qualify.
+    // with capturing saves ((\d{4})-(\d{2})-(\d{2}), (a)(b)), with optional leading/trailing `\b`/`\B`
+    // (B1). The whole match is fixed width, so one walk verifies it; because every width is fixed, each
+    // save sits at a compile-time-constant offset from the match start, so the fast path fills each
+    // group slot by that offset (no re-match). Covers class{n} and mixed sequences; pure literals hit
+    // the exact-literal path first. A klass_cp (Unicode shorthand, variable width), split/jump
+    // (alternation, {n,m}/+/*/?), `.` or a negated class (byte-level branches), non-wb assertions,
+    // and lookarounds all break the run.
     {
       std::size_t  i           {};
       std::int32_t width       {};
       std::int32_t open_groups {};  // capturing groups (slots >= 2) currently open, for the nesting guard
       bool         closed      {};  // saw the closing save (slot 1)
       bool         nested      {};  // a group opened inside another -- kept on the general VM (flat only)
+      std::uint8_t wb_lead     {};
+      std::uint8_t wb_trail    {};
+      std::uint8_t body_pc     {1};
+      bool         saw_body    {};  // true once a consuming op has been seen (trail assert only after)
       if (i < code.size() && code[i].op == opcode::save && code[i].arg16 == 0) {
         ++i; // opening save (slot 0)
+        // Optional lead \b/\B.
+        if (i < code.size() && code[i].op == opcode::assert_position) {
+          const auto k {static_cast<assert_kind>(code[i].arg8)};
+          if (!is_word_boundary_kind(k)) {
+            // Non-wb lead assert: not this shape (keep on VM / other paths).
+            i = code.size();
+          }
+          else {
+            wb_lead = wb_hint_of(k);
+            ++i;
+            body_pc = static_cast<std::uint8_t>(i);
+          }
+        }
         while (i < code.size()) {
           const opcode op {code[i].op};
           if (op == opcode::byte || op == opcode::klass) {
             ++width;
             ++i;
+            saw_body = true;
           }
           else if (op == opcode::save) {
             const std::int32_t slot {code[i].arg16};
@@ -489,12 +603,24 @@ namespace real::detail {
             }
             ++i;
           }
+          else if (op == opcode::assert_position && saw_body && wb_trail == 0) {
+            // Single trailing \b/\B immediately before save 1.
+            const auto k {static_cast<assert_kind>(code[i].arg8)};
+            if (!is_word_boundary_kind(k)) {
+              break;
+            }
+            wb_trail = wb_hint_of(k);
+            ++i;
+          }
           else {
-            break; // any other op (split/jump/klass_cp/assert/lookaround) disqualifies the shape
+            break; // split/jump/klass_cp/lookaround/extra assert disqualify
           }
         }
         if (width >= 1 && closed && !nested && i + 1 == code.size() && code[i].op == opcode::match) {
           hints.fixed_shape = true;
+          hints.wb_lead     = wb_lead;
+          hints.wb_trail    = wb_trail;
+          hints.body_pc     = body_pc;
         }
       }
 
@@ -502,7 +628,8 @@ namespace real::detail {
       // run_fixed_shape) only when it is also HOMOGENEOUS -- every byte/klass position accepts the
       // identical set, itself <= 2 contiguous ranges -- because the sound "skip to the first failing
       // lane" only holds when a mismatch at any position rules out every position (same required set
-      // everywhere). Mixed shapes ((\d{4})-(\d{2})-(\d{2})) stay on the scalar walk.
+      // everywhere). Mixed shapes ((\d{4})-(\d{2})-(\d{2})) stay on the scalar walk. Lead/trail `\b`
+      // are zero-width and do not affect homogeneity of the consuming run.
       if (hints.fixed_shape) {
         bool          homogeneous {true};
         bool          have_first  {false};
@@ -511,10 +638,10 @@ namespace real::detail {
         std::uint8_t  lo1         {1};
         std::uint8_t  hi1         {};
         std::uint32_t len         {};
-        for (std::size_t pc {1}; pc < i; ++pc) {
+        for (std::size_t pc {static_cast<std::size_t>(hints.body_pc)}; pc < i; ++pc) {
           const opcode op {code[pc].op};
           if (op != opcode::byte && op != opcode::klass) {
-            continue; // interleaved capturing save -- epsilon for this purpose
+            continue; // interleaved capturing save or trail assert -- epsilon for this purpose
           }
           ++len;
           std::uint8_t plo0 {};
@@ -596,9 +723,21 @@ namespace real::detail {
       }
     }
 
-    // Whole pattern is an alternation of straight-line branches.
-    if (is_fixed_alternation(code)) {
-      hints.fixed_alternation = true;
+    // Whole pattern is an alternation of straight-line branches (optional lead/trail `\b`/`\B`).
+    {
+      std::uint8_t wb_lead  {};
+      std::uint8_t wb_trail {};
+      std::uint8_t body_pc  {1};
+      if (is_fixed_alternation(code, &wb_lead, &wb_trail, &body_pc)) {
+        hints.fixed_alternation = true;
+        // Only set wb_* here if exact_literal / fixed_shape did not already claim them
+        // (a pure literal alternation is rare; prefer not clobbering an earlier path).
+        if (!hints.fixed_shape && hints.exact_literal_len == 0) {
+          hints.wb_lead  = wb_lead;
+          hints.wb_trail = wb_trail;
+          hints.body_pc  = body_pc;
+        }
+      }
     }
   }
 

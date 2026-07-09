@@ -421,10 +421,12 @@ TEST(exact_literal_fastpath_hint_and_results)
   // + replay handle the assert at cand).
   EXPECT_EQ(static_cast<int>(hints_of("^needle").exact_literal_len), 6);
   EXPECT_EQ(static_cast<int>(hints_of("\\Aabc").exact_literal_len), 3);
-  // Trailing assert or post-byte condition: do not claim exact (must let VM
-  // filter/reject cands and continue search).
+  // Trailing `$` (non-wb): still not exact — replay is for word-boundary wraps only (B1).
   EXPECT_EQ(static_cast<int>(hints_of("needle$").exact_literal_len), 0);
-  EXPECT_EQ(static_cast<int>(hints_of("\\bword\\b").exact_literal_len), 0);
+  // Trailing/leading `\b`: exact_literal + O(1) boundary check via replay (Arc II B1).
+  EXPECT_EQ(static_cast<int>(hints_of("\\bword\\b").exact_literal_len), 4);
+  EXPECT_EQ(static_cast<int>(hints_of("\\bword\\b").wb_lead), 1);
+  EXPECT_EQ(static_cast<int>(hints_of("\\bword\\b").wb_trail), 1);
   EXPECT_EQ(static_cast<int>(hints_of("ne\\d+").exact_literal_len), 0);
 
   // Fastpath must still produce correct results (including groups).

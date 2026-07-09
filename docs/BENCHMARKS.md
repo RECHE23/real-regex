@@ -147,6 +147,11 @@ TABLE B — extraction non-overlapping (counts equal REAL/RE2):
   measured); dense still **~0.95–0.97×** (quasi-parité, not a rout). `regex_set` routes fused when
   `eligible.size() ≥ 56` (calibrated crossover), else N-walks; lookarounds stay N-walk. Skip is
   off when any rule lacks a sound `first_bytes` set (empty-match / can start anywhere).
+- **Arc II B1 — `\b`/`\B` wrap on shape fast-paths** (same host, arm64 M1, post-Stage-2 tree):
+  patterns like `\b[0-9a-f]{8}\b` and `(?:foo|bar)\b` re-use `run_fixed_shape` / `run_alternation`
+  / exact-literal with an O(1) boundary check. Fair same-hit-count vs the unwrapped proxy:
+  **`\bhex8\b` ~1.0× proxy SIMD** (was ~0.1× / ~57 MB/s on dense → ~540 MB/s); alt-trail ~0.84–0.96×
+  proxy. Not a general assertion-DFA; `$` / complex assert shapes stay deferred.
 - **Incumbent for this product shape is RE2::Set**, not Hyperscan. « Faster than Hyperscan » is not
   a product goal; HS is another corner (thousands of literals / streaming).
 - **At small N** pure N-walks remain competitive (sometimes faster than fused).
