@@ -19,7 +19,7 @@ answer is not a benchmark win.
 
 | | |
 | --- | --- |
-| Version | REAL `2026.7.29` — §multi-pattern added this train (Stage-1 `regex_set`); §A absolute ns/B still the dual-ISA 2026.7.26 campaign (ratios durable; re-run `make bench-engines` on both ISAs to refresh absolutes) |
+| Version | REAL `2026.7.30` — §multi-pattern Stage-2 fused + Arc I first-byte + Arc II B1 `\b` wrap (this train); §A absolute ns/B still the dual-ISA 2026.7.26 campaign (ratios durable; re-run `make bench-engines` on both ISAs to refresh absolutes) |
 | Machines | §A on **two ISAs**: devbox (`x86-64`, g++ 13.3) *and* Apple M1 Pro (`arm64`, Apple clang 16). §B / §E on M1 Pro. §multi-pattern measured on **x86-64 devbox** (g++ 13.3, RE2 + Hyperscan 5.4) |
 | Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (built from source on x86-64 to pin the exact version); RE2 (10.0 on x86-64, 11.0 on arm64 — version-differs-by-leg, uncontested given the margins). Multi-pattern: RE2::Set, Hyperscan (optional) |
 | Python | CPython 3.14, `re` (stdlib) vs the REAL `2026.7.25` abi3 wheel (§B — not re-measured this train; §B/§E are outside this restamp's scope) |
