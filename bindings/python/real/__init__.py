@@ -26,8 +26,9 @@ from real._real import Match, Pattern, compile as _compile_core, error
 __all__ = [
     "compile", "match", "fullmatch", "search", "findall", "count_matches",
     "finditer", "split", "sub", "subn", "escape", "purge", "error", "Pattern",
-    "Match", "A", "ASCII", "I", "IGNORECASE", "M", "MULTILINE", "S", "DOTALL",
-    "X", "VERBOSE", "U", "UNICODE", "NOFLAG", "get_include", "get_config",
+    "Match", "RegexSet", "A", "ASCII", "I", "IGNORECASE", "M", "MULTILINE",
+    "S", "DOTALL", "X", "VERBOSE", "U", "UNICODE", "NOFLAG", "get_include",
+    "get_config",
 ]
 
 __version__ = "2026.7.28"
@@ -130,6 +131,54 @@ class _FallbackPattern:
     @property
     def groupindex(self):
         return self._p.groupindex
+
+
+class RegexSet:
+    """Multi-pattern which-matched set (RE2::Set / rust ``RegexSet`` style).
+
+    Construction compiles every pattern (raises :class:`error` if any fails —
+    no silent skip). ``matches(text)`` returns a list of bools in construction
+    order; ``is_match(text)`` is any-match (stops at the first hit). Captures
+    are not reported — re-run the individual :class:`Pattern` if groups are
+    needed.
+
+    Stage-1 is N independent searches with per-pattern early-exit (not a fused
+    single-pass automaton).
+    """
+
+    def __init__(self, patterns, flags=0):
+        """Compile ``patterns`` (iterable of str/bytes) with optional ``flags``.
+
+        Args:
+            patterns: Iterable of pattern strings or bytes.
+            flags (int): Compilation flags applied to every pattern.
+        """
+        self._patterns = [compile(p, flags) for p in patterns]
+        self.flags = flags
+
+    def __len__(self):
+        return len(self._patterns)
+
+    def is_match(self, string, pos=0, endpos=None):
+        """True if any pattern matches ``string`` (stops at the first hit)."""
+        kwargs = {"pos": pos}
+        if endpos is not None:
+            kwargs["endpos"] = endpos
+        for p in self._patterns:
+            if p.search(string, **kwargs) is not None:
+                return True
+        return False
+
+    def matches(self, string, pos=0, endpos=None):
+        """Which patterns match at least once (construction-order list of bool)."""
+        kwargs = {"pos": pos}
+        if endpos is not None:
+            kwargs["endpos"] = endpos
+        return [p.search(string, **kwargs) is not None for p in self._patterns]
+
+    def which(self, string, pos=0, endpos=None):
+        """Indices of matching patterns (ascending, construction order)."""
+        return [i for i, hit in enumerate(self.matches(string, pos, endpos)) if hit]
 
 
 def get_include():

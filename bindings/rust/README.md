@@ -96,7 +96,10 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   literal inside a class, so the two would parse the same pattern differently. The crate declines these up
   front with `Error::Unsupported` (never a silent mis-match); escaped forms (`[\[]`) and ordinary ranges stay
   accepted. `fallback` delegates them to `regex`. Planned alongside `\p{}` as drop-in-completeness features.
-- **`RegexSet` — not offered.** Multi-pattern set matching is not part of this version.
+- **`RegexSet` — offered (which-matched).** Multi-pattern set matching: `RegexSet::new` /
+  `is_match` / `matches` (bitset, construction order). Stage-1 is N independent walks with
+  per-pattern early-exit — not a fused single-pass (that is a follow-up). Not the same as
+  C++ `real::dfa` (maximal-munch lexer).
 - **Bounded lookarounds — a *positive* divergence.** REAL supports bounded lookahead `(?=…)` / `(?!…)` and
   lookbehind `(?<=…)` / `(?<!…)` in linear time. The `regex` crate and RE2 support neither. This is a
   documented superset, not a gap.

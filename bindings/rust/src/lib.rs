@@ -23,6 +23,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 // Opaque C handles.
 enum RealRegex {}
 enum RealIter {}
+enum RealRegexSet {}
 
 extern "C" {
     fn real_compile(pattern: *const c_char, len: usize, flags: u32,
@@ -34,6 +35,12 @@ extern "C" {
     fn real_find_iter_at(re: *const RealRegex, text: *const c_char, len: usize, start: usize) -> *mut RealIter;
     fn real_iter_next(iter: *mut RealIter, spans: *mut usize) -> i32;
     fn real_iter_free(iter: *mut RealIter);
+    fn real_set_compile(patterns: *const *const c_char, lens: *const usize, n: usize, flags: u32,
+                        errbuf: *mut c_char, errbuf_len: usize, code: *mut i32) -> *mut RealRegexSet;
+    fn real_set_size(set: *const RealRegexSet) -> usize;
+    fn real_set_free(set: *mut RealRegexSet);
+    fn real_set_is_match(set: *const RealRegexSet, text: *const c_char, len: usize) -> i32;
+    fn real_set_matches(set: *const RealRegexSet, text: *const c_char, len: usize, out: *mut u8) -> i32;
 }
 
 const DIVERGENCES_URL: &str = "https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md";
@@ -369,6 +376,126 @@ impl Regex {
             return fb.shortest_match(text); // the regex backend gives true earliest-completion
         }
         self.raw(text, None).advance().map(|(_, e)| e)
+    }
+}
+
+/// A multi-pattern set: which patterns match the subject at least once (which-matched).
+///
+/// Mirrors the [`regex`](https://docs.rs/regex) crate's `RegexSet`. Bitset order is the
+/// construction order of the patterns. Captures are not reported — re-run the individual
+/// pattern if groups are needed. Stage-1 is N independent walks with per-pattern early-exit
+/// (not a fused single-pass automaton).
+pub struct RegexSet {
+    handle: *mut RealRegexSet,
+    patterns: Vec<String>,
+}
+
+unsafe impl Send for RegexSet {}
+unsafe impl Sync for RegexSet {}
+
+impl RegexSet {
+    /// Compile every pattern; fails if any pattern is invalid (no silent skip).
+    pub fn new<I, S>(patterns: I) -> Result<RegexSet, Error>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        RegexSet::with_flags(patterns, 0)
+    }
+
+    /// Compile with a `real::flags` bitmask (same bits as [`Regex::with_flags`]).
+    pub fn with_flags<I, S>(patterns: I, flags: u32) -> Result<RegexSet, Error>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let owned: Vec<String> = patterns.into_iter().map(|s| s.as_ref().to_string()).collect();
+        let mut ptrs: Vec<*const c_char> = Vec::with_capacity(owned.len());
+        let mut lens: Vec<usize> = Vec::with_capacity(owned.len());
+        for p in &owned {
+            ptrs.push(p.as_ptr() as *const c_char);
+            lens.push(p.len());
+        }
+        let mut err = [0i8; 512];
+        let mut code: i32 = 0;
+        let handle = unsafe {
+            real_set_compile(
+                ptrs.as_ptr(),
+                lens.as_ptr(),
+                owned.len(),
+                flags | DOLLAR_ENDONLY,
+                err.as_mut_ptr(),
+                err.len(),
+                &mut code,
+            )
+        };
+        if handle.is_null() {
+            let raw = unsafe { std::ffi::CStr::from_ptr(err.as_ptr()) }
+                .to_string_lossy()
+                .into_owned();
+            return Err(Error::from_engine(&raw, code));
+        }
+        Ok(RegexSet {
+            handle,
+            patterns: owned,
+        })
+    }
+
+    /// Number of patterns in the set.
+    pub fn len(&self) -> usize {
+        unsafe { real_set_size(self.handle) }
+    }
+
+    /// Whether the set has no patterns.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The original pattern strings (construction order).
+    pub fn patterns(&self) -> &[String] {
+        &self.patterns
+    }
+
+    /// True if **any** pattern matches `text` (stops at the first hit).
+    pub fn is_match(&self, text: &str) -> bool {
+        let r = unsafe {
+            real_set_is_match(self.handle, text.as_ptr() as *const c_char, text.len())
+        };
+        r == 1
+    }
+
+    /// Which patterns match at least once: bitset of length [`len`](RegexSet::len),
+    /// construction order. Index `i` is true iff pattern `i` matched.
+    pub fn matches(&self, text: &str) -> Vec<bool> {
+        let n = self.len();
+        let mut out = vec![0u8; n];
+        let r = unsafe {
+            real_set_matches(
+                self.handle,
+                text.as_ptr() as *const c_char,
+                text.len(),
+                out.as_mut_ptr(),
+            )
+        };
+        assert_eq!(r, 0, "real-regex: regex_set matches failed");
+        out.into_iter().map(|b| b != 0).collect()
+    }
+
+    /// Indices of matching patterns (ascending, construction order).
+    pub fn matched_ids(&self, text: &str) -> Vec<usize> {
+        self.matches(text)
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, hit)| hit.then_some(i))
+            .collect()
+    }
+}
+
+impl Drop for RegexSet {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            unsafe { real_set_free(self.handle) }
+        }
     }
 }
 

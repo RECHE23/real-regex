@@ -180,6 +180,23 @@ class TestModuleFunctions(unittest.TestCase):
         self.assertEqual(real.findall(r"(\d)\d", "12 34"), ["1", "3"])
         self.assertEqual(real.findall(r"(a)|(b)", "ab"), [("a", ""), ("", "b")])
 
+    def test_regex_set_which_matched(self):
+        """RegexSet which-matched: construction order, any-match, compile-fail."""
+        s = real.RegexSet([r"alpha", r"beta", r"gamma"])
+        self.assertEqual(len(s), 3)
+        self.assertEqual(s.matches("xx beta yy"), [False, True, False])
+        self.assertEqual(s.which("xx beta yy"), [1])
+        self.assertTrue(s.is_match("please find beta"))
+        self.assertFalse(s.is_match("nothing"))
+        # Oracle: N × search
+        text = "2026-06-13 error id=a3f9c1d8"
+        pats = [r"[0-9]{4}-[0-9]{2}-[0-9]{2}", r"error|warn", r"absent_xyz"]
+        rs = real.RegexSet(pats)
+        self.assertEqual(rs.matches(text),
+                         [real.search(p, text) is not None for p in pats])
+        with self.assertRaises(real.error):
+            real.RegexSet([r"ok", r"(?>atomic)"])
+
     def test_count_matches(self):
         """count_matches agrees with findall / finditer without materialising Match objects."""
         self.assertEqual(real.count_matches(r"\d+", "a1 b22 c333"), 3)
