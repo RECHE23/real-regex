@@ -52,6 +52,24 @@ TEST(regex_set_empty)
   EXPECT(set.which("anything").empty());
 }
 
+TEST(regex_set_brace_init_and_vector_string)
+{
+  // Inline brace-init (const char* → string_view) — public ergonomics.
+  const real::regex_set braced {"alpha", "beta", "gamma"};
+  EXPECT_EQ(braced.size(), 3U);
+  EXPECT(braced.is_match("xx beta yy"));
+  EXPECT_EQ(braced.which("xx beta yy").size(), 1U);
+  EXPECT_EQ(braced.which("xx beta yy")[0], 1U);
+
+  // Owning strings (vector<string>) — common construction path.
+  const std::vector<std::string> owned {"error|warn", R"([0-9]{4})", "absent"};
+  const real::regex_set          from_vec(owned);
+  EXPECT_EQ(from_vec.size(), 3U);
+  EXPECT(from_vec.matches("error 2026")[0]);
+  EXPECT(from_vec.matches("error 2026")[1]);
+  EXPECT(!from_vec.matches("error 2026")[2]);
+}
+
 TEST(regex_set_which_matched_order_is_construction_order)
 {
   const std::string_view pats[] = {"alpha", "beta", "gamma"};

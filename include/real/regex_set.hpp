@@ -17,7 +17,9 @@
 #include "real/real.hpp"
 
 #include <cstddef>
+#include <initializer_list>
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -71,6 +73,36 @@ namespace real {
       : regex_set(std::span<const std::string_view> {patterns, n},
                   compile_flags)
     {}
+
+    /*!
+     * \brief Brace-init / inline list: \c regex_set{"a", "b", R"(\\d+)"} .
+     *
+     * String literals convert to \c string_view; construction order = bitset order.
+     * \param[in] patterns Pattern texts.
+     * \param[in] compile_flags Flags applied to every pattern.
+     * \throws regex_error if any pattern fails to compile.
+     */
+    regex_set(std::initializer_list<std::string_view> patterns,
+              flags                                   compile_flags = flags::none)
+      : regex_set(std::span<const std::string_view> {patterns.begin(), patterns.size()},
+                  compile_flags)
+    {}
+
+    /*!
+     * \brief Compile from owning strings (e.g. \c std::vector<std::string>).
+     * \param[in] patterns Pattern texts (views borrowed only during construction).
+     * \param[in] compile_flags Flags applied to every pattern.
+     * \throws regex_error if any pattern fails to compile.
+     */
+    explicit regex_set(std::span<const std::string> patterns,
+                       flags                        compile_flags = flags::none)
+      : flags_(compile_flags)
+    {
+      members_.reserve(patterns.size());
+      for (const std::string& pat : patterns) {
+        members_.emplace_back(pat, compile_flags);
+      }
+    }
 
     //! \brief Number of patterns in the set (bitset length).
     [[nodiscard]] std::size_t size() const noexcept

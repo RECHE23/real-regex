@@ -283,8 +283,8 @@ RE2::Set / rust `RegexSet` style), include `<real/regex_set.hpp>`:
 
 ```cpp
 #include <real/regex_set.hpp>
-const std::string_view pats[] = {"error|warn", "[0-9]{4}-[0-9]{2}-[0-9]{2}", "absent"};
-real::regex_set set(pats, 3);
+real::regex_set set {"error|warn", "[0-9]{4}-[0-9]{2}-[0-9]{2}", "absent"};
+// or: span/array of string_view, or span/vector of string
 set.is_match(log_line);          // any-match (stops at first hit)
 auto bits = set.matches(log_line); // construction-order bitset
 ```
