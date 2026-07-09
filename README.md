@@ -276,6 +276,23 @@ carrying a zero-width assertion no DFA can represent (`$`, `\b`, multiline `^`/`
 throws `real::dfa_error`; lazy and greedy accept the same language, so feed it
 longest-match-faithful rules.
 
+### Multi-pattern set (`real::regex_set`)
+
+For **which-matched** multi-pattern queries (which patterns hit the text at least once —
+RE2::Set / rust `RegexSet` style), include `<real/regex_set.hpp>`:
+
+```cpp
+#include <real/regex_set.hpp>
+const std::string_view pats[] = {"error|warn", "[0-9]{4}-[0-9]{2}-[0-9]{2}", "absent"};
+real::regex_set set(pats, 3);
+set.is_match(log_line);          // any-match (stops at first hit)
+auto bits = set.matches(log_line); // construction-order bitset
+```
+
+Stage-1 is N independent `search` walks with per-pattern early-exit — **not**
+`real::dfa` (munch one-winner) and not yet a fused single-pass. Compile fails the
+whole set if any pattern is invalid.
+
 ## Python binding
 
 An `re`-compatible module backed by the C++ engine (CPython Limited API, one

@@ -8,10 +8,13 @@
 #include <cstring>
 #include <exception>
 #include <new>
+#include <span>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include <real/real.hpp>
+#include <real/regex_set.hpp>
 
 namespace {
   using dyn_iter = decltype(std::declval<const real::regex&>().find_iter(std::string_view {}).begin());
@@ -26,6 +29,11 @@ struct real_iter
 {
   dyn_iter it;
   dyn_iter end;
+};
+
+struct real_regex_set
+{
+  real::regex_set set;
 };
 
 extern "C" {
@@ -153,6 +161,92 @@ int real_iter_next(real_iter* iter, size_t* spans)
 void real_iter_free(real_iter* iter)
 {
   delete iter;
+}
+
+real_regex_set* real_set_compile(const char* const* patterns, const size_t* lens, size_t n,
+                                 uint32_t flags, char* errbuf, size_t errbuf_len, int* code)
+{
+  if (code != nullptr) {
+    *code = REAL_ERR_NONE;
+  }
+  if (patterns == nullptr && n > 0) {
+    if (code != nullptr) {
+      *code = REAL_ERR_SYNTAX;
+    }
+    write_err(errbuf, errbuf_len, "null patterns");
+    return nullptr;
+  }
+  try {
+    std::vector<std::string_view> views;
+    views.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+      const size_t len = (lens != nullptr) ? lens[i] : std::strlen(patterns[i]);
+      views.emplace_back(patterns[i], len);
+    }
+    return new real_regex_set {
+      real::regex_set(std::span<const std::string_view> {views}, static_cast<real::flags>(flags))};
+  }
+  catch (const real::regex_error& e) {
+    if (code != nullptr) {
+      *code = (e.kind() == real::error_kind::unsupported) ? REAL_ERR_UNSUPPORTED : REAL_ERR_SYNTAX;
+    }
+    write_err(errbuf, errbuf_len, e.what());
+    return nullptr;
+  }
+  catch (const std::exception& e) {
+    if (code != nullptr) {
+      *code = REAL_ERR_SYNTAX;
+    }
+    write_err(errbuf, errbuf_len, e.what());
+    return nullptr;
+  }
+  catch (...) {
+    if (code != nullptr) {
+      *code = REAL_ERR_SYNTAX;
+    }
+    write_err(errbuf, errbuf_len, "unknown error");
+    return nullptr;
+  }
+}
+
+size_t real_set_size(const real_regex_set* set)
+{
+  return set == nullptr ? 0 : set->set.size();
+}
+
+void real_set_free(real_regex_set* set)
+{
+  delete set;
+}
+
+int real_set_is_match(const real_regex_set* set, const char* text, size_t len)
+{
+  if (set == nullptr || text == nullptr) {
+    return -1;
+  }
+  try {
+    return set->set.is_match(std::string_view(text, len)) ? 1 : 0;
+  }
+  catch (...) {
+    return -1;
+  }
+}
+
+int real_set_matches(const real_regex_set* set, const char* text, size_t len, uint8_t* out)
+{
+  if (set == nullptr || text == nullptr || out == nullptr) {
+    return -1;
+  }
+  try {
+    const auto hit = set->set.matches(std::string_view(text, len));
+    for (size_t i = 0; i < hit.size(); ++i) {
+      out[i] = hit[i] ? 1 : 0;
+    }
+    return 0;
+  }
+  catch (...) {
+    return -1;
+  }
 }
 
 } // extern "C"

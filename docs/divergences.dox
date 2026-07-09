@@ -203,5 +203,6 @@ the wrapper, so `find_iter`/`split` match `regex`), `shortest_match` (leftmost-f
 completion — a parked `first-accept` engine follow-up, see \ref g_followups), the \\p{} coverage
 (\\p{Gc} / \\p{sc} run natively now; binary and other-namespace properties raise `Error::Unsupported` or are
 delegated via the opt-in `fallback` feature), `RegexSet`
-(not offered), and the bounded lookarounds as a **positive** divergence (a superset `regex` and RE2 lack).
+(which-matched Stage-1 N-walks — offered; not a fused single-pass yet), and the bounded lookarounds as a
+**positive** divergence (a superset `regex` and RE2 lack).
 */

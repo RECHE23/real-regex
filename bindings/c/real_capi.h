@@ -8,7 +8,7 @@
 #define REAL_CAPI_H
 
 #include <stddef.h>
-#include <stdint.h>
+#include <stdint.h> /* uint8_t, uint32_t */
 
 #ifdef __cplusplus
 extern "C" {
@@ -57,6 +57,26 @@ real_iter* real_find_iter_at(const real_regex* re, const char* text, size_t len,
 int real_iter_next(real_iter* iter, size_t* spans);
 
 void real_iter_free(real_iter* iter);
+
+/* --- multi-pattern set (which-matched; Stage-1 N-walks) --------------------- */
+
+typedef struct real_regex_set real_regex_set;
+
+/* Compile N patterns into a set. `patterns[i]` has length `lens[i]`. `flags` applies to every
+ * pattern. Fails (NULL) if any pattern is invalid — no silent skip. Bitset order = patterns order. */
+real_regex_set* real_set_compile(const char* const* patterns, const size_t* lens, size_t n,
+                                 uint32_t flags, char* errbuf, size_t errbuf_len, int* code);
+
+size_t real_set_size(const real_regex_set* set);
+
+void real_set_free(real_regex_set* set);
+
+/* 1 if any pattern matches [text, text+len) at least once; 0 if none; -1 on error. */
+int real_set_is_match(const real_regex_set* set, const char* text, size_t len);
+
+/* Which-matched bitset: writes `real_set_size(set)` bytes to `out` (0/1 per pattern, construction
+ * order). Returns 0 on success, -1 on error. `out` must hold at least size bytes. */
+int real_set_matches(const real_regex_set* set, const char* text, size_t len, uint8_t* out);
 
 #ifdef __cplusplus
 }
