@@ -41,9 +41,10 @@ case-folding follow `re` in text mode.
 ## Not `re`, on purpose
 
 **Strict by default — every accepted pattern is guaranteed linear.** The unsupported constructs
-(backreferences, conditionals, binary Unicode properties like `\p{Alphabetic}`) raise `real.error` rather than
-silently falling back to a backtracking engine, so a compiled pattern is a ReDoS-safety guarantee, not a maybe.
-(`\p{L}` / `\p{sc=Greek}` — General_Category and Script — *are* supported, a superset of stdlib `re`.) Opt
+(backreferences, conditionals, non-binary Unicode properties like `\p{Bidi_Class=L}`) raise `real.error`
+rather than silently falling back to a backtracking engine, so a compiled pattern is a ReDoS-safety
+guarantee, not a maybe. (`\p{L}` / `\p{sc=Greek}` / `\p{Alphabetic}` — General_Category, Script and the
+standard binary properties — *are* supported, a superset of stdlib `re`.) Opt
 into delegating those to the standard library `re` per call with `real.compile(pat, fallback=True)` (or
 module-wide with `real.fallback = True`) — it may accept them, at the cost of the linear-time guarantee for
 that pattern; `Pattern.engine` (`"real"` or `"re"`) always tells you which backend you got. A few semantics

@@ -1,8 +1,8 @@
 // Structural + invariant guard for the generated Script table (unicode_script.hpp). The full exhaustive-vs-UCD
 // oracle lives in the Python regen guard (test_unicode_script_regen, byte-identity from the bundled Scripts.txt,
 // cross-checked against the `regex` module at generation) — here we check what is checkable in C++: the table is
-// a sorted, disjoint partition, and known code points land in the right Script. INERT: no parser reaches these
-// yet (the P0b data slice).
+// a sorted, disjoint partition, and known code points land in the right Script. Wired at
+// ast.hpp::resolve_property; the parser-level tests live in tests/frontend/test_unicode_property_class.cpp.
 #include <cstddef>
 
 #include <sciforge/test/framework.hpp>

@@ -461,10 +461,11 @@ class TestIntentionalDivergences(unittest.TestCase):
 
     def test_rejected_by_design(self):
         # Each rejected for a documented reason (see the divergences page): backreferences and conditional
-        # groups are non-regular (they would break linearity). \p{Gc} and \p{sc=...} are now supported (see
-        # test_unicode_property_classes); a binary property like \p{Alphabetic} is not yet tabulated, so it
-        # stays rejected. (\N{NAME} is now supported — see the parity suite.)
-        for pattern in [r"(a)\1", r"(?P=name)", r"(?(1)a|b)", r"\p{Alphabetic}"]:
+        # groups are non-regular (they would break linearity). \p{Gc}, \p{sc=...} and the standard binary
+        # properties are now supported (see test_unicode_property_classes / test_unicode_binary_properties);
+        # Bidi_Class (a real UAX44 property, enumerated not binary) is not tabulated, so it stays rejected.
+        # (\N{NAME} is now supported — see the parity suite.)
+        for pattern in [r"(a)\1", r"(?P=name)", r"(?(1)a|b)", r"\p{Bidi_Class=L}"]:
             with self.subTest(pattern=pattern):
                 with self.assertRaises(real.error):
                     real.compile(pattern)
@@ -492,6 +493,25 @@ class TestIntentionalDivergences(unittest.TestCase):
         self.assertTrue(real.compile(r"(?i)\p{Lu}").fullmatch("K"))  # KELVIN folds to k
         self.assertTrue(real.compile(r"(?i)\p{Lu}").fullmatch("ı"))  # Turkish dotless-i folds with I, like re
         self.assertIsNone(real.compile(r"(?i)\P{Lu}").fullmatch("a"))
+
+    def test_unicode_binary_properties(self):
+        # The standard UCD binary properties (\p{Alphabetic}, \p{White_Space}, ...) are ALSO a documented
+        # SUPERSET of stdlib re (which rejects \p entirely). No namespace of its own, same as PCRE2; a bare
+        # name tries General_Category, then Script, then a binary property.
+        self.assertTrue(real.compile(r"\p{White_Space}").fullmatch(" "))
+        self.assertIsNone(real.compile(r"\p{White_Space}").fullmatch("x"))
+        self.assertTrue(real.compile(r"\p{Alphabetic}").fullmatch("a"))
+        self.assertIsNone(real.compile(r"\p{Alphabetic}").fullmatch("3"))
+        self.assertTrue(real.compile(r"\p{Emoji}").fullmatch("\U0001F600"))  # GRINNING FACE, astral
+        self.assertTrue(real.compile(r"\p{ WHITE-space }").fullmatch(" "))   # loose matching, same as GC/Script
+        self.assertTrue(real.compile(r"\P{White_Space}").fullmatch("x"))    # negation
+        self.assertIsNone(real.compile(r"\P{White_Space}").fullmatch(" "))
+        self.assertTrue(real.compile(r"[\p{White_Space}x]").fullmatch("x")) # in-class
+        self.assertTrue(real.compile(r"[\p{White_Space}x]").fullmatch(" "))
+        # an explicit gc=/sc= namespace does NOT fall through to a binary property on a miss -- only a bare
+        # name does (a misspelled explicit namespace should fail, not silently resolve elsewhere)
+        with self.assertRaises(real.error):
+            real.compile(r"\p{gc=White_Space}")
 
     def test_lookbehind_variable_width_accepted(self):
         # A bounded variable-width lookbehind is ACCEPTED -- beyond re/PCRE, which require a

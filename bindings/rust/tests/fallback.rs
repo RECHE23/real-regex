@@ -9,11 +9,13 @@ fn fb(pat: &str) -> Regex {
 
 #[test]
 fn unicode_property_delegates_and_is_observable() {
-    // \p{Alphabetic} is a binary property REAL does not tabulate (it builds only General_Category and Script),
-    // so it is still delegated — unlike \p{L}/\p{N}, which REAL now runs natively.
-    let re = fb(r"\p{Alphabetic}+");
-    assert_eq!(re.engine(), Engine::Fallback, "\\p{{Alphabetic}} must be delegated");
-    let std = regex::Regex::new(r"\p{Alphabetic}+").unwrap();
+    // Word_Break (a UAX#29 text-segmentation property) is not General_Category, Script or one of the
+    // standard binary properties REAL now tabulates (\p{Alphabetic} moved natively in this train — see
+    // unicode_binary_properties_run_natively_not_delegated below), so it is still delegated. `=` gives it
+    // an explicit namespace REAL does not recognize (gc=/sc= only), same rejection path as an unknown one.
+    let re = fb(r"\p{Word_Break=ALetter}+");
+    assert_eq!(re.engine(), Engine::Fallback, "\\p{{Word_Break=ALetter}} must be delegated");
+    let std = regex::Regex::new(r"\p{Word_Break=ALetter}+").unwrap();
     let text = "héllo, wörld 42";
     assert_eq!(re.find_iter(text).map(|m| (m.start(), m.end())).collect::<Vec<_>>(),
                std.find_iter(text).map(|m| (m.start(), m.end())).collect::<Vec<_>>(), "find_iter");
@@ -37,9 +39,20 @@ fn unicode_gc_and_script_run_natively_not_delegated() {
 }
 
 #[test]
+fn unicode_binary_properties_run_natively_not_delegated() {
+    // The standard binary properties (\p{Alphabetic}, \p{White_Space}, ...) are built into REAL now too —
+    // even with fallback requested they stay on REAL. This is why unicode_property_delegates_and_is_
+    // observable above had to switch its delegated example to a Word_Break property.
+    for pat in [r"\p{Alphabetic}+", r"\P{White_Space}", r"\p{Emoji}"] {
+        let re = RegexBuilder::new(pat).fallback(true).build().unwrap();
+        assert_eq!(re.engine(), Engine::Real, "{pat} must run on REAL, not fall back");
+    }
+}
+
+#[test]
 fn delegated_captures_and_names_match_regex() {
-    let re = fb(r"(?P<w>\p{Alphabetic}+)\s+(\p{Alphabetic}+)");
-    let std = regex::Regex::new(r"(?P<w>\p{Alphabetic}+)\s+(\p{Alphabetic}+)").unwrap();
+    let re = fb(r"(?P<w>\p{Word_Break=ALetter}+)\s+(\p{Word_Break=ALetter}+)");
+    let std = regex::Regex::new(r"(?P<w>\p{Word_Break=ALetter}+)\s+(\p{Word_Break=ALetter}+)").unwrap();
     let text = "café oui";
     let c = re.captures(text).unwrap();
     let s = std.captures(text).unwrap();
@@ -52,9 +65,9 @@ fn delegated_captures_and_names_match_regex() {
 #[test]
 fn without_fallback_flag_still_rejects() {
     // The feature is on, but a builder without fallback(true) stays strict -> Unsupported.
-    let e = RegexBuilder::new(r"\p{Alphabetic}+").build().unwrap_err();
+    let e = RegexBuilder::new(r"\p{Word_Break=ALetter}+").build().unwrap_err();
     assert!(e.is_unsupported());
-    assert!(Regex::new(r"\p{Alphabetic}+").is_err()); // Regex::new is always strict
+    assert!(Regex::new(r"\p{Word_Break=ALetter}+").is_err()); // Regex::new is always strict
 }
 
 #[test]

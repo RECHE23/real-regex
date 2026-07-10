@@ -15,7 +15,8 @@ Two guarantees, the same as the sibling generator:
      regen guard skips when the running Python's version differs.
 
 Emits, per category and per group, a sorted non-overlapping `code_range` table and a dispatch by `gc_property`.
-Ranges-first (no speculative two-level table). INERT: nothing parses `\\p{}` yet — this is the data slice (P0a).
+Ranges-first (no speculative two-level table). Wired into the parser at ast.hpp::resolve_property
+(`\\p{gc=...}` / a bare name), via the generated, loose-keyed `resolve_gc`.
 """
 import sys
 import unicodedata
@@ -120,7 +121,7 @@ def _emit(tables, path):
             "Built from, and exhaustively validated against, the Unicode Character Database via",
             f"`unicodedata.category`, so REAL's `\\p{{Gc}}` classes equal the UCD by construction (matching the",
             f"`regex` crate). SEPARATE from unicode_props.hpp, whose contract is CPython `re`. Unicode data",
-            f"version: {ver} (asserted). INERT: no parser reaches these yet (the P0a data slice).",
+            f"version: {ver} (asserted). Wired at ast.hpp::resolve_property (`\\p{{gc=...}}` / a bare name).",
         ],
         guard="REAL_UNICODE_PROPERTY_HPP",
         includes=[

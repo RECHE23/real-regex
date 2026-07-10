@@ -2,7 +2,8 @@
 // exhaustive-vs-UCD oracle (all 1.1M scalars vs unicodedata.category) lives in the Python regen guard
 // (test_unicode_property_regen) — C++ has no UCD, so here we check what is checkable without one: each table is
 // sorted and coalesced, known code points land in the right category, and each top-level group equals the union
-// of its categories on a spread of probes. INERT: no parser reaches these yet (the P0a data slice).
+// of its categories on a spread of probes. Wired at ast.hpp::resolve_property; the parser-level tests
+// live in tests/frontend/test_unicode_property_class.cpp.
 #include <cstddef>
 
 #include <sciforge/test/framework.hpp>

@@ -78,12 +78,34 @@ TEST(unicode_property_matches_across_engines)
 
 TEST(unicode_property_named_errors)
 {
-  EXPECT_THROWS(real::regex(R"(\p{Xyz})"), real::regex_error);         // unknown name
-  EXPECT_THROWS(real::regex(R"(\p{White_Space})"), real::regex_error); // a binary property: not GC/Script (P2+)
-  EXPECT_THROWS(real::regex(R"(\p{zz=Latin})"), real::regex_error);    // unknown namespace
-  EXPECT_THROWS(real::regex(R"(\p{Latin)"), real::regex_error);        // unterminated
-  EXPECT_THROWS(real::regex(R"(\p)"), real::regex_error);              // no name
-  EXPECT_THROWS(real::regex(R"(\p{})"), real::regex_error);            // empty name
+  EXPECT_THROWS(real::regex(R"(\p{Xyz})"), real::regex_error);            // unknown name (not GC/Script/binary)
+  EXPECT_THROWS(real::regex(R"(\p{zz=Latin})"), real::regex_error);       // unknown namespace
+  EXPECT_THROWS(real::regex(R"(\p{gc=White_Space})"), real::regex_error); // binary prop has no namespace of its own
+  EXPECT_THROWS(real::regex(R"(\p{Latin)"), real::regex_error);           // unterminated
+  EXPECT_THROWS(real::regex(R"(\p)"), real::regex_error);                 // no name
+  EXPECT_THROWS(real::regex(R"(\p{})"), real::regex_error);               // empty name
+}
+
+TEST(unicode_property_binary)
+{
+  // Binary properties (\p{Name}, no namespace of its own, same as PCRE2) -- the tables and their UCD
+  // oracle live in tests/unicode/test_unicode_binprop.cpp; here, the parser wiring: bare-name resolution
+  // after GC/Script both decline, negation, and in-class.
+  EXPECT(real::regex(R"(\p{White_Space})").fullmatch(" "));
+  EXPECT(!real::regex(R"(\p{White_Space})").fullmatch("x"));
+  EXPECT(real::regex(R"(\p{Alphabetic})").fullmatch("a"));
+  EXPECT(!real::regex(R"(\p{Alphabetic})").fullmatch("3"));
+  EXPECT(real::regex(R"(\p{Emoji})").fullmatch("\xF0\x9F\x98\x80"sv)); // U+1F600 GRINNING FACE
+  EXPECT(real::regex(R"(\p{Hex_Digit})").fullmatch("F"));
+  EXPECT(!real::regex(R"(\p{Hex_Digit})").fullmatch("G"));
+  EXPECT(real::regex(R"(\p{ WHITE-space })").fullmatch(" "));          // loose matching, same as GC/Script
+  EXPECT(real::regex(R"(\P{White_Space})").fullmatch("x"));            // negation
+  EXPECT(!real::regex(R"(\P{White_Space})").fullmatch(" "));
+  EXPECT(real::regex(R"([\p{White_Space}x])").fullmatch("x"));         // in-class, mixed with a literal
+  EXPECT(real::regex(R"([\p{White_Space}x])").fullmatch(" "));
+  EXPECT(!real::regex(R"([\p{White_Space}x])").fullmatch("y"));
+  EXPECT(real::regex(R"([^\p{White_Space}])").fullmatch("x"));         // negated class containing a binary property
+  EXPECT(!real::regex(R"([^\p{White_Space}])").fullmatch(" "));
 }
 
 TEST(unicode_property_bytes_mode_rejects)

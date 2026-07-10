@@ -7,7 +7,8 @@
  * Every assigned code point has exactly one Script, so this is one sorted `{lo, hi, script}` table
  * partitioning the code space (gaps are `Unknown`). Parsed from the committed Scripts.txt and, at
  * generation, cross-checked against the `regex` module. Scripts data version: 16.0.0 (asserted).
- * INERT: no parser reaches these yet (the P0b data slice).
+ * Wired at ast.hpp::resolve_property (`\p{sc=...}` / a bare name), via the generated,
+ * loose-keyed `resolve_script`.
  */
 #ifndef REAL_UNICODE_SCRIPT_HPP
 #define REAL_UNICODE_SCRIPT_HPP

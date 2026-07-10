@@ -32,6 +32,7 @@
 #include "real/core/charclass.hpp"
 #include "real/core/config.hpp"
 #include "real/core/program.hpp"
+#include "real/unicode/unicode_binprop.hpp"
 #include "real/unicode/unicode_fold.hpp"
 #include "real/unicode/unicode_property.hpp"
 #include "real/unicode/unicode_props.hpp"
@@ -561,9 +562,10 @@ namespace real::detail {
     /*!
      * \brief Resolves a `\p{...}` property name to its code-point ranges, or fails with a clear error. An
      *        optional `gc=` / `sc=` (or `general_category=` / `script=`) prefix picks the namespace; a bare name
-     *        tries General_Category then Script. GC ranges come straight from the table; a Script's ranges are
-     *        collected from the partition. The alias resolvers are the generated, loose-keyed `resolve_gc` /
-     *        `resolve_script`.
+     *        tries General_Category, then Script, then a binary property (`\p{Alphabetic}`, no namespace of its
+     *        own, same as PCRE2). GC ranges come straight from the table; a Script's ranges are collected from
+     *        the partition; a binary property's ranges come straight from its table. The alias resolvers are
+     *        the generated, loose-keyed `resolve_gc` / `resolve_script` / `resolve_binprop`.
      */
     [[nodiscard]] constexpr std::vector<code_range> resolve_property(std::string_view name) const
     {
@@ -604,9 +606,20 @@ namespace real::detail {
           return out;
         }
       }
-      // well-formed `\p{Name}` but a property REAL does not yet tabulate (e.g. a binary property like
-      // `\p{Alphabetic}`, or a script/category REAL lacks): unsupported, so a binding can delegate it.
-      fail_unsupported("unsupported Unicode property in \\p{...} (only General_Category and Script are built in)");
+      if (nk.empty()) {
+        // Binary properties have no namespace of their own (like PCRE2): only a bare `\p{Name}` tries
+        // one, never `\p{gc=Name}` / `\p{sc=Name}` with a name that failed to resolve in that explicit
+        // namespace -- an explicit, misspelled namespace should fail, not silently fall through.
+        const binprop bp {resolve_binprop(value_key.view())};
+        if (bp != binprop::count) {
+          const std::span<const code_range> t {binprop_ranges[static_cast<std::size_t>(bp)]};
+          return {t.begin(), t.end()};
+        }
+      }
+      // well-formed `\p{Name}` but a property REAL does not yet tabulate (a script/category REAL lacks,
+      // or an unknown/misspelled binary property name): unsupported, so a binding can delegate it.
+      fail_unsupported("unsupported Unicode property in \\p{...} (General_Category, Script and the "
+                       "standard binary properties are built in)");
     }
 
     //! \brief Rejects bytes mode, consumes the `p`/`P` and the `{Name}` (or single letter), and resolves it to
