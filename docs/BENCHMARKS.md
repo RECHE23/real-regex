@@ -317,29 +317,34 @@ Patterns with a zero-width assertion no DFA can represent throw `real::dfa_error
 The rust `regex` crate (a lazy-DFA engine with literal prefilters) is REAL's closest peer on the
 linear-time-guarantee axis. This duel is honest about where REAL loses: the same patterns run through both
 engines over the same corpora, `find_iter` over ~1 MB, best of 15 batches, match counts cross-checked
-equal. `rust regex 1.12.4` (`find_iter` on `regex::bytes`), REAL 2026.7.11, Apple M1 Pro, both `-O3`/LTO.
+equal. **Stamp:** `rust regex 1.12.4` (`find_iter` on `regex::bytes`), REAL **2026.7.11** (pre lazy-DFA /
+pre Arc B), Apple M1 Pro, both `-O3`/LTO. Absolute rows below are historical; the reading after the table
+is the **7.30 honesty re-stamp**.
 
-| case | REAL ns/B | rust ns/B | winner |
+| case | REAL ns/B (7.11) | rust ns/B | winner (then) |
 | --- | ---: | ---: | :--- |
 | class `[a-z]+` | 2.466 | 3.138 | **REAL 1.3×** |
 | digits `[0-9]+` | 2.982 | 8.039 | **REAL 2.7×** |
 | fields `[^,]+` | 3.086 | 2.791 | rust 1.1× |
 | alternation `fox\|dog\|cat` | 1.365 | 0.876 | rust 1.6× |
 | literal `dog` | 0.728 | 0.274 | rust 2.7× |
-| ident `(\w+)_(\w+)` | 59.865 | 4.662 | rust 12.8× |
-| word-boundary `\b\w+\b` | 41.531 | 2.671 | rust 15.5× |
-| email `(\w+)@(\w+)` | 44.551 | 1.806 | rust 24.7× |
+| ident `(\w+)_(\w+)` | 59.865 | 4.662 | rust 12.8× *(stale)* |
+| word-boundary `\b\w+\b` | 41.531 | 2.671 | rust 15.5× *(stale)* |
+| email `(\w+)@(\w+)` | 44.551 | 1.806 | rust 24.7× *(stale)* |
 | date (no-match) `\d{4}-\d{2}-\d{2}` | 0.450 | 0.012 | rust 36.6× |
 
-REAL's SWAR class-loop fast paths win the single-class ASCII scans (`[a-z]+`, `[0-9]+`). rust wins
-everything a lazy DFA does well: **word-boundary and multi-group capture** rows, where REAL falls back to
-the general Pike VM (which tracks capture slots even for span iteration), and the **literal / alternation**
-rows, where its Teddy/memchr prefilters beat REAL's cascade.
+**7.30 re-read (same host family, post lazy-DFA + Arc B — internal MB/s, not a full rust re-duel):**
 
-On the capture rows the comparison is not symmetric, and the asymmetry is the point: rust's `find_iter`
-answers match *spans* without ever running its capture machinery (its lazy DFA), while REAL's Pike VM
-always tracks its slots. That gap is the architecture gap itself — it is exactly what the lazy-DFA arc
-targets (a `kFirstMatch` DFA for the span, a windowed Pike pass only where captures are actually read).
+- **Capture / email / ident rows are no longer the 12–25× story.** Lazy-DFA routes capture-free and many
+  capture shapes for span location; S-MEASURE (2026-07-09) isolated **slot-tracking at only ~1.0–1.3×**
+  (capturing vs non-capturing, same shape, span-only). Email-like `(\w+)@(\w+)` ~**420 MB/s** with
+  lazy-DFA on dense text — the 7.11 email row is **stale**.
+- **Word-boundary was a different lever:** `\b` forced `eligible=false` (no DFA). S-MEASURE: `\b\w+\b`
+  ~26 MB/s vs `\w+` ~257 (**~10×**). **Arc B (7.30+):** `\b\w+\b` simplifies to `\w+` when the class is
+  full word (parity with bare `\w+`, ~190 MB/s on a dense word corpus); `\b[a-z]+\b` / `\b\d+\b` use a
+  class-loop wrap with O(1) boundary checks (large recovery vs pre-Arc-B Pike).
+- **Still open vs rust (honest):** literal / alternation prefilters (Teddy/memchr), and a full same-host
+  re-duel of the §E table after Arc B (not re-run for this stamp — shapes above are the durable claim).
 
 Two rows carry a caveat, not a verdict:
 

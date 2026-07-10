@@ -71,6 +71,44 @@ namespace real::detail {
     return 0;
   }
 
+  //! \brief True if \p cls is exactly the ASCII word set `[0-9A-Za-z_]` (`\w` under bytes/`re.A`).
+  [[nodiscard]] constexpr bool is_full_ascii_word_class(const char_class& cls) noexcept
+  {
+    for (unsigned b = 0; b < 128U; ++b) {
+      if (cls.test(static_cast<std::uint8_t>(b)) != is_ascii_word_byte(static_cast<std::uint8_t>(b))) {
+        return false;
+      }
+    }
+    for (unsigned b = 128U; b < 256U; ++b) {
+      if (cls.test(static_cast<std::uint8_t>(b))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  //! \brief True if \p cc is the Unicode `\w` class (ASCII word + large non-ASCII word table).
+  [[nodiscard]] constexpr bool is_full_unicode_word_cp_class(const cp_class& cc) noexcept
+  {
+    for (unsigned b = 0; b < 128U; ++b) {
+      if (cc.ascii.test(static_cast<std::uint8_t>(b)) !=
+          is_ascii_word_byte(static_cast<std::uint8_t>(b))) {
+        return false;
+      }
+    }
+    return cc.range_count >= 200U; // word ~767 ranges; digit ~70; space ~8
+  }
+
+  //! \brief Arc B-1: `\b` next to a full-`\w` maximal run is redundant (`\B` never is).
+  [[nodiscard]] constexpr bool wb_redundant_for_full_word(std::uint8_t lead,
+                                                          std::uint8_t trail) noexcept
+  {
+    if (lead == 2 || trail == 2) {
+      return false;
+    }
+    return lead == 1 || trail == 1;
+  }
+
   /*!
    * \brief Alternation of straight-line byte/klass branches, optionally wrapped in `\b`/`\B`.
    *
@@ -443,6 +481,7 @@ namespace real::detail {
    *        an alternation of straight-line branches, and trailing-lookaround class+ (P3c).
    * \param[in]     code           The instruction stream.
    * \param[in]     classes        Interned character classes referenced by \p code.
+   * \param[in]     cp_classes     Match-time code-point classes (for `\w`/`\d`/`\s` Arc B word-class tests).
    * \param[in]     cp_mark_ascii  ASCII sub-class index of an emitted codepoint-class block (-1 = none).
    * \param[in]     cp_mark_offset Program offset where that block starts (-1 = none).
    * \param[in]     lookarounds    Bounded lookaround subs (for trailing-LA eligibility); may be empty.
@@ -450,23 +489,31 @@ namespace real::detail {
    */
   constexpr void detect_fast_shapes(std::span<const instr>          code,
                                     std::span<const char_class>     classes,
+                                    std::span<const cp_class>       cp_classes,
                                     std::int32_t                    cp_mark_ascii,
                                     std::int32_t                    cp_mark_offset,
                                     std::span<const lookaround_sub> lookarounds,
                                     pattern_hints&                  hints)
   {
-    // "class+" shape: save 0, klass, split(back to the klass, exit),
-    // save 1, match -- greedy only (the lazy variant has different
-    // semantics) and no capture groups.
-    // "class+", optionally wrapped in exactly ONE capturing group: save 0, [group-start save,] klass,
-    // split(back to the klass, exit), [group-end save,] save 1, match. Greedy only (the lazy variant
-    // differs). An enveloping group ((\w+), ([a-z]+)) has span == the whole match by
-    // construction, so the fast path mirrors the bounds into the group's slots -- no re-match.
+    // "class+" shape: save 0, [optional \b/\B,] [group-start save,] klass, split(back, exit),
+    // [group-end save,] [optional \b/\B,] save 1, match. Arc B: lead/trail word-boundary allowed.
+    // Full ASCII `\w` + `\b` only → B-1 drop `\b` (redundant). Subset class + `\b` → B-2 wrap.
     {
-      std::size_t  p  {0};
-      std::int16_t gs {-1};
-      if (p < code.size() && code[p].op == opcode::save) {
+      std::size_t  p       {0};
+      std::int16_t gs      {-1};
+      std::uint8_t wb_lead {0};
+      if (p < code.size() && code[p].op == opcode::save && code[p].arg16 == 0) {
         ++p;
+        if (p < code.size() && code[p].op == opcode::assert_position) {
+          const auto k {static_cast<assert_kind>(code[p].arg8)};
+          if (!is_word_boundary_kind(k)) {
+            p = code.size(); // disqualify
+          }
+          else {
+            wb_lead = wb_hint_of(k);
+            ++p;
+          }
+        }
         if (p < code.size() && code[p].op == opcode::save) {
           gs = static_cast<std::int16_t>(code[p].arg16);
           ++p;
@@ -483,11 +530,39 @@ namespace real::detail {
             ++q;
             ok = true;
           }
-          if (ok && q + 1 < code.size() && code[q].op == opcode::save && code[q + 1].op == opcode::match &&
-              q + 2 == code.size()) {
-            hints.greedy_class_loop  = cls;
-            hints.greedy_group_start = gs;
-            hints.greedy_group_end   = ge;
+          std::uint8_t wb_trail {0};
+          if (q < code.size() && code[q].op == opcode::assert_position) {
+            const auto k {static_cast<assert_kind>(code[q].arg8)};
+            if (!is_word_boundary_kind(k)) {
+              ok = false;
+            }
+            else {
+              wb_trail = wb_hint_of(k);
+              ++q;
+            }
+          }
+          if (ok && q + 1 < code.size() && code[q].op == opcode::save && code[q].arg16 == 1 &&
+              code[q + 1].op == opcode::match && q + 2 == code.size() &&
+              cls >= 0 && static_cast<std::size_t>(cls) < classes.size()) {
+            // `\B` wraps need non-maximal placement — leave the general VM.
+            if (wb_lead == 2 || wb_trail == 2) {
+              // no arm
+            }
+            else {
+              hints.greedy_class_loop  = cls;
+              hints.greedy_group_start = gs;
+              hints.greedy_group_end   = ge;
+              const bool full_word {is_full_ascii_word_class(classes[static_cast<std::size_t>(cls)])};
+              if (full_word && wb_redundant_for_full_word(wb_lead, wb_trail)) {
+                // B-1: `\b\w+\b` (ASCII) ≡ `\w+` — drop boundary checks.
+                hints.wb_lead  = 0;
+                hints.wb_trail = 0;
+              }
+              else {
+                hints.wb_lead  = wb_lead;
+                hints.wb_trail = wb_trail;
+              }
+            }
           }
         }
       }
@@ -523,14 +598,25 @@ namespace real::detail {
       }
     }
 
-    // Code-point class (klass_cp + its three `klass` continuations), optional greedy `+`, optionally
-    // wrapped in one capturing group: save 0, [group-start save,] klass_cp, klass, klass, klass,
-    // [split back,] [group-end save,] save 1, match. A \w/\d/\s run scanned code point by code point.
+    // Code-point class (klass_cp + three klass continuations), optional greedy `+`, optional `\b`/`\B`
+    // wraps (Arc B), optional one capturing group. Unicode `\w+` / `\d+` / `\s+`.
+    // Full Unicode `\w` + `\b` → B-1 drop `\b`. Subset (`\d`) + `\b` → B-2 wrap.
     {
-      std::size_t  p  {0};
-      std::int16_t gs {-1};
-      if (p < code.size() && code[p].op == opcode::save) {
+      std::size_t  p       {0};
+      std::int16_t gs      {-1};
+      std::uint8_t wb_lead {0};
+      if (p < code.size() && code[p].op == opcode::save && code[p].arg16 == 0) {
         ++p;
+        if (p < code.size() && code[p].op == opcode::assert_position) {
+          const auto k {static_cast<assert_kind>(code[p].arg8)};
+          if (!is_word_boundary_kind(k)) {
+            p = code.size();
+          }
+          else {
+            wb_lead = wb_hint_of(k);
+            ++p;
+          }
+        }
         if (p < code.size() && code[p].op == opcode::save) {
           gs = static_cast<std::int16_t>(code[p].arg16);
           ++p;
@@ -554,12 +640,38 @@ namespace real::detail {
             ++q;
             ok = true;
           }
-          if (ok && q + 1 < code.size() && code[q].op == opcode::save && code[q + 1].op == opcode::match &&
-              q + 2 == code.size()) {
-            hints.greedy_cp_class      = cp_idx;
-            hints.greedy_cp_class_plus = plus;
-            hints.greedy_group_start   = gs;
-            hints.greedy_group_end     = ge;
+          std::uint8_t wb_trail {0};
+          if (q < code.size() && code[q].op == opcode::assert_position) {
+            const auto k {static_cast<assert_kind>(code[q].arg8)};
+            if (!is_word_boundary_kind(k)) {
+              ok = false;
+            }
+            else {
+              wb_trail = wb_hint_of(k);
+              ++q;
+            }
+          }
+          if (ok && q + 1 < code.size() && code[q].op == opcode::save && code[q].arg16 == 1 &&
+              code[q + 1].op == opcode::match && q + 2 == code.size() &&
+              cp_idx >= 0 && static_cast<std::size_t>(cp_idx) < cp_classes.size()) {
+            // `\B` wraps need non-maximal placement — leave the general VM.
+            if (wb_lead != 2 && wb_trail != 2) {
+              hints.greedy_cp_class      = cp_idx;
+              hints.greedy_cp_class_plus = plus;
+              hints.greedy_group_start   = gs;
+              hints.greedy_group_end     = ge;
+              const bool full_word {
+                is_full_unicode_word_cp_class(cp_classes[static_cast<std::size_t>(cp_idx)])};
+              if (full_word && wb_redundant_for_full_word(wb_lead, wb_trail)) {
+                // B-1: `\b\w+\b` ≡ `\w+` — drop boundary checks; route as bare greedy_cp.
+                hints.wb_lead  = 0;
+                hints.wb_trail = 0;
+              }
+              else {
+                hints.wb_lead  = wb_lead;
+                hints.wb_trail = wb_trail;
+              }
+            }
           }
         }
       }
@@ -910,7 +1022,7 @@ namespace real::detail {
 
     compute_first_bytes(code, classes, cp_classes, hints);
 
-    detect_fast_shapes(code, classes, cp_mark_ascii, cp_mark_offset, lookarounds, hints);
+    detect_fast_shapes(code, classes, cp_classes, cp_mark_ascii, cp_mark_offset, lookarounds, hints);
 
     // Clear every pure fast-path hint when a lookaround is present. Trailing-LA class+ already
     // left greedy_class_loop at −1 and only set trailing_* (so this wipe is a no-op for those).

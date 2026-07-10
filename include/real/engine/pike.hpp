@@ -1105,6 +1105,66 @@ namespace real::detail {
       const auto in_class = [&](std::size_t i) {
                               return tbl[static_cast<std::uint8_t>(text[i])] != 0U;
                             };
+      const auto scan_end = [&](std::size_t match_start) -> std::size_t {
+                              std::size_t match_end {match_start + 1};
+                              // OPT-C: Cascade memchr-stop after a long run; see historical comment.
+                              // Sound because run_class_loop never validates UTF-8 (test_utf8 perimeter).
+                              if constexpr (Cascade) {
+                                if (!std::is_constant_evaluated()) {
+                                  while (match_end < text.size() && in_class(match_end)) {
+                                    ++match_end;
+                                    if (match_end - match_start == cascade_run_threshold) {
+                                      match_end = run_cascade_stop(text, match_end);
+                                      break;
+                                    }
+                                  }
+                                  return match_end;
+                                }
+                              }
+                              while (match_end < text.size() && in_class(match_end)) {
+                                ++match_end;
+                              }
+                              return match_end;
+                            };
+
+      // Arc B-2: optional `\b`/`\B` — try successive maximal class runs until boundaries hold.
+      if (prog_.hints.wb_lead != 0 || prog_.hints.wb_trail != 0) {
+        if (mode == run_mode::full || mode == run_mode::prefix) {
+          if (start >= text.size() || !in_class(start)) {
+            out_slots.assign(prog_.slot_count, npos);
+            return false;
+          }
+          const std::size_t match_end {scan_end(start)};
+          if ((mode == run_mode::full && match_end != text.size()) ||
+              !wb_boundaries_ok(start, match_end)) {
+            out_slots.assign(prog_.slot_count, npos);
+            return false;
+          }
+          out_slots.assign(prog_.slot_count, npos);
+          fill_span_slots(out_slots, start, match_end);
+          return true;
+        }
+        std::size_t pos {start};
+        while (pos < text.size()) {
+          std::size_t match_start {pos};
+          while (match_start < text.size() && !in_class(match_start)) {
+            ++match_start;
+          }
+          if (match_start >= text.size()) {
+            break;
+          }
+          const std::size_t match_end {scan_end(match_start)};
+          if (wb_boundaries_ok(match_start, match_end)) {
+            out_slots.assign(prog_.slot_count, npos);
+            fill_span_slots(out_slots, match_start, match_end);
+            return true;
+          }
+          pos = match_end; // next run (e.g. "9abc def" → skip "abc", try "def")
+        }
+        out_slots.assign(prog_.slot_count, npos);
+        return false;
+      }
+
       std::size_t match_start {start};
       if (mode == run_mode::search) {
         while (match_start < text.size() && !in_class(match_start)) {
@@ -1115,35 +1175,7 @@ namespace real::detail {
         out_slots.assign(prog_.slot_count, npos);
         return false;
       }
-      // OPT-C: this is a byte-wise run whose accepted set may have a small complement (the STOP bytes).
-      // Only the Cascade instantiation carries the memchr-cascade; it advances per byte until a run
-      // passes a 32-byte threshold — a genuinely long run — then jumps to the next stop by a cascade, so
-      // a stop-dense stream of short runs stays on the per-byte path. The constant-evaluation guard is a
-      // per-call property, hoisted out of the loop; at compile time the plain loop runs. The common
-      // classes (`[a-z]+`, `\d+`) compile to the pristine per-byte loop with none of the cascade code.
-      // Sound because run_class_loop never validates UTF-8 (the OPT-C perimeter pin, test_utf8.cpp).
-      std::size_t match_end {match_start + 1};
-      if constexpr (Cascade) {
-        if (!std::is_constant_evaluated()) {
-          while (match_end < text.size() && in_class(match_end)) {
-            ++match_end;
-            if (match_end - match_start == cascade_run_threshold) {
-              match_end = run_cascade_stop(text, match_end);
-              break;
-            }
-          }
-        }
-        else {
-          while (match_end < text.size() && in_class(match_end)) {
-            ++match_end;
-          }
-        }
-      }
-      else {
-        while (match_end < text.size() && in_class(match_end)) {
-          ++match_end;
-        }
-      }
+      const std::size_t match_end {scan_end(match_start)};
       if (mode == run_mode::full && match_end != text.size()) {
         out_slots.assign(prog_.slot_count, npos);
         return false;
@@ -1310,6 +1342,63 @@ namespace real::detail {
                            return m ? dc.length : 0;
                          };
       out_slots.assign(prog_.slot_count, npos);
+      const auto extend_run = [&](std::size_t match_start) -> std::size_t {
+                                const std::size_t first {width(match_start)};
+                                if (first == 0) {
+                                  return npos;
+                                }
+                                std::size_t match_end {match_start + first};
+                                if (prog_.hints.greedy_cp_class_plus) {
+                                  while (match_end < text.size()) {
+                                    const auto lead {static_cast<std::uint8_t>(text[match_end])};
+                                    if (lead < 0x80U) {
+                                      if (asc[lead] == 0U) {
+                                        break;
+                                      }
+                                      ++match_end;
+                                      continue;
+                                    }
+                                    const detail::decoded_codepoint dc {
+                                      detail::decode_codepoint_strict(text, match_end)};
+                                    if (!dc.valid || !member_hi(dc.cp)) {
+                                      break;
+                                    }
+                                    match_end += dc.length;
+                                  }
+                                }
+                                return match_end;
+                              };
+
+      // Arc B-2: `\b`/`\B` on subset cp-class (e.g. `\b\d+\b`) — try successive runs.
+      if (prog_.hints.wb_lead != 0 || prog_.hints.wb_trail != 0) {
+        if (mode == run_mode::full || mode == run_mode::prefix) {
+          const std::size_t match_end {extend_run(start)};
+          if (match_end == npos || (mode == run_mode::full && match_end != text.size()) ||
+              !wb_boundaries_ok(start, match_end)) {
+            return false;
+          }
+          fill_span_slots(out_slots, start, match_end);
+          return true;
+        }
+        std::size_t pos {start};
+        while (pos < text.size()) {
+          std::size_t match_start {pos};
+          while (match_start < text.size() && width(match_start) == 0) {
+            ++match_start;
+          }
+          if (match_start >= text.size()) {
+            break;
+          }
+          const std::size_t match_end {extend_run(match_start)};
+          if (match_end != npos && wb_boundaries_ok(match_start, match_end)) {
+            fill_span_slots(out_slots, match_start, match_end);
+            return true;
+          }
+          pos = match_end == npos ? match_start + 1 : match_end;
+        }
+        return false;
+      }
+
       std::size_t match_start {start};
       if (mode == run_mode::search) {
         while (match_start < text.size() && width(match_start) == 0) {
@@ -1319,34 +1408,9 @@ namespace real::detail {
       if (match_start >= text.size()) {
         return false;
       }
-      // The first code point must match: this path is only chosen for `\w`/`\w+` (never nullable), so
-      // it reports a non-empty match or none — it can never produce the empty match `forbid_empty_until_`
-      // guards, which is why that state is not consulted here (see the fast-path dispatch in run()).
-      const std::size_t first {width(match_start)};
-      if (first == 0) {
-        return false;
-      }
-      std::size_t match_end {match_start + first};
-      if (prog_.hints.greedy_cp_class_plus) {
-        while (match_end < text.size()) {
-          // Tight ASCII inner loop: a byte-indexed table lookup with no decode and no call,
-          // the same one-load trick the byte-NFA scan loop uses; only a non-ASCII lead decodes.
-          const auto lead {static_cast<std::uint8_t>(text[match_end])};
-          if (lead < 0x80U) {
-            if (asc[lead] == 0U) {
-              break;
-            }
-            ++match_end;
-            continue;
-          }
-          const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, match_end)};
-          if (!dc.valid || !member_hi(dc.cp)) {
-            break;
-          }
-          match_end += dc.length;
-        }
-      }
-      if (mode == run_mode::full && match_end != text.size()) {
+      // The first code point must match: this path is only chosen for `\w`/`\w+` (never nullable).
+      const std::size_t match_end {extend_run(match_start)};
+      if (match_end == npos || (mode == run_mode::full && match_end != text.size())) {
         return false;
       }
       fill_span_slots(out_slots, match_start, match_end);
