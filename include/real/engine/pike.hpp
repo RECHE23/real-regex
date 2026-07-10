@@ -1378,13 +1378,24 @@ namespace real::detail {
      * \param[out] out_slots Receives the matched span on success.
      * \return `true` if a non-empty run was found.
      */
+    // O2r-1b (gcc-only outline of the >= 0x80 path in run_cp_class_loop): split into
+    // real/engine/cpclass_gcc.hpp (full rationale + measured numbers there), excluded from the
+    // coverage floor like simd.hpp — a branch clang never compiles shouldn't inflate this file's line
+    // count. #else (in run_cp_class_loop below) is the original nested-closure shape, untouched.
+#if defined(__GNUC__) && !defined(__clang__)
+#include "real/engine/cpclass_gcc.hpp"
+#endif
+
     template <typename OutSlots>
     constexpr bool run_cp_class_loop(std::string_view text,
                                      std::size_t      start,
                                      run_mode         mode,
                                      OutSlots&        out_slots)
     {
-      const std::size_t          cp_index {static_cast<std::size_t>(prog_.hints.greedy_cp_class)};
+      const std::size_t cp_index {static_cast<std::size_t>(prog_.hints.greedy_cp_class)};
+#if defined(__GNUC__) && !defined(__clang__)
+#include "real/engine/cpclass_gcc_loop.hpp"
+#else
       const detail::cp_class&    cc       {prog_.cp_classes[cp_index]};
       const std::uint8_t* const  asc      {cp_ascii_table(cp_index)};
       // Membership of a non-ASCII code point (>= 0x80): a one-load page-bitmap test over the two-byte
@@ -1435,6 +1446,7 @@ namespace real::detail {
                                 }
                                 return match_end;
                               };
+#endif
 
       // Arc B-2: `\b`/`\B` on subset cp-class (e.g. `\b\d+\b`) — try successive runs.
       if (prog_.hints.wb_lead != 0 || prog_.hints.wb_trail != 0) {

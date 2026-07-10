@@ -147,10 +147,19 @@ coverage: coverage-build
 # logic that CALLS these primitives stays in pike.hpp — the same C++ on every ISA — and is exercised by the
 # ordinary suite regardless of which leg compiled; only the intrinsics themselves are excluded. Guarded instead
 # by sanitize, the fuzz corpus, the correctness nets (test_quantifiers), and the twin ISA's own coverage of the
-# identical contract. llvm-cov has no per-line exclusion, so both exclusions are per-file. The floor itself
-# does NOT move for this exclusion — 95.0 stays the bar on what remains in scope.
+# identical contract. include/real/engine/cpclass_gcc.hpp and cpclass_gcc_loop.hpp (O2r-1b) are the same
+# shape again, one compiler instead of one ISA: a gcc-only fast path for run_cp_class_loop's >= 0x80 byte
+# handling, spliced into pike.hpp under #if defined(__GNUC__) && !defined(__clang__) (see that file for the
+# measured P0-callgrind numbers). clang — the only compiler this local/CI coverage build ever runs — never
+# compiles either file, by construction, so a clang-only coverage run can never line-cover them no matter how
+# thorough the tests are; the #else they sit beside (pike.hpp's original nested-closure shape) is exercised by
+# the ordinary suite exactly as before the split. Guarded instead by the gcc leg of full-local-gate (compiles
+# and functionally runs the branch), the x86 devbox A/B + callgrind (attribution: the lambda symbols are gone
+# from the gcc build), and clang's own coverage of the identical #else contract. llvm-cov has no per-line
+# exclusion, so both exclusions are per-file. The floor itself does NOT move for this exclusion — 95.0 stays
+# the bar on what remains in scope.
 COV_FLOOR := 95.0
-COV_FLOOR_IGNORE := bindings/c|include/real/engine/simd.hpp
+COV_FLOOR_IGNORE := bindings/c|include/real/engine/simd.hpp|include/real/engine/cpclass_gcc
 
 coverage-check: coverage-build
 	@pct=$$($(LLVM_COV) report $(COV_DIR)/real_tests_bin -instr-profile=$(COV_DIR)/tests.profdata \
