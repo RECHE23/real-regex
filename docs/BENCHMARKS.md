@@ -19,11 +19,11 @@ answer is not a benchmark win.
 
 | | |
 | --- | --- |
-| Version | REAL `2026.7.30` — §multi-pattern Stage-2 fused + Arc I first-byte + Arc II B1 `\b` wrap (this train); §A absolute ns/B still the dual-ISA 2026.7.26 campaign (ratios durable; re-run `make bench-engines` on both ISAs to refresh absolutes) |
+| Version | REAL `2026.7.30` + Arc B (`e38f516`) — §multi-pattern Stage-2 + Arc I/II + Arc B `\b` unlock; §E re-duel post-Arc B (this train). §A absolute ns/B still the dual-ISA 2026.7.26 campaign (ratios durable) |
 | Machines | §A on **two ISAs**: devbox (`x86-64`, g++ 13.3) *and* Apple M1 Pro (`arm64`, Apple clang 16). §B / §E on M1 Pro. §multi-pattern measured on **x86-64 devbox** (g++ 13.3, RE2 + Hyperscan 5.4) |
-| Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (built from source on x86-64 to pin the exact version); RE2 (10.0 on x86-64, 11.0 on arm64 — version-differs-by-leg, uncontested given the margins). Multi-pattern: RE2::Set, Hyperscan (optional) |
-| Python | CPython 3.14, `re` (stdlib) vs the REAL `2026.7.25` abi3 wheel (§B — not re-measured this train; §B/§E are outside this restamp's scope) |
-| Method | §A: median of N ≥ 15 paired batches (x86-64 N = 30, arm64 N = 15), bootstrap CI; match counts equal. §multi-pattern: best-of-7, equal set/count asserts, `make bench-multipattern`. **Ratios / shapes are durable; absolute ns/B and MB/s track the host** |
+| Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (built from source on x86-64 to pin the exact version); RE2 (10.0 on x86-64, 11.0 on arm64 — version-differs-by-leg, uncontested given the margins). Multi-pattern: RE2::Set, Hyperscan (optional). §E: rust `regex` 1.12.4 |
+| Python | CPython 3.14, `re` (stdlib) vs the REAL `2026.7.25` abi3 wheel (§B — not re-measured this train) |
+| Method | §A: median of N ≥ 15 paired batches (x86-64 N = 30, arm64 N = 15), bootstrap CI; match counts equal. §E: best-of-15, REAL `count_matches` vs rust `find_iter`, match counts equal. §multi-pattern: best-of-7, `make bench-multipattern`. **Ratios / shapes are durable; absolute ns/B and MB/s track the host** |
 
 ## A. C++ engine throughput — and the SIMD candidate arc closes part of the PCRE2 gap
 
@@ -316,49 +316,52 @@ Patterns with a zero-width assertion no DFA can represent throw `real::dfa_error
 
 The rust `regex` crate (a lazy-DFA engine with literal prefilters) is REAL's closest peer on the
 linear-time-guarantee axis. This duel is honest about where REAL loses: the same patterns run through both
-engines over the same corpora, `find_iter` over ~1 MB, best of 15 batches, match counts cross-checked
-equal. **Stamp:** `rust regex 1.12.4` (`find_iter` on `regex::bytes`), REAL **2026.7.11** (pre lazy-DFA /
-pre Arc B), Apple M1 Pro, both `-O3`/LTO. Absolute rows below are historical; the reading after the table
-is the **7.30 honesty re-stamp**.
+engines over the same corpora (~1 MB), best of 15 batches, match counts cross-checked equal.
+**Stamp (re-duel):** REAL **`e38f516`** = `2026.7.30` + Arc B, `rust regex 1.12.4` (`find_iter` on
+`regex::bytes`), Apple M1 Pro, both `-O3`/LTO. **Method:** REAL matching-only (`count_matches`) vs rust
+`find_iter` (spans) — engine scan cost, no capture-slot fill on either side. Corpora = `benchmarks/duel/run_duel.py`.
+Reproduce: rebuild `benchmarks/duel/real_bench` against current headers (`-O3 -flto`),
+`cargo build --release` in `benchmarks/duel/rust_bench`, then the §E cases (or `make bench-duel` for the
+related find_iter/captures apples-to-apples table in §E.3).
 
-| case | REAL ns/B (7.11) | rust ns/B | winner (then) |
-| --- | ---: | ---: | :--- |
-| class `[a-z]+` | 2.466 | 3.138 | **REAL 1.3×** |
-| digits `[0-9]+` | 2.982 | 8.039 | **REAL 2.7×** |
-| fields `[^,]+` | 3.086 | 2.791 | rust 1.1× |
-| alternation `fox\|dog\|cat` | 1.365 | 0.876 | rust 1.6× |
-| literal `dog` | 0.728 | 0.274 | rust 2.7× |
-| ident `(\w+)_(\w+)` | 59.865 | 4.662 | rust 12.8× *(stale)* |
-| word-boundary `\b\w+\b` | 41.531 | 2.671 | rust 15.5× *(stale)* |
-| email `(\w+)@(\w+)` | 44.551 | 1.806 | rust 24.7× *(stale)* |
-| date (no-match) `\d{4}-\d{2}-\d{2}` | 0.450 | 0.012 | rust 36.6× |
+| case | REAL ns/B | rust ns/B | winner | Δ REAL vs 7.11 |
+| --- | ---: | ---: | :--- | :--- |
+| class `[a-z]+` | 1.772 | 3.166 | **REAL 1.8×** | ↓1.4× (was 2.47) |
+| digits `[0-9]+` | 2.266 | 8.140 | **REAL 3.6×** | ↓1.3× (was 2.98) |
+| fields `[^,]+` | 2.830 | 2.805 | ~tie (rust 1.0×) | ↓1.1× (was 3.09) |
+| alternation `fox\|dog\|cat` | 1.035 | 0.869 | rust 1.2× | ↓1.3× (was 1.36) |
+| literal `dog` | 0.691 | 0.274 | rust 2.5× | ~flat (was 0.73) |
+| ident `(\w+)_(\w+)` | 48.518 | 4.686 | rust 10.4× | ↓1.2× only (was 59.9) |
+| word-boundary `\b\w+\b` | 4.662 | 2.684 | rust 1.7× | **↓8.9×** (was 41.5) |
+| bare `\w+` (residual probe) | 4.678 | 3.151 | rust 1.5× | *(new row)* |
+| email `(\w+)@(\w+)` | 5.269 | 1.798 | rust 2.9× | **↓8.5×** (was 44.6) |
+| date (no-match) `\d{4}-\d{2}-\d{2}` | 0.023 | 0.013 | rust 1.8× | **↓20×** (was 0.45) |
 
-**7.30 re-read (same host family, post lazy-DFA + Arc B — internal MB/s, not a full rust re-duel):**
+**Reading (post lazy-DFA + Arc B, same-host re-duel):**
 
-- **Capture / email / ident rows are no longer the 12–25× story.** Lazy-DFA routes capture-free and many
-  capture shapes for span location; S-MEASURE (2026-07-09) isolated **slot-tracking at only ~1.0–1.3×**
-  (capturing vs non-capturing, same shape, span-only). Email-like `(\w+)@(\w+)` ~**420 MB/s** with
-  lazy-DFA on dense text — the 7.11 email row is **stale**.
-- **Word-boundary was a different lever:** `\b` forced `eligible=false` (no DFA). S-MEASURE: `\b\w+\b`
-  ~26 MB/s vs `\w+` ~257 (**~10×**). **Arc B (7.30+):** `\b\w+\b` simplifies to `\w+` when the class is
-  full word (parity with bare `\w+`, ~190 MB/s on a dense word corpus); `\b[a-z]+\b` / `\b\d+\b` use a
-  class-loop wrap with O(1) boundary checks (large recovery vs pre-Arc-B Pike).
-- **Still open vs rust (honest):** literal / alternation prefilters (Teddy/memchr), and a full same-host
-  re-duel of the §E table after Arc B (not re-run for this stamp — shapes above are the durable claim).
+- **Veto A holds (captures are not the 12–25× story).** Email `(\w+)@(\w+)` is **5.3 ns/B** (was 44.6) —
+  **2.9×** behind rust spans, not 25×. S-MEASURE already showed slot-tracking alone is only ~1.0–1.3×;
+  the remaining email gap is denser DFA / prefilter work, not capture slots. **Ident** `(\w+)_(\w+)` is the
+  outlier still at **~48 ns/B / rust 10×** on this dense `id_42` corpus (only mild Δ vs 7.11) — a separate
+  residual (dense `_`-joined `\w` scans), not a reason to re-open “slots first.”
+- **Arc B closed the `\b` lockout; residual is raw `\w+`.** `\b\w+\b` **4.662 ≈ bare `\w+` 4.678** (parity —
+  the B-1 simplify is live). vs rust that is **1.5–1.7×**, not 15×. The open word gap is **Unicode
+  `klass_cp` / word-class throughput vs rust’s DFA**, distinct from word-boundary handling.
+- **Class scans still lead:** `[a-z]+` / `[0-9]+` **REAL 1.8× / 3.6×**.
+- **Still open vs rust (honest):** literal / alternation prefilters (Teddy/memchr — rust 1.2–2.5×);
+  raw `\w+` klass_cp vs DFA (~1.5×); dense ident `(\w+)_(\w+)` on this corpus; date no-match is now
+  **1.8×** (rare-byte path), not 37×.
 
 Two rows carry a caveat, not a verdict:
 
 - The **date row is a no-match scan** — the corpus contains *no* `yyyy-mm-dd`, so both engines only reject.
-  rust's required-literal prefilter jumps on the fixed `-`; REAL, scanning the first-byte digit class per
-  byte, grinds. This is a **prefilter gap, not a capture cost** — and now a closed one for fixed-width
-  shapes: a *rare-required-byte* hint makes REAL `memchr` the same `-`. For the explicit-class
-  `[0-9]{4}-[0-9]{2}-[0-9]{2}` it drops the no-match scan from **0.449 → 0.023 ns/B** (within 1.8× of rust,
-  from 37×), and on a corpus with sparse real dates REAL now *beats* rust **1.78×** (0.91 vs 1.63 ns/B —
-  memchr on the rare byte, then its fast digit verify). The `\d{4}-…` row above keeps the class scan: text
-  Unicode `\d` is a variable-width `klass_cp`, so the `-` is not at a byte-fixed offset and the hint soundly
-  declines — a `re.ASCII` `\d` or an explicit class gets it.
-- The **capture rows are what the lazy-DFA arc targeted** — the rows above are recorded at their pre-arc
-  cost, deliberately; §E.1 measures the arc's delivered result and the gap that survives it.
+  rust’s required-literal prefilter jumps on the fixed `-`. REAL’s rare-required-byte path now lands at
+  **0.023 ns/B** (within **1.8×** of rust). On a corpus with sparse real dates REAL can *beat* rust
+  (~1.8× — memchr on the rare byte, then digit verify). Explicit `[0-9]{4}-…` gets the fixed-offset hint;
+  text Unicode `\d` is variable-width `klass_cp` when the hint would be unsound.
+- **Capture apples-to-apples** (REAL `find_iter` full Match vs rust `captures_iter`) is §E.1–E.3 — email
+  dense is ~parity with rust captures; the table above is span/count-only so it does not charge either
+  side for group fill.
 
 ### E.1 The lazy-DFA arc: what it bought, and the gap that remains
 
