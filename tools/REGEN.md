@@ -42,6 +42,24 @@ derived from `unicodedata`), by `tools/gen_unicode_binprop_tables.py`, into
 `include/real/unicode/unicode_binprop.hpp`. Do not hand-edit any of the three; re-fetch the same
 URLs at the pinned version to update, and re-run the generator.
 
+## Script_Extensions source data (`tools/ucd/`)
+
+`tools/ucd/ScriptExtensions.txt` and `tools/ucd/PropertyValueAliases.txt` are committed, unmodified
+UCD 16.0.0 source files, fetched from:
+
+- `https://www.unicode.org/Public/16.0.0/ucd/ScriptExtensions.txt`
+- `https://www.unicode.org/Public/16.0.0/ucd/PropertyValueAliases.txt`
+
+Together they are the source for `\p{scx=...}`. `ScriptExtensions.txt` lists, in the short 4-letter
+UAX24 script codes (`Latn`, `Grek`, …), the code points whose Script_Extensions set is an explicit
+override of more than one script (e.g. U+0660 ARABIC-INDIC DIGIT ZERO: `Script=Arabic` but
+`scx={Arab, Thaa, Yezi, ...}`); every other code point's scx defaults to its single `Script` value.
+`PropertyValueAliases.txt` is needed only to map those short codes to the long names REAL's `script`
+enum already uses (`Scripts.txt` itself never uses the short form) — `tools/gen_unicode_scx_tables.py`
+reuses `gen_unicode_script_tables.py`'s own `script` enum and aliases rather than redefining them.
+Emits `include/real/unicode/unicode_scx.hpp`. Do not hand-edit either file; re-fetch the same URLs at
+the pinned version to update, and re-run the generator.
+
 ## When to regenerate
 
 - After a CPython upgrade that bumps the bundled Unicode data version (`unicodedata.unidata_version`).
