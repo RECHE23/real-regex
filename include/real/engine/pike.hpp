@@ -368,15 +368,17 @@ namespace real::detail {
    */
   struct pike_state : basic_pike_state<thread_list, std::vector<eps_entry>>
   {
-    lookaround_scratch         lookaround;              //!< Isolated sub-scratch for bounded lookaround evaluation.
-    capture_pool               pool;                    //!< OPT D1: copy-on-write capture blocks (heap-backed).
-    std::optional<lazy_dfa>    fwd_dfa;                 //!< OPT lazy-DFA: forward pass (built lazily, cache persists across a find_iter).
-    std::optional<reverse_dfa> rev_dfa;                 //!< OPT lazy-DFA: the reverse start-finder.
-    const void*                dfa_program   {nullptr}; //!< The program the DFAs were built for (rebuild if it changes).
-    std::optional<reverse_dfa> il_prefix_rev;           //!< IL: the inner-literal prefix reverse DFA (built once per program).
-    const void*                il_prefix_for {nullptr}; //!< IL: the prefix program \ref il_prefix_rev was built for.
-    const void*                il_text       {nullptr}; //!< IL: the haystack \ref il_abandoned refers to (reset the flag when it changes).
-    bool                       il_abandoned  {false};   //!< IL: a linearity guard tripped on this haystack — stay on the core.
+    lookaround_scratch         lookaround;                  //!< Isolated sub-scratch for bounded lookaround evaluation.
+    capture_pool               pool;                        //!< OPT D1: copy-on-write capture blocks (heap-backed).
+    std::optional<lazy_dfa>    fwd_dfa;                     //!< OPT lazy-DFA: forward pass (built lazily, cache persists across a find_iter).
+    std::optional<reverse_dfa> rev_dfa;                     //!< OPT lazy-DFA: the reverse start-finder.
+    const void*                dfa_program       {nullptr}; //!< The program the DFAs were built for (rebuild if it changes).
+    std::optional<reverse_dfa> il_prefix_rev;               //!< IL: the inner-literal prefix reverse DFA (built once per program).
+    const void*                il_prefix_for     {nullptr}; //!< IL: the prefix program \ref il_prefix_rev was built for.
+    const void*                il_text           {nullptr}; //!< IL: the haystack \ref il_abandoned refers to (reset the flag when it changes).
+    bool                       il_abandoned      {false};   //!< IL: a linearity/density guard tripped on this haystack — stay on the core.
+    std::uint32_t              il_density_cands  {};        //!< O1: IL candidates seen on this haystack (density sample).
+    std::size_t                il_density_origin {npos};    //!< O1: byte offset of the first IL candidate this haystack.
   };
 
   /*!
@@ -480,8 +482,10 @@ namespace real::detail {
           // the first candidate, never here), so it wins at every size; and the prefix byte-program is a
           // per-regex immutable (built once, amortized by any later use — the lazy-DFA warmup's own contract).
           if (state_.il_text != static_cast<const void*>(text.data())) {
-            state_.il_abandoned = false; // a fresh haystack: re-enable the route and re-evaluate its guards
-            state_.il_text      = static_cast<const void*>(text.data());
+            state_.il_abandoned      = false; // a fresh haystack: re-enable the route and re-evaluate its guards
+            state_.il_density_cands  = 0;
+            state_.il_density_origin = npos;
+            state_.il_text           = static_cast<const void*>(text.data());
           }
           if (!state_.il_abandoned) {
             bool       abandon {false};
@@ -492,7 +496,7 @@ namespace real::detail {
               return matched;
             }
             prof::tick_event(prof::event::il_abandoned);
-            state_.il_abandoned = true; // a linearity guard tripped: stay on the core for the rest of this haystack
+            state_.il_abandoned = true; // linearity or density guard: stay on the core for the rest of this haystack
           }
         }
       }
@@ -796,6 +800,28 @@ namespace real::detail {
             return false;
           }
         }
+        // O1 density gate: sticky candidate sample across the haystack (find_iter). Capture-free +
+        // DFA-eligible only — see \ref il_density_milli_threshold. Checked before reverse/confirm so a
+        // dense stream of successful hits still switches after K candidates.
+        if constexpr (requires(State & s) {
+          s.il_density_cands;
+        }) {
+          if (state_.il_density_origin == npos) {
+            state_.il_density_origin = h;
+          }
+          ++state_.il_density_cands;
+          if (state_.il_density_cands == il_density_probe_candidates && prog_.slot_count <= 2) {
+            const std::size_t origin {state_.il_density_origin};
+            const std::size_t span   {(h >= origin) ? (h - origin + 1) : 1};
+            if (static_cast<std::size_t>(state_.il_density_cands) * 1000U / span >=
+                il_density_milli_threshold) {
+              if (prog_.immut != nullptr && prog_.immut->byte_prog.eligible) {
+                abandon = true;
+                return false;
+              }
+            }
+          }
+        }
         if (h < min_pre_start) {
           abandon = true; // guard 2: the scan is regressing into confirmed territory -> retry on the core
           return false;
@@ -900,6 +926,19 @@ namespace real::detail {
     //! \brief Below this input length the lazy-DFA routing is skipped (the two-pass setup does not amortise
     //!        on a short subject — the Pike VM goes direct). A measured, documented threshold.
     static constexpr std::size_t lazy_dfa_min_input {512};
+
+    /*!
+     * \brief O1 density-gate sample size and threshold (inner-literal → core/DFA when candidate density is high).
+     *
+     * Measured 2026-07 on M1 Pro, pattern \c (?:\\w+)_(?:\\w+), 300&nbsp;KB corpora, best-of clean timing
+     * vs \c il_off: dens = candidates/byte ≈ underscore/byte for this shape. Crossover IL≈DFA at dens ≈ 0.037;
+     * dens 0.05 → IL 1.3× worse; dens 0.077 → 2.3×; dens 0.17 (P0 \c ident_dense) → ~8×. Threshold 60/1000
+     * (dens 0.06) sits conservatively above crossover so sparse IL wins (dens ≪ 0.01) stay on IL. Capture-free
+     * only (\c slot_count ≤ 2): with groups, IL still beat forced DFA on dense (P0). Probe after K candidates
+     * across the haystack (sticky on \ref pike_state::il_density_cands).
+     */
+    static constexpr std::uint32_t il_density_probe_candidates {8};
+    static constexpr std::size_t   il_density_milli_threshold  {60};
 
     //! \brief Build the forward/reverse DFAs into the reusable state on first eligible use, or rebuild them
     //!        if the state is now bound to a different program (its `code` pointer changed). The cache then

@@ -338,47 +338,49 @@ check-layers:
 # wait for sanitize/python. Compound steps (lint | tee) use `set -euo pipefail`.
 full-local-gate:
 	@echo "full-local-gate: start (fail-fast — cheap first, first red stops the train)"
-	@echo "── [1/17] format-check"
+	@echo "── [1/18] format-check"
 	@$(MAKE) format-check
-	@echo "── [2/17] version-check"
+	@echo "── [2/18] version-check"
 	@$(MAKE) version-check
-	@echo "── [3/17] check-layers"
+	@echo "── [3/18] check-layers"
 	@$(MAKE) check-layers
-	@echo "── [4/17] check-pins"
+	@echo "── [4/18] check-pins"
 	@$(MAKE) check-pins
-	@echo "── [5/17] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
+	@echo "── [5/18] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
 	@$(MAKE) doc-no-coverage
-	@echo "── [6/17] doc-check (CI-pinned Doxygen when Docker is available)"
+	@echo "── [6/18] doc-check (CI-pinned Doxygen when Docker is available)"
 	@$(MAKE) doc-check
-	@echo "── [7/17] misra (single synthetic TU)"
+	@echo "── [7/18] misra (single synthetic TU)"
 	@$(MAKE) misra
-	@echo "── [8/17] c-test"
+	@echo "── [8/18] c-test"
 	@$(MAKE) c-test
-	@echo "── [9/17] matrix-gate"
+	@echo "── [9/18] matrix-gate"
 	@$(MAKE) matrix-gate
-	@echo "── [10/17] fowler-compat"
+	@echo "── [10/18] fowler-compat"
 	@$(MAKE) fowler-compat
-	@echo "── [11/17] exhaustive-compat"
+	@echo "── [11/18] exhaustive-compat"
 	@$(MAKE) exhaustive-compat
-	@echo "── [12/17] test (default CXX)"
+	@echo "── [12/18] test (default CXX)"
 	@$(MAKE) test
-	@echo "── [13/17] rust-test"
+	@echo "── [13/18] rust-test"
 	@$(MAKE) rust-test
-	@echo "── [14/17] rust-publish-check"
+	@echo "── [14/18] rust-publish-check"
 	@$(MAKE) rust-publish-check
-	@echo "── [15/17] python-test"
+	@echo "── [15/18] python-test"
 	@$(MAKE) python-test
-	@echo "── [16/17] lint"
+	@echo "── [16/18] lint"
 	@set -euo pipefail; \
 	  mkdir -p $(BUILD); \
 	  $(MAKE) lint 2>&1 | tee $(BUILD)/lint.log; \
 	  if grep -qE 'warning:|error:' $(BUILD)/lint.log; then \
 	    echo "full-local-gate: FAIL at lint (see $(BUILD)/lint.log)"; exit 1; \
 	  fi
-	@echo "── [17/17] test (GCC leg) + sanitize (slowest last)"
+	@echo "── [17/18] test (GCC leg) + sanitize (slowest last)"
 	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "full-local-gate: WARN — $(GXX) absent, GCC leg skipped (CI covers it)"; fi
 	@$(MAKE) sanitize
-	@echo "full-local-gate: ALL gates green (cheap→doc→tests→lint→sanitize; first red would have stopped the train)"
+	@echo "── [18/18] coverage-check (line floor $(COV_FLOOR)% — closes the P0 gate hole)"
+	@$(MAKE) coverage-check
+	@echo "full-local-gate: ALL gates green (cheap→doc→tests→lint→sanitize→coverage; first red would have stopped the train)"
 
 # doc-check builds the docs under the EXACT CI Doxygen (1.9.8, in Docker) via the shared SciForge tool,
 # so a warning the developer's newer local Doxygen tolerates cannot slip past to CI or a release (the
