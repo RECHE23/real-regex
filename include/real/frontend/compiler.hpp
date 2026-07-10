@@ -139,8 +139,9 @@ namespace real::detail {
       prog.hints        = analyze_program(prog.code, prog.classes, prog.cp_classes, prog.cp_ranges,
                                           prog.codepoint_mark_ascii, prog.codepoint_mark_offset,
                                           prog.lookarounds);
-      // The required inner literal + its prefix boundary (a single AST walk). Recorded for the inner-literal
-      // search path; not yet routed on. Kept off the program code, so byte-identity is untouched.
+      // The required inner literal + its prefix boundary (a single AST walk). Recorded in hints for the
+      // inner-literal search route (pike_vm::run dispatches to run_inner_literal); kept off the program
+      // code, so byte-identity is untouched.
       const inner_literal il {extract_inner_literal(tree_)};
       prog.hints.inner_literal        = il.bytes;
       prog.hints.inner_literal_len    = il.len;
