@@ -72,6 +72,62 @@ namespace real::detail {
     return 0;
   }
 
+  /*!
+   * \brief Peel an optional lead `\b`/`\B` at \p p (typically after `save 0`).
+   *
+   * If \p p is not an assert, leaves \p lead at 0 and returns true. If it is a word-boundary
+   * assert, records the hint, advances \p p, returns true. If it is any other assert, returns
+   * false (shape disqualified for wb-wrapping fast paths).
+   *
+   * \param[in]     code Instruction stream.
+   * \param[in,out] p    Program counter (advanced past the lead assert when peeled).
+   * \param[out]    lead Hint 0/1/2.
+   * \return false if a non-wb lead assert blocks the shape.
+   */
+  [[nodiscard]] constexpr bool peel_optional_lead_wb(std::span<const instr> code,
+                                                     std::size_t&           p,
+                                                     std::uint8_t&          lead) noexcept
+  {
+    lead = 0;
+    if (p >= code.size() || code[p].op != opcode::assert_position) {
+      return true;
+    }
+    const auto k {static_cast<assert_kind>(code[p].arg8)};
+    if (!is_word_boundary_kind(k)) {
+      return false;
+    }
+    lead = wb_hint_of(k);
+    ++p;
+    return true;
+  }
+
+  /*!
+   * \brief Peel an optional trail `\b`/`\B` at \p p (before closing `save 1` / exit).
+   *
+   * Same contract as \ref peel_optional_lead_wb for a trailing assert.
+   *
+   * \param[in]     code  Instruction stream.
+   * \param[in,out] p     Program counter (advanced past the trail assert when peeled).
+   * \param[out]    trail Hint 0/1/2.
+   * \return false if a non-wb trail assert blocks the shape.
+   */
+  [[nodiscard]] constexpr bool peel_optional_trail_wb(std::span<const instr> code,
+                                                      std::size_t&           p,
+                                                      std::uint8_t&          trail) noexcept
+  {
+    trail = 0;
+    if (p >= code.size() || code[p].op != opcode::assert_position) {
+      return true;
+    }
+    const auto k {static_cast<assert_kind>(code[p].arg8)};
+    if (!is_word_boundary_kind(k)) {
+      return false;
+    }
+    trail = wb_hint_of(k);
+    ++p;
+    return true;
+  }
+
   //! \brief True if \p cls is exactly the ASCII word set `[0-9A-Za-z_]` (`\w` under bytes/`re.A`).
   [[nodiscard]] constexpr bool is_full_ascii_word_class(const char_class& cls) noexcept
   {
@@ -158,6 +214,46 @@ namespace real::detail {
       return false;
     }
     return lead == 1 || trail == 1;
+  }
+
+  /*!
+   * \brief B-1/B-2 policy for class / cp-class loops under optional `\b` wraps.
+   *
+   * Unarms on `\B` or on a non-word-subset class under `\b` (superset maximal-run is unsound).
+   * Full word + `\b` drops boundaries (B-1). Proper word subset keeps the wrap (B-2). Bare
+   * (no `\b`) arms with zero wb hints.
+   *
+   * \param[in]  full_word Exact `\w` class (ASCII or Unicode table identity).
+   * \param[in]  word_sub  Non-empty subset of `\w`.
+   * \param[in]  lead      Peeled lead hint.
+   * \param[in]  trail     Peeled trail hint.
+   * \param[out] out_lead  Hints to store (0 when dropped).
+   * \param[out] out_trail Hints to store (0 when dropped).
+   * \return true if the fast path should arm.
+   */
+  [[nodiscard]] constexpr bool resolve_class_wb_hints(bool          full_word,
+                                                      bool          word_sub,
+                                                      std::uint8_t  lead,
+                                                      std::uint8_t  trail,
+                                                      std::uint8_t& out_lead,
+                                                      std::uint8_t& out_trail) noexcept
+  {
+    if (lead == 2 || trail == 2) {
+      return false;
+    }
+    const bool has_wb {lead != 0 || trail != 0};
+    if (has_wb && !full_word && !word_sub) {
+      return false;
+    }
+    if (has_wb && word_sub && !(full_word && wb_redundant_for_full_word(lead, trail))) {
+      out_lead  = lead;
+      out_trail = trail;
+    }
+    else {
+      out_lead  = 0;
+      out_trail = 0;
+    }
+    return true;
   }
 
   //! \brief True if every code point in [\p lo, \p hi] is a Unicode word char (covered by \ref word_ranges).
@@ -250,27 +346,21 @@ namespace real::detail {
         code[code_size - 2].op != opcode::save || code[code_size - 2].arg16 != 1) {
       return false;
     }
-    std::uint8_t  wb_lead  {0};
-    std::uint8_t  wb_trail {0};
-    std::size_t   body     {1};
-    std::size_t   exit_pc  {code_size - 2}; // save 1
-    // Optional trail \b/\B immediately before save 1.
+    std::uint8_t wb_lead  {0};
+    std::uint8_t wb_trail {0};
+    std::size_t  body     {1};
+    std::size_t  exit_pc  {code_size - 2}; // save 1
+    // Optional trail \b/\B immediately before save 1 (branches jump to it).
     if (exit_pc >= 2 && code[exit_pc - 1].op == opcode::assert_position) {
-      const auto k {static_cast<assert_kind>(code[exit_pc - 1].arg8)};
-      if (!is_word_boundary_kind(k)) {
+      std::size_t t {exit_pc - 1};
+      if (!peel_optional_trail_wb(code, t, wb_trail)) {
         return false;
       }
-      wb_trail = wb_hint_of(k);
-      exit_pc  = exit_pc - 1; // branches jump to the trail assert (or previously to save 1)
+      exit_pc = exit_pc - 1;
     }
     // Optional lead \b/\B immediately after save 0.
-    if (body < exit_pc && code[body].op == opcode::assert_position) {
-      const auto k {static_cast<assert_kind>(code[body].arg8)};
-      if (!is_word_boundary_kind(k)) {
-        return false;
-      }
-      wb_lead = wb_hint_of(k);
-      ++body;
+    if (!peel_optional_lead_wb(code, body, wb_lead)) {
+      return false;
     }
     if (body >= exit_pc) {
       return false;
@@ -615,23 +705,15 @@ namespace real::detail {
                                     pattern_hints&                  hints)
   {
     // "class+" shape: save 0, [optional \b/\B,] [group-start save,] klass, split(back, exit),
-    // [group-end save,] [optional \b/\B,] save 1, match. Arc B: lead/trail word-boundary allowed.
-    // Full ASCII `\w` + `\b` only → B-1 drop `\b` (redundant). Subset class + `\b` → B-2 wrap.
+    // [group-end save,] [optional \b/\B,] save 1, match. Arc B via peel + resolve_class_wb_hints.
     {
       std::size_t  p       {0};
       std::int16_t gs      {-1};
       std::uint8_t wb_lead {0};
       if (p < code.size() && code[p].op == opcode::save && code[p].arg16 == 0) {
         ++p;
-        if (p < code.size() && code[p].op == opcode::assert_position) {
-          const auto k {static_cast<assert_kind>(code[p].arg8)};
-          if (!is_word_boundary_kind(k)) {
-            p = code.size(); // disqualify
-          }
-          else {
-            wb_lead = wb_hint_of(k);
-            ++p;
-          }
+        if (!peel_optional_lead_wb(code, p, wb_lead)) {
+          p = code.size(); // non-wb lead assert — disqualify
         }
         if (p < code.size() && code[p].op == opcode::save) {
           gs = static_cast<std::int16_t>(code[p].arg16);
@@ -650,45 +732,22 @@ namespace real::detail {
             ok = true;
           }
           std::uint8_t wb_trail {0};
-          if (q < code.size() && code[q].op == opcode::assert_position) {
-            const auto k {static_cast<assert_kind>(code[q].arg8)};
-            if (!is_word_boundary_kind(k)) {
-              ok = false;
-            }
-            else {
-              wb_trail = wb_hint_of(k);
-              ++q;
-            }
+          if (!peel_optional_trail_wb(code, q, wb_trail)) {
+            ok = false;
           }
           if (ok && q + 1 < code.size() && code[q].op == opcode::save && code[q].arg16 == 1 &&
               code[q + 1].op == opcode::match && q + 2 == code.size() &&
               cls >= 0 && static_cast<std::size_t>(cls) < classes.size()) {
-            // `\B` wraps need non-maximal placement — leave the general VM.
-            if (wb_lead != 2 && wb_trail != 2) {
-              const char_class& cc        {classes[static_cast<std::size_t>(cls)]};
-              const bool        full_word {is_full_ascii_word_class(cc)};
-              const bool        word_sub  {is_ascii_word_subset_class(cc)};
-              const bool        has_wb    {wb_lead != 0 || wb_trail != 0};
-              // Supersets / non-word members under `\b` → general VM (maximal-run wrap unsound).
-              if (has_wb && !full_word && !word_sub) {
-                // leave unarmed
-              }
-              else {
-                hints.greedy_class_loop  = cls;
-                hints.greedy_group_start = gs;
-                hints.greedy_group_end   = ge;
-                // B-2 wrap only for proper word subsets under `\b`. Full `\w` with `\b` is B-1
-                // (drop boundaries). Bare class loops keep wb hints at 0.
-                if (has_wb && word_sub &&
-                    !(full_word && wb_redundant_for_full_word(wb_lead, wb_trail))) {
-                  hints.wb_lead  = wb_lead;
-                  hints.wb_trail = wb_trail;
-                }
-                else {
-                  hints.wb_lead  = 0;
-                  hints.wb_trail = 0;
-                }
-              }
+            const char_class& cc        {classes[static_cast<std::size_t>(cls)]};
+            std::uint8_t      out_lead  {0};
+            std::uint8_t      out_trail {0};
+            if (resolve_class_wb_hints(is_full_ascii_word_class(cc), is_ascii_word_subset_class(cc),
+                                       wb_lead, wb_trail, out_lead, out_trail)) {
+              hints.greedy_class_loop  = cls;
+              hints.greedy_group_start = gs;
+              hints.greedy_group_end   = ge;
+              hints.wb_lead            = out_lead;
+              hints.wb_trail           = out_trail;
             }
           }
         }
@@ -726,23 +785,15 @@ namespace real::detail {
     }
 
     // Code-point class (klass_cp + three klass continuations), optional greedy `+`, optional `\b`/`\B`
-    // wraps (Arc B), optional one capturing group. Unicode `\w+` / `\d+` / `\s+`.
-    // Full Unicode `\w` + `\b` → B-1 drop `\b`. Subset (`\d`) + `\b` → B-2 wrap.
+    // wraps (Arc B), optional one capturing group. Unicode `\w+` / `\d+` / `\s+` via peel + resolve.
     {
       std::size_t  p       {0};
       std::int16_t gs      {-1};
       std::uint8_t wb_lead {0};
       if (p < code.size() && code[p].op == opcode::save && code[p].arg16 == 0) {
         ++p;
-        if (p < code.size() && code[p].op == opcode::assert_position) {
-          const auto k {static_cast<assert_kind>(code[p].arg8)};
-          if (!is_word_boundary_kind(k)) {
-            p = code.size();
-          }
-          else {
-            wb_lead = wb_hint_of(k);
-            ++p;
-          }
+        if (!peel_optional_lead_wb(code, p, wb_lead)) {
+          p = code.size();
         }
         if (p < code.size() && code[p].op == opcode::save) {
           gs = static_cast<std::int16_t>(code[p].arg16);
@@ -768,51 +819,35 @@ namespace real::detail {
             ok = true;
           }
           std::uint8_t wb_trail {0};
-          if (q < code.size() && code[q].op == opcode::assert_position) {
-            const auto k {static_cast<assert_kind>(code[q].arg8)};
-            if (!is_word_boundary_kind(k)) {
-              ok = false;
-            }
-            else {
-              wb_trail = wb_hint_of(k);
-              ++q;
-            }
+          if (!peel_optional_trail_wb(code, q, wb_trail)) {
+            ok = false;
           }
           if (ok && q + 1 < code.size() && code[q].op == opcode::save && code[q].arg16 == 1 &&
               code[q + 1].op == opcode::match && q + 2 == code.size() &&
               cp_idx >= 0 && static_cast<std::size_t>(cp_idx) < cp_classes.size()) {
-            // `\B` wraps need non-maximal placement — leave the general VM.
-            if (wb_lead != 2 && wb_trail != 2) {
-              const bool has_wb {wb_lead != 0 || wb_trail != 0};
-              if (!has_wb) {
-                // Bare `\w+` / `\d+` / `\s+` — no boundary analysis (keeps constexpr light).
+            const bool has_wb {wb_lead != 0 || wb_trail != 0};
+            // Bare path: no Unicode table walk (keeps constexpr light for static_regex).
+            if (!has_wb) {
+              hints.greedy_cp_class      = cp_idx;
+              hints.greedy_cp_class_plus = plus;
+              hints.greedy_group_start   = gs;
+              hints.greedy_group_end     = ge;
+              hints.wb_lead              = 0;
+              hints.wb_trail             = 0;
+            }
+            else {
+              const cp_class& cc        {cp_classes[static_cast<std::size_t>(cp_idx)]};
+              std::uint8_t    out_lead  {0};
+              std::uint8_t    out_trail {0};
+              if (resolve_class_wb_hints(is_full_unicode_word_cp_class(cc, cp_ranges),
+                                         is_unicode_word_subset_cp_class(cc, cp_ranges), wb_lead,
+                                         wb_trail, out_lead, out_trail)) {
                 hints.greedy_cp_class      = cp_idx;
                 hints.greedy_cp_class_plus = plus;
                 hints.greedy_group_start   = gs;
                 hints.greedy_group_end     = ge;
-                hints.wb_lead              = 0;
-                hints.wb_trail             = 0;
-              }
-              else {
-                const cp_class& cc        {cp_classes[static_cast<std::size_t>(cp_idx)]};
-                const bool      full_word {is_full_unicode_word_cp_class(cc, cp_ranges)};
-                const bool      word_sub  {is_unicode_word_subset_cp_class(cc, cp_ranges)};
-                // Supersets under `\b` (e.g. `[\w😀]`) → general VM (maximal-run wrap unsound).
-                if (full_word || word_sub) {
-                  hints.greedy_cp_class      = cp_idx;
-                  hints.greedy_cp_class_plus = plus;
-                  hints.greedy_group_start   = gs;
-                  hints.greedy_group_end     = ge;
-                  if (full_word && wb_redundant_for_full_word(wb_lead, wb_trail)) {
-                    hints.wb_lead  = 0;
-                    hints.wb_trail = 0;
-                  }
-                  else {
-                    // B-2: word subset (e.g. `\d`) + `\b` wrap.
-                    hints.wb_lead  = wb_lead;
-                    hints.wb_trail = wb_trail;
-                  }
-                }
+                hints.wb_lead              = out_lead;
+                hints.wb_trail             = out_trail;
               }
             }
           }
@@ -840,18 +875,11 @@ namespace real::detail {
       bool         saw_body    {};  // true once a consuming op has been seen (trail assert only after)
       if (i < code.size() && code[i].op == opcode::save && code[i].arg16 == 0) {
         ++i; // opening save (slot 0)
-        // Optional lead \b/\B.
-        if (i < code.size() && code[i].op == opcode::assert_position) {
-          const auto k {static_cast<assert_kind>(code[i].arg8)};
-          if (!is_word_boundary_kind(k)) {
-            // Non-wb lead assert: not this shape (keep on VM / other paths).
-            i = code.size();
-          }
-          else {
-            wb_lead = wb_hint_of(k);
-            ++i;
-            body_pc = static_cast<std::uint8_t>(i);
-          }
+        if (!peel_optional_lead_wb(code, i, wb_lead)) {
+          i = code.size(); // non-wb lead — not this shape
+        }
+        else if (wb_lead != 0) {
+          body_pc = static_cast<std::uint8_t>(i);
         }
         while (i < code.size()) {
           const opcode op {code[i].op};
@@ -878,12 +906,9 @@ namespace real::detail {
           }
           else if (op == opcode::assert_position && saw_body && wb_trail == 0) {
             // Single trailing \b/\B immediately before save 1.
-            const auto k {static_cast<assert_kind>(code[i].arg8)};
-            if (!is_word_boundary_kind(k)) {
-              break;
+            if (!peel_optional_trail_wb(code, i, wb_trail)) {
+              break; // non-wb trail assert
             }
-            wb_trail = wb_hint_of(k);
-            ++i;
           }
           else {
             break; // split/jump/klass_cp/lookaround/extra assert disqualify

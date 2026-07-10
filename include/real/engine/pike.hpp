@@ -1530,7 +1530,17 @@ namespace real::detail {
       return s + consumed;
     }
 
-    //! \brief Arc II B1: O(1) lead/trail `\b`/`\B` check at match [s, e).
+    /*!
+     * \brief O(1) lead/trail `\b`/`\B` check at match bounds [\p s, \p e).
+     *
+     * Single verification helper for every wb-wrapping fast path (class-loop, cp-class,
+     * fixed-shape, literal, alternation). Hints 0/1/2 from \ref pattern_hints::wb_lead /
+     * \ref pattern_hints::wb_trail.
+     *
+     * \param[in] s Match start (lead assert position).
+     * \param[in] e Match end (trail assert position).
+     * \return true if both configured boundaries hold (or are unset).
+     */
     [[nodiscard]] constexpr bool wb_boundaries_ok(std::size_t s,
                                                   std::size_t e) const
     {
