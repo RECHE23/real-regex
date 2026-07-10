@@ -56,7 +56,7 @@ TEST(lazy_dfa_ineligible_forward_and_anchored_end_decline)
   lazy_dfa   dfa {uni.program.code, uni.program.classes};
   EXPECT(!dfa.eligible());
   EXPECT_EQ(dfa.forward_end("hello"), real::npos);
-  EXPECT_EQ(dfa.anchored_end("hello", 0), real::npos);
+  EXPECT_EQ(dfa.anchored_end("hello", 0).end, real::npos);
 }
 
 TEST(lazy_dfa_transitions_a_literal)

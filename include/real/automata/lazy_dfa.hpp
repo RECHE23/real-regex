@@ -619,6 +619,13 @@ namespace real::detail {
       return best_end;
     }
 
+    /*! \brief \ref anchored_end's result: the match end (or \ref real::npos) and how far the walk got. */
+    struct anchored_result
+    {
+      std::size_t end;        //!< Match end, or \ref real::npos.
+      std::size_t scanned_to; //!< Position the walk stopped at (see \ref anchored_end).
+    };
+
     /*!
      * \brief The end offset of the leftmost-first match ANCHORED at \p start in \p text, or \ref
      *        real::npos.
@@ -651,12 +658,20 @@ namespace real::detail {
      *
      * \param[in] text  The subject text.
      * \param[in] start Offset to anchor the match at (must be `<= text.size()`).
+     * \return The match end and the position the walk stopped at (\ref anchored_result::scanned_to). On
+     *         a miss (`end == real::npos`), `scanned_to == text.size()` means the walk consumed the
+     *         whole remaining haystack without a dead state pruning it -- an *unbounded* reach (e.g.
+     *         `.*` with no terminator ahead), as opposed to one the pattern's own structure bounded (a
+     *         dead state hit before the end). A caller trying candidate after candidate (\ref
+     *         real::detail::pike_vm's A2 route) uses this to tell "this candidate's reach is bounded,
+     *         the next one is cheap too" apart from "every candidate from here will re-scan to the end"
+     *         -- the O(n^2) regime.
      */
-    [[nodiscard]] std::size_t anchored_end(std::string_view text,
-                                           std::size_t      start)
+    [[nodiscard]] anchored_result anchored_end(std::string_view text,
+                                               std::size_t      start)
     {
       if (!eligible_) {
-        return npos;
+        return {.end = npos, .scanned_to = start};
       }
       std::uint32_t       state    {start_state_};
       std::size_t         best_end {npos};
@@ -681,7 +696,7 @@ namespace real::detail {
         state = (trans != no_transition) ? trans : step(state, byte); // anchored: never re-seed -- a match starts at `start` or not at all
         ++pos;
       }
-      return best_end;
+      return {.end = best_end, .scanned_to = pos};
     }
 
     //! \brief Whether \p state accepts here (its ordered set contains a `match` PC).

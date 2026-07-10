@@ -38,6 +38,47 @@ namespace {
     }
     return out;
   }
+
+  std::string corpus_all_a(std::size_t n)
+  {
+    // {n, 'a'} prefers the initializer_list<char> overload and fails to narrow n (std::size_t) to char;
+    // the (count, char) constructor needs the explicit call.
+    return std::string(n, 'a'); // NOLINT(modernize-return-braced-init-list)
+  }
+
+  std::string corpus_xy(std::size_t n)
+  {
+    std::string s;
+    s.reserve(n);
+    for (std::size_t i = 0; i < n; ++i) {
+      s += (i % 2 == 0) ? 'x' : 'y';
+    }
+    return s;
+  }
+
+  // Deterministic O(n) vs O(n^2) check for a lazy-DFA route pattern, via the compile-gated work
+  // counter (REAL_TEST_INSTRUMENT) rather than wall-clock -- literal_prefilter_throughput_smoke's exact
+  // method (tests/engine/test_prefilter.cpp), applied to the A2 unbounded-reach fix. `make_corpus`
+  // builds the adversarial no-match haystack for `pat` (dense in the pattern's first-byte set, no
+  // terminator anywhere).
+  void expect_search_is_linear(std::string_view pat,
+                               std::string    (*make_corpus)(std::size_t))
+  {
+    const real::regex  rx {pat};
+    const auto         work {[&](std::size_t n) -> std::uint64_t {
+                               const std::string text {make_corpus(n)};
+                               real::detail::prefilter_work_units() = 0;
+                               EXPECT(!rx.search(text).matched());
+                               return real::detail::prefilter_work_units();
+                             }};
+    (void) work(1 << 10);                    // warmup (first-call path setup); discarded
+    const std::uint64_t small {work(16384)};
+    const std::uint64_t large {work(32768)}; // 2x the bytes
+    // O(n) -> ~2x; O(n^2) -> ~4x. 3x bites quadratic, absorbs constant per-search overhead.
+    EXPECT(large < small * 3);
+    // Determinism pin: re-run large -- same work count (not wall time).
+    EXPECT_EQ(work(32768), large);
+  }
 }
 
 TEST(lazy_dfa_routed_equals_core)
@@ -135,4 +176,49 @@ TEST(lazy_dfa_a1_a2_do_not_regress_the_dedicated_fast_paths)
     EXPECT(core == routed);
     EXPECT(!core.empty());
   }
+}
+
+TEST(lazy_dfa_a2_unbounded_reach_equals_core)
+{
+  // FIX P0 (O(n^2)): a first-byte-valid pattern whose reach past that byte is unbounded (`.*`, `.+`, a
+  // wide-class `*`/`+`) used to make A2's candidate loop re-scan to the end of the haystack for every
+  // dense candidate -- `a.*b` on a run of 'a' with no 'b' is O(n^2). The fix changes ROUTE (A2 hands off
+  // to forward_end once a candidate's own miss proves the reach unbounded), never RESULT: prove it
+  // against the route-disabled core across match/no-match/greedy-vs-lazy/boundary/empty corpora.
+  struct testcase { std::string_view pat; std::string text; };
+  const std::string all_a    (2000, 'a');                                                   // no 'b': no-match, the exact bug shape
+  const std::string a_then_b (std::string(1999, 'a') + "b");                                // match right at the end -- reach truly unbounded until then
+  const std::string two_b    (std::string(900, 'a') + "b" + std::string(900, 'a') + "b");   // two candidate ends: greedy/lazy must disagree correctly
+  const testcase    cases[] {
+    {.pat = R"(a.*b)",       .text = all_a},
+    {.pat = R"(a.*b)",       .text = a_then_b},
+    {.pat = R"(a.*b)",       .text = two_b},         // greedy: must reach the LAST b
+    {.pat = R"(a.*?b)",      .text = two_b},         // lazy: must reach the FIRST b
+    {.pat = R"(a.*b)",       .text = pad("the quick brown fox jumps over a lazy dog near the bench ")},
+    {.pat = R"(a.*b)",       .text = std::string()}, // empty haystack
+    {.pat = R"(.*x)",        .text = all_a},         // no sound first-byte prefilter at all -- pre-existing route, must stay unaffected
+    {.pat = R"((?:a|c).*z)", .text = all_a},         // a first-byte SET (not one literal byte), still unbounded reach
+  };
+  for (const testcase& tc : cases) {
+    real::detail::lazy_dfa_route_disabled() = true;
+    const auto core   {spans(tc.pat, tc.text)};
+    real::detail::lazy_dfa_route_disabled() = false;
+    const auto routed {spans(tc.pat, tc.text)};
+    EXPECT(core == routed);
+  }
+}
+
+TEST(lazy_dfa_a2_unbounded_reach_scales_linearly)
+{
+  // THE gate for the O(n^2) fix itself: total search work must grow linearly with the haystack on the
+  // adversarial corpus for each pattern shape named in the fix's own fiche.
+  expect_search_is_linear(R"(a.*b)", corpus_all_a);
+  expect_search_is_linear(R"(a.+b)", corpus_all_a);
+  expect_search_is_linear(R"(.*needle)", corpus_all_a); // no first-byte prefilter -- forward_end from the start, pre-existing O(n)
+  // \w+.*\w+ dropped from the fiche's battery: it is a false adversarial case, not a test bug fix --
+  // any text with 2+ word characters ANYWHERE matches it trivially (.* bridges any gap), so a large
+  // no-match corpus for it does not exist. \w+.*x keeps the \w+-prefixed, unbounded-.*-reach shape
+  // while staying genuinely unmatched (no literal terminator in the corpus).
+  expect_search_is_linear(R"(\w+.*x)", corpus_all_a);
+  expect_search_is_linear(R"((x|y)*z)", corpus_xy);
 }

@@ -567,8 +567,10 @@ namespace real::detail {
                   out_slots.assign(prog_.slot_count, npos);
                   return false; // no further candidate -- the prefilter itself is exhaustive
                 }
-                const std::size_t match_end {state_.fwd_dfa->anchored_end(text, c)};
-                if (match_end != npos) {
+                const auto anchored {state_.fwd_dfa->anchored_end(text, c)};
+                prefilter_note_scan(anchored.scanned_to - c);
+                if (anchored.end != npos) {
+                  const std::size_t match_end {anchored.end};
                   prof::tick_route(prof::route::lazy_dfa_anchored);
                   if (prog_.slot_count <= 2) {
                     out_slots.assign(2, npos);
@@ -585,20 +587,34 @@ namespace real::detail {
                   prof::tick_route(prof::route::general_window);
                   return run_general<Cascade>(text.substr(0, match_end), c, mode, out_slots);
                 }
+                // Unbounded reach (scanned_to == text.size(), no dead state pruned it early): this
+                // candidate's miss required scanning to the end of the haystack, so every further
+                // candidate would repeat comparable work -- O(n) candidates x O(n) scan = O(n^2) (the
+                // `a.*b` shape). A2's leftmost-first contract already proved no match starts at or
+                // before c; hand the rest to the forward_end + reverse-recovery route below, which
+                // covers it in one further O(n) pass -- reusing `start` as its origin (safe: every path
+                // from here on returns, so the mutation never escapes to code after this whole block).
+                if (anchored.scanned_to >= text.size()) {
+                  start = c + 1;
+                  break;
+                }
                 ++c; // false candidate: past it, one candidate at a time (bounded by the pattern's own
                      // reach, exactly as run_fixed_shape/run_alternation/run_inner_literal already skip)
               }
+              // Reached only via the unbounded-reach break above (every other path in the loop returns):
+              // falls through to the forward_end + reverse-recovery route below, from `start = c + 1`.
             }
-            // No sound first-byte prefilter (e.g. .*x): the unanchored forward pass plus a reverse
-            // recovery is the route that applies -- there is no candidate to anchor on.
+            // No sound first-byte prefilter (e.g. .*x), or A2 just gave up above: the unanchored forward
+            // pass plus a reverse recovery is the route that applies.
             const std::size_t match_end {state_.fwd_dfa->forward_end(text.substr(start))};
+            prefilter_note_scan(text.size() - start);
             if (match_end == npos) {
               prof::tick_route(prof::route::lazy_dfa_fwd_rev); // reject at DFA speed still used the route
               out_slots.assign(prog_.slot_count, npos);
               return false;                                    // the forward DFA rejected the whole suffix at DFA speed
             }
-            const std::size_t                                                                                                                                                                                                                                                             abs_end   {start + match_end};
-            const std::size_t                                                                                                                                                                                                                                                             abs_start {state_.rev_dfa->reverse_start(text, abs_end, start)};
+            const std::size_t abs_end   {start + match_end};
+            const std::size_t abs_start {state_.rev_dfa->reverse_start(text, abs_end, start)};
             prof::tick_route(prof::route::lazy_dfa_fwd_rev);
             // OPT bounds-only (A1): a GROUPLESS pattern ([a-z][a-z]+ — slot_count <= 2, group 0 only) has
             // no captures beyond the span itself, so the one-pass extractor's per-op table walk buys
@@ -612,7 +628,7 @@ namespace real::detail {
             }
             // OPT onepass (Tier A): a one-pass pattern fills captures in a single pass over [s, e] with no
             // thread lists (the shared per-regex table). Otherwise the window-Pike runs the general loop
-            // there. Both give the same slots. prog_.immut is non-null whenever fwd_dfa/rev_dfa hold a
+            // there. Both give the same slots. prog_.immut is non-null whenever fwd_dfa/rev_dfa holds a
             // value (both are set only by ensure_lazy_dfa, which builds on ensure_immutables' own
             // null-guarded fill) -- the explicit check here just makes that invariant visible to the
             // analyzer (confirm_at, below, already spells it out the same way).
