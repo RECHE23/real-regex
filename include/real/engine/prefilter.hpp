@@ -26,6 +26,7 @@
 
 #include "real/core/charclass.hpp"
 #include "real/core/program.hpp"
+#include "real/unicode/unicode_props.hpp" // word_ranges — exact \w identity for Arc B-1
 
 namespace real::detail {
 
@@ -87,8 +88,35 @@ namespace real::detail {
     return true;
   }
 
-  //! \brief True if \p cc is the Unicode `\w` class (ASCII word + large non-ASCII word table).
-  [[nodiscard]] constexpr bool is_full_unicode_word_cp_class(const cp_class& cc) noexcept
+  //! \brief True if every member of \p cls is an ASCII word byte (subset of `\w` under bytes/`re.A`).
+  [[nodiscard]] constexpr bool is_ascii_word_subset_class(const char_class& cls) noexcept
+  {
+    bool any {false};
+    for (unsigned b = 0; b < 256U; ++b) {
+      if (!cls.test(static_cast<std::uint8_t>(b))) {
+        continue;
+      }
+      any = true;
+      if (!is_ascii_word_byte(static_cast<std::uint8_t>(b))) {
+        return false;
+      }
+    }
+    return any;
+  }
+
+  /*!
+   * \brief True if \p cc is exactly the canonical Unicode `\w` class (not a user superset).
+   *
+   * Compares the ASCII bitmap to \ref is_ascii_word_byte and the non-ASCII range slice to
+   * \ref word_ranges (generated, same table the compiler uses for `\w`). A threshold on
+   * \c range_count alone is unsound: `[\w😀]` has the `\w` ASCII half plus one extra range
+   * and would pass `>= 200`, but `\b[\w😀]+\b` is NOT equivalent to `[\w😀]+`.
+   *
+   * \param[in] cc         The code-point class under test.
+   * \param[in] all_ranges Program flat range buffer (\p cc indexes a slice of it).
+   */
+  [[nodiscard]] constexpr bool is_full_unicode_word_cp_class(const cp_class&             cc,
+                                                             std::span<const code_range> all_ranges) noexcept
   {
     for (unsigned b = 0; b < 128U; ++b) {
       if (cc.ascii.test(static_cast<std::uint8_t>(b)) !=
@@ -96,7 +124,30 @@ namespace real::detail {
         return false;
       }
     }
-    return cc.range_count >= 200U; // word ~767 ranges; digit ~70; space ~8
+    std::size_t word_hi {0};
+    for (std::size_t i = 0; i < word_ranges_size; ++i) {
+      if (word_ranges[i].lo >= 0x80U) {
+        ++word_hi;
+      }
+    }
+    if (static_cast<std::size_t>(cc.range_count) != word_hi) {
+      return false;
+    }
+    if (static_cast<std::size_t>(cc.range_begin) + word_hi > all_ranges.size()) {
+      return false;
+    }
+    std::size_t j {0};
+    for (std::size_t i = 0; i < word_ranges_size; ++i) {
+      if (word_ranges[i].lo < 0x80U) {
+        continue;
+      }
+      const code_range& r {all_ranges[static_cast<std::size_t>(cc.range_begin) + j]};
+      if (r.lo != word_ranges[i].lo || r.hi != word_ranges[i].hi) {
+        return false;
+      }
+      ++j;
+    }
+    return true;
   }
 
   //! \brief Arc B-1: `\b` next to a full-`\w` maximal run is redundant (`\B` never is).
@@ -107,6 +158,72 @@ namespace real::detail {
       return false;
     }
     return lead == 1 || trail == 1;
+  }
+
+  //! \brief True if every code point in [\p lo, \p hi] is a Unicode word char (covered by \ref word_ranges).
+  [[nodiscard]] constexpr bool word_ranges_cover_interval(char32_t lo,
+                                                          char32_t hi) noexcept
+  {
+    if (lo > hi) {
+      return false;
+    }
+    char32_t cur {lo};
+    while (cur <= hi) {
+      // Linear scan is fine: called only on the (small) user-class range list at analyze time.
+      bool found {false};
+      for (std::size_t i = 0; i < word_ranges_size; ++i) {
+        const code_range& wr {word_ranges[i]};
+        if (wr.hi < cur) {
+          continue;
+        }
+        if (wr.lo > cur) {
+          return false; // gap: cur is not a word char
+        }
+        // wr covers cur; advance past wr.hi
+        if (wr.hi >= hi) {
+          return true;
+        }
+        cur   = wr.hi + 1;
+        found = true;
+        break;
+      }
+      if (!found) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /*!
+   * \brief True if \p cc is a non-empty subset of Unicode `\w` (safe for maximal-run + `\b` wrap).
+   *
+   * Supersets like `[\w😀]` must NOT take B-2: a maximal class run can start on a non-word member
+   * and skip over a later word-bounded sub-run.
+   */
+  [[nodiscard]] constexpr bool is_unicode_word_subset_cp_class(const cp_class&             cc,
+                                                               std::span<const code_range> all_ranges) noexcept
+  {
+    for (unsigned b = 0; b < 128U; ++b) {
+      if (cc.ascii.test(static_cast<std::uint8_t>(b)) &&
+          !is_ascii_word_byte(static_cast<std::uint8_t>(b))) {
+        return false;
+      }
+    }
+    if (static_cast<std::size_t>(cc.range_begin) + cc.range_count > all_ranges.size()) {
+      return false;
+    }
+    for (std::uint32_t i = 0; i < cc.range_count; ++i) {
+      const code_range& r {all_ranges[static_cast<std::size_t>(cc.range_begin) + i]};
+      if (!word_ranges_cover_interval(static_cast<char32_t>(r.lo), static_cast<char32_t>(r.hi))) {
+        return false;
+      }
+    }
+    // At least one member (ASCII or range) so `\w+`-shaped paths stay non-nullable.
+    bool any {false};
+    for (unsigned b = 0; b < 128U && !any; ++b) {
+      any = cc.ascii.test(static_cast<std::uint8_t>(b));
+    }
+    return any || cc.range_count > 0;
   }
 
   /*!
@@ -482,6 +599,7 @@ namespace real::detail {
    * \param[in]     code           The instruction stream.
    * \param[in]     classes        Interned character classes referenced by \p code.
    * \param[in]     cp_classes     Match-time code-point classes (for `\w`/`\d`/`\s` Arc B word-class tests).
+   * \param[in]     cp_ranges      Flat range buffer the \p cp_classes slices index into.
    * \param[in]     cp_mark_ascii  ASCII sub-class index of an emitted codepoint-class block (-1 = none).
    * \param[in]     cp_mark_offset Program offset where that block starts (-1 = none).
    * \param[in]     lookarounds    Bounded lookaround subs (for trailing-LA eligibility); may be empty.
@@ -490,6 +608,7 @@ namespace real::detail {
   constexpr void detect_fast_shapes(std::span<const instr>          code,
                                     std::span<const char_class>     classes,
                                     std::span<const cp_class>       cp_classes,
+                                    std::span<const code_range>     cp_ranges,
                                     std::int32_t                    cp_mark_ascii,
                                     std::int32_t                    cp_mark_offset,
                                     std::span<const lookaround_sub> lookarounds,
@@ -545,22 +664,30 @@ namespace real::detail {
               code[q + 1].op == opcode::match && q + 2 == code.size() &&
               cls >= 0 && static_cast<std::size_t>(cls) < classes.size()) {
             // `\B` wraps need non-maximal placement — leave the general VM.
-            if (wb_lead == 2 || wb_trail == 2) {
-              // no arm
-            }
-            else {
-              hints.greedy_class_loop  = cls;
-              hints.greedy_group_start = gs;
-              hints.greedy_group_end   = ge;
-              const bool full_word {is_full_ascii_word_class(classes[static_cast<std::size_t>(cls)])};
-              if (full_word && wb_redundant_for_full_word(wb_lead, wb_trail)) {
-                // B-1: `\b\w+\b` (ASCII) ≡ `\w+` — drop boundary checks.
-                hints.wb_lead  = 0;
-                hints.wb_trail = 0;
+            if (wb_lead != 2 && wb_trail != 2) {
+              const char_class& cc        {classes[static_cast<std::size_t>(cls)]};
+              const bool        full_word {is_full_ascii_word_class(cc)};
+              const bool        word_sub  {is_ascii_word_subset_class(cc)};
+              const bool        has_wb    {wb_lead != 0 || wb_trail != 0};
+              // Supersets / non-word members under `\b` → general VM (maximal-run wrap unsound).
+              if (has_wb && !full_word && !word_sub) {
+                // leave unarmed
               }
               else {
-                hints.wb_lead  = wb_lead;
-                hints.wb_trail = wb_trail;
+                hints.greedy_class_loop  = cls;
+                hints.greedy_group_start = gs;
+                hints.greedy_group_end   = ge;
+                // B-2 wrap only for proper word subsets under `\b`. Full `\w` with `\b` is B-1
+                // (drop boundaries). Bare class loops keep wb hints at 0.
+                if (has_wb && word_sub &&
+                    !(full_word && wb_redundant_for_full_word(wb_lead, wb_trail))) {
+                  hints.wb_lead  = wb_lead;
+                  hints.wb_trail = wb_trail;
+                }
+                else {
+                  hints.wb_lead  = 0;
+                  hints.wb_trail = 0;
+                }
               }
             }
           }
@@ -656,20 +783,36 @@ namespace real::detail {
               cp_idx >= 0 && static_cast<std::size_t>(cp_idx) < cp_classes.size()) {
             // `\B` wraps need non-maximal placement — leave the general VM.
             if (wb_lead != 2 && wb_trail != 2) {
-              hints.greedy_cp_class      = cp_idx;
-              hints.greedy_cp_class_plus = plus;
-              hints.greedy_group_start   = gs;
-              hints.greedy_group_end     = ge;
-              const bool full_word {
-                is_full_unicode_word_cp_class(cp_classes[static_cast<std::size_t>(cp_idx)])};
-              if (full_word && wb_redundant_for_full_word(wb_lead, wb_trail)) {
-                // B-1: `\b\w+\b` ≡ `\w+` — drop boundary checks; route as bare greedy_cp.
-                hints.wb_lead  = 0;
-                hints.wb_trail = 0;
+              const bool has_wb {wb_lead != 0 || wb_trail != 0};
+              if (!has_wb) {
+                // Bare `\w+` / `\d+` / `\s+` — no boundary analysis (keeps constexpr light).
+                hints.greedy_cp_class      = cp_idx;
+                hints.greedy_cp_class_plus = plus;
+                hints.greedy_group_start   = gs;
+                hints.greedy_group_end     = ge;
+                hints.wb_lead              = 0;
+                hints.wb_trail             = 0;
               }
               else {
-                hints.wb_lead  = wb_lead;
-                hints.wb_trail = wb_trail;
+                const cp_class& cc        {cp_classes[static_cast<std::size_t>(cp_idx)]};
+                const bool      full_word {is_full_unicode_word_cp_class(cc, cp_ranges)};
+                const bool      word_sub  {is_unicode_word_subset_cp_class(cc, cp_ranges)};
+                // Supersets under `\b` (e.g. `[\w😀]`) → general VM (maximal-run wrap unsound).
+                if (full_word || word_sub) {
+                  hints.greedy_cp_class      = cp_idx;
+                  hints.greedy_cp_class_plus = plus;
+                  hints.greedy_group_start   = gs;
+                  hints.greedy_group_end     = ge;
+                  if (full_word && wb_redundant_for_full_word(wb_lead, wb_trail)) {
+                    hints.wb_lead  = 0;
+                    hints.wb_trail = 0;
+                  }
+                  else {
+                    // B-2: word subset (e.g. `\d`) + `\b` wrap.
+                    hints.wb_lead  = wb_lead;
+                    hints.wb_trail = wb_trail;
+                  }
+                }
               }
             }
           }
@@ -988,6 +1131,7 @@ namespace real::detail {
    * \param[in] code           The instruction stream.
    * \param[in] classes        The interned character classes referenced by \p code.
    * \param[in] cp_classes     The match-time code-point classes referenced by `klass_cp`.
+   * \param[in] cp_ranges      Flat range buffer the \p cp_classes slices index into.
    * \param[in] cp_mark_ascii  ASCII sub-class index of an emitted codepoint-class
    *                           block (-1 = none), as recorded by `emit_codepoint_class`.
    * \param[in] cp_mark_offset Program offset where that block starts (-1 = none); the
@@ -999,6 +1143,7 @@ namespace real::detail {
   constexpr pattern_hints analyze_program(std::span<const instr>          code,
                                           std::span<const char_class>     classes,
                                           std::span<const cp_class>       cp_classes,
+                                          std::span<const code_range>     cp_ranges,
                                           std::int32_t                    cp_mark_ascii,
                                           std::int32_t                    cp_mark_offset,
                                           std::span<const lookaround_sub> lookarounds = {})
@@ -1022,7 +1167,8 @@ namespace real::detail {
 
     compute_first_bytes(code, classes, cp_classes, hints);
 
-    detect_fast_shapes(code, classes, cp_classes, cp_mark_ascii, cp_mark_offset, lookarounds, hints);
+    detect_fast_shapes(code, classes, cp_classes, cp_ranges, cp_mark_ascii, cp_mark_offset, lookarounds,
+                       hints);
 
     // Clear every pure fast-path hint when a lookaround is present. Trailing-LA class+ already
     // left greedy_class_loop at −1 and only set trailing_* (so this wipe is a no-op for those).

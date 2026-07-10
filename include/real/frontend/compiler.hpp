@@ -136,8 +136,9 @@ namespace real::detail {
       emit(prog, {.op   = opcode::match});
       prog.byte_mode    = has_flag(flags_, flags::bytes);
       prog.unicode_word = !has_flag(flags_, flags::bytes) && !has_flag(flags_, flags::ascii);
-      prog.hints        = analyze_program(prog.code, prog.classes, prog.cp_classes, prog.codepoint_mark_ascii,
-                                          prog.codepoint_mark_offset, prog.lookarounds);
+      prog.hints        = analyze_program(prog.code, prog.classes, prog.cp_classes, prog.cp_ranges,
+                                          prog.codepoint_mark_ascii, prog.codepoint_mark_offset,
+                                          prog.lookarounds);
       // The required inner literal + its prefix boundary (a single AST walk). Recorded for the inner-literal
       // search path; not yet routed on. Kept off the program code, so byte-identity is untouched.
       const inner_literal il {extract_inner_literal(tree_)};

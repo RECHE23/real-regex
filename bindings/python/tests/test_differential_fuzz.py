@@ -76,7 +76,10 @@ _LITERALS = "abcABC012 _-.é€😀"
 _CLASSES = [r"\d", r"\D", r"\w", r"\W", r"\s", r"\S", ".",
             "[abc]", "[a-c]", "[^abc]", "[a-z0-9]", r"[\dx]",
             # UTF-8 classes: specific code points / ranges / negation, code-point mode.
-            "[é]", "[éàü]", "[à-ÿ]", "[a-zé]", "[^é]", "[^à-ÿ]", "[Ā-ſ]"]
+            "[é]", "[éàü]", "[à-ÿ]", "[a-zé]", "[^é]", "[^à-ÿ]", "[Ā-ſ]",
+            # Quasi-shorthand supersets (\w ∪ non-word CP): the class of bug that made a
+            # range_count>=200 B-1 guard unsound — must stay general under \b (oracle parity).
+            r"[\w😀]", r"[\w·]", r"[\w€]", r"[\d😀]", r"[\w-]", r"[\w_]"]
 _QUANTS = ["", "*", "+", "?", "??", "*?", "+?", "{2}", "{1,3}", "{2,}", "{0,2}"]
 # Quantifiers that cannot repeat (so cannot create a nullable loop). Anything
 # else establishes a "looping context" whose body must always consume.
@@ -85,6 +88,8 @@ _NONLOOP_QUANTS = ["", "?", "??"]
 # inside a looping quantifier, keeping every loop body non-nullable (incl. UTF-8 code points).
 _CONSUMING = [re.escape(c) for c in "abABC012_-é€😀"] + \
              [r"\d", r"\w", r"\s", ".", "[abc]", "[a-c]", "[^abc]", "[a-z0-9]"]
+# Str-only: \w±non-word CP under loops — the quasi-shorthand class B-1 must not mis-arm on.
+_CONSUMING_QUASI_W = [r"[\w😀]", r"[\w·]", r"[\w€]", r"[\d😀]", r"[\w-]"]
 _ANCHORS = ["^", "$", r"\b", r"\B", r"\A", r"\Z"]
 # Atoms allowed inside a (capture-free) lookaround sub-pattern: ASCII, single codepoint,
 # so REAL and re agree on the subjects generated here.
@@ -110,6 +115,10 @@ class PatternGen:
         # _CLASSES entries after the first 12 are the UTF-8 classes ([é], [à-ÿ], ...): drop them for bytes.
         self._literals = "abcABC012 _-." if ascii_only else _LITERALS
         self._classes = _CLASSES[:12] if ascii_only else _CLASSES
+        # Looping bodies: bytes path must stay ASCII-safe (_CONSUMING already has UTF-8
+        # literals via re.escape of é€😀 — those fail to compile under .encode() and are
+        # skips; quasi-shorthand classes are str-only extras for the B-1 guard net).
+        self._consuming = _CONSUMING if ascii_only else (_CONSUMING + _CONSUMING_QUASI_W)
 
     def _atom(self, depth):
         """Return a literal, class, or nested group atom.
@@ -254,7 +263,7 @@ class PatternGen:
                 return "(?:" + self._nullable_alt(depth) + ")" + quant
             # Otherwise the body must always consume: a bare consuming token only, never a group or an
             # already-quantified atom (the OTHER way nullable loops — the capture divergence — arise).
-            return self.rng.choice(_CONSUMING) + quant
+            return self.rng.choice(self._consuming) + quant
         return self._atom(depth) + quant
 
     def _nullable_alt(self, depth):
