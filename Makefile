@@ -49,6 +49,7 @@ FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
         lint misra fuzz fuzz-compat exhaustive-compat fowler-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
         bench-engines bench-multipattern bench-duel bench-matrix matrix-gate \
+        profile-sample-build profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers
 
 .DEFAULT_GOAL := help
@@ -74,6 +75,7 @@ help:
 	@echo "  make version-check  Assert pyproject = __init__ = CMake-derived version"
 	@echo "  make full-local-gate  Every pass/fail gate in one command (the macOS gate of record)"
 	@echo "  make bench-duel   REAL vs the regex crate, ns/byte (needs a Rust toolchain)"
+	@echo "  make profile-sample  P0 2-pass profile grid (JSONL + markdown; not a CI gate)"
 	@echo ""
 	@echo "  Per-binding targets: make {python,c,rust}-<target> (build/test/bench/fuzz/...)"
 	@echo "    see: make python-help | make c-help | make rust-help"
@@ -395,6 +397,26 @@ doc-check:
 bench-duel:
 	@c++ $(CXXSTD) -O2 $(INCLUDES) benchmarks/duel/real_bench.cpp -o benchmarks/duel/real_bench
 	@$(PYTHON) benchmarks/duel/run_duel.py
+
+# P0 profiling substrate: clean + instrumented binaries, 2-pass JSONL, markdown grid.
+# Not a CI gate (informational; timings are host-noise). See benchmarks/profile/ and
+# .recovery/p0-profile-substrate-fiche.md.
+PROF_DIR := $(BUILD)/profile
+profile-sample-build:
+	@mkdir -p $(PROF_DIR)
+	@c++ $(CXXSTD) -O3 -DNDEBUG $(INCLUDES) \
+	    -Ibenchmarks/profile \
+	    benchmarks/profile/profile_runner.cpp -o $(PROF_DIR)/profile_runner_clean
+	@c++ $(CXXSTD) -O3 -DNDEBUG -DREAL_PROFILE $(INCLUDES) \
+	    -Ibenchmarks/profile \
+	    benchmarks/profile/profile_runner.cpp -o $(PROF_DIR)/profile_runner_inst
+	@echo "profile binaries: $(PROF_DIR)/profile_runner_{clean,inst}"
+
+profile-sample: profile-sample-build
+	@$(PYTHON) benchmarks/profile/run_profile.py
+
+profile-callgrind: profile-sample-build
+	@bash benchmarks/profile/callgrind_runs.sh
 
 # The 4-D veto matrix (pattern x size x match/no-match x density): a COMMITTED regression gate for the
 # inner-literal route, born from repeated fixes that each missed a dimension. Mechanical verdict, non-zero exit

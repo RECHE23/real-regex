@@ -134,6 +134,7 @@ namespace real {
                                              std::string_view text,
                                              std::size_t      pos)
     {
+      detail::prof::tick_route(detail::prof::route::trailing_la);
       matched_ = vm.template run_class_loop_trailing_la<Cascade>(text, pos, detail::run_mode::search, slots_);
       return matched_;
     }
@@ -1121,6 +1122,7 @@ namespace real {
       }) {
         if (sem == match_semantics::first && prog.hints.trailing_lookaround >= 0
             && (std::is_constant_evaluated() || !detail::trailing_la_route_disabled())) {
+          detail::prof::tick_route(detail::prof::route::trailing_la);
           matched = prog.hints.stop_set_size >= 1
                       ? vm.template run_class_loop_trailing_la<true>(subject, pos, mode, slots)
                       : vm.template run_class_loop_trailing_la<false>(subject, pos, mode, slots);

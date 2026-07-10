@@ -38,6 +38,7 @@
 #include "real/automata/lazy_dfa.hpp"
 #include "real/automata/onepass.hpp"
 #include "real/core/program.hpp"
+#include "real/core/profile.hpp"
 #include "real/unicode/unicode_props.hpp"
 #include "real/unicode/utf8.hpp"
 
@@ -435,17 +436,28 @@ namespace real::detail {
       // P3c trailing-LA is NOT dispatched here — it lives outside pike_vm::run (real.hpp /
       // find_iter) so this function stays pre-P3c-sized and keeps inlining into find_iter
       // (x86: +16–20 % when cold code bloated run() past the inline threshold).
-      if (sem_ == match_semantics::first && prog_.hints.greedy_class_loop >= 0) {
+      if (sem_ == match_semantics::first && prog_.hints.greedy_class_loop >= 0
+          && (std::is_constant_evaluated() || !class_fastpath_disabled())) {
         // OPT-C: the memchr-cascade instantiation (Cascade) is selected ONCE by the caller (a whole
         // find_iter/search) from stop_set_size, never per match — so when it is off this run is byte-for-
         // byte the pre-OPT-C per-byte loop and the hot path pays nothing. The caller only sets Cascade
         // when stop_set_size >= 1, so the cascade tail always has real stop bytes.
+        prof::tick_route(prof::route::class_loop);
+        if (prog_.hints.wb_lead != 0 || prog_.hints.wb_trail != 0) {
+          prof::tick_event(prof::event::wb_b2_wrap);
+        }
         return run_class_loop<Cascade>(text, start, mode, out_slots);
       }
-      if (sem_ == match_semantics::first && prog_.hints.greedy_cp_class >= 0) {
+      if (sem_ == match_semantics::first && prog_.hints.greedy_cp_class >= 0
+          && (std::is_constant_evaluated() || !class_fastpath_disabled())) {
+        prof::tick_route(prof::route::cp_class_loop);
+        if (prog_.hints.wb_lead != 0 || prog_.hints.wb_trail != 0) {
+          prof::tick_event(prof::event::wb_b2_wrap);
+        }
         return run_cp_class_loop(text, start, mode, out_slots);
       }
       if (sem_ == match_semantics::first && prog_.hints.exact_literal_len > 0) {
+        prof::tick_route(prof::route::exact_literal);
         return run_exact_literal(text, start, mode, out_slots);
       }
       // OPT inner-literal: memmem a required inner literal and reverse/confirm the match around it — the
@@ -475,20 +487,26 @@ namespace real::detail {
             bool       abandon {false};
             const bool matched {run_inner_literal(text, start, out_slots, abandon)};
             if (!abandon) {
+              prof::tick_route(prof::route::inner_literal);
+              prof::tick_event(prof::event::memmem);
               return matched;
             }
+            prof::tick_event(prof::event::il_abandoned);
             state_.il_abandoned = true; // a linearity guard tripped: stay on the core for the rest of this haystack
           }
         }
       }
       if (sem_ == match_semantics::first && prog_.hints.fixed_shape) {
+        prof::tick_route(prof::route::fixed_shape);
         return run_fixed_shape(text, start, mode, out_slots);
       }
       if (sem_ == match_semantics::first && prog_.hints.codepoint_class_ascii >= 0) {
         // OPT-C-1b: the SWAR variant (Cascade) is chosen once per walk, like the class-loop cascade.
+        prof::tick_route(prof::route::codepoint_class);
         return run_codepoint_class<Cascade>(text, start, mode, out_slots);
       }
       if (sem_ == match_semantics::first && prog_.hints.fixed_alternation) {
+        prof::tick_route(prof::route::alternation);
         return run_alternation(text, start, mode, out_slots);
       }
       // OPT inner-literal: memmem a required literal and reverse/confirm the match around it — for patterns
@@ -511,6 +529,7 @@ namespace real::detail {
           ensure_immutables();
           if (prog_.immut != nullptr && prog_.immut->op_table.has_value() && prog_.immut->op_table->eligible()
               && prog_.immut->op_table->extract(text, start, text.size(), out_slots)) {
+            prof::tick_route(prof::route::onepass_full);
             return true;
           }
         }
@@ -546,6 +565,7 @@ namespace real::detail {
                 }
                 const std::size_t match_end {state_.fwd_dfa->anchored_end(text, c)};
                 if (match_end != npos) {
+                  prof::tick_route(prof::route::lazy_dfa_anchored);
                   if (prog_.slot_count <= 2) {
                     out_slots.assign(2, npos);
                     out_slots[0] = c;
@@ -555,8 +575,10 @@ namespace real::detail {
                   if (prog_.immut != nullptr && prog_.immut->op_table.has_value()
                       && prog_.immut->op_table->eligible()
                       && prog_.immut->op_table->extract(text, c, match_end, out_slots)) {
+                    prof::tick_route(prof::route::onepass_window);
                     return true;
                   }
+                  prof::tick_route(prof::route::general_window);
                   return run_general<Cascade>(text.substr(0, match_end), c, mode, out_slots);
                 }
                 ++c; // false candidate: past it, one candidate at a time (bounded by the pattern's own
@@ -567,11 +589,13 @@ namespace real::detail {
             // recovery is the route that applies -- there is no candidate to anchor on.
             const std::size_t match_end {state_.fwd_dfa->forward_end(text.substr(start))};
             if (match_end == npos) {
+              prof::tick_route(prof::route::lazy_dfa_fwd_rev); // reject at DFA speed still used the route
               out_slots.assign(prog_.slot_count, npos);
-              return false; // the forward DFA rejected the whole suffix at DFA speed
+              return false;                                    // the forward DFA rejected the whole suffix at DFA speed
             }
-            const std::size_t abs_end   {start + match_end};
-            const std::size_t abs_start {state_.rev_dfa->reverse_start(text, abs_end, start)};
+            const std::size_t                                                                                                                                                                                                                                                             abs_end   {start + match_end};
+            const std::size_t                                                                                                                                                                                                                                                             abs_start {state_.rev_dfa->reverse_start(text, abs_end, start)};
+            prof::tick_route(prof::route::lazy_dfa_fwd_rev);
             // OPT bounds-only (A1): a GROUPLESS pattern ([a-z][a-z]+ — slot_count <= 2, group 0 only) has
             // no captures beyond the span itself, so the one-pass extractor's per-op table walk buys
             // nothing here — it exists to fill group slots this pattern does not have. The forward+reverse
@@ -590,8 +614,10 @@ namespace real::detail {
             // analyzer (confirm_at, below, already spells it out the same way).
             if (prog_.immut != nullptr && prog_.immut->op_table.has_value() && prog_.immut->op_table->eligible()
                 && prog_.immut->op_table->extract(text, abs_start, abs_end, out_slots)) {
+              prof::tick_route(prof::route::onepass_window);
               return true; // extract filled out_slots directly — no intermediate buffer or copy
             }
+            prof::tick_route(prof::route::general_window);
             return run_general<Cascade>(text.substr(0, abs_end), abs_start, mode, out_slots);
           }
         }
@@ -599,8 +625,10 @@ namespace real::detail {
       if (sem_ == match_semantics::longest) {
         // The longest path uses the plain general loop (the memchr-cascade OPT-C variant is a first-match
         // acceleration; correctness, not throughput, is what the experimental mode needs).
+        prof::tick_route(prof::route::general_full);
         return run_general<false>(text, start, mode, out_slots);
       }
+      prof::tick_route(prof::route::general_full);
       return run_general<Cascade>(text, start, mode, out_slots);
     }
 
