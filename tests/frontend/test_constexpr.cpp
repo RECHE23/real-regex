@@ -34,14 +34,22 @@ namespace {
     CONSTEXPR_EXPECT(!real::regex("[^a]").fullmatch("ab"));
     CONSTEXPR_EXPECT(real::regex("\\d\\d").fullmatch("42").matched());
     CONSTEXPR_EXPECT(real::regex("\\D").fullmatch("é").matched());
-    CONSTEXPR_EXPECT(real::regex(".").fullmatch("𝄞").matched());
-    CONSTEXPR_EXPECT(!real::regex(".").fullmatch("\n"));
-    CONSTEXPR_EXPECT(real::regex("a.c").fullmatch("aéc").matched());
     CONSTEXPR_EXPECT(real::regex("\\x41").fullmatch("A").matched());
     CONSTEXPR_EXPECT(real::regex("\\u00e9").fullmatch("é").matched());  // \u code point at compile time
     CONSTEXPR_EXPECT(real::regex("a(?#c)b").fullmatch("ab").matched()); // (?#...) comment at compile time
     CONSTEXPR_EXPECT(real::regex("[^,]+").search("ab,c").end() == 2);   // codepoint-class +
-    CONSTEXPR_EXPECT(real::regex(".+").search("a\nb").end() == 1);      // dot stops at \n
+    return true;
+  }
+
+  // Split out from class_cases (each dot-family pattern's compiled program grew, wagon 4's canonical
+  // second-continuation-byte splitting) -- a smaller per-static_assert step count, one evaluation per
+  // function, not a bigger shared budget. See flag_cases below for the same reasoning.
+  constexpr bool dot_cases()
+  {
+    CONSTEXPR_EXPECT(real::regex(".").fullmatch("𝄞").matched());
+    CONSTEXPR_EXPECT(!real::regex(".").fullmatch("\n"));
+    CONSTEXPR_EXPECT(real::regex("a.c").fullmatch("aéc").matched());
+    CONSTEXPR_EXPECT(real::regex(".+").search("a\nb").end() == 1); // dot stops at \n
     return true;
   }
 
@@ -79,7 +87,7 @@ namespace {
     return true;
   }
 
-  constexpr bool anchor_and_flag_cases()
+  constexpr bool anchor_cases()
   {
     CONSTEXPR_EXPECT(real::regex("^ab").search("abab").start() == 0);
     CONSTEXPR_EXPECT(real::regex("ab$").search("abab").start() == 2);
@@ -89,6 +97,14 @@ namespace {
     CONSTEXPR_EXPECT(!real::regex("\\bcat\\b").search("concat"));
     CONSTEXPR_EXPECT(real::regex("\\<cat\\>").search("a cat!").start() == 2);
     CONSTEXPR_EXPECT(!real::regex("\\<cat\\>").search("category"));
+    return true;
+  }
+
+  // Split out from anchor_and_flag_cases -- two of these five are dot-family patterns, and bundling
+  // all 13 original checks into one static_assert is what tripped a newer libc++'s default
+  // constexpr-step budget once wagon 4 grew `.`'s compiled program (see dot_cases above).
+  constexpr bool flag_cases()
+  {
     CONSTEXPR_EXPECT(real::regex("hello", real::flags::icase).fullmatch("HeLLo").matched());
     CONSTEXPR_EXPECT(!real::regex("[^a]", real::flags::icase).fullmatch("A"));
     CONSTEXPR_EXPECT(real::regex("a.b", real::flags::dotall).fullmatch("a\nb").matched());
@@ -137,9 +153,11 @@ namespace {
 #if !defined(__GNUC__) || defined(__clang__) || __GNUC__ >= 15
 static_assert(literal_cases());
 static_assert(class_cases());
+static_assert(dot_cases());
 static_assert(quantifier_cases());
 static_assert(group_cases());
-static_assert(anchor_and_flag_cases());
+static_assert(anchor_cases());
+static_assert(flag_cases());
 static_assert(iteration_cases());
 #endif
 
@@ -162,6 +180,11 @@ TEST(constexpr_class_cases_also_pass_at_runtime)
   EXPECT(class_cases());
 }
 
+TEST(constexpr_dot_cases_also_pass_at_runtime)
+{
+  EXPECT(dot_cases());
+}
+
 TEST(constexpr_quantifier_cases_also_pass_at_runtime)
 {
   EXPECT(quantifier_cases());
@@ -172,9 +195,14 @@ TEST(constexpr_group_cases_also_pass_at_runtime)
   EXPECT(group_cases());
 }
 
-TEST(constexpr_anchor_and_flag_cases_also_pass_at_runtime)
+TEST(constexpr_anchor_cases_also_pass_at_runtime)
 {
-  EXPECT(anchor_and_flag_cases());
+  EXPECT(anchor_cases());
+}
+
+TEST(constexpr_flag_cases_also_pass_at_runtime)
+{
+  EXPECT(flag_cases());
 }
 
 TEST(constexpr_iteration_cases_also_pass_at_runtime)

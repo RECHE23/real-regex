@@ -569,8 +569,11 @@ data table).
 
 **Stamp.** REAL `98876d2`, Apple M1 Pro (arm64), Apple clang 16.0.0 (clang-1600.0.26.6), `-O2`,
 2026-07-11T01:00Z. The `(?i)<literal>` cells (`(?i)café` in both tables, and its own subsection below) are
-re-stamped at `4e98b75` (post P0-fix `b6c2a0e` + seed-tune `4e98b75`), same host/build; every other cell is
-unchanged from `98876d2` and was not re-measured. Engine Unicode Character Database versions:
+re-stamped at `4e98b75` (post P0-fix `b6c2a0e` + seed-tune `4e98b75`), same host/build. The `.` (emoji, one
+codepoint) and `ascii witness` cells (both tables) are re-stamped at `258783b` (post wagon-4's strict-UTF-8
+fix for `.` — the compiled shape changed; §A/§E's non-`.` rows were already reconfirmed flat under that
+wagon's own A/B and are not touched here), same host/build. Every other cell is unchanged from `98876d2` and
+was not re-measured. Engine Unicode Character Database versions:
 
 | engine | UCD version |
 | --- | --- |
@@ -614,8 +617,8 @@ raw JSON — every ratio's 95% CI is within ±2% of the point estimate); match c
 | `(?i)café` (accented) | 1.06 | unsupported | 0.35 (**0.33×**) | 1.31 (1.24×) | 3509/—/3509/3509 |
 | `[à-ÿ]+` (accented) | 5.57 | 114.31 (20.52×) | 2.72 (**0.49×**) | 16.60 (2.98×) | 38599/38599/38599/38599 |
 | literal `你好` (CJK) | 1.54 | 38.79 (25.19×) | 0.78 (**0.51×**) | 3.48 (2.26×) | 6452/6452/6452/6452 |
-| `.` (emoji, one codepoint) | 5.40 | 78.78 (14.59×) | 5.03 (**0.93×**) | 24.96 (4.62×) | 68306/200039/68306/68306 ⚠ |
-| ascii witness `[a-z]+` | 3.08 | 122.08 (39.64×) | 2.96 (**0.96×**) | 18.53 (6.02×) | 42108/42108/42108/42108 |
+| `.` (emoji, one codepoint) | 4.01 | 59.46 (14.82×) | 3.80 (**0.95×**) | 18.81 (4.69×) | 68306/200039/68306/68306 ⚠ |
+| ascii witness `[a-z]+` | 2.45 | 91.83 (37.48×) | 2.25 (**0.92×**) | 13.85 (5.65×) | 42108/42108/42108/42108 |
 
 *(Same convention as §A: `(x) = engine_time / REAL_time`, **> 1 means REAL is faster**; **bold** marks the
 PCRE2-JIT column, REAL's main competitor throughout this document. Every ratio here is computed
@@ -631,17 +634,17 @@ them against this table.)*
   engine's default, not a clean speed comparison.
 - **`.` (emoji corpus): 68306 (REAL/PCRE2/RE2) vs 200039 (std::regex).** `std::regex` operates byte-level:
   `.` matches one *byte*, not one *code point*, so on 4-byte-UTF-8 emoji it counts ~2.9× too many "matches" —
-  not the same pattern semantically, so the 14.59× speed ratio is not comparing equal work. It is not a
+  not the same pattern semantically, so the 14.82× speed ratio is not comparing equal work. It is not a
   mitigating factor for `std::regex`, though: doing ~2.9× more (trivial, byte-level) matches and still
-  landing 14.59× slower than REAL's real per-codepoint decode is a clean loss either way, just not a
+  landing 14.82× slower than REAL's real per-codepoint decode is a clean loss either way, just not a
   precisely-quantifiable one from this row alone. REAL vs PCRE2/RE2 on this row is unaffected (those three
   agree on the count).
 
 **Honest read (verdict brut).** **REAL trails PCRE2-JIT on every single row in this table** — the `\p{}`/
-script rows run 0.20×–0.82× (REAL 1.2×–5× slower), the literal/class rows 0.49×–0.96× (REAL 1.04×–2×
+script rows run 0.20×–0.82× (REAL 1.2×–5× slower), the literal/class rows 0.49×–0.95× (REAL 1.05×–2×
 slower); `\p{L}+` (0.20×) is REAL's **worst** showing here, not a win — PCRE2's JIT dominates Unicode work
 the same way it dominates `date`/`literal` in §A's ASCII tables. **REAL is comfortably ahead of RE2** on
-every comparable row except the count-divergent `\w+` (1.24×–6.02×, REAL 1.2×–6× faster) — RE2's
+every comparable row except the count-divergent `\w+` (1.24×–5.65×, REAL 1.2×–6× faster) — RE2's
 General_Category/Script support is real but its DFA is slower than REAL's per-codepoint route here. **REAL
 crushes `std::regex`** everywhere `\p{}` is unsupported for it (13×–40×, as expected — `std::regex` doing
 zero real Unicode work is not a REAL achievement, just a baseline). `(?i)café` was a 117×-behind outlier — a
@@ -666,7 +669,7 @@ divergence to flag here). REAL `find_iter` vs rust `find_iter`, min-of-15.
 | `(?i)` accented literal | 0.96 | 1.44 | **REAL 1.5×** |
 | `[a-y]` accented class | 5.30 | 14.10 | REAL 2.7× |
 | CJK literal | 1.94 | 1.12 | rust 1.7× |
-| `.` (emoji, one codepoint) | 5.34 | 21.25 | REAL 4.0× |
+| `.` (emoji, one codepoint) | 3.99 | 15.91 | REAL 4.0× |
 
 A genuine, roughly-even split — REAL ahead on scripts/classes/`.`/accented-literal, rust ahead on `\p{L}+`
 and the CJK literal (both by a modest ~1.1–1.7×) — not the lopsided picture the three-way table paints,

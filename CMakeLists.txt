@@ -7,6 +7,10 @@
 # top-level project.
 cmake_minimum_required(VERSION 3.16)
 
+# compile_commands.json (build/) for clangd/IDE tooling and any script that wants the exact
+# per-file flags CMake computed -- generated automatically, never hand-maintained.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # Single source of truth for the version: pyproject.toml (which `make release`
 # bumps and setup.py reads). Deriving it here means the CMake package version can
 # never drift from the Python package — the defect that had left this frozen at
@@ -155,14 +159,6 @@ else()
         # hook in tests/test_static.cpp pairs malloc/free with operator new.
         target_compile_options(real_tests_bin PRIVATE
             -Wno-array-bounds -Wno-mismatched-new-delete)
-    endif()
-    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        # Clang's default constexpr-evaluation step budget (2^20) is a compile-time-only cap with
-        # no runtime cost -- but test_constexpr.cpp bundles many regex compiles/searches into a
-        # handful of static_asserts, and some libc++ versions' constexpr std::vector internals are
-        # step-hungry enough to trip the default on totally ordinary patterns (e.g. `.` in a
-        # multiline anchor case). Raising it is safe headroom, not a correctness workaround.
-        target_compile_options(real_tests_bin PRIVATE -fconstexpr-steps=8388608)
     endif()
 endif()
 

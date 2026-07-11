@@ -33,12 +33,6 @@ CMAKE_CXX := -DCMAKE_CXX_COMPILER=$(CXX)
 endif
 
 CXXSTD       := -std=c++20
-# Clang-only, compile-time-only budget (no runtime cost): the default constexpr-evaluation step
-# cap (2^20) is tight enough that some libc++ versions' constexpr std::vector internals can trip
-# it compiling ordinary constexpr regex patterns (see CMakeLists.txt's real_tests_bin option for
-# the matching CMake-driven build). clang-tidy/misra invoke clang-tidy directly (bypassing CMake),
-# so they need the same flag appended here.
-CONSTEXPR_STEPS := -fconstexpr-steps=8388608
 INCLUDES     := -Iinclude
 # The test harness (framework.hpp) is owned by SciForge; the test TUs include it
 # as <sciforge/test/framework.hpp>. clang-tidy (make lint) needs that path too.
@@ -191,7 +185,7 @@ coverage-html:
 # --- QA tools (wrappers; no compilation policy here) ----------------------
 
 lint:
-	@find tests -name '*.cpp' | xargs -P $(JOBS) -I{} clang-tidy {} -- $(CXXSTD) $(CONSTEXPR_STEPS) $(INCLUDES) -Ibindings/c -I$(SCIFORGE_INCLUDE)
+	@find tests -name '*.cpp' | xargs -P $(JOBS) -I{} clang-tidy {} -- $(CXXSTD) $(INCLUDES) -Ibindings/c -I$(SCIFORGE_INCLUDE)
 
 # Analyzes the library's own headers through a synthetic translation unit that
 # includes the umbrella header and exercises the engine (so templates get
@@ -210,7 +204,7 @@ misra:
 	clang-tidy --config-file=$(SCIFORGE_LINT)/clang-tidy-misra \
 	    --checks='-cppcoreguidelines-pro-type-union-access' \
 	    --header-filter='include/real/.*' \
-	    $(BUILD)/misra_tu.cpp -- $(CXXSTD) $(CONSTEXPR_STEPS) $(INCLUDES)
+	    $(BUILD)/misra_tu.cpp -- $(CXXSTD) $(INCLUDES)
 
 # libFuzzer is a Clang feature; this target always uses Clang regardless of CXX.
 # FUZZ_TIME bounds a local run (CI uses a short smoke run); point the corpus at

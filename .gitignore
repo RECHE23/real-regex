@@ -19,3 +19,7 @@ build/doc/
 # Stray compiler default output (scratch builds)
 a.out
 bindings/rust/fuzz/unicode_probe/target/
+
+# CMAKE_EXPORT_COMPILE_COMMANDS writes build/compile_commands.json (already under build/); this
+# covers a root-level symlink too, the common clangd convention (`ln -sf build/compile_commands.json .`)
+compile_commands.json
