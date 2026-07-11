@@ -19,7 +19,7 @@ answer is not a benchmark win.
 
 | | |
 | --- | --- |
-| Version | REAL `2026.7.32` — §A/§E re-stamped on `a994ff9` (post O2r-1b, the A2 fix, the P0 #2 icase fix + seed-128 tune, and the mono/multi cascade split), 2026-07-11. §multi-pattern unchanged (Stage-2 + Arc I/II + Arc B `\b` unlock) |
+| Version | REAL `2026.7.33` — §A/§E re-stamped on `a994ff9` (post O2r-1b, the A2 fix, the P0 #2 icase fix + seed-128 tune, and the mono/multi cascade split), 2026-07-11; §Unicode's `.`/ascii-witness cells re-stamped on `258783b` (post wagon-4 strict-UTF-8 fix for `.`), 2026-07-11 — every section carrying a re-stamp note is now re-stamped within this same train, not a stale carry-over. §multi-pattern unchanged (Stage-2 + Arc I/II + Arc B `\b` unlock) |
 | Machines | §A on **two ISAs**: devbox (`x86-64`, g++ 13.3.0) *and* Apple M1 Pro (`arm64`, Apple clang 16). §B / §E on M1 Pro (§E's x86-64 leg noted inline where it diverges — see §E). §multi-pattern measured on **x86-64 devbox** (g++ 13.3, RE2 + Hyperscan 5.4) |
 | Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (built from source on x86-64 to pin the exact version); RE2 (10.0 on x86-64, 11.0 on arm64 — version-differs-by-leg, uncontested given the margins). Multi-pattern: RE2::Set, Hyperscan (optional). §E: rust `regex` 1.12.4 |
 | Python | CPython 3.14, `re` (stdlib) vs the REAL `2026.7.25` abi3 wheel (§B — not re-measured this train) |
