@@ -9,8 +9,6 @@
 // byte run. Every malformed byte position is expected to behave as a non-match, non-word,
 // non-property code unit — the same "malformed is never a code point" rule the engine already
 // applies to `.` and class runs, extended here to the rest of the feature surface.
-#include <algorithm>
-#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -35,18 +33,19 @@ namespace {
    * `std::string` always guarantees `data()[size()] == '\0'` as a valid, allocated byte, SSO or
    * not -- so a `std::string`-backed subject, even a large heap-allocated one, can never catch a
    * "read one byte past size()" bug: that read lands on the guaranteed terminator, still inside
-   * the allocation. This constructs a raw `new[]` buffer with EXACTLY `total` bytes, matching what
-   * the C-ABI / fuzz harness hands the engine (a bare pointer+length pair with no such guarantee),
-   * so a read at exactly `text.size()` crosses a real heap-redzone boundary under ASan. Leaked
-   * deliberately -- ASan tracks the allocation regardless, and this is test-only code.
+   * the allocation. `std::vector<char>` has no such guarantee (`data()[size()]` is not part of
+   * the allocation at all) and owns its storage via RAII, matching what the C-ABI / fuzz harness
+   * hands the engine (a bare pointer+length pair) without leaking the buffer the way a raw
+   * `new[]`/`.release()` did in an earlier version of this test (wagon 4c's own OOB fix shipped
+   * with a leak LeakSanitizer caught on the CI's Linux leg -- invisible locally, since LSan is not
+   * enabled by default on this macOS toolchain; see the sanitize target's own comment).
    */
-  std::string_view bare_heap_ending_in(std::size_t   total,
-                                       unsigned char last_byte)
+  std::vector<char> bare_heap_ending_in(std::size_t   total,
+                                        unsigned char last_byte)
   {
-    auto buf = std::make_unique<char[]>(total);
-    std::fill_n(buf.get(), total - 1, 'x');
-    buf[total - 1] = static_cast<char>(last_byte);
-    return {buf.release(), total};
+    std::vector<char> buf(total, 'x');
+    buf.back() = static_cast<char>(last_byte);
+    return buf;
   }
 
   bool searches(const std::string& pattern,
@@ -230,28 +229,30 @@ TEST(dot_width_no_oob_read_past_heap_buffer_end)
   // `std::string`, and `std::string` ALWAYS guarantees `data()[size()] == '\0'` as a valid,
   // allocated byte -- SSO or heap-allocated, large or small, that guarantee masks a "read one byte
   // past size()" bug completely, since the read lands on the terminator, still inside the
-  // allocation. bare_heap_ending_in gives a subject with no such slack (a bare `new[]` allocation
-  // of EXACTLY `total` bytes), matching the bare pointer+length pair the C API / fuzz harness
-  // actually hands the engine -- the only shape that puts a real heap-redzone boundary at
-  // `text.size()`. The proof is this test running clean under `make sanitize` (ASan aborts the
-  // whole process on the read this pins, so a crash here IS the failure signal, not an EXPECT);
-  // the assertions below are a bonus correctness check, not the point of the test.
+  // allocation. bare_heap_ending_in gives a subject with no such slack (a `std::vector<char>` of
+  // EXACTLY `total` bytes, no implicit terminator), matching the bare pointer+length pair the C
+  // API / fuzz harness actually hands the engine -- the only shape that puts a real heap-redzone
+  // boundary at `text.size()`. The vector owns its storage (RAII; wagon 4c's first version used a
+  // raw `new[]`/`.release()` that leaked, caught by LeakSanitizer on CI's Linux leg). The proof is
+  // this test running clean under `make sanitize` (ASan aborts the whole process on the read this
+  // pins, so a crash here IS the failure signal, not an EXPECT); the assertions below are a bonus
+  // correctness check, not the point of the test.
   const unsigned char tricky_leads[] = {0xE0, 0xE4, 0xED, 0xF0, 0xF4};
   for (unsigned char lead : tricky_leads) {
     // The lead byte is the absolute last byte of the buffer (0 continuation bytes present) -- the
     // exact shape the fuzzer found (E0-EF hits the 3-byte branch's guard, F0-F4 the 4-byte one).
-    const std::string_view sv {bare_heap_ending_in(70, lead)};
+    const std::vector<char> buf {bare_heap_ending_in(70, lead)};
+    const std::string_view  sv  {buf.data(), buf.size()};
     EXPECT(!regex(".+").fullmatch(sv).matched()); // the truncated tail can never be consumed
     EXPECT(regex(".+").search(sv).matched());     // the 69 leading ASCII bytes still match
   }
   // A 3-byte lead with exactly 1 (not 2) continuation bytes present -- the i+2 guard must also
   // catch this shallower truncation depth, not just "lead is the very last byte."
   {
-    auto buf = std::make_unique<char[]>(70);
-    std::fill_n(buf.get(), 68, 'x');
+    std::vector<char> buf(70, 'x');
     buf[68] = static_cast<char>(0xE0);
     buf[69] = static_cast<char>(0xA5); // one valid continuation byte, then end of buffer
-    const std::string_view sv {buf.release(), 70};
+    const std::string_view sv {buf.data(), buf.size()};
     EXPECT(!regex(".+").fullmatch(sv).matched());
     EXPECT(regex(".+").search(sv).matched());
   }

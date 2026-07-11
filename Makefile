@@ -101,6 +101,13 @@ build:
 test: build
 	$(CTEST) --test-dir $(BUILD) --output-on-failure
 
+# ASan/UBSan only here -- LeakSanitizer is CI-Linux-only. `ASAN_OPTIONS=detect_leaks=1` aborts
+# immediately on macOS ("detect_leaks is not supported on this platform", confirmed empirically on
+# this Darwin toolchain -- Apple's ASan runtime does not ship LSan), so it cannot be the default
+# here without breaking every local sanitize run. A real leak (wagon 4c's own `bare_heap_ending_in`
+# test helper first shipped with a `new[]`/`.release()` that never freed) therefore passes locally
+# and is caught only in CI's Linux leg, invisible until then -- same shape as `doc-check`'s
+# Docker-optional skip: visible in the CI job that IS the backstop, never a false green here.
 sanitize:
 	$(CMAKE) -S . -B $(BUILD)/sanitize $(CMAKE_CXX) -DREAL_SANITIZE=ON
 	$(CMAKE) --build $(BUILD)/sanitize --parallel $(JOBS)
