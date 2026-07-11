@@ -47,7 +47,7 @@ SCIFORGE_TOOLS ?= ../sciforge/tools
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep -vE 'include/real/unicode/unicode_(fold|props|property|script|binprop|scx)\.hpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-        lint misra fuzz fuzz-compat exhaustive-compat fowler-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate clean \
+        lint misra fuzz fuzz-compat exhaustive-compat fowler-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate gate-bump gate-doc gate-test clean \
         bench-engines bench-multipattern bench-duel bench-matrix matrix-gate \
         profile-sample-build profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers
@@ -74,6 +74,9 @@ help:
 	@echo ""
 	@echo "  make version-check  Assert pyproject = __init__ = CMake-derived version"
 	@echo "  make full-local-gate  Every pass/fail gate in one command (the macOS gate of record)"
+	@echo "  make gate-bump  Calibrated gate for a version bump only (version-check + build)"
+	@echo "  make gate-doc   Calibrated gate for a doc-only change (doc-check/format-check as needed)"
+	@echo "  make gate-test  Calibrated gate for a tests/-only change (test + sanitize + coverage-check)"
 	@echo "  make bench-duel   REAL vs the regex crate, ns/byte (needs a Rust toolchain)"
 	@echo "  make profile-sample  P0 2-pass profile grid (JSONL + markdown; not a CI gate)"
 	@echo ""
@@ -345,6 +348,101 @@ check-layers:
 # Fail-fast gate of record: CHEAP / FAST first, expensive last. First non-zero aborts
 # the rest (no -k). Order is intentional — a Doxygen param miss or format drift must not
 # wait for sanitize/python. Compound steps (lint | tee) use `set -euo pipefail`.
+# --- calibrated local gating (dev-tooling; CI stays FULL and uncalibrated -- the real net) -
+#
+# full-local-gate (18/18) is the right call for engine code, but wasteful to run in full for a
+# pure version bump or a doc-only change. These 3 targets run the SUBSET matched to the diff's
+# own category, detected via `git diff --name-only origin/main` -- and each one REFUSES to run
+# (pointing back to full-local-gate) if that diff touches a file outside its own category, so a
+# miscategorized change cannot quietly get an under-powered gate. Safe ONLY because CI itself
+# stays full and uncalibrated before any tag: this is a local-loop velocity optimization, never
+# a coverage reduction. Doubt about the category -> the guard fails closed; never guess.
+#
+#   change type (files)                                | target    | runs
+#   bump: version.hpp/pyproject/__init__/Cargo/CITATION/| gate-bump | version-check + build
+#     README + docs/release-notes/*.md, docs/BENCHMARKS |           |
+#   doc-only: *.md, *.dox, or comment-only .hpp diffs   | gate-doc  | doc-check if headers/
+#                                                        |           | Doxyfile touched;
+#                                                        |           | format-check if .cpp
+#                                                        |           | touched; verify_unicode_
+#                                                        |           | ratios.py if BENCHMARKS.md
+#                                                        |           | touched
+#   test-only: tests/, or the Makefile itself            | gate-test | test + sanitize +
+#                                                        |           | coverage-check
+#
+# Anything under include/real/{engine,core,automata,frontend}, storage.hpp, real.hpp: none of
+# these targets accept it -- full-local-gate is the only gate for engine code, unconditionally.
+
+gate-bump:
+	@set -euo pipefail; \
+	 files="$$(git diff --name-only origin/main -- .)"; \
+	 bad="$$(printf '%s\n' "$$files" | grep -vE '^(include/real/version\.hpp|pyproject\.toml|bindings/python/real/__init__\.py|bindings/rust/Cargo\.toml|CITATION\.cff|README\.md|docs/release-notes/.*\.md|docs/BENCHMARKS\.md)$$' | grep -v '^$$' || true)"; \
+	 if [ -n "$$bad" ]; then \
+	   echo "gate-bump: REFUSED — out-of-category file(s) vs origin/main, use full-local-gate:"; \
+	   printf '%s\n' "$$bad" | sed 's/^/  /'; \
+	   exit 1; \
+	 fi; \
+	 echo "gate-bump: category OK (version-bump files only)"
+	@echo "── [1/2] version-check"
+	@$(MAKE) version-check
+	@echo "── [2/2] build (compile-smoke)"
+	@$(MAKE) build
+	@echo "gate-bump: PASS (version-check + build)"
+
+gate-doc:
+	@set -euo pipefail; \
+	 files="$$(git diff --name-only origin/main -- .)"; \
+	 for f in $$files; do \
+	   case "$$f" in \
+	     *.md|*.dox) continue ;; \
+	   esac; \
+	   if [ ! -f "$$f" ]; then \
+	     echo "gate-doc: REFUSED — $$f deleted/renamed outside .md/.dox, use full-local-gate"; exit 1; \
+	   fi; \
+	   noncomment="$$(git diff -U0 origin/main -- "$$f" | grep -E '^[+-][^+-]' | grep -vE '^[+-][[:space:]]*(//|/\*|\*/|\*[[:space:]])' | grep -vE '^[+-][[:space:]]*$$' || true)"; \
+	   if [ -n "$$noncomment" ]; then \
+	     echo "gate-doc: REFUSED — $$f has non-comment changes, use full-local-gate:"; \
+	     printf '%s\n' "$$noncomment" | head -5 | sed 's/^/  /'; \
+	     exit 1; \
+	   fi; \
+	   echo "gate-doc: $$f is comment-only, treating as doc"; \
+	 done; \
+	 echo "gate-doc: category OK (doc-only / comment-only diff)"
+	@set -euo pipefail; \
+	 files="$$(git diff --name-only origin/main -- .)"; \
+	 if printf '%s\n' "$$files" | grep -qE '\.hpp$$|Doxyfile$$'; then \
+	   echo "── doc-check (headers or Doxyfile touched)"; $(MAKE) doc-check; \
+	 else echo "gate-doc: skip doc-check (no headers/Doxyfile touched)"; fi
+	@set -euo pipefail; \
+	 files="$$(git diff --name-only origin/main -- .)"; \
+	 if printf '%s\n' "$$files" | grep -qE '\.cpp$$'; then \
+	   echo "── format-check (.cpp touched)"; $(MAKE) format-check; \
+	 else echo "gate-doc: skip format-check (no .cpp touched)"; fi
+	@set -euo pipefail; \
+	 files="$$(git diff --name-only origin/main -- .)"; \
+	 if printf '%s\n' "$$files" | grep -qE '^docs/BENCHMARKS\.md$$'; then \
+	   echo "── verify_unicode_ratios.py (BENCHMARKS.md touched)"; python3 benchmarks/verify_unicode_ratios.py; \
+	 else echo "gate-doc: skip verify_unicode_ratios.py (BENCHMARKS.md untouched)"; fi
+	@echo "gate-doc: PASS"
+
+gate-test:
+	@set -euo pipefail; \
+	 files="$$(git diff --name-only origin/main -- .)"; \
+	 bad="$$(printf '%s\n' "$$files" | grep -vE '^(tests/|Makefile$$)' | grep -v '^$$' || true)"; \
+	 if [ -n "$$bad" ]; then \
+	   echo "gate-test: REFUSED — out-of-category file(s) vs origin/main, use full-local-gate:"; \
+	   printf '%s\n' "$$bad" | sed 's/^/  /'; \
+	   exit 1; \
+	 fi; \
+	 echo "gate-test: category OK (tests/ or Makefile only)"
+	@echo "── [1/3] test"
+	@$(MAKE) test
+	@echo "── [2/3] sanitize"
+	@$(MAKE) sanitize
+	@echo "── [3/3] coverage-check"
+	@$(MAKE) coverage-check
+	@echo "gate-test: PASS (test + sanitize + coverage-check)"
+
 full-local-gate:
 	@echo "full-local-gate: start (fail-fast — cheap first, first red stops the train)"
 	@echo "── [1/18] format-check"
