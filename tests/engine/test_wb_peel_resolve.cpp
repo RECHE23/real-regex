@@ -299,38 +299,54 @@ TEST(wb_resolve_helpers_direct_policy_matrix)
   std::uint8_t ol {9};
   std::uint8_t ot {9};
 
-  // \B → unarm.
-  EXPECT(!resolve_class_wb_hints(true, true, 2, 0, ol, ot));
-  EXPECT(!resolve_class_wb_hints(true, true, 0, 2, ol, ot));
-  EXPECT(!resolve_class_wb_hints(false, true, 1, 2, ol, ot));
+  // \B → unarm (maximal_run irrelevant -- \B is never redundant either way).
+  EXPECT(!resolve_class_wb_hints(true, true, true, 2, 0, ol, ot));
+  EXPECT(!resolve_class_wb_hints(true, true, true, 0, 2, ol, ot));
+  EXPECT(!resolve_class_wb_hints(false, true, true, 1, 2, ol, ot));
 
   // Superset under \b → unarm.
-  EXPECT(!resolve_class_wb_hints(false, false, 1, 1, ol, ot));
+  EXPECT(!resolve_class_wb_hints(false, false, true, 1, 1, ol, ot));
 
   // Bare (no wb) → arm, drop hints.
-  EXPECT(resolve_class_wb_hints(false, true, 0, 0, ol, ot));
+  EXPECT(resolve_class_wb_hints(false, true, true, 0, 0, ol, ot));
   EXPECT_EQ(static_cast<int>(ol), 0);
   EXPECT_EQ(static_cast<int>(ot), 0);
 
-  // Full word + \b → B-1 drop.
+  // Full word + \b, maximal run → B-1 drop.
   EXPECT(wb_redundant_for_full_word(1, 1));
   EXPECT(wb_redundant_for_full_word(1, 0));
   EXPECT(wb_redundant_for_full_word(0, 1));
   EXPECT(!wb_redundant_for_full_word(2, 1)); // \B never redundant
   EXPECT(!wb_redundant_for_full_word(1, 2));
   EXPECT(!wb_redundant_for_full_word(0, 0));
-  EXPECT(resolve_class_wb_hints(true, true, 1, 1, ol, ot));
+  EXPECT(resolve_class_wb_hints(true, true, true, 1, 1, ol, ot));
   EXPECT_EQ(static_cast<int>(ol), 0);
   EXPECT_EQ(static_cast<int>(ot), 0);
 
-  // Subset + \b → keep wrap (B-2).
-  EXPECT(resolve_class_wb_hints(false, true, 1, 0, ol, ot));
+  // wb-class-junction fix: full word + \b, NOT a maximal run (a single code point, e.g. `\b\w`
+  // with no `+`) -- B-1's redundancy argument does not hold (the match may legally start mid-run),
+  // so the wrap must be KEPT, not dropped. This is the exact policy gap that let `\b\w` claim a
+  // boundary between two adjacent word code points across a multi-byte/ASCII junction (real::regex
+  // v2026.7.33 and earlier) -- `\b\w+` (maximal_run=true, tested above) was always correct; only
+  // the single-code-point shape silently reused B-1's maximal-run-only guarantee.
+  EXPECT(resolve_class_wb_hints(true, true, false, 1, 1, ol, ot));
+  EXPECT_EQ(static_cast<int>(ol), 1);
+  EXPECT_EQ(static_cast<int>(ot), 1);
+  EXPECT(resolve_class_wb_hints(true, true, false, 1, 0, ol, ot));
   EXPECT_EQ(static_cast<int>(ol), 1);
   EXPECT_EQ(static_cast<int>(ot), 0);
-  EXPECT(resolve_class_wb_hints(false, true, 0, 1, ol, ot));
+  EXPECT(resolve_class_wb_hints(true, true, false, 0, 1, ol, ot));
   EXPECT_EQ(static_cast<int>(ol), 0);
   EXPECT_EQ(static_cast<int>(ot), 1);
-  EXPECT(resolve_class_wb_hints(false, true, 1, 1, ol, ot));
+
+  // Subset + \b → keep wrap (B-2), regardless of maximal_run (B-2 never drops).
+  EXPECT(resolve_class_wb_hints(false, true, true, 1, 0, ol, ot));
+  EXPECT_EQ(static_cast<int>(ol), 1);
+  EXPECT_EQ(static_cast<int>(ot), 0);
+  EXPECT(resolve_class_wb_hints(false, true, true, 0, 1, ol, ot));
+  EXPECT_EQ(static_cast<int>(ol), 0);
+  EXPECT_EQ(static_cast<int>(ot), 1);
+  EXPECT(resolve_class_wb_hints(false, true, true, 1, 1, ol, ot));
   EXPECT_EQ(static_cast<int>(ol), 1);
   EXPECT_EQ(static_cast<int>(ot), 1);
 

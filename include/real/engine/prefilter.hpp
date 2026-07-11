@@ -206,7 +206,14 @@ namespace real::detail {
     return true;
   }
 
-  //! \brief Arc B-1: `\b` next to a full-`\w` maximal run is redundant (`\B` never is).
+  //! \brief Arc B-1: `\b` next to a full-`\w` MAXIMAL run is redundant (`\B` never is).
+  //!        Only sound when the match is a greedy `+` run: a maximal run of `\w` can only ever
+  //!        START where the character before it is non-word (or absent) -- that IS `\b` (or the
+  //!        text edge), so checking it again is redundant. A SINGLE code point (no `+`) has no
+  //!        such guarantee: `\b\w` may legally start mid-run (any word code point qualifies as a
+  //!        candidate start), so dropping the boundary there is unsound, not just conservative.
+  //!        The caller is responsible for only calling this when \p lead / \p trail came from a
+  //!        provably maximal-run shape (see \ref resolve_class_wb_hints's \p maximal_run).
   [[nodiscard]] constexpr bool wb_redundant_for_full_word(std::uint8_t lead,
                                                           std::uint8_t trail) noexcept
   {
@@ -220,19 +227,25 @@ namespace real::detail {
    * \brief B-1/B-2 policy for class / cp-class loops under optional `\b` wraps.
    *
    * Unarms on `\B` or on a non-word-subset class under `\b` (superset maximal-run is unsound).
-   * Full word + `\b` drops boundaries (B-1). Proper word subset keeps the wrap (B-2). Bare
-   * (no `\b`) arms with zero wb hints.
+   * Full word + `\b` drops boundaries (B-1) -- but ONLY for a maximal (`+`) run; see \ref
+   * wb_redundant_for_full_word. Proper word subset keeps the wrap (B-2). Bare (no `\b`) arms with
+   * zero wb hints.
    *
-   * \param[in]  full_word Exact `\w` class (ASCII or Unicode table identity).
-   * \param[in]  word_sub  Non-empty subset of `\w`.
-   * \param[in]  lead      Peeled lead hint.
-   * \param[in]  trail     Peeled trail hint.
-   * \param[out] out_lead  Hints to store (0 when dropped).
-   * \param[out] out_trail Hints to store (0 when dropped).
+   * \param[in]  full_word   Exact `\w` class (ASCII or Unicode table identity).
+   * \param[in]  word_sub    Non-empty subset of `\w`.
+   * \param[in]  maximal_run Whether the class loop is a greedy `+` (a maximal run, so any valid
+   *                         start already sits at a word/non-word transition) rather than a
+   *                         single code point (which may start anywhere inside a word run, where
+   *                         B-1's redundancy argument does not hold).
+   * \param[in]  lead        Peeled lead hint.
+   * \param[in]  trail       Peeled trail hint.
+   * \param[out] out_lead    Hints to store (0 when dropped).
+   * \param[out] out_trail   Hints to store (0 when dropped).
    * \return true if the fast path should arm.
    */
   [[nodiscard]] constexpr bool resolve_class_wb_hints(bool          full_word,
                                                       bool          word_sub,
+                                                      bool          maximal_run,
                                                       std::uint8_t  lead,
                                                       std::uint8_t  trail,
                                                       std::uint8_t& out_lead,
@@ -245,7 +258,8 @@ namespace real::detail {
     if (has_wb && !full_word && !word_sub) {
       return false;
     }
-    if (has_wb && word_sub && !(full_word && wb_redundant_for_full_word(lead, trail))) {
+    if (has_wb && word_sub &&
+        !(maximal_run && full_word && wb_redundant_for_full_word(lead, trail))) {
       out_lead  = lead;
       out_trail = trail;
     }
@@ -744,8 +758,11 @@ namespace real::detail {
             const char_class& cc        {classes[static_cast<std::size_t>(cls)]};
             std::uint8_t      out_lead  {0};
             std::uint8_t      out_trail {0};
+            // This shape structurally requires the split/loop matched above -- always a maximal
+            // `+` run, never a single code point -- so B-1's redundancy argument always applies.
             if (resolve_class_wb_hints(is_full_ascii_word_class(cc), is_ascii_word_subset_class(cc),
-                                       wb_lead, wb_trail, out_lead, out_trail)) {
+                                       /*maximal_run=*/ true, wb_lead, wb_trail, out_lead,
+                                       out_trail)) {
               hints.greedy_class_loop  = cls;
               hints.greedy_group_start = gs;
               hints.greedy_group_end   = ge;
@@ -842,9 +859,12 @@ namespace real::detail {
               const cp_class& cc        {cp_classes[static_cast<std::size_t>(cp_idx)]};
               std::uint8_t    out_lead  {0};
               std::uint8_t    out_trail {0};
+              // Unlike the ASCII class+ shape above, `plus` here is genuinely optional (this
+              // recognizer accepts both `\b\w+` and bare `\b\w`) -- B-1's redundancy argument
+              // only holds for the former, so it must gate on the ACTUAL shape, not assume it.
               if (resolve_class_wb_hints(is_full_unicode_word_cp_class(cc, cp_ranges),
-                                         is_unicode_word_subset_cp_class(cc, cp_ranges), wb_lead,
-                                         wb_trail, out_lead, out_trail)) {
+                                         is_unicode_word_subset_cp_class(cc, cp_ranges), plus,
+                                         wb_lead, wb_trail, out_lead, out_trail)) {
                 hints.greedy_cp_class      = cp_idx;
                 hints.greedy_cp_class_plus = plus;
                 hints.greedy_group_start   = gs;
