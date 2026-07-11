@@ -1408,6 +1408,17 @@ namespace real::detail {
    * scalar byte loop. During constant evaluation the plain member-wise scan runs instead (the home-made
    * path — the same shape the bitmap loop takes).
    *
+   * FIX P0 #2 (O(n^2)): the window is grown **exponentially** (galloping search) from a modest initial
+   * probe, doubling each round, rather than handed the full remaining haystack up front. A caller that
+   * invokes this once per rejected candidate (`next_candidate`'s icase small-set route) used to pay one
+   * `memchr` per set member over `text.size() - pos` on EVERY such call; a set with an asymmetrically
+   * rare or entirely absent member (e.g. `(?i)cafe`'s `{c, C}` on an all-lowercase haystack) turned that
+   * into a full remaining-text scan on every rejected candidate — O(n) candidates x O(n) scan = O(n^2),
+   * same family as A2's unbounded-reach fix but one level upstream (the candidate SEARCH, not the
+   * anchored walk once a candidate is found). The geometric series bounds one call's total scanned bytes
+   * to at most ~2x the distance to the actual hit (or the remaining text, on a true miss) — the standard
+   * galloping-search argument — independent of any one member's frequency.
+   *
    * \param[in] text The subject text.
    * \param[in] pos  Index to start scanning from.
    * \param[in] set  Pointer to the enumerated set members (first \p n valid).
@@ -1423,20 +1434,36 @@ namespace real::detail {
       return npos;
     }
     if (!std::is_constant_evaluated()) {
-      const char* const base   {text.data()};
-      std::size_t       window {text.size() - pos}; // narrows to [pos, best) as hits are found
-      std::size_t       best   {npos};
-      for (std::uint8_t i = 0; i < n; ++i) {
-        const void* hit {std::memchr(base + pos, set[i], window)};
-        if (hit != nullptr) {
-          const std::size_t idx {static_cast<std::size_t>(static_cast<const char*>(hit) - base)};
-          if (idx < best) {
-            best   = idx;
-            window = idx - pos; // subsequent members need only search before the current best
+      const char* const base  {text.data()};
+      const std::size_t total {text.size() - pos};
+      // Initial probe width: the caller (next_candidate's small-set route) already tried a 32-byte bitmap
+      // probe before falling here, so this starts just past it; any reasonable seed gives the same
+      // asymptotic bound, only the constant factor for a near-miss changes.
+      std::size_t window {total < 64 ? total : 64};
+      while (true) {
+        std::size_t best {npos};
+        std::size_t win  {window};
+        for (std::uint8_t i = 0; i < n; ++i) {
+          const void* hit {std::memchr(base + pos, set[i], win)};
+          if (hit != nullptr) {
+            const std::size_t idx {static_cast<std::size_t>(static_cast<const char*>(hit) - base)};
+            if (idx < best) {
+              best = idx;
+              win  = best - pos; // subsequent members this round only search the shorter prefix
+            }
           }
         }
+#if defined(REAL_TEST_INSTRUMENT)
+        prefilter_note_scan(win); // bill this round's actual scanned width, like find_prefix does
+#endif
+        if (best != npos) {
+          return best;
+        }
+        if (window >= total) {
+          return npos; // the full remaining haystack was covered across the rounds above; no member anywhere
+        }
+        window = (window > total - window) ? total : window * 2; // double, capped to the remaining text
       }
-      return best;
     }
     for (std::size_t i = pos; i < text.size(); ++i) {
       for (std::uint8_t j = 0; j < n; ++j) {

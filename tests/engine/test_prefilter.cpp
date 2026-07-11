@@ -540,3 +540,118 @@ TEST(find_literal_memmem_wrapper)
   EXPECT(find_literal("abc", 1, "") == 1);                // empty literal -> pos
   EXPECT(find_literal("x\xC3\xA9y", 0, "\xC3\xA9") == 1); // non-ASCII bytes in the literal
 }
+
+// --- FIX P0 #2 (O(n^2)): (?i)<literal> on a sparse-match haystack ----------------------------------
+//
+// An icase literal compiles to a small (2..4-member) first-byte set (no literal prefix -- see
+// prefix_literal_is_extracted's icase note above), routed through next_candidate's small-set branch,
+// which falls back to find_bytes_cascade past a 32-byte probe miss. find_bytes_cascade used to hand
+// `memchr` the FULL remaining haystack on every such call; a set member that is rare or absent from a
+// stretch of text (e.g. `(?i)cafe`'s {c, C} on all-lowercase prose) turned every rejected-candidate
+// cascade call into an O(remaining-text) memchr scan for a byte that is never found there -- O(n)
+// candidates x O(n) scan = O(n^2), same family as A2's unbounded-reach fix (tests above) but one level
+// upstream: the candidate SEARCH itself, not the anchored walk once a candidate is found.
+
+TEST(icase_literal_cascade_hints_never_change_results)
+{
+  // Same with/without-hints technique as hints_never_change_results, but targeting the corpus shapes
+  // named in the fix's own fiche: sparse-match (the adversarial shape -- mostly filler, no uppercase
+  // fold member anywhere), dense-match, no-match, a match at the very start/end (boundary), a non-ASCII
+  // fold (café), and an empty haystack.
+  const std::string_view filler {"the quick brown fox jumps over the lazy dog and words filler here "};
+  std::string            sparse;
+  for (int i = 0; i < 40; ++i) {
+    sparse += filler;
+    sparse += "cafe ";
+  }
+  std::string dense;
+  for (int i = 0; i < 200; ++i) {
+    dense += "cafe ";
+  }
+  std::string no_match;
+  for (int i = 0; i < 40; ++i) {
+    no_match += filler;
+  }
+  const std::string boundary_start {"cafe " + no_match};
+  const std::string boundary_end   {no_match + "cafe"};
+  std::string       fold_accented  {sparse};
+  fold_accented += "CAF\xC3\x89 "; // CAFÉ, upper-cased incl. the accent
+  fold_accented += sparse;
+
+  const std::string_view patterns[] = {"(?i)cafe", "(?i)CAFE", "(?i)caf\xC3\xA9", "(?i)ABC"};
+  const std::string      texts[]    = {sparse, dense, no_match, boundary_start, boundary_end, fold_accented, ""};
+
+  for (const auto& pattern : patterns) {
+    const auto with       = dynamic_storage::compile(pattern, real::flags::none);
+    auto       without    = with;
+    without.program.hints = {};
+    for (const auto& text : texts) {
+      real::detail::pike_state         s1;
+      real::detail::pike_state         s2;
+      std::vector<std::size_t>         r1;
+      std::vector<std::size_t>         r2;
+      const real::detail::program_view pv1 {with.view()};
+      const real::detail::program_view pv2 {without.view()};
+      real::detail::pike_vm            vm1(pv1, s1);
+      real::detail::pike_vm            vm2(pv2, s2);
+      const bool                       m1 = vm1.run(text, 0, real::detail::run_mode::search, r1);
+      const bool                       m2 = vm2.run(text, 0, real::detail::run_mode::search, r2);
+      EXPECT_EQ(m1, m2);
+      EXPECT(r1 == r2);
+    }
+  }
+}
+
+TEST(icase_literal_cascade_finds_every_match_find_iter)
+{
+  // find_iter (not just the first search) over the exact bug shape: sparse, all-lowercase filler with
+  // no uppercase fold member anywhere, checked against a hand-counted expected match count.
+  const std::string_view filler {"the quick brown fox jumps over the lazy dog and words filler here "};
+  std::string            text;
+  constexpr int          reps   {50};
+  for (int i = 0; i < reps; ++i) {
+    text += filler;
+    text += "cafe ";
+  }
+  const real::regex  rx {"(?i)cafe"};
+  std::size_t        n  {0};
+  for (const auto& m : rx.find_iter(text)) {
+    EXPECT_EQ(m[0], "cafe"sv);
+    ++n;
+  }
+  EXPECT_EQ(n, static_cast<std::size_t>(reps));
+}
+
+TEST(icase_literal_cascade_throughput_smoke)
+{
+  // THE gate for the fix itself: deterministic work counter (REAL_TEST_INSTRUMENT), not wall-clock --
+  // literal_prefilter_throughput_smoke's exact method, applied to find_bytes_cascade. Pre-fix this
+  // regresses hard (O(n^2): the ratio below would land near 16x, not under 8x) -- verified by hand
+  // against the pre-fix tree during the fix's own diagnosis.
+  const real::regex rx {"(?i)cafe"};
+  const auto        work {[&](std::size_t n) -> std::uint64_t {
+                            std::string text;
+                            text.reserve(n + 128);
+                            const std::string_view filler {
+                              "the quick brown fox jumps over the lazy dog and words filler here more filler text words "};
+                            while (text.size() < n) {
+                              text += filler;
+                              text += "cafe ";
+                            }
+                            real::detail::prefilter_work_units() = 0;
+                            std::size_t matches {0};
+                            for (const auto& m : rx.find_iter(text)) {
+                              (void) m;
+                              ++matches;
+                            }
+                            EXPECT(matches > 0);
+                            return real::detail::prefilter_work_units();
+                          }};
+  (void) work(1 << 12);                      // warmup (first-call path setup); discarded
+  const std::uint64_t small {work(1 << 18)}; // 256 KiB
+  const std::uint64_t large {work(1 << 20)}; // 1 MiB -- 4x the bytes
+  // O(n) -> ~4x; O(n^2) -> ~16x. 8x bites quadratic, absorbs constant per-search overhead.
+  EXPECT(large < small * 8);
+  // Determinism pin: re-run large -- same work count (not wall time).
+  EXPECT_EQ(work(1 << 20), large);
+}
