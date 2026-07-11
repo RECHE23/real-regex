@@ -98,3 +98,25 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
+
+  # Notify the two package-manager taps (homebrew-sci, vcpkg-sci) that a new version has
+  # released, so their bump.yml workflows push the update directly instead of waiting for
+  # their next daily cron. Cross-repo dispatch needs a PAT with Contents:write on both tap
+  # repos (the local GITHUB_TOKEN in this job cannot write to another repo) — the tap-side
+  # push itself uses each tap's own local GITHUB_TOKEN, not this one.
+  notify-taps:
+    needs: [publish, github-release]
+    if: ${{ needs.github-release.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch upstream-release to taps
+        env:
+          GH_TOKEN: ${{ secrets.PACKAGING_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          ver="${GITHUB_REF_NAME#v}"
+          for tap in homebrew-sci vcpkg-sci; do
+            gh api "repos/RECHE23/$tap/dispatches" \
+              -f event_type=upstream-release \
+              -f "client_payload[version]=$ver"
+          done
