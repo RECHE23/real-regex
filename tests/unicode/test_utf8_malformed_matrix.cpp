@@ -10,12 +10,15 @@
 // non-property code unit — the same "malformed is never a code point" rule the engine already
 // applies to `.` and class runs, extended here to the rest of the feature surface.
 #include <algorithm>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include <sciforge/test/framework.hpp>
 #include <sciforge/test/strings.hpp>
+#include "real/automata/lazy_dfa.hpp" // lazy_dfa_route_disabled
+#include "real/dfa.hpp"
 #include "real/real.hpp"
 
 using real::flags;
@@ -46,42 +49,57 @@ namespace {
   std::vector<malformed_case> malformed_catalog()
   {
     return {
-      {"lone_continuation_80", bytes({0x80})},
-      {"lone_continuation_bf", bytes({0xBF})},
-      {"truncated_2byte_lead_eot", bytes({0xC3})},
-      {"truncated_3byte_lead_eot", bytes({0xE2, 0x82})},
-      {"truncated_4byte_lead_eot", bytes({0xF0, 0x9F, 0x98})},
-      {"overlong_2byte_c0_80", bytes({0xC0, 0x80})},
-      {"overlong_3byte_e0_80_80", bytes({0xE0, 0x80, 0x80})},
-      {"overlong_4byte_f0_80_80_80", bytes({0xF0, 0x80, 0x80, 0x80})},
-      {"surrogate_ed_a0_80", bytes({0xED, 0xA0, 0x80})},
-      {"past_10ffff_f5", bytes({0xF5, 0x80, 0x80, 0x80})},
-      {"invalid_lead_fe", bytes({0xFE})},
-      {"invalid_lead_ff", bytes({0xFF})},
+      {.name = "lone_continuation_80", .seq = bytes({0x80})},
+      {.name = "lone_continuation_bf", .seq = bytes({0xBF})},
+      {.name = "truncated_2byte_lead_eot", .seq = bytes({0xC3})},
+      {.name = "truncated_3byte_lead_eot", .seq = bytes({0xE2, 0x82})},
+      {.name = "truncated_4byte_lead_eot", .seq = bytes({0xF0, 0x9F, 0x98})},
+      {.name = "overlong_2byte_c0_80", .seq = bytes({0xC0, 0x80})},
+      {.name = "overlong_3byte_e0_80_80", .seq = bytes({0xE0, 0x80, 0x80})},
+      {.name = "overlong_4byte_f0_80_80_80", .seq = bytes({0xF0, 0x80, 0x80, 0x80})},
+      {.name = "surrogate_ed_a0_80", .seq = bytes({0xED, 0xA0, 0x80})},
+      {.name = "past_10ffff_f5", .seq = bytes({0xF5, 0x80, 0x80, 0x80})},
+      {.name = "invalid_lead_fe", .seq = bytes({0xFE})},
+      {.name = "invalid_lead_ff", .seq = bytes({0xFF})},
     };
   }
 
-  // KNOWN GAP (found by this arc, reported not fixed -- volet B is test-only, "STOP + report" on
-  // an engine bug): `.`'s own width/validity check -- used by bare `.` and by a fixed-width
-  // lookaround's content check -- accepts these three as if they were one valid code point, even
-  // though `decode_codepoint_strict` (the pattern-side validator) and the canonical-ranges
-  // automaton used by an explicit-codepoint class (`[é]`, `[^é]` -- see test_utf8.cpp's
-  // utf8_class_security_and_malformed, which pins `[^é]` correctly REJECTING the very same
-  // surrogate bytes) both correctly reject them. Root cause not diagnosed here (that is the next
-  // arc's job): the working hypothesis is that `.`'s width check validates the STRUCTURAL shape
-  // (lead byte in the canonical C2-DF/E0-EF/F0-F4 range, plus the right COUNT of continuation
-  // bytes in 0x80-0xBF) without also checking that the first continuation byte falls in the
-  // length-specific sub-range that excludes overlong/surrogate encodings (E0 needs A0-BF not
-  // 80-9F; ED needs 80-9F not A0-BF to exclude D800-DFFF; F0 needs 90-BF not 80-8F) --
-  // exactly the check `decode_codepoint_strict` does (its `min_cp` guard) and the 2-byte case
-  // gets "for free" by excluding C0/C1 from the lead set entirely, which is why only the 2-byte
-  // overlong case (already in malformed_catalog above) is currently caught by `.`.
-  std::vector<malformed_case> dot_width_gap_catalog()
+  // Wagon 4 (was a KNOWN GAP through volet B, now FIXED on every route): `.` and negated-ASCII-
+  // only classes (`[^,]`) used to accept these four byte sequences as one valid code point --
+  // overlong 3-byte, overlong 4-byte, an encoded surrogate, and a code point past U+10FFFF via a
+  // structurally-plausible F4 lead. Two independent implementations shared the bug (neither
+  // narrowed the FIRST continuation byte's valid range per lead byte the way
+  // decode_codepoint_strict's min_cp/surrogate guard already did): pike.hpp's `run_codepoint_class`
+  // fast path (bare `.`/`.+`, whole-pattern only) and compiler.hpp's `emit_codepoint_class`
+  // byte-chain (every other route: `.` combined with other elements, lookaround content, the
+  // lazy-DFA/one-pass byte-programs built from that same chain, and `real::dfa`).
+  //
+  // Both are now fixed via ONE shared table, `real::detail::utf8_second_byte_bounds_table`
+  // (charclass.hpp): `[lo,hi]` bounds for the first continuation byte, indexed by lead byte,
+  // narrowing exactly the four lead bytes below. A full `decode_codepoint_strict`-based fix (which
+  // accumulates the code point via shifts, checked against min_cp/the surrogate block after the
+  // fact) was measured and REJECTED for pike.hpp's fast path: +13% ns/B on a `.`-heavy corpus, too
+  // costly for a per-byte hot loop that only needs a bounds check, not a full decode.
+  //   - pike.hpp `run_codepoint_class::width`: the first continuation byte is bounds-checked
+  //     against the table directly (site 1).
+  //   - compiler.hpp `emit_any_codepoint_class`: the non-ASCII branches are built via
+  //     `emit_class_codepoints`/`utf8_range_sequences` (the SAME canonical RE2-style splitting
+  //     already used for `\p{...}` ranges), which independently derives the identical per-lead
+  //     bounds from first principles (site 2). Because every downstream consumer of the compiled
+  //     program (general Pike VM, lookaround, the lazy-DFA's byte-program, one-pass, `real::dfa`)
+  //     just walks byte/klass/split/jump instructions with no `.`-specific logic of its own, fixing
+  //     the compiled program fixes every one of those routes at once -- see
+  //     strict_utf8_boundary_cases_rejected_on_every_route below for the route-by-route proof.
+  std::vector<malformed_case> strict_utf8_boundary_catalog()
   {
     return {
-      {"overlong_3byte_e0_80_80", bytes({0xE0, 0x80, 0x80})},
-      {"overlong_4byte_f0_80_80_80", bytes({0xF0, 0x80, 0x80, 0x80})},
-      {"surrogate_ed_a0_80", bytes({0xED, 0xA0, 0x80})},
+      {.name = "overlong_3byte_e0_80_80", .seq = bytes({0xE0, 0x80, 0x80})},
+      {.name = "overlong_4byte_f0_80_80_80", .seq = bytes({0xF0, 0x80, 0x80, 0x80})},
+      {.name = "surrogate_ed_a0_80", .seq = bytes({0xED, 0xA0, 0x80})},
+      // F4's own valid continuation range is 80-8F (codepoints up to U+10FFFF); 90-BF decodes to
+      // U+110000-U+13FFFF, past the Unicode range -- the bug accepted any 80-BF continuation after
+      // an F0-F4 lead regardless of which lead it specifically was.
+      {.name = "out_of_range_f4_90_80_80", .seq = bytes({0xF4, 0x90, 0x80, 0x80})},
     };
   }
 } // namespace
@@ -149,18 +167,7 @@ TEST(malformed_lookaround_stays_defined_no_crash)
   // and run under `make sanitize` -- ASan/UBSan, not an assertion here). Patterns stay well-formed
   // throughout -- only the subject carries malformed bytes (malformed PATTERN text is already a
   // compile-time rejection, tested in test_utf8.cpp's utf8_malformed_pattern_is_a_compile_error).
-  //
-  // The 3-entry dot_width_gap_catalog is deliberately EXCLUDED from this loop -- `.`'s width check
-  // currently (wrongly) accepts those three, which is the known gap pinned separately below, not
-  // a "no crash" question (nothing crashes; the match outcome is simply wrong). Filtering here
-  // keeps this test asserting only what is actually true today.
-  const auto gap = dot_width_gap_catalog();
   for (const auto& mc : malformed_catalog()) {
-    const bool is_gap_case = std::any_of(gap.begin(), gap.end(),
-                                         [&](const malformed_case& g) { return g.name == mc.name; });
-    if (is_gap_case) {
-      continue;
-    }
     const std::string after  {cat({"ab", mc.seq})}; // malformed bytes right where the lookahead window looks
     const std::string before {cat({mc.seq, "cd"})}; // malformed bytes right where the lookbehind window looks
 
@@ -176,21 +183,80 @@ TEST(malformed_lookaround_stays_defined_no_crash)
   }
 }
 
-TEST(KNOWN_GAP_dot_width_accepts_3_4byte_overlong_and_surrogate)
+TEST(dot_bare_fast_path_rejects_second_byte_bounds_cases)
 {
-  // Pins the CURRENT (wrong) behavior found by this arc, per volet B's "STOP + report, do not fix
-  // silently" mandate -- this is a discovered engine bug, reported separately, not addressed here.
-  // See dot_width_gap_catalog's comment for the full analysis and the working root-cause
-  // hypothesis. `[é]`/`[^é]` (an explicit-codepoint class) already correctly reject every one of
-  // these (test_utf8.cpp's utf8_class_security_and_malformed) -- only `.`'s own width check (used
-  // directly by bare `.`/`.+` and by a fixed-width lookaround's content check) has this gap.
-  //
-  // If this test starts failing because the gap was CLOSED (the EXPECT below now sees `.` NOT
-  // matching malformed input), that is progress, not a regression -- flip the assertions, fold the
-  // three entries back into the main malformed_catalog(), and delete dot_width_gap_catalog and this
-  // test. Do not "fix" this test to keep it green some other way.
-  for (const auto& mc : dot_width_gap_catalog()) {
-    EXPECT(regex(".").fullmatch(mc.seq).matched()); // WRONG: should be false; pinning today's reality
+  // Site 1: pike.hpp's run_codepoint_class fast path (bare `.`/`.+`, ONLY when that is the whole
+  // pattern) bounds-checks the first continuation byte against utf8_second_byte_bounds_table.
+  for (const auto& mc : strict_utf8_boundary_catalog()) {
+    EXPECT(!regex(".").fullmatch(mc.seq).matched());
+    const std::string doubled {cat({mc.seq, mc.seq})};
+    EXPECT(!regex(".+").fullmatch(doubled).matched());
+  }
+  // Sanity: real multi-byte code points still match (no false negative from the bounds check).
+  const std::string euro  {"\xE2\x82\xAC"};
+  const std::string emoji {"\xF0\x9F\x98\x80"};
+  EXPECT(regex(".").fullmatch(euro).matched());  // € (3-byte)
+  EXPECT(regex(".").fullmatch(emoji).matched()); // (4-byte emoji)
+}
+
+TEST(strict_utf8_boundary_cases_rejected_on_every_route)
+{
+  // Cohérence multi-routes (wagon 4 v2): the four second-continuation-byte-bounds cases must be
+  // rejected IDENTICALLY no matter which internal route a `.`/negated-ASCII-only-class pattern
+  // takes -- fast-path bare, general Pike VM (forced via lookaround, which disqualifies onepass
+  // and the lazy-DFA), one-pass, the lazy-DFA byte-program, and the separate public real::dfa
+  // engine. Sites 1 and 2 share one bounds table (charclass.hpp), so there is no code path left
+  // where the four cases could diverge by construction -- this test is the empirical proof of
+  // that claim, not just the design argument for it.
+  const auto cases {strict_utf8_boundary_catalog()};
+
+  // -- one-pass: `a.b` and `a[^,]b` are BOTH one-pass-eligible (confirmed via is_one_pass in
+  // test_onepass.cpp's own convention) -- real::regex's dispatch is transparent, so exercising
+  // them through the public search/fullmatch API exercises the one-pass table walk.
+  for (const auto& mc : cases) {
+    const std::string ab {cat({"a", mc.seq, "b"})};
+    EXPECT(!regex("a.b").fullmatch(ab).matched());
+    EXPECT(!regex("a[^,]b").fullmatch(ab).matched());
+  }
+
+  // -- general Pike VM, forced: a lookaround clears every DFA/one-pass/class-loop fast-path hint
+  // (prefilter.hpp's "has_lookaround" wipe), so `.` inside one always walks the plain compiled
+  // byte/klass/split/jump chain with no shortcut in front of it.
+  for (const auto& mc : cases) {
+    const std::string after  {cat({"ab", mc.seq})};
+    const std::string before {cat({mc.seq, "cd"})};
+    EXPECT(!searches(R"(ab(?=.))", after));
+    EXPECT(!searches(R"((?<=.)cd)", before));
+  }
+
+  // -- lazy-DFA: a differential against the SAME search with the route toggled off (test_lazy_
+  // dfa_route.cpp's own convention) -- if disabling the route ever changed the (correct) answer,
+  // the DFA path would be the one diverging. Padded well past lazy_dfa_min_input (512 B) so the
+  // route actually engages, not just compiles eligible.
+  for (const auto& mc : cases) {
+    std::string corpus     {cat({std::string(700, 'x'), "a", mc.seq, "b"})};
+    real::detail::lazy_dfa_route_disabled() = true;
+    const bool without_dfa {regex("a.b").search(corpus).matched()};
+    real::detail::lazy_dfa_route_disabled() = false;
+    const bool with_dfa    {regex("a.b").search(corpus).matched()};
+    EXPECT(!without_dfa);
+    EXPECT(without_dfa == with_dfa);
+  }
+
+  // -- real::dfa: the separate public maximal-munch engine. dfa_flatten copies `.`'s compiled
+  // byte/klass/split/jump chain through unchanged (no klass_cp involved), so it inherits the same
+  // fix; unlike every route above, a wrong answer here would surface as "the DFA claims a match
+  // real::regex itself rejects", not a thrown dfa_error (the pattern compiles and constructs fine
+  // both before and after this wagon).
+  {
+    std::vector<real::regex> pats {real::regex("a.b")};
+    const real::dfa          d    {std::span<const real::regex>(pats)};
+    for (const auto& mc : cases) {
+      const std::string ab {cat({"a", mc.seq, "b"})};
+      EXPECT(!d.match(ab).has_value());
+    }
+    const std::string valid {cat({"a", std::string {"\xE2\x82\xAC"}, "b"})}; // sanity: € still munches
+    EXPECT(d.match(valid).has_value());
   }
 }
 

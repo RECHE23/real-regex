@@ -156,6 +156,14 @@ else()
         target_compile_options(real_tests_bin PRIVATE
             -Wno-array-bounds -Wno-mismatched-new-delete)
     endif()
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # Clang's default constexpr-evaluation step budget (2^20) is a compile-time-only cap with
+        # no runtime cost -- but test_constexpr.cpp bundles many regex compiles/searches into a
+        # handful of static_asserts, and some libc++ versions' constexpr std::vector internals are
+        # step-hungry enough to trip the default on totally ordinary patterns (e.g. `.` in a
+        # multiline anchor case). Raising it is safe headroom, not a correctness workaround.
+        target_compile_options(real_tests_bin PRIVATE -fconstexpr-steps=8388608)
+    endif()
 endif()
 
 if(REAL_SANITIZE)

@@ -41,7 +41,7 @@ namespace real::detail {
   // encode_utf8_bytes) now lives in utf8_ranges.hpp, shared with the lazy DFA's klass_cp expansion.
 
   //! \brief Whether \p ranges is exactly the whole non-ASCII space `[U+0080, U+10FFFF]` — the
-  //!        "any non-ASCII code point" shape emitted by the compact \ref compiler::emit_codepoint_class.
+  //!        "any non-ASCII code point" shape emitted by \ref compiler::emit_any_codepoint_class.
   constexpr bool is_any_non_ascii(const std::vector<code_range>& ranges)
   {
     return ranges.size() == 1 && ranges[0].lo == 0x80U && ranges[0].hi == 0x10FFFFU;
@@ -138,7 +138,7 @@ namespace real::detail {
       prog.unicode_word = !has_flag(flags_, flags::bytes) && !has_flag(flags_, flags::ascii);
       prog.hints        = analyze_program(prog.code, prog.classes, prog.cp_classes, prog.cp_ranges,
                                           prog.codepoint_mark_ascii, prog.codepoint_mark_offset,
-                                          prog.lookarounds);
+                                          prog.codepoint_mark_end, prog.lookarounds);
       // The required inner literal + its prefix boundary (a single AST walk). Recorded in hints for the
       // inner-literal search route (pike_vm::run dispatches to run_inner_literal); kept off the program
       // code, so byte-identity is untouched.
@@ -328,66 +328,46 @@ namespace real::detail {
     /*!
      * \brief Emits "one codepoint matching \p ascii, or any non-ASCII codepoint".
      *
-     * Expands to the byte-level alternation
-     * `ascii | lead2 cont | lead3 cont cont | lead4 cont cont cont`, so
-     * the engine steps one byte at a time while still consuming whole codepoints.
-     * The UTF-8 byte sets come from charclass.hpp, shared with the prefilter that
-     * recognizes this exact shape.
+     * The non-ASCII branches go through \ref emit_class_codepoints for the code-point
+     * range `[U+0080, U+10FFFF]` — the SAME canonical-splitting algorithm (`utf8_range_sequences`,
+     * RE2-style) already used for `\p{...}`, so the emitted branches narrow each lead byte's first
+     * continuation byte to the sub-range that excludes overlong and surrogate encodings (`0xE0`,
+     * `0xED`, `0xF0`, `0xF4` each get their own branch; every other lead byte keeps the generic
+     * `[0x80,0xBF]` continuation, same as before). This used to be a hand-written 4-branch/16-
+     * instruction block with flat lead-byte classes (charclass.hpp's `utf8_lead2/3/4_set` /
+     * `utf8_cont_set`) that DIDN'T narrow the first continuation byte — a since-fixed correctness
+     * gap (overlong/surrogate byte sequences read as one valid codepoint).
      *
      * \param[in,out] prog  The program being built.
      * \param[in]     ascii The accepted ASCII bytes (the non-ASCII branches are
      *                      always included).
      */
-    constexpr void emit_codepoint_class(dynamic_program&  prog,
-                                        const char_class& ascii) const
+    constexpr void emit_any_codepoint_class(dynamic_program&  prog,
+                                            const char_class& ascii) const
     {
       const std::int32_t block_start {here(prog)}; // start offset, recorded as the marker below
-      const char_class   cont        {utf8_cont_set()};
-      const char_class   lead2       {utf8_lead2_set()};
-      const char_class   lead3       {utf8_lead3_set()};
-      const char_class   lead4       {utf8_lead4_set()};
+      emit_class_codepoints(prog, ascii, {{.lo = 0x80U, .hi = 0x10FFFFU}});
+      const std::int32_t block_end   {here(prog)};
 
-      const std::int32_t s1          {emit_split(prog)};
-      patch_primary(prog, s1, here(prog));
-      emit_klass(prog, ascii);
-      const std::int32_t j1 {emit_jump(prog)};
-
-      patch_secondary(prog, s1, here(prog));
-      const std::int32_t s2 {emit_split(prog)};
-      patch_primary(prog, s2, here(prog));
-      emit_klass(prog, lead2);
-      emit_klass(prog, cont);
-      const std::int32_t j2 {emit_jump(prog)};
-
-      patch_secondary(prog, s2, here(prog));
-      const std::int32_t s3 {emit_split(prog)};
-      patch_primary(prog, s3, here(prog));
-      emit_klass(prog, lead3);
-      emit_klass(prog, cont);
-      emit_klass(prog, cont);
-      const std::int32_t j3 {emit_jump(prog)};
-
-      patch_secondary(prog, s3, here(prog));
-      emit_klass(prog, lead4);
-      emit_klass(prog, cont);
-      emit_klass(prog, cont);
-      emit_klass(prog, cont);
-
-      const std::int32_t end {here(prog)};
-      patch_primary(prog, j1, end);
-      patch_primary(prog, j2, end);
-      patch_primary(prog, j3, end);
-
-      // Record the marker (offset + ASCII sub-class index) so analyze_program reads
-      // it instead of reverse-engineering this 16-instruction block's bytecode shape.
+      // Record the marker (start/end offsets + ASCII sub-class index) so analyze_program reads
+      // it instead of reverse-engineering this block's bytecode shape. The ASCII sub-class sits
+      // at code[block_start+1] whenever `ascii` is non-empty (emit_byte_sequences's first branch
+      // is exactly {ascii}, a single klass step, right after that branch's split) -- true for `.`
+      // always (its accepted ASCII set is never fully empty) and for all but a pathological
+      // negated-ASCII-only class (`[^\x00-\x7F]`, which negates ALL of ASCII); in that one case
+      // this reads a byte-range class's index instead, which the prefilter's content guard (it
+      // must hold ASCII bytes only) then correctly rejects.
       prog.codepoint_mark_offset = block_start;
+      prog.codepoint_mark_end    = block_end;
       prog.codepoint_mark_ascii  = static_cast<std::int32_t>(prog.code[static_cast<std::size_t>(block_start) + 1].arg16);
     }
 
     /*!
-     * \brief Emits an alternation of byte-range sequences (`branches`) as split/jump — the general
-     *        form of \ref emit_codepoint_class. Each branch is a chain of `klass` steps; the leftmost
-     *        matching branch wins. Used for a character class carrying specific code-point ranges.
+     * \brief Emits an alternation of byte-range sequences (`branches`) as split/jump. Each branch
+     *        is a chain of `klass` steps; the leftmost matching branch wins. The shared backbone of
+     *        \ref emit_class_codepoints (used for both `\p{...}`-style specific code-point ranges
+     *        and, via \ref emit_any_codepoint_class, the single `[U+0080, U+10FFFF]` "any non-ASCII"
+     *        range `.`/negated-ASCII-only classes need).
      */
     constexpr void emit_byte_sequences(dynamic_program&                            prog,
                                        const std::vector<std::vector<char_class>>& branches) const
@@ -413,8 +393,8 @@ namespace real::detail {
 
     /*!
      * \brief Emits a code-point class: the ASCII bitmap (one byte, if any) OR the canonical UTF-8
-     *        byte sequences of each code-point range. This is the specific-code-point generalization
-     *        of \ref emit_codepoint_class (whose `[U+0080, U+10FFFF]` "any non-ASCII" is one case).
+     *        byte sequences of each code-point range. \ref emit_any_codepoint_class is a thin
+     *        wrapper over this for the specific `[U+0080, U+10FFFF]` "any non-ASCII" range.
      */
     constexpr void emit_class_codepoints(dynamic_program&               prog,
                                          const char_class&              ascii,
@@ -527,9 +507,9 @@ namespace real::detail {
               break;
             }
             if (is_any_non_ascii(eff.ranges)) {
-              // "ASCII bitmap OR any non-ASCII code point" (`.`-family, `[^x]`): the compact
-              // emit_codepoint_class shape the prefilter/DFA fast path recognizes.
-              emit_codepoint_class(prog, eff.ascii);
+              // "ASCII bitmap OR any non-ASCII code point" (`.`-family, `[^x]`): the
+              // emit_any_codepoint_class shape the prefilter fast path recognizes.
+              emit_any_codepoint_class(prog, eff.ascii);
               break;
             }
             emit_class_codepoints(prog, eff.ascii, eff.ranges);
@@ -558,7 +538,7 @@ namespace real::detail {
               emit_klass(prog, head);
             }
             else {
-              emit_codepoint_class(prog, head);
+              emit_any_codepoint_class(prog, head);
             }
             break;
           }

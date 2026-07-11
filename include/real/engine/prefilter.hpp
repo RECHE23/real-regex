@@ -692,6 +692,8 @@ namespace real::detail {
    * \param[in]     cp_ranges      Flat range buffer the \p cp_classes slices index into.
    * \param[in]     cp_mark_ascii  ASCII sub-class index of an emitted codepoint-class block (-1 = none).
    * \param[in]     cp_mark_offset Program offset where that block starts (-1 = none).
+   * \param[in]     cp_mark_end    Program offset right after that block ends (-1 = none) -- the
+   *                               block's instruction count is not fixed, so this locates its end.
    * \param[in]     lookarounds    Bounded lookaround subs (for trailing-LA eligibility); may be empty.
    * \param[in,out] hints          Hint bag to fill (class-loop, fixed-shape, trailing-LA, …).
    */
@@ -701,6 +703,7 @@ namespace real::detail {
                                     std::span<const code_range>     cp_ranges,
                                     std::int32_t                    cp_mark_ascii,
                                     std::int32_t                    cp_mark_offset,
+                                    std::int32_t                    cp_mark_end,
                                     std::span<const lookaround_sub> lookarounds,
                                     pattern_hints&                  hints)
   {
@@ -980,28 +983,37 @@ namespace real::detail {
     }
 
     // Whole pattern is a single codepoint class (`.`/negated class), optionally a
-    // greedy `+`. Layout: save 0, the 16-instruction codepoint block (at 1..16),
-    // then either save 1, match (bare, 19 instructions) or split(loop, exit),
-    // save 1, match (the `+`, 20 instructions). No captures; `*` is excluded
-    // because its empty match rules out a consuming fast path.
-    if ((code.size() == 19 || code.size() == 20) && code[0].op == opcode::save) {
+    // greedy `+`. Layout: save 0, the codepoint-class block (offset 1..cp_mark_end),
+    // then either save 1, match (bare) or split(loop, exit), save 1, match (the
+    // `+`). No captures; `*` is excluded because its empty match rules out a
+    // consuming fast path. The block's own instruction count is NOT fixed (it
+    // grows with the number of canonical byte-range branches the compiler emits
+    // for the lead bytes it has to narrow) -- cp_mark_end (set alongside
+    // cp_mark_offset/cp_mark_ascii by emit_any_codepoint_class) locates its end,
+    // so this recognizer needs no hardcoded block size.
+    if (cp_mark_offset == 1 && cp_mark_end > cp_mark_offset &&
+        static_cast<std::size_t>(cp_mark_end) < code.size() && code[0].op == opcode::save) {
+      const auto end {static_cast<std::size_t>(cp_mark_end)};
       // The ASCII sub-class index comes from the marker the compiler set when it
-      // emitted the block (emit_codepoint_class) — we no longer reverse-engineer the
-      // 16-instruction bytecode shape here. The whole-program size / `+`-loop checks
+      // emitted the block (emit_any_codepoint_class) — we no longer reverse-engineer
+      // the block's bytecode shape here. The whole-program layout / `+`-loop checks
       // are program structure; the ASCII-only test is class content; neither depends
       // on the block's internal opcode layout.
-      std::int32_t ascii {(cp_mark_ascii >= 0 && cp_mark_offset == 1
-                           && static_cast<std::size_t>(cp_mark_ascii) < classes.size())
+      std::int32_t ascii {(cp_mark_ascii >= 0 && static_cast<std::size_t>(cp_mark_ascii) < classes.size())
                           ? cp_mark_ascii
                           : -1};
       // Content guard: the recorded ASCII sub-class must hold ASCII bytes only.
-      // Provably unreachable today — `ast.hpp::parse_class_item` rejects any class
+      // Provably unreachable today for `.` (its accepted ASCII set always keeps at
+      // least most of [0x00,0x7F]) — `ast.hpp::parse_class_item` rejects any class
       // member >= 0x80 and `char_class::invert_ascii` leaves the high bytes (>= 0x80)
-      // cleared (non-ASCII codepoints are matched via the UTF-8 multi-byte branches),
-      // so the marked sub-class is always pure ASCII. Kept deliberately: unlike the
-      // bytecode-shape recognition this replaced, it is a *content* check that stays
-      // robust to layout changes and becomes load-bearing again if a Unicode
-      // codepoint-class mode is ever added.
+      // cleared, so the marked sub-class is always pure ASCII when it is the ASCII
+      // branch at all. It stops being the ASCII branch only for a class that negates
+      // every ASCII byte (e.g. `[^\x00-\x7F]`, "any non-ASCII", ascii bitmap empty) --
+      // emit_class_codepoints then skips the ascii branch entirely and this reads a
+      // byte-range class's index instead, which this content check correctly rejects
+      // (a lead/continuation byte-range set has high bytes set). Kept deliberately:
+      // unlike the bytecode-shape recognition this replaced, it is a *content* check
+      // that stays robust to layout changes.
       if (ascii >= 0) {
         const char_class& ascii_class {classes[static_cast<std::size_t>(ascii)]};
         for (int byte {0x80}; byte <= 0xFF; ++byte) {
@@ -1011,10 +1023,11 @@ namespace real::detail {
           }
         }
       }
-      const bool bare {code.size() == 19 && code[17].op == opcode::save &&
-                       code[18].op == opcode::match};
-      const bool plus {code.size() == 20 && code[17].op == opcode::split && code[17].primary_target == 1 &&
-                       code[18].op == opcode::save && code[19].op == opcode::match};
+      const bool bare {code.size() == end + 2 && code[end].op == opcode::save &&
+                       code[end + 1].op == opcode::match};
+      const bool plus {code.size() == end + 3 && code[end].op == opcode::split &&
+                       code[end].primary_target == 1 && code[end + 1].op == opcode::save &&
+                       code[end + 2].op == opcode::match};
       if (ascii >= 0 && (bare || plus)) {
         hints.codepoint_class_ascii = ascii;
         hints.codepoint_class_plus  = plus;
@@ -1158,9 +1171,12 @@ namespace real::detail {
    * \param[in] cp_classes     The match-time code-point classes referenced by `klass_cp`.
    * \param[in] cp_ranges      Flat range buffer the \p cp_classes slices index into.
    * \param[in] cp_mark_ascii  ASCII sub-class index of an emitted codepoint-class
-   *                           block (-1 = none), as recorded by `emit_codepoint_class`.
+   *                           block (-1 = none), as recorded by `emit_any_codepoint_class`.
    * \param[in] cp_mark_offset Program offset where that block starts (-1 = none); the
    *                           whole-pattern codepoint fast path requires it to be 1.
+   * \param[in] cp_mark_end    Program offset right after that block ends (-1 = none) --
+   *                           the block's own instruction count is not fixed, so this
+   *                           locates its end instead of a hardcoded size.
    * \param[in] lookarounds    Bounded lookaround subs (trailing-LA class+ detection).
    * \return The \ref pattern_hints (anchoring, literal prefix, first-byte set,
    *         and the `class+` / exact-literal fast-path flags).
@@ -1171,6 +1187,7 @@ namespace real::detail {
                                           std::span<const code_range>     cp_ranges,
                                           std::int32_t                    cp_mark_ascii,
                                           std::int32_t                    cp_mark_offset,
+                                          std::int32_t                    cp_mark_end,
                                           std::span<const lookaround_sub> lookarounds = {})
   {
     pattern_hints hints;
@@ -1192,8 +1209,8 @@ namespace real::detail {
 
     compute_first_bytes(code, classes, cp_classes, hints);
 
-    detect_fast_shapes(code, classes, cp_classes, cp_ranges, cp_mark_ascii, cp_mark_offset, lookarounds,
-                       hints);
+    detect_fast_shapes(code, classes, cp_classes, cp_ranges, cp_mark_ascii, cp_mark_offset, cp_mark_end,
+                       lookarounds, hints);
 
     // Clear every pure fast-path hint when a lookaround is present. Trailing-LA class+ already
     // left greedy_class_loop at −1 and only set trailing_* (so this wipe is a no-op for those).

@@ -1794,7 +1794,15 @@ namespace real::detail {
                           const auto cont_byte {static_cast<std::uint8_t>(text[i])};
                           return cont_byte >= 0x80 && cont_byte <= 0xBF;
                         };
-      // Byte length of a matching codepoint at i, or 0 for no match.
+      // Byte length of a matching codepoint at i, or 0 for no match. ASCII stays a direct table
+      // hit; the 3-/4-byte cases bounds-check their FIRST continuation byte against
+      // utf8_second_byte_bounds_table (charclass.hpp) instead of the generic [0x80,0xBF] `cont`
+      // check -- that generic check accepted overlong (E0 80 80 / F0 80 80 80) and encoded-
+      // surrogate (ED A0 80) sequences as one code point. A table lookup, not a full decode: an
+      // earlier version reused decode_codepoint_strict (which accumulates the code point via
+      // shifts and checks it against min_cp/the surrogate block after the fact) and cost +13%
+      // ns/B on this exact path -- rejected. This keeps the original branch/comparison shape,
+      // swapping only one hardcoded bound for a per-lead table entry.
       const auto width = [&](std::size_t i) -> std::size_t {
                            const auto byte_value {static_cast<std::uint8_t>(text[i])};
                            if (byte_value < 0x80) {
@@ -1804,10 +1812,17 @@ namespace real::detail {
                              return i + 1 < text.size() && cont(i + 1) ? 2 : 0;
                            }
                            if (byte_value >= 0xE0 && byte_value <= 0xEF) {
-                             return i + 2 < text.size() && cont(i + 1) && cont(i + 2) ? 3 : 0;
+                             const detail::utf8_second_byte_bounds& b {
+                               detail::utf8_second_byte_bounds_table[byte_value]};
+                             const auto b2                            {static_cast<std::uint8_t>(text[i + 1])};
+                             return i + 2 < text.size() && b2 >= b.lo && b2 <= b.hi && cont(i + 2) ? 3 : 0;
                            }
                            if (byte_value >= 0xF0 && byte_value <= 0xF4) {
-                             return i + 3 < text.size() && cont(i + 1) && cont(i + 2) && cont(i + 3) ? 4 : 0;
+                             const detail::utf8_second_byte_bounds& b {
+                               detail::utf8_second_byte_bounds_table[byte_value]};
+                             const auto b2                            {static_cast<std::uint8_t>(text[i + 1])};
+                             return i + 3 < text.size() && b2 >= b.lo && b2 <= b.hi && cont(i + 2) &&
+                                    cont(i + 3) ? 4 : 0;
                            }
                            return 0;
                          };
