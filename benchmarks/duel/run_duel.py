@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """REAL-vs-rust duel: the same patterns over the same corpora through both engines, ns/byte and match-count
-cross-checked, non-cherry-picked. Emits a Markdown table (paste into BENCHMARKS.md). The date row is a
-deliberate no-match scan (no yyyy-mm-dd in its corpus): a prefilter gap, not captures."""
+cross-checked, non-cherry-picked. Emits a Markdown table (paste into BENCHMARKS.md) and, with --json, a raw
+JSON dump (ns/byte + counts per case, no ratios) so a consumer can recompute every ratio programmatically
+instead of transcribing it from this table -- the same "0 ratio by hand" discipline bench_engines.cpp/.py
+already follow. The date row is a deliberate no-match scan (no yyyy-mm-dd in its corpus): a prefilter gap,
+not captures."""
+import argparse
+import json
 import pathlib
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 
 HERE = str(pathlib.Path(__file__).resolve().parent)
 REAL = f"{HERE}/real_bench"
@@ -97,8 +103,13 @@ def run(binary, pattern, text, mode=None):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="REAL-vs-rust duel")
+    parser.add_argument("--json", metavar="PATH", help="also write a raw ns/byte + counts JSON dump")
+    args = parser.parse_args()
+
     print(f"{'case':40s} {'REAL ns/B':>10s} {'rust ns/B':>10s} {'winner':>16s}  match✓")
     rows = []
+    json_cases = []
     for label, pat, text in CASES:
         rr, rc = run(REAL, pat, text)
         # rust in "captures" mode: it extracts every group, the apples-to-apples with REAL's find_iter,
@@ -113,6 +124,31 @@ def main():
             verdict = f"rust {rr/ur:.1f}x"
         print(f"{label:40s} {rr:10.3f} {ur:10.3f} {verdict:>16s}  {'yes' if agree else 'NO('+str(rc)+'/'+str(uc)+')'}")
         rows.append((label, rr, ur, verdict, agree, rc))
+        json_cases.append({
+            "name": label,
+            "pattern": pat,
+            "real_ns_per_byte": rr,
+            "rust_ns_per_byte": ur,
+            "real_count": rc,
+            "rust_count": uc,
+            "counts_agree": agree,
+        })
+
+    if args.json:
+        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
+                                 cwd=HERE).stdout.strip() or "unknown"
+        doc = {
+            "meta": {
+                "bench": "duel",
+                "commit": commit,
+                "date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+            "cases": json_cases,
+        }
+        with open(args.json, "w") as fh:
+            json.dump(doc, fh, indent=2)
+        print(f"\nwrote {args.json}", file=sys.stderr)
+
     return rows
 
 
