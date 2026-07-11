@@ -580,42 +580,49 @@ raw JSON — every ratio's 95% CI is within ±2% of the point estimate); match c
 
 | case | REAL ns/B | std::regex | PCRE2-JIT (UTF+UCP) | RE2 | counts (real/std/pcre2/re2) |
 | --- | ---: | ---: | ---: | ---: | --- |
-| `\w+` (mixed-script) | 6.08 | 79.65 (0.41×) | 2.47 (**0.41×**) | 4.26 (0.70×) | 16218/5406/16218/5406 ⚠ |
-| `\p{L}+` (CJK) | 8.96 | unsupported | 1.77 (**5.06×**) | 17.76 (0.50×) | 12904/—/12904/12904 |
-| `\p{N}+` (arabic digits) | 2.61 | unsupported | 2.15 (**1.21×**) | 7.05 (0.37×) | 6250/—/6250/6250 |
-| `\p{sc=Han}` (CJK) | 8.01 | unsupported | 2.86 (**2.80×**) | unsupported | 25808/—/25808/— |
-| `\p{scx=Cyrl}` (mixed-script) | 6.51 | unsupported | 3.53 (**1.84×**) | unsupported | 32436/—/32436/— |
-| `(?i)café` (accented) | 1.06 | unsupported | 0.35 (3.03×) | 1.31 (**0.81×**) | 3509/—/3509/3509 |
-| `[à-ÿ]+` (accented) | 5.57 | 114.31 (**0.05×**) | 2.72 (0.49×) | 16.60 (0.34×) | 38599/38599/38599/38599 |
-| literal `你好` (CJK) | 1.54 | 38.79 (**0.04×**) | 0.78 (0.51×) | 3.48 (0.44×) | 6452/6452/6452/6452 |
-| `.` (emoji, one codepoint) | 5.40 | 78.78 (0.07×) | 5.03 (**0.93×**) | 24.96 (0.22×) | 68306/200039/68306/68306 ⚠ |
-| ascii witness `[a-z]+` | 3.08 | 122.08 (**0.03×**) | 2.96 (0.96×) | 18.53 (0.17×) | 42108/42108/42108/42108 |
+| `\w+` (mixed-script) | 6.08 | 79.65 (13.10×) | 2.47 (**0.41×**) | 4.26 (0.70×) | 16218/5406/16218/5406 ⚠ |
+| `\p{L}+` (CJK) | 8.96 | unsupported | 1.77 (**0.20×**) | 17.76 (1.98×) | 12904/—/12904/12904 |
+| `\p{N}+` (arabic digits) | 2.61 | unsupported | 2.15 (**0.82×**) | 7.05 (2.70×) | 6250/—/6250/6250 |
+| `\p{sc=Han}` (CJK) | 8.01 | unsupported | 2.86 (**0.36×**) | unsupported | 25808/—/25808/— |
+| `\p{scx=Cyrl}` (mixed-script) | 6.51 | unsupported | 3.53 (**0.54×**) | unsupported | 32436/—/32436/— |
+| `(?i)café` (accented) | 1.06 | unsupported | 0.35 (**0.33×**) | 1.31 (1.24×) | 3509/—/3509/3509 |
+| `[à-ÿ]+` (accented) | 5.57 | 114.31 (20.52×) | 2.72 (**0.49×**) | 16.60 (2.98×) | 38599/38599/38599/38599 |
+| literal `你好` (CJK) | 1.54 | 38.79 (25.19×) | 0.78 (**0.51×**) | 3.48 (2.26×) | 6452/6452/6452/6452 |
+| `.` (emoji, one codepoint) | 5.40 | 78.78 (14.59×) | 5.03 (**0.93×**) | 24.96 (4.62×) | 68306/200039/68306/68306 ⚠ |
+| ascii witness `[a-z]+` | 3.08 | 122.08 (39.64×) | 2.96 (**0.96×**) | 18.53 (6.02×) | 42108/42108/42108/42108 |
 
-*(Ratios are read as REAL_time / engine_time — i.e. `std::regex` at 0.41× means REAL is roughly 1/0.41 ≈
-2.4× faster; **bold** marks REAL's closest competitor per row. This differs from §A's `engine_time /
-REAL_time` convention because most rows above are "REAL loses" — see next paragraph — and that framing reads
-more honestly than inverting every number to look like a REAL win.)*
+*(Same convention as §A: `(x) = engine_time / REAL_time`, **> 1 means REAL is faster**; **bold** marks the
+PCRE2-JIT column, REAL's main competitor throughout this document. Every ratio here is computed
+programmatically from the ns/B pair — `benchmarks/verify_unicode_ratios.py` re-derives and checks all of
+them against this table.)*
 
 ⚠ **Two rows have divergent counts — flagged, not glossed over:**
 
 - **`\w+` (mixed-script): 16218 (REAL/PCRE2) vs 5406 (std/RE2).** *Not* a UCD-vintage gap — RE2's `\w` is
   ASCII-only by construction (`[0-9A-Za-z_]`) regardless of Unicode data version, and `std::regex` here runs
-  plain ECMAScript grammar. REAL and PCRE2-JIT (`PCRE2_UCP`) both treat `\w` as Unicode-aware. The 0.41×/0.70×
-  ratios above compare *different definitions of "word character"* — informative about each engine's
-  default, not a clean speed comparison.
+  plain ECMAScript grammar. REAL and PCRE2-JIT (`PCRE2_UCP`) both treat `\w` as Unicode-aware. The
+  13.10×/0.70× ratios above compare *different definitions of "word character"* — informative about each
+  engine's default, not a clean speed comparison.
 - **`.` (emoji corpus): 68306 (REAL/PCRE2/RE2) vs 200039 (std::regex).** `std::regex` operates byte-level:
-  `.` matches one *byte*, not one *code point*, so on 4-byte-UTF-8 emoji it counts ~2.9× too many "matches."
-  The 0.07× ratio is comparing REAL's per-codepoint scan to `std::regex` doing roughly 4× less semantic work
-  per byte — not a fair speed comparison at all.
+  `.` matches one *byte*, not one *code point*, so on 4-byte-UTF-8 emoji it counts ~2.9× too many "matches" —
+  not the same pattern semantically, so the 14.59× speed ratio is not comparing equal work. It is not a
+  mitigating factor for `std::regex`, though: doing ~2.9× more (trivial, byte-level) matches and still
+  landing 14.59× slower than REAL's real per-codepoint decode is a clean loss either way, just not a
+  precisely-quantifiable one from this row alone. REAL vs PCRE2/RE2 on this row is unaffected (those three
+  agree on the count).
 
-**Honest read of the rest.** REAL is **behind PCRE2-JIT on every `\p{}`/script row except `\p{L}+`**
-(0.36×–1.21× — often 2–3× slower), and **badly behind on the two literal/class rows** (`[à-ÿ]+` 0.49×,
-CJK literal 0.51×) where PCRE2's JIT and RE2's compiled DFA both have a real edge over REAL's byte-class
-scan on multi-byte input. REAL is comfortably ahead of `std::regex` everywhere `\p{}` is unsupported for it
-(as expected — `std::regex` doing zero real work is not a REAL win). The one clear win against a *capable*
-competitor is `\p{L}+` vs PCRE2 (**5.06×**) — REAL's General_Category route wins there. **`(?i)café` was a
-117×-behind outlier — a P0 correctness-adjacent bug (see below), not a throughput gap. Fixed, it now trails
-PCRE2 by 3.0× (in the same range as the other `\p{}` rows) and is slightly ahead of RE2 (0.81×).**
+**Honest read (verdict brut).** **REAL trails PCRE2-JIT on every single row in this table** — the `\p{}`/
+script rows run 0.20×–0.82× (REAL 1.2×–5× slower), the literal/class rows 0.49×–0.96× (REAL 1.04×–2×
+slower); `\p{L}+` (0.20×) is REAL's **worst** showing here, not a win — PCRE2's JIT dominates Unicode work
+the same way it dominates `date`/`literal` in §A's ASCII tables. **REAL is comfortably ahead of RE2** on
+every comparable row except the count-divergent `\w+` (1.24×–6.02×, REAL 1.2×–6× faster) — RE2's
+General_Category/Script support is real but its DFA is slower than REAL's per-codepoint route here. **REAL
+crushes `std::regex`** everywhere `\p{}` is unsupported for it (13×–40×, as expected — `std::regex` doing
+zero real Unicode work is not a REAL achievement, just a baseline). `(?i)café` was a 117×-behind outlier — a
+P0 correctness-adjacent bug (below), not a throughput gap; fixed, it now sits at 0.33× vs PCRE2 (in the same
+losing range as the rest of the table) and 1.24× vs RE2 (a REAL win, unaffected by the fix). The honest
+frame: REAL is linear-time-safe and `\p{}`-complete, **not** the Unicode throughput leader — that is
+PCRE2-JIT, consistent with its lead on ASCII `date`/`literal` in §A.
 
 ### `duel` — REAL vs rust `regex` (`make bench-duel`, `N=20000` repetitions)
 

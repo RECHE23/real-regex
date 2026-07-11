@@ -185,7 +185,9 @@ input — reproduce them locally rather than trusting a number here. The GitHub 
 **Bounded lookarounds** match in linear time — REAL's differentiator: lookahead `(?=…)`/`(?!…)` and
 lookbehind `(?<=…)`/`(?<!…)`, each length-bounded and capture-free (variable-width lookbehind such as
 `(?<=a|bb)` is accepted, beyond `re`/PCRE's fixed-width limit). **Unicode property classes** `\p{…}`
-(General_Category and Script) match natively and linearly — a superset of `re`. Unsupported syntax —
+match natively and linearly: General_Category, Script (`sc=`, short ISO codes), Script_Extensions (`scx=`),
+and 63 binary properties (`\p{Alphabetic}`, `\p{Emoji}`, …) — a superset of `re`, which has none of this.
+Unsupported syntax —
 backreferences, atomic/possessive groups, conditional groups — is rejected with `real::regex_error`, never a
 silent divergence.
 
