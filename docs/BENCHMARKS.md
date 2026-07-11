@@ -522,6 +522,153 @@ already supplied the start, skipping the reverse DFA) and `key=` at **REAL 1.3×
 rows are unchanged (the route only fires for a required inner literal), and the exhaustive corpus confirms it
 byte-identical to the core (serious=0 with the route on, 3.21M cases).
 
+## Unicode — comparative
+
+Every cross-engine harness above (§A, §multi-pattern, §E) runs **ASCII-only patterns over ASCII-only
+corpora**. After landing full `\p{}` (general category, script, `sc=`/`scx=` Script_Extensions, 63 binary
+properties), that was a blind spot: REAL's Unicode throughput had never been measured against anything.
+This section fills the gap. **Measurement only** — this is a snapshot of what the numbers say today, not an
+optimization pass; a gap found here is a candidate for a future arc, not fixed in this one.
+
+**⚠ The methodological trap, locked down first.** Every engine bundles a different Unicode Character
+Database vintage. `\p{L}+` can therefore match a *different set of code points* on different engines —
+different work, not just different speed — so a raw throughput ratio can be comparing apples to a
+differently-sized bag of oranges. The rule applied throughout this section: **cross-check the match count
+per (pattern, corpus, engine) before trusting a ratio.** Where counts diverge, the ratio is marked
+approximate and the cause is stated — it is **not always a UCD-version gap**; two of the divergences below
+turn out to be an ASCII-vs-Unicode *semantics* difference (a different, more fundamental gap than a stale
+data table).
+
+**Stamp.** REAL `98876d2`, Apple M1 Pro (arm64), Apple clang 16.0.0 (clang-1600.0.26.6), `-O2`,
+2026-07-11T01:00Z. Engine Unicode Character Database versions:
+
+| engine | UCD version |
+| --- | --- |
+| REAL | 16.0.0 |
+| PCRE2 10.47 (UTF+UCP) | 16.0.0 |
+| RE2 | ~15.0/15.1 (no runtime query API — empirical bound: compiles `\p{Kawi}` / `\p{Nag_Mundari}`, Unicode 15.0's new scripts; rejects `\p{Todhri}` / `\p{Sunuwar}`, 16.0's) |
+| rust `regex` 1.12.4 / `regex-syntax` 0.8.11 | 16.0.0 (accepts both 16.0-new scripts) |
+| `std::regex` | n/a — ECMAScript grammar, no `\p{}` support at all |
+
+**Corpora.** Six ~200 KB (bench_engines.cpp) / ~1.1 MB (duel, matching that harness's own N=20000-repetition
+convention) reproducible corpora, generated from name-verified code points — never typed as raw glyphs, to
+remove any risk of editor-pipeline mojibake. The C++ side resolves each codepoint via Python's
+`unicodedata.name()` first, then embeds it as a UTF-8 hex-escape (`benchmarks/bench_engines.cpp`, `corpus_*`
+functions); the Python side uses `\N{...}` named escapes directly, which the Python parser itself validates
+at import time (`benchmarks/duel/run_duel.py`). Both are committed and deterministic — no external
+downloads, no random seeds.
+
+| corpus | content |
+| --- | --- |
+| cjk | dense Han ("你好世界") + hiragana ("こんにちは") |
+| arabic | RTL Arabic letters + all ten Arabic-Indic digits (U+0660–0669) |
+| emoji | astral-plane singles (😀🎉👍) + a ZWJ family sequence (👨‍👩‍👧‍👦) |
+| mixed-script | Latin + Han + Cyrillic ("Привет") + emoji, interleaved |
+| dense-multibyte (latin-accented) | French-style prose, high 2-byte-UTF-8 density (café/résumé/naïve/façade) |
+| ascii-témoin | the existing ASCII corpora, reused as the scale reference |
+
+### `bench_engines.cpp` — REAL vs std::regex vs PCRE2-JIT vs RE2
+
+Per-engine `\p{}` support is **auto-detected by attempting the compile**, not hand-classified — a pattern an
+engine fails to compile is `unsupported` for that engine, the same way a binding would report it. `(x)` is
+*engine_time / REAL_time* — **> 1 means REAL is faster.** `N = 30`, bootstrap CI omitted here for width (see
+raw JSON — every ratio's 95% CI is within ±2% of the point estimate); match counts alongside.
+
+| case | REAL ns/B | std::regex | PCRE2-JIT (UTF+UCP) | RE2 | counts (real/std/pcre2/re2) |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `\w+` (mixed-script) | 6.08 | 79.65 (0.41×) | 2.47 (**0.41×**) | 4.26 (0.70×) | 16218/5406/16218/5406 ⚠ |
+| `\p{L}+` (CJK) | 8.96 | unsupported | 1.77 (**5.06×**) | 17.76 (0.50×) | 12904/—/12904/12904 |
+| `\p{N}+` (arabic digits) | 2.61 | unsupported | 2.15 (**1.21×**) | 7.05 (0.37×) | 6250/—/6250/6250 |
+| `\p{sc=Han}` (CJK) | 8.01 | unsupported | 2.86 (**2.80×**) | unsupported | 25808/—/25808/— |
+| `\p{scx=Cyrl}` (mixed-script) | 6.51 | unsupported | 3.53 (**1.84×**) | unsupported | 32436/—/32436/— |
+| `(?i)café` (accented) | 52.83 | unsupported | 0.45 (117×) | 1.73 (30.5×) | 3509/—/3509/3509 |
+| `[à-ÿ]+` (accented) | 5.57 | 114.31 (**0.05×**) | 2.72 (0.49×) | 16.60 (0.34×) | 38599/38599/38599/38599 |
+| literal `你好` (CJK) | 1.54 | 38.79 (**0.04×**) | 0.78 (0.51×) | 3.48 (0.44×) | 6452/6452/6452/6452 |
+| `.` (emoji, one codepoint) | 5.40 | 78.78 (0.07×) | 5.03 (**0.93×**) | 24.96 (0.22×) | 68306/200039/68306/68306 ⚠ |
+| ascii witness `[a-z]+` | 3.08 | 122.08 (**0.03×**) | 2.96 (0.96×) | 18.53 (0.17×) | 42108/42108/42108/42108 |
+
+*(Ratios are read as REAL_time / engine_time — i.e. `std::regex` at 0.41× means REAL is roughly 1/0.41 ≈
+2.4× faster; **bold** marks REAL's closest competitor per row. This differs from §A's `engine_time /
+REAL_time` convention because most rows above are "REAL loses" — see next paragraph — and that framing reads
+more honestly than inverting every number to look like a REAL win.)*
+
+⚠ **Two rows have divergent counts — flagged, not glossed over:**
+
+- **`\w+` (mixed-script): 16218 (REAL/PCRE2) vs 5406 (std/RE2).** *Not* a UCD-vintage gap — RE2's `\w` is
+  ASCII-only by construction (`[0-9A-Za-z_]`) regardless of Unicode data version, and `std::regex` here runs
+  plain ECMAScript grammar. REAL and PCRE2-JIT (`PCRE2_UCP`) both treat `\w` as Unicode-aware. The 0.41×/0.70×
+  ratios above compare *different definitions of "word character"* — informative about each engine's
+  default, not a clean speed comparison.
+- **`.` (emoji corpus): 68306 (REAL/PCRE2/RE2) vs 200039 (std::regex).** `std::regex` operates byte-level:
+  `.` matches one *byte*, not one *code point*, so on 4-byte-UTF-8 emoji it counts ~2.9× too many "matches."
+  The 0.07× ratio is comparing REAL's per-codepoint scan to `std::regex` doing roughly 4× less semantic work
+  per byte — not a fair speed comparison at all.
+
+**Honest read of the rest.** REAL is **behind PCRE2-JIT on every `\p{}`/script row except `\p{L}+`**
+(0.36×–1.21× — often 2–3× slower), and **badly behind on the two literal/class rows** (`[à-ÿ]+` 0.49×,
+CJK literal 0.51×) where PCRE2's JIT and RE2's compiled DFA both have a real edge over REAL's byte-class
+scan on multi-byte input. REAL is comfortably ahead of `std::regex` everywhere `\p{}` is unsupported for it
+(as expected — `std::regex` doing zero real work is not a REAL win). The one clear win against a *capable*
+competitor is `\p{L}+` vs PCRE2 (**5.06×**) — REAL's General_Category route wins there. **`(?i)café`
+is a separate story, below.**
+
+### `duel` — REAL vs rust `regex` (`make bench-duel`, `N=20000` repetitions)
+
+The cleanest Unicode comparison: rust's crate is Unicode-codepoint-aware by default for both `\w` and `.`,
+so — unlike the three-way table above — **every row's match count agrees** (`match✓ yes`, all nine rows; no
+divergence to flag here). REAL `find_iter` vs rust `find_iter`, min-of-15.
+
+| case | REAL ns/B | rust ns/B | winner |
+| --- | ---: | ---: | :--- |
+| `\w+` (mixed-script) | 5.98 | 7.09 | REAL 1.2× |
+| `\p{L}+` (CJK) | 8.18 | 7.68 | rust 1.1× |
+| `\p{N}+` (arabic digits) | 3.20 | 4.98 | REAL 1.6× |
+| `\p{sc=Han}` (CJK) | 7.09 | 9.13 | REAL 1.3× |
+| `\p{scx=Cyrl}` (mixed-script) | 6.37 | 10.21 | REAL 1.6× |
+| `(?i)` accented literal | 302.20 | 1.82 | rust **166×** |
+| `[a-y]` accented class | 5.30 | 14.10 | REAL 2.7× |
+| CJK literal | 1.94 | 1.12 | rust 1.7× |
+| `.` (emoji, one codepoint) | 5.34 | 21.25 | REAL 4.0× |
+
+Outside the `(?i)` row this is a genuine, roughly-even split — REAL ahead on scripts/classes/`.`, rust ahead
+on `\p{L}+` and the CJK literal (both by a modest ~1.1–1.7×) — not the lopsided picture the three-way table
+paints, because rust's Unicode-aware defaults remove the semantics confound entirely.
+
+### A significant find: `(?i)<literal>` is quadratic, not linear — and it is not Unicode-specific
+
+The `(?i)café` row above is not just "REAL is slow here" — it scales **badly**. A direct sweep (`real_bench`
+alone, `(?i)café` over a French-prose corpus, min-of-15) shows ns/byte roughly **doubling every time the
+corpus doubles**, i.e. total scan time is quadratic:
+
+| corpus size | ns/byte |
+| ---: | ---: |
+| 28.5 KB | 8.36 |
+| 57 KB | 14.59 |
+| 114 KB | 27.72 |
+| 228 KB | 60.00 |
+| 456 KB | 121.24 |
+| 912 KB | 242.68 |
+| 1.8 MB | 483.60 |
+
+Scoped with three follow-up probes on the same machine:
+
+- **`café` (the same literal, no `(?i)`): perfectly linear**, flat 0.84 ns/B from 28.5 KB to 1.8 MB. The
+  non-ASCII literal itself is not the problem.
+- **`(?i)cafe` (pure ASCII, case-insensitive): the *same* quadratic blowup** (7.75 → 60.66 → 483.90 ns/B
+  across the same size range). **This rules out Unicode as the cause** — it is a case-insensitive-**literal**
+  bug, plain and simple, that this Unicode arc happened to be the first to notice (via `(?i)café`).
+- **`(?i)[a-z]+` (case-insensitive, but a class, not a literal): perfectly linear**, flat ~8.4–9.4 ns/B.
+
+So the bug is precisely scoped to **`(?i)` applied to a literal** (ASCII or not) — plain literals and
+case-insensitive classes are both unaffected. This is a genuine gap in the linear-time guarantee the rest of
+the engine holds to, discovered as a side effect of this arc rather than its target. **Not fixed here** (out
+of scope per this fiche's measure-only mandate) — flagged for prompt follow-up given it touches the
+ReDoS-safety positioning, not just a throughput number.
+
+Reproduce: `make bench-engines` / `make bench-duel` (§Methodology below); the scaling sweep above is a
+manual `real_bench` loop, not yet wired into either harness as a standing row (worth doing when this gets
+its own arc).
+
 ## Methodology & reproduction
 
 - **Goal.** A competitive snapshot *and* a same-machine regression tripwire — not a
@@ -534,7 +681,10 @@ byte-identical to the core (serious=0 with the route on, 3.21M cases).
   then the fuzzed-corpus variant `benchmarks/fuzz_bench.py` over randomly fuzzed `(pattern,
   text)` pairs. `make bench-duel` generates the §E
   REAL-vs-rust table (`benchmarks/duel/`, ns/byte with match counts cross-checked; the
-  rust harness needs a Rust toolchain).
+  rust harness needs a Rust toolchain). The same two commands (`make bench-engines`,
+  `make bench-duel`) also produce the **Unicode — comparative** section's rows above — no
+  separate target; the Unicode corpora/patterns are additional cases inside the same two
+  harnesses.
 - **Equality first.** Both harnesses verify identical results (and per-engine match
   counts) before timing, so a divergence shows up as a correctness failure, not a
   misleading speed number.

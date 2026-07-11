@@ -105,6 +105,43 @@ def print_case_boxplots(doc, names):
             print(ascii_boxplot(series, labels, width=42))
 
 
+def print_unicode_versions(doc):
+    versions = doc["meta"].get("unicode_versions")
+    if not versions:
+        return
+    print("\nUnicode data versions per engine (a count divergence below may be a version gap, not a bug):")
+    for e, v in versions.items():
+        print(f"  {e:<6} {v}")
+
+
+def print_unicode_cases(doc):
+    cases = doc.get("unicode_cases")
+    if not cases:
+        return
+    engines = engine_order(doc)
+    others = [e for e in engines if e != "real"]
+    print("\nUnicode comparative — per (pattern, corpus, engine); cross-check counts before trusting a ratio:")
+    header = f"{'case':<38} {'REAL ns/B':>10}"
+    for e in others:
+        header += " " + f"{e + ' ns/B(x[95% CI])':>{ENGINE_W}}"
+    header += f"   match({'/'.join(e[0] for e in engines)})"
+    print(header)
+    print("-" * len(header))
+    for case in cases:
+        eng = case["engines"]
+        real_samples = eng["real"]["samples"]
+        corpus_bytes = case["corpus_bytes"]
+        row = f"{case['name']:<38} {median_nspb(real_samples, corpus_bytes):10.3f}"
+        for e in others:
+            row += " " + engine_cell(eng[e], real_samples, corpus_bytes)
+        counts_supported = [eng[e]["count"] for e in engines if isinstance(eng[e], dict)]
+        counts = "/".join(str(eng[e]["count"]) if isinstance(eng[e], dict) else "—" for e in engines)
+        row += f"   {counts}"
+        if len(set(counts_supported)) > 1:
+            row += "  <-- counts DIVERGE (ratio above is approximate; see BENCHMARKS.md for the cause)"
+        print(row)
+
+
 def print_scaling(doc):
     engines = engine_order(doc)
     print("\nscaling sweep — [a-z]+ across sizes (median ns/byte + ratio-vs-REAL):")
@@ -152,6 +189,8 @@ def main():
     print_case_boxplots(doc, ["words [a-z]+", "digits [0-9]+", "lookahead [a-z]+(?=[a-z])"])
     print_scaling(doc)
     print_redos(doc)
+    print_unicode_versions(doc)
+    print_unicode_cases(doc)
     return 0
 
 

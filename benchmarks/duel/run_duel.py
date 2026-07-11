@@ -27,6 +27,37 @@ EMAIL_SPARSE = ("just plain words on this line with no address to be found here 
                 + "reach jane@corp.io if you must ") * (N // 15)
 KV = "config alpha beta gamma key=val host=web port=99 mode=on delta epsilon " * N  # key= flagship
 
+# --- international corpora (Unicode comparative arc) ------------------------------------------------
+# Named via \N{...} escapes (not typed as raw glyphs) so each codepoint is verified by the Python parser
+# itself at import time -- a wrong name is a SyntaxError, not a silent mojibake risk. Same phrases (and
+# same 200 KB-class size, N=20000 repetitions matching this file's existing convention) as the Unicode
+# corpora in bench_engines.cpp, so a cross-check between the two harnesses is meaningful.
+CJK = ("\N{CJK UNIFIED IDEOGRAPH-4F60}\N{CJK UNIFIED IDEOGRAPH-597D}\N{CJK UNIFIED IDEOGRAPH-4E16}"
+       "\N{CJK UNIFIED IDEOGRAPH-754C} \N{HIRAGANA LETTER KO}\N{HIRAGANA LETTER N}\N{HIRAGANA LETTER NI}"
+       "\N{HIRAGANA LETTER TI}\N{HIRAGANA LETTER HA} ") * N  # "hello world" (Han) + "konnichiwa" (hiragana)
+ARABIC = ("\N{ARABIC LETTER MEEM}\N{ARABIC LETTER REH}\N{ARABIC LETTER HAH}\N{ARABIC LETTER BEH}"
+          "\N{ARABIC LETTER ALEF} \N{ARABIC-INDIC DIGIT ZERO}\N{ARABIC-INDIC DIGIT ONE}"
+          "\N{ARABIC-INDIC DIGIT TWO}\N{ARABIC-INDIC DIGIT THREE} ") * N  # RTL letters + Arabic-Indic digits
+EMOJI = ("\N{GRINNING FACE} \N{PARTY POPPER} \N{THUMBS UP SIGN} "
+         "\N{MAN}\N{ZERO WIDTH JOINER}\N{WOMAN}\N{ZERO WIDTH JOINER}\N{GIRL}\N{ZERO WIDTH JOINER}"
+         "\N{BOY} ") * N  # astral singles + a ZWJ family sequence
+MIXED_SCRIPT = ("Hello \N{CJK UNIFIED IDEOGRAPH-4F60}\N{CJK UNIFIED IDEOGRAPH-597D}"
+                "\N{CJK UNIFIED IDEOGRAPH-4E16}\N{CJK UNIFIED IDEOGRAPH-754C} "
+                "\N{CYRILLIC CAPITAL LETTER PE}\N{CYRILLIC SMALL LETTER ER}\N{CYRILLIC SMALL LETTER I}"
+                "\N{CYRILLIC SMALL LETTER VE}\N{CYRILLIC SMALL LETTER IE}\N{CYRILLIC SMALL LETTER TE} "
+                "\N{GRINNING FACE} ") * N  # Latin + Han + Cyrillic + emoji interleaved
+LATIN_ACCENTED = ("caf\N{LATIN SMALL LETTER E WITH ACUTE} r\N{LATIN SMALL LETTER E WITH ACUTE}sum"
+                  "\N{LATIN SMALL LETTER E WITH ACUTE} na\N{LATIN SMALL LETTER I WITH DIAERESIS}ve fa"
+                  "\N{LATIN SMALL LETTER C WITH CEDILLA}ade d\N{LATIN SMALL LETTER E WITH ACUTE}j"
+                  "\N{LATIN SMALL LETTER A WITH GRAVE} v\N{LATIN SMALL LETTER E WITH ACUTE}cu tr"
+                  "\N{LATIN SMALL LETTER E WITH GRAVE}s \N{LATIN SMALL LETTER E WITH ACUTE}l"
+                  "\N{LATIN SMALL LETTER E WITH GRAVE}ve ") * N  # café/résumé/naïve/façade-style FR prose
+
+# Same \N{...}-escape discipline for the Unicode pattern literals below (not just the corpora).
+CAFE_CI = "(?i)caf\N{LATIN SMALL LETTER E WITH ACUTE}"
+ACCENT_CLASS = "[\N{LATIN SMALL LETTER A WITH GRAVE}-\N{LATIN SMALL LETTER Y WITH DIAERESIS}]+"
+CJK_LITERAL = "\N{CJK UNIFIED IDEOGRAPH-4F60}\N{CJK UNIFIED IDEOGRAPH-597D}"
+
 CASES = [
     # (label, pattern, text) — chosen to span REAL's fast-path strengths and rust's DFA/prefilter strengths
     ("literal `dog`",           r"dog",                          WORDS),
@@ -42,6 +73,17 @@ CASES = [
     (r"date sparse `\d{4}-\d{2}-\d{2}`", r"\d{4}-\d{2}-\d{2}", DATE_SPARSE),
     (r"email sparse `(\w+)@(\w+)`",      r"(\w+)@(\w+)",       EMAIL_SPARSE),
     (r"key= `key=(\w+)`",                r"key=(\w+)",         KV),
+    # Unicode comparative rows (rust regex crate = recent UCD, cleanest comparison for \p{}; see
+    # docs/BENCHMARKS.md's Unicode section for each engine's UCD version and the count-divergence rule).
+    (r"unicode `\w+` (mixed-script)",    r"\w+",               MIXED_SCRIPT),
+    (r"unicode `\p{L}+` (CJK)",          r"\p{L}+",            CJK),
+    (r"unicode `\p{N}+` (arabic digits)", r"\p{N}+",           ARABIC),
+    (r"unicode `\p{sc=Han}` (CJK)",      r"\p{sc=Han}",        CJK),
+    (r"unicode `\p{scx=Cyrl}` (mixed-script)", r"\p{scx=Cyrl}", MIXED_SCRIPT),
+    ("unicode (?i) accented literal",    CAFE_CI,              LATIN_ACCENTED),
+    ("unicode accented class `[a-y]+`",  ACCENT_CLASS,         LATIN_ACCENTED),
+    ("unicode CJK literal",              CJK_LITERAL,          CJK),
+    ("unicode `.` (emoji, one codepoint)", r".",               EMOJI),
 ]
 
 
