@@ -550,6 +550,60 @@ class TestDifferentialFuzz(unittest.TestCase):
         # majority of patterns compile on both engines -- the bytes differential is not mostly skips.
         self.assertGreater(compiled / total, 0.8)
 
+    def test_malformed_utf8_bytes_match_re(self):
+        """Volet B: the exact malformed-UTF-8 byte sequences that test_utf8_malformed_matrix.cpp
+        pins as *rejected* in text mode must, in BYTES mode, be plain data that re also accepts --
+        bytes mode has no UTF-8 concept on either engine, so a byte that is "malformed" only means
+        something in text mode. This is the differential half of that C++ file's own contract."""
+        # Same catalog as tests/unicode/test_utf8_malformed_matrix.cpp's malformed_catalog(),
+        # kept in sync by name/bytes so a change on one side is easy to mirror on the other.
+        malformed_catalog = {
+            "lone_continuation_80": bytes([0x80]),
+            "lone_continuation_bf": bytes([0xBF]),
+            "truncated_2byte_lead_eot": bytes([0xC3]),
+            "truncated_3byte_lead_eot": bytes([0xE2, 0x82]),
+            "truncated_4byte_lead_eot": bytes([0xF0, 0x9F, 0x98]),
+            "overlong_2byte_c0_80": bytes([0xC0, 0x80]),
+            "overlong_3byte_e0_80_80": bytes([0xE0, 0x80, 0x80]),
+            "overlong_4byte_f0_80_80_80": bytes([0xF0, 0x80, 0x80, 0x80]),
+            "surrogate_ed_a0_80": bytes([0xED, 0xA0, 0x80]),
+            "past_10ffff_f5": bytes([0xF5, 0x80, 0x80, 0x80]),
+            "invalid_lead_fe": bytes([0xFE]),
+            "invalid_lead_ff": bytes([0xFF]),
+        }
+        # \xHH-escaped pattern spelling of a byte sequence: a RAW non-ASCII byte embedded directly
+        # in a pattern (even a bytes pattern) is rejected at compile time ("non-ASCII character
+        # class member not supported" -- confirmed empirically here, and the reason
+        # test_random_bytes_match_re's own generator is ascii_only=True). \xHH is the escape both
+        # engines agree keeps byte provenance (test_utf8.cpp's utf8_bytes_mode_classes).
+        def esc(bs):
+            return b"".join(b"\\x%02x" % b for b in bs)
+
+        # Representative byte patterns: "any one byte" (repeated), a byte class carrying the exact
+        # malformed lead byte, a negated-delimiter run (the class_loop/codepoint_class_plus shape
+        # the C++ file's run_cascade_stop tests exercise), and a literal wrapping the sequence.
+        checked = 0
+        for name, seq in malformed_catalog.items():
+            prefix, suffix = b"ab", b"cd"
+            text = prefix + seq + suffix
+            patterns = [
+                rb".",
+                rb".+",
+                rb"[^\"]+",
+                esc(seq),                    # the malformed bytes as a literal, \xHH-escaped
+                b"[" + esc(seq[:1]) + b"]",  # a byte class carrying just its lead byte
+            ]
+            for pat in patterns:
+                rp = re.compile(pat)
+                xp = real.compile(pat)  # a bytes pattern implies bytes-mode matching, like re
+                ctx = f"case={name} pattern={pat!r} text={text!r}"
+                ng = rp.groups
+                facts = (match_facts(xp.search(text), ng), [m.span() for m in xp.finditer(text)])
+                ref = (match_facts(rp.search(text), ng), [m.span() for m in rp.finditer(text)])
+                self.assertEqual(facts, ref, ctx)
+                checked += 1
+        self.assertEqual(checked, 12 * 5)  # every (catalog entry, pattern) pair actually ran
+
 
 def verbosify(pattern, rng):
     """Insert verbose-insignificant whitespace and #-comments into a pattern.
