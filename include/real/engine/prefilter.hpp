@@ -1437,9 +1437,17 @@ namespace real::detail {
       const char* const base  {text.data()};
       const std::size_t total {text.size() - pos};
       // Initial probe width: the caller (next_candidate's small-set route) already tried a 32-byte bitmap
-      // probe before falling here, so this starts just past it; any reasonable seed gives the same
-      // asymptotic bound, only the constant factor for a near-miss changes.
-      std::size_t window {total < 64 ? total : 64};
+      // probe before falling here, so this starts just past it. Members are enumerated in ascending byte
+      // value (see the hint builder above), so for an icase pair like {c, C} the UPPERCASE byte (0x43) is
+      // always member 0 -- checked first, with the full round window, before the far commoner lowercase
+      // byte even gets a chance to narrow it. That makes this seed a genuine trade-off, not a free
+      // parameter: measured on M1 across four adversarial shapes (a stop-byte set at a ~93-byte period,
+      // and (?i)<literal> sparse/no-match/dense), the stop-set win saturates by ~96 B (no further gain to
+      // 512+) while the icase-sparse/no-match cost keeps climbing past it (roughly +2% at 128 B, +40% by
+      // 1024 B) -- so 512-1024 (an earlier candidate) would have traded a bounded stop-set win for an
+      // unbounded-looking icase cost. 128 captures the stop-set win in full at a ~2% icase cost.
+      constexpr std::size_t seed   {128};
+      std::size_t           window {total < seed ? total : seed};
       while (true) {
         std::size_t best {npos};
         std::size_t win  {window};
