@@ -10,6 +10,7 @@
 // non-property code unit — the same "malformed is never a code point" rule the engine already
 // applies to `.` and class runs, extended here to the rest of the feature surface.
 #include <algorithm>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -27,6 +28,26 @@ using test::bytes;
 using test::cat;
 
 namespace {
+
+  /*!
+   * \brief A bare heap buffer of exactly \p total bytes -- no null-terminator slack.
+   *
+   * `std::string` always guarantees `data()[size()] == '\0'` as a valid, allocated byte, SSO or
+   * not -- so a `std::string`-backed subject, even a large heap-allocated one, can never catch a
+   * "read one byte past size()" bug: that read lands on the guaranteed terminator, still inside
+   * the allocation. This constructs a raw `new[]` buffer with EXACTLY `total` bytes, matching what
+   * the C-ABI / fuzz harness hands the engine (a bare pointer+length pair with no such guarantee),
+   * so a read at exactly `text.size()` crosses a real heap-redzone boundary under ASan. Leaked
+   * deliberately -- ASan tracks the allocation regardless, and this is test-only code.
+   */
+  std::string_view bare_heap_ending_in(std::size_t   total,
+                                       unsigned char last_byte)
+  {
+    auto buf = std::make_unique<char[]>(total);
+    std::fill_n(buf.get(), total - 1, 'x');
+    buf[total - 1] = static_cast<char>(last_byte);
+    return {buf.release(), total};
+  }
 
   bool searches(const std::string& pattern,
                 const std::string& text,
@@ -197,6 +218,43 @@ TEST(dot_bare_fast_path_rejects_second_byte_bounds_cases)
   const std::string emoji {"\xF0\x9F\x98\x80"};
   EXPECT(regex(".").fullmatch(euro).matched());  // € (3-byte)
   EXPECT(regex(".").fullmatch(emoji).matched()); // (4-byte emoji)
+}
+
+TEST(dot_width_no_oob_read_past_heap_buffer_end)
+{
+  // Wagon 4c hotfix: run_codepoint_class's width lambda (site 1, pike.hpp) hoisted the 3-/4-byte
+  // branches' first-continuation-byte read OUT of the short-circuit `i+2/i+3 < text.size()` guard,
+  // losing the bounds protection the pre-wagon-4 code had -- a truncated 3-/4-byte lead as the
+  // LAST byte of a subject then read one byte past the buffer. Caught by the C-ABI fuzzer under
+  // ASan, not by this suite's own `make sanitize` run: every subject elsewhere in this file is a
+  // `std::string`, and `std::string` ALWAYS guarantees `data()[size()] == '\0'` as a valid,
+  // allocated byte -- SSO or heap-allocated, large or small, that guarantee masks a "read one byte
+  // past size()" bug completely, since the read lands on the terminator, still inside the
+  // allocation. bare_heap_ending_in gives a subject with no such slack (a bare `new[]` allocation
+  // of EXACTLY `total` bytes), matching the bare pointer+length pair the C API / fuzz harness
+  // actually hands the engine -- the only shape that puts a real heap-redzone boundary at
+  // `text.size()`. The proof is this test running clean under `make sanitize` (ASan aborts the
+  // whole process on the read this pins, so a crash here IS the failure signal, not an EXPECT);
+  // the assertions below are a bonus correctness check, not the point of the test.
+  const unsigned char tricky_leads[] = {0xE0, 0xE4, 0xED, 0xF0, 0xF4};
+  for (unsigned char lead : tricky_leads) {
+    // The lead byte is the absolute last byte of the buffer (0 continuation bytes present) -- the
+    // exact shape the fuzzer found (E0-EF hits the 3-byte branch's guard, F0-F4 the 4-byte one).
+    const std::string_view sv {bare_heap_ending_in(70, lead)};
+    EXPECT(!regex(".+").fullmatch(sv).matched()); // the truncated tail can never be consumed
+    EXPECT(regex(".+").search(sv).matched());     // the 69 leading ASCII bytes still match
+  }
+  // A 3-byte lead with exactly 1 (not 2) continuation bytes present -- the i+2 guard must also
+  // catch this shallower truncation depth, not just "lead is the very last byte."
+  {
+    auto buf = std::make_unique<char[]>(70);
+    std::fill_n(buf.get(), 68, 'x');
+    buf[68] = static_cast<char>(0xE0);
+    buf[69] = static_cast<char>(0xA5); // one valid continuation byte, then end of buffer
+    const std::string_view sv {buf.release(), 70};
+    EXPECT(!regex(".+").fullmatch(sv).matched());
+    EXPECT(regex(".+").search(sv).matched());
+  }
 }
 
 TEST(strict_utf8_boundary_cases_rejected_on_every_route)

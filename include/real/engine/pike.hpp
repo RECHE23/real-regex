@@ -1812,17 +1812,22 @@ namespace real::detail {
                              return i + 1 < text.size() && cont(i + 1) ? 2 : 0;
                            }
                            if (byte_value >= 0xE0 && byte_value <= 0xEF) {
+                             if (i + 2 >= text.size()) {
+                               return 0;
+                             }
                              const detail::utf8_second_byte_bounds& b {
                                detail::utf8_second_byte_bounds_table[byte_value]};
                              const auto b2                            {static_cast<std::uint8_t>(text[i + 1])};
-                             return i + 2 < text.size() && b2 >= b.lo && b2 <= b.hi && cont(i + 2) ? 3 : 0;
+                             return b2 >= b.lo && b2 <= b.hi && cont(i + 2) ? 3 : 0;
                            }
                            if (byte_value >= 0xF0 && byte_value <= 0xF4) {
+                             if (i + 3 >= text.size()) {
+                               return 0;
+                             }
                              const detail::utf8_second_byte_bounds& b {
                                detail::utf8_second_byte_bounds_table[byte_value]};
                              const auto b2                            {static_cast<std::uint8_t>(text[i + 1])};
-                             return i + 3 < text.size() && b2 >= b.lo && b2 <= b.hi && cont(i + 2) &&
-                                    cont(i + 3) ? 4 : 0;
+                             return b2 >= b.lo && b2 <= b.hi && cont(i + 2) && cont(i + 3) ? 4 : 0;
                            }
                            return 0;
                          };
