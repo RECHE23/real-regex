@@ -528,7 +528,9 @@ Every cross-engine harness above (§A, §multi-pattern, §E) runs **ASCII-only p
 corpora**. After landing full `\p{}` (general category, script, `sc=`/`scx=` Script_Extensions, 63 binary
 properties), that was a blind spot: REAL's Unicode throughput had never been measured against anything.
 This section fills the gap. **Measurement only** — this is a snapshot of what the numbers say today, not an
-optimization pass; a gap found here is a candidate for a future arc, not fixed in this one.
+optimization pass; a gap found here is a candidate for a future arc, not fixed in this one. *(One exception:
+the `(?i)<literal>` finding below was a P0 correctness-adjacent bug, not a throughput gap, and was fixed
+same-day — see that subsection.)*
 
 **⚠ The methodological trap, locked down first.** Every engine bundles a different Unicode Character
 Database vintage. `\p{L}+` can therefore match a *different set of code points* on different engines —
@@ -540,7 +542,9 @@ turn out to be an ASCII-vs-Unicode *semantics* difference (a different, more fun
 data table).
 
 **Stamp.** REAL `98876d2`, Apple M1 Pro (arm64), Apple clang 16.0.0 (clang-1600.0.26.6), `-O2`,
-2026-07-11T01:00Z. Engine Unicode Character Database versions:
+2026-07-11T01:00Z. The `(?i)<literal>` cells (`(?i)café` in both tables, and its own subsection below) are
+re-stamped at `4e98b75` (post P0-fix `b6c2a0e` + seed-tune `4e98b75`), same host/build; every other cell is
+unchanged from `98876d2` and was not re-measured. Engine Unicode Character Database versions:
 
 | engine | UCD version |
 | --- | --- |
@@ -581,7 +585,7 @@ raw JSON — every ratio's 95% CI is within ±2% of the point estimate); match c
 | `\p{N}+` (arabic digits) | 2.61 | unsupported | 2.15 (**1.21×**) | 7.05 (0.37×) | 6250/—/6250/6250 |
 | `\p{sc=Han}` (CJK) | 8.01 | unsupported | 2.86 (**2.80×**) | unsupported | 25808/—/25808/— |
 | `\p{scx=Cyrl}` (mixed-script) | 6.51 | unsupported | 3.53 (**1.84×**) | unsupported | 32436/—/32436/— |
-| `(?i)café` (accented) | 52.83 | unsupported | 0.45 (117×) | 1.73 (30.5×) | 3509/—/3509/3509 |
+| `(?i)café` (accented) | 1.06 | unsupported | 0.35 (3.03×) | 1.31 (**0.81×**) | 3509/—/3509/3509 |
 | `[à-ÿ]+` (accented) | 5.57 | 114.31 (**0.05×**) | 2.72 (0.49×) | 16.60 (0.34×) | 38599/38599/38599/38599 |
 | literal `你好` (CJK) | 1.54 | 38.79 (**0.04×**) | 0.78 (0.51×) | 3.48 (0.44×) | 6452/6452/6452/6452 |
 | `.` (emoji, one codepoint) | 5.40 | 78.78 (0.07×) | 5.03 (**0.93×**) | 24.96 (0.22×) | 68306/200039/68306/68306 ⚠ |
@@ -609,8 +613,9 @@ more honestly than inverting every number to look like a REAL win.)*
 CJK literal 0.51×) where PCRE2's JIT and RE2's compiled DFA both have a real edge over REAL's byte-class
 scan on multi-byte input. REAL is comfortably ahead of `std::regex` everywhere `\p{}` is unsupported for it
 (as expected — `std::regex` doing zero real work is not a REAL win). The one clear win against a *capable*
-competitor is `\p{L}+` vs PCRE2 (**5.06×**) — REAL's General_Category route wins there. **`(?i)café`
-is a separate story, below.**
+competitor is `\p{L}+` vs PCRE2 (**5.06×**) — REAL's General_Category route wins there. **`(?i)café` was a
+117×-behind outlier — a P0 correctness-adjacent bug (see below), not a throughput gap. Fixed, it now trails
+PCRE2 by 3.0× (in the same range as the other `\p{}` rows) and is slightly ahead of RE2 (0.81×).**
 
 ### `duel` — REAL vs rust `regex` (`make bench-duel`, `N=20000` repetitions)
 
@@ -625,22 +630,23 @@ divergence to flag here). REAL `find_iter` vs rust `find_iter`, min-of-15.
 | `\p{N}+` (arabic digits) | 3.20 | 4.98 | REAL 1.6× |
 | `\p{sc=Han}` (CJK) | 7.09 | 9.13 | REAL 1.3× |
 | `\p{scx=Cyrl}` (mixed-script) | 6.37 | 10.21 | REAL 1.6× |
-| `(?i)` accented literal | 302.20 | 1.82 | rust **166×** |
+| `(?i)` accented literal | 0.96 | 1.44 | **REAL 1.5×** |
 | `[a-y]` accented class | 5.30 | 14.10 | REAL 2.7× |
 | CJK literal | 1.94 | 1.12 | rust 1.7× |
 | `.` (emoji, one codepoint) | 5.34 | 21.25 | REAL 4.0× |
 
-Outside the `(?i)` row this is a genuine, roughly-even split — REAL ahead on scripts/classes/`.`, rust ahead
-on `\p{L}+` and the CJK literal (both by a modest ~1.1–1.7×) — not the lopsided picture the three-way table
-paints, because rust's Unicode-aware defaults remove the semantics confound entirely.
+A genuine, roughly-even split — REAL ahead on scripts/classes/`.`/accented-literal, rust ahead on `\p{L}+`
+and the CJK literal (both by a modest ~1.1–1.7×) — not the lopsided picture the three-way table paints,
+because rust's Unicode-aware defaults remove the semantics confound entirely. The `(?i)` row was the one
+outlier (rust 166×) until the P0 fix below closed it; it is no longer carved out from the split above.
 
-### A significant find: `(?i)<literal>` is quadratic, not linear — and it is not Unicode-specific
+### A significant find, fixed same-day: `(?i)<literal>` was quadratic, not linear — and it was not Unicode-specific
 
-The `(?i)café` row above is not just "REAL is slow here" — it scales **badly**. A direct sweep (`real_bench`
-alone, `(?i)café` over a French-prose corpus, min-of-15) shows ns/byte roughly **doubling every time the
-corpus doubles**, i.e. total scan time is quadratic:
+The `(?i)café` row above was not just "REAL is slow here" — it scaled **badly**. A direct sweep (`real_bench`
+alone, `(?i)café` over a French-prose corpus, min-of-15) showed ns/byte roughly **doubling every time the
+corpus doubled**, i.e. total scan time was quadratic:
 
-| corpus size | ns/byte |
+| corpus size | ns/byte (pre-fix) |
 | ---: | ---: |
 | 28.5 KB | 8.36 |
 | 57 KB | 14.59 |
@@ -653,21 +659,52 @@ corpus doubles**, i.e. total scan time is quadratic:
 Scoped with three follow-up probes on the same machine:
 
 - **`café` (the same literal, no `(?i)`): perfectly linear**, flat 0.84 ns/B from 28.5 KB to 1.8 MB. The
-  non-ASCII literal itself is not the problem.
+  non-ASCII literal itself was not the problem.
 - **`(?i)cafe` (pure ASCII, case-insensitive): the *same* quadratic blowup** (7.75 → 60.66 → 483.90 ns/B
-  across the same size range). **This rules out Unicode as the cause** — it is a case-insensitive-**literal**
+  across the same size range). **This ruled out Unicode as the cause** — it was a case-insensitive-**literal**
   bug, plain and simple, that this Unicode arc happened to be the first to notice (via `(?i)café`).
 - **`(?i)[a-z]+` (case-insensitive, but a class, not a literal): perfectly linear**, flat ~8.4–9.4 ns/B.
 
-So the bug is precisely scoped to **`(?i)` applied to a literal** (ASCII or not) — plain literals and
-case-insensitive classes are both unaffected. This is a genuine gap in the linear-time guarantee the rest of
-the engine holds to, discovered as a side effect of this arc rather than its target. **Not fixed here** (out
-of scope per this fiche's measure-only mandate) — flagged for prompt follow-up given it touches the
-ReDoS-safety positioning, not just a throughput number.
+So the bug was precisely scoped to **`(?i)` applied to a literal** (ASCII or not) — plain literals and
+case-insensitive classes were both unaffected — a genuine gap in the linear-time guarantee the rest of the
+engine holds to, discovered as a side effect of this arc rather than its target.
+
+**Root cause and fix (P0, same day — `b6c2a0e` + `4e98b75`).** An icase literal loses its exact-prefix hint
+(case-folding needs a small first-byte *set*, e.g. `{c, C}`, not one byte), routing through
+`find_bytes_cascade`: one `memchr` per set member, handed the **entire remaining haystack** as its search
+window on every call. Members enumerate in ascending byte value, so for `{c, C}` the uppercase byte is
+always checked *first* — with the full window — before the far commoner lowercase byte gets a chance to
+narrow it. On a haystack sparse in true matches (the common shape — a rare literal in a large text) with the
+uppercase fold variant absent from a stretch of it, every rejected candidate paid a full
+remaining-haystack `memchr` for a byte that was never there: O(n) candidates × O(n) scan = O(n²). The fix
+grows the cascade's window **exponentially** (galloping search, seed 128 B after x86 tuning) instead of
+handing it the whole remainder up front, bounding one call to ~2× the distance to the actual hit regardless
+of any member's frequency — and bills its cost to the existing deterministic work-counter gate
+(`prefilter_note_scan`), which had never covered this function, the actual reason the linearity gate never
+caught it.
+
+Post-fix, the same sweep is flat:
+
+| corpus size | ns/byte (post-fix) |
+| ---: | ---: |
+| 28.5 KB | 1.19 |
+| 57 KB | 1.07 |
+| 114 KB | 1.01 |
+| 228 KB | 0.98 |
+| 456 KB | 0.97 |
+| 912 KB | 0.96 |
+| 1.8 MB | 0.96 |
+
+~500× faster at 1.8 MB (483.6 → 0.96 ns/B), converging rather than growing — genuinely linear, not just
+"still quadratic but with a smaller constant." The tuning cost an honest, disclosed, non-eliminable ~4%
+on cascade-favorable cases versus never having bounded the window at all (measured against the pre-P0-fix
+baseline) — the price of closing the O(n²) hole without reopening it in reverse. Full mechanism, the seed
+trade-off measurement (64→1024), and the x86/M1 A/B are in the `b6c2a0e`/`4e98b75` commit messages.
 
 Reproduce: `make bench-engines` / `make bench-duel` (§Methodology below); the scaling sweep above is a
-manual `real_bench` loop, not yet wired into either harness as a standing row (worth doing when this gets
-its own arc).
+manual `real_bench` loop, not yet wired into either harness as a standing row (worth doing as a regression
+tripwire — the deterministic work-counter test added alongside the fix, not this wall-clock sweep, is the
+actual gate).
 
 ## Methodology & reproduction
 
