@@ -655,3 +655,73 @@ TEST(icase_literal_cascade_throughput_smoke)
   // Determinism pin: re-run large -- same work count (not wall time).
   EXPECT_EQ(work(1 << 20), large);
 }
+
+// --- FIX (mono/multi split): a 1-member find_bytes_cascade call cannot exhibit the P0 #2 O(n^2)
+// by construction -- one memchr's own cost already equals its progress, so windowing it is pure
+// overhead (measured as a real x86 regression on stop-set-shaped patterns, e.g. [^\x01]+, once
+// the general galloping fix landed). White-box on find_bytes_cascade directly (not through a full
+// regex search) to isolate its own billing from any other prefilter mechanism's contribution.
+
+TEST(mono_member_cascade_miss_is_single_unwindowed_pass)
+{
+  using real::detail::find_bytes_cascade;
+  const std::string text (100000, 'a'); // the member never occurs: a genuine full-range miss
+  const char        member {'\x01'};
+  real::detail::prefilter_work_units() = 0;
+  const std::size_t hit = find_bytes_cascade(text, 0, &member, 1);
+  EXPECT_EQ(hit, real::npos);
+  // Exactly the range scanned once -- not the ~1.9x a windowed re-scan bills on a full miss
+  // (contrast: multi_member_cascade_miss_still_windows below, same shape, n=2).
+  EXPECT_EQ(real::detail::prefilter_work_units(), static_cast<std::uint64_t>(text.size()));
+}
+
+TEST(mono_member_cascade_hit_bills_distance_only)
+{
+  using real::detail::find_bytes_cascade;
+  std::string text (100000, 'a');
+  text[12345] = '\x01';
+  const char member {'\x01'};
+  real::detail::prefilter_work_units() = 0;
+  const std::size_t hit = find_bytes_cascade(text, 0, &member, 1);
+  EXPECT_EQ(hit, 12345U);
+  EXPECT_EQ(real::detail::prefilter_work_units(), 12345ULL); // distance to the hit, not the whole range
+}
+
+TEST(multi_member_cascade_miss_still_windows)
+{
+  // Contrast/regression pin: the SAME full-miss shape with n=2 must still pay the P0 #2 fix's own
+  // geometric-doubling series -- the split must not have silently disabled galloping for the case
+  // it exists to protect. seed=128, doubling, capped to the 1000-byte range: 128+256+512+1000 = 1896.
+  using real::detail::find_bytes_cascade;
+  const std::string text (1000, 'a');
+  const char        members[2] {'\x01', '\x02'}; // neither occurs
+  real::detail::prefilter_work_units() = 0;
+  const std::size_t hit = find_bytes_cascade(text, 0, members, 2);
+  EXPECT_EQ(hit, real::npos);
+  EXPECT_EQ(real::detail::prefilter_work_units(), 1896ULL);
+}
+
+TEST(stop_set_class_loop_throughput_smoke_mono_member)
+{
+  // End-to-end (not white-box): [^\x01]+ over an all-'a' corpus routes through codepoint_class_plus
+  // -> run_cascade_stop -> find_bytes_cascade with stop_set_size == 1 (confirmed via hints_of-style
+  // inspection during the fix's own diagnosis). Deterministic work counter, not wall-clock -- proves
+  // the mono-member bypass holds through the real dispatch path, not just the white-box call above.
+  const real::regex rx {"[^\x01]+"};
+  const auto        work {[&](std::size_t n) -> std::uint64_t {
+                            const std::string text (n, 'a');
+                            real::detail::prefilter_work_units() = 0;
+                            const auto m = rx.search(text);
+                            EXPECT(m.matched());
+                            EXPECT_EQ(m.end(), n);
+                            return real::detail::prefilter_work_units();
+                          }};
+  (void) work(1 << 12);                      // warmup
+  const std::uint64_t small {work(1 << 18)}; // 256 KiB
+  const std::uint64_t large {work(1 << 20)}; // 1 MiB -- 4x the bytes
+  // O(n) -> ~4x; a lingering windowed re-scan would still be O(n) here too (single call either
+  // way) but at a larger constant -- this pins the ratio stays tight to 4x, not just under a loose
+  // quadratic-smoke margin.
+  EXPECT(large < small * 5);
+  EXPECT_EQ(work(1 << 20), large); // determinism pin
+}

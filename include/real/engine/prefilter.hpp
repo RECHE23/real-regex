@@ -1408,21 +1408,34 @@ namespace real::detail {
    * scalar byte loop. During constant evaluation the plain member-wise scan runs instead (the home-made
    * path — the same shape the bitmap loop takes).
    *
-   * FIX P0 #2 (O(n^2)): the window is grown **exponentially** (galloping search) from a modest initial
-   * probe, doubling each round, rather than handed the full remaining haystack up front. A caller that
-   * invokes this once per rejected candidate (`next_candidate`'s icase small-set route) used to pay one
-   * `memchr` per set member over `text.size() - pos` on EVERY such call; a set with an asymmetrically
-   * rare or entirely absent member (e.g. `(?i)cafe`'s `{c, C}` on an all-lowercase haystack) turned that
-   * into a full remaining-text scan on every rejected candidate — O(n) candidates x O(n) scan = O(n^2),
-   * same family as A2's unbounded-reach fix but one level upstream (the candidate SEARCH, not the
-   * anchored walk once a candidate is found). The geometric series bounds one call's total scanned bytes
-   * to at most ~2x the distance to the actual hit (or the remaining text, on a true miss) — the standard
-   * galloping-search argument — independent of any one member's frequency.
+   * FIX P0 #2 (O(n^2)): for **2+ members**, the window is grown **exponentially** (galloping
+   * search) from a modest initial probe, doubling each round, rather than handed the full
+   * remaining haystack up front. A caller that invokes this once per rejected candidate
+   * (`next_candidate`'s icase small-set route) used to pay one `memchr` per set member over
+   * `text.size() - pos` on EVERY such call; a set with an asymmetrically rare or entirely absent
+   * member (e.g. `(?i)cafe`'s `{c, C}` on an all-lowercase haystack) turned that into a full
+   * remaining-text scan on every rejected candidate — O(n) candidates x O(n) scan = O(n^2), same
+   * family as A2's unbounded-reach fix but one level upstream (the candidate SEARCH, not the
+   * anchored walk once a candidate is found). The geometric series bounds one call's total
+   * scanned bytes to at most ~2x the distance to the actual hit (or the remaining text, on a
+   * true miss) — the standard galloping-search argument — independent of any one member's
+   * frequency.
+   *
+   * FIX (mono/multi split): a **single**-member call (`run_cascade_stop`'s class-loop stop-byte
+   * scan is the hot one — its `stop_set_size` is frequently 1) cannot exhibit the O(n^2) above by
+   * construction: one `memchr` call's own cost already equals its progress (the distance to the
+   * hit, or the whole range on a miss) — there is no second member whose scan could redundantly
+   * re-cover ground the first one already paid for. Windowing a mono-member call therefore adds
+   * pure overhead (per-round setup, the narrowing compare, the doubling arithmetic) for zero
+   * safety benefit, measured as a real x86 regression on stop-set-shaped patterns (`[^\x01]+`-
+   * style) once the general galloping fix landed. So `n == 1` takes the direct pre-fix path — one
+   * unbounded `memchr` over `[pos, text.size())` — and every `n >= 2` call keeps the galloping
+   * loop exactly as the P0 #2 fix landed it, untouched.
    *
    * \param[in] text The subject text.
    * \param[in] pos  Index to start scanning from.
    * \param[in] set  Pointer to the enumerated set members (first \p n valid).
-   * \param[in] n    Number of valid members (2..4).
+   * \param[in] n    Number of valid members (1..6 — `run_cascade_stop`'s stop_set allows up to 6).
    * \return The least index at or after \p pos whose byte is in the set, else npos.
    */
   constexpr std::size_t find_bytes_cascade(std::string_view text,
@@ -1436,6 +1449,23 @@ namespace real::detail {
     if (!std::is_constant_evaluated()) {
       const char* const base  {text.data()};
       const std::size_t total {text.size() - pos};
+      if (n == 1) {
+        // Mono-member: a single memchr IS the whole search, unwindowed -- see the mono/multi
+        // split note above. Billing mirrors the multi-member loop below: distance-to-hit on a
+        // hit, the full remaining range on a miss (npos).
+        const void* hit {std::memchr(base + pos, set[0], total)};
+        if (hit != nullptr) {
+          const std::size_t idx {static_cast<std::size_t>(static_cast<const char*>(hit) - base)};
+#if defined(REAL_TEST_INSTRUMENT)
+          prefilter_note_scan(idx - pos);
+#endif
+          return idx;
+        }
+#if defined(REAL_TEST_INSTRUMENT)
+        prefilter_note_scan(total);
+#endif
+        return npos;
+      }
       // Initial probe width: the caller (next_candidate's small-set route) already tried a 32-byte bitmap
       // probe before falling here, so this starts just past it. Members are enumerated in ascending byte
       // value (see the hint builder above), so for an icase pair like {c, C} the UPPERCASE byte (0x43) is
