@@ -37,6 +37,7 @@
 #include "real/unicode/unicode_property.hpp"
 #include "real/unicode/unicode_props.hpp"
 #include "real/unicode/unicode_script.hpp"
+#include "real/unicode/unicode_scx.hpp"
 #include "real/unicode/utf8.hpp"
 
 namespace real::detail {
@@ -561,11 +562,15 @@ namespace real::detail {
 
     /*!
      * \brief Resolves a `\p{...}` property name to its code-point ranges, or fails with a clear error. An
-     *        optional `gc=` / `sc=` (or `general_category=` / `script=`) prefix picks the namespace; a bare name
-     *        tries General_Category, then Script, then a binary property (`\p{Alphabetic}`, no namespace of its
-     *        own, same as PCRE2). GC ranges come straight from the table; a Script's ranges are collected from
-     *        the partition; a binary property's ranges come straight from its table. The alias resolvers are
-     *        the generated, loose-keyed `resolve_gc` / `resolve_script` / `resolve_binprop`.
+     *        optional `gc=` / `sc=` / `scx=` (or `general_category=` / `script=` / `scriptextensions=`)
+     *        prefix picks the namespace; a bare name tries General_Category, then Script, then a binary
+     *        property (`\p{Alphabetic}`, no namespace of its own, same as PCRE2) -- `scx=` has no bare-name
+     *        form (PCRE2: a bare name never means Script_Extensions, the explicit prefix is required). GC
+     *        ranges come straight from the table; a Script's ranges are collected from the partition; a
+     *        binary property's or a Script_Extensions' ranges come straight from their own table (both are
+     *        NOT partitions -- a code point can satisfy several). The alias resolvers are the generated,
+     *        loose-keyed `resolve_gc` / `resolve_script` (shared by `sc=` and `scx=` -- same script names,
+     *        long or short UAX24 code) / `resolve_binprop`.
      */
     [[nodiscard]] constexpr std::vector<code_range> resolve_property(std::string_view name) const
     {
@@ -582,9 +587,10 @@ namespace real::detail {
       const std::string_view nk          {ns_key.view()};
       const bool             want_gc     {nk.empty() || nk == "gc" || nk == "generalcategory"};
       const bool             want_script {nk.empty() || nk == "sc" || nk == "script"};
-      if (!want_gc && !want_script) {
+      const bool             want_scx    {nk == "scx" || nk == "scriptextensions"};
+      if (!want_gc && !want_script && !want_scx) {
         // well-formed `\p{ns=...}` but a namespace REAL does not offer (a binding may delegate it).
-        fail_unsupported("unknown Unicode property namespace in \\p{...} (use gc= or sc=)");
+        fail_unsupported("unknown Unicode property namespace in \\p{...} (use gc=, sc= or scx=)");
       }
       const loose_buf value_key {loose_key(value)};
       if (want_gc) {
@@ -606,6 +612,13 @@ namespace real::detail {
           return out;
         }
       }
+      if (want_scx) {
+        const script sc {resolve_script(value_key.view())};
+        if (sc != script::count) {
+          const std::span<const code_range> t {scx_ranges[static_cast<std::size_t>(sc)]};
+          return {t.begin(), t.end()};
+        }
+      }
       if (nk.empty()) {
         // Binary properties have no namespace of their own (like PCRE2): only a bare `\p{Name}` tries
         // one, never `\p{gc=Name}` / `\p{sc=Name}` with a name that failed to resolve in that explicit
@@ -617,9 +630,10 @@ namespace real::detail {
         }
       }
       // well-formed `\p{Name}` but a property REAL does not yet tabulate (a script/category REAL lacks,
-      // or an unknown/misspelled binary property name): unsupported, so a binding can delegate it.
-      fail_unsupported("unsupported Unicode property in \\p{...} (General_Category, Script and the "
-                       "standard binary properties are built in)");
+      // or an unknown/misspelled binary property or Script_Extensions name): unsupported, so a binding
+      // can delegate it.
+      fail_unsupported("unsupported Unicode property in \\p{...} (General_Category, Script, "
+                       "Script_Extensions and the standard binary properties are built in)");
     }
 
     //! \brief Rejects bytes mode, consumes the `p`/`P` and the `{Name}` (or single letter), and resolves it to

@@ -85,12 +85,13 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   `"aaa"`: REAL `3`, `regex` `1`). A true earliest-completion mode (a `first-accept` stop in the forward
   pass) is a planned engine follow-up; until then, use `shortest_match` as an `is_match` that also reports
   where the leftmost match ends.
-- **Unicode property classes `\p{…}` — General_Category, Script and the standard binary properties,
-  natively.** `\p{L}`, `\p{Lu}`, `\p{Nd}`, the groups `\p{L}`..`\p{C}`, `\p{sc=Greek}` / `\p{Script=Latin}`
-  (short codes, long names, `gc=`/`sc=` prefixes, loose matching, negation `\P{…}`), and the 63 standard
-  binary properties (`\p{Alphabetic}`, `\p{White_Space}`, `\p{Emoji}`, no namespace of their own, same as
-  PCRE2) run on REAL's linear engine — `engine()` reports `Real`. Other UAX44 properties (`Bidi_Class`,
-  `Word_Break`, `Age`, …) raise `Error::Unsupported`; enable the `fallback` feature and
+- **Unicode property classes `\p{…}` — General_Category, Script, Script_Extensions and the standard
+  binary properties, natively.** `\p{L}`, `\p{Lu}`, `\p{Nd}`, the groups `\p{L}`..`\p{C}`, `\p{sc=Greek}`
+  / `\p{Script=Latin}` / `\p{scx=Grek}` (short UAX24/ISO 15924 codes, long names, `gc=`/`sc=`/`scx=`
+  prefixes, loose matching, negation `\P{…}` — `scx=` has no bare-name form, same as PCRE2), and the 63
+  standard binary properties (`\p{Alphabetic}`, `\p{White_Space}`, `\p{Emoji}`, no namespace of their own,
+  same as PCRE2) run on REAL's linear engine — `engine()` reports `Real`. Other UAX44 properties
+  (`Bidi_Class`, `Word_Break`, `Age`, …) raise `Error::Unsupported`; enable the `fallback` feature and
   `RegexBuilder::new(pat).fallback(true)` to delegate *those* to the `regex` crate (per pattern, forfeiting
   the linear-time guarantee — `engine()` reports `Fallback`).
 - **Class set notation — declined (rust-only syntax).** Nested character classes (`[a[b]]` = union) and the

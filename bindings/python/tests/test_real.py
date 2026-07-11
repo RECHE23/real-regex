@@ -513,6 +513,21 @@ class TestIntentionalDivergences(unittest.TestCase):
         with self.assertRaises(real.error):
             real.compile(r"\p{gc=White_Space}")
 
+    def test_unicode_script_extensions(self):
+        # \p{scx=...} (Script_Extensions, NOT a partition unlike Script) -- sc=/scx= share one name
+        # resolver that accepts both the long name (Latin) and the short UAX24/ISO 15924 code (Latn).
+        self.assertTrue(real.compile(r"\p{sc=Latn}").fullmatch("A"))          # short code, sc=
+        digit = "٠"  # ARABIC-INDIC DIGIT ZERO: scx={Arab, Thaa, Yezi}
+        self.assertTrue(real.compile(r"\p{scx=Arab}").fullmatch(digit))
+        self.assertTrue(real.compile(r"\p{scx=Thaa}").fullmatch(digit))       # same cp, a different script's scx
+        self.assertIsNone(real.compile(r"\p{scx=Latin}").fullmatch(digit))
+        # scx has no bare-name form (PCRE2): the difference shows up in the RESULT, since sc=/scx= share
+        # names now -- U+0300 is Inherited in the Script partition (excluded from bare \p{Grek}) but IS
+        # in Greek's scx.
+        combining_grave = "̀"
+        self.assertIsNone(real.compile(r"\p{Grek}").fullmatch(combining_grave))
+        self.assertTrue(real.compile(r"\p{scx=Grek}").fullmatch(combining_grave))
+
     def test_lookbehind_variable_width_accepted(self):
         # A bounded variable-width lookbehind is ACCEPTED -- beyond re/PCRE, which require a
         # fixed width.

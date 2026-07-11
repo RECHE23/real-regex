@@ -12,6 +12,13 @@ is importable (a gen-time cross-oracle — `pip install regex` in a venv), every
 re-verified against `regex`'s own `\\p{sc=Name}` over the whole code space, aborting on any disagreement. The
 `regex` check does not affect the emitted bytes (the parse is the source), so the regen guard stays byte-exact
 without it. The emitted `..._unidata_version` pins the Scripts.txt version.
+
+`script_aliases` carries BOTH the long name (`Latin`, from Scripts.txt itself) and the short UAX24/ISO 15924
+code (`Latn`, from the committed tools/ucd/PropertyValueAliases.txt `sc ;` lines) for every script, loose-
+keyed, resolving to the same `script` value -- so `\\p{sc=Latn}` and `\\p{sc=Latin}` are the same lookup.
+Short codes are required by `\\p{scx=...}` (gen_unicode_scx_tables.py; ScriptExtensions.txt states its
+overrides in short codes only) and, since the table is shared, `\\p{sc=...}` gains PCRE2/rust-crate parity
+on the short form as a direct consequence, not a separate change.
 """
 import os
 import re
@@ -24,8 +31,35 @@ _MAX_CP = 0x10FFFF
 _SURROGATE_LO = 0xD800
 _SURROGATE_HI = 0xDFFF
 _SCRIPTS_TXT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ucd", "Scripts.txt")
+_PROPERTY_VALUE_ALIASES_TXT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ucd",
+                                           "PropertyValueAliases.txt")
 _LINE = re.compile(r"^([0-9A-Fa-f]{4,6})(?:\.\.([0-9A-Fa-f]{4,6}))?\s*;\s*(\w+)")
 _VERSION = re.compile(r"^#\s*Scripts-([0-9.]+)\.txt")
+_PVA_VERSION = re.compile(r"^#\s*PropertyValueAliases-([0-9.]+)\.txt")
+
+
+def parse_sc_short_codes(path=_PROPERTY_VALUE_ALIASES_TXT):
+    """Parse PropertyValueAliases.txt's `sc ; Short ; Long` lines into {long_name: short_code} and the data
+    version. Public (no leading underscore): gen_unicode_scx_tables.py imports this directly rather than
+    re-parsing the file, so the two generators can never disagree on the mapping."""
+    version = None
+    short_of = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if version is None:
+                m = _PVA_VERSION.match(line)
+                if m:
+                    version = m.group(1)
+            data = line.split("#", 1)[0].strip()
+            if not data.startswith("sc ;"):
+                continue
+            fields = [p.strip() for p in data.split(";")]
+            if len(fields) < 3:
+                sys.exit(f"gen_unicode_script_tables: unparsable PropertyValueAliases.txt sc line: {line!r}")
+            short_of[fields[2]] = fields[1]  # long -> short (ignore any further legacy aliases, e.g. Qaac)
+    if version is None:
+        sys.exit("gen_unicode_script_tables: PropertyValueAliases.txt is missing its version header")
+    return short_of, version
 
 
 def _loose(name):
@@ -111,7 +145,7 @@ def _cross_check_regex(entries):
         _check, lambda n: sys.exit(f"gen_unicode_script_tables: {n} code point(s) disagree with the regex module"))
 
 
-def _emit(entries, version, path):
+def _emit(entries, version, short_of, path):
     names = sorted({name for _, _, name in entries})
     enum = ["Unknown"] + names  # Unknown = 0, the script of every gap
     out = common.file_header(
@@ -122,8 +156,9 @@ def _emit(entries, version, path):
             "Every assigned code point has exactly one Script, so this is one sorted `{lo, hi, script}` table",
             "partitioning the code space (gaps are `Unknown`). Parsed from the committed Scripts.txt and, at",
             f"generation, cross-checked against the `regex` module. Scripts data version: {version} (asserted).",
-            "Wired at ast.hpp::resolve_property (`\\p{sc=...}` / a bare name), via the generated,",
-            "loose-keyed `resolve_script`.",
+            "Wired at ast.hpp::resolve_property (`\\p{sc=...}` / a bare name / `\\p{scx=...}`), via the",
+            "generated, loose-keyed `resolve_script`, which resolves both the long name (`Latin`) and the",
+            "short UAX24/ISO 15924 code (`Latn`) -- see tools/ucd/PropertyValueAliases.txt.",
         ],
         guard="REAL_UNICODE_SCRIPT_HPP",
         includes=[
@@ -167,9 +202,15 @@ def _emit(entries, version, path):
     out += ["  constexpr bool is_script_cp(script sc, char32_t cp) { return script_of(cp) == sc; }", ""]
     out += ["  //! \\brief A loose-normalized (lowercase, no _/-/space) Script name and its value."]
     out += ["  struct script_alias_entry { std::string_view name; script sc; };", ""]
-    out += ["  //! \\brief Script names, loose-keyed; for the `\\p{sc=...}` parser."]
+    out += ["  //! \\brief Script names, loose-keyed; for the `\\p{sc=...}` / `\\p{scx=...}` parsers. Both the"]
+    out += ["  //!        long name (`Latin`) and the short UAX24/ISO 15924 code (`Latn`) resolve to the same"]
+    out += ["  //!        value -- `\\p{scx=...}` states its overrides in short codes only, and since this"]
+    out += ["  //!        table is shared, `\\p{sc=...}` gains the short form too."]
     out += ["  inline constexpr script_alias_entry script_aliases[] {"]
-    out += [f'    {{"{_loose(n)}", script::{n}}},' for n in names]
+    # A short code that coincides with its own script's long name (Thai, Lisu, Cham, ...) would otherwise
+    # duplicate the row -- harmless (both resolve to the same value) but noise in the generated table.
+    aliases = sorted({(_loose(n), n) for n in names} | {(_loose(short_of[n]), n) for n in names})
+    out += [f'    {{"{key}", script::{n}}},' for key, n in aliases]
     out += ["  };", ""]
     out += ["  //! \\brief Resolve a loose-normalized Script name to its value, or `count` if unknown."]
     out += ["  constexpr script resolve_script(std::string_view loose)"]
@@ -189,7 +230,30 @@ def generate(path):
     entries, version = _parse_scripts_txt(_SCRIPTS_TXT)
     _validate_structure(entries)
     _cross_check_regex(entries)
-    _emit(entries, version, path)
+    short_of, pva_version = parse_sc_short_codes()
+    names = sorted({name for _, _, name in entries})
+    missing = [n for n in names if n not in short_of]
+    if missing:
+        sys.exit(f"gen_unicode_script_tables: no short UAX24 code for: {missing} "
+                  f"(PropertyValueAliases.txt out of sync with Scripts.txt?)")
+    # Cross-script loose-key collision guard: a short code (or long name) accidentally equal to a
+    # DIFFERENT script's key would silently misroute a `\p{sc=...}` lookup -- catch it at generation, not
+    # at a user's runtime surprise. A script's OWN short code coinciding with its OWN long name (Thai,
+    # Lisu, Cham, ... -- the English name already IS the 4-letter code) is not a collision: both keys
+    # resolve to the same value, so it is just a harmless duplicate row, not ambiguity.
+    key_owner = {}
+    collisions = []
+    for n in names:
+        for key in (_loose(n), _loose(short_of[n])):
+            owner = key_owner.setdefault(key, n)
+            if owner != n:
+                collisions.append((key, owner, n))
+    if collisions:
+        sys.exit(f"gen_unicode_script_tables: cross-script loose-key collision(s): {collisions}")
+    if pva_version != version:
+        sys.exit(f"gen_unicode_script_tables: source version mismatch: Scripts.txt={version} "
+                  f"PropertyValueAliases.txt={pva_version}")
+    _emit(entries, version, short_of, path)
 
 
 def main():

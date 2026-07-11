@@ -84,6 +84,8 @@ TEST(unicode_property_named_errors)
   EXPECT_THROWS(real::regex(R"(\p{Latin)"), real::regex_error);           // unterminated
   EXPECT_THROWS(real::regex(R"(\p)"), real::regex_error);                 // no name
   EXPECT_THROWS(real::regex(R"(\p{})"), real::regex_error);               // empty name
+  EXPECT_THROWS(real::regex(R"(\p{sc=NoSuchScript})"), real::regex_error);
+  EXPECT_THROWS(real::regex(R"(\p{scx=NoSuchScript})"), real::regex_error);
 }
 
 TEST(unicode_property_binary)
@@ -106,6 +108,46 @@ TEST(unicode_property_binary)
   EXPECT(!real::regex(R"([\p{White_Space}x])").fullmatch("y"));
   EXPECT(real::regex(R"([^\p{White_Space}])").fullmatch("x"));         // negated class containing a binary property
   EXPECT(!real::regex(R"([^\p{White_Space}])").fullmatch(" "));
+}
+
+TEST(unicode_property_script_short_codes)
+{
+  // sc= now resolves BOTH the long name (Latin) and the short UAX24/ISO 15924 code (Latn) to the same
+  // value -- one shared alias table with scx= (PropertyValueAliases.txt maps them).
+  EXPECT(real::regex(R"(\p{sc=Latn})").fullmatch("A"));
+  EXPECT(real::regex(R"(\p{sc=Latin})").fullmatch("A"));
+  EXPECT(real::regex(R"(\p{sc=Grek})").fullmatch("\xCE\xB1"sv));     // α
+  EXPECT(real::regex(R"(\p{sc=Thai})").fullmatch("\xE0\xB8\x81"sv)); // ก -- name == its own short code
+}
+
+TEST(unicode_property_scx)
+{
+  // Script_Extensions (\p{scx=...}, NOT a partition -- the tables and their UCD oracle live in
+  // tests/unicode/test_unicode_scx.cpp) -- here, the parser wiring: negation, in-class, and the
+  // multi-scx proof.
+  const std::string_view digit {"\xD9\xA0"};                  // U+0660 ARABIC-INDIC DIGIT ZERO: scx={Arab, Thaa, Yezi}
+  EXPECT(real::regex(R"(\p{scx=Arab})").fullmatch(digit));
+  EXPECT(real::regex(R"(\p{scx=Thaa})").fullmatch(digit));    // same code point, a DIFFERENT script's scx
+  EXPECT(real::regex(R"(\p{scx=Arabic})").fullmatch(digit));  // long name works too
+  EXPECT(!real::regex(R"(\p{scx=Latin})").fullmatch(digit));
+  EXPECT(!real::regex(R"(\P{scx=Arab})").fullmatch(digit));   // negation
+  EXPECT(real::regex(R"(\P{scx=Latin})").fullmatch(digit));
+  EXPECT(real::regex(R"([\p{scx=Arab}x])").fullmatch(digit)); // in-class
+  EXPECT(real::regex(R"([\p{scx=Arab}x])").fullmatch("x"));
+}
+
+TEST(unicode_property_scx_has_no_bare_name_form)
+{
+  // scx has no bare-name form (PCRE2: a bare \p{Name} never means Script_Extensions) -- but since sc= and
+  // scx= now share the SAME name resolver (a script's short code resolves via bare \p{Name} too, see
+  // unicode_property_script_short_codes), a missing bare form cannot be proven by a name failing to
+  // resolve anymore. It shows up in the RESULT instead: bare \p{Grek} uses script_ranges (the Script
+  // partition), \p{scx=Grek} uses the superset. U+0300 COMBINING GRAVE ACCENT is Inherited in the
+  // partition (excluded from bare \p{Grek}) but IS in Greek's scx (included by \p{scx=Grek}).
+  const std::string_view combining_grave {"\xCC\x80"}; // U+0300
+  EXPECT(!real::regex(R"(\p{Grek})").fullmatch(combining_grave));
+  EXPECT(!real::regex(R"(\p{sc=Grek})").fullmatch(combining_grave));
+  EXPECT(real::regex(R"(\p{scx=Grek})").fullmatch(combining_grave));
 }
 
 TEST(unicode_property_bytes_mode_rejects)
