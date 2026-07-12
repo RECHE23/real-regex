@@ -83,6 +83,24 @@ namespace {
 
   // Invalid patterns are *compile errors* (uncomment to verify):
   //   constexpr real::static_regex<"(a"> broken;
+
+  // D1: Tier 1 possessive quantifiers / atomic groups under TRUE constant evaluation --
+  // emit_tier1_loop / emit_tier1_atom_test / tier1_capture_on_match are all constexpr, but
+  // nothing exercised them at compile time until now. A static_assert proves the whole
+  // pipeline (parse -> compile -> match) runs at compile time, not just "is marked constexpr".
+  constexpr real::static_regex<"(a){2,4}+b"> possessive_rx;
+  static_assert(possessive_rx.search("xx aaaab yy").matched());
+  static_assert(possessive_rx.search("xx aaaab yy").start() == 3);
+  static_assert(possessive_rx.search("xx aaaab yy")[1] == "a"sv); // group(1): the LAST iteration
+  // search() retries at later start positions: position 0's possessive attempt (max 4 a's) lands
+  // on the 5th 'a', not 'b', and fails outright (no giveback) -- but position 1's INDEPENDENT
+  // attempt has only 4 a's ahead of it, consumes all 4, and lands exactly on 'b'. Per-attempt
+  // independence (D0-1's own oracle contract), not a possessive/greedy distinction here.
+  static_assert(possessive_rx.search("aaaaab").start() == 1);
+  static_assert(!possessive_rx.fullmatch("aaaaab")); // fullmatch is anchored at 0 only -- no retry available
+
+  constexpr real::static_regex<"(?>[^\"]*)\""> atomic_rx;
+  static_assert(atomic_rx.fullmatch("abc\"").matched());
 } // namespace
 
 TEST(static_regex_matches_at_runtime_like_dynamic)
@@ -96,6 +114,36 @@ TEST(static_regex_matches_at_runtime_like_dynamic)
   // Same results as the dynamic engine on the same pattern.
   const real::regex dyn("(\\d{4})-(\\d{2})");
   EXPECT_EQ(dyn.search(text).start(), match.start());
+}
+
+TEST(static_regex_possessive_and_atomic_at_runtime)
+{
+  // The compile-time static_asserts above prove the pipeline runs under constant evaluation;
+  // this proves the SAME compiled program also matches correctly at runtime, on non-constant
+  // (heap/hybrid) text -- both storage policies (dynamic_program's constexpr paths AND
+  // static_storage's own instantiation) actually execute the Tier 1 opcodes, not just compile.
+  const std::string text = "xx aaaab yy";
+  const auto        m    = possessive_rx.search(text);
+  EXPECT(m.matched());
+  EXPECT_EQ(m.start(), 3U);
+  EXPECT_EQ(m[1], "a"sv);
+
+  const std::string aaaaab = "aaaaab";
+  const auto        m2     = possessive_rx.search(aaaaab);
+  EXPECT(m2.matched());
+  EXPECT_EQ(m2.start(), 1U);
+  EXPECT(!possessive_rx.fullmatch(aaaaab));
+
+  const std::string quoted   = "abc\"";
+  const std::string unquoted = "abc";
+  EXPECT(atomic_rx.fullmatch(quoted).matched());
+  EXPECT(!atomic_rx.fullmatch(unquoted));
+
+  // Same results as the dynamic engine on the same patterns.
+  const real::regex dyn_possessive("(a){2,4}+b");
+  const real::regex dyn_atomic(R"re((?>[^"]*)")re");
+  EXPECT_EQ(dyn_possessive.search(text).start(), m.start());
+  EXPECT_EQ(dyn_atomic.fullmatch(quoted).matched(), atomic_rx.fullmatch(quoted).matched());
 }
 
 TEST(static_regex_matching_allocates_nothing)

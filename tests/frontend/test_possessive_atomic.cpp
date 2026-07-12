@@ -123,14 +123,63 @@ TEST(compound_body_and_alternation_rejected)
 
 TEST(possessive_inside_lookaround_rejected)
 {
-  // The lookaround sub-VM's own hand-written dispatch (pike.hpp's lookahead_matches /
-  // sub_fullmatch_window / sub_add_thread) hard-assumes only byte/klass/klass_cp ever appear in
-  // a sub-region; klass_cp_loop_possessive there would silently misread its arg16 against the
-  // wrong class table. A hard compile-time reject, not an attempt to thread Tier 1 through three
-  // separate hand-written dispatchers.
-  EXPECT_THROWS(real::regex("(?=a*+)"), real::regex_error);
+  // Unbounded possessive/atomic constructs inside a lookaround are ALREADY rejected by the
+  // pre-existing, generic "unbounded lookaround" check (l_max_bytes doesn't know about Tier 1's
+  // possessive semantics at all -- it just sees an ordinary node_kind::repeat with max == -1
+  // and rejects on that basis alone, exactly as it would for an ordinary unbounded greedy
+  // repeat). Confirmed by exception message, not just type -- these do NOT exercise the new
+  // capture_free checks below; they exercise the pre-existing path, which is itself worth
+  // pinning (both reasons lead to rejection, but via genuinely different code).
+  {
+    bool threw = false;
+    try {
+      real::regex r("(?=a*+)");
+    } catch (const real::regex_error& e) {
+      threw = true;
+      EXPECT(std::string_view(e.what()).find("unbounded lookaround") != std::string_view::npos);
+    }
+    EXPECT(threw);
+  }
   EXPECT_THROWS(real::regex("(?<=a*+)"), real::regex_error);
-  EXPECT_THROWS(real::regex("(?=(?>a*))"), real::regex_error); // (?>a*) desugars to Tier 1 -- still rejected inside a lookaround
+  EXPECT_THROWS(real::regex("(?=(?>a*))"), real::regex_error); // unbounded -> same pre-existing path
+
+  // BOUNDED possessive/atomic constructs inside a lookaround pass the unbounded check (a{2,4}+'s
+  // l_max_bytes is a finite 4, regardless of the possessive flag l_max_bytes doesn't consult) --
+  // these are what actually reach and exercise the new capture_free checks in emit_possessive_
+  // repeat (X{n,m}+ suffix) and emit_atomic_group (the (?>X{n,m}) desugaring), confirmed by the
+  // exact, distinct message.
+  const char* const bounded_in_lookaround_msg = "possessive/atomic quantifiers inside a lookaround are not supported yet";
+  {
+    bool threw = false;
+    try {
+      real::regex r("(?=a{2,4}+)");
+    } catch (const real::regex_error& e) {
+      threw = true;
+      EXPECT(std::string_view(e.what()).find(bounded_in_lookaround_msg) != std::string_view::npos);
+    }
+    EXPECT(threw);
+  }
+  {
+    bool threw = false;
+    try {
+      real::regex r("(?<=a{2,4}+)");
+    } catch (const real::regex_error& e) {
+      threw = true;
+      EXPECT(std::string_view(e.what()).find(bounded_in_lookaround_msg) != std::string_view::npos);
+    }
+    EXPECT(threw);
+  }
+  {
+    bool threw = false;
+    try {
+      real::regex r("(?=(?>a{2,4}))"); // (?>X{n,m}) desugaring -- emit_atomic_group's OWN capture_free check
+    } catch (const real::regex_error& e) {
+      threw = true;
+      EXPECT(std::string_view(e.what()).find(bounded_in_lookaround_msg) != std::string_view::npos);
+    }
+    EXPECT(threw);
+  }
+
   // (?>a), with no repeat at all, compiles vacuously inline (emit_atomic_group's shape 2) --
   // it never touches a Tier 1 opcode, so it stays perfectly safe inside a lookaround too. Found
   // by an initially-wrong test assertion here, corrected against the actual compiled behavior --
@@ -170,6 +219,14 @@ TEST(atomic_group_multiple_quantifier_suffix_still_rejected)
   EXPECT_THROWS(real::regex("a*+?"), real::regex_error);
   EXPECT_THROWS(real::regex("a*?+"), real::regex_error);
   EXPECT_THROWS(real::regex("a{2,3}+?"), real::regex_error);
+}
+
+TEST(atomic_group_unterminated_is_a_clean_parse_error)
+{
+  // (?> with no closing paren -- parse_atomic_group's own "missing ), unterminated subpattern"
+  // path, distinct from the emission-time Tier 1/3 rejections tested elsewhere in this file.
+  EXPECT_THROWS(real::regex("(?>a"), real::regex_error);
+  EXPECT_THROWS(real::regex("(?>"), real::regex_error);
 }
 
 // --- regression: Tier 1 as an alternation branch losing priority to a same-round-convergent,
@@ -240,4 +297,137 @@ TEST(possessive_alternation_priority_regression)
   EXPECT_EQ(matches4[0].end(), 3U);
   EXPECT_EQ(matches4[1].start(), 3U);
   EXPECT_EQ(matches4[1].end(), 4U);
+}
+
+// --- coverage top-up: the 3 opcodes x {miss-at-min, max-reached, min=0 exit, end-of-text
+//     mid-run, anchor/\b interaction}, Tier 3 exact messages, parser shapes, is_deterministic's
+//     no-outer-repeat branches (group / nested-possessive / exact-count), `.` as a Tier 1 atom --
+//     each a real behavior probe, not filler (coverage-bump-735 fiche). ----------------------
+
+TEST(possessive_miss_at_min_fails_for_all_three_opcode_families)
+{
+  // byte_loop_possessive: min=2, only 1 'a' available -- the mandatory copy itself fails (dies
+  // outright, no exit path to offer -- min is required).
+  EXPECT(!real::regex("a{2,4}+").search("a"));
+  // klass_loop_possessive: min=2 on a byte/ASCII class, same shortfall.
+  EXPECT(!real::regex("[a-z]{2,4}+", real::flags::bytes).search("a"));
+  // klass_cp_loop_possessive: min=2 on a Unicode predicate class (\w), same shortfall.
+  EXPECT(!real::regex("\\w{2,4}+").search("a"));
+  // Captured variant: the mandatory copy's own save/emit_node/save dies the same way; no torn
+  // capture is left behind because the thread is simply gone.
+  EXPECT(!real::regex("(a){2,4}+").search("a"));
+}
+
+TEST(possessive_max_reached_stops_the_optional_tail_exactly_at_the_bound)
+{
+  // Exactly max repetitions available: the possessive loop must stop AT max, not read one past
+  // it (an off-by-one here would either under-consume or run past the corpus).
+  EXPECT_EQ(real::regex("a{2,4}+").search("aaaa").end(), 4U);
+  EXPECT_EQ(real::regex("a{2,4}+").search("aaaaa").end(), 4U); // MORE than max available: still stops at 4
+  EXPECT_EQ(real::regex("[a-z]{2,4}+", real::flags::bytes).search("aaaaa").end(), 4U);
+  EXPECT_EQ(real::regex("\\w{2,4}+").search("aaaaa").end(), 4U);
+  // Captured: group(1) reflects the LAST (4th) iteration specifically, not the 5th (never attempted).
+  auto m = real::regex("(a){2,4}+").search("aaaaa");
+  EXPECT(m);
+  EXPECT_EQ(m.end(), 4U);
+  EXPECT_EQ(m.start(1), 3U);
+  EXPECT_EQ(m.end(1), 4U);
+}
+
+TEST(possessive_min_zero_exits_immediately_when_the_first_attempt_fails)
+{
+  // min=0: zero repetitions is a legitimate possessive match -- the FIRST attempt failing must
+  // not be treated as an overall failure, for all three opcode families.
+  EXPECT_EQ(real::regex("a*+").search("zzz").end(), 0U);
+  EXPECT_EQ(real::regex("[a-z]*+", real::flags::bytes).search("999").end(), 0U);
+  EXPECT_EQ(real::regex("\\w*+").search("!!!").end(), 0U);
+  EXPECT_EQ(real::regex("a{0,3}+").search("zzz").end(), 0U);
+}
+
+TEST(possessive_stops_cleanly_at_end_of_text_mid_run)
+{
+  // The loop must stop at text_.size() without reading past it, for an unbounded tail landing
+  // exactly on the corpus boundary (byte_loop_possessive) and a codepoint tail that could
+  // otherwise attempt to decode past the end (klass_cp_loop_possessive).
+  EXPECT_EQ(real::regex("a++").search("aaa").end(), 3U);
+  EXPECT_EQ(real::regex("\\w++").search("aaa").end(), 3U);
+  // Multi-byte codepoint run ending exactly at the corpus boundary: dc.length must not push the
+  // decode past text_.size() on the last iteration.
+  EXPECT_EQ(real::regex("\\w++").search("a\xc3\xa9").end(), 3U); // "aé" -- 1 ASCII + 1 two-byte codepoint
+}
+
+TEST(possessive_word_boundary_interaction)
+{
+  // \b/\B still evaluate correctly around a Tier 1 possessive run -- the possessive opcode's
+  // own closure-time routing doesn't disturb the ordinary assert_position handling elsewhere
+  // in the same program.
+  EXPECT(real::regex("\\ba++\\b").fullmatch("aaa"));
+  EXPECT(!real::regex("\\ba++\\b").fullmatch("aaab")); // \b fails right after the possessive run
+  auto m = real::regex("\\ba{2,4}+\\b").search("xx aaa yy");
+  EXPECT(m);
+  EXPECT_EQ(m.start(), 3U);
+  EXPECT_EQ(m.end(), 6U);
+}
+
+TEST(tier3_rejection_exact_messages)
+{
+  const char* const  compound_msg = "possessive/atomic over a compound body is not supported yet";
+  const auto         throws_with_message = [](const char* pat, const char* msg) {
+                                             bool threw = false;
+                                             try {
+                                               real::regex r(pat);
+                                             } catch (const real::regex_error& e) {
+                                               threw = true;
+                                               EXPECT(std::string_view(e.what()).find(msg) != std::string_view::npos);
+                                             }
+                                             EXPECT(threw);
+                                           };
+  throws_with_message("(?:ab)*+", compound_msg);
+  throws_with_message("(?>ab|a)", compound_msg);
+  throws_with_message("(a|b)*+", compound_msg);
+}
+
+TEST(atomic_group_no_repeat_deterministic_compound_shapes)
+{
+  // emit_atomic_group's "shape 2" (no outer repeat, deterministic body) via is_deterministic's
+  // own branches beyond the simple concat/empty cases already covered elsewhere:
+  // - node_kind::group (an ordinary, non-atomic group wrapping something deterministic)
+  // - node_kind::repeat with possessive == true (a NESTED, already-valid Tier 1 construct)
+  // - node_kind::repeat, ordinary, exact count (min == max, ordinarily deterministic too)
+  EXPECT(real::regex("(?>(?:a*+))").fullmatch("aaa"));  // group wrapping a nested possessive repeat
+  EXPECT(real::regex("(?>(?:a{3}))").fullmatch("aaa")); // group wrapping an ordinary EXACT-count repeat
+  // Control: a{2,3} (non-exact bounded, ordinary) genuinely emits a split -- emit_repeat's
+  // "optional copies" loop covers the ONE extra rep beyond min with a real give-back-capable
+  // branch point -- so is_deterministic's exact-count shortcut (min == max) does NOT apply here,
+  // and wrapping it with no outer repeat correctly still hits Tier 3's rejection (real give-back
+  // potential to protect against, not a false positive).
+  EXPECT_THROWS(real::regex("(?>(?:a{2,3}))"), real::regex_error);
+}
+
+TEST(possessive_dot_atom_bytes_and_text_mode)
+{
+  // `.` as a Tier 1 atom -- the any-node branch of emit_tier1_atom_test, both the bytes-mode
+  // (klass_loop_possessive) and text-mode (klass_cp_loop_possessive, with its 3-slot UTF-8
+  // continuation chain) paths.
+  EXPECT_EQ(real::regex(".*+", real::flags::bytes).search("abc").end(), 3U);
+  EXPECT_EQ(real::regex(".*+").search("abc").end(), 3U);
+  EXPECT_EQ(real::regex(".++").search("a\xc3\xa9y").end(), 4U); // ASCII + 2-byte codepoint + ASCII, text mode
+  EXPECT(real::regex("(?>.+)").fullmatch("a\xc3\xa9y"));
+  // dotall interaction: `.` possessive should also respect (?s:...) scoping like ordinary `.`.
+  EXPECT(real::regex(".*+", real::flags::dotall).fullmatch("a\nb"));
+  EXPECT(!real::regex(".*+").fullmatch("a\nb")); // no dotall: '.' possessively stops before '\n', trailing text left over -- fullmatch fails
+}
+
+TEST(parser_possessive_desugar_and_scoped_flags)
+{
+  // a?+ specifically (the ? possessive suffix, distinct from */++ already covered above).
+  EXPECT(!real::regex("a?+a").search("a"));
+  EXPECT_EQ(real::regex("a?+").search("a").end(), 1U);
+  // (?>X*) desugars to the SAME compiled shape as X*+, regardless of the inner repeat's own
+  // possessive flag (D0-2's detection-order finding) -- confirmed on a bounded {n,m} form too.
+  EXPECT_EQ(real::regex("(?>a{2,4})").search("aaaaa").end(), 4U);
+  // Scoped flags around a Tier 1 possessive construct: icase folds the atom test itself,
+  // orthogonally to the possessive machinery around it.
+  EXPECT(real::regex("(?i:a*+)b").fullmatch("AAAb"));
+  EXPECT(real::regex("(?i:(?>a+))b").fullmatch("AAAb"));
 }
