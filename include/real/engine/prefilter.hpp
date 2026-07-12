@@ -128,6 +128,51 @@ namespace real::detail {
     return true;
   }
 
+  //! \brief detect_fast_shapes's outer envelope: `save 0`, optional lead `\b`/`\B`. No-ops safely
+  //!        on a shape with no `\b`/`\B` support (e.g. a literal `byte` right after `save 0`).
+  struct shape_lead
+  {
+    std::size_t  body_start {}; //!< pc where the shape-specific body begins.
+    std::uint8_t wb_lead    {}; //!< 0/1/2, see \ref wb_hint_of.
+    bool         ok         {}; //!< false: no leading `save 0`, or a non-wb lead assert disqualifies.
+  };
+
+  [[nodiscard]] constexpr shape_lead parse_shape_lead(std::span<const instr> code) noexcept
+  {
+    if (code.empty() || code[0].op != opcode::save || code[0].arg16 != 0) {
+      return {};
+    }
+    std::size_t  p       {1};
+    std::uint8_t wb_lead {0};
+    if (!peel_optional_lead_wb(code, p, wb_lead)) {
+      return {};
+    }
+    return {.body_start = p, .wb_lead = wb_lead, .ok = true};
+  }
+
+  //! \brief The \ref shape_lead counterpart: optional trail `\b`/`\B` at \p from, then exactly
+  //!        `save 1`, `match` at the very end of \p code. \p from (the body's own end) is the
+  //!        caller's to supply -- only its shape-specific body walk knows where that is.
+  struct shape_close
+  {
+    std::uint8_t wb_trail {}; //!< 0/1/2, see \ref wb_hint_of.
+    bool         ok       {}; //!< false: not exactly `save 1`, `match` at the end after peeling.
+  };
+
+  [[nodiscard]] constexpr shape_close parse_shape_close(std::span<const instr> code,
+                                                        std::size_t            from) noexcept
+  {
+    std::uint8_t wb_trail {0};
+    if (!peel_optional_trail_wb(code, from, wb_trail)) {
+      return {};
+    }
+    if (from + 1 < code.size() && code[from].op == opcode::save && code[from].arg16 == 1 &&
+        code[from + 1].op == opcode::match && from + 2 == code.size()) {
+      return {.wb_trail = wb_trail, .ok = true};
+    }
+    return {};
+  }
+
   //! \brief True if \p cls is exactly the ASCII word set `[0-9A-Za-z_]` (`\w` under bytes/`re.A`).
   [[nodiscard]] constexpr bool is_full_ascii_word_class(const char_class& cls) noexcept
   {
@@ -762,15 +807,12 @@ namespace real::detail {
   {
     // "class+" shape: save 0, [optional \b/\B,] [group-start save,] klass, split(back, exit),
     // [group-end save,] [optional \b/\B,] save 1, match. Arc B via peel + resolve_class_wb_hints.
+    // R3: the outer envelope (open/close) is \ref parse_shape_lead / \ref parse_shape_close.
     {
-      std::size_t  p       {0};
-      std::int16_t gs      {-1};
-      std::uint8_t wb_lead {0};
-      if (p < code.size() && code[p].op == opcode::save && code[p].arg16 == 0) {
-        ++p;
-        if (!peel_optional_lead_wb(code, p, wb_lead)) {
-          p = code.size(); // non-wb lead assert — disqualify
-        }
+      const shape_lead lead {parse_shape_lead(code)};
+      if (lead.ok) {
+        std::size_t  p  {lead.body_start};
+        std::int16_t gs {-1};
         if (p < code.size() && code[p].op == opcode::save) {
           gs = static_cast<std::int16_t>(code[p].arg16);
           ++p;
@@ -787,20 +829,15 @@ namespace real::detail {
             ++q;
             ok = true;
           }
-          std::uint8_t wb_trail {0};
-          if (!peel_optional_trail_wb(code, q, wb_trail)) {
-            ok = false;
-          }
-          if (ok && q + 1 < code.size() && code[q].op == opcode::save && code[q].arg16 == 1 &&
-              code[q + 1].op == opcode::match && q + 2 == code.size() &&
-              cls >= 0 && static_cast<std::size_t>(cls) < classes.size()) {
+          const shape_close close {ok ? parse_shape_close(code, q) : shape_close {}};
+          if (ok && close.ok && cls >= 0 && static_cast<std::size_t>(cls) < classes.size()) {
             const char_class& cc        {classes[static_cast<std::size_t>(cls)]};
             std::uint8_t      out_lead  {0};
             std::uint8_t      out_trail {0};
             // This shape structurally requires the split/loop matched above -- always a maximal
             // `+` run, never a single code point -- so B-1's redundancy argument always applies.
             if (resolve_class_wb_hints(is_full_ascii_word_class(cc), is_ascii_word_subset_class(cc),
-                                       /*maximal_run=*/ true, wb_lead, wb_trail, out_lead,
+                                       /*maximal_run=*/ true, lead.wb_lead, close.wb_trail, out_lead,
                                        out_trail)) {
               hints.greedy_class_loop  = cls;
               hints.greedy_group_start = gs;
@@ -810,7 +847,7 @@ namespace real::detail {
               // B-1 dropped a genuine leading \b (wb_lead was 1, out_lead came back 0): the
               // runner's search-mode fast path needs the start>0 window-edge guard -- see
               // pattern_hints::wb_lead_maximal_run's own doc comment for the full argument.
-              hints.wb_lead_maximal_run = (wb_lead == 1 && out_lead == 0);
+              hints.wb_lead_maximal_run = (lead.wb_lead == 1 && out_lead == 0);
             }
           }
         }
@@ -849,15 +886,12 @@ namespace real::detail {
 
     // Code-point class (klass_cp + three klass continuations), optional greedy `+`, optional `\b`/`\B`
     // wraps (Arc B), optional one capturing group. Unicode `\w+` / `\d+` / `\s+` via peel + resolve.
+    // R3: the outer envelope (open/close) is \ref parse_shape_lead / \ref parse_shape_close.
     {
-      std::size_t  p       {0};
-      std::int16_t gs      {-1};
-      std::uint8_t wb_lead {0};
-      if (p < code.size() && code[p].op == opcode::save && code[p].arg16 == 0) {
-        ++p;
-        if (!peel_optional_lead_wb(code, p, wb_lead)) {
-          p = code.size();
-        }
+      const shape_lead lead {parse_shape_lead(code)};
+      if (lead.ok) {
+        std::size_t  p  {lead.body_start};
+        std::int16_t gs {-1};
         if (p < code.size() && code[p].op == opcode::save) {
           gs = static_cast<std::int16_t>(code[p].arg16);
           ++p;
@@ -881,14 +915,9 @@ namespace real::detail {
             ++q;
             ok = true;
           }
-          std::uint8_t wb_trail {0};
-          if (!peel_optional_trail_wb(code, q, wb_trail)) {
-            ok = false;
-          }
-          if (ok && q + 1 < code.size() && code[q].op == opcode::save && code[q].arg16 == 1 &&
-              code[q + 1].op == opcode::match && q + 2 == code.size() &&
-              cp_idx >= 0 && static_cast<std::size_t>(cp_idx) < cp_classes.size()) {
-            const bool has_wb {wb_lead != 0 || wb_trail != 0};
+          const shape_close close {ok ? parse_shape_close(code, q) : shape_close {}};
+          if (ok && close.ok && cp_idx >= 0 && static_cast<std::size_t>(cp_idx) < cp_classes.size()) {
+            const bool has_wb {lead.wb_lead != 0 || close.wb_trail != 0};
             // Bare path: no Unicode table walk (keeps constexpr light for static_regex).
             if (!has_wb) {
               hints.greedy_cp_class      = cp_idx;
@@ -907,14 +936,14 @@ namespace real::detail {
               // only holds for the former, so it must gate on the ACTUAL shape, not assume it.
               if (resolve_class_wb_hints(is_full_unicode_word_cp_class(cc, cp_ranges),
                                          is_unicode_word_subset_cp_class(cc, cp_ranges), plus,
-                                         wb_lead, wb_trail, out_lead, out_trail)) {
+                                         lead.wb_lead, close.wb_trail, out_lead, out_trail)) {
                 hints.greedy_cp_class      = cp_idx;
                 hints.greedy_cp_class_plus = plus;
                 hints.greedy_group_start   = gs;
                 hints.greedy_group_end     = ge;
                 hints.wb_lead              = out_lead;
                 hints.wb_trail             = out_trail;
-                hints.wb_lead_maximal_run  = (wb_lead == 1 && out_lead == 0);
+                hints.wb_lead_maximal_run  = (lead.wb_lead == 1 && out_lead == 0);
               }
             }
           }
@@ -930,22 +959,21 @@ namespace real::detail {
     // the exact-literal path first. A klass_cp (Unicode shorthand, variable width), split/jump
     // (alternation, {n,m}/+/*/?), `.` or a negated class (byte-level branches), non-wb assertions,
     // and lookarounds all break the run.
+    // R3: only \ref parse_shape_lead applies here -- the close interleaves its trailing-wb peel
+    // with the arbitrary-length body walk below, unlike \ref shape_close's immediate check.
     {
-      std::size_t  i           {};
-      std::int32_t width       {};
-      std::int32_t open_groups {};  // capturing groups (slots >= 2) currently open, for the nesting guard
-      bool         closed      {};  // saw the closing save (slot 1)
-      bool         nested      {};  // a group opened inside another -- kept on the general VM (flat only)
-      std::uint8_t wb_lead     {};
-      std::uint8_t wb_trail    {};
-      std::uint8_t body_pc     {1};
-      bool         saw_body    {};  // true once a consuming op has been seen (trail assert only after)
-      if (i < code.size() && code[i].op == opcode::save && code[i].arg16 == 0) {
-        ++i; // opening save (slot 0)
-        if (!peel_optional_lead_wb(code, i, wb_lead)) {
-          i = code.size(); // non-wb lead — not this shape
-        }
-        else if (wb_lead != 0) {
+      std::int32_t       width       {};
+      std::int32_t       open_groups {}; // capturing groups (slots >= 2) currently open, for the nesting guard
+      bool               closed      {}; // saw the closing save (slot 1)
+      bool               nested      {}; // a group opened inside another -- kept on the general VM (flat only)
+      std::uint8_t       wb_trail    {};
+      std::uint8_t       body_pc     {1};
+      bool               saw_body    {}; // true once a consuming op has been seen (trail assert only after)
+      const shape_lead   lead        {parse_shape_lead(code)};
+      std::size_t        i           {lead.ok ? lead.body_start : code.size()};
+      const std::uint8_t wb_lead     {lead.wb_lead};
+      if (lead.ok) {
+        if (wb_lead != 0) {
           body_pc = static_cast<std::uint8_t>(i);
         }
         while (i < code.size()) {
@@ -1133,14 +1161,13 @@ namespace real::detail {
     // no capture -- a structurally different, uncaptured-at-the-opcode-level shape this block also
     // matches, just with gs resolving to -1: correct, not a bug, since the group's OWN save/save pair,
     // sitting outside [p, loop_pc), is simply invisible to (and irrelevant for) this recognizer.
+    // R3: only \ref parse_shape_lead applies here -- the close interleaves its trailing-wb peel
+    // with an optional literal SUFFIX before save1+match, unlike \ref shape_close's immediate check.
     {
-      std::size_t  p       {0};
-      std::uint8_t wb_lead {0};
-      if (p < code.size() && code[p].op == opcode::save && code[p].arg16 == 0) {
-        ++p;
-        if (!peel_optional_lead_wb(code, p, wb_lead)) {
-          p = code.size();
-        }
+      const shape_lead   lead    {parse_shape_lead(code)};
+      const std::size_t  p       {lead.ok ? lead.body_start : code.size()};
+      const std::uint8_t wb_lead {lead.wb_lead};
+      if (lead.ok) {
         const std::size_t mandatory_start {p};
         std::size_t       loop_pc         {mandatory_start};
         bool              has_mandatory   {false};
