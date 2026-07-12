@@ -33,6 +33,12 @@ CMAKE_CXX := -DCMAKE_CXX_COMPILER=$(CXX)
 endif
 
 CXXSTD       := -std=c++20
+# What gate-bump/gate-doc/gate-test diff against to detect their change category (see the block
+# comment above those targets). Override to compare against a single commit instead of the whole
+# unpushed stack on a train of several already-committed wagons -- e.g.
+# `GATE_BASE=HEAD~1 make gate-bump` diffs just the latest commit, not everything since origin/main.
+# Default unchanged (fail-closed stays the behavior for anyone who doesn't override it).
+GATE_BASE ?= origin/main
 INCLUDES     := -Iinclude
 # The test harness (framework.hpp) is owned by SciForge; the test TUs include it
 # as <sciforge/test/framework.hpp>. clang-tidy (make lint) needs that path too.
@@ -77,6 +83,9 @@ help:
 	@echo "  make gate-bump  Calibrated gate for a version bump only (version-check + build)"
 	@echo "  make gate-doc   Calibrated gate for a doc-only change (doc-check/format-check as needed)"
 	@echo "  make gate-test  Calibrated gate for a tests/-only change (test + sanitize + coverage-check)"
+	@echo "    all 3 diff against GATE_BASE (default origin/main); on a stacked train where later"
+	@echo "    commits accumulate earlier wagons in that diff, GATE_BASE=HEAD~1 make gate-bump"
+	@echo "    scopes the category check to just the latest commit"
 	@echo "  make bench-duel   REAL vs the regex crate, ns/byte (needs a Rust toolchain)"
 	@echo "  make profile-sample  P0 2-pass profile grid (JSONL + markdown; not a CI gate)"
 	@echo ""
@@ -382,10 +391,10 @@ check-layers:
 
 gate-bump:
 	@set -euo pipefail; \
-	 files="$$(git diff --name-only origin/main -- .)"; \
+	 files="$$(git diff --name-only $(GATE_BASE) -- .)"; \
 	 bad="$$(printf '%s\n' "$$files" | grep -vE '^(include/real/version\.hpp|pyproject\.toml|bindings/python/real/__init__\.py|bindings/rust/Cargo\.toml|CITATION\.cff|README\.md|docs/release-notes/.*\.md|docs/BENCHMARKS\.md)$$' | grep -v '^$$' || true)"; \
 	 if [ -n "$$bad" ]; then \
-	   echo "gate-bump: REFUSED — out-of-category file(s) vs origin/main, use full-local-gate:"; \
+	   echo "gate-bump: REFUSED — out-of-category file(s) vs $(GATE_BASE), use full-local-gate:"; \
 	   printf '%s\n' "$$bad" | sed 's/^/  /'; \
 	   exit 1; \
 	 fi; \
@@ -398,7 +407,7 @@ gate-bump:
 
 gate-doc:
 	@set -euo pipefail; \
-	 files="$$(git diff --name-only origin/main -- .)"; \
+	 files="$$(git diff --name-only $(GATE_BASE) -- .)"; \
 	 for f in $$files; do \
 	   case "$$f" in \
 	     *.md|*.dox) continue ;; \
@@ -406,7 +415,7 @@ gate-doc:
 	   if [ ! -f "$$f" ]; then \
 	     echo "gate-doc: REFUSED — $$f deleted/renamed outside .md/.dox, use full-local-gate"; exit 1; \
 	   fi; \
-	   noncomment="$$(git diff -U0 origin/main -- "$$f" | grep -E '^[+-][^+-]' | grep -vE '^[+-][[:space:]]*(//|/\*|\*/|\*[[:space:]])' | grep -vE '^[+-][[:space:]]*$$' || true)"; \
+	   noncomment="$$(git diff -U0 $(GATE_BASE) -- "$$f" | grep -E '^[+-][^+-]' | grep -vE '^[+-][[:space:]]*(//|/\*|\*/|\*[[:space:]])' | grep -vE '^[+-][[:space:]]*$$' || true)"; \
 	   if [ -n "$$noncomment" ]; then \
 	     echo "gate-doc: REFUSED — $$f has non-comment changes, use full-local-gate:"; \
 	     printf '%s\n' "$$noncomment" | head -5 | sed 's/^/  /'; \
@@ -416,17 +425,17 @@ gate-doc:
 	 done; \
 	 echo "gate-doc: category OK (doc-only / comment-only diff)"
 	@set -euo pipefail; \
-	 files="$$(git diff --name-only origin/main -- .)"; \
+	 files="$$(git diff --name-only $(GATE_BASE) -- .)"; \
 	 if printf '%s\n' "$$files" | grep -qE '\.hpp$$|Doxyfile$$'; then \
 	   echo "── doc-check (headers or Doxyfile touched)"; $(MAKE) doc-check; \
 	 else echo "gate-doc: skip doc-check (no headers/Doxyfile touched)"; fi
 	@set -euo pipefail; \
-	 files="$$(git diff --name-only origin/main -- .)"; \
+	 files="$$(git diff --name-only $(GATE_BASE) -- .)"; \
 	 if printf '%s\n' "$$files" | grep -qE '\.cpp$$'; then \
 	   echo "── format-check (.cpp touched)"; $(MAKE) format-check; \
 	 else echo "gate-doc: skip format-check (no .cpp touched)"; fi
 	@set -euo pipefail; \
-	 files="$$(git diff --name-only origin/main -- .)"; \
+	 files="$$(git diff --name-only $(GATE_BASE) -- .)"; \
 	 if printf '%s\n' "$$files" | grep -qE '^docs/BENCHMARKS\.md$$'; then \
 	   echo "── verify_unicode_ratios.py (BENCHMARKS.md touched)"; python3 benchmarks/verify_unicode_ratios.py; \
 	 else echo "gate-doc: skip verify_unicode_ratios.py (BENCHMARKS.md untouched)"; fi
@@ -434,10 +443,10 @@ gate-doc:
 
 gate-test:
 	@set -euo pipefail; \
-	 files="$$(git diff --name-only origin/main -- .)"; \
+	 files="$$(git diff --name-only $(GATE_BASE) -- .)"; \
 	 bad="$$(printf '%s\n' "$$files" | grep -vE '^(tests/|Makefile$$)' | grep -v '^$$' || true)"; \
 	 if [ -n "$$bad" ]; then \
-	   echo "gate-test: REFUSED — out-of-category file(s) vs origin/main, use full-local-gate:"; \
+	   echo "gate-test: REFUSED — out-of-category file(s) vs $(GATE_BASE), use full-local-gate:"; \
 	   printf '%s\n' "$$bad" | sed 's/^/  /'; \
 	   exit 1; \
 	 fi; \
