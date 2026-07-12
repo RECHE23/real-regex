@@ -84,6 +84,7 @@ namespace real::detail {
     anchor_kind  anchor          {anchor_kind::caret}; //!< anchor: the assertion kind.
     bool         negated         {};                   //!< klass: written as `[^...]` / `\D` `\W` `\S`.
     bool         lazy            {};                   //!< repeat: prefer the shortest expansion.
+    bool         possessive      {};                   //!< repeat: no give-back (`X*+`/`X++`/`X?+`/`X{n,m}+`). group: atomic `(?>...)` — same "no give-back" meaning, reused.
     look_dir     direction       {look_dir::ahead};    //!< lookaround: ahead `(?=`/`(?!` or behind `(?<=`/`(?<!`.
     std::int32_t klass           {-1};                 //!< klass: index into \ref ast::classes.
     std::int32_t min             {};                   //!< repeat: minimum count.
@@ -900,7 +901,8 @@ namespace real::detail {
         default:
           return atom;
       }
-      const bool lazy {accept('?')};
+      const bool lazy       {accept('?')};
+      const bool possessive {!lazy && accept('+')}; // X*+/X++/X?+/X{n,m}+ — mutually exclusive with lazy
       if (!eof()) {
         const char   ch          {peek()};
         std::int32_t ignored_min {};
@@ -910,7 +912,12 @@ namespace real::detail {
           fail("multiple repeat");
         }
       }
-      return add_node(out, {.kind = node_kind::repeat, .lazy = lazy, .min = min, .max = max, .child = atom});
+      return add_node(out, {.kind       = node_kind::repeat,
+                            .lazy       = lazy,
+                            .possessive = possessive,
+                            .min        = min,
+                            .max        = max,
+                            .child      = atom});
     }
 
     /*!
@@ -1125,7 +1132,7 @@ namespace real::detail {
           return parse_lookaround(out, look_dir::ahead, open_pos);
         }
         else if (!eof() && peek() == '>') {
-          fail("atomic groups are not supported");
+          return parse_atomic_group(out, open_pos);
         }
         else if (!eof() && peek() == '(') {
           fail("conditional groups are not supported");
@@ -1216,6 +1223,34 @@ namespace real::detail {
                             .negated   = negative,
                             .direction = direction,
                             .child     = sub});
+    }
+
+    /*!
+     * \brief Parses an atomic group after `(?>` (the `>` is not yet consumed).
+     *
+     * Builds a \ref node_kind::group node with `possessive = true` and `group = -1`
+     * (atomic groups are never capturing at their own level, exactly like `(?:...)`;
+     * a numbered capture group written inside one still gets its own number and
+     * stays visible after the atomic group closes — the parser does not special-case
+     * this, since it never restricts capture numbering inside the body). Compile-time
+     * linearity/support restrictions (deterministic-body tiers) are enforced later by
+     * the compiler, not here — this function only builds the tree.
+     *
+     * \param[in,out] out      The AST being built.
+     * \param[in]     open_pos Offset of the group's `(` (for error reporting).
+     * \return The index of the atomic group's \ref node_kind::group node.
+     */
+    constexpr std::int32_t parse_atomic_group(ast&        out,
+                                              std::size_t open_pos)
+    {
+      ++pos_; // consume '>'
+      const std::int32_t body {parse_alternation(out)};
+      if (!accept(')')) {
+        pos_ = open_pos;
+        fail("missing ), unterminated subpattern");
+      }
+      --depth_;
+      return add_node(out, {.kind = node_kind::group, .possessive = true, .group = -1, .child = body});
     }
 
     /*!

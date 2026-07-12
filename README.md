@@ -37,6 +37,7 @@ REAL gives you **both**: linear-time, ReDoS-safe matching *with* bounded lookaro
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | Linear-time, ReDoS-safe       | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ |
 | Lookarounds                   | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ |
+| Possessive quantifiers / atomic groups | ✅⁶ | ❌ | ❌ | ❌ | ✅ | ✅ |
 | Header-only, zero-dependency  | ✅ | ✅¹ | ❌ | ❌ | ❌ | — |
 | Constexpr (compile-time match)| ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Drop-in Python `re`           | ✅² | ❌ | ❌ | ❌ | ❌ | ✅ |
@@ -51,6 +52,9 @@ quantified, not an adjective.
 ⁵ not one verdict: REAL leads class scans (**5–6×**) and dense-capture extraction (**3–6×**); the crate leads
 straight-line literal / alternation (1.1–1.3×) and word-boundary; no-match is ≈ parity (1.6×). The per-line
 duel is in §E.
+⁶ Tier 1 (linear time): a single atom, or one wrapped in one capturing group — `[^x]*+`, `\d++`,
+`(?>\w+)` — covers the dominant real-world shape. A compound/alternating body (`(?:ab)*+`, `(?>ab|a)`)
+is rejected as not supported yet, not silently accepted with wrong semantics — see `docs/divergences.dox`.
 Exact multipliers, machines and methodology are in
 [`docs/BENCHMARKS.md`](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md).
 
@@ -173,6 +177,7 @@ input — reproduce them locally rather than trusting a number here. The GitHub 
 | `\n \t \r \f \v \a \0` `\xHH` | control and hex escapes |
 | `x*` `x+` `x?` | quantifiers (greedy; append `?` for lazy) |
 | `x{n}` `x{n,}` `x{,m}` `x{n,m}` | counted repetition (greedy or lazy; counts capped at 1000) |
+| `x*+` `x++` `x?+` `x{n,m}+` | possessive quantifiers (no give-back), and `(?>x)` atomic groups — over a single atom or one wrapped in one capturing group; linear time, beyond RE2/rust-regex |
 | `a\|b` | alternation, leftmost branch preferred |
 | `(…)` `(?:…)` | capturing / non-capturing group |
 | `(?P<name>…)` `(?<name>…)` | named capturing group (Python and .NET styles) |
@@ -188,8 +193,9 @@ lookbehind `(?<=…)`/`(?<!…)`, each length-bounded and capture-free (variable
 match natively and linearly: General_Category, Script (`sc=`, short ISO codes), Script_Extensions (`scx=`),
 and 63 binary properties (`\p{Alphabetic}`, `\p{Emoji}`, …) — a superset of `re`, which has none of this.
 Unsupported syntax —
-backreferences, atomic/possessive groups, conditional groups — is rejected with `real::regex_error`, never a
-silent divergence.
+backreferences, conditional groups, a possessive/atomic construct over a compound body (`(?:ab)*+`,
+`(?>ab|a)`, not yet — see `docs/divergences.dox`) — is rejected with `real::regex_error`, never a silent
+divergence.
 
 Matching is UTF-8 code-point-aware: classes and `.` accept non-ASCII (`[é]`, `[à-ÿ]`), `\w \d \s \b` and
 `IGNORECASE` are Unicode in text mode (ASCII under `flags::ascii` / `re.A`), and no match boundary splits a

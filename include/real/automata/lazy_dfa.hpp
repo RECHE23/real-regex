@@ -327,6 +327,16 @@ namespace real::detail {
         }
         bp.has_assertions = true; // Tier-B: kept, to become an edge condition in the one-pass table
       }
+      if (in.op == opcode::byte_loop_possessive || in.op == opcode::klass_loop_possessive ||
+          in.op == opcode::klass_cp_loop_possessive) {
+        // No byte automaton can carry a Tier 1 possessive loop: its `primary_target` is a
+        // capture-slot index (or -1), not a branch target -- the generic copy below blindly
+        // remaps every op's primary_target/secondary_target through the pc `map`, which would
+        // silently corrupt that slot index into a bogus remapped pc for a captured loop. Decline
+        // outright, exactly like a bounded lookaround (Tier-B stops at assertions).
+        bp.eligible = false;
+        return bp;
+      }
     }
     bp.classes.assign(prog.classes.begin(), prog.classes.end()); // original classes keep their indices
 
@@ -806,8 +816,13 @@ namespace real::detail {
     {
       for (const instr& in : code) {
         if (in.op == opcode::assert_position || in.op == opcode::assert_lookaround
-            || in.op == opcode::klass_cp) {
-          return false;   // position assertions / variable-width classes: no forward-DFA representation
+            || in.op == opcode::klass_cp || in.op == opcode::byte_loop_possessive
+            || in.op == opcode::klass_loop_possessive || in.op == opcode::klass_cp_loop_possessive) {
+          // Position assertions / variable-width classes: no forward-DFA representation. Tier 1's
+          // possessive-loop family additionally has no consuming-edge representation at all here
+          // (consumes() below only recognizes byte/klass) — treating it as a dead end (silently
+          // non-consuming) would be an outright wrong DFA, not just an unrepresented shape.
+          return false;
         }
       }
       return true;
@@ -1113,7 +1128,11 @@ namespace real::detail {
     {
       for (const instr& in : code) {
         if (in.op == opcode::assert_position || in.op == opcode::assert_lookaround
-            || in.op == opcode::klass_cp) {
+            || in.op == opcode::klass_cp || in.op == opcode::byte_loop_possessive
+            || in.op == opcode::klass_loop_possessive || in.op == opcode::klass_cp_loop_possessive) {
+          // Tier 1's possessive-loop family has no consuming-edge representation here either
+          // (consumes() above only recognizes byte/klass) -- same reasoning as the forward-DFA's
+          // own compute_eligibility.
           return false;
         }
       }

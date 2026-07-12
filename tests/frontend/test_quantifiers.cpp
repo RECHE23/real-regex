@@ -77,7 +77,7 @@ TEST(quantifier_errors)
   EXPECT_THROWS(real::regex("+a"), real::regex_error);
   EXPECT_THROWS(real::regex("?a"), real::regex_error);
   EXPECT_THROWS(real::regex("a**"), real::regex_error);
-  EXPECT_THROWS(real::regex("a*+"), real::regex_error);
+  EXPECT_THROWS(real::regex("a*+*"), real::regex_error); // possessive `a*+` is now valid; a THIRD quantifier still isn't
   EXPECT_THROWS(real::regex("a*?*"), real::regex_error);
   EXPECT_THROWS(real::regex("a*{2}"), real::regex_error);
   EXPECT_THROWS(real::regex("a{3,2}"), real::regex_error);

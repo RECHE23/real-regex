@@ -144,6 +144,14 @@ namespace real {
             throw dfa_error("pattern has a Unicode code-point class (\\w/\\d/\\s in text mode), "
                             "which no DFA can represent");
           }
+          else if (in.op == opcode::byte_loop_possessive || in.op == opcode::klass_loop_possessive ||
+                   in.op == opcode::klass_cp_loop_possessive) {
+            // A Tier 1 possessive loop's on-no-match transition is an in-place, same-position
+            // epsilon splice resolved by the Pike VM's step() (see pike.hpp) -- not a pure byte
+            // transition a DFA state machine can represent, and its primary_target is a
+            // capture-slot index, not a branch pc (copying it unremapped would corrupt the DFA).
+            throw dfa_error("pattern has a possessive quantifier or atomic group, which no DFA can represent");
+          }
           nfa.code.push_back(out);
           nfa.accept_rule.push_back(in.op == opcode::match ? static_cast<std::int64_t>(r) : -1);
         }
@@ -206,7 +214,11 @@ namespace real {
           case opcode::klass:
           case opcode::klass_cp:
           case opcode::match:
-          case opcode::assert_lookaround: break; // terminal / unreachable (dfa_flatten rejects lookaround & klass_cp)
+          case opcode::assert_lookaround:
+          case opcode::byte_loop_possessive:
+          case opcode::klass_loop_possessive:
+          case opcode::klass_cp_loop_possessive:
+            break; // terminal / unreachable (dfa_flatten rejects lookaround, klass_cp & Tier 1 loops)
         }
       }
       return present;

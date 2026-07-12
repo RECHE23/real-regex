@@ -2321,6 +2321,29 @@ namespace real::detail {
               }
             }
             break;
+          case opcode::byte_loop_possessive:
+          case opcode::klass_loop_possessive:
+            // Tier 1 (D1, redesigned): by the time a leaf reaches step(), add_thread's closure
+            // has ALREADY confirmed the atom matches at pos (that's precisely why it was parked
+            // here instead of being routed to secondary_target immediately) — no re-test, no
+            // fail branch, and no need to distinguish byte from klass here either (the arg8-vs-
+            // arg16 test already happened in closure). See add_thread's own case for the full
+            // rationale (a same-round-convergent alternation sibling could otherwise steal
+            // priority from a step()-time exit decision, a real bug this redesign closes).
+            tier1_capture_on_match(clist, i, instruction.primary_target, pos, pos + 1);
+            advance_thread(clist, nlist, i, pc + 1, pos + 1);
+            break;
+          case opcode::klass_cp_loop_possessive:
+            {
+              // Closure already confirmed the codepoint matches; decode once more here purely
+              // for dc.length (the chain-skip arithmetic) — cheap and deterministic, not a
+              // second decision.
+              const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, pos)};
+              tier1_capture_on_match(clist, i, instruction.primary_target, pos, pos + dc.length);
+              advance_thread(clist, nlist, i,
+                             pc + 1 + static_cast<std::int32_t>(4 - dc.length), pos + 1);
+              break;
+            }
           case opcode::match:
             {
               if (mode == run_mode::full && pos != text_.size()) {
@@ -2363,6 +2386,39 @@ namespace real::detail {
             break; // epsilon ops never appear in a stepped list
         }
       }
+    }
+
+    /*!
+     * \brief Tier 1's on-match capture write (D1): if \p capture_start_slot is not -1, records
+     *        [\p start, \p end) into thread \p i's capture block, in place.
+     *
+     * Called ONLY on a confirmed atom match — never speculatively before the test, which is
+     * what makes this safe: a possessive loop always attempts one more repetition after every
+     * success, so a `save` fired BEFORE knowing the next attempt succeeds would overwrite THIS
+     * successful iteration's start the moment the next (possibly failing) attempt began,
+     * corrupting the capture with a torn [next-attempt's-start, this-iteration's-end) pair. See
+     * program.hpp's opcode-family note.
+     *
+     * \param[in,out] clist              The current thread list (whose slot this thread owns is updated).
+     * \param[in]     i                  Index of the thread in \p clist.
+     * \param[in]     capture_start_slot The start slot, or -1 for an uncaptured Tier 1 loop (a no-op).
+     * \param[in]     start              Position before the atom was consumed.
+     * \param[in]     end                Position after the atom was consumed.
+     */
+    constexpr void tier1_capture_on_match(list_type&    clist,
+                                          std::size_t   i,
+                                          std::int32_t  capture_start_slot,
+                                          std::size_t   start,
+                                          std::size_t   end)
+    {
+      if (capture_start_slot < 0) {
+        return;
+      }
+      const auto    slot  {static_cast<std::uint16_t>(capture_start_slot)};
+      std::uint32_t block {static_cast<std::uint32_t>(clist.slots[i])};
+      block          = state_.pool.cow_write(block, slot, start);
+      block          = state_.pool.cow_write(block, static_cast<std::uint16_t>(slot + 1), end);
+      clist.slots[i] = block;
     }
 
     /*!
@@ -2518,6 +2574,58 @@ namespace real::detail {
             list.pcs.push_back(pc);
             list.slots.push_back(block); // transfer the ref to the thread: one block handle per pc
             break;
+          case opcode::byte_loop_possessive:
+            // Tier 1 (D1, redesigned): the match/no-match decision is made HERE, at insertion
+            // time, in the SAME priority-ordered closure pass as everything else — not deferred
+            // to step() one round later. That deferral was the root cause of a real bug this
+            // opcode family shipped with first: inside an alternation, a same-round-convergent
+            // LOWER-priority sibling (single leaf, resolves in one round) could claim the shared
+            // convergence pc via its own advance_thread call BEFORE a step()-time exit from this
+            // (HIGHER-priority, but multi-round) construct got a chance to compete — plain "first
+            // felt this generation wins" dedup has no notion of true priority once insertion
+            // order is violated. Precedented by assert_lookaround just above: a whole sub-VM
+            // decision, evaluated at closure time; testing one byte here is far cheaper.
+            //
+            // A match: park as a leaf, exactly like byte/klass/klass_cp (step() consumes it,
+            // capture-writes if captured, and re-inserts the SAME pc at pos+1 — where THIS SAME
+            // closure logic re-decides, fresh). A non-match (or end of text): do NOT park —
+            // continue the closure walk via secondary_target RIGHT NOW, in this pass, so the
+            // exit's priority position is exactly this thread's own earned position, identical
+            // in spirit to how `jump`'s target is pushed above.
+            if (pos < text_.size() && static_cast<std::uint8_t>(text_[pos]) == instruction.arg8) {
+              list.pcs.push_back(pc);
+              list.slots.push_back(block);
+            }
+            else {
+              stack.push_back({.pc = instruction.secondary_target, .block = block});
+            }
+            break;
+          case opcode::klass_loop_possessive:
+            if (pos < text_.size() &&
+                prog_.classes[instruction.arg16].test(static_cast<std::uint8_t>(text_[pos]))) {
+              list.pcs.push_back(pc);
+              list.slots.push_back(block);
+            }
+            else {
+              stack.push_back({.pc = instruction.secondary_target, .block = block});
+            }
+            break;
+          case opcode::klass_cp_loop_possessive:
+            {
+              bool matched_here {false};
+              if (pos < text_.size()) {
+                const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, pos)};
+                matched_here = dc.valid && cp_class_matches(prog_.cp_classes[instruction.arg16], dc.cp);
+              }
+              if (matched_here) {
+                list.pcs.push_back(pc);
+                list.slots.push_back(block);
+              }
+              else {
+                stack.push_back({.pc = instruction.secondary_target, .block = block});
+              }
+              break;
+            }
         }
       }
     }
@@ -2800,8 +2908,20 @@ namespace real::detail {
             list.pcs.push_back(pc);
             break;
           case opcode::assert_lookaround:
-            // intentionally uncovered: -Wswitch exhaustiveness arm; nesting is rejected at
-            // parse time, so a sub-program never contains an assert_lookaround.
+          // intentionally uncovered: -Wswitch exhaustiveness arm; nesting is rejected at parse
+          // time, so a sub-program never contains an assert_lookaround.
+          //
+          // Tier 1's possessive-loop family is ALSO structurally absent here, for a related but
+          // distinct reason: the compiler rejects a possessive/atomic quantifier inside a
+          // lookaround (emit_possessive_repeat / emit_atomic_group throw on capture_free), so a
+          // sub-program never contains one of these either — this dispatcher (and lookahead_
+          // matches'/sub_fullmatch_window's own inline byte/klass/klass_cp-only dispatch) would
+          // otherwise silently misread klass_cp_loop_possessive's arg16 against the wrong class
+          // table. Folded into this same arm (not a separate one) — bugprone-branch-clone flags
+          // adjacent case labels whose bodies are both just `break;`, comments notwithstanding.
+          case opcode::byte_loop_possessive:
+          case opcode::klass_loop_possessive:
+          case opcode::klass_cp_loop_possessive:
             break;
         }
       }

@@ -160,6 +160,60 @@ Each of these raises a clear `real::regex_error`, for a reason worth keeping:
   calls** — non-regular control flow, each super-linear in the worst case. Excluded for
   the same ReDoS reason (see the note at the top of this page).
 
+Unlike the above, **a possessive quantifier or atomic group over a compound body**
+(`(?:ab)*+`, `(?>ab|a)`) is rejected "not supported **yet**", not "by design" — see
+\ref div_possessive. The *linear-time* argument for the general case is expected to hold
+(a bounded compound body looks like it can reuse the same priority-kill sub-VM technique
+lookaround already ships), the gap is VM-integration work not yet done, not a ReDoS
+concession. Recursion/callouts/conditionals above stay permanently excluded regardless — that door
+really is closed.
+
+\section div_possessive Possessive quantifiers and atomic groups (Tier 1 — a capability beyond re? no: parity, deliberately narrower for now)
+
+`re` (3.11+) and PCRE2 support possessive quantifiers (`a*+`, `a++`, `a?+`, `a{n,m}+`) and
+atomic groups `(?>...)` generally, over any body. Neither RE2 nor the Rust `regex` crate
+support them at all — REAL closing part of this gap is the differentiator, in the same
+class as REAL's already-shipped bounded lookarounds.
+
+**What REAL accepts (Tier 1 — the dominant real-world shape):**
+- A possessive quantifier over a **bare single atom** — a literal byte, a character class,
+  or `.` — e.g. `[^"]*+`, `\d++`, `x?+`, `[a-z]{2,4}+`.
+- The same, wrapped in **exactly one capturing group** — `(a)*+` — the group reflects the
+  *last* successful repetition's span, matching `re`'s own semantics for a possessive loop.
+- An atomic group `(?>X*)` / `(?>X+)` / `(?>X?)` / `(?>X{n,m})` wrapping a bare or
+  singly-captured atom — desugars to exactly the possessive-quantifier case above,
+  regardless of whether the inner repeat's own written form used the `+` suffix (so
+  `(?>[^"]*)` and `(?>\d+)`, the dominant real-world atomic-group shapes, are NOT rejected
+  as "unbounded" — a compile-time detection-order requirement, not an accident).
+- An atomic group with **no repeat at all**, over any deterministic (split-free) body,
+  however compound — `(?>ab)`, `(?>)` — nothing to give back regardless of body shape, since
+  it never loops; compiled inline, at zero extra VM cost.
+
+**What REAL rejects, "not supported yet":** a possessive quantifier or atomic group over a
+**compound, repeated body** — `(?:ab)*+`, `(?:X++)*+`, `(?:a?+)*+` — and an atomic group over
+a **genuine alternation**, even with no repeat — `(?>ab|a)`, `(?>a|ab)b`. A design-first
+spike (D0) confirmed the linear-time argument for the general case is sound in principle
+(the same isolated, bounded sub-VM technique lookaround already ships could plausibly carry
+it); implementing it is separately-scoped future work (D2), not a ReDoS concession — see the
+note in \ref div_rejected above.
+
+**A correctness note on the shipped Tier 1 itself, for anyone extending it:** the
+possessive-loop opcode's match/no-match decision is made at **epsilon-closure time**
+(`add_thread`, pike.hpp), not deferred to the per-byte step. An earlier design that decided
+it one round later, in the byte-stepping dispatch, shipped with a real bug: inside an
+alternation, a lower-priority sibling that resolves in a single round could claim the
+shared post-alternation convergence point before the (higher-priority, but multi-round)
+possessive thread's step()-time exit got a chance to compete for it — plain
+first-felt-this-generation dedup has no notion of true priority once insertion order like
+that is violated. The fix — evaluating the atom test at insertion time, in the same
+priority-ordered closure pass as everything else — is precedented directly above it in the
+same closure: `assert_lookaround` already runs a whole sub-VM decision at closure time, so
+testing one byte/class/codepoint there is a direct extension of an existing pattern, not new
+architecture. Regression-pinned in `possessive_alternation_priority_regression`
+(tests/frontend/test_possessive_atomic.cpp) and found originally by the differential
+fuzzer's own possessive-quantifier generator (test_differential_fuzz.py) before it ever
+shipped.
+
 **A superset of `re`:** **Unicode property classes** \\p{...} are now built in for
 **General_Category** and **Script** (see \\ref div_property), which standard `re` rejects
 outright. **Named characters** \\N{NAME} are also supported — the Python binding resolves the

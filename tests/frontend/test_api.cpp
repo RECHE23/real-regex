@@ -66,8 +66,8 @@ TEST(no_match_result_is_empty)
 
 TEST(unsupported_syntax_is_rejected)
 {
-  EXPECT_THROWS(real::regex("(?>a)"), real::regex_error);  // atomic groups: not supported
-  EXPECT_THROWS(real::regex("(?P=g)"), real::regex_error); // backrefs: v2
+  EXPECT_THROWS(real::regex("(?>a|b)"), real::regex_error); // atomic groups: Tier 1 bodies only (D1); a compound/alternating body is not
+  EXPECT_THROWS(real::regex("(?P=g)"), real::regex_error);  // backrefs: v2
   EXPECT_THROWS(real::regex("\\q"), real::regex_error);
   EXPECT_THROWS(real::regex("a\\"), real::regex_error);
 }

@@ -582,6 +582,30 @@ namespace real::detail {
         case opcode::match:
           empty_match_possible = true;
           break;
+        case opcode::byte_loop_possessive:
+          // Reachable via pure epsilon traversal from pc 0 ONLY when zero repetitions are
+          // valid here (any mandatory-minimum copies were unrolled as plain `byte` instructions
+          // AHEAD of this opcode, which this walker would have stopped at first) -- so `secondary_target`
+          // (the on-no-match exit) is always a live alternative to explore, unconditionally.
+          hints.first_bytes.set(instruction.arg8);
+          stack.push_back(instruction.secondary_target);
+          break;
+        case opcode::klass_loop_possessive:
+          hints.first_bytes.merge(classes[instruction.arg16]);
+          stack.push_back(instruction.secondary_target);
+          break;
+        case opcode::klass_cp_loop_possessive:
+          {
+            // Same sound superset as klass_cp above: the ASCII members plus every UTF-8 lead
+            // byte a non-ASCII member could begin with. Self-contained (no continuation chain).
+            const cp_class& cc {cp_classes[static_cast<std::size_t>(instruction.arg16)]};
+            hints.first_bytes.merge(cc.ascii);
+            hints.first_bytes.merge(utf8_lead2_set());
+            hints.first_bytes.merge(utf8_lead3_set());
+            hints.first_bytes.merge(utf8_lead4_set());
+            stack.push_back(instruction.secondary_target);
+            break;
+          }
       }
     }
     hints.first_bytes_valid    = !empty_match_possible && !hints.first_bytes.empty();

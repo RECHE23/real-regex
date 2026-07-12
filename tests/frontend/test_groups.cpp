@@ -160,7 +160,7 @@ TEST(group_errors)
   EXPECT_THROWS(real::regex("(?P<n>x)(?P<n>y)"), real::regex_error);
   EXPECT_THROWS(real::regex("(?P<n*>x)"), real::regex_error);
   EXPECT_THROWS(real::regex("(?P=n)"), real::regex_error);
-  EXPECT_THROWS(real::regex("(?>x)"), real::regex_error); // atomic groups: not supported
+  EXPECT_THROWS(real::regex("(?>a|b)"), real::regex_error); // atomic groups: supported for Tier 1 bodies only (D1); a compound/alternating body is not
 }
 
 TEST(inline_comment_and_group_construct_rejections)

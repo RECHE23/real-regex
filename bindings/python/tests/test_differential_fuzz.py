@@ -54,6 +54,32 @@ if _HAVE_ALARM:
     signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(_Timeout()))
 
 
+def _probe_re_supports_possessive():
+    """Whether the running `re` accepts possessive quantifiers / atomic groups (3.11+).
+
+    Probed once at import, not branched on `sys.version_info` directly: the concrete
+    accept/reject behaviour of the actual interpreter in front of us is the fact that
+    matters, matching the project's own established `\\B`-on-empty-text precedent (see
+    test_random_patterns_match_re's `compare_region` comment) rather than a version-number
+    guess. Below 3.11, `re.compile(r"a*+")` raises `re.error` ("multiple repeat") --
+    exactly the SAME "re rejects it; nothing to compare" path the harness already takes
+    for any pattern outside re's own grammar, so an UNGATED generator would not be
+    incorrect, only wasteful (every possessive/atomic slot burned on a guaranteed skip).
+    Gating the generator's own choice list on this probe keeps that fuzz budget useful on
+    every supported Python, at the cost of the generator's RNG-consumption shape differing
+    between legs -- the same accepted trade-off the `\\B`-empty precedent already makes.
+    """
+    try:
+        re.compile(r"a*+")
+        re.compile(r"(?>a)")
+    except re.error:
+        return False
+    return True
+
+
+_RE_SUPPORTS_POSSESSIVE = _probe_re_supports_possessive()
+
+
 class deadline:
     """Context manager bounding a block to _CASE_TIMEOUT (no-op off Unix)."""
 
@@ -84,6 +110,11 @@ _QUANTS = ["", "*", "+", "?", "??", "*?", "+?", "{2}", "{1,3}", "{2,}", "{0,2}"]
 # Quantifiers that cannot repeat (so cannot create a nullable loop). Anything
 # else establishes a "looping context" whose body must always consume.
 _NONLOOP_QUANTS = ["", "?", "??"]
+# Possessive quantifiers (D1, Tier 1): a bare atom or one wrapped in exactly one capturing
+# group only -- REAL rejects a possessive/atomic construct over any compound body, which the
+# harness's existing "REAL declines by design, skip" path (below) already handles gracefully,
+# so this list can stay a touch broader than REAL's own accepted shapes without risk.
+_POSSESSIVE_QUANTS = ["*+", "++", "?+", "{2}+", "{1,3}+", "{2,}+", "{0,2}+"]
 # Tokens that always consume >= 1 character: the only things allowed directly
 # inside a looping quantifier, keeping every loop body non-nullable (incl. UTF-8 code points).
 _CONSUMING = [re.escape(c) for c in "abABC012_-é€😀"] + \
@@ -253,6 +284,8 @@ class PatternGen:
         Returns:
             str: A quantified pattern fragment.
         """
+        if _RE_SUPPORTS_POSSESSIVE and self.rng.random() < 0.1:
+            return self._possessive_element()
         quant = self.rng.choice(_QUANTS)
         if quant not in _NONLOOP_QUANTS:
             # A looping quantifier. Occasionally build a NON-CAPTURING nullable loop — an empty
@@ -265,6 +298,41 @@ class PatternGen:
             # already-quantified atom (the OTHER way nullable loops — the capture divergence — arise).
             return self.rng.choice(self._consuming) + quant
         return self._atom(depth) + quant
+
+    def _possessive_element(self):
+        """Return a possessive-quantified atom (D1, Tier 1) or a small atomic group.
+
+        Only called when `_RE_SUPPORTS_POSSESSIVE` (the 3.11+ probe) is true. Generates
+        BOTH REAL-supported shapes (a bare atom, or one wrapped in exactly one capturing
+        group) and REAL-rejected ones (an atomic group over an alternation) -- the harness's
+        existing "REAL declines by design, skip" path already handles the latter
+        gracefully, so exercising the rejection boundary itself is free coverage, not a risk.
+
+        Returns:
+            str: A possessive-quantified atom or an atomic-group fragment.
+        """
+        if self.rng.random() < 0.25:
+            return self._atomic_group()
+        atom = self.rng.choice(self._consuming)
+        if self.rng.random() < 0.3:
+            atom = "(" + atom + ")"  # single-captured-atom: still Tier 1
+        return atom + self.rng.choice(_POSSESSIVE_QUANTS)
+
+    def _atomic_group(self):
+        """Return an atomic group `(?>...)` — a Tier-1-eligible body most of the time, an
+        alternation body (which REAL rejects, `re` accepts) occasionally to exercise the
+        rejection boundary itself.
+
+        Returns:
+            str: An atomic-group fragment.
+        """
+        if self.rng.random() < 0.2:
+            body = "|".join(self.rng.choice(["a", "b", "ab"]) for _ in range(2))
+            return "(?>" + body + ")"
+        atom = self.rng.choice(self._consuming)
+        if self.rng.random() < 0.5:
+            atom += self.rng.choice(["*", "+", "?", "{2}", "{1,3}"])  # (?>X*) desugars to Tier 1
+        return "(?>" + atom + ")"
 
     def _nullable_alt(self, depth):
         """Return an alternation with an empty branch (so the whole thing is nullable): ``|a`` / ``a|`` /

@@ -30,7 +30,7 @@ class TestCompile(unittest.TestCase):
 
     def test_invalid_patterns_raise_error(self):
         """Invalid syntax raises real.error."""
-        for pattern in [r"(", r")", r"a**", r"[z-a]", r"(?>x)",  # (?>x): atomic group, unsupported
+        for pattern in [r"(", r")", r"a**", r"[z-a]", r"(?>a|b)",  # atomic groups: Tier 1 bodies only (D1); a compound/alternating body is not
                         r"(?P=name)", r"(?P<1>x)", r"\q", "a\\"]:
             with self.assertRaises(real.error, msg=pattern):
                 real.compile(pattern)
@@ -195,7 +195,7 @@ class TestModuleFunctions(unittest.TestCase):
         self.assertEqual(rs.matches(text),
                          [real.search(p, text) is not None for p in pats])
         with self.assertRaises(real.error):
-            real.RegexSet([r"ok", r"(?>atomic)"])
+            real.RegexSet([r"ok", r"(?>a|b)"])  # atomic groups: Tier 1 bodies only (D1); a compound/alternating body is not
 
     def test_count_matches(self):
         """count_matches agrees with findall / finditer without materialising Match objects."""

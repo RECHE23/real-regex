@@ -196,6 +196,34 @@ namespace real {
       assert_position,   //!< Epsilon; proceeds only if assertion arg8 holds here.
       match,             //!< Accept.
       assert_lookaround, //!< Epsilon; proceeds only if the lookaround sub-program arg16 holds here.
+      // Tier 1 (D1): the OPTIONAL tail of a possessive/atomic quantifier over a single bare atom
+      // (byte/klass/klass_cp), after any mandatory-minimum copies have been unrolled as plain
+      // byte/klass/klass_cp instructions ahead of this opcode (dies naturally like any plain
+      // atom on failure — no new opcode needed for the mandatory part, since a required
+      // repetition has no exit path to offer).
+      //
+      // On a match: consume one byte/codepoint and fall through to pc+1, EXACTLY like the
+      // ordinary byte/klass/klass_cp opcode it mirrors — `primary_target` is NOT an "on-match"
+      // field. Looping is ordinary control flow AFTER this instruction (an explicit `jump` back
+      // for an unbounded tail, X*+/X++; natural pc+1 chaining through unrolled copies for a
+      // bounded tail, X{n,m}+) — see compiler.hpp's emit_tier1_loop. `primary_target` instead
+      // carries an OPTIONAL capture-slot index (-1 = uncaptured, else the start slot; the end
+      // slot is always start+1): a possessive loop always retries once more after every success,
+      // so a plain `save` emitted BEFORE the test would fire speculatively and corrupt a PRIOR
+      // successful iteration's capture the moment the next (ultimately failing) attempt began.
+      // Writing both slots atomically with the consume, only on confirmed success, avoids that —
+      // see pike.hpp's step().
+      //
+      // On no match (or end of text): epsilon-transition IN PLACE (same position, no byte
+      // consumed) to `secondary_target` — safe specifically because it never crosses a position,
+      // unlike a hypothetical multi-byte single-dispatch jump-ahead, which this
+      // one-position-per-thread-list VM cannot represent (see pike.hpp's step()/add_thread; this
+      // is also why a general "Tier 1.5" for compound bodies was scoped out of this train — a
+      // bare/singly-captured atom is the only shape that carries its own failure locally, within
+      // one dispatch, with nothing to propagate).
+      byte_loop_possessive,     //!< Consume one byte == arg8. See the opcode-family note above.
+      klass_loop_possessive,    //!< Consume one byte in classes[arg16]. See the opcode-family note above.
+      klass_cp_loop_possessive, //!< Consume one code point in cp_classes[arg16] (direct decode; emits the ordinary 3-slot UTF-8 continuation chain right after itself, identical layout to klass_cp — the membership decision is already fully made at the first byte). See the opcode-family note above.
     };
 
     /*!
@@ -243,6 +271,7 @@ namespace real {
       look_dir     direction   {look_dir::ahead}; //!< Ahead or behind.
       bool         negative    {};                //!< `(?!` / `(?<!` (negated assertion).
     };
+
 
     /*!
      * \brief One NFA instruction. Field meaning depends on \ref op.
