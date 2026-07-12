@@ -377,6 +377,29 @@ namespace real {
       std::int16_t trailing_lookaround {-1};
       std::int32_t trailing_la_class   {-1}; //!< Class index for \ref trailing_lookaround body; −1 if unset.
 
+      //! \brief D1-perf (Étage A): possessive fast-path hints -- additive, mirrors \ref greedy_class_loop /
+      //!        \ref greedy_cp_class / \ref prefix. Scope: UNBOUNDED possessive loops only (`X*+`/`X++`, an
+      //!        opcode-level self-loop via `jump` back to itself) -- a bounded count (`X{n,m}+`) has no "any
+      //!        start within the run reaches the identical body end" invariant (the upper bound can cut
+      //!        different start positions at genuinely different lengths -- see the per-attempt-independence
+      //!        divergence pinned in test_static.cpp's `(a){2,4}+b`), so a linear-time skip-based search
+      //!        cannot be built for it here; it stays on the general VM. At most one leading mandatory copy
+      //!        (min in {0,1}); min >= 2 also stays on the general VM (not in this train's measured corpus).
+      //!        A non-empty \ref possessive_prefix additionally requires (checked at recognition time,
+      //!        prefilter.hpp) that the loop's class excludes the prefix's AND suffix's leading byte -- the
+      //!        invariant that makes the delimited/"quoted" runner's skip-to-body-end retry provably linear
+      //!        rather than quadratic on adversarial input (`id=[a-z0-9]*+;` fails this and stays general --
+      //!        alphanumeric prefix bytes are members of the loop's own class).
+      std::array<char, 8>  possessive_prefix       {};   //!< Required literal BEFORE the loop (0 len = none; the delimited/"quoted" shape).
+      std::uint8_t         possessive_prefix_size  {};
+      std::array<char, 8>  possessive_suffix       {};   //!< Required literal AFTER the loop (0 len = none; e.g. the 'x' in `\d++x`).
+      std::uint8_t         possessive_suffix_size  {};
+      std::int32_t         possessive_class_loop   {-1}; //!< Byte-class index for the loop body (`klass_loop_possessive`), else -1.
+      std::int32_t         possessive_cp_class     {-1}; //!< cp_class index for the loop body (`klass_cp_loop_possessive`), else -1.
+      std::int16_t         possessive_group_start  {-1}; //!< Enveloping single capture group's start slot (mirrors \ref greedy_group_start), -1 = none.
+      std::int16_t         possessive_group_end    {-1}; //!< The enveloping group's end slot.
+      bool                 possessive_min_nonzero  {};   //!< True for `X++`/`X{1,}+` (one mandatory copy present) — a search candidate MUST be in-class; false for `X*+` (min 0), where a zero-length body is also a valid candidate anywhere.
+
       //! \brief Optional leading/trailing word-boundary wrap on fixed_shape / fixed_alternation /
       //!        exact_literal (Arc II B1). 0 = none; 1 = `\b` (\ref assert_kind::word_boundary);
       //!        2 = `\B` (\ref assert_kind::not_word_boundary). Verified in O(1) at the match

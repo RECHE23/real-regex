@@ -336,6 +336,21 @@ namespace real::detail {
     return any || cc.range_count > 0;
   }
 
+  //! \brief D1-perf (Étage A) safety check: true if the ASCII byte \p b could be a member of code-point
+  //!        class \p cc — used only to test whether a single-byte delimiter (a "quoted"-shape prefix or
+  //!        suffix) could hide inside a `klass_cp_loop_possessive` body, in which case the delimited
+  //!        fast path must decline (see \ref pattern_hints::possessive_prefix). A non-ASCII \p b (>=
+  //!        0x80) is conservatively treated as a member (unsafe, declines) — this shape's corpus is
+  //!        single-byte ASCII delimiters (`"`, `;`, …), so a multi-byte delimiter simply stays general.
+  [[nodiscard]] constexpr bool cp_class_may_contain_ascii_byte(const cp_class& cc,
+                                                               std::uint8_t    b) noexcept
+  {
+    if (b >= 0x80U) {
+      return true;
+    }
+    return cc.ascii.test(b);
+  }
+
   /*!
    * \brief Alternation of straight-line byte/klass branches, optionally wrapped in `\b`/`\B`.
    *
@@ -1091,6 +1106,205 @@ namespace real::detail {
           hints.wb_lead  = wb_lead;
           hints.wb_trail = wb_trail;
           hints.body_pc  = body_pc;
+        }
+      }
+    }
+
+    // D1-perf (Étage A): possessive class+/cp-class+ loop -- UNBOUNDED only (X*+/X++, self-loop via
+    // `jump` back to the loop opcode's own pc; see pattern_hints's doc comment for why a bounded count
+    // is out of scope). Layout: save 0, [optional lead \b/\B], [optional ONE mandatory copy: klass |
+    // klass_cp(+3-instr chain), the SAME class/cp-class as the loop, min=1 -- min>=2 stays general],
+    // loop_pc: klass_loop_possessive | klass_cp_loop_possessive(+3-instr chain), jump(self), [optional
+    // trail \b/\B], [optional literal SUFFIX: 0+ plain `byte` ops, e.g. the 'x' in \d++x], save 1, match.
+    //
+    // Capture: NOT a preceding `save` -- Tier 1's own design (program.hpp's opcode doc comment)
+    // deliberately never emits one (a `save` before the test would fire speculatively and corrupt a
+    // prior successful iteration's capture the moment a later attempt failed). The ONLY place a capture
+    // slot is visible is `code[loop_pc].primary_target`, read directly off the loop opcode itself once
+    // found -- there is nothing to "look for" ahead of it. (`([a-z])*+b`, the group AROUND the
+    // quantifier, compiles this way and is exactly what this block targets; `([a-z]++)`, the group
+    // wrapping an ALREADY-possessive class with no quantifier of its own, is an ordinary capturing group
+    // compiled with plain ahead-of-time save/save instructions around a Tier-1 loop that itself claims
+    // no capture -- a structurally different, uncaptured-at-the-opcode-level shape this block also
+    // matches, just with gs resolving to -1: correct, not a bug, since the group's OWN save/save pair,
+    // sitting outside [p, loop_pc), is simply invisible to (and irrelevant for) this recognizer.
+    {
+      std::size_t  p       {0};
+      std::uint8_t wb_lead {0};
+      if (p < code.size() && code[p].op == opcode::save && code[p].arg16 == 0) {
+        ++p;
+        if (!peel_optional_lead_wb(code, p, wb_lead)) {
+          p = code.size();
+        }
+        const std::size_t mandatory_start {p};
+        std::size_t       loop_pc         {mandatory_start};
+        bool              has_mandatory   {false};
+        if (loop_pc < code.size() && code[loop_pc].op == opcode::klass) {
+          loop_pc       = mandatory_start + 1;
+          has_mandatory = true;
+        }
+        else if (loop_pc + 3 < code.size() && code[loop_pc].op == opcode::klass_cp &&
+                 code[loop_pc + 1].op == opcode::klass && code[loop_pc + 2].op == opcode::klass &&
+                 code[loop_pc + 3].op == opcode::klass) {
+          loop_pc       = mandatory_start + 4;
+          has_mandatory = true;
+        }
+        if (loop_pc < code.size() && (code[loop_pc].op == opcode::klass_loop_possessive ||
+                                      code[loop_pc].op == opcode::klass_cp_loop_possessive)) {
+          const bool         is_cp    {code[loop_pc].op == opcode::klass_cp_loop_possessive};
+          const std::int32_t body_idx {code[loop_pc].arg16};
+          const std::int32_t cap_slot {code[loop_pc].primary_target};
+          const std::int16_t gs       {cap_slot >= 0 ? static_cast<std::int16_t>(cap_slot) : std::int16_t {-1}};
+          // A captured shape must have no mandatory copy (min == 0): a captured min>=1 has its OWN,
+          // structurally different shape (a save/save-wrapped mandatory copy, unrolled per repetition)
+          // this block does not attempt to recognize this train -- see the doc comment above.
+          const bool capture_ok         {cap_slot < 0 || !has_mandatory};
+          // Never assume: the mandatory copy (if any) must be literally the same atom the loop tests.
+          const bool        same_atom   {!has_mandatory || code[mandatory_start].arg16 == body_idx};
+          const std::size_t exit_pc     {static_cast<std::size_t>(code[loop_pc].secondary_target)};
+          const std::size_t block_width {is_cp ? std::size_t {4} : std::size_t {1}};
+          const std::size_t after_loop  {loop_pc + block_width};
+          if (capture_ok && same_atom && after_loop < code.size() &&
+              code[after_loop].op == opcode::jump &&
+              code[after_loop].primary_target == static_cast<std::int32_t>(loop_pc) &&
+              exit_pc == after_loop + 1) {
+            std::size_t  q        {exit_pc};
+            std::uint8_t wb_trail {0};
+            if (!peel_optional_trail_wb(code, q, wb_trail)) {
+              q = code.size(); // disqualify below
+            }
+            std::array<char, 8>  suffix      {};
+            std::uint8_t         suffix_len  {0};
+            while (q < code.size() && code[q].op == opcode::byte && suffix_len < suffix.size()) {
+              suffix[suffix_len] = static_cast<char>(code[q].arg8);
+              ++suffix_len;
+              ++q;
+            }
+            // Non-empty-consumption guard: a min=0 (star) loop with no required suffix can match the
+            // EMPTY string (0 repetitions, nothing after) -- exactly the case run()'s dispatch comment
+            // warns fast paths must never reach ("Fast paths only fire for patterns that always
+            // consume"), since this driver has no forbid_empty_until/iterator-advance contract. Mirrors
+            // greedy's own class+ recognizer, which for the identical reason never arms on bare `[a-z]*`
+            // (confirmed empirically: `[a-z]*` alone stays on general_full, only `[a-z]+` arms).
+            if (q + 1 < code.size() && q + 2 == code.size() && code[q].op == opcode::save &&
+                code[q].arg16 == 1 && code[q + 1].op == opcode::match && body_idx >= 0 &&
+                (has_mandatory || suffix_len >= 1) &&
+                (is_cp ? static_cast<std::size_t>(body_idx) < cp_classes.size()
+                       : static_cast<std::size_t>(body_idx) < classes.size())) {
+              const bool   has_wb    {wb_lead != 0 || wb_trail != 0};
+              bool         arm       {!has_wb};
+              std::uint8_t out_lead  {0};
+              std::uint8_t out_trail {0};
+              if (has_wb) {
+                // Unbounded possessive: always a maximal run wherever it starts (no upper bound to cut
+                // it short at different lengths for different starts), so B-1's redundancy argument --
+                // "a maximal run can only legitimately start where the byte before it is non-word" --
+                // holds unconditionally here, unlike a BOUNDED possessive count (see pattern_hints's own
+                // doc comment on why those stay out of this fast path's scope entirely).
+                if (is_cp) {
+                  const cp_class& cc {cp_classes[static_cast<std::size_t>(body_idx)]};
+                  arm = resolve_class_wb_hints(is_full_unicode_word_cp_class(cc, cp_ranges),
+                                               is_unicode_word_subset_cp_class(cc, cp_ranges),
+                                               /*maximal_run=*/ true, wb_lead, wb_trail, out_lead,
+                                               out_trail);
+                }
+                else {
+                  const char_class& cc {classes[static_cast<std::size_t>(body_idx)]};
+                  arm = resolve_class_wb_hints(is_full_ascii_word_class(cc), is_ascii_word_subset_class(cc),
+                                               /*maximal_run=*/ true, wb_lead, wb_trail, out_lead,
+                                               out_trail);
+                }
+              }
+              if (arm) {
+                if (is_cp) {
+                  hints.possessive_cp_class = body_idx;
+                }
+                else {
+                  hints.possessive_class_loop = body_idx;
+                }
+                hints.possessive_group_start  = gs;
+                hints.possessive_group_end    = gs < 0 ? std::int16_t {-1}
+                                                        : static_cast<std::int16_t>(gs + 1);
+                hints.possessive_suffix       = suffix;
+                hints.possessive_suffix_size  = suffix_len;
+                hints.possessive_min_nonzero  = has_mandatory;
+                if (has_wb) {
+                  hints.wb_lead  = out_lead;
+                  hints.wb_trail = out_trail;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // D1-perf (Étage A): possessive delimited ("quoted") shape -- literal PREFIX (1+ bytes) + possessive
+    // class+/cp-class+ loop (UNBOUNDED, min=0, uncaptured) + literal SUFFIX (1+ bytes). Eligibility
+    // additionally requires the loop's class to EXCLUDE the prefix's AND the suffix's leading byte: without
+    // it, a prefix occurrence could hide inside an already-scanned body run (an alphanumeric "id=" prefix
+    // inside an `[a-z0-9]*+` body, say), and the delimited runner's skip-to-body-end retry (pike.hpp) would
+    // either silently skip a valid leftmost match or, absent the skip, degrade to quadratic on adversarial
+    // input -- see pattern_hints's own doc comment. Mutually exclusive with the shape above by construction
+    // (that one never starts with a literal `byte`; this one always does) and only tried when it did not
+    // already claim the pattern.
+    if (hints.possessive_class_loop < 0 && hints.possessive_cp_class < 0 && code.size() >= 6 &&
+        code[0].op == opcode::save && code[0].arg16 == 0 && code[1].op == opcode::byte) {
+      std::size_t           p          {1};
+      std::array<char, 8>   prefix     {};
+      std::uint8_t          prefix_len {0};
+      while (p < code.size() && code[p].op == opcode::byte && prefix_len < prefix.size()) {
+        prefix[prefix_len] = static_cast<char>(code[p].arg8);
+        ++prefix_len;
+        ++p;
+      }
+      const std::size_t loop_pc {p};
+      if (loop_pc < code.size() &&
+          (code[loop_pc].op == opcode::klass_loop_possessive ||
+           code[loop_pc].op == opcode::klass_cp_loop_possessive) &&
+          code[loop_pc].primary_target < 0) {
+        const bool         is_cp       {code[loop_pc].op == opcode::klass_cp_loop_possessive};
+        const std::int32_t body_idx    {code[loop_pc].arg16};
+        const std::size_t  exit_pc     {static_cast<std::size_t>(code[loop_pc].secondary_target)};
+        const std::size_t  block_width {is_cp ? std::size_t {4} : std::size_t {1}};
+        const std::size_t  after_loop  {loop_pc + block_width};
+        if (after_loop < code.size() && code[after_loop].op == opcode::jump &&
+            code[after_loop].primary_target == static_cast<std::int32_t>(loop_pc) &&
+            exit_pc == after_loop + 1) {
+          std::size_t           q          {exit_pc};
+          std::array<char, 8>   suffix     {};
+          std::uint8_t          suffix_len {0};
+          while (q < code.size() && code[q].op == opcode::byte && suffix_len < suffix.size()) {
+            suffix[suffix_len] = static_cast<char>(code[q].arg8);
+            ++suffix_len;
+            ++q;
+          }
+          if (prefix_len >= 1 && suffix_len >= 1 && q + 1 < code.size() && q + 2 == code.size() &&
+              code[q].op == opcode::save && code[q].arg16 == 1 && code[q + 1].op == opcode::match &&
+              body_idx >= 0 &&
+              (is_cp ? static_cast<std::size_t>(body_idx) < cp_classes.size()
+                     : static_cast<std::size_t>(body_idx) < classes.size())) {
+            const auto excludes = [&](std::uint8_t b) {
+                                    return is_cp
+                                             ? !cp_class_may_contain_ascii_byte(
+                                      cp_classes[static_cast<std::size_t>(body_idx)], b)
+                                             : !classes[static_cast<std::size_t>(body_idx)].test(b);
+                                  };
+            if (excludes(static_cast<std::uint8_t>(prefix[0])) &&
+                excludes(static_cast<std::uint8_t>(suffix[0]))) {
+              hints.possessive_prefix      = prefix;
+              hints.possessive_prefix_size = prefix_len;
+              hints.possessive_suffix      = suffix;
+              hints.possessive_suffix_size = suffix_len;
+              hints.possessive_min_nonzero = false; // the loop itself is min=0 in this shape; the PREFIX is the mandatory part
+              if (is_cp) {
+                hints.possessive_cp_class = body_idx;
+              }
+              else {
+                hints.possessive_class_loop = body_idx;
+              }
+            }
+          }
         }
       }
     }

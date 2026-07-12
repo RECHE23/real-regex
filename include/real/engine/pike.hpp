@@ -458,6 +458,21 @@ namespace real::detail {
         }
         return run_cp_class_loop(text, start, mode, out_slots);
       }
+      // D1-perf (Étage A): possessive class+/++ loop -- bare/suffixed or delimited/"quoted". A
+      // possessive pattern can never also be greedy_class_loop/greedy_cp_class (mutually exclusive
+      // AST shapes), so ordering relative to those two is moot -- it matters only relative to
+      // exact_literal/inner_literal/lazy-DFA below, which this shape reliably beats (see the
+      // D1-perf fiche's route-profile: those routes decline every possessive opcode outright today).
+      // The route-name split (bare vs delimited, profiling only) is pushed into the runners
+      // themselves so this dispatch site stays exactly as small as the existing two above it.
+      if (sem_ == match_semantics::first && prog_.hints.possessive_class_loop >= 0
+          && (std::is_constant_evaluated() || !possessive_fastpath_disabled())) {
+        return run_possessive_class_loop(text, start, mode, out_slots);
+      }
+      if (sem_ == match_semantics::first && prog_.hints.possessive_cp_class >= 0
+          && (std::is_constant_evaluated() || !possessive_fastpath_disabled())) {
+        return run_possessive_cp_class_loop(text, start, mode, out_slots);
+      }
       if (sem_ == match_semantics::first && prog_.hints.exact_literal_len > 0) {
         prof::tick_route(prof::route::exact_literal);
         return run_exact_literal(text, start, mode, out_slots);
@@ -1510,6 +1525,229 @@ namespace real::detail {
       }
       fill_span_slots(out_slots, match_start, match_end);
       return true;
+    }
+
+    /*!
+     * \brief D1-perf (Étage A) shared driver: a possessive class+/++ loop, bare/suffixed (\ref
+     *        pattern_hints::possessive_prefix_size == 0) or delimited/"quoted" (non-zero) -- the
+     *        BODY's own class/cp-class membership test is supplied by \p in_class / \p scan_end so this
+     *        one driver serves both the byte-class and the code-point-class runners below.
+     *
+     * A possessive run never gives back: once matched, it always advances maximally, so -- unlike \ref
+     * run_class_loop's whole-pattern shape, which has nothing AFTER the loop to fail against -- this
+     * scan can hit a required literal SUFFIX (or, for the delimited shape, fail to find the closing
+     * SUFFIX after a required PREFIX) that does not follow. There is nothing to retry within one
+     * attempt (that is exactly what "possessive" means); in \c search mode the NEXT candidate is tried,
+     * and the retry skips straight to the failed attempt's own body end -- provably safe and linear, not
+     * merely fast, PROVIDED the eligibility \ref pattern_hints documents held at recognition time
+     * (prefilter.hpp): every candidate strictly between the attempt's start and its body end is
+     * guaranteed to fail identically (an unbounded possessive run has no shorter/longer variant to
+     * offer), so skipping them loses no leftmost match.
+     *
+     * \tparam InClass  `bool(std::size_t) -> true` if the body's class/cp-class accepts the byte/code
+     *                  point starting at that offset.
+     * \tparam ScanEnd  `std::size_t(std::size_t from) -> end` of the maximal body run starting at \p from
+     *                  (== \p from itself when \p from is not a valid start -- a zero-length run).
+     */
+    template <typename OutSlots, typename InClass, typename ScanEnd>
+    constexpr bool run_possessive_loop_generic(std::string_view  text,
+                                               std::size_t       start,
+                                               run_mode          mode,
+                                               OutSlots&         out_slots,
+                                               const InClass&    in_class,
+                                               const ScanEnd&    scan_end)
+    {
+      const auto&        h           {prog_.hints};
+      const std::uint8_t prefix_size {h.possessive_prefix_size};
+      const std::uint8_t suffix_size {h.possessive_suffix_size};
+      const auto         suffix_ok = [&](std::size_t pos) {
+                                       if (suffix_size == 0) {
+                                         return true;
+                                       }
+                                       if (pos + suffix_size > text.size()) {
+                                         return false;
+                                       }
+                                       for (std::uint8_t k {0}; k < suffix_size; ++k) {
+                                         if (text[pos + k] != h.possessive_suffix[k]) {
+                                           return false;
+                                         }
+                                       }
+                                       return true;
+                                     };
+      const auto write_success = [&](std::size_t s, std::size_t e) {
+                                   out_slots.assign(prog_.slot_count, npos);
+                                   out_slots[0] = s;
+                                   out_slots[1] = e;
+                                   if (h.possessive_group_start >= 0) {
+                                     out_slots[static_cast<std::size_t>(h.possessive_group_start)] = s;
+                                     out_slots[static_cast<std::size_t>(h.possessive_group_end)]   = e;
+                                   }
+                                 };
+      const auto fail = [&]() {
+                          out_slots.assign(prog_.slot_count, npos);
+                          return false;
+                        };
+      if (prefix_size > 0) {
+        // Delimited ("quoted") shape: no capture, no \b wrap by construction (prefilter.hpp never
+        // arms both together this train) -- suffix_ok / write_success above already cover it exactly.
+        const auto find_prefix = [&](std::size_t from) -> std::size_t {
+                                   if (from > text.size() || prefix_size > text.size() - from) {
+                                     return npos;
+                                   }
+                                   for (std::size_t i {from}; i <= text.size() - prefix_size; ++i) {
+                                     bool ok {true};
+                                     for (std::uint8_t k {0}; k < prefix_size; ++k) {
+                                       if (text[i + k] != h.possessive_prefix[k]) {
+                                         ok = false;
+                                         break;
+                                       }
+                                     }
+                                     if (ok) {
+                                       return i;
+                                     }
+                                   }
+                                   return npos;
+                                 };
+        if (mode == run_mode::full || mode == run_mode::prefix) {
+          if (prefix_size > (text.size() >= start ? text.size() - start : 0)) {
+            return fail();
+          }
+          for (std::uint8_t k {0}; k < prefix_size; ++k) {
+            if (text[start + k] != h.possessive_prefix[k]) {
+              return fail();
+            }
+          }
+          const std::size_t body_end {scan_end(start + prefix_size)};
+          if (!suffix_ok(body_end)) {
+            return fail();
+          }
+          const std::size_t end {body_end + suffix_size};
+          if (mode == run_mode::full && end != text.size()) {
+            return fail();
+          }
+          write_success(start, end);
+          return true;
+        }
+        std::size_t pos {start};
+        while (true) {
+          const std::size_t cand {find_prefix(pos)};
+          if (cand == npos) {
+            return fail();
+          }
+          const std::size_t body_end {scan_end(cand + prefix_size)};
+          if (suffix_ok(body_end)) {
+            write_success(cand, body_end + suffix_size);
+            return true;
+          }
+          pos = body_end > cand ? body_end : cand + 1;
+        }
+      }
+      // Bare / suffixed (no leading literal).
+      const bool min_nonzero {h.possessive_min_nonzero};
+      if (mode == run_mode::full || mode == run_mode::prefix) {
+        if (min_nonzero && (start >= text.size() || !in_class(start))) {
+          return fail();
+        }
+        const std::size_t body_end {start < text.size() && in_class(start) ? scan_end(start) : start};
+        if (!wb_boundaries_ok(start, body_end) || !suffix_ok(body_end)) {
+          return fail();
+        }
+        const std::size_t end {body_end + suffix_size};
+        if (mode == run_mode::full && end != text.size()) {
+          return fail();
+        }
+        write_success(start, end);
+        return true;
+      }
+      std::size_t pos {start};
+      while (pos <= text.size()) {
+        if (min_nonzero) {
+          while (pos < text.size() && !in_class(pos)) {
+            ++pos;
+          }
+          if (pos >= text.size()) {
+            break;
+          }
+        }
+        const std::size_t body_end {pos < text.size() && in_class(pos) ? scan_end(pos) : pos};
+        if (wb_boundaries_ok(pos, body_end) && suffix_ok(body_end)) {
+          write_success(pos, body_end + suffix_size);
+          return true;
+        }
+        pos = body_end > pos ? body_end : pos + 1;
+      }
+      return fail();
+    }
+
+    //! \brief D1-perf Étage A: possessive class+/++ loop over a BYTE class (`klass_loop_possessive`).
+    //!        See \ref run_possessive_loop_generic for the shared algorithm.
+    template <typename OutSlots>
+    constexpr bool run_possessive_class_loop(std::string_view  text,
+                                             std::size_t       start,
+                                             run_mode          mode,
+                                             OutSlots&         out_slots)
+    {
+      prof::tick_route(prog_.hints.possessive_prefix_size > 0 ? prof::route::possessive_delimited
+                                                               : prof::route::possessive_class_loop);
+      const std::uint8_t* const tbl {
+        class_table(static_cast<std::size_t>(prog_.hints.possessive_class_loop))};
+      const auto in_class = [&](std::size_t i) {
+                              return tbl[static_cast<std::uint8_t>(text[i])] != 0U;
+                            };
+      const auto scan_end = [&](std::size_t from) -> std::size_t {
+                              std::size_t e {from};
+                              while (e < text.size() && in_class(e)) {
+                                ++e;
+                              }
+                              return e;
+                            };
+      return run_possessive_loop_generic(text, start, mode, out_slots, in_class, scan_end);
+    }
+
+    //! \brief D1-perf Étage A: possessive class+/++ loop over a CODE-POINT class
+    //!        (`klass_cp_loop_possessive`). Mirrors \ref run_cp_class_loop's decode/membership
+    //!        primitives (no O2r-1b GCC split here yet -- measure-first; not in this train's scope).
+    //!        See \ref run_possessive_loop_generic for the shared algorithm.
+    template <typename OutSlots>
+    constexpr bool run_possessive_cp_class_loop(std::string_view  text,
+                                                std::size_t       start,
+                                                run_mode          mode,
+                                                OutSlots&         out_slots)
+    {
+      prof::tick_route(prog_.hints.possessive_prefix_size > 0 ? prof::route::possessive_delimited
+                                                               : prof::route::possessive_cp_class_loop);
+      const std::size_t         cp_index {static_cast<std::size_t>(prog_.hints.possessive_cp_class)};
+      const detail::cp_class&   cc       {prog_.cp_classes[cp_index]};
+      const std::uint8_t* const asc      {cp_ascii_table(cp_index)};
+      const auto                member_hi = [&](char32_t cp) -> bool {
+                                              if (cp <= cp_page_max) {
+                                                const std::uint64_t* const page {cp_page_table(cp_index)};
+                                                const std::uint32_t        bit  {static_cast<std::uint32_t>(cp) - 0x80U};
+                                                return ((page[bit >> 6U] >> (bit & 63U)) & std::uint64_t {1}) != 0U;
+                                              }
+                                              return cp_class_matches(cc, cp);
+                                            };
+      const auto cp_width = [&](std::size_t i) -> std::size_t {
+                              const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, i)};
+                              if (!dc.valid) {
+                                return 0;
+                              }
+                              const bool m {dc.cp < 0x80U ? asc[dc.cp] != 0U : member_hi(dc.cp)};
+                              return m ? dc.length : 0;
+                            };
+      const auto in_class = [&](std::size_t i) { return i < text.size() && cp_width(i) != 0; };
+      const auto scan_end = [&](std::size_t from) -> std::size_t {
+                              std::size_t e {from};
+                              while (e < text.size()) {
+                                const std::size_t w {cp_width(e)};
+                                if (w == 0) {
+                                  break;
+                                }
+                                e += w;
+                              }
+                              return e;
+                            };
+      return run_possessive_loop_generic(text, start, mode, out_slots, in_class, scan_end);
     }
 
     /*!

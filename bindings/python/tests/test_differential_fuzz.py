@@ -115,6 +115,9 @@ _NONLOOP_QUANTS = ["", "?", "??"]
 # harness's existing "REAL declines by design, skip" path (below) already handles gracefully,
 # so this list can stay a touch broader than REAL's own accepted shapes without risk.
 _POSSESSIVE_QUANTS = ["*+", "++", "?+", "{2}+", "{1,3}+", "{2,}+", "{0,2}+"]
+# D1-perf (Étage A): single-byte delimiters for the whole-pattern "quoted"/delimited possessive
+# shape (`"[^"]*+"`) -- see PatternGen._quoted_possessive below.
+_DELIMS = ['"', "'", ";", "|"]
 # Tokens that always consume >= 1 character: the only things allowed directly
 # inside a looping quantifier, keeping every loop body non-nullable (incl. UTF-8 code points).
 _CONSUMING = [re.escape(c) for c in "abABC012_-é€😀"] + \
@@ -334,6 +337,33 @@ class PatternGen:
             atom += self.rng.choice(["*", "+", "?", "{2}", "{1,3}"])  # (?>X*) desugars to Tier 1
         return "(?>" + atom + ")"
 
+    def _quoted_possessive(self):
+        """Return a WHOLE-PATTERN "delimited" possessive shape (D1-perf Étage A): a literal
+        delimiter, a possessive class run, and a closing literal -- the "quoted string" shape
+        REAL's new fast-path route specifically targets (`"[^"]*+"`). Only meaningful as a
+        top-level pattern (unlike `_possessive_element`, which nests inside a larger sequence
+        and so rarely if ever produces the exact whole-pattern shape the route requires) --
+        called from `pattern()` directly, never from `_element`/`_seq`.
+
+        Generates BOTH the route-ELIGIBLE case (body excludes the delimiter, e.g. `"[^"]*+"`)
+        and a deliberately INELIGIBLE one (an alphanumeric prefix whose bytes are members of
+        the body's own class, e.g. `id=[a-z0-9]*+;` -- REAL's own eligibility guard declines
+        this and it stays on the general VM) -- REAL must give the identical answer either
+        way; only the route differs, and that is exactly what this generator is for.
+
+        Returns:
+            str: A whole-pattern delimited possessive fragment.
+        """
+        quant = self.rng.choice(_POSSESSIVE_QUANTS[:2])  # *+ / ++ only -- the route is unbounded-only
+        if self.rng.random() < 0.6:
+            delim = self.rng.choice(_DELIMS)
+            body = "[^" + re.escape(delim) + "]" + quant
+            return delim + body + delim
+        prefix = self.rng.choice(["id=", "key=", "x="])
+        body = "[a-z0-9]" + quant
+        suffix = self.rng.choice([";", ",", ")"])
+        return prefix + body + suffix
+
     def _nullable_alt(self, depth):
         """Return an alternation with an empty branch (so the whole thing is nullable): ``|a`` / ``a|`` /
         ``|a|b``. Used only inside a non-capturing group under a looping quantifier."""
@@ -378,7 +408,13 @@ class PatternGen:
         Returns:
             str: A random regular expression pattern.
         """
-        body = self._alt(0)
+        if _RE_SUPPORTS_POSSESSIVE and self.rng.random() < 0.08:
+            # D1-perf Étage A: the whole-pattern "quoted"/delimited shape must be generated at
+            # the TOP level (see _quoted_possessive's own doc comment) -- anchors below still
+            # apply on top of it like any other body.
+            body = self._quoted_possessive()
+        else:
+            body = self._alt(0)
         if self.rng.random() < 0.3:
             body = self.rng.choice(_ANCHORS) + body
         if self.rng.random() < 0.3:
