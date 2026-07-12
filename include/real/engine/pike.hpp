@@ -465,11 +465,15 @@ namespace real::detail {
       // D1-perf fiche's route-profile: those routes decline every possessive opcode outright today).
       // The route-name split (bare vs delimited, profiling only) is pushed into the runners
       // themselves so this dispatch site stays exactly as small as the existing two above it.
-      if (sem_ == match_semantics::first && prog_.hints.possessive_class_loop >= 0
+      if (sem_ == match_semantics::first && prog_.hints.possessive_class.kind == class_kind::byte
+          && (std::is_constant_evaluated() || !possessive_fastpath_disabled())) {
+        return run_possessive_byte_loop(text, start, mode, out_slots);
+      }
+      if (sem_ == match_semantics::first && prog_.hints.possessive_class.kind == class_kind::klass
           && (std::is_constant_evaluated() || !possessive_fastpath_disabled())) {
         return run_possessive_class_loop(text, start, mode, out_slots);
       }
-      if (sem_ == match_semantics::first && prog_.hints.possessive_cp_class >= 0
+      if (sem_ == match_semantics::first && prog_.hints.possessive_class.kind == class_kind::klass_cp
           && (std::is_constant_evaluated() || !possessive_fastpath_disabled())) {
         return run_possessive_cp_class_loop(text, start, mode, out_slots);
       }
@@ -1748,6 +1752,33 @@ namespace real::detail {
       return fail();
     }
 
+    //! \brief R2 (phase Raffinement): possessive literal-byte +/++ loop (`byte_loop_possessive`,
+    //!        e.g. `a++`) -- the asymmetry class_ref's typing made natural to close: this opcode was
+    //!        already emitted and executed by the general VM, but had no dedicated recognizer or
+    //!        runner, so `a++` fell back to the general VM despite the class/cp-class family
+    //!        already having one. See \ref run_possessive_loop_generic for the shared algorithm.
+    template <typename OutSlots>
+    constexpr bool run_possessive_byte_loop(std::string_view  text,
+                                            std::size_t       start,
+                                            run_mode          mode,
+                                            OutSlots&         out_slots)
+    {
+      prof::tick_route(prog_.hints.possessive_prefix_size > 0 ? prof::route::possessive_delimited
+                                                               : prof::route::possessive_byte_loop);
+      const std::uint8_t target {static_cast<std::uint8_t>(prog_.hints.possessive_class.index)};
+      const auto         in_class = [&](std::size_t i) {
+                                      return static_cast<std::uint8_t>(text[i]) == target;
+                                    };
+      const auto scan_end = [&](std::size_t from) -> std::size_t {
+                              std::size_t e {from};
+                              while (e < text.size() && in_class(e)) {
+                                ++e;
+                              }
+                              return e;
+                            };
+      return run_possessive_loop_generic(text, start, mode, out_slots, in_class, scan_end);
+    }
+
     //! \brief D1-perf Étage A: possessive class+/++ loop over a BYTE class (`klass_loop_possessive`).
     //!        See \ref run_possessive_loop_generic for the shared algorithm.
     template <typename OutSlots>
@@ -1759,7 +1790,7 @@ namespace real::detail {
       prof::tick_route(prog_.hints.possessive_prefix_size > 0 ? prof::route::possessive_delimited
                                                                : prof::route::possessive_class_loop);
       const std::uint8_t* const tbl {
-        class_table(static_cast<std::size_t>(prog_.hints.possessive_class_loop))};
+        class_table(static_cast<std::size_t>(prog_.hints.possessive_class.index))};
       const auto in_class = [&](std::size_t i) {
                               return tbl[static_cast<std::uint8_t>(text[i])] != 0U;
                             };
@@ -1785,7 +1816,7 @@ namespace real::detail {
     {
       prof::tick_route(prog_.hints.possessive_prefix_size > 0 ? prof::route::possessive_delimited
                                                                : prof::route::possessive_cp_class_loop);
-      const std::size_t         cp_index {static_cast<std::size_t>(prog_.hints.possessive_cp_class)};
+      const std::size_t         cp_index {static_cast<std::size_t>(prog_.hints.possessive_class.index)};
       const detail::cp_class&   cc       {prog_.cp_classes[cp_index]};
       const std::uint8_t* const asc      {cp_ascii_table(cp_index)};
       const auto                member_hi = [&](char32_t cp) -> bool {

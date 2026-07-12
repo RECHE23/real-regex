@@ -285,6 +285,42 @@ namespace real {
       std::int32_t  secondary_target {}; //!< Secondary branch target (split).
     };
 
+    //! \brief Which operand space a `class_ref` indexes: `byte_loop_possessive`'s own literal
+    //!        byte value (not a table at all), `classes[]` (`klass_loop_possessive`), or
+    //!        `cp_classes[]` (`klass_cp_loop_possessive`). `none` = unarmed.
+    enum class class_kind : std::uint8_t
+    {
+      none,
+      byte,
+      klass,
+      klass_cp,
+    };
+
+    /*!
+     * \brief A typed reference into one of the three possessive-loop-body opcodes' own operand
+     *        spaces.
+     *
+     * R2 (phase Raffinement): replaces the untyped `{classes-index, cp_classes-index, is_cp bool}`
+     * triple that was Bug D/E's own locus -- prefilter.hpp's same_atom check compared a
+     * classes-table index against a cp_classes-table index with nothing but a hand-written side
+     * check to know they were different tables; a coincidental numeric collision (both table-index
+     * 0) let `[abc].*+` match unconditionally. A `class_ref`'s `operator==` always compares
+     * `kind` first, so a byte/klass/klass_cp mismatch cannot silently compare equal.
+     */
+    struct class_ref
+    {
+      class_kind    kind  {class_kind::none};
+      std::uint16_t index {}; //!< classes[]/cp_classes[] index (kind == klass/klass_cp), or the literal byte value 0-255 (kind == byte).
+
+      [[nodiscard]] constexpr bool armed() const noexcept
+      {
+        return kind != class_kind::none;
+      }
+
+      friend constexpr bool operator==(const class_ref&,
+                                       const class_ref&) noexcept = default;
+    };
+
     /*!
      * \brief Search-acceleration hints extracted from a compiled program.
      *
@@ -390,15 +426,14 @@ namespace real {
       //!        invariant that makes the delimited/"quoted" runner's skip-to-body-end retry provably linear
       //!        rather than quadratic on adversarial input (`id=[a-z0-9]*+;` fails this and stays general --
       //!        alphanumeric prefix bytes are members of the loop's own class).
-      std::array<char, 8>  possessive_prefix       {};   //!< Required literal BEFORE the loop (0 len = none; the delimited/"quoted" shape).
-      std::uint8_t         possessive_prefix_size  {};
-      std::array<char, 8>  possessive_suffix       {};   //!< Required literal AFTER the loop (0 len = none; e.g. the 'x' in `\d++x`).
-      std::uint8_t         possessive_suffix_size  {};
-      std::int32_t         possessive_class_loop   {-1}; //!< Byte-class index for the loop body (`klass_loop_possessive`), else -1.
-      std::int32_t         possessive_cp_class     {-1}; //!< cp_class index for the loop body (`klass_cp_loop_possessive`), else -1.
-      std::int16_t         possessive_group_start  {-1}; //!< Enveloping single capture group's start slot (mirrors \ref greedy_group_start), -1 = none.
-      std::int16_t         possessive_group_end    {-1}; //!< The enveloping group's end slot.
-      bool                 possessive_min_nonzero  {};   //!< True for `X++`/`X{1,}+` (one mandatory copy present) — a search candidate MUST be in-class; false for `X*+` (min 0), where a zero-length body is also a valid candidate anywhere.
+      std::array<char, 8>   possessive_prefix       {};   //!< Required literal BEFORE the loop (0 len = none; the delimited/"quoted" shape).
+      std::uint8_t          possessive_prefix_size  {};
+      std::array<char, 8>   possessive_suffix       {};   //!< Required literal AFTER the loop (0 len = none; e.g. the 'x' in `\d++x`).
+      std::uint8_t          possessive_suffix_size  {};
+      class_ref             possessive_class        {};   //!< The loop body's class, typed by opcode.
+      std::int16_t          possessive_group_start  {-1}; //!< Enveloping single capture group's start slot (mirrors \ref greedy_group_start), -1 = none.
+      std::int16_t          possessive_group_end    {-1}; //!< The enveloping group's end slot.
+      bool                  possessive_min_nonzero  {};   //!< True for `X++`/`X{1,}+` (one mandatory copy present) — a search candidate MUST be in-class; false for `X*+` (min 0), where a zero-length body is also a valid candidate anywhere.
 
       //! \brief Optional leading/trailing word-boundary wrap on fixed_shape / fixed_alternation /
       //!        exact_literal (Arc II B1). 0 = none; 1 = `\b` (\ref assert_kind::word_boundary);

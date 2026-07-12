@@ -66,7 +66,7 @@ TEST(route_pin_bare_class_possessive)
 {
   const real::regex re   {"[a-z]++"};
   const auto        prog {re.raw_program()};
-  EXPECT(prog.hints.possessive_class_loop >= 0);
+  EXPECT(prog.hints.possessive_class.kind == real::detail::class_kind::klass);
   EXPECT(prog.hints.possessive_min_nonzero);
   EXPECT_EQ(static_cast<int>(prog.hints.possessive_prefix_size), 0);
 }
@@ -76,11 +76,11 @@ TEST(route_pin_star_possessive_needs_nonempty_consumption)
   // Bare `[a-z]*+` alone (no suffix) is nullable -- must NOT arm (mirrors bare `[a-z]*` never
   // arming greedy_class_loop either; see the guard's own doc comment in prefilter.hpp).
   const real::regex bare  {"[a-z]*+"};
-  EXPECT_EQ(static_cast<int>(bare.raw_program().hints.possessive_class_loop), -1);
+  EXPECT(!bare.raw_program().hints.possessive_class.armed());
   // The same loop with a required suffix always consumes >= 1 byte -- arms.
   const real::regex  suffixed {"[a-z]*+x"};
   const auto         prog     {suffixed.raw_program()};
-  EXPECT(prog.hints.possessive_class_loop >= 0);
+  EXPECT(prog.hints.possessive_class.kind == real::detail::class_kind::klass);
   EXPECT(!prog.hints.possessive_min_nonzero);
   EXPECT_EQ(prog.hints.possessive_suffix_size, 1U);
 }
@@ -89,15 +89,14 @@ TEST(route_pin_unicode_word_class_possessive)
 {
   const real::regex re   {R"(\w++)"};
   const auto        prog {re.raw_program()};
-  EXPECT(prog.hints.possessive_cp_class >= 0);
-  EXPECT_EQ(static_cast<int>(prog.hints.possessive_class_loop), -1);
+  EXPECT(prog.hints.possessive_class.kind == real::detail::class_kind::klass_cp);
 }
 
 TEST(route_pin_quoted_delimited_possessive)
 {
   const real::regex re   {R"("[^"]*+")"};
   const auto        prog {re.raw_program()};
-  EXPECT(prog.hints.possessive_cp_class >= 0); // [^"] is a negated class -> klass_cp (wagon-4)
+  EXPECT(prog.hints.possessive_class.kind == real::detail::class_kind::klass_cp); // [^"] is a negated class -> klass_cp (wagon-4)
   EXPECT_EQ(prog.hints.possessive_prefix_size, 1U);
   EXPECT_EQ(prog.hints.possessive_suffix_size, 1U);
 }
@@ -112,11 +111,11 @@ TEST(route_pin_captured_class_possessive)
   // expected `([a-z]++)` to arm and it does not).
   const real::regex re   {"([a-z])*+b"};
   const auto        prog {re.raw_program()};
-  EXPECT(prog.hints.possessive_class_loop >= 0);
+  EXPECT(prog.hints.possessive_class.kind == real::detail::class_kind::klass);
   EXPECT(prog.hints.possessive_group_start >= 0);
   EXPECT_EQ(prog.hints.possessive_group_end, static_cast<std::int16_t>(prog.hints.possessive_group_start + 1));
   const real::regex ordinary_group {"([a-z]++)"};
-  EXPECT_EQ(static_cast<int>(ordinary_group.raw_program().hints.possessive_class_loop), -1);
+  EXPECT(!ordinary_group.raw_program().hints.possessive_class.armed());
 }
 
 TEST(route_pin_kv_prefix_overlaps_body_class_stays_general)
@@ -127,18 +126,19 @@ TEST(route_pin_kv_prefix_overlaps_body_class_stays_general)
   // pattern_hints's own doc comment for the full argument.
   const real::regex re   {"id=[a-z0-9]*+;"};
   const auto        prog {re.raw_program()};
-  EXPECT_EQ(static_cast<int>(prog.hints.possessive_class_loop), -1);
-  EXPECT_EQ(static_cast<int>(prog.hints.possessive_cp_class), -1);
+  EXPECT(!prog.hints.possessive_class.armed());
 }
 
 TEST(route_pin_byte_atom_possessive_stays_general)
 {
-  // A single literal-byte body (`a*+`, `(a)*+b`) is out of this train's scope -- greedy has no
-  // dedicated whole-pattern byte-loop fast path either (`a+` alone stays general/lazy-DFA too).
+  // A single literal-byte body wrapped in a CAPTURING group (`(a)*+b`) is out of this train's
+  // scope: R2's class_ref{kind=byte} recognizer only matches the BARE/suffixed byte shape (no
+  // enveloping group), mirroring the klass/cp_class recognizer's own capture story (embedded
+  // capture requires reading it off the loop opcode's own primary_target field directly, which
+  // this recognizer's byte branch does not attempt for this train). `(a)*+b` still declines.
   const real::regex re   {"(a)*+b"};
   const auto        prog {re.raw_program()};
-  EXPECT_EQ(static_cast<int>(prog.hints.possessive_class_loop), -1);
-  EXPECT_EQ(static_cast<int>(prog.hints.possessive_cp_class), -1);
+  EXPECT(!prog.hints.possessive_class.armed());
 }
 
 TEST(route_pin_bounded_count_possessive_stays_general)
@@ -147,10 +147,10 @@ TEST(route_pin_bounded_count_possessive_stays_general)
   // body end" invariant -- out of scope for the whole train (see pattern_hints's doc comment).
   const real::regex re2   {"[a-z]{2,4}+"};
   const auto        prog2 {re2.raw_program()};
-  EXPECT_EQ(static_cast<int>(prog2.hints.possessive_class_loop), -1);
+  EXPECT(!prog2.hints.possessive_class.armed());
   const real::regex re1   {"[a-z]{1,4}+"};     // min=1 fits the "one mandatory copy" shape by itself,
   const auto        prog1 {re1.raw_program()}; // but the bounded TAIL has no self-loop jump -- must still decline.
-  EXPECT_EQ(static_cast<int>(prog1.hints.possessive_class_loop), -1);
+  EXPECT(!prog1.hints.possessive_class.armed());
 }
 
 TEST(route_pin_non_wb_trailing_assert_stays_general)
@@ -159,7 +159,7 @@ TEST(route_pin_non_wb_trailing_assert_stays_general)
   // peel_optional_trail_wb's "any other assert disqualifies" branch exists for.
   const real::regex re   {"[a-z]++$"};
   const auto        prog {re.raw_program()};
-  EXPECT_EQ(static_cast<int>(prog.hints.possessive_class_loop), -1);
+  EXPECT(!prog.hints.possessive_class.armed());
 }
 
 TEST(route_pin_unicode_word_class_possessive_with_wb)
@@ -168,7 +168,7 @@ TEST(route_pin_unicode_word_class_possessive_with_wb)
   // above only exercises it for the byte-class arm via \b[a-z]++\b).
   const real::regex re   {R"(\b\w++\b)"};
   const auto        prog {re.raw_program()};
-  EXPECT(prog.hints.possessive_cp_class >= 0);
+  EXPECT(prog.hints.possessive_class.kind == real::detail::class_kind::klass_cp);
 }
 
 TEST(route_pin_mandatory_and_loop_table_mismatch_stays_general)
@@ -179,11 +179,54 @@ TEST(route_pin_mandatory_and_loop_table_mismatch_stays_general)
   // copy check used to compare raw arg16 without verifying the table matched, so this accidental
   // collision let `[abc].*+` silently match ANY input regardless of whether [abc] matched at all
   // -- found live by the 5x100k differential fuzz closure battle (`[abc].*+` matched "x" as (0,1)
-  // when the correct answer, confirmed against Python 3.14.6, is no match at all).
+  // when the correct answer, confirmed against Python 3.14.6, is no match at all). R2's class_ref
+  // makes this comparison a type mismatch rather than a coincidental index collision.
   const real::regex re   {"[abc].*+"};
   const auto        prog {re.raw_program()};
-  EXPECT_EQ(static_cast<int>(prog.hints.possessive_class_loop), -1);
-  EXPECT_EQ(static_cast<int>(prog.hints.possessive_cp_class), -1);
+  EXPECT(!prog.hints.possessive_class.armed());
+}
+
+TEST(route_pin_byte_possessive_bare_and_suffixed)
+{
+  // R2 (phase Raffinement): the class_ref{kind=byte} recognizer for byte_loop_possessive, closing
+  // the asymmetry `a++`/`a*+x` had with the class/cp_class family (emitted and executed by the
+  // general VM, but with no dedicated recognizer/runner until now).
+  const real::regex re   {"a++"};
+  const auto        prog {re.raw_program()};
+  EXPECT(prog.hints.possessive_class.kind == real::detail::class_kind::byte);
+  EXPECT_EQ(static_cast<int>(prog.hints.possessive_class.index), static_cast<int>('a'));
+  EXPECT(prog.hints.possessive_min_nonzero);
+  const real::regex star_suffixed {"x*+y"};
+  const auto        prog2         {star_suffixed.raw_program()};
+  EXPECT(prog2.hints.possessive_class.kind == real::detail::class_kind::byte);
+  EXPECT(!prog2.hints.possessive_min_nonzero);
+  EXPECT_EQ(prog2.hints.possessive_suffix_size, 1U);
+}
+
+TEST(route_pin_byte_possessive_captured_stays_general)
+{
+  // A captured byte-possessive loop (`(a)*+b`) never arms, regardless of has_mandatory: the
+  // shared driver's write_success captures the group as the WHOLE match span, not the loop's own
+  // last-iteration span (found live testing this exact recognizer -- see the capture_ok guard's
+  // own doc comment in prefilter.hpp). The general VM gets `(a)*+b` right (group(1) is the LAST
+  // "a", not the whole "aaa") precisely because it was NEVER routed through this fast path before
+  // R2; arming it here would have silently regressed that correctness.
+  const real::regex re {"(a)*+b"};
+  EXPECT(!re.raw_program().hints.possessive_class.armed());
+  const auto m = re.search("aaab");
+  EXPECT(m.matched());
+  if (m.matched()) {
+    EXPECT_EQ(m.start(1), 2U);
+    EXPECT_EQ(m.end(1), 3U);
+  }
+}
+
+TEST(route_pin_byte_possessive_wb_wrapped_stays_general)
+{
+  // R2's byte recognizer declines the wb-wrapped shape outright (documented, not silently
+  // dropped): a literal byte has no "word class" to resolve B-1 eligibility against.
+  const real::regex re {R"(\ba++\b)"};
+  EXPECT(!re.raw_program().hints.possessive_class.armed());
 }
 
 TEST(mandatory_and_loop_table_mismatch_oracle_pinned)

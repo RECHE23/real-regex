@@ -1171,42 +1171,61 @@ namespace real::detail {
         const std::size_t mandatory_start {p};
         std::size_t       loop_pc         {mandatory_start};
         bool              has_mandatory   {false};
-        bool              mandatory_is_cp {false};
-        if (loop_pc < code.size() && code[loop_pc].op == opcode::klass) {
-          loop_pc         = mandatory_start + 1;
-          has_mandatory   = true;
-          mandatory_is_cp = false;
+        class_ref         mandatory_ref   {};
+        if (loop_pc < code.size() && code[loop_pc].op == opcode::byte) {
+          loop_pc       = mandatory_start + 1;
+          has_mandatory = true;
+          mandatory_ref = {.kind = class_kind::byte, .index = code[mandatory_start].arg8};
+        }
+        else if (loop_pc < code.size() && code[loop_pc].op == opcode::klass) {
+          loop_pc       = mandatory_start + 1;
+          has_mandatory = true;
+          mandatory_ref = {.kind = class_kind::klass, .index = code[mandatory_start].arg16};
         }
         else if (loop_pc + 3 < code.size() && code[loop_pc].op == opcode::klass_cp &&
                  code[loop_pc + 1].op == opcode::klass && code[loop_pc + 2].op == opcode::klass &&
                  code[loop_pc + 3].op == opcode::klass) {
-          loop_pc         = mandatory_start + 4;
-          has_mandatory   = true;
-          mandatory_is_cp = true;
+          loop_pc       = mandatory_start + 4;
+          has_mandatory = true;
+          mandatory_ref = {.kind = class_kind::klass_cp, .index = code[mandatory_start].arg16};
         }
-        if (loop_pc < code.size() && (code[loop_pc].op == opcode::klass_loop_possessive ||
+        if (loop_pc < code.size() && (code[loop_pc].op == opcode::byte_loop_possessive ||
+                                      code[loop_pc].op == opcode::klass_loop_possessive ||
                                       code[loop_pc].op == opcode::klass_cp_loop_possessive)) {
-          const bool         is_cp    {code[loop_pc].op == opcode::klass_cp_loop_possessive};
-          const std::int32_t body_idx {code[loop_pc].arg16};
-          const std::int32_t cap_slot {code[loop_pc].primary_target};
-          const std::int16_t gs       {cap_slot >= 0 ? static_cast<std::int16_t>(cap_slot) : std::int16_t {-1}};
+          class_kind loop_kind {class_kind::klass_cp};
+          if (code[loop_pc].op == opcode::byte_loop_possessive) {
+            loop_kind = class_kind::byte;
+          }
+          else if (code[loop_pc].op == opcode::klass_loop_possessive) {
+            loop_kind = class_kind::klass;
+          }
+          const std::int32_t body_idx  {loop_kind == class_kind::byte ? code[loop_pc].arg8
+                                                                      : code[loop_pc].arg16};
+          const class_ref    loop_ref  {.kind = loop_kind, .index = static_cast<std::uint16_t>(body_idx)};
+          const std::int32_t cap_slot  {code[loop_pc].primary_target};
+          const std::int16_t gs        {cap_slot >= 0 ? static_cast<std::int16_t>(cap_slot) : std::int16_t {-1}};
           // A captured shape must have no mandatory copy (min == 0): a captured min>=1 has its OWN,
           // structurally different shape (a save/save-wrapped mandatory copy, unrolled per repetition)
-          // this block does not attempt to recognize this train -- see the doc comment above.
-          const bool capture_ok         {cap_slot < 0 || !has_mandatory};
-          // Never assume: the mandatory copy (if any) must be literally the same atom the loop tests.
-          // `arg16` alone is NOT enough -- klass and klass_cp index two DIFFERENT tables (classes vs
-          // cp_classes), so a byte-class mandatory copy and a cp-class loop (or vice versa) can share
-          // the same numeric arg16 by pure coincidence (e.g. both table-index 0) despite testing
-          // completely unrelated sets. Found live by differential fuzzing: `[abc].*+` (mandatory
-          // `klass` for [abc], loop `klass_cp_loop_possessive` for the dotall '.') matched EVERY
-          // input regardless of the leading class, because [abc]'s classes-table index 0 collided
-          // with '.'s cp_classes-table index 0.
-          const bool        same_atom   {!has_mandatory ||
-                                         (mandatory_is_cp == is_cp && code[mandatory_start].arg16 == body_idx)};
-          const std::size_t exit_pc     {static_cast<std::size_t>(code[loop_pc].secondary_target)};
-          const std::size_t block_width {is_cp ? std::size_t {4} : std::size_t {1}};
-          const std::size_t after_loop  {loop_pc + block_width};
+          // this block does not attempt to recognize this train -- see the doc comment above. R2:
+          // kind=byte additionally never arms captured (cap_slot >= 0) at all, regardless of
+          // has_mandatory -- found live while testing this train's own new recognizer: the shared
+          // driver's write_success captures the group as the WHOLE match span, not the possessive
+          // loop's own last-iteration span (`(a)*+b` on "aaab" must capture "a" at [2,3), the LAST
+          // successful repetition -- re's own semantics, and this engine's general-VM path already
+          // gets it right). That is a pre-existing defect in the ALREADY-SHIPPED klass/klass_cp
+          // fast path too (confirmed live: `([a-z])*+;` on "aaa;" captures [0,4) on the fast path,
+          // [2,3) on the general VM) -- out of THIS train's scope to fix (Interdits: no touching the
+          // existing runners beyond the new wrapper), reported instead of silently worked around.
+          const bool capture_ok {cap_slot < 0 || (!has_mandatory && loop_kind != class_kind::byte)};
+          // Never assume: the mandatory copy (if any) must be literally the same atom the loop tests
+          // -- class_ref's own operator== compares \ref class_kind first, so a byte/klass/klass_cp
+          // mismatch (the exact shape of Bug D/E: `[abc].*+`'s mandatory `klass` colliding with the
+          // loop's `klass_cp` on a shared numeric index) cannot silently compare equal.
+          const bool         same_atom   {!has_mandatory || mandatory_ref == loop_ref};
+          const std::size_t  exit_pc     {static_cast<std::size_t>(code[loop_pc].secondary_target)};
+          const std::size_t  block_width {loop_kind == class_kind::klass_cp ? std::size_t {4}
+                                                                             : std::size_t {1}};
+          const std::size_t after_loop   {loop_pc + block_width};
           if (capture_ok && same_atom && after_loop < code.size() &&
               code[after_loop].op == opcode::jump &&
               code[after_loop].primary_target == static_cast<std::int32_t>(loop_pc) &&
@@ -1229,22 +1248,28 @@ namespace real::detail {
             // consume"), since this driver has no forbid_empty_until/iterator-advance contract. Mirrors
             // greedy's own class+ recognizer, which for the identical reason never arms on bare `[a-z]*`
             // (confirmed empirically: `[a-z]*` alone stays on general_full, only `[a-z]+` arms).
+            const bool table_bound_ok {loop_kind == class_kind::byte ||
+                                       (loop_kind == class_kind::klass_cp
+                                          ? static_cast<std::size_t>(body_idx) < cp_classes.size()
+                                          : static_cast<std::size_t>(body_idx) < classes.size())};
             if (q + 1 < code.size() && q + 2 == code.size() && code[q].op == opcode::save &&
                 code[q].arg16 == 1 && code[q + 1].op == opcode::match && body_idx >= 0 &&
-                (has_mandatory || suffix_len >= 1) &&
-                (is_cp ? static_cast<std::size_t>(body_idx) < cp_classes.size()
-                       : static_cast<std::size_t>(body_idx) < classes.size())) {
+                (has_mandatory || suffix_len >= 1) && table_bound_ok) {
               const bool   has_wb    {wb_lead != 0 || wb_trail != 0};
+              // R2: a literal byte has no "word class" to resolve B-1 eligibility against yet --
+              // the wb-wrapped byte-possessive shape (`\ba++\b`) stays on the general VM, documented
+              // rather than silently dropped; the bare/suffixed shape (`a++`, `a++x`) still arms
+              // (arm starts true whenever there is no wb at all, regardless of kind).
               bool         arm       {!has_wb};
               std::uint8_t out_lead  {0};
               std::uint8_t out_trail {0};
-              if (has_wb) {
+              if (has_wb && loop_kind != class_kind::byte) {
                 // Unbounded possessive: always a maximal run wherever it starts (no upper bound to cut
                 // it short at different lengths for different starts), so B-1's redundancy argument --
                 // "a maximal run can only legitimately start where the byte before it is non-word" --
                 // holds unconditionally here, unlike a BOUNDED possessive count (see pattern_hints's own
                 // doc comment on why those stay out of this fast path's scope entirely).
-                if (is_cp) {
+                if (loop_kind == class_kind::klass_cp) {
                   const cp_class& cc {cp_classes[static_cast<std::size_t>(body_idx)]};
                   arm = resolve_class_wb_hints(is_full_unicode_word_cp_class(cc, cp_ranges),
                                                is_unicode_word_subset_cp_class(cc, cp_ranges),
@@ -1259,12 +1284,7 @@ namespace real::detail {
                 }
               }
               if (arm) {
-                if (is_cp) {
-                  hints.possessive_cp_class = body_idx;
-                }
-                else {
-                  hints.possessive_class_loop = body_idx;
-                }
+                hints.possessive_class        = loop_ref;
                 hints.possessive_group_start  = gs;
                 hints.possessive_group_end    = gs < 0 ? std::int16_t {-1}
                                                         : static_cast<std::int16_t>(gs + 1);
@@ -1292,7 +1312,7 @@ namespace real::detail {
     // input -- see pattern_hints's own doc comment. Mutually exclusive with the shape above by construction
     // (that one never starts with a literal `byte`; this one always does) and only tried when it did not
     // already claim the pattern.
-    if (hints.possessive_class_loop < 0 && hints.possessive_cp_class < 0 && code.size() >= 6 &&
+    if (!hints.possessive_class.armed() && code.size() >= 6 &&
         code[0].op == opcode::save && code[0].arg16 == 0 && code[1].op == opcode::byte) {
       std::size_t           p          {1};
       std::array<char, 8>   prefix     {};
@@ -1336,17 +1356,13 @@ namespace real::detail {
                                   };
             if (excludes(static_cast<std::uint8_t>(prefix[0])) &&
                 excludes(static_cast<std::uint8_t>(suffix[0]))) {
-              hints.possessive_prefix      = prefix;
-              hints.possessive_prefix_size = prefix_len;
-              hints.possessive_suffix      = suffix;
-              hints.possessive_suffix_size = suffix_len;
-              hints.possessive_min_nonzero = false; // the loop itself is min=0 in this shape; the PREFIX is the mandatory part
-              if (is_cp) {
-                hints.possessive_cp_class = body_idx;
-              }
-              else {
-                hints.possessive_class_loop = body_idx;
-              }
+              hints.possessive_prefix         = prefix;
+              hints.possessive_prefix_size    = prefix_len;
+              hints.possessive_suffix         = suffix;
+              hints.possessive_suffix_size    = suffix_len;
+              hints.possessive_min_nonzero    = false; // the loop itself is min=0 in this shape; the PREFIX is the mandatory part
+              const class_kind delimited_kind {is_cp ? class_kind::klass_cp : class_kind::klass};
+              hints.possessive_class          = {.kind = delimited_kind, .index = static_cast<std::uint16_t>(body_idx)};
             }
           }
         }
