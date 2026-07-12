@@ -55,6 +55,29 @@ two conventions differ; **both engines are correct for their contract** (REAL fo
 UTS#18 folding). The Rust binding's differential masks exactly this set (its `ICASE_FOLD_DELTAS`, computed by
 asking both engines), the twin of the `\\w`/`\\s` mask above.
 
+\section div_cpython_scoped_ascii_bug A known CPython 3.14 oracle bug (not a REAL divergence)
+
+A scoped ascii group — `(?a:...)`, with `a` among the *added* letters — behaves inconsistently in
+CPython 3.14 specifically when it is the **pattern's own first construct**, with *nothing*
+preceding it at all (not even a zero-width assertion or a single literal byte): a negated
+shorthand `\\S`/`\\D`/`\\W` inside it wrongly fails to match `U+001C`–`U+001F`, the same four
+separators \ref div_icase above documents as included in text-mode `\\s` and excluded from
+ascii-mode `\\s`. Concretely, on `'\\x1c'`: `re.search(r"(?a:\\s)", ...)` correctly returns no match
+(not ascii whitespace) — but `re.search(r"(?a:\\S)", ...)` **also** returns no match, an outright
+partition violation (`\\x1c` matches neither `\\s` nor its own negation `\\S`). Prepending literally
+anything before the group — `\\B`, `^`, a lookahead, or a single literal byte — "fixes" it on `re`'s
+side; a runtime `search(text, pos, endpos)` offset does **not** (confirmed a compile-time artifact
+of `re`'s own opcode order, not a runtime one — `pos > 0` still fails). REAL has no such
+inconsistency: `(?a:\\S)` and `\\B(?a:\\S)` agree, and every one of these four codepoints partitions
+correctly between `\\s`/`\\S` regardless of what, if anything, precedes the scoped group.
+
+This is filtered out of the differential fuzzer rather than "fixed" on REAL's side — there is
+nothing on REAL's side to fix, `re` is the one behaving inconsistently — and pinned directly
+against `re`'s own (buggy) behaviour in `TestIntentionalDivergences.
+test_scoped_ascii_negated_shorthand_leading_bug` (bindings/python/tests/test_real.py), so a future
+CPython release that fixes its own bug is caught (the pin asserts `re`'s buggy value too, not just
+REAL's correct one) rather than silently masked forever.
+
 \section div_hex \\xHH (HH ≥ 0x80) is byte-level
 
 \\xHH matches the raw byte `0xHH`, not the codepoint `chr(HH)`. On a str pattern `re`

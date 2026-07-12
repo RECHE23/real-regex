@@ -493,6 +493,31 @@ _REAL_FLAG_SETS = [0, real.I, real.M, real.S, real.M | real.S]
 _BASE_RE = {0: 0, real.I: re.IGNORECASE, real.M: re.MULTILINE, real.S: re.DOTALL,
             real.M | real.S: re.MULTILINE | re.DOTALL}
 
+# Known CPython 3.14 oracle bug, NOT a REAL bug -- filtered out of the differential rather than
+# fixed on REAL's side (REAL is already consistently correct on both sides of it; see
+# docs/divergences.dox and TestIntentionalDivergences.test_scoped_ascii_negated_shorthand_leading_bug
+# for the pinned real-only assertion). When a scoped ascii group (?a:...) / (?a...-...:...) -- 'a'
+# in the ADDED letters -- is the pattern's own FIRST construct, with LITERALLY NOTHING preceding it
+# (not even a zero-width assertion or a single literal byte), a negated shorthand \S/\D/\W inside it
+# fails to match U+001C-U+001F (the 4 separators whose ascii-vs-Unicode \s classification differs --
+# the same 4 codepoints Bug B fixed). Prepending anything at all -- \B, ^, a lookahead, a literal --
+# "fixes" it, and re.search(text, pos, endpos) does NOT (verified live: pos=1 does not fix it, so
+# this is a compile-time artifact of the pattern's own opcode order, not a runtime one). Scoped
+# rather than checked structurally (parsing nesting depth is not worth it for a fuzzer filter):
+# conservatively broad (any \S/\D/\W anywhere in the pattern, not just the exact leading atom) so it
+# never lets a REAL false positive slip through as "known CPython bug" -- it can only skip a few
+# comparisons that would have agreed anyway, never mask a real divergence.
+_LEADING_ASCII_SCOPE = re.compile(r"^\(\?([a-zA-Z]+)(?:-[a-zA-Z]+)?:")
+_NEGATED_SHORTHAND = re.compile(r"\\[SDW]")
+_ASCII_SEPARATORS = frozenset(range(0x1C, 0x20))
+
+
+def _hits_cpython_leading_scoped_ascii_bug(pattern, text):
+    m = _LEADING_ASCII_SCOPE.match(pattern)
+    if not m or "a" not in m.group(1) or not _NEGATED_SHORTHAND.search(pattern):
+        return False
+    return any(ord(c) in _ASCII_SEPARATORS for c in text)
+
 
 class TestDifferentialFuzz(unittest.TestCase):
     """Differential fuzz test comparing real against Python re."""
@@ -530,6 +555,8 @@ class TestDifferentialFuzz(unittest.TestCase):
                 text = random_text(rng)
                 if not text:
                     continue  # empty text + zero-width anchors/\b/\B/ lazy empty matches are notoriously variable across engines and Python versions for some patterns; skip to keep differential strict on comparable cases
+                if _hits_cpython_leading_scoped_ascii_bug(pattern, text):
+                    continue  # known CPython 3.14 oracle bug, not a REAL bug -- see the filter's own doc comment
                 ctx = f"pattern={pattern!r} text={text!r} flags={real_flags}"
                 pos = rng.randint(0, len(text))
                 endpos = rng.randint(pos, len(text) + 2)  # may exceed len -> clamped, like re
@@ -585,7 +612,8 @@ class TestDifferentialFuzz(unittest.TestCase):
         checked = 0
         for _ in range(ITERS // 2):
             gen = PatternGen(rng)
-            verbose = verbosify(gen.pattern(), rng)
+            compact = gen.pattern()
+            verbose = verbosify(compact, rng)
             re_flags = re.VERBOSE  # full Unicode oracle (every shorthand/boundary is Unicode in str mode)
             try:
                 rp = re.compile(verbose, re_flags)
@@ -599,6 +627,13 @@ class TestDifferentialFuzz(unittest.TestCase):
             for _ in range(3):
                 text = random_text(rng)
                 if not text:
+                    continue
+                # verbosify() never inserts whitespace inside an escape/group-opener token but CAN
+                # insert it before the pattern's first real construct; VERBOSE strips it before
+                # compiling, so the EFFECTIVE leading construct is still the pre-verbosify string's
+                # -- check `compact` (not `verbose`) for the same known CPython bug (see the
+                # filter's own doc comment above).
+                if _hits_cpython_leading_scoped_ascii_bug(compact, text):
                     continue
                 ctx = f"verbose pattern={verbose!r} text={text!r}"
                 try:

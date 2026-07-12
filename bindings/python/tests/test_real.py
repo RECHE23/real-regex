@@ -436,6 +436,37 @@ class TestIntentionalDivergences(unittest.TestCase):
         self.assertIsNotNone(real.compile("k", real.A | real.I).fullmatch("k"))  # ASCII fold still works
         self.assertEqual(real.findall(r"\d", "٣5", real.U), ["٣", "5"])
 
+    def test_scoped_ascii_negated_shorthand_leading_bug(self):
+        r"""Not a REAL divergence from re's CONTRACT -- a known CPython 3.14 oracle BUG, filtered
+        out of the differential fuzzer (test_differential_fuzz.py's
+        _hits_cpython_leading_scoped_ascii_bug) rather than compared against, and pinned here
+        instead. When a scoped ascii group -- (?a:...), 'a' among the ADDED letters -- is the
+        PATTERN'S OWN FIRST CONSTRUCT with nothing preceding it at all, CPython's negated
+        shorthand \S/\D/\W inside it wrongly fails to match U+001C-U+001F (the 4 separators whose
+        ascii-vs-Unicode \s classification differs -- see Bug B / div_ascii in divergences.dox):
+        `re.search(r"(?a:\S)", "\x1c")` is None even though \x1c is NOT ascii whitespace, so \S
+        should match it -- re's own (?a:\s) on the same input agrees it is not whitespace ([]) yet
+        (?a:\S) ALSO returns [] on the SAME codepoint, an outright partition violation ('\x1c'
+        matches neither \s nor \S). Prepending literally anything -- \B, ^, a lookahead, or a
+        single literal byte -- "fixes" it on re's side; re.search(text, pos, endpos) does NOT (a
+        compile-time artifact of re's own opcode order, not a runtime one). REAL has no such
+        inconsistency: bare and \B-prefixed agree, and \s/\S partition every one of these
+        codepoints correctly, with or without a leading construct.
+        """
+        for sep in "\x1c\x1d\x1e\x1f":
+            with self.subTest(sep=hex(ord(sep))):
+                # re's own bug, pinned as ground truth so a re upgrade that fixes it is caught
+                # (this subTest would then fail loudly, telling us to drop the filter/pin).
+                self.assertIsNone(re.search(r"(?a:\S)", sep))
+                self.assertIsNotNone(re.search(r"\B(?a:\S)", sep))
+                # REAL: consistent, correct, and unaffected by a leading \B either way.
+                self.assertIsNotNone(real.search(r"(?a:\S)", sep))
+                self.assertIsNotNone(real.search(r"\B(?a:\S)", sep))
+                self.assertIsNone(real.search(r"(?a:\s)", sep))
+        # Control: an ordinary ascii whitespace byte is unaffected (not part of the bug's scope).
+        self.assertIsNone(re.search(r"(?a:\S)", " "))
+        self.assertIsNone(real.search(r"(?a:\S)", " "))
+
     def test_hex_escape_is_byte_level(self):
         # \xHH for HH >= 0x80 matches the raw byte, not chr(HH): re str \xe9 matches U+00E9 (é),
         # REAL \xe9 matches the single byte 0xE9 (which a well-formed str's UTF-8 of é never is).
