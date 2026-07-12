@@ -1206,17 +1206,12 @@ namespace real::detail {
           const std::int16_t gs        {cap_slot >= 0 ? static_cast<std::int16_t>(cap_slot) : std::int16_t {-1}};
           // A captured shape must have no mandatory copy (min == 0): a captured min>=1 has its OWN,
           // structurally different shape (a save/save-wrapped mandatory copy, unrolled per repetition)
-          // this block does not attempt to recognize this train -- see the doc comment above. R2:
-          // kind=byte additionally never arms captured (cap_slot >= 0) at all, regardless of
-          // has_mandatory -- found live while testing this train's own new recognizer: the shared
-          // driver's write_success captures the group as the WHOLE match span, not the possessive
-          // loop's own last-iteration span (`(a)*+b` on "aaab" must capture "a" at [2,3), the LAST
-          // successful repetition -- re's own semantics, and this engine's general-VM path already
-          // gets it right). That is a pre-existing defect in the ALREADY-SHIPPED klass/klass_cp
-          // fast path too (confirmed live: `([a-z])*+;` on "aaa;" captures [0,4) on the fast path,
-          // [2,3) on the general VM) -- out of THIS train's scope to fix (Interdits: no touching the
-          // existing runners beyond the new wrapper), reported instead of silently worked around.
-          const bool capture_ok {cap_slot < 0 || (!has_mandatory && loop_kind != class_kind::byte)};
+          // this block does not attempt to recognize this train -- see the doc comment above.
+          // Possessive-capture-fix: write_success now captures the loop's own LAST iteration (a
+          // last_width policy per class_kind), not the whole match span -- the bug that originally
+          // made this recognizer decline kind=byte captured outright is fixed at the driver level, so
+          // byte captures exactly like klass/klass_cp now.
+          const bool capture_ok {cap_slot < 0 || !has_mandatory};
           // Never assume: the mandatory copy (if any) must be literally the same atom the loop tests
           // -- class_ref's own operator== compares \ref class_kind first, so a byte/klass/klass_cp
           // mismatch (the exact shape of Bug D/E: `[abc].*+`'s mandatory `klass` colliding with the

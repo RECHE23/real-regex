@@ -1599,18 +1599,25 @@ namespace real::detail {
      * guaranteed to fail identically (an unbounded possessive run has no shorter/longer variant to
      * offer), so skipping them loses no leftmost match.
      *
-     * \tparam InClass  `bool(std::size_t) -> true` if the body's class/cp-class accepts the byte/code
-     *                  point starting at that offset.
-     * \tparam ScanEnd  `std::size_t(std::size_t from) -> end` of the maximal body run starting at \p from
-     *                  (== \p from itself when \p from is not a valid start -- a zero-length run).
+     * \tparam InClass    `bool(std::size_t) -> true` if the body's class/cp-class accepts the
+     *                    byte/code point starting at that offset.
+     * \tparam ScanEnd    `std::size_t(std::size_t from) -> end` of the maximal body run starting at
+     *                    \p from (== \p from itself when \p from is not a valid start -- a
+     *                    zero-length run).
+     * \tparam LastWidth  `std::size_t(std::size_t end) -> width` (in bytes) of the LAST atom
+     *                    consumed by a non-empty run ending at \p end -- fixed at 1 for a byte or
+     *                    byte-class body, a backward UTF-8 decode for a code-point-class body (see
+     *                    \ref codepoint_retreat). Only ever called with \p end strictly greater than
+     *                    the run's own start, so there is always at least one atom to measure.
      */
-    template <typename OutSlots, typename InClass, typename ScanEnd>
-    constexpr bool run_possessive_loop_generic(std::string_view  text,
-                                               std::size_t       start,
-                                               run_mode          mode,
-                                               OutSlots&         out_slots,
-                                               const InClass&    in_class,
-                                               const ScanEnd&    scan_end)
+    template <typename OutSlots, typename InClass, typename ScanEnd, typename LastWidth>
+    constexpr bool run_possessive_loop_generic(std::string_view    text,
+                                               std::size_t         start,
+                                               run_mode            mode,
+                                               OutSlots&           out_slots,
+                                               const InClass&      in_class,
+                                               const ScanEnd&      scan_end,
+                                               const LastWidth&    last_width)
     {
       const auto&        h           {prog_.hints};
       const std::uint8_t prefix_size {h.possessive_prefix_size};
@@ -1629,13 +1636,23 @@ namespace real::detail {
                                        }
                                        return true;
                                      };
-      const auto write_success = [&](std::size_t s, std::size_t e) {
+      // R2 capture fix: the captured group is the possessive loop's own LAST iteration, not the
+      // whole match span -- re's own semantics, matching what the general VM already got right (it
+      // was never routed through this driver for a byte-literal body before R2 armed one, which is
+      // how this bug -- shipped since D1-perf's original klass/klass_cp fast path, 7.36 -- surfaced
+      // live). \p body_end is the loop's own end (before any suffix); defaults to npos for the
+      // delimited ("quoted") shape, which never captures at all (possessive_group_start stays -1
+      // there by construction, so the branch below never runs regardless of what body_end is).
+      // Zero iterations (body_end == s) leaves the group UNSET (npos, re's `None`), never [s, s).
+      const auto write_success = [&](std::size_t s, std::size_t e, std::size_t body_end = npos) {
                                    out_slots.assign(prog_.slot_count, npos);
                                    out_slots[0] = s;
                                    out_slots[1] = e;
-                                   if (h.possessive_group_start >= 0) {
-                                     out_slots[static_cast<std::size_t>(h.possessive_group_start)] = s;
-                                     out_slots[static_cast<std::size_t>(h.possessive_group_end)]   = e;
+                                   if (h.possessive_group_start >= 0 && body_end != npos && body_end > s) {
+                                     const std::size_t w {last_width(body_end)};
+                                     out_slots[static_cast<std::size_t>(h.possessive_group_start)] =
+                                       body_end - w;
+                                     out_slots[static_cast<std::size_t>(h.possessive_group_end)] = body_end;
                                    }
                                  };
       const auto fail = [&]() {
@@ -1722,7 +1739,7 @@ namespace real::detail {
         if (mode == run_mode::full && end != text.size()) {
           return fail();
         }
-        write_success(start, end);
+        write_success(start, end, body_end);
         return true;
       }
       std::size_t pos {start};
@@ -1744,7 +1761,7 @@ namespace real::detail {
         }
         const std::size_t body_end {pos < text.size() && in_class(pos) ? scan_end(pos) : pos};
         if (wb_boundaries_ok(pos, body_end) && suffix_ok(body_end)) {
-          write_success(pos, body_end + suffix_size);
+          write_success(pos, body_end + suffix_size, body_end);
           return true;
         }
         pos = body_end > pos ? body_end : pos + 1;
@@ -1776,7 +1793,9 @@ namespace real::detail {
                               }
                               return e;
                             };
-      return run_possessive_loop_generic(text, start, mode, out_slots, in_class, scan_end);
+      // A byte's own width is always 1 -- no decode needed.
+      const auto last_width = [](std::size_t) { return std::size_t {1}; };
+      return run_possessive_loop_generic(text, start, mode, out_slots, in_class, scan_end, last_width);
     }
 
     //! \brief D1-perf Étage A: possessive class+/++ loop over a BYTE class (`klass_loop_possessive`).
@@ -1801,7 +1820,9 @@ namespace real::detail {
                               }
                               return e;
                             };
-      return run_possessive_loop_generic(text, start, mode, out_slots, in_class, scan_end);
+      // A byte-class member is always 1 byte wide -- no decode needed.
+      const auto last_width = [](std::size_t) { return std::size_t {1}; };
+      return run_possessive_loop_generic(text, start, mode, out_slots, in_class, scan_end, last_width);
     }
 
     //! \brief D1-perf Étage A: possessive class+/++ loop over a CODE-POINT class
@@ -1847,7 +1868,11 @@ namespace real::detail {
                               }
                               return e;
                             };
-      return run_possessive_loop_generic(text, start, mode, out_slots, in_class, scan_end);
+      // The last code point's own width, decoded backward from its end -- see codepoint_retreat's
+      // own doc comment. `start` is a sound floor: the loop can never have consumed anything before
+      // its own start.
+      const auto last_width = [&](std::size_t end) { return detail::codepoint_retreat(text, end, start); };
+      return run_possessive_loop_generic(text, start, mode, out_slots, in_class, scan_end, last_width);
     }
 
     /*!

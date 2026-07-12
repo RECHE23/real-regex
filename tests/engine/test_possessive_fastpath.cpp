@@ -17,9 +17,9 @@ using namespace std::string_view_literals;
 
 namespace {
 
-  // Compares find_iter's full span+group sequence under route-auto vs forced-general. Restores
-  // the toggle unconditionally (even on an EXPECT failure) so one bad case cannot poison the rest
-  // of the binary's test run.
+  // Compares find_iter's overall-match span sequence (start/end only, NOT group spans) under
+  // route-auto vs forced-general. Restores the toggle unconditionally (even on an EXPECT failure)
+  // so one bad case cannot poison the rest of the binary's test run.
   void expect_route_toggle_agrees(const real::regex&  re,
                                   std::string_view    text,
                                   std::string_view    ctx)
@@ -42,6 +42,37 @@ namespace {
     for (std::size_t i {0}; i < n; ++i) {
       EXPECT_EQ(auto_route[i].start, forced_general[i].start);
       EXPECT_EQ(auto_route[i].end, forced_general[i].end);
+    }
+    (void) ctx;
+  }
+
+  // Same as expect_route_toggle_agrees, but also compares group(1) -- the exact surface the
+  // possessive-capture-fix touches, which the overall-span-only helper above cannot see.
+  void expect_route_toggle_agrees_group1(const real::regex&  re,
+                                         std::string_view    text,
+                                         std::string_view    ctx)
+  {
+    struct span { std::size_t start, end, g1s, g1e; };
+    const auto collect = [&] {
+                           std::vector<span> out;
+                           for (const auto& m : re.find_iter(text)) {
+                             out.push_back({.start = m.start(), .end = m.end(),
+                                            .g1s   = m.start(1), .g1e = m.end(1)});
+                           }
+                           return out;
+                         };
+    real::detail::possessive_fastpath_disabled() = false;
+    const auto auto_route     {collect()};
+    real::detail::possessive_fastpath_disabled() = true;
+    const auto forced_general {collect()};
+    real::detail::possessive_fastpath_disabled() = false;
+    EXPECT_EQ(auto_route.size(), forced_general.size());
+    const std::size_t n {std::min(auto_route.size(), forced_general.size())};
+    for (std::size_t i {0}; i < n; ++i) {
+      EXPECT_EQ(auto_route[i].start, forced_general[i].start);
+      EXPECT_EQ(auto_route[i].end, forced_general[i].end);
+      EXPECT_EQ(auto_route[i].g1s, forced_general[i].g1s);
+      EXPECT_EQ(auto_route[i].g1e, forced_general[i].g1e);
     }
     (void) ctx;
   }
@@ -129,16 +160,15 @@ TEST(route_pin_kv_prefix_overlaps_body_class_stays_general)
   EXPECT(!prog.hints.possessive_class.armed());
 }
 
-TEST(route_pin_byte_atom_possessive_stays_general)
+TEST(route_pin_byte_atom_possessive_captured_now_arms)
 {
-  // A single literal-byte body wrapped in a CAPTURING group (`(a)*+b`) is out of this train's
-  // scope: R2's class_ref{kind=byte} recognizer only matches the BARE/suffixed byte shape (no
-  // enveloping group), mirroring the klass/cp_class recognizer's own capture story (embedded
-  // capture requires reading it off the loop opcode's own primary_target field directly, which
-  // this recognizer's byte branch does not attempt for this train). `(a)*+b` still declines.
+  // A single literal-byte body wrapped in a CAPTURING group (`(a)*+b`) now arms exactly like
+  // klass/cp_class: the possessive-capture-fix taught the shared driver to capture the loop's own
+  // LAST iteration (not the whole match), so kind=byte no longer needs to decline captured shapes
+  // -- see the capture_ok guard's own doc comment.
   const real::regex re   {"(a)*+b"};
   const auto        prog {re.raw_program()};
-  EXPECT(!prog.hints.possessive_class.armed());
+  EXPECT(prog.hints.possessive_class.kind == real::detail::class_kind::byte);
 }
 
 TEST(route_pin_bounded_count_possessive_stays_general)
@@ -203,16 +233,13 @@ TEST(route_pin_byte_possessive_bare_and_suffixed)
   EXPECT_EQ(prog2.hints.possessive_suffix_size, 1U);
 }
 
-TEST(route_pin_byte_possessive_captured_stays_general)
+TEST(route_pin_byte_possessive_captured_last_iteration)
 {
-  // A captured byte-possessive loop (`(a)*+b`) never arms, regardless of has_mandatory: the
-  // shared driver's write_success captures the group as the WHOLE match span, not the loop's own
-  // last-iteration span (found live testing this exact recognizer -- see the capture_ok guard's
-  // own doc comment in prefilter.hpp). The general VM gets `(a)*+b` right (group(1) is the LAST
-  // "a", not the whole "aaa") precisely because it was NEVER routed through this fast path before
-  // R2; arming it here would have silently regressed that correctness.
+  // Possessive-capture-fix: (a)*+b on "aaab" now arms AND captures correctly on the fast path --
+  // group(1) is the LAST successful iteration ("a" at [2,3)), not the whole loop span, matching
+  // re's own semantics (oracle-verified against Python 3.14.6) and the general VM's own answer.
   const real::regex re {"(a)*+b"};
-  EXPECT(!re.raw_program().hints.possessive_class.armed());
+  EXPECT(re.raw_program().hints.possessive_class.armed());
   const auto m = re.search("aaab");
   EXPECT(m.matched());
   if (m.matched()) {
@@ -369,6 +396,171 @@ TEST(possessive_fastpath_full_prefix_mode_failure_branches)
 
   expect_route_toggle_agrees(delim, R"(xhello" "hi"extra "a")"sv, "delim-full-prefix-fail");
   expect_route_toggle_agrees(suffixed, "abcx 123xyz 123x"sv, "suffixed-full-prefix-fail");
+}
+
+// --- possessive-capture-fix: oracle-verified matrix ({byte,klass,klass_cp} x {*+,++} x -----------
+// {dense,sparse,zero-iteration,multi-byte-last-atom}) -- run_possessive_loop_generic's LastWidth
+// mechanism must capture the loop's own LAST iteration, not the whole match. Every span below is
+// oracle-verified against Python 3.14.6 (re.search, byte offsets recomputed from the codepoint
+// spans it reports). Reversion-proven: fails against pre-fix f28a604 (whole-match capture), passes
+// here (git worktree diff, see the commit message).
+
+TEST(capture_fix_byte_dense_and_sparse)
+{
+  // Captured bare `++` (no suffix) never arms the fast path (only the star+mandatory-suffix
+  // "embedded capture Tier 1" shape does -- see route_pin_captured_class_possessive's own doc
+  // comment), so the armed shape needs a suffix: `(a)*+;`.
+  // dense: the run starts at text[0], no leading noise.
+  const real::regex re {"(a)*+;"};
+  EXPECT(re.raw_program().hints.possessive_class.armed());
+  const auto m1        {re.search("aaa;")};
+  EXPECT(m1.matched());
+  EXPECT_EQ(m1.start(), 0U);
+  EXPECT_EQ(m1.end(), 4U);
+  EXPECT_EQ(m1.start(1), 2U);
+  EXPECT_EQ(m1.end(1), 3U);
+  // sparse: leading noise (no 'a' or ';') the loop must skip over via seed_viable before landing
+  // on the run.
+  const auto m2 {re.search("xxyyaaa;")};
+  EXPECT(m2.matched());
+  EXPECT_EQ(m2.start(), 4U);
+  EXPECT_EQ(m2.end(), 8U);
+  EXPECT_EQ(m2.start(1), 6U);
+  EXPECT_EQ(m2.end(1), 7U);
+}
+
+TEST(capture_fix_byte_zero_iteration)
+{
+  // (a)*+b on "b": the loop runs zero times -- group 1 must stay real::npos (Python's None), NOT
+  // collapse to the empty span [0,0) the old whole-match-span bug would have produced.
+  const real::regex re  {"(a)*+b"};
+  const auto        m0  {re.search("b")};
+  EXPECT(m0.matched());
+  EXPECT_EQ(m0.start(), 0U);
+  EXPECT_EQ(m0.end(), 1U);
+  EXPECT_EQ(m0.start(1), real::npos);
+  EXPECT_EQ(m0.end(1), real::npos);
+  // same shape with >0 iterations, for contrast within the same TEST.
+  const auto m1 {re.search("aaab")};
+  EXPECT(m1.matched());
+  EXPECT_EQ(m1.start(1), 2U);
+  EXPECT_EQ(m1.end(1), 3U);
+}
+
+TEST(capture_fix_klass_dense_and_sparse)
+{
+  const real::regex re {"([a-z])*+;"};
+  EXPECT(re.raw_program().hints.possessive_class.armed());
+  const auto m1        {re.search("abcxyz;")};
+  EXPECT(m1.matched());
+  EXPECT_EQ(m1.start(), 0U);
+  EXPECT_EQ(m1.end(), 7U);
+  EXPECT_EQ(m1.start(1), 5U);
+  EXPECT_EQ(m1.end(1), 6U);
+  const auto m2 {re.search("9900--abcxyz;")};
+  EXPECT(m2.matched());
+  EXPECT_EQ(m2.start(), 6U);
+  EXPECT_EQ(m2.end(), 13U);
+  EXPECT_EQ(m2.start(1), 11U);
+  EXPECT_EQ(m2.end(1), 12U);
+}
+
+TEST(capture_fix_klass_zero_iteration)
+{
+  const real::regex re {"([a-z])*+;"};
+  const auto        m0 {re.search(";")};
+  EXPECT(m0.matched());
+  EXPECT_EQ(m0.start(1), real::npos);
+  EXPECT_EQ(m0.end(1), real::npos);
+  const auto m1 {re.search("abc;")};
+  EXPECT(m1.matched());
+  EXPECT_EQ(m1.start(1), 2U);
+  EXPECT_EQ(m1.end(1), 3U);
+}
+
+TEST(capture_fix_klass_cp_dense_and_sparse)
+{
+  // \w is Unicode-width (klass_cp) -- "café" ends on the 2-byte codepoint 'é' (0xC3 0xA9), the
+  // exact shape codepoint_retreat exists to walk back over.
+  const real::regex re {R"((\w)*+;)"};
+  EXPECT(re.raw_program().hints.possessive_class.armed());
+  const auto m1        {re.search("caf\xC3\xA9;"sv)};
+  EXPECT(m1.matched());
+  EXPECT_EQ(m1.start(), 0U);
+  EXPECT_EQ(m1.end(), 6U);
+  EXPECT_EQ(m1.start(1), 3U);
+  EXPECT_EQ(m1.end(1), 5U);
+  const auto m2 {re.search("   caf\xC3\xA9;"sv)};
+  EXPECT(m2.matched());
+  EXPECT_EQ(m2.start(), 3U);
+  EXPECT_EQ(m2.end(), 9U);
+  EXPECT_EQ(m2.start(1), 6U);
+  EXPECT_EQ(m2.end(1), 8U);
+}
+
+TEST(capture_fix_klass_cp_zero_iteration)
+{
+  const real::regex re {R"((\w)*+;)"};
+  const auto        m0 {re.search(";")};
+  EXPECT(m0.matched());
+  EXPECT_EQ(m0.start(1), real::npos);
+  EXPECT_EQ(m0.end(1), real::npos);
+}
+
+TEST(capture_fix_klass_cp_ascii_last_atom)
+{
+  const real::regex re {R"((\w)*+ )"};
+  const auto        m  {re.search("hello ")};
+  EXPECT(m.matched());
+  EXPECT_EQ(m.start(), 0U);
+  EXPECT_EQ(m.end(), 6U);
+  EXPECT_EQ(m.start(1), 4U);
+  EXPECT_EQ(m.end(1), 5U);
+}
+
+TEST(capture_fix_klass_cp_multibyte_last_atom_4byte)
+{
+  // U+1F600 (grinning face) is the maximal 4-byte UTF-8 case -- the exact boundary
+  // codepoint_retreat's own 4-byte cap exists for. Body excludes ';' (a negated class, klass_cp)
+  // so the possessive loop cannot over-consume the delimiter.
+  const real::regex re   {R"(([^;])*+;)"};
+  const std::string text {"ab\xF0\x9F\x98\x80;"}; // "ab" + U+1F600 (F0 9F 98 80) + ';'
+  const auto        m    {re.search(text)};
+  EXPECT(m.matched());
+  EXPECT_EQ(m.start(), 0U);
+  EXPECT_EQ(m.end(), 7U);
+  EXPECT_EQ(m.start(1), 2U);
+  EXPECT_EQ(m.end(1), 6U); // 4-byte codepoint: [2,6)
+  EXPECT_EQ(text.substr(m.start(1), m.end(1) - m.start(1)), "\xF0\x9F\x98\x80");
+}
+
+TEST(capture_fix_bounded_count_general_vm_parity)
+{
+  // {n,m}+ never arms the fast path (route_pin_bounded_count_possessive_stays_general) -- always
+  // runs on the general VM, which already captured correctly (this bug was fast-path-only). Pinned
+  // here as the matrix's control cell: parity with re, unaffected by this fix, must stay flat.
+  const real::regex re {"(a){2,4}+b"};
+  const auto        m1 {re.search("aaaab")};
+  EXPECT(m1.matched());
+  EXPECT_EQ(m1.start(1), 3U);
+  EXPECT_EQ(m1.end(1), 4U);
+  const auto m2 {re.search("aab")};
+  EXPECT(m2.matched());
+  EXPECT_EQ(m2.start(1), 1U);
+  EXPECT_EQ(m2.end(1), 2U);
+}
+
+TEST(capture_fix_route_toggle_all_kinds)
+{
+  // wagon-4: route-auto (fast path) vs forced-general must agree on every captured-possessive
+  // shape across all three loop kinds, including the zero-iteration and multi-byte-last-atom
+  // corners above -- group(1), not just the overall span (expect_route_toggle_agrees_group1 is
+  // the only helper in this file that can see the capture-fix's own surface).
+  expect_route_toggle_agrees_group1(real::regex {"(a)*+;"}, "xxyyaaa; ;yaaaa;"sv, "capture-fix byte");
+  expect_route_toggle_agrees_group1(real::regex {"(a)*+b"}, "b aaab xaaaab"sv, "capture-fix byte zero-iter");
+  expect_route_toggle_agrees_group1(real::regex {"([a-z])*+;"}, "9900--abcxyz; ;xyz;"sv, "capture-fix klass");
+  expect_route_toggle_agrees_group1(real::regex {R"((\w)*+;)"}, "   caf\xC3\xA9; ;h\xC3\xA9llo;"sv, "capture-fix klass_cp");
+  expect_route_toggle_agrees_group1(real::regex {R"(([^;])*+;)"}, "ab\xF0\x9F\x98\x80; ;xyz;"sv, "capture-fix klass_cp 4-byte");
 }
 
 TEST(possessive_fastpath_route_toggle_randomized_sweep)
