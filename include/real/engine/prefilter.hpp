@@ -807,6 +807,10 @@ namespace real::detail {
               hints.greedy_group_end   = ge;
               hints.wb_lead            = out_lead;
               hints.wb_trail           = out_trail;
+              // B-1 dropped a genuine leading \b (wb_lead was 1, out_lead came back 0): the
+              // runner's search-mode fast path needs the start>0 window-edge guard -- see
+              // pattern_hints::wb_lead_maximal_run's own doc comment for the full argument.
+              hints.wb_lead_maximal_run = (wb_lead == 1 && out_lead == 0);
             }
           }
         }
@@ -910,6 +914,7 @@ namespace real::detail {
                 hints.greedy_group_end     = ge;
                 hints.wb_lead              = out_lead;
                 hints.wb_trail             = out_trail;
+                hints.wb_lead_maximal_run  = (wb_lead == 1 && out_lead == 0);
               }
             }
           }
@@ -1139,15 +1144,18 @@ namespace real::detail {
         const std::size_t mandatory_start {p};
         std::size_t       loop_pc         {mandatory_start};
         bool              has_mandatory   {false};
+        bool              mandatory_is_cp {false};
         if (loop_pc < code.size() && code[loop_pc].op == opcode::klass) {
-          loop_pc       = mandatory_start + 1;
-          has_mandatory = true;
+          loop_pc         = mandatory_start + 1;
+          has_mandatory   = true;
+          mandatory_is_cp = false;
         }
         else if (loop_pc + 3 < code.size() && code[loop_pc].op == opcode::klass_cp &&
                  code[loop_pc + 1].op == opcode::klass && code[loop_pc + 2].op == opcode::klass &&
                  code[loop_pc + 3].op == opcode::klass) {
-          loop_pc       = mandatory_start + 4;
-          has_mandatory = true;
+          loop_pc         = mandatory_start + 4;
+          has_mandatory   = true;
+          mandatory_is_cp = true;
         }
         if (loop_pc < code.size() && (code[loop_pc].op == opcode::klass_loop_possessive ||
                                       code[loop_pc].op == opcode::klass_cp_loop_possessive)) {
@@ -1160,7 +1168,15 @@ namespace real::detail {
           // this block does not attempt to recognize this train -- see the doc comment above.
           const bool capture_ok         {cap_slot < 0 || !has_mandatory};
           // Never assume: the mandatory copy (if any) must be literally the same atom the loop tests.
-          const bool        same_atom   {!has_mandatory || code[mandatory_start].arg16 == body_idx};
+          // `arg16` alone is NOT enough -- klass and klass_cp index two DIFFERENT tables (classes vs
+          // cp_classes), so a byte-class mandatory copy and a cp-class loop (or vice versa) can share
+          // the same numeric arg16 by pure coincidence (e.g. both table-index 0) despite testing
+          // completely unrelated sets. Found live by differential fuzzing: `[abc].*+` (mandatory
+          // `klass` for [abc], loop `klass_cp_loop_possessive` for the dotall '.') matched EVERY
+          // input regardless of the leading class, because [abc]'s classes-table index 0 collided
+          // with '.'s cp_classes-table index 0.
+          const bool        same_atom   {!has_mandatory ||
+                                         (mandatory_is_cp == is_cp && code[mandatory_start].arg16 == body_idx)};
           const std::size_t exit_pc     {static_cast<std::size_t>(code[loop_pc].secondary_target)};
           const std::size_t block_width {is_cp ? std::size_t {4} : std::size_t {1}};
           const std::size_t after_loop  {loop_pc + block_width};
@@ -1229,8 +1245,9 @@ namespace real::detail {
                 hints.possessive_suffix_size  = suffix_len;
                 hints.possessive_min_nonzero  = has_mandatory;
                 if (has_wb) {
-                  hints.wb_lead  = out_lead;
-                  hints.wb_trail = out_trail;
+                  hints.wb_lead             = out_lead;
+                  hints.wb_trail            = out_trail;
+                  hints.wb_lead_maximal_run = (wb_lead == 1 && out_lead == 0);
                 }
               }
             }

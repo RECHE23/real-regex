@@ -406,6 +406,23 @@ namespace real {
       //!        start/end after the body fast-path accepts a candidate.
       std::uint8_t wb_lead  {};
       std::uint8_t wb_trail {};
+      //! \brief True when a genuine leading `\b` was dropped by the B-1 optimization (a maximal
+      //!        greedy/possessive run can only legitimately START where the preceding character
+      //!        is non-word, so the runtime check is redundant -- \ref resolve_class_wb_hints).
+      //!        That argument silently assumes "preceding character absent" means the TRUE start
+      //!        of the text -- sound for `mode::full`/`mode::prefix` and for `search()`'s own
+      //!        internal position-0 seed, but NOT for a caller-supplied `search(text, pos, ...)`
+      //!        with `pos > 0`: `pos` restricts where a match may START, it does not assert that
+      //!        `text[pos - 1]` is absent or non-word (Python's own `re.search(pat, text, pos)`
+      //!        does not treat `pos` as a virtual string start for `\b` purposes -- verified
+      //!        against the live oracle, and confirmed asymmetric with `endpos`, which DOES act
+      //!        as a virtual end for a *trailing* `\b`, so only the lead side needs this guard).
+      //!        When true, a fast-path runner whose very first search-mode candidate coincides
+      //!        with `start` itself (no forward scan past a genuine non-word byte occurred) must
+      //!        fall back to an explicit `assertion_holds` check at that one position before
+      //!        accepting it — found live by differential fuzzing (`\b\w+` search'd from `pos>0`
+      //!        wrongly matched with no boundary at `pos`).
+      bool wb_lead_maximal_run {};
       //! \brief First consuming (byte/klass) or branch pc for fixed_shape / alternation after
       //!        save 0 and an optional lead `\b`/`\B`. Default 1 (no lead wrap).
       std::uint8_t body_pc {1};

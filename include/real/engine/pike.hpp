@@ -1263,10 +1263,34 @@ namespace real::detail {
         return false;
       }
 
+      // B-1 window-edge guard, mode::full/prefix: anchored at `start` with no retry available --
+      // see pattern_hints::wb_lead_maximal_run's own doc comment for the full argument.
+      if ((mode == run_mode::full || mode == run_mode::prefix) && prog_.hints.wb_lead_maximal_run &&
+          start > 0 && start < text.size() && in_class(start) &&
+          !assertion_holds(assert_kind::word_boundary, start, false)) {
+        out_slots.assign(prog_.slot_count, npos);
+        return false;
+      }
       std::size_t match_start {start};
       if (mode == run_mode::search) {
-        while (match_start < text.size() && !in_class(match_start)) {
-          ++match_start;
+        while (true) {
+          while (match_start < text.size() && !in_class(match_start)) {
+            ++match_start;
+          }
+          if (match_start >= text.size()) {
+            break;
+          }
+          // B-1 window-edge guard: a candidate found by scanning forward past a non-class byte
+          // is provably preceded by one (the scan just confirmed it), so B-1's redundancy
+          // argument holds unconditionally there. The ONE exception is the very first candidate
+          // when it coincides with `start` itself (no forward scan occurred) AND `start > 0` --
+          // see pattern_hints::wb_lead_maximal_run's own doc comment for the full argument.
+          if (prog_.hints.wb_lead_maximal_run && match_start == start && match_start > 0 &&
+              !assertion_holds(assert_kind::word_boundary, match_start, false)) {
+            match_start = scan_end(match_start); // no genuine boundary here: skip this whole run
+            continue;
+          }
+          break;
         }
       }
       if (match_start >= text.size() || !in_class(match_start)) {
@@ -1509,10 +1533,37 @@ namespace real::detail {
         return false;
       }
 
+      // B-1 window-edge guard, mode::full/prefix: anchored at `start` with no retry available --
+      // see pattern_hints::wb_lead_maximal_run's own doc comment for the full argument.
+      if ((mode == run_mode::full || mode == run_mode::prefix) && prog_.hints.wb_lead_maximal_run &&
+          start > 0 && start < text.size() && width(start) != 0 &&
+          !assertion_holds(assert_kind::word_boundary, start, false)) {
+        return false;
+      }
       std::size_t match_start {start};
       if (mode == run_mode::search) {
-        while (match_start < text.size() && width(match_start) == 0) {
-          ++match_start;
+        while (true) {
+          while (match_start < text.size() && width(match_start) == 0) {
+            ++match_start;
+          }
+          if (match_start >= text.size()) {
+            break;
+          }
+          // B-1 window-edge guard: a candidate found by scanning forward past a non-class
+          // code point is provably preceded by one, so B-1's redundancy argument holds
+          // unconditionally there. The ONE exception is the very first candidate when it
+          // coincides with `start` itself (no forward scan occurred) AND `start > 0` -- see
+          // pattern_hints::wb_lead_maximal_run's own doc comment for the full argument.
+          if (prog_.hints.wb_lead_maximal_run && match_start == start && match_start > 0 &&
+              !assertion_holds(assert_kind::word_boundary, match_start, false)) {
+            const std::size_t skip {extend_run(match_start)};
+            if (skip == npos) {
+              return false; // malformed sequence right at the window edge: nothing to skip to
+            }
+            match_start = skip; // no genuine boundary here: skip this whole run
+            continue;
+          }
+          break;
         }
       }
       if (match_start >= text.size()) {
@@ -1644,8 +1695,19 @@ namespace real::detail {
       }
       // Bare / suffixed (no leading literal).
       const bool min_nonzero {h.possessive_min_nonzero};
+      // B-1 window-edge guard: see pattern_hints::wb_lead_maximal_run's own doc comment. Applies
+      // only when `start` itself is the candidate AND is actually in-class (a zero-length body at
+      // a non-class `start` has no "run" for B-1's argument to be about in the first place).
+      const auto b1_edge_blocks = [&](std::size_t pos) {
+                                    return h.wb_lead_maximal_run && pos > 0 && pos < text.size() &&
+                                           in_class(pos) &&
+                                           !assertion_holds(assert_kind::word_boundary, pos, false);
+                                  };
       if (mode == run_mode::full || mode == run_mode::prefix) {
         if (min_nonzero && (start >= text.size() || !in_class(start))) {
+          return fail();
+        }
+        if (b1_edge_blocks(start)) {
           return fail();
         }
         const std::size_t body_end {start < text.size() && in_class(start) ? scan_end(start) : start};
@@ -1668,6 +1730,13 @@ namespace real::detail {
           if (pos >= text.size()) {
             break;
           }
+        }
+        if (pos == start && b1_edge_blocks(pos)) {
+          // No genuine boundary at the window's own edge: skip past this whole run (a candidate
+          // reached by scanning forward past a non-class byte is provably preceded by one, so
+          // this guard can never re-trigger on a LATER iteration of this same loop).
+          pos = scan_end(pos);
+          continue;
         }
         const std::size_t body_end {pos < text.size() && in_class(pos) ? scan_end(pos) : pos};
         if (wb_boundaries_ok(pos, body_end) && suffix_ok(body_end)) {
@@ -1977,6 +2046,14 @@ namespace real::detail {
      *        byte wide, so each save sits at a constant offset from the match start; a single linear
      *        pass writes `slot = match_start + offset`. No-op when the pattern has no inner groups
      *        (slot_count 2). Not a re-match: the bytes were already verified.
+     *
+     * Starts at \ref pattern_hints::body_pc, not a hardcoded `1`: an optional leading `\b`/`\B`
+     * (`hints.wb_lead`) sits at pc 1, and starting the walk there instead of at the body's own
+     * first byte/klass/save hits the assert_position immediately, which matches neither the
+     * byte/klass nor the save arm below and so `break`s on the FIRST instruction — silently
+     * filling zero capture slots. Found live: `\B(\w){2}` (plain greedy, no possessive quantifier
+     * involved) loses group(1) entirely, `(\w){2}` without the `\B` does not — confirmed by
+     * bisection, not assumed from reading the loop.
      * \param[in]  match_start Byte offset where the match begins.
      * \param[out] out_slots   Receives the group slots.
      */
@@ -1987,8 +2064,10 @@ namespace real::detail {
       if (prog_.slot_count <= 2) {
         return;
       }
-      std::size_t offset {};
-      for (std::size_t pc {1}; pc < prog_.code.size(); ++pc) {
+      const std::size_t body_pc {prog_.hints.body_pc == 0 ? std::size_t {1}
+                                                          : static_cast<std::size_t>(prog_.hints.body_pc)};
+      std::size_t offset        {};
+      for (std::size_t pc {body_pc}; pc < prog_.code.size(); ++pc) {
         const instr& instruction {prog_.code[pc]};
         if (instruction.op == opcode::byte || instruction.op == opcode::klass) {
           ++offset;
@@ -1997,7 +2076,7 @@ namespace real::detail {
           out_slots[static_cast<std::size_t>(instruction.arg16)] = match_start + offset;
         }
         else {
-          break; // reached match
+          break; // reached a trailing \b/\B or match
         }
       }
     }

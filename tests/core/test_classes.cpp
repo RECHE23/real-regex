@@ -11,10 +11,15 @@
 using namespace std::string_view_literals;
 
 // Drift-guard: the hand-written ASCII bitsets (`word_set`/`digit_set`/`space_set`, tier-1 core) must agree
-// EXACTLY with the oracle-generated code-point ranges (`is_*_cp`, tier-2 unicode, built from `re.fullmatch`)
-// over the whole ASCII range. Core cannot include the generated tables (a layer violation), so the two are
-// separate sources of truth; this pins them. The `\s` set once dropped U+001C-U+001F — which Python `re`
-// matches and `space_ranges` lists — and this test would have caught that regression at build time.
+// with the oracle-generated code-point ranges (`is_*_cp`, tier-2 unicode, built from `re.fullmatch`) over
+// the whole ASCII range — EXCEPT U+001C-U+001F (FS/GS/RS/US), where `space_set` (ASCII-mode `\s`,
+// `flags::ascii`/`flags::bytes`) and `is_space_cp` (text/Unicode-mode `\s`) legitimately DIVERGE: Python
+// `re.match(r"(?a)\s", "\x1c")` does not match, `re.match(r"\s", "\x1c")` (no ascii flag) does. `space_set`
+// once wrongly included those four (conflating `str.isspace()`/text-mode `\s` with ASCII-mode `\s`, which
+// are different predicates) — found live by differential fuzzing (`(?a)\s` matching `'\x1c'` where `re`
+// does not) and fixed by removing them; this test pins the CORRECT divergence so a future "fix" cannot
+// silently re-merge the two sets. Core cannot include the generated tables (a layer violation), so the two
+// are separate sources of truth by design; only `\s` has this ASCII/Unicode divergence -- `\w`/`\d` do not.
 TEST(ascii_shorthands_match_generated_ranges)
 {
   using namespace real::detail;
@@ -23,22 +28,38 @@ TEST(ascii_shorthands_match_generated_ranges)
     const char32_t cp {c};
     EXPECT(word_set().test(b) == is_word_cp(cp));
     EXPECT(digit_set().test(b) == is_digit_cp(cp));
-    EXPECT(space_set().test(b) == is_space_cp(cp));
+    if (c >= 0x1C && c <= 0x1F) {
+      EXPECT(!space_set().test(b));  // ASCII-mode \s: FS/GS/RS/US are NOT whitespace (re.match(r"(?a)\s", ...))
+      EXPECT(is_space_cp(cp));       // text/Unicode-mode \s: they ARE (re.match(r"\s", ...), no ascii flag)
+    }
+    else {
+      EXPECT(space_set().test(b) == is_space_cp(cp));
+    }
   }
 }
 
-TEST(space_matches_cpython_file_separators)
+TEST(space_matches_cpython_file_separators_in_text_mode_only)
 {
-  // Python re's `\s` matches U+001C-U+001F (str.isspace); pin the four across `\s`, `\S`, `[\s]`, `[^\s]` — the
-  // regression the ASCII set once carried, at the matching level (not just the class definition).
+  // Python re's TEXT-mode `\s` (no ascii flag) matches U+001C-U+001F (str.isspace); ASCII-mode `\s`
+  // (flags::ascii, and bytes mode) does NOT — pin both directions across `\s`, `\S`, `[\s]`, `[^\s]`, at
+  // the matching level (not just the class definition) — the regression the ASCII set once carried.
   for (char sep = 0x1C; sep <= 0x1F; ++sep) {
     const std::string s(1, sep);
-    EXPECT(real::regex(R"(\s)").fullmatch(s));
+    EXPECT(real::regex(R"(\s)").fullmatch(s));  // text mode: matches
     EXPECT(!real::regex(R"(\S)").fullmatch(s));
     EXPECT(real::regex(R"([\s])").fullmatch(s));
     EXPECT(!real::regex(R"([^\s])").fullmatch(s));
+
+    EXPECT(!real::regex(R"((?a)\s)").fullmatch(s)); // ASCII mode: does NOT match
+    EXPECT(real::regex(R"((?a)\S)").fullmatch(s));
+    EXPECT(!real::regex(R"((?a)[\s])").fullmatch(s));
+    EXPECT(real::regex(R"((?a)[^\s])").fullmatch(s));
+
+    EXPECT(!real::regex(R"(\s)", real::flags::bytes).fullmatch(s)); // bytes mode: same as ASCII
+    EXPECT(!real::regex(R"(\s)", real::flags::ascii).fullmatch(s)); // API flag: same as inline (?a)
   }
-  EXPECT(real::regex(R"(\s)").fullmatch(" "sv));  // ordinary whitespace still matches
+  EXPECT(real::regex(R"(\s)").fullmatch(" "sv));  // ordinary whitespace still matches, both modes
+  EXPECT(real::regex(R"((?a)\s)").fullmatch(" "sv));
   EXPECT(!real::regex(R"(\s)").fullmatch("a"sv)); // a letter does not
 }
 

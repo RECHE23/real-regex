@@ -171,6 +171,66 @@ TEST(route_pin_unicode_word_class_possessive_with_wb)
   EXPECT(prog.hints.possessive_cp_class >= 0);
 }
 
+TEST(route_pin_mandatory_and_loop_table_mismatch_stays_general)
+{
+  // [abc] compiles to a byte klass (ASCII-only, `classes` table); a possessive `.*+` loop compiles
+  // to a klass_cp loop (Unicode-width "any", `cp_classes` table) -- two DIFFERENT tables that can
+  // coincidentally share the same numeric index (both table-index 0). The "same_atom" mandatory-
+  // copy check used to compare raw arg16 without verifying the table matched, so this accidental
+  // collision let `[abc].*+` silently match ANY input regardless of whether [abc] matched at all
+  // -- found live by the 5x100k differential fuzz closure battle (`[abc].*+` matched "x" as (0,1)
+  // when the correct answer, confirmed against Python 3.14.6, is no match at all).
+  const real::regex re   {"[abc].*+"};
+  const auto        prog {re.raw_program()};
+  EXPECT_EQ(static_cast<int>(prog.hints.possessive_class_loop), -1);
+  EXPECT_EQ(static_cast<int>(prog.hints.possessive_cp_class), -1);
+}
+
+TEST(mandatory_and_loop_table_mismatch_oracle_pinned)
+{
+  // Oracle-verified against Python 3.14.6: re.search(r"[abc].*+", text).
+  const real::regex re {"[abc].*+"};
+  EXPECT(!re.search("x").matched());
+  EXPECT(!re.search("xyz").matched());
+  const auto m1 = re.search("bxyz");
+  EXPECT(m1.matched());
+  if (m1.matched()) {
+    EXPECT_EQ(m1.start(), 0U);
+    EXPECT_EQ(m1.end(), 4U);
+  }
+  const auto m2 = re.search("xbxyz");
+  EXPECT(m2.matched());
+  if (m2.matched()) {
+    EXPECT_EQ(m2.start(), 1U);
+    EXPECT_EQ(m2.end(), 5U);
+  }
+}
+
+TEST(possessive_fastpath_route_toggle_mandatory_loop_table_mismatch)
+{
+  // wagon-4: even though this shape now correctly declines the fast path (route-pin test above),
+  // pin the route-toggle differential too so a regression that makes it arm again is caught by
+  // BOTH signals (route-pin AND behavioral agreement), not hint inspection alone.
+  const real::regex re {"[abc].*+"};
+  expect_route_toggle_agrees(re, "xbxyz"sv, "mandatory/loop table mismatch");
+}
+
+TEST(mandatory_and_loop_table_mismatch_exact_original_repro)
+{
+  // The exact minimized repro from the fuzz battle (a general atomic-group shape, NOT even a
+  // direct possessive quantifier in the source pattern -- `(?>C)` and `(?>[\w·]*)` compile down to
+  // the identical mandatory-copy + possessive-loop bytecode shape as `C[\w·]*+`), pinned verbatim.
+  // Oracle-verified against Python 3.14.6.
+  const real::regex re {R"((?>C)(?>[\w·]*))", real::flags::icase};
+  EXPECT(!re.search("x").matched());
+  const auto m = re.search("abc");
+  EXPECT(m.matched());
+  if (m.matched()) {
+    EXPECT_EQ(m.start(), 2U);
+    EXPECT_EQ(m.end(), 3U);
+  }
+}
+
 // --- route-toggle differential: route-auto vs forced-general must always agree -----------------
 
 TEST(possessive_fastpath_route_toggle_quoted)
