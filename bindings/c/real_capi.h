@@ -60,8 +60,9 @@ enum {
 };
 
 /* Compile [pattern, pattern+len). `flags` is a bitmask of real::flags (icase=1, multiline=2, dotall=4,
- * bytes=8, verbose=16, ecma=32, ascii=64). Returns NULL on error, filling `errbuf` (NUL-terminated) and (if
- * non-NULL) `code` with one of the REAL_ERR_* values. The returned handle must be freed with real_free. */
+ * bytes=8, verbose=16, ecma=32, ascii=64, dollar_endonly=128 — see the numbering table above). Returns
+ * NULL on error, filling `errbuf` (NUL-terminated) and (if non-NULL) `code` with one of the REAL_ERR_*
+ * values. The returned handle must be freed with real_free. */
 real_regex* real_compile(const char* pattern, size_t len, uint32_t flags,
                          char* errbuf, size_t errbuf_len, int* code);
 
@@ -140,7 +141,7 @@ size_t real_sub(const real_regex* re, const char* text, size_t len,
                 char* out, size_t outlen, size_t* n_subs,
                 char* errbuf, size_t errbuf_len);
 
-/* --- multi-pattern set (which-matched; Stage-1 N-walks) --------------------- */
+/* --- multi-pattern set (which-matched) --------------------------------------- */
 
 typedef struct real_regex_set real_regex_set;
 
