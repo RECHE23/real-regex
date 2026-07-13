@@ -109,7 +109,7 @@ More runnable programs — including the ReDoS demo — are in [`examples/`](htt
 | PyPI (Python + headers) | `pip install real-regex` |
 | Homebrew (macOS / Linux) | `brew install RECHE23/sci/real-regex` |
 | vcpkg | via the [`vcpkg-sci`](https://github.com/RECHE23/vcpkg-sci) registry → `"dependencies": ["real-regex"]` |
-| CMake FetchContent | `FetchContent_Declare(real GIT_REPOSITORY https://github.com/RECHE23/real-regex GIT_TAG v2026.7.38)` |
+| CMake FetchContent | `FetchContent_Declare(real GIT_REPOSITORY https://github.com/RECHE23/real-regex GIT_TAG v2026.7.39)` |
 | Vendored | copy `include/` and compile with `-std=c++20 -I include` |
 
 REAL is header-only, so "installing" just places the headers and the package metadata where a
