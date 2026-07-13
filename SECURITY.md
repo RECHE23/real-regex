@@ -32,6 +32,46 @@ time there is **not** a REAL bypass, it is the opt-in you asked for (and observa
 `engine()`). A ReDoS report is about REAL's *own* engine running non-linearly, or about a pattern being
 delegated when you did **not** opt in.
 
+### Linear-time ≠ constant-bounded cost
+
+The linear-time guarantee is **asymptotic**: no pattern REAL accepts drives it into super-linear time on
+its input. It does **not** bound the *constant* factor. A pattern that is legally O(n) can still carry a
+large constant — and in a multi-tenant setting where an attacker supplies the *pattern* (not just the
+input), a legally-linear-but-expensive-per-byte pattern can still saturate a core. That is not a bypass;
+it is a cost you must budget for if you accept untrusted patterns.
+
+The legal, non-bypass worst cases, and where each constant comes from (`include/real/core/config.hpp`
+unless noted):
+
+- **Bounded lookaround**: `O(n · k · L)`, where `k` is the number of lookarounds in the pattern and `L` is
+  each one's own length, capped at `max_lookaround_length` (255 bytes) — still linear in `n`, but with a
+  per-position constant that grows with `k` and `L`.
+- **Lazy-DFA thrash falling back to the general Pike VM**: the DFA state cache holds up to `state_budget`
+  (4096, `include/real/automata/lazy_dfa.hpp`) states before a flush; `thrash_flushes` (2) flushes within
+  one scan trip a fallback to the slower general engine for the rest of that scan — still linear, at a
+  higher per-byte constant.
+- **A compiled program at its size cap**: `max_program_size` (262144 instructions) — reachable via nested
+  bounded repeats (`{1000}`-class quantifiers); more instructions per byte scanned.
+- **Capture groups at their cap**: `max_group_count` (32766) — `slot_count = 2 * (groups + 1)` capture
+  slots copied on every branch (COW-slots), so a pattern with many groups raises the constant behind every
+  step of the scan.
+
+**If you accept untrusted patterns** (not just untrusted input — e.g. a multi-tenant service where a
+tenant supplies the regex), the recommended posture: stay on `policy::strict` (`real::compat`'s default,
+which rejects a pattern REAL cannot run linearly rather than silently degrading); lower
+`max_lookaround_length` / `max_program_size` / `max_group_count` for your build (compile-time constants,
+`include/real/core/config.hpp`) to whatever your workload actually needs, well below the library
+defaults; and bound the haystack size upstream of the match call. There is no runtime kill-switch for
+match-time cost today (`prefilter_work_units` exists only as a test instrument) — the compile-time caps
+above are the current lever.
+
+**The distinction that matters for a report**: a pattern and input that drive REAL *super-linear* is a
+bypass — report it through the channel above. A pattern that is linear but expensive on a hostile input
+it was never rejected for is not a bypass; it is a case to bound through the configuration above, in a
+deployment that accepts untrusted patterns. That is a deployment responsibility, not an engine defect —
+said here for the same reason the benchmarks document where PCRE2-JIT beats REAL on raw throughput: this
+policy states what the guarantee covers, not more.
+
 ## The three published surfaces
 
 REAL ships as three artifacts, all built from one engine. Reports are welcome on any of them:
