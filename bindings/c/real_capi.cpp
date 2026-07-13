@@ -176,7 +176,7 @@ void real_iter_free(real_iter* iter)
 
 size_t real_count_matches(const real_regex* re, const char* text, size_t len)
 {
-  if (re == nullptr || text == nullptr) {
+  if (re == nullptr || (text == nullptr && len != 0)) {
     return static_cast<size_t>(-1);
   }
   try {
@@ -190,7 +190,7 @@ size_t real_count_matches(const real_regex* re, const char* text, size_t len)
 int real_match(const real_regex* re, const char* text, size_t len,
                size_t start, size_t end, int mode, size_t* spans)
 {
-  if (re == nullptr || text == nullptr) {
+  if (re == nullptr || (text == nullptr && len != 0)) {
     return -1;
   }
   try {
@@ -347,7 +347,7 @@ size_t real_sub(const real_regex* re, const char* text, size_t len,
                 char* out, size_t outlen, size_t* n_subs,
                 char* errbuf, size_t errbuf_len)
 {
-  if (re == nullptr || text == nullptr || repl == nullptr) {
+  if (re == nullptr || (text == nullptr && len != 0) || (repl == nullptr && repl_len != 0)) {
     write_err(errbuf, errbuf_len, "null re/text/repl");
     return static_cast<size_t>(-1);
   }
@@ -456,7 +456,7 @@ void real_set_free(real_regex_set* set)
 
 int real_set_is_match(const real_regex_set* set, const char* text, size_t len)
 {
-  if (set == nullptr || text == nullptr) {
+  if (set == nullptr || (text == nullptr && len != 0)) {
     return -1;
   }
   try {
@@ -469,7 +469,7 @@ int real_set_is_match(const real_regex_set* set, const char* text, size_t len)
 
 int real_set_matches(const real_regex_set* set, const char* text, size_t len, uint8_t* out)
 {
-  if (set == nullptr || text == nullptr || out == nullptr) {
+  if (set == nullptr || (text == nullptr && len != 0) || out == nullptr) {
     return -1;
   }
   try {

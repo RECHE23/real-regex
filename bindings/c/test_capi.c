@@ -126,7 +126,35 @@ int main(void) {
   size_t bad_sub = real_sub(sre, stext, strlen(stext), "\\9", 2, 0, NULL, 0, NULL, err, sizeof err);
   assert(bad_sub == (size_t) -1);
   assert(strlen(err) > 0);
+
+  /* (NULL, 0) empty-subject convention: valid everywhere a (text, len) or (repl, repl_len) pair
+     appears -- the natural Go nil-slice representation. Only NULL with a NONZERO length errors. */
+  const char* epat = "";
+  real_regex* ere = real_compile(epat, 0, 0, err, sizeof err, &code); /* empty pattern */
+  assert(ere != NULL);
+
+  assert(real_match(ere, NULL, 0, 0, 0, REAL_MODE_FULLMATCH, ms) == 1); /* "" fullmatches "" */
+  /* an empty pattern matches ONCE at position 0, even in an empty subject (re's own semantics:
+     re.findall("", "") == ['']) -- 1, not 0, and NOT -1 (the fix under test: NULL text no longer
+     unconditionally errors). */
+  assert(real_count_matches(ere, NULL, 0) == 1);
+  assert(real_match(sre, NULL, 5, 0, 5, REAL_MODE_SEARCH, ms) == -1); /* NULL + nonzero len: still an error */
+
+  size_t sub_need = real_sub(ere, NULL, 0, NULL, 0, 0, NULL, 0, &n_subs, err, sizeof err);
+  assert(sub_need == 0 && n_subs == 1); /* the one empty match gets "substituted" with nothing */
+
+  real_free(ere);
   real_free(sre);
+
+  const char* set_pats[2] = {"a", "b"};
+  const size_t set_lens[2] = {1, 1};
+  real_regex_set* set = real_set_compile(set_pats, set_lens, 2, 0, err, sizeof err, &code);
+  assert(set != NULL);
+  assert(real_set_is_match(set, NULL, 0) == 0); /* no match in an empty subject: 0, not -1 */
+  uint8_t hits[2];
+  assert(real_set_matches(set, NULL, 0, hits) == 0);
+  assert(hits[0] == 0 && hits[1] == 0);
+  real_set_free(set);
 
   printf("capi-test: OK\n");
   return 0;

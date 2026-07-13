@@ -83,6 +83,16 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
                         sizeof sub_err);
     }
 
+    // (NULL, 0) empty-subject convention: dedicated, unconditional coverage (not left to chance —
+    // the fuzzed text_len/repl_len are rarely exactly 0) on every function that accepts a
+    // (text, len) or (repl, repl_len) pair. Must never crash and must never return the -1/NULL
+    // error sentinel purely because the pointer was null at length 0.
+    (void) real_match(re, nullptr, 0, 0, 0, REAL_MODE_SEARCH, spans.data());
+    (void) real_count_matches(re, nullptr, 0);
+    char nb_err[256];
+    std::size_t nb_subs = 0;
+    (void) real_sub(re, nullptr, 0, nullptr, 0, 0, nullptr, 0, &nb_subs, nb_err, sizeof nb_err);
+
     real_free(re);
 
     // real_set_* — a 2-member set from the same fuzzed pattern bytes exercises the whole set surface
@@ -98,6 +108,9 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         (void) real_set_is_match(set, text, text_len);
         std::vector<std::uint8_t> hits(set_size);
         (void) real_set_matches(set, text, text_len, hits.data());
+        (void) real_set_is_match(set, nullptr, 0);
+        std::vector<std::uint8_t> nb_hits(set_size);
+        (void) real_set_matches(set, nullptr, 0, nb_hits.data());
         real_set_free(set);
     }
     return 0;

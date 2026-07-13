@@ -18,6 +18,11 @@
  * exception ever crosses this boundary; an internal engine error surfaces as the same failure sentinel a
  * bad input would, never a crash or a propagated throw.
  *
+ * Empty-subject convention, also stated once: `(NULL, 0)` is a VALID empty subject everywhere a
+ * `(text, len)` or `(repl, repl_len)` pair appears — the natural representation of an empty slice in a
+ * caller like Go (`nil, 0`), so a binding never needs a real allocation just to pass "nothing". Only a
+ * NULL pointer paired with a NONZERO length is an error (a claimed length with nothing to back it).
+ *
  * Flag numbering does NOT match Python's `re` module — a binding author assuming otherwise (the most likely
  * first mistake porting from the Python binding) will silently compile with the wrong mode. REAL's native
  * bitmask (this header's `flags` parameter) and Python's `re`-style numbering diverge on every shared flag,
