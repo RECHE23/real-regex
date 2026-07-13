@@ -37,17 +37,17 @@ namespace {
   // The general force-every-route-off differential, reused from test_prefilter.cpp's own
   // equivalence tests. `mode` lets a caller reach the lazy-DFA onepass route (REAL_MODE_FULL-only)
   // as well as search.
-  void expect_seam_agrees(std::string_view pattern,
-                          std::string_view text,
-                          std::size_t      pos    = 0,
-                          std::size_t      endpos = real::npos,
-                          real::detail::run_mode mode = real::detail::run_mode::search,
-                          real::flags       flags  = real::flags::none)
+  void expect_seam_agrees(std::string_view       pattern,
+                          std::string_view       text,
+                          std::size_t            pos        = 0,
+                          std::size_t            endpos     = real::npos,
+                          real::detail::run_mode mode       = real::detail::run_mode::search,
+                          real::flags            flags      = real::flags::none)
   {
     const auto with       = dynamic_storage::compile(pattern, flags);
     auto       without    = with;
     without.program.hints = {};
-    const std::size_t end {endpos < text.size() ? endpos : text.size()};
+    const std::size_t end    {endpos < text.size() ? endpos : text.size()};
     const auto        region {text.substr(0, end)};
 
     real::detail::pike_state         s1;
@@ -67,7 +67,7 @@ namespace {
   // A short adversarial corpus, reused across runners: dense (matches back-to-back), sparse
   // (rare, scattered), zero-match, a multi-byte UTF-8 junction, and end-of-text (no trailing
   // separator/context to fall back on).
-  void expect_seam_agrees_corpus(std::string_view pattern,
+  void expect_seam_agrees_corpus(std::string_view  pattern,
                                  real::flags       flags = real::flags::none)
   {
     expect_seam_agrees(pattern, "xx", 0, real::npos, real::detail::run_mode::search, flags); // ~zero-match-ish, tiny
@@ -80,10 +80,10 @@ namespace {
 TEST(seam_run_class_loop)
 {
   expect_seam_agrees("[a-z]+", "the quick brown FOX jumps 42 times, cafe\xC3\xA9 world");
-  expect_seam_agrees("[a-z]+", "AAAA9999");    // zero-match (all uppercase/digits)
+  expect_seam_agrees("[a-z]+", "AAAA9999");                                                  // zero-match (all uppercase/digits)
   expect_seam_agrees("[a-z]+", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); // dense
-  expect_seam_agrees("[a-z]+", "a b c d e f g h i j k l m n o p q r s t u v w x y z"); // sparse
-  expect_seam_agrees("[a-z]+", "hello world", 6);      // region pos>0
+  expect_seam_agrees("[a-z]+", "a b c d e f g h i j k l m n o p q r s t u v w x y z");       // sparse
+  expect_seam_agrees("[a-z]+", "hello world", 6);                                            // region pos>0
   expect_seam_agrees_corpus("[a-z]+");
   // B-2 wrap: \b...\b keeps wb hints ON the class-loop itself (not dropped like B-1).
   expect_seam_agrees(R"(\b[a-z]+\b)", "the QUICK-brown_fox jumps, cafe\xC3\xA9 next-door");
@@ -93,7 +93,7 @@ TEST(seam_run_class_loop)
 TEST(seam_run_cp_class_loop)
 {
   expect_seam_agrees(R"(\w+)", "caf\xC3\xA9 h\xC3\xA9llo w\xC3\xB6rld 123_under");
-  expect_seam_agrees(R"(\w+)", "!!! *** ,,,"); // zero-match
+  expect_seam_agrees(R"(\w+)", "!!! *** ,,,");                                  // zero-match
   expect_seam_agrees(R"(\w+)", "a\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80z world"); // 1/2/3/4-byte junctions
   expect_seam_agrees_corpus(R"(\w+)");
   expect_seam_agrees(R"(\b\w+\b)", "  caf\xC3\xA9  world  ");
@@ -131,7 +131,7 @@ TEST(seam_run_possessive_class_loop_captured)
 TEST(seam_run_possessive_cp_class_loop)
 {
   expect_seam_agrees(R"(\w*+;)", "   caf\xC3\xA9; ;h\xC3\xA9llo;");
-  expect_seam_agrees(R"(\w*+;)", ";"); // zero-iteration
+  expect_seam_agrees(R"(\w*+;)", ";");                             // zero-iteration
   // Delimited: the OTHER shape this runner drives (quoted bodies, negated class, prefix+suffix).
   expect_seam_agrees(R"("[^"]*+")", R"(a="1" b="two words" c="" d="unterminated)");
   expect_seam_agrees(R"(([^;])*+;)", "ab\xF0\x9F\x98\x80; ;xyz;"); // 4-byte codepoint last atom
@@ -147,7 +147,7 @@ TEST(seam_run_fixed_shape)
 
 TEST(seam_run_codepoint_class)
 {
-  expect_seam_agrees(".+", "hello\nworld"); // dotall off: stops at \n
+  expect_seam_agrees(".+", "hello\nworld");                      // dotall off: stops at \n
   expect_seam_agrees(".+", "caf\xC3\xA9 \xF0\x9F\x98\x80 done"); // multi-byte codepoints
   expect_seam_agrees("[^x]+", "aaaxaaax xxx");
   expect_seam_agrees_corpus("[^x]+");
