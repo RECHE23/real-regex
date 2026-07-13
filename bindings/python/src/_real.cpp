@@ -16,6 +16,7 @@
 #include <Python.h>
 
 #include <real/real.hpp>
+#include <real/regex_set.hpp>
 #include <sciforge/binding/error.hpp>
 #include <sciforge/binding/gil.hpp>
 
@@ -38,6 +39,7 @@ PyObject* error_type = nullptr;    // real.error
 PyObject* pattern_type = nullptr;  // real.Pattern
 PyObject* match_type = nullptr;    // real.Match
 PyObject* match_iterator_type = nullptr;  // real.MatchIterator (internal: created, not exposed)
+PyObject* regex_set_type = nullptr;  // real._RegexSet (internal: wrapped by real.RegexSet)
 
 // RAII GIL release (restores on every exit, including a throw): the shared
 // sciforge::binding::gil_release, kept under the local name the call sites use.
@@ -161,8 +163,10 @@ void MatchIterator_dealloc(PyObject* self) {
     Py_DECREF(reinterpret_cast<PyObject*>(tp));
 }
 
-int get_subject(PatternObject* pat, PyObject* obj, subject_view* out) {
-    if (pat->is_bytes != 0) {
+// `is_bytes` rather than a PatternObject*: shared by Pattern (pat->is_bytes) and RegexSet
+// (rs->is_bytes) — both just need to know which of str/bytes the subject must be.
+int get_subject(int is_bytes, PyObject* obj, subject_view* out) {
+    if (is_bytes != 0) {
         if (!PyBytes_Check(obj)) {
             PyErr_SetString(PyExc_TypeError,
                             "cannot use a bytes pattern on a string-like object");
@@ -326,7 +330,7 @@ PyObject* group_value(MatchObject* match, Py_ssize_t group, PyObject* default_va
     }
     const Py_ssize_t end = (*match->byte_spans)[(2 * group) + 1];
     subject_view sv;
-    if (get_subject(pat, match->subject, &sv) < 0) {
+    if (get_subject(pat->is_bytes, match->subject, &sv) < 0) {
         return nullptr;
     }
     return slice_subject(pat, sv, start, end);
@@ -423,7 +427,7 @@ int ensure_char_spans(MatchObject* match) {
         return 0;
     }
     subject_view sv;
-    if (get_subject(as_pattern(match->pattern), match->subject, &sv) < 0) {
+    if (get_subject(as_pattern(match->pattern)->is_bytes, match->subject, &sv) < 0) {
         return -1;
     }
     try {
@@ -705,7 +709,7 @@ PyObject* run_region(PyObject* self, PyObject* args, PyObject* kwargs, real::det
         return nullptr;
     }
     subject_view sv;
-    if (get_subject(pat, string, &sv) < 0) {
+    if (get_subject(pat->is_bytes, string, &sv) < 0) {
         return nullptr;
     }
     // Clamp char offsets to [0, char_len] (re clamps silently — out of range never errors),
@@ -804,7 +808,7 @@ PyObject* Pattern_findall(PyObject* self, PyObject* args, PyObject* kwargs) {
         return nullptr;
     }
     subject_view sv;
-    if (get_subject(pat, string, &sv) < 0) {
+    if (get_subject(pat->is_bytes, string, &sv) < 0) {
         return nullptr;
     }
     const Py_ssize_t char_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
@@ -909,7 +913,7 @@ PyObject* Pattern_count_matches(PyObject* self, PyObject* args, PyObject* kwargs
         return nullptr;
     }
     subject_view sv;
-    if (get_subject(pat, string, &sv) < 0) {
+    if (get_subject(pat->is_bytes, string, &sv) < 0) {
         return nullptr;
     }
     const Py_ssize_t char_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
@@ -985,7 +989,7 @@ PyObject* Pattern_finditer(PyObject* self, PyObject* args, PyObject* kwargs) {
         return nullptr;
     }
     subject_view sv;
-    if (get_subject(pat, string, &sv) < 0) {
+    if (get_subject(pat->is_bytes, string, &sv) < 0) {
         return nullptr;
     }
     const Py_ssize_t char_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
@@ -1021,7 +1025,7 @@ PyObject* Pattern_split(PyObject* self, PyObject* args, PyObject* kwargs) {
         return nullptr;
     }
     subject_view sv;
-    if (get_subject(pat, string, &sv) < 0) {
+    if (get_subject(pat->is_bytes, string, &sv) < 0) {
         return nullptr;
     }
     PyObject* out = PyList_New(0);
@@ -1325,7 +1329,7 @@ PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_c
         return nullptr;
     }
     subject_view sv;
-    if (get_subject(pat, string, &sv) < 0) {
+    if (get_subject(pat->is_bytes, string, &sv) < 0) {
         return nullptr;
     }
 
@@ -1420,7 +1424,7 @@ PyObject* Match_expand(PyObject* self, PyObject* template_arg) {
         return nullptr;
     }
     subject_view sv;
-    if (get_subject(pat, match->subject, &sv) < 0) {  // re-derive the UTF-8 view, like group_value
+    if (get_subject(pat->is_bytes, match->subject, &sv) < 0) {  // re-derive the UTF-8 view, like group_value
         return nullptr;
     }
 
@@ -1644,6 +1648,302 @@ PyType_Spec pattern_spec = {
 };
 
 // ---------------------------------------------------------------------------
+// RegexSet: real::regex_set (Stage-2 fused which-matched) wired in directly, not through the
+// C ABI (bindings/c) -- that ABI is byte-oriented and would force a str/bytes round-trip this
+// binding does not need. real.RegexSet (real/__init__.py) is a thin Python wrapper around this
+// internal type: it exists only so RegexSet keeps its historical public constructor shape
+// (RegexSet(patterns, flags=0), directly instantiable) while Pattern/Match's convention --
+// DISALLOW_INSTANTIATION plus a module-level factory -- still holds for the type this file
+// owns. No span/group reporting: same scope as real::regex_set itself (rerun the individual
+// Pattern if group data is needed).
+// ---------------------------------------------------------------------------
+
+struct RegexSetObject {
+    PyObject_HEAD
+    real::regex_set* set;
+    int is_bytes;
+};
+
+RegexSetObject* as_regex_set(PyObject* obj) { return reinterpret_cast<RegexSetObject*>(obj); }
+
+void RegexSet_dealloc(PyObject* self) {
+    PyTypeObject* tp = Py_TYPE(self);
+    RegexSetObject* rs = as_regex_set(self);
+    delete rs->set;
+    PyObject_Free(self);
+    Py_DECREF(reinterpret_cast<PyObject*>(tp));
+}
+
+Py_ssize_t RegexSet_len(PyObject* self) {
+    return static_cast<Py_ssize_t>(as_regex_set(self)->set->size());
+}
+
+// Parses (string, pos=0, endpos=None) -- same region convention as Pattern's run_region -- and
+// converts to a byte region against `rs`'s own is_bytes (RegexSet has no per-pattern PatternObject
+// to key off; is_bytes is a set-wide property, fixed at construction).
+int regex_set_parse_region(RegexSetObject* rs, PyObject* args, PyObject* kwargs,
+                           subject_view* sv, std::size_t* pos_byte, std::size_t* end_byte) {
+    PyObject* string = nullptr;
+    Py_ssize_t pos = 0;
+    Py_ssize_t endpos = PY_SSIZE_T_MAX;
+    static const char* const keywords[] = {"string", "pos", "endpos", nullptr};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|nn", const_cast<char**>(keywords),
+                                     &string, &pos, &endpos)) {
+        return -1;
+    }
+    // Whether the CALLER passed endpos at all, checked before it gets clamped down to char_len
+    // below (which would otherwise erase the distinction): real::regex_set::matches/is_match only
+    // take the fused single-pass DFA route when endpos == real::npos EXACTLY (its own "no region"
+    // sentinel) -- resolving an unspecified endpos to the concrete text length here would silently
+    // force every call onto the slower N-walks path, whether or not the caller asked for a region.
+    const bool endpos_given = (endpos != PY_SSIZE_T_MAX);
+    if (get_subject(rs->is_bytes, string, sv) < 0) {
+        return -1;
+    }
+    const Py_ssize_t char_len = sv->char_is_byte ? sv->len : PyUnicode_GetLength(string);
+    pos = std::clamp(pos, Py_ssize_t {0}, char_len);
+    *pos_byte = char_to_byte(*sv, pos);
+    if (endpos_given) {
+        endpos = std::clamp(endpos, Py_ssize_t {0}, char_len);
+        *end_byte = char_to_byte(*sv, endpos);
+    } else {
+        *end_byte = real::npos;
+    }
+    return 0;
+}
+
+PyObject* RegexSet_is_match(PyObject* self, PyObject* args, PyObject* kwargs) {
+    RegexSetObject* rs = as_regex_set(self);
+    subject_view sv;
+    std::size_t pos_byte = 0;
+    std::size_t end_byte = 0;
+    if (regex_set_parse_region(rs, args, kwargs, &sv, &pos_byte, &end_byte) < 0) {
+        return nullptr;
+    }
+    try {
+        const bool hit = rs->set->is_match(sv.view(), pos_byte, end_byte);
+        if (hit) {
+            Py_RETURN_TRUE;
+        }
+        Py_RETURN_FALSE;
+    } catch (...) {
+        return set_cpp_error();
+    }
+}
+
+PyObject* RegexSet_matches(PyObject* self, PyObject* args, PyObject* kwargs) {
+    RegexSetObject* rs = as_regex_set(self);
+    subject_view sv;
+    std::size_t pos_byte = 0;
+    std::size_t end_byte = 0;
+    if (regex_set_parse_region(rs, args, kwargs, &sv, &pos_byte, &end_byte) < 0) {
+        return nullptr;
+    }
+    std::vector<bool> hit;
+    try {
+        hit = rs->set->matches(sv.view(), pos_byte, end_byte);
+    } catch (...) {
+        return set_cpp_error();
+    }
+    PyObject* list = PyList_New(static_cast<Py_ssize_t>(hit.size()));
+    if (list == nullptr) {
+        return nullptr;
+    }
+    for (std::size_t i = 0; i < hit.size(); ++i) {
+        PyObject* b = hit[i] ? Py_True : Py_False;
+        Py_INCREF(b);  // PyList_SetItem steals the reference (limited-API safe; no _SET_ITEM macro)
+        if (PyList_SetItem(list, static_cast<Py_ssize_t>(i), b) < 0) {
+            Py_DECREF(list);
+            return nullptr;
+        }
+    }
+    return list;
+}
+
+PyObject* RegexSet_which(PyObject* self, PyObject* args, PyObject* kwargs) {
+    RegexSetObject* rs = as_regex_set(self);
+    subject_view sv;
+    std::size_t pos_byte = 0;
+    std::size_t end_byte = 0;
+    if (regex_set_parse_region(rs, args, kwargs, &sv, &pos_byte, &end_byte) < 0) {
+        return nullptr;
+    }
+    std::vector<std::size_t> ids;
+    try {
+        ids = rs->set->which(sv.view(), pos_byte, end_byte);
+    } catch (...) {
+        return set_cpp_error();
+    }
+    PyObject* list = PyList_New(static_cast<Py_ssize_t>(ids.size()));
+    if (list == nullptr) {
+        return nullptr;
+    }
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+        PyObject* n = PyLong_FromSize_t(ids[i]);
+        if (n == nullptr) {
+            Py_DECREF(list);
+            return nullptr;
+        }
+        // PyList_SetItem always consumes the `n` reference, success or failure -- never decref
+        // it separately (i stays within [0, size), so failure is not expected in practice).
+        if (PyList_SetItem(list, static_cast<Py_ssize_t>(i), n) < 0) {
+            Py_DECREF(list);
+            return nullptr;
+        }
+    }
+    return list;
+}
+
+PyMethodDef regex_set_methods[] = {
+    {"is_match", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(RegexSet_is_match)),
+     METH_VARARGS | METH_KEYWORDS, "True if any pattern matches (stops at the first hit)."},
+    {"matches", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(RegexSet_matches)),
+     METH_VARARGS | METH_KEYWORDS,
+     "Which patterns match at least once (construction-order list of bool)."},
+    {"which", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(RegexSet_which)),
+     METH_VARARGS | METH_KEYWORDS, "Indices of matching patterns (ascending, construction order)."},
+    {nullptr, nullptr, 0, nullptr},
+};
+
+PyType_Slot regex_set_slots[] = {
+    {Py_tp_dealloc, reinterpret_cast<void*>(RegexSet_dealloc)},
+    {Py_sq_length, reinterpret_cast<void*>(RegexSet_len)},
+    {Py_tp_methods, static_cast<void*>(regex_set_methods)},
+    {0, nullptr},
+};
+
+PyType_Spec regex_set_spec = {
+    "real._RegexSet",
+    sizeof(RegexSetObject),
+    0,
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_DISALLOW_INSTANTIATION,
+    regex_set_slots,
+};
+
+// real._compile_set(patterns, flags=0) -> _RegexSet -- the factory real.RegexSet.__init__ calls.
+// Every pattern must share the same str-vs-bytes-ness (mixed raises, like mixing them across
+// separate real.compile calls would eventually surface anyway) -- checked once here rather than
+// per-member, so the error names the whole set, not an arbitrary first divergent index.
+PyObject* real_compile_set(PyObject*, PyObject* args, PyObject* kwargs) {
+    PyObject* patterns_obj = nullptr;
+    unsigned long py_flags = 0;
+    static const char* const keywords[] = {"patterns", "flags", nullptr};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|k", const_cast<char**>(keywords),
+                                     &patterns_obj, &py_flags)) {
+        return nullptr;
+    }
+    // Iterator protocol, not PySequence_Fast + its _GET_ITEM/_GET_SIZE macros: those macros reach
+    // into the object's internals directly and are excluded from the limited API (Py_LIMITED_API
+    // above) -- and the iterator protocol also preserves the original pure-Python RegexSet's
+    // "any iterable of patterns" contract (a generator included), not just a sequence.
+    PyObject* iterator = PyObject_GetIter(patterns_obj);
+    if (iterator == nullptr) {
+        return nullptr;
+    }
+    std::vector<std::string> owned;
+    int is_bytes = -1;
+    PyObject* p = nullptr;
+    while ((p = PyIter_Next(iterator)) != nullptr) {
+        const char* data = nullptr;
+        Py_ssize_t len = 0;
+        int this_is_bytes = 0;
+        if (PyUnicode_Check(p)) {
+            data = PyUnicode_AsUTF8AndSize(p, &len);
+            if (data == nullptr) {
+                Py_DECREF(p);
+                Py_DECREF(iterator);
+                return nullptr;
+            }
+            owned.emplace_back(data, static_cast<std::size_t>(len));
+        } else if (PyBytes_Check(p)) {
+            char* raw = nullptr;
+            if (PyBytes_AsStringAndSize(p, &raw, &len) < 0) {
+                Py_DECREF(p);
+                Py_DECREF(iterator);
+                return nullptr;
+            }
+            this_is_bytes = 1;
+            owned.emplace_back(raw, static_cast<std::size_t>(len));
+        } else {
+            Py_DECREF(p);
+            Py_DECREF(iterator);
+            PyErr_SetString(PyExc_TypeError, "patterns must be str or bytes");
+            return nullptr;
+        }
+        Py_DECREF(p);
+        if (is_bytes == -1) {
+            is_bytes = this_is_bytes;
+        } else if (is_bytes != this_is_bytes) {
+            Py_DECREF(iterator);
+            PyErr_SetString(PyExc_TypeError, "cannot mix str and bytes patterns in a RegexSet");
+            return nullptr;
+        }
+    }
+    Py_DECREF(iterator);
+    if (PyErr_Occurred() != 0) {
+        return nullptr;  // the iterator itself raised mid-iteration
+    }
+
+    if ((py_flags & (PYFLAG_LOCALE | PYFLAG_DEBUG)) != 0) {
+        set_error("re.L and re.DEBUG are not supported by real");
+        return nullptr;
+    }
+    constexpr unsigned long known = PYFLAG_IGNORECASE | PYFLAG_MULTILINE | PYFLAG_DOTALL |
+                                    PYFLAG_UNICODE | PYFLAG_ASCII | PYFLAG_VERBOSE;
+    if ((py_flags & ~known) != 0) {
+        set_error("unknown flag passed to real.compile_set");
+        return nullptr;
+    }
+    real::flags compile_flags = real::flags::none;
+    if (is_bytes == 1) {
+        compile_flags = compile_flags | real::flags::bytes;
+    }
+    if ((py_flags & PYFLAG_IGNORECASE) != 0) {
+        compile_flags = compile_flags | real::flags::icase;
+    }
+    if ((py_flags & PYFLAG_MULTILINE) != 0) {
+        compile_flags = compile_flags | real::flags::multiline;
+    }
+    if ((py_flags & PYFLAG_DOTALL) != 0) {
+        compile_flags = compile_flags | real::flags::dotall;
+    }
+    if ((py_flags & PYFLAG_VERBOSE) != 0) {
+        compile_flags = compile_flags | real::flags::verbose;
+    }
+    if ((py_flags & PYFLAG_ASCII) != 0) {
+        compile_flags = compile_flags | real::flags::ascii;
+    }
+
+    std::vector<std::string_view> views;
+    views.reserve(owned.size());
+    for (const std::string& s : owned) {
+        views.emplace_back(s);
+    }
+
+    real::regex_set* set = nullptr;
+    try {
+        set = new real::regex_set(std::span<const std::string_view> {views}, compile_flags);
+    } catch (const real::regex_error& ex) {
+        set_error(ex.what());
+        return nullptr;
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
+    } catch (const std::exception& ex) {
+        PyErr_SetString(PyExc_RuntimeError, ex.what());
+        return nullptr;
+    }
+
+    auto* obj = PyObject_New(RegexSetObject, reinterpret_cast<PyTypeObject*>(regex_set_type));
+    if (obj == nullptr) {
+        delete set;
+        return nullptr;
+    }
+    obj->set = set;
+    obj->is_bytes = (is_bytes == 1) ? 1 : 0;
+    return reinterpret_cast<PyObject*>(obj);
+}
+
+// ---------------------------------------------------------------------------
 // compile()
 // ---------------------------------------------------------------------------
 
@@ -1748,6 +2048,11 @@ PyMethodDef module_methods[] = {
      "    Pattern: Compiled pattern object.\n\n"
      "Raises:\n"
      "    error: If the pattern is invalid or unsupported."},
+    {"_compile_set", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(real_compile_set)),
+     METH_VARARGS | METH_KEYWORDS,
+     "_compile_set(patterns, flags=0, /)\n"
+     "Compile patterns into an internal native set object (RegexSet's own factory --\n"
+     "not public API; use real.RegexSet)."},
     {nullptr, nullptr, 0, nullptr},
 };
 
@@ -1778,8 +2083,9 @@ PyMODINIT_FUNC PyInit__real() {  // PyMODINIT_FUNC already says extern "C"
     pattern_type = PyType_FromSpec(&pattern_spec);
     match_type = PyType_FromSpec(&match_spec);
     match_iterator_type = PyType_FromSpec(&match_iterator_spec);  // internal: created, not exposed
+    regex_set_type = PyType_FromSpec(&regex_set_spec);            // internal: created, not exposed
     if (error_type == nullptr || pattern_type == nullptr || match_type == nullptr ||
-        match_iterator_type == nullptr ||
+        match_iterator_type == nullptr || regex_set_type == nullptr ||
         PyModule_AddObject(module, "error", Py_NewRef(error_type)) < 0 ||
         PyModule_AddObject(module, "Pattern", Py_NewRef(pattern_type)) < 0 ||
         PyModule_AddObject(module, "Match", Py_NewRef(match_type)) < 0) {

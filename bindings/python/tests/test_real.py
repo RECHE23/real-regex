@@ -197,6 +197,71 @@ class TestModuleFunctions(unittest.TestCase):
         with self.assertRaises(real.error):
             real.RegexSet([r"ok", r"(?>a|b)"])  # atomic groups: Tier 1 bodies only (D1); a compound/alternating body is not
 
+    def test_regex_set_native_matches_n_loop_reference(self):
+        """R4: RegexSet now wraps real::regex_set directly (Stage-1/Stage-2 fused inside the C++
+        engine) instead of looping N individual Pattern.search calls in Python. Differential
+        proof that the rewire changed nothing observable: for every (pattern-set, text) pair,
+        RegexSet.matches/.which/.is_match must agree EXACTLY (order included) with the N-loop
+        reference built from individual real.search calls -- the old implementation's own logic,
+        kept here purely as the oracle, not as production code."""
+        patterns = [
+            r"alpha", r"beta", r"gamma", r"[0-9]+", r"[a-z]+", r"[A-Z]+",
+            r"\d{2,4}", r"^start", r"end$", r"a|b|c", r"foo(bar)?", r"[^x]+",
+            r"colou?r", r"(?:ab)+", r"x{2,5}", r"[[:digit:]]+", r"q(?=u)",
+            r"(?<=a)b", r"\bword\b", r"\W+", r"\s+", r"[^\s]+", r".*",
+            r"(cat|dog)s?", r"1[0-9]{3}", r"[A-Za-z0-9_]+", r"--+", r"==",
+        ]
+        texts = [
+            "alpha beta gamma 123 xyz ABC",
+            "no matches for most of these ZZZ",
+            "start of the line, and the end",
+            "foobar foo colour color coloor",
+            "abababab xxxxx q qu quack",
+            "a cat and a dog, cats and dogs, 1999",
+            "word boundaries: word, sword, words",
+            "",
+            "____----====....",
+            "\t\n  \r\n whitespace only  ",
+        ]
+        rs = real.RegexSet(patterns)
+        self.assertEqual(len(rs), len(patterns))
+        for text in texts:
+            reference = [real.search(p, text) is not None for p in patterns]
+            self.assertEqual(rs.matches(text), reference, msg=f"matches() diverged on {text!r}")
+            self.assertEqual(rs.which(text), [i for i, hit in enumerate(reference) if hit],
+                             msg=f"which() diverged on {text!r}")
+            self.assertEqual(rs.is_match(text), any(reference), msg=f"is_match() diverged on {text!r}")
+            # Region-aware: pos/endpos must thread through to the same reference shape.
+            if len(text) >= 4:
+                pos, endpos = 1, len(text) - 1
+                # real.compile(p).search(text, pos, endpos) is the reference: region-aware (pos is
+                # the VM anchor, not a slice), matching regex_set's own pos/endpos contract exactly.
+                region_reference = [real.compile(p).search(text, pos, endpos) is not None
+                                    for p in patterns]
+                self.assertEqual(rs.matches(text, pos=pos, endpos=endpos), region_reference,
+                                 msg=f"region matches() diverged on {text!r}")
+
+    def test_regex_set_native_stage2_fused_parity(self):
+        """The fused Stage-2 single-pass DFA (regex_set.hpp's fused_min_eligible = 56) is new
+        code the old Python N-loop never exercised at all -- push a set past that threshold with
+        plain DFA-eligible patterns (no lookaround, no Unicode \\w/\\d/\\s) and prove the fused
+        path still agrees with the N-loop reference, order included."""
+        patterns = [f"tok{i:03d}" for i in range(40)] + \
+                   [rf"[a-{chr(ord('a') + (i % 20))}]+{i}" for i in range(30)]
+        self.assertGreaterEqual(len(patterns), 56)
+        rs = real.RegexSet(patterns)
+        texts = [
+            " ".join(f"tok{i:03d}" for i in range(0, 40, 3)),
+            "aaaa5 bbbb12 nothing_here zzzz29",
+            "no tokens and no classes match this one at all",
+            "tok000tok001tok002 back to back, aaa0aaa1aaa2",
+        ]
+        for text in texts:
+            reference = [real.search(p, text) is not None for p in patterns]
+            self.assertEqual(rs.matches(text), reference, msg=f"fused matches() diverged on {text!r}")
+            self.assertEqual(rs.which(text), [i for i, hit in enumerate(reference) if hit])
+            self.assertEqual(rs.is_match(text), any(reference))
+
     def test_count_matches(self):
         """count_matches agrees with findall / finditer without materialising Match objects."""
         self.assertEqual(real.count_matches(r"\d+", "a1 b22 c333"), 3)
