@@ -45,6 +45,17 @@ Run it before every push. Individual steps (`make test`, `make lint`, `make cove
   smoke that `build-cpp.yml` configures). A relocation or deletion that greps only source/docs will pass the
   local gate and only fail in CI — this bit a `python/` move once and a `cmake/smoke/` delete once. Grep
   `.github/` (and the SciForge reusable workflows) for the path before you commit.
+- **A new fast-path runner arming a `pattern_hints` field needs a seam-matrix entry.** Three shipped
+  correctness bugs (the wb `\b`+pos>0 fix, the possessive-capture fix in 7.38, ASCII-mode `\s`) were each a
+  fast-path runner whose local invariant silently diverged from the general Pike VM, caught by fuzzing only
+  after shipping. `tests/engine/test_fastpath_seam_matrix.cpp` proves every runner dispatched in
+  `pike_vm::run()` agrees with the general VM on spans **and** groups (a span-only check would have missed
+  7.38's own bug) via the same hint-blanking differential `test_prefilter.cpp` already used
+  (`without.program.hints = {}` forces `run_general` deterministically without changing the compiled
+  bytecode). Adding or changing a dispatch condition in `pike_vm::run()`: add a pattern that arms it to that
+  file, and add the corresponding hint-field assertion to its `seam_matrix_coverage_manifest` test (which
+  catches the table's own patterns silently losing coverage — it cannot, by itself, catch a brand-new hint
+  field with no manifest line at all; this bullet is that other half).
 
 ## Releases
 
