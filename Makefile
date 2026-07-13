@@ -228,15 +228,18 @@ misra:
 FUZZ_TIME ?= 30
 FUZZ_DIR  := $(BUILD)/fuzz
 
-# Per-binding delegation. Each binding owns a standardized Makefile (bindings/{python,c,rust}/Makefile);
-# `make python-test`, `make c-fuzz`, `make rust-vendor` ... forward to it, and `make <binding>-help` lists a
-# binding's targets. This is THE form — there are no duplicate root targets for the binding work.
+# Per-binding delegation. Each binding owns a standardized Makefile (bindings/{python,c,rust,go}/Makefile);
+# `make python-test`, `make c-fuzz`, `make rust-vendor`, `make go-test` ... forward to it, and
+# `make <binding>-help` lists a binding's targets. This is THE form — there are no duplicate root targets
+# for the binding work.
 python-%:
 	@$(MAKE) -C bindings/python $*
 c-%:
 	@$(MAKE) -C bindings/c $*
 rust-%:
 	@$(MAKE) -C bindings/rust $*
+go-%:
+	@$(MAKE) -C bindings/go $*
 
 fuzz:
 	mkdir -p $(FUZZ_DIR)/corpus
