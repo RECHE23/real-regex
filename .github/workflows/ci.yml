@@ -199,6 +199,31 @@ jobs:
       - name: crate build + differential tests (fallback)
         run: cargo test --manifest-path bindings/rust/Cargo.toml --features fallback
 
+  # Go binding (bindings/go, cgo over bindings/c/real_capi.h). v0.1 scope is explicitly
+  # linux-x86-64 + macOS-arm64 only (Windows/MSVC and cross-compilation are out of v0 — see the
+  # module's own README). check-vendor runs once (linux leg) — it's a diff against tracked files,
+  # not a per-OS build concern; a drift would show identically on every OS.
+  go:
+    needs: preflight
+    strategy:
+      fail-fast: true   # one OS red cancels the other — fix and re-run, don't burn the sibling
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - name: Install g++ (Ubuntu — cgo needs a C++ compiler; macOS runners ship Xcode's clang++)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y g++
+      - name: Vendored C-ABI drift check
+        if: matrix.os == 'ubuntu-latest'
+        run: make go-check-vendor
+      - name: Build + vet + test (race detector on)
+        run: make go-test
+
   # The third differential fuzzer: real-regex vs the regex crate (cargo-fuzz, nightly). A short smoke here;
   # the long run is on the devbox. re/std/rust are now all covered by a differential fuzzer.
   fuzz-rust:
