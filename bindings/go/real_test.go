@@ -6,6 +6,21 @@ import (
 	"testing"
 )
 
+// --- EngineVersion (the vendored engine's own CalVer, decoupled from this module's semver) --
+
+func TestEngineVersion(t *testing.T) {
+	// A shape check ("YYYY.M.PATCH"), not a hardcoded version string -- this test must not need
+	// editing on every engine bump. Non-empty is the load-bearing assertion: an empty string
+	// would mean the vendored real/version.hpp's macros silently stopped stringizing right.
+	matched, err := regexp.MatchString(`^\d{4}\.\d{1,2}\.\d+$`, EngineVersion)
+	if err != nil {
+		t.Fatalf("regexp error: %v", err)
+	}
+	if !matched {
+		t.Fatalf("EngineVersion %q does not look like a CalVer string", EngineVersion)
+	}
+}
+
 // --- Compile / MustCompile plumbing ---------------------------------------------------------
 
 func TestCompileValid(t *testing.T) {

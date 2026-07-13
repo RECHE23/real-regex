@@ -20,6 +20,15 @@ package real
 #cgo linux LDFLAGS: -lstdc++
 #include "real_capi.h"
 #include <stdlib.h>
+
+// Implemented in engine_version.cpp (Go-binding-internal, NOT real_capi.h/.cpp — that ABI is
+// frozen-additive and has no version accessor). A plain extern declaration here, not an
+// #include of real/version.hpp: cgo's own preamble-parsing pass runs a C (not C++) front end
+// with none of this package's #cgo CXXFLAGS applied, and every real/*.hpp header enforces a
+// hard C++20 #error gate -- so the vendored header can only be touched from a real .cpp file,
+// compiled normally (and correctly, with -std=c++20) as part of the package build, exactly
+// like real_capi.cpp already is.
+extern const char* real_go_engine_version(void);
 */
 import "C"
 
@@ -31,6 +40,13 @@ import (
 
 // sizeMax is (size_t)-1, the C ABI's error sentinel for count/length-returning functions.
 var sizeMax = ^C.size_t(0)
+
+// EngineVersion is the vendored REAL C++ engine's version (e.g. "2026.7.40") — the engine
+// version actually compiled into this build. Intentionally decoupled from this module's own
+// semver (bindings/go/vX.Y.Z, Go's Semantic Import Versioning) — see README.md's Versioning
+// section: a CalVer major (e.g. "2026") baked into the Go import path would force a breaking
+// import-path change every year, which is exactly what the tag-prefix scheme avoids.
+var EngineVersion = C.GoString(C.real_go_engine_version())
 
 // cBytes returns a pointer usable as a real_capi (text, len) or (repl, repl_len) argument.
 // (NULL, 0) is a valid empty subject throughout the C ABI (v2026.7.39+, the D0-finding fix) —
