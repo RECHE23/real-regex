@@ -31,7 +31,7 @@
 #include <utility>
 #include <vector>
 
-#include "real/std/regex.hpp"
+#include "real/compat/std/regex.hpp"
 
 namespace rc = real::compat;
 

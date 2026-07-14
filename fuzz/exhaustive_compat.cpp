@@ -18,7 +18,7 @@
 #include <string>
 #include <vector>
 
-#include "real/std/regex.hpp"
+#include "real/compat/std/regex.hpp"
 #include "real/automata/lazy_dfa.hpp" // inner_literal_guard_disabled (exercise the route on small inputs)
 
 namespace rc = real::compat;

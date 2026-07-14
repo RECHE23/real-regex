@@ -17,7 +17,7 @@ pattern's replace/iteration delegates to std. See @ref compat.)
 Swap the include, alias the namespace, and your `std::regex` code compiles unchanged:
 
 \code{.cpp}
-#include <real/std/regex.hpp>   // was: #include <regex>
+#include <real/compat/std/regex.hpp>   // was: #include <regex>
 namespace re = real::compat;    // then use re::regex / re::smatch / re::regex_search / …
 \endcode
 

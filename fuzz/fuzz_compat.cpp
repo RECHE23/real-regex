@@ -13,7 +13,7 @@
 //   - lookbehind `(?<=` / `(?<!` (libstdc++ does not implement it)
 // and any pattern that takes the std fallback (then compat IS std, so no divergence is possible).
 
-#include <real/std/regex.hpp>
+#include <real/compat/std/regex.hpp>
 
 #include <cstddef>
 #include <cstdint>

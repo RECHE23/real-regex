@@ -42,8 +42,8 @@ class build_py_with_headers(build_py):
         here = os.path.dirname(os.path.abspath(__file__))
         src = os.path.join(here, "include", "real")
         dst = os.path.join(self.build_lib, "real", "include", "real")
-        # Walk recursively so subdirectories (real/std/) ship too, mirroring the tree — a flat
-        # os.listdir would silently drop real/std/regex*.hpp from the wheel.
+        # Walk recursively so subdirectories (real/compat/std/) ship too, mirroring the tree — a flat
+        # os.listdir would silently drop real/compat/std/regex*.hpp from the wheel.
         for root, _dirs, files in os.walk(src):
             rel = os.path.relpath(root, src)
             out_dir = dst if rel == os.curdir else os.path.join(dst, rel)

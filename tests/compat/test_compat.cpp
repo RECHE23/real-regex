@@ -14,7 +14,7 @@
 #include <vector>
 
 #include <sciforge/test/framework.hpp>
-#include "real/std/regex.hpp"
+#include "real/compat/std/regex.hpp"
 
 namespace rc = real::compat;
 using namespace std::string_view_literals;

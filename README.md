@@ -238,7 +238,7 @@ Already using `<regex>`? `real::compat` is a drop-in for the `<regex>` surface o
 swap the include and alias the namespace, and your code keeps compiling:
 
 ```cpp
-#include <real/std/regex.hpp>   // was: #include <regex>
+#include <real/compat/std/regex.hpp>   // was: #include <regex>
 namespace re = real::compat;    // then re::regex / re::smatch / re::regex_search / …
 ```
 
