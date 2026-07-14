@@ -366,6 +366,39 @@ TEST(onepass_node_cap_declines)
   EXPECT(!capped.bail_reason().empty());
 }
 
+TEST(onepass_minimize_work_cap_declines)
+{
+  // (iii) The Moore-refinement work cap: a repeated large class (e.g. `\w{k}`) floods thousands of onepass
+  // nodes per copy and forms a *chain* of that many groups -- Moore refinement needs ~k rounds to propagate
+  // a distinguishing byte all the way back to the start, each round O(nodes x alphabet), so total work is
+  // quadratic in k and unbounded as k grows (confirmed: `\w{30}` alone took ~2.1s on arm64/-O2 before this
+  // cap; the original fuzzer-discovered case, `\w{42}a`, hung 60+ seconds). work_cap (a constructor test
+  // hook, mirroring max_bytes/node_cap) exercises the decline on a small, fast pattern instead.
+  const byte_program bp {byte_prog("(\\w+)@(\\w+)")};
+  EXPECT(onepass(bp).eligible());                                                                   // real cap: one-pass
+  const onepass capped  {bp, onepass::max_table_bytes, onepass::max_nodes, /*work_cap=*/ std::uint64_t {10}};
+  EXPECT(!capped.eligible());
+  EXPECT_EQ(capped.bail_reason(), std::string {"one-pass minimization exceeded its work budget: not one-pass"});
+}
+
+TEST(onepass_repeated_class_no_longer_hangs)
+{
+  // The regression itself: `\w{k}a` for a k past the (real, default) work cap must decline quickly rather
+  // than hang, and — the point of a graceful decline — `real::regex` must still match correctly via the
+  // Pike VM fallback. k=20 is comfortably past the cap (issue #3 / the fuzzer's `\w{42}a}` finding).
+  const real::regex  rx   {R"(\w{20}a)"};
+  const std::string  word20a (20, 'b');
+  const std::string  subj {word20a + "a"};
+  const auto         m    {rx.fullmatch(subj)};
+  EXPECT(m.matched());
+  EXPECT_EQ(m.start(0), std::size_t {0});
+  EXPECT_EQ(m.end(0), subj.size());
+  const std::string no_tail (21, 'b');
+  EXPECT(!rx.fullmatch(no_tail).matched());                   // no trailing 'a': must not match
+  const std::string one_short {std::string(19, 'b') + "a"};
+  EXPECT(!rx.fullmatch(one_short).matched());                 // one short: must not match
+}
+
 TEST(onepass_ineligible_construction_and_extract)
 {
   // The byte-program can itself be ineligible before onepass ever walks it (a lookaround, present in
