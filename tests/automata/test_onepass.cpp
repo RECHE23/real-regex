@@ -381,6 +381,19 @@ TEST(onepass_minimize_work_cap_declines)
   EXPECT_EQ(capped.bail_reason(), std::string {"one-pass minimization exceeded its work budget: not one-pass"});
 }
 
+TEST(onepass_byte_program_size_cap_declines)
+{
+  // (iv) build_byte_program's own expansion-size cap (lazy_dfa.hpp, root cause #2 of the same fuzzer-found
+  // hang): every `klass_cp` occurrence gets its own freshly-built UTF-8 trie, unshared even when many
+  // occurrences reference the identical class -- e.g. every copy of a `{k}`-repeated `\w`. Left unbounded
+  // that is O(k x trie size) wall-clock BEFORE onepass ever runs. max_size (a test hook, mirroring onepass's
+  // own max_bytes/node_cap/work_cap hooks) exercises the decline on a small, fast pattern instead of one
+  // that takes seconds to build.
+  const auto st {dynamic_storage::compile("(\\w+)@(\\w+)", real::flags::none)};
+  EXPECT(build_byte_program(st.program.view()).eligible);                        // real cap: byte-program builds fine
+  EXPECT(!build_byte_program(st.program.view(), /*keep_assertions=*/ false, /*max_size=*/ std::size_t {10}).eligible);
+}
+
 TEST(onepass_repeated_class_no_longer_hangs)
 {
   // The regression itself: `\w{k}a` for a k past the (real, default) work cap must decline quickly rather

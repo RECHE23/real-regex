@@ -97,6 +97,13 @@ TEST(seam_run_class_loop)
   expect_seam_agrees(R"((?a)\b[a-z]{4,}\b)", "the QUICK four fives aaaaa a bb ccc dddd");
   expect_seam_agrees(R"((?a)\b[a-z]{4,})", "xabcdx four5 abcde");
   expect_seam_agrees("(?a)[a-z]{1,}", "same as plain +"); // k==1 must stay identical to bare `+`
+  // Coverage top-up (7.41 finalization): the min-check boundary in isolation -- a run of exactly
+  // k-1 (must NOT match as the counted run; the general VM's own {4,} semantics is the oracle
+  // here) vs exactly k (the limit, must match), with and without \b.
+  expect_seam_agrees("(?a)[a-z]{4,}", "abc");  // exactly k-1=3: no match
+  expect_seam_agrees("(?a)[a-z]{4,}", "abcd"); // exactly k=4: matches at the limit
+  expect_seam_agrees(R"((?a)\b[a-z]{4,}\b)", "abc");
+  expect_seam_agrees(R"((?a)\b[a-z]{4,}\b)", "abcd");
 }
 
 TEST(seam_run_cp_class_loop)
@@ -115,6 +122,13 @@ TEST(seam_run_cp_class_loop)
   expect_seam_agrees(R"(\b\w{4,}\b)", "  caf\xC3\xA9  ab  h\xC3\xA9llo  ");
   expect_seam_agrees(R"(\d{3,})", "12 123 1234 caf\xC3\xA9 12345");
   expect_seam_agrees(R"(\w{1,})", "same as plain +"); // k==1 must stay identical to bare `+`
+  // Coverage top-up (7.41 finalization): the min-check boundary in isolation, counted in CODE
+  // POINTS -- "caf" is 3 code points (under k=4), "caf\xC3\xA9" (café) is exactly 4 (c,a,f,é), the
+  // last one multi-byte -- a byte-length check here would be the exact bug this seam must catch.
+  expect_seam_agrees(R"(\w{4,})", "caf");                // exactly k-1=3 code points: no match
+  expect_seam_agrees(R"(\w{4,})", "caf\xC3\xA9");        // exactly k=4 code points: matches at the limit
+  expect_seam_agrees(R"(\b\w{4,}\b)", "caf");
+  expect_seam_agrees(R"(\b\w{4,}\b)", "caf\xC3\xA9");
 }
 
 TEST(seam_run_possessive_byte_loop)
@@ -185,6 +199,10 @@ TEST(seam_run_alternation)
   expect_seam_agrees("cat|dog|fish|bird|fox|bear", "the quick brown fox jumps over the lazy dog near the cat");                                                                  // 4 distinct (unaffected: pre-existing small_set)
   expect_seam_agrees("cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog", "the quick brown fox jumps over the lazy dog near the cat and bear and wolf and deer and hawk and frog"); // 6 distinct (issue #3's own example)
   expect_seam_agrees("cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog", "no animals mentioned");                                                                                  // zero-match, 6 distinct
+  // Coverage top-up (7.41 finalization): the two boundary points the 4/6/8/9 spread skipped.
+  expect_seam_agrees("cat|dog|fish|bird|owl", "the cat and the owl and a fish and a dog and a bird");                                                                            // 5 distinct: the new regime's own floor
+  expect_seam_agrees("cat|dog|fish|bird|owl", "no animals mentioned");                                                                                                           // zero-match, 5 distinct
+  expect_seam_agrees("cat|dog|fish|bird|owl|rat|hen", "the cat and the hen and a rat and a fish and a dog and a bird and an owl");                                               // 7 distinct
   expect_seam_agrees("cat|dog|fox|owl|rat|hen|pig|emu", "the cat and the owl and a hen and a pig and a rat and an emu");                                                         // 8 distinct: right at the new cap
   expect_seam_agrees("cat|dog|fox|owl|rat|hen|pig|emu|yak", "the cat and the yak and an emu");                                                                                   // 9 distinct: still correctly declines small_set
   expect_seam_agrees_corpus("cat|dog|fox|owl|rat|hen|pig|emu");
@@ -345,6 +363,9 @@ TEST(seam_matrix_coverage_manifest)
   // the bitmap loop, not a buffer overrun into the 8-element array).
   EXPECT_EQ(hints_of("cat|dog|fox|owl|rat|hen|pig|emu").small_set_size, std::uint8_t {8});
   EXPECT_EQ(hints_of("cat|dog|fox|owl|rat|hen|pig|emu|yak").small_set_size, std::uint8_t {0});
+  // Coverage top-up (7.41 finalization): the interior of the new regime (5 and 7), not just its ends.
+  EXPECT_EQ(hints_of("cat|dog|fish|bird|owl").small_set_size, std::uint8_t {5});
+  EXPECT_EQ(hints_of("cat|dog|fish|bird|owl|rat|hen").small_set_size, std::uint8_t {7});
   EXPECT(hints_of("dog").exact_literal_len > 0);
   EXPECT(hints_of(R"(\d{4}-\d{2})").inner_literal_len > 0);
   EXPECT(hints_of("[a-z]+(?=[a-z])").trailing_lookaround >= 0);

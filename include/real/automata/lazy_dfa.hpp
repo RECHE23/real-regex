@@ -333,11 +333,19 @@ namespace real::detail {
    *        deterministic UTF-8 trie recognising its code-point class (\ref build_utf8_trie), converging on
    *        the mapped P+4; every other op is copied with its branch targets remapped. Two passes: the first
    *        builds each trie and sizes it to form the old→new pc map, the second emits. The first pass also
-   *        enforces \ref max_byte_program_size as it accumulates `cur`, so a large repeated class declines
-   *        before building any trie past the one that crosses the cap.
+   *        enforces \p max_size (see \ref max_byte_program_size) as it accumulates `cur`, so a large repeated
+   *        class declines before building any trie past the one that crosses the cap.
+   *
+   * \param[in] prog            The Pike program to expand.
+   * \param[in] keep_assertions Tier-B: keep `assert_position` ops as edge conditions instead of declining
+   *                            them (Tier-A's default).
+   * \param[in] max_size        Expanded-program-size cap. Defaults to \ref max_byte_program_size; a smaller
+   *                            value is a test hook to exercise the decline without a pattern that takes
+   *                            seconds to build.
    */
   inline byte_program build_byte_program(const program_view& prog,
-                                         bool                keep_assertions = false)
+                                         bool                keep_assertions = false,
+                                         std::size_t         max_size        = max_byte_program_size)
   {
     byte_program bp;
     bp.unicode_word = prog.unicode_word;
@@ -375,7 +383,7 @@ namespace real::detail {
       if (prog.code[pc].op == opcode::klass_cp) {
         tries[pc]   = build_utf8_trie(prog.cp_classes[prog.code[pc].arg16], prog.cp_ranges);
         cur        += utf8_trie_emit_size(tries[pc]);
-        if (cur > max_byte_program_size) {
+        if (cur > max_size) {
           bp.eligible = false; // a large repeated class (e.g. `\w{k}` for a big k): decline before building
           return bp;           // any further trie -- the general Pike VM needs no byte-program expansion.
         }
