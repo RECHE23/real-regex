@@ -805,9 +805,15 @@ namespace real::detail {
                                     std::span<const lookaround_sub> lookarounds,
                                     pattern_hints&                  hints)
   {
-    // "class+" shape: save 0, [optional \b/\B,] [group-start save,] klass, split(back, exit),
+    // "class+" shape: save 0, [optional \b/\B,] [group-start save,] klass{k}, split(back, exit),
     // [group-end save,] [optional \b/\B,] save 1, match. Arc B via peel + resolve_class_wb_hints.
     // R3: the outer envelope (open/close) is \ref parse_shape_lead / \ref parse_shape_close.
+    // P1 (issue #3): `klass{k}` (k >= 1 consecutive copies of the SAME class) generalizes the
+    // original single-`klass` shape -- `X{k,}` desugars to k-1 mandatory copies then a k-th copy
+    // that doubles as the loop body (compiler.hpp's emit_repeat), so k identical `klass` ops
+    // followed by a self-loop split is the bytecode signature of `X{k,}` (k==1 is the original
+    // bare `X+`). A literal run like `\w\w\w+` desugars to the SAME bytecode as `\w{3,}` and is
+    // correctly recognized identically -- same matching semantics, same fast path.
     {
       const shape_lead lead {parse_shape_lead(code)};
       if (lead.ok) {
@@ -817,37 +823,47 @@ namespace real::detail {
           gs = static_cast<std::int16_t>(code[p].arg16);
           ++p;
         }
-        if (p + 1 < code.size() && code[p].op == opcode::klass && code[p + 1].op == opcode::split &&
-            code[p + 1].primary_target == static_cast<std::int32_t>(p) &&
-            code[p + 1].secondary_target == static_cast<std::int32_t>(p + 2)) {
+        if (p < code.size() && code[p].op == opcode::klass) {
           const std::int32_t cls {code[p].arg16};
-          std::size_t        q   {p + 2};
-          std::int16_t       ge  {-1};
-          bool               ok  {gs < 0};
-          if (gs >= 0 && q < code.size() && code[q].op == opcode::save) {
-            ge = static_cast<std::int16_t>(code[q].arg16);
-            ++q;
-            ok = true;
+          std::size_t        k   {1};
+          while (p + k < code.size() && code[p + k].op == opcode::klass && code[p + k].arg16 == cls) {
+            ++k;
           }
-          const shape_close close {ok ? parse_shape_close(code, q) : shape_close {}};
-          if (ok && close.ok && cls >= 0 && static_cast<std::size_t>(cls) < classes.size()) {
-            const char_class& cc        {classes[static_cast<std::size_t>(cls)]};
-            std::uint8_t      out_lead  {0};
-            std::uint8_t      out_trail {0};
-            // This shape structurally requires the split/loop matched above -- always a maximal
-            // `+` run, never a single code point -- so B-1's redundancy argument always applies.
-            if (resolve_class_wb_hints(is_full_ascii_word_class(cc), is_ascii_word_subset_class(cc),
-                                       /*maximal_run=*/ true, lead.wb_lead, close.wb_trail, out_lead,
-                                       out_trail)) {
-              hints.greedy_class_loop  = cls;
-              hints.greedy_group_start = gs;
-              hints.greedy_group_end   = ge;
-              hints.wb_lead            = out_lead;
-              hints.wb_trail           = out_trail;
-              // B-1 dropped a genuine leading \b (wb_lead was 1, out_lead came back 0): the
-              // runner's search-mode fast path needs the start>0 window-edge guard -- see
-              // pattern_hints::wb_lead_maximal_run's own doc comment for the full argument.
-              hints.wb_lead_maximal_run = (lead.wb_lead == 1 && out_lead == 0);
+          const std::size_t last {p + k - 1};
+          if (last + 1 < code.size() && code[last + 1].op == opcode::split &&
+              code[last + 1].primary_target == static_cast<std::int32_t>(last) &&
+              code[last + 1].secondary_target == static_cast<std::int32_t>(last + 2)) {
+            std::size_t  q  {last + 2};
+            std::int16_t ge {-1};
+            bool         ok {gs < 0};
+            if (gs >= 0 && q < code.size() && code[q].op == opcode::save) {
+              ge = static_cast<std::int16_t>(code[q].arg16);
+              ++q;
+              ok = true;
+            }
+            const shape_close close {ok ? parse_shape_close(code, q) : shape_close {}};
+            if (ok && close.ok && cls >= 0 && static_cast<std::size_t>(cls) < classes.size()
+                && k <= 65535) {
+              const char_class& cc        {classes[static_cast<std::size_t>(cls)]};
+              std::uint8_t      out_lead  {0};
+              std::uint8_t      out_trail {0};
+              // This shape structurally requires the split/loop matched above -- always a maximal
+              // `+`-family run, never a single code point -- so B-1's redundancy argument always
+              // applies regardless of k.
+              if (resolve_class_wb_hints(is_full_ascii_word_class(cc), is_ascii_word_subset_class(cc),
+                                         /*maximal_run=*/ true, lead.wb_lead, close.wb_trail, out_lead,
+                                         out_trail)) {
+                hints.greedy_class_loop     = cls;
+                hints.greedy_class_loop_min = static_cast<std::uint16_t>(k);
+                hints.greedy_group_start    = gs;
+                hints.greedy_group_end      = ge;
+                hints.wb_lead               = out_lead;
+                hints.wb_trail              = out_trail;
+                // B-1 dropped a genuine leading \b (wb_lead was 1, out_lead came back 0): the
+                // runner's search-mode fast path needs the start>0 window-edge guard -- see
+                // pattern_hints::wb_lead_maximal_run's own doc comment for the full argument.
+                hints.wb_lead_maximal_run = (lead.wb_lead == 1 && out_lead == 0);
+              }
             }
           }
         }
@@ -884,9 +900,16 @@ namespace real::detail {
       }
     }
 
-    // Code-point class (klass_cp + three klass continuations), optional greedy `+`, optional `\b`/`\B`
-    // wraps (Arc B), optional one capturing group. Unicode `\w+` / `\d+` / `\s+` via peel + resolve.
-    // R3: the outer envelope (open/close) is \ref parse_shape_lead / \ref parse_shape_close.
+    // Code-point class (klass_cp + three klass continuations){k}, optional greedy `+` (a self-loop
+    // of the LAST block), optional `\b`/`\B` wraps (Arc B), optional one capturing group. Unicode
+    // `\w+` / `\d+` / `\s+` / `\w{k,}` via peel + resolve. R3: the outer envelope (open/close) is
+    // \ref parse_shape_lead / \ref parse_shape_close.
+    // P1 (issue #3): k >= 1 consecutive copies of the IDENTICAL 4-instruction klass_cp block --
+    // `\w{k,}` desugars to k-1 mandatory copies then a k-th copy that doubles as the loop body
+    // (compiler.hpp's emit_repeat). intern_cp_class/intern_class content-based dedup (compiler.hpp)
+    // guarantees repeated blocks are byte-identical (same cp_idx, same 3 continuation class
+    // indices) -- verified explicitly below rather than assumed, so a future emitter change that
+    // broke the guarantee would just decline this shape, never misrecognize it.
     {
       const shape_lead lead {parse_shape_lead(code)};
       if (lead.ok) {
@@ -898,9 +921,23 @@ namespace real::detail {
         }
         if (p + 3 < code.size() && code[p].op == opcode::klass_cp && code[p + 1].op == opcode::klass &&
             code[p + 2].op == opcode::klass && code[p + 3].op == opcode::klass) {
-          const std::int32_t cp_idx  {code[p].arg16};
-          const std::size_t  loop_pc {p};
-          std::size_t        q       {p + 4};
+          const std::int32_t  cp_idx {code[p].arg16};
+          const std::int32_t  cont0  {code[p + 1].arg16};
+          const std::int32_t  cont1  {code[p + 2].arg16};
+          const std::int32_t  cont2  {code[p + 3].arg16};
+          std::size_t         k      {1};
+          while (p + (k * 4) + 3 < code.size()) {
+            const std::size_t bp {p + (k * 4)};
+            if (code[bp].op != opcode::klass_cp || code[bp].arg16 != cp_idx ||
+                code[bp + 1].op != opcode::klass || code[bp + 1].arg16 != cont0 ||
+                code[bp + 2].op != opcode::klass || code[bp + 2].arg16 != cont1 ||
+                code[bp + 3].op != opcode::klass || code[bp + 3].arg16 != cont2) {
+              break;
+            }
+            ++k;
+          }
+          const std::size_t  loop_pc {p + ((k - 1) * 4)}; // the LAST block's own klass_cp position
+          std::size_t        q       {loop_pc + 4};
           bool               plus    {false};
           if (q < code.size() && code[q].op == opcode::split &&
               code[q].primary_target == static_cast<std::int32_t>(loop_pc) &&
@@ -916,12 +953,17 @@ namespace real::detail {
             ok = true;
           }
           const shape_close close {ok ? parse_shape_close(code, q) : shape_close {}};
-          if (ok && close.ok && cp_idx >= 0 && static_cast<std::size_t>(cp_idx) < cp_classes.size()) {
+          // k > 1 without a trailing self-loop is `X{k}` (exact count, no MIN-only run to bound a
+          // search against) -- not this recognizer's shape; only arm when the loop is present
+          // (the {k,} shape) or k == 1 (the original bare-atom/optional-`+` shape).
+          if (ok && close.ok && (plus || k == 1) && cp_idx >= 0
+              && static_cast<std::size_t>(cp_idx) < cp_classes.size() && k <= 65535) {
             const bool has_wb {lead.wb_lead != 0 || close.wb_trail != 0};
             // Bare path: no Unicode table walk (keeps constexpr light for static_regex).
             if (!has_wb) {
               hints.greedy_cp_class      = cp_idx;
               hints.greedy_cp_class_plus = plus;
+              hints.greedy_cp_class_min  = static_cast<std::uint16_t>(k);
               hints.greedy_group_start   = gs;
               hints.greedy_group_end     = ge;
               hints.wb_lead              = 0;
@@ -939,6 +981,7 @@ namespace real::detail {
                                          lead.wb_lead, close.wb_trail, out_lead, out_trail)) {
                 hints.greedy_cp_class      = cp_idx;
                 hints.greedy_cp_class_plus = plus;
+                hints.greedy_cp_class_min  = static_cast<std::uint16_t>(k);
                 hints.greedy_group_start   = gs;
                 hints.greedy_group_end     = ge;
                 hints.wb_lead              = out_lead;

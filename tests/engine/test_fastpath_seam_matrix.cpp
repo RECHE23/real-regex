@@ -88,6 +88,15 @@ TEST(seam_run_class_loop)
   // B-2 wrap: \b...\b keeps wb hints ON the class-loop itself (not dropped like B-1).
   expect_seam_agrees(R"(\b[a-z]+\b)", "the QUICK-brown_fox jumps, cafe\xC3\xA9 next-door");
   expect_seam_agrees(R"(\b[a-z]+\b)", "xhello worldx"); // no boundary anywhere
+  // P1 (issue #3): the `{k,}` counted-min extension -- k mandatory copies + a loop of the same
+  // atom, byte class. Dense/sparse/under-the-min (runs shorter than k, which must NOT match) and
+  // both wb wraps.
+  expect_seam_agrees("(?a)[a-z]{4,}", "abc abcd abcde ab a");   // under-min (3,4,5,2,1 -char runs)
+  expect_seam_agrees("(?a)[a-z]{4,}", "aaaaaaaaaaaaaaaaaaaaa"); // dense, well over min
+  expect_seam_agrees_corpus("(?a)[a-z]{4,}");
+  expect_seam_agrees(R"((?a)\b[a-z]{4,}\b)", "the QUICK four fives aaaaa a bb ccc dddd");
+  expect_seam_agrees(R"((?a)\b[a-z]{4,})", "xabcdx four5 abcde");
+  expect_seam_agrees("(?a)[a-z]{1,}", "same as plain +"); // k==1 must stay identical to bare `+`
 }
 
 TEST(seam_run_cp_class_loop)
@@ -97,6 +106,15 @@ TEST(seam_run_cp_class_loop)
   expect_seam_agrees(R"(\w+)", "a\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80z world"); // 1/2/3/4-byte junctions
   expect_seam_agrees_corpus(R"(\w+)");
   expect_seam_agrees(R"(\b\w+\b)", "  caf\xC3\xA9  world  ");
+  // P1 (issue #3): the `{k,}` counted-min extension, Unicode cp-class -- min counted in CODE
+  // POINTS, not bytes, so a multi-byte-junction corpus is the point (a byte-length check here
+  // would be a genuine bug this seam must catch).
+  expect_seam_agrees(R"(\w{4,})", "abc abcd caf\xC3\xA9 h\xC3\xA9llo x");     // under-min + multi-byte cp
+  expect_seam_agrees(R"(\w{4,})", "caf\xC3\xA9" "caf\xC3\xA9" "caf\xC3\xA9"); // dense multi-byte
+  expect_seam_agrees_corpus(R"(\w{4,})");
+  expect_seam_agrees(R"(\b\w{4,}\b)", "  caf\xC3\xA9  ab  h\xC3\xA9llo  ");
+  expect_seam_agrees(R"(\d{3,})", "12 123 1234 caf\xC3\xA9 12345");
+  expect_seam_agrees(R"(\w{1,})", "same as plain +"); // k==1 must stay identical to bare `+`
 }
 
 TEST(seam_run_possessive_byte_loop)
@@ -293,6 +311,18 @@ TEST(seam_matrix_coverage_manifest)
                         };
   EXPECT(hints_of("[a-z]+").greedy_class_loop >= 0);
   EXPECT(hints_of(R"(\w+)").greedy_cp_class >= 0);
+  // P1 (issue #3): the {k,} min-count extension actually arms with k, not silently falling back
+  // to the bare-`+` min=1 default (which would make the recognizer extension a no-op).
+  EXPECT(hints_of("(?a)[a-z]{4,}").greedy_class_loop >= 0);
+  EXPECT_EQ(hints_of("(?a)[a-z]{4,}").greedy_class_loop_min, std::uint16_t {4});
+  EXPECT_EQ(hints_of("[a-z]+").greedy_class_loop_min, std::uint16_t {1});
+  EXPECT(hints_of(R"(\w{4,})").greedy_cp_class >= 0);
+  EXPECT_EQ(hints_of(R"(\w{4,})").greedy_cp_class_min, std::uint16_t {4});
+  EXPECT_EQ(hints_of(R"(\w+)").greedy_cp_class_min, std::uint16_t {1});
+  // {k,m} (bounded max) must NOT arm this shape (P1's own explicit scope limit) -- declines to
+  // general, greedy_class_loop stays -1.
+  EXPECT(hints_of("(?a)[a-z]{2,4}").greedy_class_loop < 0);
+  EXPECT(hints_of(R"(\w{2,4})").greedy_cp_class < 0);
   EXPECT(hints_of("a*+;").possessive_class.kind == real::detail::class_kind::byte);
   EXPECT(hints_of("[a-z]*+;").possessive_class.kind == real::detail::class_kind::klass);
   EXPECT(hints_of(R"(\w*+;)").possessive_class.kind == real::detail::class_kind::klass_cp);
