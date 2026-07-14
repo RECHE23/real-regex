@@ -2,13 +2,13 @@
  * \file std/regex_core.hpp
  * \brief std::regex-compatibility layer, part 1/3: the constants, the error type, the backend-routing
  *        screens, and `basic_regex`. Included via the `std/regex.hpp` umbrella — do not include the
- *        parts directly; `#include <real/std/regex.hpp>` stays the one public entry point.
+ *        parts directly; `#include <real/compat/std/regex.hpp>` stays the one public entry point.
  */
 #ifndef REAL_STD_REGEX_CORE_HPP
 #define REAL_STD_REGEX_CORE_HPP
 
 // Internal — do not include directly.
-// Users: #include <real/real.hpp> (or the documented opt-ins <real/dfa.hpp>, <real/std/regex.hpp>).
+// Users: #include <real/real.hpp> (or the documented opt-ins <real/dfa.hpp>, <real/compat/std/regex.hpp>).
 
 #include <real/version.hpp>
 
