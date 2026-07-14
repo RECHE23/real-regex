@@ -1583,17 +1583,22 @@ namespace real::detail {
       hints.single_first = static_cast<unsigned char>(hints.prefix[0]);
     }
     else if (hints.first_bytes_valid) {
-      // Enumerate the set, stopping once it exceeds four. A single member drives find_byte (one memchr);
-      // two-to-four members drive the memchr-cascade (small_set); five or more stay on the bitmap loop.
-      std::array<char, 4> members {};
+      // Enumerate the set, stopping once it exceeds eight -- the recognizer's own cap now matches
+      // run_alternation's L-SIMD masked-block scan (pike.hpp), which has always gated on
+      // small_set_size <= 8; only this enumeration cap was left at 4 (issue #3's Alternation gap:
+      // a 5-8-distinct-first-byte pattern like `cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog`
+      // fell all the way to the bitmap loop, un-accelerated). A single member drives find_byte (one
+      // memchr); two-to-eight members drive the memchr-cascade/SIMD scan (small_set); nine or more
+      // stay on the bitmap loop.
+      std::array<char, 8> members {};
       int                 count   {0};
       for (unsigned byte = 0; byte < 256; ++byte) {
         if (hints.first_bytes.test(static_cast<std::uint8_t>(byte))) {
-          if (count < 4) {
+          if (count < 8) {
             members[static_cast<std::size_t>(count)] = static_cast<char>(byte);
           }
           ++count;
-          if (count > 4) {
+          if (count > 8) {
             break;
           }
         }
@@ -1601,7 +1606,7 @@ namespace real::detail {
       if (count == 1) {
         hints.single_first = static_cast<std::int16_t>(static_cast<unsigned char>(members[0]));
       }
-      else if (count >= 2 && count <= 4) {
+      else if (count >= 2 && count <= 8) {
         hints.small_set      = members;
         hints.small_set_size = static_cast<std::uint8_t>(count);
       }

@@ -338,8 +338,8 @@ namespace real {
       bool                 empty_match_possible  {};   //!< The pattern can match the empty string (the nullable gate; conservative: assertions/lookarounds pass through, so e.g. `^$` is flagged nullable).
       std::int16_t         single_first          {-1}; //!< The unique possible first byte, or -1.
       char_class           first_bytes;                //!< All possible first bytes.
-      std::array<char, 4>  small_set             {};   //!< The 2..4 possible first bytes, enumerated (the memchr-cascade set). Empty unless \ref small_set_size is set.
-      std::uint8_t         small_set_size        {};   //!< Number of valid members in \ref small_set — 0 when not a small set, else 2..4. Drives the memchr-cascade scan in place of the bitmap loop.
+      std::array<char, 8>  small_set             {};   //!< The 2..8 possible first bytes, enumerated (the memchr-cascade set). Empty unless \ref small_set_size is set.
+      std::uint8_t         small_set_size        {};   //!< Number of valid members in \ref small_set — 0 when not a small set, else 2..8. Drives the memchr-cascade scan (search mode: the L-SIMD masked block scan) in place of the bitmap loop.
       std::int32_t         greedy_class_loop     {-1}; //!< Class index if the whole pattern is "class+", else -1.
       std::uint16_t        greedy_class_loop_min {1};  //!< P1: minimum run length (bytes) for \ref greedy_class_loop -- 1 for a bare `X+`, k for the `X{k,}` desugaring (k mandatory copies of the same atom then a loop of it, compiler.hpp's emit_repeat).
       std::int32_t         greedy_cp_class       {-1}; //!< cp_class index if the whole pattern is a code-point class `klass_cp` (optionally `+`), else -1.

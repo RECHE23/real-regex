@@ -177,6 +177,17 @@ TEST(seam_run_alternation)
   expect_seam_agrees("dog|fox|cat", "no animals mentioned"); // zero-match
   expect_seam_agrees(R"(\b(?:foo|bar)\b)", " foo bar foobar xfoo barx ");
   expect_seam_agrees_corpus("dog|fox|cat");
+  // Alt-fix (issue #3): small_set's enumeration cap raised 4->8 (prefilter.hpp), matching
+  // run_alternation's own L-SIMD scan, which already gated on small_set_size <= 8 (pike.hpp) --
+  // only the recognizer's enumeration cap was left at 4. 5-8 distinct first bytes now arm the
+  // scan where they previously fell straight to the bitmap loop; 9 still correctly declines.
+  // Dense/sparse/no-match, and right at both new boundaries (8 armed, 9 declined).
+  expect_seam_agrees("cat|dog|fish|bird|fox|bear", "the quick brown fox jumps over the lazy dog near the cat");                                                                  // 4 distinct (unaffected: pre-existing small_set)
+  expect_seam_agrees("cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog", "the quick brown fox jumps over the lazy dog near the cat and bear and wolf and deer and hawk and frog"); // 6 distinct (issue #3's own example)
+  expect_seam_agrees("cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog", "no animals mentioned");                                                                                  // zero-match, 6 distinct
+  expect_seam_agrees("cat|dog|fox|owl|rat|hen|pig|emu", "the cat and the owl and a hen and a pig and a rat and an emu");                                                         // 8 distinct: right at the new cap
+  expect_seam_agrees("cat|dog|fox|owl|rat|hen|pig|emu|yak", "the cat and the yak and an emu");                                                                                   // 9 distinct: still correctly declines small_set
+  expect_seam_agrees_corpus("cat|dog|fox|owl|rat|hen|pig|emu");
 }
 
 TEST(seam_run_exact_literal)
@@ -329,6 +340,11 @@ TEST(seam_matrix_coverage_manifest)
   EXPECT(hints_of("[0-9a-f]{4}").fixed_shape);
   EXPECT(hints_of(".+").codepoint_class_ascii >= 0);
   EXPECT(hints_of("dog|fox|cat").fixed_alternation);
+  // Alt-fix (issue #3): the small_set cap actually arms at 8, not silently staying at the old
+  // 4 (which would make the recognizer extension a no-op), and 9 correctly declines (stays on
+  // the bitmap loop, not a buffer overrun into the 8-element array).
+  EXPECT_EQ(hints_of("cat|dog|fox|owl|rat|hen|pig|emu").small_set_size, std::uint8_t {8});
+  EXPECT_EQ(hints_of("cat|dog|fox|owl|rat|hen|pig|emu|yak").small_set_size, std::uint8_t {0});
   EXPECT(hints_of("dog").exact_literal_len > 0);
   EXPECT(hints_of(R"(\d{4}-\d{2})").inner_literal_len > 0);
   EXPECT(hints_of("[a-z]+(?=[a-z])").trailing_lookaround >= 0);
