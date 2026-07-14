@@ -338,11 +338,11 @@ namespace real {
       bool                 empty_match_possible  {};   //!< The pattern can match the empty string (the nullable gate; conservative: assertions/lookarounds pass through, so e.g. `^$` is flagged nullable).
       std::int16_t         single_first          {-1}; //!< The unique possible first byte, or -1.
       char_class           first_bytes;                //!< All possible first bytes.
-      std::array<char, 4>  small_set             {};   //!< The 2..4 possible first bytes, enumerated (the memchr-cascade set). Empty unless \ref small_set_size is set.
-      std::uint8_t         small_set_size        {};   //!< Number of valid members in \ref small_set — 0 when not a small set, else 2..4. Drives the memchr-cascade scan in place of the bitmap loop.
       std::int32_t         greedy_class_loop     {-1}; //!< Class index if the whole pattern is "class+", else -1.
+      std::uint16_t        greedy_class_loop_min {1};  //!< P1: minimum run length (bytes) for \ref greedy_class_loop -- 1 for a bare `X+`, k for the `X{k,}` desugaring (k mandatory copies of the same atom then a loop of it, compiler.hpp's emit_repeat).
       std::int32_t         greedy_cp_class       {-1}; //!< cp_class index if the whole pattern is a code-point class `klass_cp` (optionally `+`), else -1.
       bool                 greedy_cp_class_plus  {};   //!< The \ref greedy_cp_class pattern is a greedy `+` loop (vs a single code point).
+      std::uint16_t        greedy_cp_class_min   {1};  //!< P1: minimum run length (CODE POINTS, not bytes) for \ref greedy_cp_class when \ref greedy_cp_class_plus is set -- see \ref greedy_class_loop_min.
       std::int16_t         greedy_group_start    {-1}; //!< For a class-loop wrapped in one capturing group (`(\w+)`, `([a-z]+)`): the group's start slot to mirror the whole-match start into (-1 = no enveloping group).
       std::int16_t         greedy_group_end      {-1}; //!< The enveloping group's end slot (mirrors the whole-match end).
       bool                 fixed_shape           {};   //!< Whole pattern is a fixed-width byte/klass sequence (no branches/asserts/captures).
@@ -365,6 +365,17 @@ namespace real {
       //!        unless \ref stop_set_size is set. Placed last so it never shifts the hot fields' offsets.
       std::array<char, 6> stop_set      {};
       std::uint8_t        stop_set_size {}; //!< Members in \ref stop_set — 0 when the complement is too large, else 1..6.
+
+      //! \brief The 2..8 possible first bytes, enumerated (the memchr-cascade set for alternation search
+      //!        mode: the L-SIMD masked block scan) in place of the bitmap loop. Empty unless \ref
+      //!        small_set_size is set. Placed here (cold, alongside \ref stop_set — the same memchr-cascade
+      //!        family) rather than near \ref first_bytes, its earlier position: that spot was ahead of the
+      //!        greedy_class_loop* fields the class-loop fast path reads every call, and growing this array
+      //!        (Alt-fix's 4->8 cap raise) shifted those hot fields' offsets and their cache line -- a pure
+      //!        layout effect, not a logic change, but measurable. This array is written once at compile and
+      //!        read only by the alternation route, so it costs nothing to keep it out of the hot prefix.
+      std::array<char, 8> small_set      {};
+      std::uint8_t        small_set_size {}; //!< Members in \ref small_set — 0 when not a small set, else 2..8.
 
       //! \brief A *required* literal byte at a fixed offset from the match start that is statically rarer
       //!        than the pattern's first-byte set (OPT: the date `-` at offset 4). The search jumps by

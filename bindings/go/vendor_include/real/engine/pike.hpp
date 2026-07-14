@@ -1202,6 +1202,11 @@ namespace real::detail {
                                   run_mode         mode,
                                   OutSlots&        out_slots)
     {
+      // P1 (issue #3): minimum run length in BYTES for the `X{k,}` desugaring (k identical copies
+      // of the atom + a loop of it, see prefilter.hpp's extended class+ recognizer); 1 for the
+      // original bare `X+` shape, where every one of the checks below is a dead branch (byte
+      // runs are never shorter than 1) -- byte-identical to the pre-P1 behavior.
+      const std::size_t         min_len {prog_.hints.greedy_class_loop_min};
       const std::uint8_t* const tbl =
         class_table(static_cast<std::size_t>(prog_.hints.greedy_class_loop));
       const auto in_class = [&](std::size_t i) {
@@ -1238,7 +1243,7 @@ namespace real::detail {
           }
           const std::size_t match_end {scan_end(start)};
           if ((mode == run_mode::full && match_end != text.size()) ||
-              !wb_boundaries_ok(start, match_end)) {
+              !wb_boundaries_ok(start, match_end) || (match_end - start) < min_len) {
             out_slots.assign(prog_.slot_count, npos);
             return false;
           }
@@ -1256,7 +1261,7 @@ namespace real::detail {
             break;
           }
           const std::size_t match_end {scan_end(match_start)};
-          if (wb_boundaries_ok(match_start, match_end)) {
+          if ((match_end - match_start) >= min_len && wb_boundaries_ok(match_start, match_end)) {
             out_slots.assign(prog_.slot_count, npos);
             fill_span_slots(out_slots, match_start, match_end);
             return true;
@@ -1276,13 +1281,15 @@ namespace real::detail {
         return false;
       }
       std::size_t match_start {start};
-      if (mode == run_mode::search) {
-        while (true) {
+      std::size_t match_end   {};
+      while (true) {
+        if (mode == run_mode::search) {
           while (match_start < text.size() && !in_class(match_start)) {
             ++match_start;
           }
           if (match_start >= text.size()) {
-            break;
+            out_slots.assign(prog_.slot_count, npos);
+            return false;
           }
           // B-1 window-edge guard: a candidate found by scanning forward past a non-class byte
           // is provably preceded by one (the scan just confirmed it), so B-1's redundancy
@@ -1294,17 +1301,28 @@ namespace real::detail {
             match_start = scan_end(match_start); // no genuine boundary here: skip this whole run
             continue;
           }
-          break;
         }
-      }
-      if (match_start >= text.size() || !in_class(match_start)) {
-        out_slots.assign(prog_.slot_count, npos);
-        return false;
-      }
-      const std::size_t match_end {scan_end(match_start)};
-      if (mode == run_mode::full && match_end != text.size()) {
-        out_slots.assign(prog_.slot_count, npos);
-        return false;
+        if (match_start >= text.size() || !in_class(match_start)) {
+          out_slots.assign(prog_.slot_count, npos);
+          return false;
+        }
+        match_end = scan_end(match_start);
+        if (mode == run_mode::full && match_end != text.size()) {
+          out_slots.assign(prog_.slot_count, npos);
+          return false;
+        }
+        // P1: a maximal run shorter than the required minimum can never satisfy `X{k,}` starting
+        // here -- in search mode, skip past the whole (too-short) run and try the next one,
+        // exactly like the wb-boundary retry above; anchored modes have no retry, so fail outright.
+        if ((match_end - match_start) < min_len) {
+          if (mode != run_mode::search) {
+            out_slots.assign(prog_.slot_count, npos);
+            return false;
+          }
+          match_start = match_end;
+          continue;
+        }
+        break;
       }
       out_slots.assign(prog_.slot_count, npos);
       fill_span_slots(out_slots, match_start, match_end);
@@ -1451,6 +1469,9 @@ namespace real::detail {
                                      run_mode         mode,
                                      OutSlots&        out_slots)
     {
+      // P1 (issue #3): minimum run length in CODE POINTS (not bytes) for the `X{k,}` desugaring --
+      // see run_class_loop's own doc comment; 1 for the original bare shape (dead branch below).
+      const std::size_t min_len  {prog_.hints.greedy_cp_class_min};
       const std::size_t cp_index {static_cast<std::size_t>(prog_.hints.greedy_cp_class)};
 #if defined(__GNUC__) && !defined(__clang__)
 #include "real/engine/cpclass_gcc_loop.hpp"
@@ -1507,12 +1528,28 @@ namespace real::detail {
                               };
 #endif
 
+      // P1: counts code points in [s, e) -- only walked when min_len > 1 (the {k,} shape); the
+      // range is already known to be a valid run of class-member code points (extend_run just
+      // built it), so this simply re-walks UTF-8 lead bytes to count boundaries, never re-validates.
+      const auto count_cps = [&](std::size_t s, std::size_t e) -> std::size_t {
+                               std::size_t n {0};
+                               std::size_t i {s};
+                               while (i < e) {
+                                 const auto lead {static_cast<std::uint8_t>(text[i])};
+                                 i += lead < 0x80U ? std::size_t {1}
+                                                   : detail::decode_codepoint_strict(text, i).length;
+                                 ++n;
+                               }
+                               return n;
+                             };
+
       // Arc B-2: `\b`/`\B` on subset cp-class (e.g. `\b\d+\b`) — try successive runs.
       if (prog_.hints.wb_lead != 0 || prog_.hints.wb_trail != 0) {
         if (mode == run_mode::full || mode == run_mode::prefix) {
           const std::size_t match_end {extend_run(start)};
           if (match_end == npos || (mode == run_mode::full && match_end != text.size()) ||
-              !wb_boundaries_ok(start, match_end)) {
+              !wb_boundaries_ok(start, match_end) ||
+              (min_len > 1 && count_cps(start, match_end) < min_len)) {
             return false;
           }
           fill_span_slots(out_slots, start, match_end);
@@ -1528,7 +1565,8 @@ namespace real::detail {
             break;
           }
           const std::size_t match_end {extend_run(match_start)};
-          if (match_end != npos && wb_boundaries_ok(match_start, match_end)) {
+          if (match_end != npos && wb_boundaries_ok(match_start, match_end) &&
+              (min_len <= 1 || count_cps(match_start, match_end) >= min_len)) {
             fill_span_slots(out_slots, match_start, match_end);
             return true;
           }
@@ -1545,13 +1583,14 @@ namespace real::detail {
         return false;
       }
       std::size_t match_start {start};
-      if (mode == run_mode::search) {
-        while (true) {
+      std::size_t match_end   {};
+      while (true) {
+        if (mode == run_mode::search) {
           while (match_start < text.size() && width(match_start) == 0) {
             ++match_start;
           }
           if (match_start >= text.size()) {
-            break;
+            return false;
           }
           // B-1 window-edge guard: a candidate found by scanning forward past a non-class
           // code point is provably preceded by one, so B-1's redundancy argument holds
@@ -1567,16 +1606,26 @@ namespace real::detail {
             match_start = skip; // no genuine boundary here: skip this whole run
             continue;
           }
-          break;
         }
-      }
-      if (match_start >= text.size()) {
-        return false;
-      }
-      // The first code point must match: this path is only chosen for `\w`/`\w+` (never nullable).
-      const std::size_t match_end {extend_run(match_start)};
-      if (match_end == npos || (mode == run_mode::full && match_end != text.size())) {
-        return false;
+        if (match_start >= text.size()) {
+          return false;
+        }
+        // The first code point must match: this path is only chosen for `\w`/`\w+` (never nullable).
+        match_end = extend_run(match_start);
+        if (match_end == npos || (mode == run_mode::full && match_end != text.size())) {
+          return false;
+        }
+        // P1: a maximal run shorter than the required minimum can never satisfy `X{k,}` starting
+        // here -- in search mode, skip past the whole (too-short) run and try the next one;
+        // anchored modes have no retry, so fail outright (mirrors run_class_loop's own min-check).
+        if (min_len > 1 && count_cps(match_start, match_end) < min_len) {
+          if (mode != run_mode::search) {
+            return false;
+          }
+          match_start = match_end;
+          continue;
+        }
+        break;
       }
       fill_span_slots(out_slots, match_start, match_end);
       return true;
