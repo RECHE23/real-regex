@@ -35,6 +35,12 @@
  * boundaries do not depend on it (matching text is matching text end-to-end either way), and its
  * effect on capture tie-breaking inside an ambiguous alternation is the same non-POSIX-submatch
  * caveat RE2 itself documents as shared, not a new one.
+ *
+ * **`\C` (RE2's raw-byte escape) is accepted**, matching real RE2's own default-mode behavior
+ * exactly: it consumes exactly one byte, unconditionally, possibly landing mid-codepoint. Safe
+ * here specifically because this layer's whole API is byte-offset C++ (mirroring RE2's own) — the
+ * char-offset hazard that keeps `\C` gated to `flags::bytes` on REAL-native, char-offset surfaces
+ * (e.g. the Python `str` binding, which cannot reach this flag) never applies to `real::compat::re2`.
  */
 #ifndef REAL_RE2_RE2_HPP
 #define REAL_RE2_RE2_HPP
@@ -705,7 +711,11 @@ namespace real::compat::re2 {
      */
     [[nodiscard]] static real::flags options_to_flags(const Options& options)
     {
-      real::flags result {real::flags::none};
+      // allow_raw_byte, unconditionally: this layer's whole API is byte-offset C++ (mirroring RE2's
+      // own), so \C landing mid-codepoint is exactly as safe here as it is under flags::bytes -- the
+      // char-offset hazard the gate protects against (e.g. the Python str binding) never applies to
+      // real::compat::re2. Widens the *gate* only; \C still always consumes exactly one raw byte.
+      real::flags result {real::flags::allow_raw_byte};
       if (!options.case_sensitive()) {
         result = result | real::flags::icase;
       }

@@ -501,3 +501,46 @@ TEST(set_match_without_output_param)
   EXPECT(set.Match("foo", nullptr));
   EXPECT(!set.Match("bar", nullptr));
 }
+
+// D1 (issue #2): \C-in-text-mode completion. Real RE2 accepts \C in its default UTF-8 mode (matches
+// exactly one byte, possibly mid-codepoint); rejecting it here would have been an asterisk on the
+// "drop-in" claim. Safe unconditionally for this layer specifically: the whole API is byte-offset
+// C++ (mirroring RE2's own), so the char-offset hazard that keeps \C gated to flags::bytes on a
+// char-offset REAL-native surface (e.g. Python str) never applies here.
+
+TEST(raw_byte_escape_is_accepted_in_default_mode)
+{
+  const rc2::RE2 re(R"(a\Cb)");
+  EXPECT(re.ok());
+  EXPECT(rc2::RE2::FullMatch("aXb", re));
+}
+
+TEST(raw_byte_escape_matches_exactly_one_byte_possibly_mid_codepoint)
+{
+  // "café" = c a f \xC3 \xA9 (UTF-8) -- \C descends to the byte even though the rest of the
+  // pattern (and the surrounding text) is codepoint-aware, RE2's own exact semantics.
+  const rc2::RE2 re(R"(caf\C)");
+  EXPECT(re.ok());
+  EXPECT(rc2::RE2::PartialMatch("caf\xC3\xA9", re));
+  std::string_view input {"caf\xC3\xA9"};
+  EXPECT(rc2::RE2::Consume(&input, re));
+  EXPECT_EQ(input, "\xA9"sv); // \C consumed only \xC3, the first byte of the 2-byte codepoint
+}
+
+TEST(raw_byte_escape_mixed_with_codepoint_aware_constructs)
+{
+  const rc2::RE2 re(R"([a-z]+\C[a-z]+)");
+  EXPECT(re.ok());
+  EXPECT(rc2::RE2::FullMatch("abc\xC3xyz", re));
+}
+
+TEST(raw_byte_escape_reachable_through_set)
+{
+  rc2::RE2::Options opt;
+  rc2::RE2::Set     set(opt, rc2::RE2::Anchor::UNANCHORED);
+  EXPECT_EQ(set.Add(R"(a\Cb)", nullptr), 0);
+  EXPECT(set.Compile());
+  std::vector<int> hits;
+  EXPECT(set.Match("aXb", &hits));
+  EXPECT_EQ(hits.size(), std::size_t {1});
+}
