@@ -18,14 +18,17 @@ its generated tables index the IR's code_range):
     frontend                the parser and compiler (they consume the runtime's prefilter / utf8_ranges)
     root                    the public headers (real.hpp, dfa.hpp) and the storage assembly they drive
 
-std/ is the std::regex-compatibility consumer and ranks with root.
+compat/ (std/, re2/, …) holds the drop-in compatibility consumers and ranks with root.
 """
 import pathlib
 import re
 import sys
 
-RANK = {"core": 1, "unicode": 2, "engine": 3, "automata": 3, "frontend": 4, "root": 5, "std": 5}
-INCLUDE = re.compile(r'#include\s+[<"]real/(?:([a-z]+)/)?([a-z0-9_]+)\.hpp[>"]')
+RANK = {"core": 1, "unicode": 2, "engine": 3, "automata": 3, "frontend": 4, "root": 5, "compat": 5}
+# The first path segment after "real/" is captured for tiering; any deeper segments (e.g. compat's own
+# std/, re2/ subfolders) are consumed but not captured, so a two-level include is tiered by its top
+# directory alone, same as a one-level one.
+INCLUDE = re.compile(r'#include\s+[<"]real/(?:([a-z0-9_]+)/)?(?:[a-z0-9_]+/)*([a-z0-9_]+)\.hpp[>"]')
 
 
 def main() -> int:
