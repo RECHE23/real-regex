@@ -404,16 +404,21 @@ namespace real::detail {
    * last branch (trail assert or save 1). Captures other than group 0, nested branches, empty
    * branches, and non-wb assertions all disqualify.
    *
-   * \param[in]  code          The instruction stream.
-   * \param[out] out_wb_lead   Optional; receives lead wb hint (0/1/2).
-   * \param[out] out_wb_trail  Optional; receives trail wb hint (0/1/2).
-   * \param[out] out_body_pc   Optional; receives first branch/split pc after lead wrap.
+   * \param[in]  code            The instruction stream.
+   * \param[out] out_wb_lead     Optional; receives lead wb hint (0/1/2).
+   * \param[out] out_wb_trail    Optional; receives trail wb hint (0/1/2).
+   * \param[out] out_body_pc     Optional; receives first branch/split pc after lead wrap.
+   * \param[out] out_branch_count Optional; receives the branch count (already tracked internally
+   *             to enforce the ">= 2 branches" rule below) -- lets a caller pick a runtime STRATEGY
+   *             (e.g. Aho-Corasick past a literal-count threshold) without re-walking the split
+   *             chain a second time. Does not change eligibility: still requires >= 2 branches.
    * \return `true` if the program has that shape with at least two branches.
    */
   constexpr bool is_fixed_alternation(std::span<const instr> code,
-                                      std::uint8_t*          out_wb_lead  = nullptr,
-                                      std::uint8_t*          out_wb_trail = nullptr,
-                                      std::uint8_t*          out_body_pc  = nullptr)
+                                      std::uint8_t*          out_wb_lead      = nullptr,
+                                      std::uint8_t*          out_wb_trail     = nullptr,
+                                      std::uint8_t*          out_body_pc      = nullptr,
+                                      std::int32_t*          out_branch_count = nullptr)
   {
     const std::size_t code_size {code.size()};
     if (code_size < 7 || code[0].op != opcode::save || code[code_size - 1].op != opcode::match ||
@@ -476,6 +481,9 @@ namespace real::detail {
           }
           if (out_body_pc != nullptr) {
             *out_body_pc = static_cast<std::uint8_t>(body);
+          }
+          if (out_branch_count != nullptr) {
+            *out_branch_count = branches;
           }
           return true;
         }
@@ -1171,11 +1179,13 @@ namespace real::detail {
 
     // Whole pattern is an alternation of straight-line branches (optional lead/trail `\b`/`\B`).
     {
-      std::uint8_t wb_lead  {};
-      std::uint8_t wb_trail {};
-      std::uint8_t body_pc  {1};
-      if (is_fixed_alternation(code, &wb_lead, &wb_trail, &body_pc)) {
-        hints.fixed_alternation = true;
+      std::uint8_t  wb_lead      {};
+      std::uint8_t  wb_trail     {};
+      std::uint8_t  body_pc      {1};
+      std::int32_t  branch_count {};
+      if (is_fixed_alternation(code, &wb_lead, &wb_trail, &body_pc, &branch_count)) {
+        hints.fixed_alternation        = true;
+        hints.alternation_branch_count = static_cast<std::uint16_t>(branch_count);
         // Only set wb_* here if exact_literal / fixed_shape did not already claim them
         // (a pure literal alternation is rare; prefer not clobbering an earlier path).
         if (!hints.fixed_shape && hints.exact_literal_len == 0) {

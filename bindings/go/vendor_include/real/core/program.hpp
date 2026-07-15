@@ -473,6 +473,19 @@ namespace real {
       //! \brief First consuming (byte/klass) or branch pc for fixed_shape / alternation after
       //!        save 0 and an optional lead `\b`/`\B`. Default 1 (no lead wrap).
       std::uint8_t body_pc {1};
+
+      //! \brief Branch count for \ref fixed_alternation (0 when unset). Read only by the alternation
+      //!        route to pick a runtime STRATEGY past a literal-count threshold (Aho-Corasick) --
+      //!        \ref small_set is untouched either way (still capped 2..8, still the sub-threshold
+      //!        scan). Placed LAST (own reason \ref small_set / \ref stop_set are also placed away
+      //!        from the hot prefix): inserting anywhere earlier reflows every field after it,
+      //!        including \ref wb_lead / \ref body_pc themselves, which fixed_shape / alternation /
+      //!        exact_literal all read on every match — measured empirically (a naive insertion
+      //!        right after \ref small_set_size grew sizeof(pattern_hints) by 8 bytes via an
+      //!        alignment cascade off \ref inner_literal_prefix and shifted wb_lead/body_pc by +4).
+      //!        Appending after the last field instead is byte-identical: sizeof/offsetof unchanged
+      //!        for every existing field, verified before/after.
+      std::uint16_t alternation_branch_count {};
     };
 
     /*!

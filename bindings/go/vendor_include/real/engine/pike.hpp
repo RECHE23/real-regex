@@ -39,6 +39,7 @@
 #include "real/automata/onepass.hpp"
 #include "real/core/program.hpp"
 #include "real/core/profile.hpp"
+#include "real/engine/aho_corasick.hpp"
 #include "real/unicode/unicode_props.hpp"
 #include "real/unicode/utf8.hpp"
 
@@ -368,17 +369,27 @@ namespace real::detail {
    */
   struct pike_state : basic_pike_state<thread_list, std::vector<eps_entry>>
   {
-    lookaround_scratch         lookaround;                  //!< Isolated sub-scratch for bounded lookaround evaluation.
-    capture_pool               pool;                        //!< OPT D1: copy-on-write capture blocks (heap-backed).
-    std::optional<lazy_dfa>    fwd_dfa;                     //!< OPT lazy-DFA: forward pass (built lazily, cache persists across a find_iter).
-    std::optional<reverse_dfa> rev_dfa;                     //!< OPT lazy-DFA: the reverse start-finder.
-    const void*                dfa_program       {nullptr}; //!< The program the DFAs were built for (rebuild if it changes).
-    std::optional<reverse_dfa> il_prefix_rev;               //!< IL: the inner-literal prefix reverse DFA (built once per program).
-    const void*                il_prefix_for     {nullptr}; //!< IL: the prefix program \ref il_prefix_rev was built for.
-    const void*                il_text           {nullptr}; //!< IL: the haystack \ref il_abandoned refers to (reset the flag when it changes).
-    bool                       il_abandoned      {false};   //!< IL: a linearity/density guard tripped on this haystack — stay on the core.
-    std::uint32_t              il_density_cands  {};        //!< O1: IL candidates seen on this haystack (density sample).
-    std::size_t                il_density_origin {npos};    //!< O1: byte offset of the first IL candidate this haystack.
+    lookaround_scratch          lookaround;                  //!< Isolated sub-scratch for bounded lookaround evaluation.
+    capture_pool                pool;                        //!< OPT D1: copy-on-write capture blocks (heap-backed).
+    std::optional<lazy_dfa>     fwd_dfa;                     //!< OPT lazy-DFA: forward pass (built lazily, cache persists across a find_iter).
+    std::optional<reverse_dfa>  rev_dfa;                     //!< OPT lazy-DFA: the reverse start-finder.
+    const void *                dfa_program       {nullptr}; //!< The program the DFAs were built for (rebuild if it changes).
+    std::optional<reverse_dfa>  il_prefix_rev;               //!< IL: the inner-literal prefix reverse DFA (built once per program).
+    const void *                il_prefix_for     {nullptr}; //!< IL: the prefix program \ref il_prefix_rev was built for.
+    const void *                il_text           {nullptr}; //!< IL: the haystack \ref il_abandoned refers to (reset the flag when it changes).
+    bool                        il_abandoned      {false};   //!< IL: a linearity/density guard tripped on this haystack — stay on the core.
+    std::uint32_t               il_density_cands  {};        //!< O1: IL candidates seen on this haystack (density sample).
+    std::size_t                 il_density_origin {npos};    //!< O1: byte offset of the first IL candidate this haystack.
+    // D1-AC fields placed LAST (own reason as pattern_hints::alternation_branch_count): inserting
+    // here right after il_prefix_for -- as an earlier draft of this struct did -- shifted il_text/
+    // il_abandoned/il_density_cands/il_density_origin (the inner-literal density-gate fields, read
+    // on every search that takes that route) by the full size of std::optional<ac_automaton> plus
+    // a pointer. Caught by re-inspection against dynamic_storage::state_type (storage.hpp), which
+    // already had this right -- this struct (pike_state) is test-harness-only (the meta-seam
+    // differential), never real::regex's own runtime state, so the mid-struct version never
+    // affected any measured path; fixed anyway for consistency with the stated placement rule.
+    std::optional<ac_automaton> ac_state;               //!< D1-AC: the multi-literal automaton (built once per program).
+    const void*                 ac_state_for {nullptr}; //!< D1-AC: the program \ref ac_state was built for.
   };
 
   /*!
@@ -421,6 +432,23 @@ namespace real::detail {
      * \param[in]  sem   Match semantics: \ref match_semantics::first (default, leftmost-first) or the
      *             experimental \ref match_semantics::longest (which forces the general loop, off every fast path).
      * \return `true` if a match was found.
+     *
+     * D1-AC gcc/x86 note: an x86 A/B (relayed, not independently run here) found `[^,]+` +39%
+     * slower with the AC engine present but never dispatched to (a class-loop pattern returns from
+     * \ref run_class_loop before ever reaching the fixed_alternation check) — callgrind/cachegrind
+     * showed byte-identical instructions/cache misses, isolating it to front-end loop-alignment
+     * codegen-luck from the AC code's mere presence in this translation unit, not a logic or
+     * memory-access change. Two targeted `optimize("align-loops=N")` attempts were tried and
+     * reverted: one on \ref run_class_loop (provably inert once force-inlined — confirmed on this
+     * machine's own gcc via `-S`, the attribute does not travel with an `always_inline` callee's
+     * body into its caller) and one here on `run()` itself (did align the right loop — confirmed
+     * via the same `-S` method, `.p2align 6` where baseline only had one incidental occurrence —
+     * but `[^,]+`, `[a-z]+`, and `\w+` all share this same inlined class-loop body with different
+     * alignment optima, so uniformly forcing one traded the `[^,]+` regression for new ones on the
+     * other two). No uniform alignment satisfies all three; accepted as a documented, gcc+x86-only,
+     * arm64/clang-unaffected regression rather than trading one hot path's regression for another's
+     * — the Alternation route's own gain (this file's `aho_corasick_route_disabled()` — see
+     * `run_aho_corasick`) is unconditional and far larger.
      */
     template <bool Cascade = false, typename OutSlots>
     constexpr bool run(std::string_view text,
@@ -529,6 +557,26 @@ namespace real::detail {
         return run_codepoint_class<Cascade>(text, start, mode, out_slots);
       }
       if (sem_ == match_semantics::first && prog_.hints.fixed_alternation) {
+        // D1-AC: past the measured branch-count threshold, a single Aho-Corasick automaton walk
+        // beats small_set's 2..8-member memchr-cascade scan (which has no fast path at all past 8
+        // distinct first bytes — issue #3's "Alternation" gap). Search mode only (the automaton's
+        // whole value is candidate-finding; full/prefix modes keep the existing run_alternation,
+        // unchanged). Dynamic storage only (if constexpr elides this for static_regex, which does
+        // not benefit from AC — see the D1-AC report) and only when the automaton actually built
+        // (ensure_ac_automaton declines, leaving it unset, on a pathological icase-expansion
+        // branch — falls through to run_alternation below, zero behavior change).
+        if constexpr (requires(State & s) {
+          s.ac_state;
+        }) {
+          if (!std::is_constant_evaluated() && !aho_corasick_route_disabled() && mode == run_mode::search
+              && prog_.hints.alternation_branch_count >= ac_branch_threshold) {
+            ensure_ac_automaton();
+            if (state_.ac_state.has_value()) {
+              prof::tick_route(prof::route::aho_corasick);
+              return run_aho_corasick(text, start, out_slots);
+            }
+          }
+        }
         prof::tick_route(prof::route::alternation);
         return run_alternation(text, start, mode, out_slots);
       }
@@ -1050,6 +1098,52 @@ namespace real::detail {
         }
         state_.dfa_program = program;
       }
+    }
+
+    //! \brief Branch count of a \ref pattern_hints::fixed_alternation at or above which a single
+    //!        Aho-Corasick automaton walk beats \ref pattern_hints::small_set's 2..8-member
+    //!        memchr-cascade scan (which has no fast path at all past 8 distinct first bytes).
+    //!        Measured 2026-07 on M1 Pro against the WIRED engine (real::regex, find_iter, min-of-5,
+    //!        aho_corasick_route_disabled() toggle) on two corpus shapes — mostly-non-matching prose
+    //!        and majority-matching text: at N=11 AC already wins on the match-heavy corpus (0.66x)
+    //!        but is ~8% SLOWER on prose (1.08x); at N=12 it wins on both (0.72x prose, 0.61x match)
+    //!        with no measured regression. 12, not 11, so the gate matches its own contract — AC
+    //!        BEATS the VM-branch path at the threshold, not roughly ties it (see D1-AC report; the
+    //!        issue #3 repro's own N=10 stays correctly below threshold either way, AC/VM=1.16x
+    //!        there against the standalone POC — inside the closed-gap target of <=~1.5x).
+    static constexpr std::uint16_t ac_branch_threshold {12};
+
+    //! \brief Build (or rebuild, on a program change) this iterator's Aho-Corasick automaton for a
+    //!        `fixed_alternation` program whose branch count has reached \ref ac_branch_threshold.
+    //!        Declines (leaves \ref pike_state::ac_state unset) if any branch's icase-fold
+    //!        expansion would exceed \ref ac_max_branch_expansion — the caller falls back to the
+    //!        existing \ref run_alternation, zero behavior change. Runs once per iterator/program,
+    //!        off the hot path, mirroring \ref ensure_lazy_dfa's cache-by-program-pointer contract.
+    //!
+    //!        `noinline`, deliberately NOT `cold` (round-2 x86 isolation A/B: neither the
+    //!        pattern_hints field alone nor the pike_state size growth alone regressed the
+    //!        non-alternation hot-corpus witnesses, isolating the cause to code called directly
+    //!        from `run()`'s own dispatch chain — a codegen-neighbor/inlining-bloat effect on
+    //!        `run_class_loop`, which shares the same translation unit and physically returns
+    //!        before ever reaching this call at runtime, so it's presence, not execution, doing the
+    //!        damage). `cold` would additionally deprioritize this function's OWN optimization —
+    //!        wrong here, since it (unlike the actual construction work in aho_corasick.hpp,
+    //!        already marked `cold`) is called on every AC-eligible search, not just once per
+    //!        program. `noinline` alone keeps it fully optimized while stopping the compiler from
+    //!        folding its body into `run()`'s.
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    void ensure_ac_automaton()
+    {
+      const auto* const program {static_cast<const void*>(prog_.code.data())};
+      if (state_.ac_state_for == program) {
+        return;
+      }
+      const std::size_t body_pc {prog_.hints.body_pc == 0 ? std::size_t {1}
+                                                          : static_cast<std::size_t>(prog_.hints.body_pc)};
+      state_.ac_state     = build_ac_automaton(prog_.code, prog_.classes, body_pc);
+      state_.ac_state_for = program;
     }
 
     //! \brief The capture-block pool type of the bound `State` (OPT D1) — heap-backed for dynamic,
@@ -2319,6 +2413,51 @@ namespace real::detail {
       }
       out_slots[0] = match_start;
       out_slots[1] = match_end;
+      return true;
+    }
+
+    /*!
+     * \brief D1-AC: multi-literal search via the automaton cached in \ref pike_state::ac_state.
+     *
+     * Search mode only — the automaton's own leftmost-first scan already IS the candidate search
+     * (no separate memchr-cascade block scan). Non-`constexpr` by construction (needs a runtime
+     * scratch cache), so this is never instantiated for the static storage's `State` — guarded at
+     * the call site by `if constexpr (requires(State& s) { s.ac_state; })`.
+     *
+     * \tparam OutSlots Output slot container.
+     * \param[in]  text      The subject text.
+     * \param[in]  start     Index to begin at.
+     * \param[out] out_slots Receives the matched span on success.
+     * \return `true` if some branch matched.
+     *
+     * `noinline`, deliberately NOT `cold` — same reasoning as \ref ensure_ac_automaton (called on
+     * every AC-eligible search, so it must stay fully optimized); only kept OUT of `run()`'s own
+     * body, which is what a round-2 x86 isolation A/B (relayed) traced the "fields [^,]+ +39%"
+     * finding to (neither the pattern_hints field nor the pike_state size growth alone regressed
+     * it — only the full dispatch/search code sharing `run()`'s translation unit did).
+     */
+    template <typename OutSlots>
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    bool run_aho_corasick(std::string_view text,
+                          std::size_t      start,
+                          OutSlots&        out_slots)
+    {
+      out_slots.assign(2, npos);
+      // Called only from the dispatch site's own state_.ac_state.has_value() guard, but that
+      // invariant is invisible across the call boundary to static analysis -- an explicit local
+      // check keeps this function's own contract self-contained (defensive, not defensive-in-name).
+      if (!state_.ac_state.has_value()) {
+        return false;
+      }
+      const auto wb_ok = [&](std::size_t s, std::size_t e) { return wb_boundaries_ok(s, e); };
+      const auto m {state_.ac_state->search(text, start, wb_ok)};
+      if (!m.matched) {
+        return false;
+      }
+      out_slots[0] = m.start;
+      out_slots[1] = m.end;
       return true;
     }
 
