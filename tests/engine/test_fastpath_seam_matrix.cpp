@@ -112,6 +112,15 @@ TEST(seam_run_class_loop)
   expect_seam_agrees(R"(\C+)", "", 0, real::npos, real::detail::run_mode::search, real::flags::bytes);                     // zero-match
   expect_seam_agrees(R"(\C+)", "\xC3\xA9\xE2\x82\xAC", 0, real::npos, real::detail::run_mode::search, real::flags::bytes); // multi-byte junctions, byte-blind
   expect_seam_agrees(R"(a\C+)", "a\xC3\xA9", 0, real::npos, real::detail::run_mode::search, real::flags::bytes);
+  // D1 (issue #2, RE2-compat \C-in-text-mode completion): flags::allow_raw_byte arms the SAME class-loop
+  // fast path in plain TEXT mode (no flags::bytes at all) -- \C mixed with codepoint-aware bytes in the
+  // same program, a genuinely new shape Volet A's bytes-only tests never exercised. A D0 spike confirmed
+  // fixed_shape/class_loop/lazy_dfa_anchored all agree with the general VM here (57+ checks, 0 divergence);
+  // this pins the class-loop-specific ones in the tracked suite.
+  expect_seam_agrees(R"(\C+)", "hello", 0, real::npos, real::detail::run_mode::search, real::flags::allow_raw_byte);
+  expect_seam_agrees(R"(\C+)", "caf\xC3\xA9", 0, real::npos, real::detail::run_mode::search, real::flags::allow_raw_byte); // \C splits a codepoint
+  expect_seam_agrees(R"(a\Cb)", "aXb", 0, real::npos, real::detail::run_mode::search, real::flags::allow_raw_byte);
+  expect_seam_agrees(R"([a-z]+\C[a-z]+)", "abc\xC3xyz", 0, real::npos, real::detail::run_mode::search, real::flags::allow_raw_byte);
 }
 
 TEST(seam_run_cp_class_loop)
@@ -367,6 +376,9 @@ TEST(seam_matrix_coverage_manifest)
   // 256-bit "any byte" set) is structurally identical to any other class+ once compiled, so the existing
   // recognizer picks it up with zero dedicated wiring.
   EXPECT(dynamic_storage::compile(R"(\C+)", real::flags::bytes).program.hints.greedy_class_loop >= 0);
+  // D1 (issue #2, RE2-compat \C-in-text-mode completion): the SAME class-loop recognizer also arms
+  // under flags::allow_raw_byte alone (no flags::bytes) -- the gate widened, not the recognizer.
+  EXPECT(dynamic_storage::compile(R"(\C+)", real::flags::allow_raw_byte).program.hints.greedy_class_loop >= 0);
   EXPECT(hints_of("[0-9a-f]{4}").fixed_shape);
   EXPECT(hints_of(".+").codepoint_class_ascii >= 0);
   EXPECT(hints_of("dog|fox|cat").fixed_alternation);

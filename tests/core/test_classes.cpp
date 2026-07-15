@@ -229,12 +229,32 @@ TEST(bytes_mode_matches_raw_bytes)
 
 TEST(raw_byte_escape_requires_bytes_mode)
 {
-  // \C (RE2's raw-byte escape hatch, D1 volet A of the RE2 drop-in / issue #2): rejected in text mode --
-  // its span can land mid-codepoint, which corrupts a byte-to-char binding conversion (the same reasoning
-  // \u/\U keep in bytes mode, mirrored the other direction).
+  // \C (RE2's raw-byte escape hatch, D1 volet A of the RE2 drop-in / issue #2): rejected in plain text
+  // mode -- its span can land mid-codepoint, which corrupts a byte-to-char binding conversion (the same
+  // reasoning \u/\U keep in bytes mode, mirrored the other direction).
   EXPECT_THROWS(real::regex(R"(\C)"), real::regex_error);
   EXPECT_THROWS(real::regex(R"(\C+)"), real::regex_error);
   EXPECT_THROWS(real::regex(R"(a\Cb)"), real::regex_error);
+}
+
+TEST(raw_byte_escape_allow_raw_byte_widens_the_gate)
+{
+  using real::flags;
+  // flags::allow_raw_byte (D1, the RE2-compat \C-in-text-mode completion): a second, independent gate
+  // for byte-offset-native consumers only (e.g. real::compat::re2) -- \C itself is unaffected, still
+  // always exactly one raw byte, possibly mid-codepoint.
+  EXPECT(real::regex(R"(\C)", flags::allow_raw_byte).fullmatch("\xC3"sv));
+  EXPECT(real::regex(R"(a\Cb)", flags::allow_raw_byte).fullmatch("aXb"sv));
+  EXPECT_THROWS(real::regex(R"(\C)", flags::none), real::regex_error); // neither gate -> still rejected
+  // \C mixed with codepoint-aware constructs in the SAME program (the D0 spike's own question): the
+  // whole rest of the pattern stays codepoint-aware, only \C itself descends to the byte.
+  {
+    const auto m {real::regex(R"(caf\C)", flags::allow_raw_byte).search("caf\xC3\xA9"sv)};
+    EXPECT(m.matched());
+    EXPECT_EQ(m.start(0), std::size_t {0});
+    EXPECT_EQ(m.end(0), std::size_t {4}); // "caf" (3 codepoint-aware bytes) + \C's first byte of é
+  }
+  EXPECT(real::regex(R"([a-z]+\C[a-z]+)", flags::allow_raw_byte).search("abc\xC3xyz"sv).matched());
 }
 
 TEST(raw_byte_escape_matches_exactly_one_byte)

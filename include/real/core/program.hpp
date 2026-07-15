@@ -38,7 +38,7 @@ namespace real {
    * Combinable with \ref operator|. Case folding is ASCII-only, consistent with
    * the library's character-class semantics.
    */
-  enum class flags : std::uint8_t
+  enum class flags : std::uint16_t
   {
     none      = 0,        //!< No flags.
     icase     = 1,        //!< Case-insensitive (ASCII).
@@ -49,6 +49,7 @@ namespace real {
     ecma = 32,            //!< ECMAScript compatibility: `$` (no multiline) matches only at the very end (not before a final `\n`, the Python default), AND `.` (no dotall) also excludes `\r` (ECMAScript excludes `\n` and `\r`; the multi-byte U+2028/U+2029 have no byte-level effect).
     ascii = 64,           //!< ASCII mode (`re.A`): `\d \w \s \b` stay ASCII and icase folds ASCII only, even in text mode. `.`, explicit classes and UTF-8 literals stay code-point-aware.
     dollar_endonly = 128, //!< `$` (no multiline) matches only at the very end of the text, never before a final `\n` — the Rust/`\z` semantics. Unlike \ref flags::ecma this touches `$` ONLY, leaving `.` at the Python default. Used by the Rust binding for drop-in parity.
+    allow_raw_byte = 256, //!< Permits `\C` (RE2's raw-byte escape) outside `flags::bytes` too — for byte-offset-native consumers only (e.g. `real::compat::re2`), never a char-offset-based binding (a `\C` span can land mid-codepoint). `flags::bytes` alone still suffices on its own; this widens the *gate*, not `\C`'s own byte-only behavior. `std::uint16_t`-backed since `bytes`..`dollar_endonly` already claim every bit of a `std::uint8_t` (a D0 spike confirmed the width change is layout-neutral: `sizeof`/`offsetof` on every downstream struct are unchanged, the extra byte absorbed by existing padding).
   };
 
   //! \brief Which match a search returns among those starting at the leftmost position (an experimental,
@@ -68,7 +69,7 @@ namespace real {
   constexpr flags operator|(flags lhs,
                             flags rhs)
   {
-    return static_cast<flags>(static_cast<std::uint8_t>(lhs) | static_cast<std::uint8_t>(rhs));
+    return static_cast<flags>(static_cast<std::uint16_t>(lhs) | static_cast<std::uint16_t>(rhs));
   }
 
   /*!
@@ -80,7 +81,7 @@ namespace real {
   constexpr flags operator&(flags lhs,
                             flags rhs)
   {
-    return static_cast<flags>(static_cast<std::uint8_t>(lhs) & static_cast<std::uint8_t>(rhs));
+    return static_cast<flags>(static_cast<std::uint16_t>(lhs) & static_cast<std::uint16_t>(rhs));
   }
 
   /*!
