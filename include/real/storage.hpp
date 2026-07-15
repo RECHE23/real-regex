@@ -715,17 +715,19 @@ namespace real {
                                               std::vector<std::uint64_t>>,
                             small_vec<eps_entry, 32>>
       {
-        lookaround_scratch         lookaround;                  //!< Isolated sub-scratch for bounded lookaround evaluation.
-        capture_pool               pool;                        //!< OPT D1: copy-on-write capture blocks (heap-backed).
-        std::optional<lazy_dfa>    fwd_dfa;                     //!< OPT lazy-DFA: forward pass (cache persists across a find_iter).
-        std::optional<reverse_dfa> rev_dfa;                     //!< OPT lazy-DFA: the reverse start-finder.
-        const void*                dfa_program       {nullptr}; //!< The program the DFAs were built for.
-        std::optional<reverse_dfa> il_prefix_rev;               //!< IL: the inner-literal prefix reverse DFA (built once per program).
-        const void*                il_prefix_for     {nullptr}; //!< IL: the prefix program \ref il_prefix_rev was built for.
-        const void*                il_text           {nullptr}; //!< IL: the haystack \ref il_abandoned refers to.
-        bool                       il_abandoned      {false};   //!< IL: a linearity/density guard tripped on this haystack.
-        std::uint32_t              il_density_cands  {};        //!< O1: IL candidates seen on this haystack.
-        std::size_t                il_density_origin {npos};    //!< O1: first IL candidate byte offset this haystack.
+        lookaround_scratch          lookaround;                  //!< Isolated sub-scratch for bounded lookaround evaluation.
+        capture_pool                pool;                        //!< OPT D1: copy-on-write capture blocks (heap-backed).
+        std::optional<lazy_dfa>     fwd_dfa;                     //!< OPT lazy-DFA: forward pass (cache persists across a find_iter).
+        std::optional<reverse_dfa>  rev_dfa;                     //!< OPT lazy-DFA: the reverse start-finder.
+        const void *                dfa_program       {nullptr}; //!< The program the DFAs were built for.
+        std::optional<reverse_dfa>  il_prefix_rev;               //!< IL: the inner-literal prefix reverse DFA (built once per program).
+        const void *                il_prefix_for     {nullptr}; //!< IL: the prefix program \ref il_prefix_rev was built for.
+        const void *                il_text           {nullptr}; //!< IL: the haystack \ref il_abandoned refers to.
+        bool                        il_abandoned      {false};   //!< IL: a linearity/density guard tripped on this haystack.
+        std::uint32_t               il_density_cands  {};        //!< O1: IL candidates seen on this haystack.
+        std::size_t                 il_density_origin {npos};    //!< O1: first IL candidate byte offset this haystack.
+        std::optional<ac_automaton> ac_state;                    //!< D1-AC: the multi-literal automaton (built once per program).
+        const void*                 ac_state_for      {nullptr}; //!< D1-AC: the program \ref ac_state was built for.
       };
 
       std::string     pattern_text;                  //!< The original pattern text.

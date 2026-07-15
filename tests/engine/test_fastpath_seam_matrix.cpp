@@ -225,6 +225,47 @@ TEST(seam_run_alternation)
   expect_seam_agrees_corpus("cat|dog|fox|owl|rat|hen|pig|emu");
 }
 
+TEST(seam_run_aho_corasick)
+{
+  // D1-AC (issue #3): past the measured branch-count threshold (N=12), a fixed_alternation program
+  // routes to the Aho-Corasick automaton (aho_corasick.hpp) instead of run_alternation's memchr-
+  // cascade scan. This differential (hints zeroed -> forced general VM) already exercises it,
+  // since pike_state (this file's harness) carries the ac_automaton field.
+  expect_seam_agrees("cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog|lion|tiger",
+                     "the quick brown fox jumps over the lazy dog near the cat and the lion and the tiger");
+  expect_seam_agrees("cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog|lion|tiger", "no animals mentioned"); // zero-match
+  expect_seam_agrees(R"(\b(?:cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog|lion|tiger)\b)",
+                     " cats dog catfish xdogx a lion. a tiger. ");
+  expect_seam_agrees_corpus("cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog|lion|tiger");
+  // Right at the threshold: N=11 must NOT engage AC (stays on run_alternation) -- the seam still
+  // must agree either way, but this pins the boundary is exercised by the differential.
+  expect_seam_agrees("cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog|lion",
+                     "the quick brown fox jumps over the lazy dog near the cat and the lion");       // N=11, below threshold
+  expect_seam_agrees("cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog|lion|tiger",
+                     "the quick brown fox jumps over the lazy dog near the cat and the tiger");      // N=12, at threshold
+  expect_seam_agrees("cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog|lion|tiger|zebra|camel|otter",
+                     "the quick brown fox jumps over the lazy dog near the cat and the otter");      // N=15, past threshold
+  // Post-mortem bug (a) seed: alternation order -- leftmost-first requires the FIRST-LISTED
+  // branch to win at equal start position, regardless of length or scan-completion order (the D0
+  // spike's own repro: a longer, first-listed branch must beat a shorter one nested as its own
+  // output-link suffix). >= 12 branches so this seed actually exercises the AC route, not just
+  // run_alternation -- padded with enough distinct literals to cross the threshold.
+  expect_seam_agrees("category|cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog|lion", "category");
+  expect_seam_agrees("cat|category|dog|fish|bird|fox|bear|wolf|deer|hawk|frog|lion", "category");
+  // Post-mortem bug (b) seed: empty alternation branches. REAL's parser rejects an empty
+  // alternation branch as a syntax error (no zero-width branch ever reaches fixed_alternation, let
+  // alone the AC recognizer) -- this seed pins that the SIBLING literals are wholly unaffected by
+  // an adjacent empty branch's absence, mirroring the D0 spike's own sidestep-by-construction proof.
+  expect_seam_agrees("cat||dog|fish|bird|fox|bear|wolf|deer|hawk|frog|lion", "the dog barks");
+  // icase: the current compiler's is_fixed_alternation gate does not reach 3+ branch icase
+  // alternations at all (a pre-existing, unrelated limit -- confirmed on baseline, see the D1-AC
+  // report) so this seed exercises what IS reachable today: 2-branch icase, which stays on
+  // run_alternation (below the AC threshold either way). AC's own klass fan-out logic is verified
+  // directly (bypassing the compiler) in the D1-AC report, since the compiler-level gap currently
+  // makes it unreachable through real::regex's public API at N >= 12.
+  expect_seam_agrees("(?i)cat|dog", "the DOG barks");
+}
+
 TEST(seam_run_exact_literal)
 {
   expect_seam_agrees("dog", "the dog and the doghouse and dogs");
@@ -390,6 +431,17 @@ TEST(seam_matrix_coverage_manifest)
   // Coverage top-up (7.41 finalization): the interior of the new regime (5 and 7), not just its ends.
   EXPECT_EQ(hints_of("cat|dog|fish|bird|owl").small_set_size, std::uint8_t {5});
   EXPECT_EQ(hints_of("cat|dog|fish|bird|owl|rat|hen").small_set_size, std::uint8_t {7});
+  // D1-AC (issue #3): alternation_branch_count arms alongside fixed_alternation, right at the
+  // AC-route threshold (12) and one below it (11, still fixed_alternation but not AC-eligible).
+  EXPECT_EQ(hints_of("cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog|lion").alternation_branch_count, std::uint16_t {11});
+  EXPECT_EQ(hints_of("cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog|lion|tiger").alternation_branch_count, std::uint16_t {12});
+  // A capturing alternation (outer group, per-branch, or mixed) never arms fixed_alternation at
+  // all -- the D1-AC "safe capturing scope" decision is enforced for free by this PRE-EXISTING
+  // gate (interior save ops break the byte/klass-only branch-body whitelist before the branch
+  // loop even runs), not by anything new AC itself had to add.
+  EXPECT(!hints_of("(cat|dog|fish)").fixed_alternation);      // outer capturing group
+  EXPECT(!hints_of("(cat)|(dog)|(fish)").fixed_alternation);  // per-branch capturing
+  EXPECT(!hints_of("(cat)|dog|(fish)").fixed_alternation);    // mixed capturing
   EXPECT(hints_of("dog").exact_literal_len > 0);
   EXPECT(hints_of(R"(\d{4}-\d{2})").inner_literal_len > 0);
   EXPECT(hints_of("[a-z]+(?=[a-z])").trailing_lookaround >= 0);

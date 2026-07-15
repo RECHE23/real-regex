@@ -91,6 +91,16 @@ namespace real::detail {
     return disabled;
   }
 
+  //! \brief Test seam (D1-AC): force the matcher off the Aho-Corasick multi-literal route (past the
+  //!        branch-count threshold) onto the existing \ref pattern_hints::fixed_alternation
+  //!        `run_alternation` path, so a differential can assert routed and unrouted searches agree.
+  //!        Not for production use — same contract as the other route-disabled seams.
+  inline bool& aho_corasick_route_disabled()
+  {
+    static bool disabled {false};
+    return disabled;
+  }
+
   //! \brief A byte-level program derived from a Pike program for the DFA passes: every `klass_cp` construct
   //!        is expanded into UTF-8 byte-range split/klass chains, so the whole thing is byte-transition-only
   //!        and a forward DFA can represent it. The Pike program itself is untouched (byte-identity); this
