@@ -535,6 +535,15 @@ namespace real::detail {
             break;
           }
         case node_kind::any:
+          if (node.raw_byte) {
+            // \C (RE2's raw-byte escape, parser-restricted to flags::bytes): the plain 256-bit "any byte"
+            // klass -- the same shape bytes-mode `.` emits below, but unconditional (no dotall exclusion:
+            // \C matches a literal '\n' byte too, RE2's own semantics).
+            char_class all;
+            all.set_range(0x00, 0xFF);
+            emit_klass(prog, all);
+            break;
+          }
           {
             // dotall is read from this node's own scope (a scoped (?s:.) matches \n inside the island
             // only); bytes and ecma are not scopable and stay global. A non-scoped node carries the
@@ -1051,6 +1060,16 @@ namespace real::detail {
         return pc;
       }
       if (node.kind == node_kind::any) {
+        if (node.raw_byte) {
+          // \C (parser-restricted to flags::bytes, so this branch's own bytes-mode klass_loop_possessive
+          // shape already applies): the full 256-bit set, unconditionally -- no dotall/newline exclusion,
+          // matching emit_node's own \C case.
+          char_class all;
+          all.set_range(0x00, 0xFF);
+          emit(prog, {.op             = opcode::klass_loop_possessive, .arg16 = intern_class(prog, all),
+                      .primary_target = capture_start_slot, .secondary_target = -1});
+          return pc;
+        }
         const flags node_flags {static_cast<flags>(node.effective_flags)};
         char_class  head;
         head.set_range(0x00, 0x7F);

@@ -83,6 +83,7 @@ namespace real::detail {
     std::uint8_t byte            {};                   //!< byte: the exact byte value.
     anchor_kind  anchor          {anchor_kind::caret}; //!< anchor: the assertion kind.
     bool         negated         {};                   //!< klass: written as `[^...]` / `\D` `\W` `\S`.
+    bool         raw_byte        {};                   //!< any: `\C` (RE2's raw-byte escape) — always 1 byte, bypasses UTF-8 even outside bytes mode. Parser requires flags::bytes (see `parse_escape`).
     bool         lazy            {};                   //!< repeat: prefer the shortest expansion.
     bool         possessive      {};                   //!< repeat: no give-back (`X*+`/`X++`/`X?+`/`X{n,m}+`). group: atomic `(?>...)` — same "no give-back" meaning, reused.
     look_dir     direction       {look_dir::ahead};    //!< lookaround: ahead `(?=`/`(?!` or behind `(?<=`/`(?<!`.
@@ -1725,6 +1726,21 @@ namespace real::detail {
         case 'N':
           ++pos_;
           return emit_literal_codepoint(out, parse_named_codepoint());
+        // `\C` — RE2's raw-byte escape hatch: match exactly one byte, bypassing UTF-8 entirely (RE2 does
+        // this even under its default UTF-8 mode). Restricted to flags::bytes here: outside bytes mode a
+        // \C span can land mid-codepoint, which is well-formed on the byte-offset C++ API (RE2 behaves
+        // identically) but corrupts a binding that converts byte offsets to character offsets (e.g. the
+        // Python layer) -- rejecting it outside bytes mode (where every offset is already byte-native)
+        // keeps every REAL-native surface codepoint-clean by construction, matching the strict-dot
+        // precedent (see divergences.dox).
+        case 'C':
+          ++pos_;
+          // Read bytes-mode from the scope stack, not the global `bytes_` member (the flag-scope ratchet):
+          // bytes is never scoped, so this equals `bytes_` while keeping the parser's global-read count flat.
+          if (!has_flag(current_flags(), flags::bytes)) {
+            fail_unsupported("\\C (raw-byte escape) requires flags::bytes -- it can split a UTF-8 codepoint");
+          }
+          return add_node(out, {.kind = node_kind::any, .raw_byte = true});
         default:
           {
             const std::int32_t byte_value {parse_byte_escape()};

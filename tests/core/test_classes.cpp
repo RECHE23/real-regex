@@ -227,6 +227,38 @@ TEST(bytes_mode_matches_raw_bytes)
   EXPECT_EQ(xs.find_all("é"sv).size(), 3U); // positions 0, 1, 2
 }
 
+TEST(raw_byte_escape_requires_bytes_mode)
+{
+  // \C (RE2's raw-byte escape hatch, D1 volet A of the RE2 drop-in / issue #2): rejected in text mode --
+  // its span can land mid-codepoint, which corrupts a byte-to-char binding conversion (the same reasoning
+  // \u/\U keep in bytes mode, mirrored the other direction).
+  EXPECT_THROWS(real::regex(R"(\C)"), real::regex_error);
+  EXPECT_THROWS(real::regex(R"(\C+)"), real::regex_error);
+  EXPECT_THROWS(real::regex(R"(a\Cb)"), real::regex_error);
+}
+
+TEST(raw_byte_escape_matches_exactly_one_byte)
+{
+  using real::flags;
+  // \C matches any single byte, unconditionally -- including a literal '\n' (unlike '.', even under
+  // bytes|dotall) and half of a multi-byte codepoint (RE2's own semantics: \C descends to the byte even
+  // under RE2's default UTF-8 mode).
+  EXPECT(real::regex(R"(\C)", flags::bytes).fullmatch("\n"));
+  EXPECT(real::regex(R"(\C)", flags::bytes).fullmatch("\xFF"sv));
+  EXPECT(!real::regex(R"(\C)", flags::bytes).fullmatch("\xC3\xA9"sv));  // é, 2 bytes: \C alone is too short
+  EXPECT(real::regex(R"(\C\C)", flags::bytes).fullmatch("\xC3\xA9"sv)); // 2x \C spans the same 2 bytes
+  const auto m {real::regex(R"(\C)", flags::bytes).search("\xC3\xA9"sv)};
+  EXPECT(m.matched());
+  EXPECT_EQ(m.start(0), std::size_t {0});
+  EXPECT_EQ(m.end(0), std::size_t {1});                                             // mid-codepoint span -- exactly RE2's own byte-offset semantics
+  // Tier-1 possessive path (\C++ / \C*+): is_single_atom already covers node_kind::any, so \C is eligible;
+  // exercises the emit_tier1_atom_test duplicate of the emit_node byte-klass shape.
+  EXPECT(real::regex(R"(\C++)", flags::bytes).fullmatch("\xC3\xA9\xE2\x82\xAC"sv)); // 2+3 = 5 bytes total
+  EXPECT(real::regex(R"(\Ca\C)", flags::bytes).fullmatch("X"
+                                                         "a"
+                                                         "\xC3"sv));
+}
+
 TEST(invalid_utf8_subjects_make_progress)
 {
   // Truncated/invalid sequences never stall iteration (advance >= 1 byte).

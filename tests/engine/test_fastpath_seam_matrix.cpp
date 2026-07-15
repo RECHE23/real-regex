@@ -104,6 +104,14 @@ TEST(seam_run_class_loop)
   expect_seam_agrees("(?a)[a-z]{4,}", "abcd"); // exactly k=4: matches at the limit
   expect_seam_agrees(R"((?a)\b[a-z]{4,}\b)", "abc");
   expect_seam_agrees(R"((?a)\b[a-z]{4,}\b)", "abcd");
+  // D1 volet A (issue #2, RE2 \C): \C+ arms this same class-loop fast path (a plain 256-bit byte-klass,
+  // structurally indistinguishable from any other class+ once compiled) -- confirmed via hints_of
+  // (greedy_class_loop >= 0). Dense/sparse/zero-match, and a case splitting a multi-byte codepoint (\C
+  // has no UTF-8 awareness at all, unlike the byte class-loop's other callers).
+  expect_seam_agrees(R"(\C+)", "hello", 0, real::npos, real::detail::run_mode::search, real::flags::bytes);
+  expect_seam_agrees(R"(\C+)", "", 0, real::npos, real::detail::run_mode::search, real::flags::bytes);                     // zero-match
+  expect_seam_agrees(R"(\C+)", "\xC3\xA9\xE2\x82\xAC", 0, real::npos, real::detail::run_mode::search, real::flags::bytes); // multi-byte junctions, byte-blind
+  expect_seam_agrees(R"(a\C+)", "a\xC3\xA9", 0, real::npos, real::detail::run_mode::search, real::flags::bytes);
 }
 
 TEST(seam_run_cp_class_loop)
@@ -355,6 +363,10 @@ TEST(seam_matrix_coverage_manifest)
   EXPECT(hints_of("a*+;").possessive_class.kind == real::detail::class_kind::byte);
   EXPECT(hints_of("[a-z]*+;").possessive_class.kind == real::detail::class_kind::klass);
   EXPECT(hints_of(R"(\w*+;)").possessive_class.kind == real::detail::class_kind::klass_cp);
+  // D1 volet A (issue #2, RE2 \C): \C+ arms greedy_class_loop too -- the byte-klass it compiles to (the
+  // 256-bit "any byte" set) is structurally identical to any other class+ once compiled, so the existing
+  // recognizer picks it up with zero dedicated wiring.
+  EXPECT(dynamic_storage::compile(R"(\C+)", real::flags::bytes).program.hints.greedy_class_loop >= 0);
   EXPECT(hints_of("[0-9a-f]{4}").fixed_shape);
   EXPECT(hints_of(".+").codepoint_class_ascii >= 0);
   EXPECT(hints_of("dog|fox|cat").fixed_alternation);
