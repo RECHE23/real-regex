@@ -1,6 +1,6 @@
 [package]
 name = "real-regex"
-version = "2026.7.42"
+version = "2026.7.43"
 edition = "2021"
 description = "Linear-time, ReDoS-safe regular expressions with bounded lookarounds — Rust bindings to the REAL C++ engine."
 license = "MIT"
