@@ -364,6 +364,15 @@ TEST(compat_backend_selection)
   expect_defers_to_local_std_on_escape(R"(\012)"); // octal newline on real -> std
   EXPECT(rc::regex(R"(\0)").uses_real());          // \0 alone is NUL on both -> stays on real (platform-stable)
   EXPECT(rc::regex(R"(\0x)").uses_real());         // \0 then non-digit literal -> stays on real
+
+  // `\C` (RE2's raw-byte escape, D1 volet A) is screened to std: real accepts it here only because
+  // real::compat always compiles with flags::bytes internally (byte-per-std::regex-char alignment),
+  // an implementation detail that must not leak \C through as unintended public surface -- \C is not
+  // ECMAScript at all, so this is not even a "real superset, defer to std" case, just a plain reject.
+  // The fuzzer found this (crash: real matched a byte, std rejected -- a verdict divergence) via the
+  // \C corpus seeds added for the engine-level tests, replayed here since fuzz/corpus is shared.
+  expect_defers_to_local_std_on_escape(R"(\C)");
+  expect_defers_to_local_std_on_escape(R"(\Chello)");
 }
 
 namespace {
