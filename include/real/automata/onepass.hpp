@@ -27,7 +27,9 @@
 #include <array>
 #include <bit>
 #include <cassert>
+#include <memory>
 #include <mutex>
+#include <unordered_map>
 #include <optional>
 #include <cstddef>
 #include <cstdint>
@@ -553,14 +555,18 @@ namespace real::detail {
   //! \brief The per-regex immutable cache the router shares across every find_iter on a regex: the byte-
   //!        program (klass_cp expanded to the deterministic trie) and, when the pattern is one-pass, the
   //!        extractor table. Built exactly once, under \ref once, so a const regex used from many threads
-  //!        (the binding shares the compiled object across GIL-released calls) builds it race-free. The
-  //!        mutable DFA transition caches stay per-iterator — they warm per scan and would need a lock here.
+  //!        (the binding shares the compiled object across GIL-released calls) builds it race-free.
+  //!
+  //!        D1: the mutable lazy-DFA transition caches live in a process-wide side table
+  //!        (\ref shared_dfa_slot), keyed by this object's address and guarded by a per-slot mutex —
+  //!        so this struct stays free of \c std::mutex / extra members (layout and constexpr size match
+  //!        pre-D1; address-reuse invalidates the slot from \c call_once via \ref reset_shared_dfas).
   struct regex_immutables
   {
     byte_program           byte_prog;          //!< klass_cp-expanded byte program (empty until built).
     lazy_byte_alphabet     alphabet;           //!< byte-class alphabet of byte_prog (shared by both DFAs, else recomputed per scan).
     std::optional<onepass> op_table;           //!< one-pass extractor, present iff the pattern is one-pass.
-    byte_program           il_prefix_prog;     //!< IL: the inner-literal prefix's byte program (ineligible until built). Per-regex so the reverse DFA that spans it is a cheap per-iterator wrapper, not a per-find_iter rebuild.
+    byte_program           il_prefix_prog;     //!< IL: the inner-literal prefix's byte program (ineligible until built). Per-regex so the reverse DFA that spans it is a cheap shared wrapper, not a per-find_iter rebuild.
     std::size_t            il_min_haystack {}; //!< IL: on a haystack that HAS a candidate, the route only fires at or above this size (0 = always). The prefix reverse DFA's cache is per-iterator and re-warms per find_iter; below N that cost does not amortize and the core is faster. Checked ONLY after the first memmem hit, so a no-match haystack (memmem-only) is never gated. Scaled by the prefix byte-program size (its cache size); see \ref pike_vm::run_inner_literal.
     std::once_flag         once;               //!< guards the one-time build.
 
@@ -588,8 +594,64 @@ namespace real::detail {
       return *this;
     }
 
+    // Default dtor: required for constexpr \c dynamic_storage::compile / \c static_assert paths. Shared
+    // DFA slots are process-lifetime (keyed by address); a new immutables at a reused address re-runs
+    // \c call_once which clears the slot (\ref reset_shared_dfas).
     ~regex_immutables() = default;
   };
+
+  //! \brief D1: process-wide shared DFA transition caches keyed by \ref regex_immutables*.
+  //!        Thread-safe: map insert under \ref shared_dfa_map_mu, DFA warm/scan under \ref mu.
+  struct shared_dfa_slot
+  {
+    std::mutex                 mu;
+    std::optional<lazy_dfa>    fwd;
+    std::optional<reverse_dfa> rev;
+    std::optional<reverse_dfa> il_prefix_rev;
+  };
+
+  inline std::mutex& shared_dfa_map_mu()
+  {
+    static std::mutex m;
+    return m;
+  }
+
+  inline std::unordered_map<const regex_immutables*, std::unique_ptr<shared_dfa_slot>>& shared_dfa_map()
+  {
+    static std::unordered_map<const regex_immutables*, std::unique_ptr<shared_dfa_slot>> m;
+    return m;
+  }
+
+  //! \brief Resolve the process-wide DFA slot for this regex (map insert under \ref shared_dfa_map_mu).
+  //!        Thread-local last-hit cache: dense IL was paying map_mu per candidate without it; the cache
+  //!        is not on \ref regex_immutables (layout isolation — x86 class-loop +6% suspect).
+  [[nodiscard]] inline shared_dfa_slot& shared_dfa_for(regex_immutables* immut)
+  {
+    thread_local const regex_immutables* cached_immut {nullptr};
+    thread_local shared_dfa_slot*        cached_slot  {nullptr};
+    if (cached_immut == immut && cached_slot != nullptr) {
+      return *cached_slot;
+    }
+    const std::lock_guard<std::mutex> lock {shared_dfa_map_mu()};
+    std::unique_ptr<shared_dfa_slot>& slot {shared_dfa_map()[immut]};
+    if (!slot) {
+      slot = std::make_unique<shared_dfa_slot>();
+    }
+    cached_immut = immut;
+    cached_slot  = slot.get();
+    return *slot;
+  }
+
+  //! \brief Drop any DFAs cached for \p immut (caller holds nothing; takes map + slot locks).
+  //!        Invoked from \c call_once so a reused immutables address cannot keep a previous pattern's DFAs.
+  inline void reset_shared_dfas(regex_immutables* immut)
+  {
+    shared_dfa_slot&                  slot {shared_dfa_for(immut)};
+    const std::lock_guard<std::mutex> lock {slot.mu};
+    slot.fwd.reset();
+    slot.rev.reset();
+    slot.il_prefix_rev.reset();
+  }
 } // namespace real::detail
 
 #endif // REAL_ONEPASS_HPP

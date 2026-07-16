@@ -717,11 +717,11 @@ namespace real {
       {
         lookaround_scratch          lookaround;                  //!< Isolated sub-scratch for bounded lookaround evaluation.
         capture_pool                pool;                        //!< OPT D1: copy-on-write capture blocks (heap-backed).
-        std::optional<lazy_dfa>     fwd_dfa;                     //!< OPT lazy-DFA: forward pass (cache persists across a find_iter).
-        std::optional<reverse_dfa>  rev_dfa;                     //!< OPT lazy-DFA: the reverse start-finder.
-        const void *                dfa_program       {nullptr}; //!< The program the DFAs were built for.
-        std::optional<reverse_dfa>  il_prefix_rev;               //!< IL: the inner-literal prefix reverse DFA (built once per program).
-        const void *                il_prefix_for     {nullptr}; //!< IL: the prefix program \ref il_prefix_rev was built for.
+        std::optional<lazy_dfa>     fwd_dfa;                     //!< Fallback when immut is null; prefer shared_fwd_dfa (D1).
+        std::optional<reverse_dfa>  rev_dfa;                     //!< Fallback reverse; prefer shared_rev_dfa (D1).
+        const void *                dfa_program       {nullptr}; //!< Program the per-state DFAs were built for (fallback).
+        std::optional<reverse_dfa>  il_prefix_rev;               //!< Fallback IL prefix reverse; prefer shared_il_prefix_rev (D1).
+        const void *                il_prefix_for     {nullptr}; //!< Fallback: prefix program il_prefix_rev was built for.
         const void *                il_text           {nullptr}; //!< IL: the haystack \ref il_abandoned refers to.
         bool                        il_abandoned      {false};   //!< IL: a linearity/density guard tripped on this haystack.
         std::uint32_t               il_density_cands  {};        //!< O1: IL candidates seen on this haystack.
