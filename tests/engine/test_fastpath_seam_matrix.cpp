@@ -148,7 +148,7 @@ TEST(seam_run_cp_class_loop)
   expect_seam_agrees(R"(\b\w{4,}\b)", "caf\xC3\xA9");
   // D1a: single-atom `\B\w` / `\B\d` arm cp-class with wb_lead=2 (maximal `\B\w+` stays general).
   expect_seam_agrees(R"(\B\w)", std::string("hello world ahello caf\xC3\xA9") + "a");
-  expect_seam_agrees(R"(\B\w)", "a"); // zero mid-word hits
+  expect_seam_agrees(R"(\B\w)", "a");                           // zero mid-word hits
   expect_seam_agrees(R"(\B\w)", std::string("\xC3\xA9") + "a"); // multi-byte then ASCII word junction
   expect_seam_agrees(R"(\B\d)", "a12b 9 99");
   expect_seam_agrees_corpus(R"(\B\w)");
