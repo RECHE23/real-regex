@@ -24,7 +24,7 @@ namespace real::detail {
   //! \brief The best required inner literal of a pattern (the memmem candidate). `len == 0` means the pattern
   //!        declined: an alternation, an optional (`?`/`*`/`{0,n}`), a lookaround or a non-wb anchor at the
   //!        level walked, or simply no literal run — anything that would make a required literal unsound.
-  //!        Top-level `\b`/`\B` are peeled (D1a): they set \ref wb_lead / \ref wb_trail and \ref prefix_skip
+  //!        Top-level `\b`/`\B` are peeled (D1a): they set #wb_lead / #wb_trail and #prefix_skip
   //!        so the reverse-prefix excludes them (asserts are not byte-DFA-eligible) while `confirm_at` still
   //!        runs the full program (boundaries checked there).
   struct inner_literal
@@ -37,7 +37,7 @@ namespace real::detail {
     //!< head (reverse is the identity: start = candidate). -1 = the literal is nested in a group/repeat, so no
     //!< clean top-level prefix boundary exists (the prefix-reverse does not apply; the memmem candidate still does).
     //! \brief Leading top-level children to skip when building the reverse-prefix (peeled lead `\b`/`\B`).
-    //!        \ref prefix_child_count is counted from the first non-peeled body child, so the reverse program
+    //!        #prefix_child_count is counted from the first non-peeled body child, so the reverse program
     //!        is `children[prefix_skip .. prefix_skip + prefix_child_count)`.
     std::int32_t                 prefix_skip        {0};
     std::uint8_t                 wb_lead            {0}; //!< 0/1/2 — peeled lead `\b`/`\B` (informational; confirm checks).
@@ -186,8 +186,9 @@ namespace real::detail {
   //!        Returns an empty \ref inner_literal when the pattern declines; routed on by \ref pike_vm::run
   //!        (search mode) via \ref pike_vm::run_inner_literal.
   //!
-  //!        D1a: leading/trailing top-level `\b`/`\B` are peeled (recorded in \ref inner_literal::wb_lead /
-  //!        \ref wb_trail / \ref prefix_skip) so `\b\w+@\w+\b` keeps the `@` IL route; a mid-body wb
+  //!        D1a: leading/trailing top-level `\b`/`\B` are peeled (recorded in
+  //!        \ref inner_literal::wb_lead / \ref inner_literal::wb_trail /
+  //!        \ref inner_literal::prefix_skip) so `\b\w+@\w+\b` keeps the `@` IL route; a mid-body wb
   //!        anchor still declines. `confirm_at` on the full program re-checks the boundaries.
   constexpr inner_literal extract_inner_literal(const ast& tree)
   {
