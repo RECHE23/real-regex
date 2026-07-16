@@ -22,8 +22,11 @@
 namespace real::detail {
 
   //! \brief The best required inner literal of a pattern (the memmem candidate). `len == 0` means the pattern
-  //!        declined: an alternation, an optional (`?`/`*`/`{0,n}`), a lookaround or an anchor at the level
-  //!        walked, or simply no literal run — anything that would make a required literal unsound.
+  //!        declined: an alternation, an optional (`?`/`*`/`{0,n}`), a lookaround or a non-wb anchor at the
+  //!        level walked, or simply no literal run — anything that would make a required literal unsound.
+  //!        Top-level `\b`/`\B` are peeled (D1a): they set \ref wb_lead / \ref wb_trail and \ref prefix_skip
+  //!        so the reverse-prefix excludes them (asserts are not byte-DFA-eligible) while `confirm_at` still
+  //!        runs the full program (boundaries checked there).
   struct inner_literal
   {
     std::array<std::uint8_t, 16> bytes              {};
@@ -33,6 +36,12 @@ namespace real::detail {
     //!< sub-pattern IL.1 reverse-matches from a candidate to find the match start. 0 = the literal is at the
     //!< head (reverse is the identity: start = candidate). -1 = the literal is nested in a group/repeat, so no
     //!< clean top-level prefix boundary exists (the prefix-reverse does not apply; the memmem candidate still does).
+    //! \brief Leading top-level children to skip when building the reverse-prefix (peeled lead `\b`/`\B`).
+    //!        \ref prefix_child_count is counted from the first non-peeled body child, so the reverse program
+    //!        is `children[prefix_skip .. prefix_skip + prefix_child_count)`.
+    std::int32_t                 prefix_skip        {0};
+    std::uint8_t                 wb_lead            {0}; //!< 0/1/2 — peeled lead `\b`/`\B` (informational; confirm checks).
+    std::uint8_t                 wb_trail           {0}; //!< 0/1/2 — peeled trail `\b`/`\B`.
 
     [[nodiscard]] constexpr bool found() const
     {
@@ -141,15 +150,45 @@ namespace real::detail {
         case node_kind::alternation:
         case node_kind::lookaround:
         case node_kind::anchor:
-          return false; // DECLINE
+          // Top-level `\b`/`\B` are peeled by extract_inner_literal before the walk; any anchor that
+          // still reaches here (mid-body wb, ^, $, nested) would make a required inner literal unsound
+          // or a reverse-prefix non-byte — decline.
+          return false;
       }
       return false;
+    }
+
+    //! \brief True if \p idx is a top-level `\b` or `\B` anchor (D1a peel candidate).
+    [[nodiscard]] constexpr bool is_top_wb_anchor(const ast&   tree,
+                                                  std::int32_t idx) noexcept
+    {
+      if (idx < 0) {
+        return false;
+      }
+      const ast_node& n {tree.nodes[static_cast<std::size_t>(idx)]};
+      return n.kind == node_kind::anchor
+          && (n.anchor == anchor_kind::word_boundary || n.anchor == anchor_kind::not_word_boundary);
+    }
+
+    [[nodiscard]] constexpr std::uint8_t wb_hint_from_anchor(anchor_kind k) noexcept
+    {
+      if (k == anchor_kind::word_boundary) {
+        return 1;
+      }
+      if (k == anchor_kind::not_word_boundary) {
+        return 2;
+      }
+      return 0;
     }
   } // namespace inner_literal_detail
 
   //! \brief Extract the best required inner literal from a pattern's AST (a pure function on the node pool).
   //!        Returns an empty \ref inner_literal when the pattern declines; routed on by \ref pike_vm::run
   //!        (search mode) via \ref pike_vm::run_inner_literal.
+  //!
+  //!        D1a: leading/trailing top-level `\b`/`\B` are peeled (recorded in \ref inner_literal::wb_lead /
+  //!        \ref wb_trail / \ref prefix_skip) so `\b\w+@\w+\b` keeps the `@` IL route; a mid-body wb
+  //!        anchor still declines. `confirm_at` on the full program re-checks the boundaries.
   constexpr inner_literal extract_inner_literal(const ast& tree)
   {
     inner_literal_detail::walk_state st;
@@ -158,34 +197,79 @@ namespace real::detail {
     }
     const ast_node& root {tree.nodes[static_cast<std::size_t>(tree.root)]};
     if (root.kind == node_kind::concat) {
-      std::int32_t i {0};
-      for (std::int32_t c = root.child; c >= 0; c = tree.nodes[static_cast<std::size_t>(c)].next, ++i) {
-        if (!inner_literal_detail::walk(tree, c, st, i)) { // top-level child index = i
+      // Collect top-level child indices (small; patterns with hundreds of top-level siblings are not IL targets).
+      std::vector<std::int32_t> kids;
+      for (std::int32_t c = root.child; c >= 0; c = tree.nodes[static_cast<std::size_t>(c)].next) {
+        kids.push_back(c);
+      }
+      std::size_t lo {0};
+      std::size_t hi {kids.size()};
+      std::uint8_t wb_lead  {0};
+      std::uint8_t wb_trail {0};
+      // Peel a single optional lead `\b`/`\B` (multiple consecutive wb asserts are declined — rare & ambiguous).
+      if (lo < hi && inner_literal_detail::is_top_wb_anchor(tree, kids[lo])) {
+        wb_lead = inner_literal_detail::wb_hint_from_anchor(
+          tree.nodes[static_cast<std::size_t>(kids[lo])].anchor);
+        ++lo;
+      }
+      if (lo < hi && inner_literal_detail::is_top_wb_anchor(tree, kids[hi - 1])) {
+        wb_trail = inner_literal_detail::wb_hint_from_anchor(
+          tree.nodes[static_cast<std::size_t>(kids[hi - 1])].anchor);
+        --hi;
+      }
+      // Mid-body wb (or a second lead/trail left after the single peel) → decline.
+      for (std::size_t i = lo; i < hi; ++i) {
+        if (inner_literal_detail::is_top_wb_anchor(tree, kids[i])) {
           return inner_literal {};
         }
       }
+      // Walk the body only; top_child indices are body-local (0 = first body child) so
+      // prefix_child_count + prefix_skip rebuild the reverse prefix without the peeled lead wb.
+      std::int32_t body_i {0};
+      for (std::size_t i = lo; i < hi; ++i, ++body_i) {
+        if (!inner_literal_detail::walk(tree, kids[i], st, body_i)) {
+          return inner_literal {};
+        }
+      }
+      inner_literal_detail::flush(st);
+      st.best.prefix_child_count = st.best_top;
+      st.best.prefix_skip        = static_cast<std::int32_t>(lo);
+      st.best.wb_lead            = wb_lead;
+      st.best.wb_trail           = wb_trail;
+      return st.best;
     }
-    else if (!inner_literal_detail::walk(tree, tree.root, st, 0)) { // a lone top-level node is child 0
+    // Lone top-level node: a bare `\b`/`\B` is not an IL pattern; other roots walk as child 0.
+    if (inner_literal_detail::is_top_wb_anchor(tree, tree.root)) {
       return inner_literal {};
     }
-    inner_literal_detail::flush(st); // the final run
+    if (!inner_literal_detail::walk(tree, tree.root, st, 0)) {
+      return inner_literal {};
+    }
+    inner_literal_detail::flush(st);
     st.best.prefix_child_count = st.best_top;
     return st.best;
   }
 
-  //! \brief Build the prefix sub-AST: the first \p count top-level concat children (\p count >= 1). Copies the
-  //!        tree and truncates the root concat's child chain after the count-th child — the later children
-  //!        become unreferenced and are simply never reached when it is compiled.
+  //! \brief Build the prefix sub-AST: \p count top-level concat children starting after \p skip lead
+  //!        children (\p count >= 1). Copies the tree, re-roots the concat chain at the skip-th child,
+  //!        and truncates after \p count body children — later siblings (literal + suffix + trail wb)
+  //!        become unreferenced. \p skip is the D1a peeled-lead count (\ref inner_literal::prefix_skip);
+  //!        0 preserves the pre-D1a behaviour (prefix = first \p count children).
   inline ast build_prefix_ast(const ast&   tree,
-                              std::int32_t count)
+                              std::int32_t count,
+                              std::int32_t skip = 0)
   {
     ast             prefix {tree};
-    const ast_node& root   {prefix.nodes[static_cast<std::size_t>(prefix.root)]};
+    ast_node&       root   {prefix.nodes[static_cast<std::size_t>(prefix.root)]};
     std::int32_t    c      {root.child};
+    for (std::int32_t i = 0; i < skip; ++i) {
+      c = prefix.nodes[static_cast<std::size_t>(c)].next;
+    }
+    root.child = c; // drop peeled lead wb anchors from the prefix root
     for (std::int32_t i = 0; i + 1 < count; ++i) {
       c = prefix.nodes[static_cast<std::size_t>(c)].next;
     }
-    prefix.nodes[static_cast<std::size_t>(c)].next = -1; // truncate after the count-th top-level child
+    prefix.nodes[static_cast<std::size_t>(c)].next = -1; // truncate after the count-th body child
     return prefix;
   }
 } // namespace real::detail

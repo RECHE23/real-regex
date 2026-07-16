@@ -78,11 +78,11 @@ TEST(wb_peel_trail_only_cp_digit)
   EXPECT(!hit(re, "42a"));
 }
 
-// --- resolve: \B never arms class/cp maximal-run fast path ------------------
+// --- resolve: \B unarms MAXIMAL-run class/cp; single-atom \B keeps the wrap (D1a) -
 
-TEST(wb_resolve_B_unarms_class_loop)
+TEST(wb_resolve_B_unarms_maximal_class_loop)
 {
-  // `\B[a-z]+\B` — resolve returns false (\B); greedy_class_loop stays off.
+  // `\B[a-z]+\B` — maximal-run + `\B` is unsound for the skip-whole-run scanner; stay general.
   const real::regex re {R"(\B[a-z]+\B)"};
   EXPECT_EQ(static_cast<int>(re.raw_program().hints.greedy_class_loop), -1);
   // General path: non-boundaries both sides of "abc" inside "xabcy".
@@ -92,7 +92,7 @@ TEST(wb_resolve_B_unarms_class_loop)
   EXPECT_EQ(m[0], "abc");
 }
 
-TEST(wb_resolve_B_unarms_cp_loop)
+TEST(wb_resolve_B_unarms_maximal_cp_loop)
 {
   const real::regex re {R"(\B\d+\B)"};
   EXPECT_EQ(static_cast<int>(re.raw_program().hints.greedy_cp_class), -1);
@@ -100,11 +100,26 @@ TEST(wb_resolve_B_unarms_cp_loop)
   EXPECT(!hit(re, " 12 "));
 }
 
-TEST(wb_resolve_mixed_b_and_B_unarms)
+TEST(wb_resolve_mixed_b_and_B_unarms_maximal)
 {
-  // Lead \b + trail \B → still \B present → unarm.
+  // Lead \b + trail \B on a maximal run → still unarm.
   const real::regex re {R"(\b[a-z]+\B)"};
   EXPECT_EQ(static_cast<int>(re.raw_program().hints.greedy_class_loop), -1);
+}
+
+TEST(wb_resolve_B_arms_single_atom_cp)
+{
+  // D1a: `\B\w` / `\B\d` (no `+`) arm cp-class with wb_lead=2 — each candidate is one code point.
+  const real::regex Bw {R"(\B\w)"};
+  EXPECT(Bw.raw_program().hints.greedy_cp_class >= 0);
+  EXPECT_EQ(static_cast<int>(Bw.raw_program().hints.wb_lead), 2);
+  EXPECT_EQ(static_cast<int>(Bw.raw_program().hints.wb_trail), 0);
+  EXPECT(!Bw.raw_program().hints.greedy_cp_class_plus);
+
+  EXPECT(hit(Bw, "hello")); // mid-word letters
+  EXPECT_EQ(real::regex(R"(\B\w)").count_matches("hello"), 4U); // e,l,l,o — not h
+  EXPECT(!hit(Bw, "a"));      // sole letter sits on a boundary at both ends of a one-char "run"
+  EXPECT(hit(Bw, "aa"));      // second 'a' is non-boundary-led
 }
 
 // --- peel-reject: non-wb assert at peel position → no fake wb wrap ----------

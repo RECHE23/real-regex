@@ -143,9 +143,15 @@ namespace real::detail {
       // inner-literal search route (pike_vm::run dispatches to run_inner_literal); kept off the program
       // code, so byte-identity is untouched.
       const inner_literal il {extract_inner_literal(tree_)};
-      prog.hints.inner_literal        = il.bytes;
-      prog.hints.inner_literal_len    = il.len;
-      prog.hints.inner_literal_prefix = il.prefix_child_count;
+      prog.hints.inner_literal             = il.bytes;
+      prog.hints.inner_literal_len         = il.len;
+      prog.hints.inner_literal_prefix      = il.prefix_child_count;
+      // D1a: peel-lead skip for the reverse-prefix (see build_prefix_ast). Non-zero only when the
+      // IL route is live. confirm_at still runs the full program (lead/trail `\b`/`\B` checked there).
+      prog.hints.inner_literal_prefix_skip =
+        (il.len > 0 && il.prefix_child_count >= 1 && il.prefix_skip > 0)
+          ? static_cast<std::uint8_t>(il.prefix_skip)
+          : std::uint8_t {0};
       if (prog.code.size() > max_program_size) {
         throw regex_error("program too large", 0);
       }
@@ -1300,7 +1306,10 @@ namespace real::detail {
     // budget" choice, taken up front). The prefix program is a subset, so this does not recurse into itself.
     if (!std::is_constant_evaluated() && prog.hints.inner_literal_prefix >= 1) {
       const dynamic_program pp {
-        compiler(build_prefix_ast(tree, prog.hints.inner_literal_prefix), compile_flags).compile()};
+        compiler(build_prefix_ast(tree, prog.hints.inner_literal_prefix,
+                                  prog.hints.inner_literal_prefix_skip),
+                 compile_flags)
+          .compile()};
       prog.prefix_code       = pp.code;
       prog.prefix_classes    = pp.classes;
       prog.prefix_cp_classes = pp.cp_classes;

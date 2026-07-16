@@ -146,6 +146,27 @@ TEST(seam_run_cp_class_loop)
   expect_seam_agrees(R"(\w{4,})", "caf\xC3\xA9");        // exactly k=4 code points: matches at the limit
   expect_seam_agrees(R"(\b\w{4,}\b)", "caf");
   expect_seam_agrees(R"(\b\w{4,}\b)", "caf\xC3\xA9");
+  // D1a: single-atom `\B\w` / `\B\d` arm cp-class with wb_lead=2 (maximal `\B\w+` stays general).
+  expect_seam_agrees(R"(\B\w)", std::string("hello world ahello caf\xC3\xA9") + "a");
+  expect_seam_agrees(R"(\B\w)", "a"); // zero mid-word hits
+  expect_seam_agrees(R"(\B\w)", std::string("\xC3\xA9") + "a"); // multi-byte then ASCII word junction
+  expect_seam_agrees(R"(\B\d)", "a12b 9 99");
+  expect_seam_agrees_corpus(R"(\B\w)");
+}
+
+TEST(seam_run_inner_literal_wb)
+{
+  // D1a: top-level `\b`/`\B` peel so `\b\w+@\w+\b` keeps the `@` IL route (prefix reverse excludes
+  // the lead assert; confirm_at re-checks boundaries on the full program).
+  expect_seam_agrees(R"(\b\w+@\w+\b)", "aa foo@bar bb x@y noat foo@baz");
+  expect_seam_agrees(R"(\b\w+@\w+\b)", "no at signs here");
+  expect_seam_agrees(R"(\b\w+@\w+\b)", "xfoo@barx"); // whole-string boundary at text edges
+  expect_seam_agrees(R"(\b\w+@\w+\b)", "  foo@bar  ");
+  expect_seam_agrees(R"(\b\w+@\w+\b)", "caf\xC3\xA9@test.com");
+  expect_seam_agrees_corpus(R"(\b\w+@\w+\b)");
+  // Lead-only / trail-only peel variants.
+  expect_seam_agrees(R"(\b\w+@\w+)", "aa foo@bar bb");
+  expect_seam_agrees(R"(\w+@\w+\b)", "aa foo@bar bb");
 }
 
 TEST(seam_run_possessive_byte_loop)

@@ -486,6 +486,12 @@ namespace real {
       //!        Appending after the last field instead is byte-identical: sizeof/offsetof unchanged
       //!        for every existing field, verified before/after.
       std::uint16_t alternation_branch_count {};
+
+      //! \brief D1a: number of leading top-level children peeled before the IL reverse-prefix
+      //!        (a lead `\b`/`\B` on `\b\w+@\w+\b`). \ref build_prefix_ast skips this many children
+      //!        then takes \ref inner_literal_prefix body children. Appended last (same placement
+      //!        rule as \ref alternation_branch_count) so hot-field offsets stay put.
+      std::uint8_t inner_literal_prefix_skip {};
     };
 
     /*!

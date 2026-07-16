@@ -67,6 +67,30 @@ TEST(inner_literal_prefix_boundary)
   EXPECT(extract(R"((foo)bar)").prefix_child_count == -1);         // literal opens inside a group -> no clean boundary
 }
 
+TEST(inner_literal_d1a_peels_top_level_wb)
+{
+  // D1a: leading/trailing `\b`/`\B` no longer decline extraction — they set prefix_skip + wb hints
+  // so the reverse-prefix excludes the assert (byte-DFA) while confirm re-checks boundaries.
+  const auto both {extract(R"(\b\w+@\w+\b)")};
+  EXPECT(both.found());
+  EXPECT(is_lit(both, "@"));
+  EXPECT_EQ(both.prefix_child_count, 1); // body-local: just `\w+` before `@`
+  EXPECT_EQ(both.prefix_skip, 1);        // peeled lead `\b`
+  EXPECT_EQ(static_cast<int>(both.wb_lead), 1);
+  EXPECT_EQ(static_cast<int>(both.wb_trail), 1);
+
+  const auto lead_only {extract(R"(\b\w+@\w+)")};
+  EXPECT(lead_only.found());
+  EXPECT_EQ(lead_only.prefix_skip, 1);
+  EXPECT_EQ(static_cast<int>(lead_only.wb_lead), 1);
+  EXPECT_EQ(static_cast<int>(lead_only.wb_trail), 0);
+
+  // Mid-body wb still declines (unsound for a required-literal + reverse-prefix split).
+  EXPECT(!extract(R"(\w+\b@\w+)").found());
+  // Non-wb anchors still decline.
+  EXPECT(!extract(R"(^\w+@\w+)").found());
+}
+
 
 TEST(inner_literal_stored_in_hints)
 {

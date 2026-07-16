@@ -45,10 +45,21 @@ TEST(arc_b1_lead_or_trail_only_also_simplifies)
   EXPECT_EQ(static_cast<int>(real::regex(R"(\w+\b)").raw_program().hints.greedy_cp_class), 0);
 }
 
-TEST(arc_b1_not_word_boundary_not_simplified)
+TEST(arc_b1_not_word_boundary_maximal_not_simplified)
 {
-  // `\B` is never redundant with a maximal `\w` run — stay off the cp fast path.
+  // `\B` on a maximal `\w+` run is unsound for the skip-whole-run scanner — stay general.
+  // (D1a arms single-atom `\B\w` instead; see test_wb_peel_resolve.)
   EXPECT_EQ(static_cast<int>(real::regex(R"(\B\w+\B)").raw_program().hints.greedy_cp_class), -1);
+  EXPECT_EQ(static_cast<int>(real::regex(R"(\B\w+)").raw_program().hints.greedy_cp_class), -1);
+}
+
+TEST(d1a_B_single_atom_arms_cp_wrap)
+{
+  const real::regex re {R"(\B\w)"};
+  EXPECT(re.raw_program().hints.greedy_cp_class >= 0);
+  EXPECT_EQ(static_cast<int>(re.raw_program().hints.wb_lead), 2);
+  EXPECT_EQ(cnt(re, "hello"), 4U);
+  EXPECT_EQ(cnt(re, " a "), 0U); // sole letter after space is boundary-led
 }
 
 TEST(arc_b2_az_wrap_boundaries)

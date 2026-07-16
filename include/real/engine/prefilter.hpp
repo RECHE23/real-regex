@@ -269,12 +269,18 @@ namespace real::detail {
   }
 
   /*!
-   * \brief B-1/B-2 policy for class / cp-class loops under optional `\b` wraps.
+   * \brief B-1/B-2 policy for class / cp-class loops under optional `\b`/`\B` wraps.
    *
-   * Unarms on `\B` or on a non-word-subset class under `\b` (superset maximal-run is unsound).
-   * Full word + `\b` drops boundaries (B-1) -- but ONLY for a maximal (`+`) run; see \ref
-   * wb_redundant_for_full_word. Proper word subset keeps the wrap (B-2). Bare (no `\b`) arms with
-   * zero wb hints.
+   * - Full word + `\b` on a maximal (`+`) run: drop boundaries (B-1); see \ref
+   *   wb_redundant_for_full_word.
+   * - Proper word subset + `\b`, or full word + `\b` on a single atom: keep the wrap (B-2).
+   * - `\B` on a **maximal** run: **unarm** — the runner skips whole class runs on a failed lead
+   *   check, but `\B` legitimately starts *mid-run* (`\B\w+` on "hello" → "ello"). That skip is
+   *   unsound; stay on the general VM (D1a will not invent a mid-run scanner here).
+   * - `\B` on a **single** atom (`\B\w`, `\B\d`, …): keep the wrap — each candidate is one
+   *   code point, so a failed lead check advances one atom and mid-run hits are found (D1a).
+   * - Non-word-subset class under any wb: unarm (superset maximal-run is unsound).
+   * - Bare (no wb): arm with zero wb hints.
    *
    * \param[in]  full_word   Exact `\w` class (ASCII or Unicode table identity).
    * \param[in]  word_sub    Non-empty subset of `\w`.
@@ -296,14 +302,16 @@ namespace real::detail {
                                                       std::uint8_t& out_lead,
                                                       std::uint8_t& out_trail) noexcept
   {
-    if (lead == 2 || trail == 2) {
+    // `\B` + maximal-run scanner is unsound (mid-run starts); unarm. Single-atom `\B` is fine.
+    if ((lead == 2 || trail == 2) && maximal_run) {
       return false;
     }
     const bool has_wb {lead != 0 || trail != 0};
     if (has_wb && !full_word && !word_sub) {
       return false;
     }
-    if (has_wb && word_sub &&
+    // Keep the wrap for subset/`\B`/single-atom `\b`; B-1 drops only maximal full-word + `\b`.
+    if (has_wb && (word_sub || full_word) &&
         !(maximal_run && full_word && wb_redundant_for_full_word(lead, trail))) {
       out_lead  = lead;
       out_trail = trail;
