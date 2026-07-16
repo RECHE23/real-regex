@@ -125,9 +125,10 @@ if(NOT EXISTS "${SCIFORGE_INCLUDE_DIR}/sciforge/test/framework.hpp")
 endif()
 
 file(GLOB_RECURSE REAL_TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp)
-# tsan_compat.cpp is a standalone ThreadSanitizer program with its own main() (run by `make tsan`),
-# not part of the framework suite — exclude it from the test binary.
+# Standalone ThreadSanitizer programs with their own main() (run by `make tsan` / `make tsan-core`),
+# not part of the framework suite — exclude them from the test binary.
 list(FILTER REAL_TEST_SOURCES EXCLUDE REGEX "tests/compat/tsan_compat\\.cpp$")
+list(FILTER REAL_TEST_SOURCES EXCLUDE REGEX "tests/engine/tsan_core\\.cpp$")
 # Target name avoids a clash with CMake's generated RUN_TESTS on
 # case-insensitive generators (Visual Studio).
 add_executable(real_tests_bin ${REAL_TEST_SOURCES})
