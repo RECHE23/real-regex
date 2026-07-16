@@ -180,6 +180,68 @@ TEST(klass_cp_static_regex_is_constexpr_and_correct)
   EXPECT(real::static_regex<"\\w+">().fullmatch("héllo").matched());
 }
 
+TEST(klass_cp_hi_table_matches_range_search_exhaustively_for_pL)
+{
+  // D1 \p{}: sparse hi membership (cp > U+07FF) must match the range tables bit-for-bit over the
+  // entire Unicode space. Encode each scalar and fullmatch `\p{L}` — runtime path = European page +
+  // thread-local 2-stage hi table.
+  const real::regex                 pl   {R"(\p{L})"};
+  const auto                        st   {real::detail::dynamic_storage::compile(R"(\p{L})", real::flags::none)};
+  const auto                        pv   {st.view()};
+  const real::detail::cp_class&     cc   {pv.cp_classes[0]};
+  std::size_t                       mism {0};
+  for (std::uint32_t cp = 0; cp < 0x110000U; ++cp) {
+    if (cp >= 0xD800U && cp <= 0xDFFFU) {
+      continue; // surrogates are not valid UTF-8 scalar values
+    }
+    bool want {false};
+    if (cp < 0x80U) {
+      want = cc.ascii.test(static_cast<std::uint8_t>(cp));
+    }
+    else {
+      for (std::uint32_t k = 0; k < cc.range_count; ++k) {
+        const auto& r {pv.cp_ranges[cc.range_begin + k]};
+        if (cp >= r.lo && cp <= r.hi) {
+          want = true;
+          break;
+        }
+        if (r.lo > cp) {
+          break;
+        }
+      }
+    }
+    char        buf[4] {};
+    std::size_t n      {0};
+    if (cp < 0x80U) {
+      buf[0] = static_cast<char>(cp);
+      n      = 1;
+    }
+    else if (cp < 0x800U) {
+      buf[0] = static_cast<char>(0xC0U | (cp >> 6U));
+      buf[1] = static_cast<char>(0x80U | (cp & 0x3FU));
+      n      = 2;
+    }
+    else if (cp < 0x10000U) {
+      buf[0] = static_cast<char>(0xE0U | (cp >> 12U));
+      buf[1] = static_cast<char>(0x80U | ((cp >> 6U) & 0x3FU));
+      buf[2] = static_cast<char>(0x80U | (cp & 0x3FU));
+      n      = 3;
+    }
+    else {
+      buf[0] = static_cast<char>(0xF0U | (cp >> 18U));
+      buf[1] = static_cast<char>(0x80U | ((cp >> 12U) & 0x3FU));
+      buf[2] = static_cast<char>(0x80U | ((cp >> 6U) & 0x3FU));
+      buf[3] = static_cast<char>(0x80U | (cp & 0x3FU));
+      n      = 4;
+    }
+    const bool got {static_cast<bool>(pl.fullmatch(std::string_view {buf, n}))};
+    if (want != got) {
+      ++mism;
+    }
+  }
+  EXPECT_EQ(mism, 0U);
+}
+
 TEST(klass_cp_mixed_members_union_regardless_of_order)
 {
   // KLASS-MIX regression (P1, shipped v2026.7.3): a non-ASCII member — a literal, a range, or a second
