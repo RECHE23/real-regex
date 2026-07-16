@@ -116,10 +116,10 @@ TEST(wb_resolve_B_arms_single_atom_cp)
   EXPECT_EQ(static_cast<int>(Bw.raw_program().hints.wb_trail), 0);
   EXPECT(!Bw.raw_program().hints.greedy_cp_class_plus);
 
-  EXPECT(hit(Bw, "hello")); // mid-word letters
+  EXPECT(hit(Bw, "hello"));                                     // mid-word letters
   EXPECT_EQ(real::regex(R"(\B\w)").count_matches("hello"), 4U); // e,l,l,o — not h
-  EXPECT(!hit(Bw, "a"));      // sole letter sits on a boundary at both ends of a one-char "run"
-  EXPECT(hit(Bw, "aa"));      // second 'a' is non-boundary-led
+  EXPECT(!hit(Bw, "a"));                                        // sole letter sits on a boundary at both ends of a one-char "run"
+  EXPECT(hit(Bw, "aa"));                                        // second 'a' is non-boundary-led
 }
 
 // --- peel-reject: non-wb assert at peel position → no fake wb wrap ----------

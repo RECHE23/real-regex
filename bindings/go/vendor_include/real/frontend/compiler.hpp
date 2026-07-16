@@ -1309,7 +1309,7 @@ namespace real::detail {
         compiler(build_prefix_ast(tree, prog.hints.inner_literal_prefix,
                                   prog.hints.inner_literal_prefix_skip),
                  compile_flags)
-          .compile()};
+        .compile()};
       prog.prefix_code       = pp.code;
       prog.prefix_classes    = pp.classes;
       prog.prefix_cp_classes = pp.cp_classes;

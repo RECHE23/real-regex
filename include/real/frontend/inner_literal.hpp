@@ -167,7 +167,7 @@ namespace real::detail {
       }
       const ast_node& n {tree.nodes[static_cast<std::size_t>(idx)]};
       return n.kind == node_kind::anchor
-          && (n.anchor == anchor_kind::word_boundary || n.anchor == anchor_kind::not_word_boundary);
+             && (n.anchor == anchor_kind::word_boundary || n.anchor == anchor_kind::not_word_boundary);
     }
 
     [[nodiscard]] constexpr std::uint8_t wb_hint_from_anchor(anchor_kind k) noexcept
@@ -202,8 +202,8 @@ namespace real::detail {
       for (std::int32_t c = root.child; c >= 0; c = tree.nodes[static_cast<std::size_t>(c)].next) {
         kids.push_back(c);
       }
-      std::size_t lo {0};
-      std::size_t hi {kids.size()};
+      std::size_t  lo       {0};
+      std::size_t  hi       {kids.size()};
       std::uint8_t wb_lead  {0};
       std::uint8_t wb_trail {0};
       // Peel a single optional lead `\b`/`\B` (multiple consecutive wb asserts are declined — rare & ambiguous).
