@@ -34,19 +34,41 @@ TEST(inner_literal_extracted)
   EXPECT(is_lit(extract(R"((foo)bar)"), "foobar"));      // descends the group; the run spans the boundary
 }
 
+TEST(inner_literal_d1_pure_lit_alt_only)
+{
+  // D1' P0.1: pure-literal alternation no longer aborts — a later required run arms (StatusLine).
+  const auto sl {extract(R"((info|error|warn)\s+\d{4}-\d{2}-\d{2}\s+req=[a-f0-9]+)")};
+  EXPECT(sl.found());
+  EXPECT(is_lit(sl, "req="));
+  EXPECT(sl.prefix_child_count >= 1); // reverse-prefix covers (alt)\s+\d{4}-…
+
+  // D1' P0.2 DROPPED (x86 A/B: IL on `://` regressed vs strong first-byte/`http` baseline).
+  // URL with mono-byte optional `s?` must decline IL entirely — stays on v7.45 prefix/DFA route.
+  EXPECT(!extract(R"(https?://[^\s]+)").found());
+  // Optional still declines the whole walk (conservative v1 restored for min==0).
+  EXPECT(!extract(R"((a)?@b)").found());
+  EXPECT(!extract(R"(x*@?y)").found());
+}
+
 TEST(inner_literal_declined_soundness)
 {
-  // The acid: a bypassing path means the literal is NOT required -> no extraction.
-  EXPECT(!extract(R"((a)?@b)").found());   // (a)? optional -> conservative decline
-  EXPECT(!extract(R"(foo|@bar)").found()); // alternation -> no common required literal
-  EXPECT(!extract(R"(x*@?y)").found());    // @? optional -> @ is not guaranteed
+  // The acid: a bypassing path means the literal is NOT required -> no extraction from inside it.
+  // Pure-literal root alt with no common continuation: nothing required across both branches.
+  EXPECT(!extract(R"(foo|@bar)").found());
+  // Non-literal branch (klass) → whole extract declines (conservative: reverse-prefix must be representable).
+  EXPECT(!extract(R"((info|\w+)\s+req=x)").found());
+  // Unsound trap: `req=` appears in only ONE branch — must NOT be selected; only a later common run is.
+  const auto trap {extract(R"((abc|xreq=y)z)")};
+  EXPECT(trap.found());
+  EXPECT(is_lit(trap, "z")); // not "req=" / "xreq="
+  EXPECT(!is_lit(trap, "req="));
 }
 
 TEST(inner_literal_declined_routed)
 {
   EXPECT(!extract(R"(^foo)").found());       // anchored -> handled without a scan
   EXPECT(!extract(R"((?=foo)bar)").found()); // lookaround -> VM-routed
-  EXPECT(!extract(R"(a|b)").found());        // top-level alternation
+  EXPECT(!extract(R"(a|b)").found());        // top-level pure alt, no common suffix
   EXPECT(!extract(R"(\w+)").found());        // no literal run at all
 }
 

@@ -54,6 +54,12 @@ TEST(inner_literal_routed_equals_core)
     {.pat = R"([0-9]{4}-[0-9]{2}-[0-9]{2})", .text = "9-04"},                                                   // prefix cannot fit before the hit at all (h < prefix_w) -- must decline, not underflow
     {.pat = R"([0-9]{10}-[0-9]{10}-[0-9]{10})", .text = "x0123456789-0123456789-01234567890y bad"},             // total width 32 (== il_fused_max_width, the boundary): still fused
     {.pat = R"([0-9]{15}-[0-9]{15}-[0-9]{15})", .text = "012345678901234-012345678901234-012345678901234"},     // total width 47 (> il_fused_max_width): stays on the pre-fusion route, must still match correctly
+    // D1' P0.1 pure-lit alt: StatusLine arms IL `req=`; URL (`s?`) deliberately declines IL (P0.2 dropped).
+    // Both stay 0-div route-on vs core.
+    {.pat  = R"(https?://[^\s]+)", .text = "see http://a.com and https://b.org/x end no-url http:/bad"},
+    {.pat  = R"((info|error|warn)\s+\d{4}-\d{2}-\d{2}\s+req=[a-f0-9]+)",
+     .text = "x info 2024-01-15 req=deadbeef y error 2023-12-01 req=abc warn 2020-01-01 req=0 z info_x req=no"},
+    {.pat  = R"((abc|xreq=y)z)", .text = "xreq=yz abcz xreq= noz abczz"}, // unsound trap: only common `z` is IL
   };
   // These inputs are tiny (< the small-haystack guard's floor), so the guard would send the routed run back to
   // the core and the comparison would be trivially true. Disable it: the point is to exercise the route.
