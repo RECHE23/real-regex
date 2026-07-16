@@ -104,3 +104,30 @@ TEST(wb_empty_and_edge_text)
   EXPECT(search_bool(re, "abcdefaa")); // [0-9a-f]{8} + whole-string boundaries
   EXPECT(!search_bool(re, "abcdefg")); // length 7
 }
+
+// fuzz-compat crash-86573f5 (CI after tsan-core land): mid-pattern `\b` was peeled as a *trail*
+// wrap on fixed_shape, so match_byte_klass_run stopped at the assert and dropped the following
+// literal — `\w{2}\bthe` falsely matched just `\w{2}` under flags::bytes (compat's default).
+// A true trail `\b` (`\w{2}\b`) must still arm fixed_shape + wb_trail.
+TEST(wb_mid_pattern_boundary_not_peeled_as_trail_fixed_shape)
+{
+  constexpr real::flags bytes_ecma {real::flags::bytes | real::flags::ecma};
+  const real::regex     mid        {R"(\w{2}\bthe)", bytes_ecma};
+  const auto&           hm         {mid.raw_program().hints};
+  EXPECT(!hm.fixed_shape); // mid \b disqualifies the pure fixed-shape run
+  EXPECT_EQ(static_cast<int>(hm.wb_trail), 0);
+  // Impossible shape: \w{2} ends on a word char, "the" starts on one — no \b junction either.
+  EXPECT(!search_bool(mid, "\xa3ox"));
+  EXPECT(!search_bool(mid, "oxthe"));
+  EXPECT(!search_bool(mid, "ox the"));
+
+  const real::regex trail {R"(\w{2}\b)", bytes_ecma};
+  const auto&       ht    {trail.raw_program().hints};
+  EXPECT(ht.fixed_shape);
+  EXPECT_EQ(static_cast<int>(ht.wb_trail), 1);
+  EXPECT(search_bool(trail, "\xa3ox")); // true trail at end of text
+  EXPECT(search_bool(trail, "ox "));
+  // "oxy": `\w{2}` can start at 'x' → "xy" + end-of-text `\b` — a legitimate match.
+  EXPECT(search_bool(trail, "oxy"));
+  EXPECT(!search_bool(trail, "x")); // only one word char
+}

@@ -1059,9 +1059,22 @@ namespace real::detail {
             ++i;
           }
           else if (op == opcode::assert_position && saw_body && wb_trail == 0) {
-            // Single trailing \b/\B immediately before save 1.
-            if (!peel_optional_trail_wb(code, i, wb_trail)) {
-              break; // non-wb trail assert
+            // Single trailing \b/\B only when it is immediately before save 1 / match.
+            // A mid-pattern \b (e.g. `\w{2}\bthe`) must NOT be peeled as trail: match_byte_klass_run
+            // stops at the assert and would silently drop the following literal, falsely matching
+            // just the prefix (fuzz-compat crash 86573f5 / pattern `\w{2}\bthe` on "…ox").
+            std::size_t  probe      {i};
+            std::uint8_t trail_hint {0};
+            if (!peel_optional_trail_wb(code, probe, trail_hint)) {
+              break; // non-wb assert
+            }
+            if (probe + 1 < code.size() && code[probe].op == opcode::save && code[probe].arg16 == 1
+                && code[probe + 1].op == opcode::match && probe + 2 == code.size()) {
+              wb_trail = trail_hint;
+              i        = probe; // advance past the trail assert; next iter hits save 1
+            }
+            else {
+              break;            // mid-pattern \b/\B — fixed-shape cannot represent a mid-run zero-width assert
             }
           }
           else {
