@@ -128,6 +128,10 @@ jobs:
       # (std_engine's lazy build under a mutex). Reproduce locally with: make tsan.
       - name: ThreadSanitizer smoke (concurrent std_engine)
         run: make tsan CXX=clang++
+      # Core concurrent caches (7.45 shared-confirm / immutables call_once / shared_dfa_for slot mutex).
+      # Barrier-synced first search on a fresh const regex — not the compat layer. make tsan-core.
+      - name: ThreadSanitizer smoke (core shared-confirm / immutables)
+        run: make tsan-core CXX=clang++
 
   # Public conformance + exhaustive nets, promoted from the local gate now that the corpus/enumerator
   # substrate is pinnable. The rust-regex + Fowler corpora differential against Python re, and the

@@ -53,7 +53,7 @@ SCIFORGE_TOOLS ?= ../sciforge/tools
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep -vE 'include/real/unicode/unicode_(fold|props|property|script|binprop|scx)\.hpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-        lint misra fuzz fuzz-compat exhaustive-compat fowler-compat check-pins tsan doc doc-no-coverage doc-check format format-check full-local-gate gate-bump gate-doc gate-test clean \
+        lint misra fuzz fuzz-compat exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check format format-check full-local-gate gate-bump gate-doc gate-test clean \
         bench-engines bench-multipattern bench-duel bench-matrix matrix-gate \
         profile-sample-build profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers
@@ -72,6 +72,7 @@ help:
 	@echo "  make fuzz       libFuzzer robustness fuzzing (Clang; FUZZ_TIME=secs)"
 	@echo "  make fuzz-compat  Differential fuzz: real::compat vs std::regex (Clang; FUZZ_TIME=secs)"
 	@echo "  make tsan       ThreadSanitizer smoke of concurrent std_engine (Clang)"
+	@echo "  make tsan-core  ThreadSanitizer smoke of core shared-confirm / immut caches (Clang)"
 	@echo "  make doc        Generate API reference (Doxygen) with embedded coverage"
 	@echo "  make doc-no-coverage  Generate API reference without coverage report"
 	@echo "  make format     Uncrustify, in place"
@@ -256,6 +257,19 @@ tsan:
 	mkdir -p $(BUILD)
 	clang++ $(CXXSTD) -O1 -g $(INCLUDES) -fsanitize=thread tests/compat/tsan_compat.cpp -o $(BUILD)/tsan_compat
 	$(BUILD)/tsan_compat
+
+# ThreadSanitizer smoke for the CORE concurrent caches (7.45 shared-confirm / immutables / call_once),
+# not the compat layer. Barrier-synchronized first search on a FRESH const regex each iteration —
+# without the barrier+fresh pattern, call_once fills once and late threads never race the warm path
+# (false-negative risk). Harness proof (must go red):
+#   TSAN_OPTIONS=halt_on_error=1 REAL_TSAN_INJECT_RACE=1 make tsan-core
+# ASLR: some Linux kernels hit TSan "FATAL: unexpected memory mapping" under high ASLR — prefer
+# setarch -R when present (Linux CI/devbox); fall back to a direct run (macOS has no setarch).
+tsan-core:
+	mkdir -p $(BUILD)
+	clang++ $(CXXSTD) -O1 -g $(INCLUDES) -fsanitize=thread \
+	    tests/engine/tsan_core.cpp -o $(BUILD)/tsan_core
+	setarch $$(uname -m) -R $(BUILD)/tsan_core 2>/dev/null || $(BUILD)/tsan_core
 
 # Differential fuzzer: real::compat vs std::regex (search/replace/iterate/token/match-flags). This
 # is the net that has caught every silent divergence in the compat layer, so it runs in CI too.
