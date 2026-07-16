@@ -47,6 +47,8 @@ namespace {
 
   [[nodiscard]] bool inject_race_enabled()
   {
+    // Single-threaded main only; getenv is not MT-safe but this runs before any worker starts.
+    // NOLINTNEXTLINE(concurrency-mt-unsafe)
     const char* e {std::getenv("REAL_TSAN_INJECT_RACE")};
     return e != nullptr && e[0] != '\0' && std::strcmp(e, "0") != 0;
   }
@@ -144,9 +146,9 @@ int main()
   const std::string ascii_hay {make_ascii_haystack()};
 
   const case_spec cases[] =   {
-    {"email-IL",   R"((\w+)@(\w+))", email_hay},
-    {"pL-CJK",     R"(\p{L}+)",      cjk_hay},
-    {"wplus-ascii", R"(\w+)",         ascii_hay},
+    {.name = "email-IL", .pattern = R"((\w+)@(\w+))", .hay = email_hay},
+    {.name = "pL-CJK", .pattern = R"(\p{L}+)", .hay = cjk_hay},
+    {.name = "wplus-ascii", .pattern = R"(\w+)", .hay = ascii_hay},
   };
 
   const bool inject {inject_race_enabled()};
