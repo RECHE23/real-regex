@@ -178,10 +178,39 @@ namespace real {
     //!        match time — O(log ranges) per position, independent of the range count.
     struct cp_class
     {
-      char_class    ascii;          //!< Members `< 0x80`.
-      std::uint32_t range_begin {}; //!< First range in the program's `cp_ranges` buffer.
-      std::uint32_t range_count {}; //!< Number of ranges belonging to this class.
+      char_class    ascii;             //!< Members `< 0x80`.
+      std::uint32_t range_begin {};    //!< First range in the program's `cp_ranges` buffer.
+      std::uint32_t range_count {};    //!< Number of ranges belonging to this class.
+      //! Content identity (FNV-1a of ASCII bitmap + every range), set once at intern. The thread-local
+      //! sparse `cp_hi` cache keys by this (not a pointer into a program) so a destroyed program's
+      //! recycled `cp_ranges` address cannot poison a later class. Read O(1) per codepoint on the
+      //! hot path — never re-hashed per probe (that would erase the 7.47 `\p{}` gain).
+      std::uint64_t fingerprint {};
     };
+
+    //! \brief FNV-1a 64-bit content fingerprint of an ASCII bitmap + a contiguous range span.
+    //!        Used once at `intern_cp_class` (compile time / first intern); match time only reads
+    //!        \ref cp_class::fingerprint. Constexpr so `static_regex` stays happy.
+    [[nodiscard]] constexpr std::uint64_t fingerprint_cp_class_content(
+      const char_class&                     ascii,
+      const code_range*                     ranges,
+      std::uint32_t                         range_count)
+    {
+      std::uint64_t h {14695981039346656037ULL};
+      const auto    mix {[&h](std::uint64_t v) constexpr {
+                           h ^= v;
+                           h *= 1099511628211ULL;
+                         }};
+      for (const std::uint64_t word : ascii.bits) {
+        mix(word);
+      }
+      mix(range_count);
+      for (std::uint32_t k {0}; k < range_count; ++k) {
+        mix(ranges[k].lo);
+        mix(ranges[k].hi);
+      }
+      return h;
+    }
 
     /*!
      * \brief NFA instruction opcodes executed by the Pike VM.

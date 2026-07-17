@@ -1313,29 +1313,6 @@ namespace real::detail {
       std::unique_ptr<cp_hi_table> table;
     };
 
-    //! \brief Content fingerprint of a `cp_class` (ASCII bitmap + every non-ASCII range).
-    //!        Stable for the class's membership, independent of program allocation addresses.
-    [[nodiscard]] static std::uint64_t cp_class_fingerprint(const program_view&     prog,
-                                                            const detail::cp_class& cc)
-    {
-      // FNV-1a 64-bit over the effective membership description.
-      std::uint64_t h {14695981039346656037ULL};
-      const auto    mix {[&h](std::uint64_t v) {
-                           h ^= v;
-                           h *= 1099511628211ULL;
-                         }};
-      for (const std::uint64_t word : cc.ascii.bits) {
-        mix(word);
-      }
-      mix(cc.range_count);
-      for (std::uint32_t k {0}; k < cc.range_count; ++k) {
-        const detail::code_range& r {prog.cp_ranges[static_cast<std::size_t>(cc.range_begin) + k]};
-        mix(r.lo);
-        mix(r.hi);
-      }
-      return h;
-    }
-
     //! \brief Cold path: build a sparse hi table and install it in the thread-local cache.
     //!        Outlined so the hot membership check never inlines the range-walk builder.
     [[nodiscard]]
@@ -1406,13 +1383,14 @@ namespace real::detail {
       return slot->table.get();
     }
 
-    //! \brief Thread-local sparse hi tables, keyed by class **content** fingerprint.
-    //!        Keeps \ref basic_pike_state sizeof unchanged. Hot path: last-hit + 8-slot scan; miss → cold build.
+    //! \brief Thread-local sparse hi tables, keyed by \ref cp_class::fingerprint (set once at intern).
+    //!        Hot path: load `uint64` + sticky compare (cheap, like the pre-poisoning pointer key) —
+    //!        never re-hash ranges per codepoint. Keeps \ref basic_pike_state sizeof unchanged.
     [[nodiscard]] static const cp_hi_table* cp_hi_cached(const program_view& prog,
                                                          std::size_t         cp_index)
     {
       const detail::cp_class& cc                  {prog.cp_classes[cp_index]};
-      const std::uint64_t     key_fp              {cp_class_fingerprint(prog, cc)};
+      const std::uint64_t     key_fp              {cc.fingerprint}; // interned once — O(1) load, not FNV of 675 ranges
       // One-thread sticky last hit: a tight `\p{L}+` run probes the same class millions of times.
       thread_local std::uint64_t         last_fp  {0};
       thread_local const cp_hi_table*    last_tab {nullptr};
