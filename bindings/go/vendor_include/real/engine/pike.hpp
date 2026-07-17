@@ -1301,12 +1301,40 @@ namespace real::detail {
     }
 
     //! \brief Cache entry for \ref cp_hi_cached (thread-local, not on \ref basic_pike_state).
+    //!        Keyed by a content fingerprint of the class (never a pointer into a program):
+    //!        programs die while this cache lives for the thread, and the allocator can recycle
+    //!        the same `cp_ranges` address for a *different* class — a pointer key then returns
+    //!        the wrong sparse table (false membership, e.g. emoji matching `[\w€]` after a prior
+    //!        high-range class was destroyed). Seen as a deterministic wrong-match on macos-clang
+    //!        CI after a long test binary has churned many classes (find_iter euro empty-alt pin).
     struct cp_hi_cache_entry
     {
-      const void*                  key_ptr {nullptr};
-      std::uint32_t                key_n   {0};
+      std::uint64_t                key_fp {0};
       std::unique_ptr<cp_hi_table> table;
     };
+
+    //! \brief Content fingerprint of a `cp_class` (ASCII bitmap + every non-ASCII range).
+    //!        Stable for the class's membership, independent of program allocation addresses.
+    [[nodiscard]] static std::uint64_t cp_class_fingerprint(const program_view&     prog,
+                                                            const detail::cp_class& cc)
+    {
+      // FNV-1a 64-bit over the effective membership description.
+      std::uint64_t h {14695981039346656037ULL};
+      const auto    mix {[&h](std::uint64_t v) {
+                           h ^= v;
+                           h *= 1099511628211ULL;
+                         }};
+      for (const std::uint64_t word : cc.ascii.bits) {
+        mix(word);
+      }
+      mix(cc.range_count);
+      for (std::uint32_t k {0}; k < cc.range_count; ++k) {
+        const detail::code_range& r {prog.cp_ranges[static_cast<std::size_t>(cc.range_begin) + k]};
+        mix(r.lo);
+        mix(r.hi);
+      }
+      return h;
+    }
 
     //! \brief Cold path: build a sparse hi table and install it in the thread-local cache.
     //!        Outlined so the hot membership check never inlines the range-walk builder.
@@ -1316,8 +1344,10 @@ namespace real::detail {
 #endif
     static const cp_hi_table* cp_hi_build(const program_view&               prog,
                                           std::size_t                       cp_index,
-                                          const void *                      key_ptr,
-                                          std::array<cp_hi_cache_entry, 8>& cache)
+                                          std::uint64_t                     key_fp,
+                                          std::array<cp_hi_cache_entry, 8>& cache,
+                                          const cp_hi_table*&               last_tab,
+                                          std::uint64_t&                    last_fp)
     {
       const detail::cp_class& cc       {prog.cp_classes[cp_index]};
       auto                    table    {std::make_unique<cp_hi_table>()};
@@ -1358,6 +1388,8 @@ namespace real::detail {
           }
         }
       }
+      // Prefer an empty slot; if the 8-entry cache is full, evict slot 0 and drop last-hit if it
+      // pointed at the table we are about to destroy (otherwise last_tab would dangle).
       cp_hi_cache_entry* slot {&cache[0]};
       for (cp_hi_cache_entry& e : cache) {
         if (!e.table) {
@@ -1365,41 +1397,38 @@ namespace real::detail {
           break;
         }
       }
-      slot->key_ptr = key_ptr;
-      slot->key_n   = cc.range_count;
-      slot->table   = std::move(table);
+      if (slot->table && last_tab == slot->table.get()) {
+        last_tab = nullptr;
+        last_fp  = 0;
+      }
+      slot->key_fp = key_fp;
+      slot->table  = std::move(table);
       return slot->table.get();
     }
 
-    //! \brief Thread-local sparse hi tables (keyed by the class's range span identity).
+    //! \brief Thread-local sparse hi tables, keyed by class **content** fingerprint.
     //!        Keeps \ref basic_pike_state sizeof unchanged. Hot path: last-hit + 8-slot scan; miss → cold build.
     [[nodiscard]] static const cp_hi_table* cp_hi_cached(const program_view& prog,
                                                          std::size_t         cp_index)
     {
-      const detail::cp_class& cc      {prog.cp_classes[cp_index]};
-      const void* const       key_ptr {
-        cc.range_count == 0
-          ? static_cast<const void*>(&cc)
-          : static_cast<const void*>(&prog.cp_ranges[cc.range_begin])};
+      const detail::cp_class& cc                  {prog.cp_classes[cp_index]};
+      const std::uint64_t     key_fp              {cp_class_fingerprint(prog, cc)};
       // One-thread sticky last hit: a tight `\p{L}+` run probes the same class millions of times.
-      thread_local const void*           last_key {nullptr};
-      thread_local std::uint32_t         last_n   {0};
+      thread_local std::uint64_t         last_fp  {0};
       thread_local const cp_hi_table*    last_tab {nullptr};
-      if (last_key == key_ptr && last_n == cc.range_count && last_tab != nullptr) {
+      if (last_fp == key_fp && last_tab != nullptr) {
         return last_tab;
       }
       thread_local std::array<cp_hi_cache_entry, 8> cache {};
       for (const cp_hi_cache_entry& e : cache) {
-        if (e.key_ptr == key_ptr && e.key_n == cc.range_count && e.table) {
-          last_key = key_ptr;
-          last_n   = cc.range_count;
+        if (e.key_fp == key_fp && e.table) {
+          last_fp  = key_fp;
           last_tab = e.table.get();
           return last_tab;
         }
       }
-      const cp_hi_table* const built {cp_hi_build(prog, cp_index, key_ptr, cache)};
-      last_key = key_ptr;
-      last_n   = cc.range_count;
+      const cp_hi_table* const built {cp_hi_build(prog, cp_index, key_fp, cache, last_tab, last_fp)};
+      last_fp  = key_fp;
       last_tab = built;
       return built;
     }

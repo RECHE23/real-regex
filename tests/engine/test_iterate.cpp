@@ -79,43 +79,56 @@ TEST(empty_matches_advance_whole_codepoints)
   EXPECT_EQ(xs.find_all("éo").size(), 3U);
 }
 
-// CI finding (python differential macos-3.10, 2026-07-17): empty-leading alternation
-// + quasi-shorthand class with EURO SIGN (U+20AC, above the European page → cp_hi path)
-// must keep the mid-string two-char match under find_iter.
+// CI finding (python differential macos-3.10 + posix macos-clang pin, 2026-07-17):
+// empty-leading alternation + quasi-shorthand class with EURO (U+20AC → cp_hi path).
+// Root cause of the C++ pin failure (4 spans, bogus [0,7) "€😀"): thread-local cp_hi
+// cache keyed by a *pointer into a dead program*'s cp_ranges; after many classes the
+// allocator reuses that address for a different class and membership returns the wrong
+// sparse table (emoji false-positive under [\w€]). Fixed in pike.hpp: content fingerprint.
 //
-// Engine offsets are BYTE indices. Subject "€😀é €€x" as UTF-8 is 17 bytes; mid "€€" is
-// [10,16). Pattern/text are built from \u / \x escapes only (no raw UTF-8 in the source
-// file) so Apple clang source-charset cannot alter the bytes — the first pin revision
-// used UTF-8 literals and failed only on macos-clang CI (4 spans, bogus [0,7) "€😀")
-// while Python-on-macOS and every Linux leg stayed green.
+// Engine offsets are BYTE indices. Subject "€😀é €€x" is 17 UTF-8 bytes; mid "€€" is [10,16).
+// Both UTF-8 source form and \u/\x form are exercised — the bug is in the cache, not charset.
 TEST(find_iter_euro_class_empty_alt_keeps_mid_match)
 {
-  const real::flags fl   {real::flags::multiline | real::flags::dotall};
-  // ^ | [\w€]{2} | _?[é]?? $   — € = U+20AC, é = U+00E9, _ via octal \137
-  const real::regex rx   {R"(^|[\w\u20AC]{2}|\137?[\u00E9]??$)", fl};
-  // € = e2 82 ac, 😀 = f0 9f 98 80, é = c3 a9, space, €€, x
-  const std::string text {"\xE2\x82\xAC\xF0\x9F\x98\x80\xC3\xA9 \xE2\x82\xAC\xE2\x82\xACx"};
-  EXPECT_EQ(text.size(), 17U);
-  std::vector<std::pair<std::size_t, std::size_t>> spans;
-  for (const auto& m : rx.find_iter(text)) {
-    spans.emplace_back(m.start(), m.end());
-  }
-  EXPECT_EQ(spans.size(), 3U);
-  if (spans.size() == 3U) {
-    EXPECT_EQ(spans[0].first, 0U);
-    EXPECT_EQ(spans[0].second, 0U);
-    EXPECT_EQ(spans[1].first, 10U);
-    EXPECT_EQ(spans[1].second, 16U); // "€€" as UTF-8 bytes
-    EXPECT_EQ(text.substr(10, 6), std::string {"\xE2\x82\xAC\xE2\x82\xAC"});
-    EXPECT_EQ(spans[2].first, 17U);
-    EXPECT_EQ(spans[2].second, 17U);
-  }
-  // Stress (sanitize builds): recompile + iterate; one aggregate check, not 1000 fail lines.
+  const real::flags fl        {real::flags::multiline | real::flags::dotall};
+  const std::string text_utf8 {"€😀é €€x"};
+  const std::string text_hex  {"\xE2\x82\xAC\xF0\x9F\x98\x80\xC3\xA9 \xE2\x82\xAC\xE2\x82\xACx"};
+  EXPECT_EQ(text_utf8, text_hex);
+  EXPECT_EQ(text_utf8.size(), 17U);
+
+  auto check_spans = [&](const real::regex& rx, const std::string& text) {
+                       std::vector<std::pair<std::size_t, std::size_t>> spans;
+                       for (const auto& m : rx.find_iter(text)) {
+                         spans.emplace_back(m.start(), m.end());
+                       }
+                       EXPECT_EQ(spans.size(), 3U);
+                       if (spans.size() != 3U) {
+                         return;
+                       }
+                       EXPECT_EQ(spans[0].first, 0U);
+                       EXPECT_EQ(spans[0].second, 0U);
+                       EXPECT_EQ(spans[1].first, 10U);
+                       EXPECT_EQ(spans[1].second, 16U);
+                       EXPECT_EQ(text.substr(10, 6), std::string {"\xE2\x82\xAC\xE2\x82\xAC"});
+                       EXPECT_EQ(spans[2].first, 17U);
+                       EXPECT_EQ(spans[2].second, 17U);
+                     };
+
+  // UTF-8-in-source form (the shape that failed on macos-clang before the cache fix).
+  check_spans(real::regex {R"(^|[\w€]{2}|\137?[é]??$)", fl}, text_utf8);
+  // Escape form (same membership, independent of source charset).
+  check_spans(real::regex {R"(^|[\w\u20AC]{2}|\137?[\u00E9]??$)", fl}, text_hex);
+
+  // 😀 must never be a member of [\w€] (the false positive the dangling cache produced).
+  EXPECT(!real::regex {R"([\w€])"}.search("😀").matched());
+  EXPECT(!real::regex {R"([\w€]{2})"}.search("€😀").matched());
+
+  // Stress: recompile + iterate; aggregate wrong-count (no 1000-line FAIL spam).
   std::size_t wrong {};
   for (int i = 0; i < 1000; ++i) {
-    const real::regex again {R"(^|[\w\u20AC]{2}|\137?[\u00E9]??$)", fl};
+    const real::regex again {R"(^|[\w€]{2}|\137?[é]??$)", fl};
     std::size_t       n     {};
-    for (const auto& m : again.find_iter(text)) {
+    for (const auto& m : again.find_iter(text_utf8)) {
       EXPECT(m.start() <= m.end());
       ++n;
     }
@@ -124,6 +137,33 @@ TEST(find_iter_euro_class_empty_alt_keeps_mid_match)
     }
   }
   EXPECT_EQ(wrong, 0U);
+}
+
+// Deterministic repro of the cp_hi pointer-key UAF: pollute the thread-local sparse
+// cache with a high-range class that *does* contain emoji, destroy it, then probe [\w€]
+// — with a pointer key the recycled address can return the old table and 😀 falsely matches.
+TEST(cp_hi_cache_not_poisoned_by_destroyed_program)
+{
+  {
+    // \p{So} (Symbol, other) includes U+1F600 GRINNING FACE and is dense enough for cp_hi.
+    const real::regex poison {R"(\p{So}+)"};
+    EXPECT(poison.search("😀").matched());
+  } // poison destroyed — its cp_ranges storage may be reused
+  // Fresh class: word + euro only. Must not inherit So membership via a stale cache hit.
+  const real::regex word_euro {R"([\w€]+)"};
+  EXPECT(!word_euro.search("😀").matched());
+  EXPECT(word_euro.search("€").matched());
+  EXPECT(word_euro.search("ab").matched());
+  // The original find_iter shape after pollution.
+  const real::flags fl   {real::flags::multiline | real::flags::dotall};
+  const real::regex rx   {R"(^|[\w€]{2}|\137?[é]??$)", fl};
+  const std::string text {"€😀é €€x"};
+  std::size_t       n    {};
+  for (const auto& m : rx.find_iter(text)) {
+    (void) m;
+    ++n;
+  }
+  EXPECT_EQ(n, 3U);
 }
 
 TEST(replace_basic_and_count)
