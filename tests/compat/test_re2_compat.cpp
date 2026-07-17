@@ -412,6 +412,50 @@ TEST(global_replace_respects_longest_match)
   EXPECT_EQ(s, std::string {"# #"});
 }
 
+// Hardening #2 (v7.49): GlobalReplace must skip a zero-width match that abuts the end of the
+// previous accepted match — real RE2's empty-advance policy. Dumping find_iter raw double-replaced
+// (e.g. a* on "aa" → "##" instead of "#"). Oracle = true libre2 via fuzz/fuzz_re2.cpp; these pin
+// the RE2-correct outcomes without a libre2 link in the tracked suite.
+TEST(global_replace_skips_empty_match_abutting_previous_end)
+{
+  {
+    std::string s {"aa"};
+    EXPECT_EQ(rc2::RE2::GlobalReplace(&s, "a*", "#"), 1);
+    EXPECT_EQ(s, std::string {"#"});
+  }
+  {
+    std::string s {"a"};
+    EXPECT_EQ(rc2::RE2::GlobalReplace(&s, "a*", "#"), 1);
+    EXPECT_EQ(s, std::string {"#"});
+  }
+  {
+    std::string s {"aaa"};
+    EXPECT_EQ(rc2::RE2::GlobalReplace(&s, "a*", "#"), 1);
+    EXPECT_EQ(s, std::string {"#"});
+  }
+  {
+    std::string s {"aab"};
+    EXPECT_EQ(rc2::RE2::GlobalReplace(&s, "a*", "#"), 2);
+    EXPECT_EQ(s, std::string {"#b#"});
+  }
+}
+
+TEST(global_replace_still_applies_non_abutting_empty_matches)
+{
+  // a* on "bbb": empty matches at 0,1,2,3 are non-abutting (each advanced past the prior empty's
+  // end by find_iter) — must still rewrite (RE2 yields #b#b#b#).
+  std::string s {"bbb"};
+  EXPECT_EQ(rc2::RE2::GlobalReplace(&s, "a*", "#"), 4);
+  EXPECT_EQ(s, std::string {"#b#b#b#"});
+}
+
+TEST(global_replace_empty_subject_nullable_is_one_replacement)
+{
+  std::string s;
+  EXPECT_EQ(rc2::RE2::GlobalReplace(&s, "a*", "#"), 1);
+  EXPECT_EQ(s, std::string {"#"});
+}
+
 TEST(quote_meta_escapes_metacharacters)
 {
   const std::string q {rc2::RE2::QuoteMeta("a.b*c")};

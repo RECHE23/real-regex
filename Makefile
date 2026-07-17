@@ -53,7 +53,7 @@ SCIFORGE_TOOLS ?= ../sciforge/tools
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep -vE 'include/real/unicode/unicode_(fold|props|property|script|binprop|scx)\.hpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-        lint misra fuzz fuzz-compat exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check format format-check full-local-gate gate-bump gate-doc gate-test clean \
+        lint misra fuzz fuzz-compat fuzz-re2 exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check format format-check full-local-gate gate-bump gate-doc gate-test clean \
         bench-engines bench-multipattern bench-duel bench-matrix matrix-gate \
         profile-sample-build profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers
@@ -71,6 +71,7 @@ help:
 	@echo "  make misra      MISRA C++:2023-oriented analysis"
 	@echo "  make fuzz       libFuzzer robustness fuzzing (Clang; FUZZ_TIME=secs)"
 	@echo "  make fuzz-compat  Differential fuzz: real::compat vs std::regex (Clang; FUZZ_TIME=secs)"
+	@echo "  make fuzz-re2   Differential: real::compat::re2 vs true libre2 (needs pkg-config re2)"
 	@echo "  make tsan       ThreadSanitizer smoke of concurrent std_engine (Clang)"
 	@echo "  make tsan-core  ThreadSanitizer smoke of core shared-confirm / immut caches (Clang)"
 	@echo "  make doc        Generate API reference (Doxygen) with embedded coverage"
@@ -279,6 +280,25 @@ fuzz-compat:
 	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_compat.cpp -o $(FUZZ_DIR)/fuzz_compat
 	$(FUZZ_DIR)/fuzz_compat -max_total_time=$(FUZZ_TIME) -timeout=10 \
 	    $(FUZZ_DIR)/corpus-compat fuzz/corpus
+
+# Differential: real::compat::re2 (drop-in) vs true libre2 (oracle). Curated harness + can-fail
+# (REAL_RE2_DIFF_CANFAIL=1 must trip). Requires pkg-config re2; skips cleanly when absent so
+# full-local-gate / hosts without libre2 are not blocked. CI installs libre2 and runs this.
+# Reproduce a finding: make fuzz-re2  (exit 1 = drop-in parity bug; ENG \w/UCD is allowlisted only).
+fuzz-re2:
+	@if ! pkg-config --exists re2; then \
+	  echo "fuzz-re2: SKIP — pkg-config re2 not found (install libre2 to enable the oracle)"; \
+	  exit 0; \
+	fi
+	@mkdir -p $(FUZZ_DIR)
+	@echo "fuzz-re2: building drop-in vs libre2 differential ($$(pkg-config --modversion re2))"
+	@$(CXX) $(CXXSTD) -O1 -g $(INCLUDES) fuzz/fuzz_re2.cpp \
+	    $$(pkg-config --cflags --libs re2) -o $(FUZZ_DIR)/fuzz_re2
+	@echo "fuzz-re2: curated differential (must be green — exit 0)"
+	@$(FUZZ_DIR)/fuzz_re2
+	@echo "fuzz-re2: can-fail inject (must trip, exit 0 in inject mode)"
+	@REAL_RE2_DIFF_CANFAIL=1 $(FUZZ_DIR)/fuzz_re2 >/dev/null
+	@echo "fuzz-re2: PASS (parity green + can-fail intact)"
 
 doc: coverage-html
 	mkdir -p $(BUILD)/doc

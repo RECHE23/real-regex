@@ -132,6 +132,13 @@ jobs:
       # Barrier-synced first search on a fresh const regex — not the compat layer. make tsan-core.
       - name: ThreadSanitizer smoke (core shared-confirm / immutables)
         run: make tsan-core CXX=clang++
+      # RE2 drop-in differential vs true libre2 (hardening #2). Optional locally (skip if no re2);
+      # CI installs libre2 so the oracle always runs. Catches GlobalReplace empty-abut and kin.
+      # Reproduce: make fuzz-re2  (needs pkg-config re2). Can-fail: REAL_RE2_DIFF_CANFAIL=1.
+      - name: Install libre2 (oracle for real::compat::re2 differential)
+        run: sudo apt-get update && sudo apt-get install -y libre2-dev pkg-config
+      - name: RE2 drop-in differential (real::compat::re2 vs true libre2)
+        run: make fuzz-re2 CXX=clang++
 
   # Public conformance + exhaustive nets, promoted from the local gate now that the corpus/enumerator
   # substrate is pinnable. The rust-regex + Fowler corpora differential against Python re, and the
