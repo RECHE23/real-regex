@@ -375,6 +375,104 @@ TEST(compat_backend_selection)
   expect_defers_to_local_std_on_escape(R"(\Chello)");
 }
 
+TEST(compat_nullable_captured_repeat_group)
+{
+  // The nullable-loop group-capture class (COMPATIBILITY.md, "the one tolerated divergence"):
+  // `(ab|)+a` on "aba" -- the capturing group `(ab|)` is nullable and iterates. real's engine
+  // captures the loop's last CONSUMING iteration (RE2/Rust/Go lineage: group 1 = "ab"); an
+  // ECMAScript backtracker (std::regex here) re-enters for one final EMPTY iteration and captures
+  // THAT instead (group 1 = ""). The pattern as a WHOLE is non-nullable (the trailing literal `a`
+  // forces content), so plain nullable() routing does not catch it -- it needs its own hint
+  // (pattern_hints::nullable_captured_repeat, an AST walk in compiler.hpp) to route replace/iterate.
+  const rc::regex   re("(ab|)+a");
+  const std::regex  sre("(ab|)+a", std::regex::ECMAScript);
+  const std::string subj {"aba"};
+
+  // real-backed and non-nullable as a WHOLE, yet the captured-repeat hint fires and routes
+  // replace/iterate to std -- this IS the fix (before it, uses_real_traversal() was true here,
+  // and regex_replace's `$1` diverged from std -- the fuzz_compat S2 flake this closes).
+  EXPECT(re.uses_real());
+  EXPECT(!re.nullable());
+  EXPECT(!re.uses_real_traversal());
+
+  // Pin 1 -- regex_replace $1: ROUTED to std, so compat == std (convergence, not divergence).
+  {
+    const std::string got {rc::regex_replace(subj, re, std::string("$1"))};
+    const std::string ref {std::regex_replace(subj, sre, std::string("$1"))};
+    EXPECT_EQ(got, ref);
+    EXPECT_EQ(got, std::string("")); // std's empty-final-iteration capture, on both sides now
+  }
+
+  // Pin 2 -- sregex_token_iterator on the sub-group (field 1): ROUTED to std, so compat == std.
+  {
+    std::vector<std::pair<std::string, bool>> got;
+    std::vector<std::pair<std::string, bool>> ref;
+    for (rc::sregex_token_iterator it(subj.begin(), subj.end(), re, {1}), e; it != e; ++it) {
+      got.emplace_back(it->str(), it->matched);
+    }
+    for (std::sregex_token_iterator it(subj.begin(), subj.end(), sre, {1}), e; it != e; ++it) {
+      ref.emplace_back(it->str(), it->matched);
+    }
+    EXPECT(got == ref);
+  }
+
+  // Pin 3 -- regex_search m[1]: NOT routable (search on `real` IS the product; routing it would
+  // abandon the linear-time guarantee across the whole `(x|)+...` class). This is a GOLDEN lock of
+  // the accepted, DOCUMENTED residue (COMPATIBILITY.md's nullable-loop group-capture section) --
+  // NOT a must-match assertion. Both sides are pinned explicitly so a future change to EITHER value
+  // fails this test loudly instead of silently drifting.
+  {
+    rc::smatch  rm;
+    std::smatch sm;
+    EXPECT(rc::regex_search(subj, rm, re));
+    EXPECT(std::regex_search(subj, sm, sre));
+    EXPECT_EQ(rm.str(1), std::string("ab")); // real: last CONSUMING iteration (RE2/Rust/Go lineage)
+    EXPECT_EQ(sm.str(1), std::string(""));   // std: extra empty final iteration (ECMAScript backtracker)
+  }
+
+  // A second shape of the same class: a bounded-min loop (`{2,}`) whose body is a nullable
+  // capturing alternation. Same 2-converge / 1-golden-divergence structure.
+  {
+    const rc::regex   re2("(x|){2,}y");
+    const std::regex  sre2("(x|){2,}y", std::regex::ECMAScript);
+    const std::string subj2 {"xxy"};
+    EXPECT(!re2.uses_real_traversal());
+
+    const std::string got {rc::regex_replace(subj2, re2, std::string("$1"))};
+    const std::string ref {std::regex_replace(subj2, sre2, std::string("$1"))};
+    EXPECT_EQ(got, ref); // routed -> convergence
+
+    rc::smatch  rm2;
+    std::smatch sm2;
+    EXPECT(rc::regex_search(subj2, rm2, re2));
+    EXPECT(std::regex_search(subj2, sm2, sre2));
+    EXPECT_EQ(rm2.str(1), std::string("x")); // golden: real's last consuming iteration
+    EXPECT_EQ(sm2.str(1), std::string(""));  // golden: std's empty final iteration
+  }
+
+  // Non-regression: a NON-nullable capturing group under a quantifier (its body always consumes,
+  // `ab`) must NOT trip the hint -- the fix must not over-route beyond the targeted class.
+  EXPECT(rc::regex("(ab)+a").uses_real_traversal());
+
+  // Spot-check: ordinary patterns (no nullable captured-repeat group at all) are unaffected.
+  EXPECT(rc::regex("a+b").uses_real_traversal());
+  EXPECT(rc::regex(R"((\w+)@)").uses_real_traversal());
+
+  // compiler.hpp's node_nullable, direct: a capturing group whose body is a CONCAT of purely
+  // zero-width pieces (`\b\B`, both anchors) is nullable via the "every child nullable" path
+  // (distinct from `(ab|)`'s alternation path exercised above) -- over-flagged per the fiche's own
+  // example (`(\b|x)+` is "in the class", conservative). Checked on `real::regex` directly since the
+  // shape itself, not a compat routing decision, is what is under test here.
+  EXPECT(real::regex(R"((\b\B)+x)").raw_program().hints.nullable_captured_repeat);
+
+  // subtree_has_nullable_capturing_group's own concat/alternation walk, direct: the outer capturing
+  // group `(a(?:b|))` is NOT itself nullable (`a` forces content), so the walk must descend past it
+  // (no short-circuit) into the NON-capturing `(?:b|)` and there visit a bare zero-width `empty` AST
+  // node (the alternation's `|` branch) without mistaking it for a capturing group. No capturing
+  // group in this pattern is ever nullable, so the hint stays false.
+  EXPECT(!real::regex(R"((a(?:b|))+)").raw_program().hints.nullable_captured_repeat);
+}
+
 namespace {
 
   // search [lo, hi) with a match flag on BOTH backends; assert identical verdict + whole-match span.

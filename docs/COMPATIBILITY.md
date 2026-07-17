@@ -153,21 +153,36 @@ The Python binding follows the same policy (`real.compile(pat, fallback=True)`, 
 ## The one tolerated divergence: nullable-loop group capture
 
 There is exactly **one** place a real-backed pattern's observable differs from the local `std::regex`,
-and it is documented rather than routed away. For a `*`/`+` loop whose body can match empty and captures
-(`(a*)*`, `(.*)*`, `(a|)*`), `real` records the last **consuming** iteration for the group while
-`std::regex` (ECMAScript, a backtracker) records an extra **empty final** iteration. The whole match —
-and every match **span** — is **identical**; only the inner group's captured span differs, and the `re`
-value is always a zero-width capture at the loop's end. This is the same behaviour documented against
+and it is documented rather than routed away: **`regex_search`/`regex_match`'s per-group captures**
+(`m[N]`, `N >= 1`). For a `*`/`+` loop whose body can match empty and captures (`(a*)*`, `(.*)*`,
+`(a|)*`, `(ab|)+a`), `real` records the last **consuming** iteration for the group while `std::regex`
+(ECMAScript, a backtracker) records an extra **empty final** iteration. The whole match — and every
+match **span** — is **identical**; only the inner group's captured span differs, and the `std` value
+is always a zero-width capture at the loop's end. This is the same behaviour documented against
 Python `re` (see [the divergences page](@ref div_empty_iteration_capture)); the linear engines **RE2,
 the Rust `regex` crate, and Go's `regexp` share it**.
 
-**Why it is kept, not screened to std.** Routing this class to `std::regex` would hand exactly the
-textbook catastrophic-backtracking patterns — nested nullable quantifiers — to a backtracking engine,
-which is the one thing `real::compat` exists to avoid. Linearity is kept **deliberately**; the price is
-a group-capture span that matches the linear-engine family instead of the backtracker. The exhaustive
-compat check measures this precisely (4 548 cases out of 3.2 M in the tier-1 space) and **fails on any
-divergence outside this exact signature** — a whole-match agreement with only an empty-final-iteration
-group difference — so no *other* silent divergence can hide behind it.
+**Why `search`/`match` keep it, rather than routing to std.** Routing this class to `std::regex` would
+hand exactly the textbook catastrophic-backtracking patterns — nested nullable quantifiers — to a
+backtracking engine, which is the one thing `real::compat` exists to avoid. `regex_search`/`regex_match`
+on `real` **is** the product; screening this signature away would forfeit the linear-time guarantee for
+the whole `(x|)+…` family of patterns, not just the divergent capture. Linearity is kept **deliberately**;
+the price is a group-capture span that matches the linear-engine family instead of the backtracker. The
+exhaustive compat check measures this precisely (4 548 cases out of 3.2 M in the tier-1 space) and
+**fails on any divergence outside this exact signature** — a whole-match agreement with only an
+empty-final-iteration group difference — so no *other* silent divergence can hide behind it. This is a
+genuine engine-semantics divergence, not a gap in `real::compat`'s scope — consistent with the layer's
+contract: identical to `std` where `real` can prove it, routed/documented otherwise.
+
+**`regex_replace`/iterators do not carry this residue.** A pattern whose capturing group is nullable
+under a quantifier routes replace/iterate to `std::regex`, *even when the pattern as a whole is not
+nullable* — `(ab|)+a`'s trailing `a` forces content, so the whole-pattern `nullable()` gate alone misses
+it. A dedicated hint (`nullable_captured_repeat`, an AST walk at compile time — group-under-quantifier
+is visible in the parsed tree, not in the compiled program the usual prefilter hints derive from) is a
+sibling of `empty_match_possible`/`nullable()` and extends \ref real::compat::basic_regex::uses_real_traversal
+to catch this shape too. So `regex_replace`'s `$N` and `sregex_token_iterator`'s sub-group fields
+**converge with `std`** for this whole class of patterns — the residue above is confined to
+`regex_search`/`regex_match`, by design, not by gap.
 
 ## regex_replace
 

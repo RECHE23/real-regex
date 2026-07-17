@@ -360,25 +360,26 @@ namespace real {
      */
     struct pattern_hints
     {
-      std::array<char, 16> prefix                {};   //!< Required literal prefix (possibly truncated).
-      std::uint8_t         prefix_size           {};   //!< Valid bytes in \ref prefix.
-      bool                 anchored_start        {};   //!< `\A` / `^` (no multiline): only position 0.
-      bool                 line_anchored         {};   //!< `^` multiline: position 0 or after `\n`.
-      bool                 first_bytes_valid     {};   //!< False when an empty match is possible.
-      bool                 empty_match_possible  {};   //!< The pattern can match the empty string (the nullable gate; conservative: assertions/lookarounds pass through, so e.g. `^$` is flagged nullable).
-      std::int16_t         single_first          {-1}; //!< The unique possible first byte, or -1.
-      char_class           first_bytes;                //!< All possible first bytes.
-      std::int32_t         greedy_class_loop     {-1}; //!< Class index if the whole pattern is "class+", else -1.
-      std::uint16_t        greedy_class_loop_min {1};  //!< P1: minimum run length (bytes) for \ref greedy_class_loop -- 1 for a bare `X+`, k for the `X{k,}` desugaring (k mandatory copies of the same atom then a loop of it, compiler.hpp's emit_repeat).
-      std::int32_t         greedy_cp_class       {-1}; //!< cp_class index if the whole pattern is a code-point class `klass_cp` (optionally `+`), else -1.
-      bool                 greedy_cp_class_plus  {};   //!< The \ref greedy_cp_class pattern is a greedy `+` loop (vs a single code point).
-      std::uint16_t        greedy_cp_class_min   {1};  //!< P1: minimum run length (CODE POINTS, not bytes) for \ref greedy_cp_class when \ref greedy_cp_class_plus is set -- see \ref greedy_class_loop_min.
-      std::int16_t         greedy_group_start    {-1}; //!< For a class-loop wrapped in one capturing group (`(\w+)`, `([a-z]+)`): the group's start slot to mirror the whole-match start into (-1 = no enveloping group).
-      std::int16_t         greedy_group_end      {-1}; //!< The enveloping group's end slot (mirrors the whole-match end).
-      bool                 fixed_shape           {};   //!< Whole pattern is a fixed-width byte/klass sequence (no branches/asserts/captures).
-      std::int32_t         codepoint_class_ascii {-1}; //!< ASCII-class index when the whole pattern is `.`/negated-class (optionally `+`), else -1.
-      bool                 codepoint_class_plus  {};   //!< The \ref codepoint_class_ascii pattern is a greedy `+` loop (vs a single codepoint).
-      bool                 fixed_alternation     {};   //!< Whole pattern is an alternation of straight-line branches (no captures/asserts).
+      std::array<char, 16> prefix                   {};   //!< Required literal prefix (possibly truncated).
+      std::uint8_t         prefix_size              {};   //!< Valid bytes in \ref prefix.
+      bool                 anchored_start           {};   //!< `\A` / `^` (no multiline): only position 0.
+      bool                 line_anchored            {};   //!< `^` multiline: position 0 or after `\n`.
+      bool                 first_bytes_valid        {};   //!< False when an empty match is possible.
+      bool                 empty_match_possible     {};   //!< The pattern can match the empty string (the nullable gate; conservative: assertions/lookarounds pass through, so e.g. `^$` is flagged nullable).
+      bool                 nullable_captured_repeat {};   //!< The pattern contains a CAPTURING group (not `(?:...)`) whose body is nullable, transitively under a quantifier (any quantifier, `?` included) — e.g. `(ab|)+a`. AST-derived (compiler.hpp, not analyze_program/prefilter.hpp): real's engine captures the loop's last CONSUMING iteration (RE2/Rust/Go lineage) while an ECMAScript backtracker captures an extra empty final one, so `real::compat` routes replace/iterate to std for these patterns (\ref real::compat::basic_regex::uses_real_traversal); conservative over-approximation (assertions/lookarounds count as nullable), so sur-flagging is safe.
+      std::int16_t         single_first             {-1}; //!< The unique possible first byte, or -1.
+      char_class           first_bytes;                   //!< All possible first bytes.
+      std::int32_t         greedy_class_loop        {-1}; //!< Class index if the whole pattern is "class+", else -1.
+      std::uint16_t        greedy_class_loop_min    {1};  //!< P1: minimum run length (bytes) for \ref greedy_class_loop -- 1 for a bare `X+`, k for the `X{k,}` desugaring (k mandatory copies of the same atom then a loop of it, compiler.hpp's emit_repeat).
+      std::int32_t         greedy_cp_class          {-1}; //!< cp_class index if the whole pattern is a code-point class `klass_cp` (optionally `+`), else -1.
+      bool                 greedy_cp_class_plus     {};   //!< The \ref greedy_cp_class pattern is a greedy `+` loop (vs a single code point).
+      std::uint16_t        greedy_cp_class_min      {1};  //!< P1: minimum run length (CODE POINTS, not bytes) for \ref greedy_cp_class when \ref greedy_cp_class_plus is set -- see \ref greedy_class_loop_min.
+      std::int16_t         greedy_group_start       {-1}; //!< For a class-loop wrapped in one capturing group (`(\w+)`, `([a-z]+)`): the group's start slot to mirror the whole-match start into (-1 = no enveloping group).
+      std::int16_t         greedy_group_end         {-1}; //!< The enveloping group's end slot (mirrors the whole-match end).
+      bool                 fixed_shape              {};   //!< Whole pattern is a fixed-width byte/klass sequence (no branches/asserts/captures).
+      std::int32_t         codepoint_class_ascii    {-1}; //!< ASCII-class index when the whole pattern is `.`/negated-class (optionally `+`), else -1.
+      bool                 codepoint_class_plus     {};   //!< The \ref codepoint_class_ascii pattern is a greedy `+` loop (vs a single codepoint).
+      bool                 fixed_alternation        {};   //!< Whole pattern is an alternation of straight-line branches (no captures/asserts).
 
       /*!
        * \brief Length of the pure-literal match, or 0.
