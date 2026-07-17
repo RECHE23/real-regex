@@ -439,6 +439,59 @@ TEST(named_codepoint_escape)
   EXPECT_THROWS(real::regex("\\N{U+D800}"), real::regex_error);                                  // a surrogate is rejected
 }
 
+TEST(braced_hex_codepoint_escape)
+{
+  // \x{...} is RE2/Perl's braced code-point escape — lives on the code-point path with \u/\U/\N
+  // (shares parse_braced_hex_scalar's digit-loop/surrogate/overflow validation), NOT the \xHH byte
+  // path (re2-parity-measurement.md: closes the \x{10FFFF} gap).
+  EXPECT(real::regex("\\x{41}").fullmatch("A").matched());
+  EXPECT(real::regex("\\x{1F600}").fullmatch("\xF0\x9F\x98\x80").matched());    // astral, > U+FFFF, 4 bytes
+  EXPECT(real::regex("\\x{10FFFF}").fullmatch("\xF4\x8F\xBF\xBF").matched());   // max scalar
+  EXPECT(real::regex("[\\x{1F600}]").fullmatch("\xF0\x9F\x98\x80").matched());  // in-class member
+  EXPECT(!real::regex("[\\x{1F600}]").fullmatch("\xF0\x9F\x98\x81").matched()); // and only that one
+  // \x{1F600}+ quantifies the whole code point, not a UTF-8 byte.
+  EXPECT_EQ(real::regex("\\x{1F600}+").search("\xF0\x9F\x98\x80\xF0\x9F\x98\x80"sv)[0],
+            "\xF0\x9F\x98\x80\xF0\x9F\x98\x80"sv);
+
+  // \xHH (two-hex byte escape) is STRICTLY UNCHANGED: no '{' after \x keeps the existing byte path.
+  EXPECT(real::regex("\\x41\\x62").fullmatch("Ab").matched());
+  EXPECT(real::regex("[\\x30-\\x39]").fullmatch("7").matched());
+  EXPECT_THROWS(real::regex("\\x4"), real::regex_error);
+  EXPECT_THROWS(real::regex("\\xg0"), real::regex_error);
+
+  // bytes mode: \x{...} has no code-point meaning there, like \u/\U/\N (rejected, not silently truncated).
+  EXPECT_THROWS(real::regex(std::string("\\x{41}"), real::flags::bytes), real::regex_error);
+  EXPECT_THROWS(real::regex(std::string("[\\x{41}]"), real::flags::bytes), real::regex_error);
+
+  // Surrogate / overflow: real keeps the Python-semantics core codepoint validation (shared with
+  // \u/\U/\N) — measured vs libre2 11.0.0: RE2 rejects \x{110000} too (parity), but RE2 accepts a
+  // surrogate in \x{...} where real does not (a confirmed sub-edge, tracked as a fuzz_re2 KNOWN-GAP
+  // rather than relaxed here — relaxing would riddle the shared \u/\U/\N validation).
+  EXPECT_THROWS(real::regex("\\x{D800}"), real::regex_error);
+  EXPECT_THROWS(real::regex("\\x{110000}"), real::regex_error);
+
+  // parse_braced_hex_scalar (shared with \N{U+XXXX}): lowercase hex digits, a missing digit run, and
+  // an unterminated brace -- pins the shared helper's full branch coverage, not just the \x{...}-new
+  // paths above.
+  EXPECT(real::regex("\\x{1f600}").fullmatch("\xF0\x9F\x98\x80").matched()); // lowercase a-f hex digits
+  EXPECT_THROWS(real::regex("\\x{}"), real::regex_error);                    // no hex digits
+  EXPECT_THROWS(real::regex("\\x{41"), real::regex_error);                   // unterminated (no '}')
+}
+
+TEST(braced_hex_codepoint_escape_ecma_pins)
+{
+  using real::flags;
+  // \x{...} is NOT ECMAScript (ES spells this \u{...}); under ecma, \x{ falls back to the two-hex
+  // path, which then fails on the non-hex '{' -- the same rejection ecma already produced before
+  // this feature existed (pin so a future change to the ecma gate cannot silently start accepting it).
+  EXPECT_THROWS(real::regex("\\x{41}", flags::ecma), real::regex_error);
+  EXPECT_THROWS(real::regex("[\\x{41}]", flags::ecma), real::regex_error);
+  // \xHH under ecma is unchanged: still the two-hex ECMAScript escape.
+  EXPECT(real::regex("\\x41", flags::ecma).fullmatch("A").matched());
+  const std::string ff(1, '\xFF');
+  EXPECT(real::regex("\\xFF", flags::ecma | flags::bytes).fullmatch(ff).matched());
+}
+
 TEST(octal_escapes_inside_a_class)
 {
   // Inside a class every \digit is octal — there are no back-references in a class (re's rule).

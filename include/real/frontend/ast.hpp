@@ -1546,33 +1546,19 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Decodes a `\N{U+XXXX}` named-code-point escape (1–6 hex digits) — the same code-point path
-     *        as `\u`/`\U`, spelled by its U+ scalar value. `re` writes `\N{NAME}` for the *name*; the
-     *        Python binding rewrites a name to this `U+XXXX` form before parsing, so the engine only ever
-     *        sees the scalar. A C++ caller writes `\N{U+XXXX}` directly.
+     * \brief Decodes a braced hex scalar `HHHHHH}` (1–6 hex digits, then the closing `}`) — the code-
+     *        point reader shared by `\N{U+XXXX}` (after its own `U+` prefix) and `\x{XXXX}` (after its
+     *        own bytes-mode check, see \ref parse_braced_hex_escape). The opening `{` is already
+     *        consumed by the caller; this reads the hex digits, the closing `}`, and rejects a
+     *        surrogate (U+D800–U+DFFF) or a value beyond U+10FFFF — the same code-point range `\u`/`\U`
+     *        enforce (Python semantics).
      *
-     * Rejected with clear messages: byte mode (no code-point meaning ≡ `re`'s `bad escape \N`), a missing
-     * or malformed `{U+…}`, a surrogate, or a value beyond U+10FFFF. The backslash and `N` are already
-     * consumed.
      * \return The code point in `[0, 0x10FFFF]` (never a surrogate).
+     * \throws real::regex_error on a missing digit run, an unterminated brace, a surrogate, or a value
+     *         beyond U+10FFFF.
      */
-    constexpr std::int32_t parse_named_codepoint()
+    constexpr std::int32_t parse_braced_hex_scalar()
     {
-      if (bytes_) {
-        fail("\\N escapes are not allowed in bytes patterns");
-      }
-      if (eof() || peek() != '{') {
-        fail("expected '{' after \\N (\\N{U+XXXX})");
-      }
-      ++pos_; // consume '{'
-      if (eof() || peek() != 'U') {
-        fail("\\N{...} takes a U+XXXX code point; a character name is resolved by the Python binding");
-      }
-      ++pos_; // consume 'U'
-      if (eof() || peek() != '+') {
-        fail("expected '+' in \\N{U+XXXX}");
-      }
-      ++pos_; // consume '+'
       std::int32_t value {};
       int          count {};
       while (!eof() && count < 6) {
@@ -1595,19 +1581,73 @@ namespace real::detail {
         ++count;
       }
       if (count == 0) {
-        fail("expected 1 to 6 hex digits in \\N{U+XXXX}");
+        fail("expected 1 to 6 hex digits in a braced hex escape");
       }
       if (eof() || peek() != '}') {
-        fail("unterminated \\N{U+XXXX} (expected '}')");
+        fail("unterminated braced hex escape (expected '}')");
       }
       ++pos_; // consume '}'
       if (value >= 0xD800 && value <= 0xDFFF) {
-        fail("invalid \\N escape: surrogate code point");
+        fail("invalid braced hex escape: surrogate code point");
       }
       if (value > 0x10FFFF) {
-        fail("invalid \\N escape: code point out of range");
+        fail("invalid braced hex escape: code point out of range");
       }
       return value;
+    }
+
+    /*!
+     * \brief Decodes a `\N{U+XXXX}` named-code-point escape (1–6 hex digits) — the same code-point path
+     *        as `\u`/`\U`, spelled by its U+ scalar value. `re` writes `\N{NAME}` for the *name*; the
+     *        Python binding rewrites a name to this `U+XXXX` form before parsing, so the engine only ever
+     *        sees the scalar. A C++ caller writes `\N{U+XXXX}` directly.
+     *
+     * Rejected with clear messages: byte mode (no code-point meaning ≡ `re`'s `bad escape \N`), a missing
+     * or malformed `{U+…}`; \ref parse_braced_hex_scalar rejects a surrogate or a value beyond U+10FFFF.
+     * The backslash and `N` are already consumed.
+     * \return The code point in `[0, 0x10FFFF]` (never a surrogate).
+     */
+    constexpr std::int32_t parse_named_codepoint()
+    {
+      if (bytes_) {
+        fail("\\N escapes are not allowed in bytes patterns");
+      }
+      if (eof() || peek() != '{') {
+        fail("expected '{' after \\N (\\N{U+XXXX})");
+      }
+      ++pos_; // consume '{'
+      if (eof() || peek() != 'U') {
+        fail("\\N{...} takes a U+XXXX code point; a character name is resolved by the Python binding");
+      }
+      ++pos_; // consume 'U'
+      if (eof() || peek() != '+') {
+        fail("expected '+' in \\N{U+XXXX}");
+      }
+      ++pos_; // consume '+'
+      return parse_braced_hex_scalar();
+    }
+
+    /*!
+     * \brief Decodes a `\x{XXXX}` braced code-point escape — RE2/Perl syntax (ECMAScript spells this
+     *        `\u{...}` instead, so every caller gates on `!is_ecma()` before reaching here). Rejected in
+     *        bytes mode, like `\u`/`\U`/`\N` (no code-point meaning there) — read from the scope stack,
+     *        not the global `bytes_` member (the flag-scope ratchet: bytes is never scoped, so this
+     *        equals `bytes_` while keeping the parser's global-read count flat; same precedent as `\C`
+     *        above). Shares its digit-loop / surrogate / overflow validation with `\N{U+XXXX}` via
+     *        \ref parse_braced_hex_scalar — this function only adds the bytes-mode check and the
+     *        opening `{`. The backslash and `x` are already consumed by the caller.
+     *
+     * \return The code point in `[0, 0x10FFFF]` (never a surrogate).
+     * \throws real::regex_error in bytes mode, or (via \ref parse_braced_hex_scalar) on a malformed or
+     *         unterminated `{...}`, a surrogate, or a value beyond U+10FFFF.
+     */
+    constexpr std::int32_t parse_braced_hex_escape()
+    {
+      if (has_flag(current_flags(), flags::bytes)) {
+        fail("\\x{...} escapes are not allowed in bytes patterns");
+      }
+      ++pos_; // consume '{'
+      return parse_braced_hex_scalar();
     }
 
     /*!
@@ -1796,6 +1836,15 @@ namespace real::detail {
           return add_node(out, {.kind = node_kind::any, .raw_byte = true});
         default:
           {
+            // `\x{...}` is RE2/Perl's braced code-point escape (ECMAScript spells this `\u{...}`
+            // instead — Annex B has no braced `\x`, so under ecma `\x` keeps its two-hex meaning).
+            // Gated `!is_ecma()`, mirroring `\u`/`\U` above (l.1770/1772). Anything else — ecma, `\x`
+            // not followed by `{`, or any other escaped char — falls through unchanged to the
+            // existing `\xHH` / octal / punctuation byte path via parse_byte_escape below.
+            if (peek() == 'x' && !is_ecma() && pos_ + 1 < pattern_.size() && pattern_[pos_ + 1] == '{') {
+              ++pos_; // consume 'x'
+              return emit_literal_codepoint(out, parse_braced_hex_escape());
+            }
             const std::int32_t byte_value {parse_byte_escape()};
             if (byte_value < 0) {
               fail_unsupported("unsupported escape sequence");
@@ -1915,6 +1964,12 @@ namespace real::detail {
           fail("invalid escape (\\8 and \\9 are not octal and there are no back-references in a class)");
         default:
           {
+            // Mirrors the outside-class `\x{...}` gate in parse_escape: RE2/Perl braced code point,
+            // `!is_ecma()`, else the existing `\xHH` byte path below (parse_byte_escape) is unchanged.
+            if (peek() == 'x' && !is_ecma() && pos_ + 1 < pattern_.size() && pattern_[pos_ + 1] == '{') {
+              ++pos_; // consume 'x'
+              return parse_braced_hex_escape();
+            }
             const std::int32_t byte_value {parse_byte_escape()};
             if (byte_value < 0) {
               fail_unsupported("unsupported escape sequence");
