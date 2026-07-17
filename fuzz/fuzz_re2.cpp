@@ -19,6 +19,7 @@
 
 #include <re2/re2.h>
 #include <re2/set.h>
+#include <re2/stringpiece.h> // re2::StringPiece — portable vs absl::string_view (apt RE2 10 vs brew 11)
 
 #include <algorithm>
 #include <cstdlib>
@@ -258,11 +259,12 @@ namespace {
     if (!both_ok(d, t)) {
       return;
     }
-    std::string_view        idrop {text};
-    absl::string_view       itrue {text};
-    std::vector<std::string> drops;
-    std::vector<std::string> trues;
-    // Cap iterations so a pathological empty-match loop cannot hang the D0 harness.
+    std::string_view  idrop {text};
+    // re2::StringPiece is the portable input cursor for FindAndConsume across RE2
+    // versions (Homebrew 11 exposes absl::string_view; Ubuntu apt 10 may not pull
+    // absl into the TU without this typedef header).
+    re2::StringPiece  itrue {text.data(), text.size()};
+    // Cap iterations so a pathological empty-match loop cannot hang the harness.
     for (int i = 0; i < 64; ++i) {
       std::string gd;
       std::string gt;
@@ -286,11 +288,9 @@ namespace {
                  "stream diverged at step " + std::to_string(i));
         return;
       }
-      drops.push_back(gd);
-      trues.push_back(gt);
     }
     const std::string rem_d {std::string(idrop)};
-    const std::string rem_t {std::string(itrue)};
+    const std::string rem_t {std::string(itrue.data(), itrue.size())};
     if (rem_d != rem_t) {
       note_bug(r, "FAC-rem " + std::string(pat), "remainder drop=[" + rem_d + "] true=[" + rem_t + "]");
     }
