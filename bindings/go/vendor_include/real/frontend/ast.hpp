@@ -670,6 +670,16 @@ namespace real::detail {
           const std::span<const code_range> t {binprop_ranges[static_cast<std::size_t>(bp)]};
           return {t.begin(), t.end()};
         }
+        // `\p{Any}` is an engine-defined meta-property (RE2/Perl: "every code point"), not UCD data --
+        // there is no generated table entry for it, so it is resolved here as the full code-point
+        // range instead. ECMAScript-conforming (the spec's binary-property table lists `Any`; V8
+        // accepts it), so this carries no ecma gate -- the fix benefits every dialect equally. Loose-
+        // matched like every other bare name. `\p{gc=Any}` / `\p{sc=Any}` stay unsupported: Any is
+        // neither a General_Category nor a Script, so an explicit namespace never reaches this branch
+        // (gated by the enclosing `nk.empty()`).
+        if (value_key.view() == "any") {
+          return {{.lo = 0x0, .hi = 0x10FFFF}};
+        }
       }
       // well-formed `\p{Name}` but a property REAL does not yet tabulate (a script/category REAL lacks,
       // or an unknown/misspelled binary property or Script_Extensions name): unsupported, so a binding
@@ -678,10 +688,21 @@ namespace real::detail {
                        "Script_Extensions and the standard binary properties are built in)");
     }
 
-    //! \brief Rejects bytes mode, consumes the `p`/`P` and the `{Name}` (or single letter), and resolves it to
-    //!        the property's code-point ranges. Shared by the out-of-class atom and the in-class merge. On entry
-    //!        `pos_` is on the `p`/`P`; on return it is just past the name.
-    constexpr std::vector<code_range> parse_property_table()
+    //! \brief The result of \ref parse_property_table — the property's code-point ranges, plus whether a
+    //!        leading `\p{^...}` caret was stripped (RE2/Perl negation-by-caret, e.g. `\p{^L}` == `\P{L}`).
+    //!        `caret` is XORed into the caller's own negation flag so the caret composes with `\P` /
+    //!        `[^...]` instead of overriding them.
+    struct property_table_result
+    {
+      std::vector<code_range>  ranges; //!< The resolved property's code-point ranges (never caret-adjusted).
+      bool                     caret;  //!< True when a leading `^` (native dialects only) was stripped from the name.
+    };
+
+    //! \brief Rejects bytes mode, consumes the `p`/`P` and the `{Name}` (or single letter), strips a leading
+    //!        `^` caret-negation (native dialects only), and resolves the remaining name to the property's
+    //!        code-point ranges. Shared by the out-of-class atom and the in-class merge. On entry `pos_` is on
+    //!        the `p`/`P`; on return it is just past the name (caret and all).
+    constexpr property_table_result parse_property_table()
     {
       // Read bytes-mode from the scope stack, not the global `bytes_` member (the flag-scope ratchet): bytes is
       // never scoped, so this equals `bytes_` while keeping the parser's global-read count flat.
@@ -712,7 +733,18 @@ namespace real::detail {
       if (name.empty()) {
         fail("empty Unicode property name in \\p{}");
       }
-      return resolve_property(name);
+      // `\p{^Name}` is RE2/Perl caret-negation (`\p{^L}` == `\P{L}`), not ECMAScript (a SyntaxError under
+      // V8) -- so the strip is gated to the native dialects only. Under ecma the `^` is left in `name`
+      // and falls through to `resolve_property`, which fails it with the existing "unsupported Unicode
+      // property" message -- rejection is automatic, no new error path. The caret sits ahead of any
+      // namespace, so `\p{^gc=L}` / `\p{^Latin}` strip first and then negate whatever the namespace
+      // resolves.
+      bool caret {false};
+      if (!is_ecma() && !name.empty() && name.front() == '^') {
+        caret = true;
+        name.remove_prefix(1);
+      }
+      return {.ranges = resolve_property(name), .caret = caret};
     }
 
     //! \brief Splits a property's ranges into its ASCII bitmap (< 0x80) and its non-ASCII ranges. Unconditional:
@@ -738,15 +770,18 @@ namespace real::detail {
     /*!
      * \brief Parses `\p{Name}` / `\P{Name}` / `\pX` (outside a class) into a negatable Unicode code-point class
      *        (`klass_cp`), reusing the same match-time mechanism as `\w`. Negation is the class-node flag, as for
-     *        `\W`. `pos_` is on the letter after `\`; `negated` distinguishes `\P` from `\p`.
+     *        `\W`, XORed with a caret-negation `\p{^Name}` stripped by \ref parse_property_table (so
+     *        `\P{^L}` negates twice back to `\p{L}`, same as `\P{...}` on an already-negated property would).
+     *        `pos_` is on the letter after `\`; `negated` distinguishes `\P` from `\p`.
      */
     constexpr std::int32_t parse_unicode_property(ast& out,
                                                   bool negated)
     {
-      const std::vector<code_range> table {parse_property_table()};
+      const property_table_result table {parse_property_table()};
+      negated = negated != table.caret; // bool XOR without the int promotion misra rejects
       char_class                    ascii;
       std::vector<code_range>       high;
-      property_ascii_high(table, ascii, high);
+      property_ascii_high(table.ranges, ascii, high);
       return add_class_node(out, ascii, negated, high, /*codepoint_predicate=*/ true);
     }
 
@@ -1827,11 +1862,13 @@ namespace real::detail {
             return -1;
           }
         // `\p{Name}` / `\P{Name}` / `\pX` inside a class — a Unicode General_Category / Script property member.
+        // Caret-negation `\p{^Name}` XORs into `negated` too, so `[\p{^L}]` == `[\P{L}]` here as well.
         case 'p':
         case 'P': {
-            const bool                    negated {peek() == 'P'};
-            const std::vector<code_range> table   {parse_property_table()};
-            merge_unicode_property(klass, ranges, table, negated, property_derived);
+            bool                         negated {peek() == 'P'};
+            const property_table_result  table   {parse_property_table()};
+            negated = negated != table.caret; // bool XOR without the int promotion misra rejects
+            merge_unicode_property(klass, ranges, table.ranges, negated, property_derived);
             return -1;
           }
         case 'b':

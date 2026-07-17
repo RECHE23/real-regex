@@ -87,8 +87,6 @@ namespace {
     static constexpr std::string_view gaps[] {
       R"(\Qa.b\E)",          // \Q...\E literal quoting — real frontend has no \Q escape
       R"(\x{10FFFF})",       // braced hex \x{...} — real accepts \xNN only
-      R"(\p{Any})",          // \p{Any} (every codepoint) — not in real's property set
-      R"(\p{^L})",           // negated \p{^...} spelling — real has \PL, not this form
       R"((?U)a+)",           // (?U) ungreedy-swap inline flag — real: unknown extension
       R"((?i-s)a)",          // unscoped inline flag with '-' removal — real rejects the global form
       R"((?P<n>a)(?P<n>b))", // duplicate group name — RE2 tolerates; debatable, allowlisted pending a call
@@ -463,6 +461,8 @@ namespace {
     check_compile_parity(r, R"(\p{L})");
     check_compile_parity(r, R"(\p{Nd})");
     check_compile_parity(r, "(?P<name>a)");
+    check_compile_parity(r, R"(\p{Any})");  // meta-property "every code point" — closed 2026-07-17
+    check_compile_parity(r, R"(\p{^L})");   // caret-negation == \P{L} — closed 2026-07-17
     // Deliberate REAL supersets (drop accepts, RE2 rejects → ENG, on-contract):
     check_compile_parity(r, R"(\Z)");
     check_compile_parity(r, "(?>a)");
@@ -470,8 +470,6 @@ namespace {
     // Known RE2 gaps real currently rejects (→ KNOWN-GAP, tracked debt — NOT a fail):
     check_compile_parity(r, R"(\Qa.b\E)");
     check_compile_parity(r, R"(\x{10FFFF})");
-    check_compile_parity(r, R"(\p{Any})");
-    check_compile_parity(r, R"(\p{^L})");
     check_compile_parity(r, R"((?U)a+)");
     check_compile_parity(r, R"((?i-s)a)");
     check_compile_parity(r, R"((?P<n>a)(?P<n>b))");

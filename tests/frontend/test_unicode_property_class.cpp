@@ -205,3 +205,66 @@ TEST(unicode_property_icase_grid)
   EXPECT(real::regex(R"((?i)\p{Lu})").fullmatch("ı"));  // 6. Turkish dotless-i folds with I (== re, != crate)
   EXPECT(real::regex(R"([^\P{L}])").fullmatch("A"));    // 7. double negation == [\p{L}]
 }
+
+TEST(unicode_property_any_meta)
+{
+  // `\p{Any}` — the RE2/Perl "every code point" meta-property (re2-parity gap #3): engine-defined, not a
+  // UCD table, resolved as the full [0x0, 0x10FFFF] range. Must match beyond the BMP (U+1F600, astral) and
+  // U+0000, not just an ASCII probe.
+  EXPECT(real::regex(R"(\p{Any})").fullmatch(std::string_view {"\x00", 1}));
+  EXPECT(real::regex(R"(\p{Any})").fullmatch("a"));
+  EXPECT(real::regex(R"(\p{Any})").fullmatch("é"));
+  EXPECT(real::regex(R"(\p{Any})").fullmatch("\xF0\x9F\x98\x80"sv));   // U+1F600 GRINNING FACE (astral, > U+FFFF)
+  EXPECT(real::regex(R"([\p{Any}])").fullmatch("\xF0\x9F\x98\x80"sv)); // in-class
+  // `\P{Any}` negates the full range: an empty set, so it matches nothing at all — a real edge (a negated
+  // class spanning every code point had better still mean "no code point").
+  EXPECT(!real::regex(R"(\P{Any})").fullmatch("a"));
+  EXPECT(!real::regex(R"(\P{Any})").fullmatch("\xF0\x9F\x98\x80"sv));
+  EXPECT(!real::regex(R"(\P{Any})").search(""sv));
+  // `\p{gc=Any}` / `\p{sc=Any}` stay unsupported: Any is a namespace-less special, not a General_Category
+  // or a Script — an explicit (mis-namespaced) prefix must still fail.
+  EXPECT_THROWS(real::regex(R"(\p{gc=Any})"), real::regex_error);
+  EXPECT_THROWS(real::regex(R"(\p{sc=Any})"), real::regex_error);
+}
+
+TEST(unicode_property_caret_negation)
+{
+  // `\p{^L}` — RE2/Perl caret-negation spelling (re2-parity gap #4), == `\P{L}` (real already had `\PL` /
+  // `\P{L}`, not this internal-caret form). Equivalence checked on ASCII AND non-ASCII letters/non-letters.
+  EXPECT(!real::regex(R"(\p{^L})").fullmatch("a"));
+  EXPECT(!real::regex(R"(\p{^L})").fullmatch("é")); // non-ASCII letter
+  EXPECT(real::regex(R"(\p{^L})").fullmatch("3"));
+  EXPECT(real::regex(R"(\p{^L})").fullmatch(" "));
+  // in-class: `[\p{^L}]` == `[\P{L}]`
+  EXPECT(!real::regex(R"([\p{^L}])").fullmatch("a"));
+  EXPECT(!real::regex(R"([\p{^L}])").fullmatch("é"));
+  EXPECT(real::regex(R"([\p{^L}])").fullmatch("3"));
+  // double-negation: `[^\p{^L}]` == `[\p{L}]`
+  EXPECT(real::regex(R"([^\p{^L}])").fullmatch("a"));
+  EXPECT(real::regex(R"([^\p{^L}])").fullmatch("é"));
+  EXPECT(!real::regex(R"([^\p{^L}])").fullmatch("3"));
+  // caret + namespace: the `^` sits ahead of `gc=`/`sc=`/a bare script name, negating whatever follows it
+  EXPECT(real::regex(R"(\p{^gc=L})").fullmatch("3"));
+  EXPECT(!real::regex(R"(\p{^gc=L})").fullmatch("a"));
+  EXPECT(real::regex(R"(\p{^Latin})").fullmatch("3"));
+  EXPECT(!real::regex(R"(\p{^Latin})").fullmatch("A"));
+  // icase does not change the category (parity with plain `\p{L}` under icase, which also does not).
+  EXPECT(!real::regex(R"(\p{^L})", real::flags::icase).fullmatch("a"));
+  EXPECT(real::regex(R"(\p{^L})", real::flags::icase).fullmatch("3"));
+}
+
+TEST(unicode_property_dialect_pins)
+{
+  // `\p{Any}` is ECMAScript-conforming (the spec's binary-property table lists `Any`; V8 accepts it) — no
+  // ecma gate, so it compiles under flags::ecma exactly like every other dialect.
+  EXPECT(real::regex(R"(\p{Any})", real::flags::ecma).fullmatch("a"));
+  // `\p{^L}` caret-negation is RE2/Perl syntax, NOT ECMAScript (a SyntaxError under V8) — gated to the
+  // native dialects: under ecma the `^` is left in the name and `resolve_property` rejects it (the same
+  // "unsupported Unicode property" error as any other unknown name, no new error path).
+  EXPECT_THROWS(real::regex(R"(\p{^L})", real::flags::ecma), real::regex_error);
+  // Both forms stay rejected under bytes mode, ecma or not (the existing bytes gate, unchanged).
+  EXPECT_THROWS(real::regex(R"(\p{Any})", real::flags::bytes), real::regex_error);
+  EXPECT_THROWS(real::regex(R"(\p{^L})", real::flags::bytes), real::regex_error);
+  EXPECT_THROWS(real::regex(R"(\p{Any})", real::flags::bytes | real::flags::ecma), real::regex_error);
+  EXPECT_THROWS(real::regex(R"(\p{^L})", real::flags::bytes | real::flags::ecma), real::regex_error);
+}
