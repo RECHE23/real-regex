@@ -79,6 +79,42 @@ TEST(empty_matches_advance_whole_codepoints)
   EXPECT_EQ(xs.find_all("éo").size(), 3U);
 }
 
+// CI finding (python differential macos-3.10, 2026-07-17): empty-leading alternation
+// + quasi-shorthand class with EURO SIGN (U+20AC, above the European page → cp_hi path)
+// must keep the mid-string two-char match under find_iter.
+// Engine offsets are BYTE indices (UTF-8); the Python binding maps them to codepoint
+// spans [(0,0), (4,6), (7,7)]. Here the mid match "€€" is bytes [10,16) of "€😀é €€x"
+// (len 17). Pin at the engine layer so sanitize/ASan builds exercise the path continuously.
+TEST(find_iter_euro_class_empty_alt_keeps_mid_match)
+{
+  const real::flags fl   {real::flags::multiline | real::flags::dotall};
+  const real::regex rx   {R"(^|[\w€]{2}|\137?[é]??$)", fl};
+  const std::string text {"€😀é €€x"};
+  EXPECT_EQ(text.size(), 17U);
+  std::vector<std::pair<std::size_t, std::size_t>> spans;
+  for (const auto& m : rx.find_iter(text)) {
+    spans.emplace_back(m.start(), m.end());
+  }
+  EXPECT_EQ(spans.size(), 3U);
+  EXPECT_EQ(spans[0].first, 0U);
+  EXPECT_EQ(spans[0].second, 0U);
+  EXPECT_EQ(spans[1].first, 10U);
+  EXPECT_EQ(spans[1].second, 16U); // "€€" as UTF-8 bytes
+  EXPECT_EQ(text.substr(spans[1].first, spans[1].second - spans[1].first), std::string {"€€"});
+  EXPECT_EQ(spans[2].first, 17U);
+  EXPECT_EQ(spans[2].second, 17U);
+  // Stress the path (ASan/UBSan suite): recompile + iterate many times.
+  for (int i = 0; i < 1000; ++i) {
+    const real::regex again {R"(^|[\w€]{2}|\137?[é]??$)", fl};
+    std::size_t       n     {};
+    for (const auto& m : again.find_iter(text)) {
+      EXPECT(m.start() <= m.end());
+      ++n;
+    }
+    EXPECT_EQ(n, 3U);
+  }
+}
+
 TEST(replace_basic_and_count)
 {
   const real::regex rx("\\d+");

@@ -307,6 +307,35 @@ class TestModuleFunctions(unittest.TestCase):
             ["1", "4", "2", "5"])
         self.assertEqual(sum(1 for _ in p.finditer("x9 " * 10000)), 10000)  # scale
 
+    def test_finditer_euro_class_empty_alt_matches_re(self):
+        """CI finding (macos-3.10 differential, 2026-07-17): finditer must not drop the
+        mid-string ``€€`` match for an empty-leading alternation over a quasi-shorthand
+        class with an astral-adjacent subject.
+
+        Reported once as REAL ``[(0,0),(7,7)]`` vs re ``[(0,0),(4,6),(7,7)]`` on
+        ``pattern='^|[\\w€]{2}|\\137?[é]??$'`` / ``text='€😀é €€x'`` / ``M|S``.
+        Deterministic pin (floor): re is the oracle. Non-determinism is investigated
+        separately under ASan; this pin makes a *stable* wrong-match fail immediately.
+        """
+        pattern = r"^|[\w€]{2}|\137?[é]??$"
+        text = "€😀é €€x"
+        flags = real.M | real.S
+        re_flags = re.M | re.S
+        xp = real.compile(pattern, flags)
+        rp = re.compile(pattern, re_flags)
+        self.assertEqual([m.span() for m in xp.finditer(text)],
+                         [m.span() for m in rp.finditer(text)])
+        self.assertEqual(xp.findall(text), rp.findall(text))
+        # Full region matrix: any (pos, endpos) search span must match re.
+        for pos in range(len(text) + 1):
+            for endpos in range(pos, len(text) + 1):
+                mr = xp.search(text, pos, endpos)
+                mp = rp.search(text, pos, endpos)
+                self.assertEqual(
+                    None if mr is None else mr.span(),
+                    None if mp is None else mp.span(),
+                    f"pos={pos} endpos={endpos}")
+
     def test_search_is_thread_safe(self):
         """Concurrent search/match on shared and distinct Patterns give correct
         results. match/fullmatch/search release the GIL around the scan for subjects
