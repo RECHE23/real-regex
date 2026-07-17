@@ -492,6 +492,86 @@ TEST(braced_hex_codepoint_escape_ecma_pins)
   EXPECT(real::regex("\\xFF", flags::ecma | flags::bytes).fullmatch(ff).matched());
 }
 
+TEST(quoted_literal_span)
+{
+  // \Q...\E literal quoting (RE2/Perl; libre2 11.0.0 is the oracle for every edge pinned here —
+  // re2-parity-measurement.md, closed 2026-07-17). The span is a sequence of literal atoms; every
+  // metacharacter inside is inert.
+  EXPECT(real::regex("\\Qa.b\\E").fullmatch("a.b").matched());
+  EXPECT(!real::regex("\\Qa.b\\E").fullmatch("axb").matched()); // '.' is literal, not any-char
+  EXPECT(real::regex("\\Q(a|b)*\\E").fullmatch("(a|b)*").matched());
+  EXPECT(real::regex("\\Qa|b\\E").fullmatch("a|b").matched());  // '|' inside the span: no alternation
+  EXPECT(!real::regex("\\Qa|b\\E").fullmatch("a").matched());
+  EXPECT(real::regex("\\Qa+\\E").fullmatch("a+").matched());    // '+' inside the span is literal
+  EXPECT(!real::regex("\\Qa+\\E").fullmatch("aa").matched());
+
+  // A quantifier after \E binds to the span's LAST character (RE2: \Qab\E+ == ab+).
+  EXPECT(real::regex("\\Qab\\E+").fullmatch("abb").matched());
+  EXPECT(!real::regex("\\Qab\\E+").fullmatch("abab").matched());
+  EXPECT(real::regex("\\Qab\\E{2}").fullmatch("abb").matched()); // counted form binds the same
+  EXPECT(real::regex("x\\Qab\\E?").fullmatch("xa").matched());   // '?' on 'b' only: 'a' stays required
+  EXPECT(!real::regex("x\\Qab\\E?").fullmatch("x").matched());
+
+  // Empty \Q\E is grammar-invisible (RE2-measured): a following quantifier re-binds to the previous
+  // atom (a\Q\E+ == a+); with no previous atom it is an error, like RE2's "no argument for repetition".
+  EXPECT(real::regex("\\Q\\E").fullmatch("").matched());
+  EXPECT(real::regex("a\\Q\\Eb").fullmatch("ab").matched());
+  EXPECT(real::regex("a\\Q\\E+").fullmatch("aa").matched());
+  EXPECT(real::regex("ab\\Q\\E+").fullmatch("abb").matched());   // re-binds mid-sequence (== ab+) ...
+  EXPECT(!real::regex("ab\\Q\\E+").fullmatch("abab").matched()); // ... to the LAST atom only
+  EXPECT_THROWS(real::regex("\\Q\\E+"), real::regex_error);
+  EXPECT_THROWS(real::regex("(\\Q\\E+)"), real::regex_error);
+
+  // Unterminated \Q quotes to the end of the pattern; the "dumb scan" takes a backslash literally
+  // unless it is exactly followed by 'E' (no escape processing, no nesting inside the span).
+  EXPECT(real::regex("\\Qa.b").fullmatch("a.b").matched());
+  EXPECT(real::regex("\\Qa\\").fullmatch("a\\").matched());        // trailing lone backslash is literal
+  EXPECT(real::regex("\\Qa\\Qb\\E").fullmatch("a\\Qb").matched()); // inner \Q: two literal chars
+  EXPECT(real::regex("\\Qa\\\\Eb").fullmatch("a\\b").matched());   // '\' then \E terminator
+  EXPECT(real::regex("\\Qa\\nb\\E").fullmatch("a\\nb").matched()); // \n inside the span: 2 literal chars
+  EXPECT(!real::regex("\\Qa\\nb\\E").fullmatch("a\nb").matched()); // NOT a newline
+
+  // Multibyte: one atom per code point, so a quantifier repeats the whole last code point. A
+  // malformed UTF-8 byte inside the span is a pattern error (same rule as a raw literal, text mode).
+  EXPECT(real::regex("\\Q\xF0\x9F\x98\x80\\E").fullmatch("\xF0\x9F\x98\x80").matched());
+  EXPECT(real::regex("\\Q\xF0\x9F\x98\x80\\E+").fullmatch("\xF0\x9F\x98\x80\xF0\x9F\x98\x80").matched());
+  EXPECT_THROWS(real::regex("\\Q\xC3\\E"), real::regex_error); // lone lead byte in the span
+
+  // The span folds under icase like any literal (RE2 (?i) folds \Q spans), incl. a scoped (?i:...).
+  EXPECT(real::regex("\\Qab\\E", real::flags::icase).fullmatch("AB").matched());
+  EXPECT(real::regex("(?i:\\Qab\\E)c").fullmatch("ABc").matched());
+  EXPECT(!real::regex("(?i:\\Qab\\E)c").fullmatch("ABC").matched());
+
+  // Group interaction: ')' inside the span is literal, so the span can eat a close-paren (then the
+  // group is unbalanced, an error — RE2 agrees) and works inside alternation branches.
+  EXPECT(real::regex("(\\Qa.b\\E|x)").fullmatch("a.b").matched());
+  EXPECT(real::regex("(\\Qa)b\\E)").fullmatch("a)b").matched());
+  EXPECT_THROWS(real::regex("(\\Qa)b\\E"), real::regex_error);
+
+  // bytes mode (non-ecma): the span is per-byte literal (the gate is the dialect, not the encoding).
+  EXPECT(real::regex(std::string("\\Qa.b\\E"), real::flags::bytes).fullmatch("a.b").matched());
+
+  // Verbose mode: whitespace inside the span stays literal — a quoted span protects its spaces
+  // (REAL's own call: RE2 rejects (?x) entirely, so there is no oracle; Perl's \Q quotes spaces too).
+  EXPECT(real::regex("\\Qa b\\E", real::flags::verbose).fullmatch("a b").matched());
+  EXPECT(real::regex("a \\Qb c\\E", real::flags::verbose).fullmatch("ab c").matched());
+}
+
+TEST(quoted_literal_span_rejections)
+{
+  using real::flags;
+  // \E without \Q: RE2 rejects ("invalid escape sequence: \E") and real always has — parity pin.
+  EXPECT_THROWS(real::regex("\\E"), real::regex_error);
+  EXPECT_THROWS(real::regex("a\\Eb"), real::regex_error);
+  // In-class [\Q...\E]: RE2 rejects ("invalid escape sequence: \Q") — real keeps rejecting, measured
+  // 2026-07-17, deliberately NOT over-implemented.
+  EXPECT_THROWS(real::regex("[\\Qab\\E]"), real::regex_error);
+  // ecma pins: \Q is not ECMAScript; the dialect gate preserves the unsupported-escape rejection
+  // (the std-compat layer relies on this statu quo).
+  EXPECT_THROWS(real::regex("\\Qa\\E", flags::ecma), real::regex_error);
+  EXPECT_THROWS(real::regex(std::string("\\Qa.b\\E"), flags::ecma | flags::bytes), real::regex_error);
+}
+
 TEST(octal_escapes_inside_a_class)
 {
   // Inside a class every \digit is octal — there are no back-references in a class (re's rule).

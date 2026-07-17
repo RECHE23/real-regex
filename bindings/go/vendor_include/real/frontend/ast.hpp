@@ -842,6 +842,17 @@ namespace real::detail {
 
     /*!
      * \brief Parses `sequence := (atom quantifier?)*`, stopping at `|` or `)`.
+     *
+     * Also intercepts `\Q...\E` literal quoting here (RE2/Perl syntax, `!is_ecma()` only — under
+     * ecma `\Q` keeps falling through to the rejected unknown escape): the span emits a SEQUENCE of
+     * literal atoms, not one atom, so it cannot live in \ref parse_atom. A quantifier after `\E`
+     * binds to the span's LAST character (`\Qab\E+` == `ab+`, libre2-measured): all-but-last chain
+     * bare and the last atom re-enters the loop's normal quantifier path. An empty `\Q\E` is
+     * grammar-invisible (libre2-measured `a\Q\E+` == `a+`): a quantifier after it re-binds to the
+     * PREVIOUS atom — the `prev` tracker exists to re-chain that re-quantified atom — and with no
+     * previous atom the next iteration fails ("nothing to repeat"), matching RE2's "no argument for
+     * repetition operator".
+     *
      * \param[in,out] out The AST being built.
      * \return The index of a concat node, a single atom, or an empty node.
      */
@@ -849,12 +860,46 @@ namespace real::detail {
     {
       std::int32_t first {-1};
       std::int32_t last  {-1};
+      std::int32_t prev  {-1}; // predecessor of `last` (-1: none): the re-chain point after an empty \Q\E
       while (true) {
         skip_insignificant(); // verbose: between elements and before '|' / ')'
         if (eof() || peek() == '|' || peek() == ')') {
           break;
         }
-        std::int32_t atom {parse_atom(out)};
+        std::int32_t atom {-1};
+        if (peek() == '\\' && pos_ + 1 < pattern_.size() && pattern_[pos_ + 1] == 'Q' && !is_ecma()) {
+          pos_ += 2; // consume \Q
+          const quoted_span span {parse_quoted_span(out)};
+          if (span.last == -1) {
+            if (last != -1) {
+              skip_insignificant();
+              const std::int32_t requant {parse_quantifier(out, last)};
+              if (requant != last) {
+                if (prev == -1) {
+                  first = requant;
+                }
+                else {
+                  out.nodes[static_cast<std::size_t>(prev)].next = requant;
+                }
+                last = requant;
+              }
+            }
+            continue;
+          }
+          if (span.head != -1) { // chain the bare all-but-last prefix
+            if (first == -1) {
+              first = span.head;
+            }
+            else {
+              out.nodes[static_cast<std::size_t>(last)].next = span.head;
+            }
+            last = span.head_tail;
+          }
+          atom = span.last; // the span's final atom takes the normal quantifier path below
+        }
+        else {
+          atom = parse_atom(out);
+        }
         skip_insignificant(); // verbose: whitespace between an atom and its quantifier
         atom = parse_quantifier(out, atom);
         if (first == -1) {
@@ -862,6 +907,7 @@ namespace real::detail {
         }
         else {
           out.nodes[static_cast<std::size_t>(last)].next = atom;
+          prev                                           = last;
         }
         last = atom;
       }
@@ -874,6 +920,77 @@ namespace real::detail {
       const std::int32_t seq                         = add_node(out, {.kind = node_kind::concat});
       out.nodes[static_cast<std::size_t>(seq)].child = first;
       return seq;
+    }
+
+    //! \brief What \ref parse_quoted_span emitted: a bare pre-chained all-but-last prefix
+    //!        (`head`..`head_tail`, -1 when the span has fewer than two characters) plus the span's
+    //!        final atom `last` (-1 when the span is empty) — the caller's quantifier target.
+    struct quoted_span
+    {
+      std::int32_t head      {-1}; //!< First atom of the all-but-last prefix chain (-1: none).
+      std::int32_t head_tail {-1}; //!< Last atom of the prefix chain (-1: none).
+      std::int32_t last      {-1}; //!< The span's final atom (-1: empty span).
+    };
+
+    /*!
+     * \brief Scans a `\Q...\E` literal span (the `\Q` is already consumed) and emits its characters
+     *        as literal atoms — the same emission as \ref parse_atom's default (whole code point per
+     *        atom in text mode, single byte in bytes mode, icase folding via
+     *        \ref emit_literal_codepoint), libre2-measured semantics:
+     *
+     * - The span ends at the exact two-character `\E` (consumed) or at the end of the pattern
+     *   (an unterminated `\Q` quotes to the end).
+     * - Everything inside is literal — metacharacters, `|`, `)`, whitespace (even in verbose mode;
+     *   RE2 has no `(?x)` so this is REAL's own call: a quoted span protects its spaces), and a
+     *   backslash NOT followed by `E` (so `\Qa\Qb\E` is the literal `a\Qb` and a trailing `\Qa\` is
+     *   the literal `a\` — the "dumb scan": no escape processing, no nesting).
+     * - All atoms except the last are chained bare; the last is left unchained so the caller can
+     *   apply a following quantifier to it alone (`\Qab\E+` == `ab+`).
+     *
+     * \param[in,out] out The AST being built.
+     * \return A \ref quoted_span (all members -1 for an empty `\Q\E`).
+     * \throws real::regex_error on an invalid UTF-8 byte inside the span (text mode).
+     */
+    constexpr quoted_span parse_quoted_span(ast& out)
+    {
+      quoted_span  r;
+      std::int32_t pending {-1}; // the previously scanned character, not yet known to be the last
+      while (!eof()) {
+        if (peek() == '\\' && pos_ + 1 < pattern_.size() && pattern_[pos_ + 1] == 'E') {
+          pos_ += 2; // consume the \E terminator
+          break;
+        }
+        std::int32_t cp {};
+        // Read bytes-mode from the scope stack, not the global `bytes_` member (the flag-scope
+        // ratchet; bytes is never scoped, so this equals `bytes_` — same precedent as `\C`).
+        if (!has_flag(current_flags(), flags::bytes) && static_cast<std::uint8_t>(peek()) >= 0x80U) {
+          const detail::decoded_codepoint decoded {detail::decode_codepoint_strict(pattern_, pos_)};
+          if (!decoded.valid) {
+            fail("invalid UTF-8 byte in pattern");
+          }
+          pos_ += decoded.length;
+          cp    = static_cast<std::int32_t>(decoded.cp);
+        }
+        else {
+          cp = static_cast<std::uint8_t>(peek());
+          ++pos_;
+        }
+        if (pending >= 0) { // the previous character is now known not-last: chain it bare
+          const std::int32_t node {emit_literal_codepoint(out, pending)};
+          if (r.head == -1) {
+            r.head = node;
+          }
+          else {
+            out.nodes[static_cast<std::size_t>(r.head_tail)].next = node;
+          }
+          r.head_tail = node;
+        }
+        pending = cp;
+      }
+      if (pending >= 0) {
+        r.last = emit_literal_codepoint(out, pending);
+      }
+      return r;
     }
 
     /*!

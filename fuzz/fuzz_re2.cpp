@@ -85,7 +85,6 @@ namespace {
   bool is_known_re2_gap(std::string_view pat)
   {
     static constexpr std::string_view gaps[] {
-      R"(\Qa.b\E)",          // \Q...\E literal quoting — real frontend has no \Q escape
       R"(\x{D800})",         // braced hex \x{...} surrogate — measured 2026-07-17 vs libre2 11.0.0: RE2
                               // accepts the whole U+D800-DFFF range unvalidated, real rejects it
                               // (Python-semantics surrogate rejection, shared with \u/\U/\N — deliberately
@@ -409,6 +408,14 @@ namespace {
     check_partial_full(r, R"(\d+)", "12x");
     check_partial_full(r, R"(\bthe\b)", "the");
     check_partial_full(r, R"(\bthe\b)", "then");
+    // \Q...\E literal quoting (closed 2026-07-17): match parity, incl. the quantifier-binds-to-the-
+    // last-span-character edge (\Qab\E+ == ab+) and the grammar-invisible empty span (a\Q\E+ == a+).
+    check_partial_full(r, R"(\Qa.b\E)", "a.b");
+    check_partial_full(r, R"(\Qa.b\E)", "axb");
+    check_partial_full(r, R"(\Qab\E+)", "abb");
+    check_partial_full(r, R"(\Qab\E+)", "abab");
+    check_partial_full(r, R"(\Qa.b)", "a.b");
+    check_partial_full(r, R"(a\Q\E+)", "aa");
 
     // --- longest-match ties (audit priority) ---
     check_partial_capture(r, "(a|ab)", "xabx", false);
@@ -469,12 +476,12 @@ namespace {
     check_compile_parity(r, R"(\p{Any})");  // meta-property "every code point" — closed 2026-07-17
     check_compile_parity(r, R"(\p{^L})");   // caret-negation == \P{L} — closed 2026-07-17
     check_compile_parity(r, R"(\x{10FFFF})"); // braced hex \x{...} (max valid scalar) — closed 2026-07-17
+    check_compile_parity(r, R"(\Qa.b\E)");    // \Q...\E literal quoting — closed 2026-07-17
     // Deliberate REAL supersets (drop accepts, RE2 rejects → ENG, on-contract):
     check_compile_parity(r, R"(\Z)");
     check_compile_parity(r, "(?>a)");
     check_compile_parity(r, "a*+");
     // Known RE2 gaps real currently rejects (→ KNOWN-GAP, tracked debt — NOT a fail):
-    check_compile_parity(r, R"(\Qa.b\E)");
     check_compile_parity(r, R"(\x{D800})"); // braced hex surrogate — RE2 accepts, real rejects (sub-edge)
     check_compile_parity(r, R"((?U)a+)");
     check_compile_parity(r, R"((?i-s)a)");
@@ -510,12 +517,15 @@ namespace {
     // can-fail #2: a subset-violation with the allowlist SUPPRESSED must become a BUG. Proves the
     // promoted subset direction can redden, and that the allowlist is the only thing sparing the
     // known gaps (remove a gap's entry and this is exactly what the harness would do to it).
+    // The inject pattern must be a STILL-OPEN gap (real rejects, RE2 accepts): it was \Qx\E until
+    // \Q...\E closed on 2026-07-17 (real now accepts it — the inject would go mute), so it is now
+    // the \x{D800} surrogate sub-edge, the longest-lived entry in gaps[] above.
     const int   bugs_before {r.bugs};
-    const drop::RE2 dg(R"(\Qx\E)"); // real rejects \Q...\E; true RE2 accepts it → subset direction
+    const drop::RE2 dg(R"(\x{D800})"); // real rejects the surrogate; true RE2 accepts it → subset direction
     ::RE2::Options  tgo;
     tgo.set_log_errors(false);
-    const ::RE2 tg(std::string(R"(\Qx\E)"), tgo);
-    classify_compile_asym(r, R"(\Qx\E)", dg.ok(), tg.ok(), /*suppress_allowlist=*/true);
+    const ::RE2 tg(std::string(R"(\x{D800})"), tgo);
+    classify_compile_asym(r, R"(\x{D800})", dg.ok(), tg.ok(), /*suppress_allowlist=*/true);
     if (r.bugs > bugs_before) {
       std::cout << "can-fail subset-violation: reddened as expected (allowlist suppressed)\n";
       ++r.canfail_tripped;
