@@ -52,6 +52,9 @@ SCIFORGE_TOOLS ?= ../sciforge/tools
 # pin them), so they are excluded from the hand-written-code formatter.
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep -vE 'include/real/unicode/unicode_(fold|props|property|script|binprop|scx)\.hpp')
 
+# Vendored in-repo (see mk/help.mk for why this is never a hard include toward sciforge).
+include mk/help.mk
+
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
         lint misra fuzz fuzz-compat fuzz-re2 check-capi-abi exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check format format-check full-local-gate gate-bump gate-doc gate-test clean \
         bench-engines bench-multipattern bench-duel bench-matrix matrix-gate \
@@ -60,57 +63,20 @@ FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep
 
 .DEFAULT_GOAL := help
 
-help:
-	@echo "REAL — build orchestrator (CMake + QA tools)"
-	@echo ""
-	@echo "  make build      Configure and build the test binary (CMake)"
-	@echo "  make test       Build and run the test suite (ctest)"
-	@echo "  make sanitize   Build and run the tests under ASan + UBSan"
-	@echo "  make coverage   Line-coverage text summary + HTML report"
-	@echo "  make lint       clang-tidy over the test sources"
-	@echo "  make misra      MISRA C++:2023-oriented analysis"
-	@echo "  make fuzz       libFuzzer robustness fuzzing (Clang; FUZZ_TIME=secs)"
-	@echo "  make fuzz-compat  Differential fuzz: real::compat vs std::regex (Clang; FUZZ_TIME=secs)"
-	@echo "  make fuzz-re2   Differential: real::compat::re2 vs true libre2 (needs pkg-config re2)"
-	@echo "  make check-capi-abi  C ABI golden vs real_capi.h + enum/flag pins (hardening #4)"
-	@echo "  make tsan       ThreadSanitizer smoke of concurrent std_engine (Clang)"
-	@echo "  make tsan-core  ThreadSanitizer smoke of core shared-confirm / immut caches (Clang)"
-	@echo "  make doc        Generate API reference (Doxygen) with embedded coverage"
-	@echo "  make doc-no-coverage  Generate API reference without coverage report"
-	@echo "  make format     Uncrustify, in place"
-	@echo "  make format-check  Uncrustify, dry-run, exits non-zero on diff"
-	@echo "  make clean      Remove build artifacts"
-	@echo ""
-	@echo "  make version-check  Assert pyproject = __init__ = CMake-derived version"
-	@echo "  make full-local-gate  Every pass/fail gate in one command (the macOS gate of record)"
-	@echo "  make gate-bump  Calibrated gate for a version bump only (version-check + build)"
-	@echo "  make gate-doc   Calibrated gate for a doc-only change (doc-check/format-check as needed)"
-	@echo "  make gate-test  Calibrated gate for a tests/-only change (test + sanitize + coverage-check)"
-	@echo "    all 3 diff against GATE_BASE (default origin/main); on a stacked train where later"
-	@echo "    commits accumulate earlier wagons in that diff, GATE_BASE=HEAD~1 make gate-bump"
-	@echo "    scopes the category check to just the latest commit"
-	@echo "  make bench-duel   REAL vs the regex crate, ns/byte (needs a Rust toolchain)"
-	@echo "  make profile-sample  P0 2-pass profile grid (JSONL + markdown; not a CI gate)"
-	@echo ""
-	@echo "  Per-binding targets: make {python,c,rust}-<target> (build/test/bench/fuzz/...)"
-	@echo "    see: make python-help | make c-help | make rust-help"
-	@echo "  make bench-engines  C++ throughput vs std::regex/PCRE2/RE2 (if present)"
-	@echo "  make bench-multipattern  multi-pattern which-matched / extraction (RE2/HS optional)"
-	@echo "  make install      Install the Python package (pip)"
-	@echo "  make uninstall    Uninstall the Python package (pip)"
-	@echo "  make release      Cut a calendar-versioned release (tag + push)"
-	@echo ""
-	@echo "  Override the compiler: make test CXX=g++-14"
+SECTIONS := bindings/c bindings/go bindings/python bindings/rust fuzz tests tools benchmarks docs
+help: ## Aggregated help: top-level targets, then each section's own help
+	@grep -hE '^[a-zA-Z0-9_-]+:.*##' $(firstword $(MAKEFILE_LIST)) | sed -E 's/^([a-zA-Z0-9_-]+):.*## /  make \1 — /' | sort
+	@for s in $(SECTIONS); do if [ -f $$s/Makefile ]; then echo; echo "── $$s ──"; $(MAKE) -s -C $$s help; fi; done
 
 all: build
 
 # --- build / test (delegated to CMake) ------------------------------------
 
-build:
+build: ## Configure and build the test binary (CMake)
 	$(CMAKE) -S . -B $(BUILD) $(CMAKE_CXX) -DCMAKE_BUILD_TYPE=Release
 	$(CMAKE) --build $(BUILD) --parallel $(JOBS)
 
-test: build
+test: build ## Build and run the test suite (ctest)
 	$(CTEST) --test-dir $(BUILD) --output-on-failure
 
 # ASan/UBSan only here -- LeakSanitizer is CI-Linux-only. `ASAN_OPTIONS=detect_leaks=1` aborts
@@ -120,7 +86,7 @@ test: build
 # test helper first shipped with a `new[]`/`.release()` that never freed) therefore passes locally
 # and is caught only in CI's Linux leg, invisible until then -- same shape as `doc-check`'s
 # Docker-optional skip: visible in the CI job that IS the backstop, never a false green here.
-sanitize:
+sanitize: ## Build and run the tests under ASan + UBSan
 	$(CMAKE) -S . -B $(BUILD)/sanitize $(CMAKE_CXX) -DREAL_SANITIZE=ON
 	$(CMAKE) --build $(BUILD)/sanitize --parallel $(JOBS)
 	$(CTEST) --test-dir $(BUILD)/sanitize --output-on-failure
@@ -147,7 +113,7 @@ coverage-build:
 	LLVM_PROFILE_FILE=$(COV_DIR)/tests.profraw $(COV_DIR)/real_tests_bin
 	$(PROFDATA) merge -sparse $(COV_DIR)/tests.profraw -o $(COV_DIR)/tests.profdata
 
-coverage: coverage-build
+coverage: coverage-build ## Line-coverage text summary + HTML report
 	$(LLVM_COV) report $(COV_DIR)/real_tests_bin -instr-profile=$(COV_DIR)/tests.profdata
 	$(LLVM_COV) show $(COV_DIR)/real_tests_bin -instr-profile=$(COV_DIR)/tests.profdata \
 	    -format=html -output-dir=$(COV_DIR)/html -show-line-counts-or-regions
@@ -203,7 +169,7 @@ coverage-html:
 
 # --- QA tools (wrappers; no compilation policy here) ----------------------
 
-lint:
+lint: ## clang-tidy over the test sources
 	@find tests -name '*.cpp' | xargs -P $(JOBS) -I{} clang-tidy {} -- $(CXXSTD) $(INCLUDES) -Ibindings/c -I$(SCIFORGE_INCLUDE)
 
 # Analyzes the library's own headers through a synthetic translation unit that
@@ -217,7 +183,7 @@ lint:
 # REAL's one extra deviation — the SBO union in storage.hpp — is appended on the
 # command line with --checks (which appends to the config's Checks), not by forking
 # the shared file. See docs/MISRA.md.
-misra:
+misra: ## MISRA C++:2023-oriented analysis
 	mkdir -p $(BUILD)
 	printf '#include <real/real.hpp>\nint main(){ try { const real::regex r("a"); return r.search("a") ? 0 : 1; } catch (...) { return 2; } }\n' > $(BUILD)/misra_tu.cpp
 	clang-tidy --config-file=$(SCIFORGE_LINT)/clang-tidy-misra \
@@ -244,7 +210,7 @@ rust-%:
 go-%:
 	@$(MAKE) -C bindings/go $*
 
-fuzz:
+fuzz: ## libFuzzer robustness fuzzing (Clang; FUZZ_TIME=secs)
 	mkdir -p $(FUZZ_DIR)/corpus
 	clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
 	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_target.cpp -o $(FUZZ_DIR)/fuzz_target
@@ -255,7 +221,7 @@ fuzz:
 # concurrent lazy std_engine() build on shared regex objects, proving the "concurrent const ops are
 # race-free" claim reproducibly. Standalone (no framework / test_static.cpp non-atomic op-new counter,
 # which would itself race). Clang feature; always uses Clang.
-tsan:
+tsan: ## ThreadSanitizer smoke of concurrent std_engine (Clang)
 	mkdir -p $(BUILD)
 	clang++ $(CXXSTD) -O1 -g $(INCLUDES) -fsanitize=thread tests/compat/tsan_compat.cpp -o $(BUILD)/tsan_compat
 	$(BUILD)/tsan_compat
@@ -267,7 +233,7 @@ tsan:
 #   TSAN_OPTIONS=halt_on_error=1 REAL_TSAN_INJECT_RACE=1 make tsan-core
 # ASLR: some Linux kernels hit TSan "FATAL: unexpected memory mapping" under high ASLR — prefer
 # setarch -R when present (Linux CI/devbox); fall back to a direct run (macOS has no setarch).
-tsan-core:
+tsan-core: ## ThreadSanitizer smoke of core shared-confirm / immut caches (Clang)
 	mkdir -p $(BUILD)
 	clang++ $(CXXSTD) -O1 -g $(INCLUDES) -fsanitize=thread \
 	    tests/engine/tsan_core.cpp -o $(BUILD)/tsan_core
@@ -275,7 +241,7 @@ tsan-core:
 
 # Differential fuzzer: real::compat vs std::regex (search/replace/iterate/token/match-flags). This
 # is the net that has caught every silent divergence in the compat layer, so it runs in CI too.
-fuzz-compat:
+fuzz-compat: ## Differential fuzz: real::compat vs std::regex (Clang; FUZZ_TIME=secs)
 	mkdir -p $(FUZZ_DIR)/corpus-compat
 	clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
 	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_compat.cpp -o $(FUZZ_DIR)/fuzz_compat
@@ -286,7 +252,7 @@ fuzz-compat:
 # (REAL_RE2_DIFF_CANFAIL=1 must trip). Requires pkg-config re2; skips cleanly when absent so
 # full-local-gate / hosts without libre2 are not blocked. CI installs libre2 and runs this.
 # Reproduce a finding: make fuzz-re2  (exit 1 = drop-in parity bug; ENG \w/UCD is allowlisted only).
-fuzz-re2:
+fuzz-re2: ## Differential: real::compat::re2 vs true libre2 (needs pkg-config re2)
 	@if ! pkg-config --exists re2; then \
 	  echo "fuzz-re2: SKIP — pkg-config re2 not found (install libre2 to enable the oracle)"; \
 	  exit 0; \
@@ -306,11 +272,11 @@ fuzz-re2:
 #   python3 tools/gen_capi_abi_golden.py --inject-enum REAL_ERR_SYNTAX=99 --stdout > tests/bindings/capi_abi_golden.txt
 #   make check-capi-abi   # must exit non-zero; then: python3 tools/gen_capi_abi_golden.py
 # Enum/flag value pins live in tests/bindings/test_capi_abi.cpp (real::flags cross-check).
-check-capi-abi:
+check-capi-abi: ## C ABI golden vs real_capi.h + enum/flag pins (hardening #4)
 	@python3 tools/gen_capi_abi_golden.py --check
 	@echo "check-capi-abi: PASS (golden matches real_capi.h)"
 
-doc: coverage-html
+doc: coverage-html ## Generate API reference (Doxygen) with embedded coverage
 	mkdir -p $(BUILD)/doc
 	doxygen Doxyfile
 	@rm -rf $(BUILD)/doc/html/coverage
@@ -319,15 +285,15 @@ doc: coverage-html
 
 # Doc target for environments without Clang/LLVM coverage tools (e.g. CI that only
 # needs the API reference). It does not rebuild the coverage report.
-doc-no-coverage:
+doc-no-coverage: ## Generate API reference without coverage report
 	mkdir -p $(BUILD)/doc
 	doxygen Doxyfile
 	@echo "API reference: $(BUILD)/doc/html/index.html"
 
-format:
+format: ## Uncrustify, in place
 	uncrustify -c $(SCIFORGE_LINT)/uncrustify.cfg --replace --no-backup $(FORMAT_FILES)
 
-format-check:
+format-check: ## Uncrustify, dry-run, exits non-zero on diff
 	uncrustify -c $(SCIFORGE_LINT)/uncrustify.cfg --check $(FORMAT_FILES)
 
 # --- Python binding -------------------------------------------------------
@@ -344,7 +310,7 @@ HEADERS := $(shell find include/real -name '*.hpp')
 # release` bumps __init__.py from it, CMakeLists.txt derives it. Asserts the three
 # agree and that CMake still DERIVES (no hardcoded literal that could drift) — the
 # invariant the CMake 2026.6.6-vs-.8 drift violated.
-version-check:
+version-check: ## Assert pyproject = __init__ = CMake-derived version
 	@py=$$(sed -nE 's/^version = "([0-9][0-9.]*)"/\1/p' pyproject.toml); \
 	 ini=$$(sed -nE 's/^__version__ = "([0-9][0-9.]*)"/\1/p' bindings/python/real/__init__.py); \
 	 lit=$$(sed -nE 's/^project\([A-Za-z_]+ VERSION ([0-9][0-9.]*).*/\1/p' CMakeLists.txt); \
@@ -436,7 +402,7 @@ check-layers:
 # Anything under include/real/{engine,core,automata,frontend}, storage.hpp, real.hpp: none of
 # these targets accept it -- full-local-gate is the only gate for engine code, unconditionally.
 
-gate-bump:
+gate-bump: ## Calibrated gate for a version bump only (version-check + build)
 	@set -euo pipefail; \
 	 files="$$(git diff --name-only $(GATE_BASE) -- .)"; \
 	 bad="$$(printf '%s\n' "$$files" | grep -vE '^(include/real/version\.hpp|pyproject\.toml|bindings/python/real/__init__\.py|bindings/rust/Cargo\.toml|CITATION\.cff|README\.md|docs/release-notes/.*\.md|docs/BENCHMARKS\.md)$$' | grep -v '^$$' || true)"; \
@@ -452,7 +418,7 @@ gate-bump:
 	@$(MAKE) build
 	@echo "gate-bump: PASS (version-check + build)"
 
-gate-doc:
+gate-doc: ## Calibrated gate for a doc-only change (doc-check/format-check as needed)
 	@set -euo pipefail; \
 	 files="$$(git diff --name-only $(GATE_BASE) -- .)"; \
 	 for f in $$files; do \
@@ -488,7 +454,7 @@ gate-doc:
 	 else echo "gate-doc: skip verify_unicode_ratios.py (BENCHMARKS.md untouched)"; fi
 	@echo "gate-doc: PASS"
 
-gate-test:
+gate-test: ## Calibrated gate for a tests/-only change (test + sanitize + coverage-check)
 	@set -euo pipefail; \
 	 files="$$(git diff --name-only $(GATE_BASE) -- .)"; \
 	 bad="$$(printf '%s\n' "$$files" | grep -vE '^(tests/|Makefile$$)' | grep -v '^$$' || true)"; \
@@ -506,7 +472,7 @@ gate-test:
 	@$(MAKE) coverage-check
 	@echo "gate-test: PASS (test + sanitize + coverage-check)"
 
-full-local-gate:
+full-local-gate: ## Every pass/fail gate in one command (the macOS gate of record)
 	@echo "full-local-gate: start (fail-fast — cheap first, first red stops the train)"
 	@echo "── [1/18] format-check"
 	@$(MAKE) format-check
@@ -568,7 +534,7 @@ doc-check:
 # REAL-vs-rust duel: the §E table generator (ns/byte, match-count cross-checked, non-cherry-picked).
 # Builds the REAL harness; the rust harness needs a Rust toolchain (cargo build --release in
 # benchmarks/duel/rust_bench). Manual, not a CI gate.
-bench-duel:
+bench-duel: ## REAL vs the regex crate, ns/byte (needs a Rust toolchain)
 	@c++ $(CXXSTD) -O2 $(INCLUDES) benchmarks/duel/real_bench.cpp -o benchmarks/duel/real_bench
 	@$(PYTHON) benchmarks/duel/run_duel.py
 
@@ -586,7 +552,7 @@ profile-sample-build:
 	    benchmarks/profile/profile_runner.cpp -o $(PROF_DIR)/profile_runner_inst
 	@echo "profile binaries: $(PROF_DIR)/profile_runner_{clean,inst}"
 
-profile-sample: profile-sample-build
+profile-sample: profile-sample-build ## P0 2-pass profile grid (JSONL + markdown; not a CI gate)
 	@$(PYTHON) benchmarks/profile/run_profile.py
 
 profile-callgrind: profile-sample-build
@@ -611,7 +577,7 @@ matrix-gate:
 # The C++ binary only measures and emits JSON; benchmarks/bench_engines.py (the consumer)
 # applies the shared stats module to produce the table, CIs, and ASCII box-plots. Manual,
 # not a CI gate. Tune samples via BENCH_SAMPLES / BENCH_BOOTSTRAP.
-bench-engines:
+bench-engines: ## C++ throughput vs std::regex/PCRE2/RE2 (if present)
 	@mkdir -p $(BUILD)
 	@flags=""; \
 	 if pkg-config --exists libpcre2-8; then flags="$$flags -DHAVE_PCRE2 $$(pkg-config --cflags --libs libpcre2-8)"; fi; \
@@ -623,7 +589,7 @@ bench-engines:
 
 # Multi-pattern which-matched (TABLE A) + extraction count (TABLE B). Informational only —
 # not a CI gate. RE2 and Hyperscan optional via pkg-config (libhs / hyperscan names vary).
-bench-multipattern:
+bench-multipattern: ## multi-pattern which-matched / extraction (RE2/HS optional)
 	@mkdir -p $(BUILD)
 	@flags=""; \
 	 if pkg-config --exists re2; then flags="$$flags -DHAVE_RE2 $$(pkg-config --cflags --libs re2)"; fi; \
@@ -682,10 +648,10 @@ install-smoke:
 
 # Installs the package from the repository root (root pyproject.toml builds the
 # abi3 extension against include/). uninstall removes it by distribution name.
-install:
+install: ## Install the Python package (pip)
 	$(PYTHON) -m pip install .
 
-uninstall:
+uninstall: ## Uninstall the Python package (pip)
 	$(PYTHON) -m pip uninstall -y real-regex
 
 # Cuts a calendar-versioned release. Computes YYYY.M.PATCH with the patch reset
@@ -694,7 +660,7 @@ uninstall:
 # derives its version from pyproject.toml, so it follows automatically), commits, tags and
 # pushes. Pushing the tag drives the Release workflow, which builds the wheels
 # and sdist and publishes to PyPI. Run from a clean main.
-release:
+release: ## Cut a calendar-versioned release (tag + push)
 	@test "$$(git symbolic-ref --short HEAD)" = main || { echo "release from main only"; exit 1; }
 	@test -z "$$(git status --porcelain)" || { echo "working tree not clean"; exit 1; }
 	@git fetch --tags --quiet origin
@@ -713,5 +679,5 @@ release:
 	 git tag "v$$version"; \
 	 git push origin HEAD "v$$version"
 
-clean:
+clean: ## Remove build artifacts
 	rm -rf $(BUILD) bindings/python/build bindings/python/real/*.so bindings/python/*.egg-info *.egg-info dist
