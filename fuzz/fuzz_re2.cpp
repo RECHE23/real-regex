@@ -74,6 +74,70 @@ namespace {
     return d.ok() && t.ok();
   }
 
+  // Known drop-in syntax gaps: RE2-valid constructs real::compat::re2 currently REJECTS. Each is a
+  // subset-direction violation of re2.hpp's "compiles everything RE2 compiles" superset claim — real
+  // debt, tracked here (printed KNOWN-GAP, never masked) instead of absorbed into the green engine-
+  // diff bucket. Measured 2026-07-17 against libre2 11.0.0 (see .recovery/re2-parity-measurement.md).
+  // Each needs a real::regex frontend fix (per-construct, dialect-gated) or an explicit doc-scoping
+  // of the superset claim; when one lands, delete its entry and the harness enforces parity for it
+  // from then on. EXACT patterns, not substrings: a substring allowlist would re-mask the very bugs
+  // this promotion exists to surface.
+  bool is_known_re2_gap(std::string_view pat)
+  {
+    static constexpr std::string_view gaps[] {
+      R"(\Qa.b\E)",          // \Q...\E literal quoting — real frontend has no \Q escape
+      R"(\x{10FFFF})",       // braced hex \x{...} — real accepts \xNN only
+      R"(\p{Any})",          // \p{Any} (every codepoint) — not in real's property set
+      R"(\p{^L})",           // negated \p{^...} spelling — real has \PL, not this form
+      R"((?U)a+)",           // (?U) ungreedy-swap inline flag — real: unknown extension
+      R"((?i-s)a)",          // unscoped inline flag with '-' removal — real rejects the global form
+      R"((?P<n>a)(?P<n>b))", // duplicate group name — RE2 tolerates; debatable, allowlisted pending a call
+    };
+    for (const auto g : gaps) {
+      if (pat == g) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Classify a compile-time (a)symmetry between the drop-in and true RE2. Returns true ONLY when both
+  // compiled (caller may then compare match results). The two asymmetric directions are NOT the same
+  // — the old symmetric note_engine collapsed them, which is what let a real parity bug hide:
+  //   drop accepts, RE2 rejects  → REAL superset (lookaround/possessive/\Z/…) — on-contract  → ENG.
+  //   drop rejects, RE2 accepts  → SUBSET VIOLATION of "compiles everything RE2 compiles" — a drop-in
+  //                                parity BUG (note_bug) unless it is a known, tracked gap (KNOWN-GAP).
+  // This realigns the harness with its own rule (header, line 15: never mask a drop-in parity bug).
+  bool classify_compile_asym(Report&          r,
+                             std::string_view pat,
+                             bool             dok,
+                             bool             tok,
+                             bool             suppress_allowlist = false)
+  {
+    if (dok && tok) {
+      return true;
+    }
+    if (dok && !tok) {
+      note_engine(r, "superset",
+                  std::string("pat=") + std::string(pat) + " — REAL accepts, RE2 rejects (on-contract)");
+      return false;
+    }
+    if (!dok && tok) {
+      if (!suppress_allowlist && is_known_re2_gap(pat)) {
+        note_engine(r, "KNOWN-GAP",
+                    std::string("pat=") + std::string(pat) +
+                      " — RE2 accepts, drop-in rejects (tracked debt; re2-parity-measurement.md)");
+      }
+      else {
+        note_bug(r, "subset-violation",
+                 std::string("pat=") + std::string(pat) +
+                   " — RE2 compiles it, drop-in does NOT (breaks the RE2 superset promise)");
+      }
+      return false;
+    }
+    return false; // both reject — agreement, nothing to report
+  }
+
   void check_partial_full(Report& r,
                           std::string_view pat,
                           std::string_view text)
@@ -82,14 +146,8 @@ namespace {
     ::RE2::Options  to;
     to.set_log_errors(false);
     const ::RE2 t(std::string(pat), to);
-    if (!both_ok(d, t)) {
-      if (d.ok() != t.ok()) {
-        // REAL superset (lookaround, possessive, \p{16.0 scripts}, …) or RE2-only rejection.
-        note_engine(r, "compile-asym",
-                    std::string("pat=") + std::string(pat) + " drop.ok=" + (d.ok() ? "1" : "0") +
-                      " true.ok=" + (t.ok() ? "1" : "0"));
-      }
-      return;
+    if (!classify_compile_asym(r, pat, d.ok(), t.ok())) {
+      return; // superset / known-gap / subset-violation all reported by classify; only both-ok proceeds
     }
     const bool fd {drop::RE2::FullMatch(text, d)};
     const bool ft {::RE2::FullMatch(text, t)};
@@ -299,6 +357,21 @@ namespace {
     }
   }
 
+  // Compile-parity probe: exercises ONLY the accept/reject decision (no match comparison), so the
+  // promoted subset-direction net has explicit curated inputs. Plain RE2 syntax real must accept,
+  // deliberate REAL supersets, and the known gaps all route through classify_compile_asym.
+  void check_compile_parity(Report&          r,
+                            std::string_view pat)
+  {
+    const drop::RE2 d(pat);
+    ::RE2::Options  to;
+    to.set_log_errors(false);
+    const ::RE2 t(std::string(pat), to);
+    if (classify_compile_asym(r, pat, d.ok(), t.ok())) {
+      note_ok(r, std::string("compile-parity ") + std::string(pat));
+    }
+  }
+
   // Unicode / class engine differences — allowlisted with proof, never silently.
   void check_engine_word_class(Report& r)
   {
@@ -381,6 +454,28 @@ namespace {
     check_find_and_consume(r, R"((\d+))", "12 34 56");
     check_find_and_consume(r, "a+", "aaabaaa");
 
+    // --- compile parity: the subset-direction net (real must compile everything RE2 compiles) ---
+    // Plain RE2 syntax real MUST accept (both-ok; a regression here reddens as a subset-violation):
+    check_compile_parity(r, R"(\d+)");
+    check_compile_parity(r, "[[:alpha:]]");
+    check_compile_parity(r, "(?i)abc");
+    check_compile_parity(r, R"(\pL)");
+    check_compile_parity(r, R"(\p{L})");
+    check_compile_parity(r, R"(\p{Nd})");
+    check_compile_parity(r, "(?P<name>a)");
+    // Deliberate REAL supersets (drop accepts, RE2 rejects → ENG, on-contract):
+    check_compile_parity(r, R"(\Z)");
+    check_compile_parity(r, "(?>a)");
+    check_compile_parity(r, "a*+");
+    // Known RE2 gaps real currently rejects (→ KNOWN-GAP, tracked debt — NOT a fail):
+    check_compile_parity(r, R"(\Qa.b\E)");
+    check_compile_parity(r, R"(\x{10FFFF})");
+    check_compile_parity(r, R"(\p{Any})");
+    check_compile_parity(r, R"(\p{^L})");
+    check_compile_parity(r, R"((?U)a+)");
+    check_compile_parity(r, R"((?i-s)a)");
+    check_compile_parity(r, R"((?P<n>a)(?P<n>b))");
+
     // --- Engine-diff allowlist (justified) ---
     check_engine_word_class(r);
   }
@@ -406,6 +501,23 @@ namespace {
     }
     else {
       std::cout << "FATAL: can-fail did not trip\n";
+    }
+
+    // can-fail #2: a subset-violation with the allowlist SUPPRESSED must become a BUG. Proves the
+    // promoted subset direction can redden, and that the allowlist is the only thing sparing the
+    // known gaps (remove a gap's entry and this is exactly what the harness would do to it).
+    const int   bugs_before {r.bugs};
+    const drop::RE2 dg(R"(\Qx\E)"); // real rejects \Q...\E; true RE2 accepts it → subset direction
+    ::RE2::Options  tgo;
+    tgo.set_log_errors(false);
+    const ::RE2 tg(std::string(R"(\Qx\E)"), tgo);
+    classify_compile_asym(r, R"(\Qx\E)", dg.ok(), tg.ok(), /*suppress_allowlist=*/true);
+    if (r.bugs > bugs_before) {
+      std::cout << "can-fail subset-violation: reddened as expected (allowlist suppressed)\n";
+      ++r.canfail_tripped;
+    }
+    else {
+      std::cout << "FATAL: subset-violation can-fail did not trip\n";
     }
   }
 
