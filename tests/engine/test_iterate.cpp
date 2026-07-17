@@ -82,37 +82,48 @@ TEST(empty_matches_advance_whole_codepoints)
 // CI finding (python differential macos-3.10, 2026-07-17): empty-leading alternation
 // + quasi-shorthand class with EURO SIGN (U+20AC, above the European page → cp_hi path)
 // must keep the mid-string two-char match under find_iter.
-// Engine offsets are BYTE indices (UTF-8); the Python binding maps them to codepoint
-// spans [(0,0), (4,6), (7,7)]. Here the mid match "€€" is bytes [10,16) of "€😀é €€x"
-// (len 17). Pin at the engine layer so sanitize/ASan builds exercise the path continuously.
+//
+// Engine offsets are BYTE indices. Subject "€😀é €€x" as UTF-8 is 17 bytes; mid "€€" is
+// [10,16). Pattern/text are built from \u / \x escapes only (no raw UTF-8 in the source
+// file) so Apple clang source-charset cannot alter the bytes — the first pin revision
+// used UTF-8 literals and failed only on macos-clang CI (4 spans, bogus [0,7) "€😀")
+// while Python-on-macOS and every Linux leg stayed green.
 TEST(find_iter_euro_class_empty_alt_keeps_mid_match)
 {
   const real::flags fl   {real::flags::multiline | real::flags::dotall};
-  const real::regex rx   {R"(^|[\w€]{2}|\137?[é]??$)", fl};
-  const std::string text {"€😀é €€x"};
+  // ^ | [\w€]{2} | _?[é]?? $   — € = U+20AC, é = U+00E9, _ via octal \137
+  const real::regex rx   {R"(^|[\w\u20AC]{2}|\137?[\u00E9]??$)", fl};
+  // € = e2 82 ac, 😀 = f0 9f 98 80, é = c3 a9, space, €€, x
+  const std::string text {"\xE2\x82\xAC\xF0\x9F\x98\x80\xC3\xA9 \xE2\x82\xAC\xE2\x82\xACx"};
   EXPECT_EQ(text.size(), 17U);
   std::vector<std::pair<std::size_t, std::size_t>> spans;
   for (const auto& m : rx.find_iter(text)) {
     spans.emplace_back(m.start(), m.end());
   }
   EXPECT_EQ(spans.size(), 3U);
-  EXPECT_EQ(spans[0].first, 0U);
-  EXPECT_EQ(spans[0].second, 0U);
-  EXPECT_EQ(spans[1].first, 10U);
-  EXPECT_EQ(spans[1].second, 16U); // "€€" as UTF-8 bytes
-  EXPECT_EQ(text.substr(spans[1].first, spans[1].second - spans[1].first), std::string {"€€"});
-  EXPECT_EQ(spans[2].first, 17U);
-  EXPECT_EQ(spans[2].second, 17U);
-  // Stress the path (ASan/UBSan suite): recompile + iterate many times.
+  if (spans.size() == 3U) {
+    EXPECT_EQ(spans[0].first, 0U);
+    EXPECT_EQ(spans[0].second, 0U);
+    EXPECT_EQ(spans[1].first, 10U);
+    EXPECT_EQ(spans[1].second, 16U); // "€€" as UTF-8 bytes
+    EXPECT_EQ(text.substr(10, 6), std::string {"\xE2\x82\xAC\xE2\x82\xAC"});
+    EXPECT_EQ(spans[2].first, 17U);
+    EXPECT_EQ(spans[2].second, 17U);
+  }
+  // Stress (sanitize builds): recompile + iterate; one aggregate check, not 1000 fail lines.
+  std::size_t wrong {};
   for (int i = 0; i < 1000; ++i) {
-    const real::regex again {R"(^|[\w€]{2}|\137?[é]??$)", fl};
+    const real::regex again {R"(^|[\w\u20AC]{2}|\137?[\u00E9]??$)", fl};
     std::size_t       n     {};
     for (const auto& m : again.find_iter(text)) {
       EXPECT(m.start() <= m.end());
       ++n;
     }
-    EXPECT_EQ(n, 3U);
+    if (n != 3U) {
+      ++wrong;
+    }
   }
+  EXPECT_EQ(wrong, 0U);
 }
 
 TEST(replace_basic_and_count)
