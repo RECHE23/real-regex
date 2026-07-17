@@ -53,7 +53,7 @@ SCIFORGE_TOOLS ?= ../sciforge/tools
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep -vE 'include/real/unicode/unicode_(fold|props|property|script|binprop|scx)\.hpp')
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-        lint misra fuzz fuzz-compat fuzz-re2 exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check format format-check full-local-gate gate-bump gate-doc gate-test clean \
+        lint misra fuzz fuzz-compat fuzz-re2 check-capi-abi exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check format format-check full-local-gate gate-bump gate-doc gate-test clean \
         bench-engines bench-multipattern bench-duel bench-matrix matrix-gate \
         profile-sample-build profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers
@@ -72,6 +72,7 @@ help:
 	@echo "  make fuzz       libFuzzer robustness fuzzing (Clang; FUZZ_TIME=secs)"
 	@echo "  make fuzz-compat  Differential fuzz: real::compat vs std::regex (Clang; FUZZ_TIME=secs)"
 	@echo "  make fuzz-re2   Differential: real::compat::re2 vs true libre2 (needs pkg-config re2)"
+	@echo "  make check-capi-abi  C ABI golden vs real_capi.h + enum/flag pins (hardening #4)"
 	@echo "  make tsan       ThreadSanitizer smoke of concurrent std_engine (Clang)"
 	@echo "  make tsan-core  ThreadSanitizer smoke of core shared-confirm / immut caches (Clang)"
 	@echo "  make doc        Generate API reference (Doxygen) with embedded coverage"
@@ -300,6 +301,15 @@ fuzz-re2:
 	@REAL_RE2_DIFF_CANFAIL=1 $(FUZZ_DIR)/fuzz_re2 >/dev/null
 	@echo "fuzz-re2: PASS (parity green + can-fail intact)"
 
+# C ABI frozen-surface pin (hardening #4): golden GENERATED from bindings/c/real_capi.h
+# (never hand-edited). --check fails if header and golden diverge. Can-fail proof:
+#   python3 tools/gen_capi_abi_golden.py --inject-enum REAL_ERR_SYNTAX=99 --stdout > tests/bindings/capi_abi_golden.txt
+#   make check-capi-abi   # must exit non-zero; then: python3 tools/gen_capi_abi_golden.py
+# Enum/flag value pins live in tests/bindings/test_capi_abi.cpp (real::flags cross-check).
+check-capi-abi:
+	@python3 tools/gen_capi_abi_golden.py --check
+	@echo "check-capi-abi: PASS (golden matches real_capi.h)"
+
 doc: coverage-html
 	mkdir -p $(BUILD)/doc
 	doxygen Doxyfile
@@ -506,6 +516,8 @@ full-local-gate:
 	@$(MAKE) check-layers
 	@echo "── [4/18] check-pins"
 	@$(MAKE) check-pins
+	@echo "── check-capi-abi (hardening #4 — C ABI golden vs real_capi.h)"
+	@$(MAKE) check-capi-abi
 	@echo "── [5/18] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
 	@$(MAKE) doc-no-coverage
 	@echo "── [6/18] doc-check (CI-pinned Doxygen when Docker is available)"

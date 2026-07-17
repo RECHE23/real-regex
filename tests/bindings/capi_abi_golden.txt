@@ -1,0 +1,40 @@
+# REAL C ABI golden — GENERATED from bindings/c/real_capi.h
+# DO NOT EDIT BY HAND. Regenerate: python3 tools/gen_capi_abi_golden.py
+# Source of truth: the header. This file is a pin so silent contract drift fails CI.
+
+# --- enums (ordinal contract) ---
+ENUM REAL_ERR_NONE=0
+ENUM REAL_ERR_SYNTAX=1
+ENUM REAL_ERR_UNSUPPORTED=2
+ENUM REAL_MODE_SEARCH=0
+ENUM REAL_MODE_MATCH=1
+ENUM REAL_MODE_FULLMATCH=2
+
+# --- flags (documented C bitmask; must equal real::flags) ---
+FLAG icase=1
+FLAG multiline=2
+FLAG dotall=4
+FLAG bytes=8
+FLAG verbose=16
+FLAG ecma=32
+FLAG ascii=64
+FLAG dollar_endonly=128
+
+# --- functions (normalized prototypes, param names stripped) ---
+FN real_regex* real_compile(const char*,size_t,uint32_t,char*,size_t,int*)
+FN size_t real_group_count(const real_regex*)
+FN size_t real_group_name(const real_regex*,size_t,char*,size_t)
+FN void real_free(real_regex*)
+FN real_iter* real_find_iter(const real_regex*,const char*,size_t)
+FN real_iter* real_find_iter_at(const real_regex*,const char*,size_t,size_t)
+FN real_iter* real_find_iter_between(const real_regex*,const char*,size_t,size_t,size_t)
+FN int real_iter_next(real_iter*,size_t*)
+FN void real_iter_free(real_iter*)
+FN size_t real_count_matches(const real_regex*,const char*,size_t)
+FN int real_match(const real_regex*,const char*,size_t,size_t,size_t,int,size_t*)
+FN size_t real_sub(const real_regex*,const char*,size_t,const char*,size_t,size_t,char*,size_t,size_t*,char*,size_t)
+FN real_regex_set* real_set_compile(const char*const*,const size_t*,size_t,uint32_t,char*,size_t,int*)
+FN size_t real_set_size(const real_regex_set*)
+FN void real_set_free(real_regex_set*)
+FN int real_set_is_match(const real_regex_set*,const char*,size_t)
+FN int real_set_matches(const real_regex_set*,const char*,size_t,uint8_t*)

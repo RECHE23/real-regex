@@ -42,7 +42,7 @@ jobs:
           tar -xzf /tmp/uc.tgz -C /tmp
           cmake -S /tmp/uncrustify-uncrustify-0.82.0 -B /tmp/uc-build && cmake --build /tmp/uc-build -j
           mkdir -p "$HOME/.local/bin" && cp /tmp/uc-build/uncrustify "$HOME/.local/bin/"
-      - name: preflight (format → version → layers → pins → doc)
+      - name: preflight (format → version → layers → pins → capi-abi → doc)
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"
@@ -56,6 +56,10 @@ jobs:
           make -C real-regex check-layers
           echo "── check-pins"
           make -C real-regex check-pins SCIFORGE_TOOLS="$TOOLS"
+          # Hardening #4: golden GENERATED from bindings/c/real_capi.h must match the header
+          # (silent ABI drift + re-vendor no longer goes green). Enum/flag pins are in the test suite.
+          echo "── check-capi-abi (C ABI surface golden)"
+          make -C real-regex check-capi-abi
           echo "── doc-no-coverage (Doxygen WARN_AS_ERROR)"
           make -C real-regex doc-no-coverage
 
