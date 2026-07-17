@@ -414,6 +414,19 @@ namespace real {
       std::int16_t rare_byte   {-1};
       std::uint8_t rare_offset {}; //!< The fixed byte offset of \ref rare_byte from the match start.
 
+      //! \brief Rare *discriminant* with optional mono-byte before it (URL `https?://…`).
+      //!        Search: `memchr(rare_disc)` (SIMD single-byte) → back-verify
+      //!        `[prefix][opt?][disc][after]` → return match start. Prefer this over a weak
+      //!        literal prefix (`http`) when the disc is rarer than the first-byte filter.
+      //!        Unlike \ref rare_byte, the disc offset from match start is **not** fixed when
+      //!        \ref rare_disc_opt is set (`s?` → colon at 4 or 5). -1 = unarmed.
+      std::int16_t        rare_disc            {-1}; //!< Discriminant byte (e.g. `:`).
+      std::array<char, 8> rare_disc_prefix     {};   //!< Required bytes before the optional (e.g. `http`).
+      std::uint8_t        rare_disc_prefix_len {};   //!< Length of \ref rare_disc_prefix.
+      std::int16_t        rare_disc_opt        {-1}; //!< Optional mono-byte before the disc (`s`), or -1.
+      std::array<char, 4> rare_disc_after      {};   //!< Fixed bytes after the disc (e.g. `//`).
+      std::uint8_t        rare_disc_after_len  {};   //!< Length of \ref rare_disc_after.
+
       //! \brief A *required inner literal* every match must contain (the memmem candidate the inner-literal
       //!        prefilter scans for), and how many top-level children precede it — the prefix the prefilter
       //!        reverse-matches from a candidate back to the match start. `inner_literal_len == 0` = none;

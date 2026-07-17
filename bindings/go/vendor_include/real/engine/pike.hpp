@@ -398,17 +398,19 @@ namespace real::detail {
    */
   struct pike_state : basic_pike_state<thread_list, std::vector<eps_entry>>
   {
-    lookaround_scratch          lookaround;                  //!< Isolated sub-scratch for bounded lookaround evaluation.
-    capture_pool                pool;                        //!< OPT D1: copy-on-write capture blocks (heap-backed).
-    std::optional<lazy_dfa>     fwd_dfa;                     //!< Fallback when immut is null; prefer shared_fwd_dfa (D1).
-    std::optional<reverse_dfa>  rev_dfa;                     //!< Fallback reverse; prefer shared_rev_dfa (D1).
-    const void *                dfa_program       {nullptr}; //!< Program the per-state DFAs were built for (fallback).
-    std::optional<reverse_dfa>  il_prefix_rev;               //!< Fallback IL prefix reverse; prefer shared_il_prefix_rev (D1).
-    const void *                il_prefix_for     {nullptr}; //!< Fallback: prefix program il_prefix_rev was built for.
-    const void *                il_text           {nullptr}; //!< IL: the haystack \ref il_abandoned refers to (reset the flag when it changes).
-    bool                        il_abandoned      {false};   //!< IL: a linearity/density guard tripped on this haystack — stay on the core.
-    std::uint32_t               il_density_cands  {};        //!< O1: IL candidates seen on this haystack (density sample).
-    std::size_t                 il_density_origin {npos};    //!< O1: byte offset of the first IL candidate this haystack.
+    lookaround_scratch          lookaround;                    //!< Isolated sub-scratch for bounded lookaround evaluation.
+    capture_pool                pool;                          //!< OPT D1: copy-on-write capture blocks (heap-backed).
+    std::optional<lazy_dfa>     fwd_dfa;                       //!< Fallback when immut is null; prefer shared_fwd_dfa (D1).
+    std::optional<reverse_dfa>  rev_dfa;                       //!< Fallback reverse; prefer shared_rev_dfa (D1).
+    const void *                dfa_program         {nullptr}; //!< Program the per-state DFAs were built for (fallback).
+    std::optional<reverse_dfa>  il_prefix_rev;                 //!< Fallback IL prefix reverse; prefer shared_il_prefix_rev (D1).
+    const void *                il_prefix_for       {nullptr}; //!< Fallback: prefix program il_prefix_rev was built for.
+    const void *                il_text             {nullptr}; //!< IL: the haystack \ref il_abandoned refers to (reset the flag when it changes).
+    bool                        il_abandoned        {false};   //!< IL: a linearity/density guard tripped on this haystack — stay on the core.
+    std::uint32_t               il_density_cands    {};        //!< O1: IL candidates seen on this haystack (density sample).
+    std::size_t                 il_density_origin   {npos};    //!< O1: byte offset of the first IL candidate this haystack.
+    const void *                rare_disc_text      {nullptr}; //!< Rare-disc: haystack \ref rare_disc_abandoned refers to.
+    bool                        rare_disc_abandoned {false};   //!< Rare-disc density guard: stay on prefix for this haystack.
     // D1-AC fields placed LAST (own reason as pattern_hints::alternation_branch_count): inserting
     // here right after il_prefix_for -- as an earlier draft of this struct did -- shifted il_text/
     // il_abandoned/il_density_cands/il_density_origin (the inner-literal density-gate fields, read
@@ -2921,6 +2923,37 @@ namespace real::detail {
       const pattern_hints& hints {prog_.hints};
       if (hints.anchored_start) {
         return pos == start ? pos : npos; // one shot at the start
+      }
+      // Rare discriminant (URL `https?://…`): memchr the rare mid-byte, back-verify optional
+      // prefix — prefer over a weak literal prefix (`http`) when armed. Meta-seam for differentials.
+      // Runtime-only: the seam is not constexpr (same shape as IL / lazy-DFA toggles).
+      // Density abandon (sticky per haystack): dense `:` filler makes memchr+verify lose to prefix.
+      if (!std::is_constant_evaluated() && hints.rare_disc >= 0 && !rare_disc_route_disabled()) {
+        bool use_disc {true};
+        if constexpr (requires(State & s) {
+          s.rare_disc_abandoned;
+        }) {
+          if (state_.rare_disc_text != static_cast<const void*>(text.data())) {
+            state_.rare_disc_abandoned = false;
+            state_.rare_disc_text      = static_cast<const void*>(text.data());
+          }
+          use_disc = !state_.rare_disc_abandoned;
+        }
+        if (use_disc) {
+          bool              density_abandon {false};
+          const std::size_t cand            {find_rare_disc_candidate(text, pos, hints, &density_abandon)};
+          if (density_abandon) {
+            if constexpr (requires(State & s) {
+              s.rare_disc_abandoned;
+            }) {
+              state_.rare_disc_abandoned = true;
+            }
+            // Fall through to prefix / first-byte below for this candidate.
+          }
+          else {
+            return cand;
+          }
+        }
       }
       if (hints.prefix_size >= 2) {
         return find_prefix(text, pos, std::string_view(hints.prefix.data(), hints.prefix_size));

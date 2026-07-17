@@ -499,6 +499,42 @@ TEST(fixed_shape_internal_saves_fast_path)
   EXPECT(date.search(s4).end(0) == s4.size());
 }
 
+// OPT rare-discriminant (URL `https?://…`): memchr a rare mid-byte whose offset is *not* fixed when an
+// optional mono-byte (`s?`) sits before it. Must arm past the optional, prefer the disc over a weak
+// first-byte/`http` prefix, and never steal fixed-offset rare_byte or `@` inner-literal cases.
+TEST(rare_disc_url_is_armed)
+{
+  const auto url {hints_of(R"(https?://[^\s]+)")};
+  EXPECT_EQ(url.rare_disc, static_cast<std::int16_t>(':'));
+  EXPECT_EQ(static_cast<int>(url.rare_disc_prefix_len), 4);
+  EXPECT_EQ(std::string_view(url.rare_disc_prefix.data(), url.rare_disc_prefix_len), "http"sv);
+  EXPECT_EQ(url.rare_disc_opt, static_cast<std::int16_t>('s'));
+  EXPECT_EQ(static_cast<int>(url.rare_disc_after_len), 2);
+  EXPECT_EQ(std::string_view(url.rare_disc_after.data(), url.rare_disc_after_len), "//"sv);
+  // Pure `http://` (no optional): disc still arms; offset is fixed but memchr+back-verify is fine.
+  const auto plain {hints_of(R"(http://[^\s]+)")};
+  EXPECT_EQ(plain.rare_disc, static_cast<std::int16_t>(':'));
+  EXPECT_EQ(plain.rare_disc_opt, static_cast<std::int16_t>(-1));
+  EXPECT_EQ(static_cast<int>(plain.rare_disc_prefix_len), 4);
+  EXPECT_EQ(std::string_view(plain.rare_disc_after.data(), plain.rare_disc_after_len), "//"sv);
+}
+
+TEST(rare_disc_does_not_steal_rare_byte_or_inner_literal)
+{
+  // Date: fixed-offset `-` rare_byte remains the route; no URL-shaped disc.
+  const auto date {hints_of("[0-9]{4}-[0-9]{2}-[0-9]{2}", real::flags::ascii)};
+  EXPECT_EQ(date.rare_byte, static_cast<std::int16_t>('-'));
+  EXPECT_EQ(date.rare_disc, static_cast<std::int16_t>(-1));
+  // Email: `@` inner-literal stays armed; no rare_disc takeover.
+  const auto email {hints_of(R"((\w+)@(\w+))")};
+  EXPECT(email.inner_literal_len > 0);
+  EXPECT_EQ(email.rare_disc, static_cast<std::int16_t>(-1));
+  // Strong first-byte literal with no rare mid-byte: disc stays off.
+  const auto lit {hints_of("foobar\\d+")};
+  EXPECT_EQ(lit.rare_disc, static_cast<std::int16_t>(-1));
+  EXPECT(lit.prefix_size >= 2);
+}
+
 // OPT rare-byte-at-fixed-offset: a required rare literal (the `-`/`@`) drives a memchr scan, backing up to
 // the candidate start. The prefilter only filters — the VM verifies — so it must never miss a match nor
 // invent one, at any position. These are the teeth for that soundness.
