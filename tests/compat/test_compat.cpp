@@ -1397,3 +1397,38 @@ TEST(compat_strict_policy_default_and_observability)
   }
   EXPECT(bad);
 }
+
+TEST(compat_native_only_syntax_never_uses_real)
+{
+  // The ecma grammar gate (frontend/ast.hpp): possessive quantifiers (X*+/X++/X?+/X{n,m}+),
+  // atomic groups (?>...), Python named groups (?P<name> and (?#...) comments are native-dialect
+  // constructs — ECMAScript has none of them (V8: SyntaxError). Under compat, real must reject
+  // them; the layer then treats the pattern exactly like any other real-rejected input: strict
+  // (the default) throws (std's own error when the local std also rejects, the fallback advisory
+  // when it accepts — libstdc++ tolerates some of these with its own non-spec semantics), and
+  // policy::fallback delegates to PURE std. What must NEVER happen, under either policy, is the
+  // real backend running native possessive/atomic semantics behind the std::regex API. Caught by
+  // fuzz-compat on CI Linux: pattern "[^a]?+\xC3" — real (possessive) pos=3/len=2 vs libstdc++
+  // (([^a]?)+) pos=2/len=3. Seed committed as fuzz/corpus/compat_ecma_possessive.
+  const auto outcome {[](auto make) -> int {
+                        try {
+                          return make().uses_real() ? 2 : 1; // 2 = real backend (the bug)
+                        }
+                        catch (const std::regex_error&) {
+                          return 0;                          // compat threw (strict or invalid-for-both)
+                        }
+                      }};
+  for (const char* pat : {"a?+", "a*+", "a++", "a{1,2}+", "[^a]?+\xC3",
+                          "(?>a)b", "(?P<n>a)", "(?#c)a"}) {
+    EXPECT(outcome([pat] { return rc::regex(pat); }) != 2);       // strict: throws, never real
+    EXPECT(outcome([pat] {                                        // fallback: pure std, never real
+                     return rc::regex(pat, rc::regex_constants::ECMAScript, rc::policy::fallback);
+                   }) != 2);
+  }
+
+  // The other side of the gate: the NATIVE dialect keeps all four extensions (ecma-only gate).
+  EXPECT(real::regex("a?+b").search("]b").matched());
+  EXPECT(real::regex("(?>a)b").search("ab").matched());
+  EXPECT(real::regex("(?P<n>a)b").search("ab").matched());
+  EXPECT(real::regex("(?#c)ab").search("ab").matched());
+}

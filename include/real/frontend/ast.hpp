@@ -301,6 +301,14 @@ namespace real::detail {
       return has_flag(current_flags(), flags::verbose);
     }
 
+    //! \brief True in the ECMAScript grammar. `flags::ecma` is not scopable, so the scope-stack
+    //!        base always carries it; reading it here keeps the flag-scope ratchet's global-read
+    //!        count at its terminal state (no new `ecma_` member reads).
+    [[nodiscard]] constexpr bool is_ecma() const
+    {
+      return has_flag(current_flags(), flags::ecma);
+    }
+
     //! \brief True when icase (`re.I`) is in force at the current scope (a scoped `(?i:...)` honoured).
     [[nodiscard]] constexpr bool is_icase() const
     {
@@ -935,7 +943,10 @@ namespace real::detail {
           return atom;
       }
       const bool lazy       {accept('?')};
-      const bool possessive {!lazy && accept('+')}; // X*+/X++/X?+/X{n,m}+ — mutually exclusive with lazy
+      // X*+/X++/X?+/X{n,m}+ — native dialect only, mutually exclusive with lazy. ECMAScript has no
+      // possessive quantifiers, so under ecma the '+' stays unconsumed and hits the multiple-repeat
+      // check below (SyntaxError, agreeing with V8 and both std libraries).
+      const bool possessive {!is_ecma() && !lazy && accept('+')};
       if (!eof()) {
         const char   ch          {peek()};
         std::int32_t ignored_min {};
@@ -1109,8 +1120,12 @@ namespace real::detail {
      *        | '(?<name>'  alternation ')'   named (.NET style)
      * \endcode
      * Unsupported extensions (lookaround, backreferences, atomic groups,
-     * scoped inline flags) fail with a message naming the feature. Nesting
-     * beyond \ref max_nesting_depth is rejected.
+     * scoped inline flags) fail with a message naming the feature. Under
+     * `flags::ecma` the native-only constructs `(?#...)`, `(?P<name>` and the
+     * atomic group `(?>...)` fail as "unknown extension" — the ECMAScript
+     * grammar has no such groups (possessive quantifiers are gated the same
+     * way at their parse site). Nesting beyond \ref max_nesting_depth is
+     * rejected.
      *
      * \param[in,out] out The AST being built.
      * \return The index of the \ref node_kind::group node.
@@ -1126,7 +1141,7 @@ namespace real::detail {
       std::int32_t group        {-1};
       bool         scoped_flags {false}; //!< A (?flags:...) group pushed a scope to pop after the body.
       if (accept('?')) {
-        if (accept('#')) {
+        if (!is_ecma() && accept('#')) { // (?#...) comments are native-dialect; under ecma: unknown extension
           // (?#...) comment: skip to the first ')' (a backslash is not special here, like re);
           // emits nothing. Works the same in verbose and non-verbose mode.
           while (!eof() && peek() != ')') {
@@ -1142,7 +1157,7 @@ namespace real::detail {
         if (accept(':')) {
           // non-capturing
         }
-        else if (accept('P')) {
+        else if (!is_ecma() && accept('P')) { // (?P<name>/(?P= are native-dialect; under ecma: unknown extension
           if (accept('<')) {
             group = new_group(out, open_pos);
             parse_group_name(out, group);
@@ -1164,7 +1179,7 @@ namespace real::detail {
         else if (!eof() && (peek() == '=' || peek() == '!')) {
           return parse_lookaround(out, look_dir::ahead, open_pos);
         }
-        else if (!eof() && peek() == '>') {
+        else if (!is_ecma() && !eof() && peek() == '>') { // atomic (?>...) is native-dialect; under ecma: unknown extension
           return parse_atomic_group(out, open_pos);
         }
         else if (!eof() && peek() == '(') {
