@@ -492,49 +492,56 @@ gate-test: ## [gates] Calibrated gate for a tests/-only change (test + sanitize 
 
 full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate of record)
 	@echo "full-local-gate: start (fail-fast — cheap first, first red stops the train)"
-	@echo "── [1/18] format-check"
+	@echo "── [1/20] format-check"
 	@$(MAKE) format-check
-	@echo "── [2/18] version-check"
+	@echo "── [2/20] version-check"
 	@$(MAKE) version-check
-	@echo "── [3/18] check-layers"
+	@echo "── [3/20] check-layers"
 	@$(MAKE) check-layers
-	@echo "── [4/18] check-pins"
+	@echo "── [4/20] check-pins"
 	@$(MAKE) check-pins
-	@echo "── check-capi-abi (hardening #4 — C ABI golden vs real_capi.h)"
+	@echo "── [5/20] check-capi-abi (hardening #4 — C ABI golden vs real_capi.h)"
 	@$(MAKE) check-capi-abi
-	@echo "── [5/18] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
+	@echo "── [6/20] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
 	@$(MAKE) doc-no-coverage
-	@echo "── [6/18] doc-check (CI-pinned Doxygen when Docker is available)"
+	@echo "── [7/20] doc-check (CI-pinned Doxygen when Docker is available)"
 	@$(MAKE) doc-check
-	@echo "── [7/18] misra (single synthetic TU)"
+	@echo "── [8/20] misra (single synthetic TU)"
 	@$(MAKE) misra
-	@echo "── [8/18] c-test"
+	@echo "── [9/20] c-test"
 	@$(MAKE) c-test
-	@echo "── [9/18] matrix-gate"
+	@echo "── [10/20] matrix-gate"
 	@$(MAKE) matrix-gate
-	@echo "── [10/18] fowler-compat"
+	@echo "── [11/20] fowler-compat"
 	@$(MAKE) fowler-compat
-	@echo "── [11/18] exhaustive-compat"
+	@echo "── [12/20] exhaustive-compat"
 	@$(MAKE) exhaustive-compat
-	@echo "── [12/18] test (default CXX)"
+	@echo "── [13/20] test (default CXX)"
 	@$(MAKE) test
-	@echo "── [13/18] rust-test"
+	@echo "── [14/20] rust-test"
 	@$(MAKE) rust-test
-	@echo "── [14/18] rust-publish-check"
+	@echo "── [15/20] rust-publish-check"
 	@$(MAKE) rust-publish-check
-	@echo "── [15/18] python-test"
+	@echo "── [16/20] python-test"
 	@$(MAKE) python-test
-	@echo "── [16/18] lint"
+	# Go leg: go-check-vendor regenerates the committed vendor tree from the live headers and fails
+	# on drift — the one binding NOT otherwise in this gate (its sources are vendored, not built from
+	# include/ here). Skipped with a warning when go is absent (the CI go job is the backstop), same
+	# shape as the GCC leg. Closes the gap where an include/ change that stales vendor_include/ was
+	# caught only in CI.
+	@echo "── [17/20] go-check-vendor + go-test (Go leg; skipped if go absent)"
+	@if command -v go >/dev/null 2>&1; then $(MAKE) go-check-vendor && $(MAKE) go-test; else echo "full-local-gate: WARN — go absent, Go leg skipped (CI covers it)"; fi
+	@echo "── [18/20] lint"
 	@set -euo pipefail; \
 	  mkdir -p $(BUILD); \
 	  $(MAKE) lint 2>&1 | tee $(BUILD)/lint.log; \
 	  if grep -qE 'warning:|error:' $(BUILD)/lint.log; then \
 	    echo "full-local-gate: FAIL at lint (see $(BUILD)/lint.log)"; exit 1; \
 	  fi
-	@echo "── [17/18] test (GCC leg) + sanitize (slowest last)"
+	@echo "── [19/20] test (GCC leg) + sanitize (slowest last)"
 	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "full-local-gate: WARN — $(GXX) absent, GCC leg skipped (CI covers it)"; fi
 	@$(MAKE) sanitize
-	@echo "── [18/18] coverage-check (line floor $(COV_FLOOR)% — closes the P0 gate hole)"
+	@echo "── [20/20] coverage-check (line floor $(COV_FLOOR)% — closes the P0 gate hole)"
 	@$(MAKE) coverage-check
 	@echo "full-local-gate: ALL gates green (cheap→doc→tests→lint→sanitize→coverage; first red would have stopped the train)"
 
