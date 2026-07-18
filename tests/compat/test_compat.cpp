@@ -399,8 +399,8 @@ TEST(compat_nullable_captured_repeat_group)
   {
     const std::string got {rc::regex_replace(subj, re, std::string("$1"))};
     const std::string ref {std::regex_replace(subj, sre, std::string("$1"))};
-    EXPECT_EQ(got, ref);
-    EXPECT_EQ(got, std::string("")); // std's empty-final-iteration capture, on both sides now
+    EXPECT_EQ(got, ref); // convergence with the LOCAL std is the whole contract -- the value itself
+                         // is stdlib-variant ("" on libstdc++/libc++, "ab" on MS STL), so no value pin
   }
 
   // Pin 2 -- sregex_token_iterator on the sub-group (field 1): ROUTED to std, so compat == std.
@@ -426,8 +426,16 @@ TEST(compat_nullable_captured_repeat_group)
     std::smatch sm;
     EXPECT(rc::regex_search(subj, rm, re));
     EXPECT(std::regex_search(subj, sm, sre));
-    EXPECT_EQ(rm.str(1), std::string("ab")); // real: last CONSUMING iteration (RE2/Rust/Go lineage)
-    EXPECT_EQ(sm.str(1), std::string(""));   // std: extra empty final iteration (ECMAScript backtracker)
+    EXPECT_EQ(rm.str(1), std::string("ab")); // real: last CONSUMING iteration (RE2/Rust/Go lineage) -- stable everywhere
+    // The std edge is STDLIB-VARIANT (the windows-msvc CI leg caught this when it was pinned to ""):
+    // libstdc++/libc++ capture the extra empty final iteration -> "" (the documented residue);
+    // MS STL keeps the last non-empty iteration, agreeing with real's lineage -> "ab" (NO residue
+    // on that platform). Each edge locked per-stdlib so a change on either side still reddens loudly.
+#if defined(_MSVC_STL_VERSION)
+    EXPECT_EQ(sm.str(1), std::string("ab"));
+#else
+    EXPECT_EQ(sm.str(1), std::string(""));
+#endif
   }
 
   // A second shape of the same class: a bounded-min loop (`{2,}`) whose body is a nullable
@@ -446,8 +454,12 @@ TEST(compat_nullable_captured_repeat_group)
     std::smatch sm2;
     EXPECT(rc::regex_search(subj2, rm2, re2));
     EXPECT(std::regex_search(subj2, sm2, sre2));
-    EXPECT_EQ(rm2.str(1), std::string("x")); // golden: real's last consuming iteration
-    EXPECT_EQ(sm2.str(1), std::string(""));  // golden: std's empty final iteration
+    EXPECT_EQ(rm2.str(1), std::string("x")); // golden: real's last consuming iteration -- stable everywhere
+#if defined(_MSVC_STL_VERSION)
+    EXPECT_EQ(sm2.str(1), std::string("x")); // MS STL agrees with real's lineage (see Pin 3)
+#else
+    EXPECT_EQ(sm2.str(1), std::string(""));  // libstdc++/libc++: empty final iteration (see Pin 3)
+#endif
   }
 
   // Non-regression: a NON-nullable capturing group under a quantifier (its body always consumes,
