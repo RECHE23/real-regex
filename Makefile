@@ -218,12 +218,6 @@ misra: ## [nets] MISRA C++:2023-oriented analysis
 	    --header-filter='include/real/.*' \
 	    $(BUILD)/misra_tu.cpp -- $(CXXSTD) $(INCLUDES)
 
-# libFuzzer is a Clang feature; this target always uses Clang regardless of CXX.
-# FUZZ_TIME bounds a local run (CI uses a short smoke run); point the corpus at
-# build/fuzz/corpus to accumulate findings across runs.
-FUZZ_TIME ?= 30
-FUZZ_DIR  := $(BUILD)/fuzz
-
 # Per-binding delegation. Each binding owns a standardized Makefile (bindings/{python,c,rust,go}/Makefile);
 # `make python-test`, `make c-fuzz`, `make rust-vendor`, `make go-test` ... forward to it, and
 # `make <binding>-help` lists a binding's targets. This is THE form — there are no duplicate root targets
@@ -237,12 +231,17 @@ rust-%:
 go-%:
 	@$(MAKE) -C bindings/go $*
 
-fuzz: ## [nets] libFuzzer robustness fuzzing (Clang; FUZZ_TIME=secs)
-	mkdir -p $(FUZZ_DIR)/corpus
-	clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
-	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_target.cpp -o $(FUZZ_DIR)/fuzz_target
-	$(FUZZ_DIR)/fuzz_target -max_total_time=$(FUZZ_TIME) -timeout=10 \
-	    $(FUZZ_DIR)/corpus fuzz/corpus
+# --- fuzz/ (libFuzzer robustness + differential fuzzers + exhaustive/Fowler conformance) ---
+#
+# Moved to fuzz/Makefile (compartimentalisation wagon 5) -- these 5 names stay
+# invocable at the root (the CI invariant: ci.yml's fuzz job runs fuzz/fuzz-compat/
+# fuzz-re2 at l.120/126/145, the conformance job runs exhaustive-compat at l.178, and
+# full-local-gate below runs fowler-compat/exhaustive-compat as steps 13-14/22) via
+# thin delegations. tsan/tsan-core stay HERE, unmoved (decision #6 -- their sources
+# live in tests/, so they migrate with that wagon, not this one). FUZZ_TIME/FUZZ_DIR/
+# EC_K/EC_N moved into fuzz/Makefile (fuzz-only, nothing else at root consumes them).
+fuzz:
+	@$(MAKE) -C fuzz fuzz
 
 # ThreadSanitizer smoke: a standalone multi-threaded program (tests/compat/tsan_compat.cpp) that hammers the
 # concurrent lazy std_engine() build on shared regex objects, proving the "concurrent const ops are
@@ -266,33 +265,11 @@ tsan-core: ## [nets] ThreadSanitizer smoke of core shared-confirm / immut caches
 	    tests/engine/tsan_core.cpp -o $(BUILD)/tsan_core
 	setarch $$(uname -m) -R $(BUILD)/tsan_core 2>/dev/null || $(BUILD)/tsan_core
 
-# Differential fuzzer: real::compat vs std::regex (search/replace/iterate/token/match-flags). This
-# is the net that has caught every silent divergence in the compat layer, so it runs in CI too.
-fuzz-compat: ## [nets] Differential fuzz: real::compat vs std::regex (Clang; FUZZ_TIME=secs)
-	mkdir -p $(FUZZ_DIR)/corpus-compat
-	clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
-	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_compat.cpp -o $(FUZZ_DIR)/fuzz_compat
-	$(FUZZ_DIR)/fuzz_compat -max_total_time=$(FUZZ_TIME) -timeout=10 \
-	    $(FUZZ_DIR)/corpus-compat fuzz/corpus
+fuzz-compat:
+	@$(MAKE) -C fuzz fuzz-compat
 
-# Differential: real::compat::re2 (drop-in) vs true libre2 (oracle). Curated harness + can-fail
-# (REAL_RE2_DIFF_CANFAIL=1 must trip). Requires pkg-config re2; skips cleanly when absent so
-# full-local-gate / hosts without libre2 are not blocked. CI installs libre2 and runs this.
-# Reproduce a finding: make fuzz-re2  (exit 1 = drop-in parity bug; ENG \w/UCD is allowlisted only).
-fuzz-re2: ## [nets] Differential: real::compat::re2 vs true libre2 (needs pkg-config re2)
-	@if ! pkg-config --exists re2; then \
-	  echo "fuzz-re2: SKIP — pkg-config re2 not found (install libre2 to enable the oracle)"; \
-	  exit 0; \
-	fi
-	@mkdir -p $(FUZZ_DIR)
-	@echo "fuzz-re2: building drop-in vs libre2 differential ($$(pkg-config --modversion re2))"
-	@$(CXX) $(CXXSTD) -O1 -g $(INCLUDES) fuzz/fuzz_re2.cpp \
-	    $$(pkg-config --cflags --libs re2) -o $(FUZZ_DIR)/fuzz_re2
-	@echo "fuzz-re2: curated differential (must be green — exit 0)"
-	@$(FUZZ_DIR)/fuzz_re2
-	@echo "fuzz-re2: can-fail inject (must trip, exit 0 in inject mode)"
-	@REAL_RE2_DIFF_CANFAIL=1 $(FUZZ_DIR)/fuzz_re2 >/dev/null
-	@echo "fuzz-re2: PASS (parity green + can-fail intact)"
+fuzz-re2:
+	@$(MAKE) -C fuzz fuzz-re2
 
 # C ABI frozen-surface pin (hardening #4): golden GENERATED from bindings/c/real_capi.h
 # (never hand-edited). --check fails if header and golden diverge. Can-fail proof:
@@ -383,28 +360,15 @@ version-check: ## [gates] Assert pyproject = __init__ = CMake-derived version
 # GXX defaults to the CI GCC (g++-14); override with `make full-local-gate GXX=g++-13`. If it is
 # absent, the GCC leg is skipped with a warning (the g++-14 CI job is the backstop).
 GXX ?= g++-14
-# Exhaustive compat routing check: real::compat vs the LOCAL std::regex over the shared enumerator's
-# small tier-1 space (fuzz/exhaustive_compat.cpp). The oracle is the local std (compat's philosophy). The
-# Python enumerator emits patterns/inputs; the C++ runner consumes them. Passes when there is no SERIOUS
-# (span / accept-reject) divergence — a routing/screen bug. The nullable-loop group-capture class (real's
-# RE2/Rust/Go lineage vs std's empty-final iteration) is counted separately and reported. Tune the tier
-# with EC_K / EC_N; the default is the ~10 s PR tier, the nightly widens it.
-EC_K ?= 4
-EC_N ?= 6
-exhaustive-compat: ## [nets] Exhaustive compat routing check: real::compat vs local std::regex
-	@mkdir -p $(BUILD)
-	@$(PYRUN) -c "from sciforge.corpus.exhaustive import enumerate_patterns as P, enumerate_inputs as I; open('$(BUILD)/ec_pats.txt','w').write(chr(10).join(P($(EC_K), tier=2))); open('$(BUILD)/ec_inps.txt','w').write(chr(10).join(I($(EC_N))))"
-	@$(CXX) $(CXXSTD) -O2 $(INCLUDES) fuzz/exhaustive_compat.cpp -o $(BUILD)/exhaustive_compat
-	@$(BUILD)/exhaustive_compat $(BUILD)/ec_pats.txt $(BUILD)/ec_inps.txt
+# exhaustive-compat/fowler-compat moved to fuzz/Makefile (compartimentalisation wagon
+# 5) -- EC_K/EC_N moved with them (fuzz-only). Thin delegations preserve both names at
+# the root: the conformance CI job calls exhaustive-compat directly (ci.yml l.178),
+# full-local-gate calls both below as steps 13-14/22.
+exhaustive-compat:
+	@$(MAKE) -C fuzz exhaustive-compat
 
-# The Fowler / AT&T POSIX conformance of the compat layer: the three vendored testregex corpora through
-# real::compat vs the local std, three-way-arbitrated against the corpus's POSIX expectation and bucketed.
-# Hard invariants (lib-stable): b3 == b4 == std_only == 0, the b1 perfect count, and the per-file parsed-case
-# counts (a "no silent caps" pin). See fuzz/fowler_compat.cpp.
-fowler-compat: ## [nets] Fowler/AT&T POSIX conformance of the compat layer (vendored testregex corpora)
-	@mkdir -p $(BUILD)
-	@$(CXX) $(CXXSTD) -O2 $(INCLUDES) fuzz/fowler_compat.cpp -o $(BUILD)/fowler_compat
-	@$(BUILD)/fowler_compat tests/corpora/fowler
+fowler-compat:
+	@$(MAKE) -C fuzz fowler-compat
 
 # Pin-drift lint: fail if this repo's workflows pin more than one SciForge version (the shared
 # tools/check-pins.sh, owned by SciForge). Skipped with a warning when the sibling tool is absent.
