@@ -43,9 +43,8 @@ SCIFORGE_INCLUDE ?= ../sciforge/include
 # its lint/ dir. Same sibling default; CI checks SciForge out alongside as ../sciforge.
 SCIFORGE_LINT ?= ../sciforge/lint
 SCIFORGE_TOOLS ?= ../sciforge/tools
-# unicode_fold.hpp and unicode_props.hpp are generated (their scripts own the layout; the regen tests
-# pin them), so they are excluded from the hand-written-code formatter.
-FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep -vE 'include/real/unicode/unicode_(fold|props|property|script|binprop|scx)\.hpp')
+# FORMAT_FILES moved to tools/Makefile (compartimentalisation wagon 7/FINAL, with
+# format/format-check themselves) -- nothing else at root consumes it.
 
 # ROOT-anchor + inherit the shared vars every above-the-root section Makefile already
 # gets from mk/common.mk (compartimentalisation wagon 6): CXXSTD, INCLUDES (the engine
@@ -159,29 +158,28 @@ tsan:
 tsan-core:
 	@$(MAKE) -C tests tsan-core BUILD=$(abspath $(BUILD))
 
-# --- QA tools (wrappers; no compilation policy here) ----------------------
+# --- tools/ (lint clang-tidy, MISRA, uncrustify format, header layering, C ABI golden) ---
+#
+# Moved to tools/Makefile (compartimentalisation wagon 7/FINAL) -- lint/misra/format/
+# format-check/check-layers/check-capi-abi all live there now; these 6 names stay
+# invocable at the root (the CI invariant: ci.yml's preflight job runs format-check
+# with a SCIFORGE_LINT override (l.52), check-layers (l.56), check-capi-abi (l.62);
+# the SciForge reusable spine lint-cpp.yml runs this repo's own `make format-check` +
+# `make misra` against the shared lint/ config; full-local-gate below runs
+# format-check/check-layers/check-capi-abi as steps 1/3/5 and lint/misra further down)
+# via thin delegations. SCIFORGE_LINT/CXXSTD/INCLUDES/FORMAT_FILES stay defined via
+# mk/common.mk (`?=`) / tools/Makefile-local now -- nothing else at root consumes
+# FORMAT_FILES. See tools/Makefile's own header for the INCLUDES-must-stay-relative
+# rationale (an absolute -I would flood clang-tidy's header diagnostics -- the wagon 6
+# lint gate red). This is a pure move + thin delegation, no behavior change, so
+# format/format-check (near the docs/ section), check-capi-abi (near fuzz-re2) and
+# check-layers (near full-local-gate) each keep their original root position below
+# rather than being reshuffled here.
+lint:
+	@$(MAKE) -C tools lint
 
-lint: ## [nets] clang-tidy over the test sources
-	@find tests -name '*.cpp' | xargs -P $(JOBS) -I{} clang-tidy {} -- $(CXXSTD) $(INCLUDES) -Ibindings/c -I$(SCIFORGE_INCLUDE)
-
-# Analyzes the library's own headers through a synthetic translation unit that
-# includes the umbrella header and exercises the engine (so templates get
-# instantiated and checked). --header-filter scopes diagnostics to include/real/;
-# the TU's body is wrapped in try/catch so main cannot let an exception escape
-# (otherwise bugprone-exception-escape fires on the scaffolding, not the library).
-# NB: no --line-filter — it suppresses every diagnostic outside the TU file, which
-# silently hides ALL header findings (the gate was vacant before this).
-# The MISRA profile is the shared base owned by SciForge (lint/clang-tidy-misra);
-# REAL's one extra deviation — the SBO union in storage.hpp — is appended on the
-# command line with --checks (which appends to the config's Checks), not by forking
-# the shared file. See docs/MISRA.md.
-misra: ## [nets] MISRA C++:2023-oriented analysis
-	mkdir -p $(BUILD)
-	printf '#include <real/real.hpp>\nint main(){ try { const real::regex r("a"); return r.search("a") ? 0 : 1; } catch (...) { return 2; } }\n' > $(BUILD)/misra_tu.cpp
-	clang-tidy --config-file=$(SCIFORGE_LINT)/clang-tidy-misra \
-	    --checks='-cppcoreguidelines-pro-type-union-access' \
-	    --header-filter='include/real/.*' \
-	    $(BUILD)/misra_tu.cpp -- $(CXXSTD) $(INCLUDES)
+misra:
+	@$(MAKE) -C tools misra
 
 # Per-binding delegation. Each binding owns a standardized Makefile (bindings/{python,c,rust,go}/Makefile);
 # `make python-test`, `make c-fuzz`, `make rust-vendor`, `make go-test` ... forward to it, and
@@ -216,14 +214,14 @@ fuzz-compat:
 fuzz-re2:
 	@$(MAKE) -C fuzz fuzz-re2
 
-# C ABI frozen-surface pin (hardening #4): golden GENERATED from bindings/c/real_capi.h
-# (never hand-edited). --check fails if header and golden diverge. Can-fail proof:
+# Moved to tools/Makefile (compartimentalisation wagon 7/FINAL) -- see the "--- tools/
+# ---" comment above (near lint/misra) for the CI-invariant rationale. Can-fail proof
+# (hardening #4; golden GENERATED from bindings/c/real_capi.h, never hand-edited):
 #   python3 tools/gen_capi_abi_golden.py --inject-enum REAL_ERR_SYNTAX=99 --stdout > tests/bindings/capi_abi_golden.txt
 #   make check-capi-abi   # must exit non-zero; then: python3 tools/gen_capi_abi_golden.py
 # Enum/flag value pins live in tests/bindings/test_capi_abi.cpp (real::flags cross-check).
-check-capi-abi: ## [nets] C ABI golden vs real_capi.h + enum/flag pins (hardening #4)
-	@python3 tools/gen_capi_abi_golden.py --check
-	@echo "check-capi-abi: PASS (golden matches real_capi.h)"
+check-capi-abi:
+	@$(MAKE) -C tools check-capi-abi
 
 # --- docs/ (Doxygen + Sphinx/Breathe site) ---------------------------------
 #
@@ -255,11 +253,15 @@ docs-site-gate:
 	@$(MAKE) coverage-html
 	@$(MAKE) -C docs docs-site-gate
 
-format: ## [daily] Uncrustify, in place
-	uncrustify -c $(SCIFORGE_LINT)/uncrustify.cfg --replace --no-backup $(FORMAT_FILES)
+# Moved to tools/Makefile (compartimentalisation wagon 7/FINAL) -- see the "--- tools/
+# ---" comment above (near lint/misra) for the CI-invariant rationale (ci.yml's
+# preflight passes SCIFORGE_LINT on the command line to format-check; it propagates
+# through MAKEFLAGS to this delegation's `-C tools` sub-make unchanged).
+format:
+	@$(MAKE) -C tools format
 
-format-check: ## [daily] Uncrustify, dry-run, exits non-zero on diff
-	uncrustify -c $(SCIFORGE_LINT)/uncrustify.cfg --check $(FORMAT_FILES)
+format-check:
+	@$(MAKE) -C tools format-check
 
 # --- Python binding -------------------------------------------------------
 
@@ -323,8 +325,10 @@ check-pins: ## [gates] Pin-drift lint: fail if workflows pin more than one SciFo
 	 else echo "check-pins: WARN — $(SCIFORGE_TOOLS)/check-pins.sh absent, skipped (CI covers it)"; fi
 
 
-check-layers: ## [gates] Enforce the include/real/ header layering contract (no tier climbing)
-	@python3 tools/check_layers.py
+# Moved to tools/Makefile (compartimentalisation wagon 7/FINAL) -- see the "--- tools/
+# ---" comment above (near lint/misra) for the CI-invariant rationale.
+check-layers:
+	@$(MAKE) -C tools check-layers
 
 # Fail-fast gate of record: CHEAP / FAST first, expensive last. First non-zero aborts
 # the rest (no -k). Order is intentional — a Doxygen param miss or format drift must not
