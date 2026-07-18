@@ -160,7 +160,10 @@ and it is documented rather than routed away: **`regex_search`/`regex_match`'s p
 match **span** — is **identical**; only the inner group's captured span differs, and the `std` value
 is always a zero-width capture at the loop's end. This is the same behaviour documented against
 Python `re` (see [the divergences page](@ref div_empty_iteration_capture)); the linear engines **RE2,
-the Rust `regex` crate, and Go's `regexp` share it**.
+the Rust `regex` crate, and Go's `regexp` share it**. Note the `std` side itself is
+**stdlib-variant**: libstdc++ and libc++ record the empty final iteration (the residue described
+here), while **MS STL keeps the last non-empty iteration — agreeing with `real`'s lineage**, so on
+MSVC this divergence does not exist at all (the test suite pins each stdlib's edge separately).
 
 **Why `search`/`match` keep it, rather than routing to std.** Routing this class to `std::regex` would
 hand exactly the textbook catastrophic-backtracking patterns — nested nullable quantifiers — to a
