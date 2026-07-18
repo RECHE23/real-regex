@@ -114,6 +114,11 @@ The ONLY departures from the mockup are the ones the doc-site P1c fiche calls fo
   }
 
   /* ============================ base ============================ */
+  /* The mockup was an Artifact FRAGMENT: the claude.ai frame supplied body{margin:0}.
+     As a standalone page the browser default (8px, white against --paper) shows as an
+     ugly frame -- reset it here, and paint body/html with --paper so overscroll and
+     any sub-viewport page height match the theme instead of flashing white. */
+  html, body { margin: 0; padding: 0; background: var(--paper); }
   .page { background: var(--paper); color: var(--ink); font-family: var(--font-sans);
     font-size: var(--step-0); line-height: 1.6; -webkit-font-smoothing: antialiased; }
   .page * { box-sizing: border-box; }
