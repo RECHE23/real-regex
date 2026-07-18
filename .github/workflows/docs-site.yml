@@ -36,7 +36,19 @@ jobs:
   docs-site:
     runs-on: ubuntu-latest
     steps:
+      # Sibling checkout layout, mirroring docs.yml: coverage-html (run by
+      # docs-site-gate since P1c so the landing's /coverage link resolves to a
+      # real file) compiles the test suite, whose TUs include the SciForge test
+      # framework from ../sciforge -- the dependency the first P1c run missed
+      # (green locally where the sibling exists, red here without it).
       - uses: actions/checkout@v6
+        with:
+          path: real-regex
+      - uses: actions/checkout@v6
+        with:
+          repository: RECHE23/sciforge
+          ref: v2026.7.2
+          path: sciforge
       - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
@@ -46,8 +58,8 @@ jobs:
         run: |
           python -m venv .venv-docs
           .venv-docs/bin/pip install --upgrade pip
-          .venv-docs/bin/pip install -r docs-requirements.txt
+          .venv-docs/bin/pip install -r real-regex/docs-requirements.txt
       - name: docs-site-gate (sphinx -W --keep-going + linkcheck)
         run: |
           export PATH="$PWD/.venv-docs/bin:$PATH"
-          make docs-site-gate
+          make -C real-regex docs-site-gate
