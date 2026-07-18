@@ -316,16 +316,16 @@ doc-no-coverage: ## [release] Generate API reference without coverage report
 # themed landing + Breathe-powered API scaffold into build/site/html, entirely
 # separate output, nothing wired to go live yet (see the doc-site fiche).
 #
-# sphinx-build comes from docs-requirements.txt (pinned), installed into an
+# sphinx-build comes from docs/requirements.txt (pinned), installed into an
 # isolated venv -- never the system interpreter:
-#   python3 -m venv .venv-docs && .venv-docs/bin/pip install -r docs-requirements.txt
+#   python3 -m venv .venv-docs && .venv-docs/bin/pip install -r docs/requirements.txt
 #   source .venv-docs/bin/activate   # sphinx-build now on PATH
 SPHINXBUILD ?= sphinx-build
 SPHINXOPTS  ?=
 
 docs-site: doc-no-coverage ## [release] Build the themed Sphinx/Breathe site (docs/site) -> build/site/html
 	@command -v $(SPHINXBUILD) >/dev/null 2>&1 || { \
-	  echo "docs-site: '$(SPHINXBUILD)' not found -- install docs-requirements.txt into a venv" \
+	  echo "docs-site: '$(SPHINXBUILD)' not found -- install docs/requirements.txt into a venv" \
 	       "and put it on PATH (or pass SPHINXBUILD=/path/to/sphinx-build)"; exit 1; }
 	$(SPHINXBUILD) $(SPHINXOPTS) -b html docs/site $(BUILD)/site/html
 	@if [ -d $(COV_DIR)/html ]; then \
@@ -361,7 +361,7 @@ docs-site: doc-no-coverage ## [release] Build the themed Sphinx/Breathe site (do
 #   real, not conditionally-present) before checking build/site/html/index.html.
 docs-site-gate: ## [gates] Sphinx -W --keep-going + linkcheck + built-HTML link check for docs/site (the site's net)
 	@command -v $(SPHINXBUILD) >/dev/null 2>&1 || { \
-	  echo "docs-site-gate: '$(SPHINXBUILD)' not found -- install docs-requirements.txt into a venv" \
+	  echo "docs-site-gate: '$(SPHINXBUILD)' not found -- install docs/requirements.txt into a venv" \
 	       "and put it on PATH (or pass SPHINXBUILD=/path/to/sphinx-build)"; exit 1; }
 	@mkdir -p $(BUILD)/doc && doxygen Doxyfile
 	$(SPHINXBUILD) $(SPHINXOPTS) -W --keep-going -b html docs/site $(BUILD)/site/_gate

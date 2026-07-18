@@ -5,7 +5,7 @@ does not affect `make doc` (the live Doxygen HTML site, docs.yml) — see Doxyfi
 
 Build via `make docs-site` (release) / `make docs-site-gate` (the site's own -W +
 linkcheck + built-HTML-link net). Requires the pinned toolchain in
-docs-requirements.txt, installed into an isolated venv (never the system interpreter).
+docs/requirements.txt, installed into an isolated venv (never the system interpreter).
 """
 
 import re

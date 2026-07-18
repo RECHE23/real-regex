@@ -5,7 +5,7 @@
 # commit, verified against `make docs-site-gate`.
 #
 # Install into an isolated venv -- never the system/site interpreter:
-#   python3 -m venv .venv-docs && .venv-docs/bin/pip install -r docs-requirements.txt
+#   python3 -m venv .venv-docs && .venv-docs/bin/pip install -r docs/requirements.txt
 #
 # Breathe (Doxygen-XML -> Sphinx bridge) requires Doxygen >= 1.9.2; CI pins Doxygen
 # via apt (see .github/workflows/ci.yml, docs-site job). Doxyfile's GENERATE_XML

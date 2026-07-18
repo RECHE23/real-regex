@@ -54,11 +54,11 @@ jobs:
           python-version: '3.14'
       - name: Install Doxygen + Graphviz + Clang/LLVM (Breathe's XML input + coverage-html)
         run: sudo apt-get update && sudo apt-get install -y doxygen graphviz clang llvm
-      - name: Install the pinned docs toolchain (docs-requirements.txt) into a venv
+      - name: Install the pinned docs toolchain (docs/requirements.txt) into a venv
         run: |
           python -m venv .venv-docs
           .venv-docs/bin/pip install --upgrade pip
-          .venv-docs/bin/pip install -r real-regex/docs-requirements.txt
+          .venv-docs/bin/pip install -r real-regex/docs/requirements.txt
       - name: docs-site-gate (sphinx -W --keep-going + linkcheck)
         run: |
           export PATH="$PWD/.venv-docs/bin:$PATH"

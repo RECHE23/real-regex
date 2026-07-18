@@ -38,11 +38,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
-      - name: Install the pinned docs toolchain (docs-requirements.txt) into a venv
+      - name: Install the pinned docs toolchain (docs/requirements.txt) into a venv
         run: |
           python -m venv .venv-docs
           .venv-docs/bin/pip install --upgrade pip
-          .venv-docs/bin/pip install -r real-regex/docs-requirements.txt
+          .venv-docs/bin/pip install -r real-regex/docs/requirements.txt
       - name: Build the coverage report (kept at /coverage, as make doc did)
         run: make -C real-regex coverage-html
       - name: Build the site (Sphinx landing + Doxygen at /api + coverage)
