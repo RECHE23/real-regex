@@ -8,7 +8,6 @@
 # cached build dir, so run `make clean` first.
 
 CMAKE  ?= cmake
-CTEST  ?= ctest
 PYTHON ?= python3
 BUILD  := build
 # Parallelism: detected core count (override with JOBS=N).
@@ -30,20 +29,12 @@ SCIFORGE_PYTHON ?= ../sciforge/python
 # Makefiles below the root (e.g. benchmarks/Makefile), which cannot rely on CURDIR.
 PYRUN := PYTHONPATH=$(CURDIR)/bindings/python:$(abspath $(SCIFORGE_PYTHON)) $(PYTHON)
 
-# Forward CMAKE_CXX_COMPILER only when CXX is set on the command line;
-# otherwise CMake selects the platform default.
-ifeq ($(origin CXX),command line)
-CMAKE_CXX := -DCMAKE_CXX_COMPILER=$(CXX)
-endif
-
-CXXSTD       := -std=c++20
 # What gate-bump/gate-doc/gate-test diff against to detect their change category (see the block
 # comment above those targets). Override to compare against a single commit instead of the whole
 # unpushed stack on a train of several already-committed wagons -- e.g.
 # `GATE_BASE=HEAD~1 make gate-bump` diffs just the latest commit, not everything since origin/main.
 # Default unchanged (fail-closed stays the behavior for anyone who doesn't override it).
 GATE_BASE ?= origin/main
-INCLUDES     := -Iinclude
 # The test harness (framework.hpp) is owned by SciForge; the test TUs include it
 # as <sciforge/test/framework.hpp>. clang-tidy (make lint) needs that path too.
 # Sibling checkout by default — matches the CMake SCIFORGE_INCLUDE_DIR default.
@@ -55,6 +46,22 @@ SCIFORGE_TOOLS ?= ../sciforge/tools
 # unicode_fold.hpp and unicode_props.hpp are generated (their scripts own the layout; the regen tests
 # pin them), so they are excluded from the hand-written-code formatter.
 FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep -vE 'include/real/unicode/unicode_(fold|props|property|script|binprop|scx)\.hpp')
+
+# ROOT-anchor + inherit the shared vars every above-the-root section Makefile already
+# gets from mk/common.mk (compartimentalisation wagon 6): CXXSTD, INCLUDES (the engine
+# header search path), the CMAKE_CXX CXX-forwarding guard, and the coverage floor
+# (COV_FLOOR/COV_FLOOR_IGNORE -- full-local-gate's own step 22 echoes $(COV_FLOOR)
+# directly below, see mk/common.mk's own comment for why it must live there and not
+# tests/Makefile-only). Included AFTER every var this file defines above: their `?=`
+# (and PYRUN's `:=`, identical by value since ROOT == CURDIR here) are no-ops against
+# an already-set variable, so this changes nothing about CMAKE/PYTHON/BUILD/JOBS/
+# SCIFORGE_*/PYRUN/GATE_BASE -- it only supplies the 4 names above this file no longer
+# defines itself (CXXSTD/INCLUDES/CMAKE_CXX's ifeq/COV_FLOOR*), verified with `make -n`:
+# the only diff is $(INCLUDES) itself, now `-I$(ROOT)/include` (was the bare
+# `-Iinclude`) -- both resolve to the same directory from CURDIR == ROOT, an accepted
+# path-prefix equivalence, not a behavior change (lint/misra below are the consumers).
+ROOT := $(abspath $(CURDIR))
+include $(ROOT)/mk/common.mk
 
 # Vendored in-repo (see mk/help.mk for why this is never a hard include toward sciforge).
 include mk/help.mk
@@ -103,96 +110,54 @@ build: ## [daily] Configure and build the test binary (CMake)
 	$(CMAKE) -S . -B $(BUILD) $(CMAKE_CXX) -DCMAKE_BUILD_TYPE=Release
 	$(CMAKE) --build $(BUILD) --parallel $(JOBS)
 
-test: build ## [daily] Build and run the test suite (ctest)
-	$(CTEST) --test-dir $(BUILD) --output-on-failure
+# --- tests/ (ctest[via `test`]/sanitize/coverage toolchain/tsan smokes) ---------
+#
+# Moved to tests/Makefile (compartimentalisation wagon 6) -- these names stay invocable
+# at the root via thin delegations below (the CI invariant: ci.yml's coverage job runs
+# coverage-check at l.274, its fuzz job runs tsan/tsan-core at l.134/138, docs.yml runs
+# coverage-html at l.47, and full-local-gate below runs sanitize/coverage-check as its
+# last 2 of 22 steps; the cross-repo invariant --
+# ../sciforge/.github/workflows/ecosystem.yml:58 runs `make -C real-regex test`).
+# `build` (the CMake config, `-S .`-rooted) stays HERE, unmigrated: `test`'s own
+# delegation keeps `build` as its prerequisite, then hands off just the ctest run.
+# COV_CXX/PROFDATA/LLVM_COV/COV_DIR/CTEST moved into tests/Makefile (tests-only, nothing
+# else at root consumed them); COV_FLOOR/COV_FLOOR_IGNORE promoted to mk/common.mk
+# instead -- this file's own full-local-gate step 22 echoes $(COV_FLOOR) directly below
+# (see mk/common.mk's own comment for why it could not stay tests/Makefile-only).
+# `coverage-build` has no delegation here (matching benchmarks/Makefile's own
+# profile-sample-build precedent): nothing outside tests/Makefile invokes it by name.
+#
+# BUILD=$(abspath $(BUILD)) on every delegation below: a bare command-line override
+# (e.g. full-local-gate step 21's `$(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc`, a
+# RELATIVE "build/gcc") is forwarded to the `-C tests` sub-make verbatim via MAKEFLAGS
+# -- command-line-set variables cannot be reset by mk/common.mk's `BUILD ?= $(ROOT)/build`
+# (command-line origin beats any in-makefile assignment) -- and the sub-make's own CWD is
+# tests/, not $(ROOT), so an unresolved relative override would silently resolve against
+# the WRONG directory (tests/build/gcc instead of $(ROOT)/build/gcc, confirmed empirically
+# with `make -n test CXX=g++-14 BUILD=build/gcc` before this fix). Re-passing it explicitly,
+# already $(abspath)-resolved against ROOT's own CURDIR (evaluated here, before the `-C`
+# changes directory), fixes it regardless of whether BUILD was overridden -- a no-op in the
+# common case (abspath(build) == $(ROOT)/build either way).
+test: build
+	@$(MAKE) -C tests test BUILD=$(abspath $(BUILD))
 
-# ASan/UBSan only here -- LeakSanitizer is CI-Linux-only. `ASAN_OPTIONS=detect_leaks=1` aborts
-# immediately on macOS ("detect_leaks is not supported on this platform", confirmed empirically on
-# this Darwin toolchain -- Apple's ASan runtime does not ship LSan), so it cannot be the default
-# here without breaking every local sanitize run. A real leak (wagon 4c's own `bare_heap_ending_in`
-# test helper first shipped with a `new[]`/`.release()` that never freed) therefore passes locally
-# and is caught only in CI's Linux leg, invisible until then -- same shape as `doc-check`'s
-# Docker-optional skip: visible in the CI job that IS the backstop, never a false green here.
-sanitize: ## [daily] Build and run the tests under ASan + UBSan
-	$(CMAKE) -S . -B $(BUILD)/sanitize $(CMAKE_CXX) -DREAL_SANITIZE=ON
-	$(CMAKE) --build $(BUILD)/sanitize --parallel $(JOBS)
-	$(CTEST) --test-dir $(BUILD)/sanitize --output-on-failure
+sanitize:
+	@$(MAKE) -C tests sanitize BUILD=$(abspath $(BUILD))
 
-# Coverage uses LLVM source-based instrumentation, so it pins a Clang
-# toolchain end to end. On macOS the Apple toolchain is required: Homebrew
-# clang links a profile runtime whose .profraw the Homebrew llvm-profdata
-# cannot read. On Linux the bare llvm-profdata/llvm-cov tools work.
-ifeq ($(shell uname -s),Darwin)
-COV_CXX  ?= /usr/bin/clang++
-PROFDATA ?= xcrun llvm-profdata
-LLVM_COV ?= xcrun llvm-cov
-else
-COV_CXX  ?= clang++
-PROFDATA ?= llvm-profdata
-LLVM_COV ?= llvm-cov
-endif
-COV_DIR  := $(BUILD)/coverage
+coverage:
+	@$(MAKE) -C tests coverage BUILD=$(abspath $(BUILD))
 
-# Shared build/run/merge steps used by both the text summary and the HTML report.
-coverage-build:
-	$(CMAKE) -S . -B $(COV_DIR) -DREAL_COVERAGE=ON -DCMAKE_CXX_COMPILER=$(COV_CXX)
-	$(CMAKE) --build $(COV_DIR) --parallel $(JOBS)
-	LLVM_PROFILE_FILE=$(COV_DIR)/tests.profraw $(COV_DIR)/real_tests_bin
-	$(PROFDATA) merge -sparse $(COV_DIR)/tests.profraw -o $(COV_DIR)/tests.profdata
+coverage-check:
+	@$(MAKE) -C tests coverage-check BUILD=$(abspath $(BUILD))
 
-coverage: coverage-build ## [gates] Line-coverage text summary + HTML report
-	$(LLVM_COV) report $(COV_DIR)/real_tests_bin -instr-profile=$(COV_DIR)/tests.profdata
-	$(LLVM_COV) show $(COV_DIR)/real_tests_bin -instr-profile=$(COV_DIR)/tests.profdata \
-	    -format=html -output-dir=$(COV_DIR)/html -show-line-counts-or-regions
-	@grep -q "REAL dark-coverage theme" $(COV_DIR)/html/style.css 2>/dev/null || \
-	    cat docs/coverage-style.css >> $(COV_DIR)/html/style.css
-	@echo "HTML coverage report: $(COV_DIR)/html/index.html"
-
-# Minimum line coverage enforced by `coverage-check` (the CI gate). `make coverage` itself
-# stays advisory for local iteration; CI fails the build if a change drops below the floor.
-# The floor measures the engine's reachable logic. The C ABI shim (bindings/c/real_capi.cpp) is excluded from
-# the FLOOR — not from the report (`make coverage` still shows it): it is a thin boundary of defensive
-# exception catch-alls ("no C++ exception crosses into C") that are unreachable by construction (the engine's
-# only exception type, real::regex_error, is caught by a specific handler), so they cannot be line-covered by
-# a test. That surface is guarded instead by the sanitize build and the c-fuzz target, which exercises it at
-# runtime. include/real/engine/simd.hpp is excluded for the same shape of reason: it holds ONLY the
-# intrinsics-only 16-byte membership masks (no eligibility decision, no loop, no candidate/skip logic) behind
-# the SIMD fast paths — by construction ISA-exclusive (the NEON body never compiles on x86 and vice versa), so
-# a single-ISA CI runner can never line-cover both legs no matter how thorough the tests are. The decision/loop
-# logic that CALLS these primitives stays in pike.hpp — the same C++ on every ISA — and is exercised by the
-# ordinary suite regardless of which leg compiled; only the intrinsics themselves are excluded. Guarded instead
-# by sanitize, the fuzz corpus, the correctness nets (test_quantifiers), and the twin ISA's own coverage of the
-# identical contract. include/real/engine/cpclass_gcc.hpp and cpclass_gcc_loop.hpp (O2r-1b) are the same
-# shape again, one compiler instead of one ISA: a gcc-only fast path for run_cp_class_loop's >= 0x80 byte
-# handling, spliced into pike.hpp under #if defined(__GNUC__) && !defined(__clang__) (see that file for the
-# measured P0-callgrind numbers). clang — the only compiler this local/CI coverage build ever runs — never
-# compiles either file, by construction, so a clang-only coverage run can never line-cover them no matter how
-# thorough the tests are; the #else they sit beside (pike.hpp's original nested-closure shape) is exercised by
-# the ordinary suite exactly as before the split. Guarded instead by the gcc leg of full-local-gate (compiles
-# and functionally runs the branch), the x86 devbox A/B + callgrind (attribution: the lambda symbols are gone
-# from the gcc build), and clang's own coverage of the identical #else contract. llvm-cov has no per-line
-# exclusion, so both exclusions are per-file. The floor itself does NOT move for this exclusion — 95.0 stays
-# the bar on what remains in scope.
-COV_FLOOR := 95.0
-COV_FLOOR_IGNORE := bindings/c|include/real/engine/simd.hpp|include/real/engine/cpclass_gcc
-
-coverage-check: coverage-build ## [gates] Enforce the line-coverage floor (CI gate)
-	@pct=$$($(LLVM_COV) report $(COV_DIR)/real_tests_bin -instr-profile=$(COV_DIR)/tests.profdata \
-	        -ignore-filename-regex='$(COV_FLOOR_IGNORE)' \
-	        | awk '$$1 == "TOTAL" { gsub(/%/, "", $$10); print $$10 }'); \
-	  echo "Line coverage: $$pct% (floor $(COV_FLOOR)%, engine logic; bindings/c guarded by sanitize+fuzz)"; \
-	  awk -v p="$$pct" -v f="$(COV_FLOOR)" 'BEGIN { exit !(p + 0 >= f + 0) }' || \
-	    { echo "FAIL: line coverage $$pct% is below the $(COV_FLOOR)% floor"; exit 1; }
-
-# Silent variant used by make doc: keeps the terminal focused on the doc output.
 coverage-html:
-	@mkdir -p $(COV_DIR)
-	@$(MAKE) --silent coverage-build > $(COV_DIR)/build.log 2>&1 || (cat $(COV_DIR)/build.log; exit 1)
-	@$(LLVM_COV) show $(COV_DIR)/real_tests_bin -instr-profile=$(COV_DIR)/tests.profdata \
-	    -format=html -output-dir=$(COV_DIR)/html -show-line-counts-or-regions
-	@grep -q "REAL dark-coverage theme" $(COV_DIR)/html/style.css 2>/dev/null || \
-	    cat docs/coverage-style.css >> $(COV_DIR)/html/style.css
-	@echo "HTML coverage report: $(COV_DIR)/html/index.html"
+	@$(MAKE) -C tests coverage-html BUILD=$(abspath $(BUILD))
+
+tsan:
+	@$(MAKE) -C tests tsan BUILD=$(abspath $(BUILD))
+
+tsan-core:
+	@$(MAKE) -C tests tsan-core BUILD=$(abspath $(BUILD))
 
 # --- QA tools (wrappers; no compilation policy here) ----------------------
 
@@ -237,33 +202,13 @@ go-%:
 # invocable at the root (the CI invariant: ci.yml's fuzz job runs fuzz/fuzz-compat/
 # fuzz-re2 at l.120/126/145, the conformance job runs exhaustive-compat at l.178, and
 # full-local-gate below runs fowler-compat/exhaustive-compat as steps 13-14/22) via
-# thin delegations. tsan/tsan-core stay HERE, unmoved (decision #6 -- their sources
-# live in tests/, so they migrate with that wagon, not this one). FUZZ_TIME/FUZZ_DIR/
-# EC_K/EC_N moved into fuzz/Makefile (fuzz-only, nothing else at root consumes them).
+# thin delegations. tsan/tsan-core moved to tests/Makefile instead (compartimentalisation
+# wagon 6 -- their sources live in tests/, see that Makefile's own header), not here;
+# their root delegations sit with the rest of the tests/ ones, above (near `build`).
+# FUZZ_TIME/FUZZ_DIR/EC_K/EC_N moved into fuzz/Makefile (fuzz-only, nothing else at root
+# consumes them).
 fuzz:
 	@$(MAKE) -C fuzz fuzz
-
-# ThreadSanitizer smoke: a standalone multi-threaded program (tests/compat/tsan_compat.cpp) that hammers the
-# concurrent lazy std_engine() build on shared regex objects, proving the "concurrent const ops are
-# race-free" claim reproducibly. Standalone (no framework / test_static.cpp non-atomic op-new counter,
-# which would itself race). Clang feature; always uses Clang.
-tsan: ## [nets] ThreadSanitizer smoke of concurrent std_engine (Clang)
-	mkdir -p $(BUILD)
-	clang++ $(CXXSTD) -O1 -g $(INCLUDES) -fsanitize=thread tests/compat/tsan_compat.cpp -o $(BUILD)/tsan_compat
-	$(BUILD)/tsan_compat
-
-# ThreadSanitizer smoke for the CORE concurrent caches (7.45 shared-confirm / immutables / call_once),
-# not the compat layer. Barrier-synchronized first search on a FRESH const regex each iteration —
-# without the barrier+fresh pattern, call_once fills once and late threads never race the warm path
-# (false-negative risk). Harness proof (must go red):
-#   TSAN_OPTIONS=halt_on_error=1 REAL_TSAN_INJECT_RACE=1 make tsan-core
-# ASLR: some Linux kernels hit TSan "FATAL: unexpected memory mapping" under high ASLR — prefer
-# setarch -R when present (Linux CI/devbox); fall back to a direct run (macOS has no setarch).
-tsan-core: ## [nets] ThreadSanitizer smoke of core shared-confirm / immut caches (Clang)
-	mkdir -p $(BUILD)
-	clang++ $(CXXSTD) -O1 -g $(INCLUDES) -fsanitize=thread \
-	    tests/engine/tsan_core.cpp -o $(BUILD)/tsan_core
-	setarch $$(uname -m) -R $(BUILD)/tsan_core 2>/dev/null || $(BUILD)/tsan_core
 
 fuzz-compat:
 	@$(MAKE) -C fuzz fuzz-compat
@@ -285,11 +230,12 @@ check-capi-abi: ## [nets] C ABI golden vs real_capi.h + enum/flag pins (hardenin
 # Moved to docs/Makefile (compartimentalisation wagon 3, docs/ pilot section) -- these
 # names stay invocable at the root (the CI invariant: docs.yml/docs-site.yml/ci.yml
 # invoke them as `make -C real-regex <name>`) via thin delegations below.
-# `coverage-html`/COV_DIR stay here (tests/coverage domain, not migrated); `doc` and
-# `docs-site-gate` orchestrate it from here, root-first, before delegating -- see
-# docs/Makefile's own `doc`/`docs-site-gate` comments for the other half of each
-# recipe (paths there are ré-ancrées $(ROOT) so they run identically from either
-# place).
+# `coverage-html` itself now delegates to tests/Makefile too (compartimentalisation
+# wagon 6, its own COV_DIR moved with it -- see the `test:`/`sanitize:` block above);
+# `doc` and `docs-site-gate` still orchestrate it from here, root-first, before
+# delegating to docs/ -- see docs/Makefile's own `doc`/`docs-site-gate` comments for the
+# other half of each recipe (paths there are ré-ancrées $(ROOT) so they run identically
+# from either place).
 #
 # SPHINXBUILD stays defined here too (not just in docs/Makefile): full-local-gate's own
 # "is sphinx-build on PATH" guard (below) reads $(SPHINXBUILD) directly, so this
