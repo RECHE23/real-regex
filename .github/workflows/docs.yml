@@ -1,8 +1,11 @@
 name: Docs
 
-# Build the Doxygen API reference and publish it to GitHub Pages on every push
-# to the default branch. Enable Pages once in the repository settings with
-# "GitHub Actions" as the source.
+# Build and publish the documentation SITE to GitHub Pages on every push to the
+# default branch (doc-site P1b-B go-live): the themed Sphinx/Breathe landing is
+# the front door, with the full Doxygen API reference preserved at /api and the
+# llvm-cov coverage report at /coverage (same content the old front page linked,
+# one level deeper -- pre-swap deep links into the Doxygen pages moved under /api).
+# Enable Pages once in the repository settings with "GitHub Actions" as the source.
 on:
   push:
     branches: [main, master]
@@ -32,12 +35,25 @@ jobs:
           path: sciforge
       - name: Install Doxygen, Graphviz, Clang and LLVM coverage tools
         run: sudo apt-get update && sudo apt-get install -y doxygen graphviz clang llvm
-      - name: Generate the API reference
-        run: make -C real-regex doc
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install the pinned docs toolchain (docs-requirements.txt) into a venv
+        run: |
+          python -m venv .venv-docs
+          .venv-docs/bin/pip install --upgrade pip
+          .venv-docs/bin/pip install -r real-regex/docs-requirements.txt
+      - name: Build the coverage report (kept at /coverage, as make doc did)
+        run: make -C real-regex coverage-html
+      - name: Build the site (Sphinx landing + Doxygen at /api + coverage)
+        # SPHINXBUILD override instead of putting the venv on PATH: the venv's
+        # python would otherwise shadow python3 for every other recipe (measured
+        # locally -- the setuptools trap).
+        run: make -C real-regex docs-site SPHINXBUILD="$PWD/.venv-docs/bin/sphinx-build"
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: real-regex/build/doc/html
+          path: real-regex/build/site/html
 
   deploy:
     needs: build
