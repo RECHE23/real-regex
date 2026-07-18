@@ -26,3 +26,13 @@ SCIFORGE_INCLUDE ?= $(ROOT)/../sciforge/include
 SCIFORGE_LINT    ?= $(ROOT)/../sciforge/lint
 SCIFORGE_TOOLS   ?= $(ROOT)/../sciforge/tools
 SCIFORGE_PYTHON  ?= $(ROOT)/../sciforge/python
+
+# Run Python against the in-place build under bindings/python/, ahead of any installed
+# copy, with the SciForge sibling appended so a bench can `import sciforge.bench` (the
+# shared dep-free stats/schema substrate) -- $(ROOT)-anchored so a section Makefile
+# (e.g. benchmarks/) gets the right PYTHONPATH regardless of the invoking CWD. The root
+# Makefile keeps its own $(CURDIR)-relative PYRUN (Makefile:27) rather than including
+# this file wholesale: CURDIR == ROOT there by construction (the root Makefile IS
+# $(ROOT)), so the two stay identical in value; this is the ROOT-anchored twin for
+# consumers below the root (benchmarks/Makefile's bench-engines is the first).
+PYRUN := PYTHONPATH=$(ROOT)/bindings/python:$(abspath $(SCIFORGE_PYTHON)) $(PYTHON)

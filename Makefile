@@ -24,6 +24,10 @@ SCIFORGE_PYTHON ?= ../sciforge/python
 # copy (PYTHONPATH precedes site-packages, so an editable install elsewhere
 # cannot shadow the freshly built extension). The SciForge sibling is appended so the
 # benches can `import sciforge.bench` (the shared stats/schema substrate).
+# $(CURDIR)-relative here, not $(ROOT)-anchored -- CURDIR == this Makefile's own
+# directory (the repo root) by construction, so the two spellings are identical in
+# value. mk/common.mk carries a $(ROOT)-anchored twin of this same variable for section
+# Makefiles below the root (e.g. benchmarks/Makefile), which cannot rely on CURDIR.
 PYRUN := PYTHONPATH=$(CURDIR)/bindings/python:$(abspath $(SCIFORGE_PYTHON)) $(PYTHON)
 
 # Forward CMAKE_CXX_COMPILER only when CXX is set on the command line;
@@ -59,7 +63,7 @@ include mk/help.mk
         lint misra fuzz fuzz-compat fuzz-re2 check-capi-abi exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-multipattern bench-duel bench-matrix matrix-gate \
-        profile-sample-build profile-sample profile-callgrind \
+        profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers
 
 .DEFAULT_GOAL := help
@@ -67,7 +71,11 @@ include mk/help.mk
 SECTIONS := bindings/c bindings/go bindings/python bindings/rust fuzz tests tools benchmarks docs
 # Display order for the top-level help groups (workflow-first, not alphabetical). The
 # group tag lives in each target's `## [group] ...` comment -- nothing else moves.
-HELP_GROUPS := daily gates nets bench release
+# "bench" dropped (compartimentalisation wagon 4): every [bench]-tagged target moved to
+# benchmarks/Makefile (thin delegations, untagged, the docs/ precedent), so the group
+# would otherwise print a permanently empty "── bench ──" header here -- the real
+# listing is the auto-appended "── benchmarks ──" section below (SECTIONS loop).
+HELP_GROUPS := daily gates nets release
 help: ## [daily] Aggregated help: top-level targets, then each section's own help
 	@echo "Start here:  make test              — run the test suite (daily loop)"
 	@echo "             make full-local-gate   — every gate, macOS record (pre-push)"
@@ -580,75 +588,37 @@ full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate 
 doc-check:
 	@$(MAKE) -C docs doc-check
 
-# REAL-vs-rust duel: the §E table generator (ns/byte, match-count cross-checked, non-cherry-picked).
-# Builds the REAL harness; the rust harness needs a Rust toolchain (cargo build --release in
-# benchmarks/duel/rust_bench). Manual, not a CI gate.
-bench-duel: ## [bench] REAL vs the regex crate, ns/byte (needs a Rust toolchain)
-	@c++ $(CXXSTD) -O2 $(INCLUDES) benchmarks/duel/real_bench.cpp -o benchmarks/duel/real_bench
-	@$(PYTHON) benchmarks/duel/run_duel.py
+# --- benchmarks/ (throughput/duel/matrix/profile — dev-only; matrix-gate is the one CI-relevant gate) ---
+#
+# Moved to benchmarks/Makefile (compartimentalisation wagon 4) -- these names stay
+# invocable at the root (matrix-gate is full-local-gate's own step 12/22 below; the
+# rest are developer-invoked directly, never from CI) via thin delegations below.
+# Paths inside benchmarks/Makefile are ré-ancrées $(ROOT) (via mk/common.mk) or run
+# under `cd $(ROOT) &&` per recipe line -- see that file's own header for why
+# (callgrind_runs.sh reads a bare-relative "build/profile/corpora", so it needs
+# CWD=$(ROOT) regardless of where `make` was invoked from). The internal
+# profile-sample-build helper has no root delegation (nothing outside benchmarks/
+# invokes it by name); see benchmarks/Makefile.
+bench-duel:
+	@$(MAKE) -C benchmarks bench-duel
 
-# P0 profiling substrate: clean + instrumented binaries, 2-pass JSONL, markdown grid.
-# Not a CI gate (informational; timings are host-noise). See benchmarks/profile/ and
-# .recovery/p0-profile-substrate-fiche.md.
-PROF_DIR := $(BUILD)/profile
-profile-sample-build:
-	@mkdir -p $(PROF_DIR)
-	@c++ $(CXXSTD) -O3 -DNDEBUG $(INCLUDES) \
-	    -Ibenchmarks/profile \
-	    benchmarks/profile/profile_runner.cpp -o $(PROF_DIR)/profile_runner_clean
-	@c++ $(CXXSTD) -O3 -DNDEBUG -DREAL_PROFILE $(INCLUDES) \
-	    -Ibenchmarks/profile \
-	    benchmarks/profile/profile_runner.cpp -o $(PROF_DIR)/profile_runner_inst
-	@echo "profile binaries: $(PROF_DIR)/profile_runner_{clean,inst}"
+profile-sample:
+	@$(MAKE) -C benchmarks profile-sample
 
-profile-sample: profile-sample-build ## [bench] P0 2-pass profile grid (JSONL + markdown; not a CI gate)
-	@$(PYTHON) benchmarks/profile/run_profile.py
+profile-callgrind:
+	@$(MAKE) -C benchmarks profile-callgrind
 
-profile-callgrind: profile-sample-build ## [bench] Callgrind instrumentation runs over the profile binaries (not a CI gate)
-	@bash benchmarks/profile/callgrind_runs.sh
+bench-matrix:
+	@$(MAKE) -C benchmarks bench-matrix
 
-# The 4-D veto matrix (pattern x size x match/no-match x density): a COMMITTED regression gate for the
-# inner-literal route, born from repeated fixes that each missed a dimension. Mechanical verdict, non-zero exit
-# on a red cell. `bench-matrix` is the full matrix (for an arc's veto); `matrix-gate` (in full-local-gate) is a
-# fast 64 KB subset.
-bench-matrix: ## [bench] Full 4-D veto matrix (pattern x size x match x density) — inner-literal regression gate
-	@mkdir -p $(BUILD)
-	@c++ $(CXXSTD) -O2 $(INCLUDES) benchmarks/matrix4d/matrix4d.cpp -o $(BUILD)/matrix4d
-	@$(BUILD)/matrix4d
+matrix-gate:
+	@$(MAKE) -C benchmarks matrix-gate
 
-matrix-gate: ## [bench] Fast 64 KB subset of the 4-D veto matrix (used by full-local-gate)
-	@mkdir -p $(BUILD)
-	@c++ $(CXXSTD) -O2 $(INCLUDES) benchmarks/matrix4d/matrix4d.cpp -o $(BUILD)/matrix4d
-	@$(BUILD)/matrix4d --short
+bench-engines:
+	@$(MAKE) -C benchmarks bench-engines
 
-# Multi-engine C++ throughput benchmark (REAL vs std::regex vs PCRE2 vs RE2).
-# Optional engines are compiled in only when pkg-config locates them.
-# The C++ binary only measures and emits JSON; benchmarks/bench_engines.py (the consumer)
-# applies the shared stats module to produce the table, CIs, and ASCII box-plots. Manual,
-# not a CI gate. Tune samples via BENCH_SAMPLES / BENCH_BOOTSTRAP.
-bench-engines: ## [bench] C++ throughput vs std::regex/PCRE2/RE2 (if present)
-	@mkdir -p $(BUILD)
-	@flags=""; \
-	 if pkg-config --exists libpcre2-8; then flags="$$flags -DHAVE_PCRE2 $$(pkg-config --cflags --libs libpcre2-8)"; fi; \
-	 if pkg-config --exists re2; then flags="$$flags -DHAVE_RE2 $$(pkg-config --cflags --libs re2)"; fi; \
-	 commit=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown); \
-	 echo "engines: REAL std::regex$${flags:+ +optional}"; \
-	 c++ -std=c++20 -O2 -DBENCH_FLAGS='"-O2"' -DBENCH_COMMIT="\"$$commit\"" $(INCLUDES) -I$(SCIFORGE_INCLUDE) benchmarks/bench_engines.cpp $$flags -o $(BUILD)/bench_engines
-	$(PYRUN) benchmarks/bench_engines.py $(BUILD)/bench_engines
-
-# Multi-pattern which-matched (TABLE A) + extraction count (TABLE B). Informational only —
-# not a CI gate. RE2 and Hyperscan optional via pkg-config (libhs / hyperscan names vary).
-bench-multipattern: ## [bench] multi-pattern which-matched / extraction (RE2/HS optional)
-	@mkdir -p $(BUILD)
-	@flags=""; \
-	 if pkg-config --exists re2; then flags="$$flags -DHAVE_RE2 $$(pkg-config --cflags --libs re2)"; fi; \
-	 if pkg-config --exists libhs; then flags="$$flags -DHAVE_HS $$(pkg-config --cflags --libs libhs)"; \
-	 elif pkg-config --exists libhyperscan; then flags="$$flags -DHAVE_HS $$(pkg-config --cflags --libs libhyperscan)"; \
-	 elif [ -f /usr/include/hs/hs.h ] || [ -f /usr/local/include/hs/hs.h ] || [ -f /opt/homebrew/include/hs/hs.h ]; then \
-	   flags="$$flags -DHAVE_HS -lhs"; fi; \
-	 echo "mp_bench flags:$$flags"; \
-	 c++ -std=c++20 -O2 $(INCLUDES) benchmarks/mp_bench.cpp $$flags -o $(BUILD)/mp_bench
-	@$(BUILD)/mp_bench
+bench-multipattern:
+	@$(MAKE) -C benchmarks bench-multipattern
 
 # The light C++ net for examples/cpp/*.cpp: compile+run DIRECTLY against the source tree
 # (-Iinclude, no install step) so a showcase example that stops compiling/running reds here
