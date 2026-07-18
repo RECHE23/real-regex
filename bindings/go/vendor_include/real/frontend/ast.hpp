@@ -1094,10 +1094,18 @@ namespace real::detail {
         default:
           return atom;
       }
-      const bool lazy       {accept('?')};
+      // (?U) ungreedy (RE2): swap the default greediness — a bare quantifier becomes lazy and the
+      // explicit '?' re-inverts back to greedy (measured vs libre2 11.0.0: `(?U)a+` on "aaa" matches
+      // "a", `(?U)a+?` matches "aaa"). Read from the scope stack, so `(?U:...)` scopes, `(?-U:...)`
+      // removal and the flags::ungreedy constructor seed all work; resolved here at parse time into
+      // node.lazy — the compiler and VM are unchanged.
+      const bool explicit_q {accept('?')};
+      const bool lazy       {has_flag(current_flags(), flags::ungreedy) ? !explicit_q : explicit_q};
       // X*+/X++/X?+/X{n,m}+ — native dialect only, mutually exclusive with lazy. ECMAScript has no
       // possessive quantifiers, so under ecma the '+' stays unconsumed and hits the multiple-repeat
-      // check below (SyntaxError, agreeing with V8 and both std libraries).
+      // check below (SyntaxError, agreeing with V8 and both std libraries). Under (?U) a bare
+      // quantifier is lazy, so `(?U)a++` fails "multiple repeat" — in agreement with libre2, which
+      // rejects it too ("bad repetition operator", RE2 has no possessives; measured 2026-07-17).
       const bool possessive {!is_ecma() && !lazy && accept('+')};
       if (!eof()) {
         const char   ch          {peek()};
@@ -1185,9 +1193,8 @@ namespace real::detail {
 
     /*!
      * \brief Maps a flag letter to its \ref flags value.
-     * \param[in] letter One of 'i', 'm', 's', 'a'.
-     * \return The flag; \ref flags::none for 'a' (ASCII — already the default)
-     *         and for any unrecognized letter.
+     * \param[in] letter One of 'i', 'm', 's', 'x', 'a', 'U'.
+     * \return The flag; \ref flags::none for any unrecognized letter.
      */
     static constexpr flags flag_for_letter(char letter)
     {
@@ -1202,27 +1209,32 @@ namespace real::detail {
           return flags::verbose;
         case 'a': // ASCII mode: `\d \w \s \b` stay ASCII, icase folds ASCII only.
           return flags::ascii;
+        case 'U': // Ungreedy mode (RE2 (?U)): swap the default quantifier greediness.
+          return flags::ungreedy;
         default:
           return flags::none;
       }
     }
 
     /*!
-     * \brief Returns `true` if \p letter is a flag letter (imsax).
+     * \brief Returns `true` if \p letter is a flag letter (imsaxU).
      * \param[in] letter A character.
-     * \return `true` if \p letter is a flag letter (imsax).
+     * \return `true` if \p letter is a flag letter (imsaxU).
      */
     static constexpr bool is_flag_letter(char letter)
     {
-      return letter == 'i' || letter == 'm' || letter == 's' || letter == 'a' || letter == 'x';
+      return letter == 'i' || letter == 'm' || letter == 's' || letter == 'a' || letter == 'x' ||
+             letter == 'U';
     }
 
-    //! \brief \p value with \p bit cleared.
+    //! \brief \p value with \p bit cleared. The intermediate cast matches the enum's
+    //!        `std::uint16_t` underlying type — a `std::uint8_t` here (the pre-widening
+    //!        vestige) would silently drop `flags::ungreedy` (512) from every scope.
     static constexpr flags without(flags value,
                                    flags bit)
     {
       return static_cast<flags>(
-        static_cast<std::uint8_t>(static_cast<unsigned>(value) & ~static_cast<unsigned>(bit)));
+        static_cast<std::uint16_t>(static_cast<unsigned>(value) & ~static_cast<unsigned>(bit)));
     }
 
     /*!
@@ -1387,9 +1399,10 @@ namespace real::detail {
             // parse_global_flags_prefix); anything else here is a misplaced global-flags group.
             fail("global flags not at the start of the expression");
           }
-          // Every inline flag (i m s x a) is honoured per scope: verbose changes tokenization, icase/
-          // ascii govern folding and the \w\d\s tables, dotall the dot, multiline the ^/$ anchors — all
-          // read from the scope stack. The added set is applied and the removed set cleared for the body.
+          // Every inline flag (i m s x a U) is honoured per scope: verbose changes tokenization, icase/
+          // ascii govern folding and the \w\d\s tables, dotall the dot, multiline the ^/$ anchors,
+          // ungreedy the default quantifier greediness — all read from the scope stack. The added set
+          // is applied and the removed set cleared for the body.
           flag_scopes_.push_back(without(current_flags() | added, removed));
           scoped_flags = true; // group stays non-capturing (-1)
         }

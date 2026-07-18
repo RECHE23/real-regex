@@ -255,6 +255,10 @@ TEST(raw_byte_escape_allow_raw_byte_widens_the_gate)
     EXPECT_EQ(m.end(0), std::size_t {4}); // "caf" (3 codepoint-aware bytes) + \C's first byte of é
   }
   EXPECT(real::regex(R"([a-z]+\C[a-z]+)", flags::allow_raw_byte).search("abc\xC3xyz"sv).matched());
+  // The gate survives a scoped-flags group: the parser's scope stack must carry the full uint16_t
+  // flag width. The pre-widening without() truncated scopes to uint8_t, silently dropping
+  // allow_raw_byte (256) — and ungreedy (512) — inside any (?flags:...) body (fixed 2026-07-17).
+  EXPECT(real::regex(R"((?i:\C))", flags::allow_raw_byte).fullmatch("\xC3"sv));
 }
 
 TEST(raw_byte_escape_matches_exactly_one_byte)

@@ -91,7 +91,6 @@ namespace {
                               // NOT relaxed just to close this). \x{10FFFF} (valid scalar) closed instead
                               // and moved to the MUST-accept block below; this surrogate sub-edge is what
                               // stayed open.
-      R"((?U)a+)",           // (?U) ungreedy-swap inline flag — real: unknown extension
       R"((?P<n>a)(?P<n>b))", // duplicate group name — RE2 tolerates; debatable, allowlisted pending a call
     };
     for (const auto g : gaps) {
@@ -428,6 +427,14 @@ namespace {
     check_partial_capture(r, "(ab|a)", "xabx", true);
     check_partial_capture(r, "(a+|ab)", "aaab", false);
     check_partial_capture(r, "(a+|ab)", "aaab", true);
+    // (?U) ungreedy swap (closed 2026-07-17): EXTENT parity, not just compile — the captured text is
+    // what discriminates lazy from greedy (the boolean verdict cannot). Bare quantifier goes lazy,
+    // the explicit '?' re-inverts to greedy, the scoped form stops at its group, and leftmost-LONGEST
+    // overrides the lazy preference identically on both engines.
+    check_partial_capture(r, "(?U)(a+)", "aaa", false);      // lazy: both capture "a"
+    check_partial_capture(r, "(?U)(a+?)", "aaa", false);     // '?' re-inverts: both capture "aaa"
+    check_partial_capture(r, "((?U:a+))b", "aaab", false);   // scoped: lazy still expands to reach 'b'
+    check_partial_capture(r, "(?U)(a+)", "aaa", true);       // longest-match mode beats the lazy default
 
     // --- empty-match / nullable GlobalReplace (audit priority) ---
     check_global_replace(r, "a*", "bbb", "#", false);
@@ -482,13 +489,13 @@ namespace {
     check_compile_parity(r, R"(\x{10FFFF})"); // braced hex \x{...} (max valid scalar) — closed 2026-07-17
     check_compile_parity(r, R"(\Qa.b\E)");    // \Q...\E literal quoting — closed 2026-07-17
     check_compile_parity(r, R"((?i-s)a)");    // global flag removal `(?flags-flags)` — closed 2026-07-17
+    check_compile_parity(r, R"((?U)a+)");     // (?U) ungreedy-swap inline flag — closed 2026-07-17
     // Deliberate REAL supersets (drop accepts, RE2 rejects → ENG, on-contract):
     check_compile_parity(r, R"(\Z)");
     check_compile_parity(r, "(?>a)");
     check_compile_parity(r, "a*+");
     // Known RE2 gaps real currently rejects (→ KNOWN-GAP, tracked debt — NOT a fail):
     check_compile_parity(r, R"(\x{D800})"); // braced hex surrogate — RE2 accepts, real rejects (sub-edge)
-    check_compile_parity(r, R"((?U)a+)");
     check_compile_parity(r, R"((?P<n>a)(?P<n>b))");
 
     // --- Engine-diff allowlist (justified) ---

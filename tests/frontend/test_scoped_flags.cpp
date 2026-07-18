@@ -169,3 +169,54 @@ TEST(global_flags_prefix_removal_scoped_form_unaffected)
   EXPECT(!real::regex("(?i-s:A.B)").fullmatch("a\nb"));
   EXPECT(!real::regex("(?i-s:a)b").fullmatch("AB")); // 'b' outside the scope: no icase, no removal either
 }
+
+TEST(ungreedy_inline_flag_swaps_default_greediness)
+{
+  // (?U) (RE2 parity, measured 2026-07-17 vs libre2 11.0.0 — see fuzz/fuzz_re2.cpp's
+  // check_partial_capture((?U)(a+), ...) extent pins): a bare quantifier becomes lazy and the
+  // explicit '?' re-inverts back to greedy. Resolved at parse time into node.lazy — the swap
+  // covers +, *, ? and {n,m} alike.
+  EXPECT_EQ(real::regex("(?U)a+").search("aaa")[0], std::string_view {"a"});
+  EXPECT_EQ(real::regex("(?U)a+?").search("aaa")[0], std::string_view {"aaa"});
+  EXPECT_EQ(real::regex("(?U)a*").search("aaa")[0], std::string_view {""});
+  EXPECT_EQ(real::regex("(?U)a{1,3}").search("aaa")[0], std::string_view {"a"});
+  // No-U behavior unchanged (regression guard for the explicit_q refactor).
+  EXPECT_EQ(real::regex("a+").search("aaa")[0], std::string_view {"aaa"});
+  EXPECT_EQ(real::regex("a+?").search("aaa")[0], std::string_view {"a"});
+}
+
+TEST(ungreedy_scoped_and_removal)
+{
+  // (?U:...) swaps only inside its scope; (?-U:...) restores greedy inside a (?U) pattern —
+  // both measured vs libre2 (extents "a" / "aaa" respectively). The scoped forms work by
+  // construction: 'U' joins is_flag_letter, and the scope push/pop does the rest.
+  EXPECT_EQ(real::regex("(?U:a+)").search("aaa")[0], std::string_view {"a"});
+  EXPECT_EQ(real::regex("(?U:a+)b").search("aaab")[0], std::string_view {"aaab"}); // lazy still reaches b
+  EXPECT_EQ(real::regex("(?U)(?-U:a+)").search("aaa")[0], std::string_view {"aaa"});
+}
+
+TEST(ungreedy_constructor_flag)
+{
+  // flags::ungreedy as a constructor flag seeds the base scope exactly like a leading (?U).
+  using real::flags;
+  EXPECT_EQ(real::regex("a+", flags::ungreedy).search("aaa")[0], std::string_view {"a"});
+  EXPECT_EQ(real::regex("a+?", flags::ungreedy).search("aaa")[0], std::string_view {"aaa"});
+}
+
+TEST(ungreedy_possessive_interaction_agrees_with_re2)
+{
+  // Under (?U) a bare quantifier is lazy, so the possessive '+' is never consumed and `(?U)a++`
+  // fails "multiple repeat" — measured 2026-07-17: libre2 rejects it too ("bad repetition
+  // operator: ++", RE2 has no possessives). Agreement, not a KNOWN-GAP.
+  bool threw = false;
+  try {
+    real::regex re("(?U)a++");
+  }
+  catch (const real::regex_error& e) {
+    threw = true;
+    EXPECT(std::string_view(e.what()).find("multiple repeat") != std::string_view::npos);
+  }
+  EXPECT(threw);
+  // Without U the native possessive is untouched.
+  EXPECT_EQ(real::regex("a++").search("aaa")[0], std::string_view {"aaa"});
+}

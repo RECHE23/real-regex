@@ -341,8 +341,11 @@ TEST(compat_backend_selection)
   // parse_global_flags_prefix): the `i`/`-` right after `(?` already routes via is_flag_or_dash, same
   // as the scoped forms below -- a pin in ACCORD with the local std, not a hard-coded "rejects
   // everywhere" (the MSVC-parity lesson: only the local stdlib's own verdict is measured here).
+  // `(?U)a` / `(?U:a+)` are the RE2 ungreedy swap: real honors them natively, so the `U` in
+  // is_flag_or_dash is what KEEPS compat ≡ std here -- without it real would silently apply swapped
+  // greediness while std rejects the group (the guaranteed-divergence axis this pin guards).
   for (const char* scoped : {"(?i:abc)", "(?-i:abc)", "(?ms:a.b)", "(?x: a b )", "(?a:\\w)",
-                             "(?i-s)a", "(?-s)a"}) {
+                             "(?i-s)a", "(?-s)a", "(?U)a", "(?U:a+)"}) {
     bool std_rejects {false};
     try {
       static_cast<void>(std::regex(scoped).mark_count());
