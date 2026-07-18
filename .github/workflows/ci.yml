@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches: ['**']   # all branches, but not release tags (release.yml covers those)
-    paths-ignore: ['**.md', 'docs/**']   # doc-only pushes don't need the full matrix
+    paths-ignore: ['**.md', 'docs/**', 'docs-requirements.txt', '.github/workflows/docs.yml', '.github/workflows/docs-site.yml']   # doc-only pushes don't need the full matrix; the doc workflows/requirements are validated by the Docs/Docs-site runs they themselves trigger (both fire on every push)
   pull_request:
 
 # One active CI run per ref: a new push cancels the previous (fail-fast across pushes).
