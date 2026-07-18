@@ -337,7 +337,12 @@ TEST(compat_backend_selection)
   // Inline-flag groups: real accepts (?imsxa:...) with Python semantics, but ECMAScript has no inline
   // flags, so compat routes them to std -- which rejects them, exactly as std::regex does. Compat stays
   // ≡ std rather than silently applying re semantics. `(?:` `(?=` `(?<` are NOT flag groups and stay real.
-  for (const char* scoped : {"(?i:abc)", "(?-i:abc)", "(?ms:a.b)", "(?x: a b )", "(?a:\\w)"}) {
+  // `(?i-s)a` / `(?-s)a` are the UNSCOPED global-flags-prefix form (RE2 `-removed` parity, real's own
+  // parse_global_flags_prefix): the `i`/`-` right after `(?` already routes via is_flag_or_dash, same
+  // as the scoped forms below -- a pin in ACCORD with the local std, not a hard-coded "rejects
+  // everywhere" (the MSVC-parity lesson: only the local stdlib's own verdict is measured here).
+  for (const char* scoped : {"(?i:abc)", "(?-i:abc)", "(?ms:a.b)", "(?x: a b )", "(?a:\\w)",
+                             "(?i-s)a", "(?-s)a"}) {
     bool std_rejects {false};
     try {
       static_cast<void>(std::regex(scoped).mark_count());

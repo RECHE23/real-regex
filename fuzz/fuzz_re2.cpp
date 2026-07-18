@@ -92,7 +92,6 @@ namespace {
                               // and moved to the MUST-accept block below; this surrogate sub-edge is what
                               // stayed open.
       R"((?U)a+)",           // (?U) ungreedy-swap inline flag — real: unknown extension
-      R"((?i-s)a)",          // unscoped inline flag with '-' removal — real rejects the global form
       R"((?P<n>a)(?P<n>b))", // duplicate group name — RE2 tolerates; debatable, allowlisted pending a call
     };
     for (const auto g : gaps) {
@@ -416,6 +415,11 @@ namespace {
     check_partial_full(r, R"(\Qab\E+)", "abab");
     check_partial_full(r, R"(\Qa.b)", "a.b");
     check_partial_full(r, R"(a\Q\E+)", "aa");
+    // (?i-s) global flag removal (closed 2026-07-17): match parity, not just compile — the removal
+    // semantics (i enabled, s disabled for the rest of the pattern) must agree with the oracle, not
+    // merely "both compile". `.` must NOT cross \n (s off) while A/a fold together (i on).
+    check_partial_full(r, R"((?i-s)A.B)", "a\nb");
+    check_partial_full(r, R"((?i-s)A.B)", "axb");
 
     // --- longest-match ties (audit priority) ---
     check_partial_capture(r, "(a|ab)", "xabx", false);
@@ -477,6 +481,7 @@ namespace {
     check_compile_parity(r, R"(\p{^L})");   // caret-negation == \P{L} — closed 2026-07-17
     check_compile_parity(r, R"(\x{10FFFF})"); // braced hex \x{...} (max valid scalar) — closed 2026-07-17
     check_compile_parity(r, R"(\Qa.b\E)");    // \Q...\E literal quoting — closed 2026-07-17
+    check_compile_parity(r, R"((?i-s)a)");    // global flag removal `(?flags-flags)` — closed 2026-07-17
     // Deliberate REAL supersets (drop accepts, RE2 rejects → ENG, on-contract):
     check_compile_parity(r, R"(\Z)");
     check_compile_parity(r, "(?>a)");
@@ -484,7 +489,6 @@ namespace {
     // Known RE2 gaps real currently rejects (→ KNOWN-GAP, tracked debt — NOT a fail):
     check_compile_parity(r, R"(\x{D800})"); // braced hex surrogate — RE2 accepts, real rejects (sub-edge)
     check_compile_parity(r, R"((?U)a+)");
-    check_compile_parity(r, R"((?i-s)a)");
     check_compile_parity(r, R"((?P<n>a)(?P<n>b))");
 
     // --- Engine-diff allowlist (justified) ---

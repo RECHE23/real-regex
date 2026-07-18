@@ -3,6 +3,7 @@
 // dotall (s) the dot, multiline (m) the ^/$ anchors. A scope reads from the flag-scope stack (parser)
 // and the per-node effective_flags (compiler). These tests pin the scoping and its boundaries.
 #include <string>
+#include <string_view>
 
 #include <sciforge/test/framework.hpp>
 #include "real/real.hpp"
@@ -109,4 +110,62 @@ TEST(scoped_ascii_word_boundary)
   EXPECT(real::regex("(?a:\\bx)").search("éx").matched());  // ASCII: boundary before x
   EXPECT(!real::regex("\\bx").search("éx").matched());      // Unicode: é and x both word, no boundary
   EXPECT(!real::regex("(?a:\\Bx)").search("éx").matched()); // \B is the complement
+}
+
+TEST(global_flags_prefix_removal_re2_parity)
+{
+  // (?i-s) at the very start: RE2 syntax for "enable i, disable s" from here on (RE2 parity,
+  // measured 2026-07-17 vs libre2 11.0.0 — see .recovery/re2-parity-measurement.md and
+  // fuzz/fuzz_re2.cpp's check_partial_full((?i-s)A.B, ...) match-parity pins). i is active
+  // (A folds to a), s is inactive (the dot does not cross \n).
+  EXPECT(real::regex("(?i-s)A.B").fullmatch("axb"));
+  EXPECT(!real::regex("(?i-s)A.B").fullmatch("a\nb"));
+
+  // Pure removal, no addition: (?-s) alone still disables dotall for the whole pattern —
+  // measured vs libre2 first (both reject "\n", both accept any other single byte).
+  EXPECT(!real::regex("(?-s).").fullmatch("\n"));
+  EXPECT(real::regex("(?-s).").fullmatch("x"));
+
+  // Chained global prefixes accumulate on the base scope, same as the add-only path.
+  EXPECT(real::regex("(?i)(?-s)A.B").fullmatch("axb"));
+  EXPECT(!real::regex("(?i)(?-s)A.B").fullmatch("a\nb"));
+}
+
+TEST(global_flags_prefix_dash_with_no_flag_is_an_error)
+{
+  // Mirrors a_dash_with_no_flag_is_still_an_error, but for the unscoped global-prefix parse
+  // (parse_global_flags_prefix), which has its own accept('-')/loop — same failure message.
+  const char* const msg = "missing flag after '-'";
+  {
+    bool threw = false;
+    try {
+      real::regex re("(?i-)a");
+    }
+    catch (const real::regex_error& e) {
+      threw = true;
+      EXPECT(std::string_view(e.what()).find(msg) != std::string_view::npos);
+    }
+    EXPECT(threw);
+  }
+  {
+    bool threw = false;
+    try {
+      real::regex re("(?-)a"); // pure dash, no added letters either
+    }
+    catch (const real::regex_error& e) {
+      threw = true;
+      EXPECT(std::string_view(e.what()).find(msg) != std::string_view::npos);
+    }
+    EXPECT(threw);
+  }
+}
+
+TEST(global_flags_prefix_removal_scoped_form_unaffected)
+{
+  // (?i-s:...) is the pre-existing SCOPED form (parse_group), not the global prefix — the new
+  // global -removed parse must not change it: still requires a trailing ':', still pops back
+  // to the outer scope after the group body.
+  EXPECT(real::regex("(?i-s:A.B)").fullmatch("axb"));
+  EXPECT(!real::regex("(?i-s:A.B)").fullmatch("a\nb"));
+  EXPECT(!real::regex("(?i-s:a)b").fullmatch("AB")); // 'b' outside the scope: no icase, no removal either
 }

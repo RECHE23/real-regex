@@ -1226,12 +1226,19 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Consumes a leading `(?ims)` global-flags group, if present.
+     * \brief Consumes a leading `(?ims)` or `(?ims-ims)` global-flags group, if present.
      *
      * Like Python (3.11+), global flags are only legal at the very start of the
-     * pattern; later occurrences are rejected in \ref parse_group.
+     * pattern; later occurrences are rejected in \ref parse_group. RE2 additionally
+     * permits an optional `-removed` suffix (e.g. `(?i-s)`, or a pure `(?-s)`) that
+     * clears flags from the base scope for the rest of the pattern — this mirrors
+     * the added/`-`/removed parse in \ref parse_group's scoped-flags branch
+     * (`(?flags-flags:...)`), minus its trailing `:` (a global prefix has none).
      *
-     * \param[in,out] out Receives the flags into \ref ast::inline_flags.
+     * \param[in,out] out Receives the added letters into \ref ast::inline_flags — same
+     *                    convention as the pre-existing add-only path; the removed set
+     *                    only ever clears bits on the scope stack (see \ref ast::inline_flags
+     *                    itself, which is OR-only and cannot represent a removal).
      * \return `true` if a flags group was consumed (position advanced), else
      *         `false` (position restored, for \ref parse_group to handle).
      */
@@ -1249,15 +1256,33 @@ namespace real::detail {
         any_letter = true;
         ++pos_;
       }
-      if (!any_letter || !accept(')')) {
-        pos_ = saved_pos; // some other (?...) construct: let parse_group decide
+      flags removed     {flags::none};
+      bool  any_removed {};
+      if (accept('-')) {
+        bool saw_negative {false};
+        while (!eof() && is_flag_letter(peek())) {
+          removed      = removed | flag_for_letter(peek());
+          saw_negative = true;
+          ++pos_;
+        }
+        if (!saw_negative) {
+          // '-' right after (? is only ever a flags construct (global or scoped) — see
+          // parse_group's dispatch, which fails the same way for the scoped form. No other
+          // (?...) construct starts with a dash, so this is a hard failure, not a backtrack.
+          fail("missing flag after '-'");
+        }
+        any_removed = true;
+      }
+      if ((!any_letter && !any_removed) || !accept(')')) {
+        pos_ = saved_pos; // some other (?...) construct, or a scoped (?flags-flags:...): let parse_group decide
         return false;
       }
       out.inline_flags = out.inline_flags | found;
       // A leading (?flags) group sets the base scope, so the rest of the pattern is parsed under it —
       // verbose affects tokenization, icase/ascii affect literal folding and the \w\d\s tables. This
-      // mirrors the constructor flags, which seed the same base scope.
-      flag_scopes_.back() = flag_scopes_.back() | found;
+      // mirrors the constructor flags, which seed the same base scope. The optional -removed clears
+      // flags from that same base scope (RE2 semantics: (?i-s) enables i and disables s from here on).
+      flag_scopes_.back() = without(current_flags() | found, removed);
       return true;
     }
 
