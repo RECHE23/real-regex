@@ -57,6 +57,7 @@ include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
         lint misra fuzz fuzz-compat fuzz-re2 check-capi-abi exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
+        example-check \
         bench-engines bench-multipattern bench-duel bench-matrix matrix-gate \
         profile-sample-build profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers
@@ -337,6 +338,14 @@ docs-site: doc-no-coverage ## [release] Build the themed Sphinx/Breathe site (do
 # not just the first) + linkcheck, mirroring doc-no-coverage's WARN_AS_ERROR
 # discipline for the Doxygen side. Separate output dirs from docs-site's release
 # build (_gate / _linkcheck) so a gate run never staleness-poisons a real build.
+#
+# no-inline-quickstart (doc-site P1b-A gate-snippet): the landing's quickstart tab-set is
+# `literalinclude`-only by design (page == tested code, zero drift) -- this closes the gap a
+# broken-path literalinclude doesn't: nothing stops an EDIT from re-adding a plain ```cpp/
+# ```python/```rust/```go fence ALONGSIDE the literalinclude ones (both would render, `-W` would
+# not complain, and the extra fence would be untested illustrative code again). Scoped to the
+# quickstart section only (between its own eyebrow marker and the next section's) so the
+# install grid's legitimate ```console shell fences are untouched.
 docs-site-gate: ## [gates] Sphinx -W --keep-going + linkcheck for docs/site (the site's net)
 	@command -v $(SPHINXBUILD) >/dev/null 2>&1 || { \
 	  echo "docs-site-gate: '$(SPHINXBUILD)' not found -- install docs-requirements.txt into a venv" \
@@ -344,7 +353,15 @@ docs-site-gate: ## [gates] Sphinx -W --keep-going + linkcheck for docs/site (the
 	@mkdir -p $(BUILD)/doc && doxygen Doxyfile
 	$(SPHINXBUILD) $(SPHINXOPTS) -W --keep-going -b html docs/site $(BUILD)/site/_gate
 	$(SPHINXBUILD) $(SPHINXOPTS) -b linkcheck docs/site $(BUILD)/site/_linkcheck
-	@echo "docs-site-gate: PASS (sphinx -W --keep-going + linkcheck)"
+	@echo "── no-inline-quickstart (quickstart tab-set: literalinclude only, zero inline cpp/python/rust/go)"
+	@hit=$$(awk '/<span class="eyebrow">quickstart<\/span>/{flag=1;next} /<span class="eyebrow">install<\/span>/{flag=0} flag' docs/site/index.md \
+	  | grep -nE '^```(cpp|python|rust|go)\b' || true); \
+	 if [ -n "$$hit" ]; then \
+	   echo "docs-site-gate: FAIL -- inline cpp/python/rust/go code fence in docs/site/index.md's quickstart section (must be a {literalinclude}, not inline code):"; \
+	   printf '%s\n' "$$hit" | sed 's/^/  /'; \
+	   exit 1; \
+	 fi
+	@echo "docs-site-gate: PASS (sphinx -W --keep-going + linkcheck + no-inline-quickstart)"
 
 format: ## [daily] Uncrustify, in place
 	uncrustify -c $(SCIFORGE_LINT)/uncrustify.cfg --replace --no-backup $(FORMAT_FILES)
@@ -530,62 +547,69 @@ gate-test: ## [gates] Calibrated gate for a tests/-only change (test + sanitize 
 
 full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate of record)
 	@echo "full-local-gate: start (fail-fast — cheap first, first red stops the train)"
-	@echo "── [1/21] format-check"
+	@echo "── [1/22] format-check"
 	@$(MAKE) format-check
-	@echo "── [2/21] version-check"
+	@echo "── [2/22] version-check"
 	@$(MAKE) version-check
-	@echo "── [3/21] check-layers"
+	@echo "── [3/22] check-layers"
 	@$(MAKE) check-layers
-	@echo "── [4/21] check-pins"
+	@echo "── [4/22] check-pins"
 	@$(MAKE) check-pins
-	@echo "── [5/21] check-capi-abi (hardening #4 — C ABI golden vs real_capi.h)"
+	@echo "── [5/22] check-capi-abi (hardening #4 — C ABI golden vs real_capi.h)"
 	@$(MAKE) check-capi-abi
-	@echo "── [6/21] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
+	@echo "── [6/22] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
 	@$(MAKE) doc-no-coverage
-	@echo "── [7/21] doc-check (CI-pinned Doxygen when Docker is available)"
+	@echo "── [7/22] doc-check (CI-pinned Doxygen when Docker is available)"
 	@$(MAKE) doc-check
 	# docs/site's own net (-W --keep-going + linkcheck, doc-site P1). Same shape as the
 	# GXX/go legs below: skipped with a warning when sphinx-build is absent (a dev
 	# without the docs venv on PATH doesn't need to rougir tout le gate) -- the docs-site
 	# CI job (ci.yml) is the backstop, so this is never the ONLY net on the site.
-	@echo "── [8/21] docs-site-gate (sphinx -W --keep-going + linkcheck; skipped if sphinx-build absent)"
+	@echo "── [8/22] docs-site-gate (sphinx -W --keep-going + linkcheck; skipped if sphinx-build absent)"
 	@if command -v $(SPHINXBUILD) >/dev/null 2>&1; then $(MAKE) docs-site-gate; else echo "full-local-gate: WARN — $(SPHINXBUILD) absent, docs-site-gate skipped (CI covers it)"; fi
-	@echo "── [9/21] misra (single synthetic TU)"
+	@echo "── [9/22] misra (single synthetic TU)"
 	@$(MAKE) misra
-	@echo "── [10/21] c-test"
+	@echo "── [10/22] c-test"
 	@$(MAKE) c-test
-	@echo "── [11/21] matrix-gate"
+	# examples/cpp/*.cpp direct compile+run (doc-site P1b-A gate-snippet) -- unconditional, not
+	# skip-if-absent: unlike the OPTIONAL alternate-compiler/toolchain legs below (GXX, go,
+	# sphinx-build), a default C++ compiler is already a hard prerequisite of this entire gate
+	# (build/test/misra/c-test above assume one unconditionally), so example-check rides the
+	# same assumption instead of the "warn and skip" shape reserved for genuinely optional tools.
+	@echo "── [11/22] example-check (examples/cpp/*.cpp direct compile+run)"
+	@$(MAKE) example-check
+	@echo "── [12/22] matrix-gate"
 	@$(MAKE) matrix-gate
-	@echo "── [12/21] fowler-compat"
+	@echo "── [13/22] fowler-compat"
 	@$(MAKE) fowler-compat
-	@echo "── [13/21] exhaustive-compat"
+	@echo "── [14/22] exhaustive-compat"
 	@$(MAKE) exhaustive-compat
-	@echo "── [14/21] test (default CXX)"
+	@echo "── [15/22] test (default CXX)"
 	@$(MAKE) test
-	@echo "── [15/21] rust-test"
+	@echo "── [16/22] rust-test"
 	@$(MAKE) rust-test
-	@echo "── [16/21] rust-publish-check"
+	@echo "── [17/22] rust-publish-check"
 	@$(MAKE) rust-publish-check
-	@echo "── [17/21] python-test"
+	@echo "── [18/22] python-test"
 	@$(MAKE) python-test
 	# Go leg: go-check-vendor regenerates the committed vendor tree from the live headers and fails
 	# on drift — the one binding NOT otherwise in this gate (its sources are vendored, not built from
 	# include/ here). Skipped with a warning when go is absent (the CI go job is the backstop), same
 	# shape as the GCC leg. Closes the gap where an include/ change that stales vendor_include/ was
 	# caught only in CI.
-	@echo "── [18/21] go-check-vendor + go-test (Go leg; skipped if go absent)"
+	@echo "── [19/22] go-check-vendor + go-test (Go leg; skipped if go absent)"
 	@if command -v go >/dev/null 2>&1; then $(MAKE) go-check-vendor && $(MAKE) go-test; else echo "full-local-gate: WARN — go absent, Go leg skipped (CI covers it)"; fi
-	@echo "── [19/21] lint"
+	@echo "── [20/22] lint"
 	@set -euo pipefail; \
 	  mkdir -p $(BUILD); \
 	  $(MAKE) lint 2>&1 | tee $(BUILD)/lint.log; \
 	  if grep -qE 'warning:|error:' $(BUILD)/lint.log; then \
 	    echo "full-local-gate: FAIL at lint (see $(BUILD)/lint.log)"; exit 1; \
 	  fi
-	@echo "── [20/21] test (GCC leg) + sanitize (slowest last)"
+	@echo "── [21/22] test (GCC leg) + sanitize (slowest last)"
 	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "full-local-gate: WARN — $(GXX) absent, GCC leg skipped (CI covers it)"; fi
 	@$(MAKE) sanitize
-	@echo "── [21/21] coverage-check (line floor $(COV_FLOOR)% — closes the P0 gate hole)"
+	@echo "── [22/22] coverage-check (line floor $(COV_FLOOR)% — closes the P0 gate hole)"
 	@$(MAKE) coverage-check
 	@echo "full-local-gate: ALL gates green (cheap→doc→tests→lint→sanitize→coverage; first red would have stopped the train)"
 
@@ -670,6 +694,30 @@ bench-multipattern: ## [bench] multi-pattern which-matched / extraction (RE2/HS 
 	 c++ -std=c++20 -O2 $(INCLUDES) benchmarks/mp_bench.cpp $$flags -o $(BUILD)/mp_bench
 	@$(BUILD)/mp_bench
 
+# The light C++ net for examples/cpp/*.cpp: compile+run DIRECTLY against the source tree
+# (-Iinclude, no install step) so a showcase example that stops compiling/running reds here
+# fast, before the slower install-smoke cycle. Complementary, not redundant, with
+# install-smoke's step (e), which proves the same files against the INSTALLED package
+# (find_package) — one net catches a header regression early, the other catches a packaging
+# regression. CXX is honored (run under both clang and g++ in ci.yml's install-smoke job,
+# which already has both) so a compiler-specific regression in a showcase snippet cannot hide.
+# Born with the landing page's quickstart tab (doc-site P1b-A gate-snippet): every example
+# under examples/cpp/ is now also a `literalinclude` source for docs/site/index.md, so a red
+# here means the page's own code sample stopped working.
+example-check: ## [nets] Compile + run every examples/cpp/*.cpp directly against include/ (CXX honored)
+	@set -e; \
+	 cxx="$${CXX:-c++}"; \
+	 mkdir -p $(BUILD)/examples; \
+	 n=0; \
+	 for src in examples/cpp/*.cpp; do \
+	   name=$$(basename "$$src" .cpp); \
+	   echo "example-check: $$cxx -std=c++20 -Iinclude $$src"; \
+	   $$cxx -std=c++20 $(INCLUDES) "$$src" -o "$(BUILD)/examples/$$name"; \
+	   "$(BUILD)/examples/$$name"; \
+	   n=$$((n + 1)); \
+	 done; \
+	 echo "example-check: OK ($$n example(s) compiled + run with $$cxx)"
+
 # Proves the *system* install end to end, the exact packager path: install REAL to a temp prefix
 # with -DBUILD_TESTING=OFF (noarch LIBDIR=lib, no SciForge — the library stands alone), then
 # consume it the three supported C++ ways plus a negative check that the C++20 guard fires. CXX is
@@ -712,7 +760,7 @@ install-smoke: ## [release] System install end to end: find_package + pkg-config
 	 echo "  (e) examples/ build + run against the installed package (proves the showcase examples never rot)"; \
 	 $(CMAKE) -S examples -B "$$work/ex" -DCMAKE_PREFIX_PATH="$$pfx" >/dev/null; \
 	 $(CMAKE) --build "$$work/ex" >/dev/null; \
-	 "$$work/ex/hello"; "$$work/ex/redos_demo"; echo "      examples: OK"; \
+	 "$$work/ex/hello"; "$$work/ex/redos_demo"; "$$work/ex/quickstart"; echo "      examples: OK"; \
 	 echo "install-smoke: OK (find_package + pkg-config + direct-copy + negative guard + examples)"
 
 # Installs the package from the repository root (root pyproject.toml builds the

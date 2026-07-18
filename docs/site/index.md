@@ -130,47 +130,38 @@ If you know `std::regex`, `re`, the `regex` crate or `regexp`, you already know 
 
 :::{tab-item} C++
 
-```cpp
-// The pattern lives in the type — parsed & compiled at compile time.
-#include <real/real.hpp>
-constexpr real::static_regex<R"((\d{1,3})(?:\.(\d{1,3})){3})"> ipv4;
-static_assert(ipv4.match("192.168.0.1"));
-
-// …or drop into std::regex's place — same API, linear-time engine.
-#include <real/compat/std/regex.hpp>
-real::compat::smatch m;
-real::compat::regex_search(line, m, real::compat::regex{R"((\w+)=(\S+))"});
+```{literalinclude} ../../examples/cpp/quickstart.cpp
+:language: cpp
+:start-after: [quickstart]
+:end-before: [/quickstart]
+:dedent: 2
 ```
 :::
 
 :::{tab-item} Python
 
-```python
-import real as re   # drop-in for the standard library's re
-
-m = re.search(r"(\w+)@(\w+)\.(\w+)", "info@example.com")
-m.group(2)                # 'example' — linear time, no backtracking cliff
+```{literalinclude} ../../bindings/python/examples/quickstart.py
+:language: python
+:start-after: [quickstart]
+:end-before: [/quickstart]
 ```
 :::
 
 :::{tab-item} Rust
 
-```rust
-use real_regex::Regex;   // drop-in for the regex crate
-
-let re = Regex::new(r"(?P<user>\w+)@(?P<host>\w+)")?;
-let caps = re.captures("info@example.com").unwrap();
-&caps["host"];              // "example"
+```{literalinclude} ../../bindings/rust/examples/quickstart.rs
+:language: rust
+:start-after: [quickstart]
+:end-before: [/quickstart]
+:dedent: 4
 ```
 :::
 
 :::{tab-item} Go
 
-```go
-import real "github.com/RECHE23/real-regex/bindings/go"
-
-re := real.MustCompile(`(\w+)@(\w+)`)              // drop-in for regexp
-re.FindSubmatchIndex([]byte("info@example.com"))  // capture-group offsets
+```{literalinclude} ../../bindings/go/quickstart_example_test.go
+:language: go
+:lines: 23-24,34-35
 ```
 :::
 

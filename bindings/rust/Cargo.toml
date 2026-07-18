@@ -12,7 +12,12 @@ categories = ["text-processing"]
 # deliberately not packaged — they need the `regex` dev-dependency as a differential oracle and are not part
 # of the published API; `cargo publish` noting "ignoring test ... not included" is expected, not a warning to
 # fix. They run in CI (the bindings / bindings-cross jobs) against the in-tree sources.
-include = ["src/**/*.rs", "build.rs", "Cargo.toml", "README.md", "vendor/**"]
+#
+# examples/** IS packaged (unlike tests/**): it has no dev-dependency on the `regex` oracle, it
+# doubles as the landing page's Rust quickstart tab (docs/site/index.md, doc-site P1b-A
+# gate-snippet), and `rust-publish-check` explicitly builds it from the extracted tarball (see
+# that Makefile target) — so shipping it is what makes that proof possible in the first place.
+include = ["src/**/*.rs", "build.rs", "Cargo.toml", "README.md", "vendor/**", "examples/**"]
 
 [features]
 # Delegate a pattern REAL cannot run linearly (\p{...}, a backreference, an unbounded lookaround) to the

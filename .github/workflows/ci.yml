@@ -278,7 +278,10 @@ jobs:
   # the C++20 guard fires under -std=c++17 (the only thing exercising the guard — CI otherwise
   # builds C++20). pkg-config and cmake are installed explicitly (absent from some images);
   # SciForge is a sibling so REAL's top-level configure resolves the test harness (the install
-  # itself is harness-free).
+  # itself is harness-free). This job is also the C++ home for `example-check` (doc-site P1b-A
+  # gate-snippet): it already has both compilers, and install-smoke's own step (e) already
+  # proves examples/cpp/*.cpp against the INSTALLED package, so example-check's direct
+  # -Iinclude compile+run is the complementary, cheaper leg — same two files, two proofs.
   install-smoke:
     needs: preflight
     runs-on: ubuntu-latest
@@ -297,6 +300,10 @@ jobs:
         run: make -C real-regex install-smoke
       - name: Install smoke (clang++)
         run: make -C real-regex install-smoke CXX=clang++
+      - name: Example check (g++ — examples/cpp/*.cpp compiled+run directly against include/)
+        run: make -C real-regex example-check
+      - name: Example check (clang++)
+        run: make -C real-regex example-check CXX=clang++
 
   # Python binding (abi3) build + unittest via SciForge's reusable spine. REAL's
   # binding is a leaf (no dependency siblings); its exact prior coverage is

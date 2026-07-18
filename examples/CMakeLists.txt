@@ -7,7 +7,7 @@ project(real_examples CXX)
 
 find_package(real CONFIG REQUIRED)
 
-foreach(ex hello redos_demo)
+foreach(ex hello redos_demo quickstart)
   add_executable(${ex} cpp/${ex}.cpp)
   target_link_libraries(${ex} PRIVATE real::real)
   set_target_properties(${ex} PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
