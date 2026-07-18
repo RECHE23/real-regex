@@ -295,98 +295,34 @@ check-capi-abi: ## [nets] C ABI golden vs real_capi.h + enum/flag pins (hardenin
 	@python3 tools/gen_capi_abi_golden.py --check
 	@echo "check-capi-abi: PASS (golden matches real_capi.h)"
 
-doc: coverage-html ## [release] Generate API reference (Doxygen) with embedded coverage
-	mkdir -p $(BUILD)/doc
-	doxygen Doxyfile
-	@rm -rf $(BUILD)/doc/html/coverage
-	@cp -R $(COV_DIR)/html $(BUILD)/doc/html/coverage
-	@echo "API reference: $(BUILD)/doc/html/index.html"
-
-# Doc target for environments without Clang/LLVM coverage tools (e.g. CI that only
-# needs the API reference). It does not rebuild the coverage report.
-doc-no-coverage: ## [release] Generate API reference without coverage report
-	mkdir -p $(BUILD)/doc
-	doxygen Doxyfile
-	@echo "API reference: $(BUILD)/doc/html/index.html"
-
-# --- docs/site (Sphinx + Breathe + pydata-sphinx-theme, doc-site P1) -------
+# --- docs/ (Doxygen + Sphinx/Breathe site) ---------------------------------
 #
-# Additive to `doc`/`doc-no-coverage` above, not a replacement: docs.yml still
-# deploys build/doc/html (the live Doxygen site) untouched. This builds the
-# themed landing + Breathe-powered API scaffold into build/site/html, entirely
-# separate output, nothing wired to go live yet (see the doc-site fiche).
+# Moved to docs/Makefile (compartimentalisation wagon 3, docs/ pilot section) -- these
+# names stay invocable at the root (the CI invariant: docs.yml/docs-site.yml/ci.yml
+# invoke them as `make -C real-regex <name>`) via thin delegations below.
+# `coverage-html`/COV_DIR stay here (tests/coverage domain, not migrated); `doc` and
+# `docs-site-gate` orchestrate it from here, root-first, before delegating -- see
+# docs/Makefile's own `doc`/`docs-site-gate` comments for the other half of each
+# recipe (paths there are ré-ancrées $(ROOT) so they run identically from either
+# place).
 #
-# sphinx-build comes from docs/requirements.txt (pinned), installed into an
-# isolated venv -- never the system interpreter:
-#   python3 -m venv .venv-docs && .venv-docs/bin/pip install -r docs/requirements.txt
-#   source .venv-docs/bin/activate   # sphinx-build now on PATH
+# SPHINXBUILD stays defined here too (not just in docs/Makefile): full-local-gate's own
+# "is sphinx-build on PATH" guard (below) reads $(SPHINXBUILD) directly, so this
+# repo-level default must exist independently of docs/Makefile's own copy.
 SPHINXBUILD ?= sphinx-build
-SPHINXOPTS  ?=
 
-docs-site: doc-no-coverage ## [release] Build the themed Sphinx/Breathe site (docs/site) -> build/site/html
-	@command -v $(SPHINXBUILD) >/dev/null 2>&1 || { \
-	  echo "docs-site: '$(SPHINXBUILD)' not found -- install docs/requirements.txt into a venv" \
-	       "and put it on PATH (or pass SPHINXBUILD=/path/to/sphinx-build)"; exit 1; }
-	$(SPHINXBUILD) $(SPHINXOPTS) -b html docs/site $(BUILD)/site/html
-	@if [ -d $(COV_DIR)/html ]; then \
-	  rm -rf $(BUILD)/site/html/coverage && cp -R $(COV_DIR)/html $(BUILD)/site/html/coverage; \
-	fi
-	@rm -rf $(BUILD)/site/html/api && cp -R $(BUILD)/doc/html $(BUILD)/site/html/api
-	@echo "docs-site: $(BUILD)/site/html/index.html"
+doc: coverage-html
+	@$(MAKE) -C docs doc
 
-# The site's own gate: -W (every warning fatal) + --keep-going (report all of them,
-# not just the first) + linkcheck, mirroring doc-no-coverage's WARN_AS_ERROR
-# discipline for the Doxygen side. Separate output dirs from docs-site's release
-# build (_gate / _linkcheck) so a gate run never staleness-poisons a real build.
-#
-# Two nets added for doc-site P1c (the bespoke landing template, docs/site/_templates/
-# landing.html, served via html_additional_pages -- see conf.py):
-#
-#   no-inline-quickstart, adapted: the quickstart panels are no longer {literalinclude}
-#   directives in a source document (P1b-A's shape) -- they are `{{ quickstart_* }}`
-#   placeholders injected by conf.py's html-page-context hook (P1c). The check now scans
-#   the TEMPLATE SOURCE for (a) any of the 4 placeholders missing (the injection points
-#   themselves were deleted) and (b) known verbatim strings from the actual snippet
-#   bodies (static_regex/MustCompile(/etc.) -- their presence in the template SOURCE
-#   would mean someone pasted real code in over the hook instead of using it. Rendered
-#   OUTPUT necessarily contains those same strings (that's the whole point of the
-#   injection), so this greps docs/site/_templates/landing.html, never build/site/html.
-#
-#   built-HTML link check (tools/check_site_links.py): linkcheck (above) walks SOURCE
-#   documents only -- landing.html is a Jinja2 template, invisible to it, so a broken
-#   href inside the bespoke landing could ship undetected (the exact "linkcheck doesn't
-#   see html_additional_pages" gap the P1c review caught). Needs the REAL release
-#   output (api/ + coverage/ copied in, not just _gate's bare sphinx-build), so this
-#   builds docs-site (which itself depends on coverage-html so the /coverage link is
-#   real, not conditionally-present) before checking build/site/html/index.html.
-docs-site-gate: ## [gates] Sphinx -W --keep-going + linkcheck + built-HTML link check for docs/site (the site's net)
-	@command -v $(SPHINXBUILD) >/dev/null 2>&1 || { \
-	  echo "docs-site-gate: '$(SPHINXBUILD)' not found -- install docs/requirements.txt into a venv" \
-	       "and put it on PATH (or pass SPHINXBUILD=/path/to/sphinx-build)"; exit 1; }
-	@mkdir -p $(BUILD)/doc && doxygen Doxyfile
-	$(SPHINXBUILD) $(SPHINXOPTS) -W --keep-going -b html docs/site $(BUILD)/site/_gate
-	$(SPHINXBUILD) $(SPHINXOPTS) -b linkcheck docs/site $(BUILD)/site/_linkcheck
-	@echo "── no-inline-quickstart (landing.html: injected {{ quickstart_* }} placeholders only, zero hardcoded snippet code)"
-	@tmpl=docs/site/_templates/landing.html; \
-	 missing=""; \
-	 for ph in quickstart_cpp quickstart_py quickstart_rs quickstart_go; do \
-	   grep -qE '\{\{[[:space:]]*'"$$ph"'[[:space:]]*\}\}' "$$tmpl" || missing="$$missing $$ph"; \
-	 done; \
-	 if [ -n "$$missing" ]; then \
-	   echo "docs-site-gate: FAIL -- $$tmpl is missing injection point(s):$$missing (must stay {{ quickstart_* }}, never hardcoded)"; \
-	   exit 1; \
-	 fi; \
-	 hit=$$(grep -nE 'static_regex|regex_search\(line|import real as re|re\.search\(r|real_regex::Regex|real\.MustCompile\(|FindSubmatchIndex\(' "$$tmpl" || true); \
-	 if [ -n "$$hit" ]; then \
-	   echo "docs-site-gate: FAIL -- hardcoded quickstart code found in $$tmpl (must be injected via {{ quickstart_* }}, not pasted):"; \
-	   printf '%s\n' "$$hit" | sed 's/^/  /'; \
-	   exit 1; \
-	 fi
-	@echo "── built-HTML link check (build/site/html/index.html -- linkcheck can't see the bespoke landing template)"
+doc-no-coverage:
+	@$(MAKE) -C docs doc-no-coverage
+
+docs-site:
+	@$(MAKE) -C docs docs-site
+
+docs-site-gate:
 	@$(MAKE) coverage-html
-	@$(MAKE) docs-site
-	@python3 tools/check_site_links.py $(BUILD)/site/html index.html
-	@echo "docs-site-gate: PASS (sphinx -W --keep-going + linkcheck + no-inline-quickstart + built-HTML link check)"
+	@$(MAKE) -C docs docs-site-gate
 
 format: ## [daily] Uncrustify, in place
 	uncrustify -c $(SCIFORGE_LINT)/uncrustify.cfg --replace --no-backup $(FORMAT_FILES)
@@ -638,16 +574,11 @@ full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate 
 	@$(MAKE) coverage-check
 	@echo "full-local-gate: ALL gates green (cheap→doc→tests→lint→sanitize→coverage; first red would have stopped the train)"
 
-# doc-check builds the docs under the EXACT CI Doxygen (1.9.8, in Docker) via the shared SciForge tool,
-# so a warning the developer's newer local Doxygen tolerates cannot slip past to CI or a release (the
-# gate-hole that shipped a broken Docs build before). Skipped with a warning when Docker or the tool is
-# absent — visible, never a false green; the Docs CI job is the backstop.
-doc-check: ## [nets] Build docs under the exact CI Doxygen (Docker) to catch version-drift warnings
-	@if command -v docker >/dev/null 2>&1 && test -x $(SCIFORGE_TOOLS)/doxygen-check.sh; then \
-	   $(SCIFORGE_TOOLS)/doxygen-check.sh . Doxyfile; \
-	 else \
-	   echo "doc-check: WARN — Docker or $(SCIFORGE_TOOLS)/doxygen-check.sh absent, CI-Doxygen check skipped (the Docs CI job is the backstop)"; \
-	 fi
+# doc-check moved to docs/Makefile (compartimentalisation wagon 3); thin delegation
+# below preserves the root-invocable name (full-local-gate step 7/22 above, and the
+# CI invariant, both call it by this name).
+doc-check:
+	@$(MAKE) -C docs doc-check
 
 # REAL-vs-rust duel: the §E table generator (ns/byte, match-count cross-checked, non-cherry-picked).
 # Builds the REAL harness; the rust harness needs a Rust toolchain (cargo build --release in
