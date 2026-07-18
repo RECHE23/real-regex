@@ -1,11 +1,13 @@
-// quickstart.cpp — the landing page's C++ quickstart tab (docs/site/index.md), compiled and run
-// here so the code the page shows is exactly the code that's tested, never merely illustrative
-// (doc-site P1b-A gate-snippet). A pair of region-boundary comments further down bounds the
-// block a Sphinx `literalinclude` pulls verbatim onto the page (NOTE: keep this sentence from
-// ever spelling out that pair of comments literally — a literalinclude start-after/end-before
-// match is a first-occurrence substring search, and a mention up here would shadow the real one
-// below) — do not edit the marked lines without also checking docs/site/index.md's C++ tab
-// still matches byte-for-byte.
+// quickstart.cpp — the landing page's C++ quickstart tab (docs/site/_templates/landing.html,
+// doc-site P1c), compiled and run here so the code the page shows is exactly the code that's
+// tested, never merely illustrative (doc-site P1b-A gate-snippet). A pair of region-boundary
+// comments further down bounds the block conf.py's `_inject_quickstart` (html-page-context
+// hook) reads and Pygments-highlights onto the page at build time (NOTE: keep this sentence
+// from ever spelling out that pair of comments literally — the hook's own region search is a
+// first-occurrence substring search, the same start-after/end-before contract Sphinx
+// `literalinclude` used before P1c, and a mention up here would shadow the real one below) — do
+// not edit the marked lines without also checking the landing's C++ tab still matches
+// byte-for-byte (rebuild with `make docs-site` and diff).
 //
 // The two #include lines inside main() are REDUNDANT (both headers are already included above,
 // so their include guards make the second inclusion a no-op) — kept only so the marked region

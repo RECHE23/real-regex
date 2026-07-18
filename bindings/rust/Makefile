@@ -13,9 +13,10 @@ build: ## Build the crate (debug)
 test: ## Run the crate tests in both feature configurations (default and `fallback`) + the quickstart example
 	rm -rf vendor
 	cargo test --quiet && cargo test --quiet --features fallback
-	# examples/quickstart.rs is the landing page's Rust tab (docs/site/index.md, doc-site P1b-A
-	# gate-snippet, literalinclude'd from that file) — building AND running it here means the
-	# code the page shows is exactly the code that's tested, in-tree, every `rust-test` run.
+	# examples/quickstart.rs is the landing page's Rust tab (docs/site/_templates/landing.html,
+	# doc-site P1b-A gate-snippet, injected at build time from that file — doc-site P1c) —
+	# building AND running it here means the code the page shows is exactly the code that's
+	# tested, in-tree, every `rust-test` run.
 	@echo "── quickstart example (in-tree)"
 	cargo run --quiet --example quickstart
 
@@ -38,7 +39,7 @@ publish-check: vendor ## Vendor, then let `cargo publish --dry-run` COMPILE the 
 	# empirically: an example placed in a probe crate never appears in the verify step's rustc
 	# invocations, with or without --all-features). So proving examples/quickstart.rs survives
 	# PACKAGING -- the actual point of this check, since it's also the landing page's Rust tab
-	# (docs/site/index.md, doc-site P1b-A gate-snippet) -- needs one more explicit step: build
+	# (docs/site/_templates/landing.html, doc-site P1b-A gate-snippet) -- needs one more explicit step: build
 	# and run it from the exact extracted directory cargo publish just left behind
 	# (target/package/<name>-<version>/), standing in for what crates.io would actually ship.
 	@ver=$$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -1); \

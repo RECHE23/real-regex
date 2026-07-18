@@ -1,6 +1,7 @@
 r"""Runs bindings/python/examples/quickstart.py — the landing page's Python quickstart tab
-(docs/site/index.md, literalinclude'd from that file's `[quickstart]` region) — as part of the
-normal `python-test` unittest discovery, against the just-built binding. This is how `python-test`
+(docs/site/_templates/landing.html, injected at build time from that file's `[quickstart]`
+region — doc-site P1c) — as part of the normal `python-test` unittest discovery, against the
+just-built binding. This is how `python-test`
 (both `make python-test` and ci.yml's `python` job, which share the same
 `unittest discover -s bindings/python/tests` entry point) proves the code the landing page shows
 is exactly the code that's tested, never merely illustrative (doc-site P1b-A gate-snippet).

@@ -339,29 +339,54 @@ docs-site: doc-no-coverage ## [release] Build the themed Sphinx/Breathe site (do
 # discipline for the Doxygen side. Separate output dirs from docs-site's release
 # build (_gate / _linkcheck) so a gate run never staleness-poisons a real build.
 #
-# no-inline-quickstart (doc-site P1b-A gate-snippet): the landing's quickstart tab-set is
-# `literalinclude`-only by design (page == tested code, zero drift) -- this closes the gap a
-# broken-path literalinclude doesn't: nothing stops an EDIT from re-adding a plain ```cpp/
-# ```python/```rust/```go fence ALONGSIDE the literalinclude ones (both would render, `-W` would
-# not complain, and the extra fence would be untested illustrative code again). Scoped to the
-# quickstart section only (between its own eyebrow marker and the next section's) so the
-# install grid's legitimate ```console shell fences are untouched.
-docs-site-gate: ## [gates] Sphinx -W --keep-going + linkcheck for docs/site (the site's net)
+# Two nets added for doc-site P1c (the bespoke landing template, docs/site/_templates/
+# landing.html, served via html_additional_pages -- see conf.py):
+#
+#   no-inline-quickstart, adapted: the quickstart panels are no longer {literalinclude}
+#   directives in a source document (P1b-A's shape) -- they are `{{ quickstart_* }}`
+#   placeholders injected by conf.py's html-page-context hook (P1c). The check now scans
+#   the TEMPLATE SOURCE for (a) any of the 4 placeholders missing (the injection points
+#   themselves were deleted) and (b) known verbatim strings from the actual snippet
+#   bodies (static_regex/MustCompile(/etc.) -- their presence in the template SOURCE
+#   would mean someone pasted real code in over the hook instead of using it. Rendered
+#   OUTPUT necessarily contains those same strings (that's the whole point of the
+#   injection), so this greps docs/site/_templates/landing.html, never build/site/html.
+#
+#   built-HTML link check (tools/check_site_links.py): linkcheck (above) walks SOURCE
+#   documents only -- landing.html is a Jinja2 template, invisible to it, so a broken
+#   href inside the bespoke landing could ship undetected (the exact "linkcheck doesn't
+#   see html_additional_pages" gap the P1c review caught). Needs the REAL release
+#   output (api/ + coverage/ copied in, not just _gate's bare sphinx-build), so this
+#   builds docs-site (which itself depends on coverage-html so the /coverage link is
+#   real, not conditionally-present) before checking build/site/html/index.html.
+docs-site-gate: ## [gates] Sphinx -W --keep-going + linkcheck + built-HTML link check for docs/site (the site's net)
 	@command -v $(SPHINXBUILD) >/dev/null 2>&1 || { \
 	  echo "docs-site-gate: '$(SPHINXBUILD)' not found -- install docs-requirements.txt into a venv" \
 	       "and put it on PATH (or pass SPHINXBUILD=/path/to/sphinx-build)"; exit 1; }
 	@mkdir -p $(BUILD)/doc && doxygen Doxyfile
 	$(SPHINXBUILD) $(SPHINXOPTS) -W --keep-going -b html docs/site $(BUILD)/site/_gate
 	$(SPHINXBUILD) $(SPHINXOPTS) -b linkcheck docs/site $(BUILD)/site/_linkcheck
-	@echo "── no-inline-quickstart (quickstart tab-set: literalinclude only, zero inline cpp/python/rust/go)"
-	@hit=$$(awk '/<span class="eyebrow">quickstart<\/span>/{flag=1;next} /<span class="eyebrow">install<\/span>/{flag=0} flag' docs/site/index.md \
-	  | grep -nE '^```(cpp|python|rust|go)\b' || true); \
+	@echo "── no-inline-quickstart (landing.html: injected {{ quickstart_* }} placeholders only, zero hardcoded snippet code)"
+	@tmpl=docs/site/_templates/landing.html; \
+	 missing=""; \
+	 for ph in quickstart_cpp quickstart_py quickstart_rs quickstart_go; do \
+	   grep -qE '\{\{[[:space:]]*'"$$ph"'[[:space:]]*\}\}' "$$tmpl" || missing="$$missing $$ph"; \
+	 done; \
+	 if [ -n "$$missing" ]; then \
+	   echo "docs-site-gate: FAIL -- $$tmpl is missing injection point(s):$$missing (must stay {{ quickstart_* }}, never hardcoded)"; \
+	   exit 1; \
+	 fi; \
+	 hit=$$(grep -nE 'static_regex|regex_search\(line|import real as re|re\.search\(r|real_regex::Regex|real\.MustCompile\(|FindSubmatchIndex\(' "$$tmpl" || true); \
 	 if [ -n "$$hit" ]; then \
-	   echo "docs-site-gate: FAIL -- inline cpp/python/rust/go code fence in docs/site/index.md's quickstart section (must be a {literalinclude}, not inline code):"; \
+	   echo "docs-site-gate: FAIL -- hardcoded quickstart code found in $$tmpl (must be injected via {{ quickstart_* }}, not pasted):"; \
 	   printf '%s\n' "$$hit" | sed 's/^/  /'; \
 	   exit 1; \
 	 fi
-	@echo "docs-site-gate: PASS (sphinx -W --keep-going + linkcheck + no-inline-quickstart)"
+	@echo "── built-HTML link check (build/site/html/index.html -- linkcheck can't see the bespoke landing template)"
+	@$(MAKE) coverage-html
+	@$(MAKE) docs-site
+	@python3 tools/check_site_links.py $(BUILD)/site/html index.html
+	@echo "docs-site-gate: PASS (sphinx -W --keep-going + linkcheck + no-inline-quickstart + built-HTML link check)"
 
 format: ## [daily] Uncrustify, in place
 	uncrustify -c $(SCIFORGE_LINT)/uncrustify.cfg --replace --no-backup $(FORMAT_FILES)
@@ -702,8 +727,9 @@ bench-multipattern: ## [bench] multi-pattern which-matched / extraction (RE2/HS 
 # regression. CXX is honored (run under both clang and g++ in ci.yml's install-smoke job,
 # which already has both) so a compiler-specific regression in a showcase snippet cannot hide.
 # Born with the landing page's quickstart tab (doc-site P1b-A gate-snippet): every example
-# under examples/cpp/ is now also a `literalinclude` source for docs/site/index.md, so a red
-# here means the page's own code sample stopped working.
+# under examples/cpp/ is now also an injection source for the landing (docs/site/_templates/
+# landing.html, conf.py's html-page-context hook, doc-site P1c), so a red here means the page's
+# own code sample stopped working.
 example-check: ## [nets] Compile + run every examples/cpp/*.cpp directly against include/ (CXX honored)
 	@set -e; \
 	 cxx="$${CXX:-c++}"; \
