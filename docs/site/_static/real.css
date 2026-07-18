@@ -1,0 +1,315 @@
+/* real.css -- docs/site theme skin.
+ *
+ * Translates the approved landing mockup's tokens (~/Projects/.recovery/
+ * real-regex-landing-mockup.html) onto two layers:
+ *   1. Local custom properties (--paper, --ink, --accent, ...) -- the source of
+ *      truth, used directly by the page's own bespoke blocks (hero, guarantee
+ *      panel, the cliff comparison, quickstart chrome).
+ *   2. pydata-sphinx-theme's own semantic variables (--pst-color-*), pointed at
+ *      the same values so the theme's built-in chrome (navbar, sidebars, prose,
+ *      code blocks, sphinx-design cards/grids/tabs, which key off --sd-color-*
+ *      which in turn key off --pst-color-*) is harmonized rather than fighting
+ *      the mockup's palette. Variable names below were extracted from the
+ *      installed pydata_sphinx_theme==0.20.0 package CSS (theme/.../
+ *      pydata-sphinx-theme.css), not guessed.
+ *
+ * No webfont CDN: both stacks are system/local (Interdits, doc-site P0/P1 fiche).
+ * Both themes are deliberately tuned (no naive inversion) -- light values live at
+ * :root, dark values are re-declared under html[data-theme="dark"] (the attribute
+ * pydata-sphinx-theme itself stamps on <html>), with an @media(prefers-color-
+ * scheme) fallback for the brief pre-hydration paint.
+ */
+
+:root {
+  /* neutrals -- cool green-grey bias, chosen not defaulted */
+  --paper: #F1F4F2;
+  --surface: #FBFCFB;
+  --surface-2: #FFFFFF;
+  --ink: #0F1A16;
+  --ink-2: #47554F;
+  --ink-3: #77847E;
+  --line: #D9E1DC;
+  --line-2: #E7ECE8;
+  /* signal -- deep emerald = "safe / linear / go" */
+  --accent: #0B7D5A;
+  --accent-ink: #075E44;
+  --accent-2: #0A6E4F;
+  --accent-soft: #E1EFE8;
+  --on-accent: #FFFFFF;
+  /* the cliff -- muted clay, used sparingly */
+  --danger: #B0493A;
+  --danger-soft: #F4E4E1;
+
+  --shadow: 0 1px 2px rgba(15, 26, 22, .04), 0 8px 24px -12px rgba(15, 26, 22, .14);
+  --shadow-lift: 0 2px 4px rgba(15, 26, 22, .05), 0 18px 44px -18px rgba(15, 26, 22, .22);
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --radius: 9px;
+  --radius-s: 6px;
+
+  /* -- pydata-sphinx-theme semantic vars, pointed at the tokens above -- */
+  --pst-color-primary: var(--accent);
+  --pst-color-primary-bg: var(--accent-soft);
+  --pst-color-primary-text: var(--on-accent);
+  --pst-color-primary-highlight: var(--accent-2);
+  --pst-color-secondary: var(--accent-ink);
+  --pst-color-secondary-bg: var(--accent-soft);
+  --pst-color-danger: var(--danger);
+  --pst-color-danger-bg: var(--danger-soft);
+  --pst-color-text-base: var(--ink);
+  --pst-color-text-muted: var(--ink-2);
+  --pst-color-border: var(--line);
+  --pst-color-border-muted: var(--line-2);
+  --pst-color-heading: var(--ink);
+  --pst-color-link: var(--accent-ink);
+  --pst-color-link-hover: var(--accent);
+  --pst-color-inline-code: var(--ink);
+  --pst-color-target: var(--accent-soft);
+  --pst-color-background: var(--paper);
+  --pst-color-on-background: var(--surface);
+  --pst-color-surface: var(--surface-2);
+  --pst-color-on-surface: var(--ink);
+  --pst-font-family-base: var(--font-sans);
+  --pst-font-family-heading: var(--font-sans);
+  --pst-font-family-monospace: var(--font-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #0B1210;
+    --surface: #111B17;
+    --surface-2: #16211C;
+    --ink: #E9F0EC;
+    --ink-2: #9DABA5;
+    --ink-3: #6C7A74;
+    --line: #223029;
+    --line-2: #1A251F;
+    --accent: #35D399;
+    --accent-ink: #6FE7B7;
+    --accent-2: #2CC08A;
+    --accent-soft: #122A20;
+    --on-accent: #04140E;
+    --danger: #E58067;
+    --danger-soft: #2A1712;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 10px 30px -14px rgba(0, 0, 0, .6);
+    --shadow-lift: 0 2px 6px rgba(0, 0, 0, .35), 0 22px 54px -20px rgba(0, 0, 0, .7);
+  }
+}
+
+html[data-theme="dark"] {
+  --paper: #0B1210;
+  --surface: #111B17;
+  --surface-2: #16211C;
+  --ink: #E9F0EC;
+  --ink-2: #9DABA5;
+  --ink-3: #6C7A74;
+  --line: #223029;
+  --line-2: #1A251F;
+  --accent: #35D399;
+  --accent-ink: #6FE7B7;
+  --accent-2: #2CC08A;
+  --accent-soft: #122A20;
+  --on-accent: #04140E;
+  --danger: #E58067;
+  --danger-soft: #2A1712;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 10px 30px -14px rgba(0, 0, 0, .6);
+  --shadow-lift: 0 2px 6px rgba(0, 0, 0, .35), 0 22px 54px -20px rgba(0, 0, 0, .7);
+}
+
+html[data-theme="light"] {
+  --paper: #F1F4F2;
+  --surface: #FBFCFB;
+  --surface-2: #FFFFFF;
+  --ink: #0F1A16;
+  --ink-2: #47554F;
+  --ink-3: #77847E;
+  --line: #D9E1DC;
+  --line-2: #E7ECE8;
+  --accent: #0B7D5A;
+  --accent-ink: #075E44;
+  --accent-2: #0A6E4F;
+  --accent-soft: #E1EFE8;
+  --on-accent: #FFFFFF;
+  --danger: #B0493A;
+  --danger-soft: #F4E4E1;
+  --shadow: 0 1px 2px rgba(15, 26, 22, .04), 0 8px 24px -12px rgba(15, 26, 22, .14);
+  --shadow-lift: 0 2px 4px rgba(15, 26, 22, .05), 0 18px 44px -18px rgba(15, 26, 22, .22);
+}
+
+/* ============================ bespoke landing blocks ============================
+ * Scoped under .real-landing so nothing here leaks onto other pages (api/index.rst
+ * etc.) that use the theme's own prose/typography untouched.
+ */
+.real-landing .eyebrow {
+  font-family: var(--font-mono);
+  font-size: .82rem;
+  letter-spacing: .04em;
+  color: var(--accent-ink);
+  display: inline-flex;
+  gap: .5ch;
+  align-items: baseline;
+}
+.real-landing .eyebrow::before { content: "//"; color: var(--ink-3); }
+
+.real-landing .mono { font-family: var(--font-mono); }
+
+.real-landing .hero { padding: clamp(1.6rem, 4vw, 3rem) 0 clamp(1.4rem, 3vw, 2rem); }
+.real-landing .hero__grid {
+  display: grid;
+  grid-template-columns: 1.05fr .95fr;
+  gap: clamp(1.5rem, 4vw, 3.4rem);
+  align-items: center;
+}
+.real-landing .hero h1 {
+  font-size: clamp(2.1rem, 1.5rem + 2.6vw, 3.1rem);
+  font-weight: 720;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  margin: .7rem 0 0;
+  max-width: 15ch;
+  color: var(--ink);
+}
+.real-landing .hero__lead {
+  color: var(--ink-2);
+  font-size: 1.15rem;
+  margin-top: 1.1rem;
+  max-width: 46ch;
+  line-height: 1.55;
+}
+.real-landing .hero__lead b { color: var(--ink); font-weight: 600; }
+.real-landing .hero__cmd { margin-top: 1.5rem; display: flex; gap: .5rem; max-width: 430px; }
+.real-landing .cmd {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: .9rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  padding: .6rem .85rem;
+  color: var(--ink);
+}
+.real-landing .cmd .prompt { color: var(--accent); }
+.real-landing .hero__alt { margin-top: .7rem; font-size: .85rem; color: var(--ink-3); font-family: var(--font-mono); }
+.real-landing .hero__cta { margin-top: 1.5rem; display: flex; gap: .7rem; flex-wrap: wrap; }
+
+.real-landing .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: .5ch;
+  font-weight: 560;
+  font-size: .98rem;
+  padding: .68rem 1.1rem;
+  border-radius: var(--radius-s);
+  border: 1px solid transparent;
+  text-decoration: none !important;
+  transition: transform .12s ease, box-shadow .2s ease, background .2s ease;
+}
+.real-landing .btn--primary { background: var(--accent); color: var(--on-accent) !important; box-shadow: var(--shadow); }
+.real-landing .btn--primary:hover { background: var(--accent-2); transform: translateY(-1px); box-shadow: var(--shadow-lift); }
+.real-landing .btn--ghost { background: transparent; color: var(--ink) !important; border-color: var(--line); }
+.real-landing .btn--ghost:hover { border-color: var(--ink-3); transform: translateY(-1px); }
+
+.real-landing .panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.real-landing .panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .8rem 1rem;
+  border-bottom: 1px solid var(--line-2);
+}
+.real-landing .panel__head .t { font-family: var(--font-mono); font-size: .78rem; color: var(--ink-2); }
+.real-landing .panel__head .pat {
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  color: var(--danger);
+  background: var(--danger-soft);
+  padding: .12rem .5rem;
+  border-radius: 5px;
+}
+.real-landing .chartbox { position: relative; padding: .4rem .4rem 0; }
+.real-landing canvas#curve { display: block; width: 100%; height: 220px; }
+.real-landing .legend { display: flex; gap: 1.2rem; padding: .55rem 1rem 1rem; flex-wrap: wrap; }
+.real-landing .legend .k {
+  display: inline-flex;
+  align-items: center;
+  gap: .5ch;
+  font-size: .8rem;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+}
+.real-landing .legend .dot { width: 9px; height: 9px; border-radius: 50%; }
+.real-landing .legend .dot.a { background: var(--accent); }
+.real-landing .legend .dot.d { background: var(--danger); }
+
+@media (max-width: 900px) {
+  .real-landing .hero__grid { grid-template-columns: 1fr; }
+  .real-landing .panel { order: -1; }
+}
+@media (max-width: 560px) {
+  .real-landing .hero__cmd { flex-direction: column; }
+}
+
+/* the cliff comparison */
+.real-landing .cliff {
+  display: grid;
+  grid-template-columns: 1.1fr .9fr;
+  gap: clamp(1.5rem, 4vw, 3rem);
+  align-items: center;
+  margin-top: 1.4rem;
+}
+.real-landing .cliff__pat {
+  font-family: var(--font-mono);
+  font-size: 1.02rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  padding: .85rem 1rem;
+  display: inline-block;
+  color: var(--ink);
+}
+.real-landing .cliff__pat .hl { color: var(--danger); }
+.real-landing .cliff__note { color: var(--ink-2); margin-top: 1rem; max-width: 44ch; }
+.real-landing .versus { display: grid; gap: .8rem; }
+.real-landing .vrow {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: .9rem 1.1rem;
+}
+.real-landing .vrow .who { font-weight: 580; color: var(--ink); }
+.real-landing .vrow .who small {
+  display: block;
+  font-weight: 400;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  margin-top: 2px;
+}
+.real-landing .vrow .bar { height: 8px; border-radius: 100px; background: var(--line-2); position: relative; overflow: hidden; }
+.real-landing .vrow .bar i { position: absolute; inset: 0 auto 0 0; border-radius: 100px; }
+.real-landing .vrow.bad .bar i { width: 100%; background: var(--danger); }
+.real-landing .vrow.good .bar i { width: 7%; background: var(--accent); }
+.real-landing .vrow .val { font-family: var(--font-mono); font-size: .9rem; white-space: nowrap; }
+.real-landing .vrow.bad .val { color: var(--danger); }
+.real-landing .vrow.good .val { color: var(--accent-ink); }
+
+@media (max-width: 900px) {
+  .real-landing .cliff { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .real-landing * { animation: none !important; transition: none !important; }
+}

@@ -56,7 +56,7 @@ FORMAT_FILES := $(shell find include tests -name '*.hpp' -o -name '*.cpp' | grep
 include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-        lint misra fuzz fuzz-compat fuzz-re2 check-capi-abi exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check format format-check full-local-gate gate-bump gate-doc gate-test clean \
+        lint misra fuzz fuzz-compat fuzz-re2 check-capi-abi exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         bench-engines bench-multipattern bench-duel bench-matrix matrix-gate \
         profile-sample-build profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers
@@ -308,6 +308,44 @@ doc-no-coverage: ## [release] Generate API reference without coverage report
 	doxygen Doxyfile
 	@echo "API reference: $(BUILD)/doc/html/index.html"
 
+# --- docs/site (Sphinx + Breathe + pydata-sphinx-theme, doc-site P1) -------
+#
+# Additive to `doc`/`doc-no-coverage` above, not a replacement: docs.yml still
+# deploys build/doc/html (the live Doxygen site) untouched. This builds the
+# themed landing + Breathe-powered API scaffold into build/site/html, entirely
+# separate output, nothing wired to go live yet (see the doc-site fiche).
+#
+# sphinx-build comes from docs-requirements.txt (pinned), installed into an
+# isolated venv -- never the system interpreter:
+#   python3 -m venv .venv-docs && .venv-docs/bin/pip install -r docs-requirements.txt
+#   source .venv-docs/bin/activate   # sphinx-build now on PATH
+SPHINXBUILD ?= sphinx-build
+SPHINXOPTS  ?=
+
+docs-site: doc-no-coverage ## [release] Build the themed Sphinx/Breathe site (docs/site) -> build/site/html
+	@command -v $(SPHINXBUILD) >/dev/null 2>&1 || { \
+	  echo "docs-site: '$(SPHINXBUILD)' not found -- install docs-requirements.txt into a venv" \
+	       "and put it on PATH (or pass SPHINXBUILD=/path/to/sphinx-build)"; exit 1; }
+	$(SPHINXBUILD) $(SPHINXOPTS) -b html docs/site $(BUILD)/site/html
+	@if [ -d $(COV_DIR)/html ]; then \
+	  rm -rf $(BUILD)/site/html/coverage && cp -R $(COV_DIR)/html $(BUILD)/site/html/coverage; \
+	fi
+	@rm -rf $(BUILD)/site/html/api && cp -R $(BUILD)/doc/html $(BUILD)/site/html/api
+	@echo "docs-site: $(BUILD)/site/html/index.html"
+
+# The site's own gate: -W (every warning fatal) + --keep-going (report all of them,
+# not just the first) + linkcheck, mirroring doc-no-coverage's WARN_AS_ERROR
+# discipline for the Doxygen side. Separate output dirs from docs-site's release
+# build (_gate / _linkcheck) so a gate run never staleness-poisons a real build.
+docs-site-gate: ## [gates] Sphinx -W --keep-going + linkcheck for docs/site (the site's net)
+	@command -v $(SPHINXBUILD) >/dev/null 2>&1 || { \
+	  echo "docs-site-gate: '$(SPHINXBUILD)' not found -- install docs-requirements.txt into a venv" \
+	       "and put it on PATH (or pass SPHINXBUILD=/path/to/sphinx-build)"; exit 1; }
+	@mkdir -p $(BUILD)/doc && doxygen Doxyfile
+	$(SPHINXBUILD) $(SPHINXOPTS) -W --keep-going -b html docs/site $(BUILD)/site/_gate
+	$(SPHINXBUILD) $(SPHINXOPTS) -b linkcheck docs/site $(BUILD)/site/_linkcheck
+	@echo "docs-site-gate: PASS (sphinx -W --keep-going + linkcheck)"
+
 format: ## [daily] Uncrustify, in place
 	uncrustify -c $(SCIFORGE_LINT)/uncrustify.cfg --replace --no-backup $(FORMAT_FILES)
 
@@ -492,56 +530,62 @@ gate-test: ## [gates] Calibrated gate for a tests/-only change (test + sanitize 
 
 full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate of record)
 	@echo "full-local-gate: start (fail-fast — cheap first, first red stops the train)"
-	@echo "── [1/20] format-check"
+	@echo "── [1/21] format-check"
 	@$(MAKE) format-check
-	@echo "── [2/20] version-check"
+	@echo "── [2/21] version-check"
 	@$(MAKE) version-check
-	@echo "── [3/20] check-layers"
+	@echo "── [3/21] check-layers"
 	@$(MAKE) check-layers
-	@echo "── [4/20] check-pins"
+	@echo "── [4/21] check-pins"
 	@$(MAKE) check-pins
-	@echo "── [5/20] check-capi-abi (hardening #4 — C ABI golden vs real_capi.h)"
+	@echo "── [5/21] check-capi-abi (hardening #4 — C ABI golden vs real_capi.h)"
 	@$(MAKE) check-capi-abi
-	@echo "── [6/20] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
+	@echo "── [6/21] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
 	@$(MAKE) doc-no-coverage
-	@echo "── [7/20] doc-check (CI-pinned Doxygen when Docker is available)"
+	@echo "── [7/21] doc-check (CI-pinned Doxygen when Docker is available)"
 	@$(MAKE) doc-check
-	@echo "── [8/20] misra (single synthetic TU)"
+	# docs/site's own net (-W --keep-going + linkcheck, doc-site P1). Same shape as the
+	# GXX/go legs below: skipped with a warning when sphinx-build is absent (a dev
+	# without the docs venv on PATH doesn't need to rougir tout le gate) -- the docs-site
+	# CI job (ci.yml) is the backstop, so this is never the ONLY net on the site.
+	@echo "── [8/21] docs-site-gate (sphinx -W --keep-going + linkcheck; skipped if sphinx-build absent)"
+	@if command -v $(SPHINXBUILD) >/dev/null 2>&1; then $(MAKE) docs-site-gate; else echo "full-local-gate: WARN — $(SPHINXBUILD) absent, docs-site-gate skipped (CI covers it)"; fi
+	@echo "── [9/21] misra (single synthetic TU)"
 	@$(MAKE) misra
-	@echo "── [9/20] c-test"
+	@echo "── [10/21] c-test"
 	@$(MAKE) c-test
-	@echo "── [10/20] matrix-gate"
+	@echo "── [11/21] matrix-gate"
 	@$(MAKE) matrix-gate
-	@echo "── [11/20] fowler-compat"
+	@echo "── [12/21] fowler-compat"
 	@$(MAKE) fowler-compat
-	@echo "── [12/20] exhaustive-compat"
+	@echo "── [13/21] exhaustive-compat"
 	@$(MAKE) exhaustive-compat
-	@echo "── [13/20] test (default CXX)"
+	@echo "── [14/21] test (default CXX)"
 	@$(MAKE) test
-	@echo "── [14/20] rust-test"
+	@echo "── [15/21] rust-test"
 	@$(MAKE) rust-test
-	@echo "── [15/20] rust-publish-check"
+	@echo "── [16/21] rust-publish-check"
 	@$(MAKE) rust-publish-check
-	@echo "── [16/20] python-test"
+	@echo "── [17/21] python-test"
 	@$(MAKE) python-test
 	# Go leg: go-check-vendor regenerates the committed vendor tree from the live headers and fails
 	# on drift — the one binding NOT otherwise in this gate (its sources are vendored, not built from
 	# include/ here). Skipped with a warning when go is absent (the CI go job is the backstop), same
 	# shape as the GCC leg. Closes the gap where an include/ change that stales vendor_include/ was
 	# caught only in CI.
-	@echo "── [17/20] go-check-vendor + go-test (Go leg; skipped if go absent)"
+	@echo "── [18/21] go-check-vendor + go-test (Go leg; skipped if go absent)"
 	@if command -v go >/dev/null 2>&1; then $(MAKE) go-check-vendor && $(MAKE) go-test; else echo "full-local-gate: WARN — go absent, Go leg skipped (CI covers it)"; fi
-	@echo "── [18/20] lint"
+	@echo "── [19/21] lint"
 	@set -euo pipefail; \
 	  mkdir -p $(BUILD); \
 	  $(MAKE) lint 2>&1 | tee $(BUILD)/lint.log; \
 	  if grep -qE 'warning:|error:' $(BUILD)/lint.log; then \
 	    echo "full-local-gate: FAIL at lint (see $(BUILD)/lint.log)"; exit 1; \
 	  fi
-	@echo "── [19/20] test (GCC leg) + sanitize (slowest last)"
+	@echo "── [20/21] test (GCC leg) + sanitize (slowest last)"
 	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "full-local-gate: WARN — $(GXX) absent, GCC leg skipped (CI covers it)"; fi
 	@$(MAKE) sanitize
-	@echo "── [20/20] coverage-check (line floor $(COV_FLOOR)% — closes the P0 gate hole)"
+	@echo "── [21/21] coverage-check (line floor $(COV_FLOOR)% — closes the P0 gate hole)"
 	@$(MAKE) coverage-check
 	@echo "full-local-gate: ALL gates green (cheap→doc→tests→lint→sanitize→coverage; first red would have stopped the train)"
 

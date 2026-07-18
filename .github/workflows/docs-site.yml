@@ -1,0 +1,46 @@
+name: Docs-site
+
+# docs/site build + gate (doc-site P1: Sphinx + Breathe + pydata-sphinx-theme landing).
+# Additive only -- no deploy, nothing goes live here; docs.yml (the live Doxygen Pages
+# site) stays the deploy path until the P1b go-live swap.
+#
+# A DEDICATED workflow, deliberately with NO paths filter: ci.yml's trigger has
+# paths-ignore ['**.md', 'docs/**'], so a job living there would be skipped on exactly
+# the doc-only pushes it exists to gate (caught in the P1 review). This job costs ~2
+# minutes -- cheap enough to run on every push -- and full-local-gate's own
+# docs-site-gate step skips with a warning when sphinx-build is absent locally, so THIS
+# is the net that always fires.
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# One gate at a time per ref; supersede an in-flight run with the latest.
+concurrency:
+  group: docs-site-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs-site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install Doxygen + Graphviz (Breathe's XML input)
+        run: sudo apt-get update && sudo apt-get install -y doxygen graphviz
+      - name: Install the pinned docs toolchain (docs-requirements.txt) into a venv
+        run: |
+          python -m venv .venv-docs
+          .venv-docs/bin/pip install --upgrade pip
+          .venv-docs/bin/pip install -r docs-requirements.txt
+      - name: docs-site-gate (sphinx -W --keep-going + linkcheck)
+        run: |
+          export PATH="$PWD/.venv-docs/bin:$PATH"
+          make docs-site-gate

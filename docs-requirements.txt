@@ -1,0 +1,17 @@
+# Pinned toolchain for docs/site (Sphinx + Breathe + pydata-sphinx-theme landing).
+# Exact pins, not floating ranges: a docs-site build must reproduce identically on
+# every machine and in CI (docs-site job in ci.yml), the same discipline as
+# check-pins/version-check for the rest of the repo. Bump deliberately, in its own
+# commit, verified against `make docs-site-gate`.
+#
+# Install into an isolated venv -- never the system/site interpreter:
+#   python3 -m venv .venv-docs && .venv-docs/bin/pip install -r docs-requirements.txt
+#
+# Breathe (Doxygen-XML -> Sphinx bridge) requires Doxygen >= 1.9.2; CI pins Doxygen
+# via apt (see .github/workflows/ci.yml, docs-site job). Doxyfile's GENERATE_XML
+# (Doxyfile, P0) is the producer this whole chain consumes.
+sphinx==9.1.0
+pydata-sphinx-theme==0.20.0
+myst-parser==5.1.0
+breathe==4.36.0
+sphinx-design==0.7.0
