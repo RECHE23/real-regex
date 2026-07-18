@@ -22,7 +22,8 @@ O(n²) even on a linear engine, so REAL cannot promise linear there and does not
 
 > New here? Start with the migration tour: [Drop-in for std::regex](@ref std_regex_dropin). This page
 > is the exhaustive per-feature reference; REAL's own differences from Python `re` are in
-> [the divergences page](@ref divergences).
+> [the divergences page](@ref divergences). The RE2 drop-in (`real::compat::re2`) is a separate
+> compat layer — its syntax contract is documented at the top of `<real/compat/re2/re2.hpp>`.
 
 **The contract:** behave identically to the ECMAScript spec where `real` can prove it, and fall
 back to `std::regex` otherwise — *never a silent divergence*. The ECMAScript spec is the primary
