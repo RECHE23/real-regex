@@ -66,16 +66,25 @@ nitpicky = True
 # template-instantiated signatures would pull in real::fixed_string / real::flags
 # / the real::detail namespace transitively -- out of scope for this wagon's
 # single proof page; see reference/index.rst's own comment and the doc-site fiche's
-# P2-P4 deferral). Without these four entries, nitpicky correctly fails the build
+# P2-P4 deferral). Without these entries, nitpicky correctly fails the build
 # on these dangling \ref targets; this is the "mark linkcheck_ignore explicit"
 # pattern applied to the Sphinx xref net instead -- an explicit, reviewed
-# exception, not a silently-skipped check. Refids are Doxygen-generated (stable
-# for a given header + Doxygen version, the same coupling doc-check already pins).
+# exception, not a silently-skipped check.
+#
+# The two struct refids below are NAME-derived and stable across Doxygen
+# versions. The namespace-MEMBER refids (real::regex / real::static_regex, the
+# `using` aliases) carry a Doxygen-generated HASH that differs between Doxygen
+# versions -- the first Docs-site CI run proved it (local Homebrew 1.17 vs CI
+# apt 1.9.8 emitted different hashes, and pinning one version's hash reds the
+# other). So those go through nitpick_ignore_regex on the anchor PATTERN,
+# version-independent by construction. Scope stays narrow: only anchored
+# members of `namespace real` itself, only until the real pages exist (P2-P4).
 nitpick_ignore = [
-    ("ref", "namespacereal_1a1ea221a8ba47a0e1e973f4f02dade160"),  # real::regex
-    ("ref", "namespacereal_1aec53faf599938c0c619a995ecb60c5f1"),  # real::static_regex
     ("ref", "structreal_1_1detail_1_1dynamic__storage"),
     ("ref", "structreal_1_1detail_1_1static__storage"),
+]
+nitpick_ignore_regex = [
+    ("ref", r"namespacereal_1a[0-9a-f]+"),  # real::regex / real::static_regex (hashed member anchors)
 ]
 
 pygments_style = "tango"
