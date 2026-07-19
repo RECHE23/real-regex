@@ -47,6 +47,7 @@ extensions = [
     "myst_parser",
     "breathe",
     "sphinx_design",
+    "sphinx_copybutton",
 ]
 
 # root_doc is "contents", not "index" (doc-site P1c). The bespoke landing owns
@@ -106,6 +107,9 @@ nitpick_ignore = [
 nitpick_ignore_regex = [
     ("ref", r"namespacereal_1a[0-9a-f]+"),  # real::regex / real::static_regex (hashed member anchors)
 ]
+
+copybutton_prompt_text = r"\$ "
+copybutton_prompt_is_regexp = True
 
 pygments_style = "tango"
 

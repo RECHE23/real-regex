@@ -180,8 +180,6 @@ The ONLY departures from the mockup are the ones the doc-site P1c fiche calls fo
   .cmd .prompt { color: var(--accent); }
   .cmd .copy { margin-left: auto; color: var(--ink-3); cursor: pointer; background: none; border: none; padding: 2px; }
   .cmd .copy:hover { color: var(--ink); }
-  .hero__alt { margin-top: .7rem; font-size: .85rem; color: var(--ink-3); font-family: var(--font-mono); }
-  .hero__alt b { color: var(--ink-2); font-weight: 500; }
   .hero__cta { margin-top: 1.7rem; display: flex; gap: .7rem; flex-wrap: wrap; }
 
   /* guarantee panel (the thesis, visualized) */
@@ -369,7 +367,6 @@ The ONLY departures from the mockup are the ones the doc-site P1c fiche calls fo
             </button>
           </div>
         </div>
-        <p class="hero__alt">or &nbsp;<b>pip install real-regex</b> &nbsp;·&nbsp; <b>cargo add real-regex</b> &nbsp;·&nbsp; <b>go get …/real-regex/bindings/go</b></p>
 
         <div class="hero__cta">
           <a class="btn btn--primary" href="#install">Get started <span class="arw">→</span></a>
@@ -403,32 +400,17 @@ The ONLY departures from the mockup are the ones the doc-site P1c fiche calls fo
         <article class="card">
           <span class="tag">linear-time</span>
           <h3>It can't blow up</h3>
-          <p>Every match is <code>O(n·m)</code>. No backtracking means no catastrophic path — ReDoS-safe by construction, not by heuristic or timeout.</p>
-        </article>
-        <article class="card">
-          <span class="tag">constexpr</span>
-          <h3>Compiles at compile time</h3>
-          <p>Build a <code>real::regex</code> in a <code>constexpr</code> context — the pattern is parsed and compiled before your program ever runs.</p>
+          <p>Every match is <code>O(n·m)</code> — no backtracking, so no catastrophic path: ReDoS-safe by construction.</p>
         </article>
         <article class="card">
           <span class="tag">drop-in</span>
-          <h3>Replace what you use</h3>
-          <p>Faithful drop-ins for <code>std::regex</code> and RE2 — same API, honest contracts, a linear-time engine underneath.</p>
+          <h3>Drop in anywhere</h3>
+          <p>Faithful drop-ins for <code>std::regex</code>, RE2, Python <code>re</code>, the Rust <code>regex</code> crate, Go <code>regexp</code> and a frozen C ABI — one linear engine underneath.</p>
         </article>
         <article class="card">
-          <span class="tag">bindings</span>
-          <h3>Python, Rust, C, Go</h3>
-          <p>One engine, idiomatic everywhere: drop into <code>re</code>, the <code>regex</code> crate, <code>regexp</code>, or call the frozen C ABI.</p>
-        </article>
-        <article class="card">
-          <span class="tag">unicode</span>
-          <h3>Unicode, complete</h3>
-          <p>UCD 16 <code>\p{}</code> properties, scripts, case-folding and word boundaries. Code-point mode by default, bytes mode when you ask.</p>
-        </article>
-        <article class="card">
-          <span class="tag">zero-dep</span>
-          <h3>Header-only, nothing to link</h3>
-          <p>A few dozen headers, no runtime dependency. Drop <code>include/</code> into any C++20 build and go.</p>
+          <span class="tag">constexpr</span>
+          <h3>Compile-time, zero-dependency</h3>
+          <p>Build a <code>real::regex</code> in a <code>constexpr</code> context; a few dozen headers, nothing to link.</p>
         </article>
       </div>
     </div>
@@ -508,21 +490,31 @@ The ONLY departures from the mockup are the ones the doc-site P1c fiche calls fo
       <div class="inst" id="install">
         <article class="card">
           <h3>C++ <span class="lang">· header-only</span></h3>
-          <pre><span class="prompt">$</span> brew install RECHE23/sci/real-regex
-<span class="c"># or: vendor include/ (header-only)</span></pre>
+          <div class="cmd"><span class="prompt">$</span> brew install RECHE23/sci/real-regex
+            <button class="copy" aria-label="Copy install command" title="Copy">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+            </button></div>
         </article>
         <article class="card">
           <h3>Python <span class="lang">· PyPI</span></h3>
-          <pre><span class="prompt">$</span> pip install real-regex</pre>
+          <div class="cmd"><span class="prompt">$</span> pip install real-regex
+            <button class="copy" aria-label="Copy install command" title="Copy">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+            </button></div>
         </article>
         <article class="card">
           <h3>Rust <span class="lang">· crates.io</span></h3>
-          <pre><span class="prompt">$</span> cargo add real-regex</pre>
+          <div class="cmd"><span class="prompt">$</span> cargo add real-regex
+            <button class="copy" aria-label="Copy install command" title="Copy">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+            </button></div>
         </article>
         <article class="card">
           <h3>Go <span class="lang">· module</span></h3>
-          <pre><span class="prompt">$</span> go get github.com/
-    RECHE23/real-regex/bindings/go</pre>
+          <div class="cmd"><span class="prompt">$</span> go get github.com/RECHE23/real-regex/bindings/go
+            <button class="copy" aria-label="Copy install command" title="Copy">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+            </button></div>
         </article>
       </div>
     </div>

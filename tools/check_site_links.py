@@ -103,7 +103,7 @@ class _NavExtractor(HTMLParser):
             if (
                 not self._done
                 and tag == self._tag
-                and self._cls in (a.get("class") or "")
+                and self._cls in _class_tokens(a)
             ):
                 self._depth = 1
             return
@@ -151,6 +151,105 @@ def _extract_primary_nav(
             )
         out.append((label, target.relative_to(site_root_resolved).as_posix()))
     return out
+
+
+def _class_tokens(attrs_dict: dict[str, str | None]) -> set[str]:
+    """The element's class attribute as a set of whole tokens. Substring
+    matching is a trap here twice over (supervision catch, doc-site P2):
+    `"cmd" in class` also matches the OUTER `hero__cmd` wrapper around the
+    hero's real `.cmd` box, and `"copy" in class` matches a hypothetical
+    `nocopy` -- token matching is what the browser's own class selector does.
+    """
+    return set((attrs_dict.get("class") or "").split())
+
+
+class _LandingCommandChecker(HTMLParser):
+    """Parse the landing page for command blocks: checks that all shell commands
+    are in copyable <div class="cmd"> format (never in <pre>), and that each
+    <div class="cmd"> contains a <button class="copy">.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.in_cmd = False
+        self.has_copy_button = False
+        self.pre_lines: list[str] = []
+        self.current_pre = ""
+        self.in_pre = False
+        self.pre_texts: list[str] = []
+        self.errors: list[str] = []
+        self.cmd_count = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        a = dict(attrs)
+        if tag == "div" and "cmd" in _class_tokens(a):
+            self.in_cmd = True
+            self.has_copy_button = False
+            self.cmd_count += 1
+        elif tag == "button" and self.in_cmd and "copy" in _class_tokens(a):
+            self.has_copy_button = True
+        elif tag == "pre":
+            self.in_pre = True
+            self.current_pre = ""
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "div" and self.in_cmd:
+            if not self.has_copy_button:
+                self.errors.append(
+                    "landing-commands: FAIL -- <div class=\"cmd\"> without <button class=\"copy\">"
+                )
+            self.in_cmd = False
+        elif tag == "pre" and self.in_pre:
+            self.in_pre = False
+            if self.current_pre:
+                self.pre_texts.append(self.current_pre)
+
+    def handle_data(self, data: str) -> None:
+        if self.in_pre:
+            self.current_pre += data
+
+
+def _check_landing_commands(site_root: Path) -> list[str]:
+    """Check landing page commands are all copyable (in <div class="cmd"> with
+    <button class="copy">), never in <pre> matching prompt/install patterns.
+    Returns human-readable error strings; empty = PASS.
+    """
+    landing = site_root / "index.html"
+    if not landing.is_file():
+        return [f"landing-commands: landing index.html not found at {landing}"]
+
+    checker = _LandingCommandChecker()
+    try:
+        checker.feed(landing.read_text(encoding="utf-8"))
+    except Exception as e:
+        return [f"landing-commands: FAIL -- error parsing {landing}: {e}"]
+
+    # Check for <pre> blocks with shell command patterns (prompt or install keywords)
+    import re
+
+    prompt_pattern = re.compile(r"^\s*\$ ")
+    install_pattern = re.compile(r"^\s*(brew|pip|cargo|go get)\s")
+
+    errors = list(checker.errors)
+    for pre_text in checker.pre_texts:
+        for line in pre_text.split("\n"):
+            if prompt_pattern.match(line) or install_pattern.match(line):
+                errors.append(
+                    f"landing-commands: FAIL -- found shell command in <pre>: {line.strip()}"
+                )
+                break
+
+    # A landing with ZERO .cmd boxes is not "clean", it is missing (empty file,
+    # botched render, restructure) -- an empty page must never PASS vacuously
+    # (supervision catch, doc-site P2: a truncated index.html sailed through this
+    # check while nav-equality correctly failed closed on it).
+    if not checker.cmd_count:
+        errors.append(
+            "landing-commands: FAIL -- no <div class=\"cmd\"> found on the landing "
+            "(the hero install box alone should give >= 1; empty or broken page?)"
+        )
+
+    return errors
 
 
 def _check_nav_equality(site_root: Path) -> list[str]:
@@ -356,6 +455,7 @@ def main(argv: list[str]) -> int:
     )
 
     nav_errors: list[str] = []
+    landing_cmd_errors: list[str] = []
     if explicit_page is None:  # site-wide mode only: the gate's invocation
         nav_errors = _check_nav_equality(site_root)
         if nav_errors:
@@ -366,6 +466,17 @@ def main(argv: list[str]) -> int:
             print(
                 "check_site_links: nav-equality PASS -- landing nav == inner "
                 "header nav (single toctree source, doc-site P1 reorg)"
+            )
+
+        landing_cmd_errors = _check_landing_commands(site_root)
+        if landing_cmd_errors:
+            fail_count += len(landing_cmd_errors)
+            for e in landing_cmd_errors:
+                print(f"check_site_links: FAIL -- {e}")
+        else:
+            print(
+                "check_site_links: landing-commands PASS -- all shell commands "
+                "in copyable <div class=\"cmd\"> format (no <pre> with prompt/install patterns)"
             )
 
     if fail_count:
