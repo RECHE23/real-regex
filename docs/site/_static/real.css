@@ -1,7 +1,7 @@
 /* real.css -- docs/site theme skin.
  *
- * Translates the approved landing mockup's tokens (~/Projects/.recovery/
- * real-regex-landing-mockup.html) onto two layers:
+ * Translates the approved Cyanotype palette (doc-site palette wagon, 2026-07-18 --
+ * blueprint bleu de Prusse, replacing the earlier emerald palette) onto two layers:
  *   1. Local custom properties (--paper, --ink, --accent, ...) -- the source of
  *      truth, used directly by the page's own bespoke blocks (hero, guarantee
  *      panel, the cliff comparison, quickstart chrome).
@@ -9,39 +9,57 @@
  *      the same values so the theme's built-in chrome (navbar, sidebars, prose,
  *      code blocks, sphinx-design cards/grids/tabs, which key off --sd-color-*
  *      which in turn key off --pst-color-*) is harmonized rather than fighting
- *      the mockup's palette. Variable names below were extracted from the
- *      installed pydata_sphinx_theme==0.20.0 package CSS (theme/.../
- *      pydata-sphinx-theme.css), not guessed.
+ *      the palette. Variable names below were extracted from the installed
+ *      pydata_sphinx_theme==0.20.0 package CSS (theme/.../pydata-sphinx-theme.css),
+ *      not guessed.
  *
  * No webfont CDN: both stacks are system/local (Interdits, doc-site P0/P1 fiche).
  * Both themes are deliberately tuned (no naive inversion) -- light values live at
  * :root, dark values are re-declared under html[data-theme="dark"] (the attribute
  * pydata-sphinx-theme itself stamps on <html>), with an @media(prefers-color-
  * scheme) fallback for the brief pre-hydration paint.
+ *
+ * WHY THE --pst-color-* MAPPING IS REPEATED FOUR TIMES (:root, html:not([data-
+ * theme]), html[data-theme="dark"], html[data-theme="light"]), NOT DECLARED ONCE:
+ * pydata-sphinx-theme's OWN compiled CSS redeclares the semantic hue families
+ * (primary/secondary/accent/info/warning/success/danger, base+text+highlight+
+ * highlight-text) inside its own html:not([data-theme]) / html[data-theme=light] /
+ * html[data-theme=dark] selectors -- each of specificity (0,1,1) (one type selector
+ * + one attribute/pseudo-class selector). A bare `:root { --pst-color-primary: ... }`
+ * is only (0,1,0) -- LOWER specificity, which loses to pydata's own rule regardless
+ * of stylesheet load order (specificity is compared before source order in the CSS
+ * cascade). Since pydata-sphinx-theme.js always stamps a concrete data-theme="light"
+ * or "dark" on <html> within moments of page load (confirmed in the built JS: the
+ * inline bootstrap script runs first, then the deferred theme-switcher script
+ * resolves "auto" to a concrete value), a :root-only mapping would be invisible in
+ * the steady state -- the exact bug this repetition avoids. Matching pydata's own
+ * selectors (same specificity, real.css loaded after pydata-sphinx-theme.css per
+ * html_css_files, so ties go to real.css) is what actually lets the swap win,
+ * without resorting to !important anywhere in this section.
  */
 
 :root {
-  /* neutrals -- cool green-grey bias, chosen not defaulted */
-  --paper: #F1F4F2;
-  --surface: #FBFCFB;
+  /* neutrals -- Cyanotype, light (the paper) */
+  --paper: #F3F5F7;
+  --surface: #FAFBFC;
   --surface-2: #FFFFFF;
-  --ink: #0F1A16;
-  --ink-2: #47554F;
-  --ink-3: #77847E;
-  --line: #D9E1DC;
-  --line-2: #E7ECE8;
-  /* signal -- deep emerald = "safe / linear / go" */
-  --accent: #0B7D5A;
-  --accent-ink: #075E44;
-  --accent-2: #0A6E4F;
-  --accent-soft: #E1EFE8;
+  --ink: #0F1720;
+  --ink-2: #43505C;
+  --ink-3: #73808C;
+  --line: #D5DCE2;
+  --line-2: #E4E9EE;
+  /* signal -- Prussian blue = "real / linear / interactive" */
+  --accent: #14548F;
+  --accent-ink: #0E4173;
+  --accent-2: #114B82;
+  --accent-soft: #E0EAF4;
   --on-accent: #FFFFFF;
-  /* the cliff -- muted clay, used sparingly */
-  --danger: #B0493A;
-  --danger-soft: #F4E4E1;
+  /* the cliff -- orange, used sparingly */
+  --danger: #C14E20;
+  --danger-soft: #F7E6DD;
 
-  --shadow: 0 1px 2px rgba(15, 26, 22, .04), 0 8px 24px -12px rgba(15, 26, 22, .14);
-  --shadow-lift: 0 2px 4px rgba(15, 26, 22, .05), 0 18px 44px -18px rgba(15, 26, 22, .22);
+  --shadow: 0 1px 2px rgba(15, 23, 32, .04), 0 8px 24px -12px rgba(15, 23, 32, .14);
+  --shadow-lift: 0 2px 4px rgba(15, 23, 32, .05), 0 18px 44px -18px rgba(15, 23, 32, .22);
 
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
@@ -49,22 +67,130 @@
   --radius: 9px;
   --radius-s: 6px;
 
-  /* -- pydata-sphinx-theme semantic vars, pointed at the tokens above -- */
+  /* -- pydata-sphinx-theme semantic vars, pointed at the tokens above --
+   * COMPLET for every category the doc-site Cyanotype fiche names (fonds,
+   * hiérarchie d'encre, bordures, liens, primary/secondary/info/warning/danger,
+   * code inline, navbar/sidebar/recherche, cibles/hover) PLUS --pst-color-accent
+   * (navbar/search/sidebar chrome reads this directly -- confirmed by grepping the
+   * installed theme CSS; left unmapped it stays pydata's own stock magenta hue)
+   * and success/attention, included defensively: pydata's own stock success is a
+   * green close to the retired emerald palette, and no admonition/badge directive
+   * is used anywhere in docs/site today, so mapping it is free insurance against
+   * a future stray green, using table tokens only (no new hue).
+   *
+   * warning/danger share the "danger" (orange) hue -- the palette table has no
+   * second, darker "danger-2" for a hover/-highlight shade the way accent has
+   * accent-2, so -highlight reuses the base danger value verbatim rather than
+   * inventing one (Interdits: no invented tint, "not even for a hover").
+   *
+   * Left at pydata's own stock (neutral, unhued) values, deliberately: the
+   * light/muted/dark/black/white swatch family and the table-* variables --
+   * not named in the fiche's category list, and not reachable from any directive
+   * used in docs/site's current content (no sphinx-design badges, no tables, no
+   * admonitions -- verified by grep across every .md/.rst under docs/site).
+   */
   --pst-color-primary: var(--accent);
   --pst-color-primary-bg: var(--accent-soft);
   --pst-color-primary-text: var(--on-accent);
   --pst-color-primary-highlight: var(--accent-2);
+  --pst-color-primary-highlight-text: var(--on-accent);
   --pst-color-secondary: var(--accent-ink);
   --pst-color-secondary-bg: var(--accent-soft);
+  --pst-color-secondary-text: var(--on-accent);
+  --pst-color-secondary-highlight: var(--accent-2);
+  --pst-color-secondary-highlight-text: var(--on-accent);
+  --pst-color-accent: var(--accent);
+  --pst-color-accent-bg: var(--accent-soft);
+  --pst-color-info: var(--accent);
+  --pst-color-info-bg: var(--accent-soft);
+  --pst-color-info-text: var(--on-accent);
+  --pst-color-info-highlight: var(--accent-2);
+  --pst-color-info-highlight-text: var(--on-accent);
+  --pst-color-success: var(--accent);
+  --pst-color-success-bg: var(--accent-soft);
+  --pst-color-success-text: var(--on-accent);
+  --pst-color-success-highlight: var(--accent-2);
+  --pst-color-success-highlight-text: var(--on-accent);
+  --pst-color-warning: var(--danger);
+  --pst-color-warning-bg: var(--danger-soft);
+  --pst-color-warning-text: var(--on-accent);
+  --pst-color-warning-highlight: var(--danger);
+  --pst-color-warning-highlight-text: var(--on-accent);
   --pst-color-danger: var(--danger);
   --pst-color-danger-bg: var(--danger-soft);
+  --pst-color-danger-text: var(--on-accent);
+  --pst-color-danger-highlight: var(--danger);
+  --pst-color-danger-highlight-text: var(--on-accent);
   --pst-color-text-base: var(--ink);
   --pst-color-text-muted: var(--ink-2);
   --pst-color-border: var(--line);
   --pst-color-border-muted: var(--line-2);
+  --pst-color-blockquote-notch: var(--line);
   --pst-color-heading: var(--ink);
   --pst-color-link: var(--accent-ink);
   --pst-color-link-hover: var(--accent);
+  --pst-color-link-higher-contrast: var(--accent-ink);
+  --pst-color-inline-code: var(--ink);
+  --pst-color-target: var(--accent-soft);
+  --pst-color-background: var(--paper);
+  --pst-color-on-background: var(--surface);
+  --pst-color-surface: var(--surface-2);
+  --pst-color-on-surface: var(--ink);
+  --pst-font-family-base: var(--font-sans);
+  --pst-font-family-heading: var(--font-sans);
+  --pst-font-family-monospace: var(--font-mono);
+}
+
+/* Same --pst-color-* mapping as :root, verbatim: covers the narrow, real window
+ * where <html> carries data-theme="" (empty, not absent) -- the inline bootstrap
+ * script (see landing/base.html's <head>) sets dataset.theme from localStorage
+ * unconditionally, including to "" when no value is stored yet, which matches
+ * NEITHER html:not([data-theme]) NOR html[data-theme=light|dark] until the
+ * deferred theme-switcher script resolves a concrete value a moment later. This
+ * block, at pydata's own html:not([data-theme]) specificity (0,1,1), keeps that
+ * moment on Cyanotype instead of an unset custom property. */
+html:not([data-theme]) {
+  --pst-color-primary: var(--accent);
+  --pst-color-primary-bg: var(--accent-soft);
+  --pst-color-primary-text: var(--on-accent);
+  --pst-color-primary-highlight: var(--accent-2);
+  --pst-color-primary-highlight-text: var(--on-accent);
+  --pst-color-secondary: var(--accent-ink);
+  --pst-color-secondary-bg: var(--accent-soft);
+  --pst-color-secondary-text: var(--on-accent);
+  --pst-color-secondary-highlight: var(--accent-2);
+  --pst-color-secondary-highlight-text: var(--on-accent);
+  --pst-color-accent: var(--accent);
+  --pst-color-accent-bg: var(--accent-soft);
+  --pst-color-info: var(--accent);
+  --pst-color-info-bg: var(--accent-soft);
+  --pst-color-info-text: var(--on-accent);
+  --pst-color-info-highlight: var(--accent-2);
+  --pst-color-info-highlight-text: var(--on-accent);
+  --pst-color-success: var(--accent);
+  --pst-color-success-bg: var(--accent-soft);
+  --pst-color-success-text: var(--on-accent);
+  --pst-color-success-highlight: var(--accent-2);
+  --pst-color-success-highlight-text: var(--on-accent);
+  --pst-color-warning: var(--danger);
+  --pst-color-warning-bg: var(--danger-soft);
+  --pst-color-warning-text: var(--on-accent);
+  --pst-color-warning-highlight: var(--danger);
+  --pst-color-warning-highlight-text: var(--on-accent);
+  --pst-color-danger: var(--danger);
+  --pst-color-danger-bg: var(--danger-soft);
+  --pst-color-danger-text: var(--on-accent);
+  --pst-color-danger-highlight: var(--danger);
+  --pst-color-danger-highlight-text: var(--on-accent);
+  --pst-color-text-base: var(--ink);
+  --pst-color-text-muted: var(--ink-2);
+  --pst-color-border: var(--line);
+  --pst-color-border-muted: var(--line-2);
+  --pst-color-blockquote-notch: var(--line);
+  --pst-color-heading: var(--ink);
+  --pst-color-link: var(--accent-ink);
+  --pst-color-link-hover: var(--accent);
+  --pst-color-link-higher-contrast: var(--accent-ink);
   --pst-color-inline-code: var(--ink);
   --pst-color-target: var(--accent-soft);
   --pst-color-background: var(--paper);
@@ -78,64 +204,327 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #0B1210;
-    --surface: #111B17;
-    --surface-2: #16211C;
-    --ink: #E9F0EC;
-    --ink-2: #9DABA5;
-    --ink-3: #6C7A74;
-    --line: #223029;
-    --line-2: #1A251F;
-    --accent: #35D399;
-    --accent-ink: #6FE7B7;
-    --accent-2: #2CC08A;
-    --accent-soft: #122A20;
-    --on-accent: #04140E;
-    --danger: #E58067;
-    --danger-soft: #2A1712;
+    --paper: #0A1826;
+    --surface: #0F2033;
+    --surface-2: #13273D;
+    --ink: #E4EDF5;
+    --ink-2: #97A9BA;
+    --ink-3: #64788C;
+    --line: #1D3550;
+    --line-2: #16293E;
+    --accent: #5FA8E8;
+    --accent-ink: #8CC3F2;
+    --accent-2: #4E9BE0;
+    --accent-soft: #10304D;
+    --on-accent: #041526;
+    --danger: #F0955C;
+    --danger-soft: #33200F;
     --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 10px 30px -14px rgba(0, 0, 0, .6);
     --shadow-lift: 0 2px 6px rgba(0, 0, 0, .35), 0 22px 54px -20px rgba(0, 0, 0, .7);
   }
 }
 
 html[data-theme="dark"] {
-  --paper: #0B1210;
-  --surface: #111B17;
-  --surface-2: #16211C;
-  --ink: #E9F0EC;
-  --ink-2: #9DABA5;
-  --ink-3: #6C7A74;
-  --line: #223029;
-  --line-2: #1A251F;
-  --accent: #35D399;
-  --accent-ink: #6FE7B7;
-  --accent-2: #2CC08A;
-  --accent-soft: #122A20;
-  --on-accent: #04140E;
-  --danger: #E58067;
-  --danger-soft: #2A1712;
+  --paper: #0A1826;
+  --surface: #0F2033;
+  --surface-2: #13273D;
+  --ink: #E4EDF5;
+  --ink-2: #97A9BA;
+  --ink-3: #64788C;
+  --line: #1D3550;
+  --line-2: #16293E;
+  --accent: #5FA8E8;
+  --accent-ink: #8CC3F2;
+  --accent-2: #4E9BE0;
+  --accent-soft: #10304D;
+  --on-accent: #041526;
+  --danger: #F0955C;
+  --danger-soft: #33200F;
   --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 10px 30px -14px rgba(0, 0, 0, .6);
   --shadow-lift: 0 2px 6px rgba(0, 0, 0, .35), 0 22px 54px -20px rgba(0, 0, 0, .7);
+
+  /* pst mapping, repeated at this selector's own specificity -- see the header
+     comment on :root for why a bare :root declaration is not enough. */
+  --pst-color-primary: var(--accent);
+  --pst-color-primary-bg: var(--accent-soft);
+  --pst-color-primary-text: var(--on-accent);
+  --pst-color-primary-highlight: var(--accent-2);
+  --pst-color-primary-highlight-text: var(--on-accent);
+  --pst-color-secondary: var(--accent-ink);
+  --pst-color-secondary-bg: var(--accent-soft);
+  --pst-color-secondary-text: var(--on-accent);
+  --pst-color-secondary-highlight: var(--accent-2);
+  --pst-color-secondary-highlight-text: var(--on-accent);
+  --pst-color-accent: var(--accent);
+  --pst-color-accent-bg: var(--accent-soft);
+  --pst-color-info: var(--accent);
+  --pst-color-info-bg: var(--accent-soft);
+  --pst-color-info-text: var(--on-accent);
+  --pst-color-info-highlight: var(--accent-2);
+  --pst-color-info-highlight-text: var(--on-accent);
+  --pst-color-success: var(--accent);
+  --pst-color-success-bg: var(--accent-soft);
+  --pst-color-success-text: var(--on-accent);
+  --pst-color-success-highlight: var(--accent-2);
+  --pst-color-success-highlight-text: var(--on-accent);
+  --pst-color-warning: var(--danger);
+  --pst-color-warning-bg: var(--danger-soft);
+  --pst-color-warning-text: var(--on-accent);
+  --pst-color-warning-highlight: var(--danger);
+  --pst-color-warning-highlight-text: var(--on-accent);
+  --pst-color-danger: var(--danger);
+  --pst-color-danger-bg: var(--danger-soft);
+  --pst-color-danger-text: var(--on-accent);
+  --pst-color-danger-highlight: var(--danger);
+  --pst-color-danger-highlight-text: var(--on-accent);
+  --pst-color-text-base: var(--ink);
+  --pst-color-text-muted: var(--ink-2);
+  --pst-color-border: var(--line);
+  --pst-color-border-muted: var(--line-2);
+  --pst-color-blockquote-notch: var(--line);
+  --pst-color-heading: var(--ink);
+  --pst-color-link: var(--accent-ink);
+  --pst-color-link-hover: var(--accent);
+  --pst-color-link-higher-contrast: var(--accent-ink);
+  --pst-color-inline-code: var(--ink);
+  --pst-color-target: var(--accent-soft);
+  --pst-color-background: var(--paper);
+  --pst-color-on-background: var(--surface);
+  --pst-color-surface: var(--surface-2);
+  --pst-color-on-surface: var(--ink);
+  --pst-font-family-base: var(--font-sans);
+  --pst-font-family-heading: var(--font-sans);
+  --pst-font-family-monospace: var(--font-mono);
 }
 
 html[data-theme="light"] {
-  --paper: #F1F4F2;
-  --surface: #FBFCFB;
+  --paper: #F3F5F7;
+  --surface: #FAFBFC;
   --surface-2: #FFFFFF;
-  --ink: #0F1A16;
-  --ink-2: #47554F;
-  --ink-3: #77847E;
-  --line: #D9E1DC;
-  --line-2: #E7ECE8;
-  --accent: #0B7D5A;
-  --accent-ink: #075E44;
-  --accent-2: #0A6E4F;
-  --accent-soft: #E1EFE8;
+  --ink: #0F1720;
+  --ink-2: #43505C;
+  --ink-3: #73808C;
+  --line: #D5DCE2;
+  --line-2: #E4E9EE;
+  --accent: #14548F;
+  --accent-ink: #0E4173;
+  --accent-2: #114B82;
+  --accent-soft: #E0EAF4;
   --on-accent: #FFFFFF;
-  --danger: #B0493A;
-  --danger-soft: #F4E4E1;
-  --shadow: 0 1px 2px rgba(15, 26, 22, .04), 0 8px 24px -12px rgba(15, 26, 22, .14);
-  --shadow-lift: 0 2px 4px rgba(15, 26, 22, .05), 0 18px 44px -18px rgba(15, 26, 22, .22);
+  --danger: #C14E20;
+  --danger-soft: #F7E6DD;
+  --shadow: 0 1px 2px rgba(15, 23, 32, .04), 0 8px 24px -12px rgba(15, 23, 32, .14);
+  --shadow-lift: 0 2px 4px rgba(15, 23, 32, .05), 0 18px 44px -18px rgba(15, 23, 32, .22);
+
+  /* pst mapping, repeated at this selector's own specificity -- see the header
+     comment on :root for why a bare :root declaration is not enough. */
+  --pst-color-primary: var(--accent);
+  --pst-color-primary-bg: var(--accent-soft);
+  --pst-color-primary-text: var(--on-accent);
+  --pst-color-primary-highlight: var(--accent-2);
+  --pst-color-primary-highlight-text: var(--on-accent);
+  --pst-color-secondary: var(--accent-ink);
+  --pst-color-secondary-bg: var(--accent-soft);
+  --pst-color-secondary-text: var(--on-accent);
+  --pst-color-secondary-highlight: var(--accent-2);
+  --pst-color-secondary-highlight-text: var(--on-accent);
+  --pst-color-accent: var(--accent);
+  --pst-color-accent-bg: var(--accent-soft);
+  --pst-color-info: var(--accent);
+  --pst-color-info-bg: var(--accent-soft);
+  --pst-color-info-text: var(--on-accent);
+  --pst-color-info-highlight: var(--accent-2);
+  --pst-color-info-highlight-text: var(--on-accent);
+  --pst-color-success: var(--accent);
+  --pst-color-success-bg: var(--accent-soft);
+  --pst-color-success-text: var(--on-accent);
+  --pst-color-success-highlight: var(--accent-2);
+  --pst-color-success-highlight-text: var(--on-accent);
+  --pst-color-warning: var(--danger);
+  --pst-color-warning-bg: var(--danger-soft);
+  --pst-color-warning-text: var(--on-accent);
+  --pst-color-warning-highlight: var(--danger);
+  --pst-color-warning-highlight-text: var(--on-accent);
+  --pst-color-danger: var(--danger);
+  --pst-color-danger-bg: var(--danger-soft);
+  --pst-color-danger-text: var(--on-accent);
+  --pst-color-danger-highlight: var(--danger);
+  --pst-color-danger-highlight-text: var(--on-accent);
+  --pst-color-text-base: var(--ink);
+  --pst-color-text-muted: var(--ink-2);
+  --pst-color-border: var(--line);
+  --pst-color-border-muted: var(--line-2);
+  --pst-color-blockquote-notch: var(--line);
+  --pst-color-heading: var(--ink);
+  --pst-color-link: var(--accent-ink);
+  --pst-color-link-hover: var(--accent);
+  --pst-color-link-higher-contrast: var(--accent-ink);
+  --pst-color-inline-code: var(--ink);
+  --pst-color-target: var(--accent-soft);
+  --pst-color-background: var(--paper);
+  --pst-color-on-background: var(--surface);
+  --pst-color-surface: var(--surface-2);
+  --pst-color-on-surface: var(--ink);
+  --pst-font-family-base: var(--font-sans);
+  --pst-font-family-heading: var(--font-sans);
+  --pst-font-family-monospace: var(--font-mono);
+}
+
+/* ============================ Pygments (inner pages): tango/monokai override ====
+ * pygments_style="tango" / pygments_light_style="tango" / pygments_dark_style=
+ * "monokai" (conf.py) are named styles with a FIXED palette -- they never read
+ * --pst-*/local custom properties, unlike the landing's own hand-tuned .highlight
+ * rules (landing.html, token-driven, verified unchanged -- see the fiche's 3a).
+ * pydata-sphinx-theme compiles both named styles into build/site/html/_static/
+ * pygments.css under `html[data-theme="light"] .highlight .KLASS` / `html[data-
+ * theme="dark"] .highlight .KLASS` (measured directly in the built CSS, not
+ * assumed) -- specificity (0,3,1): one type selector (html) + one attribute
+ * selector ([data-theme=...]) + two class selectors (.highlight, .KLASS). Every
+ * rule below repeats that EXACT selector shape, so specificity is equal; real.css
+ * is loaded after pygments.css (html_css_files order, confirmed in the built
+ * <head>), so the equal-specificity tie goes to real.css by source order alone --
+ * no !important needed or used here.
+ *
+ * Mapping (palette table tokens only): keywords = accent-ink light / accent dark
+ * (mirrors the landing's own .k* rule, landing.html l.260-271); strings = danger;
+ * comments = ink-3; names/numbers/operators/punctuation = the ink family; errors
+ * and Generic.Deleted/Error/Traceback = danger; Generic.Inserted = accent.
+ * Covers every short class pydata's compiled pygments.css emits for tango/monokai
+ * (measured from the built CSS), not just the classes the current cpp-only
+ * quickstart/tour snippets happen to use today.
+ */
+html[data-theme="light"] .highlight,
+html[data-theme="dark"] .highlight {
+  background: var(--surface-2);
+}
+html[data-theme="dark"] .highlight {
+  color: var(--ink);
+}
+html[data-theme="light"] .highlight .hll,
+html[data-theme="dark"] .highlight .hll {
+  background-color: var(--accent-soft);
+}
+
+/* comments */
+html[data-theme="light"] .highlight .c, html[data-theme="dark"] .highlight .c,
+html[data-theme="light"] .highlight .ch, html[data-theme="dark"] .highlight .ch,
+html[data-theme="light"] .highlight .cm, html[data-theme="dark"] .highlight .cm,
+html[data-theme="light"] .highlight .cp, html[data-theme="dark"] .highlight .cp,
+html[data-theme="light"] .highlight .cpf, html[data-theme="dark"] .highlight .cpf,
+html[data-theme="light"] .highlight .c1, html[data-theme="dark"] .highlight .c1,
+html[data-theme="light"] .highlight .cs, html[data-theme="dark"] .highlight .cs,
+html[data-theme="light"] .highlight .gu, html[data-theme="dark"] .highlight .gu,
+html[data-theme="light"] .highlight .go, html[data-theme="dark"] .highlight .go {
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+/* keywords -- light: accent-ink (same convention as the landing's dark-mode-only
+   bump); dark: accent (landing.html l.260 does the identical light->dark bump) */
+html[data-theme="light"] .highlight .k, html[data-theme="light"] .highlight .kc,
+html[data-theme="light"] .highlight .kd, html[data-theme="light"] .highlight .kn,
+html[data-theme="light"] .highlight .kp, html[data-theme="light"] .highlight .kr,
+html[data-theme="light"] .highlight .kt, html[data-theme="light"] .highlight .ow,
+html[data-theme="light"] .highlight .nt {
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+html[data-theme="dark"] .highlight .k, html[data-theme="dark"] .highlight .kc,
+html[data-theme="dark"] .highlight .kd, html[data-theme="dark"] .highlight .kn,
+html[data-theme="dark"] .highlight .kp, html[data-theme="dark"] .highlight .kr,
+html[data-theme="dark"] .highlight .kt, html[data-theme="dark"] .highlight .ow,
+html[data-theme="dark"] .highlight .nt {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* strings */
+html[data-theme="light"] .highlight .s, html[data-theme="dark"] .highlight .s,
+html[data-theme="light"] .highlight .sa, html[data-theme="dark"] .highlight .sa,
+html[data-theme="light"] .highlight .sb, html[data-theme="dark"] .highlight .sb,
+html[data-theme="light"] .highlight .sc, html[data-theme="dark"] .highlight .sc,
+html[data-theme="light"] .highlight .dl, html[data-theme="dark"] .highlight .dl,
+html[data-theme="light"] .highlight .sd, html[data-theme="dark"] .highlight .sd,
+html[data-theme="light"] .highlight .s2, html[data-theme="dark"] .highlight .s2,
+html[data-theme="light"] .highlight .se, html[data-theme="dark"] .highlight .se,
+html[data-theme="light"] .highlight .sh, html[data-theme="dark"] .highlight .sh,
+html[data-theme="light"] .highlight .si, html[data-theme="dark"] .highlight .si,
+html[data-theme="light"] .highlight .sx, html[data-theme="dark"] .highlight .sx,
+html[data-theme="light"] .highlight .sr, html[data-theme="dark"] .highlight .sr,
+html[data-theme="light"] .highlight .s1, html[data-theme="dark"] .highlight .s1,
+html[data-theme="light"] .highlight .ss, html[data-theme="dark"] .highlight .ss {
+  color: var(--danger);
+}
+
+/* names, builtins, decorators -- bold ink */
+html[data-theme="light"] .highlight .nb, html[data-theme="dark"] .highlight .nb,
+html[data-theme="light"] .highlight .nc, html[data-theme="dark"] .highlight .nc,
+html[data-theme="light"] .highlight .nf, html[data-theme="dark"] .highlight .nf,
+html[data-theme="light"] .highlight .ne, html[data-theme="dark"] .highlight .ne,
+html[data-theme="light"] .highlight .fm, html[data-theme="dark"] .highlight .fm,
+html[data-theme="light"] .highlight .bp, html[data-theme="dark"] .highlight .bp {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* names, attributes, numbers, literals -- ink-2 */
+html[data-theme="light"] .highlight .n, html[data-theme="dark"] .highlight .n,
+html[data-theme="light"] .highlight .nn, html[data-theme="dark"] .highlight .nn,
+html[data-theme="light"] .highlight .nx, html[data-theme="dark"] .highlight .nx,
+html[data-theme="light"] .highlight .na, html[data-theme="dark"] .highlight .na,
+html[data-theme="light"] .highlight .nd, html[data-theme="dark"] .highlight .nd,
+html[data-theme="light"] .highlight .ni, html[data-theme="dark"] .highlight .ni,
+html[data-theme="light"] .highlight .nl, html[data-theme="dark"] .highlight .nl,
+html[data-theme="light"] .highlight .no, html[data-theme="dark"] .highlight .no,
+html[data-theme="light"] .highlight .py, html[data-theme="dark"] .highlight .py,
+html[data-theme="light"] .highlight .nv, html[data-theme="dark"] .highlight .nv,
+html[data-theme="light"] .highlight .vc, html[data-theme="dark"] .highlight .vc,
+html[data-theme="light"] .highlight .vg, html[data-theme="dark"] .highlight .vg,
+html[data-theme="light"] .highlight .vi, html[data-theme="dark"] .highlight .vi,
+html[data-theme="light"] .highlight .vm, html[data-theme="dark"] .highlight .vm,
+html[data-theme="light"] .highlight .l, html[data-theme="dark"] .highlight .l,
+html[data-theme="light"] .highlight .ld, html[data-theme="dark"] .highlight .ld,
+html[data-theme="light"] .highlight .m, html[data-theme="dark"] .highlight .m,
+html[data-theme="light"] .highlight .mb, html[data-theme="dark"] .highlight .mb,
+html[data-theme="light"] .highlight .mf, html[data-theme="dark"] .highlight .mf,
+html[data-theme="light"] .highlight .mh, html[data-theme="dark"] .highlight .mh,
+html[data-theme="light"] .highlight .mi, html[data-theme="dark"] .highlight .mi,
+html[data-theme="light"] .highlight .mo, html[data-theme="dark"] .highlight .mo,
+html[data-theme="light"] .highlight .il, html[data-theme="dark"] .highlight .il {
+  color: var(--ink-2);
+}
+
+/* operators, punctuation, whitespace, plain generic/other text -- ink */
+html[data-theme="light"] .highlight .o, html[data-theme="dark"] .highlight .o,
+html[data-theme="light"] .highlight .p, html[data-theme="dark"] .highlight .p,
+html[data-theme="light"] .highlight .pm, html[data-theme="dark"] .highlight .pm,
+html[data-theme="light"] .highlight .w, html[data-theme="dark"] .highlight .w,
+html[data-theme="light"] .highlight .g, html[data-theme="dark"] .highlight .g,
+html[data-theme="light"] .highlight .x, html[data-theme="dark"] .highlight .x,
+html[data-theme="light"] .highlight .esc, html[data-theme="dark"] .highlight .esc,
+html[data-theme="light"] .highlight .ge, html[data-theme="dark"] .highlight .ge,
+html[data-theme="light"] .highlight .ges, html[data-theme="dark"] .highlight .ges,
+html[data-theme="light"] .highlight .gs, html[data-theme="dark"] .highlight .gs,
+html[data-theme="light"] .highlight .gh, html[data-theme="dark"] .highlight .gh,
+html[data-theme="light"] .highlight .gp, html[data-theme="dark"] .highlight .gp {
+  color: var(--ink);
+}
+
+/* errors / deleted / diff-error -- danger; inserted -- accent */
+html[data-theme="light"] .highlight .err, html[data-theme="dark"] .highlight .err,
+html[data-theme="light"] .highlight .gd, html[data-theme="dark"] .highlight .gd,
+html[data-theme="light"] .highlight .gr, html[data-theme="dark"] .highlight .gr,
+html[data-theme="light"] .highlight .gt, html[data-theme="dark"] .highlight .gt {
+  color: var(--danger);
+}
+html[data-theme="light"] .highlight .gi, html[data-theme="dark"] .highlight .gi {
+  color: var(--accent);
+}
+
+/* line numbers (when :emphasize-lines: / linenos is used) */
+html[data-theme="light"] .highlight span.linenos, html[data-theme="dark"] .highlight span.linenos,
+html[data-theme="light"] .highlight td.linenos .normal, html[data-theme="dark"] .highlight td.linenos .normal {
+  color: var(--ink-3);
 }
 
 /* ============================ bespoke landing blocks ============================

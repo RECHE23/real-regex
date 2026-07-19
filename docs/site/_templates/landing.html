@@ -36,27 +36,27 @@ The ONLY departures from the mockup are the ones the doc-site P1c fiche calls fo
 <style>
   /* ============================ tokens ============================ */
   :root {
-    /* neutrals — cool green-grey bias, chosen not defaulted */
-    --paper:      #F1F4F2;
-    --surface:    #FBFCFB;
+    /* neutrals — Cyanotype, light (the paper) */
+    --paper:      #F3F5F7;
+    --surface:    #FAFBFC;
     --surface-2:  #FFFFFF;
-    --ink:        #0F1A16;
-    --ink-2:      #47554F;
-    --ink-3:      #77847E;
-    --line:       #D9E1DC;
-    --line-2:     #E7ECE8;
-    /* signal — deep emerald = "safe / linear / go" */
-    --accent:     #0B7D5A;
-    --accent-ink: #075E44;
-    --accent-2:   #0A6E4F;
-    --accent-soft:#E1EFE8;
+    --ink:        #0F1720;
+    --ink-2:      #43505C;
+    --ink-3:      #73808C;
+    --line:       #D5DCE2;
+    --line-2:     #E4E9EE;
+    /* signal — Prussian blue = "real / linear / interactive" */
+    --accent:     #14548F;
+    --accent-ink: #0E4173;
+    --accent-2:   #114B82;
+    --accent-soft:#E0EAF4;
     --on-accent:  #FFFFFF;
-    /* the cliff — muted clay, used sparingly */
-    --danger:     #B0493A;
-    --danger-soft:#F4E4E1;
+    /* the cliff — orange, used sparingly */
+    --danger:     #C14E20;
+    --danger-soft:#F7E6DD;
     /* utility */
-    --shadow: 0 1px 2px rgba(15,26,22,.04), 0 8px 24px -12px rgba(15,26,22,.14);
-    --shadow-lift: 0 2px 4px rgba(15,26,22,.05), 0 18px 44px -18px rgba(15,26,22,.22);
+    --shadow: 0 1px 2px rgba(15,23,32,.04), 0 8px 24px -12px rgba(15,23,32,.14);
+    --shadow-lift: 0 2px 4px rgba(15,23,32,.05), 0 18px 44px -18px rgba(15,23,32,.22);
 
     --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
@@ -76,39 +76,39 @@ The ONLY departures from the mockup are the ones the doc-site P1c fiche calls fo
 
   @media (prefers-color-scheme: dark) {
     :root {
-      --paper:      #0B1210;
-      --surface:    #111B17;
-      --surface-2:  #16211C;
-      --ink:        #E9F0EC;
-      --ink-2:      #9DABA5;
-      --ink-3:      #6C7A74;
-      --line:       #223029;
-      --line-2:     #1A251F;
-      --accent:     #35D399;
-      --accent-ink: #6FE7B7;
-      --accent-2:   #2CC08A;
-      --accent-soft:#122A20;
-      --on-accent:  #04140E;
-      --danger:     #E58067;
-      --danger-soft:#2A1712;
+      --paper:      #0A1826;
+      --surface:    #0F2033;
+      --surface-2:  #13273D;
+      --ink:        #E4EDF5;
+      --ink-2:      #97A9BA;
+      --ink-3:      #64788C;
+      --line:       #1D3550;
+      --line-2:     #16293E;
+      --accent:     #5FA8E8;
+      --accent-ink: #8CC3F2;
+      --accent-2:   #4E9BE0;
+      --accent-soft:#10304D;
+      --on-accent:  #041526;
+      --danger:     #F0955C;
+      --danger-soft:#33200F;
       --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px -14px rgba(0,0,0,.6);
       --shadow-lift: 0 2px 6px rgba(0,0,0,.35), 0 22px 54px -20px rgba(0,0,0,.7);
     }
   }
   /* explicit toggle wins in both directions */
   :root[data-theme="light"] {
-    --paper:#F1F4F2; --surface:#FBFCFB; --surface-2:#FFFFFF;
-    --ink:#0F1A16; --ink-2:#47554F; --ink-3:#77847E; --line:#D9E1DC; --line-2:#E7ECE8;
-    --accent:#0B7D5A; --accent-ink:#075E44; --accent-2:#0A6E4F; --accent-soft:#E1EFE8; --on-accent:#FFFFFF;
-    --danger:#B0493A; --danger-soft:#F4E4E1;
-    --shadow:0 1px 2px rgba(15,26,22,.04),0 8px 24px -12px rgba(15,26,22,.14);
-    --shadow-lift:0 2px 4px rgba(15,26,22,.05),0 18px 44px -18px rgba(15,26,22,.22);
+    --paper:#F3F5F7; --surface:#FAFBFC; --surface-2:#FFFFFF;
+    --ink:#0F1720; --ink-2:#43505C; --ink-3:#73808C; --line:#D5DCE2; --line-2:#E4E9EE;
+    --accent:#14548F; --accent-ink:#0E4173; --accent-2:#114B82; --accent-soft:#E0EAF4; --on-accent:#FFFFFF;
+    --danger:#C14E20; --danger-soft:#F7E6DD;
+    --shadow:0 1px 2px rgba(15,23,32,.04),0 8px 24px -12px rgba(15,23,32,.14);
+    --shadow-lift:0 2px 4px rgba(15,23,32,.05),0 18px 44px -18px rgba(15,23,32,.22);
   }
   :root[data-theme="dark"] {
-    --paper:#0B1210; --surface:#111B17; --surface-2:#16211C;
-    --ink:#E9F0EC; --ink-2:#9DABA5; --ink-3:#6C7A74; --line:#223029; --line-2:#1A251F;
-    --accent:#35D399; --accent-ink:#6FE7B7; --accent-2:#2CC08A; --accent-soft:#122A20; --on-accent:#04140E;
-    --danger:#E58067; --danger-soft:#2A1712;
+    --paper:#0A1826; --surface:#0F2033; --surface-2:#13273D;
+    --ink:#E4EDF5; --ink-2:#97A9BA; --ink-3:#64788C; --line:#1D3550; --line-2:#16293E;
+    --accent:#5FA8E8; --accent-ink:#8CC3F2; --accent-2:#4E9BE0; --accent-soft:#10304D; --on-accent:#041526;
+    --danger:#F0955C; --danger-soft:#33200F;
     --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px -14px rgba(0,0,0,.6);
     --shadow-lift:0 2px 6px rgba(0,0,0,.35),0 22px 54px -20px rgba(0,0,0,.7);
   }
