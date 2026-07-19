@@ -137,6 +137,14 @@ html_theme_options = {
     # doc-site P1 reorg: the out-of-menu links (Performance/Coverage/Changelog)
     # live in the inner-page footer -- see _templates/footer-site-links.html.
     "footer_end": ["footer-site-links"],
+    # Per-page dict: "**" must restate theme.conf's stock default verbatim or
+    # every other page silently loses its right-hand rail; an empty list drops
+    # that page's secondary-sidebar <div> from the markup. The left sidebar is
+    # html_sidebars below -- two config surfaces, not one.
+    "secondary_sidebar_items": {
+        "**": ["page-toc", "edit-this-page", "sourcelink"],
+        "features": [],
+    },
     # No "logo_link" here: pydata_sphinx_theme's navbar-logo.html partial uses
     # `theme_logo_link` VERBATIM as the href (`{% set href = theme_logo_link %}`,
     # no `pathto()` call) -- a plain string here would be wrong on every page except
@@ -149,6 +157,10 @@ html_theme_options = {
     # extension caught the resulting dead brand-link on every inner page and this
     # replaces that with the page-relative fix.)
 }
+
+# An empty per-page list takes the left column out of the flow on that page
+# only (layout.html's hide-on-wide); unnamed pages keep the theme default.
+html_sidebars = {"features": []}
 
 # The bespoke root landing (doc-site P1c): docs/site/_templates/landing.html is a
 # self-contained template (its own <style>/<script>, no pydata layout) rendered to

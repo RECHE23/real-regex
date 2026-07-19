@@ -567,6 +567,20 @@ html[data-theme="light"] .highlight td.linenos .normal, html[data-theme="dark"] 
   background: var(--danger-soft);
 }
 
+/* Dropping the sidebars (conf.py) is not enough: the theme caps the article
+ * column at 60em and flex-centers it, so a sidebar-less page just gets wider
+ * gutters. :has() scopes the un-capping to the one page holding the table;
+ * every other page keeps its 60em prose measure. */
+.bd-main .bd-content .bd-article-container:has(.feature-table) {
+  max-width: 100%;
+}
+
+/* Block spacing so full-width category tables don't read as one slab. */
+.feature-table {
+  margin-top: .5rem;
+  margin-bottom: 1.5rem;
+}
+
 /* ============================ bespoke landing blocks ============================
  * Scoped under .real-landing so nothing here leaks onto other pages (api/index.rst
  * etc.) that use the theme's own prose/typography untouched.

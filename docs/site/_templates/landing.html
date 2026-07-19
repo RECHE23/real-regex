@@ -276,11 +276,12 @@ The ONLY departures from the mockup are the ones the doc-site P1c fiche calls fo
   .highlight .err { color: var(--danger); }
 
   /* ============================ install / strip ============================ */
-  .inst { display: grid; grid-template-columns: repeat(4,1fr); gap: 1rem; }
+  /* One column by necessity, not taste: under the section's 1140px cap, any
+     multi-column layout wraps the longest install command (the Go module
+     path) -- measured at 2 columns before settling here. */
+  .inst { display: grid; grid-template-columns: 1fr; gap: 1rem; }
   .inst .card h3 { font-size: 1.02rem; margin: 0 0 .2rem; display:flex; align-items:center; gap:.5ch;}
   .inst .card .lang { font-family: var(--font-mono); font-size:.72rem; color: var(--ink-3); }
-  .inst .card pre { padding: .7rem 0 0; font-size: .82rem; background: none; }
-  .inst .card pre .prompt { color: var(--accent); }
 
   .strip { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
   .flow { background: var(--surface); border:1px solid var(--line); border-radius: var(--radius); padding: 1.5rem; }
@@ -310,7 +311,7 @@ The ONLY departures from the mockup are the ones the doc-site P1c fiche calls fo
     .panel { order: -1; }
     .cards { grid-template-columns: 1fr 1fr; }
     .cliff, .strip { grid-template-columns: 1fr; }
-    .inst { grid-template-columns: 1fr 1fr; }
+    .inst { grid-template-columns: 1fr; }
     .foot__grid { grid-template-columns: 1fr 1fr; }
     .nav__links { display: none; }
   }
