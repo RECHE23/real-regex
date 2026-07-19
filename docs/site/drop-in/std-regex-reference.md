@@ -1,22 +1,29 @@
 <!--
 std-regex-reference.md -- MyST conversion of docs/COMPATIBILITY.md (doc-site
 P2a·Drop-in). Mechanical conversion only, content TEL-QUEL (std-only scope
-unchanged; the rename/rescope to a Drop-in-std-only title is P2b, per the fiche).
-{#compat} -> a MyST anchor above the H1. The ORIGINAL docs/COMPATIBILITY.md is
-untouched (still feeds /api via Doxygen and repo readers who cite it by name) and
-stays the canon until P2b decides ownership -- this page is a migration mirror, not
-yet the source of truth. See the doc-site P2a fiche.
+unchanged). {#compat} -> a MyST anchor above the H1. The ORIGINAL
+docs/COMPATIBILITY.md is untouched (still feeds /api via Doxygen and repo readers
+who cite it by name) and stays the canon -- this page is a migration mirror, not
+the source of truth. See the doc-site P2a fiche.
 
-Forward-refs (@ref divergences, @ref div_*, \ref real::compat::basic_regex::…)
-point at the Doxygen HTML preserved under /api/ -- each target file/anchor was
-build-verified (ls / grep id=) in build/doc/html before linking here, per the
-fiche's mapping-must-be-founded rule. The `uses_real_traversal` member ref links to
-its class page WITHOUT a #fragment: Doxygen member anchors are content-hashed and
+doc-site P2b decided the COMPATIBILITY.md-vs-divergences.dox naming trap the P2a
+comment above once expected a rename to fix: renaming/rescoping
+docs/COMPATIBILITY.md was REJECTED (16 live refs across source/binding/test/fuzz/
+docs, see the P2b fiche) -- the fix goes to the site layer instead, not this file's
+name or title.
+
+Forward-refs (@ref divergences, @ref div_*) have been rewired from the Doxygen
+HTML under /api/ to internal {doc}/{ref} cross-refs, now that
+docs/site/differences-from-re.md (doc-site P2b) mirrors docs/divergences.dox into
+the site. One forward-ref remains genuinely /api-only: \ref
+real::compat::basic_regex::… (the `uses_real_traversal` member ref) links to its
+class page WITHOUT a #fragment -- Doxygen member anchors are content-hashed and
 proven version-variant between the local (Homebrew) and CI (apt) Doxygen builds --
 see conf.py's own nitpick_ignore_regex comment for the same trap on the Breathe
-side -- so hardcoding that hash here would be a guessed, not a verified, link.
-Re-wire every forward-ref to internal Sphinx cross-refs once these pages migrate
-into the site (P2b/P3).
+side -- so hardcoding that hash here would be a guessed, not a verified, link. It
+stays build-verified raw HTML (ls / grep id= in build/doc/html) until the API
+reference itself migrates into the site (P3+), per the fiche's
+mapping-must-be-founded rule.
 -->
 
 (compat)=
@@ -44,7 +51,7 @@ O(n²) even on a linear engine, so REAL cannot promise linear there and does not
 
 > New here? Start with the migration tour: {doc}`Drop-in for std::regex <std-regex-tour>`. This page
 > is the exhaustive per-feature reference; REAL's own differences from Python `re` are in
-> <a href="../api/divergences.html">the divergences page</a>. The RE2 drop-in (`real::compat::re2`) is a separate
+> {doc}`the divergences page <../differences-from-re>`. The RE2 drop-in (`real::compat::re2`) is a separate
 > compat layer — its syntax contract is documented at the top of `<real/compat/re2/re2.hpp>`.
 
 **The contract:** behave identically to the ECMAScript spec where `real` can prove it, and fall
@@ -57,7 +64,7 @@ are catalogued below (where `real`, following the spec, is the correct one).
 The public **status view** of REAL's regex features — the lines where REAL says something notable
 against a full feature matrix. Statuses: **supported** (parity with Python `re`), **extension**
 (REAL accepts it, `re` does not), **planned**, **excluded by design**. The *rationale* for each lives
-in the <a href="../api/divergences.html">divergences page</a>; this table is the single status source and links there —
+in the {doc}`divergences page <../differences-from-re>`; this table is the single status source and links there —
 there is no competing table.
 
 **Excluded by design is a closed door, not a missing feature.** Backreferences, recursion, and callouts
@@ -66,14 +73,14 @@ raise a clear error rather than sitting on a roadmap.
 
 | Feature | Status | Rationale | Since / target |
 | --- | --- | --- | --- |
-| Backreferences (`(a)\1`, `(?P=n)`) | **excluded by design** | non-regular → super-linear → ReDoS (<a href="../api/divergences.html#div_rejected">why</a>) | — |
-| Conditional groups `(?(id)…)`, recursion, callouts | **excluded by design** | non-regular control flow → ReDoS (<a href="../api/divergences.html#div_rejected">why</a>) | — |
+| Backreferences (`(a)\1`, `(?P=n)`) | **excluded by design** | non-regular → super-linear → ReDoS ({ref}`why <div_rejected>`) | — |
+| Conditional groups `(?(id)…)`, recursion, callouts | **excluded by design** | non-regular control flow → ReDoS ({ref}`why <div_rejected>`) | — |
 | Unicode property classes `\p{…}` | **supported** (General_Category + Script + Script_Extensions + the standard binary properties) | native, linear `klass_cp`; a superset of `re` (which rejects `\p`); `sc=`/`scx=` accept both the long name (`Latin`) and the short UAX24/ISO 15924 code (`Latn`); other UAX44 properties (`Bidi_Class`, `Word_Break`, `Age`, …) stay `unsupported` | 2026.7 |
 | `\N{NAME}` named characters | **supported** | binding resolves the name via `unicodedata` (no C++ table) | 2026.7 |
-| `\N{U+XXXX}` scalar form | **extension** (PCRE2-style) | uniform C++/Python surfaces; `re` knows only names (<a href="../api/divergences.html#div_named_scalar">more</a>) | 2026.7 |
+| `\N{U+XXXX}` scalar form | **extension** (PCRE2-style) | uniform C++/Python surfaces; `re` knows only names ({ref}`more <div_named_scalar>`) | 2026.7 |
 | `\z` end-of-text anchor | **supported** | exact alias of `\Z` (Python 3.14's meaning) | 2026.7 |
 | Octal escapes in a class `[\1]` `[\12]` | **supported** | every `\digit` is octal in a class (no back-refs there) | 2026.7 |
-| Variable-width lookbehind `(?<=a|bb)` | **extension** | bounded → still linear; `re`/PCRE reject it (<a href="../api/divergences.html#div_lookbehind">more</a>) | — |
+| Variable-width lookbehind `(?<=a|bb)` | **extension** | bounded → still linear; `re`/PCRE reject it ({ref}`more <div_lookbehind>`) | — |
 | Word-edge anchors `\<` `\>` | **extension** | word-start / word-end; `re` has no such escape | — |
 | POSIX `[[:alpha:]]` classes | **supported** | exact `re`-parity: `re` reads them as a *literal* class (currently with a `FutureWarning`); REAL matches the same characters | — |
 | Global flags `i m s x a` (and `(?imsxa)` prefix) | **supported** | `re` semantics; `re.U` is a no-op, `re.L` excluded | — |
@@ -182,7 +189,7 @@ and it is documented rather than routed away: **`regex_search`/`regex_match`'s p
 (ECMAScript, a backtracker) records an extra **empty final** iteration. The whole match — and every
 match **span** — is **identical**; only the inner group's captured span differs, and the `std` value
 is always a zero-width capture at the loop's end. This is the same behaviour documented against
-Python `re` (see <a href="../api/divergences.html#div_empty_iteration_capture">the divergences page</a>); the linear engines **RE2,
+Python `re` (see {ref}`the divergences page <div_empty_iteration_capture>`); the linear engines **RE2,
 the Rust `regex` crate, and Go's `regexp` share it**. Note the `std` side itself is
 **stdlib-variant**: libstdc++ and libc++ record the empty final iteration (the residue described
 here), while **MS STL keeps the last non-empty iteration — agreeing with `real`'s lineage**, so on

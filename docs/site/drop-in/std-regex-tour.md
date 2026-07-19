@@ -6,10 +6,10 @@ docs/std_regex_dropin.dox is untouched (still feeds /api via Doxygen) and stays 
 canon until P2b decides ownership -- this page is a migration mirror, not yet the
 source of truth. See the doc-site P2a fiche.
 
-Forward-refs (\ref divergences) point at the Doxygen HTML preserved under /api/ --
-each target file/anchor was build-verified (ls / grep id=) in build/doc/html before
-linking here, per the fiche's mapping-must-be-founded rule. Re-wire to internal
-Sphinx cross-refs once the divergences page migrates into the site (P2b/P3).
+doc-site P2b: the page's one forward-ref (\ref divergences) has been rewired from the
+Doxygen HTML under /api/ to an internal {doc} cross-ref, now that
+docs/site/differences-from-re.md (doc-site P2b) mirrors docs/divergences.dox into the
+site. No forward-ref to /api remains on this page.
 -->
 
 # Drop-in for std::regex
@@ -97,7 +97,7 @@ confirm it.
 This page is the tour. The exhaustive, per-feature compatibility matrix — every routing rule, the
 `match_flag_type` support, the intentional divergences and their rationale — lives in the
 {doc}`compatibility reference <std-regex-reference>`, and REAL's own (non-compat) differences from Python `re` are in
-<a href="../api/divergences.html">Differences from Python re</a>.
+{doc}`Differences from Python re <../differences-from-re>`.
 
 <!--
 std-regex-reference is nested here (not a direct entry of contents.md's root

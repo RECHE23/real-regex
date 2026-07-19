@@ -1,0 +1,351 @@
+<!--
+differences-from-re.md -- MyST conversion of docs/divergences.dox (doc-site P2b: the
+site-layer fix for the COMPATIBILITY.md-vs-divergences.dox naming trap -- see the doc-site
+P2b fiche). Mechanical conversion only, content TEL-QUEL: \page -> title, the 13
+\section div_* -> titles with explicit MyST anchor targets `(div_X)=`, named after the
+Doxygen `div_X` label VERBATIM for a recognizable 1:1 mapping to the ids already live at
+/api/divergences.html#div_* -- \note -> a ```{note}``` admonition, \tableofcontents
+dropped (pydata_sphinx_theme's own "On this page" secondary sidebar already renders an
+in-page ToC for every page, so no manual equivalent is needed). The ORIGINAL
+docs/divergences.dox is untouched (still feeds /api via Doxygen, and is what every
+source/binding/test/fuzz reference in the repo actually cites) and stays canon
+permanently -- this page is a migration mirror, not a new source of truth.
+
+NOT byte-identical to the Doxygen id= despite the verbatim target name: docutils'
+nodes.make_id() unconditionally maps every explicit target through its CSS-safe-id
+normalizer (lowercase, NFKD-fold, collapse to `[a-z](-?[a-z0-9]+)*`), which turns every
+underscore into a hyphen regardless of input -- confirmed empirically (`(div_ascii)=`
+built to `id="div-ascii"`, not `id="div_ascii"`; no docutils/MyST target syntax opts out
+of it). The alternative -- a raw `<a id="div_ascii">` HTML anchor plus raw `<a href=
+"#div_ascii">` links -- would get the literal string but forfeits Sphinx's own
+nitpicky-verified cross-reference net for every intra-page/inter-page div_* link this
+wagon closes, which the fiche's gate section and its "no dangling @ref" prohibition both
+require; correctness under nitpicky won over exact-string id parity. The hyphenated form
+is otherwise a faithful 1:1 mapping (same slugs, same order, same count).
+
+Body text is a byte-for-byte copy of the .dox prose, including its Doxygen-style
+\\-doubled escapes (\\w, \\xHH, \\p{...}, ...): CommonMark's own backslash-escape rule
+(escaping applies only to ASCII punctuation, and is suppressed entirely inside a backtick
+code span) collapses those same doubled escapes to the identical single-backslash glyphs
+Doxygen itself renders, in and out of a code span alike -- verified against the live
+build/doc/html/divergences.html byte-for-byte before writing this file, so no manual
+unescaping was applied or needed.
+
+\ref surface -- flagged for the supervisor, not a silent scope call: the fiche's own sweep
+measured exactly one \ref here (the double-backslash-escaped `\ref div_property` mention at
+.dox:241, which Doxygen itself renders as inert literal text "\ref div_property", not a
+link -- upgraded here into a real cross-ref per the fiche's explicit instruction) and an
+empty forward-ref-API class. Re-measuring turned up four more FUNCTIONING single-backslash
+\ref commands the sweep's grep evidently missed -- div_icase (.dox:64),
+div_empty_iteration_capture (.dox:159), div_possessive (.dox:188) and div_rejected
+(.dox:221) -- all genuinely intra-page and already rendering as real hyperlinks in the
+current /api build; converted here the same way as div_property ({ref}`div_X`), since
+leaving live Doxygen \ref syntax as inert literal text would be a broken conversion, not a
+TEL-QUEL one. The sweep also missed two real forward-refs this page's prose makes to
+docs/design.dox, which has NOT migrated into the site: \ref design (.dox:272, the
+`\page design` title) and \ref g_followups (.dox:280, design.dox's own `\subsection
+g_followups`) -- both build-verified (ls / grep id=) in build/doc/html before linking here
+via raw HTML, exactly the P2a mapping-must-be-founded guard the fiche kept "in case the
+conversion reveals one" -- it did, twice.
+
+The `COMPATIBILITY.md` mention (.dox:134) is a plain backticked filename citation in the
+source, not a \ref -- left exactly as text, unlinked, per the fiche (strict-minimal: the
+repo file exists, the mention is honest).
+-->
+
+# Differences from Python re
+
+REAL targets parity with Python's `re`, and a randomized differential fuzzer plus a
+large parity corpus enforce it. A handful of behaviours diverge **on purpose**; each is
+listed here with its rationale, and each is pinned by a direct, version-independent
+assertion in `TestIntentionalDivergences` (bindings/python/tests/test_real.py) so the contract
+cannot drift silently.
+
+```{note}
+**Excluded by design — a closed door, not a missing feature.** Backreferences, recursion,
+and callouts are **not** on a roadmap: each makes matching super-linear and
+would reopen the ReDoS door this engine exists to close. Refusing them is the point of a
+linear-time engine, so they raise a clear `real::regex_error` rather than being "not yet
+supported". This is the one promise REAL will not trade for feature coverage.
+```
+
+(div_ascii)=
+## UTF-8 character classes (code-point mode)
+
+In code-point mode (the default), a character class carries specific non-ASCII code-point
+members and ranges: `[é]`, `[éàü]`, `[à-ÿ]`, `[a-zé]`, and their negations `[^é]` / `[^à-ÿ]`
+all match exactly like `re` (the code-point oracle). They compile to the canonical
+UTF-8-ranges automaton, so a class never matches an overlong or surrogate byte sequence —
+`[é]` matches only `C3 A9`, and `[^é]` matches every valid code point *except* é. `.` and an
+ASCII-only negated class such as `[^x]` still match *any* non-ASCII code point (the
+pre-existing sound superset, which also accepts a malformed byte sequence as "a character").
+A malformed UTF-8 member in the pattern is a `real::regex_error`. In **bytes mode** a
+non-ASCII class member is rejected (raw byte semantics), which is what the `std::regex`
+compat layer relies on to fall back to `std`.
+
+(div_icase)=
+## Unicode text-mode semantics: case folding, shorthands and boundaries
+
+Under `IGNORECASE` in text (code-point) mode, REAL does full **Unicode simple case folding** for
+literals, classes and ranges — identical to `re.IGNORECASE`: `é` matches `É`, `[é]`/`[à-ÿ]` fold,
+`k` matches Kelvin (U+212A), `ß` matches `ẞ` (but not `ss` — simple, not full, folding). A cased
+literal is promoted to a foldable code point; a \xHH or octal byte escape keeps byte provenance and
+**never folds** (\xe9 under `IGNORECASE` does not match `É`) — the same deliberate byte-vs-code-point
+split described in the hex-escape section below.
+
+The \w \W \d \D \s \S shorthands are **Unicode** in text mode (matching `re`): `\\w` matches any
+Unicode word code point (é, ٣, ², astral letters…), `\d` any `Nd` digit (Arabic ٣, fullwidth ９…),
+`\s` exactly Python `re`'s whitespace — Unicode White_Space (NBSP, U+2028…) **plus** the four separators
+`U+001C`–`U+001F` that `re` (via `str.isspace`) adds and Unicode does not. This holds in or out of a character class (`[\\w]`, `[\\d.]`,
+and `[\\W]`/`[\\D]`/`[\\S]` — accepted as their Unicode complements, with `[^\\W]` == `\\w` etc). The
+`\\b \\B` word boundaries (and the `\\< \\>` word-start/end extensions) use the same Unicode word-ness,
+so `\\bété\\b` matches. In **bytes mode**, and under `flags::ascii` (`re.A`), every shorthand and
+boundary stays ASCII (byte-for-byte `std::regex<char>`), and `IGNORECASE` folds ASCII only, so the
+compat layer is unaffected.
+
+Case-insensitive matching follows **CPython's** equivalences (via `str.upper`/`lower`), so the Turkish
+**dotless/dotted I** fold with I/i — `(?i)I` matches ı (U+0131) and İ (U+0130), exactly as stdlib `re` does
+(`re.fullmatch("(?i)I", "ı")` is True) and as `(?i)\p{Lu}` therefore matches ı. Unicode **simple CaseFolding**
+— used by RE2 and the Rust `regex` crate — keeps ı apart instead. This is one code point (two, with İ) where the
+two conventions differ; **both engines are correct for their contract** (REAL for `re`-parity, the crate for
+UTS#18 folding). The Rust binding's differential masks exactly this set (its `ICASE_FOLD_DELTAS`, computed by
+asking both engines), the twin of the `\\w`/`\\s` mask above.
+
+(div_cpython_scoped_ascii_bug)=
+## A known CPython 3.14 oracle bug (not a REAL divergence)
+
+A scoped ascii group — `(?a:...)`, with `a` among the *added* letters — behaves inconsistently in
+CPython 3.14 specifically when it is the **pattern's own first construct**, with *nothing*
+preceding it at all (not even a zero-width assertion or a single literal byte): a negated
+shorthand `\S`/`\D`/`\W` inside it wrongly fails to match `U+001C`–`U+001F`, the same four
+separators {ref}`div_icase` above documents as included in text-mode `\s` and excluded from
+ascii-mode `\s`. Concretely, on `'\x1c'`: `re.search(r"(?a:\s)", ...)` correctly returns no match
+(not ascii whitespace) — but `re.search(r"(?a:\S)", ...)` **also** returns no match, an outright
+partition violation (`\x1c` matches neither `\s` nor its own negation `\S`). Prepending literally
+anything before the group — `\B`, `^`, a lookahead, or a single literal byte — "fixes" it on `re`'s
+side; a runtime `search(text, pos, endpos)` offset does **not** (confirmed a compile-time artifact
+of `re`'s own opcode order, not a runtime one — `pos > 0` still fails). REAL has no such
+inconsistency: `(?a:\S)` and `\B(?a:\S)` agree, and every one of these four codepoints partitions
+correctly between `\s`/`\S` regardless of what, if anything, precedes the scoped group.
+
+This is filtered out of the differential fuzzer rather than "fixed" on REAL's side — there is
+nothing on REAL's side to fix, `re` is the one behaving inconsistently — and pinned directly
+against `re`'s own (buggy) behaviour in `TestIntentionalDivergences.
+test_scoped_ascii_negated_shorthand_leading_bug` (bindings/python/tests/test_real.py), so a future
+CPython release that fixes its own bug is caught (the pin asserts `re`'s buggy value too, not just
+REAL's correct one) rather than silently masked forever.
+
+(div_hex)=
+## \xHH (HH ≥ 0x80) is byte-level
+
+\xHH matches the raw byte `0xHH`, not the codepoint `chr(HH)`. On a str pattern `re`
+reads \xe9 as U+00E9 (é); REAL reads it as the single byte `0xE9` — which a well-formed
+str's UTF-8 of é (`C3 A9`) never contains. Use `é` for the codepoint.
+
+One deliberate exception makes \xHH **context-dependent** in a str (code-point-mode) pattern:
+*inside a character class* [\xHH], a value ≥ 0x80 is the code point `U+00HH` (so [\xe9] ==
+`[é]` == `[é]`), because a class member is a code point, whereas outside a class \xe9
+stays the single byte `0xE9`. In `bytes` mode \xHH is always the raw byte, in a class or not
+(so a `bytes` class is byte-for-byte `std::regex<char>`).
+
+(div_boundary)=
+## \b / \B on an empty string or region
+
+By definition an empty string has no word boundary, so \B (not-a-boundary) matches at
+position 0 while \b does not. REAL implements this by-definition behaviour, which is
+also `re`'s since Python 3.11 (`re` < 3.11 had the opposite quirk for \B on the empty
+string). The differential fuzzer therefore cannot use `re` as an oracle on an empty
+region and skips it; the assertions pin REAL's behaviour directly.
+
+(div_empty_iteration_capture)=
+## Capture of a nullable loop's final iteration
+
+**The rule.** For a `*` or `+` loop whose body can match the empty string, `re` runs one final
+**empty** iteration after the last consuming one and records *its* (zero-width) capture for the group;
+REAL records the last **consuming** iteration instead. The overall match — group 0, and every match
+**span** — is identical in both; only the inner group's captured span differs.
+
+This remains only for a loop whose body **consumes** on its last productive iteration (so the inner
+group captured that run). A loop whose body can only ever match empty (`()*`, `($)*`) now agrees with
+`re` — the greedy-loop empty-exit fix routes its empty iteration to the loop exit, applying that
+iteration's capture, exactly as `re` does.
+
+**The verified forms** (search; `re` value ↦ REAL value for group 1):
+
+| Pattern | Input | `re` group 1 | REAL group 1 | |
+| --- | --- | --- | --- | --- |
+| `(a*)*` | `"a"` | `(1, 1)` | `(0, 1)` | diverges (consuming body) |
+| `(a*)+` | `"a"` | `(1, 1)` | `(0, 1)` | diverges (consuming body) |
+| `(a\|)*` | `"a"` | `(1, 1)` | `(0, 1)` | diverges (consuming body) |
+| `()*` | `""` | `(0, 0)` | `(0, 0)` | **now agrees with `re`** |
+| `($)*` | `""` | `(0, 0)` | `(0, 0)` | **now agrees with `re`** |
+
+**Lineage.** This is the linear-engine convention: **RE2, the Rust `regex` crate, and Go's `regexp`**
+share REAL's behaviour (they do not re-enter a loop on an empty match). `re` and PCRE, being
+backtrackers, take the extra empty step. REAL sits with the linear engines by design — the same family
+whose linear-time guarantee it shares.
+
+**It also touches the compat contract.** The same group-capture difference shows up under
+`real::compat` against the local `std::regex` (ECMAScript is a backtracker too). The exhaustive compat
+check measures it — 4 548 cases out of 3.2 M in the tier-1 space — and tolerates *only* this exact
+signature (whole match identical, the differing group is `std`'s zero-width empty-final iteration),
+failing on any other divergence. It is documented, not routed to `std`, on purpose: routing nested
+nullable quantifiers to a backtracker would forfeit the linearity `real::compat` exists to keep. See
+`COMPATIBILITY.md`.
+
+**When to revisit.** Only if a future goal is *exact* `re`/`std` capture parity for these degenerate
+loops, which would mean adding a trailing empty-iteration step purely to update a capture — a cost with
+no matching benefit for a linear engine, and none that would justify handing catastrophic-backtracking
+patterns to a backtracking fallback. Pinned, both values, in `TestIntentionalDivergences`; the compat
+side is guarded by the exhaustive-compat gate's exact-signature discriminator.
+
+(div_empty_first_branch_loop)=
+## Span of an empty-first-branch loop under a forced-non-empty retry
+
+**The rule.** An unbounded `*`/`+` loop whose body's **first** alternative is empty and a later one
+consumes (`(|a)*`, `(|a)+`) has, under a **forced-non-empty** match — the step `finditer` / `sub` take at a
+position where the whole match would otherwise be empty — a different **span** in `re` and REAL. `re` exits
+the loop through the empty branch after the first consuming iteration (the shortest non-empty match); REAL
+consumes maximally. On `"aa"`:
+
+| Pattern | `re` finditer | REAL finditer |
+| --- | --- | --- |
+| `(\|a)*` | `(0,0)(0,1)(1,1)(1,2)(2,2)` | `(0,0)(0,2)(2,2)` |
+| `(\|a)+` | same as `*` | `(0,0)(0,2)(2,2)` |
+| `(a\|\|b)*` on `"ab"` | `(0,1)(1,1)(1,2)(2,2)` | `(0,2)(2,2)` |
+
+**Green witnesses (parity).** `search` / `match` / `fullmatch` agree for these patterns — the divergence is
+**only** the forced-non-empty retry. An empty-**last** branch `(a\|)*` agrees (its empty branch is the loop's
+natural secondary exit, not a deduped back-edge). The **bounded** forms `(\|a){2}`, `(\|a){1,3}` agree
+(unrolled, no back-edge). This is distinct from {ref}`div_empty_iteration_capture`, where the match spans are
+identical and only a group **capture** differs.
+
+**The mechanism, both sides.** In REAL's star loop (Thompson `split → body → jump-back`), an empty-first
+body makes the jump-back land at the **same position**; REAL's per-position thread dedup — which is *how* it
+guards against an infinite empty loop — removes that empty back-edge, so the greedy loop falls through to
+consuming. `re`, a backtracker, takes the empty iteration as a loop exit (the empty branch's exit
+preference). The `regex` crate does a **third** thing (all-empty: `(0,0)(1,1)(2,2)`), so **`re` is the
+arbiter, never the crate** (the crate's own bugs on this family are in the Rust binding's known-bugs).
+
+**When to revisit.** A fix would have to distinguish an empty iteration that should **exit** the loop from
+one that should be **deduped**, at `re`'s exact priority, under the runtime forbid-empty flag — a change to
+the star-loop termination that underlies *every* quantifier. Judged not worth it for a class this rare and
+this constrained (the forced-non-empty retry only; `search`/`match` in parity); a weighed choice, not an
+oversight. Pinned in `TestIntentionalDivergences`.
+
+(div_rejected)=
+## Rejected by design
+
+Each of these raises a clear `real::regex_error`, for a reason worth keeping:
+
+- **Backreferences** (`(a)\1`, `(?P=name)`) — a backreference makes the language
+  non-regular; supporting it would forfeit the linear-time, ReDoS-safe guarantee that is
+  REAL's reason to exist.
+- **Conditional groups** `(?(id)yes|no)`, **recursion**, and **callouts / subroutine
+  calls** — non-regular control flow, each super-linear in the worst case. Excluded for
+  the same ReDoS reason (see the note at the top of this page).
+
+Unlike the above, **a possessive quantifier or atomic group over a compound body**
+(`(?:ab)*+`, `(?>ab|a)`) is rejected "not supported **yet**", not "by design" — see
+{ref}`div_possessive`. The *linear-time* argument for the general case is expected to hold
+(a bounded compound body looks like it can reuse the same priority-kill sub-VM technique
+lookaround already ships), the gap is VM-integration work not yet done, not a ReDoS
+concession. Recursion/callouts/conditionals above stay permanently excluded regardless — that door
+really is closed.
+
+(div_possessive)=
+## Possessive quantifiers and atomic groups (Tier 1 — a capability beyond re? no: parity, deliberately narrower for now)
+
+`re` (3.11+) and PCRE2 support possessive quantifiers (`a*+`, `a++`, `a?+`, `a{n,m}+`) and
+atomic groups `(?>...)` generally, over any body. Neither RE2 nor the Rust `regex` crate
+support them at all — REAL closing part of this gap is the differentiator, in the same
+class as REAL's already-shipped bounded lookarounds.
+
+**What REAL accepts (Tier 1 — the dominant real-world shape):**
+- A possessive quantifier over a **bare single atom** — a literal byte, a character class,
+  or `.` — e.g. `[^"]*+`, `\d++`, `x?+`, `[a-z]{2,4}+`.
+- The same, wrapped in **exactly one capturing group** — `(a)*+` — the group reflects the
+  *last* successful repetition's span, matching `re`'s own semantics for a possessive loop.
+- An atomic group `(?>X*)` / `(?>X+)` / `(?>X?)` / `(?>X{n,m})` wrapping a bare or
+  singly-captured atom — desugars to exactly the possessive-quantifier case above,
+  regardless of whether the inner repeat's own written form used the `+` suffix (so
+  `(?>[^"]*)` and `(?>\d+)`, the dominant real-world atomic-group shapes, are NOT rejected
+  as "unbounded" — a compile-time detection-order requirement, not an accident).
+- An atomic group with **no repeat at all**, over any deterministic (split-free) body,
+  however compound — `(?>ab)`, `(?>)` — nothing to give back regardless of body shape, since
+  it never loops; compiled inline, at zero extra VM cost.
+
+**What REAL rejects, "not supported yet":** a possessive quantifier or atomic group over a
+**compound, repeated body** — `(?:ab)*+`, `(?:X++)*+`, `(?:a?+)*+` — and an atomic group over
+a **genuine alternation**, even with no repeat — `(?>ab|a)`, `(?>a|ab)b`. A design-first
+spike (D0) confirmed the linear-time argument for the general case is sound in principle
+(the same isolated, bounded sub-VM technique lookaround already ships could plausibly carry
+it); implementing it is separately-scoped future work (D2), not a ReDoS concession — see the
+note in {ref}`div_rejected` above.
+
+**A correctness note on the shipped Tier 1 itself, for anyone extending it:** the
+possessive-loop opcode's match/no-match decision is made at **epsilon-closure time**
+(`add_thread`, pike.hpp), not deferred to the per-byte step. An earlier design that decided
+it one round later, in the byte-stepping dispatch, shipped with a real bug: inside an
+alternation, a lower-priority sibling that resolves in a single round could claim the
+shared post-alternation convergence point before the (higher-priority, but multi-round)
+possessive thread's step()-time exit got a chance to compete for it — plain
+first-felt-this-generation dedup has no notion of true priority once insertion order like
+that is violated. The fix — evaluating the atom test at insertion time, in the same
+priority-ordered closure pass as everything else — is precedented directly above it in the
+same closure: `assert_lookaround` already runs a whole sub-VM decision at closure time, so
+testing one byte/class/codepoint there is a direct extension of an existing pattern, not new
+architecture. Regression-pinned in `possessive_alternation_priority_regression`
+(tests/frontend/test_possessive_atomic.cpp) and found originally by the differential
+fuzzer's own possessive-quantifier generator (test_differential_fuzz.py) before it ever
+shipped.
+
+**A superset of `re`:** **Unicode property classes** \p{...} are now built in for
+**General_Category** and **Script** (see {ref}`div_property`), which standard `re` rejects
+outright. **Named characters** \N{NAME} are also supported — the Python binding resolves the
+name via `unicodedata` and the engine takes the resulting code point — so no table lives
+in C++. REAL additionally accepts the scalar form \N{U+XXXX} directly (a PCRE2-style
+**extension**; `re` does not).
+
+(div_named_scalar)=
+## \N{U+XXXX} scalar escape (a capability beyond re)
+
+REAL accepts the **scalar** form \N{U+XXXX} (1–6 hex, a PCRE2-style spelling) as a code point,
+on **both** surfaces — the C++ engine and the Python binding — so the two are uniform. `re` knows
+\N{...} only as a character *name* and rejects the U+ form (`undefined character name`). The *name*
+form \N{NAME} is exact `re`-parity (the binding resolves it via `unicodedata`); only the scalar form
+is the extension. Pinned real-accepts / re-rejects in `TestIntentionalDivergences`.
+
+(div_property)=
+## Unicode property classes \p{...} (a capability beyond re)
+
+REAL builds in **General_Category** (\p{L}, \p{Lu}, \p{Nd}, and the groups \p{L}..\p{C}) and
+**Script** (\p{sc=Greek}, \p{Script=Latin}), with short codes, the UCD long names (\p{Letter}),
+`gc=` / `sc=` prefixes, loose matching (UAX44-LM3), the single-letter form \pL, and negation \P{...} — on
+**both** the C++ engine and the Python binding. Standard `re` rejects \p entirely (a `bad escape` error), so
+accepting it is a **superset**: it cannot break re-compatible code (which could never use \p). The class
+matches as a linear code-point predicate (the same `klass_cp` mechanism as `\w`), so it stays ReDoS-safe, and
+`flags::ascii` (`re.A`) does **not** restrict it — a Unicode property is always Unicode. The tables are pinned
+to a Unicode version and validated exhaustively against the UCD (the regen guards). Binary properties
+(\p{Alphabetic}, \p{White_Space}) and other namespaces are **not** built in yet: they raise `unsupported`
+(the Rust binding can delegate them via its `fallback` feature). Pinned in the property and parity suites.
+
+(div_lookbehind)=
+## Variable-width lookbehind (a capability beyond re)
+
+REAL accepts any **bounded** lookbehind, including variable-width alternations such as
+`(?<=a|bb)`, which `re` and PCRE reject as non-fixed-width. The bound keeps the scan
+linear; see <a href="api/design.html">How REAL Works — a guided tour</a> for how the lookbehind sub-VM works.
+
+(div_rust)=
+## The Rust binding vs the `regex` crate
+
+The `real-regex` Rust crate mirrors the [`regex`](https://docs.rs/regex) crate's API. Its divergences are on a
+different axis (crate-vs-`regex`, not REAL-vs-`re`) and are documented on the crate itself
+(`bindings/rust/README.md` — the docs.rs landing page): the empty-match iteration rule (adapted to rust's at
+the wrapper, so `find_iter`/`split` match `regex`), `shortest_match` (leftmost-first greedy end vs earliest
+completion — a parked `first-accept` engine follow-up, see <a href="api/design.html#g_followups">8.1 Named follow-ups</a>), the \p{} coverage
+(\p{Gc} / \p{sc} run natively now; binary and other-namespace properties raise `Error::Unsupported` or are
+delegated via the opt-in `fallback` feature), `RegexSet`
+(which-matched Stage-1 N-walks — offered; not a fused single-pass yet), and the bounded lookarounds as a
+**positive** divergence (a superset `regex` and RE2 lack).
