@@ -527,6 +527,46 @@ html[data-theme="light"] .highlight td.linenos .normal, html[data-theme="dark"] 
   color: var(--ink-3);
 }
 
+/* ============================ Features matrix (doc-site P2b) ====================
+ * `.feature-status` is the per-row status badge span the {features} directive emits
+ * (docs/site/conf.py, FeaturesDirective); `.feature-row--excluded-by-design` is the
+ * row itself. Cyanotype tokens ONLY, no invented hue: supported -> --accent,
+ * extension -> --accent-ink, excluded-by-design -> --danger, planned -> --ink-3
+ * (reserved -- no row uses it yet, see features.yaml's own header). Excluded-by-
+ * design rows are additionally tinted LOUD (--danger-soft row background), per the
+ * doc-site P2b fiche's "closed door, not a missing feature" framing (COMPATIBILITY.md
+ * l.41-43) -- the moat should read as deliberate, not as a gap in the matrix.
+ */
+.feature-category__title {
+  color: var(--ink);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: .3rem;
+  margin-top: 2rem;
+}
+
+.feature-table .feature-status {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  font-weight: 600;
+  line-height: 1.4;
+  padding: .1rem .6rem;
+  border-radius: 100px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.feature-table .feature-status.supported { color: var(--accent); }
+.feature-table .feature-status.extension { color: var(--accent-ink); }
+.feature-table .feature-status.excluded-by-design { color: var(--danger); }
+.feature-table .feature-status.planned { color: var(--ink-3); }
+
+.feature-table .feature-pattern { color: var(--ink-2); }
+
+.feature-table tr.feature-row--excluded-by-design,
+.feature-table tr.feature-row--excluded-by-design > td {
+  background: var(--danger-soft);
+}
+
 /* ============================ bespoke landing blocks ============================
  * Scoped under .real-landing so nothing here leaks onto other pages (api/index.rst
  * etc.) that use the theme's own prose/typography untouched.

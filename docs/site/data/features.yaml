@@ -1,0 +1,181 @@
+# docs/site/data/features.yaml -- the Features-matrix DATA (doc-site P2b, 3rd wagon).
+#
+# Derived from docs/COMPATIBILITY.md's "## Feature scorecard" (l.33-58, table l.45-58 --
+# the single curated status source) plus its "## What runs on real (linear, ReDoS-safe)"
+# baseline (l.85-93, the Core category below) and its excluded-by-design rows (l.41-48 /
+# 47-48, the moat -- backreferences, conditional groups/recursion/callouts). This file
+# DUPLICATES that scorecard's status data on purpose, for now: the de-dup that makes
+# features.yaml the single source (COMPATIBILITY.md generated FROM it, or vice versa) is
+# a follow-up wagon, not this one -- see the doc-site P2b fiche's "De-dup DIFFÉRÉ"
+# section. COMPATIBILITY.md itself, and its own "there is no competing table" line
+# (l.38), are untouched by this wagon.
+#
+# Schema (probe-ready for the phase-2 CI sonde -- NOT built here; this wagon is data +
+# render only):
+#
+#   categories: [ { name: str, features: [ FEATURE, ... ] }, ... ]
+#
+#   FEATURE:
+#     construct: str        -- human label; Markdown-style single-backtick code spans
+#                               (the {features} directive splits on backtick, it does
+#                               not run a full Markdown/reST parser over this field)
+#     status: enum           -- FIGE to exactly these 4 machine slugs, no others:
+#                                  supported | extension | excluded-by-design | planned
+#                                The rendered badge shows the scorecard's HUMAN form
+#                                ("excluded by design", spaced -- COMPATIBILITY.md
+#                                l.37/47 has no hyphens); the slug is the machine key,
+#                                the label is a display-only lookup in conf.py.
+#     note: str              -- the scorecard's Rationale cell verbatim-ish, or (Core
+#                               category, which has no table of its own) a short note
+#                               derived from COMPATIBILITY.md's baseline prose (l.85-93)
+#     link: "PAGE#target"    -- OPTIONAL. Names a real MyST cross-ref target already
+#                               live on the site (today always
+#                               "differences-from-re#div_*"). The {features} directive
+#                               resolves only the "#target" half, as a Sphinx
+#                               :ref:-equivalent cross-reference BY TARGET NAME -- never
+#                               a raw `<a href="#div_x">` fragment. Reason: docutils'
+#                               `nodes.make_id()` folds every explicit MyST target
+#                               through its CSS-safe-id normalizer, turning `div_property`
+#                               into the built id `div-property` (underscore -> hyphen,
+#                               unconditionally) -- a raw href using the target's own
+#                               spelling would 404 (see differences-from-re.md's own
+#                               header comment, "PIEGE D'ANCRES"). Omitted entirely when
+#                               no row-specific div_* target exists on the site yet; no
+#                               weak/inferred link was invented just to fill the column.
+#     pattern: str or null   -- ONE representative, testable regex for this row.
+#                               Phase 2 (a follow-up wagon, not built here): supported/
+#                               extension rows must COMPILE on real; excluded-by-design
+#                               rows must be REJECTED under policy::strict; planned rows
+#                               and null patterns are skipped. null is used ONLY where no
+#                               single pattern can honestly stand for the row's claim --
+#                               see the one such row below for why, in a comment there.
+#                               A fabricated pattern was not used to avoid a blank cell.
+#
+# No "planned" row exists yet: neither the scorecard (l.45-58) nor the baseline (l.85-93)
+# currently has one. The slug stays reserved in the schema (probe-ready) -- not
+# populated here with an invented row just to exercise all 4 enum values.
+
+categories:
+  - name: "Core"
+    features:
+      - construct: "Literals, concatenation & alternation"
+        status: supported
+        note: "the base regular-language operators"
+        pattern: "abc|xyz"
+      - construct: "`.` any character (ECMAScript semantics)"
+        status: supported
+        note: "excludes `\\n` and `\\r` under the compat/ECMAScript grammar"
+        pattern: "a.b"
+      - construct: "Character classes & ranges `[a-z]`"
+        status: supported
+        note: "compiled to the canonical UTF-8-ranges automaton in code-point mode"
+        link: "differences-from-re#div_ascii"
+        pattern: "[a-z0-9_]+"
+      - construct: "`\\d \\w \\s` shorthand classes (+ negations)"
+        status: supported
+        note: "Unicode-aware in text mode, ASCII under `flags::ascii`/bytes mode"
+        link: "differences-from-re#div_icase"
+        pattern: "\\d+\\w*\\s?"
+      - construct: "Anchors `^ $ \\b \\B`"
+        status: supported
+        note: "`\\b`/`\\B` on an empty region follow Python 3.11+ by-definition semantics"
+        link: "differences-from-re#div_boundary"
+        pattern: "^\\bfoo\\b$"
+      - construct: "Quantifiers `* + ? {m,n}` (greedy/lazy)"
+        status: supported
+        note: "compiled to the bounded, linear Thompson/Pike VM"
+        pattern: "a+?b*"
+      - construct: "Groups (capturing, non-capturing, named)"
+        status: supported
+        note: "capture is write-only -- there is no backreference to read it"
+        pattern: "(?P<x>a)(?:b)"
+      - construct: "Lookahead & lookbehind (bounded)"
+        status: supported
+        note: "REAL's ReDoS-safe bounded lookaround"
+        pattern: "(?<=a)b(?=c)"
+      - construct: "ASCII case-insensitive matching (`icase`)"
+        status: supported
+        note: "byte-for-byte ASCII fold; Unicode-aware folding is a text-mode extension of this"
+        pattern: "(?i)ABC"
+      - construct: "Multiline mode (`^`/`$` per line)"
+        status: supported
+        note: "`re`-parity; `$` includes a trailing `\\n` under multiline"
+        pattern: "(?m)^a$"
+
+  - name: "Unicode"
+    features:
+      - construct: "`\\p{…}` property classes"
+        status: supported
+        note: "General_Category + Script + Script_Extensions + the standard binary properties; a REAL superset -- `re` rejects `\\p` outright"
+        link: "differences-from-re#div_property"
+        pattern: "\\p{L}+"
+      - construct: "`\\N{NAME}` named characters"
+        status: supported
+        note: "binding resolves the name via `unicodedata` (no C++ table)"
+        link: "differences-from-re#div_named_scalar"
+        pattern: null
+        # pattern: null -- "supported" here is a Python-binding-level claim: the
+        # binding's unicodedata lookup resolves the name before the engine ever sees
+        # a code point (COMPATIBILITY.md l.50, "no C++ table"). One pattern cannot
+        # honestly represent both surfaces -- it would compile on the Python binding
+        # and could fail to compile on the bare C++ parser, which has no name table.
+        # A phase-2 probe would need a surface-aware harness to test this row at all;
+        # a single fabricated pattern would silently test a narrower claim than the
+        # row actually makes.
+      - construct: "`\\N{U+XXXX}` scalar form"
+        status: extension
+        note: "PCRE2-style; uniform C++/Python surfaces -- `re` knows only names"
+        link: "differences-from-re#div_named_scalar"
+        pattern: "\\N{U+1F600}"
+
+  - name: "Anchors & lookaround extensions"
+    features:
+      - construct: "`\\z` end-of-text anchor"
+        status: supported
+        note: "exact alias of `\\Z` (Python 3.14's meaning)"
+        pattern: "abc\\z"
+      - construct: "Variable-width lookbehind `(?<=a|bb)`"
+        status: extension
+        note: "bounded, so still linear; `re`/PCRE reject it as non-fixed-width"
+        link: "differences-from-re#div_lookbehind"
+        pattern: "(?<=a|bb)x"
+      - construct: "Word-edge anchors `\\< \\>`"
+        status: extension
+        note: "word-start / word-end; `re` has no such escape"
+        link: "differences-from-re#div_icase"
+        pattern: "\\<word\\>"
+
+  - name: "Escapes & classes"
+    features:
+      - construct: "Octal escapes in a class `[\\1]` `[\\12]`"
+        status: supported
+        note: "every `\\digit` is octal in a class body (no backreferences there)"
+        pattern: "[\\12]"
+      - construct: "POSIX `[[:alpha:]]` classes"
+        status: supported
+        note: "exact `re`-parity: read as a literal class (matches `re`'s FutureWarning-era behaviour), not true POSIX semantics"
+        pattern: "[[:alpha:]]+"
+
+  - name: "Flags"
+    features:
+      - construct: "Global flags `i m s x a` (and `(?imsxa)` prefix)"
+        status: supported
+        note: "`re` semantics; `re.U` is a no-op, `re.L` excluded"
+        pattern: "(?imsxa)a.b"
+      - construct: "Scoped inline flags `(?imsxa:…)` / `(?-…:…)` / `(?…-…:…)`"
+        status: supported
+        note: "per-scope `i m s x a` (Python 3.11 semantics), exact `re`-parity in str and bytes"
+        pattern: "(?i:abc)(?-i:def)"
+
+  - name: "Excluded by design"
+    features:
+      - construct: "Backreferences `(a)\\1`, `(?P=n)`"
+        status: excluded-by-design
+        note: "non-regular -> super-linear -> ReDoS"
+        link: "differences-from-re#div_rejected"
+        pattern: "(a)\\1"
+      - construct: "Conditional groups `(?(id)…)`, recursion, callouts"
+        status: excluded-by-design
+        note: "non-regular control flow -> ReDoS"
+        link: "differences-from-re#div_rejected"
+        pattern: "(?(1)a|b)"

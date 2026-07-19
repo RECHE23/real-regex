@@ -12,9 +12,13 @@ import re
 import textwrap
 from pathlib import Path
 
+import yaml
+from docutils import nodes
 from pygments import highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexers import CppLexer, GoLexer, PythonLexer, RustLexer
+from sphinx import addnodes
+from sphinx.util.docutils import SphinxDirective
 
 _HERE = Path(__file__).resolve().parent  # docs/site
 _ROOT = _HERE.parent.parent  # repository root
@@ -275,6 +279,192 @@ def _fix_logo_link(app, pagename, templatename, context, doctree):
     context["theme_logo_link"] = context["pathto"]("index.html", 1)
 
 
+# -- {features} directive (doc-site P2b, 3rd wagon: features.yaml -> render) -------
+#
+# Reads docs/site/data/features.yaml (schema documented in that file's own header --
+# read it first) and renders one categorized table per category, one row per
+# construct, with a Cyanotype-tinted status badge (`.feature-status.<slug>`, styled
+# in real.css) and -- when a row names a `link:` -- a Sphinx cross-reference resolved
+# by TARGET NAME (never a raw `<a href>` fragment; see features.yaml's own header for
+# why a raw href into differences-from-re.md's div_* anchors would 404). PyYAML is not
+# separately pinned in docs/requirements.txt: it is already a hard transitive
+# dependency of myst-parser (its own front-matter parser), confirmed present in the
+# pinned toolchain's resolved venv, the same way docutils/jinja2/pygments are never
+# separately pinned either.
+#
+# data/features.yaml is plain data, not a Sphinx source document: never `{include}`d
+# and never listed in a toctree, so it cannot become an orphan-doc warning under -W,
+# and it is already outside Doxygen's scan (Doxyfile's `EXCLUDE += docs/site` covers
+# the whole tree, data/ included). If a future Sphinx version ever starts treating a
+# stray non-source file under a scanned directory as noteworthy, add "data/*.yaml" to
+# exclude_patterns above -- not needed as of sphinx==9.1.0 (verified empirically).
+
+_FEATURES_YAML = _HERE / "data" / "features.yaml"
+
+# FIGE: exactly these 4 machine slugs, matching features.yaml's own schema comment.
+# The dict value is the badge's HUMAN label -- "excluded by design" is spaced,
+# matching COMPATIBILITY.md's scorecard prose (l.37/47), not the hyphenated slug.
+_FEATURE_STATUS_LABELS = {
+    "supported": "supported",
+    "extension": "extension",
+    "excluded-by-design": "excluded by design",
+    "planned": "planned",
+}
+
+
+def _feature_inline_nodes(text):
+    """Split TEXT on Markdown-style single-backtick spans into docutils Text/literal
+    nodes. features.yaml's construct/note strings use the same single-backtick-for-
+    code convention as COMPATIBILITY.md's own prose (Markdown, not reST) -- a hand-
+    rolled split, rather than `state.inline_text` (which would apply reST's title-
+    reference backtick rule instead), is what actually renders a `` `\\p{...}` ``-
+    style span as inline code here.
+    """
+    result = []
+    for i, part in enumerate(text.split("`")):
+        if not part:
+            continue
+        if i % 2 == 1:
+            result.append(nodes.literal(part, part))
+        else:
+            result.append(nodes.Text(part))
+    return result
+
+
+def _feature_ref_node(target, text="details"):
+    """Build the same `pending_xref` shape Sphinx's own `:ref:` / MyST `{ref}` role
+    emits (`refdomain="std"`, `reftype="ref"`, `reftarget=<label>`) so a features.yaml
+    `link:`'s "#target" half becomes a real, nitpicky-checked cross-reference resolved
+    by MyST TARGET NAME -- the fiche's "cross-ref Sphinx par nom de cible, jamais un
+    <a href> brut" requirement. This is the mechanism that sidesteps the div_* anchor
+    trap: the MyST target `div_property` builds to the HTML id `div-property`
+    (docutils' `nodes.make_id`, underscore -> hyphen unconditionally), so a raw
+    `#div_property` href would be a dead fragment; resolving by name lets Sphinx's own
+    resolver find the right (hyphenated) id at render time, and lets nitpicky (`-W`)
+    catch a typo'd/renamed target as a build failure instead of a silent 404.
+    """
+    refnode = addnodes.pending_xref(
+        "", refdomain="std", reftype="ref", reftarget=target, refexplicit=True, refwarn=True
+    )
+    refnode += nodes.inline(text, text, classes=["xref", "std", "std-ref"])
+    return refnode
+
+
+class FeaturesDirective(SphinxDirective):
+    """`{features}` -- renders docs/site/data/features.yaml as the Features-matrix
+    page (docs/site/features.md). See that YAML file's own header for the schema and
+    the doc-site P2b fiche for scope: data + render only here -- the phase-2 CI probe
+    that will consume each row's `pattern:` is a follow-up wagon, not built by this
+    directive.
+    """
+
+    has_content = False
+    required_arguments = 0
+    optional_arguments = 0
+
+    def run(self):
+        # note_dependency: features.yaml is read as plain data, never parsed as a
+        # Sphinx source document, so Sphinx's own incremental-build change detection
+        # (mtime/content hash of *source documents*) has no way to know this page
+        # depends on it. Without this call, editing only features.yaml (not
+        # features.md, not conf.py) leaves an incremental `sphinx-build` believing
+        # features.html is still up to date -- a stale-page bug, not just a slow-
+        # rebuild inconvenience (confirmed empirically: a second incremental build
+        # after a features.yaml-only edit re-wrote 0 pages until this call was added).
+        self.env.note_dependency(_FEATURES_YAML)
+
+        if not _FEATURES_YAML.is_file():
+            raise self.error(f"{{features}}: {_FEATURES_YAML} not found")
+        with _FEATURES_YAML.open(encoding="utf-8") as fh:
+            data = yaml.safe_load(fh)
+
+        categories = data.get("categories") if isinstance(data, dict) else None
+        if not categories:
+            raise self.error("{features}: features.yaml has no 'categories'")
+
+        output = []
+        for category in categories:
+            name = category["name"]
+
+            heading = nodes.rubric(name, name, classes=["feature-category__title"])
+            output.append(heading)
+
+            table = nodes.table(classes=["feature-table"])
+            tgroup = nodes.tgroup(cols=3)
+            table += tgroup
+            for colwidth in (32, 14, 54):
+                tgroup += nodes.colspec(colwidth=colwidth)
+
+            thead = nodes.thead()
+            tgroup += thead
+            header_row = nodes.row()
+            for label in ("Construct", "Status", "Notes"):
+                entry = nodes.entry()
+                entry += nodes.paragraph(text=label)
+                header_row += entry
+            thead += header_row
+
+            tbody = nodes.tbody()
+            tgroup += tbody
+
+            for feature in category["features"]:
+                construct = feature["construct"]
+                status = feature["status"]
+                if status not in _FEATURE_STATUS_LABELS:
+                    raise self.error(
+                        f"{{features}}: {name!r} / {construct!r} has status "
+                        f"{status!r}, not one of {sorted(_FEATURE_STATUS_LABELS)}"
+                    )
+                note = feature.get("note", "")
+                link = feature.get("link")
+                pattern = feature.get("pattern")
+
+                row = nodes.row(classes=["feature-row", f"feature-row--{status}"])
+
+                construct_entry = nodes.entry()
+                construct_p = nodes.paragraph()
+                construct_p += _feature_inline_nodes(construct)
+                construct_entry += construct_p
+                row += construct_entry
+
+                status_entry = nodes.entry()
+                status_p = nodes.paragraph()
+                status_p += nodes.inline(
+                    _FEATURE_STATUS_LABELS[status],
+                    _FEATURE_STATUS_LABELS[status],
+                    classes=["feature-status", status],
+                )
+                status_entry += status_p
+                row += status_entry
+
+                notes_entry = nodes.entry()
+                notes_p = nodes.paragraph()
+                notes_p += _feature_inline_nodes(note)
+                if pattern:
+                    notes_p += nodes.Text(" — ")
+                    notes_p += nodes.literal(pattern, pattern, classes=["feature-pattern"])
+                if link:
+                    _, _, target = link.partition("#")
+                    if not target:
+                        raise self.error(
+                            f"{{features}}: {name!r} / {construct!r} link {link!r} "
+                            "has no '#target' (only PAGE#target cross-refs are "
+                            "supported by this directive)"
+                        )
+                    notes_p += nodes.Text(" (")
+                    notes_p += _feature_ref_node(target)
+                    notes_p += nodes.Text(")")
+                notes_entry += notes_p
+                row += notes_entry
+
+                tbody += row
+
+            output.append(table)
+
+        return output
+
+
 def setup(app):
+    app.add_directive("features", FeaturesDirective)
     app.connect("html-page-context", _fix_logo_link)
     app.connect("html-page-context", _inject_quickstart)
