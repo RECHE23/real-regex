@@ -2,7 +2,7 @@
 // No oracle: the contract is that no sequence of calls on arbitrary bytes crashes, triggers UB (ASan/UBSan)
 // or leaks (LSan), and that no C++ exception ever crosses into C. Drives real_compile / real_group_name /
 // real_find_iter[_at/_between] / real_iter_next / real_count_matches / real_match (all 3 modes) / real_sub
-// / every real_set_* / real_free — the full R4 surface, the same boundary that caught the wagon-4c OOB.
+// / every real_set_* / real_free — the full C-API surface, the same boundary that caught an OOB read.
 //
 // Build & run: make fuzz-capi   (requires clang with -fsanitize=fuzzer)
 //

@@ -1,7 +1,7 @@
-// D1-perf (Étage A): possessive class+/++ loop fast paths -- route-pinning (a regression of
+// possessive class+/++ loop fast paths -- route-pinning (a regression of
 // recognition is a silent perf loss, mirrors test_route_pinning.cpp) plus the MANDATORY
 // route-toggle differential (route-auto vs forced-general must agree on every input -- the
-// "wagon-4 pattern" applied to these new recognizers/runners). Gate-safe: no wall-clock.
+// route-agreement pattern applied to these new recognizers/runners). Gate-safe: no wall-clock.
 #include <sciforge/test/framework.hpp>
 
 #include <real/automata/lazy_dfa.hpp>
@@ -127,7 +127,7 @@ TEST(route_pin_quoted_delimited_possessive)
 {
   const real::regex re   {R"("[^"]*+")"};
   const auto        prog {re.raw_program()};
-  EXPECT(prog.hints.possessive_class.kind == real::detail::class_kind::klass_cp); // [^"] is a negated class -> klass_cp (wagon-4)
+  EXPECT(prog.hints.possessive_class.kind == real::detail::class_kind::klass_cp); // [^"] is a negated class -> klass_cp
   EXPECT_EQ(prog.hints.possessive_prefix_size, 1U);
   EXPECT_EQ(prog.hints.possessive_suffix_size, 1U);
 }
@@ -138,8 +138,8 @@ TEST(route_pin_captured_class_possessive)
   // mechanism (primary_target IS the capture slot, no separate save pair) to apply -- `([a-z]++)`
   // is a different AST shape (an ordinary capturing group wrapping an ALREADY-possessive class,
   // compiled with plain save/save instructions around it) and correctly stays out of this fast
-  // path's scope (caught empirically: an earlier, wrong hand-derived version of this test
-  // expected `([a-z]++)` to arm and it does not).
+  // path's scope (caught empirically: a wrong hand-derivation expected `([a-z]++)`
+  // to arm; it does not).
   const real::regex re   {"([a-z])*+b"};
   const auto        prog {re.raw_program()};
   EXPECT(prog.hints.possessive_class.kind == real::detail::class_kind::klass);
@@ -164,7 +164,7 @@ TEST(route_pin_byte_atom_possessive_captured_now_arms)
 {
   // A single literal-byte body wrapped in a CAPTURING group (`(a)*+b`) now arms exactly like
   // klass/cp_class: the possessive-capture-fix taught the shared driver to capture the loop's own
-  // LAST iteration (not the whole match), so kind=byte no longer needs to decline captured shapes
+  // LAST iteration (not the whole match), so kind=byte does not need to decline captured shapes
   // -- see the capture_ok guard's own doc comment.
   const real::regex re   {"(a)*+b"};
   const auto        prog {re.raw_program()};
@@ -278,7 +278,7 @@ TEST(mandatory_and_loop_table_mismatch_oracle_pinned)
 
 TEST(possessive_fastpath_route_toggle_mandatory_loop_table_mismatch)
 {
-  // wagon-4: even though this shape now correctly declines the fast path (route-pin test above),
+  // Route agreement: even though this shape correctly declines the fast path (route-pin test above),
   // pin the route-toggle differential too so a regression that makes it arm again is caught by
   // BOTH signals (route-pin AND behavioral agreement), not hint inspection alone.
   const real::regex re {"[abc].*+"};
@@ -552,7 +552,7 @@ TEST(capture_fix_bounded_count_general_vm_parity)
 
 TEST(capture_fix_route_toggle_all_kinds)
 {
-  // wagon-4: route-auto (fast path) vs forced-general must agree on every captured-possessive
+  // Route agreement: route-auto (fast path) vs forced-general must agree on every captured-possessive
   // shape across all three loop kinds, including the zero-iteration and multi-byte-last-atom
   // corners above -- group(1), not just the overall span (expect_route_toggle_agrees_group1 is
   // the only helper in this file that can see the capture-fix's own surface).
@@ -566,7 +566,7 @@ TEST(capture_fix_route_toggle_all_kinds)
 TEST(possessive_fastpath_route_toggle_randomized_sweep)
 {
   // A broader randomized sweep across body/quantifier/prefix/suffix combinations (the same
-  // corpus shape D1-perf Étage A's own verification used) -- kept small enough for the gate
+  // corpus shape the original verification used) -- kept small enough for the gate
   // (a few hundred checks), not a substitute for the offline fuzz run, a permanent regression
   // pin for it.
   // NOLINTNEXTLINE(cert-msc51-cpp,cert-msc32-c,bugprone-random-generator-seed)

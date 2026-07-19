@@ -1,15 +1,6 @@
 <!--
-std-regex-tour.md -- MyST conversion of docs/std_regex_dropin.dox (doc-site P2a·Drop-in).
-Mechanical conversion only, content TEL-QUEL: \page -> title, \section dropin_* ->
-titles with MyST anchors, \code{.cpp}/\endcode -> ```cpp fences. The ORIGINAL
-docs/std_regex_dropin.dox is untouched (still feeds /api via Doxygen) and stays the
-canon until P2b decides ownership -- this page is a migration mirror, not yet the
-source of truth. See the doc-site P2a fiche.
-
-doc-site P2b: the page's one forward-ref (\ref divergences) has been rewired from the
-Doxygen HTML under /api/ to an internal {doc} cross-ref, now that
-docs/site/differences-from-re.md (doc-site P2b) mirrors docs/divergences.dox into the
-site. No forward-ref to /api remains on this page.
+Mirror of docs/std_regex_dropin.dox (the canon, which still feeds /api). Edit the
+.dox, then re-mirror -- never edit prose here alone.
 -->
 
 # Drop-in for std::regex

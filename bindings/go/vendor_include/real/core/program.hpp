@@ -49,7 +49,7 @@ namespace real {
     ecma = 32,            //!< ECMAScript compatibility: `$` (no multiline) matches only at the very end (not before a final `\n`, the Python default), AND `.` (no dotall) also excludes `\r` (ECMAScript excludes `\n` and `\r`; the multi-byte U+2028/U+2029 have no byte-level effect).
     ascii = 64,           //!< ASCII mode (`re.A`): `\d \w \s \b` stay ASCII and icase folds ASCII only, even in text mode. `.`, explicit classes and UTF-8 literals stay code-point-aware.
     dollar_endonly = 128, //!< `$` (no multiline) matches only at the very end of the text, never before a final `\n` — the Rust/`\z` semantics. Unlike \ref flags::ecma this touches `$` ONLY, leaving `.` at the Python default. Used by the Rust binding for drop-in parity.
-    allow_raw_byte = 256, //!< Permits `\C` (RE2's raw-byte escape) outside `flags::bytes` too — for byte-offset-native consumers only (e.g. `real::compat::re2`), never a char-offset-based binding (a `\C` span can land mid-codepoint). `flags::bytes` alone still suffices on its own; this widens the *gate*, not `\C`'s own byte-only behavior. `std::uint16_t`-backed since `bytes`..`dollar_endonly` already claim every bit of a `std::uint8_t` (a D0 spike confirmed the width change is layout-neutral: `sizeof`/`offsetof` on every downstream struct are unchanged, the extra byte absorbed by existing padding).
+    allow_raw_byte = 256, //!< Permits `\C` (RE2's raw-byte escape) outside `flags::bytes` too — for byte-offset-native consumers only (e.g. `real::compat::re2`), never a char-offset-based binding (a `\C` span can land mid-codepoint). `flags::bytes` alone still suffices on its own; this widens the *gate*, not `\C`'s own byte-only behavior. `std::uint16_t`-backed since `bytes`..`dollar_endonly` already claim every bit of a `std::uint8_t` (a spike confirmed the width change is layout-neutral: `sizeof`/`offsetof` on every downstream struct are unchanged, the extra byte absorbed by existing padding).
     ungreedy = 512,       //!< Ungreedy mode (RE2 `(?U)`): swap the default quantifier greediness — a bare quantifier becomes lazy and the explicit `?` suffix re-inverts back to greedy (`(?U)a+` matches minimally, `(?U)a+?` maximally). Resolved entirely at parse time into each repeat node's `lazy` bit (the compiler and VM never read this flag), and scoped like the other inline letters: `(?U:…)`, `(?-U:…)` and the constructor flag all work through the flag-scope stack.
   };
 
@@ -185,7 +185,7 @@ namespace real {
       //! Content identity (FNV-1a of ASCII bitmap + every range), set once at intern. The thread-local
       //! sparse `cp_hi` cache keys by this (not a pointer into a program) so a destroyed program's
       //! recycled `cp_ranges` address cannot poison a later class. Read O(1) per codepoint on the
-      //! hot path — never re-hashed per probe (that would erase the 7.47 `\p{}` gain).
+      //! hot path — never re-hashed per probe (that would erase the `\p{}` hot-path gain).
       std::uint64_t fingerprint {};
     };
 
@@ -227,7 +227,7 @@ namespace real {
       assert_position,   //!< Epsilon; proceeds only if assertion arg8 holds here.
       match,             //!< Accept.
       assert_lookaround, //!< Epsilon; proceeds only if the lookaround sub-program arg16 holds here.
-      // Tier 1 (D1): the OPTIONAL tail of a possessive/atomic quantifier over a single bare atom
+      // Tier 1: the OPTIONAL tail of a possessive/atomic quantifier over a single bare atom
       // (byte/klass/klass_cp), after any mandatory-minimum copies have been unrolled as plain
       // byte/klass/klass_cp instructions ahead of this opcode (dies naturally like any plain
       // atom on failure — no new opcode needed for the mandatory part, since a required
@@ -469,7 +469,7 @@ namespace real {
       std::int16_t trailing_lookaround {-1};
       std::int32_t trailing_la_class   {-1}; //!< Class index for \ref trailing_lookaround body; −1 if unset.
 
-      //! \brief D1-perf (Étage A): possessive fast-path hints -- additive, mirrors \ref greedy_class_loop /
+      //! \brief possessive fast-path hints -- additive, mirrors \ref greedy_class_loop /
       //!        \ref greedy_cp_class / \ref prefix. Scope: UNBOUNDED possessive loops only (`X*+`/`X++`, an
       //!        opcode-level self-loop via `jump` back to itself) -- a bounded count (`X{n,m}+`) has no "any
       //!        start within the run reaches the identical body end" invariant (the upper bound can cut
@@ -531,7 +531,7 @@ namespace real {
       //!        for every existing field, verified before/after.
       std::uint16_t alternation_branch_count {};
 
-      //! \brief D1a: number of leading top-level children peeled before the IL reverse-prefix
+      //! \brief Number of leading top-level children peeled before the IL reverse-prefix
       //!        (a lead `\b`/`\B` on `\b\w+@\w+\b`). \ref build_prefix_ast skips this many children
       //!        then takes \ref inner_literal_prefix body children. Appended last (same placement
       //!        rule as \ref alternation_branch_count) so hot-field offsets stay put.

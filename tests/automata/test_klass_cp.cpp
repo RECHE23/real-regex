@@ -182,7 +182,7 @@ TEST(klass_cp_static_regex_is_constexpr_and_correct)
 
 TEST(klass_cp_hi_table_matches_range_search_exhaustively_for_pL)
 {
-  // D1 \p{}: sparse hi membership (cp > U+07FF) must match the range tables bit-for-bit over the
+  // \p{} sparse hi membership (cp > U+07FF) must match the range tables bit-for-bit over the
   // entire Unicode space. Encode each scalar and fullmatch `\p{L}` — runtime path = European page +
   // thread-local 2-stage hi table.
   const real::regex                 pl   {R"(\p{L})"};
@@ -255,7 +255,7 @@ TEST(klass_cp_mixed_members_union_regardless_of_order)
                      return real::regex(p).search(s).matched();
                    };
   // predicate then a non-ASCII literal (é = U+00E9: a word char, not a digit) — either order must match é
-  EXPECT(hit(cat({"[\\d", kEacute, "]"}), kEacute));              // [\dé]  (the order that used to lose é)
+  EXPECT(hit(cat({"[\\d", kEacute, "]"}), kEacute));              // [\dé]  (regression: this order lost é)
   EXPECT(hit(cat({"[", kEacute, "\\d]"}), kEacute));              // [é\d]  (the witness that always worked)
   EXPECT(hit(cat({"[\\d", kEacute, "]"}), kArab3));               // the \d part still matches a digit (U+0663)
   EXPECT(!hit(cat({"[\\d", kEacute, "]"}), kEuro));               // a non-member stays out (U+20AC)

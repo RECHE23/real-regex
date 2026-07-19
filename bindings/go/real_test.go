@@ -259,7 +259,7 @@ func TestConcurrentSharedPattern(t *testing.T) {
 	}
 }
 
-// --- submatch / named-group / unset matrix (new in D1) --------------------------------------
+// --- submatch / named-group / unset matrix --------------------------------------
 
 func TestFindSubmatchIndex(t *testing.T) {
 	r := MustCompile(`(\w+)@(\w+)`)

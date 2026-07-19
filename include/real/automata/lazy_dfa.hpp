@@ -89,9 +89,9 @@ namespace real::detail {
     return disabled;
   }
 
-  //! \brief Test/profile seam (D1-perf, Étage A): force the matcher off the possessive-loop fast paths
+  //! \brief Test/profile seam : force the matcher off the possessive-loop fast paths
   //!        (bare/suffixed/delimited `X*+`/`X++`) onto the general VM, so a differential can assert
-  //!        route-auto and forced-general agree on every input — the "wagon-4 pattern" applied to the new
+  //!        route-auto and forced-general agree on every input — the route-agreement pattern applied to the new
   //!        recognizers. Not for production use — same contract as the other route-disabled seams.
   inline bool& possessive_fastpath_disabled()
   {
@@ -99,7 +99,7 @@ namespace real::detail {
     return disabled;
   }
 
-  //! \brief Test seam (D1-AC): force the matcher off the Aho-Corasick multi-literal route (past the
+  //! \brief Test seam : force the matcher off the Aho-Corasick multi-literal route (past the
   //!        branch-count threshold) onto the existing \ref pattern_hints::fixed_alternation
   //!        `run_alternation` path, so a differential can assert routed and unrouted searches agree.
   //!        Not for production use — same contract as the other route-disabled seams.

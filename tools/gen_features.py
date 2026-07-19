@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-r"""Generate TWO artifacts from the single source docs/site/data/features.yaml (also the
-data behind the {features} site directive -- doc-site P3a/P3b):
+r"""Generate TWO artifacts from the single source docs/site/data/features.yaml (also
+the data behind the {features} site directive):
 
-1. tests/frontend/features_probe_generated.inc -- the executable-claims CI probe (P3a).
+1. tests/frontend/features_probe_generated.inc -- the executable-claims CI probe.
    Every features.yaml row with a non-null `pattern` becomes one assertion:
 
      - status: supported / extension   -> real::regex(pattern) must COMPILE (not throw).
@@ -19,7 +19,7 @@ data behind the {features} site directive -- doc-site P3a/P3b):
    tests/frontend/test_features_probe.cpp (hand-written, stable) provides the includes and
    `#include`s the generated fragment; this script owns only the fragment.
 
-2. docs/COMPATIBILITY.md's "## Feature scorecard" table (doc-site P3b) -- the GitHub-reader-
+2. docs/COMPATIBILITY.md's "## Feature scorecard" table -- the GitHub-reader-
    facing status view, GENERATED and injected between two markers already present in the
    file (never invented by this script; the hand-written prose around them is untouched).
    Only categories NOT marked `scorecard: false` (see features.yaml's own schema comment)
@@ -53,13 +53,11 @@ THROW_STATUSES = {"excluded-by-design"}
 SKIP_STATUSES = {"planned"}
 KNOWN_STATUSES = COMPILE_STATUSES | THROW_STATUSES | SKIP_STATUSES
 
-# The canonical status-slug -> human-label table (doc-site P3b: moved here from conf.py so
-# BOTH consumers -- this script's generate_scorecard() and conf.py's {features} directive --
-# share exactly one vocabulary, never two. conf.py imports this dict (see its own comment);
-# this module must stay import-safe with only yaml/stdlib (conf.py is venv-only -- sphinx/
-# breathe -- so the dependency direction is tools/ -> nothing, conf.py -> tools/, never the
-# reverse). The dict VALUE is the human label -- "excluded by design" is spaced, matching
-# COMPATIBILITY.md's scorecard prose, not the hyphenated slug.
+# The canonical status-slug -> human-label table, shared by generate_scorecard() and
+# conf.py's {features} directive (conf.py imports this dict). This module must stay
+# import-safe with only yaml/stdlib: conf.py is venv-only, the dependency direction is
+# conf.py -> tools/, never the reverse. Values are the human labels ("excluded by
+# design" is spaced, matching the scorecard prose).
 STATUS_LABELS = {
     "supported": "supported",
     "extension": "extension",
@@ -67,12 +65,9 @@ STATUS_LABELS = {
     "planned": "planned",
 }
 
-# doc-site P3b: the scorecard table lives between these two exact marker lines in
-# COMPATIBILITY.md (already present there, never created by this script -- a missing
-# marker is a hard error, not a silent no-op). The link-text convention below ("why" for
-# an excluded-by-design row, "more" otherwise) reproduces the two texts the hand-written
-# scorecard actually used before generation (COMPATIBILITY.md git history, doc-site P3b's
-# own diff audit) -- not a new invention.
+# The scorecard table lives between these two exact marker lines in COMPATIBILITY.md
+# (never created by this script -- a missing marker is a hard error, not a silent
+# no-op). Link-text convention: "why" for an excluded-by-design row, "more" otherwise.
 SCORECARD_BEGIN = (
     "<!-- BEGIN GENERATED features scorecard — DO NOT EDIT — "
     "regenerate: python3 tools/gen_features.py -->"

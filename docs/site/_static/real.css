@@ -1,23 +1,14 @@
-/* real.css -- docs/site theme skin.
+/* real.css -- docs/site theme skin (Cyanotype palette).
  *
- * Translates the approved Cyanotype palette (doc-site palette wagon, 2026-07-18 --
- * blueprint bleu de Prusse, replacing the earlier emerald palette) onto two layers:
- *   1. Local custom properties (--paper, --ink, --accent, ...) -- the source of
- *      truth, used directly by the page's own bespoke blocks (hero, guarantee
- *      panel, the cliff comparison, quickstart chrome).
- *   2. pydata-sphinx-theme's own semantic variables (--pst-color-*), pointed at
- *      the same values so the theme's built-in chrome (navbar, sidebars, prose,
- *      code blocks, sphinx-design cards/grids/tabs, which key off --sd-color-*
- *      which in turn key off --pst-color-*) is harmonized rather than fighting
- *      the palette. Variable names below were extracted from the installed
- *      pydata_sphinx_theme==0.20.0 package CSS (theme/.../pydata-sphinx-theme.css),
- *      not guessed.
+ * Two layers: local custom properties (--paper, --ink, --accent, ...) are the
+ * source of truth; pydata-sphinx-theme's semantic variables (--pst-color-*)
+ * point at the same values so the theme chrome follows the palette. Variable
+ * names were extracted from the installed theme CSS, not guessed.
  *
- * No webfont CDN: both stacks are system/local (Interdits, doc-site P0/P1 fiche).
- * Both themes are deliberately tuned (no naive inversion) -- light values live at
- * :root, dark values are re-declared under html[data-theme="dark"] (the attribute
- * pydata-sphinx-theme itself stamps on <html>), with an @media(prefers-color-
- * scheme) fallback for the brief pre-hydration paint.
+ * No webfont CDN: both font stacks are system/local. Both themes are tuned
+ * (no naive inversion): light at :root, dark under html[data-theme="dark"]
+ * (stamped by the theme), with an @media(prefers-color-scheme) fallback for
+ * the pre-hydration paint.
  *
  * WHY THE --pst-color-* MAPPING IS REPEATED FOUR TIMES (:root, html:not([data-
  * theme]), html[data-theme="dark"], html[data-theme="light"]), NOT DECLARED ONCE:
@@ -67,28 +58,13 @@
   --radius: 9px;
   --radius-s: 6px;
 
-  /* -- pydata-sphinx-theme semantic vars, pointed at the tokens above --
-   * COMPLET for every category the doc-site Cyanotype fiche names (fonds,
-   * hiérarchie d'encre, bordures, liens, primary/secondary/info/warning/danger,
-   * code inline, navbar/sidebar/recherche, cibles/hover) PLUS --pst-color-accent
-   * (navbar/search/sidebar chrome reads this directly -- confirmed by grepping the
-   * installed theme CSS; left unmapped it stays pydata's own stock magenta hue)
-   * and success/attention, included defensively: pydata's own stock success is a
-   * green close to the retired emerald palette, and no admonition/badge directive
-   * is used anywhere in docs/site today, so mapping it is free insurance against
-   * a future stray green, using table tokens only (no new hue).
-   *
-   * warning/danger share the "danger" (orange) hue -- the palette table has no
-   * second, darker "danger-2" for a hover/-highlight shade the way accent has
-   * accent-2, so -highlight reuses the base danger value verbatim rather than
-   * inventing one (Interdits: no invented tint, "not even for a hover").
-   *
-   * Left at pydata's own stock (neutral, unhued) values, deliberately: the
-   * light/muted/dark/black/white swatch family and the table-* variables --
-   * not named in the fiche's category list, and not reachable from any directive
-   * used in docs/site's current content (no sphinx-design badges, no tables, no
-   * admonitions -- verified by grep across every .md/.rst under docs/site).
-   */
+  /* -- pydata-sphinx-theme semantic vars, pointed at the tokens above.
+   * --pst-color-accent must be mapped (navbar/search chrome reads it directly;
+   * unmapped it stays the theme's stock magenta). success/attention are mapped
+   * defensively -- the theme's stock success green would clash. warning/danger
+   * -highlight reuse the base danger value: the palette deliberately has no
+   * second danger shade. The neutral swatch family (light/muted/dark/...) stays
+   * at theme stock: unreachable from any directive used in this site. */
   --pst-color-primary: var(--accent);
   --pst-color-primary-bg: var(--accent-soft);
   --pst-color-primary-text: var(--on-accent);
@@ -371,25 +347,16 @@ html[data-theme="light"] {
 }
 
 /* ============================ Pygments (inner pages): tango/monokai override ====
- * pygments_style="tango" / pygments_light_style="tango" / pygments_dark_style=
- * "monokai" (conf.py) are named styles with a FIXED palette -- they never read
- * --pst-*/local custom properties, unlike the landing's own hand-tuned .highlight
- * rules (landing.html, token-driven, verified unchanged -- see the fiche's 3a).
- * pydata-sphinx-theme compiles both named styles into build/site/html/_static/
- * pygments.css under `html[data-theme="light"] .highlight .KLASS` / `html[data-
- * theme="dark"] .highlight .KLASS` (measured directly in the built CSS, not
- * assumed) -- specificity (0,3,1): one type selector (html) + one attribute
- * selector ([data-theme=...]) + two class selectors (.highlight, .KLASS). Every
- * rule below repeats that EXACT selector shape, so specificity is equal; real.css
- * is loaded after pygments.css (html_css_files order, confirmed in the built
- * <head>), so the equal-specificity tie goes to real.css by source order alone --
- * no !important needed or used here.
+ * The named Pygments styles (tango/monokai, conf.py) have a fixed palette and
+ * never read custom properties. The theme compiles them into pygments.css under
+ * `html[data-theme=...] .highlight .KLASS` (0,3,1); every rule below repeats
+ * that exact selector shape, and real.css loads after pygments.css, so the
+ * equal-specificity tie goes here by source order -- no !important.
  *
- * Mapping (palette table tokens only): keywords = accent-ink light / accent dark
- * (mirrors the landing's own .k* rule, landing.html l.260-271); strings = danger;
- * comments = ink-3; names/numbers/operators/punctuation = the ink family; errors
- * and Generic.Deleted/Error/Traceback = danger; Generic.Inserted = accent.
- * Covers every short class pydata's compiled pygments.css emits for tango/monokai
+ * Mapping (palette tokens only): keywords = accent-ink light / accent dark;
+ * strings = danger; comments = ink-3; names/numbers/operators = the ink family;
+ * errors and Generic.Deleted/Error/Traceback = danger; Generic.Inserted =
+ * accent. Covers every short class the compiled pygments.css emits
  * (measured from the built CSS), not just the classes the current cpp-only
  * quickstart/tour snippets happen to use today.
  */
@@ -527,15 +494,11 @@ html[data-theme="light"] .highlight td.linenos .normal, html[data-theme="dark"] 
   color: var(--ink-3);
 }
 
-/* ============================ Features matrix (doc-site P2b) ====================
- * `.feature-status` is the per-row status badge span the {features} directive emits
- * (docs/site/conf.py, FeaturesDirective); `.feature-row--excluded-by-design` is the
- * row itself. Cyanotype tokens ONLY, no invented hue: supported -> --accent,
- * extension -> --accent-ink, excluded-by-design -> --danger, planned -> --ink-3
- * (reserved -- no row uses it yet, see features.yaml's own header). Excluded-by-
- * design rows are additionally tinted LOUD (--danger-soft row background), per the
- * doc-site P2b fiche's "closed door, not a missing feature" framing (COMPATIBILITY.md
- * l.41-43) -- the moat should read as deliberate, not as a gap in the matrix.
+/* ============================ Features matrix ===================================
+ * `.feature-status` is the badge span the {features} directive emits. Palette
+ * tokens only: supported -> --accent, extension -> --accent-ink,
+ * excluded-by-design -> --danger (row additionally tinted --danger-soft: the
+ * closed door should read as deliberate, not as a gap), planned -> --ink-3.
  */
 .feature-category__title {
   color: var(--ink);

@@ -398,7 +398,7 @@ TEST(onepass_repeated_class_no_longer_hangs)
 {
   // The regression itself: `\w{k}a` for a k past the (real, default) work cap must decline quickly rather
   // than hang, and — the point of a graceful decline — `real::regex` must still match correctly via the
-  // Pike VM fallback. k=20 is comfortably past the cap (issue #3 / the fuzzer's `\w{42}a}` finding).
+  // Pike VM fallback. k=20 is comfortably past the cap (the fuzzer's `\w{42}a}` finding).
   const real::regex  rx   {R"(\w{20}a)"};
   const std::string  word20a (20, 'b');
   const std::string  subj {word20a + "a"};

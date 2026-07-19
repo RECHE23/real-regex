@@ -1,30 +1,12 @@
 <!--
-landing.html — the bespoke root of docs/site (doc-site P1c). Rendered to
-"index.html" via html_additional_pages (conf.py), NOT a source document: this
-template does NOT extend pydata_sphinx_theme's layout.html (the theme applies to
-the inner pages only — contents.md, reference/index.rst). It is a faithful,
-self-contained port of the approved landing mockup
-(~/Projects/.recovery/real-regex-landing-mockup.html): same CSS tokens, same
-markup, same canvas/JS, embedded here rather than loaded from docs/site/_static so
-the root never depends on pydata's own stylesheet loading order.
-
-The ONLY departures from the mockup are the ones the doc-site P1c fiche calls for:
-  (a) every mockup `href="#"` stub is now a real destination (or, where the target
-      page genuinely doesn't exist yet — Guide, Architecture: P2 — the nav/footer
-      entry is omitted rather than left as a dead link);
-  (b) the 4 quickstart code panels are Jinja placeholders (see the 4 `codepanel`
-      divs below — one per language), injected by conf.py's `_inject_quickstart`
-      (html-page-context hook) from the same 4 tested snippet files doc-site P1b-A
-      gates in CI, Pygments-highlighted — never hand-written code in this file
-      (docs-site-gate's no-inline-quickstart check enforces that; it greps for
-      the injection points and for known snippet-body strings, so this comment
-      deliberately does NOT spell out the placeholders' own double-brace syntax —
-      that would satisfy the "injection point present" half of the check without
-      one actually being there, the same first-occurrence-substring trap the
-      snippet files' own header comments warn about for their region markers).
-  (c) the version chip / footer version string use a Jinja `version` variable
-      (derived from pyproject.toml, conf.py) instead of a literal "v2026.7.51"
-      that would go stale on every release bump.
+The bespoke landing, rendered to "index.html" via html_additional_pages
+(conf.py) — not a source document, and it does not extend the theme's layout:
+style and script are self-contained so the root never depends on the theme's
+stylesheet loading order. The quickstart panels are Jinja placeholders filled
+from the CI-tested snippet files (conf.py), never hand-written code — the
+docs-site-gate check enforces that, and this comment deliberately does not
+spell out the placeholder syntax, which would fool the check's grep. The
+version chip renders a Jinja variable derived from pyproject.toml.
 -->
 <!doctype html>
 <html lang="en">
@@ -114,10 +96,8 @@ The ONLY departures from the mockup are the ones the doc-site P1c fiche calls fo
   }
 
   /* ============================ base ============================ */
-  /* The mockup was an Artifact FRAGMENT: the claude.ai frame supplied body{margin:0}.
-     As a standalone page the browser default (8px, white against --paper) shows as an
-     ugly frame -- reset it here, and paint body/html with --paper so overscroll and
-     any sub-viewport page height match the theme instead of flashing white. */
+  /* Reset the browser's 8px body margin and paint body/html with --paper so
+     overscroll and sub-viewport heights match the theme instead of flashing white. */
   html, body { margin: 0; padding: 0; background: var(--paper); }
   .page { background: var(--paper); color: var(--ink); font-family: var(--font-sans);
     font-size: var(--step-0); line-height: 1.6; -webkit-font-smoothing: antialiased; }
@@ -248,18 +228,14 @@ The ONLY departures from the mockup are the ones the doc-site P1c fiche calls fo
   pre { margin: 0; overflow-x: auto; padding: 1.15rem 1.2rem; font-family: var(--font-mono);
     font-size: .88rem; line-height: 1.75; color: var(--ink); tab-size: 2; }
   .codepanel[hidden] { display: none; }
-  /* lightweight syntax tint (verbatim from the mockup) -- still live: the install
-     grid's C++ card comment span (below) uses it directly, and it happens to line
-     up with Pygments' own bare short classes (k/s/c/n) used inside .highlight, so
-     it doubles as the base layer for the quickstart panels too. */
+  /* Base syntax tint: lines up with Pygments' bare short classes (k/s/c/n)
+     inside .highlight, so it is also the quickstart panels' base layer. */
   .k { color: var(--accent-ink); } .s { color: var(--danger); }
   .c { color: var(--ink-3); font-style: italic; } .t { color: var(--ink); font-weight:600;}
   .f { color: var(--ink); } .n { color: var(--ink-2); }
   :root[data-theme="dark"] .k, .page .codewrap .k { color: var(--accent); }
-  /* Pygments' remaining, more specific token subclasses (doc-site P1c: the 4
-     quickstart panels are real syntax-highlighted HTML injected by conf.py) -- not
-     a stock Pygments style, tuned to the same tokens as the rest of the page via
-     the custom properties above, so a theme flip re-tints code for free. */
+  /* Pygments' more specific token subclasses, tuned to the same custom
+     properties as the rest of the page so a theme flip re-tints code for free. */
   .highlight .c1, .highlight .cm, .highlight .cp, .highlight .cpf,
   .highlight .cs { color: var(--ink-3); font-style: italic; }
   .highlight .kn, .highlight .kd, .highlight .kt, .highlight .kr,
@@ -333,10 +309,9 @@ The ONLY departures from the mockup are the ones the doc-site P1c fiche calls fo
     <div class="wrap nav__in">
       <a class="brand" href="index.html" aria-label="real::regex home">real<span class="op">::</span>regex</a>
       <div class="nav__links">
-        {#- doc-site P1 reorg: the nav is INJECTED from the root toctree
-            (conf.py's _inject_primary_nav) -- the same source as the inner
-            pydata header. NEVER hard-code an item here: the nav-equality net
-            in tools/check_site_links.py reds the gate on any divergence. -#}
+        {#- Injected from the root toctree (conf.py) -- the same source as the
+            inner header. Never hard-code an item here: the nav-equality check
+            reds the gate on any divergence. -#}
         {%- for item in primary_nav %}
         <a href="{{ item.href }}">{{ item.label }}</a>
         {%- endfor %}
@@ -465,10 +440,8 @@ The ONLY departures from the mockup are the ones the doc-site P1c fiche calls fo
       <div class="codewrap">
         <div class="codewrap__bar"><span class="dot3"><span></span><span></span><span></span></span> drop-in + a constexpr match</div>
 
-        <!-- Every panel below is INJECTED at build time (conf.py's html-page-context
-             hook) from the same tested snippet files doc-site P1b-A gates in CI, through
-             Pygments -- no hardcoded quickstart code lives in this file. See conf.py's
-             `_inject_quickstart` and docs-site-gate's no-inline-quickstart check. -->
+        <!-- Panels injected at build time (conf.py) from the CI-tested snippet
+             files -- no hardcoded quickstart code lives in this file. -->
         <div class="codepanel" data-p="cpp"><pre class="highlight">{{ quickstart_cpp }}</pre></div>
 
         <div class="codepanel" data-p="py" hidden><pre class="highlight">{{ quickstart_py }}</pre></div>

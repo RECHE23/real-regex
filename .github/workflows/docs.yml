@@ -1,7 +1,7 @@
 name: Docs
 
 # Build and publish the documentation SITE to GitHub Pages on every push to the
-# default branch (doc-site P1b-B go-live): the themed Sphinx/Breathe landing is
+# default branch: the themed Sphinx/Breathe landing is
 # the front door, with the full Doxygen API reference preserved at /api and the
 # llvm-cov coverage report at /coverage (same content the old front page linked,
 # one level deeper -- pre-swap deep links into the Doxygen pages moved under /api).

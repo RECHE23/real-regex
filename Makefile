@@ -31,7 +31,7 @@ PYRUN := PYTHONPATH=$(CURDIR)/bindings/python:$(abspath $(SCIFORGE_PYTHON)) $(PY
 
 # What gate-bump/gate-doc/gate-test diff against to detect their change category (see the block
 # comment above those targets). Override to compare against a single commit instead of the whole
-# unpushed stack on a train of several already-committed wagons -- e.g.
+# unpushed stack of several commits -- e.g.
 # `GATE_BASE=HEAD~1 make gate-bump` diffs just the latest commit, not everything since origin/main.
 # Default unchanged (fail-closed stays the behavior for anyone who doesn't override it).
 GATE_BASE ?= origin/main
@@ -43,19 +43,18 @@ SCIFORGE_INCLUDE ?= ../sciforge/include
 # its lint/ dir. Same sibling default; CI checks SciForge out alongside as ../sciforge.
 SCIFORGE_LINT ?= ../sciforge/lint
 SCIFORGE_TOOLS ?= ../sciforge/tools
-# FORMAT_FILES moved to tools/Makefile (compartimentalisation wagon 7/FINAL, with
-# format/format-check themselves) -- nothing else at root consumes it.
+# FORMAT_FILES lives in tools/Makefile with format/format-check.
 
 # ROOT-anchor + inherit the shared vars every above-the-root section Makefile already
-# gets from mk/common.mk (compartimentalisation wagon 6): CXXSTD, INCLUDES (the engine
+# gets from mk/common.mk: CXXSTD, INCLUDES (the engine
 # header search path), the CMAKE_CXX CXX-forwarding guard, and the coverage floor
 # (COV_FLOOR/COV_FLOOR_IGNORE -- full-local-gate's own step 22 echoes $(COV_FLOOR)
 # directly below, see mk/common.mk's own comment for why it must live there and not
 # tests/Makefile-only). Included AFTER every var this file defines above: their `?=`
 # (and PYRUN's `:=`, identical by value since ROOT == CURDIR here) are no-ops against
 # an already-set variable, so this changes nothing about CMAKE/PYTHON/BUILD/JOBS/
-# SCIFORGE_*/PYRUN/GATE_BASE -- it only supplies the 4 names above this file no longer
-# defines itself (CXXSTD/INCLUDES/CMAKE_CXX's ifeq/COV_FLOOR*), verified with `make -n`:
+# SCIFORGE_*/PYRUN/GATE_BASE -- it only supplies the 4 names above that this file does not
+# define itself (CXXSTD/INCLUDES/CMAKE_CXX's ifeq/COV_FLOOR*), verified with `make -n`:
 # the only diff is $(INCLUDES) itself, now `-I$(ROOT)/include` (was the bare
 # `-Iinclude`) -- both resolve to the same directory from CURDIR == ROOT, an accepted
 # path-prefix equivalence, not a behavior change (lint/misra below are the consumers).
@@ -77,7 +76,7 @@ include mk/help.mk
 SECTIONS := bindings/c bindings/go bindings/python bindings/rust fuzz tests tools benchmarks docs
 # Display order for the top-level help groups (workflow-first, not alphabetical). The
 # group tag lives in each target's `## [group] ...` comment -- nothing else moves.
-# "bench" dropped (compartimentalisation wagon 4): every [bench]-tagged target moved to
+# "bench" dropped: every [bench]-tagged target moved to
 # benchmarks/Makefile (thin delegations, untagged, the docs/ precedent), so the group
 # would otherwise print a permanently empty "── bench ──" header here -- the real
 # listing is the auto-appended "── benchmarks ──" section below (SECTIONS loop).
@@ -111,7 +110,7 @@ build: ## [daily] Configure and build the test binary (CMake)
 
 # --- tests/ (ctest[via `test`]/sanitize/coverage toolchain/tsan smokes) ---------
 #
-# Moved to tests/Makefile (compartimentalisation wagon 6) -- these names stay invocable
+# Live in tests/Makefile -- these names stay invocable
 # at the root via thin delegations below (the CI invariant: ci.yml's coverage job runs
 # coverage-check at l.274, its fuzz job runs tsan/tsan-core at l.134/138, docs.yml runs
 # coverage-html at l.47, and full-local-gate below runs sanitize/coverage-check as its
@@ -160,7 +159,7 @@ tsan-core:
 
 # --- tools/ (lint clang-tidy, MISRA, uncrustify format, header layering, C ABI golden) ---
 #
-# Moved to tools/Makefile (compartimentalisation wagon 7/FINAL) -- lint/misra/format/
+# Live in tools/Makefile -- lint/misra/format/
 # format-check/check-layers/check-capi-abi all live there now; these 6 names stay
 # invocable at the root (the CI invariant: ci.yml's preflight job runs format-check
 # with a SCIFORGE_LINT override (l.52), check-layers (l.56), check-capi-abi (l.62);
@@ -170,8 +169,7 @@ tsan-core:
 # via thin delegations. SCIFORGE_LINT/CXXSTD/INCLUDES/FORMAT_FILES stay defined via
 # mk/common.mk (`?=`) / tools/Makefile-local now -- nothing else at root consumes
 # FORMAT_FILES. See tools/Makefile's own header for the INCLUDES-must-stay-relative
-# rationale (an absolute -I would flood clang-tidy's header diagnostics -- the wagon 6
-# lint gate red). This is a pure move + thin delegation, no behavior change, so
+# rationale (an absolute -I floods clang-tidy's header diagnostics -- measured). So
 # format/format-check (near the docs/ section), check-capi-abi (near fuzz-re2) and
 # check-layers (near full-local-gate) each keep their original root position below
 # rather than being reshuffled here.
@@ -196,12 +194,11 @@ go-%:
 
 # --- fuzz/ (libFuzzer robustness + differential fuzzers + exhaustive/Fowler conformance) ---
 #
-# Moved to fuzz/Makefile (compartimentalisation wagon 5) -- these 5 names stay
+# Live in fuzz/Makefile -- these 5 names stay
 # invocable at the root (the CI invariant: ci.yml's fuzz job runs fuzz/fuzz-compat/
 # fuzz-re2 at l.120/126/145, the conformance job runs exhaustive-compat at l.178, and
 # full-local-gate below runs fowler-compat/exhaustive-compat as steps 13-14/22) via
-# thin delegations. tsan/tsan-core moved to tests/Makefile instead (compartimentalisation
-# wagon 6 -- their sources live in tests/, see that Makefile's own header), not here;
+# thin delegations. tsan/tsan-core live in tests/Makefile (their sources live there);
 # their root delegations sit with the rest of the tests/ ones, above (near `build`).
 # FUZZ_TIME/FUZZ_DIR/EC_K/EC_N moved into fuzz/Makefile (fuzz-only, nothing else at root
 # consumes them).
@@ -214,16 +211,15 @@ fuzz-compat:
 fuzz-re2:
 	@$(MAKE) -C fuzz fuzz-re2
 
-# Moved to tools/Makefile (compartimentalisation wagon 7/FINAL) -- see the "--- tools/
-# ---" comment above (near lint/misra) for the CI-invariant rationale. Can-fail proof
-# (hardening #4; golden GENERATED from bindings/c/real_capi.h, never hand-edited):
+# Lives in tools/Makefile -- see the "--- tools/ ---" comment above for the
+# CI-invariant rationale. Golden GENERATED from bindings/c/real_capi.h, never hand-edited:
 #   python3 tools/gen_capi_abi_golden.py --inject-enum REAL_ERR_SYNTAX=99 --stdout > tests/bindings/capi_abi_golden.txt
 #   make check-capi-abi   # must exit non-zero; then: python3 tools/gen_capi_abi_golden.py
 # Enum/flag value pins live in tests/bindings/test_capi_abi.cpp (real::flags cross-check).
 check-capi-abi:
 	@$(MAKE) -C tools check-capi-abi
 
-# Features-probe .inc drift vs docs/site/data/features.yaml (doc-site P3a). Thin
+# Features-probe .inc drift vs docs/site/data/features.yaml. Thin
 # delegation, same shape as check-capi-abi just above — see tools/Makefile's own
 # check-features-probe for the can-fail proof and the paths-ignore rationale (why this
 # also needs its own root-invocable name rather than living only inside docs-site-gate).
@@ -232,11 +228,10 @@ check-features-probe:
 
 # --- docs/ (Doxygen + Sphinx/Breathe site) ---------------------------------
 #
-# Moved to docs/Makefile (compartimentalisation wagon 3, docs/ pilot section) -- these
+# Live in docs/Makefile -- these
 # names stay invocable at the root (the CI invariant: docs.yml/docs-site.yml/ci.yml
 # invoke them as `make -C real-regex <name>`) via thin delegations below.
-# `coverage-html` itself now delegates to tests/Makefile too (compartimentalisation
-# wagon 6, its own COV_DIR moved with it -- see the `test:`/`sanitize:` block above);
+# `coverage-html` delegates to tests/Makefile (COV_DIR lives there too);
 # `doc` and `docs-site-gate` still orchestrate it from here, root-first, before
 # delegating to docs/ -- see docs/Makefile's own `doc`/`docs-site-gate` comments for the
 # other half of each recipe (paths there are ré-ancrées $(ROOT) so they run identically
@@ -260,8 +255,7 @@ docs-site-gate:
 	@$(MAKE) coverage-html
 	@$(MAKE) -C docs docs-site-gate
 
-# Moved to tools/Makefile (compartimentalisation wagon 7/FINAL) -- see the "--- tools/
-# ---" comment above (near lint/misra) for the CI-invariant rationale (ci.yml's
+# Lives in tools/Makefile -- see the "--- tools/ ---" comment above (ci.yml's
 # preflight passes SCIFORGE_LINT on the command line to format-check; it propagates
 # through MAKEFLAGS to this delegation's `-C tools` sub-make unchanged).
 format:
@@ -315,8 +309,8 @@ version-check: ## [gates] Assert pyproject = __init__ = CMake-derived version
 # GXX defaults to the CI GCC (g++-14); override with `make full-local-gate GXX=g++-13`. If it is
 # absent, the GCC leg is skipped with a warning (the g++-14 CI job is the backstop).
 GXX ?= g++-14
-# exhaustive-compat/fowler-compat moved to fuzz/Makefile (compartimentalisation wagon
-# 5) -- EC_K/EC_N moved with them (fuzz-only). Thin delegations preserve both names at
+# exhaustive-compat/fowler-compat live in fuzz/Makefile, EC_K/EC_N with them
+# (fuzz-only). Thin delegations preserve both names at
 # the root: the conformance CI job calls exhaustive-compat directly (ci.yml l.178),
 # full-local-gate calls both below as steps 13-14/22.
 exhaustive-compat:
@@ -332,8 +326,7 @@ check-pins: ## [gates] Pin-drift lint: fail if workflows pin more than one SciFo
 	 else echo "check-pins: WARN — $(SCIFORGE_TOOLS)/check-pins.sh absent, skipped (CI covers it)"; fi
 
 
-# Moved to tools/Makefile (compartimentalisation wagon 7/FINAL) -- see the "--- tools/
-# ---" comment above (near lint/misra) for the CI-invariant rationale.
+# Lives in tools/Makefile -- see the "--- tools/ ---" comment above.
 check-layers:
 	@$(MAKE) -C tools check-layers
 
@@ -445,13 +438,13 @@ full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate 
 	@$(MAKE) check-layers
 	@echo "── [4/22] check-pins"
 	@$(MAKE) check-pins
-	@echo "── [5/22] check-capi-abi (hardening #4 — C ABI golden vs real_capi.h)"
+	@echo "── [5/22] check-capi-abi (C ABI golden vs real_capi.h)"
 	@$(MAKE) check-capi-abi
 	@echo "── [6/22] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
 	@$(MAKE) doc-no-coverage
 	@echo "── [7/22] doc-check (CI-pinned Doxygen when Docker is available)"
 	@$(MAKE) doc-check
-	# docs/site's own net (-W --keep-going + linkcheck, doc-site P1). Same shape as the
+	# docs/site's own net (-W --keep-going + linkcheck). Same shape as the
 	# GXX/go legs below: skipped with a warning when sphinx-build is absent (a dev
 	# without the docs venv on PATH doesn't need to rougir tout le gate) -- the docs-site
 	# CI job (ci.yml) is the backstop, so this is never the ONLY net on the site.
@@ -461,7 +454,7 @@ full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate 
 	@$(MAKE) misra
 	@echo "── [10/22] c-test"
 	@$(MAKE) c-test
-	# examples/cpp/*.cpp direct compile+run (doc-site P1b-A gate-snippet) -- unconditional, not
+	# examples/cpp/*.cpp direct compile+run -- unconditional, not
 	# skip-if-absent: unlike the OPTIONAL alternate-compiler/toolchain legs below (GXX, go,
 	# sphinx-build), a default C++ compiler is already a hard prerequisite of this entire gate
 	# (build/test/misra/c-test above assume one unconditionally), so example-check rides the
@@ -503,7 +496,7 @@ full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate 
 	@$(MAKE) coverage-check
 	@echo "full-local-gate: ALL gates green (cheap→doc→tests→lint→sanitize→coverage; first red would have stopped the train)"
 
-# doc-check moved to docs/Makefile (compartimentalisation wagon 3); thin delegation
+# doc-check lives in docs/Makefile; thin delegation
 # below preserves the root-invocable name (full-local-gate step 7/22 above, and the
 # CI invariant, both call it by this name).
 doc-check:
@@ -511,7 +504,7 @@ doc-check:
 
 # --- benchmarks/ (throughput/duel/matrix/profile — dev-only; matrix-gate is the one CI-relevant gate) ---
 #
-# Moved to benchmarks/Makefile (compartimentalisation wagon 4) -- these names stay
+# Live in benchmarks/Makefile -- these names stay
 # invocable at the root (matrix-gate is full-local-gate's own step 12/22 below; the
 # rest are developer-invoked directly, never from CI) via thin delegations below.
 # Paths inside benchmarks/Makefile are ré-ancrées $(ROOT) (via mk/common.mk) or run
@@ -548,9 +541,9 @@ bench-multipattern:
 # (find_package) — one net catches a header regression early, the other catches a packaging
 # regression. CXX is honored (run under both clang and g++ in ci.yml's install-smoke job,
 # which already has both) so a compiler-specific regression in a showcase snippet cannot hide.
-# Born with the landing page's quickstart tab (doc-site P1b-A gate-snippet): every example
+# The landing quickstart contract: every example
 # under examples/cpp/ is now also an injection source for the landing (docs/site/_templates/
-# landing.html, conf.py's html-page-context hook, doc-site P1c), so a red here means the page's
+# landing.html, conf.py's html-page-context hook), so a red here means the page's
 # own code sample stopped working.
 example-check: ## [nets] Compile + run every examples/cpp/*.cpp directly against include/ (CXX honored)
 	@set -e; \

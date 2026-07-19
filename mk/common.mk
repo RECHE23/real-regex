@@ -1,4 +1,4 @@
-# mk/common.mk — shared build config for section Makefiles (compartimentalisation).
+# mk/common.mk — shared build config for section Makefiles.
 #
 # Usage from a section Makefile (e.g. docs/Makefile): define ROOT FIRST, then include
 # this file --
@@ -38,7 +38,7 @@ SCIFORGE_PYTHON  ?= $(ROOT)/../sciforge/python
 PYRUN := PYTHONPATH=$(ROOT)/bindings/python:$(abspath $(SCIFORGE_PYTHON)) $(PYTHON)
 
 # Coverage floor -- the CI gate `tests/coverage-check` enforces. Promoted here rather
-# than kept tests/Makefile-local (compartimentalisation wagon 6) because the ROOT
+# than kept tests/Makefile-local because the ROOT
 # Makefile's own `full-local-gate` (step 22/22, a root recipe, not a delegation) echoes
 # $(COV_FLOOR) directly in its own progress line -- if COV_FLOOR lived only in
 # tests/Makefile, that root echo would silently print an EMPTY value (make does not
@@ -67,7 +67,7 @@ INCLUDES ?= -Iinclude
 
 # Forward CMAKE_CXX_COMPILER only when CXX is set on the command line; otherwise CMake
 # selects the platform default. Promoted alongside CXXSTD/INCLUDES: tests/Makefile's
-# `sanitize` and `coverage-build` (compartimentalisation wagon 6) are CMake-driving
+# `sanitize` and `coverage-build` are CMake-driving
 # consumers, same as the root Makefile's own `build`.
 ifeq ($(origin CXX),command line)
 CMAKE_CXX := -DCMAKE_CXX_COMPILER=$(CXX)

@@ -389,7 +389,7 @@ namespace real::detail {
     return any || cc.range_count > 0;
   }
 
-  //! \brief D1-perf (Étage A) safety check: true if the ASCII byte \p b could be a member of code-point
+  //! \brief safety check: true if the ASCII byte \p b could be a member of code-point
   //!        class \p cc — used only to test whether a single-byte delimiter (a "quoted"-shape prefix or
   //!        suffix) could hide inside a `klass_cp_loop_possessive` body, in which case the delimited
   //!        fast path must decline (see \ref pattern_hints::possessive_prefix). A non-ASCII \p b (>=
@@ -799,7 +799,7 @@ namespace real::detail {
   /*!
    * \brief Detects the whole-pattern fast-path shapes and sets their hint flags: `class+`,
    *        fixed-shape straight runs, a single codepoint class (`.`/negated, optional `+`),
-   *        an alternation of straight-line branches, and trailing-lookaround class+ (P3c).
+   *        an alternation of straight-line branches, and trailing-lookaround class+.
    * \param[in]     code           The instruction stream.
    * \param[in]     classes        Interned character classes referenced by \p code.
    * \param[in]     cp_classes     Match-time code-point classes (for `\w`/`\d`/`\s` Arc B word-class tests).
@@ -824,7 +824,7 @@ namespace real::detail {
     // "class+" shape: save 0, [optional \b/\B,] [group-start save,] klass{k}, split(back, exit),
     // [group-end save,] [optional \b/\B,] save 1, match. Arc B via peel + resolve_class_wb_hints.
     // R3: the outer envelope (open/close) is \ref parse_shape_lead / \ref parse_shape_close.
-    // P1 (issue #3): `klass{k}` (k >= 1 consecutive copies of the SAME class) generalizes the
+    // `klass{k}` (k >= 1 consecutive copies of the SAME class) generalizes the
     // original single-`klass` shape -- `X{k,}` desugars to k-1 mandatory copies then a k-th copy
     // that doubles as the loop body (compiler.hpp's emit_repeat), so k identical `klass` ops
     // followed by a self-loop split is the bytecode signature of `X{k,}` (k==1 is the original
@@ -920,7 +920,7 @@ namespace real::detail {
     // of the LAST block), optional `\b`/`\B` wraps (Arc B), optional one capturing group. Unicode
     // `\w+` / `\d+` / `\s+` / `\w{k,}` via peel + resolve. R3: the outer envelope (open/close) is
     // \ref parse_shape_lead / \ref parse_shape_close.
-    // P1 (issue #3): k >= 1 consecutive copies of the IDENTICAL 4-instruction klass_cp block --
+    // k >= 1 consecutive copies of the IDENTICAL 4-instruction klass_cp block --
     // `\w{k,}` desugars to k-1 mandatory copies then a k-th copy that doubles as the loop body
     // (compiler.hpp's emit_repeat). intern_cp_class/intern_class content-based dedup (compiler.hpp)
     // guarantees repeated blocks are byte-identical (same cp_idx, same 3 continuation class
@@ -1159,7 +1159,7 @@ namespace real::detail {
         static_cast<std::size_t>(cp_mark_end) < code.size() && code[0].op == opcode::save) {
       const auto end {static_cast<std::size_t>(cp_mark_end)};
       // The ASCII sub-class index comes from the marker the compiler set when it
-      // emitted the block (emit_any_codepoint_class) — we no longer reverse-engineer
+      // emitted the block (emit_any_codepoint_class) — we never reverse-engineer
       // the block's bytecode shape here. The whole-program layout / `+`-loop checks
       // are program structure; the ASCII-only test is class content; neither depends
       // on the block's internal opcode layout.
@@ -1217,7 +1217,7 @@ namespace real::detail {
       }
     }
 
-    // D1-perf (Étage A): possessive class+/cp-class+ loop -- UNBOUNDED only (X*+/X++, self-loop via
+    // possessive class+/cp-class+ loop -- UNBOUNDED only (X*+/X++, self-loop via
     // `jump` back to the loop opcode's own pc; see pattern_hints's doc comment for why a bounded count
     // is out of scope). Layout: save 0, [optional lead \b/\B], [optional ONE mandatory copy: klass |
     // klass_cp(+3-instr chain), the SAME class/cp-class as the loop, min=1 -- min>=2 stays general],
@@ -1372,7 +1372,7 @@ namespace real::detail {
       }
     }
 
-    // D1-perf (Étage A): possessive delimited ("quoted") shape -- literal PREFIX (1+ bytes) + possessive
+    // possessive delimited ("quoted") shape -- literal PREFIX (1+ bytes) + possessive
     // class+/cp-class+ loop (UNBOUNDED, min=0, uncaptured) + literal SUFFIX (1+ bytes). Eligibility
     // additionally requires the loop's class to EXCLUDE the prefix's AND the suffix's leading byte: without
     // it, a prefix occurrence could hide inside an already-scanned body run (an alphanumeric "id=" prefix
@@ -1526,7 +1526,7 @@ namespace real::detail {
         ++pc;
       }
       else {
-        break; // klass_cp (variable width) / split / jump / match: the offset is no longer fixed
+        break; // klass_cp (variable width) / split / jump / match: the offset is not fixed
       }
     }
     if (best_byte < 0) {
@@ -1699,7 +1699,7 @@ namespace real::detail {
     pattern_hints hints;
 
     // A lookaround forces the general Pike VM: no DFA, no pure class-loop — EXCEPT the measured
-    // trailing-LA class+ shape (P3c), which arms trailing_lookaround + trailing_la_class (not
+    // trailing-LA class+ shape, which arms trailing_lookaround + trailing_la_class (not
     // greedy_class_loop) so the pure [a-z]+ gate stays a single compare.
     bool has_lookaround {false};
     for (const instr& in : code) {
@@ -1735,7 +1735,7 @@ namespace real::detail {
     else if (hints.first_bytes_valid) {
       // Enumerate the set, stopping once it exceeds eight -- the recognizer's own cap now matches
       // run_alternation's L-SIMD masked-block scan (pike.hpp), which has always gated on
-      // small_set_size <= 8; only this enumeration cap was left at 4 (issue #3's Alternation gap:
+      // small_set_size <= 8; only this enumeration cap was left at 4 (the alternation gap:
       // a 5-8-distinct-first-byte pattern like `cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog`
       // fell all the way to the bitmap loop, un-accelerated). A single member drives find_byte (one
       // memchr); two-to-eight members drive the memchr-cascade/SIMD scan (small_set); nine or more
@@ -2055,7 +2055,7 @@ namespace real::detail {
    * FIX P0 #2 (O(n^2)): for **2+ members**, the window is grown **exponentially** (galloping
    * search) from a modest initial probe, doubling each round, rather than handed the full
    * remaining haystack up front. A caller that invokes this once per rejected candidate
-   * (`next_candidate`'s icase small-set route) used to pay one `memchr` per set member over
+   * (`next_candidate`'s icase small-set route) would otherwise pay one `memchr` per set member over
    * `text.size() - pos` on EVERY such call; a set with an asymmetrically rare or entirely absent
    * member (e.g. `(?i)cafe`'s `{c, C}` on an all-lowercase haystack) turned that into a full
    * remaining-text scan on every rejected candidate — O(n) candidates x O(n) scan = O(n^2), same
@@ -2118,7 +2118,7 @@ namespace real::detail {
       // parameter: measured on M1 across four adversarial shapes (a stop-byte set at a ~93-byte period,
       // and (?i)<literal> sparse/no-match/dense), the stop-set win saturates by ~96 B (no further gain to
       // 512+) while the icase-sparse/no-match cost keeps climbing past it (roughly +2% at 128 B, +40% by
-      // 1024 B) -- so 512-1024 (an earlier candidate) would have traded a bounded stop-set win for an
+      // 1024 B) -- so 512-1024 would trade a bounded stop-set win for an
       // unbounded-looking icase cost. 128 captures the stop-set win in full at a ~2% icase cost.
       constexpr std::size_t seed   {128};
       std::size_t           window {total < seed ? total : seed};

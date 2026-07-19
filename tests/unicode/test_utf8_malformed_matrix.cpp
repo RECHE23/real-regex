@@ -1,4 +1,4 @@
-// Volet B (malformed UTF-8 robustness): test_utf8.cpp already pins the core contract for a bare
+// Malformed UTF-8 robustness: test_utf8.cpp already pins the core contract for a bare
 // class/dot run (stops at a malformed sequence, C-0 property) and for empty-match iteration
 // (boundary-aligned). This file crosses the SAME malformed-subject corpus with the features that
 // file does not exercise on malformed input: Unicode `\w \d \s \b`, `\p{...}` (GC/script/scx/
@@ -36,8 +36,8 @@ namespace {
    * the allocation. `std::vector<char>` has no such guarantee (`data()[size()]` is not part of
    * the allocation at all) and owns its storage via RAII, matching what the C-ABI / fuzz harness
    * hands the engine (a bare pointer+length pair) without leaking the buffer the way a raw
-   * `new[]`/`.release()` did in an earlier version of this test (wagon 4c's own OOB fix shipped
-   * with a leak LeakSanitizer caught on the CI's Linux leg -- invisible locally, since LSan is not
+   * `new[]`/`.release()` did in an earlier version of this test (a leak LeakSanitizer
+   * caught on the CI's Linux leg -- invisible locally, since LSan is not
    * enabled by default on this macOS toolchain; see the sanitize target's own comment).
    */
   std::vector<char> bare_heap_ending_in(std::size_t   total,
@@ -56,7 +56,7 @@ namespace {
   }
 
   // A catalog of malformed byte sequences, named for the assertion messages. Matches the classes
-  // named in the fiche: isolated continuation, truncated lead (both at end-of-text and mid-text,
+  // the named cases: isolated continuation, truncated lead (both at end-of-text and mid-text,
   // the latter followed by ASCII so a wrongly-permissive scan would visibly overrun), overlong
   // encodings of increasing length, an encoded surrogate, a code point past U+10FFFF, and the two
   // bytes that are never valid anywhere in UTF-8.
@@ -84,7 +84,7 @@ namespace {
     };
   }
 
-  // Wagon 4 (was a KNOWN GAP through volet B, now FIXED on every route): `.` and negated-ASCII-
+  // A former KNOWN GAP, fixed on every route: `.` and negated-ASCII-
   // only classes (`[^,]`) used to accept these four byte sequences as one valid code point --
   // overlong 3-byte, overlong 4-byte, an encoded surrogate, and a code point past U+10FFFF via a
   // structurally-plausible F4 lead. Two independent implementations shared the bug (neither
@@ -221,9 +221,9 @@ TEST(dot_bare_fast_path_rejects_second_byte_bounds_cases)
 
 TEST(dot_width_no_oob_read_past_heap_buffer_end)
 {
-  // Wagon 4c hotfix: run_codepoint_class's width lambda (site 1, pike.hpp) hoisted the 3-/4-byte
+  // Hotfix guard: run_codepoint_class's width lambda (site 1, pike.hpp) hoisted the 3-/4-byte
   // branches' first-continuation-byte read OUT of the short-circuit `i+2/i+3 < text.size()` guard,
-  // losing the bounds protection the pre-wagon-4 code had -- a truncated 3-/4-byte lead as the
+  // losing the prior bounds protection -- a truncated 3-/4-byte lead as the
   // LAST byte of a subject then read one byte past the buffer. Caught by the C-ABI fuzzer under
   // ASan, not by this suite's own `make sanitize` run: every subject elsewhere in this file is a
   // `std::string`, and `std::string` ALWAYS guarantees `data()[size()] == '\0'` as a valid,
@@ -232,8 +232,8 @@ TEST(dot_width_no_oob_read_past_heap_buffer_end)
   // allocation. bare_heap_ending_in gives a subject with no such slack (a `std::vector<char>` of
   // EXACTLY `total` bytes, no implicit terminator), matching the bare pointer+length pair the C
   // API / fuzz harness actually hands the engine -- the only shape that puts a real heap-redzone
-  // boundary at `text.size()`. The vector owns its storage (RAII; wagon 4c's first version used a
-  // raw `new[]`/`.release()` that leaked, caught by LeakSanitizer on CI's Linux leg). The proof is
+  // boundary at `text.size()`. The vector owns its storage (RAII; an earlier raw
+  // `new[]`/`.release()` version leaked, caught by LeakSanitizer on CI's Linux leg). The proof is
   // this test running clean under `make sanitize` (ASan aborts the whole process on the read this
   // pins, so a crash here IS the failure signal, not an EXPECT); the assertions below are a bonus
   // correctness check, not the point of the test.
@@ -260,7 +260,7 @@ TEST(dot_width_no_oob_read_past_heap_buffer_end)
 
 TEST(strict_utf8_boundary_cases_rejected_on_every_route)
 {
-  // Cohérence multi-routes (wagon 4 v2): the four second-continuation-byte-bounds cases must be
+  // Cohérence multi-routes: the four second-continuation-byte-bounds cases must be
   // rejected IDENTICALLY no matter which internal route a `.`/negated-ASCII-only-class pattern
   // takes -- fast-path bare, general Pike VM (forced via lookaround, which disqualifies onepass
   // and the lazy-DFA), one-pass, the lazy-DFA byte-program, and the separate public real::dfa
@@ -306,7 +306,7 @@ TEST(strict_utf8_boundary_cases_rejected_on_every_route)
   // byte/klass/split/jump chain through unchanged (no klass_cp involved), so it inherits the same
   // fix; unlike every route above, a wrong answer here would surface as "the DFA claims a match
   // real::regex itself rejects", not a thrown dfa_error (the pattern compiles and constructs fine
-  // both before and after this wagon).
+  // both before and after that change).
   {
     std::vector<real::regex> pats {real::regex("a.b")};
     const real::dfa          d    {std::span<const real::regex>(pats)};

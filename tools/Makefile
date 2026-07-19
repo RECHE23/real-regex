@@ -15,7 +15,7 @@
 # read `include/real/...` (no leading component -> no match -> header diagnostics
 # suppressed, the historical always-green lint). An absolute `-I$(ROOT)/include`
 # makes every header path match and floods the log (measured A/B on one TU: 0 vs
-# 24409 warnings -- the wagon 6 gate red). Safe here because every recipe below runs
+# 24409 warnings). Safe here because every recipe below runs
 # under `cd $(ROOT) &&`, matching how the root Makefile's own former lint/misra ran
 # with CURDIR == ROOT. DO NOT re-anchor INCLUDES to absolute.
 ROOT := $(abspath $(CURDIR)/..)
@@ -72,35 +72,28 @@ format-check: ## Uncrustify, dry-run, exits non-zero on diff
 check-layers: ## Enforce the include/real/ header layering contract (no tier climbing)
 	@cd $(ROOT) && python3 tools/check_layers.py
 
-# C ABI frozen-surface pin (hardening #4): golden GENERATED from bindings/c/real_capi.h
+# C ABI frozen-surface pin: golden GENERATED from bindings/c/real_capi.h
 # (never hand-edited). --check fails if header and golden diverge. Can-fail proof:
 #   python3 tools/gen_capi_abi_golden.py --inject-enum REAL_ERR_SYNTAX=99 --stdout > tests/bindings/capi_abi_golden.txt
 #   make check-capi-abi   # must exit non-zero; then: python3 tools/gen_capi_abi_golden.py
 # Enum/flag value pins live in tests/bindings/test_capi_abi.cpp (real::flags cross-check).
-check-capi-abi: ## C ABI golden vs real_capi.h + enum/flag pins (hardening #4)
+check-capi-abi: ## C ABI golden vs real_capi.h + enum/flag pins
 	@cd $(ROOT) && python3 tools/gen_capi_abi_golden.py --check
 	@echo "check-capi-abi: PASS (golden matches real_capi.h)"
 
 # Features-matrix drift check -- ONE target, TWO generated artifacts, both from
-# docs/site/data/features.yaml via tools/gen_features.py (its own `--check` covers both,
-# doc-site P3a + P3b):
-#   1. tests/frontend/features_probe_generated.inc -- the executable-claims CI probe (P3a).
+# docs/site/data/features.yaml via tools/gen_features.py (its own `--check` covers both):
+#   1. tests/frontend/features_probe_generated.inc -- the executable-claims CI probe.
 #   2. docs/COMPATIBILITY.md's "## Feature scorecard" table, GENERATED between DO-NOT-EDIT
-#      markers (P3b) -- neither is ever hand-edited.
+#      markers -- neither is ever hand-edited.
 # Deliberately its OWN root-invocable target (not folded into docs-site-gate's heavier
 # sphinx+doxygen+coverage-html run): docs/Makefile's own docs-site-gate calls this target
 # too (the mandatory carrier -- features.yaml and COMPATIBILITY.md both live under
 # docs/**, which ci.yml's push trigger paths-ignores, so a yaml-edited-without-regen push
 # never reaches ci.yml at all; docs-site.yml has no paths filter, so THIS is where that
-# drift actually gets caught), but this target also runs standalone here, cheap enough to
-# sit alongside check-capi-abi in ci.yml's preflight job. Can-fail proof (either artifact):
-#   sed -i '' 's/status: excluded-by-design/status: supported/' docs/site/data/features.yaml
-#   make check-features-probe   # must exit non-zero (both checks fail); then:
-#   git checkout -- docs/site/data/features.yaml
-#   sed -i '' 's/note: "exact alias of `\\\\Z` (Python 3.14.s meaning)"/note: "CHANGED"/' docs/site/data/features.yaml
-#   make check-features-probe   # must exit non-zero (scorecard check fails, probe stays green); then:
-#   git checkout -- docs/site/data/features.yaml
-check-features-probe: ## Features-probe .inc + COMPATIBILITY.md scorecard vs features.yaml (doc-site P3a/P3b; the paths-ignore net)
+# drift actually gets caught), but it also runs standalone here, cheap enough to sit
+# alongside check-capi-abi in ci.yml's preflight job.
+check-features-probe: ## Features-probe .inc + COMPATIBILITY.md scorecard vs features.yaml
 	@cd $(ROOT) && python3 tools/gen_features.py --check
 	@echo "check-features-probe: PASS (features_probe_generated.inc matches features.yaml)"
 

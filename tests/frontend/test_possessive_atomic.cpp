@@ -1,10 +1,10 @@
-// Possessive quantifiers (X*+/X++/X?+/X{n,m}+) and atomic groups (?>...) — D1, Tier 1 only
+// Possessive quantifiers (X*+/X++/X?+/X{n,m}+) and atomic groups (?>...) — Tier 1 only
 // (a bare atom, or one wrapped in exactly one capturing group). A general "Tier 1.5" for
 // compound deterministic bodies was scoped OUT after verifying a genuine VM-architecture wall
 // (see compiler.hpp's emit_possessive_repeat) — any compound body under repetition, or any
 // alternation body even with no repetition, is a clean compile-time rejection instead. Every
-// expected result below is transcribed from the D0 oracle matrix (scratchpad/d0-atomic-
-// possessive/oracle_matrix.py, 46/46 probes verified against Python 3.14's live `re`), restricted
+// expected result below is transcribed from an oracle matrix of 46 probes verified against
+// Python 3.14's live `re`, restricted
 // to the probes Tier 1's amended scope actually covers; the rest became rejection tests.
 #include <string_view>
 
@@ -50,8 +50,8 @@ TEST(possessive_on_class)
 
 TEST(atomic_group_tier1_bodies)
 {
-  // (?>X*) desugars to X*+ regardless of the inner repeat's own flag (D0-2's detection-order
-  // finding) -- (?>[^"]*) and (?>\d+), the dominant real-world shapes, must not be rejected as
+  // (?>X*) desugars to X*+ regardless of the inner repeat's own flag (a measured detection-order
+  // requirement) -- (?>[^"]*) and (?>\d+), the dominant real-world shapes, must not be rejected as
   // unbounded.
   auto m = real::regex(R"re((?>[^"]*)")re").search("abc\"");
   EXPECT(m);
@@ -86,7 +86,7 @@ TEST(possessive_captured_single_atom)
 
 TEST(possessive_capture_not_corrupted_by_failed_final_attempt)
 {
-  // Regression probe for a bug found by hand-tracing during D1 design: a possessive loop always
+  // Regression probe for a bug found by hand-tracing: a possessive loop always
   // attempts one more repetition after every success. If the capture's start slot were written
   // BEFORE the atom test (speculatively), the failed final attempt would overwrite it, leaving a
   // torn [failed-attempt-start, prior-end) span instead of the correct, LAST-SUCCESSFUL span.
@@ -232,7 +232,7 @@ TEST(atomic_group_unterminated_is_a_clean_parse_error)
 // --- regression: Tier 1 as an alternation branch losing priority to a same-round-convergent,
 //     lower-priority sibling ----------------------------------------------------------------
 //
-// Found by the D1 differential fuzzer's own possessive-quantifier generator (test_
+// Found by the differential fuzzer's own possessive-quantifier generator (test_
 // differential_fuzz.py) before this shipped anywhere: `(\w){1,3}+|[a-z]` on "20bc" gave the
 // RIGHT overall span for its second find_iter match (3,4) but the WRONG (unset) group(1) --
 // silently attributing the match to the lower-priority, non-capturing branch2 instead of the
@@ -302,7 +302,7 @@ TEST(possessive_alternation_priority_regression)
 // --- coverage top-up: the 3 opcodes x {miss-at-min, max-reached, min=0 exit, end-of-text
 //     mid-run, anchor/\b interaction}, Tier 3 exact messages, parser shapes, is_deterministic's
 //     no-outer-repeat branches (group / nested-possessive / exact-count), `.` as a Tier 1 atom --
-//     each a real behavior probe, not filler (coverage-bump-735 fiche). ----------------------
+//     each a real behavior probe, not filler. ----------------------
 
 TEST(possessive_miss_at_min_fails_for_all_three_opcode_families)
 {
@@ -424,7 +424,7 @@ TEST(parser_possessive_desugar_and_scoped_flags)
   EXPECT(!real::regex("a?+a").search("a"));
   EXPECT_EQ(real::regex("a?+").search("a").end(), 1U);
   // (?>X*) desugars to the SAME compiled shape as X*+, regardless of the inner repeat's own
-  // possessive flag (D0-2's detection-order finding) -- confirmed on a bounded {n,m} form too.
+  // possessive flag (measured detection order) -- confirmed on a bounded {n,m} form too.
   EXPECT_EQ(real::regex("(?>a{2,4})").search("aaaaa").end(), 4U);
   // Scoped flags around a Tier 1 possessive construct: icase folds the atom test itself,
   // orthogonally to the possessive machinery around it.

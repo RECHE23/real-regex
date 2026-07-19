@@ -1,29 +1,10 @@
 <!--
-std-regex-reference.md -- MyST conversion of docs/COMPATIBILITY.md (doc-site
-P2a·Drop-in). Mechanical conversion only, content TEL-QUEL (std-only scope
-unchanged). {#compat} -> a MyST anchor above the H1. The ORIGINAL
-docs/COMPATIBILITY.md is untouched (still feeds /api via Doxygen and repo readers
-who cite it by name) and stays the canon -- this page is a migration mirror, not
-the source of truth. See the doc-site P2a fiche.
-
-doc-site P2b decided the COMPATIBILITY.md-vs-divergences.dox naming trap the P2a
-comment above once expected a rename to fix: renaming/rescoping
-docs/COMPATIBILITY.md was REJECTED (16 live refs across source/binding/test/fuzz/
-docs, see the P2b fiche) -- the fix goes to the site layer instead, not this file's
-name or title.
-
-Forward-refs (@ref divergences, @ref div_*) have been rewired from the Doxygen
-HTML under /api/ to internal {doc}/{ref} cross-refs, now that
-docs/site/differences-from-re.md (doc-site P2b) mirrors docs/divergences.dox into
-the site. One forward-ref remains genuinely /api-only: \ref
-real::compat::basic_regex::… (the `uses_real_traversal` member ref) links to its
-class page WITHOUT a #fragment -- Doxygen member anchors are content-hashed and
-proven version-variant between the local (Homebrew) and CI (apt) Doxygen builds --
-see conf.py's own nitpick_ignore_regex comment for the same trap on the Breathe
-side -- so hardcoding that hash here would be a guessed, not a verified, link. It
-stays build-verified raw HTML (ls / grep id= in build/doc/html) until the API
-reference itself migrates into the site (P3+), per the fiche's
-mapping-must-be-founded rule.
+Mirror of docs/COMPATIBILITY.md (the canon, which still feeds /api and is cited
+by name across source/tests/bindings -- renaming it was measured and rejected).
+Edit the original, then re-mirror -- never edit prose here alone. Cross-refs to
+the divergences page are internal {doc}/{ref}; the one /api-only link
+(real::compat::basic_regex's uses_real_traversal) stays fragment-free because
+Doxygen member anchors are content-hashed and differ across Doxygen versions.
 -->
 
 (compat)=

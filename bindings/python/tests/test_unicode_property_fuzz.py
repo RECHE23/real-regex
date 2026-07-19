@@ -1,4 +1,4 @@
-r"""Volet B, part 2: `\p{...}` in the differential fuzzer. `re` has no `\p{}` at all, so it cannot be
+r"""`\p{...}` in the differential fuzzer. `re` has no `\p{}` at all, so it cannot be
 the oracle here (unlike test_differential_fuzz.py's random-pattern fuzz) -- this file uses two
 oracles instead, neither a new dependency:
 

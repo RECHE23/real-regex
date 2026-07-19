@@ -134,7 +134,7 @@ TEST(regex_set_region_pos_endpos)
 
 TEST(regex_set_compile_fail_throws)
 {
-  const std::string_view pats[] = {"ok", "(?>a|b)"}; // atomic groups: Tier 1 bodies only (D1); a compound/alternating body is not
+  const std::string_view pats[] = {"ok", "(?>a|b)"}; // atomic groups: Tier 1 bodies only; a compound/alternating body is not
   EXPECT_THROWS(real::regex_set(pats, 2), real::regex_error);
 }
 

@@ -1,10 +1,7 @@
 <!--
-drop-in/index.md -- doc-site P1 reorg: the Drop-in section landing. One section,
-one question: "how do I adopt real in MY language?". The bindings ARE drop-ins
-(decision Rene) -- each replaces its host language's regex API -- so they live
-here, not as their own header item. std-regex-reference stays nested inside
-std-regex-tour's own toctree (unchanged since P2a); this page's toctree only
-adds the tour and the bindings.
+The Drop-in section landing: "how do I adopt real in MY language?". The bindings
+are drop-ins too, so they nest here. std-regex-reference nests inside the tour's
+own toctree, not this one.
 -->
 
 # Drop-in

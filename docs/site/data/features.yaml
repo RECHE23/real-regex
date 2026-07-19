@@ -1,92 +1,44 @@
-# docs/site/data/features.yaml -- the Features-matrix DATA and now the single status
-# source for TWO generated outputs (doc-site P2b data+render, P3a CI probe, P3b scorecard):
-#
-#   1. docs/site/features.md's `{features}` directive (conf.py) -- every category, full
-#      Unicode-badge render, for the docs SITE.
-#   2. docs/COMPATIBILITY.md's "## Feature scorecard" table (tools/gen_features.py's
-#      generate_scorecard(), GENERATED + committed between DO-NOT-EDIT markers) -- for
-#      GitHub readers, who never see the Sphinx site. Only categories NOT marked
-#      `scorecard: false` below contribute a row (see CATEGORY schema) -- this keeps the
-#      GitHub table "the lines where REAL says something notable", not the full matrix
-#      the site's page already is.
-#
-# The de-dup is done: COMPATIBILITY.md's scorecard table used to be hand-written and
-# duplicate this file's status data (doc-site P2b's "De-dup DIFFÉRÉ" section) -- that
-# follow-up wagon is P3b, this file. COMPATIBILITY.md's own prose above the table (its
-# "single status source" line) now says features.yaml IS that source, generated from.
+# The single status source, rendered three ways: the site's {features} directive
+# (conf.py), the GENERATED "## Feature scorecard" table in docs/COMPATIBILITY.md
+# (tools/gen_features.py, DO-NOT-EDIT markers), and the CI probe
+# (tests/frontend/features_probe_generated.inc, same generator).
 #
 # Schema:
 #
 #   categories: [ { name: str, scorecard: bool (optional, default true), features: [ FEATURE, ... ] }, ... ]
 #
-#   CATEGORY.scorecard: bool -- OPTIONAL, default true. false excludes every feature in
-#     this category from the GENERATED COMPATIBILITY.md table (generate_scorecard())
-#     while it still renders on the site's Features page (the {features} directive does
-#     not read this key at all). Set false on "Core" only so far -- its baseline "of
-#     course it's supported" rows are already covered, in prose, by COMPATIBILITY.md's
-#     own hand-written "## What runs on real" section; the CI probe still exercises
-#     every Core row's `pattern` regardless (this flag is scorecard-render-only).
+#   CATEGORY.scorecard: false excludes the category from the GENERATED
+#     COMPATIBILITY.md table only -- it still renders on the site and its
+#     patterns are still probed. "Core" is the one such category: its baseline
+#     rows are covered by COMPATIBILITY.md's own "What runs on real" prose.
 #
 #   FEATURE:
-#     construct: str        -- human label; Markdown-style single-backtick code spans
-#                               (the {features} directive splits on backtick, it does
-#                               not run a full Markdown/reST parser over this field)
-#     status: enum           -- FIGE to exactly these 4 machine slugs, no others:
-#                                  supported | extension | excluded-by-design | planned
-#                                The rendered badge / scorecard cell shows the HUMAN form
-#                                ("excluded by design", spaced -- COMPATIBILITY.md's
-#                                scorecard prose has no hyphens); the slug is the machine
-#                                key, the label is a display-only lookup in
-#                                tools/gen_features.py's STATUS_LABELS (the ONE canonical
-#                                vocab table -- conf.py imports it from there, doc-site
-#                                P3b; it is not redefined a second time in conf.py).
-#     note: str              -- the scorecard's Rationale cell verbatim-ish, or (Core
-#                               category, which has no table of its own) a short note
-#                               derived from COMPATIBILITY.md's baseline prose (l.85-93)
-#     link: "PAGE#target"    -- OPTIONAL. Names a real MyST cross-ref target already
-#                               live on the site (today always
-#                               "differences-from-re#div_*"). The {features} directive
-#                               resolves only the "#target" half, as a Sphinx
-#                               :ref:-equivalent cross-reference BY TARGET NAME -- never
-#                               a raw `<a href="#div_x">` fragment. Reason: docutils'
-#                               `nodes.make_id()` folds every explicit MyST target
-#                               through its CSS-safe-id normalizer, turning `div_property`
-#                               into the built id `div-property` (underscore -> hyphen,
-#                               unconditionally) -- a raw href using the target's own
-#                               spelling would 404 (see differences-from-re.md's own
-#                               header comment, "PIEGE D'ANCRES"). Omitted entirely when
-#                               no row-specific div_* target exists on the site yet; no
-#                               weak/inferred link was invented just to fill the column.
-#     since: str              -- OPTIONAL. The scorecard's "Since / target" column (e.g.
-#                               "2026.7"), preserved from the original hand-written
-#                               COMPATIBILITY.md table (doc-site P3b) -- GitHub readers
-#                               keep it. Omitted entirely means "always true / not
-#                               version-gated" -- generate_scorecard() renders that as
-#                               "—", the hand-written table's own em-dash. The site's
-#                               {features} directive deliberately does NOT render this
-#                               field at all (see conf.py's own comment): one source, two
-#                               audience-tuned renders -- the site stays laconic, the
-#                               version history lives in CHANGELOG.md, and GitHub's
-#                               scorecard keeps the column it always had.
-#     pattern: str or null   -- ONE representative, testable regex for this row.
-#                               Phase 2 (a follow-up wagon, not built here): supported/
-#                               extension rows must COMPILE on real; excluded-by-design
-#                               rows must be REJECTED under policy::strict; planned rows
-#                               and null patterns are skipped. null is used ONLY where no
-#                               single pattern can honestly stand for the row's claim --
-#                               see the one such row below for why, in a comment there.
-#                               A fabricated pattern was not used to avoid a blank cell.
-#
-# No "planned" row exists yet: no category below has one. The slug stays reserved in the
-# schema (probe-ready) -- not populated here with an invented row just to exercise all 4
-# enum values.
+#     construct: str        -- human label; single-backtick spans render as code
+#                              (the directive splits on backtick, no full parser)
+#     status: enum          -- exactly: supported | extension | excluded-by-design
+#                              | planned. Machine slug; the human label is a
+#                              display lookup in gen_features.py's STATUS_LABELS
+#                              (the one canonical vocab table; conf.py imports it).
+#     note: str             -- the rationale cell
+#     link: "PAGE#target"   -- OPTIONAL. A live MyST cross-ref target, resolved
+#                              BY NAME (a raw #href would 404: make_id folds
+#                              div_property to the built id div-property). Never
+#                              invented to fill the column.
+#     since: str            -- OPTIONAL. Scorecard "Since / target" column;
+#                              omitted renders as an em-dash. The site
+#                              deliberately does not render it (version history
+#                              is CHANGELOG.md's job).
+#     pattern: str or null  -- ONE representative regex, consumed by the CI
+#                              probe: supported/extension must compile,
+#                              excluded-by-design must be rejected, planned and
+#                              null are skipped. null only where no single
+#                              pattern honestly stands for the claim (see the
+#                              one such row's own comment) -- never fabricated.
 
 categories:
   - name: "Core"
-    # scorecard: false -- kept off the GENERATED COMPATIBILITY.md table (doc-site P3b);
-    # this baseline is already covered, in prose, by that file's own hand-written
-    # "## What runs on real (linear, ReDoS-safe)" section. Still rendered in full on the
-    # site's Features page (the {features} directive ignores this key).
+    # Off the generated COMPATIBILITY table: its "What runs on real" prose
+    # already covers this baseline. Still rendered on the site, still probed.
     scorecard: false
     features:
       - construct: "Literals, concatenation & alternation"
@@ -137,15 +89,8 @@ categories:
     features:
       - construct: "`\\p{…}` property classes"
         status: supported
-        # note carries BOTH the scorecard's old status-parenthetical ("supported
-        # (General_Category + Script + Script_Extensions + the standard binary
-        # properties)") AND its Rationale cell, merged (doc-site P3b's generated table
-        # has no separate status-parenthetical slot -- see gen_features.py's
-        # generate_scorecard()). The `sc=`/`scx=` short-vs-long-code detail and the
-        # named unsupported-property examples (`Bidi_Class`/`Word_Break`/`Age`) are not
-        # retraced anywhere in divergences.dox's div_property section (which gives
-        # different example names, Alphabetic/White_Space, for the same "not built in
-        # yet" point) -- kept here in full rather than lost on generation.
+        # The sc=/scx= short-vs-long-code detail and the unsupported-property
+        # examples live only here -- documented nowhere else.
         note: "General_Category + Script + Script_Extensions + the standard binary properties; native, linear `klass_cp`; a REAL superset -- `re` rejects `\\p` outright; `sc=`/`scx=` accept both the long name (`Latin`) and the short UAX24/ISO 15924 code (`Latn`); other UAX44 properties (`Bidi_Class`, `Word_Break`, `Age`, …) stay `unsupported`"
         link: "differences-from-re#div_property"
         since: "2026.7"

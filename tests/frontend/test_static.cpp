@@ -84,7 +84,7 @@ namespace {
   // Invalid patterns are *compile errors* (uncomment to verify):
   //   constexpr real::static_regex<"(a"> broken;
 
-  // D1: Tier 1 possessive quantifiers / atomic groups under TRUE constant evaluation --
+  // Tier 1 possessive quantifiers / atomic groups under TRUE constant evaluation --
   // emit_tier1_loop / emit_tier1_atom_test / tier1_capture_on_match are all constexpr, but
   // nothing exercised them at compile time until now. A static_assert proves the whole
   // pipeline (parse -> compile -> match) runs at compile time, not just "is marked constexpr".
@@ -95,7 +95,7 @@ namespace {
   // search() retries at later start positions: position 0's possessive attempt (max 4 a's) lands
   // on the 5th 'a', not 'b', and fails outright (no giveback) -- but position 1's INDEPENDENT
   // attempt has only 4 a's ahead of it, consumes all 4, and lands exactly on 'b'. Per-attempt
-  // independence (D0-1's own oracle contract), not a possessive/greedy distinction here.
+  // independence (the oracle contract), not a possessive/greedy distinction here.
   static_assert(possessive_rx.search("aaaaab").start() == 1);
   static_assert(!possessive_rx.fullmatch("aaaaab")); // fullmatch is anchored at 0 only -- no retry available
 

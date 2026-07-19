@@ -207,8 +207,8 @@ namespace real {
      *          only under `std::is_constant_evaluated()`, in the `Storage` union constructor). Every
      *          element's lifetime is begun by `std::construct_at` (placement-new) before it is read,
      *          and reads stay within `[0, size_)`. Any accessor added here must preserve that
-     *          write-before-read order, or it reads indeterminate memory — a silent UB the former
-     *          value-init used to mask. MemorySanitizer is the detector (the CI sanitize leg is
+     *          write-before-read order, or it reads indeterminate memory — a silent UB
+     *          value-init would mask. MemorySanitizer is the detector (the CI sanitize leg is
      *          ASan/UBSan, which does not catch it); run MSan on the devbox when changing how
      *          small_vec accesses its elements.
      *
@@ -716,11 +716,11 @@ namespace real {
                             small_vec<eps_entry, 32>>
       {
         lookaround_scratch          lookaround;                    //!< Isolated sub-scratch for bounded lookaround evaluation.
-        capture_pool                pool;                          //!< OPT D1: copy-on-write capture blocks (heap-backed).
-        std::optional<lazy_dfa>     fwd_dfa;                       //!< Fallback when immut is null; prefer shared_fwd_dfa (D1).
-        std::optional<reverse_dfa>  rev_dfa;                       //!< Fallback reverse; prefer shared_rev_dfa (D1).
+        capture_pool                pool;                          //!< copy-on-write capture blocks (heap-backed).
+        std::optional<lazy_dfa>     fwd_dfa;                       //!< Fallback when immut is null; prefer shared_fwd_dfa.
+        std::optional<reverse_dfa>  rev_dfa;                       //!< Fallback reverse; prefer shared_rev_dfa.
         const void *                dfa_program         {nullptr}; //!< Program the per-state DFAs were built for (fallback).
-        std::optional<reverse_dfa>  il_prefix_rev;                 //!< Fallback IL prefix reverse; prefer shared_il_prefix_rev (D1).
+        std::optional<reverse_dfa>  il_prefix_rev;                 //!< Fallback IL prefix reverse; prefer shared_il_prefix_rev.
         const void *                il_prefix_for       {nullptr}; //!< Fallback: prefix program il_prefix_rev was built for.
         const void *                il_text             {nullptr}; //!< IL: the haystack \ref il_abandoned refers to.
         bool                        il_abandoned        {false};   //!< IL: a linearity/density guard tripped on this haystack.
@@ -728,8 +728,8 @@ namespace real {
         std::size_t                 il_density_origin   {npos};    //!< O1: first IL candidate byte offset this haystack.
         const void *                rare_disc_text      {nullptr}; //!< Rare-disc: haystack \ref rare_disc_abandoned refers to.
         bool                        rare_disc_abandoned {false};   //!< Rare-disc density guard: stay on prefix for this haystack.
-        std::optional<ac_automaton> ac_state;                      //!< D1-AC: the multi-literal automaton (built once per program).
-        const void*                 ac_state_for        {nullptr}; //!< D1-AC: the program \ref ac_state was built for.
+        std::optional<ac_automaton> ac_state;                      //!< The multi-literal automaton (built once per program).
+        const void*                 ac_state_for        {nullptr}; //!< the program \ref ac_state was built for.
       };
 
       std::string     pattern_text;                  //!< The original pattern text.
@@ -864,7 +864,7 @@ namespace real {
        * \brief Capture-slot container: fixed-capacity, no heap.
        */
       using slot_storage = static_vec<std::size_t, slot_count>;
-      // OPT D1: worst-case live capture blocks — every reference (a DFS stack frame or a thread in either
+      // worst-case live capture blocks — every reference (a DFS stack frame or a thread in either
       // list) could point to a distinct block; freed blocks recycle through the pool's free list, so the
       // pool never grows past this. The stack is (3*code_size)+4, each list up to code_size threads.
       static constexpr std::size_t max_blocks {(5 * code_size) + 8};
@@ -873,7 +873,7 @@ namespace real {
        * \brief VM scratch state, all fixed-capacity (zero heap).
        *
        * The epsilon DFS stack is bounded because each pc is processed once and
-       * pushes at most two explore entries plus one restore entry. OPT D1: capture slots live in a
+       * pushes at most two explore entries plus one restore entry. capture slots live in a
        * copy-on-write \ref basic_capture_pool (a thread carries one block index, not a slot run), sized
        * for the worst-case block count above — the same zero-heap, compile-sized discipline.
        */

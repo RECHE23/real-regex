@@ -5,8 +5,8 @@
 // { break; }` on the FIRST instruction and silently filled zero capture slots. Found live by
 // differential fuzzing: `rb"\B(\w){2}+"` on `b"C1c_BB11BB"` lost group(1) entirely (spans stayed
 // correct -- fixed_shape's own span-finding does not go through this function). Confirmed to be
-// a PRE-EXISTING bug, unrelated to D1/D1-perf's possessive quantifiers despite the fuzzer's own
-// repro using one: plain GREEDY `\B(\w){2}` (no possessive quantifier at all, predating D1
+// a PRE-EXISTING bug, unrelated to the possessive quantifiers despite the fuzzer's own
+// repro using one: plain GREEDY `\B(\w){2}` (no possessive quantifier at all, predating them
 // entirely) reproduces identically -- verified before attributing the bug to any specific route.
 #include <optional>
 #include <string>

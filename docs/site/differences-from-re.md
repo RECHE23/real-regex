@@ -1,56 +1,15 @@
 <!--
-differences-from-re.md -- MyST conversion of docs/divergences.dox (doc-site P2b: the
-site-layer fix for the COMPATIBILITY.md-vs-divergences.dox naming trap -- see the doc-site
-P2b fiche). Mechanical conversion only, content TEL-QUEL: \page -> title, the 13
-\section div_* -> titles with explicit MyST anchor targets `(div_X)=`, named after the
-Doxygen `div_X` label VERBATIM for a recognizable 1:1 mapping to the ids already live at
-/api/divergences.html#div_* -- \note -> a ```{note}``` admonition, \tableofcontents
-dropped (pydata_sphinx_theme's own "On this page" secondary sidebar already renders an
-in-page ToC for every page, so no manual equivalent is needed). The ORIGINAL
-docs/divergences.dox is untouched (still feeds /api via Doxygen, and is what every
-source/binding/test/fuzz reference in the repo actually cites) and stays canon
-permanently -- this page is a migration mirror, not a new source of truth.
-
-NOT byte-identical to the Doxygen id= despite the verbatim target name: docutils'
-nodes.make_id() unconditionally maps every explicit target through its CSS-safe-id
-normalizer (lowercase, NFKD-fold, collapse to `[a-z](-?[a-z0-9]+)*`), which turns every
-underscore into a hyphen regardless of input -- confirmed empirically (`(div_ascii)=`
-built to `id="div-ascii"`, not `id="div_ascii"`; no docutils/MyST target syntax opts out
-of it). The alternative -- a raw `<a id="div_ascii">` HTML anchor plus raw `<a href=
-"#div_ascii">` links -- would get the literal string but forfeits Sphinx's own
-nitpicky-verified cross-reference net for every intra-page/inter-page div_* link this
-wagon closes, which the fiche's gate section and its "no dangling @ref" prohibition both
-require; correctness under nitpicky won over exact-string id parity. The hyphenated form
-is otherwise a faithful 1:1 mapping (same slugs, same order, same count).
-
-Body text is a byte-for-byte copy of the .dox prose, including its Doxygen-style
-\\-doubled escapes (\\w, \\xHH, \\p{...}, ...): CommonMark's own backslash-escape rule
-(escaping applies only to ASCII punctuation, and is suppressed entirely inside a backtick
-code span) collapses those same doubled escapes to the identical single-backslash glyphs
-Doxygen itself renders, in and out of a code span alike -- verified against the live
-build/doc/html/divergences.html byte-for-byte before writing this file, so no manual
-unescaping was applied or needed.
-
-\ref surface -- flagged for the supervisor, not a silent scope call: the fiche's own sweep
-measured exactly one \ref here (the double-backslash-escaped `\ref div_property` mention at
-.dox:241, which Doxygen itself renders as inert literal text "\ref div_property", not a
-link -- upgraded here into a real cross-ref per the fiche's explicit instruction) and an
-empty forward-ref-API class. Re-measuring turned up four more FUNCTIONING single-backslash
-\ref commands the sweep's grep evidently missed -- div_icase (.dox:64),
-div_empty_iteration_capture (.dox:159), div_possessive (.dox:188) and div_rejected
-(.dox:221) -- all genuinely intra-page and already rendering as real hyperlinks in the
-current /api build; converted here the same way as div_property ({ref}`div_X`), since
-leaving live Doxygen \ref syntax as inert literal text would be a broken conversion, not a
-TEL-QUEL one. The sweep also missed two real forward-refs this page's prose makes to
-docs/design.dox, which has NOT migrated into the site: \ref design (.dox:272, the
-`\page design` title) and \ref g_followups (.dox:280, design.dox's own `\subsection
-g_followups`) -- both build-verified (ls / grep id=) in build/doc/html before linking here
-via raw HTML, exactly the P2a mapping-must-be-founded guard the fiche kept "in case the
-conversion reveals one" -- it did, twice.
-
-The `COMPATIBILITY.md` mention (.dox:134) is a plain backticked filename citation in the
-source, not a \ref -- left exactly as text, unlinked, per the fiche (strict-minimal: the
-repo file exists, the mention is honest).
+Mirror of docs/divergences.dox (the canon, which still feeds /api and is what
+in-repo references cite). Edit the .dox, then re-mirror -- never edit prose here
+alone. Mirroring rules:
+- Body prose is a byte-for-byte copy, doubled escapes included (\\w, \\p{...}):
+  CommonMark's backslash rule collapses them to the same glyphs Doxygen renders.
+- Each \section div_X becomes an explicit `(div_X)=` target. docutils' make_id
+  turns underscores into hyphens (id="div-x"); {ref} targets keep the nitpicky
+  net, which is why raw HTML anchors were not used.
+- \ref to sections of THIS page -> {ref}`div_X`. \ref into pages not on the
+  site (design.dox) -> raw HTML links into /api, target verified in the built
+  Doxygen HTML before linking.
 -->
 
 # Differences from Python re

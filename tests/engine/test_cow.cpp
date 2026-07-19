@@ -1,4 +1,4 @@
-// Copy-on-write capture blocks (OPT D1): the adversarial scenarios for the detach-on-save-when-shared
+// Copy-on-write capture blocks (COW): the adversarial scenarios for the detach-on-save-when-shared
 // invariant. A split shares one block across its branches; a save in one branch must copy-on-write before
 // it writes, or a sibling / parked thread would see the mutation. These patterns produce WRONG captures if
 // that detach is missing — so they are the teeth guarding the refcount path (the Σ-invariant assert, live
@@ -67,7 +67,7 @@ TEST(cow_empty_alternative_shares_block)
   EXPECT_EQ(rx.search("ab")[2], "b"sv);
 }
 
-// OPT D1 made the copy-on-write pool the sole capture mechanism, so static_regex (compile-time, zero-heap)
+// The copy-on-write pool is the sole capture mechanism, so static_regex (compile-time, zero-heap)
 // now shares blocks too — the same captures must hold under constexpr evaluation.
 TEST(cow_static_regex_captures_constexpr)
 {

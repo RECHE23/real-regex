@@ -1,6 +1,6 @@
 name: Docs-site
 
-# docs/site build + gate (doc-site P1: Sphinx + Breathe + pydata-sphinx-theme landing).
+# docs/site build + gate (Sphinx + Breathe + pydata-sphinx-theme landing).
 # Additive only -- no deploy, nothing goes live here; docs.yml (the live Doxygen Pages
 # site) stays the deploy path until the P1b go-live swap.
 #
@@ -11,7 +11,7 @@ name: Docs-site
 # docs-site-gate step skips with a warning when sphinx-build is absent locally, so THIS
 # is the net that always fires.
 #
-# clang/llvm (doc-site P1c): docs-site-gate now also builds coverage-html + the full
+# clang/llvm: docs-site-gate also builds coverage-html + the full
 # docs-site release output (build/site/html, api/ + coverage/ copied in) before its
 # built-HTML link check -- the /coverage link the landing ships has to resolve to a
 # REAL file in every run that gates a push, not just in docs.yml's own deploy job.
@@ -37,9 +37,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Sibling checkout layout, mirroring docs.yml: coverage-html (run by
-      # docs-site-gate since P1c so the landing's /coverage link resolves to a
+      # docs-site-gate so the landing's /coverage link resolves to a
       # real file) compiles the test suite, whose TUs include the SciForge test
-      # framework from ../sciforge -- the dependency the first P1c run missed
+      # framework from ../sciforge -- a dependency an initial run missed
       # (green locally where the sibling exists, red here without it).
       - uses: actions/checkout@v6
         with:

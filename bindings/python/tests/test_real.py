@@ -30,7 +30,7 @@ class TestCompile(unittest.TestCase):
 
     def test_invalid_patterns_raise_error(self):
         """Invalid syntax raises real.error."""
-        for pattern in [r"(", r")", r"a**", r"[z-a]", r"(?>a|b)",  # atomic groups: Tier 1 bodies only (D1); a compound/alternating body is not
+        for pattern in [r"(", r")", r"a**", r"[z-a]", r"(?>a|b)",  # atomic groups: Tier 1 bodies only; a compound/alternating body is not
                         r"(?P=name)", r"(?P<1>x)", r"\q", "a\\"]:
             with self.assertRaises(real.error, msg=pattern):
                 real.compile(pattern)
@@ -195,7 +195,7 @@ class TestModuleFunctions(unittest.TestCase):
         self.assertEqual(rs.matches(text),
                          [real.search(p, text) is not None for p in pats])
         with self.assertRaises(real.error):
-            real.RegexSet([r"ok", r"(?>a|b)"])  # atomic groups: Tier 1 bodies only (D1); a compound/alternating body is not
+            real.RegexSet([r"ok", r"(?>a|b)"])  # atomic groups: Tier 1 bodies only; a compound/alternating body is not
 
     def test_regex_set_native_matches_n_loop_reference(self):
         """R4: RegexSet now wraps real::regex_set directly (Stage-1/Stage-2 fused inside the C++
@@ -608,7 +608,7 @@ class TestIntentionalDivergences(unittest.TestCase):
         self.assertTrue(real.compile(r"\pN").fullmatch("7"))          # single-letter form
         self.assertTrue(real.compile(r"(?a)\p{L}").fullmatch("é"))    # (?a) does not restrict \p{}
         self.assertEqual([m.group() for m in real.compile(r"\p{L}+").finditer("ab cd")], ["ab", "cd"])
-        # inside a class, with negation and an enclosing [^...] on top (P2)
+        # inside a class, with negation and an enclosing [^...] on top
         self.assertTrue(real.compile(r"[\p{L}\d_]").fullmatch("5"))
         self.assertTrue(real.compile(r"[\P{L}]").fullmatch("3"))
         self.assertIsNone(real.compile(r"[\P{L}]").fullmatch("A"))

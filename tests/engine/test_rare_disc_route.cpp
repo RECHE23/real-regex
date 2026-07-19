@@ -1,4 +1,4 @@
-//! D1 rare-discriminant prefilter: memchr(`:`) + back-verify `https?` + `//` → VM confirm.
+//! Rare-discriminant prefilter: memchr(`:`) + back-verify `https?` + `//` → VM confirm.
 //! Routed == core (meta-seam), near-misses never invent a match, multi-hit find_iter parity.
 #include <sciforge/test/framework.hpp>
 

@@ -49,7 +49,7 @@ var sizeMax = ^C.size_t(0)
 var EngineVersion = C.GoString(C.real_go_engine_version())
 
 // cBytes returns a pointer usable as a real_capi (text, len) or (repl, repl_len) argument.
-// (NULL, 0) is a valid empty subject throughout the C ABI (v2026.7.39+, the D0-finding fix) —
+// (NULL, 0) is a valid empty subject throughout the C ABI (v2026.7.39+) —
 // so an empty slice needs no allocation at all, matching Go's own nil-slice representation.
 func cBytes(b []byte) (unsafe.Pointer, func()) {
 	if len(b) == 0 {

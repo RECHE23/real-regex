@@ -10,7 +10,7 @@
 // closure battle (first seed, first 100k run): `pattern='\b\w+' text='a0b1a' flags=24` diverged
 // from CPython at search(text, pos, endpos)/match(text, pos, endpos) for pos in [1,4]. Pre-existing
 // (reproduces on an unmodified v2026.7.36 tip via plain greedy \b\w+, no possessive quantifier
-// involved) and spans three runners: run_class_loop, run_cp_class_loop, and D1-perf's own
+// involved) and spans three runners: run_class_loop, run_cp_class_loop, and the possessive own
 // run_possessive_loop_generic -- fixed via a new pattern_hints::wb_lead_maximal_run flag, set at
 // all four resolve_class_wb_hints call sites, consumed as a runtime guard in each runner.
 #include <sciforge/test/framework.hpp>
@@ -128,7 +128,7 @@ TEST(wb_windowed_search_leading_b_cp_class_loop)
                       {.pos = text.size(), .endpos = text.size(), .expect = std::nullopt}});
 }
 
-// --- D1-perf possessive loop (run_possessive_loop_generic) --------------------------------------
+// --- possessive loop (run_possessive_loop_generic) --------------------------------------
 
 TEST(wb_windowed_search_leading_b_possessive_plus)
 {
@@ -180,7 +180,7 @@ TEST(wb_windowed_search_leading_capital_b_possessive_star_unaffected)
 
 TEST(wb_windowed_search_possessive_route_toggle_agrees)
 {
-  // The "wagon-4 pattern": route-auto (D1-perf fast path armed) must agree with forced-general on
+  // Route-auto (possessive fast path armed) must agree with forced-general on
   // every window, since Bug C independently affected BOTH routes before the fix -- a regression
   // here would mean the two routes silently diverged again.
   const real::regex      re(R"(\b\w*+,)");

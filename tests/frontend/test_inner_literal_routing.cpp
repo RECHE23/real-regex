@@ -42,7 +42,7 @@ TEST(inner_literal_routed_equals_core)
     {.pat = R"((a?)a)",              .text = "aaa baa aXa aaaa"},                                   // adjacent literal, optional prefix
     {.pat = R"(.+@)",                .text = "aaaa@x bb@ c@d@e no @"},                              // greedy prefix: reverse must not over-bound
     {.pat = R"(id=[0-9a-f]{8})",     .text = "id=abc12345 id=00000000 x id=deadbeef no id= id=zz"}, // offset-0 literal
-    // IL-FUSION cases (fiche IL-FUSION): the whole pattern is fixed_shape, so these take the
+    // IL-FUSION cases: the whole pattern is fixed_shape, so these take the
     // arithmetic-verify fast path (match_byte_klass_run, no reverse/forward DFA) instead of the
     // reverse-DFA + confirm_at route the cases above still exercise. `\d` is deliberately NOT used here:
     // the Unicode shorthand compiles to klass_cp, which fixed_shape (and so il_fused_eligible) always
@@ -54,7 +54,7 @@ TEST(inner_literal_routed_equals_core)
     {.pat = R"([0-9]{4}-[0-9]{2}-[0-9]{2})", .text = "9-04"},                                                   // prefix cannot fit before the hit at all (h < prefix_w) -- must decline, not underflow
     {.pat = R"([0-9]{10}-[0-9]{10}-[0-9]{10})", .text = "x0123456789-0123456789-01234567890y bad"},             // total width 32 (== il_fused_max_width, the boundary): still fused
     {.pat = R"([0-9]{15}-[0-9]{15}-[0-9]{15})", .text = "012345678901234-012345678901234-012345678901234"},     // total width 47 (> il_fused_max_width): stays on the pre-fusion route, must still match correctly
-    // D1' P0.1 pure-lit alt: StatusLine arms IL `req=`; URL (`s?`) deliberately declines IL (P0.2 dropped).
+    // Pure-lit alt: StatusLine arms IL `req=`; URL (`s?`) deliberately declines IL (measured).
     // Both stay 0-div route-on vs core.
     {.pat  = R"(https?://[^\s]+)", .text = "see http://a.com and https://b.org/x end no-url http:/bad"},
     {.pat  = R"((info|error|warn)\s+\d{4}-\d{2}-\d{2}\s+req=[a-f0-9]+)",

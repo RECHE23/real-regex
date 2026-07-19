@@ -1,4 +1,4 @@
-// real::compat::re2 (RE2 drop-in, Volet B) -- REAL-only coverage (no RE2 dependency; RE2 is the
+// real::compat::re2 (RE2 drop-in) -- REAL-only coverage (no RE2 dependency; RE2 is the
 // test-time oracle for the differential proof, done separately against a real, locally-installed
 // RE2, not part of this tracked suite). This file exercises the wrapper's own contract: option
 // wiring, the no-fallback/no-exception error shape, Arg extraction, Consume/Replace semantics,
@@ -546,7 +546,7 @@ TEST(set_match_without_output_param)
   EXPECT(!set.Match("bar", nullptr));
 }
 
-// D1 (issue #2): \C-in-text-mode completion. Real RE2 accepts \C in its default UTF-8 mode (matches
+// \C-in-text-mode completion. Real RE2 accepts \C in its default UTF-8 mode (matches
 // exactly one byte, possibly mid-codepoint); rejecting it here would have been an asterisk on the
 // "drop-in" claim. Safe unconditionally for this layer specifically: the whole API is byte-offset
 // C++ (mirroring RE2's own), so the char-offset hazard that keeps \C gated to flags::bytes on a

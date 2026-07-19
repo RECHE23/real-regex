@@ -110,12 +110,12 @@ _QUANTS = ["", "*", "+", "?", "??", "*?", "+?", "{2}", "{1,3}", "{2,}", "{0,2}"]
 # Quantifiers that cannot repeat (so cannot create a nullable loop). Anything
 # else establishes a "looping context" whose body must always consume.
 _NONLOOP_QUANTS = ["", "?", "??"]
-# Possessive quantifiers (D1, Tier 1): a bare atom or one wrapped in exactly one capturing
+# Possessive quantifiers (Tier 1): a bare atom or one wrapped in exactly one capturing
 # group only -- REAL rejects a possessive/atomic construct over any compound body, which the
 # harness's existing "REAL declines by design, skip" path (below) already handles gracefully,
 # so this list can stay a touch broader than REAL's own accepted shapes without risk.
 _POSSESSIVE_QUANTS = ["*+", "++", "?+", "{2}+", "{1,3}+", "{2,}+", "{0,2}+"]
-# D1-perf (Étage A): single-byte delimiters for the whole-pattern "quoted"/delimited possessive
+# Single-byte delimiters for the whole-pattern "quoted"/delimited possessive
 # shape (`"[^"]*+"`) -- see PatternGen._quoted_possessive below.
 _DELIMS = ['"', "'", ";", "|"]
 # Tokens that always consume >= 1 character: the only things allowed directly
@@ -303,7 +303,7 @@ class PatternGen:
         return self._atom(depth) + quant
 
     def _possessive_element(self):
-        """Return a possessive-quantified atom (D1, Tier 1) or a small atomic group.
+        """Return a possessive-quantified atom (Tier 1) or a small atomic group.
 
         Only called when `_RE_SUPPORTS_POSSESSIVE` (the 3.11+ probe) is true. Generates
         BOTH REAL-supported shapes (a bare atom, or one wrapped in exactly one capturing
@@ -338,7 +338,7 @@ class PatternGen:
         return "(?>" + atom + ")"
 
     def _quoted_possessive(self):
-        """Return a WHOLE-PATTERN "delimited" possessive shape (D1-perf Étage A): a literal
+        """Return a WHOLE-PATTERN "delimited" possessive shape : a literal
         delimiter, a possessive class run, and a closing literal -- the "quoted string" shape
         REAL's new fast-path route specifically targets (`"[^"]*+"`). Only meaningful as a
         top-level pattern (unlike `_possessive_element`, which nests inside a larger sequence
@@ -409,7 +409,7 @@ class PatternGen:
             str: A random regular expression pattern.
         """
         if _RE_SUPPORTS_POSSESSIVE and self.rng.random() < 0.08:
-            # D1-perf Étage A: the whole-pattern "quoted"/delimited shape must be generated at
+            # The whole-pattern "quoted"/delimited shape must be generated at
             # the TOP level (see _quoted_possessive's own doc comment) -- anchors below still
             # apply on top of it like any other body.
             body = self._quoted_possessive()
@@ -690,7 +690,7 @@ class TestDifferentialFuzz(unittest.TestCase):
         self.assertGreater(compiled / total, 0.8)
 
     def test_malformed_utf8_bytes_match_re(self):
-        """Volet B: the exact malformed-UTF-8 byte sequences that test_utf8_malformed_matrix.cpp
+        """The exact malformed-UTF-8 byte sequences that test_utf8_malformed_matrix.cpp
         pins as *rejected* in text mode must, in BYTES mode, be plain data that re also accepts --
         bytes mode has no UTF-8 concept on either engine, so a byte that is "malformed" only means
         something in text mode. This is the differential half of that C++ file's own contract."""

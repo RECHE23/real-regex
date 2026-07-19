@@ -56,7 +56,7 @@ doc-check: ## Build docs under the exact CI Doxygen (Docker) to catch version-dr
 	   echo "doc-check: WARN — Docker or $(SCIFORGE_TOOLS)/doxygen-check.sh absent, CI-Doxygen check skipped (the Docs CI job is the backstop)"; \
 	 fi
 
-# --- docs/site (Sphinx + Breathe + pydata-sphinx-theme, doc-site P1) -------
+# --- docs/site (Sphinx + Breathe + pydata-sphinx-theme) -------
 #
 # Additive to `doc`/`doc-no-coverage` above, not a replacement: docs.yml still
 # deploys build/doc/html (the live Doxygen site) untouched. This builds the
@@ -86,12 +86,12 @@ docs-site: doc-no-coverage ## Build the themed Sphinx/Breathe site (docs/site) -
 # discipline for the Doxygen side. Separate output dirs from docs-site's release
 # build (_gate / _linkcheck) so a gate run never staleness-poisons a real build.
 #
-# Two nets added for doc-site P1c (the bespoke landing template, docs/site/_templates/
+# Two nets for the bespoke landing template (docs/site/_templates/
 # landing.html, served via html_additional_pages -- see conf.py):
 #
-#   no-inline-quickstart, adapted: the quickstart panels are no longer {literalinclude}
-#   directives in a source document (P1b-A's shape) -- they are `{{ quickstart_* }}`
-#   placeholders injected by conf.py's html-page-context hook (P1c). The check now scans
+#   no-inline-quickstart: the quickstart panels are not {literalinclude}
+#   directives in a source document -- they are `{{ quickstart_* }}`
+#   placeholders injected by conf.py's html-page-context hook. The check scans
 #   the TEMPLATE SOURCE for (a) any of the 4 placeholders missing (the injection points
 #   themselves were deleted) and (b) known verbatim strings from the actual snippet
 #   bodies (static_regex/MustCompile(/etc.) -- their presence in the template SOURCE
@@ -102,13 +102,13 @@ docs-site: doc-no-coverage ## Build the themed Sphinx/Breathe site (docs/site) -
 #   built-HTML link check (tools/check_site_links.py): linkcheck (above) walks SOURCE
 #   documents only -- landing.html is a Jinja2 template, invisible to it, so a broken
 #   href inside the bespoke landing could ship undetected (the exact "linkcheck doesn't
-#   see html_additional_pages" gap the P1c review caught); linkcheck also never
+#   see html_additional_pages" gap); linkcheck also never
 #   resolves a URL #fragment at all (linkcheck_anchors = False, conf.py), so a stale
-#   forward-ref anchor into build/doc/html (doc-site P2a: the Drop-in pages' @ref
+#   forward-ref anchor into build/doc/html (the Drop-in pages' @ref
 #   links into /api/ until those targets migrate into the site) would be invisible to
 #   it on both counts. Needs the REAL release output (api/ + coverage/ copied in, not
 #   just _gate's bare sphinx-build), so this builds docs-site before checking it.
-#   Site-wide since doc-site P2a (no PAGE argument -> every build/site/html/*.html,
+#   Site-wide (no PAGE argument -> every build/site/html/*.html,
 #   file + #anchor both verified, excluding api/+coverage/ as scan ROOTS -- see the
 #   script's own docstring for why those two stay Doxygen's/llvm-cov's own gate).
 #

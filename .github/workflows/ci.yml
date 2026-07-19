@@ -60,7 +60,7 @@ jobs:
           # (silent ABI drift + re-vendor no longer goes green). Enum/flag pins are in the test suite.
           echo "── check-capi-abi (C ABI surface golden)"
           make -C real-regex check-capi-abi
-          # doc-site P3a/P3b: features_probe_generated.inc AND docs/COMPATIBILITY.md's
+          # features_probe_generated.inc AND docs/COMPATIBILITY.md's
           # GENERATED "## Feature scorecard" table -- both GENERATED from
           # docs/site/data/features.yaml, both checked by this one target. Redundant-but-
           # cheap here (docs/site/data/features.yaml and docs/COMPATIBILITY.md live under
@@ -142,11 +142,11 @@ jobs:
       # (std_engine's lazy build under a mutex). Reproduce locally with: make tsan.
       - name: ThreadSanitizer smoke (concurrent std_engine)
         run: make tsan CXX=clang++
-      # Core concurrent caches (7.45 shared-confirm / immutables call_once / shared_dfa_for slot mutex).
+      # Core concurrent caches (shared-confirm / immutables call_once / shared_dfa_for slot mutex).
       # Barrier-synced first search on a fresh const regex — not the compat layer. make tsan-core.
       - name: ThreadSanitizer smoke (core shared-confirm / immutables)
         run: make tsan-core CXX=clang++
-      # RE2 drop-in differential vs true libre2 (hardening #2). Optional locally (skip if no re2);
+      # RE2 drop-in differential vs true libre2. Optional locally (skip if no re2);
       # CI installs libre2 so the oracle always runs. Catches GlobalReplace empty-abut and kin.
       # Reproduce: make fuzz-re2  (needs pkg-config re2). Can-fail: REAL_RE2_DIFF_CANFAIL=1.
       - name: Install libre2 (oracle for real::compat::re2 differential)
@@ -288,8 +288,8 @@ jobs:
   # the C++20 guard fires under -std=c++17 (the only thing exercising the guard — CI otherwise
   # builds C++20). pkg-config and cmake are installed explicitly (absent from some images);
   # SciForge is a sibling so REAL's top-level configure resolves the test harness (the install
-  # itself is harness-free). This job is also the C++ home for `example-check` (doc-site P1b-A
-  # gate-snippet): it already has both compilers, and install-smoke's own step (e) already
+  # itself is harness-free). This job is also the C++ home for `example-check`:
+  # it already has both compilers, and install-smoke's own step (e) already
   # proves examples/cpp/*.cpp against the INSTALLED package, so example-check's direct
   # -Iinclude compile+run is the complementary, cheaper leg — same two files, two proofs.
   install-smoke:

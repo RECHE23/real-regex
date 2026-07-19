@@ -14,8 +14,7 @@ categories = ["text-processing"]
 # fix. They run in CI (the bindings / bindings-cross jobs) against the in-tree sources.
 #
 # examples/** IS packaged (unlike tests/**): it has no dev-dependency on the `regex` oracle, it
-# doubles as the landing page's Rust quickstart tab (docs/site/index.md, doc-site P1b-A
-# gate-snippet), and `rust-publish-check` explicitly builds it from the extracted tarball (see
+# doubles as the landing page's Rust quickstart tab, and `rust-publish-check` explicitly builds it from the extracted tarball (see
 # that Makefile target) — so shipping it is what makes that proof possible in the first place.
 include = ["src/**/*.rs", "build.rs", "Cargo.toml", "README.md", "vendor/**", "examples/**"]
 

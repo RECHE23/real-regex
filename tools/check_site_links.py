@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""check_site_links.py — the built-HTML link check for docs/site (doc-site P1c;
-extended site-wide for doc-site P2a).
+"""check_site_links.py — the built-HTML link check for docs/site.
 
 Sphinx's own `linkcheck` builder only walks the SOURCE documents (docs/site/*.md,
 *.rst) it parses into a doctree. docs/site/_templates/landing.html is a Jinja2
@@ -8,15 +7,14 @@ template rendered straight to HTML via `html_additional_pages` (conf.py) -- it i
 never a document, so linkcheck never sees a single href/src inside it. Worse,
 linkcheck never resolves a URL FRAGMENT at all (`linkcheck_anchors = False` in
 conf.py) -- so even a source-document link into build/doc/html's Doxygen output
-(`../api/divergences.html#div_rejected`, a forward-ref used by the doc-site P2a
-Drop-in pages until those targets migrate into the site, see the doc-site fiche)
+(`../api/divergences.html#div_rejected`)
 is invisible to it on BOTH counts: the target lives outside the doctree, and the
 fragment is never checked regardless. This script closes both gaps by parsing the
 BUILT output HTML directly -- the same files a visitor's browser would load -- and
 checking each internal link's target file AND (when present) its #fragment via a
 literal `id="..."` search in the target file's own text.
 
-Site-wide (doc-site P2a): by default this walks every `*.html` file under
+Site-wide: by default this walks every `*.html` file under
 SITE_ROOT -- not just the bespoke landing -- EXCEPT it does not descend into the
 `api/` (Doxygen, copied wholesale by `make docs-site`) or `coverage/` (llvm-cov)
 subtrees to find pages to scan: their own internal links are that tool's own gate
@@ -31,7 +29,7 @@ Usage:
     SITE_ROOT defaults to build/site/html (docs-site's release output -- the exact
     tree `make docs-site` produces and docs.yml deploys).
     PAGE, if given, restricts the check to that one page (relative to SITE_ROOT) --
-    the original doc-site P1c interface, preserved for a quick single-page check.
+    preserved for a quick single-page check.
     Omitted (the default, and what docs-site-gate now invokes), every page under
     SITE_ROOT is walked (see above).
 
@@ -81,8 +79,8 @@ class _LinkCollector(HTMLParser):
 
 class _NavExtractor(HTMLParser):
     """Collect (label, href) for every <a> inside the FIRST element matching
-    (container_tag, class-substring) -- the nav-equality net's parser (doc-site
-    P1 reorg). First match only: pydata renders its primary nav twice per page
+    (container_tag, class-substring) -- the nav-equality net's parser. First
+    match only: pydata renders its primary nav twice per page
     (header + mobile drawer), identically by construction.
     """
 
@@ -155,7 +153,7 @@ def _extract_primary_nav(
 
 def _class_tokens(attrs_dict: dict[str, str | None]) -> set[str]:
     """The element's class attribute as a set of whole tokens. Substring
-    matching is a trap here twice over (supervision catch, doc-site P2):
+    matching is a trap here twice over:
     `"cmd" in class` also matches the OUTER `hero__cmd` wrapper around the
     hero's real `.cmd` box, and `"copy" in class` matches a hypothetical
     `nocopy` -- token matching is what the browser's own class selector does.
@@ -241,7 +239,7 @@ def _check_landing_commands(site_root: Path) -> list[str]:
 
     # A landing with ZERO .cmd boxes is not "clean", it is missing (empty file,
     # botched render, restructure) -- an empty page must never PASS vacuously
-    # (supervision catch, doc-site P2: a truncated index.html sailed through this
+    # (measured: a truncated index.html sailed through this
     # check while nav-equality correctly failed closed on it).
     if not checker.cmd_count:
         errors.append(
@@ -253,17 +251,17 @@ def _check_landing_commands(site_root: Path) -> list[str]:
 
 
 def _check_nav_equality(site_root: Path) -> list[str]:
-    """The nav-equality net (doc-site P1 reorg): the landing's injected nav and
+    """The nav-equality net: the landing's injected nav and
     the pydata inner header MUST render the same {label -> target} list, same
-    order. The two menus diverged for five wagons precisely because no gate
-    watched them -- this assertion is why the single-source refactor can't rot.
+    order. The two menus once diverged precisely because no gate watched them --
+    this assertion is why the single-source design can't rot.
     Returns human-readable error strings; empty = PASS.
     """
     landing = site_root / "index.html"
     # The inner witness is the ROOT DOC's own page (root_doc = "contents",
     # conf.py): it exists on every build by construction and can never be
-    # renamed by a content wagon -- unlike a hardcoded content page (Opus
-    # review note, doc-site P1). pydata renders the same header on every page.
+    # renamed by a content change -- unlike a hardcoded content page. pydata
+    # renders the same header on every page.
     inner = site_root / "contents.html"
     for page in (landing, inner):
         if not page.is_file():
@@ -465,7 +463,7 @@ def main(argv: list[str]) -> int:
         else:
             print(
                 "check_site_links: nav-equality PASS -- landing nav == inner "
-                "header nav (single toctree source, doc-site P1 reorg)"
+                "header nav (single toctree source)"
             )
 
         landing_cmd_errors = _check_landing_commands(site_root)

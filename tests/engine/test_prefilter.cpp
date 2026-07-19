@@ -124,7 +124,7 @@ TEST(codepoint_class_fast_path_activation)
   // `.` and negated classes `[^…]` compile to the 16-instruction UTF-8 codepoint
   // block; when that block is the *whole* pattern (optionally a greedy `+`), the
   // engine takes a per-codepoint scan. The hint comes from a marker the compiler
-  // records at emission — analyze_program no longer re-recognizes the bytecode shape.
+  // records at emission — analyze_program never re-recognizes the bytecode shape.
   EXPECT(hints_of(".").codepoint_class_ascii >= 0);
   EXPECT(!hints_of(".").codepoint_class_plus);                           // a single codepoint
   EXPECT(hints_of(".+").codepoint_class_ascii >= 0);
@@ -591,7 +591,7 @@ TEST(find_literal_memmem_wrapper)
 TEST(icase_literal_cascade_hints_never_change_results)
 {
   // Same with/without-hints technique as hints_never_change_results, but targeting the corpus shapes
-  // named in the fix's own fiche: sparse-match (the adversarial shape -- mostly filler, no uppercase
+  // named in the fix review: sparse-match (the adversarial shape -- mostly filler, no uppercase
   // fold member anywhere), dense-match, no-match, a match at the very start/end (boundary), a non-ASCII
   // fold (café), and an empty haystack.
   const std::string_view filler {"the quick brown fox jumps over the lazy dog and words filler here "};

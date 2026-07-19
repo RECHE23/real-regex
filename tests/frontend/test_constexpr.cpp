@@ -41,8 +41,8 @@ namespace {
     return true;
   }
 
-  // Split out from class_cases (each dot-family pattern's compiled program grew, wagon 4's canonical
-  // second-continuation-byte splitting) -- a smaller per-static_assert step count, one evaluation per
+  // Split out from class_cases (each dot-family pattern's compiled program grew with
+  // the canonical second-continuation-byte splitting) -- a smaller per-static_assert step count, one evaluation per
   // function, not a bigger shared budget. See flag_cases below for the same reasoning.
   constexpr bool dot_cases()
   {
@@ -102,7 +102,8 @@ namespace {
 
   // Split out from anchor_and_flag_cases -- two of these five are dot-family patterns, and bundling
   // all 13 original checks into one static_assert is what tripped a newer libc++'s default
-  // constexpr-step budget once wagon 4 grew `.`'s compiled program (see dot_cases above).
+  // constexpr-step budget once the canonical splitting grew `.`'s compiled program
+  // (see dot_cases above).
   constexpr bool flag_cases()
   {
     CONSTEXPR_EXPECT(real::regex("hello", real::flags::icase).fullmatch("HeLLo").matched());

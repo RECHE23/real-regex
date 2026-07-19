@@ -8,12 +8,12 @@
 # `make -C tests <target>`.
 #
 # `test` -- ctest ONLY: `build` (the CMake configure+compile step, `-S .`-rooted) stays
-# a ROOT-only target, unmigrated (compartimentalisation decision: a CMake config step is
+# a ROOT-only target, deliberately (a CMake config step is
 # repo-wide, not a tests/-only concern). The root's own `test: build` keeps `build` as
 # its prerequisite, then delegates just the ctest invocation here -- so
 # `make -C real-regex test` (the sciforge ecosystem CI's cross-repo invocation,
 # ../sciforge/.github/workflows/ecosystem.yml:58) still builds AND runs the suite, same
-# as before this wagon, byte-for-byte.
+# byte-for-byte.
 #
 # CWD idiom -- read before touching a recipe: every recipe line below that touches a
 # repo-relative path (a bare `-S .` CMake configure, or `docs/coverage-style.css`, or
@@ -111,8 +111,8 @@ coverage: coverage-build ## Line-coverage text summary + HTML report
 # and functionally runs the branch), the x86 devbox A/B + callgrind (attribution: the lambda symbols are gone
 # from the gcc build), and clang's own coverage of the identical #else contract. llvm-cov has no per-line
 # exclusion, so both exclusions are per-file. The floor itself does NOT move for this exclusion — 95.0 stays
-# the bar on what remains in scope. COV_FLOOR/COV_FLOOR_IGNORE live in mk/common.mk (compartimentalisation
-# wagon 6) — the root's own full-local-gate step 22 echoes $(COV_FLOOR) directly, see that file's comment.
+# the bar on what remains in scope. COV_FLOOR/COV_FLOOR_IGNORE live in mk/common.mk —
+# the root's own full-local-gate step 22 echoes $(COV_FLOOR) directly, see that file's comment.
 coverage-check: coverage-build ## Enforce the line-coverage floor (CI gate)
 	@pct=$$($(LLVM_COV) report $(COV_DIR)/real_tests_bin -instr-profile=$(COV_DIR)/tests.profdata \
 	        -ignore-filename-regex='$(COV_FLOOR_IGNORE)' \
@@ -141,7 +141,7 @@ tsan: ## ThreadSanitizer smoke of concurrent std_engine (Clang)
 	cd $(ROOT) && clang++ $(CXXSTD) -O1 -g $(INCLUDES) -fsanitize=thread tests/compat/tsan_compat.cpp -o $(BUILD)/tsan_compat
 	$(BUILD)/tsan_compat
 
-# ThreadSanitizer smoke for the CORE concurrent caches (7.45 shared-confirm / immutables / call_once),
+# ThreadSanitizer smoke for the CORE concurrent caches (shared-confirm / immutables / call_once),
 # not the compat layer. Barrier-synchronized first search on a FRESH const regex each iteration —
 # without the barrier+fresh pattern, call_once fills once and late threads never race the warm path
 # (false-negative risk). Harness proof (must go red):

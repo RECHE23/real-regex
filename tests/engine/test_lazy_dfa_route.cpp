@@ -156,7 +156,7 @@ TEST(lazy_dfa_a1_a2_do_not_regress_the_dedicated_fast_paths)
   // chain (run_fixed_shape, run_alternation, run_class_loop, run_exact_literal, the fused inner-literal
   // route) -- those patterns never reach pike.hpp's lazy-DFA block at all, so their own results (and, by
   // extension, their measured throughput) must be completely unaffected. Spans only here (throughput is
-  // the fiche's own benchmark, not a unit-test concern) -- this just pins that the dispatch priority
+  // a benchmark concern, not a unit-test one) -- this just pins that the dispatch priority
   // itself did not shift. Padded past lazy_dfa_min_input too: at a short length none of this would
   // exercise anything (the fast paths apply regardless of length, but the point is the A1/A2 route
   // itself must never even be REACHED for these, at any length the route would otherwise engage at).
@@ -211,11 +211,11 @@ TEST(lazy_dfa_a2_unbounded_reach_equals_core)
 TEST(lazy_dfa_a2_unbounded_reach_scales_linearly)
 {
   // THE gate for the O(n^2) fix itself: total search work must grow linearly with the haystack on the
-  // adversarial corpus for each pattern shape named in the fix's own fiche.
+  // adversarial corpus for each pattern shape named in the fix review.
   expect_search_is_linear(R"(a.*b)", corpus_all_a);
   expect_search_is_linear(R"(a.+b)", corpus_all_a);
   expect_search_is_linear(R"(.*needle)", corpus_all_a); // no first-byte prefilter -- forward_end from the start, pre-existing O(n)
-  // \w+.*\w+ dropped from the fiche's battery: it is a false adversarial case, not a test bug fix --
+  // \w+.*\w+ dropped from the battery: it is a false adversarial case, not a test bug fix --
   // any text with 2+ word characters ANYWHERE matches it trivially (.* bridges any gap), so a large
   // no-match corpus for it does not exist. \w+.*x keeps the \w+-prefixed, unbounded-.*-reach shape
   // while staying genuinely unmatched (no literal terminator in the corpus).

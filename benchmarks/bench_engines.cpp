@@ -194,7 +194,7 @@ namespace {
   {
     const real::regex rx(pat);
     // Matching-only (no Match vector) — equitable with std/pcre2/re2 counters.
-    // Once-per-walk TrailingLA monomorphic path when eligible (P3c).
+    // Once-per-walk TrailingLA monomorphic path when eligible.
     return rx.count_matches(text);
   }
 

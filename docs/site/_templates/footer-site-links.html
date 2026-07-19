@@ -1,8 +1,5 @@
-{#- doc-site P1 reorg: the out-of-menu footer links (council synthesis: Performance
-    lives in the footer, never the primary nav). Rendered on every inner page via
-    html_theme_options["footer_end"] (conf.py) -- the landing has its own footer
-    with the same targets. pathto() keeps hrefs correct at every page depth, the
-    same mechanism _fix_logo_link documents. -#}
+{#- Out-of-menu links, rendered on every inner page via footer_end (conf.py).
+    pathto() keeps hrefs correct at every page depth. -#}
 <nav class="site-footer-links" aria-label="More">
   <a href="{{ pathto('performance/index') }}">Performance</a> ·
   <a href="{{ pathto('coverage/index.html', 1) }}">Coverage</a> ·

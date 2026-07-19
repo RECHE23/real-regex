@@ -10,7 +10,7 @@ OUTPUT_LANGUAGE        = English
 # --- what to document ------------------------------------------------------
 INPUT                  = include/real README.md docs/
 FILE_PATTERNS          = *.hpp *.dox *.md
-# docs/site is the Sphinx/MyST landing (doc-site P1) -- its .md is MyST syntax, not
+# docs/site is the Sphinx/MyST landing -- its .md is MyST syntax, not
 # Doxygen-markdown, and RECURSIVE + *.md below would otherwise ingest it into the LIVE
 # Doxygen site and break `make doc` under WARN_AS_ERROR the moment the first MyST page
 # lands. Same precedent as docs/release-notes.
@@ -49,7 +49,7 @@ GENERATE_LATEX         = NO
 HTML_OUTPUT            = html
 SOURCE_BROWSER         = YES
 ALPHABETICAL_INDEX     = YES
-# XML sidecar for Breathe (docs/site, doc-site P1) -- consumed by Sphinx via
+# XML sidecar for Breathe (docs/site) -- consumed by Sphinx via
 # breathe_projects = {"real": "../../build/doc/xml"}. Additive to the HTML output above;
 # does not change what `make doc` (the live Doxygen HTML site) produces or where.
 GENERATE_XML           = YES

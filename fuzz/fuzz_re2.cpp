@@ -1,7 +1,6 @@
 // Differential harness: real::compat::re2 (drop-in) vs true libre2 (oracle).
 //
-// D0 proof (hardening #2): curated cases + can-fail. Not yet a CI libFuzzer job
-// (that is D1, after René GO). Compile requires locally-installed re2:
+// Curated cases + can-fail; not a CI libFuzzer job. Compile requires locally-installed re2:
 //
 //   c++ -std=c++20 -O1 -g -Iinclude fuzz/fuzz_re2.cpp \
 //       $(pkg-config --cflags --libs re2) -o build/fuzz_re2 && ./build/fuzz_re2
@@ -553,7 +552,7 @@ int main(int argc,
 {
   (void) argc;
   const bool canfail {std::getenv("REAL_RE2_DIFF_CANFAIL") != nullptr};
-  // Optional single-case filter later; D0 runs the full curated set.
+  // Optional single-case filter later; the default runs the full curated set.
   (void) argv;
 
   Report r;

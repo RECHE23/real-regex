@@ -373,7 +373,7 @@ TEST(compat_backend_selection)
   EXPECT(rc::regex(R"(\0)").uses_real());          // \0 alone is NUL on both -> stays on real (platform-stable)
   EXPECT(rc::regex(R"(\0x)").uses_real());         // \0 then non-digit literal -> stays on real
 
-  // `\C` (RE2's raw-byte escape, D1 volet A) is screened to std: real accepts it here only because
+  // `\C` (RE2's raw-byte escape) is screened to std: real accepts it here only because
   // real::compat always compiles with flags::bytes internally (byte-per-std::regex-char alignment),
   // an implementation detail that must not leak \C through as unintended public surface -- \C is not
   // ECMAScript at all, so this is not even a "real superset, defer to std" case, just a plain reject.
@@ -480,7 +480,7 @@ TEST(compat_nullable_captured_repeat_group)
 
   // compiler.hpp's node_nullable, direct: a capturing group whose body is a CONCAT of purely
   // zero-width pieces (`\b\B`, both anchors) is nullable via the "every child nullable" path
-  // (distinct from `(ab|)`'s alternation path exercised above) -- over-flagged per the fiche's own
+  // (distinct from `(ab|)`'s alternation path exercised above) -- over-flagged per the design's own
   // example (`(\b|x)+` is "in the class", conservative). Checked on `real::regex` directly since the
   // shape itself, not a compat routing decision, is what is under test here.
   EXPECT(real::regex(R"((\b\B)+x)").raw_program().hints.nullable_captured_repeat);

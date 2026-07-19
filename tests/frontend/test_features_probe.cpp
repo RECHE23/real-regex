@@ -1,4 +1,4 @@
-// The Features-matrix CI probe (doc-site P3a): makes "executable claims" literal by
+// The Features-matrix CI probe: makes "executable claims" literal by
 // turning every docs/site/data/features.yaml row with a non-null `pattern` into a
 // compiled + run assertion. Native real::regex ONLY -- never real::compat/policy::fallback,
 // which would delegate a rejected pattern to std::regex and mask the excluded-by-design

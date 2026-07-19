@@ -135,7 +135,7 @@ namespace real::detail {
   };
 
   /*!
-   * \brief One frame on the epsilon-closure DFS stack (OPT D1): a program counter to explore, plus the
+   * \brief One frame on the epsilon-closure DFS stack (COW): a program counter to explore, plus the
    *        capture block the branch carries. The block travels with the branch — a `split` shares it and a
    *        `save` copies it on write — so there is no slot-restore entry and no shared working array.
    */
@@ -146,7 +146,7 @@ namespace real::detail {
   };
 
   /*!
-   * \brief Copy-on-write pool of capture blocks (OPT D1) — the one capture-slot mechanism for both storages.
+   * \brief Copy-on-write pool of capture blocks (COW) — the one capture-slot mechanism for both storages.
    *
    * A per-thread value model would snapshot all `slot_count` capture values every time a thread is stepped
    * or emitted — a fifth to a third of match time on capture-heavy loads. Instead, a thread references a
@@ -305,7 +305,7 @@ namespace real::detail {
     }
   };
 
-  //! \brief D1 Unicode-property: sparse 2-stage membership for code points > U+07FF (page = cp>>8 → 256-bit block).
+  //! \brief Unicode-property sparse 2-stage membership for code points > U+07FF (page = cp>>8 → 256-bit block).
   //!        Thread-local heap cache only — \ref basic_pike_state size is unchanged (ASCII class-loop safe).
   struct cp_hi_table
   {
@@ -399,11 +399,11 @@ namespace real::detail {
   struct pike_state : basic_pike_state<thread_list, std::vector<eps_entry>>
   {
     lookaround_scratch          lookaround;                    //!< Isolated sub-scratch for bounded lookaround evaluation.
-    capture_pool                pool;                          //!< OPT D1: copy-on-write capture blocks (heap-backed).
-    std::optional<lazy_dfa>     fwd_dfa;                       //!< Fallback when immut is null; prefer shared_fwd_dfa (D1).
-    std::optional<reverse_dfa>  rev_dfa;                       //!< Fallback reverse; prefer shared_rev_dfa (D1).
+    capture_pool                pool;                          //!< copy-on-write capture blocks (heap-backed).
+    std::optional<lazy_dfa>     fwd_dfa;                       //!< Fallback when immut is null; prefer shared_fwd_dfa.
+    std::optional<reverse_dfa>  rev_dfa;                       //!< Fallback reverse; prefer shared_rev_dfa.
     const void *                dfa_program         {nullptr}; //!< Program the per-state DFAs were built for (fallback).
-    std::optional<reverse_dfa>  il_prefix_rev;                 //!< Fallback IL prefix reverse; prefer shared_il_prefix_rev (D1).
+    std::optional<reverse_dfa>  il_prefix_rev;                 //!< Fallback IL prefix reverse; prefer shared_il_prefix_rev.
     const void *                il_prefix_for       {nullptr}; //!< Fallback: prefix program il_prefix_rev was built for.
     const void *                il_text             {nullptr}; //!< IL: the haystack \ref il_abandoned refers to (reset the flag when it changes).
     bool                        il_abandoned        {false};   //!< IL: a linearity/density guard tripped on this haystack — stay on the core.
@@ -411,16 +411,16 @@ namespace real::detail {
     std::size_t                 il_density_origin   {npos};    //!< O1: byte offset of the first IL candidate this haystack.
     const void *                rare_disc_text      {nullptr}; //!< Rare-disc: haystack \ref rare_disc_abandoned refers to.
     bool                        rare_disc_abandoned {false};   //!< Rare-disc density guard: stay on prefix for this haystack.
-    // D1-AC fields placed LAST (own reason as pattern_hints::alternation_branch_count): inserting
-    // here right after il_prefix_for -- as an earlier draft of this struct did -- shifted il_text/
+    // AC fields placed LAST (own reason as pattern_hints::alternation_branch_count): inserting
+    // here right after il_prefix_for would shift il_text/
     // il_abandoned/il_density_cands/il_density_origin (the inner-literal density-gate fields, read
     // on every search that takes that route) by the full size of std::optional<ac_automaton> plus
     // a pointer. Caught by re-inspection against dynamic_storage::state_type (storage.hpp), which
     // already had this right -- this struct (pike_state) is test-harness-only (the meta-seam
     // differential), never real::regex's own runtime state, so the mid-struct version never
     // affected any measured path; fixed anyway for consistency with the stated placement rule.
-    std::optional<ac_automaton> ac_state;               //!< D1-AC: the multi-literal automaton (built once per program).
-    const void*                 ac_state_for {nullptr}; //!< D1-AC: the program \ref ac_state was built for.
+    std::optional<ac_automaton> ac_state;               //!< The multi-literal automaton (built once per program).
+    const void*                 ac_state_for {nullptr}; //!< the program \ref ac_state was built for.
   };
 
   /*!
@@ -465,7 +465,7 @@ namespace real::detail {
      *             experimental \ref match_semantics::longest (which forces the general loop, off every fast path).
      * \return `true` if a match was found.
      *
-     * D1-AC gcc/x86 note: an x86 A/B (relayed, not independently run here) found `[^,]+` +39%
+     * gcc/x86 note: an x86 A/B found `[^,]+` +39%
      * slower with the AC engine present but never dispatched to (a class-loop pattern returns from
      * \ref run_class_loop before ever reaching the fixed_alternation check) — callgrind/cachegrind
      * showed byte-identical instructions/cache misses, isolating it to front-end loop-alignment
@@ -518,11 +518,11 @@ namespace real::detail {
         }
         return run_cp_class_loop(text, start, mode, out_slots);
       }
-      // D1-perf (Étage A): possessive class+/++ loop -- bare/suffixed or delimited/"quoted". A
+      // possessive class+/++ loop -- bare/suffixed or delimited/"quoted". A
       // possessive pattern can never also be greedy_class_loop/greedy_cp_class (mutually exclusive
       // AST shapes), so ordering relative to those two is moot -- it matters only relative to
       // exact_literal/inner_literal/lazy-DFA below, which this shape reliably beats (see the
-      // D1-perf fiche's route-profile: those routes decline every possessive opcode outright today).
+      // route-profile contract: those routes decline every possessive opcode outright today).
       // The route-name split (bare vs delimited, profiling only) is pushed into the runners
       // themselves so this dispatch site stays exactly as small as the existing two above it.
       if (sem_ == match_semantics::first && prog_.hints.possessive_class.kind == class_kind::byte
@@ -589,12 +589,12 @@ namespace real::detail {
         return run_codepoint_class<Cascade>(text, start, mode, out_slots);
       }
       if (sem_ == match_semantics::first && prog_.hints.fixed_alternation) {
-        // D1-AC: past the measured branch-count threshold, a single Aho-Corasick automaton walk
+        // Past the measured branch-count threshold, a single Aho-Corasick automaton walk
         // beats small_set's 2..8-member memchr-cascade scan (which has no fast path at all past 8
-        // distinct first bytes — issue #3's "Alternation" gap). Search mode only (the automaton's
+        // distinct first bytes — the alternation gap). Search mode only (the automaton's
         // whole value is candidate-finding; full/prefix modes keep the existing run_alternation,
         // unchanged). Dynamic storage only (if constexpr elides this for static_regex, which does
-        // not benefit from AC — see the D1-AC report) and only when the automaton actually built
+        // not benefit from AC — measured) and only when the automaton actually built
         // (ensure_ac_automaton declines, leaving it unset, on a pathological icase-expansion
         // branch — falls through to run_alternation below, zero behavior change).
         if constexpr (requires(State & s) {
@@ -642,7 +642,7 @@ namespace real::detail {
         if (!std::is_constant_evaluated() && !lazy_dfa_route_disabled() && mode == run_mode::search
             && sem_ == match_semantics::first // kFirstMatch forward pass; longest uses the general loop below
             && forbid_empty_until_ == 0 && text.size() - start >= lazy_dfa_min_input) {
-          // D1: noinline out of run() so the shared-DFA body cannot bloat class-loop codegen (x86
+          // noinline out of run() so the shared-DFA body cannot bloat class-loop codegen (x86
           // witness/wplus regression pattern — same fix shape as ensure_ac_automaton).
           if (const std::optional<bool> dfa_result {
             try_shared_lazy_dfa_search<Cascade>(text, start, mode, out_slots)}) {
@@ -678,7 +678,7 @@ namespace real::detail {
       clist->reset(code_size);
       nlist->reset(code_size);
       out_slots.assign(prog_.slot_count, npos);
-      state_.pool.reset(prog_.slot_count); // OPT D1: fresh COW pool (block 0 = all-npos, per this run)
+      state_.pool.reset(prog_.slot_count); // fresh COW pool (block 0 = all-npos, per this run)
 
       bool        matched {};
       std::size_t pos     {start};
@@ -699,7 +699,7 @@ namespace real::detail {
           clist->reset(code_size);
         }
         if (seeding && seed_viable(text, pos, start)) {
-          // OPT D1: a seed shares the canonical all-npos block (one incref, no allocation); the first save
+          // a seed shares the canonical all-npos block (one incref, no allocation); the first save
           // in its closure copies-on-write off it, so block 0 is never mutated.
           state_.pool.incref(pool_type::npos_block);
           add_thread(*clist, 0, pos, pool_type::npos_block);
@@ -719,15 +719,15 @@ namespace real::detail {
         auto* swap {clist};
         clist = nlist;
         nlist = swap;
-        cow_release_blocks(*nlist); // OPT D1: the old clist was consumed by step — drop its block refs
+        cow_release_blocks(*nlist); // the old clist was consumed by step — drop its block refs
         nlist->reset(code_size);
         ++pos;
       }
-      cow_release_blocks(*clist); // OPT D1: drain both surviving lists on exit (the leak class the review named)
+      cow_release_blocks(*clist); // drain both surviving lists on exit (the leak class the review named)
       cow_release_blocks(*nlist);
       // Σ-invariant: after a full drain only the canonical npos block's sentinel ref remains. A leaked
       // block (missing decref) or a double-free (underflow) breaks it. Debug/sanitize builds only.
-      assert(state_.pool.total_refs() == 1 && "OPT-D1 capture-block refcount leak or imbalance");
+      assert(state_.pool.total_refs() == 1 && "COW capture-block refcount leak or imbalance");
       if (forward_stop != nullptr) {
         *forward_stop = pos; // the position the forward scan reached — IL's min_pre_start on a failed confirm
       }
@@ -753,7 +753,7 @@ namespace real::detail {
         st.fwd_dfa;
       }) {
         if (!lazy_dfa_route_disabled()) {
-          // D1: anchored_end on the shared confirm DFA (under slot.mu). begin_scan mirrors pre-D1
+          // anchored_end on the shared confirm DFA (under slot.mu). begin_scan mirrors the per-regex design
           // forward_end's per-confirm thrash reset; the transition cache itself stays warm across iters.
           std::size_t match_end {npos};
           const bool  dfa_ok    {
@@ -765,7 +765,7 @@ namespace real::detail {
                              })};
           if (dfa_ok) {
             if (match_end == npos) {
-              // Pre-D1 forward_end miss set stop = text.size(); keep a floor of s for the IL backstop.
+              // A bare forward_end miss would set stop = text.size(); keep a floor of s for the IL backstop.
               if (stop < s) {
                 stop = s;
               }
@@ -876,7 +876,7 @@ namespace real::detail {
             abandon = true; // no per-regex cache, or the prefix is not byte-DFA-eligible — let the core VM handle it
             return false;
           }
-          // D1: shared IL-prefix reverse under slot.mu (warmed once per regex via epoch).
+          // Shared IL-prefix reverse under slot.mu (warmed once per regex via epoch).
           {
             shared_dfa_slot&                  slot {shared_dfa_for(prog_.immut)};
             const std::lock_guard<std::mutex> lock {slot.mu};
@@ -968,9 +968,9 @@ namespace real::detail {
      *
      * Measured 2026-07 on M1 Pro, pattern \c (?:\\w+)_(?:\\w+), 300&nbsp;KB corpora, best-of clean timing
      * vs \c il_off: dens = candidates/byte ≈ underscore/byte for this shape. Crossover IL≈DFA at dens ≈ 0.037;
-     * dens 0.05 → IL 1.3× worse; dens 0.077 → 2.3×; dens 0.17 (P0 \c ident_dense) → ~8×. Threshold 60/1000
+     * dens 0.05 → IL 1.3× worse; dens 0.077 → 2.3×; dens 0.17 (\c ident_dense) → ~8×. Threshold 60/1000
      * (dens 0.06) sits conservatively above crossover so sparse IL wins (dens ≪ 0.01) stay on IL. Capture-free
-     * only (\c slot_count ≤ 2): with groups, IL still beat forced DFA on dense (P0). Probe after K candidates
+     * only (\c slot_count ≤ 2): with groups, IL still beat forced DFA on dense (measured). Probe after K candidates
      * across the haystack (sticky on \ref pike_state::il_density_cands).
      */
     static constexpr std::uint32_t il_density_probe_candidates {8};
@@ -1020,12 +1020,12 @@ namespace real::detail {
                          const std::size_t sz {immut->il_prefix_prog.code.size()};
                          immut->il_min_haystack = std::min<std::size_t>(512UL * 1024, std::max<std::size_t>(64UL * 1024, sz * 64));
                        }
-                       // D1: address-reuse of *immut must not keep a previous pattern's shared DFAs.
+                       // Address-reuse of *immut must not keep a previous pattern's shared DFAs.
                        reset_shared_dfas(immut);
                      });
     }
 
-    //! \brief D1: warm shared search DFAs for \p immut into \p slot (caller holds \p slot.mu).
+    //! \brief Warm shared search DFAs for \p immut into \p slot (caller holds \p slot.mu).
     void ensure_slot_search_dfas_unlocked(detail::regex_immutables& immut,
                                           shared_dfa_slot&          slot)
     {
@@ -1038,7 +1038,7 @@ namespace real::detail {
       }
     }
 
-    //! \brief D1: warm shared IL-prefix reverse DFA (caller holds \p slot.mu).
+    //! \brief Warm shared IL-prefix reverse DFA (caller holds \p slot.mu).
     void ensure_slot_il_prefix_rev_unlocked(detail::regex_immutables& immut,
                                             shared_dfa_slot&          slot)
     {
@@ -1050,14 +1050,14 @@ namespace real::detail {
       }
     }
 
-    //! \brief D1: run \p fn with the shared search DFAs under the slot lock.
+    //! \brief Run \p fn with the shared search DFAs under the slot lock.
     //!        Returns false when the route must stay on the Pike VM (no immut / ineligible).
     template <typename Fn>
     bool with_search_dfas(Fn&& fn)
     {
       detail::regex_immutables* const immut {prog_.immut};
       if (immut == nullptr) {
-        return false; // same contract as pre-D1 ensure_lazy_dfa: no per-regex cache → no DFA route
+        return false; // no cache → no DFA route, same contract as the per-regex design
       }
       ensure_immutables();
       shared_dfa_slot&                  slot {shared_dfa_for(immut)};
@@ -1066,7 +1066,7 @@ namespace real::detail {
       if (!slot.fwd.has_value() || !slot.rev.has_value() || !slot.fwd->eligible()) {
         return false;
       }
-      // Pre-D1 thrashing was per-iterator (a new iterator re-armed). On a shared slot a sticky thrash
+      // With per-iterator caches, thrashing re-armed on each new iterator. On a shared slot a sticky thrash
       // flag would permanently decline the DFA route for every later search on this regex — re-arm
       // per logical entry. Callers that walk many candidates (A2) still call begin_scan once more
       // for a single thrash window across that loop; a double-reset here is harmless.
@@ -1075,7 +1075,7 @@ namespace real::detail {
       return true;
     }
 
-    //! \brief D1: lazy-DFA search route on the shared confirm DFAs. \c noinline so its body cannot
+    //! \brief Lazy-DFA search route on the shared confirm DFAs. \c noinline so its body cannot
     //!        inflate \ref run (x86 class-loop codegen neighbor — same shape as \ref ensure_ac_automaton).
     //! \return matched / no-match when the route handled the search; empty when the caller must fall to Pike.
     template <bool Cascade, typename OutSlots>
@@ -1173,8 +1173,8 @@ namespace real::detail {
     //!        and majority-matching text: at N=11 AC already wins on the match-heavy corpus (0.66x)
     //!        but is ~8% SLOWER on prose (1.08x); at N=12 it wins on both (0.72x prose, 0.61x match)
     //!        with no measured regression. 12, not 11, so the gate matches its own contract — AC
-    //!        BEATS the VM-branch path at the threshold, not roughly ties it (see D1-AC report; the
-    //!        issue #3 repro's own N=10 stays correctly below threshold either way, AC/VM=1.16x
+    //!        BEATS the VM-branch path at the threshold, not roughly ties it (measured; the
+    //!        the N=10 repro stays correctly below threshold either way, AC/VM=1.16x
     //!        there against the standalone POC — inside the closed-gap target of <=~1.5x).
     static constexpr std::uint16_t ac_branch_threshold {12};
 
@@ -1211,7 +1211,7 @@ namespace real::detail {
       state_.ac_state_for = program;
     }
 
-    //! \brief The capture-block pool type of the bound `State` (OPT D1) — heap-backed for dynamic,
+    //! \brief The capture-block pool type of the bound `State` (COW) — heap-backed for dynamic,
     //!        compile-sized static_vec for static. The one capture-slot mechanism, both storages.
     using pool_type = std::remove_reference_t<decltype(std::declval<State&>().pool)>;
 
@@ -1520,7 +1520,7 @@ namespace real::detail {
                                   run_mode         mode,
                                   OutSlots&        out_slots)
     {
-      // P1 (issue #3): minimum run length in BYTES for the `X{k,}` desugaring (k identical copies
+      // Minimum run length in BYTES for the `X{k,}` desugaring (k identical copies
       // of the atom + a loop of it, see prefilter.hpp's extended class+ recognizer); 1 for the
       // original bare `X+` shape, where every one of the checks below is a dead branch (byte
       // runs are never shorter than 1) -- byte-identical to the pre-P1 behavior.
@@ -1650,7 +1650,7 @@ namespace real::detail {
   public:
 
     /*!
-     * \brief Trailing-lookaround class+ (P3c): body scan + longest end where lookaround holds.
+     * \brief Trailing-lookaround class+: body scan + longest end where lookaround holds.
      *
      * Cold, noinline: must not share a function body or inlining unit with
      * \ref run_class_loop (the daily [a-z]+ path). Invoked from real.hpp / find_iter
@@ -1787,7 +1787,7 @@ namespace real::detail {
                                      run_mode         mode,
                                      OutSlots&        out_slots)
     {
-      // P1 (issue #3): minimum run length in CODE POINTS (not bytes) for the `X{k,}` desugaring --
+      // Minimum run length in CODE POINTS (not bytes) for the `X{k,}` desugaring --
       // see run_class_loop's own doc comment; 1 for the original bare shape (dead branch below).
       const std::size_t min_len  {prog_.hints.greedy_cp_class_min};
       const std::size_t cp_index {static_cast<std::size_t>(prog_.hints.greedy_cp_class)};
@@ -1946,7 +1946,7 @@ namespace real::detail {
     }
 
     /*!
-     * \brief D1-perf (Étage A) shared driver: a possessive class+/++ loop, bare/suffixed (\ref
+     * \brief Shared driver: a possessive class+/++ loop, bare/suffixed (\ref
      *        pattern_hints::possessive_prefix_size == 0) or delimited/"quoted" (non-zero) -- the
      *        BODY's own class/cp-class membership test is supplied by \p in_class / \p scan_end so this
      *        one driver serves both the byte-class and the code-point-class runners below.
@@ -2002,7 +2002,7 @@ namespace real::detail {
       // R2 capture fix: the captured group is the possessive loop's own LAST iteration, not the
       // whole match span -- re's own semantics, matching what the general VM already got right (it
       // was never routed through this driver for a byte-literal body before R2 armed one, which is
-      // how this bug -- shipped since D1-perf's original klass/klass_cp fast path, 7.36 -- surfaced
+      // how this bug -- present since the original klass/klass_cp fast path -- surfaced
       // live). \p body_end is the loop's own end (before any suffix); defaults to npos for the
       // delimited ("quoted") shape, which never captures at all (possessive_group_start stays -1
       // there by construction, so the branch below never runs regardless of what body_end is).
@@ -2024,7 +2024,7 @@ namespace real::detail {
                         };
       if (prefix_size > 0) {
         // Delimited ("quoted") shape: no capture, no \b wrap by construction (prefilter.hpp never
-        // arms both together this train) -- suffix_ok / write_success above already cover it exactly.
+        // arms both together) -- suffix_ok / write_success above already cover it exactly.
         const auto find_prefix = [&](std::size_t from) -> std::size_t {
                                    if (from > text.size() || prefix_size > text.size() - from) {
                                      return npos;
@@ -2161,7 +2161,7 @@ namespace real::detail {
       return run_possessive_loop_generic(text, start, mode, out_slots, in_class, scan_end, last_width);
     }
 
-    //! \brief D1-perf Étage A: possessive class+/++ loop over a BYTE class (`klass_loop_possessive`).
+    //! \brief Possessive class+/++ loop over a BYTE class (`klass_loop_possessive`).
     //!        See \ref run_possessive_loop_generic for the shared algorithm.
     template <typename OutSlots>
     constexpr bool run_possessive_class_loop(std::string_view  text,
@@ -2188,7 +2188,7 @@ namespace real::detail {
       return run_possessive_loop_generic(text, start, mode, out_slots, in_class, scan_end, last_width);
     }
 
-    //! \brief D1-perf Étage A: possessive class+/++ loop over a CODE-POINT class
+    //! \brief Possessive class+/++ loop over a CODE-POINT class
     //!        (`klass_cp_loop_possessive`). Mirrors \ref run_cp_class_loop's decode/membership
     //!        primitives (no O2r-1b GCC split here yet -- measure-first; not in this train's scope).
     //!        See \ref run_possessive_loop_generic for the shared algorithm.
@@ -2531,9 +2531,9 @@ namespace real::detail {
       // hit; the 3-/4-byte cases bounds-check their FIRST continuation byte against
       // utf8_second_byte_bounds_table (charclass.hpp) instead of the generic [0x80,0xBF] `cont`
       // check -- that generic check accepted overlong (E0 80 80 / F0 80 80 80) and encoded-
-      // surrogate (ED A0 80) sequences as one code point. A table lookup, not a full decode: an
-      // earlier version reused decode_codepoint_strict (which accumulates the code point via
-      // shifts and checks it against min_cp/the surrogate block after the fact) and cost +13%
+      // surrogate (ED A0 80) sequences as one code point. A table lookup, not a full decode: reusing
+      // decode_codepoint_strict (which accumulates the code point via
+      // shifts and checks it against min_cp/the surrogate block after the fact) costs +13%
       // ns/B on this exact path -- rejected. This keeps the original branch/comparison shape,
       // swapping only one hardcoded bound for a per-lead table entry.
       const auto width = [&](std::size_t i) -> std::size_t {
@@ -2634,7 +2634,7 @@ namespace real::detail {
     }
 
     /*!
-     * \brief D1-AC: multi-literal search via the automaton cached in \ref pike_state::ac_state.
+     * \brief Multi-literal search via the automaton cached in \ref pike_state::ac_state.
      *
      * Search mode only — the automaton's own leftmost-first scan already IS the candidate search
      * (no separate memchr-cascade block scan). Non-`constexpr` by construction (needs a runtime
@@ -3132,7 +3132,7 @@ namespace real::detail {
             break;
           case opcode::byte_loop_possessive:
           case opcode::klass_loop_possessive:
-            // Tier 1 (D1, redesigned): by the time a leaf reaches step(), add_thread's closure
+            // Tier 1: by the time a leaf reaches step(), add_thread's closure
             // has ALREADY confirmed the atom matches at pos (that's precisely why it was parked
             // here instead of being routed to secondary_target immediately) — no re-test, no
             // fail branch, and no need to distinguish byte from klass here either (the arg8-vs-
@@ -3198,7 +3198,7 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Tier 1's on-match capture write (D1): if \p capture_start_slot is not -1, records
+     * \brief Tier 1's on-match capture write: if \p capture_start_slot is not -1, records
      *        [\p start, \p end) into thread \p i's capture block, in place.
      *
      * Called ONLY on a confirmed atom match — never speculatively before the test, which is
@@ -3232,7 +3232,7 @@ namespace real::detail {
 
     /*!
      * \brief Advances thread \p i of \p clist by one consumed byte, seeding its continuation's closure into
-     *        \p nlist (OPT D1). The closure takes its own reference on the thread's capture block — no slot
+     *        \p nlist (COW). The closure takes its own reference on the thread's capture block — no slot
      *        copy; the block is shared until a `save` copies it on write.
      */
     constexpr void advance_thread(list_type&   clist,
@@ -3247,7 +3247,7 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Pointer to thread \p i's `slot_count` capture values — its COW block's slots (OPT D1). Used by
+     * \brief Pointer to thread \p i's `slot_count` capture values — its COW block's slots (COW). Used by
      *        the `match` case to read out the winner.
      */
     [[nodiscard]] constexpr const std::size_t* thread_slots(list_type&  clist,
@@ -3301,7 +3301,7 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Adds \p pc0 and its whole epsilon closure to \p list — the one closure walk (OPT D1). Each
+     * \brief Adds \p pc0 and its whole epsilon closure to \p list — the one closure walk (COW). Each
      *        DFS frame carries a capture-block index (in `eps_entry::block`) rather than mutating a
      *        shared working array, so capture state is copy-on-write and there are no slot-restore entries:
      *
@@ -3395,7 +3395,7 @@ namespace real::detail {
             list.slots.push_back(block); // transfer the ref to the thread: one block handle per pc
             break;
           case opcode::byte_loop_possessive:
-            // Tier 1 (D1, redesigned): the match/no-match decision is made HERE, at insertion
+            // Tier 1: the match/no-match decision is made HERE, at insertion
             // time, in the SAME priority-ordered closure pass as everything else — not deferred
             // to step() one round later. That deferral was the root cause of a real bug this
             // opcode family shipped with first: inside an alternation, a same-round-convergent
@@ -3451,7 +3451,7 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Releases the block references a list's threads hold (OPT D1), before the list is reset or the
+     * \brief Releases the block references a list's threads hold (COW), before the list is reset or the
      *        run returns. This is the one decref site paired with the incref at each step→closure boundary
      *        — the classic double-free locus, kept single.
      */

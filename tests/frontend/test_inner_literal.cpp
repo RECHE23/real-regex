@@ -36,14 +36,15 @@ TEST(inner_literal_extracted)
 
 TEST(inner_literal_d1_pure_lit_alt_only)
 {
-  // D1' P0.1: pure-literal alternation no longer aborts — a later required run arms (StatusLine).
+  // Pure-literal alternation does not abort — a later required run arms (StatusLine).
   const auto sl {extract(R"((info|error|warn)\s+\d{4}-\d{2}-\d{2}\s+req=[a-f0-9]+)")};
   EXPECT(sl.found());
   EXPECT(is_lit(sl, "req="));
   EXPECT(sl.prefix_child_count >= 1); // reverse-prefix covers (alt)\s+\d{4}-…
 
-  // D1' P0.2 DROPPED (x86 A/B: IL on `://` regressed vs strong first-byte/`http` baseline).
-  // URL with mono-byte optional `s?` must decline IL entirely — stays on v7.45 prefix/DFA route.
+  // Deliberately NOT armed for URLs (x86 A/B: IL on `://` regressed vs the strong
+  // first-byte/`http` baseline). Mono-byte optional `s?` must decline IL entirely —
+  // stays on the prefix/DFA route.
   EXPECT(!extract(R"(https?://[^\s]+)").found());
   // Optional still declines the whole walk (conservative v1 restored for min==0).
   EXPECT(!extract(R"((a)?@b)").found());
@@ -91,7 +92,7 @@ TEST(inner_literal_prefix_boundary)
 
 TEST(inner_literal_d1a_peels_top_level_wb)
 {
-  // D1a: leading/trailing `\b`/`\B` no longer decline extraction — they set prefix_skip + wb hints
+  // Leading/trailing `\b`/`\B` do not decline extraction — they set prefix_skip + wb hints
   // so the reverse-prefix excludes the assert (byte-DFA) while confirm re-checks boundaries.
   const auto both {extract(R"(\b\w+@\w+\b)")};
   EXPECT(both.found());

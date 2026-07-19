@@ -557,10 +557,10 @@ namespace real::detail {
   //!        extractor table. Built exactly once, under \ref once, so a const regex used from many threads
   //!        (the binding shares the compiled object across GIL-released calls) builds it race-free.
   //!
-  //!        D1: the mutable lazy-DFA transition caches live in a process-wide side table
+  //!        The mutable lazy-DFA transition caches live in a process-wide side table
   //!        (\ref shared_dfa_slot), keyed by this object's address and guarded by a per-slot mutex —
   //!        so this struct stays free of \c std::mutex / extra members (layout and constexpr size match
-  //!        pre-D1; address-reuse invalidates the slot from \c call_once via \ref reset_shared_dfas).
+  //!        the cache-free layout; address-reuse invalidates the slot from \c call_once via \ref reset_shared_dfas).
   struct regex_immutables
   {
     byte_program           byte_prog;          //!< klass_cp-expanded byte program (empty until built).
@@ -600,7 +600,7 @@ namespace real::detail {
     ~regex_immutables() = default;
   };
 
-  //! \brief D1: process-wide shared DFA transition caches keyed by \ref regex_immutables*.
+  //! \brief Process-wide shared DFA transition caches keyed by \ref regex_immutables*.
   //!        Thread-safe: map insert under \ref shared_dfa_map_mu, DFA warm/scan under \ref mu.
   struct shared_dfa_slot
   {

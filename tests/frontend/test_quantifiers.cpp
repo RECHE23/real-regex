@@ -169,7 +169,7 @@ TEST(scan_verify_tail_lengths_pin_the_simd_offbyone)
   // The candidate-scan (next_candidate) and fixed-shape verify are the target of a future SIMD (16-byte block)
   // rewrite. The off-by-one that class of code always risks is a tail shorter than a block: pin the exact match
   // count at every tail length 0..33 against the scalar oracle, so a SIMD scan that mishandles the last < 16
-  // bytes is caught here, before it ships (the exact prototype bug the fiche flagged).
+  // bytes is caught here, before it ships (the exact prototype bug flagged in review).
   const real::regex hex {"[0-9a-f]{8}"};
   for (std::size_t len = 0; len <= 33; ++len) {
     std::string t;
@@ -207,7 +207,7 @@ TEST(scan_verify_tail_lengths_pin_the_simd_offbyone)
 
 TEST(hex_verify_simd_skip_finds_the_match_past_a_failing_candidate)
 {
-  // The homogeneous SIMD scan+verify (run_fixed_shape, fiche ITEM-2/2b, simd_fixed_shape_scan) skips
+  // The homogeneous SIMD scan+verify (run_fixed_shape, simd_fixed_shape_scan) skips
   // past the first failing lane when a candidate fails partway through, reusing the ALREADY-loaded
   // mask (no reload, no next_candidate call) to jump straight to the next candidate it marks. Pin that
   // a real match past such a failing candidate is still found this way: "1234567g" looks hex for 7

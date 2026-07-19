@@ -14,9 +14,9 @@
 // sound, general differential across every runner dispatched inside `pike_vm::run()` -- eleven of
 // the twelve fast-path runners. Group-aware throughout: `out_slots` (a flat vector) holds every
 // capture slot, not just the overall span -- the exact gap that let the possessive-capture bug
-// (7.38) through a span-only toggle differential.
+// through a span-only toggle differential.
 //
-// The twelfth runner, `run_class_loop_trailing_la` (P3c), is dispatched OUTSIDE pike_vm::run (in
+// The twelfth runner, `run_class_loop_trailing_la`, is dispatched OUTSIDE pike_vm::run (in
 // real.hpp / find_iter, per pike.hpp's own comment on the omission) -- it keeps its existing,
 // dedicated toggle (`trailing_la_route_disabled()`) instead, exercised at the `real::regex` level.
 // Gate-safe: no wall-clock.
@@ -88,7 +88,7 @@ TEST(seam_run_class_loop)
   // B-2 wrap: \b...\b keeps wb hints ON the class-loop itself (not dropped like B-1).
   expect_seam_agrees(R"(\b[a-z]+\b)", "the QUICK-brown_fox jumps, cafe\xC3\xA9 next-door");
   expect_seam_agrees(R"(\b[a-z]+\b)", "xhello worldx"); // no boundary anywhere
-  // P1 (issue #3): the `{k,}` counted-min extension -- k mandatory copies + a loop of the same
+  // The `{k,}` counted-min extension -- k mandatory copies + a loop of the same
   // atom, byte class. Dense/sparse/under-the-min (runs shorter than k, which must NOT match) and
   // both wb wraps.
   expect_seam_agrees("(?a)[a-z]{4,}", "abc abcd abcde ab a");   // under-min (3,4,5,2,1 -char runs)
@@ -97,14 +97,14 @@ TEST(seam_run_class_loop)
   expect_seam_agrees(R"((?a)\b[a-z]{4,}\b)", "the QUICK four fives aaaaa a bb ccc dddd");
   expect_seam_agrees(R"((?a)\b[a-z]{4,})", "xabcdx four5 abcde");
   expect_seam_agrees("(?a)[a-z]{1,}", "same as plain +"); // k==1 must stay identical to bare `+`
-  // Coverage top-up (7.41 finalization): the min-check boundary in isolation -- a run of exactly
+  // Coverage top-up: the min-check boundary in isolation -- a run of exactly
   // k-1 (must NOT match as the counted run; the general VM's own {4,} semantics is the oracle
   // here) vs exactly k (the limit, must match), with and without \b.
   expect_seam_agrees("(?a)[a-z]{4,}", "abc");  // exactly k-1=3: no match
   expect_seam_agrees("(?a)[a-z]{4,}", "abcd"); // exactly k=4: matches at the limit
   expect_seam_agrees(R"((?a)\b[a-z]{4,}\b)", "abc");
   expect_seam_agrees(R"((?a)\b[a-z]{4,}\b)", "abcd");
-  // D1 volet A (issue #2, RE2 \C): \C+ arms this same class-loop fast path (a plain 256-bit byte-klass,
+  // RE2 \C: \C+ arms this same class-loop fast path (a plain 256-bit byte-klass,
   // structurally indistinguishable from any other class+ once compiled) -- confirmed via hints_of
   // (greedy_class_loop >= 0). Dense/sparse/zero-match, and a case splitting a multi-byte codepoint (\C
   // has no UTF-8 awareness at all, unlike the byte class-loop's other callers).
@@ -112,9 +112,9 @@ TEST(seam_run_class_loop)
   expect_seam_agrees(R"(\C+)", "", 0, real::npos, real::detail::run_mode::search, real::flags::bytes);                     // zero-match
   expect_seam_agrees(R"(\C+)", "\xC3\xA9\xE2\x82\xAC", 0, real::npos, real::detail::run_mode::search, real::flags::bytes); // multi-byte junctions, byte-blind
   expect_seam_agrees(R"(a\C+)", "a\xC3\xA9", 0, real::npos, real::detail::run_mode::search, real::flags::bytes);
-  // D1 (issue #2, RE2-compat \C-in-text-mode completion): flags::allow_raw_byte arms the SAME class-loop
+  // RE2-compat \C-in-text-mode completion: flags::allow_raw_byte arms the SAME class-loop
   // fast path in plain TEXT mode (no flags::bytes at all) -- \C mixed with codepoint-aware bytes in the
-  // same program, a genuinely new shape Volet A's bytes-only tests never exercised. A D0 spike confirmed
+  // same program, a genuinely new shape the bytes-only tests never exercised. A spike confirmed
   // fixed_shape/class_loop/lazy_dfa_anchored all agree with the general VM here (57+ checks, 0 divergence);
   // this pins the class-loop-specific ones in the tracked suite.
   expect_seam_agrees(R"(\C+)", "hello", 0, real::npos, real::detail::run_mode::search, real::flags::allow_raw_byte);
@@ -130,7 +130,7 @@ TEST(seam_run_cp_class_loop)
   expect_seam_agrees(R"(\w+)", "a\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80z world"); // 1/2/3/4-byte junctions
   expect_seam_agrees_corpus(R"(\w+)");
   expect_seam_agrees(R"(\b\w+\b)", "  caf\xC3\xA9  world  ");
-  // P1 (issue #3): the `{k,}` counted-min extension, Unicode cp-class -- min counted in CODE
+  // The `{k,}` counted-min extension, Unicode cp-class -- min counted in CODE
   // POINTS, not bytes, so a multi-byte-junction corpus is the point (a byte-length check here
   // would be a genuine bug this seam must catch).
   expect_seam_agrees(R"(\w{4,})", "abc abcd caf\xC3\xA9 h\xC3\xA9llo x");     // under-min + multi-byte cp
@@ -139,7 +139,7 @@ TEST(seam_run_cp_class_loop)
   expect_seam_agrees(R"(\b\w{4,}\b)", "  caf\xC3\xA9  ab  h\xC3\xA9llo  ");
   expect_seam_agrees(R"(\d{3,})", "12 123 1234 caf\xC3\xA9 12345");
   expect_seam_agrees(R"(\w{1,})", "same as plain +"); // k==1 must stay identical to bare `+`
-  // Coverage top-up (7.41 finalization): the min-check boundary in isolation, counted in CODE
+  // Coverage top-up: the min-check boundary in isolation, counted in CODE
   // POINTS -- "caf" is 3 code points (under k=4), "caf\xC3\xA9" (café) is exactly 4 (c,a,f,é), the
   // last one multi-byte -- a byte-length check here would be the exact bug this seam must catch.
   expect_seam_agrees(R"(\w{4,})", "caf");                // exactly k-1=3 code points: no match
@@ -229,15 +229,15 @@ TEST(seam_run_alternation)
   expect_seam_agrees("dog|fox|cat", "no animals mentioned"); // zero-match
   expect_seam_agrees(R"(\b(?:foo|bar)\b)", " foo bar foobar xfoo barx ");
   expect_seam_agrees_corpus("dog|fox|cat");
-  // Alt-fix (issue #3): small_set's enumeration cap raised 4->8 (prefilter.hpp), matching
+  // small_set's enumeration cap is 8 (prefilter.hpp), matching
   // run_alternation's own L-SIMD scan, which already gated on small_set_size <= 8 (pike.hpp) --
   // only the recognizer's enumeration cap was left at 4. 5-8 distinct first bytes now arm the
-  // scan where they previously fell straight to the bitmap loop; 9 still correctly declines.
+  // scan where they otherwise fall straight to the bitmap loop; 9 still correctly declines.
   // Dense/sparse/no-match, and right at both new boundaries (8 armed, 9 declined).
   expect_seam_agrees("cat|dog|fish|bird|fox|bear", "the quick brown fox jumps over the lazy dog near the cat");                                                                  // 4 distinct (unaffected: pre-existing small_set)
-  expect_seam_agrees("cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog", "the quick brown fox jumps over the lazy dog near the cat and bear and wolf and deer and hawk and frog"); // 6 distinct (issue #3's own example)
+  expect_seam_agrees("cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog", "the quick brown fox jumps over the lazy dog near the cat and bear and wolf and deer and hawk and frog"); // 6 distinct (the alternation-gap example)
   expect_seam_agrees("cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog", "no animals mentioned");                                                                                  // zero-match, 6 distinct
-  // Coverage top-up (7.41 finalization): the two boundary points the 4/6/8/9 spread skipped.
+  // Coverage top-up: the two boundary points the 4/6/8/9 spread skipped.
   expect_seam_agrees("cat|dog|fish|bird|owl", "the cat and the owl and a fish and a dog and a bird");                                                                            // 5 distinct: the new regime's own floor
   expect_seam_agrees("cat|dog|fish|bird|owl", "no animals mentioned");                                                                                                           // zero-match, 5 distinct
   expect_seam_agrees("cat|dog|fish|bird|owl|rat|hen", "the cat and the hen and a rat and a fish and a dog and a bird and an owl");                                               // 7 distinct
@@ -248,7 +248,7 @@ TEST(seam_run_alternation)
 
 TEST(seam_run_aho_corasick)
 {
-  // D1-AC (issue #3): past the measured branch-count threshold (N=12), a fixed_alternation program
+  // Past the measured branch-count threshold (N=12), a fixed_alternation program
   // routes to the Aho-Corasick automaton (aho_corasick.hpp) instead of run_alternation's memchr-
   // cascade scan. This differential (hints zeroed -> forced general VM) already exercises it,
   // since pike_state (this file's harness) carries the ac_automaton field.
@@ -267,7 +267,7 @@ TEST(seam_run_aho_corasick)
   expect_seam_agrees("cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog|lion|tiger|zebra|camel|otter",
                      "the quick brown fox jumps over the lazy dog near the cat and the otter");      // N=15, past threshold
   // Post-mortem bug (a) seed: alternation order -- leftmost-first requires the FIRST-LISTED
-  // branch to win at equal start position, regardless of length or scan-completion order (the D0
+  // branch to win at equal start position, regardless of length or scan-completion order (the the spike
   // spike's own repro: a longer, first-listed branch must beat a shorter one nested as its own
   // output-link suffix). >= 12 branches so this seed actually exercises the AC route, not just
   // run_alternation -- padded with enough distinct literals to cross the threshold.
@@ -276,13 +276,13 @@ TEST(seam_run_aho_corasick)
   // Post-mortem bug (b) seed: empty alternation branches. REAL's parser rejects an empty
   // alternation branch as a syntax error (no zero-width branch ever reaches fixed_alternation, let
   // alone the AC recognizer) -- this seed pins that the SIBLING literals are wholly unaffected by
-  // an adjacent empty branch's absence, mirroring the D0 spike's own sidestep-by-construction proof.
+  // an adjacent empty branch's absence, mirroring the sidestep-by-construction proof.
   expect_seam_agrees("cat||dog|fish|bird|fox|bear|wolf|deer|hawk|frog|lion", "the dog barks");
   // icase: the current compiler's is_fixed_alternation gate does not reach 3+ branch icase
-  // alternations at all (a pre-existing, unrelated limit -- confirmed on baseline, see the D1-AC
-  // report) so this seed exercises what IS reachable today: 2-branch icase, which stays on
+  // alternations at all (a pre-existing, unrelated limit -- confirmed on baseline)
+  // so this seed exercises what IS reachable today: 2-branch icase, which stays on
   // run_alternation (below the AC threshold either way). AC's own klass fan-out logic is verified
-  // directly (bypassing the compiler) in the D1-AC report, since the compiler-level gap currently
+  // directly (bypassing the compiler), since the compiler-level gap currently
   // makes it unreachable through real::regex's public API at N >= 12.
   expect_seam_agrees("(?i)cat|dog", "the DOG barks");
 }
@@ -419,7 +419,7 @@ TEST(seam_matrix_coverage_manifest)
                         };
   EXPECT(hints_of("[a-z]+").greedy_class_loop >= 0);
   EXPECT(hints_of(R"(\w+)").greedy_cp_class >= 0);
-  // P1 (issue #3): the {k,} min-count extension actually arms with k, not silently falling back
+  // The {k,} min-count extension actually arms with k, not silently falling back
   // to the bare-`+` min=1 default (which would make the recognizer extension a no-op).
   EXPECT(hints_of("(?a)[a-z]{4,}").greedy_class_loop >= 0);
   EXPECT_EQ(hints_of("(?a)[a-z]{4,}").greedy_class_loop_min, std::uint16_t {4});
@@ -434,30 +434,30 @@ TEST(seam_matrix_coverage_manifest)
   EXPECT(hints_of("a*+;").possessive_class.kind == real::detail::class_kind::byte);
   EXPECT(hints_of("[a-z]*+;").possessive_class.kind == real::detail::class_kind::klass);
   EXPECT(hints_of(R"(\w*+;)").possessive_class.kind == real::detail::class_kind::klass_cp);
-  // D1 volet A (issue #2, RE2 \C): \C+ arms greedy_class_loop too -- the byte-klass it compiles to (the
+  // RE2 \C: \C+ arms greedy_class_loop too -- the byte-klass it compiles to (the
   // 256-bit "any byte" set) is structurally identical to any other class+ once compiled, so the existing
   // recognizer picks it up with zero dedicated wiring.
   EXPECT(dynamic_storage::compile(R"(\C+)", real::flags::bytes).program.hints.greedy_class_loop >= 0);
-  // D1 (issue #2, RE2-compat \C-in-text-mode completion): the SAME class-loop recognizer also arms
+  // RE2-compat \C-in-text-mode completion: the SAME class-loop recognizer also arms
   // under flags::allow_raw_byte alone (no flags::bytes) -- the gate widened, not the recognizer.
   EXPECT(dynamic_storage::compile(R"(\C+)", real::flags::allow_raw_byte).program.hints.greedy_class_loop >= 0);
   EXPECT(hints_of("[0-9a-f]{4}").fixed_shape);
   EXPECT(hints_of(".+").codepoint_class_ascii >= 0);
   EXPECT(hints_of("dog|fox|cat").fixed_alternation);
-  // Alt-fix (issue #3): the small_set cap actually arms at 8, not silently staying at the old
+  // The small_set cap actually arms at 8, not silently staying at the old
   // 4 (which would make the recognizer extension a no-op), and 9 correctly declines (stays on
   // the bitmap loop, not a buffer overrun into the 8-element array).
   EXPECT_EQ(hints_of("cat|dog|fox|owl|rat|hen|pig|emu").small_set_size, std::uint8_t {8});
   EXPECT_EQ(hints_of("cat|dog|fox|owl|rat|hen|pig|emu|yak").small_set_size, std::uint8_t {0});
-  // Coverage top-up (7.41 finalization): the interior of the new regime (5 and 7), not just its ends.
+  // Coverage top-up: the interior of the new regime (5 and 7), not just its ends.
   EXPECT_EQ(hints_of("cat|dog|fish|bird|owl").small_set_size, std::uint8_t {5});
   EXPECT_EQ(hints_of("cat|dog|fish|bird|owl|rat|hen").small_set_size, std::uint8_t {7});
-  // D1-AC (issue #3): alternation_branch_count arms alongside fixed_alternation, right at the
+  // alternation_branch_count arms alongside fixed_alternation, right at the
   // AC-route threshold (12) and one below it (11, still fixed_alternation but not AC-eligible).
   EXPECT_EQ(hints_of("cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog|lion").alternation_branch_count, std::uint16_t {11});
   EXPECT_EQ(hints_of("cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog|lion|tiger").alternation_branch_count, std::uint16_t {12});
   // A capturing alternation (outer group, per-branch, or mixed) never arms fixed_alternation at
-  // all -- the D1-AC "safe capturing scope" decision is enforced for free by this PRE-EXISTING
+  // all -- the "safe capturing scope" decision is enforced for free by this PRE-EXISTING
   // gate (interior save ops break the byte/klass-only branch-body whitelist before the branch
   // loop even runs), not by anything new AC itself had to add.
   EXPECT(!hints_of("(cat|dog|fish)").fixed_alternation);      // outer capturing group

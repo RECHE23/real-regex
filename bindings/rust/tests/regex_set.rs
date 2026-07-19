@@ -30,7 +30,7 @@ fn oracle_n_search() {
 
 #[test]
 fn compile_fail_no_silent_skip() {
-    // atomic groups: Tier 1 bodies only (D1); a compound/alternating body is not.
+    // atomic groups: Tier 1 bodies only; a compound/alternating body is not.
     assert!(RegexSet::new(["ok", "(?>a|b)"]).is_err());
 }
 

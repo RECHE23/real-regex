@@ -1,19 +1,19 @@
-// Package real_test — the landing page's Go quickstart tab (docs/site/_templates/
-// landing.html, doc-site P1c). `go test` already compiles and RUNS every `Example…` function
+// Package real_test — the landing page's Go quickstart tab. `go test` already
+// compiles and RUNS every `Example…` function
 // that carries a `// Output:` comment (no extra wiring needed — see the go job in ci.yml /
 // `make go-test`), so the code the page shows is exactly the code that's tested, never
-// merely illustrative (doc-site P1b-A gate-snippet).
+// merely illustrative.
 //
 // Go requires every import to precede all other top-level declarations (no mid-function
 // `import`, unlike C's textual #include), so the landing's 4-line snippet — an import line, a
 // blank line, then two function-body statements — cannot live in one contiguous block the way
 // examples/cpp/quickstart.cpp's redundant #include trick allows for C++. The landing's Go tab
 // is therefore built from TWO marker pairs, `[quickstart-import]` and `[quickstart-body]`
-// below, concatenated: conf.py's `_highlight_go_quickstart` (doc-site P1c's html-page-context
-// hook) reads both regions directly and joins them with a blank line, the same
+// below, concatenated: conf.py's `_highlight_go_quickstart` reads both regions
+// directly and joins them with a blank line, the same
 // start-after/end-before contract the other 3 languages' single marker pair uses. Resequencing
-// lines between the markers is safe by construction — unlike the P1b-A `:lines: 23-24,34-35`
-// Sphinx literalinclude selector this replaced, which pointed at fixed line numbers and could
+// lines between the markers is safe by construction — unlike a fixed `:lines:`
+// Sphinx literalinclude selector, which points at fixed line numbers and can
 // go silently stale (it still built successfully even after a resequence meant the wrong lines
 // rendered — `go test` proved the CODE stayed correct, but only a manual page diff would have
 // caught a stale line selector).

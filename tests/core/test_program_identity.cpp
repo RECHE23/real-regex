@@ -77,7 +77,7 @@ namespace {
 
   // Update this ONLY when a deliberate program change is intended (and never as a side effect of the
   // scoped-flags work). It is printed by the test on mismatch so the new value is easy to read off.
-  // Moved for wagon 4 (site 2): `.` (corpus entry "a.c") now compiles its non-ASCII branches via the
+  // `.` (corpus entry "a.c") compiles its non-ASCII branches via the
   // canonical utf8_range_sequences splitting (emit_class_codepoints), narrowing E0/ED/F0/F4's first
   // continuation byte to reject overlong/surrogate/out-of-range encodings -- more branches than the
   // old flat 4-branch emit_codepoint_class shape, a deliberate, intended program change.

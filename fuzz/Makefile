@@ -7,9 +7,9 @@
 # fowler-compat/exhaustive-compat as steps 13-14/22) or directly here with
 # `make -C fuzz <target>`.
 #
-# tsan/tsan-core stay OUT of this section (compartimentalisation decision #6, "follow
+# tsan/tsan-core stay OUT of this section ("follow
 # the sources"): their sources live in tests/ (tests/compat/tsan_compat.cpp,
-# tests/engine/tsan_core.cpp), so they migrate with the tests/ wagon, not here -- they
+# tests/engine/tsan_core.cpp), so they live with tests/, not here -- they
 # remain root-only targets for now, untouched by this file.
 #
 # CWD idiom -- read before touching a recipe: every recipe below runs its original,
@@ -40,11 +40,11 @@ include $(ROOT)/mk/help.mk
 # construction -- $(ROOT)-anchoring it would be a behavioral no-op (identical resolved
 # path once CWD is already $(ROOT)) while giving up the true byte-for-byte "recette
 # d'origine inchangee" property the CWD idiom is built around. Kept local rather than
-# promoted into common.mk because the proven precedent (benchmarks/Makefile, wagon 4)
+# promoted into common.mk because the proven precedent (benchmarks/Makefile)
 # already made this same call the same way for the same reason, and mk/common.mk's own
 # header says "extend as later sections migrate ... do not pre-fill for hypothetical
 # consumers" -- a second local redefinition here is not drift, it is the established
-# pattern repeating once more. common.mk is therefore untouched by this wagon (no root
+# pattern repeating once more. common.mk is therefore untouched here (no root
 # `make -n` re-verification needed for it).
 #
 # No CXX-forwarding block (`ifeq ($(origin CXX),command line)` -> CMAKE_CXX) here:
