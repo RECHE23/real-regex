@@ -345,7 +345,7 @@ check-layers:
 #
 #   change type (files)                                | target    | runs
 #   bump: version.hpp/pyproject/__init__/Cargo/CITATION/| gate-bump | version-check + build
-#     README + docs/release-notes/*.md, docs/BENCHMARKS |           |
+#     README + docs/release-notes/*.md, docs/BENCHMARKS, CHANGELOG.md |   |
 #   doc-only: *.md, *.dox, or comment-only .hpp diffs   | gate-doc  | doc-check if headers/
 #                                                        |           | Doxyfile touched;
 #                                                        |           | format-check if .cpp
@@ -361,7 +361,7 @@ check-layers:
 gate-bump: ## [gates] Calibrated gate for a version bump only (version-check + build)
 	@set -euo pipefail; \
 	 files="$$(git diff --name-only $(GATE_BASE) -- .)"; \
-	 bad="$$(printf '%s\n' "$$files" | grep -vE '^(include/real/version\.hpp|pyproject\.toml|bindings/python/real/__init__\.py|bindings/rust/Cargo\.toml|CITATION\.cff|README\.md|docs/release-notes/.*\.md|docs/BENCHMARKS\.md)$$' | grep -v '^$$' || true)"; \
+	 bad="$$(printf '%s\n' "$$files" | grep -vE '^(include/real/version\.hpp|pyproject\.toml|bindings/python/real/__init__\.py|bindings/rust/Cargo\.toml|CITATION\.cff|README\.md|docs/release-notes/.*\.md|docs/BENCHMARKS\.md|CHANGELOG\.md)$$' | grep -v '^$$' || true)"; \
 	 if [ -n "$$bad" ]; then \
 	   echo "gate-bump: REFUSED — out-of-category file(s) vs $(GATE_BASE), use full-local-gate:"; \
 	   printf '%s\n' "$$bad" | sed 's/^/  /'; \
