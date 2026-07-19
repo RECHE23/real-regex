@@ -102,9 +102,15 @@ docs-site: doc-no-coverage ## Build the themed Sphinx/Breathe site (docs/site) -
 #   built-HTML link check (tools/check_site_links.py): linkcheck (above) walks SOURCE
 #   documents only -- landing.html is a Jinja2 template, invisible to it, so a broken
 #   href inside the bespoke landing could ship undetected (the exact "linkcheck doesn't
-#   see html_additional_pages" gap the P1c review caught). Needs the REAL release
-#   output (api/ + coverage/ copied in, not just _gate's bare sphinx-build), so this
-#   builds docs-site before checking build/site/html/index.html.
+#   see html_additional_pages" gap the P1c review caught); linkcheck also never
+#   resolves a URL #fragment at all (linkcheck_anchors = False, conf.py), so a stale
+#   forward-ref anchor into build/doc/html (doc-site P2a: the Drop-in pages' @ref
+#   links into /api/ until those targets migrate into the site) would be invisible to
+#   it on both counts. Needs the REAL release output (api/ + coverage/ copied in, not
+#   just _gate's bare sphinx-build), so this builds docs-site before checking it.
+#   Site-wide since doc-site P2a (no PAGE argument -> every build/site/html/*.html,
+#   file + #anchor both verified, excluding api/+coverage/ as scan ROOTS -- see the
+#   script's own docstring for why those two stay Doxygen's/llvm-cov's own gate).
 #
 # NB: coverage-html itself is NOT invoked from this recipe -- it is root-only (tests/
 # coverage domain, not migrated here). The root Makefile's `docs-site-gate` delegation
@@ -134,9 +140,9 @@ docs-site-gate: ## Sphinx -W --keep-going + linkcheck + built-HTML link check fo
 	   printf '%s\n' "$$hit" | sed 's/^/  /'; \
 	   exit 1; \
 	 fi
-	@echo "── built-HTML link check (build/site/html/index.html -- linkcheck can't see the bespoke landing template)"
+	@echo "── built-HTML link check (build/site/html/*.html, site-wide -- linkcheck can't see the bespoke landing template or any #anchor)"
 	@$(MAKE) docs-site
-	@python3 $(ROOT)/tools/check_site_links.py $(BUILD)/site/html index.html
+	@python3 $(ROOT)/tools/check_site_links.py $(BUILD)/site/html
 	@echo "docs-site-gate: PASS (sphinx -W --keep-going + linkcheck + no-inline-quickstart + built-HTML link check)"
 
 help: ## Show these targets

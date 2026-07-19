@@ -125,11 +125,17 @@ html_theme_options = {
     "navigation_with_keys": False,
     "pygments_light_style": "tango",
     "pygments_dark_style": "monokai",
-    # "index" is not a source document any more (root_doc is "contents", doc-site
-    # P1c) but `pathto("index")` still resolves to "index.html" regardless --
-    # that file exists, rendered by html_additional_pages below. So the inner
-    # pages' pydata navbar brand still points at a real place: the bespoke landing.
-    "logo_link": "index",
+    # No "logo_link" here: pydata_sphinx_theme's navbar-logo.html partial uses
+    # `theme_logo_link` VERBATIM as the href (`{% set href = theme_logo_link %}`,
+    # no `pathto()` call) -- a plain string here would be wrong on every page except
+    # the ones sitting at the site root (site-relative "index.html" resolves to
+    # e.g. "drop-in/index.html" from a nested page, a broken link). `_fix_logo_link`
+    # below (the html-page-context hook) computes the correct page-depth-relative
+    # path to the bespoke landing instead -- see its own docstring. (An earlier
+    # revision set this to the literal string "index" on the mistaken assumption
+    # that `pathto()` still ran on it; doc-site P2a's site-wide check_site_links.py
+    # extension caught the resulting dead brand-link on every inner page and this
+    # replaces that with the page-relative fix.)
 }
 
 # The bespoke root landing (doc-site P1c): docs/site/_templates/landing.html is a
@@ -151,7 +157,10 @@ html_additional_pages = {"index": "landing.html"}
 # document, so linkcheck cannot see a single href inside it (the P1c review gap:
 # a broken link in the bespoke landing would stay invisible to this net forever).
 # `tools/check_site_links.py`, wired into `docs-site-gate` (Makefile), closes that
-# blind spot by parsing the BUILT build/site/html/index.html directly.
+# blind spot by parsing the BUILT build/site/html/*.html directly, site-wide (doc-site
+# P2a) -- including this file's own `linkcheck_anchors = False` gap: it verifies each
+# internal link's #fragment too (a literal `id="..."` search in the target file),
+# which linkcheck never does regardless of anchors setting.
 linkcheck_anchors = False
 
 # -- quickstart injection (doc-site P1c: the gate-snippet invariant, preserved) ----
@@ -243,5 +252,29 @@ def _inject_quickstart(app, pagename, templatename, context, doctree):
     )
 
 
+def _fix_logo_link(app, pagename, templatename, context, doctree):
+    """`html-page-context` event hook: point the pydata navbar brand/logo at the
+    bespoke landing ("index.html", the actual homepage -- root_doc is "contents",
+    a near-empty placeholder, doc-site P1c) with a path that is correct from
+    EVERY page's own directory, not just the ones at the site root.
+
+    pydata_sphinx_theme's navbar-logo.html partial reads `theme_logo_link`
+    (populated from `html_theme_options["logo_link"]`) and emits it as the href
+    LITERALLY -- it never calls `pathto()` on it (unlike its own fallback branches
+    for `root_doc` / `theme_logo.link`, which do). A single static config string
+    therefore cannot be correct for both a depth-0 page (contents.html) and a
+    depth-1 page (drop-in/std-regex-tour.html, reference/index.html): a value that
+    resolves on one breaks on the other. Recomputing it here, per page, via the
+    same `pathto(..., resource=1)` the theme's own asset links use (e.g.
+    webpack-macros.html's `pathto('_static/styles/theme.css', 1)`), gets the
+    right relative prefix ("index.html" at the root, "../index.html" one level
+    down, ...) on every page. Overriding `context["theme_logo_link"]` here wins
+    over the static `html_theme_options` value at render time, the same mechanism
+    `_inject_quickstart` below already relies on for its own placeholders.
+    """
+    context["theme_logo_link"] = context["pathto"]("index.html", 1)
+
+
 def setup(app):
+    app.connect("html-page-context", _fix_logo_link)
     app.connect("html-page-context", _inject_quickstart)

@@ -1,0 +1,113 @@
+<!--
+std-regex-tour.md -- MyST conversion of docs/std_regex_dropin.dox (doc-site P2a·Drop-in).
+Mechanical conversion only, content TEL-QUEL: \page -> title, \section dropin_* ->
+titles with MyST anchors, \code{.cpp}/\endcode -> ```cpp fences. The ORIGINAL
+docs/std_regex_dropin.dox is untouched (still feeds /api via Doxygen) and stays the
+canon until P2b decides ownership -- this page is a migration mirror, not yet the
+source of truth. See the doc-site P2a fiche.
+
+Forward-refs (\ref divergences) point at the Doxygen HTML preserved under /api/ --
+each target file/anchor was build-verified (ls / grep id=) in build/doc/html before
+linking here, per the fiche's mapping-must-be-founded rule. Re-wire to internal
+Sphinx cross-refs once the divergences page migrates into the site (P2b/P3).
+-->
+
+# Drop-in for std::regex
+
+`real::compat` is a drop-in replacement for the `<regex>` surface on the `char` path. It runs your
+pattern on REAL — linear-time and ReDoS-safe — wherever that is provably identical to `std::regex`: the
+ECMAScript default and all five POSIX grammars (`basic`/`extended`/`awk`/`grep`/`egrep`) when the pattern
+translates, falling back to `std::regex` everywhere else. The contract in one sentence:
+**behave identically to `std::regex`, never a silent divergence.** And the payoff: under the default
+strict policy every accepted pattern runs each `regex_search` / `regex_match` in time linear in the input
+— **no accepted pattern can make matching super-linear**, across all five POSIX grammars, where a
+`std::regex` drop-in blows up exponentially on `(a+)+b`. (`regex_replace` and the iterators compose O(n)
+such operations — quadratic worst-case, inherent to any linear engine, but never exponential; a nullable
+pattern's replace/iteration delegates to std. See {doc}`std-regex-reference`.)
+
+(dropin-migrate)=
+## The migration
+
+Swap the include, alias the namespace, and your `std::regex` code compiles unchanged:
+
+```cpp
+#include <real/compat/std/regex.hpp>   // was: #include <regex>
+namespace re = real::compat;    // then use re::regex / re::smatch / re::regex_search / …
+```
+
+The types (`regex`, `smatch` / `cmatch`, `sub_match`, `match_results`, `regex_error`), the free
+functions (`regex_search`, `regex_match`, `regex_replace`), and the iterators (`regex_iterator`,
+`regex_token_iterator`) all keep their `std::regex` signatures and semantics — so at the call sites
+only the `std::` qualifier changes to `re::`.
+
+```cpp
+re::regex  r(R"((\w+)=(\d+))");
+re::smatch m;
+std::string line = "answer=42";
+if (re::regex_search(line, m, r)) {
+  auto key = m[1].str();   // "answer"
+  auto val = m[2].str();   // "42"
+}
+```
+
+(dropin-gain)=
+## What you gain
+
+- **Linear time where it matters.** A pattern that runs on REAL cannot backtrack — matching is O(n) in
+  the input, so the catastrophic blow-ups that make `std::regex` hang (or outright refuse) cannot
+  happen. On the shared C++ benchmark REAL measures **11–40× faster than `std::regex`** across the
+  pattern families, and it stays flat on the pathological inputs where `std::regex` gives up.
+  Reproduce it with `make bench-engines`; the machine and engine versions are in `BENCHMARKS.md`.
+- **Automatic, per-pattern fallback.** Anything REAL cannot prove equivalent — a backreference, an
+  oversized or unbounded lookaround, a POSIX class, a non-ASCII member inside `[...]` — routes to
+  `std::regex` transparently, at construction. You never pick a backend by hand.
+
+(dropin-introspect)=
+## Knowing which backend ran
+
+For performance debugging, the pattern reports which engine won and why:
+
+```cpp
+re::regex r(pattern);
+r.uses_real();            // true  -> the linear REAL engine
+r.uses_real_traversal();  // true  -> replace/iterate also run on REAL (real-backed AND non-nullable)
+r.nullable();             // true  -> can match empty, so replace/iterators defer to std for that op
+r.mark_count();           // capture-group count (std::regex parity)
+```
+
+A pattern that unexpectedly falls to `std` — and so loses the linear-time guarantee — is exactly what
+`uses_real()` surfaces.
+
+(dropin-alwaysstd)=
+## What is always std
+
+Some surfaces are always the `std::regex` backend by construction — they sit outside REAL's proven
+envelope, so compat runs `std` to stay a faithful drop-in: `wregex` and any non-`char` `CharT` or custom
+traits; `collate` and `nosubs`. The five POSIX grammars — `basic`, `extended`, `awk`, `grep`, `egrep` —
+are **not** always-std: a translatable pattern runs on REAL's linear engine with leftmost-longest bounds
+(see `real::compat::detail::translate_posix`); only an untranslatable construct (a backreference, an
+ECMAScript-ism, a std-library-divergent corner) delegates. There is deliberately no switch to force REAL
+on the always-std set — forcing it could diverge, which the contract forbids. If you need REAL's linear
+guarantee for such a pattern, rewrite it into the ECMAScript subset REAL accepts, then let `uses_real()`
+confirm it.
+
+(dropin-more)=
+## The full catalogue
+
+This page is the tour. The exhaustive, per-feature compatibility matrix — every routing rule, the
+`match_flag_type` support, the intentional divergences and their rationale — lives in the
+{doc}`compatibility reference <std-regex-reference>`, and REAL's own (non-compat) differences from Python `re` are in
+<a href="../api/divergences.html">Differences from Python re</a>.
+
+<!--
+std-regex-reference is nested here (not a direct entry of contents.md's root
+toctree) so the pydata header nav shows one "Drop-in" item, not two -- see
+contents.md's own comment. It still renders in this page's sidebar.
+-->
+
+```{toctree}
+:hidden:
+:maxdepth: 1
+
+std-regex-reference
+```
