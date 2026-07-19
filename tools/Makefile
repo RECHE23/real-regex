@@ -81,19 +81,26 @@ check-capi-abi: ## C ABI golden vs real_capi.h + enum/flag pins (hardening #4)
 	@cd $(ROOT) && python3 tools/gen_capi_abi_golden.py --check
 	@echo "check-capi-abi: PASS (golden matches real_capi.h)"
 
-# Features-matrix CI probe drift check (doc-site P3a): the generated .inc fragment
-# (tests/frontend/features_probe_generated.inc) GENERATED from docs/site/data/features.yaml
-# by tools/gen_features.py must match what the generator produces right now -- never
-# hand-edited. Deliberately its OWN root-invocable target (not folded into
-# docs-site-gate's heavier sphinx+doxygen+coverage-html run): docs/Makefile's own
-# docs-site-gate calls this target too (the mandatory carrier -- features.yaml lives
-# under docs/**, which ci.yml's push trigger paths-ignores, so a yaml-edited-without-
-# regen push never reaches ci.yml at all; docs-site.yml has no paths filter, so THIS is
-# where that drift actually gets caught), but this target also runs standalone here,
-# cheap enough to sit alongside check-capi-abi in ci.yml's preflight job. Can-fail proof:
+# Features-matrix drift check -- ONE target, TWO generated artifacts, both from
+# docs/site/data/features.yaml via tools/gen_features.py (its own `--check` covers both,
+# doc-site P3a + P3b):
+#   1. tests/frontend/features_probe_generated.inc -- the executable-claims CI probe (P3a).
+#   2. docs/COMPATIBILITY.md's "## Feature scorecard" table, GENERATED between DO-NOT-EDIT
+#      markers (P3b) -- neither is ever hand-edited.
+# Deliberately its OWN root-invocable target (not folded into docs-site-gate's heavier
+# sphinx+doxygen+coverage-html run): docs/Makefile's own docs-site-gate calls this target
+# too (the mandatory carrier -- features.yaml and COMPATIBILITY.md both live under
+# docs/**, which ci.yml's push trigger paths-ignores, so a yaml-edited-without-regen push
+# never reaches ci.yml at all; docs-site.yml has no paths filter, so THIS is where that
+# drift actually gets caught), but this target also runs standalone here, cheap enough to
+# sit alongside check-capi-abi in ci.yml's preflight job. Can-fail proof (either artifact):
 #   sed -i '' 's/status: excluded-by-design/status: supported/' docs/site/data/features.yaml
-#   make check-features-probe   # must exit non-zero; then: git checkout -- docs/site/data/features.yaml
-check-features-probe: ## Features-probe .inc vs features.yaml (doc-site P3a; the paths-ignore net)
+#   make check-features-probe   # must exit non-zero (both checks fail); then:
+#   git checkout -- docs/site/data/features.yaml
+#   sed -i '' 's/note: "exact alias of `\\\\Z` (Python 3.14.s meaning)"/note: "CHANGED"/' docs/site/data/features.yaml
+#   make check-features-probe   # must exit non-zero (scorecard check fails, probe stays green); then:
+#   git checkout -- docs/site/data/features.yaml
+check-features-probe: ## Features-probe .inc + COMPATIBILITY.md scorecard vs features.yaml (doc-site P3a/P3b; the paths-ignore net)
 	@cd $(ROOT) && python3 tools/gen_features.py --check
 	@echo "check-features-probe: PASS (features_probe_generated.inc matches features.yaml)"
 

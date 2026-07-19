@@ -35,27 +35,33 @@ are catalogued below (where `real`, following the spec, is the correct one).
 The public **status view** of REAL's regex features — the lines where REAL says something notable
 against a full feature matrix. Statuses: **supported** (parity with Python `re`), **extension**
 (REAL accepts it, `re` does not), **planned**, **excluded by design**. The *rationale* for each lives
-in the [divergences page](@ref divergences); this table is the single status source and links there —
-there is no competing table.
+in the [divergences page](@ref divergences); this table is **generated from
+`docs/site/data/features.yaml`** — the single status source — and links there; there is no competing
+table (regenerate with `python3 tools/gen_features.py` after editing that file; `make check-features-probe`
+catches a stale table).
 
 **Excluded by design is a closed door, not a missing feature.** Backreferences, recursion, and callouts
 each make matching super-linear and would reopen the ReDoS door this engine exists to close — so they
 raise a clear error rather than sitting on a roadmap.
 
+<!-- BEGIN GENERATED features scorecard — DO NOT EDIT — regenerate: python3 tools/gen_features.py -->
+
 | Feature | Status | Rationale | Since / target |
 | --- | --- | --- | --- |
-| Backreferences (`(a)\1`, `(?P=n)`) | **excluded by design** | non-regular → super-linear → ReDoS ([why](@ref div_rejected)) | — |
-| Conditional groups `(?(id)…)`, recursion, callouts | **excluded by design** | non-regular control flow → ReDoS ([why](@ref div_rejected)) | — |
-| Unicode property classes `\p{…}` | **supported** (General_Category + Script + Script_Extensions + the standard binary properties) | native, linear `klass_cp`; a superset of `re` (which rejects `\p`); `sc=`/`scx=` accept both the long name (`Latin`) and the short UAX24/ISO 15924 code (`Latn`); other UAX44 properties (`Bidi_Class`, `Word_Break`, `Age`, …) stay `unsupported` | 2026.7 |
-| `\N{NAME}` named characters | **supported** | binding resolves the name via `unicodedata` (no C++ table) | 2026.7 |
-| `\N{U+XXXX}` scalar form | **extension** (PCRE2-style) | uniform C++/Python surfaces; `re` knows only names ([more](@ref div_named_scalar)) | 2026.7 |
+| `\p{…}` property classes | **supported** | General_Category + Script + Script_Extensions + the standard binary properties; native, linear `klass_cp`; a REAL superset -- `re` rejects `\p` outright; `sc=`/`scx=` accept both the long name (`Latin`) and the short UAX24/ISO 15924 code (`Latn`); other UAX44 properties (`Bidi_Class`, `Word_Break`, `Age`, …) stay `unsupported` ([more](@ref div_property)) | 2026.7 |
+| `\N{NAME}` named characters | **supported** | binding resolves the name via `unicodedata` (no C++ table) ([more](@ref div_named_scalar)) | 2026.7 |
+| `\N{U+XXXX}` scalar form | **extension** | PCRE2-style; uniform C++/Python surfaces -- `re` knows only names ([more](@ref div_named_scalar)) | 2026.7 |
 | `\z` end-of-text anchor | **supported** | exact alias of `\Z` (Python 3.14's meaning) | 2026.7 |
-| Octal escapes in a class `[\1]` `[\12]` | **supported** | every `\digit` is octal in a class (no back-refs there) | 2026.7 |
-| Variable-width lookbehind `(?<=a|bb)` | **extension** | bounded → still linear; `re`/PCRE reject it ([more](@ref div_lookbehind)) | — |
-| Word-edge anchors `\<` `\>` | **extension** | word-start / word-end; `re` has no such escape | — |
-| POSIX `[[:alpha:]]` classes | **supported** | exact `re`-parity: `re` reads them as a *literal* class (currently with a `FutureWarning`); REAL matches the same characters | — |
+| Variable-width lookbehind `(?<=a|bb)` | **extension** | bounded, so still linear; `re`/PCRE reject it as non-fixed-width ([more](@ref div_lookbehind)) | — |
+| Word-edge anchors `\< \>` | **extension** | word-start / word-end; `re` has no such escape ([more](@ref div_icase)) | — |
+| Octal escapes in a class `[\1]` `[\12]` | **supported** | every `\digit` is octal in a class body (no backreferences there) | 2026.7 |
+| POSIX `[[:alpha:]]` classes | **supported** | exact `re`-parity: read as a literal class (matches `re`'s FutureWarning-era behaviour), not true POSIX semantics | — |
 | Global flags `i m s x a` (and `(?imsxa)` prefix) | **supported** | `re` semantics; `re.U` is a no-op, `re.L` excluded | — |
 | Scoped inline flags `(?imsxa:…)` / `(?-…:…)` / `(?…-…:…)` | **supported** | per-scope `i m s x a` (Python 3.11 semantics), exact `re`-parity in str and bytes | 2026.7 |
+| Backreferences `(a)\1`, `(?P=n)` | **excluded by design** | non-regular -> super-linear -> ReDoS ([why](@ref div_rejected)) | — |
+| Conditional groups `(?(id)…)`, recursion, callouts | **excluded by design** | non-regular control flow -> ReDoS ([why](@ref div_rejected)) | — |
+
+<!-- END GENERATED -->
 
 ## How a pattern is routed
 

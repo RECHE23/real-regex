@@ -9,6 +9,7 @@ docs/requirements.txt, installed into an isolated venv (never the system interpr
 """
 
 import re
+import sys
 import textwrap
 from pathlib import Path
 
@@ -336,15 +337,16 @@ def _inject_primary_nav(app, pagename, templatename, context, doctree):
 
 _FEATURES_YAML = _HERE / "data" / "features.yaml"
 
-# FIGE: exactly these 4 machine slugs, matching features.yaml's own schema comment.
-# The dict value is the badge's HUMAN label -- "excluded by design" is spaced,
-# matching COMPATIBILITY.md's scorecard prose (l.37/47), not the hyphenated slug.
-_FEATURE_STATUS_LABELS = {
-    "supported": "supported",
-    "extension": "extension",
-    "excluded-by-design": "excluded by design",
-    "planned": "planned",
-}
+# The status-slug -> human-label vocabulary is canonical in tools/gen_features.py
+# (STATUS_LABELS) -- doc-site P3b moved it there so this directive and
+# generate_scorecard() (COMPATIBILITY.md's GENERATED scorecard table) share exactly ONE
+# table, never two. tools/gen_features.py depends on nothing but yaml/stdlib (it also
+# runs under the system Python in ci.yml's preflight and docs-site-gate's
+# check-features-probe step, never this venv), so importing FROM it here is safe; the
+# reverse (gen_features.py importing conf.py) is not even possible -- conf.py needs
+# sphinx/breathe/docutils, all venv-only. sys.path is extended for this import only.
+sys.path.insert(0, str(_ROOT / "tools"))
+from gen_features import STATUS_LABELS as _FEATURE_STATUS_LABELS  # noqa: E402
 
 
 def _feature_inline_nodes(text):
@@ -453,6 +455,12 @@ class FeaturesDirective(SphinxDirective):
                 note = feature.get("note", "")
                 link = feature.get("link")
                 pattern = feature.get("pattern")
+                # feature.get("since") is deliberately NOT read here (doc-site P3b): the
+                # site stays laconic (no per-row version column) and the version history
+                # lives in CHANGELOG.md; GitHub's COMPATIBILITY.md scorecard is the one
+                # render that keeps "Since / target" (tools/gen_features.py's
+                # generate_scorecard()). One source (features.yaml), two audience-tuned
+                # renders -- this directive simply tolerates the extra key.
 
                 row = nodes.row(classes=["feature-row", f"feature-row--{status}"])
 

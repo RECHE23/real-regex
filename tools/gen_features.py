@@ -1,29 +1,37 @@
 #!/usr/bin/env python3
-r"""Generate the Features-matrix CI probe from docs/site/data/features.yaml (single
-source of truth for the {features} directive AND this probe -- doc-site P3a).
+r"""Generate TWO artifacts from the single source docs/site/data/features.yaml (also the
+data behind the {features} site directive -- doc-site P3a/P3b):
 
-Every features.yaml row with a non-null `pattern` becomes one executable assertion,
-emitted as a GENERATED + committed C++ fragment (tests/frontend/features_probe_generated.inc):
+1. tests/frontend/features_probe_generated.inc -- the executable-claims CI probe (P3a).
+   Every features.yaml row with a non-null `pattern` becomes one assertion:
 
-  - status: supported / extension   -> real::regex(pattern) must COMPILE (not throw).
-  - status: excluded-by-design      -> real::regex(pattern) must THROW real::regex_error
+     - status: supported / extension   -> real::regex(pattern) must COMPILE (not throw).
+     - status: excluded-by-design      -> real::regex(pattern) must THROW real::regex_error
                                         (the moat, proven executable -- not just documented).
-  - status: planned, or pattern: null -> SKIPPED (a null pattern has an honest reason,
+     - status: planned, or pattern: null -> SKIPPED (a null pattern has an honest reason,
                                         recorded in features.yaml itself; no pattern is
                                         fabricated here to fill the gap).
 
-Patterns are emitted as C++ raw strings (R"delim(...)delim", delimiter chosen per-pattern
-to avoid colliding with the pattern's own text) so the yaml's already-unescaped pattern
-text (e.g. yaml `"\\p{L}+"` -> Python str `\p{L}+`) reaches the compiler unchanged --
-re-escaping it through a normal C++ string literal would risk testing the wrong pattern.
+   Patterns are emitted as C++ raw strings (R"delim(...)delim", delimiter chosen per-pattern
+   to avoid colliding with the pattern's own text) so the yaml's already-unescaped pattern
+   text (e.g. yaml `"\\p{L}+"` -> Python str `\p{L}+`) reaches the compiler unchanged --
+   re-escaping it through a normal C++ string literal would risk testing the wrong pattern.
+   tests/frontend/test_features_probe.cpp (hand-written, stable) provides the includes and
+   `#include`s the generated fragment; this script owns only the fragment.
 
-tests/frontend/test_features_probe.cpp (hand-written, stable) provides the includes and
-`#include`s the generated fragment; this script owns only the fragment.
+2. docs/COMPATIBILITY.md's "## Feature scorecard" table (doc-site P3b) -- the GitHub-reader-
+   facing status view, GENERATED and injected between two markers already present in the
+   file (never invented by this script; the hand-written prose around them is untouched).
+   Only categories NOT marked `scorecard: false` (see features.yaml's own schema comment)
+   contribute rows, in features.yaml's own order. A row's `link:` (the site's MyST
+   "PAGE#target" form) is rewritten to a Doxygen `([why|more](@ref target))` cross-ref --
+   COMPATIBILITY.md feeds Doxygen (`INPUT = ... docs/`), not Sphinx, so the site's `:ref:`
+   mechanism (conf.py's FeaturesDirective) does not apply here.
 
 Usage:
-  python3 tools/gen_features.py              # write tests/frontend/features_probe_generated.inc
-  python3 tools/gen_features.py --stdout     # print the generated fragment to stdout
-  python3 tools/gen_features.py --check      # exit 1 if the committed fragment is stale
+  python3 tools/gen_features.py              # write both generated artifacts
+  python3 tools/gen_features.py --stdout     # print the .inc fragment to stdout (probe only)
+  python3 tools/gen_features.py --check      # exit 1 if EITHER committed artifact is stale
 """
 from __future__ import annotations
 
@@ -37,12 +45,46 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 FEATURES_YAML = ROOT / "docs" / "site" / "data" / "features.yaml"
 OUT = ROOT / "tests" / "frontend" / "features_probe_generated.inc"
+COMPATIBILITY_MD = ROOT / "docs" / "COMPATIBILITY.md"
 
-# FIGE: matches features.yaml's own schema comment and conf.py's _FEATURE_STATUS_LABELS.
+# FIGE: matches features.yaml's own schema comment.
 COMPILE_STATUSES = {"supported", "extension"}
 THROW_STATUSES = {"excluded-by-design"}
 SKIP_STATUSES = {"planned"}
 KNOWN_STATUSES = COMPILE_STATUSES | THROW_STATUSES | SKIP_STATUSES
+
+# The canonical status-slug -> human-label table (doc-site P3b: moved here from conf.py so
+# BOTH consumers -- this script's generate_scorecard() and conf.py's {features} directive --
+# share exactly one vocabulary, never two. conf.py imports this dict (see its own comment);
+# this module must stay import-safe with only yaml/stdlib (conf.py is venv-only -- sphinx/
+# breathe -- so the dependency direction is tools/ -> nothing, conf.py -> tools/, never the
+# reverse). The dict VALUE is the human label -- "excluded by design" is spaced, matching
+# COMPATIBILITY.md's scorecard prose, not the hyphenated slug.
+STATUS_LABELS = {
+    "supported": "supported",
+    "extension": "extension",
+    "excluded-by-design": "excluded by design",
+    "planned": "planned",
+}
+
+# doc-site P3b: the scorecard table lives between these two exact marker lines in
+# COMPATIBILITY.md (already present there, never created by this script -- a missing
+# marker is a hard error, not a silent no-op). The link-text convention below ("why" for
+# an excluded-by-design row, "more" otherwise) reproduces the two texts the hand-written
+# scorecard actually used before generation (COMPATIBILITY.md git history, doc-site P3b's
+# own diff audit) -- not a new invention.
+SCORECARD_BEGIN = (
+    "<!-- BEGIN GENERATED features scorecard — DO NOT EDIT — "
+    "regenerate: python3 tools/gen_features.py -->"
+)
+SCORECARD_END = "<!-- END GENERATED -->"
+
+# features.yaml `link:` values are always "differences-from-re#div_X" (the site's MyST
+# cross-ref target, see features.yaml's own schema comment) -- the only page this repo's
+# scorecard rows have ever linked to. Stripping this fixed prefix and keeping "div_X" is
+# what turns the link into a Doxygen `@ref div_X` (COMPATIBILITY.md's page, divergences.dox's
+# anchor -- both Doxygen documents, not Sphinx/MyST).
+_SCORECARD_LINK_PAGE_PREFIX = "differences-from-re#"
 
 # Candidate raw-string delimiters, tried in order; the first that cannot collide with a
 # given pattern's own text is used for that pattern. Patterns here are short regex
@@ -150,10 +192,125 @@ def generate() -> str:
     return "\n".join(lines)
 
 
+def generate_scorecard() -> str:
+    """Render docs/COMPATIBILITY.md's "## Feature scorecard" TABLE ONLY (header + separator
+    + rows -- no surrounding markers, no prose) from features.yaml. See this module's own
+    docstring, item 2, for the category-filter and link-mapping rules.
+    """
+    with FEATURES_YAML.open(encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+
+    categories = data.get("categories") if isinstance(data, dict) else None
+    if not categories:
+        raise SystemExit("gen_features: features.yaml has no 'categories'")
+
+    lines: list[str] = [
+        "| Feature | Status | Rationale | Since / target |",
+        "| --- | --- | --- | --- |",
+    ]
+
+    for category in categories:
+        # `scorecard: false` (default true, per-category): opts a category OUT of the
+        # GENERATED COMPATIBILITY.md table while it still renders in full on the site's
+        # {features} page. "Core" is the one category so far that sets this -- it is
+        # already covered, in prose, by COMPATIBILITY.md's own "## What runs on real"
+        # section (hand-written, untouched by this script); the scorecard's own intro
+        # ("the lines where REAL says something notable against a full feature matrix")
+        # would stop being true if every baseline "of course it's supported" Core row
+        # joined it too.
+        if not category.get("scorecard", True):
+            continue
+        cat_name = category["name"]
+        for feature in category.get("features") or []:
+            construct = feature["construct"]
+            status = feature["status"]
+            if status not in STATUS_LABELS:
+                raise SystemExit(
+                    f"gen_features: {cat_name!r} / {construct!r} has status {status!r}, "
+                    f"not one of {sorted(STATUS_LABELS)}"
+                )
+            note = feature.get("note", "")
+            link = feature.get("link")
+            since = feature.get("since") or "—"
+
+            rationale = note
+            if link:
+                _, sep, target = link.partition("#")
+                if not link.startswith(_SCORECARD_LINK_PAGE_PREFIX) or not sep or not target:
+                    raise SystemExit(
+                        f"gen_features: {cat_name!r} / {construct!r} scorecard link {link!r} "
+                        f"does not start with {_SCORECARD_LINK_PAGE_PREFIX!r} + '#target' -- "
+                        "only differences-from-re#div_* links are mapped to a Doxygen @ref"
+                    )
+                # "why" for a closed door (excluded-by-design), "more" for everything else
+                # that links out (an extension or a supported row with extra context) --
+                # reproduces the two link texts the hand-written scorecard actually used.
+                link_text = "why" if status == "excluded-by-design" else "more"
+                rationale = f"{rationale} ([{link_text}](@ref {target}))"
+
+            lines.append(f"| {construct} | **{STATUS_LABELS[status]}** | {rationale} | {since} |")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _inject_scorecard(markdown: str, table: str) -> str:
+    """Splice TABLE between COMPATIBILITY.md's two scorecard markers. The markers must
+    already exist in MARKDOWN (a missing marker is a hard error -- this function never
+    invents one); the hand-written prose outside them passes through untouched."""
+    try:
+        start = markdown.index(SCORECARD_BEGIN)
+    except ValueError:
+        raise SystemExit(
+            f"gen_features: {COMPATIBILITY_MD.relative_to(ROOT)} is missing the marker "
+            f"{SCORECARD_BEGIN!r}"
+        )
+    try:
+        end = markdown.index(SCORECARD_END, start)
+    except ValueError:
+        raise SystemExit(
+            f"gen_features: {COMPATIBILITY_MD.relative_to(ROOT)} is missing the marker "
+            f"{SCORECARD_END!r} (after the BEGIN marker)"
+        )
+    end += len(SCORECARD_END)
+    return markdown[:start] + SCORECARD_BEGIN + "\n\n" + table + "\n" + SCORECARD_END + markdown[end:]
+
+
+def generate_compatibility_md() -> str:
+    """Return docs/COMPATIBILITY.md's full text with the scorecard block regenerated from
+    features.yaml (everything outside the two markers is the committed file, unchanged)."""
+    if not COMPATIBILITY_MD.is_file():
+        raise SystemExit(f"gen_features: missing {COMPATIBILITY_MD.relative_to(ROOT)}")
+    markdown = COMPATIBILITY_MD.read_text(encoding="utf-8")
+    return _inject_scorecard(markdown, generate_scorecard())
+
+
+def _report_stale(path: Path, existing: str, generated: str) -> None:
+    print(
+        f"gen_features: FAIL — {path.relative_to(ROOT)} stale vs docs/site/data/features.yaml\n"
+        "  regenerate: python3 tools/gen_features.py",
+        file=sys.stderr,
+    )
+    old_lines = existing.splitlines()
+    new_lines = generated.splitlines()
+    for i, (a, b) in enumerate(zip(old_lines, new_lines)):
+        if a != b:
+            print(f"  first mismatch at line {i + 1}:", file=sys.stderr)
+            print(f"    committed:   {a}", file=sys.stderr)
+            print(f"    regenerated: {b}", file=sys.stderr)
+            break
+    else:
+        if len(old_lines) != len(new_lines):
+            print(
+                f"  length committed={len(old_lines)} regenerated={len(new_lines)}",
+                file=sys.stderr,
+            )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--stdout", action="store_true", help="print the generated fragment to stdout")
-    ap.add_argument("--check", action="store_true", help="fail if the committed fragment is stale")
+    ap.add_argument("--stdout", action="store_true", help="print the .inc probe fragment to stdout (probe only)")
+    ap.add_argument("--check", action="store_true", help="fail if EITHER committed artifact is stale")
     args = ap.parse_args()
 
     fragment = generate()
@@ -163,38 +320,45 @@ def main() -> int:
         return 0
 
     if args.check:
+        ok = True
+
         if not OUT.is_file():
             print(f"gen_features: FAIL — missing {OUT}", file=sys.stderr)
-            return 1
-        existing = OUT.read_text(encoding="utf-8")
-        if existing != fragment:
-            print(
-                "gen_features: FAIL — generated fragment stale vs docs/site/data/features.yaml\n"
-                "  regenerate: python3 tools/gen_features.py",
-                file=sys.stderr,
-            )
-            old_lines = existing.splitlines()
-            new_lines = fragment.splitlines()
-            for i, (a, b) in enumerate(zip(old_lines, new_lines)):
-                if a != b:
-                    print(f"  first mismatch at line {i + 1}:", file=sys.stderr)
-                    print(f"    committed:  {a}", file=sys.stderr)
-                    print(f"    regenerated: {b}", file=sys.stderr)
-                    break
+            ok = False
+        else:
+            existing = OUT.read_text(encoding="utf-8")
+            if existing != fragment:
+                _report_stale(OUT, existing, fragment)
+                ok = False
             else:
-                if len(old_lines) != len(new_lines):
-                    print(
-                        f"  length committed={len(old_lines)} regenerated={len(new_lines)}",
-                        file=sys.stderr,
-                    )
-            return 1
-        print(f"gen_features: OK — {OUT.relative_to(ROOT)} matches features.yaml")
-        return 0
+                print(f"gen_features: OK — {OUT.relative_to(ROOT)} matches features.yaml")
+
+        if not COMPATIBILITY_MD.is_file():
+            print(f"gen_features: FAIL — missing {COMPATIBILITY_MD}", file=sys.stderr)
+            ok = False
+        else:
+            existing_md = COMPATIBILITY_MD.read_text(encoding="utf-8")
+            generated_md = _inject_scorecard(existing_md, generate_scorecard())
+            if existing_md != generated_md:
+                _report_stale(COMPATIBILITY_MD, existing_md, generated_md)
+                ok = False
+            else:
+                print(
+                    f"gen_features: OK — {COMPATIBILITY_MD.relative_to(ROOT)} "
+                    "scorecard matches features.yaml"
+                )
+
+        return 0 if ok else 1
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(fragment, encoding="utf-8")
     n_tests = fragment.count("\nTEST(")
     print(f"gen_features: wrote {OUT.relative_to(ROOT)} ({n_tests} assertions)")
+
+    table = generate_scorecard()
+    COMPATIBILITY_MD.write_text(_inject_scorecard(COMPATIBILITY_MD.read_text(encoding="utf-8"), table), encoding="utf-8")
+    n_rows = max(len(table.strip("\n").splitlines()) - 2, 0)  # minus the header + separator lines
+    print(f"gen_features: wrote scorecard into {COMPATIBILITY_MD.relative_to(ROOT)} ({n_rows} rows)")
     return 0
 
 

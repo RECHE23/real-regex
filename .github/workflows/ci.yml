@@ -60,13 +60,15 @@ jobs:
           # (silent ABI drift + re-vendor no longer goes green). Enum/flag pins are in the test suite.
           echo "── check-capi-abi (C ABI surface golden)"
           make -C real-regex check-capi-abi
-          # doc-site P3a: features_probe_generated.inc GENERATED from docs/site/data/features.yaml
-          # must match. Redundant-but-cheap here (docs/site/data/features.yaml lives under
+          # doc-site P3a/P3b: features_probe_generated.inc AND docs/COMPATIBILITY.md's
+          # GENERATED "## Feature scorecard" table -- both GENERATED from
+          # docs/site/data/features.yaml, both checked by this one target. Redundant-but-
+          # cheap here (docs/site/data/features.yaml and docs/COMPATIBILITY.md live under
           # docs/**, which this workflow's own paths-ignore skips on a docs-only push, so
           # docs-site-gate — no paths filter — is the step that actually always catches drift;
           # this one covers the case where a features.yaml edit ships alongside other, non-ignored
           # files in the same push, and costs nothing next to check-capi-abi above).
-          echo "── check-features-probe (features.yaml -> features_probe_generated.inc golden)"
+          echo "── check-features-probe (features.yaml -> features_probe_generated.inc + COMPATIBILITY.md scorecard golden)"
           make -C real-regex check-features-probe
           echo "── doc-no-coverage (Doxygen WARN_AS_ERROR)"
           make -C real-regex doc-no-coverage

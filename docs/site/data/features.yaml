@@ -1,19 +1,31 @@
-# docs/site/data/features.yaml -- the Features-matrix DATA (doc-site P2b, 3rd wagon).
+# docs/site/data/features.yaml -- the Features-matrix DATA and now the single status
+# source for TWO generated outputs (doc-site P2b data+render, P3a CI probe, P3b scorecard):
 #
-# Derived from docs/COMPATIBILITY.md's "## Feature scorecard" (l.33-58, table l.45-58 --
-# the single curated status source) plus its "## What runs on real (linear, ReDoS-safe)"
-# baseline (l.85-93, the Core category below) and its excluded-by-design rows (l.41-48 /
-# 47-48, the moat -- backreferences, conditional groups/recursion/callouts). This file
-# DUPLICATES that scorecard's status data on purpose, for now: the de-dup that makes
-# features.yaml the single source (COMPATIBILITY.md generated FROM it, or vice versa) is
-# a follow-up wagon, not this one -- see the doc-site P2b fiche's "De-dup DIFFÉRÉ"
-# section. COMPATIBILITY.md itself, and its own "there is no competing table" line
-# (l.38), are untouched by this wagon.
+#   1. docs/site/features.md's `{features}` directive (conf.py) -- every category, full
+#      Unicode-badge render, for the docs SITE.
+#   2. docs/COMPATIBILITY.md's "## Feature scorecard" table (tools/gen_features.py's
+#      generate_scorecard(), GENERATED + committed between DO-NOT-EDIT markers) -- for
+#      GitHub readers, who never see the Sphinx site. Only categories NOT marked
+#      `scorecard: false` below contribute a row (see CATEGORY schema) -- this keeps the
+#      GitHub table "the lines where REAL says something notable", not the full matrix
+#      the site's page already is.
 #
-# Schema (probe-ready for the phase-2 CI sonde -- NOT built here; this wagon is data +
-# render only):
+# The de-dup is done: COMPATIBILITY.md's scorecard table used to be hand-written and
+# duplicate this file's status data (doc-site P2b's "De-dup DIFFÉRÉ" section) -- that
+# follow-up wagon is P3b, this file. COMPATIBILITY.md's own prose above the table (its
+# "single status source" line) now says features.yaml IS that source, generated from.
 #
-#   categories: [ { name: str, features: [ FEATURE, ... ] }, ... ]
+# Schema:
+#
+#   categories: [ { name: str, scorecard: bool (optional, default true), features: [ FEATURE, ... ] }, ... ]
+#
+#   CATEGORY.scorecard: bool -- OPTIONAL, default true. false excludes every feature in
+#     this category from the GENERATED COMPATIBILITY.md table (generate_scorecard())
+#     while it still renders on the site's Features page (the {features} directive does
+#     not read this key at all). Set false on "Core" only so far -- its baseline "of
+#     course it's supported" rows are already covered, in prose, by COMPATIBILITY.md's
+#     own hand-written "## What runs on real" section; the CI probe still exercises
+#     every Core row's `pattern` regardless (this flag is scorecard-render-only).
 #
 #   FEATURE:
 #     construct: str        -- human label; Markdown-style single-backtick code spans
@@ -21,10 +33,13 @@
 #                               not run a full Markdown/reST parser over this field)
 #     status: enum           -- FIGE to exactly these 4 machine slugs, no others:
 #                                  supported | extension | excluded-by-design | planned
-#                                The rendered badge shows the scorecard's HUMAN form
-#                                ("excluded by design", spaced -- COMPATIBILITY.md
-#                                l.37/47 has no hyphens); the slug is the machine key,
-#                                the label is a display-only lookup in conf.py.
+#                                The rendered badge / scorecard cell shows the HUMAN form
+#                                ("excluded by design", spaced -- COMPATIBILITY.md's
+#                                scorecard prose has no hyphens); the slug is the machine
+#                                key, the label is a display-only lookup in
+#                                tools/gen_features.py's STATUS_LABELS (the ONE canonical
+#                                vocab table -- conf.py imports it from there, doc-site
+#                                P3b; it is not redefined a second time in conf.py).
 #     note: str              -- the scorecard's Rationale cell verbatim-ish, or (Core
 #                               category, which has no table of its own) a short note
 #                               derived from COMPATIBILITY.md's baseline prose (l.85-93)
@@ -42,6 +57,17 @@
 #                               header comment, "PIEGE D'ANCRES"). Omitted entirely when
 #                               no row-specific div_* target exists on the site yet; no
 #                               weak/inferred link was invented just to fill the column.
+#     since: str              -- OPTIONAL. The scorecard's "Since / target" column (e.g.
+#                               "2026.7"), preserved from the original hand-written
+#                               COMPATIBILITY.md table (doc-site P3b) -- GitHub readers
+#                               keep it. Omitted entirely means "always true / not
+#                               version-gated" -- generate_scorecard() renders that as
+#                               "—", the hand-written table's own em-dash. The site's
+#                               {features} directive deliberately does NOT render this
+#                               field at all (see conf.py's own comment): one source, two
+#                               audience-tuned renders -- the site stays laconic, the
+#                               version history lives in CHANGELOG.md, and GitHub's
+#                               scorecard keeps the column it always had.
 #     pattern: str or null   -- ONE representative, testable regex for this row.
 #                               Phase 2 (a follow-up wagon, not built here): supported/
 #                               extension rows must COMPILE on real; excluded-by-design
@@ -51,12 +77,17 @@
 #                               see the one such row below for why, in a comment there.
 #                               A fabricated pattern was not used to avoid a blank cell.
 #
-# No "planned" row exists yet: neither the scorecard (l.45-58) nor the baseline (l.85-93)
-# currently has one. The slug stays reserved in the schema (probe-ready) -- not
-# populated here with an invented row just to exercise all 4 enum values.
+# No "planned" row exists yet: no category below has one. The slug stays reserved in the
+# schema (probe-ready) -- not populated here with an invented row just to exercise all 4
+# enum values.
 
 categories:
   - name: "Core"
+    # scorecard: false -- kept off the GENERATED COMPATIBILITY.md table (doc-site P3b);
+    # this baseline is already covered, in prose, by that file's own hand-written
+    # "## What runs on real (linear, ReDoS-safe)" section. Still rendered in full on the
+    # site's Features page (the {features} directive ignores this key).
+    scorecard: false
     features:
       - construct: "Literals, concatenation & alternation"
         status: supported
@@ -106,13 +137,24 @@ categories:
     features:
       - construct: "`\\p{…}` property classes"
         status: supported
-        note: "General_Category + Script + Script_Extensions + the standard binary properties; a REAL superset -- `re` rejects `\\p` outright"
+        # note carries BOTH the scorecard's old status-parenthetical ("supported
+        # (General_Category + Script + Script_Extensions + the standard binary
+        # properties)") AND its Rationale cell, merged (doc-site P3b's generated table
+        # has no separate status-parenthetical slot -- see gen_features.py's
+        # generate_scorecard()). The `sc=`/`scx=` short-vs-long-code detail and the
+        # named unsupported-property examples (`Bidi_Class`/`Word_Break`/`Age`) are not
+        # retraced anywhere in divergences.dox's div_property section (which gives
+        # different example names, Alphabetic/White_Space, for the same "not built in
+        # yet" point) -- kept here in full rather than lost on generation.
+        note: "General_Category + Script + Script_Extensions + the standard binary properties; native, linear `klass_cp`; a REAL superset -- `re` rejects `\\p` outright; `sc=`/`scx=` accept both the long name (`Latin`) and the short UAX24/ISO 15924 code (`Latn`); other UAX44 properties (`Bidi_Class`, `Word_Break`, `Age`, …) stay `unsupported`"
         link: "differences-from-re#div_property"
+        since: "2026.7"
         pattern: "\\p{L}+"
       - construct: "`\\N{NAME}` named characters"
         status: supported
         note: "binding resolves the name via `unicodedata` (no C++ table)"
         link: "differences-from-re#div_named_scalar"
+        since: "2026.7"
         pattern: null
         # pattern: null -- "supported" here is a Python-binding-level claim: the
         # binding's unicodedata lookup resolves the name before the engine ever sees
@@ -126,6 +168,7 @@ categories:
         status: extension
         note: "PCRE2-style; uniform C++/Python surfaces -- `re` knows only names"
         link: "differences-from-re#div_named_scalar"
+        since: "2026.7"
         pattern: "\\N{U+1F600}"
 
   - name: "Anchors & lookaround extensions"
@@ -133,6 +176,7 @@ categories:
       - construct: "`\\z` end-of-text anchor"
         status: supported
         note: "exact alias of `\\Z` (Python 3.14's meaning)"
+        since: "2026.7"
         pattern: "abc\\z"
       - construct: "Variable-width lookbehind `(?<=a|bb)`"
         status: extension
@@ -150,6 +194,7 @@ categories:
       - construct: "Octal escapes in a class `[\\1]` `[\\12]`"
         status: supported
         note: "every `\\digit` is octal in a class body (no backreferences there)"
+        since: "2026.7"
         pattern: "[\\12]"
       - construct: "POSIX `[[:alpha:]]` classes"
         status: supported
@@ -165,6 +210,7 @@ categories:
       - construct: "Scoped inline flags `(?imsxa:…)` / `(?-…:…)` / `(?…-…:…)`"
         status: supported
         note: "per-scope `i m s x a` (Python 3.11 semantics), exact `re`-parity in str and bytes"
+        since: "2026.7"
         pattern: "(?i:abc)(?-i:def)"
 
   - name: "Excluded by design"
