@@ -66,7 +66,7 @@ include $(ROOT)/mk/common.mk
 include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-        lint misra fuzz fuzz-compat fuzz-re2 check-capi-abi exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
+        lint misra fuzz fuzz-compat fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-multipattern bench-duel bench-matrix matrix-gate \
         profile-sample profile-callgrind \
@@ -222,6 +222,13 @@ fuzz-re2:
 # Enum/flag value pins live in tests/bindings/test_capi_abi.cpp (real::flags cross-check).
 check-capi-abi:
 	@$(MAKE) -C tools check-capi-abi
+
+# Features-probe .inc drift vs docs/site/data/features.yaml (doc-site P3a). Thin
+# delegation, same shape as check-capi-abi just above — see tools/Makefile's own
+# check-features-probe for the can-fail proof and the paths-ignore rationale (why this
+# also needs its own root-invocable name rather than living only inside docs-site-gate).
+check-features-probe:
+	@$(MAKE) -C tools check-features-probe
 
 # --- docs/ (Doxygen + Sphinx/Breathe site) ---------------------------------
 #

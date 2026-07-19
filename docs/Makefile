@@ -118,6 +118,8 @@ docs-site: doc-no-coverage ## Build the themed Sphinx/Breathe site (docs/site) -
 # invoked it pre-migration) BEFORE calling `$(MAKE) -C docs docs-site-gate`, so
 # $(COV_HTML) is already populated by the time `docs-site` (below) runs.
 docs-site-gate: ## Sphinx -W --keep-going + linkcheck + built-HTML link check for docs/site (the site's net)
+	@echo "── check-features-probe (features.yaml -> tests/frontend/features_probe_generated.inc drift; the paths-ignore blind spot -- features.yaml lives under docs/**, which ci.yml's push trigger ignores, so THIS step -- not ci.yml -- is what a yaml-edited-without-regen push actually trips: docs-site.yml has no paths filter)"
+	@$(MAKE) -C $(ROOT)/tools check-features-probe
 	@command -v $(SPHINXBUILD) >/dev/null 2>&1 || { \
 	  echo "docs-site-gate: '$(SPHINXBUILD)' not found -- install docs/requirements.txt into a venv" \
 	       "and put it on PATH (or pass SPHINXBUILD=/path/to/sphinx-build)"; exit 1; }
