@@ -14,20 +14,26 @@ duplicates its status data on purpose, for now (see features.yaml's own header, 
 DIFFERE"). Multi-engine comparison columns (REAL vs std/RE2/...) stay in README, and
 how-to-write regex syntax stays out of scope for a future Syntax page -- this page is
 status only.
+
+doc-site P1 reorg: this page is the Features SECTION landing -- differences-from-re
+nests in the toctree below (Features owns the "what does it support / how does it
+differ" question, council synthesis Q1), and a future Syntax page will nest here too.
 -->
 
 # Features
 
-The status of every construct REAL accepts, rejects, or extends beyond Python `re` --
-one row per construct, one status per row. **Excluded by design is a closed door, not
-a missing feature**: backreferences, recursion, and callouts each make matching
-super-linear and would reopen the ReDoS door this engine exists to close, so they raise
-a clear error rather than sitting on a roadmap (see the rationale on
-[the divergences page](differences-from-re.md)).
-
-For *how* to write a pattern, see the drop-in tour and the divergences page; for a
-comparison against other regex engines (std::regex, RE2, the Rust `regex` crate, …),
-see the project README.
+Every construct REAL accepts, rejects, or extends beyond Python `re` — one row,
+one status. **Excluded by design is a closed door, not a missing feature**: each
+of those constructs makes matching super-linear and would reopen the ReDoS door
+this engine exists to close — rationale on
+[the divergences page](differences-from-re.md).
 
 ```{features}
+```
+
+```{toctree}
+:hidden:
+:maxdepth: 1
+
+Differences from re <differences-from-re>
 ```

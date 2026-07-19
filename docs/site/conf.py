@@ -129,6 +129,9 @@ html_theme_options = {
     "navigation_with_keys": False,
     "pygments_light_style": "tango",
     "pygments_dark_style": "monokai",
+    # doc-site P1 reorg: the out-of-menu links (Performance/Coverage/Changelog)
+    # live in the inner-page footer -- see _templates/footer-site-links.html.
+    "footer_end": ["footer-site-links"],
     # No "logo_link" here: pydata_sphinx_theme's navbar-logo.html partial uses
     # `theme_logo_link` VERBATIM as the href (`{% set href = theme_logo_link %}`,
     # no `pathto()` call) -- a plain string here would be wrong on every page except
@@ -277,6 +280,34 @@ def _fix_logo_link(app, pagename, templatename, context, doctree):
     `_inject_quickstart` below already relies on for its own placeholders.
     """
     context["theme_logo_link"] = context["pathto"]("index.html", 1)
+
+
+def _inject_primary_nav(app, pagename, templatename, context, doctree):
+    """`html-page-context` event hook: inject the landing's primary nav from the
+    ROOT TOCTREE -- the same source pydata_sphinx_theme walks for the inner
+    header (doc-site P1 reorg: ONE nav source, two consumers). landing.html
+    loops over `primary_nav`; its nav was hard-coded before this hook, which is
+    exactly what let the two menus diverge for five wagons. The nav-equality
+    net in tools/check_site_links.py asserts the two BUILT navs stay equal on
+    every docs-site-gate run -- this hook is the source, the net is the proof.
+
+    Entries: each direct entry of contents.md's toctree blocks, custom title
+    first (env.titles fallback), href root-relative (the landing sits at the
+    site root). Any exception here fails the -W build -- fail closed, never a
+    silently empty nav.
+    """
+    if pagename != "index":
+        return
+    env = app.env
+    items = []
+    for toc in env.get_doctree(app.config.root_doc).findall(addnodes.toctree):
+        for title, docname in toc["entries"]:
+            if title is None:
+                title = env.titles[docname].astext()
+            items.append({"label": title, "href": docname + ".html"})
+    if not items:
+        raise RuntimeError("primary nav: no root-toctree entries found")
+    context["primary_nav"] = items
 
 
 # -- {features} directive (doc-site P2b, 3rd wagon: features.yaml -> render) -------
@@ -468,3 +499,4 @@ def setup(app):
     app.add_directive("features", FeaturesDirective)
     app.connect("html-page-context", _fix_logo_link)
     app.connect("html-page-context", _inject_quickstart)
+    app.connect("html-page-context", _inject_primary_nav)

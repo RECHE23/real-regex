@@ -79,6 +79,124 @@ class _LinkCollector(HTMLParser):
                 self.links.append(value)
 
 
+class _NavExtractor(HTMLParser):
+    """Collect (label, href) for every <a> inside the FIRST element matching
+    (container_tag, class-substring) -- the nav-equality net's parser (doc-site
+    P1 reorg). First match only: pydata renders its primary nav twice per page
+    (header + mobile drawer), identically by construction.
+    """
+
+    def __init__(self, container_tag: str, container_class: str) -> None:
+        super().__init__()
+        self._tag = container_tag
+        self._cls = container_class
+        self._depth = 0  # >0 while inside the (first) matching container
+        self._done = False
+        self._in_a = False
+        self._href = ""
+        self._label: list[str] = []
+        self.items: list[tuple[str, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        a = dict(attrs)
+        if self._depth == 0:
+            if (
+                not self._done
+                and tag == self._tag
+                and self._cls in (a.get("class") or "")
+            ):
+                self._depth = 1
+            return
+        if tag == self._tag:
+            self._depth += 1
+        if tag == "a":
+            self._in_a = True
+            self._href = a.get("href") or ""
+            self._label = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._depth == 0:
+            return
+        if tag == "a" and self._in_a:
+            label = " ".join("".join(self._label).replace("\xa0", " ").split())
+            self.items.append((label, self._href))
+            self._in_a = False
+        if tag == self._tag:
+            self._depth -= 1
+            if self._depth == 0:
+                self._done = True
+
+    def handle_data(self, data: str) -> None:
+        if self._in_a:
+            self._label.append(data)
+
+
+def _extract_primary_nav(
+    page_path: Path, container_tag: str, container_class: str, *, site_root: Path
+) -> list[tuple[str, str]]:
+    """(label, canonical-target) list for a page's primary nav. Hrefs resolve
+    against the page's own directory; the pydata ACTIVE item's href is "#"
+    (self-reference) and canonicalizes to the page itself.
+    """
+    extractor = _NavExtractor(container_tag, container_class)
+    extractor.feed(page_path.read_text(encoding="utf-8"))
+    site_root_resolved = site_root.resolve()
+    out = []
+    for label, href in extractor.items:
+        if href in ("", "#"):
+            target = page_path.resolve()
+        else:
+            target = _resolve_internal(
+                urlsplit(href).path, page_dir=page_path.parent, site_root=site_root
+            )
+        out.append((label, target.relative_to(site_root_resolved).as_posix()))
+    return out
+
+
+def _check_nav_equality(site_root: Path) -> list[str]:
+    """The nav-equality net (doc-site P1 reorg): the landing's injected nav and
+    the pydata inner header MUST render the same {label -> target} list, same
+    order. The two menus diverged for five wagons precisely because no gate
+    watched them -- this assertion is why the single-source refactor can't rot.
+    Returns human-readable error strings; empty = PASS.
+    """
+    landing = site_root / "index.html"
+    # The inner witness is the ROOT DOC's own page (root_doc = "contents",
+    # conf.py): it exists on every build by construction and can never be
+    # renamed by a content wagon -- unlike a hardcoded content page (Opus
+    # review note, doc-site P1). pydata renders the same header on every page.
+    inner = site_root / "contents.html"
+    for page in (landing, inner):
+        if not page.is_file():
+            return [f"nav-equality: {page} missing (run `make docs-site` first)"]
+
+    landing_nav = _extract_primary_nav(
+        landing, "div", "nav__links", site_root=site_root
+    )
+    inner_nav = _extract_primary_nav(
+        inner, "ul", "bd-navbar-elements", site_root=site_root
+    )
+
+    errors = []
+    if not landing_nav:
+        errors.append("nav-equality: no nav found on the landing (div.nav__links)")
+    if not inner_nav:
+        errors.append(
+            "nav-equality: no nav found on the inner page (ul.bd-navbar-elements)"
+        )
+    if errors:
+        return errors
+
+    if landing_nav != inner_nav:
+        errors.append(
+            "nav-equality: landing nav != inner header nav "
+            "(same labels, same targets, same order required):"
+        )
+        errors.append(f"    landing: {landing_nav}")
+        errors.append(f"    inner:   {inner_nav}")
+    return errors
+
+
 def _is_internal(url: str) -> bool:
     if not url or url.startswith("#"):
         return False
@@ -237,8 +355,21 @@ def main(argv: list[str]) -> int:
         "external link(s) listed only (not fetched)"
     )
 
+    nav_errors: list[str] = []
+    if explicit_page is None:  # site-wide mode only: the gate's invocation
+        nav_errors = _check_nav_equality(site_root)
+        if nav_errors:
+            fail_count += len(nav_errors)
+            for e in nav_errors:
+                print(f"check_site_links: FAIL -- {e}")
+        else:
+            print(
+                "check_site_links: nav-equality PASS -- landing nav == inner "
+                "header nav (single toctree source, doc-site P1 reorg)"
+            )
+
     if fail_count:
-        print(f"check_site_links: FAIL -- {fail_count} internal target(s)/anchor(s) missing (see above)")
+        print(f"check_site_links: FAIL -- {fail_count} internal target(s)/anchor(s)/nav item(s) missing (see above)")
         return 1
 
     print(

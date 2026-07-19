@@ -334,10 +334,13 @@ The ONLY departures from the mockup are the ones the doc-site P1c fiche calls fo
     <div class="wrap nav__in">
       <a class="brand" href="index.html" aria-label="real::regex home">real<span class="op">::</span>regex</a>
       <div class="nav__links">
-        <a href="drop-in/std-regex-tour.html">Drop-in</a>
-        <a href="bindings/index.html">Bindings</a>
-        <a href="performance/index.html">Benchmarks</a>
-        <a href="api/index.html">API&nbsp;reference</a>
+        {#- doc-site P1 reorg: the nav is INJECTED from the root toctree
+            (conf.py's _inject_primary_nav) -- the same source as the inner
+            pydata header. NEVER hard-code an item here: the nav-equality net
+            in tools/check_site_links.py reds the gate on any divergence. -#}
+        {%- for item in primary_nav %}
+        <a href="{{ item.href }}">{{ item.label }}</a>
+        {%- endfor %}
       </div>
       <div class="nav__right">
         <span class="chip">v{{ version }}</span>
@@ -557,8 +560,8 @@ The ONLY departures from the mockup are the ones the doc-site P1c fiche calls fo
           <h4>DOCS</h4>
           <ul>
             <li><a href="#install">Getting started</a></li>
-            <li><a href="drop-in/std-regex-tour.html">Drop-in compatibility</a></li>
-            <li><a href="performance/index.html">Benchmarks</a></li>
+            <li><a href="drop-in/index.html">Drop-in</a></li>
+            <li><a href="performance/index.html">Performance</a></li>
             <li><a href="api/index.html">API reference</a></li>
           </ul>
         </div>
@@ -576,6 +579,7 @@ The ONLY departures from the mockup are the ones the doc-site P1c fiche calls fo
           <ul>
             <li><a href="https://github.com/RECHE23/real-regex">GitHub</a></li>
             <li><a href="https://github.com/RECHE23/real-regex/releases">Releases</a></li>
+            <li><a href="https://github.com/RECHE23/real-regex/blob/main/CHANGELOG.md">Changelog</a></li>
             <li><a href="coverage/index.html">Coverage report</a></li>
             <li><a href="https://github.com/RECHE23/real-regex/blob/main/LICENSE">License · MIT</a></li>
           </ul>
