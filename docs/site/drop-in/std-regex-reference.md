@@ -1,8 +1,11 @@
 <!--
 Mirror of docs/COMPATIBILITY.md (the canon, which still feeds /api and is cited
 by name across source/tests/bindings -- renaming it was measured and rejected).
-Edit the original, then re-mirror -- never edit prose here alone. Cross-refs to
-the divergences page are internal {doc}/{ref}; the one /api-only link
+Edit the original, then re-mirror -- never edit prose here alone, with ONE
+deliberate delta to preserve on every re-mirror: the canon's scorecard section
+renders here as a pointer to the Features matrix instead (the site's canonical,
+CI-probed status render -- a copied table would drift). Cross-refs to the
+divergences page are internal {doc}/{ref}; the one /api-only link
 (real::compat::basic_regex's uses_real_traversal) stays fragment-free because
 Doxygen member anchors are content-hashed and differ across Doxygen versions.
 -->
@@ -40,32 +43,11 @@ back to `std::regex` otherwise — *never a silent divergence*. The ECMAScript s
 oracle; `std::regex` (libstdc++/libc++) is a secondary oracle whose known deviations from the spec
 are catalogued below (where `real`, following the spec, is the correct one).
 
-## Feature scorecard
+## Feature status
 
-The public **status view** of REAL's regex features — the lines where REAL says something notable
-against a full feature matrix. Statuses: **supported** (parity with Python `re`), **extension**
-(REAL accepts it, `re` does not), **planned**, **excluded by design**. The *rationale* for each lives
-in the {doc}`divergences page <../differences-from-re>`; this table is the single status source and links there —
-there is no competing table.
-
-**Excluded by design is a closed door, not a missing feature.** Backreferences, recursion, and callouts
-each make matching super-linear and would reopen the ReDoS door this engine exists to close — so they
-raise a clear error rather than sitting on a roadmap.
-
-| Feature | Status | Rationale | Since / target |
-| --- | --- | --- | --- |
-| Backreferences (`(a)\1`, `(?P=n)`) | **excluded by design** | non-regular → super-linear → ReDoS ({ref}`why <div_rejected>`) | — |
-| Conditional groups `(?(id)…)`, recursion, callouts | **excluded by design** | non-regular control flow → ReDoS ({ref}`why <div_rejected>`) | — |
-| Unicode property classes `\p{…}` | **supported** (General_Category + Script + Script_Extensions + the standard binary properties) | native, linear `klass_cp`; a superset of `re` (which rejects `\p`); `sc=`/`scx=` accept both the long name (`Latin`) and the short UAX24/ISO 15924 code (`Latn`); other UAX44 properties (`Bidi_Class`, `Word_Break`, `Age`, …) stay `unsupported` | 2026.7 |
-| `\N{NAME}` named characters | **supported** | binding resolves the name via `unicodedata` (no C++ table) | 2026.7 |
-| `\N{U+XXXX}` scalar form | **extension** (PCRE2-style) | uniform C++/Python surfaces; `re` knows only names ({ref}`more <div_named_scalar>`) | 2026.7 |
-| `\z` end-of-text anchor | **supported** | exact alias of `\Z` (Python 3.14's meaning) | 2026.7 |
-| Octal escapes in a class `[\1]` `[\12]` | **supported** | every `\digit` is octal in a class (no back-refs there) | 2026.7 |
-| Variable-width lookbehind `(?<=a|bb)` | **extension** | bounded → still linear; `re`/PCRE reject it ({ref}`more <div_lookbehind>`) | — |
-| Word-edge anchors `\<` `\>` | **extension** | word-start / word-end; `re` has no such escape | — |
-| POSIX `[[:alpha:]]` classes | **supported** | exact `re`-parity: `re` reads them as a *literal* class (currently with a `FutureWarning`); REAL matches the same characters | — |
-| Global flags `i m s x a` (and `(?imsxa)` prefix) | **supported** | `re` semantics; `re.U` is a no-op, `re.L` excluded | — |
-| Scoped inline flags `(?imsxa:…)` / `(?-…:…)` / `(?…-…:…)` | **supported** | per-scope `i m s x a` (Python 3.11 semantics), exact `re`-parity in str and bytes | 2026.7 |
+Per-construct status (supported / extension / excluded by design) lives in the
+{doc}`Features matrix <../features>` — the single, CI-probed status table, with
+each rationale linked from its row.
 
 ## How a pattern is routed
 
