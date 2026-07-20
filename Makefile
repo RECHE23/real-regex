@@ -248,10 +248,12 @@ doc: coverage-html
 doc-no-coverage:
 	@$(MAKE) -C docs doc-no-coverage
 
-docs-site:
+# python-build first: conf.py autodocs the real package (reference/python), so the
+# abi3 .so must exist before sphinx imports it.
+docs-site: python-build
 	@$(MAKE) -C docs docs-site
 
-docs-site-gate:
+docs-site-gate: python-build
 	@$(MAKE) coverage-html
 	@$(MAKE) -C docs docs-site-gate
 

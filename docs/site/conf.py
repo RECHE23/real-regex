@@ -47,7 +47,17 @@ extensions = [
     "breathe",
     "sphinx_design",
     "sphinx_copybutton",
+    "sphinx.ext.autodoc",
+    "sphinx.ext.napoleon",
 ]
+
+# The binding's docstrings are Google-style (Args:/Returns:/Raises:) plus the
+# per-method "Complexity:" section carrying the linear-time guarantee -- napoleon
+# only renders sections it knows, so Complexity must be declared.
+napoleon_google_docstring = True
+napoleon_numpy_docstring = False
+napoleon_custom_sections = ["Complexity"]
+autodoc_member_order = "bysource"
 
 # The bespoke landing owns "index.html" via html_additional_pages -- Sphinx
 # cannot render a source document and an additional page to the same output
@@ -82,6 +92,11 @@ nitpicky = True
 nitpick_ignore = [
     ("ref", "structreal_1_1detail_1_1dynamic__storage"),
     ("ref", "structreal_1_1detail_1_1static__storage"),
+    # Google-style prose tokens, not classes: napoleon turns "(int, optional)" /
+    # "(… or callable)" / "Returns: iterator:" type fields into py:class xrefs.
+    ("py:class", "optional"),
+    ("py:class", "callable"),
+    ("py:class", "iterator"),
 ]
 nitpick_ignore_regex = [
     ("ref", r"namespacereal_1a[0-9a-f]+"),  # real::regex / real::static_regex (hashed member anchors)
@@ -252,6 +267,11 @@ _FEATURES_YAML = _HERE / "data" / "features.yaml"
 # needs venv-only sphinx, and the tool runs under the system Python in the gates.
 sys.path.insert(0, str(_ROOT / "tools"))
 from gen_features import STATUS_LABELS as _FEATURE_STATUS_LABELS  # noqa: E402
+
+# autodoc imports the REAL package (reference/python) -- the built abi3 .so, not a
+# mock: a mock would drop the native types' docstrings. The make targets order
+# python-build before sphinx so the .so exists here.
+sys.path.insert(0, str(_ROOT / "bindings" / "python"))
 
 
 def _feature_inline_nodes(text):

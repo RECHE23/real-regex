@@ -1619,7 +1619,7 @@ PyMethodDef pattern_methods[] = {
 PyGetSetDef pattern_getset[] = {
     {"pattern", Pattern_get_pattern, nullptr, "The pattern string or bytes used for compilation.", nullptr},
     {"engine", Pattern_get_engine, nullptr,
-     "The backend: \"real\" (linear, ReDoS-safe) or \"re\" (fallback). Extension beyond re.",
+     "The backend -- \"real\" (linear, ReDoS-safe) or \"re\" (fallback). Extension beyond re.",
      nullptr},
     {"flags", Pattern_get_flags, nullptr, "The compilation flags as passed to compile().", nullptr},
     {"groups", Pattern_get_groups, nullptr, "Number of capturing groups (excluding group 0).", nullptr},

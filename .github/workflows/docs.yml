@@ -38,6 +38,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
+      - name: Install build deps (setuptools — python-build precedes sphinx, not bundled on 3.12+)
+        run: python -m pip install --upgrade pip setuptools
       - name: Install the pinned docs toolchain (docs/requirements.txt) into a venv
         run: |
           python -m venv .venv-docs

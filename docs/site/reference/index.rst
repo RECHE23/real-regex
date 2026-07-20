@@ -3,11 +3,18 @@ API reference
 
 The symbol reference for real::regex. C++ symbols render below through the
 Doxygen-XML -> Breathe -> Sphinx pipeline, straight from the header comments --
-never hand-transcribed. The exhaustive Doxygen tree is always available:
+never hand-transcribed. The :doc:`Python surface <python>` renders the same way,
+from the binding's docstrings. The exhaustive Doxygen tree is always available:
 
 .. raw:: html
 
    <p><a href="../api/index.html">Browse the full Doxygen reference (/api)</a>.</p>
+
+.. toctree::
+   :hidden:
+   :maxdepth: 1
+
+   python
 
 .. doxygenclass:: real::basic_regex
    :project: real
