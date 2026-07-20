@@ -297,16 +297,3 @@ delegate those via its `fallback` feature). Pinned in the property and parity su
 REAL accepts any **bounded** lookbehind, including variable-width alternations such as
 `(?<=a|bb)`, which `re` and PCRE reject as non-fixed-width. The bound keeps the scan
 linear; see <a href="api/design.html">How REAL Works — a guided tour</a> for how the lookbehind sub-VM works.
-
-(div_rust)=
-## The Rust binding vs the `regex` crate
-
-The `real-regex` Rust crate mirrors the [`regex`](https://docs.rs/regex) crate's API. Its divergences are on a
-different axis (crate-vs-`regex`, not REAL-vs-`re`) and are documented on the crate itself
-(`bindings/rust/README.md` — the docs.rs landing page): the empty-match iteration rule (adapted to rust's at
-the wrapper, so `find_iter`/`split` match `regex`), `shortest_match` (leftmost-first greedy end vs earliest
-completion — a parked `first-accept` engine follow-up, see <a href="api/design.html#g_followups">8.1 Named follow-ups</a>), the \p{} coverage
-(\p{Gc} / \p{sc} run natively now; binary and other-namespace properties raise `Error::Unsupported` or are
-delegated via the opt-in `fallback` feature), `RegexSet`
-(which-matched Stage-1 N-walks — offered; not a fused single-pass yet), and the bounded lookarounds as a
-**positive** divergence (a superset `regex` and RE2 lack).
