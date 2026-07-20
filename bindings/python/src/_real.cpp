@@ -495,7 +495,7 @@ PyObject* Match_expand(PyObject* self, PyObject* template_arg);
 
 PyMethodDef match_methods[] = {
     {"group", Match_group, METH_VARARGS,
-     "group(group=0, /)\n"
+     "group($self, group=0, /)\n--\n\n"
      "Return the matched substring or subgroups.\n\n"
      "Args:\n"
      "    group (int or str, optional): Group number or name. Defaults to 0\n"
@@ -505,7 +505,7 @@ PyMethodDef match_methods[] = {
      "        not participate. Multiple arguments return a tuple."},
     {"groups", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Match_groups)),
      METH_VARARGS | METH_KEYWORDS,
-     "groups(default=None, /)\n"
+     "groups($self, default=None)\n--\n\n"
      "Return a tuple of all subgroup strings.\n\n"
      "Args:\n"
      "    default: Value for groups that did not participate.\n\n"
@@ -513,35 +513,35 @@ PyMethodDef match_methods[] = {
      "    tuple: One entry per capturing group (group 1 onwards)."},
     {"groupdict", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Match_groupdict)),
      METH_VARARGS | METH_KEYWORDS,
-     "groupdict(default=None, /)\n"
+     "groupdict($self, default=None)\n--\n\n"
      "Return a dictionary mapping group names to matched strings.\n\n"
      "Args:\n"
      "    default: Value for groups that did not participate.\n\n"
      "Returns:\n"
      "    dict: {name: matched_text} for all named groups."},
     {"start", Match_start, METH_VARARGS,
-     "start(group=0, /)\n"
+     "start($self, group=0, /)\n--\n\n"
      "Return the start index of a group in the original string.\n\n"
      "Args:\n"
      "    group (int or str, optional): Group number or name. Defaults to 0.\n\n"
      "Returns:\n"
      "    int: Character index where the group starts."},
     {"end", Match_end, METH_VARARGS,
-     "end(group=0, /)\n"
+     "end($self, group=0, /)\n--\n\n"
      "Return the end index of a group in the original string.\n\n"
      "Args:\n"
      "    group (int or str, optional): Group number or name. Defaults to 0.\n\n"
      "Returns:\n"
      "    int: Character index where the group ends."},
     {"span", Match_span, METH_VARARGS,
-     "span(group=0, /)\n"
+     "span($self, group=0, /)\n--\n\n"
      "Return the (start, end) indices of a group.\n\n"
      "Args:\n"
      "    group (int or str, optional): Group number or name. Defaults to 0.\n\n"
      "Returns:\n"
      "    tuple: (start, end) character indices."},
     {"expand", Match_expand, METH_O,
-     "expand(template, /)\n"
+     "expand($self, template, /)\n--\n\n"
      "Return the string obtained by backslash-substituting the template, exactly\n"
      "as sub() would for this match.\n\n"
      "Args:\n"
@@ -659,6 +659,10 @@ PyType_Slot match_slots[] = {
     {Py_tp_methods, static_cast<void*>(match_methods)},
     {Py_tp_getset, static_cast<void*>(match_getset)},
     {Py_mp_subscript, reinterpret_cast<void*>(Match_subscript)},
+    {Py_tp_doc,
+     const_cast<char*>("The result of a successful match, with the re.Match API.\n\n"
+                       "Returned by Pattern match/fullmatch/search/finditer -- not instantiable\n"
+                       "directly. Supports m[group] subscripting; always truthy.")},
     {0, nullptr},
 };
 
@@ -963,6 +967,10 @@ PyType_Slot match_iterator_slots[] = {
     {Py_tp_dealloc, reinterpret_cast<void*>(MatchIterator_dealloc)},
     {Py_tp_iter, reinterpret_cast<void*>(MatchIterator_iter)},
     {Py_tp_iternext, reinterpret_cast<void*>(MatchIterator_iternext)},
+    {Py_tp_doc,
+     const_cast<char*>("Lazy iterator over the non-overlapping matches of a region.\n\n"
+                       "Returned by Pattern.finditer() -- not instantiable directly. Yields\n"
+                       "Match objects left to right.")},
     {0, nullptr},
 };
 
@@ -1490,7 +1498,7 @@ PyObject* Pattern_get_groupindex(PyObject* self, void*) {
 PyMethodDef pattern_methods[] = {
     {"match", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_match)),
      METH_VARARGS | METH_KEYWORDS,
-     "match(string, pos=0, endpos=sys.maxsize)\n"
+     "match($self, string, pos=0, endpos=sys.maxsize)\n--\n\n"
      "Try to match at position pos in the string.\n\n"
      "Args:\n"
      "    string (str or bytes): Text to match.\n"
@@ -1498,20 +1506,24 @@ PyMethodDef pattern_methods[] = {
      "        Not a slice: \\A and ^ (without MULTILINE) still fail at pos > 0.\n"
      "    endpos (int): Where the string is treated as ending ($ and \\Z see it).\n\n"
      "Returns:\n"
-     "    Match or None: Match object on success, None otherwise."},
+     "    Match or None: Match object on success, None otherwise.\n\n"
+     "Complexity:\n"
+     "    Matching is O(len(string)) -- guaranteed linear; never backtracks (ReDoS-safe)."},
     {"fullmatch", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_fullmatch)),
      METH_VARARGS | METH_KEYWORDS,
-     "fullmatch(string, pos=0, endpos=sys.maxsize)\n"
+     "fullmatch($self, string, pos=0, endpos=sys.maxsize)\n--\n\n"
      "Try to match the whole region [pos, endpos) of the string.\n\n"
      "Args:\n"
      "    string (str or bytes): Text to match.\n"
      "    pos (int): Start. Character offset for str, byte offset for bytes.\n"
      "    endpos (int): End of the region the match must span ($ and \\Z see it).\n\n"
      "Returns:\n"
-     "    Match or None: Match object on success, None otherwise."},
+     "    Match or None: Match object on success, None otherwise.\n\n"
+     "Complexity:\n"
+     "    Matching is O(len(string)) -- guaranteed linear; never backtracks (ReDoS-safe)."},
     {"search", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_search)),
      METH_VARARGS | METH_KEYWORDS,
-     "search(string, pos=0, endpos=sys.maxsize)\n"
+     "search($self, string, pos=0, endpos=sys.maxsize)\n--\n\n"
      "Scan the region [pos, endpos) for the leftmost match.\n\n"
      "Args:\n"
      "    string (str or bytes): Text to search.\n"
@@ -1519,10 +1531,12 @@ PyMethodDef pattern_methods[] = {
      "        Not a slice: \\A and ^ (without MULTILINE) still fail at pos > 0.\n"
      "    endpos (int): Where the string is treated as ending ($ and \\Z see it).\n\n"
      "Returns:\n"
-     "    Match or None: Match object on success, None otherwise."},
+     "    Match or None: Match object on success, None otherwise.\n\n"
+     "Complexity:\n"
+     "    Matching is O(len(string)) -- guaranteed linear; never backtracks (ReDoS-safe)."},
     {"findall", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_findall)),
      METH_VARARGS | METH_KEYWORDS,
-     "findall(string, pos=0, endpos=sys.maxsize)\n"
+     "findall($self, string, pos=0, endpos=sys.maxsize)\n--\n\n"
      "Return all non-overlapping matches in the region [pos, endpos).\n\n"
      "Args:\n"
      "    string (str or bytes): Text to search.\n"
@@ -1530,11 +1544,14 @@ PyMethodDef pattern_methods[] = {
      "        Not a slice: \\A and ^ (without MULTILINE) still fail at pos > 0.\n"
      "    endpos (int): Where the string is treated as ending; matches stop there.\n\n"
      "Returns:\n"
-     "    list: List of strings, bytes, or tuples depending on groups."},
+     "    list: List of strings, bytes, or tuples depending on groups.\n\n"
+     "Complexity:\n"
+     "    Matching is O(len(string)) -- guaranteed linear; never backtracks (ReDoS-safe)."},
     {"count_matches", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_count_matches)),
      METH_VARARGS | METH_KEYWORDS,
-     "count_matches(string, pos=0, endpos=sys.maxsize)\n"
+     "count_matches($self, string, pos=0, endpos=sys.maxsize)\n--\n\n"
      "Count non-overlapping matches in [pos, endpos) without building Match objects.\n\n"
+     "Extension beyond re.\n\n"
      "Matching-only: uses the trailing-LA class+ fast path when eligible (unlike\n"
      "finditer, which stays on the pure monomorphic walk). Prefer this over\n"
      "len(findall(...)) or sum(1 for _ in finditer(...)) for throughput.\n\n"
@@ -1544,10 +1561,12 @@ PyMethodDef pattern_methods[] = {
      "        Not a slice: \\A and ^ (without MULTILINE) still fail at pos > 0.\n"
      "    endpos (int): Where the string is treated as ending; counting stops there.\n\n"
      "Returns:\n"
-     "    int: Number of non-overlapping matches."},
+     "    int: Number of non-overlapping matches.\n\n"
+     "Complexity:\n"
+     "    Matching is O(len(string)) -- guaranteed linear; never backtracks (ReDoS-safe)."},
     {"finditer", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_finditer)),
      METH_VARARGS | METH_KEYWORDS,
-     "finditer(string, pos=0, endpos=sys.maxsize)\n"
+     "finditer($self, string, pos=0, endpos=sys.maxsize)\n--\n\n"
      "Return an iterator yielding Match objects for the region [pos, endpos).\n\n"
      "Args:\n"
      "    string (str or bytes): Text to search.\n"
@@ -1555,19 +1574,23 @@ PyMethodDef pattern_methods[] = {
      "        Not a slice: \\A and ^ (without MULTILINE) still fail at pos > 0.\n"
      "    endpos (int): Where the string is treated as ending; iteration stops there.\n\n"
      "Returns:\n"
-     "    iterator: Iterator over all matches (each carries the region's .pos/.endpos)."},
+     "    iterator: Iterator over all matches (each carries the region's .pos/.endpos).\n\n"
+     "Complexity:\n"
+     "    Matching is O(len(string)) -- guaranteed linear; never backtracks (ReDoS-safe)."},
     {"split", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_split)),
      METH_VARARGS | METH_KEYWORDS,
-     "split(string, maxsplit=0, /)\n"
+     "split($self, string, maxsplit=0)\n--\n\n"
      "Split the string by occurrences of the pattern.\n\n"
      "Args:\n"
      "    string (str or bytes): Text to split.\n"
      "    maxsplit (int, optional): Maximum number of splits. 0 means no limit.\n\n"
      "Returns:\n"
-     "    list: Substrings with captured groups interleaved."},
+     "    list: Substrings with captured groups interleaved.\n\n"
+     "Complexity:\n"
+     "    Matching is O(len(string)) -- guaranteed linear; never backtracks (ReDoS-safe)."},
     {"sub", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_sub)),
      METH_VARARGS | METH_KEYWORDS,
-     "sub(repl, string, count=0, /)\n"
+     "sub($self, repl, string, count=0)\n--\n\n"
      "Replace occurrences of the pattern in the string.\n\n"
      "Args:\n"
      "    repl (str, bytes, or callable): Replacement template or callable\n"
@@ -1575,23 +1598,29 @@ PyMethodDef pattern_methods[] = {
      "    string (str or bytes): Text to modify.\n"
      "    count (int, optional): Maximum replacements. 0 means all.\n\n"
      "Returns:\n"
-     "    str or bytes: Result after replacements."},
+     "    str or bytes: Result after replacements.\n\n"
+     "Complexity:\n"
+     "    Matching is O(len(string)) -- guaranteed linear; never backtracks (ReDoS-safe)."},
     {"subn", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_subn)),
      METH_VARARGS | METH_KEYWORDS,
-     "subn(repl, string, count=0, /)\n"
+     "subn($self, repl, string, count=0)\n--\n\n"
      "Replace occurrences and return the result plus the count.\n\n"
      "Args:\n"
      "    repl (str, bytes, or callable): Replacement template or callable.\n"
      "    string (str or bytes): Text to modify.\n"
      "    count (int, optional): Maximum replacements. 0 means all.\n\n"
      "Returns:\n"
-     "    tuple: (result, number_of_substitutions)."},
+     "    tuple: (result, number_of_substitutions).\n\n"
+     "Complexity:\n"
+     "    Matching is O(len(string)) -- guaranteed linear; never backtracks (ReDoS-safe)."},
     {nullptr, nullptr, 0, nullptr},
 };
 
 PyGetSetDef pattern_getset[] = {
     {"pattern", Pattern_get_pattern, nullptr, "The pattern string or bytes used for compilation.", nullptr},
-    {"engine", Pattern_get_engine, nullptr, "The backend: \"real\" (linear, ReDoS-safe) or \"re\" (fallback).", nullptr},
+    {"engine", Pattern_get_engine, nullptr,
+     "The backend: \"real\" (linear, ReDoS-safe) or \"re\" (fallback). Extension beyond re.",
+     nullptr},
     {"flags", Pattern_get_flags, nullptr, "The compilation flags as passed to compile().", nullptr},
     {"groups", Pattern_get_groups, nullptr, "Number of capturing groups (excluding group 0).", nullptr},
     {"groupindex", Pattern_get_groupindex, nullptr, "Mapping from group name to group number.",
@@ -1636,6 +1665,10 @@ PyType_Slot pattern_slots[] = {
     {Py_tp_hash, reinterpret_cast<void*>(Pattern_hash)},
     {Py_tp_methods, static_cast<void*>(pattern_methods)},
     {Py_tp_getset, static_cast<void*>(pattern_getset)},
+    {Py_tp_doc,
+     const_cast<char*>("A compiled REAL pattern, with the re.Pattern API.\n\n"
+                       "Created by real.compile() -- not instantiable directly. Matching is\n"
+                       "O(len(string)): guaranteed linear, never backtracks (ReDoS-safe).")},
     {0, nullptr},
 };
 
@@ -1796,12 +1829,44 @@ PyObject* RegexSet_which(PyObject* self, PyObject* args, PyObject* kwargs) {
 
 PyMethodDef regex_set_methods[] = {
     {"is_match", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(RegexSet_is_match)),
-     METH_VARARGS | METH_KEYWORDS, "True if any pattern matches (stops at the first hit)."},
+     METH_VARARGS | METH_KEYWORDS,
+     "is_match($self, string, pos=0, endpos=sys.maxsize)\n--\n\n"
+     "True if any pattern matches (stops at the first hit).\n\n"
+     "Args:\n"
+     "    string (str or bytes): Text to search (the set's own str/bytes type).\n"
+     "    pos (int): Where to start. Character offset for str, byte offset for bytes.\n"
+     "    endpos (int): Where the string is treated as ending.\n\n"
+     "Returns:\n"
+     "    bool: True if at least one pattern matches.\n\n"
+     "Complexity:\n"
+     "    Matching is O(len(string)) per pattern -- guaranteed linear; never backtracks\n"
+     "    (ReDoS-safe)."},
     {"matches", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(RegexSet_matches)),
      METH_VARARGS | METH_KEYWORDS,
-     "Which patterns match at least once (construction-order list of bool)."},
+     "matches($self, string, pos=0, endpos=sys.maxsize)\n--\n\n"
+     "Which patterns match at least once (construction-order list of bool).\n\n"
+     "Args:\n"
+     "    string (str or bytes): Text to search (the set's own str/bytes type).\n"
+     "    pos (int): Where to start. Character offset for str, byte offset for bytes.\n"
+     "    endpos (int): Where the string is treated as ending.\n\n"
+     "Returns:\n"
+     "    list: One bool per pattern, in construction order.\n\n"
+     "Complexity:\n"
+     "    Matching is O(len(string)) per pattern -- guaranteed linear; never backtracks\n"
+     "    (ReDoS-safe)."},
     {"which", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(RegexSet_which)),
-     METH_VARARGS | METH_KEYWORDS, "Indices of matching patterns (ascending, construction order)."},
+     METH_VARARGS | METH_KEYWORDS,
+     "which($self, string, pos=0, endpos=sys.maxsize)\n--\n\n"
+     "Indices of matching patterns (ascending, construction order).\n\n"
+     "Args:\n"
+     "    string (str or bytes): Text to search (the set's own str/bytes type).\n"
+     "    pos (int): Where to start. Character offset for str, byte offset for bytes.\n"
+     "    endpos (int): Where the string is treated as ending.\n\n"
+     "Returns:\n"
+     "    list: Indices of the matching patterns, ascending.\n\n"
+     "Complexity:\n"
+     "    Matching is O(len(string)) per pattern -- guaranteed linear; never backtracks\n"
+     "    (ReDoS-safe)."},
     {nullptr, nullptr, 0, nullptr},
 };
 
@@ -1809,6 +1874,10 @@ PyType_Slot regex_set_slots[] = {
     {Py_tp_dealloc, reinterpret_cast<void*>(RegexSet_dealloc)},
     {Py_sq_length, reinterpret_cast<void*>(RegexSet_len)},
     {Py_tp_methods, static_cast<void*>(regex_set_methods)},
+    {Py_tp_doc,
+     const_cast<char*>("Native multi-pattern which-matched set (backs real.RegexSet).\n\n"
+                       "Created by real._compile_set() -- not instantiable directly. Extension\n"
+                       "beyond re.")},
     {0, nullptr},
 };
 
@@ -2039,7 +2108,7 @@ PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
 PyMethodDef module_methods[] = {
     {"compile", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(real_compile)),
      METH_VARARGS | METH_KEYWORDS,
-     "compile(pattern, flags=0, /)\n"
+     "compile(pattern, flags=0)\n--\n\n"
      "Compile a regular expression pattern into a real.Pattern object.\n\n"
      "Args:\n"
      "    pattern (str or bytes): The regular expression pattern.\n"
@@ -2050,7 +2119,7 @@ PyMethodDef module_methods[] = {
      "    error: If the pattern is invalid or unsupported."},
     {"_compile_set", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(real_compile_set)),
      METH_VARARGS | METH_KEYWORDS,
-     "_compile_set(patterns, flags=0, /)\n"
+     "_compile_set(patterns, flags=0)\n--\n\n"
      "Compile patterns into an internal native set object (RegexSet's own factory --\n"
      "not public API; use real.RegexSet)."},
     {nullptr, nullptr, 0, nullptr},
@@ -2077,7 +2146,12 @@ PyMODINIT_FUNC PyInit__real() {  // PyMODINIT_FUNC already says extern "C"
     if (re_err == nullptr) {
         PyErr_Clear();
     }
-    error_type = PyErr_NewException("real.error", re_err, nullptr);
+    error_type = PyErr_NewExceptionWithDoc(
+        "real.error",
+        "Exception raised when a pattern is invalid or unsupported.\n\n"
+        "Subclasses re.error when re is available, so `except re.error:` also\n"
+        "catches REAL's errors.",
+        re_err, nullptr);
     Py_XDECREF(re_err);
     Py_XDECREF(re_mod);
     pattern_type = PyType_FromSpec(&pattern_spec);
