@@ -97,9 +97,26 @@ nitpick_ignore = [
     ("py:class", "optional"),
     ("py:class", "callable"),
     ("py:class", "iterator"),
+    # The curated reference/basic_regex page renders the principal members only,
+    # so the C++ domain cannot resolve the class-internal names its signatures
+    # mention -- deliberate: the exhaustive /api tree carries every symbol, and
+    # curation arranges the matter without re-rendering the whole class.
+    ("cpp:identifier", "result_type"),
+    ("cpp:identifier", "npos"),
+    ("cpp:identifier", "basic_match_range"),
+    ("cpp:identifier", "basic_match_range<Storage>"),
+    ("cpp:identifier", "real"),
+    ("cpp:identifier", "real::regex_error"),
+    ("cpp:identifier", "flags"),
+    ("cpp:identifier", "flags::none"),
 ]
 nitpick_ignore_regex = [
     ("ref", r"namespacereal_1a[0-9a-f]+"),  # real::regex / real::static_regex (hashed member anchors)
+    # basic_regex's header comments \ref members and basic_match_range; on the
+    # curated page those targets are not rendered (the /api tree has them), and
+    # the member refids carry the Doxygen-version-dependent hash.
+    ("ref", r"classreal_1_1basic__regex_1a[0-9a-f]+"),
+    ("ref", r"classreal_1_1basic__match__range"),
 ]
 
 copybutton_prompt_text = r"\$ "
