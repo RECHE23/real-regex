@@ -16,8 +16,8 @@ real::regex replaces the regex engine you already use — same API, a
 - {doc}`std::regex <std-regex-tour>` — the `<regex>` surface with per-pattern
   fallback; the {doc}`compatibility reference <std-regex-reference>` holds the
   exhaustive contract.
-- RE2 — `real::compat::re2`, the RE2-shaped surface on the same linear engine;
-  the syntax contract is documented at the top of `<real/compat/re2/re2.hpp>`.
+- {doc}`RE2 <re2>` — `real::compat::re2`, the RE2-shaped surface on the same
+  linear engine, header-only and zero-dep.
 
 **Language bindings** — each a drop-in for its host's regex API:
 
@@ -30,6 +30,7 @@ real::regex replaces the regex engine you already use — same API, a
 :maxdepth: 1
 
 std::regex <std-regex-tour>
+RE2 <re2>
 Python re <re>
 Rust regex <regex>
 Go regexp <go>
