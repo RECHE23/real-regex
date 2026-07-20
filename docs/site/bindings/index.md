@@ -1,8 +1,5 @@
-<!--
-Bare {include} of bindings/README.md (canon; a copy would drift). No H1 here: the
-README carries the only one -- adding another would double-title the document. The
-nav label comes from the toctree entry's custom title, not this page.
--->
+---
+orphan: true
+---
 
-```{include} ../../../bindings/README.md
-```
+The language bindings are drop-in targets — see the {doc}`Drop-in section <../drop-in/index>`.

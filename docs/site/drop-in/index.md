@@ -23,7 +23,7 @@ real::regex replaces the regex engine you already use — same API, a
 
 - {doc}`Python re <re>` — `import real as re`, strict by default.
 - {doc}`Rust regex crate <regex>` — `use real_regex::Regex`, same surface.
-- Go `regexp` — {doc}`language bindings <../bindings/index>`.
+- {doc}`Go regexp <go>` — `real.MustCompile`, drop-in.
 
 ```{toctree}
 :hidden:
@@ -32,5 +32,5 @@ real::regex replaces the regex engine you already use — same API, a
 std::regex <std-regex-tour>
 Python re <re>
 Rust regex <regex>
-Bindings <../bindings/index>
+Go regexp <go>
 ```
