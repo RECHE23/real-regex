@@ -46,14 +46,15 @@ not an illustration:
 See also
 --------
 
+- The match object every call returns -- groups, spans, truthiness:
+  :doc:`basic_match_result`.
+- The lazy range ``find_iter`` returns: :doc:`basic_match_range`.
 - Migrating from another engine: :doc:`Drop-in <../drop-in/index>`.
 - The same surface from Python: :doc:`python`.
 
 .. raw:: html
 
    <ul>
-   <li>The match object every call returns — groups, spans, truthiness:
-       <a href="../api/classreal_1_1basic__match__result.html">basic_match_result</a>.</li>
    <li>Multi-pattern which-matched:
        <a href="../api/classreal_1_1regex__set.html">regex_set</a>.</li>
    </ul>

@@ -20,15 +20,16 @@ C++ core
   ``constexpr``-ready).
 - **Match, search, anchor** -- ``match()`` / ``fullmatch()`` / ``search()``
   on :doc:`basic_regex <basic_regex>`.
-- **Iterate every match** -- ``find_iter()``, a lazy range.
+- **Iterate every match** -- ``find_iter()``, a lazy
+  :doc:`range <basic_match_range>`.
 - **Count without allocating** -- ``count_matches()``.
 - **Replace or split** -- ``replace()`` / ``split()``.
+- **Inspect a match** -- groups, spans, truthiness:
+  :doc:`basic_match_result <basic_match_result>`.
 
 .. raw:: html
 
    <ul>
-   <li><strong>Inspect a match</strong> — groups, spans, truthiness:
-       <a href="../api/classreal_1_1basic__match__result.html">basic_match_result</a>.</li>
    <li><strong>Match many patterns at once</strong> — which-matched:
        <a href="../api/classreal_1_1regex__set.html">regex_set</a>.</li>
    <li><strong>Tokenize, maximal-munch</strong> — the lexer-grade automaton:
@@ -53,4 +54,6 @@ layer's API, divergences and limits.
    :maxdepth: 1
 
    basic_regex
+   basic_match_result
+   basic_match_range
    python

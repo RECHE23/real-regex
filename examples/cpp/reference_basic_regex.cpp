@@ -27,5 +27,19 @@ int main()
   static_assert(email.search("info@example.com")[2] == "example"sv);
   // [/reference]
 
-  return counter.count_matches("retries: 12, errors: 3") == 2 ? 0 : 1;
+  // [match-result]
+  // A match result is testable, sized, and addressable by index or by group name.
+  const real::regex date {R"((?P<year>\d{4})-(?P<month>\d{2}))"};
+  const auto m = date.search("released 2026-07-20");
+  if (m) {
+    std::cout << m.size() << "\n";          // 3 -- group 0 plus the two named groups
+    std::cout << m[0] << "\n";              // 2026-07 -- the whole match
+    std::cout << m["year"] << "\n";         // 2026 -- by name...
+    std::cout << m[2] << "\n";              // 07   -- ...or by index
+    std::cout << m.start("month") << "\n";  // 14   -- byte offsets, by name too
+  }
+  // [/match-result]
+
+  const bool ok = counter.count_matches("retries: 12, errors: 3") == 2 && m["month"] == "07"sv;
+  return ok ? 0 : 1;
 }
