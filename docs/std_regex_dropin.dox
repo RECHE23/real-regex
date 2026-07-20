@@ -40,9 +40,9 @@ if (re::regex_search(line, m, r)) {
 
 - **Linear time where it matters.** A pattern that runs on REAL cannot backtrack — matching is O(n) in
   the input, so the catastrophic blow-ups that make `std::regex` hang (or outright refuse) cannot
-  happen. On the shared C++ benchmark REAL measures **11–40× faster than `std::regex`** across the
-  pattern families, and it stays flat on the pathological inputs where `std::regex` gives up.
-  Reproduce it with `make bench-engines`; the machine and engine versions are in `BENCHMARKS.md`.
+  happen. On the shared C++ benchmark REAL is **consistently faster than `std::regex`** across the
+  pattern families — the measured multiples live in `BENCHMARKS.md` — and it stays flat on the
+  pathological inputs where `std::regex` gives up. Reproduce it with `make bench-engines`.
 - **Automatic, per-pattern fallback.** Anything REAL cannot prove equivalent — a backreference, an
   oversized or unbounded lookaround, a POSIX class, a non-ASCII member inside `[...]` — routes to
   `std::regex` transparently, at construction. You never pick a backend by hand.

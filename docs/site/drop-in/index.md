@@ -21,13 +21,14 @@ real::regex replaces the regex engine you already use — same API, a
 
 **Language bindings** — each a drop-in for its host's regex API:
 
-- Python `re` · Rust `regex` crate · Go `regexp` —
-  {doc}`language bindings <../bindings/index>`.
+- {doc}`Python re <re>` — `import real as re`, strict by default.
+- Rust `regex` crate · Go `regexp` — {doc}`language bindings <../bindings/index>`.
 
 ```{toctree}
 :hidden:
 :maxdepth: 1
 
 std::regex <std-regex-tour>
+Python re <re>
 Bindings <../bindings/index>
 ```

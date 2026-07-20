@@ -32,11 +32,11 @@ case-folding follow `re` in text mode.
   catastrophic backtracking, ever.
 - **Bounded lookarounds, still linear.** `(?=…)` `(?!…)` `(?<=…)` `(?<!…)` — including variable-width
   lookbehind — match without backtracking. RE2 and Rust drop lookarounds to stay safe; real-regex keeps them.
-- **Faster than `re` on most work** — geometric mean **2.06×** across a broad corpus (CI [1.37, 3.12]).
-  One-pass extraction and a lazy DFA make sparse `findall` **9.6×**, multiline anchors **30×**, and
-  capture-dense group extraction (emails: `1.07×`, up from a `0.32×` loss before the one-pass work) beat `re`;
-  a couple of high-volume `split`/tiny-anchored cases stay slower (CPython's C engine wins there). It is not
-  the fastest engine at raw throughput — it is the safe one that is also quick.
+- **Faster than `re` on most work** — the measured multiples (geometric mean, per-case wins and
+  the two accepted losses) live in `docs/BENCHMARKS.md` §B. Sparse scans, multiline anchors and
+  capture-dense extraction lead; a couple of high-volume `split`/tiny-anchored cases stay slower
+  (CPython's C engine wins there). It is not the fastest engine at raw throughput — it is the safe
+  one that is also quick.
 
 ## Not `re`, on purpose
 

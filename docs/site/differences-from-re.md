@@ -259,8 +259,9 @@ architecture. Regression-pinned in `possessive_alternation_priority_regression`
 fuzzer's own possessive-quantifier generator (test_differential_fuzz.py) before it ever
 shipped.
 
-**A superset of `re`:** **Unicode property classes** \p{...} are now built in for
-**General_Category** and **Script** (see {ref}`div_property`), which standard `re` rejects
+**A superset of `re`:** **Unicode property classes** \p{...} are built in for
+**General_Category**, **Script**, **Script_Extensions** and the **standard binary
+properties** (see {ref}`div_property`), which standard `re` rejects
 outright. **Named characters** \N{NAME} are also supported — the Python binding resolves the
 name via `unicodedata` and the engine takes the resulting code point — so no table lives
 in C++. REAL additionally accepts the scalar form \N{U+XXXX} directly (a PCRE2-style
@@ -278,16 +279,17 @@ is the extension. Pinned real-accepts / re-rejects in `TestIntentionalDivergence
 (div_property)=
 ## Unicode property classes \p{...} (a capability beyond re)
 
-REAL builds in **General_Category** (\p{L}, \p{Lu}, \p{Nd}, and the groups \p{L}..\p{C}) and
-**Script** (\p{sc=Greek}, \p{Script=Latin}), with short codes, the UCD long names (\p{Letter}),
+REAL builds in **General_Category** (\p{L}, \p{Lu}, \p{Nd}, and the groups \p{L}..\p{C}),
+**Script** (\p{sc=Greek}, \p{Script=Latin}) and **Script_Extensions** (\p{scx=Cyrl}), with short codes, the UCD long names (\p{Letter}),
 `gc=` / `sc=` prefixes, loose matching (UAX44-LM3), the single-letter form \pL, and negation \P{...} — on
 **both** the C++ engine and the Python binding. Standard `re` rejects \p entirely (a `bad escape` error), so
 accepting it is a **superset**: it cannot break re-compatible code (which could never use \p). The class
 matches as a linear code-point predicate (the same `klass_cp` mechanism as `\w`), so it stays ReDoS-safe, and
 `flags::ascii` (`re.A`) does **not** restrict it — a Unicode property is always Unicode. The tables are pinned
-to a Unicode version and validated exhaustively against the UCD (the regen guards). Binary properties
-(\p{Alphabetic}, \p{White_Space}) and other namespaces are **not** built in yet: they raise `unsupported`
-(the Rust binding can delegate them via its `fallback` feature). Pinned in the property and parity suites.
+to a Unicode version and validated exhaustively against the UCD (the regen guards). The **standard
+binary properties** (\p{Alphabetic}, \p{White_Space}, \p{Emoji}, …) are built in the same way; other
+UAX44 namespaces (\p{Bidi_Class=L}, `Word_Break`, `Age`, …) raise `unsupported` (the Rust binding can
+delegate those via its `fallback` feature). Pinned in the property and parity suites.
 
 (div_lookbehind)=
 ## Variable-width lookbehind (a capability beyond re)
