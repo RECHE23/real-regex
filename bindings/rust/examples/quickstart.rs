@@ -19,11 +19,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     // [quickstart]
     use real_regex::Regex;   // drop-in for the regex crate
 
-    let re = Regex::new(r"(?P<user>\w+)@(?P<host>\w+)")?;
+    let re = Regex::new(r"(\w+)@(\w+)")?;
     let caps = re.captures("info@example.com").unwrap();
-    &caps["host"];              // "example"
+    &caps[2];              // "example"
     // [/quickstart]
 
-    assert_eq!(&caps["host"], "example");
+    assert_eq!(&caps[2], "example");
     Ok(())
 }

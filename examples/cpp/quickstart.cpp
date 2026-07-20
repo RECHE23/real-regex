@@ -15,26 +15,20 @@
 #include <real/compat/std/regex.hpp>
 
 #include <iostream>
-#include <string>
+#include <string_view>
+
+using namespace std::string_view_literals;
 
 int main()
 {
-  const std::string line = "key=value";   // referenced by the compat block below
-
   // [quickstart]
   // The pattern lives in the type — parsed & compiled at compile time.
   #include <real/real.hpp>
-  constexpr real::static_regex<R"((\d{1,3})(?:\.(\d{1,3})){3})"> ipv4;
-  static_assert(ipv4.match("192.168.0.1"));
-
-  // …or drop into std::regex's place — same API, linear-time engine.
-  #include <real/compat/std/regex.hpp>
-  real::compat::smatch m;
-  real::compat::regex_search(line, m, real::compat::regex{R"((\w+)=(\S+))"});
+  constexpr real::static_regex<R"((\w+)@(\w+))"> email;
+  static_assert(email.search("info@example.com")[2] == "example"sv);
   // [/quickstart]
 
-  const bool ok = ipv4.match("192.168.0.1") && m.size() > 0 && m[1].str() == "key" && m[2].str() == "value";
-  std::cout << "quickstart: ipv4 static_assert held; regex_search matched=" << std::boolalpha
-            << (m.size() > 0) << " (group1=" << (m.size() > 0 ? m[1].str() : std::string{}) << ")\n";
+  const bool ok = email.search("info@example.com")[2] == "example"sv;
+  std::cout << "quickstart: email static_assert held; group 2 = " << email.search("info@example.com")[2] << "\n";
   return ok ? 0 : 1;
 }

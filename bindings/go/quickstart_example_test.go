@@ -34,10 +34,11 @@ func ExampleMustCompile() {
 	// — Go does not care about statement indentation, so this stays copy-pasteable as-is.
 	// [quickstart-body]
 re := real.MustCompile(`(\w+)@(\w+)`)              // drop-in for regexp
-re.FindSubmatchIndex([]byte("info@example.com"))  // capture-group offsets
+subj := []byte("info@example.com")
+idx := re.FindSubmatchIndex(subj)
+fmt.Print(string(subj[idx[4]:idx[5]]))  // "example" — group 2
 	// [/quickstart-body]
 
-	fmt.Println(re.FindSubmatchIndex([]byte("info@example.com")))
 	// Output:
-	// [0 12 0 4 5 12]
+	// example
 }

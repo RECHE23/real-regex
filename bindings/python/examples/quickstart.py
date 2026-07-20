@@ -13,7 +13,7 @@ landing's Python tab still matches byte-for-byte (rebuild with `make docs-site` 
 # [quickstart]
 import real as re   # drop-in for the standard library's re
 
-m = re.search(r"(\w+)@(\w+)\.(\w+)", "info@example.com")
+m = re.search(r"(\w+)@(\w+)", "info@example.com")
 m.group(2)                # 'example' — linear time, no backtracking cliff
 # [/quickstart]
 
