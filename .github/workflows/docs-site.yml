@@ -52,8 +52,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
-      - name: Install build deps (setuptools — python-build precedes sphinx, not bundled on 3.12+)
-        run: python -m pip install --upgrade pip setuptools
+      - name: Install build deps for the system python (setuptools for python-build; PyYAML for the features probe — the gate's two non-venv recipes)
+        run: python -m pip install --upgrade pip setuptools pyyaml
       - name: Install Doxygen + Graphviz + Clang/LLVM (Breathe's XML input + coverage-html)
         run: sudo apt-get update && sudo apt-get install -y doxygen graphviz clang llvm
       - name: Install the pinned docs toolchain (docs/requirements.txt) into a venv
