@@ -99,6 +99,13 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   literal inside a class, so the two would parse the same pattern differently. The crate declines these up
   front with `Error::Unsupported` (never a silent mis-match); escaped forms (`[\[]`) and ordinary ranges stay
   accepted. `fallback` delegates them to `regex`. Planned alongside `\p{}` as drop-in-completeness features.
+- **Possessive quantifiers — an interpretation divergence.** REAL reads a `+` right after a quantifier
+  (`x?+`, `x*+`, `x++`, `x{n,m}+`) as **possessive** — match maximally, never give back — the Python `re`
+  3.11+/PCRE2 grammar (REAL and `re` agree on the whole family). The `regex` crate has no possessives and
+  reads the same text as **nested repetition** (`x?+` ≡ `(?:x?)+`): both engines compile the pattern and
+  the spans legitimately differ (`a?+` on `"aaaa"`: REAL `(0,1)(1,2)(2,3)(3,4)`, the crate `(0,4)`;
+  `a++a` on `"aaaa"`: REAL finds nothing, the crate `(0,4)`). `tests/possessive.rs` pins both readings;
+  the differential fuzzer masks the class by form (`has_possessive_quantifier`).
 - **`RegexSet` — offered (which-matched).** Multi-pattern set matching: `RegexSet::new` /
   `is_match` / `matches` (bitset, construction order). Stage-1 is N independent walks with
   per-pattern early-exit — not a fused single-pass (that is a follow-up). Not the same as

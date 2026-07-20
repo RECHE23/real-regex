@@ -178,6 +178,63 @@ fn has_non_strict_brace(pattern: &str) -> bool {
     false
 }
 
+/// Whether a quantifier (`?`, `*`, `+`, or a strict `{n}`/`{n,}`/`{n,m}` brace) is immediately followed by
+/// `+` — the possessive form. A parser-interpretation divergence, not a bug: REAL reads it as possessive
+/// (Python `re` 3.11+/PCRE2 — match maximally, never give back), the crate as nested repetition
+/// (`x?+` == `(?:x?)+`). Both compile; spans legitimately differ. FORM is the right filter, like the
+/// non-strict brace. Lazy `x+?`, plain `x+`, escaped `\?+` and in-class `[?+]` are not possessive and not
+/// matched; a non-strict brace is literal to REAL and already masked by `has_non_strict_brace`.
+fn has_possessive_quantifier(pattern: &str) -> bool {
+    let b = pattern.as_bytes();
+    let mut i = 0;
+    let mut in_class = false;
+    let mut escaped = false;
+    while i < b.len() {
+        let c = b[i];
+        if escaped {
+            escaped = false;
+            i += 1;
+        } else if c == b'\\' {
+            escaped = true;
+            i += 1;
+        } else if in_class {
+            if c == b']' {
+                in_class = false;
+            }
+            i += 1;
+        } else if c == b'[' {
+            in_class = true;
+            i += 1;
+        } else if c == b'?' || c == b'*' || c == b'+' {
+            if i + 1 < b.len() && b[i + 1] == b'+' {
+                return true;
+            }
+            i += 1;
+        } else if c == b'{' {
+            let mut j = i + 1;
+            let digits_start = j;
+            while j < b.len() && b[j].is_ascii_digit() {
+                j += 1;
+            }
+            let mut ok = j > digits_start;
+            if ok && j < b.len() && b[j] == b',' {
+                j += 1;
+                while j < b.len() && b[j].is_ascii_digit() {
+                    j += 1;
+                }
+            }
+            ok = ok && j < b.len() && b[j] == b'}';
+            if ok && j + 1 < b.len() && b[j + 1] == b'+' {
+                return true;
+            }
+            i = if ok { j + 1 } else { i + 1 };
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
 /// Whether the pattern has an empty alternation branch — a `|` with nothing on one side (`(|`, `|)`, `||`, or
 /// a `|` at the pattern edge). Inside a repetition this is the div_empty_first_branch_loop class where REAL,
 /// `re`, and the crate diverge three ways; `re` is the arbiter. Conservative — any empty branch counts (a
@@ -235,6 +292,13 @@ fuzz_target!(|data: &[u8]| {
     // quantifier by the crate — a legal parser-interpretation divergence (known_rust_bugs / divergences). Form is
     // the right filter here (unlike the leftmost class, handled semantically at the comparison).
     if has_non_strict_brace(pattern) {
+        return;
+    }
+    // A quantifier immediately followed by `+` is POSSESSIVE to REAL (Python re 3.11+/PCRE2 — REAL == re on
+    // the whole family) but NESTED REPETITION to the crate, which has no possessives (`x?+` == `(?:x?)+`).
+    // Both compile, spans legitimately differ (README "Divergences"; tests/possessive.rs pins both readings).
+    // Form is the right filter, exactly like the non-strict brace above.
+    if has_possessive_quantifier(pattern) {
         return;
     }
     // Skip the documented CPython-vs-UTS#18 word/space divergence (README "Divergences"): REAL's \w/\s follow

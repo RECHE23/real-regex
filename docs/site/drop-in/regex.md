@@ -42,6 +42,9 @@ Condensed — the full list with tables is the crate's own
   namespaces raise `Error::Unsupported` (or delegate under `fallback`).
 - **CPython word/space/case semantics** — `\w` `\s` and `IGNORECASE` folding
   follow Python `re`, not UTS#18; class-set syntax (`[a[b]]`, `&&`) declines.
+- **Possessive quantifiers diverge silently** — REAL reads `x?+` / `x*+` / `x++`
+  as possessive (the Python 3.11+ grammar); the `regex` crate reads them as
+  nested repetition. Both compile — check the README entry before migrating.
 - **`shortest_match` is leftmost-first** (greedy end), not earliest completion.
 - Empty-match iteration follows the `regex` crate's rule at the wrapper, so
   `find_iter` / `split` agree with it.
