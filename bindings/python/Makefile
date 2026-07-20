@@ -4,12 +4,13 @@
 # $(ROOT)-anchored (in particular PYTHONPATH — a $(CURDIR) here would be bindings/python, breaking the import).
 ROOT             := $(abspath $(CURDIR)/../..)
 PYTHON           ?= python3
+MYPY_PYTHON      ?= $(PYTHON)
 BUILD            ?= $(ROOT)/build
 SCIFORGE_INCLUDE ?= $(abspath $(ROOT)/../sciforge/include)
 SCIFORGE_PYTHON  ?= $(abspath $(ROOT)/../sciforge/python)
 PYRUN            := PYTHONPATH=$(ROOT)/bindings/python:$(SCIFORGE_PYTHON) $(PYTHON)
 
-.PHONY: build test bench fuzz clean help
+.PHONY: build test stubtest bench fuzz clean help
 .DEFAULT_GOAL := help
 
 build: ## Build the abi3 Python extension in place
@@ -17,6 +18,9 @@ build: ## Build the abi3 Python extension in place
 
 test: build ## Run the Python test suites (unittest — includes the re-vs-REAL differential fuzzer)
 	cd $(ROOT) && $(PYRUN) -m unittest discover -s bindings/python/tests
+
+stubtest: build ## Verify real/__init__.pyi against the runtime surface (mypy.stubtest; MYPY_PYTHON carries mypy)
+	cd $(ROOT) && PYTHONPATH=$(ROOT)/bindings/python:$(SCIFORGE_PYTHON) $(MYPY_PYTHON) -m mypy.stubtest real --allowlist bindings/python/tests/stubtest_allowlist.txt
 
 bench: build ## Comparative benchmarks vs Python re (bench.py, then the fuzzed-corpus variant)
 	$(PYRUN) $(ROOT)/benchmarks/bench.py

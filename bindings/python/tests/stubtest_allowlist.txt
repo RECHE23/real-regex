@@ -1,0 +1,2 @@
+# mypy.stubtest allowlist — ONLY irreducible C-API structure may live here, each
+# entry justified. A signature divergence is fixed in the .pyi, never allowlisted.

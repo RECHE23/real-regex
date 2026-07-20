@@ -495,7 +495,7 @@ PyObject* Match_expand(PyObject* self, PyObject* template_arg);
 
 PyMethodDef match_methods[] = {
     {"group", Match_group, METH_VARARGS,
-     "group($self, group=0, /)\n--\n\n"
+     "group($self, /, *groups)\n--\n\n"
      "Return the matched substring or subgroups.\n\n"
      "Args:\n"
      "    group (int or str, optional): Group number or name. Defaults to 0\n"

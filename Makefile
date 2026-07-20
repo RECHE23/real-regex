@@ -473,8 +473,11 @@ full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate 
 	@$(MAKE) rust-test
 	@echo "── [17/22] rust-publish-check"
 	@$(MAKE) rust-publish-check
-	@echo "── [18/22] python-test"
+	@echo "── [18/22] python-test + python-stubtest (.pyi ≡ runtime; skipped if mypy absent)"
 	@$(MAKE) python-test
+	@if $${MYPY_PYTHON:-$(PYTHON)} -c "import mypy" >/dev/null 2>&1; then \
+	   $(MAKE) python-stubtest; \
+	 else echo "   (stubtest skipped: mypy absent — pip install mypy, or set MYPY_PYTHON)"; fi
 	# Go leg: go-check-vendor regenerates the committed vendor tree from the live headers and fails
 	# on drift — the one binding NOT otherwise in this gate (its sources are vendored, not built from
 	# include/ here). Skipped with a warning when go is absent (the CI go job is the backstop), same
