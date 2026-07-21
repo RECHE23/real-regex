@@ -28,13 +28,8 @@ C++ core
   :doc:`basic_match_result <basic_match_result>`.
 - **Match many patterns at once** -- which-matched:
   :doc:`regex_set <regex_set>`.
-
-.. raw:: html
-
-   <ul>
-   <li><strong>Tokenize, maximal-munch</strong> — the lexer-grade automaton:
-       <a href="../api/classreal_1_1dfa.html">dfa</a>.</li>
-   </ul>
+- **Tokenize, maximal-munch** -- the lexer-grade automaton:
+  :doc:`dfa <dfa>`.
 
 Python binding
 --------------
@@ -57,4 +52,5 @@ layer's API, divergences and limits.
    basic_match_result
    basic_match_range
    regex_set
+   dfa
    python
