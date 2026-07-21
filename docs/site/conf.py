@@ -127,10 +127,8 @@ nitpick_ignore = [
     ("cpp:identifier", "sub_match<BidirIt>"),
     ("ref", "classreal_1_1regex__error"),
     ("ref", "structreal_1_1fixed__string"),
-    ("ref", "classreal_1_1compat_1_1re2_1_1_arg"),
     ("ref", "namespacereal"),
     ("ref", "namespacereal_1_1compat_1_1re2"),
-    ("ref", "_c_o_m_p_a_t_i_b_i_l_i_t_y_8md"),
 ]
 nitpick_ignore_regex = [
     ("ref", r"namespacereal_1a[0-9a-f]+"),  # real::regex / real::static_regex (hashed member anchors)
@@ -139,8 +137,12 @@ nitpick_ignore_regex = [
     # unresolved on partially-rendered pages (the /api tree has them all).
     ("ref", r"classreal_1_1basic__regex_1a[0-9a-f]+"),
     ("ref", r"classreal_1_1basic__match__iterator_1a[0-9a-f]+"),
-    ("ref", r"classreal_1_1compat_1_1[a-z0-9_]+(_1_1[a-z0-9_]+)*_1a[0-9a-f]+"),
-    ("ref", r"namespacereal_1_1compat(_1_1[a-z0-9_]+)*_1a[0-9a-f]+"),
+    ("ref", r"classreal_1_1compat_1_1[A-Za-z0-9_]+(_1_1[A-Za-z0-9_]+)*_1a[0-9a-f]+"),
+    ("ref", r"namespacereal_1_1compat(_1_1[A-Za-z0-9_]+)*_1a[0-9a-f]+"),
+    # Doxygen's refid case-escaping differs across versions (Arg vs _arg,
+    # COMPATIBILITY_8md vs _c_o_m_p_a_t_i_b_i_l_i_t_y_8md) -- cover both.
+    ("ref", r"classreal_1_1compat_1_1re2_1_1(_arg|Arg)"),
+    ("ref", r"(_c_o_m_p_a_t_i_b_i_l_i_t_y|COMPATIBILITY)_8md"),
 ]
 
 copybutton_prompt_text = r"\$ "
