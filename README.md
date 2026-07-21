@@ -4,8 +4,8 @@
 [![PyPI](https://img.shields.io/pypi/v/real-regex)](https://pypi.org/project/real-regex/)
 [![release](https://img.shields.io/github/v/release/RECHE23/real-regex)](https://github.com/RECHE23/real-regex/releases)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue)](https://en.cppreference.com/w/cpp/20)
-![header-only](https://img.shields.io/badge/header--only-yes-green)
-[![coverage](https://img.shields.io/badge/coverage-%E2%89%A595%25-brightgreen)](https://reche23.github.io/real-regex/)
+[![header-only](https://img.shields.io/badge/header--only-yes-green)](https://github.com/RECHE23/real-regex/tree/main/include/real)
+[![coverage](https://img.shields.io/badge/coverage-%E2%89%A595%25-brightgreen)](https://reche23.github.io/real-regex/coverage/index.html)
 [![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/RECHE23/real-regex/blob/main/LICENSE)
 
 Linear-time, ReDoS-safe C++20 regex with bounded lookarounds — RE2's safety plus the
@@ -37,46 +37,28 @@ REAL gives you **both**: linear-time, ReDoS-safe matching *with* bounded lookaro
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | Linear-time, ReDoS-safe       | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ |
 | Lookarounds                   | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ |
-| Possessive quantifiers / atomic groups | ✅⁶ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Possessive quantifiers / atomic groups | ✅³ | ❌ | ❌ | ❌ | ✅ | ✅ |
 | Header-only, zero-dependency  | ✅ | ✅¹ | ❌ | ❌ | ❌ | — |
 | Constexpr (compile-time match)| ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Drop-in Python `re`           | ✅² | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Raw throughput                | fast³ | 6–55× slower⁴ | 1.2–9× slower | mixed⁵ | fast | slow |
 
 ¹ part of the C++ standard library. ² for the supported subset (no backreferences, etc.).
-³ REAL-vs-PCRE2-JIT on class scans is **ISA-dependent**: on **x86-64** REAL leads (`[a-z]+` **1.9×**,
-`[0-9]+` **1.9×**), on **arm64** PCRE2's JIT retakes them (0.86–0.92×) — same engine, same version, purely the
-JIT's per-ISA codegen (§A). PCRE2-JIT leads straight-line literals / alternation / quantifiers on both.
-⁴ backtracking — **4.1 s where REAL takes 0.5 ms** on a `(a+)+b`-style input: the ReDoS-safety property,
-quantified, not an adjective.
-⁵ not one verdict: REAL leads class scans (**5–6×**) and dense-capture extraction (**3–6×**); the crate leads
-straight-line literal / alternation (1.1–1.3×) and word-boundary; no-match is ≈ parity (1.6×). The per-line
-duel is in §E.
-⁶ Tier 1 (linear time): a single atom, or one wrapped in one capturing group — `[^x]*+`, `\d++`,
-`(?>\w+)` — covers the dominant real-world shape. A compound/alternating body (`(?:ab)*+`, `(?>ab|a)`)
-is rejected as not supported yet, not silently accepted with wrong semantics — see `docs/divergences.dox`.
-Exact multipliers, machines and methodology are in
-[`docs/BENCHMARKS.md`](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md).
+³ Tier 1 (linear time): a single atom, or one wrapped in one capturing group — `[^x]*+`,
+`\d++`, `(?>\w+)` — covers the dominant real-world shape; a compound body is rejected,
+never silently mis-matched.
 
-**Every other engine that has lookarounds backtracks** (ReDoS-unsafe), and every linear-time
-engine drops them — **REAL is the only one with both**: bounded lookarounds *and* linear-time,
-ReDoS-safe matching.
+**Every other engine that has lookarounds backtracks** (ReDoS-unsafe), and every
+linear-time engine drops them — **REAL is the only one with both**. Throughput,
+machines and the per-engine duels:
+[Performance](https://reche23.github.io/real-regex/performance/).
 
 ## ReDoS, in numbers
 
-The classic catastrophic-backtracking pattern `(a+)+b` over `"a"×N` (no `b`, so no match):
-
-| engine | input | time |
-| --- | --- | ---: |
-| **REAL** | N = 100 000 | **0.52 ms** — linear |
-| RE2 | N = 100 000 | 0.16 ms — linear |
-| `std::regex` | N = 26 | **4107 ms** (libstdc++ backtracks; libc++ *refuses* at "complexity … exceeded") |
-| Python `re` | n = 24 | **1398 ms** — and climbing exponentially |
-
-REAL and RE2 stay linear; the backtracking engines refuse or blow up at trivially small
-inputs. These figures are from [`docs/BENCHMARKS.md` §C](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md); they depend on the
-platform, pattern and input, so reproduce them locally with `make bench-engines` rather than
-trusting a number here.
+On the classic catastrophic pattern `(a+)+b`, REAL answers in **0.52 ms over
+100 000 characters** — while `std::regex` takes **4.1 s on 26 characters** and
+Python `re` **1.4 s on 24, climbing exponentially**. Linear time is the measured
+property, not an adjective. Reproduce locally with `make bench-engines`; full
+tables in [Performance](https://reche23.github.io/real-regex/performance/).
 
 ## Quickstart
 
@@ -107,63 +89,37 @@ More runnable programs — including the ReDoS demo — are in [`examples/`](htt
 | Channel | Command |
 | --- | --- |
 | PyPI (Python + headers) | `pip install real-regex` |
-| Homebrew (macOS / Linux) | `brew install RECHE23/sci/real-regex` |
+| crates.io (Rust) | `cargo add real-regex` |
+| Go | `go get github.com/RECHE23/real-regex/bindings/go` |
+| Homebrew (macOS / Linux) | `brew install RECHE23/sci/real-regex` — the [`homebrew-sci`](https://github.com/RECHE23/homebrew-sci) tap |
 | vcpkg | via the [`vcpkg-sci`](https://github.com/RECHE23/vcpkg-sci) registry → `"dependencies": ["real-regex"]` |
 | CMake FetchContent | `FetchContent_Declare(real GIT_REPOSITORY https://github.com/RECHE23/real-regex GIT_TAG v2026.7.51)` |
 | Vendored | copy `include/` and compile with `-std=c++20 -I include` |
 
-REAL is header-only, so "installing" just places the headers and the package metadata where a
-consumer can find them. After `cmake --install <build> --prefix <prefix>`, there are three
-ways to consume it from C++:
-
-```cmake
-# 1. CMake — find_package against the installed config package:
-find_package(real CONFIG REQUIRED)
-target_link_libraries(app PRIVATE real::real)
-```
-
-```sh
-# 2. pkg-config — for Make / Meson / autotools (and the system packagers):
-c++ -std=c++20 $(pkg-config --cflags real) app.cpp -o app
-```
-
-```sh
-# 3. Direct copy — vendor include/ into your tree, no build system needed:
-c++ -std=c++20 -I/path/to/real/include app.cpp -o app
-```
-
-`real::real` is also available without installing, via `add_subdirectory` or `FetchContent`.
-
-REAL requires **C++20 or later**. Every header asserts it (`#include <real/...>`
-fails fast with a clear message under an older standard), and pkg-config has no
-field to convey a language standard — so the consumer must pass `-std=c++20` (or
-newer) itself, as shown above.
-
-The header-only library builds and installs with nothing but a C++20 compiler and
-CMake. The [SciForge](https://github.com/RECHE23/sciforge) test harness is needed
-**only** to build the test suite (`BUILD_TESTING=ON`, the default for development
-and CI), the Python binding and the CI scripts — never the library. Packagers
-configure with `-DBUILD_TESTING=OFF` to install the library alone, with no
-SciForge dependency.
-
-The Homebrew formula consumes the library via CMake `find_package(real)`,
-`pkg-config --cflags real`, or `-I"$(brew --prefix real-regex)/include"` — see the
-[tap README](https://github.com/RECHE23/homebrew-sci) for usage.
+REAL is header-only: installing just places the headers and package metadata.
+**C++20 or newer is required** and the consumer passes it (`-std=c++20`) — every
+header asserts it with a clear message. Consume via CMake
+(`find_package(real CONFIG)` + `real::real`), `pkg-config --cflags real`, or a
+plain vendored `-I include`; `add_subdirectory`/`FetchContent` work without
+installing. The [SciForge](https://github.com/RECHE23/sciforge) harness is needed
+only for the test suite and CI, never for the library — packagers configure with
+`-DBUILD_TESTING=OFF`.
 
 ## Documentation
 
-- **API reference & design** (Doxygen — "How REAL Works", the internals tour): <https://reche23.github.io/real-regex/>
-- **Performance** — the measured baseline, with the machine and engine versions and the rust-crate duel:
-  [`docs/BENCHMARKS.md`](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md)
-- **Compatibility** (`re` and `std::regex`) — the supported subset and every intentional divergence:
-  [`docs/COMPATIBILITY.md`](https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md)
-- **Tests & conformance** — the differential harnesses and the coverage/gate policy:
-  [`docs/TESTS.md`](https://github.com/RECHE23/real-regex/blob/main/docs/TESTS.md)
-- **Python** — `pip install real-regex`, the `re` drop-in: [on PyPI](https://pypi.org/project/real-regex/).
+The documentation site: <https://reche23.github.io/real-regex/>
 
-`make python-bench` compares throughput against Python's `re`, and `make bench-engines` against `std::regex`,
-PCRE2 and RE2 in one C++ process (match counts checked equal). Figures depend on the platform, pattern and
-input — reproduce them locally rather than trusting a number here. The GitHub releases page is the changelog.
+- **[Features](https://reche23.github.io/real-regex/features.html)** — the
+  capability scorecard, statuses probed in CI.
+- **[Drop-in](https://reche23.github.io/real-regex/drop-in/)** — migration
+  guides: `std::regex`, RE2, Python `re`, Rust `regex`, Go `regexp`.
+- **[API reference](https://reche23.github.io/real-regex/reference/)** — curated
+  per-object pages, C++ and Python, rendered from the code's own comments.
+- **[Performance](https://reche23.github.io/real-regex/performance/)** — the
+  measured baseline: machines, versions and methodology disclosed.
+- **[Developer](https://reche23.github.io/real-regex/developer/)** — the
+  architecture tour, coverage, testing — and the exhaustive
+  [Doxygen tree](https://reche23.github.io/real-regex/api/).
 
 ## Supported syntax
 
@@ -203,190 +159,28 @@ character. The full Unicode model, the code-point-mode migration notes, and ever
 from `re` (e.g. nullable-loop empty captures) are in
 [`docs/COMPATIBILITY.md`](https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md).
 
-## C++ API
-
-```cpp
-#include <real/real.hpp>
-
-real::regex rx("hello");     // runtime pattern, storage sized exactly once
-rx.match("hello world");     // anchored at the start   (Python re.match)
-rx.fullmatch("hello");       // whole text              (Python re.fullmatch)
-rx.search("say hello");      // leftmost match anywhere (Python re.search)
-```
-
-`match`/`fullmatch`/`search` return a `real::match_result`: `matched()`,
-`operator bool`, `start(g)`, `end(g)`, `m[g]` (a `std::string_view` into the
-searched text, which must outlive the result), and the same accessors by group
-name (`m["year"]`, `group_index`).
-
-```cpp
-for (auto& m : rx.find_iter(text)) { … }      // lazy, Python finditer rules
-rx.find_all(text);                            // eager vector<match_result>
-rx.replace(text, "$2:$1");                    // $&, $1…, ${name}, $$ — re.sub
-rx.replace(text, "#", 2);                     // count limit
-rx.split(text);                               // Python re.split, with groups
-```
-
-Empty matches follow Python's rules: they are yielded (even right after a
-non-empty match) and the scan then advances one whole codepoint.
-`find_iter`/`find_all` cannot be called on a temporary regex, and
-`match`/`search`/`split` cannot take a temporary `std::string`.
-
-### Drop-in for std::regex
-
-Already using `<regex>`? `real::compat` is a drop-in for the `<regex>` surface on the `char` path —
-swap the include and alias the namespace, and your code keeps compiling:
-
-```cpp
-#include <real/compat/std/regex.hpp>   // was: #include <regex>
-namespace re = real::compat;    // then re::regex / re::smatch / re::regex_search / …
-```
-
-It runs your pattern on REAL — linear-time, ReDoS-safe — wherever that is provably identical to
-`std::regex`, and falls back to `std::regex` everywhere else: **behave identically, never a silent
-divergence**. See the [migration tour](https://reche23.github.io/real-regex/std_regex_dropin.html) and
-the full [`docs/COMPATIBILITY.md`](https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md).
-
-### Three memory modes
-
-```cpp
-// Static: pattern compiled at compile time into exactly-sized constexpr
-// arrays; an invalid pattern is a *compile error*.
-constexpr real::static_regex<"(\\d{4})-(\\d{2})"> date;
-static_assert(date.search("on 2026-06-10")[1] == "2026");  // constexpr match
-
-// Hybrid: compile-time pattern, runtime text — matching performs zero heap
-// allocations (state lives on the stack).
-date.search(runtime_text);
-
-// Dynamic: everything at runtime; the program is sized exactly once at
-// compilation, match state is per-run scratch.
-real::regex rx2(user_pattern, real::flags::icase);
-```
-
-### DFA over a rule set (opt-in)
-
-```cpp
-#include <real/dfa.hpp>   // opt-in: not pulled in by <real/real.hpp>
-
-const std::array patterns {real::regex("\\s+"), real::regex("[0-9]+"),
-                           real::regex("[A-Za-z_][A-Za-z0-9_]*")};
-real::dfa d(std::span<const real::regex>(patterns));   // built once, then immutable
-auto hit = d.match("foo");   // -> {rule_index = 2, length = 3}; std::nullopt if none
-```
-
-`real::dfa` fuses a set of patterns into one **capture-free, maximal-munch DFA**: a
-single left-to-right pass recognizes the winning rule (longest match; ties to the
-earliest pattern; empty excluded) instead of running each pattern in turn — linear-time
-and ReDoS-safe like the engine, built at run time and then immutable. It is the
-accelerated rule dispatch a lexer wants (SciLex's `dfa_modes` is built on it). A pattern
-carrying a zero-width assertion no DFA can represent (`$`, `\b`, multiline `^`/`$`)
-throws `real::dfa_error`; lazy and greedy accept the same language, so feed it
-longest-match-faithful rules.
-
-### Multi-pattern set (`real::regex_set`)
-
-For **which-matched** multi-pattern queries (which patterns hit the text at least once —
-RE2::Set / rust `RegexSet` style), include `<real/regex_set.hpp>`:
-
-```cpp
-#include <real/regex_set.hpp>
-real::regex_set set {"error|warn", "[0-9]{4}-[0-9]{2}-[0-9]{2}", "absent"};
-// or: span/array of string_view, or span/vector of string
-set.is_match(log_line);          // any-match (stops at first hit)
-auto bits = set.matches(log_line); // construction-order bitset
-```
-
-Stage-1 is N independent `search` walks with per-pattern early-exit — **not**
-`real::dfa` (munch one-winner) and not yet a fused single-pass. Compile fails the
-whole set if any pattern is invalid.
-
-## Python binding
-
-An `re`-compatible module backed by the C++ engine (CPython Limited API, one
-abi3 extension, zero dependencies):
-
-```python
-import real
-
-real.search(r"(?P<y>\d{4})-(?P<m>\d{2})", "on 2026-06-10").groupdict()
-real.compile(r"\w+").findall(text)         # findall/finditer/split/sub/subn
-real.sub(r"\s+", " ", text)                # templates: \1, \g<name>, callables
-real.search(r"(\w+)=(\w+)", "k=v").expand(r"\2:\1")   # Match.expand -> "v:k"
-real.compile(rb"[^;]+").findall(raw)       # bytes patterns: raw-byte semantics
-```
-
-`str` matching is UTF-8 with character indices in `start/end/span`; `bytes`
-patterns get `re`'s exact raw-byte semantics. Unsupported `re` features raise
-`real.error` at compile time. Build with `make python-build && make python-test`.
-
-`pip install real-regex` installs one `cp310-abi3` wheel per platform
-(CPython 3.10+; the self-contained sdist compiles where no wheel matches).
-
-### Embedding the C++ library through the Python package
-
-The wheel also ships the C++ headers, so a project can compile against REAL
-located through its Python install — the convention used by `petsc4py` and
-`slepc4py`:
-
-```bash
-c++ -std=c++20 $(python -c "import real; print(real.get_include())") app.cpp
-```
-
-`real.get_config()` returns the version, the include directory and the
-required C++ standard.
-
-**Releasing.** Run `make release`. It computes the next calendar version
-`YYYY.M.PATCH` — the patch resets each month, the first release of a month is
-`.0` (PEP 440 drops leading zeros, so `2026.6.1`, never `2026.06.001`) — bumps
-it in `pyproject.toml` and `bindings/python/real/__init__.py`, then commits, tags and
-pushes. The tag drives `release.yml`, which checks the tag matches the version,
-builds abi3 wheels (`cibuildwheel`, Linux/macOS/Windows) and the sdist, and
-publishes to PyPI via Trusted Publishing (OIDC, no stored secret). The pushed
-tag is the single thing that triggers a publish.
-
 ## Development
 
 ```bash
-make help        # list all targets
-make test        # build and run the test suite
-make coverage    # line coverage report (LLVM)
-make sanitize    # tests under ASan + UBSan
-make lint        # clang-tidy
-make misra       # MISRA C++:2023-oriented analysis
-make fuzz        # libFuzzer robustness fuzzing (clang)
-make doc         # API reference (Doxygen)
-make format      # Uncrustify, in place
-make format-check  # Uncrustify, dry-run; exits non-zero on diff
+make help             # list all targets
+make test             # build and run the test suite
+make coverage         # line coverage report (LLVM)
+make full-local-gate  # every gate, pre-push record
 ```
 
-The API reference is published at <https://reche23.github.io/real-regex/>.
+Every behaviour is tested at runtime and in constexpr (`static_assert`) under
+Clang and GCC; a parity suite and a randomized differential fuzzer compare the
+Python binding against `re`; CI covers Linux (x86-64, AArch64), macOS (arm64)
+and Windows (MSVC). REAL holds a mid-90s line-coverage bar on `include/` — a
+deliberate, documented exception to the 100%-four-dimension gate of the stack
+built on top of it (dual runtime/constexpr execution leaves the last branches
+impractical to drive). The full tour, gates and taxonomy:
+[Developer](https://reche23.github.io/real-regex/developer/).
 
-Select the compiler with `make test CXX=g++-14`. Every behaviour is tested at
-runtime and in constexpr (`static_assert`) under Clang and GCC; an equivalence
-suite checks the prefilter and fast paths never change results; a parity suite
-and a randomized differential fuzzer compare Python outputs against `re`.
-
-**Coverage bar.** REAL holds a high line-coverage bar (mid-90s on `include/`),
-checked with `make coverage`. It deliberately does *not* adopt the
-100%-on-all-four-dimensions (lines, functions, regions, *and* branches) gate used
-by the SciLang-stack libraries built on top of it: as the oldest and most complex
-engine here, its dual runtime/constexpr execution and Pike-VM branch structure
-leave some regions and branches impractical to drive to 100% without contrived
-tests. That lower-but-still-high bar is a deliberate, documented exception, not an
-oversight — REAL keeps its own gate (above) and its broad public CI.
-
-CI exercises:
-
-| Platform | Architecture | Compiler |
-|----------|--------------|----------|
-| Linux    | x86-64       | GCC, Clang |
-| Linux    | AArch64      | GCC |
-| macOS    | Apple Silicon (arm64) | Apple Clang |
-| Windows  | x86-64       | MSVC |
-
-IntelLLVM (`icpx`), x86-64 macOS and the BSDs share the Clang flag set and are
-supported by the build configuration but not exercised in CI.
+**Releasing.** `make release` computes the next calendar version
+(`YYYY.M.PATCH`), bumps it, commits, tags and pushes; the pushed tag is the
+single trigger for `release.yml`, which builds the abi3 wheels and the sdist and
+publishes to PyPI via Trusted Publishing (OIDC, no stored secret).
 
 ## License
 
