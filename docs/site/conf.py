@@ -101,8 +101,9 @@ nitpick_ignore = [
     # domain cannot resolve every name their signatures mention. Two kinds, both
     # deliberate (the exhaustive /api tree has every symbol): engine-internal
     # names (result_type, npos, real, detail…) stay for good; public objects
-    # awaiting their curated page (regex_error, flags, match_semantics) leave
-    # this list when that page renders them into the C++ domain.
+    # awaiting their curated page (regex_error, flags, match_semantics,
+    # fixed_string) leave this list when that page renders them into the
+    # C++ domain.
     ("cpp:identifier", "result_type"),
     ("cpp:identifier", "npos"),
     ("cpp:identifier", "real"),
@@ -111,8 +112,14 @@ nitpick_ignore = [
     ("cpp:identifier", "flags::none"),
     ("cpp:identifier", "detail"),
     ("cpp:identifier", "detail::program_view"),
+    ("cpp:identifier", "detail::dynamic_storage"),
+    ("cpp:identifier", "detail::static_storage<Pattern, F>"),
     ("cpp:identifier", "match_semantics"),
     ("cpp:identifier", "match_semantics::first"),
+    ("cpp:identifier", "regex_error"),
+    ("cpp:identifier", "fixed_string"),
+    ("ref", "classreal_1_1regex__error"),
+    ("ref", "structreal_1_1fixed__string"),
 ]
 nitpick_ignore_regex = [
     ("ref", r"namespacereal_1a[0-9a-f]+"),  # real::regex / real::static_regex (hashed member anchors)

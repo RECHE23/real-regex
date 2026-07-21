@@ -25,6 +25,14 @@ Interface
    :project: real
    :members: basic_regex, match, fullmatch, search, find_iter, count_matches, replace, split
 
+The two aliases:
+
+.. doxygentypedef:: real::regex
+   :project: real
+
+.. doxygentypedef:: real::static_regex
+   :project: real
+
 Complexity
 ----------
 

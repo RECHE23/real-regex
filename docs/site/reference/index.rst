@@ -26,12 +26,12 @@ C++ core
 - **Replace or split** -- ``replace()`` / ``split()``.
 - **Inspect a match** -- groups, spans, truthiness:
   :doc:`basic_match_result <basic_match_result>`.
+- **Match many patterns at once** -- which-matched:
+  :doc:`regex_set <regex_set>`.
 
 .. raw:: html
 
    <ul>
-   <li><strong>Match many patterns at once</strong> — which-matched:
-       <a href="../api/classreal_1_1regex__set.html">regex_set</a>.</li>
    <li><strong>Tokenize, maximal-munch</strong> — the lexer-grade automaton:
        <a href="../api/classreal_1_1dfa.html">dfa</a>.</li>
    </ul>
@@ -56,4 +56,5 @@ layer's API, divergences and limits.
    basic_regex
    basic_match_result
    basic_match_range
+   regex_set
    python
