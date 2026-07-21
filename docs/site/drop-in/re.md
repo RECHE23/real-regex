@@ -21,8 +21,8 @@ m.group(2)          # 'example' — linear time, no backtracking cliff
 
 ## API offered
 
-`compile`, `search`, `match`, `fullmatch`, `findall`, `finditer`, `sub`, `subn`,
-`split`, and `Match.group` / `groups` / `groupdict` / `span` / `start` / `end`.
+The `re` surface you already call is offered whole — the module functions,
+`Pattern`'s methods, `Match`'s accessors — same names, same shapes.
 Flags `re.I`, `re.M`, `re.S`, `re.X`, `re.A` behave the same; Unicode
 `\w \d \s \b` and `IGNORECASE` folding follow `re` in text mode.
 
@@ -34,6 +34,8 @@ Beyond `re` — flagged extensions, never silent divergences:
   linear-time guarantee; `Pattern.engine` says which backend ran.
 - `\p{…}` property classes and the `\N{U+XXXX}` scalar escape — supersets that
   stdlib `re` rejects ({doc}`why <../differences-from-re>`).
+
+Object-level reference: {doc}`Python API <../reference/python>`.
 
 ## Differences & limitations
 
