@@ -79,6 +79,7 @@ docs-site: doc-no-coverage ## Build the themed Sphinx/Breathe site (docs/site) -
 	  rm -rf $(BUILD)/site/html/coverage && cp -R $(COV_HTML) $(BUILD)/site/html/coverage; \
 	fi
 	@rm -rf $(BUILD)/site/html/api && cp -R $(BUILD)/doc/html $(BUILD)/site/html/api
+	@if [ -d $(COV_HTML) ]; then cp -R $(COV_HTML) $(BUILD)/site/html/api/coverage; fi
 	@echo "docs-site: $(BUILD)/site/html/index.html"
 
 # The site's own gate: -W (every warning fatal) + --keep-going (report all of them,
@@ -144,6 +145,7 @@ docs-site-gate: ## Sphinx -W --keep-going + linkcheck + built-HTML link check fo
 	 fi
 	@echo "── built-HTML link check (build/site/html/*.html, site-wide -- linkcheck can't see the bespoke landing template or any #anchor)"
 	@$(MAKE) docs-site
+	@test -f $(BUILD)/site/html/api/coverage/index.html || { echo "docs-site-gate: api/coverage/index.html missing -- the \\page coverage iframe would 404 (run make coverage-html first)"; exit 1; }
 	@python3 $(ROOT)/tools/check_site_links.py $(BUILD)/site/html
 	@echo "docs-site-gate: PASS (sphinx -W --keep-going + linkcheck + no-inline-quickstart + built-HTML link check)"
 
