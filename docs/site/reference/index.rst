@@ -31,6 +31,14 @@ C++ core
 - **Tokenize, maximal-munch** -- the lexer-grade automaton:
   :doc:`dfa <dfa>`.
 
+Compatibility shims (C++)
+-------------------------
+
+- **The ``std::regex`` face** -- ``basic_regex``, the ``regex_match`` family,
+  ``match_results``, the iterators: :doc:`compat-std <compat-std>`.
+- **The RE2 face** -- ``RE2`` and ``RE2::Set``:
+  :doc:`compat-re2 <compat-re2>`.
+
 Python binding
 --------------
 
@@ -53,4 +61,6 @@ layer's API, divergences and limits.
    basic_match_range
    regex_set
    dfa
+   compat-std
+   compat-re2
    python

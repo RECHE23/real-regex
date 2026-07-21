@@ -35,7 +35,8 @@ RE2::PartialMatch("info@example.com", R"((\w+)@(\w+))", &user, &host);
 - **`RE2::Set`** — Add / Compile / Match, multi-pattern which-matched on
   `real::regex_set`.
 
-One include: `<real/compat/re2/re2.hpp>`.
+One include: `<real/compat/re2/re2.hpp>`. Object-level reference:
+{doc}`RE2 compatibility <../reference/compat-re2>`.
 
 ## Differences & limitations
 

@@ -102,8 +102,8 @@ nitpick_ignore = [
     # deliberate (the exhaustive /api tree has every symbol): engine-internal
     # names (result_type, npos, real, detail…) stay for good; public objects
     # awaiting their curated page (regex_error, flags, match_semantics,
-    # fixed_string) leave this list when that page renders them into the
-    # C++ domain.
+    # fixed_string, regex_constants, compat::re2::Arg) leave this list when
+    # that page renders them into the C++ domain.
     ("cpp:identifier", "result_type"),
     ("cpp:identifier", "npos"),
     ("cpp:identifier", "real"),
@@ -118,8 +118,19 @@ nitpick_ignore = [
     ("cpp:identifier", "match_semantics::first"),
     ("cpp:identifier", "regex_error"),
     ("cpp:identifier", "fixed_string"),
+    ("cpp:identifier", "regex_constants"),
+    ("cpp:identifier", "regex_constants::match_flag_type"),
+    ("cpp:identifier", "regex_constants::match_default"),
+    ("cpp:identifier", "regex_constants::syntax_option_type"),
+    ("cpp:identifier", "compat"),
+    ("cpp:identifier", "compat::policy"),
+    ("cpp:identifier", "sub_match<BidirIt>"),
     ("ref", "classreal_1_1regex__error"),
     ("ref", "structreal_1_1fixed__string"),
+    ("ref", "classreal_1_1compat_1_1re2_1_1_arg"),
+    ("ref", "namespacereal"),
+    ("ref", "namespacereal_1_1compat_1_1re2"),
+    ("ref", "_c_o_m_p_a_t_i_b_i_l_i_t_y_8md"),
 ]
 nitpick_ignore_regex = [
     ("ref", r"namespacereal_1a[0-9a-f]+"),  # real::regex / real::static_regex (hashed member anchors)
@@ -128,6 +139,8 @@ nitpick_ignore_regex = [
     # unresolved on partially-rendered pages (the /api tree has them all).
     ("ref", r"classreal_1_1basic__regex_1a[0-9a-f]+"),
     ("ref", r"classreal_1_1basic__match__iterator_1a[0-9a-f]+"),
+    ("ref", r"classreal_1_1compat_1_1[a-z0-9_]+(_1_1[a-z0-9_]+)*_1a[0-9a-f]+"),
+    ("ref", r"namespacereal_1_1compat(_1_1[a-z0-9_]+)*_1a[0-9a-f]+"),
 ]
 
 copybutton_prompt_text = r"\$ "

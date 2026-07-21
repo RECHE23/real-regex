@@ -54,6 +54,8 @@ r.nullable();             // true  -> can match empty; replace/iterators defer t
 r.mark_count();           // capture-group count (std::regex parity)
 ```
 
+Object-level reference: {doc}`std::regex compatibility <../reference/compat-std>`.
+
 ## Differences & limitations
 
 - **Per-pattern fallback.** A backreference, an oversized or unbounded lookaround, a
