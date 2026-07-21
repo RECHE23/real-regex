@@ -11,6 +11,12 @@ tree always has every symbol:
 
    <p><a href="../api/index.html">Browse the full Doxygen reference (/api)</a>.</p>
 
+Pattern syntax
+--------------
+
+- **The pattern language itself** -- every construct and what it means,
+  shared by all surfaces: :doc:`Pattern syntax <syntax>`.
+
 C++ core
 --------
 
@@ -65,6 +71,7 @@ layer's API, divergences and limits.
    :hidden:
    :maxdepth: 1
 
+   syntax
    basic_regex
    basic_match_result
    basic_match_range
