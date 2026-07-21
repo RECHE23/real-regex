@@ -45,6 +45,14 @@ Python binding
 The ``re``-compatible package, rendered from its docstrings:
 :doc:`Python API <python>`.
 
+Rust & Go bindings
+------------------
+
+- **Rust** -- the ``regex``-crate-shaped API on the linear engine:
+  `docs.rs/real-regex <https://docs.rs/real-regex>`_ (rendered rustdoc).
+- **Go** -- the ``regexp``-shaped API:
+  `the bindings/go README <https://github.com/RECHE23/real-regex/blob/main/bindings/go/README.md>`_.
+
 Drop-in layers
 --------------
 
