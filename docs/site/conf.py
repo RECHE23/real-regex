@@ -198,6 +198,18 @@ html_additional_pages = {"index": "landing.html"}
 # closes both gaps by parsing the built HTML directly.
 linkcheck_anchors = False
 
+# Our three canonical external references, each verified when its entry was
+# framed (docs.rs renders the crate's rustdoc, pkg.go.dev the module's godoc,
+# the GitHub blobs are this repo itself). linkcheck skips exactly these:
+# anonymous GitHub fetches rate-limit the gate into Retry-After sleeps, and
+# re-validating a stable canon every build buys nothing. Any OTHER external
+# link stays fully checked.
+linkcheck_ignore = [
+    r"https://docs\.rs/real-regex.*",
+    r"https://github\.com/RECHE23/real-regex/.*",
+    r"https://pkg\.go\.dev/github\.com/RECHE23/real-regex/.*",
+]
+
 # -- quickstart injection ------------------------------------------------------
 #
 # landing.html holds only {{ quickstart_* }} placeholders. This hook reads the

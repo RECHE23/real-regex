@@ -36,6 +36,9 @@ Beyond `regexp` — flagged extensions, never silent divergences:
   `\1` / `\g<name>`; `regexp` uses `$1` / `${name}` — not translated, document
   your own convention if you need both.
 
+Object-level reference:
+[pkg.go.dev](https://pkg.go.dev/github.com/RECHE23/real-regex/bindings/go).
+
 ## Differences & limitations
 
 The one thing to know — **`\w`, `\d`, and `\s` are Unicode-aware by default

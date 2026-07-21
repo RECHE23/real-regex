@@ -51,7 +51,8 @@ Rust & Go bindings
 - **Rust** -- the ``regex``-crate-shaped API on the linear engine:
   `docs.rs/real-regex <https://docs.rs/real-regex>`_ (rendered rustdoc).
 - **Go** -- the ``regexp``-shaped API:
-  `the bindings/go README <https://github.com/RECHE23/real-regex/blob/main/bindings/go/README.md>`_.
+  `pkg.go.dev/…/bindings/go <https://pkg.go.dev/github.com/RECHE23/real-regex/bindings/go>`_
+  (rendered godoc).
 
 Drop-in layers
 --------------
