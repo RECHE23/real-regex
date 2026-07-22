@@ -36,6 +36,8 @@ C++ core
   :doc:`regex_set <regex_set>`.
 - **Tokenize, maximal-munch** -- the lexer-grade automaton:
   :doc:`dfa <dfa>`.
+- **Flags, the pattern literal, the exception** -- the auxiliary types:
+  :doc:`Support types <support>`.
 
 Compatibility shims (C++)
 -------------------------
@@ -77,6 +79,7 @@ layer's API, divergences and limits.
    basic_match_range
    regex_set
    dfa
+   support
    compat-std
    compat-re2
    python

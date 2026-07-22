@@ -101,23 +101,16 @@ nitpick_ignore = [
     # domain cannot resolve every name their signatures mention. Two kinds, both
     # deliberate (the exhaustive /api tree has every symbol): engine-internal
     # names (result_type, npos, real, detail…) stay for good; public objects
-    # awaiting their curated page (regex_error, flags, match_semantics,
-    # fixed_string, regex_constants, compat::re2::Arg) leave this list when
-    # that page renders them into the C++ domain.
+    # awaiting their curated page leave this list when that page renders them
+    # into the C++ domain — remaining: regex_constants (the identifiers below)
+    # and compat::re2::Arg (its "ref" regex in nitpick_ignore_regex), both CS2.
     ("cpp:identifier", "result_type"),
     ("cpp:identifier", "npos"),
     ("cpp:identifier", "real"),
-    ("cpp:identifier", "real::regex_error"),
-    ("cpp:identifier", "flags"),
-    ("cpp:identifier", "flags::none"),
     ("cpp:identifier", "detail"),
     ("cpp:identifier", "detail::program_view"),
     ("cpp:identifier", "detail::dynamic_storage"),
     ("cpp:identifier", "detail::static_storage<Pattern, F>"),
-    ("cpp:identifier", "match_semantics"),
-    ("cpp:identifier", "match_semantics::first"),
-    ("cpp:identifier", "regex_error"),
-    ("cpp:identifier", "fixed_string"),
     ("cpp:identifier", "regex_constants"),
     ("cpp:identifier", "regex_constants::match_flag_type"),
     ("cpp:identifier", "regex_constants::match_default"),
@@ -125,8 +118,6 @@ nitpick_ignore = [
     ("cpp:identifier", "compat"),
     ("cpp:identifier", "compat::policy"),
     ("cpp:identifier", "sub_match<BidirIt>"),
-    ("ref", "classreal_1_1regex__error"),
-    ("ref", "structreal_1_1fixed__string"),
     ("ref", "namespacereal"),
     ("ref", "namespacereal_1_1compat_1_1re2"),
 ]
