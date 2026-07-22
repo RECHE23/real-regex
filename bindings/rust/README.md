@@ -99,7 +99,8 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   literal inside a class, so the two would parse the same pattern differently. The crate declines these up
   front with `Error::Unsupported` (never a silent mis-match); escaped forms (`[\[]`) and ordinary ranges stay
   accepted. `fallback` delegates them to `regex`. Planned alongside `\p{}` as drop-in-completeness features.
-- **Possessive quantifiers — an interpretation divergence.** REAL reads a `+` right after a quantifier
+- **Possessive quantifiers — a deliberate superset (per Python 3.11+/PCRE2), read silently
+  differently.** REAL reads a `+` right after a quantifier
   (`x?+`, `x*+`, `x++`, `x{n,m}+`) as **possessive** — match maximally, never give back — the Python `re`
   3.11+/PCRE2 grammar (REAL and `re` agree on the whole family). The `regex` crate has no possessives and
   reads the same text as **nested repetition** (`x?+` ≡ `(?:x?)+`): both engines compile the pattern and
