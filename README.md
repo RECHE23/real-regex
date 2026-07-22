@@ -123,41 +123,14 @@ The documentation site: <https://reche23.github.io/real-regex/>
 
 ## Supported syntax
 
-| Syntax | Meaning |
-|---|---|
-| `abc` | literal bytes (UTF-8 patterns match their UTF-8 bytes) |
-| `\.` `\*` `\\` … | escaped metacharacter, matched literally |
-| `.` | any codepoint except `\n` |
-| `[abc]` `[a-z]` `[^abc]` `[é]` `[à-ÿ]` | character class, ASCII **and** non-ASCII code-point members / ranges (str mode); `[^…]` matches any code point outside the set |
-| `\w \W \d \D \s \S` | word / digit / space classes — Unicode in text mode (like `re`), ASCII in bytes mode or under `a` |
-| `\n \t \r \f \v \a \0` `\xHH` | control and hex escapes |
-| `x*` `x+` `x?` | quantifiers (greedy; append `?` for lazy) |
-| `x{n}` `x{n,}` `x{,m}` `x{n,m}` | counted repetition (greedy or lazy; counts capped at 1000) |
-| `x*+` `x++` `x?+` `x{n,m}+` | possessive quantifiers (no give-back), and `(?>x)` atomic groups — over a single atom or one wrapped in one capturing group; linear time, beyond RE2/rust-regex |
-| `a\|b` | alternation, leftmost branch preferred |
-| `(…)` `(?:…)` | capturing / non-capturing group |
-| `(?P<name>…)` `(?<name>…)` | named capturing group (Python and .NET styles) |
-| `^` `$` | line/text anchors (Python semantics: `$` also matches before a final `\n`) |
-| `\A` `\Z` | strict text start / end |
-| `\b` `\B` | word boundary / non-boundary (Unicode word characters in text mode, ASCII in bytes mode or under `a`) |
-| `\<` `\>` | start / end of word (REAL extension, not in Python `re`) |
-| `(?imsxa)` prefix | global flags: `i` case-insensitive (Unicode fold in text mode), `m` multiline, `s` dotall, `x` verbose (ignore unescaped whitespace and `#` comments outside classes), `a` ASCII (`re.A`: keep `\w \W \d \D \s \S \b \B \< \>` and icase folding ASCII, even in text mode) — also `real::flags` on the constructor |
+REAL accepts the `re` subset you know, plus its differentiators: **bounded
+lookarounds** (lookahead and variable-width lookbehind, in linear time),
+**possessive quantifiers and atomic groups**, and the **`\p{…}`
+Unicode-property superset**. Backreferences and conditional groups are
+rejected up front with `real::regex_error` — never a silent divergence.
 
-**Bounded lookarounds** match in linear time — REAL's differentiator: lookahead `(?=…)`/`(?!…)` and
-lookbehind `(?<=…)`/`(?<!…)`, each length-bounded and capture-free (variable-width lookbehind such as
-`(?<=a|bb)` is accepted, beyond `re`/PCRE's fixed-width limit). **Unicode property classes** `\p{…}`
-match natively and linearly: General_Category, Script (`sc=`, short ISO codes), Script_Extensions (`scx=`),
-and 63 binary properties (`\p{Alphabetic}`, `\p{Emoji}`, …) — a superset of `re`, which has none of this.
-Unsupported syntax —
-backreferences, conditional groups, a possessive/atomic construct over a compound body (`(?:ab)*+`,
-`(?>ab|a)`, not yet — see `docs/divergences.dox`) — is rejected with `real::regex_error`, never a silent
-divergence.
-
-Matching is UTF-8 code-point-aware: classes and `.` accept non-ASCII (`[é]`, `[à-ÿ]`), `\w \d \s \b` and
-`IGNORECASE` are Unicode in text mode (ASCII under `flags::ascii` / `re.A`), and no match boundary splits a
-character. The full Unicode model, the code-point-mode migration notes, and every intentional divergence
-from `re` (e.g. nullable-loop empty captures) are in
-[`docs/COMPATIBILITY.md`](https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md).
+Full pattern-syntax reference:
+<https://reche23.github.io/real-regex/reference/syntax.html>
 
 ## Development
 
