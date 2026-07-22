@@ -17,6 +17,10 @@ Interface
    :project: real
    :members:
 
+.. doxygenclass:: real::compat::re2::Arg
+   :project: real
+   :members:
+
 Complexity
 ----------
 

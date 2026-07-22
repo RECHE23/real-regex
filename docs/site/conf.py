@@ -100,10 +100,9 @@ nitpick_ignore = [
     # The curated /reference/ pages render principal members only, so the C++
     # domain cannot resolve every name their signatures mention. Two kinds, both
     # deliberate (the exhaustive /api tree has every symbol): engine-internal
-    # names (result_type, npos, real, detail…) stay for good; public objects
-    # awaiting their curated page leave this list when that page renders them
-    # into the C++ domain — remaining: regex_constants (the identifiers below)
-    # and compat::re2::Arg (its "ref" regex in nitpick_ignore_regex), both CS2.
+    # names the curated /reference/ pages' signatures mention without rendering
+    # them — all engine-internal, all permanent (the exhaustive /api tree has
+    # every symbol; every PUBLIC object is curated, this list masks no debt).
     ("cpp:identifier", "result_type"),
     ("cpp:identifier", "npos"),
     ("cpp:identifier", "real"),
@@ -111,12 +110,11 @@ nitpick_ignore = [
     ("cpp:identifier", "detail::program_view"),
     ("cpp:identifier", "detail::dynamic_storage"),
     ("cpp:identifier", "detail::static_storage<Pattern, F>"),
-    ("cpp:identifier", "regex_constants"),
-    ("cpp:identifier", "regex_constants::match_flag_type"),
-    ("cpp:identifier", "regex_constants::match_default"),
-    ("cpp:identifier", "regex_constants::syntax_option_type"),
     ("cpp:identifier", "compat"),
-    ("cpp:identifier", "compat::policy"),
+    ("cpp:identifier", "real::compat"),
+    ("cpp:identifier", "regex_constants"),
+    ("cpp:identifier", "real::compat::regex_constants"),
+    ("cpp:identifier", "regex_constants::match_default"),
     ("cpp:identifier", "sub_match<BidirIt>"),
     ("ref", "namespacereal"),
     ("ref", "namespacereal_1_1compat_1_1re2"),
@@ -130,9 +128,8 @@ nitpick_ignore_regex = [
     ("ref", r"classreal_1_1basic__match__iterator_1a[0-9a-f]+"),
     ("ref", r"classreal_1_1compat_1_1[A-Za-z0-9_]+(_1_1[A-Za-z0-9_]+)*_1a[0-9a-f]+"),
     ("ref", r"namespacereal_1_1compat(_1_1[A-Za-z0-9_]+)*_1a[0-9a-f]+"),
-    # Doxygen's refid case-escaping differs across versions (Arg vs _arg,
-    # COMPATIBILITY_8md vs _c_o_m_p_a_t_i_b_i_l_i_t_y_8md) -- cover both.
-    ("ref", r"classreal_1_1compat_1_1re2_1_1(_arg|Arg)"),
+    # Doxygen's refid case-escaping differs across versions
+    # (COMPATIBILITY_8md vs _c_o_m_p_a_t_i_b_i_l_i_t_y_8md) -- cover both.
     ("ref", r"(_c_o_m_p_a_t_i_b_i_l_i_t_y|COMPATIBILITY)_8md"),
 ]
 

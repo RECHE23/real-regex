@@ -27,6 +27,10 @@ Interface
    :project: real
    :members:
 
+.. doxygenclass:: real::compat::regex_error
+   :project: real
+   :members:
+
 .. doxygenclass:: real::compat::regex_iterator
    :project: real
    :members:
@@ -52,6 +56,21 @@ Their complete signatures render in the Doxygen namespace reference:
 
    <p><a href="../api/namespacereal_1_1compat.html">real::compat — every
    overload (/api)</a>.</p>
+
+Constants and policy
+--------------------
+
+The ``<regex>`` constants the constructors and free functions take, and the
+``policy`` knob that picks strict rejection or the ``std::regex`` fallback:
+
+.. doxygenenum:: real::compat::regex_constants::syntax_option_type
+   :project: real
+
+.. doxygenenum:: real::compat::regex_constants::match_flag_type
+   :project: real
+
+.. doxygenenum:: real::compat::policy
+   :project: real
 
 Complexity
 ----------
