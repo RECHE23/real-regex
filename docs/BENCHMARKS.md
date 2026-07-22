@@ -113,7 +113,7 @@ TABLE B — extraction non-overlapping (counts equal REAL/RE2):
 - **Architectural gap:** single-pass engines (RE2::Set, Hyperscan) stay **flat** in N; pure N-walks
   **degrade** hard (e.g. ~421 → 41 MB/s from N=32 → 256 on arm64). Stage-2 fused which-matched
   is **flat** and closes most of that gap.
-- **Stage-2 fused + Arc I first-byte skip** (same host/harness, arm64 M1,
+- **Stage-2 fused + set-level first-byte skip** (same host/harness, arm64 M1,
   `benchmarks/s2a_measure.cpp`, RE2::Set on). Two corpora: **dense** log-like (matches every
   line) and **sparse** realistic (generic text, rare hits — where prefix-accel matters).
 
@@ -138,7 +138,7 @@ TABLE B — extraction non-overlapping (counts equal REAL/RE2):
   measured); dense still **~0.95–0.97×** (quasi-parité, not a rout). `regex_set` routes fused when
   `eligible.size() ≥ 56` (calibrated crossover), else N-walks; lookarounds stay N-walk. Skip is
   off when any rule lacks a sound `first_bytes` set (empty-match / can start anywhere).
-- **Arc II B1 — `\b`/`\B` wrap on shape fast-paths** (same host, arm64 M1, post-Stage-2 tree):
+- **`\b`/`\B` wrap on shape fast-paths** (same host, arm64 M1, post-Stage-2 tree):
   patterns like `\b[0-9a-f]{8}\b` and `(?:foo|bar)\b` re-use `run_fixed_shape` / `run_alternation`
   / exact-literal with an O(1) boundary check. Fair same-hit-count vs the unwrapped proxy:
   **`\bhex8\b` ~1.0× proxy SIMD** (was ~0.1× / ~57 MB/s on dense → ~540 MB/s); alt-trail ~0.84–0.96×

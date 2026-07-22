@@ -492,7 +492,7 @@ namespace real {
       bool                  possessive_min_nonzero  {};   //!< True for `X++`/`X{1,}+` (one mandatory copy present) — a search candidate MUST be in-class; false for `X*+` (min 0), where a zero-length body is also a valid candidate anywhere.
 
       //! \brief Optional leading/trailing word-boundary wrap on fixed_shape / fixed_alternation /
-      //!        exact_literal (Arc II B1). 0 = none; 1 = `\b` (\ref assert_kind::word_boundary);
+      //!        exact_literal. 0 = none; 1 = `\b` (\ref assert_kind::word_boundary);
       //!        2 = `\B` (\ref assert_kind::not_word_boundary). Verified in O(1) at the match
       //!        start/end after the body fast-path accepts a candidate.
       std::uint8_t wb_lead  {};

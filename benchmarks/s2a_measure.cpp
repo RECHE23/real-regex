@@ -1,4 +1,4 @@
-// Arc I measure: fused which_matched (+ optional first-byte skip) vs pure N-walks vs RE2::Set.
+// Measures fused which_matched (+ optional first-byte skip) vs pure N-walks vs RE2::Set.
 // Not a CI gate. Build:
 //   c++ -O2 -Iinclude [-DHAVE_RE2 $(pkg-config --cflags --libs re2)] benchmarks/s2a_measure.cpp
 #include <chrono>
@@ -200,7 +200,7 @@ static void run_regime(const char* name, const std::string& text)
 
 int main()
 {
-  std::printf("Arc I measure | fused first-byte skip vs no-skip | same-host\n");
+  std::printf("fused which_matched | first-byte skip vs no-skip | same-host\n");
   run_regime("DENSE log-like", corpus_dense(1u << 20));
   run_regime("SPARSE realistic", corpus_sparse(1u << 20));
   return 0;

@@ -1,4 +1,4 @@
-// Arc II B1: `\b`/`\B` wrap on fixed_shape / alternation / exact_literal —
+// `\b`/`\B` wrap on fixed_shape / alternation / exact_literal —
 // oracle vs pure Pike (lazy_dfa + IL + trailing-LA seams forced off still leaves
 // these shape paths; differential against a twin without the wrap where counts match,
 // plus boundary cases the wrapper must not mis-accept).

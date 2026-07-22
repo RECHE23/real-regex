@@ -112,7 +112,7 @@ TEST(which_matched_state_count_bounded_log_patterns)
   EXPECT(d.state_count() > 0U);
 }
 
-// Arc I: first-byte skip is a pure opt — avec == sans == N×search on sparse/dense/edge.
+// First-byte skip is a pure opt — avec == sans == N×search on sparse/dense/edge.
 TEST(which_matched_first_byte_skip_equals_oracle)
 {
   const auto               raw {present_log()};
