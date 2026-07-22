@@ -41,7 +41,7 @@ namespace real {
   enum class flags : std::uint16_t
   {
     none      = 0,        //!< No flags.
-    icase     = 1,        //!< Case-insensitive (ASCII).
+    icase     = 1,        //!< Case-insensitive (Unicode fold in text mode; ASCII under \ref flags::ascii).
     multiline = 2,        //!< `^` and `$` also match at line boundaries.
     dotall    = 4,        //!< `.` also matches `\n`.
     bytes     = 8,        //!< Binary mode: `.` and `[^…]` match raw bytes, not codepoints.
