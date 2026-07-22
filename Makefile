@@ -617,30 +617,55 @@ install: ## [release] Install the Python package (pip)
 uninstall: ## [release] Uninstall the Python package (pip)
 	$(PYTHON) -m pip uninstall -y real-regex
 
-# Cuts a calendar-versioned release. Computes YYYY.M.PATCH with the patch reset
-# each month (first release of a month is .0; PEP 440 drops leading zeros, so
-# 2026.6.1, never 2026.06.001), bumps pyproject.toml + __init__.py (CMakeLists.txt
-# derives its version from pyproject.toml, so it follows automatically), commits, tags and
-# pushes. Pushing the tag drives the Release workflow, which builds the wheels
-# and sdist and publishes to PyPI. Run from a clean main.
-release: ## [release] Cut a calendar-versioned release (tag + push)
+# Cuts the complete calendar release in one invocation. Computes YYYY.M.PATCH with
+# the patch reset each month (first release of a month is .0; PEP 440 drops leading
+# zeros, so 2026.6.1, never 2026.06.001), bumps every version-checked file
+# (pyproject + __init__ + version.hpp + Cargo.toml + CITATION.cff + README GIT_TAG;
+# CMakeLists.txt derives from pyproject and follows), re-vendors Go, folds the human
+# inputs (docs/release-notes/v<version>.md must exist; BENCHMARKS re-stamp optional),
+# commits with the BODY=<file> body, tags the engine AND the co-located decoupled Go
+# module (bindings/go/v0.1.<n+1>, so pkg.go.dev never lags the engine), and pushes.
+# Pushing the engine tag drives release.yml (wheels/sdist -> PyPI, crate, GitHub
+# release, tap bumps, pkg.go.dev nudge). BODY lives OUTSIDE the tree (the clean-tree
+# check tolerates only the human inputs). DRY_RUN=1 stops after bump+vendor+stage —
+# nothing committed, tagged or pushed; revert with `git reset --hard` (the throwaway
+# notes file stays untracked — remove it too).
+release: ## [release] Cut the complete calendar release (bump all, tag engine + Go, push) — BODY=<file outside the tree>; DRY_RUN=1 to rehearse
 	@test "$$(git symbolic-ref --short HEAD)" = main || { echo "release from main only"; exit 1; }
-	@test -z "$$(git status --porcelain)" || { echo "working tree not clean"; exit 1; }
+	@test -n "$(BODY)" || { echo "release: pass BODY=<file> (the commit body, a file OUTSIDE the tree)"; exit 1; }
+	@test -f "$(BODY)" || { echo "release: BODY file '$(BODY)' not found"; exit 1; }
+	@dirty="$$(git status --porcelain | grep -vE '^.. docs/release-notes/|^.. docs/BENCHMARKS\.md$$' || true)"; \
+	 test -z "$$dirty" || { echo "release: tree not clean beyond the human inputs (docs/release-notes/, docs/BENCHMARKS.md):"; echo "$$dirty"; exit 1; }
 	@git fetch --tags --quiet origin
 	@year=$$(date -u +%Y); month=$$(date -u +%m | sed 's/^0//'); \
 	 patch=$$(git tag -l "v$$year.$$month.*" | wc -l | tr -d ' '); \
 	 version="$$year.$$month.$$patch"; \
 	 echo "Releasing v$$version"; \
+	 test -f "docs/release-notes/v$$version.md" || { echo "release: docs/release-notes/v$$version.md missing -- write the notes first"; exit 1; }; \
 	 sed -i.bak -E "s/^version = \".*\"/version = \"$$version\"/" pyproject.toml && rm -f pyproject.toml.bak; \
 	 sed -i.bak -E "s/^__version__ = \".*\"/__version__ = \"$$version\"/" bindings/python/real/__init__.py && rm -f bindings/python/real/__init__.py.bak; \
 	 vmaj=$$(echo "$$version" | cut -d. -f1); vmin=$$(echo "$$version" | cut -d. -f2); vpat=$$(echo "$$version" | cut -d. -f3); \
 	 sed -i.bak -E "s/^#define REAL_VERSION_MAJOR .*/#define REAL_VERSION_MAJOR $$vmaj/; \
 	                s/^#define REAL_VERSION_MINOR .*/#define REAL_VERSION_MINOR $$vmin/; \
 	                s/^#define REAL_VERSION_PATCH .*/#define REAL_VERSION_PATCH $$vpat/" include/real/version.hpp && rm -f include/real/version.hpp.bak; \
-	 git add pyproject.toml bindings/python/real/__init__.py include/real/version.hpp; \
-	 git commit -m "release: v$$version"; \
+	 sed -i.bak -E "1,/^version = /s/^version = \".*\"/version = \"$$version\"/" bindings/rust/Cargo.toml && rm -f bindings/rust/Cargo.toml.bak; \
+	 sed -i.bak -E "s/^version: \".*\"/version: \"$$version\"/" CITATION.cff && rm -f CITATION.cff.bak; \
+	 sed -i.bak -E "s/GIT_TAG v[0-9][0-9.]*/GIT_TAG v$$version/" README.md && rm -f README.md.bak; \
+	 $(MAKE) go-vendor; \
+	 git add pyproject.toml bindings/python/real/__init__.py include/real/version.hpp \
+	         bindings/rust/Cargo.toml CITATION.cff README.md \
+	         bindings/go/vendor_include docs/BENCHMARKS.md docs/release-notes/; \
+	 if [ "$(DRY_RUN)" = "1" ]; then \
+	   echo "release: DRY RUN -- tree bumped+staged for v$$version; STOPPED before commit/tag/push."; \
+	   echo "release: verify with 'make version-check go-check-vendor', then revert: git reset --hard (and remove the untracked notes file)"; \
+	   exit 0; \
+	 fi; \
+	 body=$$(mktemp); printf 'release: v%s\n\n' "$$version" > "$$body"; cat "$(BODY)" >> "$$body"; \
+	 git commit -F "$$body"; rm -f "$$body"; \
 	 git tag "v$$version"; \
-	 git push origin HEAD "v$$version"
+	 gp=$$(git tag -l 'bindings/go/v0.1.*' | sed 's|.*/v0\.1\.||' | sort -n | tail -1); gp=$$((gp + 1)); \
+	 git tag "bindings/go/v0.1.$$gp"; \
+	 git push origin HEAD "v$$version" "bindings/go/v0.1.$$gp"
 
 clean: ## [daily] Remove build artifacts
 	rm -rf $(BUILD) bindings/python/build bindings/python/real/*.so bindings/python/*.egg-info *.egg-info dist

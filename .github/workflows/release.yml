@@ -120,3 +120,15 @@ jobs:
               -f event_type=upstream-release \
               -f "client_payload[version]=$ver"
           done
+
+  # Nudge pkg.go.dev to index the bindings/go tag co-located with this release (the
+  # tag itself is created at cut time by `make release`, never here). Best-effort:
+  # pkg.go.dev indexes on demand, so a transient proxy failure must not red the release.
+  publish-go:
+    needs: publish
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/setup-go@v5
+      - name: Nudge pkg.go.dev for the latest bindings/go tag
+        run: GOPROXY=https://proxy.golang.org go list -m github.com/RECHE23/real-regex/bindings/go@latest || true
