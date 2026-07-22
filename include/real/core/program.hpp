@@ -428,6 +428,11 @@ namespace real {
       std::int16_t        rare_disc_opt        {-1}; //!< Optional mono-byte before the disc (`s`), or -1.
       std::array<char, 4> rare_disc_after      {};   //!< Fixed bytes after the disc (e.g. `//`).
       std::uint8_t        rare_disc_after_len  {};   //!< Length of \ref rare_disc_after.
+      //! \brief Capture-free shape: \ref rare_disc scheme + trailing text-mode `[^\s]+` / `\S+`.
+      //!        One dedicated route (memchr disc → verify scheme → stop-scan body) — no Pike.
+      //!        Keyed on **compiled form** (not the string `"http"`). Only no-capture patterns:
+      //!        a capturing variant must not set this (slots would be wrong).
+      bool rare_disc_s_plus {};
 
       //! \brief A *required inner literal* every match must contain (the memmem candidate the inner-literal
       //!        prefilter scans for), and how many top-level children precede it — the prefix the prefilter
