@@ -20,3 +20,12 @@ Everything for reading, extending, and trusting the engine.
   behind every number: {doc}`Performance <../performance/index>`.
 - **Testing** — the test taxonomy and its gates:
   [TESTS.md](https://github.com/RECHE23/real-regex/blob/main/docs/TESTS.md).
+- **Development workflow** — the build/test harness (SciForge) and the
+  make-target taxonomy: {doc}`Development workflow <workflow>`.
+
+```{toctree}
+:hidden:
+:maxdepth: 1
+
+workflow
+```
