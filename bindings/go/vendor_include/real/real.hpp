@@ -124,8 +124,6 @@ namespace real {
                                      std::size_t      forbid,
                                      match_semantics  sem = match_semantics::first)
     {
-      // Pure walk only — must never name rare_disc_s_plus (matrix-gate date dense / IL codegen;
-      // same contract as TrailingLA=false). URL walks use engine_refill_rare_disc_s_plus.
       matched_ = vm.template run<Cascade>(text, pos, mode, slots_, forbid, sem);
       return matched_;
     }
@@ -138,16 +136,6 @@ namespace real {
     {
       detail::prof::tick_route(detail::prof::route::trailing_la);
       matched_ = vm.template run_class_loop_trailing_la<Cascade>(text, pos, detail::run_mode::search, slots_);
-      return matched_;
-    }
-
-    //! \brief D1c URL route for rare_disc_s_plus walks only (never referenced from pure walks).
-    template <typename Vm>
-    bool engine_refill_rare_disc_s_plus(Vm&              vm,
-                                        std::string_view text,
-                                        std::size_t      pos)
-    {
-      matched_ = vm.run_rare_disc_s_plus(text, pos, slots_);
       return matched_;
     }
 
@@ -281,9 +269,6 @@ namespace real {
    *                    (once-per-walk choice, like \ref cascade_). Pure walks use
    *                    `TrailingLA = false` so their `advance` has zero LA code — a per-step
    *                    runtime branch on trailing_lookaround regressed pure `[a-z]+` ~16 % on x86.
-   *                    D1c rare_disc_s_plus is selected once per pure walk via a function pointer
-   *                    so the pure stepper monomorphization never names that route (matrix-gate
-   *                    date dense); see advance_fn_.
    */
   template <typename Storage, bool TrailingLA = false>
   class basic_match_iterator
@@ -323,15 +308,7 @@ namespace real {
         // fast path, the memchr-cascade class-run is guarded to first mode (the PROTO-kLongest lesson), so a
         // longest walk must run the general loop.
         cascade_(sem == match_semantics::first && prog.hints.stop_set_size >= 1),
-        sem_(sem),
-        // D1c: once-per-walk member-function stepper. Pure monomorphization of step_pure_ must
-        // never name run_rare_disc_s_plus (V1 isolation: body may exist; a call site in the pure
-        // walk tips matrix-gate date dense over the 5% floor). Runtime only.
-        advance_fn_((!TrailingLA && sem == match_semantics::first && prog.hints.rare_disc_s_plus
-                     && prog.hints.rare_disc >= 0 && !std::is_constant_evaluated()
-                     && !detail::rare_disc_route_disabled())
-                      ? &basic_match_iterator::step_rare_disc_
-                      : &basic_match_iterator::step_pure_)
+        sem_(sem)
     {
       current_.bind_context(text_, pattern_, prog_.names); // invariant across the walk — set once, not per match
       advance();
@@ -396,44 +373,13 @@ namespace real {
     match_semantics              sem_                {match_semantics::first}; //!< leftmost-first (default) or longest (find_iter_longest).
     value_type                   current_;                                     //!< The current match.
     typename Storage::state_type state_;                                       //!< VM scratch, reused across the walk.
-    //! Member-function stepper (pure vs rare_disc_s_plus); once per walk. Null on end sentinel.
-    //! Typedef keeps uncrustify from rewriting `bool (T::*p)() = nullptr` into a fake function body.
-    using advance_fn_t = bool (basic_match_iterator::*)();
-    advance_fn_t advance_fn_ = nullptr;
-
-    /*!
-     * \brief Pure / IL walk: cascade + engine_refill_hot only — zero rare_disc_s_plus symbols.
-     * \return Whether a match was found (false → walk done).
-     */
-    bool step_pure_()
-    {
-      detail::pike_vm vm(prog_, state_);
-      return cascade_ ? current_.template engine_refill_hot<true>(vm, text_, pos_, detail::run_mode::search,
-                                                                  forbid_empty_until_, sem_)
-                      : current_.template engine_refill_hot<false>(vm, text_, pos_, detail::run_mode::search,
-                                                                   forbid_empty_until_, sem_);
-    }
-
-    /*!
-     * \brief D1c URL walk: engine_refill_rare_disc_s_plus only — never mixed into step_pure_.
-     * \return Whether a match was found (false → walk done).
-     */
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
-    bool step_rare_disc_()
-    {
-      detail::pike_vm vm(prog_, state_);
-      return current_.engine_refill_rare_disc_s_plus(vm, text_, pos_);
-    }
 
     /*!
      * \brief Finds the next match, applying the empty-match advance rules.
      *
      * \c TrailingLA is fixed for the whole walk (constructor / range). Pure walks
      * (`TrailingLA = false`) contain zero trailing-LA symbols — required for x86
-     * class-loop codegen (see pattern_hints::trailing_lookaround). D1c rare_disc_s_plus
-     * is selected via advance_fn_ so step_pure_ stays free of that route.
+     * class-loop codegen (see pattern_hints::trailing_lookaround).
      */
     constexpr void advance()
     {
@@ -441,24 +387,19 @@ namespace real {
         done_ = true;
         return;
       }
-      bool ok {};
+      detail::pike_vm vm(prog_, state_);
+      bool            ok {};
       if constexpr (TrailingLA) {
         // P3c cold path only — this specialization is never mixed into pure walks.
-        detail::pike_vm vm(prog_, state_);
         ok = cascade_ ? current_.template engine_refill_trailing_la<true>(vm, text_, pos_)
                       : current_.template engine_refill_trailing_la<false>(vm, text_, pos_);
       }
-      else if (std::is_constant_evaluated()) {
-        // rare_disc seams are runtime-only; constexpr walks stay pure (inline, no fn ptr).
-        detail::pike_vm vm(prog_, state_);
+      else {
+        // Pure walk — pre-P3c shape. Cascade chosen once; both arms are the same hot family.
         ok = cascade_ ? current_.template engine_refill_hot<true>(vm, text_, pos_, detail::run_mode::search,
                                                                   forbid_empty_until_, sem_)
                       : current_.template engine_refill_hot<false>(vm, text_, pos_, detail::run_mode::search,
                                                                    forbid_empty_until_, sem_);
-      }
-      else {
-        // Indirect once-per-walk: pure monomorphization of step_pure_ has zero rare_disc call sites.
-        ok = (this->*advance_fn_)();
       }
       if (!ok) {
         done_ = true;
@@ -1174,8 +1115,6 @@ namespace real {
       detail::pike_vm                vm(prog, state);
       const auto                     subject {text.substr(0, end)};
       // P3c cold: trailing-LA outside pike_vm::run (keeps pure class-loop run() pre-P3c-sized).
-      // D1c: rare_disc_s_plus also outside pike_vm::run (find_iter uses a once-per-walk stepper;
-      // single-shot search dispatches here so pure run() never names the URL route).
       // if constexpr: static_storage has no lookaround scratch / rejects LA at compile.
       bool matched {};
       if constexpr (requires(typename Storage::state_type & st) {
@@ -1188,17 +1127,11 @@ namespace real {
                       ? vm.template run_class_loop_trailing_la<true>(subject, pos, mode, slots)
                       : vm.template run_class_loop_trailing_la<false>(subject, pos, mode, slots);
         }
-        else if (vm.rare_disc_s_plus_eligible(mode, sem)) {
-          matched = vm.run_rare_disc_s_plus(subject, pos, slots);
-        }
         else {
           matched = prog.hints.stop_set_size >= 1
                       ? vm.template run<true>(subject, pos, mode, slots, 0, sem)
                       : vm.template run<false>(subject, pos, mode, slots, 0, sem);
         }
-      }
-      else if (vm.rare_disc_s_plus_eligible(mode, sem)) {
-        matched = vm.run_rare_disc_s_plus(subject, pos, slots);
       }
       else {
         // OPT-C Cascade is chosen once here (a single search), never in the per-byte scan.

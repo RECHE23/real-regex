@@ -541,10 +541,6 @@ namespace real::detail {
         prof::tick_route(prof::route::exact_literal);
         return run_exact_literal(text, start, mode, out_slots);
       }
-      // rare_disc_s_plus is NOT dispatched here — same contract as P3c trailing-LA: the route
-      // lives outside \ref run (see \ref basic_match_result::engine_refill_hot / basic_regex::run)
-      // so this function stays pre-D1c-sized and keeps inlining/codegen for non-URL hot paths
-      // (matrix-gate date dense was tipping over the 5% noise floor when the call site sat in run()).
       // OPT inner-literal: memmem a required inner literal and reverse/confirm the match around it — the
       // most selective prefilter for a pattern whose match does not begin with a literal (the date `-`, the
       // `@`). Placed AFTER the literal / class-loop fast paths (an exact-literal `dog` must keep its own path)
@@ -2905,102 +2901,6 @@ namespace real::detail {
           return true;
         }
         from = cand + 1; // assertion failed here; try the next occurrence
-      }
-    }
-
-    /*!
-     * \brief Whether the capture-free rare-disc + `[^\s]+`/`\S+` route should handle this run.
-     *
-     * Used by callers \b outside \ref run (find_iter / basic_regex::run) so the hot
-     * monomorphization of \ref run never names this route — same layering as P3c trailing-LA.
-     */
-    [[nodiscard]] constexpr bool rare_disc_s_plus_eligible(run_mode        mode,
-                                                           match_semantics sem) const
-    {
-      return !std::is_constant_evaluated() && sem == match_semantics::first && mode == run_mode::search
-             && prog_.hints.rare_disc_s_plus && prog_.hints.rare_disc >= 0 && !rare_disc_route_disabled();
-    }
-
-    /*!
-     * \brief Capture-free rare-disc scheme + trailing `[^\s]+` / `\S+` (URL shape).
-     *
-     * One route: \ref find_rare_disc_candidate (memchr disc + scheme verify) then
-     * \ref not_space_run_end (stop-scan body via \ref is_space_cp). No Pike threads.
-     * Search mode only; group 0 only (hint declines capturers).
-     *
-     * Called from outside \ref run (see \ref rare_disc_s_plus_eligible). \c noinline so
-     * the body cannot fold into those callers either (same shape as
-     * \ref try_shared_lazy_dfa_search / \ref ensure_ac_automaton).
-     */
-    template <typename OutSlots>
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
-    bool run_rare_disc_s_plus(std::string_view text,
-                              std::size_t      start,
-                              OutSlots&        out_slots)
-    {
-      const pattern_hints& h {prog_.hints};
-      if (h.rare_disc < 0 || !h.rare_disc_s_plus) {
-        out_slots.assign(prog_.slot_count, npos);
-        return false;
-      }
-      // Sticky density abandon (same contract as next_candidate's rare_disc path):
-      // dense `:` filler → general VM / prefix for this haystack.
-      if constexpr (requires(State & s) {
-        s.rare_disc_abandoned;
-      }) {
-        if (state_.rare_disc_text != static_cast<const void*>(text.data())) {
-          state_.rare_disc_abandoned = false;
-          state_.rare_disc_text      = static_cast<const void*>(text.data());
-        }
-        if (state_.rare_disc_abandoned) {
-          return run_general<false>(text, start, run_mode::search, out_slots);
-        }
-      }
-      const std::size_t pref    {h.rare_disc_prefix_len};
-      const bool        has_opt {h.rare_disc_opt >= 0};
-      const auto        opt_ch  {static_cast<char>(h.rare_disc_opt)};
-      const std::size_t after   {h.rare_disc_after_len};
-      std::size_t       from    {start};
-      while (true) {
-        bool              density_abandon {false};
-        const std::size_t cand            {find_rare_disc_candidate(text, from, h, &density_abandon)};
-        if (density_abandon) {
-          if constexpr (requires(State & s) {
-            s.rare_disc_abandoned;
-          }) {
-            state_.rare_disc_abandoned = true;
-          }
-          return run_general<false>(text, from, run_mode::search, out_slots);
-        }
-        if (cand == npos || cand > text.size()) {
-          out_slots.assign(prog_.slot_count, npos);
-          return false;
-        }
-        // Scheme end / body start: after [prefix][opt?][disc][after].
-        std::size_t body {cand + pref};
-        if (has_opt && body < text.size() && text[body] == opt_ch) {
-          ++body;
-        }
-        // disc byte
-        if (body >= text.size() || text[body] != static_cast<char>(h.rare_disc)) {
-          from = cand + 1U;
-          continue;
-        }
-        ++body;
-        body += after; // after already verified by find_rare_disc_candidate
-        if (body > text.size()) {
-          from = cand + 1U;
-          continue;
-        }
-        const std::size_t end {not_space_run_end(text, body)};
-        if (end > body) {
-          out_slots.assign(prog_.slot_count, npos);
-          fill_span_slots(out_slots, cand, end);
-          return true;
-        }
-        from = cand + 1U;
       }
     }
 
