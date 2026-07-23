@@ -2882,7 +2882,10 @@ namespace real::detail {
                                   std::size_t len,
                                   OutSlots&   out_slots) const
     {
-      out_slots.assign(prog_.slot_count, npos);
+      // Exact-literal programs write every live slot via save ops (whole-match + each capture);
+      // group-0 end is always cand+len. Size once without a full npos fill (dead on find_iter reuse).
+      // Assert-fail below still assign(npos) for seam/!matched consumers.
+      ensure_slot_size(out_slots, prog_.slot_count);
       std::size_t consumed {};
       for (std::size_t pc = 0; pc < prog_.code.size(); ++pc) {
         const instr& instruction {prog_.code[pc]};
@@ -2902,8 +2905,8 @@ namespace real::detail {
           break;
         }
       }
-      if (prog_.slot_count >= 2 && out_slots[1] == npos) {
-        out_slots[1] = cand + len; // group 0 end, even if replay ended early
+      if (prog_.slot_count >= 2) {
+        out_slots[1] = cand + len; // group 0 end — always the full literal (unconditional)
       }
       return true;
     }
