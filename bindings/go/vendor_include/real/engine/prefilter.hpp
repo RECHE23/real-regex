@@ -1773,7 +1773,7 @@ namespace real::detail {
       return;
     }
     ++pc;
-    std::uint8_t need {hints.rare_disc_prefix_len};
+    const std::uint8_t need {hints.rare_disc_prefix_len};
     for (std::uint8_t k {0}; k < need; ++k) {
       if (pc >= code.size() || code[pc].op != opcode::byte
           || static_cast<char>(code[pc].arg8) != hints.rare_disc_prefix[k]) {
