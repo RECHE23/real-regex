@@ -132,6 +132,28 @@ namespace real {
       }
 
       /*!
+       * \brief Ensures at least \p count live elements without re-filling or shrinking.
+       *
+       * find_iter reuses capture storage; after the first match \c size already equals
+       * the program slot count and the fast path overwrites every used index — a full
+       * \ref assign of \c npos is dead work. Never shrinks (a multi-group path may have
+       * already sized to \c slot_count > 2 before a span write).
+       *
+       * \param[in] count Minimum size.
+       * \throws std::length_error if \p count exceeds the capacity `Cap`.
+       */
+      constexpr void ensure_size(std::size_t count)
+      {
+        if (size_ >= count) {
+          return;
+        }
+        if (count > Cap) {
+          throw std::length_error("static_vec overflow");
+        }
+        size_ = count;
+      }
+
+      /*!
        * \brief Returns the number of elements.
        */
       [[nodiscard]] constexpr std::size_t size() const
@@ -478,6 +500,45 @@ namespace real {
             // first write — placement-new begins each element's lifetime. data_ is the active
             // base (inline or heap), branchless like push_back.
             std::construct_at(&data_[i], value);
+          }
+        }
+        size_ = count;
+      }
+
+      /*!
+       * \brief Ensures at least \p count live elements without re-filling or shrinking.
+       *
+       * Fast-path find_iter: after the first match, \c size already equals the program
+       * slot count and the writer overwrites every used index — a full \ref assign of \c npos
+       * is dead work. Growing default-constructs only the new tail (caller must write every
+       * slot it later reads). Never shrinks — multi-group fixed-shape may already be sized
+       * to \c slot_count before a span-only write of slots 0/1.
+       *
+       * \param[in] count Minimum size.
+       * \throws std::bad_alloc during constant evaluation if growth is needed.
+       */
+      constexpr void ensure_size(std::size_t count)
+      {
+        if (size_ >= count) {
+          return;
+        }
+        if (count > capacity_) {
+          if (std::is_constant_evaluated()) {
+            throw std::bad_alloc {};
+          }
+          reserve(count);
+        }
+        for (std::size_t i = size_; i < count; ++i) {
+          if (std::is_constant_evaluated()) {
+            if (is_heap_) {
+              std::construct_at(&storage_.heap_ptr[i], T {});
+            }
+            else {
+              inline_data()[i] = T {};
+            }
+          }
+          else {
+            std::construct_at(&data_[i], T {});
           }
         }
         size_ = count;
