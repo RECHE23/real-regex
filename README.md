@@ -47,9 +47,10 @@ REAL gives you **both**: linear-time, ReDoS-safe matching *with* bounded lookaro
 `\d++`, `(?>\w+)` — covers the dominant real-world shape; a compound body is rejected,
 never silently mis-matched.
 
-**Every other engine that has lookarounds backtracks** (ReDoS-unsafe), and every
-linear-time engine drops them — **REAL is the only one with both**. Throughput,
-machines and the per-engine duels:
+**Every production engine that ships lookarounds backtracks** (PCRE2,
+`std::regex`, Python `re` — ReDoS-unsafe), and every linear-time engine drops
+them (RE2, Go `regexp`, the Rust `regex` crate) — **REAL is the only one with
+both**. Throughput, machines and the per-engine duels:
 [Performance](https://reche23.github.io/real-regex/performance/).
 
 ## ReDoS, in numbers
