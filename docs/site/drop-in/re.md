@@ -50,6 +50,6 @@ From the shared binding benchmark — full tables and method in
 {doc}`Performance <../performance/index>`:
 
 ```{include} ../../BENCHMARKS.md
-:start-after: "**30408×** (ReDoS) |"
+:start-after: "**~3×10⁶×** (ReDoS) |"
 :end-before: "### finditer memory"
 ```

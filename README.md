@@ -55,11 +55,14 @@ both**. Throughput, machines and the per-engine duels:
 
 ## ReDoS, in numbers
 
-On the classic catastrophic pattern `(a+)+b`, REAL answers in **0.52 ms over
-100 000 characters** — while `std::regex` takes **4.1 s on 26 characters** and
-Python `re` **1.4 s on 24, climbing exponentially**. Linear time is the measured
-property, not an adjective. Reproduce locally with `make bench-engines`; full
-tables in [Performance](https://reche23.github.io/real-regex/performance/).
+On the classic catastrophic pattern `(a+)+b`, REAL's required-literal prefilter
+answers in **~2 µs over 100 000 characters** (no `b` → reject without running the
+VM). Strip the trailing literal: the bare engine on `(a+)+` still finishes in
+**~5 ms on 100K and stays linear** (~50 ms at 1M) — while `std::regex` takes
+**4.1 s on 26 characters** and Python `re` **~1.4 s on 24, climbing exponentially**.
+Linear time is the measured property, not an adjective. Method and both legs:
+[Performance](https://reche23.github.io/real-regex/performance/) (§C); prefilter
+leg also in `make bench-engines` (`redos`).
 
 ## Quickstart
 

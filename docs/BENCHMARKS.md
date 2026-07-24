@@ -171,16 +171,18 @@ TABLE B — extraction non-overlapping (counts equal REAL/RE2):
 | emails · findall groups | 1.96 ms | 1.82 ms | 1.09× |
 | literal · anchored miss @1MB | 236 ns | 281 ns | **0.84×** |
 | split · commas @100KB | 102.2 µs | 421.7 µs | **0.24×** |
-| `(a+)+b` · re n=24 / REAL n=10k | 1397.76 ms | 46.0 µs | **30408×** (ReDoS) |
+| `(a+)+b` · re n=24 / REAL n=10k (prefilter) | 1397.76 ms | **~0.5 µs** | **~3×10⁶×** (ReDoS) |
 
 **Geometric-mean speedup over `re`: 2.34× (CI [1.51, 3.76] clears 1.0 — PASS).** The headline change since
 the 2026.7.16 baseline: the **`\d{n}` quantifier / capture path roughly doubled** — date search 3.28 → **7.84×**,
 date findall-groups 3.42 → **8.25×**, sub-with-dates 3.42 → **7.71×** — while emails-with-groups holds its
 earlier flip to a win (1.09×). Two cases remain *slower* than `re`: **comma split (0.24×)** and **anchored
 miss (0.84×)** — high-volume `split` / tiny anchored matches where CPython's C engine has the lower per-match
-constant. REAL's edge widens on sparse/rare-byte scans, sub, and anything pathological (`(a+)+b`: 30408× —
-`re` blows up, REAL stays linear; on a fuzzed corpus `re` hit 85 catastrophic blow-ups, REAL none); the two
-losses are an accepted trade for linear-time safety.
+constant. REAL's edge widens on sparse/rare-byte scans, sub, and anything pathological (`(a+)+b`: ~3×10⁶× —
+`re` blows up on n=24, REAL's prefilter rejects n=10k in sub-microseconds; on a fuzzed corpus `re` hit 85
+catastrophic blow-ups, REAL none). The REAL cell was re-measured (Python binding, arm64 M1 Pro; prefilter
+path — see §C for the bare-VM leg); the rest of §B is the prior stamp. The two losses are an accepted trade
+for linear-time safety.
 
 ### finditer memory — lazy iteration
 
@@ -281,17 +283,31 @@ return O(matches) Python objects, so the order is unchanged; `finditer` stays la
 
 ## C. ReDoS safety — the headline property
 
-The catastrophic backtracking case `(a+)+b` over `"a"×N` (no `b`, so no match):
+The classic catastrophic pattern needs **two honest legs**. `(a+)+b` over `"a"×N`
+(no `b`) is rejected by REAL's **required-literal prefilter** (memchr of `b`) — that
+shows how fast the common ReDoS shape dies. The **guarantee** is the bare VM on
+`(a+)+` (no required literal to short-circuit): still **linear** in N.
 
-| engine | input | time |
+**Scope of this re-measure:** arm64 Apple M1 Pro, Apple clang, `-O3`, matching-only
+after compile, median of 31 (3 consistent rounds). Global §A stamp stays `2026.7.51`
+(not a full-train rebench). x86-64 devbox cross-check (same method): prefilter
+~1.2 µs / bare VM ~10.6 ms at N=100K. Prefilter leg is also what `make bench-engines`
+emits under `redos`.
+
+| engine / path | input | time |
 | --- | --- | ---: |
-| REAL | N = 100 000 | **0.521 ms** (linear) |
-| RE2 | N = 100 000 | 0.162 ms (linear) |
+| REAL `(a+)+b` (literal prefilter, no `b`) | N = 100 000 | **~2.1 µs** (reject; ~2 µs best) |
+| REAL `(a+)+` (bare VM, no required literal) | N = 100 000 | **~4.9 ms** (linear) |
+| REAL `(a+)+` (bare VM, linearity check) | N = 1 000 000 | **~49 ms** (≈10× → linear) |
+| RE2 `(a+)+b` | N = 100 000 | ~0.22 ms (linear; this harness) |
 | `std::regex` (libstdc++) | N = 26 | 4107 ms (backtracks; libc++ instead *refuses* at "complexity exceeded") |
 | Python `re` | n = 24 | 1397.76 ms (and climbing exponentially) |
 
 REAL and RE2 stay linear; the backtracking engines (`std::regex`, `re`) either refuse
-or blow up at trivially small inputs. This is the property REAL is built to guarantee.
+or blow up at trivially small inputs. The prefilter makes the classic demo *faster*
+than older docs claimed (~0.52 ms was a stale figure that measured neither leg); the
+bare-VM row is the guarantee without that short-circuit. This is the property REAL
+is built to guarantee.
 
 ## D. real::dfa — capture-free maximal-munch DFA (opt-in)
 
