@@ -178,12 +178,9 @@ int real_iter_next(real_iter* iter, size_t* spans)
       return 0;
     }
     const auto& m {*iter->it};
-    // Flattened slots_ is already [start0,end0,…] — one memcpy, not per-group start/end.
-    if (spans != nullptr) {
-      const auto flat {m.spans()};
-      if (!flat.empty()) {
-        std::memcpy(spans, flat.data(), flat.size() * sizeof(size_t));
-      }
+    for (size_t g = 0; g < m.size(); ++g) {
+      spans[2 * g]       = m.start(g);
+      spans[(2 * g) + 1] = m.end(g);
     }
     ++iter->it;
     return 1;
@@ -232,9 +229,9 @@ int real_match(const real_regex* re, const char* text, size_t len,
       return 0;
     }
     if (spans != nullptr) {
-      const auto flat {result.spans()};
-      if (!flat.empty()) {
-        std::memcpy(spans, flat.data(), flat.size() * sizeof(size_t));
+      for (size_t g = 0; g < result.size(); ++g) {
+        spans[2 * g]       = result.start(g);
+        spans[(2 * g) + 1] = result.end(g);
       }
     }
     return 1;
