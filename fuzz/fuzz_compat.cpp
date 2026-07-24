@@ -29,9 +29,18 @@ namespace {
   // deviates on it, so a both-accept span comparison would be meaningless).
   bool allowlisted(std::string_view pat)
   {
+    // `\b`/`\B` anywhere: std::regex (libstdc++ AND libc++) mis-evaluates word boundaries in at
+    // least two independent ways — `[a-z]{4,}(?=\b)` on "dacd1..." matches under std though
+    // 'd'→'1' is word→word (ECMAScript says none), and bare `\B` on "_" matches under std though
+    // both edges of "_" are boundaries. node and CPython agree with real on both. std is not an
+    // oracle for word-boundary patterns; the spec behavior is pinned in
+    // tests/compat/test_compat.cpp. (The `\b` search also catches the class form `[\b]`
+    // (backspace) — over-wide, which only skips, never falsely traps.)
     return pat.find("[[:") != std::string_view::npos  // POSIX bracket expression (non-spec libstdc++ ext)
            || pat.find("(?<=") != std::string_view::npos // lookbehind (ES2018; libstdc++ lacks it)
-           || pat.find("(?<!") != std::string_view::npos;
+           || pat.find("(?<!") != std::string_view::npos
+           || pat.find("\\b") != std::string_view::npos
+           || pat.find("\\B") != std::string_view::npos;
   }
 
   // Light pre-parse (not a full lexer -- just enough to bound the smoke's allocator load before
@@ -118,6 +127,12 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     // primary ECMAScript oracle — not by this std differential, which has no spec engine.)
     return 0;
   }
+
+  // std::regex can also throw AT MATCH TIME (error_complexity / error_stack — its backtracker's
+  // safety valve, on alternation/optional piles). real, linear, has no such mode; when std runs
+  // out of budget there is no oracle answer, so the comparison is skipped. compat's own std-routed
+  // pieces (e.g. `$0` formats) may throw the same way — same skip, same reason.
+  try {
 
   real::compat::smatch cm;
   std::smatch          sm;
@@ -281,6 +296,11 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   }
   if (compat_mf_spans != std_mf_spans) {
     __builtin_trap(); // iterator span-sequence divergence under match flags
+  }
+
+  }
+  catch (const std::regex_error&) {
+    return 0; // std ran out of matching budget mid-comparison: no oracle answer for this input
   }
   return 0;
 }

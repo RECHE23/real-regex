@@ -1554,3 +1554,37 @@ TEST(compat_native_only_syntax_never_uses_real)
   EXPECT(real::regex("(?P<n>a)b").search("ab").matched());
   EXPECT(real::regex("(?#c)ab").search("ab").matched());
 }
+
+TEST(compat_word_boundary_conformance)
+{
+  // std::regex (libstdc++ AND libc++) mis-evaluates word boundaries in at least two independent
+  // ways, so the fuzz-compat differential allowlists `\b`/`\B` patterns and the ECMAScript
+  // behavior — node and CPython agree with real on every case below — is pinned HERE on the
+  // real backend. Both cases were caught by fuzz-compat (CI Linux, then a local burst).
+  //
+  // Case 1 — `\b` inside a lookahead: in "dacd1…" the boundary position sits between 'd' and
+  // '1', both word chars (ECMAScript \w includes digits), so `(?=\b)` fails and the pattern has
+  // no match; std wrongly matches (0,4).
+  rc::regex         re   {R"([a-z]{4,}(?=\b))"};
+  rc::smatch        m;
+  const std::string none {"dacd1 ab2 abcde9"};
+  EXPECT(re.uses_real());
+  EXPECT(!rc::regex_search(none, m, re));
+  // Positive control: before a non-word char the boundary holds and the run matches.
+  const std::string hit {"dacd! rest"};
+  EXPECT(rc::regex_search(hit, m, re));
+  EXPECT(m.position(0) == 0);
+  EXPECT(m.length(0) == 4);
+
+  // Case 2 — bare `\B` at string edges: both edges of "_" are boundaries (start→word and
+  // word→end), so `\B` matches nowhere; std wrongly reports a match.
+  rc::regex         rb         {R"(\B)"};
+  const std::string underscore {"_"};
+  EXPECT(rb.uses_real());
+  EXPECT(!rc::regex_search(underscore, m, rb));
+  // Positive control: inside a word the boundary fails, so `\B` matches empty at position 1.
+  const std::string ab {"ab"};
+  EXPECT(rc::regex_search(ab, m, rb));
+  EXPECT(m.position(0) == 1);
+  EXPECT(m.length(0) == 0);
+}
