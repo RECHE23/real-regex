@@ -115,19 +115,19 @@ TEST(lookaround_rejects_unbounded_sub)
 {
   // True unbounded (*, +, {n,}) → "unbounded … use a fixed repeat count".
   const auto expect_unbounded = [](const char* pat) {
-    bool threw = false;
-    try {
-      real::regex r(pat);
-    } catch (const real::regex_error& e) {
-      threw = true;
-      EXPECT(std::string_view(e.what()).find("unbounded lookaround") != std::string_view::npos);
-    }
-    EXPECT(threw);
-  };
+                                  bool threw = false;
+                                  try {
+                                    real::regex r(pat);
+                                  } catch (const real::regex_error& e) {
+                                    threw = true;
+                                    EXPECT(std::string_view(e.what()).find("unbounded lookaround") != std::string_view::npos);
+                                  }
+                                  EXPECT(threw);
+                                };
   expect_unbounded("(?=a*)");
   expect_unbounded("(?=a+)");
   expect_unbounded("(?=a{2,})");
-  expect_unbounded("(?<=a*)");  // behind, unbounded
+  expect_unbounded("(?<=a*)");    // behind, unbounded
   expect_unbounded("(?<!a+)");
   expect_unbounded("(?<=\\w+)b"); // true unbounded word run
 }
@@ -142,18 +142,18 @@ TEST(lookaround_rejects_over_long_sub)
 {
   // Bounded but over max_lookaround_length (255) → "too long", never "unbounded".
   const auto expect_too_long = [](const char* pat) {
-    bool threw = false;
-    try {
-      real::regex r(pat);
-    } catch (const real::regex_error& e) {
-      threw = true;
-      const std::string_view msg {e.what()};
-      EXPECT(msg.find("too long") != std::string_view::npos);
-      EXPECT(msg.find("unbounded") == std::string_view::npos);
-    }
-    EXPECT(threw);
-  };
-  expect_too_long("(?=a{300})");   // 300 B > 255
+                                 bool threw = false;
+                                 try {
+                                   real::regex r(pat);
+                                 } catch (const real::regex_error& e) {
+                                   threw = true;
+                                   const std::string_view msg {e.what()};
+                                   EXPECT(msg.find("too long") != std::string_view::npos);
+                                   EXPECT(msg.find("unbounded") == std::string_view::npos);
+                                 }
+                                 EXPECT(threw);
+                               };
+  expect_too_long("(?=a{300})");    // 300 B > 255
   expect_too_long("(?<=a{300})");
   expect_too_long("(?<=\\w{64})b"); // \w counts 4 B → 256 > 255, fixed count
 }
