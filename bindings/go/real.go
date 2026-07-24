@@ -108,11 +108,10 @@ func MustCompile(pattern string) *Regexp {
 
 // Close releases the compiled pattern. Idempotent.
 //
-// Post-Close contract: the handle is nilled; subsequent method calls must not crash. They return
-// zero-values via the C ABI's null-handle sentinels (NumSubexp → -1-ish via groupCount 0−1, but
-// groupCount on nil re returns 0 so NumSubexp returns −1; SubexpNames → empty/zero-length names;
-// FindAll* → nil; ReplaceAll → error or empty per C real_sub). Prefer not to use a closed Regexp;
-// the guarantee is crash-freedom and stable sentinels, not a second valid lifetime.
+// Post-Close contract: the handle is nilled; subsequent method calls must not crash and return
+// zero-values (NumSubexp → 0; SubexpNames → empty slice; FindAll*/FindSubmatchIndex → nil;
+// FullMatch → false; ReplaceAll → error). Prefer not to use a closed Regexp — the guarantee is
+// crash-freedom and stable sentinels, not a second valid lifetime.
 func (r *Regexp) Close() error {
 	if r.re != nil {
 		C.real_free(r.re)
@@ -133,23 +132,39 @@ func (r *Regexp) groupSlots() []C.size_t {
 	return make([]C.size_t, 2*r.groupCount())
 }
 
+// spanPtr returns a C-safe pointer to the first span slot, or nil when the slice is empty
+// (closed handle / zero groupCount). Same idiom as RegexSet.Matches — never &x[0] on len 0.
+func spanPtr(spans []C.size_t) *C.size_t {
+	if len(spans) == 0 {
+		return nil
+	}
+	return &spans[0]
+}
+
 // NumSubexp returns the number of capturing groups (excluding group 0), like
-// regexp.Regexp.NumSubexp.
+// regexp.Regexp.NumSubexp. After Close it returns 0 (not −1).
 func (r *Regexp) NumSubexp() int {
+	if r.re == nil {
+		return 0
+	}
 	return r.groupCount() - 1
 }
 
 // SubexpNames returns each group's name in group-index order; index 0 (the whole match) and
 // any unnamed group are "" — the same shape as regexp.Regexp.SubexpNames.
+// Names are fetched with the C ABI two-call protocol (length query, then exact buffer) so long
+// names are never truncated or read out of bounds.
 func (r *Regexp) SubexpNames() []string {
 	n := r.groupCount()
 	names := make([]string, n)
-	var buf [256]C.char
 	for g := 0; g < n; g++ {
-		nameLen := C.real_group_name(r.re, C.size_t(g), &buf[0], C.size_t(len(buf)))
-		if nameLen > 0 {
-			names[g] = C.GoStringN(&buf[0], C.int(nameLen))
+		nameLen := C.real_group_name(r.re, C.size_t(g), nil, 0)
+		if nameLen == 0 {
+			continue
 		}
+		buf := make([]C.char, nameLen+1)
+		C.real_group_name(r.re, C.size_t(g), &buf[0], C.size_t(len(buf)))
+		names[g] = C.GoStringN(&buf[0], C.int(nameLen))
 	}
 	return names
 }
@@ -179,7 +194,7 @@ func (r *Regexp) FindSubmatchIndex(text []byte) []int {
 	defer freeText()
 	spans := r.groupSlots()
 	rc := C.real_match(r.re, (*C.char)(ctext), C.size_t(len(text)),
-		0, C.size_t(len(text)), C.REAL_MODE_SEARCH, &spans[0])
+		0, C.size_t(len(text)), C.REAL_MODE_SEARCH, spanPtr(spans))
 	if rc != 1 {
 		return nil
 	}
@@ -197,9 +212,13 @@ func (r *Regexp) FindAllSubmatchIndex(text []byte) [][]int {
 	}
 	defer C.real_iter_free(it)
 	spans := r.groupSlots()
+	sp := spanPtr(spans)
+	if sp == nil {
+		return nil // closed / zero slots — never &spans[0] on empty
+	}
 	var out [][]int
 	for {
-		rc := C.real_iter_next(it, &spans[0])
+		rc := C.real_iter_next(it, sp)
 		if rc != 1 {
 			break
 		}
@@ -217,7 +236,7 @@ func (r *Regexp) FullMatch(text []byte) bool {
 	defer freeText()
 	spans := r.groupSlots()
 	rc := C.real_match(r.re, (*C.char)(ctext), C.size_t(len(text)),
-		0, C.size_t(len(text)), C.REAL_MODE_FULLMATCH, &spans[0])
+		0, C.size_t(len(text)), C.REAL_MODE_FULLMATCH, spanPtr(spans))
 	return rc == 1
 }
 

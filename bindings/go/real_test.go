@@ -53,30 +53,71 @@ func TestCloseIsIdempotent(t *testing.T) {
 	r.Close() // must not double-free / crash
 }
 
-// Post-Close: C ABI null-handle sentinels — must not crash (the closed-handle contract).
+// Post-Close: every public method — by enumeration, not sample — must not crash and must
+// return the documented zero-value sentinel.
 func TestClosedHandleIsSafe(t *testing.T) {
 	r := MustCompile(`(?P<g>\w+)@(\w+)`)
 	r.Close()
 
-	// groupCount/NumSubexp: nil re → C returns 0 slots → NumSubexp = -1
-	if n := r.NumSubexp(); n != -1 {
-		t.Fatalf("NumSubexp after Close: got %d, want -1", n)
+	// Regexp surface (complete public set)
+	if n := r.NumSubexp(); n != 0 {
+		t.Fatalf("NumSubexp after Close: got %d, want 0", n)
 	}
-	// SubexpNames must not crash; with 0 groups it returns a zero-length slice
-	names := r.SubexpNames()
-	if len(names) != 0 {
+	if names := r.SubexpNames(); len(names) != 0 {
 		t.Fatalf("SubexpNames after Close: got len %d, want 0", len(names))
 	}
-	// FindAll* on closed handle: nil re → no matches / nil, no crash
 	if got := r.FindAllIndex([]byte("a@b")); got != nil {
 		t.Fatalf("FindAllIndex after Close: got %v, want nil", got)
+	}
+	if got := r.FindSubmatchIndex([]byte("a@b")); got != nil {
+		t.Fatalf("FindSubmatchIndex after Close: got %v, want nil", got)
 	}
 	if got := r.FindAllSubmatchIndex([]byte("a@b")); got != nil {
 		t.Fatalf("FindAllSubmatchIndex after Close: got %v, want nil", got)
 	}
-	// ReplaceAll: C real_sub null-re → error sentinel
+	if r.FullMatch([]byte("a@b")) {
+		t.Fatal("FullMatch after Close: got true, want false")
+	}
 	if _, err := r.ReplaceAll([]byte("a@b"), []byte("x")); err == nil {
 		t.Fatal("ReplaceAll after Close: expected error, got nil")
+	}
+
+	// RegexSet surface (complete public set)
+	s, err := CompileSet([]string{`a`, `b`})
+	if err != nil {
+		t.Fatalf("CompileSet: %v", err)
+	}
+	s.Close()
+	if n := s.Size(); n != 0 {
+		t.Fatalf("RegexSet.Size after Close: got %d, want 0", n)
+	}
+	if s.IsMatch([]byte("a")) {
+		t.Fatal("RegexSet.IsMatch after Close: got true, want false")
+	}
+	if m := s.Matches([]byte("a")); len(m) != 0 {
+		t.Fatalf("RegexSet.Matches after Close: got %v, want empty", m)
+	}
+}
+
+// Long group names must round-trip bit-for-bit (no fixed-buffer OOB / truncation).
+func TestLongGroupName(t *testing.T) {
+	// 300 'a' characters — past the old fixed [256] buffer.
+	long := make([]byte, 300)
+	for i := range long {
+		long[i] = 'a'
+	}
+	pat := "(?P<" + string(long) + ">x)"
+	r, err := Compile(pat)
+	if err != nil {
+		t.Fatalf("Compile long name: %v", err)
+	}
+	defer r.Close()
+	names := r.SubexpNames()
+	if len(names) < 2 {
+		t.Fatalf("SubexpNames len %d, want >= 2", len(names))
+	}
+	if names[1] != string(long) {
+		t.Fatalf("group name mismatch: got len %d want %d", len(names[1]), len(long))
 	}
 }
 
