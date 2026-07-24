@@ -25,10 +25,12 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <cassert>
 #include <memory>
 #include <mutex>
+#include <type_traits>
 #include <unordered_map>
 #include <optional>
 #include <cstddef>
@@ -557,10 +559,14 @@ namespace real::detail {
   //!        extractor table. Built exactly once, under \ref once, so a const regex used from many threads
   //!        (the binding shares the compiled object across GIL-released calls) builds it race-free.
   //!
+  struct regex_immutables; // forward — \ref erase_shared_dfas is called from the dtor
+  inline void erase_shared_dfas(const regex_immutables* immut);
+
   //!        The mutable lazy-DFA transition caches live in a process-wide side table
   //!        (\ref shared_dfa_slot), keyed by this object's address and guarded by a per-slot mutex —
   //!        so this struct stays free of \c std::mutex / extra members (layout and constexpr size match
   //!        the cache-free layout; address-reuse invalidates the slot from \c call_once via \ref reset_shared_dfas).
+  //!        The dtor erases this address's map entry so match-time caches do not outlive the regex.
   struct regex_immutables
   {
     byte_program           byte_prog;          //!< klass_cp-expanded byte program (empty until built).
@@ -594,14 +600,20 @@ namespace real::detail {
       return *this;
     }
 
-    // Default dtor: required for constexpr \c dynamic_storage::compile / \c static_assert paths. Shared
-    // DFA slots are process-lifetime (keyed by address); a new immutables at a reused address re-runs
-    // \c call_once which clears the slot (\ref reset_shared_dfas).
-    ~regex_immutables() = default;
+    // Runtime erase of this regex's shared DFA slot (reclaims match-time caches). Constexpr paths
+    // skip the map entirely — \c is_constant_evaluated so dynamic_storage::compile / static_assert stay valid.
+    constexpr ~regex_immutables()
+    {
+      if (!std::is_constant_evaluated()) {
+        erase_shared_dfas(this);
+      }
+    }
   };
 
   //! \brief Process-wide shared DFA transition caches keyed by \ref regex_immutables*.
-  //!        Thread-safe: map insert under \ref shared_dfa_map_mu, DFA warm/scan under \ref mu.
+  //!        Thread-safe: map insert/erase under \ref shared_dfa_map_mu, DFA warm/scan under \ref mu.
+  //!        Slots are \c shared_ptr so a concurrent \ref erase_shared_dfas (dtor) cannot free a slot a
+  //!        thread is still scanning — the slot dies when the last holder (map or TLS cache) releases.
   struct shared_dfa_slot
   {
     std::mutex                 mu;
@@ -616,29 +628,54 @@ namespace real::detail {
     return m;
   }
 
-  inline std::unordered_map<const regex_immutables*, std::unique_ptr<shared_dfa_slot>>& shared_dfa_map()
+  //! \brief Bumped on every \ref erase_shared_dfas so a TLS last-hit cache never serves a destroyed
+  //!        regex's slot to a new immutables that reuses the same address.
+  inline std::atomic<std::uint64_t>& shared_dfa_epoch()
   {
-    static std::unordered_map<const regex_immutables*, std::unique_ptr<shared_dfa_slot>> m;
-    return m;
+    static std::atomic<std::uint64_t> e {0};
+    return e;
+  }
+
+  //! \brief Process-wide map. Intentionally never destroyed (leaky singleton): a static map would
+  //!        tear down at exit while other statics' \c ~regex_immutables still call \ref erase_shared_dfas.
+  //!        The OS reclaims the map at process exit — not an accumulating leak; entries are erased on dtor.
+  inline std::unordered_map<const regex_immutables*, std::shared_ptr<shared_dfa_slot>>& shared_dfa_map()
+  {
+    static auto* m {
+      new std::unordered_map<const regex_immutables*, std::shared_ptr<shared_dfa_slot>>};
+    return *m;
+  }
+
+  //! \brief Drop this regex's map entry (called from \c ~regex_immutables). Concurrent scans that still
+  //!        hold a \c shared_ptr via TLS keep the slot alive until they release.
+  inline void erase_shared_dfas(const regex_immutables* immut)
+  {
+    const std::lock_guard<std::mutex> lock {shared_dfa_map_mu()};
+    shared_dfa_map().erase(immut);
+    shared_dfa_epoch().fetch_add(1, std::memory_order_acq_rel);
   }
 
   //! \brief Resolve the process-wide DFA slot for this regex (map insert under \ref shared_dfa_map_mu).
   //!        Thread-local last-hit cache: dense IL was paying map_mu per candidate without it; the cache
-  //!        is not on \ref regex_immutables (layout isolation — x86 class-loop +6% suspect).
+  //!        is not on \ref regex_immutables (layout isolation — x86 class-loop +6% suspect). Holds a
+  //!        \c shared_ptr (not a raw pointer) so erase cannot UAF a live scan. Epoch gates address reuse.
   [[nodiscard]] inline shared_dfa_slot& shared_dfa_for(regex_immutables* immut)
   {
-    thread_local const regex_immutables* cached_immut {nullptr};
-    thread_local shared_dfa_slot*        cached_slot  {nullptr};
-    if (cached_immut == immut && cached_slot != nullptr) {
+    thread_local const regex_immutables    *      cached_immut {nullptr};
+    thread_local std::shared_ptr<shared_dfa_slot> cached_slot  {};
+    thread_local std::uint64_t                    cached_epoch {0};
+    const std::uint64_t                           epoch        {shared_dfa_epoch().load(std::memory_order_acquire)};
+    if (cached_immut == immut && cached_slot && cached_epoch == epoch) {
       return *cached_slot;
     }
     const std::lock_guard<std::mutex> lock {shared_dfa_map_mu()};
-    std::unique_ptr<shared_dfa_slot>& slot {shared_dfa_map()[immut]};
+    std::shared_ptr<shared_dfa_slot>& slot {shared_dfa_map()[immut]};
     if (!slot) {
-      slot = std::make_unique<shared_dfa_slot>();
+      slot = std::make_shared<shared_dfa_slot>();
     }
     cached_immut = immut;
-    cached_slot  = slot.get();
+    cached_slot  = slot; // shared_ptr copy — free-safe if erase races
+    cached_epoch = shared_dfa_epoch().load(std::memory_order_relaxed);
     return *slot;
   }
 
@@ -651,6 +688,13 @@ namespace real::detail {
     slot.fwd.reset();
     slot.rev.reset();
     slot.il_prefix_rev.reset();
+  }
+
+  //! \brief Test/audit: number of live shared-DFA map entries (process-wide). Not for production.
+  [[nodiscard]] inline std::size_t shared_dfa_map_size_for_test()
+  {
+    const std::lock_guard<std::mutex> lock {shared_dfa_map_mu()};
+    return shared_dfa_map().size();
   }
 } // namespace real::detail
 
