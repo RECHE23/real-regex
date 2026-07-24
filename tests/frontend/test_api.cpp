@@ -158,10 +158,10 @@ TEST(regex_copy_assignment_resets_and_rebuilds_the_immutables_cache)
 {
   // basic_regex has no custom copy-assignment operator; the compiler-generated one member-wise assigns
   // dynamic_storage, which in turn assigns detail::regex_immutables (its mutable lazy-DFA/one-pass cache)
-  // via regex_immutables::operator=(const&) -- deliberately a no-op (each regex keeps its OWN, independent,
+  // via regex_immutables::operator=(const&) -- invalidates built_for (each regex keeps its OWN, independent,
   // lazily-rebuilt cache rather than inheriting the source's already-built one). Warm both regexes' caches
-  // first (a routed search builds it via std::call_once), THEN copy-assign, and confirm the destination
-  // still matches correctly afterward -- the reset must not corrupt anything the fresh build depends on.
+  // first (a routed search builds immutables), THEN copy-assign, and confirm the destination
+  // still matches correctly afterward -- the invalidate must not corrupt anything the rebuild depends on.
   real::regex a {R"((\w+)@(\w+))"};
   real::regex b {R"((\d+)-(\d+))"};
   std::string long_text;

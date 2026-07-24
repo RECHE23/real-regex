@@ -797,9 +797,10 @@ namespace real {
       dynamic_program program;                       //!< The compiled program.
       flags           effective_flags {flags::none}; //!< Constructor flags merged with any (?ims).
 
-      //! \brief Per-regex lazy-DFA/one-pass cache, built once (thread-safe) and shared by every search on
-      //!        this regex — not rebuilt per find_iter. `mutable`: a const regex fills it on first routed
-      //!        search. Copy/move reset it (a copied regex rebuilds its own; see \ref detail::regex_immutables).
+      //! \brief Per-regex lazy-DFA/one-pass cache, built under program-identity invalidation (thread-safe)
+      //!        and shared by every search on this regex — not rebuilt per find_iter. `mutable`: a const
+      //!        regex fills it on first routed search. Copy/move leave a fresh unbuilt cache; assignment
+      //!        invalidates \c built_for so assign-onto-warmed rebuilds (see \ref detail::regex_immutables).
       mutable detail::regex_immutables immut_ {};
 
       /*!

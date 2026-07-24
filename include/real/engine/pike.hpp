@@ -994,47 +994,65 @@ namespace real::detail {
     //!        if the state is now bound to a different program (its `code` pointer changed). The cache then
     //!        persists across a whole find_iter (where it pays), and forward_end resets its per-search thrash
     //!        flag itself. Instantiated only for the dynamic state (the one carrying the optionals).
-    //! \brief Build the per-regex immutables once, race-free: the Tier-A byte-program the DFAs run over (and
-    //!        its shared alphabet), plus the one-pass extractor. The extractor is built Tier-B (assertions
-    //!        kept as edge conditions), so one table serves both the search window (Tier-A patterns have
-    //!        empty assertion masks) and direct anchored match/fullmatch (Tier-B patterns). Needs no DFA, so
-    //!        the anchored path can call this without paying the DFA build.
+    //! \brief Build (or rebuild) the per-regex immutables, race-free: the Tier-A byte-program the DFAs
+    //!        run over (and its shared alphabet), plus the one-pass extractor. Invalidation is by
+    //!        program identity (\ref regex_immutables::built_for == \c prog_.code.data()) — same pattern
+    //!        as \c state_type::dfa_program / \c il_prefix_for. Hot path is one atomic load; a spent
+    //!        \c once_flag would never rebuild after assign-onto-warmed (silent 0 matches). The
+    //!        extractor is Tier-B (assertions kept), so one table serves the search window and anchored
+    //!        match/fullmatch. Needs no DFA, so the anchored path can call this without the DFA build.
     void ensure_immutables()
     {
       detail::regex_immutables* const immut {prog_.immut};
       if (immut == nullptr) {
-        return;                                                      // no per-regex cache (not the dynamic storage) — the caller keeps the VM
+        return; // no per-regex cache (not the dynamic storage) — the caller keeps the VM
       }
-      std::call_once(immut->once, [&] {
-                       immut->byte_prog = build_byte_program(prog_); // Tier-A: ineligible if assert/lookaround
-                       if (immut->byte_prog.eligible) {
-                         immut->alphabet =
-                           compute_lazy_alphabet(immut->byte_prog.code, immut->byte_prog.classes); // shared by both DFAs
-                       }
-                       const byte_program tier_b {build_byte_program(prog_, /*keep_assertions=*/ true)};
-                       if (tier_b.eligible) {
-                         immut->op_table.emplace(tier_b); // one-pass extractor: Tier-A window + Tier-B anchored
-                       }
-                       if (!prog_.prefix_code.empty()) {  // IL: expand the inner-literal prefix once per regex (not per find_iter)
-                         program_view pv {};
-                         pv.code                = prog_.prefix_code;
-                         pv.classes             = prog_.prefix_classes;
-                         pv.cp_classes          = prog_.prefix_cp_classes;
-                         pv.cp_ranges           = prog_.prefix_cp_ranges;
-                         pv.unicode_word        = prog_.unicode_word;
-                         immut->il_prefix_prog  = build_byte_program(pv);
-                         // Cold first-scan floor only (see run_inner_literal + shared_dfa_slot::il_warmed).
-                         // Reverse DFA lives in the shared slot (not per-iterator). Build cost still needs a
-                         // high cold floor; warm scans use il_warm_floor (~4 KB). N = size * 28, clamped
-                         // [64 KB, 512 KB]: email ~3436 instr → ~94 KB cold; date ~1031 → 64 KB clamp.
-                         // HONESTY: 94–128 KB *cold-dense* may pay ~1–2.4% vs core (accepted). Checked ONLY
-                         // after the first memmem hit, so no-match — memmem-only — is never gated.
-                         const std::size_t sz {immut->il_prefix_prog.code.size()};
-                         immut->il_min_haystack = std::min<std::size_t>(512UL * 1024, std::max<std::size_t>(64UL * 1024, sz * 28));
-                       }
-                       // Address-reuse of *immut must not keep a previous pattern's shared DFAs.
-                       reset_shared_dfas(immut);
-                     });
+      const void* const want {prog_.code.data()};
+      // Hot path: cache already matches this program (one acquire load; no mutex).
+      if (immut->built_for.load(std::memory_order_acquire) == want) {
+        return;
+      }
+      // Rebuild under a striped lock (not slot.mu / map_mu — reset_shared_dfas re-locks those).
+      const std::lock_guard<std::mutex> lock {detail::immut_build_mu(immut)};
+      if (immut->built_for.load(std::memory_order_relaxed) == want) {
+        return; // double-check
+      }
+      immut->byte_prog = build_byte_program(prog_); // Tier-A: ineligible if assert/lookaround
+      if (immut->byte_prog.eligible) {
+        immut->alphabet =
+          compute_lazy_alphabet(immut->byte_prog.code, immut->byte_prog.classes); // shared by both DFAs
+      }
+      else {
+        immut->alphabet = {};
+      }
+      immut->op_table.reset();
+      const byte_program tier_b {build_byte_program(prog_, /*keep_assertions=*/ true)};
+      if (tier_b.eligible) {
+        immut->op_table.emplace(tier_b); // one-pass extractor: Tier-A window + Tier-B anchored
+      }
+      immut->il_prefix_prog  = {};
+      immut->il_min_haystack = 0;
+      if (!prog_.prefix_code.empty()) { // IL: expand the inner-literal prefix once per program
+        program_view pv {};
+        pv.code               = prog_.prefix_code;
+        pv.classes            = prog_.prefix_classes;
+        pv.cp_classes         = prog_.prefix_cp_classes;
+        pv.cp_ranges          = prog_.prefix_cp_ranges;
+        pv.unicode_word       = prog_.unicode_word;
+        immut->il_prefix_prog = build_byte_program(pv);
+        // Cold first-scan floor only (see run_inner_literal + shared_dfa_slot::il_warmed).
+        // Reverse DFA lives in the shared slot (not per-iterator). Build cost still needs a
+        // high cold floor; warm scans use il_warm_floor (~4 KB). N = size * 28, clamped
+        // [64 KB, 512 KB]: email ~3436 instr → ~94 KB cold; date ~1031 → 64 KB clamp.
+        // HONESTY: 94–128 KB *cold-dense* may pay ~1–2.4% vs core (accepted). Checked ONLY
+        // after the first memmem hit, so no-match — memmem-only — is never gated.
+        const std::size_t sz {immut->il_prefix_prog.code.size()};
+        immut->il_min_haystack =
+          std::min<std::size_t>(512UL * 1024, std::max<std::size_t>(64UL * 1024, sz * 28));
+      }
+      // Same immut address, new program: drop previous pattern's shared DFAs (not just address-reuse).
+      reset_shared_dfas(immut);
+      immut->built_for.store(want, std::memory_order_release);
     }
 
     //! \brief Warm shared search DFAs for \p immut into \p slot (caller holds \p slot.mu).

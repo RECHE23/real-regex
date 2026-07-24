@@ -556,17 +556,19 @@ namespace real::detail {
 
   //! \brief The per-regex immutable cache the router shares across every find_iter on a regex: the byte-
   //!        program (klass_cp expanded to the deterministic trie) and, when the pattern is one-pass, the
-  //!        extractor table. Built exactly once, under \ref once, so a const regex used from many threads
-  //!        (the binding shares the compiled object across GIL-released calls) builds it race-free.
+  //!        extractor table. Built under program-identity invalidation (\ref built_for), so a const regex
+  //!        used from many threads builds race-free, and assign-onto-warmed rebuilds for the new program.
   //!
   struct regex_immutables; // forward — \ref erase_shared_dfas is called from the dtor
   inline void erase_shared_dfas(const regex_immutables* immut);
 
   //!        The mutable lazy-DFA transition caches live in a process-wide side table
   //!        (\ref shared_dfa_slot), keyed by this object's address and guarded by a per-slot mutex —
-  //!        so this struct stays free of \c std::mutex / extra members (layout and constexpr size match
-  //!        the cache-free layout; address-reuse invalidates the slot from \c call_once via \ref reset_shared_dfas).
-  //!        The dtor erases this address's map entry so match-time caches do not outlive the regex.
+  //!        so this struct stays free of \c std::mutex / extra members (layout: \c once_flag →
+  //!        \c atomic pointer, same footprint). Address-reuse of the immutables object invalidates
+  //!        the slot via \ref reset_shared_dfas; program change at the same address is detected by
+  //!        \ref built_for (see \ref pike_vm::ensure_immutables). The dtor erases this address's map
+  //!        entry so match-time caches do not outlive the regex.
   struct regex_immutables
   {
     byte_program           byte_prog;          //!< klass_cp-expanded byte program (empty until built).
@@ -574,29 +576,37 @@ namespace real::detail {
     std::optional<onepass> op_table;           //!< one-pass extractor, present iff the pattern is one-pass.
     byte_program           il_prefix_prog;     //!< IL: the inner-literal prefix's byte program (ineligible until built). Per-regex so the reverse DFA that spans it is a cheap shared wrapper, not a per-find_iter rebuild.
     std::size_t            il_min_haystack {}; //!< IL cold floor: first candidate-scan on this regex only fires at or above this size when the haystack HAS a match (0 = always). Warm scans use \ref il_warm_floor (shared reverse DFA in \ref shared_dfa_slot). Checked ONLY after the first memmem hit — no-match is never gated. Scaled by prefix byte-program size; see \ref pike_vm::run_inner_literal.
-    std::once_flag         once;               //!< guards the one-time build.
+    //! \brief \c prog.code.data() this cache was built for, or null if never built / invalidated.
+    //!        Hot path: one atomic load. Not \c once_flag — assignment reuses this object under a new
+    //!        program; a spent once_flag would never rebuild (silent wrong matches).
+    std::atomic<const void*> built_for {nullptr};
 
-    // A copied regex is an independent regex: it gets its own fresh, unbuilt cache rather than sharing
-    // (std::once_flag is not copyable anyway). Copy/move reset rather than transfer — the built state is a
-    // pure runtime accelerator, cheap to rebuild.
+    // A copied regex is an independent regex: fresh unbuilt cache (built_for null). Copy/move of the
+    // cache body is never transferred — pure runtime accelerator, cheap to rebuild.
     regex_immutables() = default;
     regex_immutables(const regex_immutables& /*other*/) noexcept
+      : built_for {nullptr}
     {}
 
     regex_immutables(regex_immutables&& /*other*/) noexcept
+      : built_for {nullptr}
     {}
 
-    // Assignment keeps this object's own (fresh) cache — it deliberately copies/moves nothing, which is
-    // inherently self-assignment-safe (there is no state to guard). NOLINT: the empty body is the contract.
+    // Assignment keeps this object's cache storage but marks it invalid — the destination's program
+    // is already the new one by the time storage assignment reaches here; we cannot rebuild from
+    // the source's program (and must not inherit its built state). built_for=null forces
+    // ensure_immutables to rebuild. Self-assignment-safe. NOLINT: deliberate non-copy of members.
     // NOLINTNEXTLINE(cert-oop54-cpp)
     regex_immutables& operator=(const regex_immutables& /*other*/) noexcept
     {
+      built_for.store(nullptr, std::memory_order_relaxed);
       return *this;
     }
 
     // NOLINTNEXTLINE(cert-oop54-cpp)
     regex_immutables& operator=(regex_immutables&& /*other*/) noexcept
     {
+      built_for.store(nullptr, std::memory_order_relaxed);
       return *this;
     }
 
@@ -609,6 +619,16 @@ namespace real::detail {
       }
     }
   };
+
+  //! \brief Striped rebuild lock for \ref pike_vm::ensure_immutables (not on \ref regex_immutables —
+  //!        layout isolation). Distinct from \ref shared_dfa_map_mu / slot.mu so \ref reset_shared_dfas
+  //!        cannot self-deadlock. Different immutables rarely share a stripe.
+  [[nodiscard]] inline std::mutex& immut_build_mu(const regex_immutables* immut)
+  {
+    static std::array<std::mutex, 64> stripes {};
+    const auto                        h       {static_cast<std::uintptr_t>(reinterpret_cast<std::uintptr_t>(immut))};
+    return stripes[h % stripes.size()];
+  }
 
   //! \brief Process-wide shared DFA transition caches keyed by \ref regex_immutables*.
   //!        Thread-safe: map insert/erase under \ref shared_dfa_map_mu, DFA warm/scan under \ref mu.
@@ -690,7 +710,8 @@ namespace real::detail {
   }
 
   //! \brief Drop any DFAs cached for \p immut (caller holds nothing; takes map + slot locks).
-  //!        Invoked from \c call_once so a reused immutables address cannot keep a previous pattern's DFAs.
+  //!        Invoked from \ref pike_vm::ensure_immutables rebuild so a reused immutables address — or
+  //!        the same address under a new program — cannot keep a previous pattern's DFAs.
   inline void reset_shared_dfas(regex_immutables* immut)
   {
     shared_dfa_slot&                  slot {shared_dfa_for(immut)};

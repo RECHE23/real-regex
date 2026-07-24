@@ -3,14 +3,14 @@
 // Gap (hardening audit, post-7.47): tests/compat/tsan_compat.cpp only hammers real::compat's
 // std_engine mutex. The 7.45 shared-confirm path and its friends were claimed "concurrent const
 // race-free" from a one-off; nothing tracked drives:
-//   - ensure_immutables / std::call_once on mutable immut_ (storage.hpp)
+//   - ensure_immutables / built_for identity on mutable immut_ (storage.hpp)
 //   - shared_dfa_for map insert + per-slot mutex (onepass.hpp / pike.hpp)
 //   - first warm of shared fwd/rev/il_prefix_rev DFAs
 //
 // Critical design (without this the harness is a false negative):
-//   call_once + per-slot mutex ⇒ first arriver fills, late arrivers see filled → NO race window
-//   if threads start staggered. So each iteration:
-//     1. construct one FRESH const real::regex (re-opens call_once / empty slot)
+//   built_for + striped rebuild lock + per-slot mutex ⇒ first arriver fills, late arrivers see
+//   filled → NO race window if threads start staggered. So each iteration:
+//     1. construct one FRESH const real::regex (empty built_for / empty slot)
 //     2. barrier-sync N threads
 //     3. ALL run the first search/find_iter simultaneously on that same regex
 //
@@ -103,7 +103,7 @@ namespace {
                         std::string_view   hay,
                         bool               inject)
   {
-    // FRESH regex each wave — re-opens immut_.once and a new shared_dfa_for key.
+    // FRESH regex each wave — empty built_for and a new shared_dfa_for key.
     const real::regex re          {pattern};
 
     std::barrier             sync {k_threads};
@@ -113,7 +113,7 @@ namespace {
 
     for (int t = 0; t < k_threads; ++t) {
       threads.emplace_back([&, t] {
-                             // Arrive together before the first search so call_once / slot warm race for real.
+                             // Arrive together before the first search so built_for / slot warm race for real.
                              sync.arrive_and_wait();
                              if (inject) {
                                // Deliberate data race: unsynchronized RMW on a shared non-atomic.
