@@ -626,7 +626,7 @@ namespace real::detail {
   [[nodiscard]] inline std::mutex& immut_build_mu(const regex_immutables* immut)
   {
     static std::array<std::mutex, 64> stripes {};
-    const auto                        h       {static_cast<std::uintptr_t>(reinterpret_cast<std::uintptr_t>(immut))};
+    const std::size_t                 h       {std::hash<const void*> {}(immut)};
     return stripes[h % stripes.size()];
   }
 
