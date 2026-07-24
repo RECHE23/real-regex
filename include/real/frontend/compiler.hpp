@@ -1046,7 +1046,11 @@ namespace real::detail {
               return -1;
             }
             if (body > 0 && node.max > max_lookaround_length / body) {
-              return -1; // the product would exceed the cap (nested {n}{m}...) -> reject; no int32 overflow
+              // Bounded but over the lookaround cap (e.g. \w{64} = 256 B > 255). Saturate so
+              // emit_lookaround takes the "too long" path — not -1/"unbounded", which would
+              // wrongly advise "use a fixed repeat count" on a count that is already fixed.
+              // max_lookaround_length + 1 is tiny: no int32 overflow.
+              return max_lookaround_length + 1;
             }
             return node.max * body;
           }
