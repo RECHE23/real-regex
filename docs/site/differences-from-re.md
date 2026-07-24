@@ -297,3 +297,12 @@ delegate those via its `fallback` feature). Pinned in the property and parity su
 REAL accepts any **bounded** lookbehind, including variable-width alternations such as
 `(?<=a|bb)`, which `re` and PCRE reject as non-fixed-width. The bound keeps the scan
 linear; see <a href="api/design.html">How REAL Works — a guided tour</a> for how the lookbehind sub-VM works.
+
+**`\b` / `\B` inside lookbehind.** Word-boundary assertions in a lookbehind are first-class and
+evaluate at the lookbehind's match position (the same rule as outside a lookaround). REAL agrees
+with Python `re`, JavaScript (V8/node), and the usual ECMAScript reading on these cases. **PCRE2
+has known mis-evaluations of `\b` in lookbehind** (a few failures per ~100k differential cases in
+third-party audits) — treat PCRE2 as a *benchmark competitor*, not an oracle for `\b`-in-lookbehind.
+There is no in-tree PCRE2 differential fuzzer (unlike `fuzz_compat` vs `std` and `fuzz_re2`); if one
+is added later, those shapes belong on an allowlist the same way `std`'s non-spec `\b` edges are,
+not as REAL bugs.
