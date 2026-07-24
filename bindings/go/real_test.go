@@ -53,6 +53,33 @@ func TestCloseIsIdempotent(t *testing.T) {
 	r.Close() // must not double-free / crash
 }
 
+// Post-Close: C ABI null-handle sentinels — must not crash (the closed-handle contract).
+func TestClosedHandleIsSafe(t *testing.T) {
+	r := MustCompile(`(?P<g>\w+)@(\w+)`)
+	r.Close()
+
+	// groupCount/NumSubexp: nil re → C returns 0 slots → NumSubexp = -1
+	if n := r.NumSubexp(); n != -1 {
+		t.Fatalf("NumSubexp after Close: got %d, want -1", n)
+	}
+	// SubexpNames must not crash; with 0 groups it returns a zero-length slice
+	names := r.SubexpNames()
+	if len(names) != 0 {
+		t.Fatalf("SubexpNames after Close: got len %d, want 0", len(names))
+	}
+	// FindAll* on closed handle: nil re → no matches / nil, no crash
+	if got := r.FindAllIndex([]byte("a@b")); got != nil {
+		t.Fatalf("FindAllIndex after Close: got %v, want nil", got)
+	}
+	if got := r.FindAllSubmatchIndex([]byte("a@b")); got != nil {
+		t.Fatalf("FindAllSubmatchIndex after Close: got %v, want nil", got)
+	}
+	// ReplaceAll: C real_sub null-re → error sentinel
+	if _, err := r.ReplaceAll([]byte("a@b"), []byte("x")); err == nil {
+		t.Fatal("ReplaceAll after Close: expected error, got nil")
+	}
+}
+
 // --- differential vs Go's stdlib regexp (shared RE2-subset syntax) -------------------------
 
 func diffFindAllIndex(t *testing.T, pattern, text string) {

@@ -107,6 +107,12 @@ func MustCompile(pattern string) *Regexp {
 }
 
 // Close releases the compiled pattern. Idempotent.
+//
+// Post-Close contract: the handle is nilled; subsequent method calls must not crash. They return
+// zero-values via the C ABI's null-handle sentinels (NumSubexp → -1-ish via groupCount 0−1, but
+// groupCount on nil re returns 0 so NumSubexp returns −1; SubexpNames → empty/zero-length names;
+// FindAll* → nil; ReplaceAll → error or empty per C real_sub). Prefer not to use a closed Regexp;
+// the guarantee is crash-freedom and stable sentinels, not a second valid lifetime.
 func (r *Regexp) Close() error {
 	if r.re != nil {
 		C.real_free(r.re)
@@ -117,6 +123,7 @@ func (r *Regexp) Close() error {
 }
 
 // groupCount returns (capturing groups + 1), matching real_group_count's own contract.
+// After Close (nil handle) the C ABI returns 0.
 func (r *Regexp) groupCount() int {
 	return int(C.real_group_count(r.re))
 }

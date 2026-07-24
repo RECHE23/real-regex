@@ -88,11 +88,20 @@ real_regex* real_compile(const char* pattern, size_t len, uint32_t flags,
 
 size_t real_group_count(const real_regex* re)
 {
+  if (re == nullptr) {
+    return 0; // invalid handle: zero span slots (documented in real_capi.h)
+  }
   return re->rx.group_count() + 1; // group_count() excludes group 0
 }
 
 size_t real_group_name(const real_regex* re, size_t group, char* buf, size_t buflen)
 {
+  if (re == nullptr) {
+    if (buf != nullptr && buflen > 0) {
+      buf[0] = '\0';
+    }
+    return 0; // invalid handle: empty name (documented in real_capi.h)
+  }
   for (const auto& [name, number] : re->rx.named_groups()) {
     if (number == group) {
       if (buf != nullptr && buflen > 0) {
@@ -111,11 +120,17 @@ size_t real_group_name(const real_regex* re, size_t group, char* buf, size_t buf
 
 void real_free(real_regex* re)
 {
+  // Intentionally null-safe: `delete nullptr` is a C++ no-op. Callers (Go Close after
+  // already-nil, defensive free paths) may pass NULL — do not "fix" this with a guard that
+  // would make null free a special case elsewhere.
   delete re;
 }
 
 real_iter* real_find_iter(const real_regex* re, const char* text, size_t len)
 {
+  if (re == nullptr) {
+    return nullptr; // invalid handle (documented in real_capi.h)
+  }
   try {
     auto range = re->rx.find_iter(std::string_view(text, len));
     return new real_iter {range.begin(), range.end()};
@@ -127,6 +142,9 @@ real_iter* real_find_iter(const real_regex* re, const char* text, size_t len)
 
 real_iter* real_find_iter_at(const real_regex* re, const char* text, size_t len, size_t start)
 {
+  if (re == nullptr) {
+    return nullptr;
+  }
   try {
     auto range = re->rx.find_iter(std::string_view(text, len), start, len);
     return new real_iter {range.begin(), range.end()};
@@ -138,6 +156,9 @@ real_iter* real_find_iter_at(const real_regex* re, const char* text, size_t len,
 
 real_iter* real_find_iter_between(const real_regex* re, const char* text, size_t len, size_t start, size_t end)
 {
+  if (re == nullptr) {
+    return nullptr;
+  }
   try {
     auto range = re->rx.find_iter(std::string_view(text, len), start, end);
     return new real_iter {range.begin(), range.end()};

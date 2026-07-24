@@ -94,3 +94,20 @@ TEST(capi_defensive_paths)
   EXPECT(std::strlen(nb) == 3 && nb[3] == '\0');         // truncated prefix, terminated
   real_free(named);
 }
+
+TEST(capi_null_handle_contracts)
+{
+  // Enumerated null-re surface: every function that takes a real_regex* must not crash and must
+  // honour the documented sentinel (aligned with real_match / real_sub).
+  EXPECT(real_group_count(nullptr) == 0);
+
+  char name[8] = {'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x'};
+  EXPECT(real_group_name(nullptr, 1, name, sizeof name) == 0);
+  EXPECT(name[0] == '\0');
+
+  EXPECT(real_find_iter(nullptr, "ab", 2) == nullptr);
+  EXPECT(real_find_iter_at(nullptr, "ab", 2, 0) == nullptr);
+  EXPECT(real_find_iter_between(nullptr, "ab", 2, 0, 2) == nullptr);
+
+  real_free(nullptr); // intentional no-op
+}

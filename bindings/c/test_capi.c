@@ -156,6 +156,16 @@ int main(void) {
   assert(hits[0] == 0 && hits[1] == 0);
   real_set_free(set);
 
+  /* null real_regex* handle contracts (use-after-free / closed-handle safety for bindings) */
+  assert(real_group_count(NULL) == 0);
+  char null_name[8];
+  null_name[0] = 'x';
+  assert(real_group_name(NULL, 1, null_name, sizeof null_name) == 0 && null_name[0] == '\0');
+  assert(real_find_iter(NULL, "ab", 2) == NULL);
+  assert(real_find_iter_at(NULL, "ab", 2, 0) == NULL);
+  assert(real_find_iter_between(NULL, "ab", 2, 0, 2) == NULL);
+  real_free(NULL); /* intentional no-op */
+
   printf("capi-test: OK\n");
   return 0;
 }

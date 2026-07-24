@@ -72,23 +72,26 @@ real_regex* real_compile(const char* pattern, size_t len, uint32_t flags,
                          char* errbuf, size_t errbuf_len, int* code);
 
 /* Number of capture-span slots per match: (capturing groups + 1) for group 0. The `spans` buffer passed to
- * real_iter_next must hold 2 * this many size_t. */
+ * real_iter_next must hold 2 * this many size_t. A NULL `re` returns 0 (invalid handle — zero slots). */
 size_t real_group_count(const real_regex* re);
 
 /* Write the name of capture group `group` (NUL-terminated) into `buf`, and return the name's length. A group
  * with no name (including group 0) writes an empty string and returns 0. `buf` may be NULL to query the
- * length only. */
+ * length only. A NULL `re` writes an empty string (if `buf` is non-NULL) and returns 0. */
 size_t real_group_name(const real_regex* re, size_t group, char* buf, size_t buflen);
 
+/* Free a pattern handle. NULL is a no-op (`delete nullptr` is intentional and safe). */
 void real_free(real_regex* re);
 
 /* Iterate the non-overlapping matches over [text, text+len). Both `re` and the text buffer must outlive the
- * returned iterator. Returns NULL if the iterator could not be constructed (allocation failure, or the engine
- * reporting an internal error) — the caller MUST check for NULL and must not call real_iter_next on it. */
+ * returned iterator. Returns NULL if `re` is NULL, or the iterator could not be constructed (allocation
+ * failure, or the engine reporting an internal error) — the caller MUST check for NULL and must not call
+ * real_iter_next on it. */
 real_iter* real_find_iter(const real_regex* re, const char* text, size_t len);
 
 /* Like real_find_iter, but the search starts at byte offset `start` (the region [start, len)). Anchors see
- * `start` as the region start, matching the engine's pos semantics. Same NULL contract as real_find_iter. */
+ * `start` as the region start, matching the engine's pos semantics. Same NULL contract as real_find_iter
+ * (NULL `re` → NULL iterator). */
 real_iter* real_find_iter_at(const real_regex* re, const char* text, size_t len, size_t start);
 
 /* Like real_find_iter, but bounded on both sides: matches are found within [start, end) of [text, len)
@@ -96,7 +99,7 @@ real_iter* real_find_iter_at(const real_regex* re, const char* text, size_t len,
  * as the end); `start` is the scan's anchor, not a slice (same pos semantics as real_find_iter_at — `\A`/`^`
  * without MULTILINE still fail at start > 0). `end` is clamped to len; start > end yields an immediately
  * exhausted iterator, not an error. A separate function rather than a real_find_iter_at overload — this ABI
- * has no default arguments. Same NULL contract as real_find_iter. */
+ * has no default arguments. Same NULL contract as real_find_iter (NULL `re` → NULL iterator). */
 real_iter* real_find_iter_between(const real_regex* re, const char* text, size_t len, size_t start, size_t end);
 
 /* Advance to the next match. On a match (return 1), fills `spans` with 2 * real_group_count(re) offsets
