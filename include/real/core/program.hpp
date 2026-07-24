@@ -35,8 +35,9 @@ namespace real {
   /*!
    * \brief Compilation flags, mirroring Python's `re.I`, `re.M` and `re.S`.
    *
-   * Combinable with \ref operator|. Case folding is ASCII-only, consistent with
-   * the library's character-class semantics.
+   * Combinable with \ref operator|. Case folding under \ref flags::icase is
+   * Unicode in text mode and ASCII-only under \ref flags::ascii (same split as
+   * the enumerator below and docs/divergences).
    */
   enum class flags : std::uint16_t
   {

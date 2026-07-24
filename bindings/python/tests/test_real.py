@@ -511,10 +511,10 @@ class TestIntentionalDivergences(unittest.TestCase):
         self.assertIsNotNone(real.compile(r"é", real.I).fullmatch("é"))
         self.assertIsNotNone(real.compile(r"é", real.I).fullmatch("É"))
         self.assertIsNotNone(real.compile("k", real.I).fullmatch("K"))  # k <-> Kelvin
-        # \w stays ASCII for now; \d \s are Unicode -- see test_shorthands_d_s_are_unicode.
+        # \w \d \s are Unicode in str mode (like re) — see test_shorthands_d_s_are_unicode.
 
     def test_shorthands_d_s_are_unicode(self):
-        # \d \s are Unicode in str mode (like re); \w stays ASCII for now.
+        # \d \s \w are Unicode in str mode (like re); real.A keeps them ASCII.
         self.assertEqual(real.findall(r"\d", "a٣b5"), ["٣", "5"])  # Arabic-Indic digit + ASCII
         self.assertIsNone(real.compile(r"\d").fullmatch("½"))       # No is not a \d digit
         self.assertIsNotNone(real.compile(r"\s").fullmatch("\u00a0"))  # NBSP
