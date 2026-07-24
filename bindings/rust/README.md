@@ -23,8 +23,9 @@ engine and this crate share one calendar version.
 ## The API
 
 The crate mirrors the [`regex`](https://docs.rs/regex) crate: `Regex` with `find` / `find_iter` / `captures`
-/ `captures_iter` / `is_match` / `replace` / `replace_all` / `replacen` (with `$`-templates, `NoExpand`, and
-closures) / `split` / `splitn`; `Match` (spans) and indexable `Captures` (`caps[0]`, `caps["name"]`);
+/ `captures_iter` / `capture_locations` + `captures_read` / `captures_read_iter` (reusable group slots) /
+`is_match` / `replace` / `replace_all` / `replacen` (with `$`-templates, `NoExpand`, and closures) /
+`split` / `splitn`; `Match` (spans) and indexable `Captures` (`caps[0]`, `caps["name"]`);
 `RegexBuilder` (case-insensitive, multi-line, `unicode(false)`, …); and a `bytes` module over `&[u8]`. Every
 method is verified against the `regex` crate by a differential test suite.
 

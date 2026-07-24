@@ -365,6 +365,60 @@ impl Regex {
         }
     }
 
+    /// A reusable capture-slot buffer for this pattern — drop-in for
+    /// [`regex::Regex::capture_locations`]. Pair with [`captures_read`](Regex::captures_read)
+    /// to extract groups without allocating a [`Captures`] per match.
+    pub fn capture_locations(&self) -> CaptureLocations {
+        CaptureLocations {
+            slots: vec![0; 2 * self.ngroups],
+            ngroups: self.ngroups,
+        }
+    }
+
+    /// Fill `locs` with the leftmost match's group spans (no per-match allocation). Returns the
+    /// whole-match [`Match`] span, or `None`. Mirrors `regex::Regex::captures_read`.
+    pub fn captures_read<'t>(
+        &self,
+        locs: &mut CaptureLocations,
+        text: &'t str,
+    ) -> Option<Match<'t>> {
+        self.captures_read_at(locs, text, 0)
+    }
+
+    /// Like [`captures_read`](Regex::captures_read), searching from byte offset `start`.
+    pub fn captures_read_at<'t>(
+        &self,
+        locs: &mut CaptureLocations,
+        text: &'t str,
+        start: usize,
+    ) -> Option<Match<'t>> {
+        locs.ensure(self.ngroups);
+        let mut c = self.raw(text, if start == 0 { None } else { Some(start) });
+        let (a, b) = c.advance()?;
+        c.copy_slots_into(locs);
+        Some(Match {
+            text,
+            start: a,
+            end: b,
+        })
+    }
+
+    /// Iterate non-overlapping matches without allocating a [`Captures`] per match.
+    /// Yields the whole-match [`Match`]; after each step, read groups with
+    /// [`CaptureLocationMatches::get`] (or copy into a [`CaptureLocations`] via
+    /// [`CaptureLocationMatches::read_captures`]). Prefer this over
+    /// [`captures_iter`](Regex::captures_iter) in capture-dense hot loops.
+    pub fn captures_read_iter<'r, 't>(
+        &'r self,
+        text: &'t str,
+    ) -> CaptureLocationMatches<'r, 't> {
+        CaptureLocationMatches {
+            raw: self.raw(text, None),
+            text,
+            ngroups: self.ngroups,
+        }
+    }
+
     /// Iterate the capture groups of each non-overlapping match in `text`.
     pub fn captures_iter<'r, 't>(&'r self, text: &'t str) -> CaptureMatches<'r, 't> {
         CaptureMatches { raw: self.raw(text, None), re: self, text }
@@ -693,6 +747,78 @@ impl SpanCursor<'_, '_> {
             SpanCursor::Fallback { cur, .. } => cur.clone(),
         }
     }
+
+    // Copy the current match's flat slots into a reusable CaptureLocations (no alloc).
+    fn copy_slots_into(&self, locs: &mut CaptureLocations) {
+        match self {
+            SpanCursor::Real(r) => {
+                locs.ensure(r.ngroups);
+                locs.slots.copy_from_slice(&r.buf);
+            }
+            #[cfg(feature = "fallback")]
+            SpanCursor::Fallback { cur, ngroups, .. } => {
+                locs.ensure(*ngroups);
+                for (g, s) in cur.iter().enumerate() {
+                    match s {
+                        Some((a, b)) => {
+                            locs.slots[2 * g] = *a;
+                            locs.slots[2 * g + 1] = *b;
+                        }
+                        None => {
+                            locs.slots[2 * g] = usize::MAX;
+                            locs.slots[2 * g + 1] = usize::MAX;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Reusable capture-slot buffer — drop-in for [`regex::CaptureLocations`].
+///
+/// Obtain via [`Regex::capture_locations`], refill with [`Regex::captures_read`] (or
+/// [`captures_read_at`](Regex::captures_read_at)). Spans are read with [`get`](CaptureLocations::get).
+/// The buffer is not tied to a text lifetime, so it can be reused across many subjects without
+/// allocating a [`Captures`] (or a group vector) per match.
+#[derive(Clone, Debug)]
+pub struct CaptureLocations {
+    slots: Vec<usize>, // flat [start0, end0, …]; usize::MAX marks an unset group
+    ngroups: usize,
+}
+
+impl CaptureLocations {
+    /// Number of capture slots, including group 0.
+    pub fn len(&self) -> usize {
+        self.ngroups
+    }
+
+    /// Whether there are no capture slots (never true for a live `Regex`).
+    pub fn is_empty(&self) -> bool {
+        self.ngroups == 0
+    }
+
+    /// Byte offsets `(start, end)` of group `i`, or `None` if the group did not participate
+    /// (or `i` is out of range).
+    pub fn get(&self, i: usize) -> Option<(usize, usize)> {
+        if i >= self.ngroups {
+            return None;
+        }
+        let a = self.slots[2 * i];
+        let b = self.slots[2 * i + 1];
+        if a == usize::MAX {
+            None
+        } else {
+            Some((a, b))
+        }
+    }
+
+    fn ensure(&mut self, ngroups: usize) {
+        if self.ngroups != ngroups || self.slots.len() != 2 * ngroups {
+            self.slots.resize(2 * ngroups, 0);
+            self.ngroups = ngroups;
+        }
+    }
 }
 
 /// A single match — one span into the subject (the whole match, or one capture group).
@@ -802,6 +928,66 @@ pub struct CaptureMatches<'r, 't> {
     raw: SpanCursor<'r, 't>,
     re: &'r Regex,
     text: &'t str,
+}
+
+/// Iterator over matches with reusable group slots — from [`Regex::captures_read_iter`].
+///
+/// After each [`next`](Iterator::next) that returns `Some`, the current match's groups are
+/// available via [`get`](CaptureLocationMatches::get) without allocating a [`Captures`].
+pub struct CaptureLocationMatches<'r, 't> {
+    raw: SpanCursor<'r, 't>,
+    text: &'t str,
+    ngroups: usize,
+}
+
+impl CaptureLocationMatches<'_, '_> {
+    /// Number of capture slots (including group 0).
+    pub fn len(&self) -> usize {
+        self.ngroups
+    }
+
+    /// Whether there are no capture slots.
+    pub fn is_empty(&self) -> bool {
+        self.ngroups == 0
+    }
+
+    /// Group `i` of the **current** match (after `next` returned `Some`), or `None` if unset /
+    /// out of range.
+    pub fn get(&self, i: usize) -> Option<(usize, usize)> {
+        if i >= self.ngroups {
+            return None;
+        }
+        match &self.raw {
+            SpanCursor::Real(r) => {
+                let a = r.buf[2 * i];
+                let b = r.buf[2 * i + 1];
+                if a == usize::MAX {
+                    None
+                } else {
+                    Some((a, b))
+                }
+            }
+            #[cfg(feature = "fallback")]
+            SpanCursor::Fallback { cur, .. } => cur.get(i).copied().flatten(),
+        }
+    }
+
+    /// Copy the current match's spans into `locs` (reusable across subjects / steps).
+    pub fn read_captures(&self, locs: &mut CaptureLocations) {
+        self.raw.copy_slots_into(locs);
+    }
+}
+
+impl<'t> Iterator for CaptureLocationMatches<'_, 't> {
+    type Item = Match<'t>;
+    fn next(&mut self) -> Option<Match<'t>> {
+        let (a, b) = self.raw.advance()?;
+        Some(Match {
+            text: self.text,
+            start: a,
+            end: b,
+        })
+    }
 }
 
 impl<'t> Iterator for CaptureMatches<'_, 't> {
@@ -1086,8 +1272,11 @@ impl<'t> Iterator for SplitN<'_, 't> {
 /// be valid UTF-8). Patterns compile in REAL's raw-byte mode (`\w \d \s \b` are ASCII); every other method
 /// mirrors the top-level string API. Group 0 is the whole match; spans are byte offsets.
 pub mod bytes {
-    use super::{compile_handle, real_find_iter, real_find_iter_at, real_free, Error, GroupInfo,
-                RawSpans, RealRegex, FLAG_ASCII, FLAG_DOTALL, FLAG_ICASE, FLAG_MULTILINE, FLAG_VERBOSE};
+    use super::{
+        compile_handle, real_find_iter, real_find_iter_at, real_free, CaptureLocations, Error,
+        GroupInfo, RawSpans, RealRegex, FLAG_ASCII, FLAG_DOTALL, FLAG_ICASE, FLAG_MULTILINE,
+        FLAG_VERBOSE,
+    };
     use std::borrow::Cow;
     use std::marker::PhantomData;
     use std::ops::Index;
@@ -1188,6 +1377,53 @@ pub mod bytes {
             {
                 let mut c = self.raw(text, Some(start));
                 c.advance().map(|_| self.caps_from(text, c.group_spans()))
+            }
+        }
+
+        /// Reusable capture-slot buffer — see [`crate::Regex::capture_locations`].
+        pub fn capture_locations(&self) -> CaptureLocations {
+            CaptureLocations {
+                slots: vec![0; 2 * self.ngroups],
+                ngroups: self.ngroups,
+            }
+        }
+
+        /// Fill `locs` with the leftmost match's groups (no per-match allocation).
+        pub fn captures_read<'t>(
+            &self,
+            locs: &mut CaptureLocations,
+            text: &'t [u8],
+        ) -> Option<Match<'t>> {
+            self.captures_read_at(locs, text, 0)
+        }
+
+        /// Like [`captures_read`](Regex::captures_read), searching from byte offset `start`.
+        pub fn captures_read_at<'t>(
+            &self,
+            locs: &mut CaptureLocations,
+            text: &'t [u8],
+            start: usize,
+        ) -> Option<Match<'t>> {
+            locs.ensure(self.ngroups);
+            let mut c = self.raw(text, if start == 0 { None } else { Some(start) });
+            let (a, b) = c.advance()?;
+            locs.slots.copy_from_slice(&c.buf);
+            Some(Match {
+                text,
+                start: a,
+                end: b,
+            })
+        }
+
+        /// Iterate matches without a per-match `Captures` — see [`crate::Regex::captures_read_iter`].
+        pub fn captures_read_iter<'r, 't>(
+            &'r self,
+            text: &'t [u8],
+        ) -> CaptureLocationMatches<'r, 't> {
+            CaptureLocationMatches {
+                raw: self.raw(text, None),
+                text,
+                ngroups: self.ngroups,
             }
         }
 
@@ -1331,6 +1567,52 @@ pub mod bytes {
         raw: RawSpans<'r, 't>,
         re: &'r Regex,
         text: &'t [u8],
+    }
+
+    /// Iterator over matches with reusable group slots — from [`Regex::captures_read_iter`].
+    pub struct CaptureLocationMatches<'r, 't> {
+        raw: RawSpans<'r, 't>,
+        text: &'t [u8],
+        ngroups: usize,
+    }
+
+    impl CaptureLocationMatches<'_, '_> {
+        /// Number of capture slots (including group 0).
+        pub fn len(&self) -> usize {
+            self.ngroups
+        }
+
+        /// Group `i` of the current match, or `None` if unset / out of range.
+        pub fn get(&self, i: usize) -> Option<(usize, usize)> {
+            if i >= self.ngroups {
+                return None;
+            }
+            let a = self.raw.buf[2 * i];
+            let b = self.raw.buf[2 * i + 1];
+            if a == usize::MAX {
+                None
+            } else {
+                Some((a, b))
+            }
+        }
+
+        /// Copy the current match into `locs`.
+        pub fn read_captures(&self, locs: &mut CaptureLocations) {
+            locs.ensure(self.ngroups);
+            locs.slots.copy_from_slice(&self.raw.buf);
+        }
+    }
+
+    impl<'t> Iterator for CaptureLocationMatches<'_, 't> {
+        type Item = Match<'t>;
+        fn next(&mut self) -> Option<Match<'t>> {
+            let (a, b) = self.raw.advance()?;
+            Some(Match {
+                text: self.text,
+                start: a,
+                end: b,
+            })
+        }
     }
 
     impl<'t> Iterator for CaptureMatches<'_, 't> {

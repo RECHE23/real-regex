@@ -521,12 +521,17 @@ operations:
   a span-0-only path that materializes no group vector, the crate is now **at parity-to-faster** than the
   pure-Rust `regex` crate: `[a-z]+` ≈ 0.8×, `[0-9]+` ≈ 0.7× (REAL ahead). The per-match allocation an earlier
   measurement flagged here is gone.
-- **`captures_iter`** (materializing every group) — the crate still allocates a group vector per match (the
-  groups have to be stored somewhere), so capture-dense extraction trails `regex` by roughly 2×. The buffer
-  reuse cut it (`[a-z]+` from ≈ 3.4× to ≈ 2×), but this residual is inherent to returning owned group spans.
+- **`captures_iter`** (materializing every group into an owned `Captures`) — allocates a group vector per
+  match. That cost is **not inherent**: the `regex` crate solves it with `capture_locations` +
+  `captures_read`, and **`real-regex` now exposes the same pair** plus a streaming
+  `captures_read_iter` (reusable slots, no per-match `Captures`). Prefer those in capture-dense hot
+  loops; `captures_iter` remains the ergonomic owned iterator. **arm64 M1 Pro**, dense ~100 KB, med of 21
+  (release): `[a-z]+` `captures_read_iter` **≈0.43×** the wall of `captures_iter` (~2.3× faster);
+  `(\w+) (\w+) (\w+) (\w+)` **≈0.93×** (search-dominated, still a clear win). The older « inherent to
+  returning owned group spans » wording is withdrawn.
 
-So on span throughput the crate is competitive; on full capture extraction it pays a bounded, understood
-allocation cost. Either way the pitch is not raw speed but the linear-time / ReDoS-safe guarantee and the
+So on span throughput the crate is competitive; on full capture extraction use the reusable buffer when it
+matters. Either way the pitch is not raw speed but the linear-time / ReDoS-safe guarantee and the
 **bounded lookarounds `regex` cannot compile at all**, delivered through a `regex`-shaped API. The numbers are
 noisy and machine-dependent (criterion reports CIs); reproduce with `make rust-bench`.
 
