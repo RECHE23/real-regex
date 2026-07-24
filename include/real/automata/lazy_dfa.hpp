@@ -80,8 +80,9 @@ namespace real::detail {
     return disabled;
   }
 
-  //! \brief Test/profile seam: skip dedicated class-loop and cp-class-loop fast paths so a pattern that
-  //!        would take them falls through to lazy-DFA / general (dispatch-optimality audit). Not for
+  //! \brief Test/profile seam: skip dedicated class-scan fast paths (byte class-loop, cp-class-loop,
+  //!        and codepoint_class / negated-class `.`/`[^,]+`) so a pattern that would take them falls
+  //!        through to lazy-DFA / general (dispatch-optimality audit; matrix4d class-scan rows). Not for
   //!        production — same contract as the other route-disabled seams.
   inline bool& class_fastpath_disabled()
   {

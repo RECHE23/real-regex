@@ -583,8 +583,10 @@ namespace real::detail {
         prof::tick_route(prof::route::fixed_shape);
         return run_fixed_shape(text, start, mode, out_slots);
       }
-      if (sem_ == match_semantics::first && prog_.hints.codepoint_class_ascii >= 0) {
+      if (sem_ == match_semantics::first && prog_.hints.codepoint_class_ascii >= 0
+          && (std::is_constant_evaluated() || !class_fastpath_disabled())) {
         // OPT-C-1b: the SWAR variant (Cascade) is chosen once per walk, like the class-loop cascade.
+        // class_fastpath_disabled: same test seam as class_loop / cp_class_loop (matrix codepoint_class rows).
         prof::tick_route(prof::route::codepoint_class);
         return run_codepoint_class<Cascade>(text, start, mode, out_slots);
       }
