@@ -64,14 +64,28 @@ TEST(features_probe_00_07_core_lookahead_lookbehind_bounded)
   EXPECT_EQ(re.pattern(), std::string_view(R"RRX((?<=a)b(?=c))RRX"));
 }
 
-TEST(features_probe_00_08_core_ascii_case_insensitive_matching_icase)
+TEST(features_probe_00_08_core_possessive_quantifiers_a_a_a_a_n_m)
+{
+  // Core / Possessive quantifiers `a*+ a++ a?+ a{n,m}+` — status: supported (must compile)
+  const real::regex re(R"RRX(a++b)RRX");
+  EXPECT_EQ(re.pattern(), std::string_view(R"RRX(a++b)RRX"));
+}
+
+TEST(features_probe_00_09_core_atomic_groups)
+{
+  // Core / Atomic groups `(?>...)` — status: supported (must compile)
+  const real::regex re(R"RRX((?>ab)c)RRX");
+  EXPECT_EQ(re.pattern(), std::string_view(R"RRX((?>ab)c)RRX"));
+}
+
+TEST(features_probe_00_10_core_ascii_case_insensitive_matching_icase)
 {
   // Core / ASCII case-insensitive matching (`icase`) — status: supported (must compile)
   const real::regex re(R"RRX((?i)ABC)RRX");
   EXPECT_EQ(re.pattern(), std::string_view(R"RRX((?i)ABC)RRX"));
 }
 
-TEST(features_probe_00_09_core_multiline_mode_per_line)
+TEST(features_probe_00_11_core_multiline_mode_per_line)
 {
   // Core / Multiline mode (`^`/`$` per line) — status: supported (must compile)
   const real::regex re(R"RRX((?m)^a$)RRX");
@@ -164,4 +178,4 @@ TEST(features_probe_05_01_excluded_by_design_conditional_groups_id_recursion_cal
   EXPECT_THROWS(real::regex(R"RRX((?(1)a|b))RRX"), real::regex_error);
 }
 
-// 19 compile-assertions, 2 throw-assertions, 1 skipped (planned / pattern: null).
+// 21 compile-assertions, 2 throw-assertions, 1 skipped (planned / pattern: null).

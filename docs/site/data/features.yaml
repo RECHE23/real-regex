@@ -76,6 +76,16 @@ categories:
         status: supported
         note: "REAL's ReDoS-safe bounded lookaround"
         pattern: "(?<=a)b(?=c)"
+      - construct: "Possessive quantifiers `a*+ a++ a?+ a{n,m}+`"
+        status: supported
+        note: "over a single atom, or one wrapped in one capturing group -- linear, ReDoS-safe; `re` 3.11+/PCRE2 parity, RE2/Rust `regex`/Go `regexp` reject the syntax; a compound body is planned"
+        link: "differences-from-re#div_possessive"
+        pattern: "a++b"
+      - construct: "Atomic groups `(?>...)`"
+        status: supported
+        note: "single atom or one-capture body -- linear; `re` 3.11+/PCRE2 parity, RE2/Rust reject; compound body planned"
+        link: "differences-from-re#div_possessive"
+        pattern: "(?>ab)c"
       - construct: "ASCII case-insensitive matching (`icase`)"
         status: supported
         note: "byte-for-byte ASCII fold; Unicode-aware folding is a text-mode extension of this"
