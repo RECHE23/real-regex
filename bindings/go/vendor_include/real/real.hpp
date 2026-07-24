@@ -243,6 +243,23 @@ namespace real {
       return g == npos ? std::string_view {} : (*this)[g];
     }
 
+    /*!
+     * \brief Flattened capture spans: `[start0, end0, start1, end1, …]` (byte offsets;
+     *        `npos` for an unset group). Same layout as the C-ABI `spans` buffer filled by
+     *        `real_iter_next` / `real_match`, so a binding can `memcpy` once instead of
+     *        re-walking groups via \ref start / \ref end.
+     *
+     * Empty when there are no slots. Callers that only care about a successful match still
+     * check \ref matched (or the C-ABI return code) first — this view is the raw storage.
+     */
+    [[nodiscard]] constexpr std::span<const std::size_t> spans() const noexcept
+    {
+      if (slots_.empty()) {
+        return {};
+      }
+      return std::span<const std::size_t>{&slots_[0], slots_.size()};
+    }
+
   private:
 
     std::string_view                     text_;       //!< The searched text.
