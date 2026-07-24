@@ -659,12 +659,16 @@ TEST(compat_regex_replace)
                               rc::regex_constants::format_no_copy),
             std::string("<1><2><3>"));
 
-  // const char* fmt + output-iterator overloads.
+  // const char* fmt + output-iterator overloads (std drop-in: both fmt forms for both sinks).
   EXPECT_EQ(rc::regex_replace(std::string("foo"), rc::regex("o"), "0"), std::string("f00"));
   std::string       sink;
   const std::string src {"a-b-c"};
   rc::regex_replace(std::back_inserter(sink), src.begin(), src.end(), rc::regex("-"), std::string("+"));
   EXPECT_EQ(sink, std::string("a+b+c"));
+  // Literal fmt decays to const CharT* — the overload that was missing vs std::regex.
+  std::string sink_lit;
+  rc::regex_replace(std::back_inserter(sink_lit), src.begin(), src.end(), rc::regex("-"), "+");
+  EXPECT_EQ(sink_lit, std::string("a+b+c"));
 
   // Std-backed pattern (backref) routes regex_replace to std::regex_replace.
   const rc::regex back(R"((a)\1)", rc::regex_constants::ECMAScript, rc::policy::fallback);
