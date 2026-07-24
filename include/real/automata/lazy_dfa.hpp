@@ -61,10 +61,10 @@ namespace real::detail {
   }
 
   //! \brief Test seam: force the inner-literal small-haystack guard off, so the route fires on any size. In
-  //!        production the guard keeps the route off a haystack too small for its per-iterator reverse cache to
-  //!        amortize (it would else be slower than the core). The correctness suites (the exhaustive compat run,
-  //!        the routed==core differential) use tiny inputs, so they set this to exercise the route itself rather
-  //!        than the core it would otherwise fall back to. Not for production use.
+  //!        production the guard uses a cold floor (\ref regex_immutables::il_min_haystack) on the first
+  //!        candidate-scan and \ref il_warm_floor thereafter (shared reverse DFA in \ref shared_dfa_slot).
+  //!        Correctness suites use tiny inputs, so they set this to exercise the route rather than the core
+  //!        fallback. Not for production use.
   inline bool& inner_literal_guard_disabled()
   {
     static bool disabled {false};

@@ -574,8 +574,11 @@ namespace real::detail {
               prof::tick_event(prof::event::memmem);
               return matched;
             }
+            // Fall through to core. Density/linearity set il_abandoned inside run_inner_literal
+            // (sticky for this haystack). Size-floor abandon is ephemeral so the next advance can
+            // re-enter IL after il_warmed flips (warm floor) — sticky size abandon would lock a
+            // reused <cold-floor buffer on core forever (audit 3.1).
             prof::tick_event(prof::event::il_abandoned);
-            state_.il_abandoned = true; // linearity or density guard: stay on the core for the rest of this haystack
           }
         }
       }
@@ -823,15 +826,22 @@ namespace real::detail {
         }
         if (first_candidate) {
           first_candidate = false;
-          // Small-haystack guard, decided ONCE at the first candidate (per-scan, made sticky by the caller's
-          // il_abandoned). It therefore applies only to a haystack that HAS a match — a no-match scan returns
-          // above, memmem-only, and is never gated (its huge win is safe by construction). Below the
-          // prefix-scaled threshold the reverse DFA's per-iterator cache does not amortize, so the core (the
-          // pre-IL baseline, with its own one-pass/lazy-DFA) is faster: hand it the whole scan.
+          // Small-haystack guard, once per scan (sticky via il_abandoned). Applies only when a match
+          // candidate exists — no-match is memmem-only and never gated. Floor is cold vs warm: cold
+          // first scan uses il_min_haystack (~94 KB email, amortizes reverse-DFA *build*); warm scans
+          // (shared il_prefix_rev already in shared_dfa_slot) use il_warm_floor (~4 KB). Key is
+          // slot.il_warmed ("this regex was candidate-scanned"), not "il_prefix_rev is built" — a
+          // corpus always below the cold floor would never build the reverse and would never warm.
           ensure_immutables();
-          if (!inner_literal_guard_disabled() && prog_.immut != nullptr && text.size() < prog_.immut->il_min_haystack) {
-            abandon = true;
-            return false;
+          if (!inner_literal_guard_disabled() && prog_.immut != nullptr) {
+            shared_dfa_slot&  slot  {shared_dfa_for(prog_.immut)};
+            const bool        warm  {slot.il_warmed.load(std::memory_order_relaxed)};
+            const std::size_t floor {warm ? il_warm_floor : prog_.immut->il_min_haystack};
+            slot.il_warmed.store(true, std::memory_order_relaxed); // next scan is warm even if we abandon
+            if (text.size() < floor) {
+              abandon = true;
+              return false;
+            }
           }
         }
         // O1 density gate: sticky candidate sample across the haystack (find_iter). Capture-free +
@@ -850,14 +860,16 @@ namespace real::detail {
             if (static_cast<std::size_t>(state_.il_density_cands) * 1000U / span >=
                 il_density_milli_threshold) {
               if (prog_.immut != nullptr && prog_.immut->byte_prog.eligible) {
-                abandon = true;
+                abandon                 = true;
+                state_.il_abandoned     = true; // sticky: dense memmem stream loses to core for this haystack
                 return false;
               }
             }
           }
         }
         if (h < min_pre_start) {
-          abandon = true; // guard 2: the scan is regressing into confirmed territory -> retry on the core
+          abandon             = true; // guard 2: regressing into confirmed territory -> core
+          state_.il_abandoned = true; // sticky for this haystack
           return false;
         }
         std::size_t s {h}; // boundary 0 = head literal: the reverse is the identity
@@ -1011,17 +1023,12 @@ namespace real::detail {
                          pv.cp_ranges           = prog_.prefix_cp_ranges;
                          pv.unicode_word        = prog_.unicode_word;
                          immut->il_prefix_prog  = build_byte_program(pv);
-                         // The reverse DFA's per-iterator cache re-warms per find_iter; below a size scaled by
-                         // the prefix byte-program (its cache size) that cost does not amortize on a cold
-                         // haystack that HAS candidates. Warm regime (shared DFAs + call_once): the email
-                         // \w+ dense crossover has collapsed — IL beats core from ~4 KB (2-ISA, 2026-07-23).
-                         // Floor is therefore set cold-safe, not warm-crossover: N = size * 28, clamped
-                         // [64 KB, 512 KB]. Email prefix ~3436 instr → ~94 KB (was size*64 → ~220 KB, a dead
-                         // warm ceiling that forced core and lost ~1.4× to rust under 220 KB). Date \d{4}
-                         // (~1031 instr) stays floor-clamped at 64 KB (1031*28 < 64K). HONESTY: the 94–128 KB
-                         // cold-dense window pays ~1–2.4% vs core (never crosses either ISA) — accepted price
-                         // for the warm ~1.35× vs rust win on 96–192 KB. Checked ONLY after the first memmem
-                         // hit (see run_inner_literal), so no-match — memmem-only — is never gated.
+                         // Cold first-scan floor only (see run_inner_literal + shared_dfa_slot::il_warmed).
+                         // Reverse DFA lives in the shared slot (not per-iterator). Build cost still needs a
+                         // high cold floor; warm scans use il_warm_floor (~4 KB). N = size * 28, clamped
+                         // [64 KB, 512 KB]: email ~3436 instr → ~94 KB cold; date ~1031 → 64 KB clamp.
+                         // HONESTY: 94–128 KB *cold-dense* may pay ~1–2.4% vs core (accepted). Checked ONLY
+                         // after the first memmem hit, so no-match — memmem-only — is never gated.
                          const std::size_t sz {immut->il_prefix_prog.code.size()};
                          immut->il_min_haystack = std::min<std::size_t>(512UL * 1024, std::max<std::size_t>(64UL * 1024, sz * 28));
                        }

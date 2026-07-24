@@ -573,7 +573,7 @@ namespace real::detail {
     lazy_byte_alphabet     alphabet;           //!< byte-class alphabet of byte_prog (shared by both DFAs, else recomputed per scan).
     std::optional<onepass> op_table;           //!< one-pass extractor, present iff the pattern is one-pass.
     byte_program           il_prefix_prog;     //!< IL: the inner-literal prefix's byte program (ineligible until built). Per-regex so the reverse DFA that spans it is a cheap shared wrapper, not a per-find_iter rebuild.
-    std::size_t            il_min_haystack {}; //!< IL: on a haystack that HAS a candidate, the route only fires at or above this size (0 = always). The prefix reverse DFA's cache is per-iterator and re-warms per find_iter; below N that cost does not amortize and the core is faster. Checked ONLY after the first memmem hit, so a no-match haystack (memmem-only) is never gated. Scaled by the prefix byte-program size (its cache size); see \ref pike_vm::run_inner_literal.
+    std::size_t            il_min_haystack {}; //!< IL cold floor: first candidate-scan on this regex only fires at or above this size when the haystack HAS a match (0 = always). Warm scans use \ref il_warm_floor (shared reverse DFA in \ref shared_dfa_slot). Checked ONLY after the first memmem hit — no-match is never gated. Scaled by prefix byte-program size; see \ref pike_vm::run_inner_literal.
     std::once_flag         once;               //!< guards the one-time build.
 
     // A copied regex is an independent regex: it gets its own fresh, unbuilt cache rather than sharing
@@ -620,7 +620,17 @@ namespace real::detail {
     std::optional<lazy_dfa>    fwd;
     std::optional<reverse_dfa> rev;
     std::optional<reverse_dfa> il_prefix_rev;
+    //! \brief True after this regex has been IL-candidate-scanned at least once (any size).
+    //!        Cold first scan keeps the high \ref regex_immutables::il_min_haystack floor; warm
+    //!        scans use \ref il_warm_floor. Not "il_prefix_rev is built" — a always-<floor corpus
+    //!        would never build the reverse DFA and would never drop the floor (audit 3.1).
+    std::atomic<bool>          il_warmed {false};
   };
+
+  //! \brief Warm-regime IL min haystack (bytes). Shared reverse DFA amortizes after scan 1; below this
+  //!        even warm IL may not win (measured ~4 KB email dense collapse, 2026-07). Cold first scan
+  //!        still uses \ref regex_immutables::il_min_haystack (~94 KB email).
+  inline constexpr std::size_t il_warm_floor {4UL * 1024};
 
   inline std::mutex& shared_dfa_map_mu()
   {
@@ -688,6 +698,7 @@ namespace real::detail {
     slot.fwd.reset();
     slot.rev.reset();
     slot.il_prefix_rev.reset();
+    slot.il_warmed.store(false, std::memory_order_relaxed);
   }
 
   //! \brief Test/audit: number of live shared-DFA map entries (process-wide). Not for production.
