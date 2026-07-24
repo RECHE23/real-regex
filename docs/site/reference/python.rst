@@ -11,8 +11,11 @@ Synopsis
 ``import real`` and use it like ``re`` -- the same functions, the same
 ``Pattern`` / ``Match`` shapes, rendered here straight from the binding's own
 docstrings (the text ``help()`` shows). Everything runs on the linear-time,
-ReDoS-safe engine; the extensions beyond ``re`` say so in their docstrings
-(``count_matches``, the ``fallback`` policy, ``RegexSet``).
+ReDoS-safe engine by default; the opt-in ``fallback`` policy delegates a
+pattern REAL would reject to the standard-library ``re`` and forfeits that
+guarantee for it -- ``Pattern.engine`` reports which backend ran. The
+extensions beyond ``re`` say so in their docstrings (``count_matches``, the
+``fallback`` policy, ``RegexSet``).
 
 Functions
 ---------
@@ -83,10 +86,13 @@ Flags and module data
 Complexity
 ----------
 
-Every call runs the same engine the C++ pages document: matching is
+Every pattern REAL accepts runs the engine the C++ pages document: matching is
 **guaranteed linear** -- O(len(string)) -- and never backtracks (ReDoS-safe),
-for ``str`` and ``bytes`` alike. The Python-vs-``re`` numbers live in
-:doc:`Performance <../performance/index>`.
+for ``str`` and ``bytes`` alike. The opt-in ``fallback=True`` (per call, or
+``real.fallback = True``) routes a pattern REAL rejects to the backtracking
+stdlib ``re``, trading the linear-time guarantee for that pattern;
+``Pattern.engine`` (``"real"`` / ``"re"``) tells you which ran. The
+Python-vs-``re`` numbers live in :doc:`Performance <../performance/index>`.
 
 Example
 -------
