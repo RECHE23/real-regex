@@ -99,6 +99,26 @@ fn capture_names_and_named_lookup_agree() {
     assert_eq!(&c[1], &s[1]);
 }
 
+/// Long group names must not truncate (old fixed 128-byte buffer) or alias-collapse in by_name.
+#[test]
+fn long_group_names_full_and_distinct() {
+    // 140 'a's shared prefix, then distinct tails — past the old 127-byte clamp.
+    let prefix: String = std::iter::repeat('a').take(140).collect();
+    let name1 = format!("{prefix}_one");
+    let name2 = format!("{prefix}_two");
+    let pat = format!("(?P<{name1}>x)(?P<{name2}>y)");
+    let re = Regex::new(&pat).expect("compile long names");
+    let names: Vec<_> = re.capture_names().collect();
+    assert_eq!(names.len(), 3); // group 0 + two named
+    assert_eq!(names[1].as_deref(), Some(name1.as_str()));
+    assert_eq!(names[2].as_deref(), Some(name2.as_str()));
+    assert_ne!(names[1], names[2], "alias collapse: truncated names collided");
+
+    let c = re.captures("xy").expect("match");
+    assert_eq!(c.name(&name1).map(|m| m.as_str()), Some("x"));
+    assert_eq!(c.name(&name2).map(|m| m.as_str()), Some("y"));
+}
+
 #[test]
 fn strict_rejects_a_backreference() {
     // A backreference cannot run linearly: the strict engine rejects it (regex rejects it too, for lack of

@@ -176,14 +176,18 @@ fn compile_handle(pattern: &[u8], flags: u32) -> Result<(*mut RealRegex, usize, 
     let ngroups = unsafe { real_group_count(handle) };
     let mut names = Vec::with_capacity(ngroups);
     let mut by_name = HashMap::new();
+    // Two-call protocol (same shape as Go SubexpNames): length query with null buf, then
+    // exact-sized fill — no fixed buffer, no 127-byte truncation / name-map alias collapse.
     for g in 0..ngroups {
-        let mut buf = [0u8; 128];
-        let len = unsafe { real_group_name(handle, g, buf.as_mut_ptr() as *mut c_char, buf.len()) };
+        let len = unsafe { real_group_name(handle, g, std::ptr::null_mut(), 0) };
         if len == 0 {
             names.push(None);
         } else {
-            let n = len.min(buf.len() - 1);
-            let name = String::from_utf8_lossy(&buf[..n]).into_owned();
+            let mut buf = vec![0u8; len + 1];
+            unsafe {
+                real_group_name(handle, g, buf.as_mut_ptr() as *mut c_char, buf.len());
+            }
+            let name = String::from_utf8_lossy(&buf[..len]).into_owned();
             by_name.insert(name.clone(), g);
             names.push(Some(name));
         }
