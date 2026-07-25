@@ -1099,19 +1099,25 @@ namespace real::detail {
       // everywhere). Mixed shapes ((\d{4})-(\d{2})-(\d{2})) stay on the scalar walk. Lead/trail `\b`
       // are zero-width and do not affect homogeneity of the consuming run.
       if (hints.fixed_shape) {
-        bool          homogeneous {true};
-        bool          have_first  {false};
-        std::uint8_t  lo0         {};
-        std::uint8_t  hi0         {};
-        std::uint8_t  lo1         {1};
-        std::uint8_t  hi1         {};
-        std::uint32_t len         {};
+        // Collect every position's accepted set ONCE, then decide: homogeneous (the fused scan+verify
+        // below) or, failing that, the two-position pair filter (\ref pattern_hints::fs_pair_width).
+        // The walk used to `break` the moment homogeneity died, which is why a mixed shape got no
+        // vector help at all; it now records and keeps going.
+        std::array<std::uint8_t, 16> plo0s       {};
+        std::array<std::uint8_t, 16> phi0s       {};
+        std::array<std::uint8_t, 16> plo1s       {};
+        std::array<std::uint8_t, 16> phi1s       {};
+        bool                         all_small   {true}; // every position resolved to 1..2 ranges
+        std::uint32_t                len         {};
         for (std::size_t pc {static_cast<std::size_t>(hints.body_pc)}; pc < i; ++pc) {
           const opcode op {code[pc].op};
           if (op != opcode::byte && op != opcode::klass) {
-            continue; // interleaved capturing save or trail assert -- epsilon for this purpose
+            continue;          // interleaved capturing save or trail assert -- epsilon for this purpose
           }
-          ++len;
+          if (len >= 16) {
+            all_small = false; // wider than one vector block; neither path applies
+            break;
+          }
           std::uint8_t plo0 {};
           std::uint8_t phi0 {};
           std::uint8_t plo1 {1};
@@ -1123,28 +1129,71 @@ namespace real::detail {
           else {
             const int ranges {class_range_count(classes[code[pc].arg16], plo0, phi0, plo1, phi1)};
             if (ranges < 1 || ranges > 2) {
+              all_small = false;
+              break;
+            }
+          }
+          plo0s[len] = plo0;
+          phi0s[len] = phi0;
+          plo1s[len] = plo1;
+          phi1s[len] = phi1;
+          ++len;
+        }
+        if (all_small && len >= 1 && len <= 16) {
+          bool homogeneous {true};
+          for (std::uint32_t k {1}; k < len; ++k) {
+            if (plo0s[k] != plo0s[0] || phi0s[k] != phi0s[0]
+                || plo1s[k] != plo1s[0] || phi1s[k] != phi1s[0]) {
               homogeneous = false;
               break;
             }
           }
-          if (!have_first) {
-            lo0        = plo0;
-            hi0        = phi0;
-            lo1        = plo1;
-            hi1        = phi1;
-            have_first = true;
+          if (homogeneous) {
+            hints.fixed_shape_lo0      = plo0s[0];
+            hints.fixed_shape_hi0      = phi0s[0];
+            hints.fixed_shape_lo1      = plo1s[0];
+            hints.fixed_shape_hi1      = phi1s[0];
+            hints.fixed_shape_simd_len = static_cast<std::uint8_t>(len);
           }
-          else if (plo0 != lo0 || phi0 != hi0 || plo1 != lo1 || phi1 != hi1) {
-            homogeneous = false; // a position needs a different set -- not uniform, disqualified
-            break;
+          else if (len >= 2) {
+            // Pick the two most selective positions: smallest accepted-set cardinality, ties broken
+            // toward the widest separation so the two probes decorrelate (adjacent bytes of real text
+            // correlate; distant ones much less). O(len^2) over len <= 16, at compile time.
+            const auto card = [&](std::uint32_t k) {
+                                std::uint32_t c {static_cast<std::uint32_t>(phi0s[k] - plo0s[k]) + 1U};
+                                if (plo1s[k] <= phi1s[k]) {
+                                  c += static_cast<std::uint32_t>(phi1s[k] - plo1s[k]) + 1U;
+                                }
+                                return c;
+                              };
+            std::uint32_t best_a {0};
+            std::uint32_t best_b {1};
+            std::uint32_t best_c {card(0) + card(1)};
+            std::uint32_t best_d {1};
+            for (std::uint32_t a {0}; a < len; ++a) {
+              for (std::uint32_t b {a + 1}; b < len; ++b) {
+                const std::uint32_t c {card(a) + card(b)};
+                const std::uint32_t d {b - a};
+                if (c < best_c || (c == best_c && d > best_d)) {
+                  best_a = a;
+                  best_b = b;
+                  best_c = c;
+                  best_d = d;
+                }
+              }
+            }
+            hints.fs_pair_width = static_cast<std::uint8_t>(len);
+            hints.fs_pair_off_a = static_cast<std::uint8_t>(best_a);
+            hints.fs_pair_off_b = static_cast<std::uint8_t>(best_b);
+            hints.fs_pair_a_lo0 = plo0s[best_a];
+            hints.fs_pair_a_hi0 = phi0s[best_a];
+            hints.fs_pair_a_lo1 = plo1s[best_a];
+            hints.fs_pair_a_hi1 = phi1s[best_a];
+            hints.fs_pair_b_lo0 = plo0s[best_b];
+            hints.fs_pair_b_hi0 = phi0s[best_b];
+            hints.fs_pair_b_lo1 = plo1s[best_b];
+            hints.fs_pair_b_hi1 = phi1s[best_b];
           }
-        }
-        if (homogeneous && have_first && len >= 1 && len <= 16) {
-          hints.fixed_shape_lo0      = lo0;
-          hints.fixed_shape_hi0      = hi0;
-          hints.fixed_shape_lo1      = lo1;
-          hints.fixed_shape_hi1      = hi1;
-          hints.fixed_shape_simd_len = static_cast<std::uint8_t>(len);
         }
       }
     }
@@ -1728,6 +1777,7 @@ namespace real::detail {
       hints.greedy_class_loop     = -1;
       hints.exact_literal_len     = 0;
       hints.fixed_shape           = false;
+      hints.fs_pair_width         = 0;    // paired with fixed_shape: never read without it
       hints.codepoint_class_ascii = -1;
       hints.fixed_alternation     = false;
     }
@@ -1823,6 +1873,24 @@ namespace real::detail {
     // Rare discriminant past an optional mono-byte (URL `https?://`): memchr the disc, back-verify
     // prefix+opt+after. Preferable to a weak literal prefix (`http`) when the disc is rarer.
     extract_rare_discriminant(code, hints);
+
+    // Veto the heterogeneous fixed-shape pair filter when the ordinary prefilter already has a
+    // single-byte `memchr` for this pattern -- a required rare byte at a fixed offset (\ref
+    // pattern_hints::rare_byte) or a unique first byte (\ref pattern_hints::single_first). Placed here,
+    // not in detect_fast_shapes, because neither hint exists yet at that point (both are computed
+    // below/above this line, after the shape walk).
+    //
+    // This is a measured veto, and the reason it is SEMANTIC rather than an ISA gate. `[0-9]{2}:[0-9]{2}`
+    // carries `rare_byte = ':'`, so next_candidate memchrs it; on x86-64 that is glibc's AVX2 memchr
+    // (256-bit) against this filter's 128-bit block, and the pair path measured **+42 % SLOWER** there
+    // while +16 % faster on arm64 -- the same per-ISA trap the NEON-gated literal filter hit. But unlike
+    // that one, the discriminator here is not the ISA: it is whether a single byte suffices at all. An
+    // icase literal has no single-byte position (`(?i)cafe` is four 2-sets, rare_byte and single_first
+    // both -1), so nothing memchrs it and the pair filter wins on BOTH ISAs (-64 % x86, -67 % arm64).
+    // Vetoing on the hint keeps that win everywhere instead of surrendering x86 to a gate.
+    if (hints.rare_byte >= 0 || hints.single_first >= 0) {
+      hints.fs_pair_width = 0;
+    }
 
     // Fold the exact-literal one-search decision, LAST: it reads anchored_start (extract_anchoring),
     // prefix_size/exact_literal_len (extract_prefix, already zeroed by the lookaround wipe above when

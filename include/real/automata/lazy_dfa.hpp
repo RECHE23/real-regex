@@ -80,6 +80,17 @@ namespace real::detail {
     return disabled;
   }
 
+  //! \brief Test seam: force the matcher off the heterogeneous fixed-shape pair-filter route onto the
+  //!        ordinary \c run_fixed_shape walk, so a differential can assert routed and unrouted agree.
+  //!        The route is transparent by contract (it only *filters* candidates; the same
+  //!        `match_fixed_body_wb` verify decides every one of them), and this seam is what proves it.
+  //!        Not for production use.
+  inline bool& fixed_shape_pair_route_disabled()
+  {
+    static bool disabled {false};
+    return disabled;
+  }
+
   //! \brief Test/profile seam: skip dedicated class-scan fast paths (byte class-loop, cp-class-loop,
   //!        and codepoint_class / negated-class `.`/`[^,]+`) so a pattern that would take them falls
   //!        through to lazy-DFA / general (dispatch-optimality audit; matrix4d class-scan rows). Not for
