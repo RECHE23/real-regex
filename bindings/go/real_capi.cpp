@@ -178,9 +178,15 @@ int real_iter_next(real_iter* iter, size_t* spans)
       return 0;
     }
     const auto& m {*iter->it};
-    for (size_t g = 0; g < m.size(); ++g) {
-      spans[2 * g]       = m.start(g);
-      spans[(2 * g) + 1] = m.end(g);
+    // Read the flat slots directly: the cursor already established a match, so start(g)/end(g)'s
+    // per-group matched()/bound re-test is dead work. Pairwise, never memcpy (runtime length -> libc
+    // call, dearer than the stores at the 1-2 slot shapes that dominate).
+    const auto          flat {m.spans()};
+    const size_t        ng   {flat.size() / 2};
+    const size_t* const src  {flat.data()};
+    for (size_t g = 0; g < ng; ++g) {
+      spans[2 * g]       = src[2 * g];
+      spans[(2 * g) + 1] = src[(2 * g) + 1];
     }
     ++iter->it;
     return 1;
@@ -229,9 +235,13 @@ int real_match(const real_regex* re, const char* text, size_t len,
       return 0;
     }
     if (spans != nullptr) {
-      for (size_t g = 0; g < result.size(); ++g) {
-        spans[2 * g]       = result.start(g);
-        spans[(2 * g) + 1] = result.end(g);
+      // Same flat pairwise read as real_iter_next: the match is already established above.
+      const auto          flat {result.spans()};
+      const size_t        ng   {flat.size() / 2};
+      const size_t* const src  {flat.data()};
+      for (size_t g = 0; g < ng; ++g) {
+        spans[2 * g]       = src[2 * g];
+        spans[(2 * g) + 1] = src[(2 * g) + 1];
       }
     }
     return 1;

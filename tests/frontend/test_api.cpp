@@ -220,3 +220,29 @@ TEST(program_size_limit)
     EXPECT(what.find("program too large") != std::string::npos);
   }
 }
+
+// match_result::spans() -- the flat [start0,end0,start1,end1,...] view of the capture slots. It is the
+// raw storage (the C ABI's fill reads straight across it after checking the return code), so the two
+// facts worth pinning are the layout/length contract and the empty case.
+TEST(match_result_spans_flat_layout)
+{
+  const real::regex re {R"((\w+)@(\w+))"};
+  const auto        m  {re.search("mail root@localhost end")};
+  EXPECT(m.matched());
+
+  const auto flat {m.spans()};
+  EXPECT_EQ(flat.size(), 2U * m.size()); // two slots per group, group 0 included
+  EXPECT_EQ(flat.size(), 6U);
+  for (std::size_t g = 0; g < m.size(); ++g) {
+    EXPECT_EQ(flat[2 * g], m.start(g));         // identical to the per-group accessors on a match
+    EXPECT_EQ(flat[(2 * g) + 1], m.end(g));
+  }
+  EXPECT_EQ(flat[0], 5U);
+  EXPECT_EQ(flat[1], 19U);
+
+  // A result with no slots at all (default-constructed) yields an empty view rather than a
+  // one-past-the-end pointer.
+  const real::match_result empty;
+  EXPECT(empty.spans().empty());
+  EXPECT_EQ(empty.spans().size(), 0U);
+}
