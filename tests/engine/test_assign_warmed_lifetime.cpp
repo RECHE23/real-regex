@@ -68,9 +68,9 @@ TEST(sort_two_warmed_regexes)
   (void) matches(v[0], corpus);
   (void) matches(v[1], corpus);
   // Order by pattern text so move/assign fire under sort.
-  std::sort(v.begin(), v.end(), [](const real::regex& a, const real::regex& b) {
-              return a.pattern() < b.pattern();
-            });
+  std::ranges::sort(v, [](const real::regex& a, const real::regex& b) {
+                      return a.pattern() < b.pattern();
+                    });
   // Whichever ends as key= must still count.
   std::size_t key_hits {0};
   for (const auto& r : v) {
