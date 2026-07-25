@@ -648,7 +648,7 @@ namespace real::detail {
 
     //! \brief The regex this slot belongs to, or null once \ref erase_shared_dfas has retired it.
     //!
-    //! This is what validates a thread's last-hit cache in \ref shared_dfa_for: a cached slot is still
+    //! This is what validates a thread's last-hit cache in \ref shared_dfa_for — a cached slot is still
     //! this regex's slot exactly while `owner == immut`. The predecessor was a single process-wide
     //! epoch counter bumped on every erase, which meant ANY regex's destruction invalidated EVERY
     //! thread's cache and sent them all back to \ref shared_dfa_map_mu — the global mutex the cache

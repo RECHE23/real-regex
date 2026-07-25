@@ -555,7 +555,7 @@ namespace real {
       //! (measured) for a decision that cannot change. The caller adds only `slot_count == 2`,
       //! which lives on the program rather than here. Assertion-freeness is computed directly from
       //! `code` and deliberately **not** inferred from \ref wb_lead / \ref anchored_start / \ref
-      //! line_anchored: an assert kind those hints do not represent would make that inference
+      //! line_anchored — an assert kind those hints do not represent would make that inference
       //! silently unsound. Appended last (same placement rule as \ref alternation_branch_count).
       bool literal_one_search {};
     };
