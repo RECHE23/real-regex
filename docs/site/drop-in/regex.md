@@ -55,7 +55,9 @@ Condensed — the full list with tables is the crate's own
 REAL's closest peer on the linear-time axis — the honest duel, both ISAs, full
 tables and method in {doc}`Performance <../performance/index>`:
 
+<!-- Anchor must be UNIQUE in BENCHMARKS.md: "**Reading — verdict brut" appears twice (§A and §E),
+     so it cannot be used here. -->
 ```{include} ../../BENCHMARKS.md
-:start-after: "**Reading — verdict brut, and the ISA genuinely changes the picture here, not just the margins.**"
+:start-after: "The ISA no longer splits this table"
 :end-before: "Two things carry a caveat"
 ```

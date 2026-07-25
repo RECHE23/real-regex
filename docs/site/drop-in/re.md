@@ -49,7 +49,9 @@ character-name lookup exists only on the Python surface (no C++ name table).
 From the shared binding benchmark — full tables and method in
 {doc}`Performance <../performance/index>`:
 
+<!-- Anchors slice BENCHMARKS.md by literal text: keep them on the row TAIL, not the ratio, so a
+     §B re-stamp does not break this include (it did once). -->
 ```{include} ../../BENCHMARKS.md
-:start-after: "**~3×10⁶×** (ReDoS) |"
+:start-after: "(ReDoS) |"
 :end-before: "### finditer memory"
 ```

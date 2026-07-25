@@ -68,8 +68,10 @@ comment of
 Single-pattern, from the shared four-engine benchmark — full tables in
 {doc}`Performance <../performance/index>`:
 
+<!-- Anchor on the phrase, not the figure: "Never below 5.4×." became "4.5×" at a §A re-stamp and
+     broke this include. -->
 ```{include} ../../BENCHMARKS.md
-:start-after: "Never below 5.4×."
+:start-after: "Never below"
 :end-before: "- **REAL vs PCRE2-JIT"
 ```
 
