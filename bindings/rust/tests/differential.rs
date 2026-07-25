@@ -13,6 +13,15 @@ const CASES: &[(&str, &str)] = &[
     (r"\bword\b", "a word in words and word."),
     (r"(?P<user>\w+)@(?P<host>\w+)", "root@localhost, guest@remote"),
     (r"(a)(b)?(c)", "ac abc ac"), // an optional group that sometimes does not participate
+    // Group counts that straddle Captures' inline slot capacity (2 slots per group, group 0 included):
+    // 4 groups fill it exactly, 5+ spill to the heap. Both sides of that boundary must agree with the
+    // regex crate on every group, and the optional groups keep unset slots in the mix while spilled.
+    (r"(\w)(\w)(\w)", "abc def"),
+    (r"(\w)(\w)(\w)(\w)", "abcd efgh"),
+    (r"(\w)(\w)(\w)(\w)(\w)", "abcde fghij"),
+    (r"(\w)(\w)(\w)(\w)(\w)(\w)(\w)(\w)", "abcdefgh ijklmnop"),
+    (r"(a)(b)?(c)(d)?(e)(f)?(g)", "aceg abcdefg aceg"),
+    (r"(?P<a>\w)(?P<b>\w)(?P<c>\w)(?P<d>\w)(?P<e>\w)(?P<f>\w)", "abcdef ghijkl"),
 ];
 
 fn spans_of(m: Option<real_regex::Match>) -> Option<(usize, usize)> {

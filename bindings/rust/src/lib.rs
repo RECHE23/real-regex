@@ -102,6 +102,69 @@ struct GroupInfo {
     by_name: HashMap<String, usize>,  // name -> group index
 }
 
+// Inline capacity of a Captures, in SLOTS (two per group, group 0 included) — 8 slots = 4 groups.
+// Covers the overwhelming majority of real patterns; beyond it a Captures spills to the heap once.
+const CAPS_INLINE_SLOTS: usize = 8;
+
+// Capture slots for one match, flat and inline: [start0, end0, start1, end1, …], usize::MAX marking a
+// group that did not participate — the same representation the C ABI fills and CaptureLocations holds,
+// so building one is a straight copy with no per-group Option mapping.
+//
+// Why inline: Captures must OWN its slots (it outlives the iterator step that produced it), and the
+// previous Vec<Option<(usize, usize)>> meant one malloc + free per match. On a groupless pattern that
+// was ~19–27 ns/match of pure allocator traffic to carry a single span — measured as the whole of the
+// crate's captures_iter-vs-find_iter gap, and the reason `regex`'s captures_iter costs what its
+// find_iter costs while ours cost 1.6–2.6× more. Spilling keeps the many-group case correct rather
+// than capping it.
+#[derive(Clone, Debug)]
+enum SlotStore {
+    Inline { len: u8, slots: [usize; CAPS_INLINE_SLOTS] },
+    Spilled(Box<[usize]>),
+}
+
+impl SlotStore {
+    // Take a flat slot run (len = 2 * ngroups) by value-copy, inline when it fits.
+    fn from_flat(src: &[usize]) -> SlotStore {
+        if src.len() <= CAPS_INLINE_SLOTS {
+            let mut slots = [usize::MAX; CAPS_INLINE_SLOTS];
+            slots[..src.len()].copy_from_slice(src);
+            SlotStore::Inline { len: src.len() as u8, slots }
+        } else {
+            SlotStore::Spilled(src.to_vec().into_boxed_slice())
+        }
+    }
+
+    fn as_slice(&self) -> &[usize] {
+        match self {
+            SlotStore::Inline { len, slots } => &slots[..*len as usize],
+            SlotStore::Spilled(b) => b,
+        }
+    }
+
+    // Byte offsets of group `i`, or None when it did not participate (or `i` is out of range).
+    // checked_mul, not `2 * i`: `i` is caller-supplied (Captures::get / Index take any usize), and a
+    // plain multiply panics on overflow in a debug build for i > usize::MAX / 2. The slot indexing is
+    // this type's own doing -- the Vec<Option<_>> this replaced was indexed by group, so it could not
+    // overflow -- so the bound has to be re-established here. `lo + 1` cannot overflow: lo came back
+    // from a successful get() on a slice, so lo < len <= isize::MAX.
+    fn group(&self, i: usize) -> Option<(usize, usize)> {
+        let s = self.as_slice();
+        let lo = i.checked_mul(2)?;
+        let a = *s.get(lo)?;
+        let b = *s.get(lo + 1)?;
+        if a == usize::MAX {
+            None
+        } else {
+            Some((a, b))
+        }
+    }
+
+    // Slot count / 2 — the number of groups, group 0 included.
+    fn ngroups(&self) -> usize {
+        self.as_slice().len() / 2
+    }
+}
+
 // The standard unsupported-construct error, hint included (shared by the engine path and the pre-scan below).
 fn unsupported_construct(construct: &str) -> Error {
     Error::Unsupported {
@@ -320,8 +383,8 @@ impl Regex {
         SpanCursor::Real(RawSpans { iter, handle: self.handle, text: text.as_bytes(), ngroups: self.ngroups, buf: vec![0usize; 2 * self.ngroups], last_end: None, drive_pos: None, utf8: true, _re: PhantomData })
     }
 
-    fn caps_from<'t>(&self, text: &'t str, spans: Vec<Option<(usize, usize)>>) -> Captures<'t> {
-        Captures { text, spans, groups: Arc::clone(&self.groups) }
+    fn caps_from<'t>(&self, text: &'t str, cur: &SpanCursor<'_, '_>) -> Captures<'t> {
+        Captures { text, slots: cur.slot_store(), groups: Arc::clone(&self.groups) }
     }
 
     /// Whether the pattern matches anywhere in `text`.
@@ -353,7 +416,7 @@ impl Regex {
     pub fn captures<'t>(&self, text: &'t str) -> Option<Captures<'t>> {
         {
             let mut c = self.raw(text, None);
-            c.advance().map(|_| self.caps_from(text, c.group_spans()))
+            c.advance().map(|_| self.caps_from(text, &c))
         }
     }
 
@@ -361,7 +424,7 @@ impl Regex {
     pub fn captures_at<'t>(&self, text: &'t str, start: usize) -> Option<Captures<'t>> {
         {
             let mut c = self.raw(text, Some(start));
-            c.advance().map(|_| self.caps_from(text, c.group_spans()))
+            c.advance().map(|_| self.caps_from(text, &c))
         }
     }
 
@@ -688,15 +751,6 @@ impl RawSpans<'_, '_> {
         Some(m)
     }
 
-    // The full group-span vector of the current match (call after advance() returned Some). Allocates once.
-    fn group_spans(&self) -> Vec<Option<(usize, usize)>> {
-        (0..self.ngroups)
-            .map(|g| {
-                let (a, b) = (self.buf[2 * g], self.buf[2 * g + 1]);
-                if a == usize::MAX { None } else { Some((a, b)) }
-            })
-            .collect()
-    }
 }
 
 impl Drop for RawSpans<'_, '_> {
@@ -719,9 +773,9 @@ enum SpanCursor<'r, 't> {
 }
 
 impl SpanCursor<'_, '_> {
-    // Advance to the next match; return its whole-match span (group 0). The group spans are then available via
-    // group_spans() — for the Real backend from the reused buffer (no per-match allocation), so find_iter /
-    // is_match / split never materialize a group vector; only captures_iter does.
+    // Advance to the next match; return its whole-match span (group 0). The group slots are then available
+    // via slot_store() / write_slots() — for the Real backend straight out of the reused flat buffer, so
+    // find_iter / is_match / split touch no group storage at all; only captures_iter builds a Captures.
     fn advance(&mut self) -> Option<(usize, usize)> {
         match self {
             SpanCursor::Real(r) => r.advance(),
@@ -739,39 +793,58 @@ impl SpanCursor<'_, '_> {
         }
     }
 
-    // The full group-span vector of the current match (after advance() returned Some).
-    fn group_spans(&self) -> Vec<Option<(usize, usize)>> {
+    // Number of capture slots this cursor reports per match (2 per group, group 0 included).
+    fn nslots(&self) -> usize {
         match self {
-            SpanCursor::Real(r) => r.group_spans(),
+            SpanCursor::Real(r) => 2 * r.ngroups,
             #[cfg(feature = "fallback")]
-            SpanCursor::Fallback { cur, .. } => cur.clone(),
+            SpanCursor::Fallback { ngroups, .. } => 2 * *ngroups,
+        }
+    }
+
+    // Write the current match's slots (after advance() returned Some) flat into `out`, whose length is
+    // nslots(). The Real backend's buffer is already in this representation; the fallback's Option
+    // vector is mapped onto it. The one place either shape is converted.
+    fn write_slots(&self, out: &mut [usize]) {
+        match self {
+            SpanCursor::Real(r) => out.copy_from_slice(&r.buf),
+            #[cfg(feature = "fallback")]
+            SpanCursor::Fallback { cur, .. } => {
+                for (g, s) in cur.iter().enumerate() {
+                    let (a, b) = s.unwrap_or((usize::MAX, usize::MAX));
+                    out[2 * g] = a;
+                    out[(2 * g) + 1] = b;
+                }
+            }
+        }
+    }
+
+    // The current match's slots as an owned, inline-when-it-fits store — what a Captures carries.
+    fn slot_store(&self) -> SlotStore {
+        match self {
+            // Fast path: the engine's buffer is already flat, so this is one copy and no conversion.
+            SpanCursor::Real(r) => SlotStore::from_flat(&r.buf),
+            #[cfg(feature = "fallback")]
+            SpanCursor::Fallback { .. } => {
+                let n = self.nslots();
+                if n <= CAPS_INLINE_SLOTS {
+                    let mut slots = [usize::MAX; CAPS_INLINE_SLOTS];
+                    self.write_slots(&mut slots[..n]);
+                    SlotStore::Inline { len: n as u8, slots }
+                } else {
+                    let mut v = vec![usize::MAX; n];
+                    self.write_slots(&mut v);
+                    SlotStore::Spilled(v.into_boxed_slice())
+                }
+            }
         }
     }
 
     // Copy the current match's flat slots into a reusable CaptureLocations (no alloc).
     fn copy_slots_into(&self, locs: &mut CaptureLocations) {
-        match self {
-            SpanCursor::Real(r) => {
-                locs.ensure(r.ngroups);
-                locs.slots.copy_from_slice(&r.buf);
-            }
-            #[cfg(feature = "fallback")]
-            SpanCursor::Fallback { cur, ngroups, .. } => {
-                locs.ensure(*ngroups);
-                for (g, s) in cur.iter().enumerate() {
-                    match s {
-                        Some((a, b)) => {
-                            locs.slots[2 * g] = *a;
-                            locs.slots[2 * g + 1] = *b;
-                        }
-                        None => {
-                            locs.slots[2 * g] = usize::MAX;
-                            locs.slots[2 * g + 1] = usize::MAX;
-                        }
-                    }
-                }
-            }
-        }
+        let ngroups = self.nslots() / 2;
+        locs.ensure(ngroups);
+        self.write_slots(&mut locs.slots);
     }
 }
 
@@ -864,14 +937,14 @@ impl<'t> Match<'t> {
 /// The capture groups of a single match. Group 0 is the whole match.
 pub struct Captures<'t> {
     text: &'t str,
-    spans: Vec<Option<(usize, usize)>>,
+    slots: SlotStore,
     groups: Arc<GroupInfo>,
 }
 
 impl<'t> Captures<'t> {
     /// Capture group `i` (0 = the whole match), or `None` if it did not participate.
     pub fn get(&self, i: usize) -> Option<Match<'t>> {
-        self.spans.get(i).copied().flatten().map(|(s, e)| Match { text: self.text, start: s, end: e })
+        self.slots.group(i).map(|(s, e)| Match { text: self.text, start: s, end: e })
     }
 
     /// The named capture group `name`, or `None` if it is absent or did not participate.
@@ -881,17 +954,17 @@ impl<'t> Captures<'t> {
 
     /// The number of capture slots, including group 0.
     pub fn len(&self) -> usize {
-        self.spans.len()
+        self.slots.ngroups()
     }
 
     /// Whether there are no capture slots (never true for a real match — group 0 always exists).
     pub fn is_empty(&self) -> bool {
-        self.spans.is_empty()
+        self.slots.ngroups() == 0
     }
 
     /// Iterate every group in order (`None` for a group that did not participate).
     pub fn iter(&self) -> impl Iterator<Item = Option<Match<'t>>> + '_ {
-        (0..self.spans.len()).map(move |i| self.get(i))
+        (0..self.len()).map(move |i| self.get(i))
     }
 }
 
@@ -993,7 +1066,7 @@ impl<'t> Iterator for CaptureLocationMatches<'_, 't> {
 impl<'t> Iterator for CaptureMatches<'_, 't> {
     type Item = Captures<'t>;
     fn next(&mut self) -> Option<Captures<'t>> {
-        self.raw.advance().map(|_| self.re.caps_from(self.text, self.raw.group_spans()))
+        self.raw.advance().map(|_| self.re.caps_from(self.text, &self.raw))
     }
 }
 
@@ -1274,8 +1347,8 @@ impl<'t> Iterator for SplitN<'_, 't> {
 pub mod bytes {
     use super::{
         compile_handle, real_find_iter, real_find_iter_at, real_free, CaptureLocations, Error,
-        GroupInfo, RawSpans, RealRegex, FLAG_ASCII, FLAG_DOTALL, FLAG_ICASE, FLAG_MULTILINE,
-        FLAG_VERBOSE,
+        GroupInfo, RawSpans, RealRegex, SlotStore, FLAG_ASCII, FLAG_DOTALL, FLAG_ICASE,
+        FLAG_MULTILINE, FLAG_VERBOSE,
     };
     use std::borrow::Cow;
     use std::marker::PhantomData;
@@ -1335,8 +1408,9 @@ pub mod bytes {
             RawSpans { iter, handle: self.handle, text, ngroups: self.ngroups, buf: vec![0usize; 2 * self.ngroups], last_end: None, drive_pos: None, utf8: false, _re: PhantomData }
         }
 
-        fn caps_from<'t>(&self, text: &'t [u8], spans: Vec<Option<(usize, usize)>>) -> Captures<'t> {
-            Captures { text, spans, groups: Arc::clone(&self.groups) }
+        fn caps_from<'t>(&self, text: &'t [u8], raw: &RawSpans<'_, '_>) -> Captures<'t> {
+            // RawSpans::buf is already the flat [start0, end0, …] representation, so this is one copy.
+            Captures { text, slots: SlotStore::from_flat(&raw.buf), groups: Arc::clone(&self.groups) }
         }
 
         /// Whether the pattern matches anywhere in `text`.
@@ -1368,7 +1442,7 @@ pub mod bytes {
         pub fn captures<'t>(&self, text: &'t [u8]) -> Option<Captures<'t>> {
             {
                 let mut c = self.raw(text, None);
-                c.advance().map(|_| self.caps_from(text, c.group_spans()))
+                c.advance().map(|_| self.caps_from(text, &c))
             }
         }
 
@@ -1376,7 +1450,7 @@ pub mod bytes {
         pub fn captures_at<'t>(&self, text: &'t [u8], start: usize) -> Option<Captures<'t>> {
             {
                 let mut c = self.raw(text, Some(start));
-                c.advance().map(|_| self.caps_from(text, c.group_spans()))
+                c.advance().map(|_| self.caps_from(text, &c))
             }
         }
 
@@ -1516,23 +1590,23 @@ pub mod bytes {
     /// The capture groups of one byte match.
     pub struct Captures<'t> {
         text: &'t [u8],
-        spans: Vec<Option<(usize, usize)>>,
+        slots: SlotStore,
         groups: Arc<GroupInfo>,
     }
 
     impl<'t> Captures<'t> {
         /// Capture group `i` (0 = whole match).
         pub fn get(&self, i: usize) -> Option<Match<'t>> {
-            self.spans.get(i).copied().flatten().map(|(s, e)| Match { text: self.text, start: s, end: e })
+            self.slots.group(i).map(|(s, e)| Match { text: self.text, start: s, end: e })
         }
         /// The named capture group `name`.
         pub fn name(&self, name: &str) -> Option<Match<'t>> {
             self.groups.by_name.get(name).and_then(|&i| self.get(i))
         }
         /// The number of capture slots (incl. group 0).
-        pub fn len(&self) -> usize { self.spans.len() }
+        pub fn len(&self) -> usize { self.slots.ngroups() }
         /// Whether there are no slots (never for a real match).
-        pub fn is_empty(&self) -> bool { self.spans.is_empty() }
+        pub fn is_empty(&self) -> bool { self.slots.ngroups() == 0 }
     }
 
     impl Index<usize> for Captures<'_> {
@@ -1618,7 +1692,7 @@ pub mod bytes {
     impl<'t> Iterator for CaptureMatches<'_, 't> {
         type Item = Captures<'t>;
         fn next(&mut self) -> Option<Captures<'t>> {
-            self.raw.advance().map(|_| self.re.caps_from(self.text, self.raw.group_spans()))
+            self.raw.advance().map(|_| self.re.caps_from(self.text, &self.raw))
         }
     }
 
