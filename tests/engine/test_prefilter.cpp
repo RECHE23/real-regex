@@ -761,3 +761,82 @@ TEST(stop_set_class_loop_throughput_smoke_mono_member)
   EXPECT(large < small * 5);
   EXPECT_EQ(work(1 << 20), large); // determinism pin
 }
+
+// The multi-byte substring search (find_prefix / find_literal) runs a two-byte SIMD block filter at run
+// time and a scalar loop under constant evaluation. Both must equal `std::string_view::find` — an
+// independent oracle, not either implementation — across every shape where a block-scan goes wrong:
+// needle lengths straddling the 16-byte lane width, haystacks shorter than / equal to / longer than a
+// block, a match at offset 0, at the last legal start, straddling a block boundary, `pos` walked over
+// the whole subject, and needles whose lead byte equals its trail (the filter degenerates to one probe).
+TEST(literal_search_equals_the_platform_find_everywhere)
+{
+  const std::array<std::string_view, 10> needles {
+    "ab"sv, "aa"sv, "dog"sv, "aba"sv, "abcdefgh"sv, "aaaaaaaa"sv,
+    "abcdefghijklmnop"sv,   // exactly one lane width
+    "abcdefghijklmnopq"sv,  // one past it
+    "xy"sv,                 // absent from every haystack below
+    "abcdefghijklmnopqrst"sv
+  };
+  // Haystacks that put matches at 0, at the tail, and across the 16/32/48-byte block seams.
+  std::vector<std::string> haystacks {
+    "", "a", "ab", "aab", "aaaaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaaa",
+    "abcdefghijklmnopqrstuvwxyz", "dog", "the dog", "dogdogdog",
+  };
+  {
+    // A match at every offset around each block seam, plus a long all-'a' run (max false-positive rate
+    // for a lead-byte filter, so the verify path is hammered).
+    // pad walks past 64 so every leg runs: the 4-block unrolled round, the single-block remainder, and
+    // the scalar tail -- and the match lands at every offset relative to each of those seams.
+    for (std::size_t pad = 0; pad <= 70; ++pad) {
+      haystacks.push_back(std::string(pad, 'a') + "dog" + std::string(20, 'z'));
+      haystacks.push_back(std::string(pad, 'z') + "ab");            // match flush at the very end
+      haystacks.push_back("ab" + std::string(pad, 'z'));            // match at offset 0
+    }
+    for (std::size_t n : {63U, 64U, 65U, 79U, 80U, 81U, 127U, 128U, 129U, 200U}) {
+      haystacks.emplace_back(n, 'a');                               // all-lead-byte: max verify pressure
+      haystacks.push_back(std::string(n, 'a') + "b");               // hit only in the very last window
+      haystacks.push_back(std::string(n / 2, 'a') + "b" + std::string(n / 2, 'a'));
+    }
+  }
+
+  std::size_t checked {0};
+  for (const std::string& hay : haystacks) {
+    const std::string_view text {hay};
+    for (const std::string_view needle : needles) {
+      for (std::size_t pos = 0; pos <= text.size() + 1; ++pos) {
+        // Oracle: the platform search, restricted to [pos, end) exactly like the primitives promise.
+        std::size_t want {real::npos};
+        if (pos <= text.size()) {
+          const auto off {text.substr(pos).find(needle)};
+          if (off != std::string_view::npos) {
+            want = pos + off;
+          }
+        }
+        const std::size_t got_literal {real::detail::find_literal(text, pos, needle)};
+        const std::size_t got_prefix  {real::detail::find_prefix(text, pos, needle)};
+        EXPECT_EQ(got_literal, want);
+        EXPECT_EQ(got_prefix, want);
+        ++checked;
+      }
+    }
+  }
+  EXPECT(checked > 20000U); // the cross product actually ran (a silently empty loop would "pass")
+}
+
+// The same primitives under constant evaluation take the scalar path (no intrinsics in a constexpr
+// context), so the two legs are pinned against each other on shapes that cross the lane width.
+TEST(literal_search_constexpr_leg_agrees)
+{
+  static_assert(real::detail::find_literal("the dog end"sv, 0, "dog"sv) == 4U);
+  static_assert(real::detail::find_literal("aaaaaaaaaaaaaaaaaaab"sv, 0, "ab"sv) == 18U);
+  static_assert(real::detail::find_literal("aaaaaaaaaaaaaaaaaaaa"sv, 0, "ab"sv) == real::npos);
+  static_assert(real::detail::find_prefix("aaaaaaaaaaaaaaaaaaab"sv, 3, "ab"sv) == 18U);
+  static_assert(real::detail::find_prefix("abcdefghijklmnopqrst"sv, 0, "pq"sv) == 15U);
+
+  // Runtime must agree with each of those.
+  EXPECT_EQ(real::detail::find_literal("the dog end"sv, 0, "dog"sv), 4U);
+  EXPECT_EQ(real::detail::find_literal("aaaaaaaaaaaaaaaaaaab"sv, 0, "ab"sv), 18U);
+  EXPECT_EQ(real::detail::find_literal("aaaaaaaaaaaaaaaaaaaa"sv, 0, "ab"sv), real::npos);
+  EXPECT_EQ(real::detail::find_prefix("aaaaaaaaaaaaaaaaaaab"sv, 3, "ab"sv), 18U);
+  EXPECT_EQ(real::detail::find_prefix("abcdefghijklmnopqrst"sv, 0, "pq"sv), 15U);
+}

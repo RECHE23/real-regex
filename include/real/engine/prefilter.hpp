@@ -26,7 +26,10 @@
 
 #include "real/core/charclass.hpp"
 #include "real/core/program.hpp"
+#include "real/engine/simd.hpp"           // load_pair_mask — the two-byte literal prefilter
 #include "real/unicode/unicode_props.hpp" // word_ranges — exact \w identity for Arc B-1
+
+#include <array>
 
 namespace real::detail {
 
@@ -1986,6 +1989,114 @@ namespace real::detail {
     return npos;
   }
 
+#if defined(__ARM_NEON)
+  /*!
+   * \brief The multi-byte substring search behind \ref find_prefix / \ref find_literal: a two-byte
+   *        block prefilter, then verify. **NEON only — see the ISA note below.**
+   *
+   * One vector compare answers "could the needle start here?" for 16 candidate positions at once, at
+   * *two* needle offsets (the first byte and the last) — so a block with no surviving candidate is
+   * skipped 16 bytes at a time for the cost of two loads and an AND. Two probes rather than one is what
+   * makes it worth the vector: a single-byte filter is what `memchr` already gives, and on text where
+   * the lead byte is common (`d` for `dog`) it survives constantly.
+   *
+   * Written ONCE against simd.hpp's uniform \ref mask_t interface (\ref load_pair_mask, \ref empty,
+   * \ref first_lane, \ref clear_first) — no `#if` ISA branch of its own, the same split
+   * `simd_fixed_shape_scan` documents: the intrinsics are ISA-exclusive and live in simd.hpp, this
+   * loop is the same C++ everywhere and is what the test suite exercises on either leg.
+   *
+   * **Why NEON only.** This filter must beat the platform's own substring search to be worth taking, and
+   * whether it does is genuinely per-ISA -- it is not a portable win. On arm64 it is (NEON is 128-bit,
+   * like this loop, and the platform search is less aggressive): dense `dog` -31.6 %, a no-match scan
+   * -60 %. On x86-64 glibc's `find`/`memchr` are **AVX2** -- 256-bit, twice this loop's width -- and a
+   * 128-bit SSE2 block filter loses to them on EVERY row measured (dense +13 %, `localhost` +17 %,
+   * no-match +19 to +24 %, devbox g++ 13.3, natively, 3 interleaved rounds). So x86 keeps the platform
+   * search, and gating restores it exactly to its pre-filter numbers on all six literal rows. An AVX2
+   * leg would be the honest way to bring this win to x86; a 128-bit one is not it, and shipping the
+   * SSE2 leg unrouted would only invite someone to route it.
+   *
+   * Linearity is unchanged from the scalar path it replaces: the block loop advances 16 per iteration
+   * and each block verifies at most 16 candidates of \p literal bytes each, so the work stays
+   * `O(n · |literal|)` with `|literal|` capped by the hint arrays (16) — the same bound the
+   * memchr-lead-plus-compare scan carried. The caller does the work-counter billing (see
+   * \ref find_prefix), once per call, so this function must not be entered per candidate.
+   *
+   * \param[in] text    The subject text.
+   * \param[in] pos     Index to start searching from.
+   * \param[in] literal The needle (>= 2 bytes; a single byte belongs on \ref find_byte's one memchr).
+   * \return The index of the first occurrence at or after \p pos, else \ref real::npos.
+   */
+  inline std::size_t simd_literal_scan(std::string_view text,
+                                       std::size_t      pos,
+                                       std::string_view literal)
+  {
+    const std::size_t len {literal.size()};
+    if (text.size() < len) {
+      return npos;
+    }
+    const std::size_t last  {text.size() - len}; // last index a match could start at
+    const auto        lead  {static_cast<std::uint8_t>(literal.front())};
+    const auto        trail {static_cast<std::uint8_t>(literal[len - 1])};
+    const std::size_t delta {len - 1};           // trail's offset from a candidate start
+    const char* const base  {text.data()};
+    std::size_t       p     {pos};
+    // Four blocks (64 candidates) per round. A no-match scan spends all its time in the reject test, and
+    // libc `memchr` sets the bar there by covering 64 B per round: at one block per round this filter
+    // measured ~13 % SLOWER than the platform `find` it replaces on a pure miss, despite rejecting on two
+    // bytes instead of one. Four independent load pairs per round (ILP, one branch) turn that into ~2.5x
+    // FASTER than memchr — the two-byte selectivity finally paying at memchr's throughput. Masks are
+    // consumed in block order, and within a mask in lane order, so candidates are still visited strictly
+    // left to right: the first verified hit is the leftmost, which the callers require.
+    constexpr std::size_t unroll {4};
+    while (p + (unroll * 16) <= last + 1) {
+      std::array<mask_t, unroll> masks {};
+      for (std::size_t u = 0; u < unroll; ++u) {
+        std::array<std::uint8_t, 16> blk_lead  {};
+        std::array<std::uint8_t, 16> blk_trail {};
+        std::memcpy(blk_lead.data(), base + p + (u * 16), 16); // MISRA-clean byte loads (no type-pun)
+        std::memcpy(blk_trail.data(), base + p + (u * 16) + delta, 16);
+        masks[u] = load_pair_mask(blk_lead.data(), lead, blk_trail.data(), trail);
+      }
+      for (std::size_t u = 0; u < unroll; ++u) {
+        mask_t mask {masks[u]};
+        while (!empty(mask)) {
+          const std::size_t cand {p + (u * 16) + first_lane(mask)};
+          if (std::memcmp(base + cand, literal.data(), len) == 0) {
+            return cand;
+          }
+          mask = clear_first(mask);
+        }
+      }
+      p += unroll * 16;
+    }
+    // A block covers candidates [p, p + 16); the furthest one reads its trail byte at p + 15 + delta,
+    // which the `p + 16 <= last + 1` guard keeps inside the text (p + 15 <= last).
+    while (p + 16 <= last + 1) {
+      std::array<std::uint8_t, 16> blk_lead  {};
+      std::array<std::uint8_t, 16> blk_trail {};
+      std::memcpy(blk_lead.data(), base + p, 16);          // MISRA-clean byte loads (no pointer type-pun)
+      std::memcpy(blk_trail.data(), base + p + delta, 16);
+      mask_t mask {load_pair_mask(blk_lead.data(), lead, blk_trail.data(), trail)};
+      while (!empty(mask)) {
+        const std::size_t cand {p + first_lane(mask)};
+        if (std::memcmp(base + cand, literal.data(), len) == 0) {
+          return cand;
+        }
+        mask = clear_first(mask); // this window can still hold a later candidate — no reload
+      }
+      p += 16;
+    }
+    while (p <= last) { // tail: fewer than 16 candidate starts left
+      if (std::memcmp(base + p, literal.data(), len) == 0) {
+        return p;
+      }
+      ++p;
+    }
+    return npos;
+  }
+
+#endif // __ARM_NEON
+
   /*!
    * \brief Index of the first occurrence of \p literal in `text[pos..)`, or \ref real::npos.
    *
@@ -2012,6 +2123,11 @@ namespace real::detail {
     if (text.size() < literal.size()) {
       return npos;
     }
+#if defined(__ARM_NEON)
+    if (!std::is_constant_evaluated()) {
+      return simd_literal_scan(text, pos, literal); // two-byte block filter; the loop below is its oracle
+    }
+#endif
     const std::size_t last_start {text.size() - literal.size()};
     std::size_t       i          {pos};
     while (i <= last_start) {
@@ -2053,6 +2169,15 @@ namespace real::detail {
       // Bill remaining haystack once per call. Correct O(n) literal miss → ~1× size;
       // per-position restart of find_prefix → sum(N..1) ≈ N²/2 (smoke margin 25×).
       prefilter_note_scan(text.size() - pos);
+#endif
+#if defined(__ARM_NEON)
+      // Two-byte block filter (NEON only -- see simd_literal_scan's ISA note; x86 falls through to the
+      // platform `find`, whose AVX2 implementation beats a 128-bit block loop). A single byte has no
+      // second probe to AND, so it stays on find_byte's one memchr either way.
+      if (prefix.size() >= 2U) {
+        return simd_literal_scan(text, pos, prefix);
+      }
+      return find_byte(text, pos, prefix.front());
 #endif
     }
     const auto off {text.substr(pos).find(prefix)};
