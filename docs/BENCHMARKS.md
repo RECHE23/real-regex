@@ -19,7 +19,7 @@ answer is not a benchmark win.
 
 | | |
 | --- | --- |
-| Version | REAL `2026.7.51` — per-train benchmark-impact log: CHANGELOG.md (full release notes: docs/release-notes/ + GitHub Releases). Live methodology note: x86-64 class-loop ns/B (words, digits) carries an absolute drift vs the `a994ff9` baseline (words +13 %, digits +20 %) — characterized as front-end codegen noise (frozen competitor binaries stayed flat = machine noise), not chased; arm64 flat-to-slightly-faster. |
+| Version | REAL `2026.7.55` — §A and §Unicode re-measured on both ISAs for this stamp (the v2026.7.55 perf train: one-search exact-literal route, two-byte NEON literal prefilter, per-slot DFA ownership); per-train benchmark-impact log: CHANGELOG.md (full release notes: docs/release-notes/ + GitHub Releases). **Live methodology note — one row moved the wrong way and is disclosed, not chased:** x86-64 `fields [^,]+` reads 5.49 ns/B here against 4.67 at the `2026.7.51` stamp, and a same-machine same-harness A/B (only the engine headers differing) puts the train at **+5.3 %** on that row. It is a layout effect, not a logic cost, and the evidence is specific: callgrind counts **−2.9 % instructions** for the same scan (14.52 M → 14.10 M Ir) and a single-pattern binary measures it **8 % faster** — the multi-engine bench binary is simply a different code layout. `[^,]+` on gcc/x86 is the row this repository already documents as alignment-luck-sensitive (see `pike.hpp`'s `run()` note: +39 % from the mere *presence* of never-dispatched Aho-Corasick code, two `align-loops` attempts reverted). `alternation`/`lookahead` carry the same effect at +3.2 % / +2.6 %; `words`/`digits`/`hex`/`date` are within ±1.5 %. |
 | Machines | §A on **two ISAs**: devbox (`x86-64`, g++ 13.3.0) *and* Apple M1 Pro (`arm64`, Apple clang 16). §B / §E on M1 Pro (§E's x86-64 leg noted inline where it diverges — see §E). §multi-pattern measured on **x86-64 devbox** (g++ 13.3, RE2 + Hyperscan 5.4) |
 | Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (built from source on x86-64 to pin the exact version); RE2 (10.0 on x86-64, 11.0 on arm64 — version-differs-by-leg, uncontested given the margins). Multi-pattern: RE2::Set, Hyperscan (optional). §E: rust `regex` 1.12.4 |
 | Python | CPython 3.14, `re` (stdlib) vs the REAL `2026.7.25` abi3 wheel (§B — not re-measured this train) |
@@ -30,45 +30,48 @@ answer is not a benchmark win.
 Each engine compiles the pattern once, then counts all non-overlapping matches over the same corpus; only
 the scan is timed. `ns/B` is nanoseconds per corpus byte (lower is better). `(x)` is *engine_time /
 REAL_time* — **> 1 means REAL is faster**. Match counts agreed across all four engines on every case, on
-both ISAs, on the same `1936d05` (v7.46) tree for this re-stamp.
+both ISAs, on the same `3cd9c81` (v2026.7.55) tree for this re-stamp.
 
 **x86-64** — devbox, g++ 13.3.0, N = 30, PCRE2 10.47-JIT, RE2 10.0:
 
 | case | REAL ns/B | std::regex | PCRE2-JIT | RE2 |
 | --- | ---: | ---: | ---: | ---: |
-| words `[a-z]+` | 4.20 | 29.15 (**6.94×**) | 6.54 (**1.56×**) | 29.37 (**6.99×**) |
-| digits `[0-9]+` | 2.51 | 24.27 (**9.67×**) | 3.59 (**1.43×**) | 17.14 (**6.83×**) |
-| fields `[^,]+` | 4.67 | 25.13 (**5.38×**) | 4.93 (**1.06×**) | 23.08 (**4.94×**) |
-| alternation `the\|fox\|dog` | 2.58 | 30.14 (**11.68×**) | 2.25 (0.87×) | 10.49 (**4.07×**) |
-| date `{4}-{2}-{2}` | 1.19 | 17.95 (**15.08×**) | 0.62 (0.52×) | 4.10 (**3.45×**) |
-| hex `[0-9a-f]{8}` | 1.45 | 20.57 (**14.19×**) | 1.81 (**1.25×**) | 4.10 (**2.83×**) |
-| literal | 0.74 | 15.09 (**20.39×**) | 0.59 (0.80×) | 2.41 (**3.26×**) |
-| lookahead `[a-z]+(?=[a-z])` | 9.11 | 76.47 (**8.39×**) | 6.72 (0.74×) | unsupported |
+| words `[a-z]+` | 4.15 | 29.03 (**6.99×**) | 6.72 (**1.62×**) | 28.32 (**6.82×**) |
+| digits `[0-9]+` | 2.36 | 24.57 (**10.40×**) | 3.82 (**1.61×**) | 16.73 (**7.08×**) |
+| fields `[^,]+` | 5.49 | 24.85 (**4.53×**) | 5.17 (0.94×) | 22.79 (**4.15×**) |
+| alternation `the\|fox\|dog` | 2.31 | 30.21 (**13.08×**) | 2.36 (**1.02×**) | 10.39 (**4.50×**) |
+| date `{4}-{2}-{2}` | 1.17 | 18.60 (**15.91×**) | 0.69 (0.59×) | 4.09 (**3.50×**) |
+| hex `[0-9a-f]{8}` | 1.36 | 20.95 (**15.42×**) | 1.99 (**1.47×**) | 4.09 (**3.01×**) |
+| literal | 0.45 | 15.57 (**34.40×**) | 0.67 (**1.48×**) | 2.41 (**5.32×**) |
+| lookahead `[a-z]+(?=[a-z])` | 8.95 | 77.78 (**8.69×**) | 7.21 (0.81×) | unsupported |
 
 **arm64** — Apple M1 Pro, Apple clang 16, N = 30, PCRE2 10.47-JIT, RE2 11.0:
 
 | case | REAL ns/B | std::regex | PCRE2-JIT | RE2 |
 | --- | ---: | ---: | ---: | ---: |
-| words `[a-z]+` | 2.42 | 92.79 (**38.34×**) | 2.33 (0.96×) | 13.90 (**5.74×**) |
-| digits `[0-9]+` | 1.49 | 82.23 (**55.19×**) | 1.46 (0.98×) | 8.42 (**5.65×**) |
-| fields `[^,]+` | 3.09 | 75.38 (**24.39×**) | 1.88 (0.61×) | 11.01 (**3.56×**) |
-| alternation `the\|fox\|dog` | 1.98 | 113.36 (**57.25×**) | 1.56 (0.79×) | 6.25 (**3.16×**) |
-| date `{4}-{2}-{2}` | 0.72 | 71.90 (**99.86×**) | 0.39 (0.54×) | 3.41 (**4.74×**) |
-| hex `[0-9a-f]{8}` | 1.44 | 80.04 (**55.58×**) | 1.25 (0.87×) | 3.40 (**2.36×**) |
-| literal | 0.62 | 30.89 (**49.82×**) | 0.48 (0.77×) | 1.36 (**2.19×**) |
-| lookahead `[a-z]+(?=[a-z])` | 6.81 | 156.90 (**23.04×**) | 3.66 (0.54×) | unsupported |
+| words `[a-z]+` | 2.27 | 94.59 (**41.67×**) | 2.34 (**1.03×**) | 14.03 (**6.18×**) |
+| digits `[0-9]+` | 1.43 | 86.35 (**60.31×**) | 1.44 (**1.00×**) | 8.68 (**6.06×**) |
+| fields `[^,]+` | 3.11 | 76.54 (**24.60×**) | 1.87 (0.60×) | 11.10 (**3.57×**) |
+| alternation `the\|fox\|dog` | 1.89 | 116.03 (**61.52×**) | 1.56 (0.83×) | 6.18 (**3.28×**) |
+| date `{4}-{2}-{2}` | 0.76 | 73.00 (**95.72×**) | 0.39 (0.51×) | 3.43 (**4.49×**) |
+| hex `[0-9a-f]{8}` | 1.43 | 80.90 (**56.64×**) | 1.25 (0.87×) | 3.42 (**2.39×**) |
+| literal | 0.25 | 31.25 (**126.61×**) | 0.48 (**1.95×**) | 1.36 (**5.50×**) |
+| lookahead `[a-z]+(?=[a-z])` | 6.18 | 163.17 (**26.39×**) | 3.67 (0.59×) | unsupported |
 
 **Reading — verdict brut, no dressing up.**
 
-- **REAL ≫ `std::regex`**, always: 5.4–20.4× on x86-64, 23–100× on arm64 (libc++'s `std::regex` falls
-  even further behind on arm64). Never below 5.4×.
-- **REAL > RE2**, always where RE2 supports the pattern: 2.8–7.0× on x86-64, 2.2–5.7× on arm64.
-- **REAL vs PCRE2-JIT is close, ISA-dependent, and mixed.** Alternation remains a loss on both ISAs
-  (0.87× x86-64, 0.79× arm64) — **no crossing**. On the rows that still lead: x86-64 REAL is ahead on
-  `words` (1.56×), `digits` (1.43×), `fields` (1.06×), `hex` (1.25×); arm64 no longer crosses on
-  `digits` (0.98×, a near-tie). `date` and `literal` remain PCRE2 ground on both ISAs (0.52×–0.80×).
-  The x86 class-loop absolute ns/B drift vs the prior `a994ff9` stamp is disclosed in the Version row —
-  not chased (leçon AC).
+- **REAL ≫ `std::regex`**, always: 4.5–34.4× on x86-64, 24.6–126.6× on arm64 (libc++'s `std::regex`
+  falls even further behind on arm64). Never below 4.5×.
+- **REAL > RE2**, always where RE2 supports the pattern: 3.0–7.1× on x86-64, 2.4–6.2× on arm64.
+- **REAL vs PCRE2-JIT is close, ISA-dependent, and mixed — and this train moved two rows across the
+  line.** **`literal` crossed on both ISAs** and is now REAL's, decisively: **1.48× x86-64, 1.95×
+  arm64**, where the `2026.7.51` stamp had it as PCRE2 ground (0.80× / 0.77×). That is the
+  one-search exact-literal route on both legs, plus the two-byte NEON prefilter on arm64.
+  **`alternation` crossed on x86-64 only** (0.87× → **1.02×**, a bare win) and remains a loss on arm64
+  (0.83×). Going the other way, **`fields` lost its thin x86-64 lead** (1.06× → 0.94×) — a layout
+  effect the Version row documents with instruction-count evidence, not a scan that got slower.
+  Elsewhere REAL leads on `words` (1.62× / 1.03×), `digits` (1.61× / **1.00×**, an exact tie on arm64)
+  and `hex` (1.47× / 0.87× — x86 only); `date` remains PCRE2 ground on both (0.59× / 0.51×).
 - **The lookahead line stays in PCRE2-JIT's order of magnitude** after P3c: **9.11 / 6.81 ns/B**
   (0.74× / 0.54×) instead of the pre-P3c general-VM order (~92 / ~48 ns/B). REAL does a **bounded
   lookaround in linear time**; PCRE2 is still faster here but by **backtracking** (itself ReDoS-able on a
@@ -289,8 +292,9 @@ shows how fast the common ReDoS shape dies. The **guarantee** is the bare VM on
 `(a+)+` (no required literal to short-circuit): still **linear** in N.
 
 **Scope of this re-measure:** arm64 Apple M1 Pro, Apple clang, `-O3`, matching-only
-after compile, median of 31 (3 consistent rounds). Global §A stamp stays `2026.7.51`
-(not a full-train rebench). x86-64 devbox cross-check (same method): prefilter
+after compile, median of 31 (3 consistent rounds). §A/§Unicode are now re-stamped at
+`2026.7.55`; this section's own two-leg numbers were measured at `2026.7.51` and are
+unchanged by that train (neither leg touches the bare-VM or prefilter paths timed here). x86-64 devbox cross-check (same method): prefilter
 ~1.2 µs / bare VM ~10.6 ms at N=100K. Prefilter leg is also what `make bench-engines`
 emits under `redos`.
 
@@ -582,12 +586,14 @@ approximate and the cause is stated — it is **not always a UCD-version gap**; 
 turn out to be an ASCII-vs-Unicode *semantics* difference (a different, more fundamental gap than a stale
 data table).
 
-**Stamp.** REAL `2026.7.47` (2-stage `cp_hi_table`), dual-ISA A/B-validated; **7.48 is a correctness-only
-fix** (mid-pattern `\b` fixed_shape peel) with **no §Unicode re-measure**. **arm64** table below:
-Apple M1 Pro, Apple clang 16, `-O2`, N = 30 (`make bench-engines`). **x86-64** REAL ns/B (superviseur
-A/B, frozen binaries, N = 30, g++ 13.3): `\w+` mixed **6.08**, `\p{L}+` CJK **7.23**, `\p{N}+` **6.62**,
-`sc=Han` **12.43**, `scx=Cyrl` **10.59** (competitors not re-stamped on that A/B harness; deltas vs v7.46
-BASE in the Version row). Oracle: exhaustive `\p{L}` over U+0000..10FFFF (surrogates skipped) — **0 mismatch**.
+**Stamp.** REAL `2026.7.55`, both ISAs re-measured for this stamp. **arm64** table below: Apple M1 Pro,
+Apple clang 16, `-O2`, N = 30 (`make bench-engines`). **x86-64**, same harness and N, g++ 13.3 with
+PCRE2 10.47 (from source) and RE2 10.0 — full four-engine run this time, not REAL-only: `\w+` mixed
+**6.10** (pcre2 0.60×, re2 0.82×), `\p{L}+` CJK **6.94** (0.43× / re2 **2.77×**), `\p{N}+` **6.79**
+(0.39× / 1.10×), `sc=Han` **12.57** (0.39×), `scx=Cyrl` **11.03** (0.61×), `(?i)café` **1.97**
+(0.32× / 1.49×), `[à-ÿ]+` **9.03** (0.69× / 2.81×), literal `你好` **0.89** (pcre2 **1.23×** — the same
+crossing as arm64), `.` emoji **7.93** (pcre2 **1.37×**), ascii witness **4.04** (**1.85×**). Oracle:
+exhaustive `\p{L}` over U+0000..10FFFF (surrogates skipped) — **0 mismatch**.
 Engine Unicode Character Database versions:
 
 | engine | UCD version |
@@ -624,16 +630,16 @@ raw JSON — every ratio's 95% CI is within ±2% of the point estimate); match c
 
 | case | REAL ns/B | std::regex | PCRE2-JIT (UTF+UCP) | RE2 | counts (real/std/pcre2/re2) |
 | --- | ---: | ---: | ---: | ---: | --- |
-| `\w+` (mixed-script) | 3.93 | 61.02 (15.53×) | 1.87 (**0.48×**) | 3.55 (0.90×) | 16218/5406/16218/5406 ⚠ |
-| `\p{L}+` (CJK) | 4.99 | unsupported | 1.35 (**0.27×**) | 13.26 (2.66×) | 12904/—/12904/12904 |
-| `\p{N}+` (arabic digits) | 2.31 | unsupported | 1.63 (**0.71×**) | 5.22 (2.26×) | 6250/—/6250/6250 |
-| `\p{sc=Han}` (CJK) | 7.84 | unsupported | 2.15 (**0.27×**) | unsupported | 25808/—/25808/— |
-| `\p{scx=Cyrl}` (mixed-script) | 6.14 | unsupported | 2.70 (**0.44×**) | unsupported | 32436/—/32436/— |
-| `(?i)café` (accented) | 1.28 | unsupported | 0.35 (**0.27×**) | 1.33 (1.04×) | 3509/—/3509/3509 |
-| `[à-ÿ]+` (accented) | 6.61 | 88.09 (13.33×) | 2.06 (**0.31×**) | 12.51 (1.89×) | 38599/38599/38599/38599 |
-| literal `你好` (CJK) | 1.17 | 29.12 (24.89×) | 0.58 (**0.50×**) | 2.63 (2.25×) | 6452/6452/6452/6452 |
-| `.` (emoji, one codepoint) | 4.18 | 59.19 (14.16×) | 3.83 (**0.92×**) | 18.86 (4.51×) | 68306/200039/68306/68306 ⚠ |
-| ascii witness `[a-z]+` | 2.42 | 91.85 (37.95×) | 2.25 (**0.93×**) | 13.91 (5.75×) | 42108/42108/42108/42108 |
+| `\w+` (mixed-script) | 3.765 | 61.82 (16.42×) | 1.94 (**0.52×**) | 3.33 (0.88×) | 16218/5406/16218/5406 ⚠ |
+| `\p{L}+` (CJK) | 4.518 | unsupported | 1.37 (**0.30×**) | 13.66 (3.02×) | 12904/—/12904/12904 |
+| `\p{N}+` (arabic digits) | 2.308 | unsupported | 1.63 (**0.71×**) | 5.30 (2.30×) | 6250/—/6250/6250 |
+| `\p{sc=Han}` (CJK) | 7.771 | unsupported | 2.14 (**0.28×**) | unsupported | 25808/—/25808/— |
+| `\p{scx=Cyrl}` (mixed-script) | 5.825 | unsupported | 2.69 (**0.46×**) | unsupported | 32436/—/32436/— |
+| `(?i)café` (accented) | 1.296 | unsupported | 0.34 (**0.26×**) | 1.31 (1.01×) | 3509/—/3509/3509 |
+| `[à-ÿ]+` (accented) | 6.748 | 89.02 (13.19×) | 2.08 (**0.31×**) | 12.75 (1.89×) | 38599/38599/38599/38599 |
+| literal `你好` (CJK) | 0.477 | 29.58 (62.01×) | 0.58 (**1.22×**) | 2.62 (5.49×) | 6452/6452/6452/6452 |
+| `.` (emoji, one codepoint) | 4.217 | 59.93 (14.21×) | 3.71 (**0.88×**) | 18.79 (4.46×) | 68306/200039/68306/68306 ⚠ |
+| ascii witness `[a-z]+` | 2.273 | 94.89 (41.75×) | 2.27 (**1.00×**) | 14.20 (6.25×) | 42108/42108/42108/42108 |
 
 *(Same convention as §A: `(x) = engine_time / REAL_time`, **> 1 means REAL is faster**; **bold** marks the
 PCRE2-JIT column, REAL's main competitor throughout this document. Every ratio here is computed
@@ -655,15 +661,18 @@ them against this table.)*
   precisely-quantifiable one from this row alone. REAL vs PCRE2/RE2 on this row is unaffected (those three
   agree on the count).
 
-**Honest read (verdict brut).** **REAL still trails PCRE2-JIT on every row** — but the worst gap closed
-materially: `\p{L}+` moved **0.20× → 0.27×** vs PCRE2 on arm64 (and **−35 % absolute** on x86-64) after the
-2-stage hi table; the `\p{}`/script band is now ~0.27×–0.71× (still 1.4×–3.7× slower than JIT). Literal/
-class rows remain 0.31×–0.93×. **REAL stays ahead of RE2** on comparable rows except count-divergent `\w+`
-(1.04×–5.75×). **REAL crushes `std::regex`** where `\p{}` is unsupported. The honest frame is unchanged in
-shape — REAL is linear-time-safe and `\p{}`-complete, **not** the Unicode throughput leader (that is still
-PCRE2-JIT) — but the CJK membership hole that made `\p{L}+` a 5× outlier is no longer structural bsearch.
-Arm64 residual on `\p{N}+`/`sc=Han`/`scx=Cyrl` (page-only / single-cp under K=32) is disclosed in the Version
-row; x86 does not reproduce it.
+**Honest read (verdict brut).** **REAL no longer trails PCRE2-JIT on every row — but on all but one it
+still does.** The exception is the one this train targeted: the **CJK literal `你好` crossed on both ISAs**
+(arm64 0.50× → **1.22×**, x86-64 **1.23×**), which is the two-byte NEON prefilter doing exactly what it was
+built for — a multi-byte needle whose lead byte alone is a weak filter. The ascii witness is now an exact
+tie (**1.00×**) and `.` (emoji) sits at 0.88× arm64 but **1.37× on x86-64**. Everything else is unchanged in
+shape: the `\p{}`/script band stays ~0.26×–0.71× (still 1.4×–3.8× slower than JIT), the accented class rows
+0.31×. **REAL stays ahead of RE2** on comparable rows except count-divergent `\w+` (1.01×–6.25×), and
+**crushes `std::regex`** where `\p{}` is unsupported. So the honest frame holds where it always did — REAL is
+linear-time-safe and `\p{}`-complete, and **PCRE2-JIT is still the Unicode throughput leader on the
+property/script band** — with one row now genuinely REAL's. Arm64 residual on `\p{N}+`/`sc=Han`/`scx=Cyrl`
+(page-only / single-cp under K=32) persists; the x86-64 leg, now measured four-engine rather than REAL-only,
+reads the same band (0.39×–0.61×) rather than contradicting it.
 
 ### `duel` — REAL vs rust `regex` (`make bench-duel`, `N=20000` repetitions)
 
