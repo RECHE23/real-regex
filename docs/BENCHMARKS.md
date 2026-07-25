@@ -22,7 +22,7 @@ answer is not a benchmark win.
 | Version | REAL `2026.7.55` — §A and §Unicode re-measured on both ISAs for this stamp (the v2026.7.55 perf train: one-search exact-literal route, two-byte NEON literal prefilter, per-slot DFA ownership); per-train benchmark-impact log: CHANGELOG.md (full release notes: docs/release-notes/ + GitHub Releases). **Live methodology note — one row moved the wrong way and is disclosed, not chased:** x86-64 `fields [^,]+` reads 5.49 ns/B here against 4.67 at the `2026.7.51` stamp, and a same-machine same-harness A/B (only the engine headers differing) puts the train at **+5.3 %** on that row. It is a layout effect, not a logic cost, and the evidence is specific: callgrind counts **−2.9 % instructions** for the same scan (14.52 M → 14.10 M Ir) and a single-pattern binary measures it **8 % faster** — the multi-engine bench binary is simply a different code layout. `[^,]+` on gcc/x86 is the row this repository already documents as alignment-luck-sensitive (see `pike.hpp`'s `run()` note: +39 % from the mere *presence* of never-dispatched Aho-Corasick code, two `align-loops` attempts reverted). `alternation`/`lookahead` carry the same effect at +3.2 % / +2.6 %; `words`/`digits`/`hex`/`date` are within ±1.5 %. |
 | Machines | §A on **two ISAs**: devbox (`x86-64`, g++ 13.3.0) *and* Apple M1 Pro (`arm64`, Apple clang 16). §B / §E on M1 Pro (§E's x86-64 leg noted inline where it diverges — see §E). §multi-pattern measured on **x86-64 devbox** (g++ 13.3, RE2 + Hyperscan 5.4) |
 | Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (built from source on x86-64 to pin the exact version); RE2 (10.0 on x86-64, 11.0 on arm64 — version-differs-by-leg, uncontested given the margins). Multi-pattern: RE2::Set, Hyperscan (optional). §E: rust `regex` 1.12.4 |
-| Python | CPython 3.14, `re` (stdlib) vs the REAL `2026.7.25` abi3 wheel (§B — not re-measured this train) |
+| Python | CPython 3.14.6, `re` (stdlib) vs the in-place REAL `2026.7.55` extension (§B re-measured for this stamp, arm64 M1 Pro, N = 40 paired samples, bootstrap CI) |
 | Method | §A: median of N = 30 paired batches (both ISAs, this re-stamp), bootstrap CI; match counts equal on every case, both ISAs. §E: best-of-15, REAL `count_matches` vs rust `find_iter`/`captures_iter`, match counts equal. §multi-pattern: best-of-7, `make bench-multipattern`. **Every ratio below is computed programmatically from the raw ns/B pair — `benchmarks/verify_bench_ratios.py` re-derives and checks all of them** |
 
 ## A. C++ engine throughput
@@ -160,32 +160,53 @@ TABLE B — extraction non-overlapping (counts equal REAL/RE2):
 
 | case | `re` | REAL | ratio |
 | --- | ---: | ---: | ---: |
-| word starts · findall (multiline) | 584.4 µs | 19.5 µs | **30.16×** |
-| digits · sparse findall @100KB | 1.50 ms | 156.6 µs | **9.60×** |
-| date · findall groups | 1.61 ms | 194.9 µs | **8.25× ↑** (was 3.42×) |
-| date · search @100KB | 1.51 ms | 192.6 µs | **7.84× ↑** (was 3.28×) |
-| sub · dates with refs | 1.64 ms | 212.7 µs | **7.71× ↑** (was 3.42×) |
-| sub · spaces @100KB | 2.99 ms | 621.3 µs | 4.82× |
-| alternation · findall @100KB | 1.06 ms | 518.3 µs | 2.05× |
-| hex ids · findall | 330.5 µs | 192.2 µs | 1.73× |
-| words · dense findall @100KB | 2.05 ms | 1.37 ms | 1.48× |
-| literal · hit @1MB | 920.5 µs | 634.1 µs | 1.45× |
-| non-space · Unicode findall | 2.33 ms | 1.89 ms | 1.22× |
-| emails · findall groups | 1.96 ms | 1.82 ms | 1.09× |
-| literal · anchored miss @1MB | 236 ns | 281 ns | **0.84×** |
-| split · commas @100KB | 102.2 µs | 421.7 µs | **0.24×** |
-| `(a+)+b` · re n=24 / REAL n=10k (prefilter) | 1397.76 ms | **~0.5 µs** | **~3×10⁶×** (ReDoS) |
+| date · search @100KB | 1.15 ms | 2.8 µs | **402.82×** ↑ (was 7.84×) |
+| date · findall groups | 1.23 ms | 3.4 µs | **356.33×** ↑ (was 8.25×) |
+| sub · dates with refs | 1.24 ms | 27.2 µs | **45.58×** ↑ (was 7.71×) |
+| word starts ASCII · findall (multiline) | 444.6 µs | 15.6 µs | **28.57×** |
+| literal · hit @1MB | 695.9 µs | 59.0 µs | **11.85×** ↑ (was 1.45×) |
+| literal · miss @1MB | 696.6 µs | 58.6 µs | **11.85×** |
+| digits · sparse findall @100KB | 1.14 ms | 243.9 µs | **4.66×** |
+| sub · spaces @100KB | 2.25 ms | 674.7 µs | 3.34× |
+| alternation · findall @100KB | 804.6 µs | 305.3 µs | 2.64× |
+| emails · findall groups | 1.48 ms | 857.5 µs | 1.73× ↑ (was 1.09×) |
+| split · commas @100KB | 77.4 µs | 46.9 µs | **1.65×** ↑ (was **0.24×** — now a win) |
+| hex ids · findall | 247.9 µs | 155.0 µs | 1.60× |
+| words · findall @1KB | 15.8 µs | 10.6 µs | 1.50× |
+| words · findall @10KB | 151.9 µs | 115.0 µs | 1.32× |
+| words · findall @100KB | 1.49 ms | 1.19 ms | 1.26× |
+| words · dense findall @100KB | 1.54 ms | 1.22 ms | 1.25× |
+| words · findall @1MB | 15.86 ms | 13.21 ms | 1.20× |
+| non-space · Unicode findall | 1.74 ms | 1.60 ms | 1.09× |
+| literal · anchored miss @1MB | 178 ns | 218 ns | **0.82×** |
+| `(a+)+b` · re n=24 / REAL n=10k (prefilter) | 1048.33 ms | **706 ns** | **~1.5×10⁶×** (ReDoS) |
 
-**Geometric-mean speedup over `re`: 2.34× (CI [1.51, 3.76] clears 1.0 — PASS).** The headline change since
-the 2026.7.16 baseline: the **`\d{n}` quantifier / capture path roughly doubled** — date search 3.28 → **7.84×**,
-date findall-groups 3.42 → **8.25×**, sub-with-dates 3.42 → **7.71×** — while emails-with-groups holds its
-earlier flip to a win (1.09×). Two cases remain *slower* than `re`: **comma split (0.24×)** and **anchored
-miss (0.84×)** — high-volume `split` / tiny anchored matches where CPython's C engine has the lower per-match
-constant. REAL's edge widens on sparse/rare-byte scans, sub, and anything pathological (`(a+)+b`: ~3×10⁶× —
-`re` blows up on n=24, REAL's prefilter rejects n=10k in sub-microseconds; on a fuzzed corpus `re` hit 85
-catastrophic blow-ups, REAL none). The REAL cell was re-measured (Python binding, arm64 M1 Pro; prefilter
-path — see §C for the bare-VM leg); the rest of §B is the prior stamp. The two losses are an accepted trade
-for linear-time safety.
+**Geometric-mean speedup over `re`: 4.78× (CI [2.32, 12.62] clears 1.0 — PASS)**, up from 2.34× at the
+`2026.7.25` stamp. Two headline movements, both from the routes the recent trains rebuilt:
+
+- **The `\d{n}` date rows went from single-digit to three-figure**: search @100KB 7.84× → **402.82×**
+  (1.15 ms → **2.8 µs**), findall-groups 8.25× → **356.33×**, sub-with-refs 7.71× → **45.58×**. These
+  patterns have a required inner literal (`-`) and no leading one, so they are exactly the shape the
+  inner-literal route plus its warm-aware floor now serve; `re` scans, REAL memchrs.
+- **The fixed-literal rows followed the engine work**: `literal hit @1MB` 1.45× → **11.85×**
+  (695.9 µs → **59.0 µs**), with the new `literal miss @1MB` row at the same 11.85×. That is the
+  one-search exact-literal route and the two-byte NEON prefilter reaching the binding.
+
+**Only one case is still slower than `re`, down from two.** `split · commas @100KB` — the worst row at the
+last stamp, **0.24×** — is now a **1.65× win**; what remains is **`anchored miss @1MB` at 0.82×**, a
+178 ns-versus-218 ns contest where CPython's C engine has the lower fixed per-call cost and there is no scan
+to amortise it over. That one is an accepted trade, not a target.
+
+Two rows moved *down* in ratio and the reason is not REAL: `digits sparse` 9.60× → 4.66× and `words dense`
+1.48× → 1.25× — `re`'s own times improved between the stamps (digits sparse 1.50 ms → 1.14 ms), so the
+quotient narrowed while REAL's absolute stayed flat-to-better. Ratios against a moving baseline are
+disclosed as such rather than read as a regression.
+
+On the fuzzed corpus (`benchmarks/fuzz_bench.py`, 2886 comparable cases): aggregate wall time **REAL 241 ms
+vs `re` 45.6 s (189×)**, and `re` hit **85 catastrophic blow-ups where REAL stayed linear**. Honest detail
+from the same run: on the *median* fuzz case — a tiny subject where nothing amortises — the per-op ratio is
+**0.44×**, i.e. REAL is slower; the aggregate win is entirely the tail `re` cannot survive. Bounded-lookahead
+throughput is flat at ~19 MB/s from 1 KB to 1 MB (linear fit R² = 1.0000 — O(n), not backtracking).
 
 ### finditer memory — lazy iteration
 
