@@ -328,9 +328,10 @@ Patterns with a zero-width assertion no DFA can represent throw `real::dfa_error
 The rust `regex` crate (a lazy-DFA engine with literal prefilters) is REAL's closest peer on the
 linear-time-guarantee axis. This duel is honest about where REAL loses: the same patterns run through both
 engines over the same corpora (~1 MB), best of 15 batches, match counts cross-checked equal.
-**Stamp (re-stamp):** REAL **`a994ff9`** (post O2r-1b, the A2 fix, the P0 #2 icase fix + seed-128 tune, and
-the mono/multi cascade split), `rust regex 1.12.4` (`find_iter` on `regex::bytes`), both `-O3`/LTO, both
-ISAs measured this pass (see table headers). **Method:** REAL matching-only (`count_matches`) vs rust
+**Stamp (re-stamp):** REAL **`3cd9c81`** (v2026.7.55 — the perf train: one-search exact-literal route,
+two-byte NEON literal prefilter, per-slot DFA ownership; and, from the two trains before it, the
+warm-aware inner-literal haystack floor that most of the sparse-row movement below belongs to),
+`rust regex 1.12.4` (`find_iter` on `regex::bytes`), both `-O3`/LTO, both ISAs measured this pass. **Method:** REAL matching-only (`count_matches`) vs rust
 `find_iter` (spans) — engine scan cost, no capture-slot fill on either side; every ratio below is
 `rust_ns/REAL_ns` computed from a JSON dump (`run_duel.py --json`), not typed by hand —
 `benchmarks/verify_bench_ratios.py` re-checks it. Corpora = `benchmarks/duel/run_duel.py`. Reproduce:
@@ -342,55 +343,59 @@ rebuild `benchmarks/duel/real_bench` against current headers (`-O3 -flto`), `car
 
 | case | REAL ns/B | rust ns/B | winner |
 | --- | ---: | ---: | :--- |
-| literal `dog` | 0.803 | 0.571 | rust 1.4× |
-| alternation `fox\|dog\|cat` | 1.375 | 1.280 | rust 1.1× |
-| class `[a-z]+` | 2.085 | 11.665 | **REAL 5.6×** |
-| digits `[0-9]+` | 2.581 | 16.822 | **REAL 6.5×** |
-| fields `[^,]+` | 3.020 | 9.237 | **REAL 3.1×** |
-| word-boundary `\b\w+\b` | 4.608 | 11.113 | **REAL 2.4×** |
-| email `(\w+)@(\w+)` | 5.147 | 5.285 | ~tie (REAL 1.0×) |
-| ident `(\w+)_(\w+)` | 51.288 | 31.142 | rust 1.6× |
+| literal `dog` | 0.318 | 0.561 | **REAL 1.8×** |
+| alternation `fox\|dog\|cat` | 1.021 | 1.294 | **REAL 1.3×** |
+| class `[a-z]+` | 1.641 | 12.199 | **REAL 7.4×** |
+| digits `[0-9]+` | 2.119 | 17.228 | **REAL 8.1×** |
+| fields `[^,]+` | 2.894 | 9.382 | **REAL 3.2×** |
+| word-boundary `\b\w+\b` | 5.388 | 10.999 | **REAL 2.0×** |
+| email `(\w+)@(\w+)` | 4.651 | 5.236 | REAL 1.1× |
+| ident `(\w+)_(\w+)` | 53.542 | 30.786 | rust 1.7× |
 | date no-match `\d{4}-\d{2}-\d{2}` | 0.023 | 0.012 | rust 1.9× |
-| date sparse `\d{4}-\d{2}-\d{2}` | 0.222 | 0.075 | rust 2.9× |
-| email sparse `(\w+)@(\w+)` | 0.578 | 0.121 | rust 4.8× |
-| key= `key=(\w+)` | 0.981 | 1.438 | **REAL 1.5×** |
+| date sparse `\d{4}-\d{2}-\d{2}` | 0.128 | 0.077 | rust 1.7× |
+| email sparse `(\w+)@(\w+)` | 0.127 | 0.121 | rust 1.0× |
+| key= `key=(\w+)` | 1.017 | 1.444 | **REAL 1.4×** |
 
 **x86-64** — devbox, g++ 13.3.0, `-O3 -flto`:
 
 | case | REAL ns/B | rust ns/B | winner |
 | --- | ---: | ---: | :--- |
-| literal `dog` | 0.759 | 0.825 | **REAL 1.1×** |
-| alternation `fox\|dog\|cat` | 1.443 | 2.144 | **REAL 1.5×** |
-| class `[a-z]+` | 2.736 | 19.440 | **REAL 7.1×** |
-| digits `[0-9]+` | 3.397 | 24.393 | **REAL 7.2×** |
-| fields `[^,]+` | 3.914 | 16.144 | **REAL 4.1×** |
-| word-boundary `\b\w+\b` | 4.992 | 16.635 | **REAL 3.3×** |
-| email `(\w+)@(\w+)` | 7.029 | 6.343 | rust 1.1× |
-| ident `(\w+)_(\w+)` | 100.541 | 47.555 | rust 2.1× |
-| date no-match `\d{4}-\d{2}-\d{2}` | 0.018 | 0.019 | **REAL 1.1×** |
-| date sparse `\d{4}-\d{2}-\d{2}` | 0.360 | 0.101 | rust 3.6× |
-| email sparse `(\w+)@(\w+)` | 1.014 | 0.162 | rust 6.3× |
-| key= `key=(\w+)` | 1.160 | 2.176 | **REAL 1.9×** |
+| literal `dog` | 0.489 | 0.841 | **REAL 1.7×** |
+| alternation `fox\|dog\|cat` | 1.480 | 2.141 | **REAL 1.4×** |
+| class `[a-z]+` | 2.712 | 19.059 | **REAL 7.0×** |
+| digits `[0-9]+` | 3.293 | 23.471 | **REAL 7.1×** |
+| fields `[^,]+` | 4.089 | 15.874 | **REAL 3.9×** |
+| word-boundary `\b\w+\b` | 4.592 | 16.848 | **REAL 3.7×** |
+| email `(\w+)@(\w+)` | 5.242 | 6.321 | **REAL 1.2×** |
+| ident `(\w+)_(\w+)` | 113.178 | 46.355 | rust 2.4× |
+| date no-match `\d{4}-\d{2}-\d{2}` | 0.018 | 0.016 | rust 1.1× |
+| date sparse `\d{4}-\d{2}-\d{2}` | 0.144 | 0.102 | rust 1.4× |
+| email sparse `(\w+)@(\w+)` | 0.138 | 0.158 | REAL 1.1× |
+| key= `key=(\w+)` | 1.287 | 2.162 | **REAL 1.7×** |
 
-**Reading — verdict brut, and the ISA genuinely changes the picture here, not just the margins.**
+**Reading — verdict brut. The ISA no longer splits this table the way it did; the trains since `a994ff9`
+closed most of the rows that used to flip.**
 
-- **The class/digit/field/word-boundary lines lead on both ISAs, x86-64 by a wider margin**
-  (`class` 5.6× arm64 → 7.1× x86-64; `digits` 6.5× → 7.2×; `fields` 3.1× → 4.1×; `word-boundary`
-  2.4× → 3.3×). REAL's class-loop / codepoint-class fast paths scale better on x86-64 here than rust's DFA
-  does.
-- **Four rows flip sign between ISAs — a single-machine number would have mis-stated the story.**
-  `literal` (rust 1.4× arm64 → **REAL 1.1× x86-64**), `alternation` (rust 1.1× → **REAL 1.5×**), `email`
-  (tie arm64 → rust 1.1× x86-64, a thin flip the other way), `date no-match` (rust 1.9× arm64 →
-  **REAL 1.1× x86-64**). None of these are dressed up as a clean win on either side —
-  `literal`/`email`/`date no-match` are all near-ties (1.0–1.4×) on at least one ISA, stated as such.
-- **The sparse-match rows (the prefilter-favorable shape for rust) are rust's clearest wins on *both* ISAs,
-  and notably wider on x86-64:** `date sparse` 2.9× arm64 → **3.6× x86-64**; `email sparse` 4.8× arm64 →
-  **6.3× x86-64** — rust's Teddy/memchr-family prefilter on a rare literal has more headroom on x86-64 than
-  REAL's rare-byte route does. `ident` (dense, no useful prefilter for either engine) stays rust's biggest
-  win on both ISAs (1.6× arm64, 2.1× x86-64) — a separate, already-named residual (dense `_`-joined `\w`
-  scans), not related to the prefilter story.
-- **`key=` is REAL's cleanest, ISA-stable win** (1.5× arm64, 1.9× x86-64) — the inner-literal prefilter
-  route (§E.5) generalizes across ISAs better than the sparse-date/email rows above.
+- **REAL now leads 8 of 12 rows on arm64 and 9 of 12 on x86-64.** The class/digit/field/word-boundary
+  block is unchanged in shape and still the widest margin (`class` 7.4× arm64 / 7.0× x86-64; `digits`
+  8.1× / 7.1×; `fields` 3.2× / 3.9×; `word-boundary` 2.0× / 3.7×).
+- **Three rows that used to flip sign between ISAs are now REAL's on both.** `literal` (was rust 1.4×
+  arm64 / REAL 1.1× x86 → now **REAL 1.8× / 1.7×**) and `alternation` (rust 1.1× / REAL 1.5× → **REAL
+  1.3× / 1.4×**) are the one-search exact-literal route, with the NEON prefilter on top for the arm64 leg;
+  `email` dense (tie / rust 1.1× → **REAL 1.1× / 1.2×**) is the same route reaching the confirm.
+  A single-machine number would no longer mis-state these — they agree across ISAs now.
+- **The sparse-match rows — rust's clearest wins at the last stamp — have largely closed.** `email sparse`
+  went from rust 4.8× arm64 / 6.3× x86-64 to **rust 1.0× arm64 (a tie) / REAL 1.1× x86-64**, an absolute
+  1.014 → 0.138 ns/B on the x86 leg; `date sparse` from 2.9× / 3.6× to **1.7× / 1.4×**. That is the
+  warm-aware inner-literal floor (the route now fires on a reused haystack instead of deferring to the
+  core), not the literal work of this train — credited where it belongs.
+- **rust's remaining wins are two, and one of them got worse.** `ident` (dense `_`-joined `\w`, no useful
+  prefilter for either engine) is still its biggest and **widened**: 1.6× → **1.7×** arm64, 2.1× →
+  **2.4×** x86-64, on an absolute that rose 100.5 → 113.2 ns/B on x86. That is the already-named
+  non-one-pass residual (the `_` conflict), and it is now the table's worst row — stated, not buried.
+  `date no-match` stays rust's on both (1.9× arm64, 1.1× x86-64), both near-ties on an 0.02 ns/B scan.
+- **`key=` remains REAL's ISA-stable win** (1.4× arm64, 1.7× x86-64) — the inner-literal prefilter route
+  (§E.5) still generalizes across ISAs better than the sparse rows do.
 
 Two things carry a caveat, not a verdict:
 
@@ -525,14 +530,30 @@ operations:
   a span-0-only path that materializes no group vector, the crate is now **at parity-to-faster** than the
   pure-Rust `regex` crate: `[a-z]+` ≈ 0.8×, `[0-9]+` ≈ 0.7× (REAL ahead). The per-match allocation an earlier
   measurement flagged here is gone.
-- **`captures_iter`** (materializing every group into an owned `Captures`) — allocates a group vector per
-  match. That cost is **not inherent**: the `regex` crate solves it with `capture_locations` +
-  `captures_read`, and **`real-regex` now exposes the same pair** plus a streaming
-  `captures_read_iter` (reusable slots, no per-match `Captures`). Prefer those in capture-dense hot
-  loops; `captures_iter` remains the ergonomic owned iterator. **arm64 M1 Pro**, dense ~100 KB, med of 21
-  (release): `[a-z]+` `captures_read_iter` **≈0.43×** the wall of `captures_iter` (~2.3× faster);
-  `(\w+) (\w+) (\w+) (\w+)` **≈0.93×** (search-dominated, still a clear win). The older « inherent to
-  returning owned group spans » wording is withdrawn.
+- **`captures_iter`** (materializing every group into an owned `Captures`) — **no longer allocates per
+  match at all.** `Captures` now stores its slots flat and inline (4 groups inline, spilling to the heap
+  beyond), so the `malloc` + `free` this line used to pay per match — ~19–27 ns/match of pure allocator
+  traffic to carry a *single* span on a groupless pattern — is gone. That was the whole of the
+  `captures_iter`-versus-`find_iter` gap, and the older « inherent to returning owned group spans »
+  wording is withdrawn twice over: the `regex` crate solves it with `capture_locations` +
+  `captures_read` (**`real-regex` exposes the same pair**, plus a streaming `captures_read_iter`), and
+  the owned iterator no longer needs the escape hatch to be competitive.
+
+  **arm64 M1 Pro, criterion, 64 KiB corpus, at `3cd9c81`** — the whole train's effect on this bench,
+  against the `regex` crate in the same process:
+
+  | criterion row | before the train | now | vs `regex` |
+  | --- | ---: | ---: | :--- |
+  | `captures/class` | 438.9 µs | **207.9** | 2.33× → **1.10×** |
+  | `captures/digits` | 112.1 | **61.0** | behind → **REAL 1.25× ahead** |
+  | `captures/fields` | 66.4 | **43.4** | **REAL 3.52× ahead** |
+  | `captures/email` | 569.7 | **143.6** | 3.33× |
+  | `captures/literal` | 52.1 | **27.7** | 4.95× → **1.97×** |
+  | `find/literal` | 33.5 | **17.3** | 3.18× → **1.64×** |
+
+  `captures_read_iter` remains the right tool when the last allocation matters (it materializes no
+  `Captures` at all): dense ~100 KB, med of 21, `[a-z]+` **≈0.43×** the wall of `captures_iter`,
+  `(\w+) (\w+) (\w+) (\w+)` **≈0.93×** (search-dominated).
 
 So on span throughput the crate is competitive; on full capture extraction use the reusable buffer when it
 matters. Either way the pitch is not raw speed but the linear-time / ReDoS-safe guarantee and the
@@ -682,20 +703,26 @@ divergence to flag here). REAL `find_iter` vs rust `find_iter`, min-of-15.
 
 | case | REAL ns/B | rust ns/B | winner |
 | --- | ---: | ---: | :--- |
-| `\w+` (mixed-script) | 5.98 | 7.09 | REAL 1.2× |
-| `\p{L}+` (CJK) | 8.18 | 7.68 | rust 1.1× |
-| `\p{N}+` (arabic digits) | 3.20 | 4.98 | REAL 1.6× |
-| `\p{sc=Han}` (CJK) | 7.09 | 9.13 | REAL 1.3× |
-| `\p{scx=Cyrl}` (mixed-script) | 6.37 | 10.21 | REAL 1.6× |
-| `(?i)` accented literal | 0.96 | 1.44 | **REAL 1.5×** |
-| `[a-y]` accented class | 5.30 | 14.10 | REAL 2.7× |
-| CJK literal | 1.94 | 1.12 | rust 1.7× |
-| `.` (emoji, one codepoint) | 3.99 | 15.91 | REAL 4.0× |
+| `\w+` (mixed-script) | 3.32 | 5.38 | **REAL 1.6×** |
+| `\p{L}+` (CJK) | 3.47 | 5.78 | **REAL 1.7×** |
+| `\p{N}+` (arabic digits) | 2.76 | 3.77 | **REAL 1.4×** |
+| `\p{sc=Han}` (CJK) | 7.08 | 6.86 | rust 1.0× |
+| `\p{scx=Cyrl}` (mixed-script) | 5.40 | 7.76 | **REAL 1.4×** |
+| `(?i)` accented literal | 1.10 | 1.43 | **REAL 1.3×** |
+| `[a-y]` accented class | 5.92 | 10.72 | **REAL 1.8×** |
+| CJK literal | 0.45 | 0.87 | **REAL 1.9×** |
+| `.` (emoji, one codepoint) | 3.94 | 15.92 | **REAL 4.0×** |
 
-A genuine, roughly-even split — REAL ahead on scripts/classes/`.`/accented-literal, rust ahead on `\p{L}+`
-and the CJK literal (both by a modest ~1.1–1.7×) — not the lopsided picture the three-way table paints,
-because rust's Unicode-aware defaults remove the semantics confound entirely. The `(?i)` row was the one
-outlier (rust 166×) until the P0 fix below closed it; it is no longer carved out from the split above.
+**No longer an even split — REAL leads eight of the nine rows.** Both rows rust used to hold have crossed:
+`\p{L}+` CJK (rust 1.1× → **REAL 1.7×**) and the **CJK literal (rust 1.7× → REAL 1.9×**, an absolute
+1.94 → 0.45 ns/B) — the latter is the two-byte NEON prefilter on a multi-byte needle, the shape it was
+built for. Only `\p{sc=Han}` is rust's now, and barely (1.0×, a tie on a 7 ns/B scan). As before, this
+table is the cleaner Unicode comparison than the three-way one above, because rust's Unicode-aware
+defaults for `\w` and `.` remove the semantics confound entirely — every row's match count agrees.
+**x86-64, same harness** (g++ 13.3, `-O3`/LTO): `\w+` **5.80** (REAL 1.6×), `\p{L}+` **6.29** (1.4×),
+`\p{N}+` **7.37** (rust 1.3×), `sc=Han` **12.04** (rust 1.1×), `scx=Cyrl` **10.49** (1.1×), `(?i)`
+accented **1.65** (1.2×), accented class **7.74** (2.0×), CJK literal **0.84** (**1.5×** — the same
+crossing), `.` emoji **6.51** (3.8×) — seven of nine REAL's on that leg.
 
 ### A significant find, fixed same-day: `(?i)<literal>` was quadratic, not linear — and it was not Unicode-specific
 
