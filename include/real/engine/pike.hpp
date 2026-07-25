@@ -2942,6 +2942,48 @@ namespace real::detail {
     }
 
     /*!
+     * \brief The whole exact-literal search in one \ref find_prefix, for a \ref
+     *        pattern_hints::literal_one_search program (see \ref run_exact_literal's own call site for
+     *        why each per-match step of the general loop is redundant there).
+     *
+     * `noinline` deliberately, and it is the *hot* path — not the usual cold-code reason. Keeping this
+     * body inside \ref run_exact_literal grew that function, which shares an inlining unit with
+     * \ref run and therefore with the class loops: `[^,]+` (\ref run_codepoint_class) measured a
+     * reproducible ~1.5 % regression from the growth alone, the same front-end codegen-luck hazard
+     * documented on \ref run and fixed the same way (\ref run_class_loop_trailing_la,
+     * `try_shared_lazy_dfa_search`). Out of line, `[^,]+` returns to its exact pre-change ns/B while
+     * this path keeps its win — the one measured cost is a 9-byte literal giving back ~3 points of a
+     * ~35 % gain (arm64: `localhost` −31.9 % out of line vs −35.2 % inline; `dog` identical at
+     * −31.6 %). Restoring a common route beats the last points of an uncommon one.
+     *
+     * \tparam OutSlots Output slot container.
+     * \param[in]  text      The subject text.
+     * \param[in]  start     Index to begin searching at.
+     * \param[in]  len       The literal's length (`hints.exact_literal_len`, >= 2 by the hint).
+     * \param[out] out_slots Receives `[cand, cand + len]` on success.
+     * \return `true` if the literal occurs at or after \p start.
+     */
+    template <typename OutSlots>
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    bool run_literal_one_search(std::string_view text,
+                                std::size_t      start,
+                                std::size_t      len,
+                                OutSlots&        out_slots)
+    {
+      const std::size_t cand {find_prefix(text, start, std::string_view(prog_.hints.prefix.data(), len))};
+      if (cand == npos) {
+        out_slots.assign(prog_.slot_count, npos);
+        return false;
+      }
+      ensure_slot_size(out_slots, prog_.slot_count); // find_prefix guarantees cand + len <= text.size()
+      out_slots[0] = cand;
+      out_slots[1] = cand + len;
+      return true;
+    }
+
+    /*!
      * \brief Fast path for a pure-literal pattern.
      *
      * The prefilter locates the fixed bytes; this replays saves directly, with
@@ -2977,6 +3019,22 @@ namespace real::detail {
           out_slots.assign(prog_.slot_count, npos);
         }
         return ok;
+      }
+      // One-search path: ONE `find_prefix` answers the whole search, because each per-match step the
+      // general loop below takes is provably redundant for a `literal_one_search` program (the compiler
+      // folded the eligibility into that one bit -- see pattern_hints::literal_one_search):
+      //   * next_candidate's hint chain would take its `prefix_size >= 2` branch and call this very
+      //     find_prefix (anchored_start / line_anchored / rare_disc are the only earlier branches, and
+      //     the hint excludes all three);
+      //   * literal_at would re-memcmp the bytes find_prefix just matched (same hints.prefix, and the
+      //     hint requires prefix_size == exact_literal_len, so the whole literal was matched);
+      //   * replay_literal would walk the whole program to rediscover a per-match-invariant answer --
+      //     with no assert_position to evaluate and slot_count == 2, the saves it writes are exactly
+      //     [0] = cand and [1] = cand + len.
+      // Everything the hint excludes (a group, any assertion, an anchor, a 1-byte literal) keeps the
+      // general loop below verbatim, so no shape loses its retry-on-assertion-failure behaviour.
+      if (!std::is_constant_evaluated() && prog_.hints.literal_one_search && prog_.slot_count == 2) {
+        return run_literal_one_search(text, start, len, out_slots);
       }
       std::size_t from {start};
       while (true) {

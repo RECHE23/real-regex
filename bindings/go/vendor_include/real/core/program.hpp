@@ -537,6 +537,27 @@ namespace real {
       //!        then takes \ref inner_literal_prefix body children. Appended last (same placement
       //!        rule as \ref alternation_branch_count) so hot-field offsets stay put.
       std::uint8_t inner_literal_prefix_skip {};
+
+      //! \brief One `find_prefix` answers the whole exact-literal search: every per-match step the
+      //!        general `run_exact_literal` loop takes is provably redundant for this program.
+      //!
+      //! Set when ALL of: \ref exact_literal_len >= 2 (a 1-byte literal goes through `find_byte`,
+      //! not `find_prefix`); \ref prefix_size == \ref exact_literal_len (so `find_prefix` matches
+      //! the *whole* literal, making `literal_at`'s re-compare redundant); the program carries no
+      //! `assert_position` (an exact-literal program legally may — `\bdog`, `^dog`, `dog\b`, see
+      //! `extract_prefix` — and each occurrence must then be checked at its own position, which is
+      //! exactly the retry the general loop exists for); and neither \ref anchored_start, \ref
+      //! line_anchored nor \ref rare_disc is armed (each takes an earlier branch in
+      //! `next_candidate`, so the candidate would not come from `find_prefix`).
+      //!
+      //! Folded into one bit deliberately: every term is a property of the compiled program, never
+      //! of the subject, so evaluating them per match cost the shapes that FAIL the guard ~1–1.6%
+      //! (measured) for a decision that cannot change. The caller adds only `slot_count == 2`,
+      //! which lives on the program rather than here. Assertion-freeness is computed directly from
+      //! `code` and deliberately **not** inferred from \ref wb_lead / \ref anchored_start / \ref
+      //! line_anchored: an assert kind those hints do not represent would make that inference
+      //! silently unsound. Appended last (same placement rule as \ref alternation_branch_count).
+      bool literal_one_search {};
     };
 
     /*!

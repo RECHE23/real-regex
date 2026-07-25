@@ -1820,6 +1820,26 @@ namespace real::detail {
     // Rare discriminant past an optional mono-byte (URL `https?://`): memchr the disc, back-verify
     // prefix+opt+after. Preferable to a weak literal prefix (`http`) when the disc is rarer.
     extract_rare_discriminant(code, hints);
+
+    // Fold the exact-literal one-search decision, LAST: it reads anchored_start (extract_anchoring),
+    // prefix_size/exact_literal_len (extract_prefix, already zeroed by the lookaround wipe above when
+    // one is present) and rare_disc (extract_rare_discriminant, just above) -- every contributor has
+    // run by here. See pattern_hints::literal_one_search for why this is one precomputed bit and not
+    // a per-match condition chain.
+    if (hints.exact_literal_len >= 2 && hints.prefix_size == hints.exact_literal_len
+        && !hints.anchored_start && !hints.line_anchored && hints.rare_disc < 0) {
+      bool no_assert {true};
+      for (const instr& instruction : code) {
+        if (instruction.op == opcode::assert_position) {
+          no_assert = false;
+          break;
+        }
+        if (instruction.op == opcode::match) {
+          break;
+        }
+      }
+      hints.literal_one_search = no_assert;
+    }
     return hints;
   }
 
