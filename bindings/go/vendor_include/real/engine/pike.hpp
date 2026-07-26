@@ -1113,6 +1113,11 @@ namespace real::detail {
       if (immut->built_for.load(std::memory_order_relaxed) == want) {
         return; // double-check
       }
+      // Destroy the old extractor BEFORE the program it spans is replaced: onepass keeps `code_` /
+      // `classes_` as spans over its byte_program, so reassigning byte_prog first would leave the still-live
+      // op_table pointing at a freed buffer. Nothing dereferences it in that window today; closing the
+      // window costs one statement and removes the need to know that.
+      immut->op_table.reset();
       immut->byte_prog = build_byte_program(prog_); // Tier-A: ineligible if assert/lookaround
       if (immut->byte_prog.eligible) {
         immut->alphabet =
@@ -1121,10 +1126,24 @@ namespace real::detail {
       else {
         immut->alphabet = {};
       }
-      immut->op_table.reset();
-      const byte_program tier_b {build_byte_program(prog_, /*keep_assertions=*/ true)};
-      if (tier_b.eligible) {
-        immut->op_table.emplace(tier_b); // one-pass extractor: Tier-A window + Tier-B anchored
+      // Tier-B differs from Tier-A ONLY at `assert_position`: build_byte_program reads keep_assertions
+      // nowhere else, and every other ineligibility (assert_lookaround, a Tier 1 possessive loop) is
+      // decided identically either way. So a program with no `assert_position` yields a byte-for-byte
+      // identical expansion, and rebuilding it means expanding every Unicode class's UTF-8 trie a second
+      // time -- measured, that was 2 of the 5 trie builds per regex, plus a second full
+      // compute_lazy_alphabet over the same input.
+      //
+      // Reusing immut->byte_prog is also the sounder lifetime: onepass keeps `code_` / `classes_` as spans
+      // over the program it was built from, and the Tier-B local died at the end of this block.
+      if (std::any_of(prog_.code.begin(), prog_.code.end(),
+                      [](const instr& in) { return in.op == opcode::assert_position; })) {
+        const byte_program tier_b {build_byte_program(prog_, /*keep_assertions=*/ true)};
+        if (tier_b.eligible) {
+          immut->op_table.emplace(tier_b); // one-pass extractor: Tier-A window + Tier-B anchored
+        }
+      }
+      else if (immut->byte_prog.eligible) {
+        immut->op_table.emplace(immut->byte_prog);
       }
       immut->il_prefix_prog  = {};
       immut->il_min_haystack = 0;
