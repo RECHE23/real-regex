@@ -237,6 +237,37 @@ namespace real::detail {
       bail_pc_     = pc;
     }
 
+    /*!
+     * \brief The first non-`jump` pc reachable from \p pc by following unconditional jumps.
+     *
+     * A `jump` is a pure epsilon step -- no byte consumed, no capture written, no assertion added (see the
+     * `opcode::jump` case in \ref build_edges, which just recurses with the masks unchanged) -- so the node
+     * at a jump's pc and the node at its target receive identical edges. Creating one for each was what left
+     * the flood holding a private copy of every shared trie subgraph for \ref minimize to merge afterwards:
+     * 2506 of 2508 nodes for `(\w+)@(\w+)` sat on a jump, because \ref emit_utf8_trie writes `klass` then
+     * `jump(target)` per trie edge and the successor below was taken as `pc + 1`. Resolving the chain makes
+     * the flood produce the shared node directly -- measured, the flood now lands ON the minimal automaton
+     * for those patterns (660 nodes in and 660 out, where it was 2508 in and 660 out).
+     *
+     * Bounded by the code size. A jump cycle would spin here, and \ref build_edges's `on_path` detection only
+     * sees pcs it actually visits; on hitting the bound the pc is returned as-is, the flood reaches the cycle
+     * through \ref build_edges, and that bails exactly as before.
+     *
+     * \param[in] pc Starting pc.
+     * \return The resolved pc (\p pc itself when it is not a jump, or on running out of steps).
+     */
+    [[nodiscard]] constexpr std::int32_t follow_jumps(std::int32_t pc) const
+    {
+      for (std::size_t steps = 0; steps < code_.size(); ++steps) {
+        if (pc < 0 || static_cast<std::size_t>(pc) >= code_.size()
+            || code_[static_cast<std::size_t>(pc)].op != opcode::jump) {
+          return pc;
+        }
+        pc = code_[static_cast<std::size_t>(pc)].primary_target;
+      }
+      return pc;
+    }
+
     //! \brief Get-or-create the node whose entry pc is \p pc, enqueueing a fresh one for the flood.
     constexpr std::uint32_t node_of(std::int32_t               pc,
                                     std::vector<std::int32_t>& queue)
@@ -521,7 +552,7 @@ namespace real::detail {
       switch (in.op) {
         case opcode::byte:
         case opcode::klass: {
-            const std::uint32_t next {node_of(pc + 1, queue)};
+            const std::uint32_t next {node_of(follow_jumps(pc + 1), queue)};
             onepass_node&       node {nodes_[node_id]};
             // Only the byte-classes this instruction actually consumes (one for `byte`, a precomputed few
             // for `klass`) — never a scan over the whole alphabet, which made the build O(nodes x classes)
