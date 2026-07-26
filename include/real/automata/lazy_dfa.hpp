@@ -537,29 +537,34 @@ namespace real::detail {
     constexpr std::size_t     pred_buckets {512};
     std::vector<std::int32_t> pred_head(pred_buckets, -1);
     std::vector<std::int32_t> pred_next;
-    const auto                push_class {[&](const char_class& cc) {
-                                            std::uint64_t h {1469598103934665603ULL};
-                                            for (const std::uint64_t w : cc.bits) {
-                                              h = (h ^ w) * 1099511628211ULL;
-                                            }
-                                            std::int32_t& head {pred_head[static_cast<std::size_t>(h) % pred_buckets]};
-                                            for (std::int32_t i2 = head; i2 >= 0; i2 = pred_next[static_cast<std::size_t>(i2)]) {
-                                              if (class_preds[static_cast<std::size_t>(i2)] == cc) {
-                                                return;
-                                              }
-                                            }
-                                            const auto id {static_cast<std::int32_t>(class_preds.size())};
-                                            class_preds.push_back(cc);
-                                            pred_next.push_back(head);
-                                            head = id;
-                                          }};
-    std::vector<bool>     seen_class(classes.size(), false);
-    std::array<bool, 256> seen_byte {};
+    std::vector<bool>         seen_class(classes.size(), false);
+    std::array<bool, 256>     seen_byte {};
     for (const instr& in : code) {
       if (in.op == opcode::klass && in.arg16 < classes.size()) {
         if (!seen_class[in.arg16]) {
           seen_class[in.arg16] = true;
-          push_class(classes[in.arg16]);
+          // Inlined rather than a lambda: the analyzer cannot model a `[&]`-captured vector through the
+          // call and reports a null-pointer call on every use of `class_preds`, and one call site does not
+          // justify suppressing that.
+          const char_class& cc {classes[in.arg16]};
+          std::uint64_t     h  {1469598103934665603ULL};
+          for (const std::uint64_t w : cc.bits) {
+            h = (h ^ w) * 1099511628211ULL;
+          }
+          std::int32_t& head    {pred_head[static_cast<std::size_t>(h) % pred_buckets]};
+          bool          present {false};
+          for (std::int32_t i2 = head; i2 >= 0; i2 = pred_next[static_cast<std::size_t>(i2)]) {
+            if (class_preds[static_cast<std::size_t>(i2)] == cc) {
+              present = true;
+              break;
+            }
+          }
+          if (!present) {
+            const auto id {static_cast<std::int32_t>(class_preds.size())};
+            class_preds.push_back(cc);
+            pred_next.push_back(head);
+            head = id;
+          }
         }
       }
       else if (in.op == opcode::byte) {
