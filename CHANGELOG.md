@@ -2,6 +2,40 @@
 
 Per-train benchmark-impact log: what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s §A/§E/§B/§Unicode/§multi-pattern sections, carried verbatim from that file's Version row. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.7.56
+
+7.56 (**cold-path train — build and compile cost, no behaviour change**): §E.4 re-stamped and given two new
+families the scan rows structurally could not see. `find`/`captures` build the pattern *outside* the timed
+closure and criterion's warm-up absorbs any lazy build, so two costs lived in that gap: a quadratic Unicode
+word-subset test (`\b\w+\b` **105.4 → 7.3 µs** at compile, 14.4× arm64 / 22× x86, `is_unicode_word_subset_cp_class`
+was 94.73 % of that build and rescanned `word_ranges` from index 0 per step — now one merge of two sorted
+lists), and the one-pass table for `(\w+)@(\w+)` (**21.3 → 2.91 ms** on first use over five passes: flat
+hoisted scratch, sparse signature rows rewriting only the words a round changes, one interned class per
+UTF-8 byte range plus the index memo that makes it pay, jump-chain resolution in the flood — which alone
+made the flood land ON the minimal automaton, 660 nodes in and 660 out where it was 2508 in — and dropping a
+duplicate Tier-A/Tier-B expansion). §E.4's `captures` rows moved too, from one runtime-length
+`copy_from_slice` compiling to a `memcpy` CALL to carry two `usize`: `captures/class` **207.9 → 186.45 µs**
+(1.10× behind → **parity**), `captures/digits` 61.0 → 54.72 (**REAL 1.39× ahead**), `captures/fields` 43.4 →
+39.76 (**3.86× ahead**), `captures/literal` 27.7 → 18.98, `find/literal` 17.3 → 16.31, `captures/email` 143.6
+→ 137.15. REAL leads **8 of 8** compile rows (2.65×–49.7×) and **7 of 8** first-use rows (1.77×–35.3×); the
+exception is `(\w+)@(\w+)` first use, **4.94× behind** after −86.8 %, disclosed not chased — declining the
+one-pass table instead was measured and rejected, it buys 3.3× on the scan with break-even near 900 KB.
+§A/§B/§Unicode/§multi-pattern **untouched**: every change is on a cold path taken once per regex, outside
+every scan loop, and the x86 instruction counts for `find_iter` over 64 KiB are identical to five decimals
+(`[a-z]+` 45249867, `\b\w+\b` 79627271). Layout: no `pattern_hints` change. Known and disclosed: 7 of 9
+dispatch routes still bill nothing to the deterministic work counter, so the linearity gate does not cover
+them — all nine measure linear (3.77×–4.04× for 4× the bytes), so this is a missing net, not a defect.
+
+## v2026.7.55
+
+7.55 — **no re-stamp at the time.** The perf train shipped (one-search exact-literal route, two-byte NEON
+literal prefilter, per-slot DFA ownership; see docs/release-notes/v2026.7.55.md for its measured per-commit
+deltas), but `docs/BENCHMARKS.md` kept its `2026.7.51` figures and `make version-check` warned about the gap
+— the notes named it and declined to hold a verified train for a documentary pass. §A/§Unicode/§E/§B/§E.4
+were re-stamped afterwards, on both ISAs, as a separate doc-only train; the Version row above carries that
+stamp. The same is true of 7.52–7.54: their Version rows all still read `2026.7.51`, so this log has no
+entry for them by its own convention (it carries that row verbatim).
+
 ## v2026.7.51
 
 7.51 (correctness/parity train — parser/compat/doc/harness only: ecma dialect gate, nullable-captured-repeat compat routing, without() uint16 widening fix, six RE2-parity syntax forms (all parse/compile-time), help/gate infra; adds no case and touches no measured §A/§E/§B/§Unicode hot path; layout: `pattern_hints` gains one bool (`nullable_captured_repeat`) — **verified sizeof/offsetof-neutral** (7.42 discipline): `sizeof(pattern_hints)` 200, `sizeof(program_view)` 376, `sizeof(dynamic_program)` 464, all three `offsetof` probed unchanged, v2026.7.50 vs this tip, both clang 16/arm64 and g++ 13/arm64 agree; not a re-stamp trigger).
