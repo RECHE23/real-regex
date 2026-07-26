@@ -30,6 +30,7 @@
 #include <cassert>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <type_traits>
 #include <unordered_map>
 #include <optional>
@@ -339,46 +340,69 @@ namespace real::detail {
       const std::uint64_t sig_width  {4U + (3U * static_cast<std::uint64_t>(alpha_.count))};
       const std::uint64_t round_work {static_cast<std::uint64_t>(n) * sig_width};
       std::uint64_t       work_done  {0};
+      // All scratch is FLAT and hoisted out of the refinement loop. Nested vectors cost three ways:
+      // rebuilding them per round was n + minimize_buckets (= 4096) allocations *each round*; the
+      // signatures' per-element push_back was capacity check plus construct per word (17 % of this
+      // build's instructions on a `\w`-shaped program); and 4096 vector headers is more memory than
+      // the table it indexes. Flat removes all three -- four allocations for the whole call.
+      //
+      // Signature rows have a UNIFORM width: every node's `edge` is assigned exactly alpha_.count
+      // entries (see build/rebuild), which is why `sig_width` above can be a single number for the
+      // work budget. That same uniformity is what makes a fixed stride correct here; a node with
+      // fewer edges would compare two different-length signatures over a common width.
+      //
+      // Buckets are an intrusive chain (`bucket_head` + `bucket_next`) rather than 4096 vectors.
+      // Insertion is at the head, which is safe because a bucket only ever holds ONE representative
+      // per distinct signature -- a later node with an equal signature reuses its class and is not
+      // inserted -- so the walk order cannot change the result. `bucket_next` needs no per-round
+      // reset: heads are reset each round, so every node reached on a chain had its `next` written
+      // this round.
+      const std::size_t          stride {static_cast<std::size_t>(sig_width)};
+      std::vector<std::uint64_t> sigs(n * stride, 0);
+      std::vector<std::uint32_t> next_cls(n, 0);
+      std::vector<std::uint32_t> bucket_head(minimize_buckets, no_node);
+      std::vector<std::uint32_t> bucket_next(n, no_node);
       while (true) {
         if (work_done + round_work > work_cap_) {
           bail("one-pass minimization exceeded its work budget: not one-pass", static_cast<std::int32_t>(n));
           return;
         }
         work_done += round_work;
-        std::vector<std::vector<std::uint64_t>> sigs(n);
         for (std::size_t i = 0; i < n; ++i) {
-          std::vector<std::uint64_t>& s {sigs[i]};
-          s.push_back(cls[i]);
-          s.push_back(nodes_[i].matches ? 1U : 0U);
-          s.push_back(nodes_[i].match_cap_mask);
-          s.push_back(nodes_[i].match_assert_mask);
+          std::uint64_t* s {sigs.data() + (i * stride)};
+          *s++ = cls[i];
+          *s++ = nodes_[i].matches ? 1U : 0U;
+          *s++ = nodes_[i].match_cap_mask;
+          *s++ = nodes_[i].match_assert_mask;
           for (const onepass_edge& e : nodes_[i].edge) {
-            s.push_back(e.assigned ? static_cast<std::uint64_t>(cls[e.next]) + 1U : 0U);
-            s.push_back(e.cap_mask);
-            s.push_back(e.assert_mask);
+            *s++ = e.assigned ? static_cast<std::uint64_t>(cls[e.next]) + 1U : 0U;
+            *s++ = e.cap_mask;
+            *s++ = e.assert_mask;
           }
         }
-        std::vector<std::uint32_t>              next_cls(n, 0);
-        std::vector<std::vector<std::uint32_t>> buckets(minimize_buckets);
-        std::uint32_t                           next {0};
+        next_cls.assign(n, 0);
+        bucket_head.assign(minimize_buckets, no_node);
+        std::uint32_t next {0};
         for (std::size_t i = 0; i < n; ++i) {
-          std::vector<std::uint32_t>& bucket {buckets[sig_hash(sigs[i]) % minimize_buckets]};
-          std::uint32_t               id     {no_node};
-          for (const std::uint32_t j : bucket) {
-            if (sigs[j] == sigs[i]) {
+          const std::span<const std::uint64_t> row  {sigs.data() + (i * stride), stride};
+          std::uint32_t&                       head {bucket_head[sig_hash(row) % minimize_buckets]};
+          std::uint32_t                        id   {no_node};
+          for (std::uint32_t j = head; j != no_node; j = bucket_next[j]) {
+            if (std::equal(row.begin(), row.end(), sigs.data() + (static_cast<std::size_t>(j) * stride))) {
               id = next_cls[j];
               break;
             }
           }
           if (id == no_node) {
-            next_cls[i] = next++;
-            bucket.push_back(static_cast<std::uint32_t>(i));
+            next_cls[i]    = next++;
+            bucket_next[i] = head;
+            head           = static_cast<std::uint32_t>(i);
           }
           else {
             next_cls[i] = id;
           }
         }
-        cls = std::move(next_cls);
+        cls.swap(next_cls); // swap, not move: `next_cls` is reused next round (assign(n, 0) above)
         if (next == classes) {
           break; // fixpoint: the partition stopped refining
         }
@@ -423,7 +447,7 @@ namespace real::detail {
     //! \brief FNV-1a hash of a partition signature (for the constexpr-friendly bucket dedup). Accumulates in
     //!        a fixed 64-bit width and truncates only at the return, so a 32-bit `size_t` (Win32) never sees
     //!        a narrowing brace-init of the 64-bit offset basis.
-    static constexpr std::size_t sig_hash(const std::vector<std::uint64_t>& v)
+    static constexpr std::size_t sig_hash(std::span<const std::uint64_t> v)
     {
       std::uint64_t h {1469598103934665603ULL};
       for (const std::uint64_t x : v) {
