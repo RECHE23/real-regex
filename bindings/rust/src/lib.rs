@@ -125,6 +125,19 @@ enum SlotStore {
 impl SlotStore {
     // Take a flat slot run (len = 2 * ngroups) by value-copy, inline when it fits.
     fn from_flat(src: &[usize]) -> SlotStore {
+        // Group 0 alone -- a groupless pattern -- is the dominant shape, and taking it with two plain
+        // stores rather than `copy_from_slice` is the whole point: a runtime length compiles to a memcpy
+        // CALL, which costs more than the stores it replaces at one or two slots. That is the same reason
+        // the C ABI reads slots pairwise instead of with one memcpy, and it was measured here too:
+        // ablating this call closed the entire remaining captures_iter-vs-find_iter gap (114 of the 171 us
+        // on `\b\w+\b` over a 64 KiB corpus, ~9.4 ns a match), where the object's size, Drop glue and Arc
+        // traffic together accounted for the other 57.
+        if src.len() == 2 {
+            let mut slots = [usize::MAX; CAPS_INLINE_SLOTS];
+            slots[0] = src[0];
+            slots[1] = src[1];
+            return SlotStore::Inline { len: 2, slots };
+        }
         if src.len() <= CAPS_INLINE_SLOTS {
             let mut slots = [usize::MAX; CAPS_INLINE_SLOTS];
             slots[..src.len()].copy_from_slice(src);
