@@ -1,7 +1,18 @@
 //! Native criterion benchmark: the real-regex crate vs the regex crate, on the BENCHMARKS §E families. Both
 //! sides run through their own Rust API in-process, so there is no FFI asymmetry for this pair (the C duel's
-//! REAL-vs-rust rows pay a cross-process cost the duel documents; these rows are measured natively). Each
-//! case times a full capture-extracting scan (captures_iter, the apples-to-apples work) over the same corpus.
+//! REAL-vs-rust rows pay a cross-process cost the duel documents; these rows are measured natively).
+//!
+//! Four groups per case, because the scan rows alone leave two blind spots that cost real time:
+//!
+//!   find/      whole-match spans over the 64 KiB corpus
+//!   captures/  the same scan materialising every group
+//!   compile/   `Regex::new` alone — the scan groups build the pattern OUTSIDE the timed closure
+//!   first_use/ `Regex::new` plus one short search — structures built lazily on first use land here,
+//!              and criterion's warm-up absorbs them entirely in the scan groups
+//!
+//! Those two blind spots are not hypothetical: `\b\w+\b` spent 105 us in a quadratic word-subset test
+//! at compile, and `(\w+)@(\w+)` spent 21 ms building its one-pass table on first use. Both were
+//! invisible to every row above, and both are now bounded by a row below.
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 const CASES: &[(&str, &str)] = &[
@@ -21,6 +32,10 @@ fn corpus() -> String {
     let unit = "the quick brown fox jumps over 12 lazy dogs, cat9 and root@localhost meet fox42, ";
     unit.repeat(64 * 1024 / unit.len())
 }
+
+// One corpus unit: long enough that every family finds something, short enough that the scan does not
+// hide what the compile and first-use groups exist to measure.
+const SHORT: &str = "the quick brown fox jumps over 12 lazy dogs, cat9 and root@localhost meet fox42, ";
 
 fn bench(c: &mut Criterion) {
     let text = corpus();
@@ -49,6 +64,34 @@ fn bench(c: &mut Criterion) {
             b.iter(|| black_box(rx.captures_iter(t).count()))
         });
         caps.finish();
+
+        // compile: the pattern alone. No throughput — bytes of corpus mean nothing here.
+        let mut comp = c.benchmark_group(format!("compile/{name}"));
+        comp.bench_function(BenchmarkId::new("real", name), |b| {
+            b.iter(|| black_box(real_regex::Regex::new(pat).unwrap()))
+        });
+        comp.bench_function(BenchmarkId::new("regex", name), |b| {
+            b.iter(|| black_box(regex::Regex::new(pat).unwrap()))
+        });
+        comp.finish();
+
+        // first_use: a FRESH regex per iteration plus one short search, so anything built lazily on the
+        // first match attempt is paid inside the timed closure. Subtracting the compile row above gives
+        // the lazy build on its own.
+        let mut first = c.benchmark_group(format!("first_use/{name}"));
+        first.bench_function(BenchmarkId::new("real", name), |b| {
+            b.iter(|| {
+                let r = real_regex::Regex::new(pat).unwrap();
+                black_box(r.find(SHORT).is_some())
+            })
+        });
+        first.bench_function(BenchmarkId::new("regex", name), |b| {
+            b.iter(|| {
+                let r = regex::Regex::new(pat).unwrap();
+                black_box(r.find(SHORT).is_some())
+            })
+        });
+        first.finish();
     }
 }
 
