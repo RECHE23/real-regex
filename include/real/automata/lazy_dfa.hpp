@@ -528,13 +528,38 @@ namespace real::detail {
     // index already processed is a no-op by construction: its content was pushed the first time.
     // This pays only because emit_utf8_trie now shares one interned class per byte range; with a fresh
     // index per edge the memo would never hit.
+    // Distinct-class collection, hashed rather than linear-scanned. The linear scan compares whole
+    // 256-bit char_class values; on `(\w+)@(\w+)` it ran 112575 of them to find exactly ONE duplicate,
+    // because interning already shares one class per byte range (see emit_utf8_trie) so the array arrives
+    // nearly deduplicated. Intrusive chain, not std::unordered_map: this function is constexpr and the
+    // engine headers avoid std::hash, whose out-of-line libc++ symbols drift across toolchains. Insertion
+    // order in `class_preds` is preserved, so sig_equal's early exit behaves identically.
+    constexpr std::size_t     pred_buckets {512};
+    std::vector<std::int32_t> pred_head(pred_buckets, -1);
+    std::vector<std::int32_t> pred_next;
+    const auto                push_class {[&](const char_class& cc) {
+                                            std::uint64_t h {1469598103934665603ULL};
+                                            for (const std::uint64_t w : cc.bits) {
+                                              h = (h ^ w) * 1099511628211ULL;
+                                            }
+                                            std::int32_t& head {pred_head[static_cast<std::size_t>(h) % pred_buckets]};
+                                            for (std::int32_t i2 = head; i2 >= 0; i2 = pred_next[static_cast<std::size_t>(i2)]) {
+                                              if (class_preds[static_cast<std::size_t>(i2)] == cc) {
+                                                return;
+                                              }
+                                            }
+                                            const auto id {static_cast<std::int32_t>(class_preds.size())};
+                                            class_preds.push_back(cc);
+                                            pred_next.push_back(head);
+                                            head = id;
+                                          }};
     std::vector<bool>     seen_class(classes.size(), false);
     std::array<bool, 256> seen_byte {};
     for (const instr& in : code) {
       if (in.op == opcode::klass && in.arg16 < classes.size()) {
         if (!seen_class[in.arg16]) {
           seen_class[in.arg16] = true;
-          push_unique(class_preds, classes[in.arg16]);
+          push_class(classes[in.arg16]);
         }
       }
       else if (in.op == opcode::byte) {
