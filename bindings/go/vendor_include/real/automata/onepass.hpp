@@ -346,10 +346,10 @@ namespace real::detail {
       // build's instructions on a `\w`-shaped program); and 4096 vector headers is more memory than
       // the table it indexes. Flat removes all three -- four allocations for the whole call.
       //
-      // Signature rows have a UNIFORM width: every node's `edge` is assigned exactly alpha_.count
-      // entries (see build/rebuild), which is why `sig_width` above can be a single number for the
-      // work budget. That same uniformity is what makes a fixed stride correct here; a node with
-      // fewer edges would compare two different-length signatures over a common width.
+      // Every node's `edge` holds exactly alpha_.count entries (see build/rebuild), which is why
+      // `sig_width` above can be a single number for the work budget. Rows are nonetheless of
+      // VARIABLE length, because most of those entries are unassigned and contribute nothing -- hence
+      // `row_at` below rather than a fixed stride.
       //
       // Buckets are an intrusive chain (`bucket_head` + `bucket_next`) rather than 4096 vectors.
       // Insertion is at the head, which is safe because a bucket only ever holds ONE representative
@@ -357,38 +357,82 @@ namespace real::detail {
       // inserted -- so the walk order cannot change the result. `bucket_next` needs no per-round
       // reset: heads are reset each round, so every node reached on a chain had its `next` written
       // this round.
-      const std::size_t          stride {static_cast<std::size_t>(sig_width)};
-      std::vector<std::uint64_t> sigs(n * stride, 0);
+      // Rows are SPARSE: only an ASSIGNED byte-class contributes. An unassigned class adds the same
+      // (0, 0, 0) to every node's dense row, so dropping it cannot change any comparison; and each
+      // sparse entry carries its class index, so two nodes whose assigned SETS differ can never
+      // compare equal. Density, not sparsity, is what decides the size of the win: 39.4 assigned
+      // classes of 103 for `(\w+)@(\w+)` gives 162 words a row against 313 dense, and 9.5 of 66 for
+      // `(\d+)@(\d+)` gives 42 against 202. Even the widest node measured (64 assigned) is 260, so
+      // the encoding never loses.
+      //
+      // Row at `row_at[i]`, `row_at[i + 1] - row_at[i]` words:
+      //   [0] cls[i]                                  <- per round
+      //   [1..3] matches, match_cap_mask, match_assert_mask
+      //   then per assigned class, in class order:
+      //   [+0] class index   [+1] cls[edge.next] + 1   <- per round
+      //   [+2] cap_mask      [+3] assert_mask
+      //
+      // The assigned set never changes between rounds -- only the partition ids do -- so the layout
+      // and every invariant word are written ONCE here, and a round rewrites just 1 + assigned words
+      // per node rather than the whole row.
+      std::vector<std::size_t> row_at(n + 1, 0);
+      for (std::size_t i = 0; i < n; ++i) {
+        std::size_t w {4};
+        for (const onepass_edge& e : nodes_[i].edge) {
+          w += e.assigned ? 4U : 0U;
+        }
+        row_at[i + 1] = row_at[i] + w;
+      }
+      std::vector<std::uint64_t> sigs(row_at[n], 0);
+      for (std::size_t i = 0; i < n; ++i) {
+        std::uint64_t* s {sigs.data() + row_at[i]};
+        s[1] = nodes_[i].matches ? 1U : 0U;
+        s[2] = nodes_[i].match_cap_mask;
+        s[3] = nodes_[i].match_assert_mask;
+        std::size_t w {4};
+        for (std::size_t c = 0; c < nodes_[i].edge.size(); ++c) {
+          const onepass_edge& e {nodes_[i].edge[c]};
+          if (e.assigned) {
+            s[w]     = c;
+            s[w + 2] = e.cap_mask;
+            s[w + 3] = e.assert_mask;
+            w       += 4;
+          }
+        }
+      }
       std::vector<std::uint32_t> next_cls(n, 0);
       std::vector<std::uint32_t> bucket_head(minimize_buckets, no_node);
       std::vector<std::uint32_t> bucket_next(n, no_node);
       while (true) {
+        // The budget is still counted on the DENSE width. Sparse rows do less real work, but the cap
+        // was calibrated against observed dense work, and loosening it would let programs that used
+        // to decline build a table instead -- a route change, not a speed change.
         if (work_done + round_work > work_cap_) {
           bail("one-pass minimization exceeded its work budget: not one-pass", static_cast<std::int32_t>(n));
           return;
         }
         work_done += round_work;
         for (std::size_t i = 0; i < n; ++i) {
-          std::uint64_t* s {sigs.data() + (i * stride)};
-          *s++ = cls[i];
-          *s++ = nodes_[i].matches ? 1U : 0U;
-          *s++ = nodes_[i].match_cap_mask;
-          *s++ = nodes_[i].match_assert_mask;
+          std::uint64_t* s {sigs.data() + row_at[i]};
+          s[0] = cls[i];
+          std::size_t w    {5};
           for (const onepass_edge& e : nodes_[i].edge) {
-            *s++ = e.assigned ? static_cast<std::uint64_t>(cls[e.next]) + 1U : 0U;
-            *s++ = e.cap_mask;
-            *s++ = e.assert_mask;
+            if (e.assigned) {
+              s[w] = static_cast<std::uint64_t>(cls[e.next]) + 1U;
+              w   += 4;
+            }
           }
         }
         next_cls.assign(n, 0);
         bucket_head.assign(minimize_buckets, no_node);
         std::uint32_t next {0};
         for (std::size_t i = 0; i < n; ++i) {
-          const std::span<const std::uint64_t> row  {sigs.data() + (i * stride), stride};
+          const std::span<const std::uint64_t> row  {sigs.data() + row_at[i], row_at[i + 1] - row_at[i]};
           std::uint32_t&                       head {bucket_head[sig_hash(row) % minimize_buckets]};
           std::uint32_t                        id   {no_node};
           for (std::uint32_t j = head; j != no_node; j = bucket_next[j]) {
-            if (std::equal(row.begin(), row.end(), sigs.data() + (static_cast<std::size_t>(j) * stride))) {
+            const std::span<const std::uint64_t> other {sigs.data() + row_at[j], row_at[j + 1] - row_at[j]};
+            if (std::equal(row.begin(), row.end(), other.begin(), other.end())) {
               id = next_cls[j];
               break;
             }
