@@ -26,6 +26,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "real/core/program.hpp"
@@ -302,9 +303,24 @@ namespace real::detail {
   //! \brief Emits \p trie into \p bp as a deterministic split/klass/jump fragment; accept edges jump to
   //!        \p after (the construct's successor). The root is emitted first, so the fragment's entry is its
   //!        base pc. Disjoint ranges mean at most one branch matches any byte.
-  inline void emit_utf8_trie(byte_program&    bp,
-                             const utf8_trie& trie,
-                             std::int32_t     after)
+  /*!
+   * \brief Emits \p trie into \p bp, interning each edge's byte range through \p seen.
+   *
+   * Every edge class here is a SINGLE range (`set_range` below), so `(lo, hi)` is an exact key and two
+   * edges with the same range can share one interned class. Without that sharing a UTF-8 trie interns
+   * the same range once per edge -- the continuation range `0x80..0xBF` sits on nearly every node --
+   * and the redundancy compounds across occurrences: `(\w+)@(\w+)` interned 2507 classes for 475
+   * distinct ranges. The caller owns \p seen so it spans all occurrences in one program, which is
+   * where most of the duplication lives (each `\w+` emits its own full trie).
+   *
+   * Sharing an index is safe because a class index is only ever read as "which byte set" -- the
+   * alphabet, `onepass`'s class_cover_, and the DFA all treat it that way; nothing uses it to tell two
+   * `klass` instructions apart.
+   */
+  inline void emit_utf8_trie(byte_program&                                     bp,
+                             const utf8_trie&                                  trie,
+                             std::int32_t                                      after,
+                             std::unordered_map<std::uint16_t, std::uint16_t>& seen)
   {
     if (trie.root < 0) {
       bp.code.push_back({.op = opcode::klass, .arg16 = static_cast<std::uint16_t>(bp.classes.size())});
@@ -334,10 +350,21 @@ namespace real::detail {
         if (j + 1 < k) {
           bp.code.push_back({.op = opcode::split, .primary_target = here + 1, .secondary_target = here + 3});
         }
-        char_class cc;
-        cc.set_range(edge.first.lo, edge.first.hi);
-        bp.code.push_back({.op = opcode::klass, .arg16 = static_cast<std::uint16_t>(bp.classes.size())});
-        bp.classes.push_back(cc);
+        const auto key    {static_cast<std::uint16_t>((static_cast<unsigned>(edge.first.lo) << 8U)
+                                                      | static_cast<unsigned>(edge.first.hi))};
+        const auto    it  {seen.find(key)};
+        std::uint16_t idx {};
+        if (it != seen.end()) {
+          idx = it->second;
+        }
+        else {
+          idx = static_cast<std::uint16_t>(bp.classes.size());
+          char_class cc;
+          cc.set_range(edge.first.lo, edge.first.hi);
+          bp.classes.push_back(cc);
+          seen.emplace(key, idx);
+        }
+        bp.code.push_back({.op = opcode::klass, .arg16 = idx});
         bp.code.push_back({.op = opcode::jump, .primary_target = target});
       }
     }
@@ -426,13 +453,17 @@ namespace real::detail {
     }
     map[n] = static_cast<std::int32_t>(cur);
 
+    // One intern cache for the whole program: the same UTF-8 range recurs across occurrences, not
+    // just within one trie.
+    std::unordered_map<std::uint16_t, std::uint16_t> range_intern;
+
     const auto remap {[&](std::int32_t t) {
                         return (t >= 0 && static_cast<std::size_t>(t) <= n) ? map[static_cast<std::size_t>(t)] : t;
                       }};
     for (std::size_t pc = 0; pc < n; ++pc) {
       const instr& in {prog.code[pc]};
       if (in.op == opcode::klass_cp) {
-        emit_utf8_trie(bp, tries[pc], map[pc + 4]);
+        emit_utf8_trie(bp, tries[pc], map[pc + 4], range_intern);
         pc += 3;
       }
       else {
@@ -471,12 +502,26 @@ namespace real::detail {
                                               }
                                               vec.push_back(value);
                                             }};
+    // Memoize by class index and by literal byte. `push_unique` is a linear scan with a full 256-bit
+    // char_class compare, and it ran once per `klass` INSTRUCTION -- ~2507 of them for `(\w+)@(\w+)`
+    // against only 475 distinct classes, so ~595k class comparisons where 113k suffice. Skipping an
+    // index already processed is a no-op by construction: its content was pushed the first time.
+    // This pays only because emit_utf8_trie now shares one interned class per byte range; with a fresh
+    // index per edge the memo would never hit.
+    std::vector<bool>     seen_class(classes.size(), false);
+    std::array<bool, 256> seen_byte {};
     for (const instr& in : code) {
       if (in.op == opcode::klass && in.arg16 < classes.size()) {
-        push_unique(class_preds, classes[in.arg16]);
+        if (!seen_class[in.arg16]) {
+          seen_class[in.arg16] = true;
+          push_unique(class_preds, classes[in.arg16]);
+        }
       }
       else if (in.op == opcode::byte) {
-        push_unique(literal_preds, static_cast<std::uint16_t>(in.arg8));
+        if (!seen_byte[in.arg8]) {
+          seen_byte[in.arg8] = true;
+          push_unique(literal_preds, static_cast<std::uint16_t>(in.arg8));
+        }
       }
     }
     const auto sig_equal {[&](unsigned a, unsigned b) {
