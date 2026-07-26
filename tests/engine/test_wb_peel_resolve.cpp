@@ -436,6 +436,44 @@ TEST(wb_unicode_word_cover_and_subset_edges)
   EXPECT(word_ranges_cover_interval(0x30, 0x39));
   EXPECT(word_ranges_cover_interval(0x61, 0x7A));
 
+  // The resumable form must answer exactly like the standalone one, whatever the cursor carries.
+  // is_unicode_word_subset_cp_class shares ONE cursor across a class's ranges, so a stale or
+  // overshot cursor silently turning coverage into a gap would mis-resolve every `\b`-wrapped
+  // class. Sweeping ascending, descending and interleaved orders against the cursor-free answer is
+  // what pins that: the ascending pass is the fast path, the descending one forces the rewind, and
+  // a deliberately out-of-bounds cursor proves the bound is re-established rather than trusted.
+  {
+    using real::detail::word_ranges_cover_interval_from;
+    using real::detail::word_ranges_size;
+
+    std::vector<std::pair<char32_t, char32_t>> probes;
+    for (const code_range& wr : word_ranges) {
+      const auto lo {static_cast<char32_t>(wr.lo)};
+      const auto hi {static_cast<char32_t>(wr.hi)};
+      probes.emplace_back(lo, hi);                    // exactly one range
+      probes.emplace_back(lo, hi + 1);                // one past the end — a gap unless the next is adjacent
+      probes.emplace_back(lo == 0 ? lo : lo - 1, hi); // one before the start
+      probes.emplace_back(lo, lo);                    // single code point
+    }
+    std::size_t checked {0};
+    const auto  sweep = [&](bool descending) {
+                          std::size_t cursor {0};
+                          for (std::size_t k = 0; k < probes.size(); ++k) {
+                            const auto& p    {probes[descending ? probes.size() - 1 - k : k]};
+                            const bool  want {word_ranges_cover_interval(p.first, p.second)};
+                            EXPECT_EQ(word_ranges_cover_interval_from(p.first, p.second, cursor), want);
+                            ++checked;
+                          }
+                        };
+    sweep(/*descending=*/ false);
+    sweep(/*descending=*/ true);
+    // A cursor past the end must be re-established, not indexed with.
+    std::size_t wild {word_ranges_size + 7};
+    EXPECT(word_ranges_cover_interval_from(0x61, 0x7A, wild));
+    EXPECT(wild <= word_ranges_size);
+    EXPECT(checked >= std::size_t {2} *4U * word_ranges_size);
+  }
+
   // Subset reject: non-word ASCII member.
   cp_class space_ascii {};
   space_ascii.ascii.set(static_cast<std::uint8_t>(' '));

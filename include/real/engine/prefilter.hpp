@@ -326,38 +326,60 @@ namespace real::detail {
     return true;
   }
 
-  //! \brief True if every code point in [\p lo, \p hi] is a Unicode word char (covered by \ref word_ranges).
-  [[nodiscard]] constexpr bool word_ranges_cover_interval(char32_t lo,
-                                                          char32_t hi) noexcept
+  /*!
+   * \brief True if every code point in [\p lo, \p hi] is a Unicode word char (\ref word_ranges),
+   *        resuming the scan at \p cursor and leaving it past the last range consulted.
+   *
+   * \ref word_ranges is sorted and disjoint, so a caller testing intervals in ascending order never
+   * needs to look at a range it has already passed — that is what \p cursor carries. Without it the
+   * scan restarts at index 0 on every step, and an interval spanning the whole word set then costs
+   * O(word_ranges_size^2): for `\w` (whose class IS the word set) that is 771^2 steps, measured at
+   * 1.79M instructions and 95 % of the cost of compiling `\b\w+\b`. With the cursor the whole subset
+   * test is one merge of two sorted lists.
+   *
+   * \p cursor is a hint, never a precondition: if a range before it could still cover \p lo — a
+   * caller passing intervals out of order — the scan rewinds. So the answer never depends on the
+   * order the caller happens to use, only the speed does.
+   *
+   * \param[in]     lo     First code point of the interval.
+   * \param[in]     hi     Last code point of the interval (inclusive).
+   * \param[in,out] cursor Index to resume from, advanced in place.
+   * \return `true` if every code point in the interval is a Unicode word character.
+   */
+  [[nodiscard]] constexpr bool word_ranges_cover_interval_from(char32_t     lo,
+                                                               char32_t     hi,
+                                                               std::size_t& cursor) noexcept
   {
     if (lo > hi) {
       return false;
     }
+    if (cursor > word_ranges_size || (cursor > 0 && word_ranges[cursor - 1].hi >= lo)) {
+      cursor = 0; // the hint has overshot this interval — the sorted walk restarts
+    }
     char32_t cur {lo};
     while (cur <= hi) {
-      // Linear scan is fine: called only on the (small) user-class range list at analyze time.
-      bool found {false};
-      for (std::size_t i = 0; i < word_ranges_size; ++i) {
-        const code_range& wr {word_ranges[i]};
-        if (wr.hi < cur) {
-          continue;
-        }
-        if (wr.lo > cur) {
-          return false; // gap: cur is not a word char
-        }
-        // wr covers cur; advance past wr.hi
-        if (wr.hi >= hi) {
-          return true;
-        }
-        cur   = wr.hi + 1;
-        found = true;
-        break;
+      while (cursor < word_ranges_size && word_ranges[cursor].hi < cur) {
+        ++cursor;
       }
-      if (!found) {
-        return false;
+      if (cursor >= word_ranges_size || word_ranges[cursor].lo > cur) {
+        return false; // ran out, or a gap: cur is not a word char
       }
+      if (word_ranges[cursor].hi >= hi) {
+        return true;  // this range finishes the interval
+      }
+      cur = static_cast<char32_t>(word_ranges[cursor].hi) + 1; // the next range must be adjacent
+      ++cursor;
     }
     return true;
+  }
+
+  //! \brief True if every code point in [\p lo, \p hi] is a Unicode word char (covered by \ref
+  //!        word_ranges). Standalone form of \ref word_ranges_cover_interval_from.
+  [[nodiscard]] constexpr bool word_ranges_cover_interval(char32_t lo,
+                                                          char32_t hi) noexcept
+  {
+    std::size_t cursor {0};
+    return word_ranges_cover_interval_from(lo, hi, cursor);
   }
 
   /*!
@@ -378,9 +400,14 @@ namespace real::detail {
     if (static_cast<std::size_t>(cc.range_begin) + cc.range_count > all_ranges.size()) {
       return false;
     }
+    // One cursor for the whole class: a cp_class's ranges are sorted and disjoint (the same property
+    // pike_vm::cp_page_table relies on to stop early), so this is a single merge of two sorted lists
+    // rather than one full-word-set scan per class range. Out-of-order ranges would only cost the
+    // rewind inside the callee, never a wrong answer.
+    std::size_t cursor {0};
     for (std::uint32_t i = 0; i < cc.range_count; ++i) {
       const code_range& r {all_ranges[static_cast<std::size_t>(cc.range_begin) + i]};
-      if (!word_ranges_cover_interval(static_cast<char32_t>(r.lo), static_cast<char32_t>(r.hi))) {
+      if (!word_ranges_cover_interval_from(static_cast<char32_t>(r.lo), static_cast<char32_t>(r.hi), cursor)) {
         return false;
       }
     }
