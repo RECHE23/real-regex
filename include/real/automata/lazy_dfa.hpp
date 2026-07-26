@@ -194,14 +194,25 @@ namespace real::detail {
     if (seqs.empty()) {
       return trie;
     }
+    //! \brief A sequence's remaining byte ranges, as a view. The sequences in `seqs` outlive the whole
+    //!        recursion, so a suffix needs no copy -- `subspan(1)` replaces a fresh vector per candidate
+    //!        per interval, which was 3179 allocations for a `\w` trie and the single largest allocation
+    //!        source in this build.
+    using seq_view = std::span<const utf8_byte_range>;
+
     struct builder
     {
-      std::vector<utf8_trie_node>&            nodes;
-      std::vector<std::vector<std::int32_t>>& memo; // hash-cons index: FNV(trans) bucket -> node ids. The
-                                                    // engine headers avoid std::hash / std::unordered_map,
-                                                    // whose out-of-line libc++ symbols (e.g. __hash_memory)
-                                                    // drift across toolchains; an in-house FNV over the
-                                                    // transitions hash-conses with no string key per node.
+      std::vector<utf8_trie_node>& nodes;
+      // Hash-cons index over FNV(trans), as an INTRUSIVE chain: `memo_head[bucket]` is a node id or -1,
+      // `memo_next[id]` the next id in that bucket. 1024 inner vectors cost 1024 allocations per trie and
+      // more memory than the table they index. Head insertion is safe because a bucket only ever holds one
+      // representative per distinct `trans` -- an identical node returns the existing id and is not inserted
+      // -- so the walk order cannot change the result.
+      // The engine headers avoid std::hash / std::unordered_map, whose out-of-line libc++ symbols (e.g.
+      // __hash_memory) drift across toolchains; an in-house FNV over the transitions hash-conses with no
+      // string key per node.
+      std::vector<std::int32_t>&   memo_head;
+      std::vector<std::int32_t>&   memo_next;
 
       static constexpr std::uint64_t hash_trans(const std::vector<std::pair<utf8_byte_range, std::int32_t>>& trans)
       {
@@ -228,10 +239,10 @@ namespace real::detail {
         return true;
       }
 
-      std::int32_t build(const std::vector<std::vector<utf8_byte_range>>& in) // all non-empty sequences
+      std::int32_t build(const std::vector<seq_view>& in) // all non-empty sequences
       {
         std::vector<int> bounds;
-        for (const std::vector<utf8_byte_range>& s : in) {
+        for (const seq_view& s : in) {
           bounds.push_back(s[0].lo);
           bounds.push_back(s[0].hi + 1);
         }
@@ -242,13 +253,13 @@ namespace real::detail {
         for (std::size_t i = 0; i + 1 < bounds.size(); ++i) {
           const int                                 lo        {bounds[i]};
           const int                                 hi        {bounds[i + 1] - 1};
-          std::vector<std::vector<utf8_byte_range>> tails;
+          std::vector<seq_view>                     tails;
           bool                                      all_empty {true};
-          for (const std::vector<utf8_byte_range>& s : in) {
+          for (const seq_view& s : in) {
             if (s[0].lo <= lo && hi <= s[0].hi) { // this disjoint interval sits inside sequence s's first range
-              std::vector<utf8_byte_range> tail(s.begin() + 1, s.end());
+              const seq_view tail {s.subspan(1)};
               all_empty = all_empty && tail.empty();
-              tails.push_back(std::move(tail));
+              tails.push_back(tail);
             }
           }
           if (tails.empty()) {
@@ -256,10 +267,10 @@ namespace real::detail {
           }
           std::int32_t child {-1};
           if (!all_empty) { // UTF-8 is prefix-free, so within one interval the tails share a length
-            std::vector<std::vector<utf8_byte_range>> nonempty;
-            for (std::vector<utf8_byte_range>& t : tails) {
+            std::vector<seq_view> nonempty;
+            for (const seq_view& t : tails) {
               if (!t.empty()) {
-                nonempty.push_back(std::move(t));
+                nonempty.push_back(t);
               }
             }
             child = build(nonempty);
@@ -267,22 +278,31 @@ namespace real::detail {
           node.trans.emplace_back(utf8_byte_range {.lo = static_cast<std::uint8_t>(lo), .hi = static_cast<std::uint8_t>(hi)}, child);
         }
 
-        std::vector<std::int32_t>& bucket {memo[hash_trans(node.trans) % memo.size()]};
-        for (const std::int32_t existing : bucket) {
+        std::int32_t& head {memo_head[hash_trans(node.trans) % memo_head.size()]};
+        for (std::int32_t existing = head; existing >= 0;
+             existing = memo_next[static_cast<std::size_t>(existing)]) {
           if (trans_equal(nodes[static_cast<std::size_t>(existing)].trans, node.trans)) {
             return existing; // an identical suffix sub-trie already exists (Daciuk sharing)
           }
         }
         const auto id {static_cast<std::int32_t>(nodes.size())};
         nodes.push_back(std::move(node));
-        bucket.push_back(id);
+        memo_next.push_back(head);
+        head = id;
         return id;
       }
     };
-    constexpr std::size_t                  trie_memo_buckets {1024}; // chained buckets, sized for the bounded trie
-    std::vector<std::vector<std::int32_t>> memo(trie_memo_buckets);
-    builder                                b                 {trie.nodes, memo};
-    trie.root = b.build(seqs);
+    constexpr std::size_t     trie_memo_buckets {1024}; // chained buckets, sized for the bounded trie
+    std::vector<std::int32_t> memo_head(trie_memo_buckets, -1);
+    std::vector<std::int32_t> memo_next;
+    memo_next.reserve(seqs.size());
+    std::vector<seq_view>     roots;
+    roots.reserve(seqs.size());
+    for (const std::vector<utf8_byte_range>& s : seqs) {
+      roots.emplace_back(s);
+    }
+    builder b {trie.nodes, memo_head, memo_next};
+    trie.root = b.build(roots);
     return trie;
   }
 
