@@ -19,7 +19,7 @@ answer is not a benchmark win.
 
 | | |
 | --- | --- |
-| Version | REAL `2026.7.55` — §A and §Unicode re-measured on both ISAs for this stamp (the v2026.7.55 perf train: one-search exact-literal route, two-byte NEON literal prefilter, per-slot DFA ownership); per-train benchmark-impact log: CHANGELOG.md (full release notes: docs/release-notes/ + GitHub Releases). **Live methodology note — one row moved the wrong way and is disclosed, not chased:** x86-64 `fields [^,]+` reads 5.49 ns/B here against 4.67 at the `2026.7.51` stamp, and a same-machine same-harness A/B (only the engine headers differing) puts the train at **+5.3 %** on that row. It is a layout effect, not a logic cost, and the evidence is specific: callgrind counts **−2.9 % instructions** for the same scan (14.52 M → 14.10 M Ir) and a single-pattern binary measures it **8 % faster** — the multi-engine bench binary is simply a different code layout. `[^,]+` on gcc/x86 is the row this repository already documents as alignment-luck-sensitive (see `pike.hpp`'s `run()` note: +39 % from the mere *presence* of never-dispatched Aho-Corasick code, two `align-loops` attempts reverted). `alternation`/`lookahead` carry the same effect at +3.2 % / +2.6 %; `words`/`digits`/`hex`/`date` are within ±1.5 %. |
+| Version | REAL `2026.7.56` — **re-measured for this stamp: §E.4 only** (the crate's own criterion rows, arm64, at `9c400e1`), because that is the only section the 7.56 cold-path train moved. §A, §Unicode, §B and §multi-pattern carry their **`2026.7.55` figures unchanged**, and the reason is measured rather than asserted: every 7.56 change is on a path taken once per `regex`, outside every scan loop, and `find_iter` over a 64 KiB corpus under x86 callgrind reads `[a-z]+` 45 249 882 → 45 249 867 instructions and `\b\w+\b` 79 627 285 → 79 627 260 across the whole train — identical to five decimals. What §E.4 gained: two families (`compile/`, `first_use/`) the scan rows structurally could not see, since `find`/`captures` build the pattern outside the timed closure and criterion's warm-up absorbs any lazy build — a quadratic Unicode word-subset test cost `\b\w+\b` 105 µs at compile and the one-pass table cost `(\w+)@(\w+)` 21.3 ms on first use, both invisible to every pre-existing row. Per-train benchmark-impact log: CHANGELOG.md (full release notes: docs/release-notes/ + GitHub Releases). **Disclosed, not chased:** `(\w+)@(\w+)` first use is still **4.94× behind** the `regex` crate (2.91 ms against 589 µs) after −86.8 %; declining the one-pass table instead was measured and rejected, it buys 3.3× on the scan with break-even near 900 KB. The `fields [^,]+` x86 layout note from the 7.55 stamp still stands and is unaffected by this train. |
 | Machines | §A on **two ISAs**: devbox (`x86-64`, g++ 13.3.0) *and* Apple M1 Pro (`arm64`, Apple clang 16). §B / §E on M1 Pro (§E's x86-64 leg noted inline where it diverges — see §E). §multi-pattern measured on **x86-64 devbox** (g++ 13.3, RE2 + Hyperscan 5.4) |
 | Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (built from source on x86-64 to pin the exact version); RE2 (10.0 on x86-64, 11.0 on arm64 — version-differs-by-leg, uncontested given the margins). Multi-pattern: RE2::Set, Hyperscan (optional). §E: rust `regex` 1.12.4 |
 | Python | CPython 3.14.6, `re` (stdlib) vs the in-place REAL `2026.7.55` extension (§B re-measured for this stamp, arm64 M1 Pro, N = 40 paired samples, bootstrap CI) |
@@ -549,8 +549,8 @@ operations:
 
 - **`find_iter`** (whole-match spans) — after the wrapper's cursor was made to reuse one span buffer and take
   a span-0-only path that materializes no group vector, the crate is now **at parity-to-faster** than the
-  pure-Rust `regex` crate: `[a-z]+` ≈ 0.8×, `[0-9]+` ≈ 0.7× (REAL ahead). The per-match allocation an earlier
-  measurement flagged here is gone.
+  pure-Rust `regex` crate: `[a-z]+` ≈ 0.86×, `[0-9]+` ≈ 0.67×, `[^,]+` ≈ 0.23× (REAL ahead). The per-match
+  allocation an earlier measurement flagged here is gone.
 - **`captures_iter`** (materializing every group into an owned `Captures`) — **no longer allocates per
   match at all.** `Captures` now stores its slots flat and inline (4 groups inline, spilling to the heap
   beyond), so the `malloc` + `free` this line used to pay per match — ~19–27 ns/match of pure allocator
@@ -560,21 +560,69 @@ operations:
   `captures_read` (**`real-regex` exposes the same pair**, plus a streaming `captures_read_iter`), and
   the owned iterator no longer needs the escape hatch to be competitive.
 
-  **arm64 M1 Pro, criterion, 64 KiB corpus, at `3cd9c81`** — the whole train's effect on this bench,
-  against the `regex` crate in the same process:
+  A later train found one more per-match cost hiding in the same place, and it was not an allocation:
+  `SlotStore::from_flat` copied the slot run with `copy_from_slice`, whose **runtime length compiles to a
+  `memcpy` call** — to move two `usize` in the shape that dominates, a groupless pattern's group 0. Two plain
+  stores replace it. Ablation apportioned that line exactly: of the 171 µs by which `captures_iter` trailed
+  `find_iter` on `\b\w+\b`, **114 µs was this one call** and 57 µs the `Captures` object's size, `Drop` glue
+  and `Arc` traffic together. The same fault is what the C ABI's own comment forbids ("pairwise specifically,
+  NOT one memcpy") — it had survived on the Rust side.
 
-  | criterion row | before the train | now | vs `regex` |
+  **arm64 M1 Pro, criterion, 64 KiB corpus** — two trains' effect on this bench, against the `regex` crate in
+  the same process:
+
+  | criterion row | v2026.7.55 (`3cd9c81`) | now (`9c400e1`) | vs `regex` |
   | --- | ---: | ---: | :--- |
-  | `captures/class` | 438.9 µs | **207.9** | 2.33× → **1.10×** |
-  | `captures/digits` | 112.1 | **61.0** | behind → **REAL 1.25× ahead** |
-  | `captures/fields` | 66.4 | **43.4** | **REAL 3.52× ahead** |
-  | `captures/email` | 569.7 | **143.6** | 3.33× |
-  | `captures/literal` | 52.1 | **27.7** | 4.95× → **1.97×** |
-  | `find/literal` | 33.5 | **17.3** | 3.18× → **1.64×** |
+  | `captures/class` | 207.9 µs | **186.45** | 1.10× → **1.00× (parity)** |
+  | `captures/digits` | 61.0 | **54.72** | 1.25× → **REAL 1.39× ahead** |
+  | `captures/fields` | 43.4 | **39.76** | 3.52× → **REAL 3.86× ahead** |
+  | `captures/email` | 143.6 | **137.15** | 3.33× → **3.16×** |
+  | `captures/literal` | 27.7 | **18.98** | 1.97× → **1.78×** |
+  | `find/literal` | 17.3 | **16.31** | 1.64× → **1.55×** |
+
+  Rows the table did not carry before, same run: `find/class` 161.13 µs vs 187.45 (**REAL 1.16× ahead**),
+  `find/digits` 50.07 vs 75.19 (**1.50× ahead**), `find/fields` 36.19 vs 154.39 (**4.27× ahead**),
+  `find/email` 131.85 vs 43.14 (3.06× behind). `email` is the one family where `regex` leads on both
+  operations; it is also the only row here with real capture groups, so `from_flat`'s two-store path does not
+  apply to it.
 
   `captures_read_iter` remains the right tool when the last allocation matters (it materializes no
   `Captures` at all): dense ~100 KB, med of 21, `[a-z]+` **≈0.43×** the wall of `captures_iter`,
   `(\w+) (\w+) (\w+) (\w+)` **≈0.93×** (search-dominated).
+
+- **`compile` and `first_use`** — two groups the scan rows structurally could not see. `find`/`captures`
+  build the pattern *outside* the timed closure, and criterion's warm-up absorbs anything the engine builds
+  lazily on the first match attempt. Two costs lived in that gap and neither was hypothetical: a quadratic
+  Unicode word-subset test cost `\b\w+\b` **105 µs at compile**, and the one-pass table for `(\w+)@(\w+)`
+  cost **21.3 ms on first use**. Both are fixed; both were invisible to every row above. `compile` times
+  `Regex::new` alone; `first_use` times a *fresh* `Regex::new` plus one short search, so a lazy build is paid
+  inside the closure. `first_use` deliberately includes `compile` rather than subtracting it — two medians
+  measured separately and subtracted is an estimate carrying both error bars, not a measurement.
+
+  **arm64 M1 Pro, criterion, at `9c400e1`.** Ratio is `regex` ÷ REAL, so **> 1 means REAL is ahead**:
+
+  | case | `compile` REAL | `regex` | ratio | `first_use` REAL | `regex` | ratio |
+  | --- | ---: | ---: | :--- | ---: | ---: | :--- |
+  | `dog` | 530 ns | 1.40 µs | **2.65×** | 825 ns | 1.46 µs | **1.77×** |
+  | `[a-z]+` | 643 ns | 4.81 µs | **7.49×** | 1.05 µs | 7.81 µs | **7.41×** |
+  | `[0-9]+` | 647 ns | 24.3 µs | **37.6×** | 1.06 µs | 27.3 µs | **25.7×** |
+  | `fox\|dog\|cat` | 850 ns | 17.7 µs | **20.8×** | 1.15 µs | 17.8 µs | **15.5×** |
+  | `[^,]+` | 2.44 µs | 19.5 µs | **7.98×** | 2.87 µs | 23.1 µs | **8.05×** |
+  | `\d{4}-\d{2}-\d{2}` | 5.39 µs | 157 µs | **29.1×** | 5.69 µs | 162 µs | **28.4×** |
+  | `\b\w+\b` | 7.12 µs | 238 µs | **33.4×** | 7.56 µs | 267 µs | **35.3×** |
+  | `(\w+)@(\w+)` | 11.2 µs | 559 µs | **49.7×** | **2.91 ms** | 589 µs | **0.20× — REAL 4.94× behind** |
+
+  REAL is ahead on **8 of 8** compile rows and **7 of 8** first-use rows. The exception is the one that
+  matters most to state plainly: `(\w+)@(\w+)` still pays **2.91 ms** on first use to build its one-pass
+  capture extractor, against 589 µs for the whole of `regex`'s eager work. That is down from **21.3 ms**
+  (34.9× behind) over five passes — flat scratch, sparse signatures, one interned class per byte range,
+  jump-chain resolution in the flood (which alone made the flood land *on* the minimal automaton, 660 nodes
+  in and 660 out where it was 2508 in), and dropping a duplicate Tier-A/Tier-B expansion — but 4.94× behind
+  is still behind. Declining the table instead is not the answer and was measured: it buys **3.3×** on the
+  scan (`find` 135 µs against 443 on a 64 KiB corpus), with a break-even near 900 KB.
+
+  Read the two families together: REAL's cost is overwhelmingly *eager and small*, `regex`'s is *eager and
+  large*, and the one place REAL is worse is a **lazy** build that a short-lived pattern pays in full.
 
 So on span throughput the crate is competitive; on full capture extraction use the reusable buffer when it
 matters. Either way the pitch is not raw speed but the linear-time / ReDoS-safe guarantee and the
