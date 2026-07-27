@@ -1525,6 +1525,9 @@ namespace real::detail {
      */
     constexpr const std::uint8_t* class_table(std::size_t class_index)
     {
+      if constexpr (requires { State::ct_class_tables; }) {
+        return State::ct_class_tables + (class_index * 256); // link-time constant address
+      }
       if (state_.table_class != static_cast<std::int32_t>(class_index)) {
         const char_class& klass {prog_.classes[class_index]};
         for (std::size_t b {0}; b < 256; ++b) {
@@ -1545,6 +1548,9 @@ namespace real::detail {
      */
     constexpr const std::uint8_t* cp_ascii_table(std::size_t cp_index)
     {
+      if constexpr (requires { State::ct_cp_ascii_tables; }) {
+        return State::ct_cp_ascii_tables + (cp_index * 256); // link-time constant address
+      }
       const std::int32_t key {-2 - static_cast<std::int32_t>(cp_index)};
       if (state_.table_class != key) {
         const char_class& klass {prog_.cp_classes[cp_index].ascii};
@@ -1612,6 +1618,9 @@ namespace real::detail {
      */
     constexpr const std::uint64_t* cp_page_table(std::size_t cp_index)
     {
+      if constexpr (requires { State::ct_cp_page_tables; }) {
+        return State::ct_cp_page_tables + (cp_index * 30); // link-time constant address
+      }
       const std::int32_t key {-2 - static_cast<std::int32_t>(cp_index)};
       if (state_.cp_page_class != key) {
         state_.cp_page.fill(0);

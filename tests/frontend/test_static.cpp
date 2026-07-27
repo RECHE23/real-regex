@@ -336,3 +336,57 @@ TEST(static_regex_inner_literal_walk_allocates_nothing)
   EXPECT_EQ(none, 0U);
   EXPECT_EQ(found, 200U);
 }
+
+TEST(static_regex_membership_tables_are_built_at_compile_time)
+{
+  // The three membership tables the VM reads per byte -- the flat byte-class table, a code-point class's
+  // ASCII half, and its U+0080..U+07FF bitmap -- are pure functions of the class, so this storage carries
+  // them ready-made instead of filling them at run time. That mattered because `static_regex` is stateless:
+  // a fresh state per `search()` meant re-filling 256 entries on every single search.
+  //
+  // Each table is checked against an INDEPENDENT computation of the same answer (the class's own `test`, and
+  // a linear walk of the class's ranges) rather than against the code that produced it, because a table that
+  // agrees with its own builder proves nothing.
+  const auto conforms {[]<real::fixed_string P>() {
+                         using S   = real::detail::static_storage<P>;
+                         bool   ok = true;
+                         for (std::size_t i = 0; i < S::class_count; ++i) {
+                           for (std::size_t b = 0; b < 256; ++b) {
+                             ok = ok && ((S::class_tables[(i * 256) + b] != 0) == S::classes[i].test(static_cast<std::uint8_t>(b)));
+                           }
+                         }
+                         for (std::size_t i = 0; i < S::cp_class_count; ++i) {
+                           for (std::size_t b = 0; b < 256; ++b) {
+                             ok = ok
+                                  && ((S::cp_ascii_tables[(i * 256) + b] != 0)
+                                      == S::cp_classes[i].ascii.test(static_cast<std::uint8_t>(b)));
+                           }
+                           for (std::uint32_t cp = 0x80; cp <= 0x7FFU; ++cp) {
+                             bool want = false;
+                             for (std::uint32_t k = 0; k < S::cp_classes[i].range_count; ++k) {
+                               const auto& r {S::cp_ranges[S::cp_classes[i].range_begin + k]};
+                               want = want || (cp >= r.lo && cp <= r.hi);
+                             }
+                             const std::uint32_t bit {cp - 0x80U};
+                             const bool          got {((S::cp_page_tables[(i * 30) + (bit >> 6U)] >> (bit & 63U)) & 1U) != 0};
+                             ok = ok && (want == got);
+                           }
+                         }
+                         return ok;
+                       }};
+
+  EXPECT(conforms.operator()<"[a-z]+">());
+  EXPECT(conforms.operator()<"[^,]+">());   // 14 interned byte classes
+  EXPECT(conforms.operator()<"\\w+">());    // a code-point class: ASCII half plus the two-byte page
+  EXPECT(conforms.operator()<"\\d+">());
+  EXPECT(conforms.operator()<"\\s+">());
+  EXPECT(conforms.operator()<"[[:alpha:]]+[0-9]+">());
+  EXPECT(conforms.operator()<"(?i)café">()); // icase folds into the class contents
+  EXPECT(conforms.operator()<"dog">());      // no class at all: the arrays are size-1 placeholders
+
+  // A pattern with no classes still instantiates, and matching still works — the placeholder must not be
+  // handed to the VM as if it described a class.
+  constexpr real::static_regex<"dog"> plain;
+  static_assert(plain.search("the dog").start() == 4);
+  EXPECT_EQ(plain.search("the dog").start(), 4U);
+}
