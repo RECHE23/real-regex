@@ -254,3 +254,64 @@ TEST(static_regex_reverse_by_class_matches_the_dynamic_regex)
   compare(real::static_regex<R"(\d+\.\d+)"> {}, R"(\d+\.\d+)");
   compare(real::static_regex<R"((\w+)@(\w+))"> {}, R"((\w+)@(\w+))");
 }
+
+//! IL.7: the two-run confirm. When the WHOLE pattern is `class+ <literal> class+`, a candidate whose start
+//! the backward walk already placed needs no match engine to finish: the end is where the suffix run stops,
+//! and every capture slot is one of four positions. These pin which patterns qualify — the risk is a shape
+//! that merely LOOKS like it, where a direct walk would report a match the pattern does not have.
+TEST(inner_literal_two_run_confirm_fires_on_exactly_the_two_run_shapes)
+{
+  const auto fwd_class {[](const char* pattern) {
+                          const real::detail::ast tree {real::detail::parse(pattern, real::flags::none)};
+                          return real::detail::compile(tree, real::flags::none | tree.inline_flags).hints.il_fwd_class;
+                        }};
+
+  EXPECT(fwd_class("[a-z]+@[a-z]+") >= 0);
+  EXPECT(fwd_class(R"(\w+-\w+)") >= 0);
+  EXPECT(fwd_class(R"(\d+\.\d+)") >= 0);
+  EXPECT(fwd_class(R"((\w+)@(\w+))") >= 0); // capture groups around either run are transparent
+
+  // Anything after the suffix run disqualifies it: the walk would run to the end of the class run and
+  // report a match, where the pattern still has work to do.
+  EXPECT_EQ(fwd_class(R"(\w+@\w+\.\w+)"), -1);      // a second literal follows
+  EXPECT_EQ(fwd_class("[a-z]+@[a-z]+x"), -1);       // a trailing byte
+  EXPECT_EQ(fwd_class(R"(\w+@\w+\b)"), -1);         // a trailing assertion
+  EXPECT_EQ(fwd_class("[a-z]+@[a-z]+?"), -1);       // a LAZY suffix does not run to the end of the class run
+  EXPECT_EQ(fwd_class(R"(\d{4}-\d{2}-\d{2})"), -1); // fixed counts, not loops
+  EXPECT_EQ(fwd_class("[a-z]+"), -1);               // no inner literal
+}
+
+TEST(inner_literal_two_run_confirm_fills_the_same_captures_as_the_core)
+{
+  // The direct path writes capture slots by anchor instead of running the VM, so every group of every match
+  // is compared against the same engine with the route switched off — not just the whole-match span.
+  const char* patterns[] = {R"((\w+)@(\w+))", "([a-z]+)-([a-z]+)", R"((\d+)\.(\d+))", R"(((\w+))@(\w+))",
+                            R"(\w+@(\w+))",   R"((\w+)@\w+)"};
+  const char* subjects[] = {"root@localhost", "a-b", "19.99", "x@y", "élève@école", "ab-cd ef-gh",
+                            "1.2 33.44", "@", "a@", "@b", "", "a@b@c", "aaa@bbb ccc@ddd eee@fff"};
+
+  for (const char* pattern : patterns) {
+    const real::regex re {pattern};
+    for (const char* subject : subjects) {
+      const std::string_view text {subject};
+
+      const auto collect          {[&] {
+                                     std::vector<std::pair<std::size_t, std::size_t>> all;
+                                     for (const auto& m : re.find_iter(text)) {
+                                       for (std::size_t g = 0; g <= re.group_count(); ++g) {
+                                         all.emplace_back(m.start(g), m.end(g));
+                                       }
+                                     }
+                                     return all;
+                                   }};
+
+      real::detail::inner_literal_route_disabled() = false;
+      const auto routed {collect()};
+      real::detail::inner_literal_route_disabled() = true;
+      const auto core   {collect()};
+      real::detail::inner_literal_route_disabled() = false;
+
+      EXPECT(routed == core);
+    }
+  }
+}

@@ -320,6 +320,40 @@ namespace real::detail {
               && prog.code[lit].arg8 == prog.hints.inner_literal[0]) {
             prog.hints.il_rev_class = static_cast<std::int32_t>(prog.code[atom].arg16);
             prog.hints.il_rev_is_cp = is_cp;
+
+            // Keep reading: if the LITERAL is followed by one greedy class loop and then nothing but saves
+            // and `match`, the whole pattern is `class+ <literal> class+` and a confirmed candidate needs no
+            // match engine — see pattern_hints::il_fwd_class. Every op is checked, so an assertion, a
+            // lookaround or any trailing structure leaves the hint clear and the general confirm in place.
+            std::size_t tail {lit};
+            while (tail < prog.code.size() && prog.code[tail].op == opcode::byte) {
+              ++tail; // a multi-byte literal is several `byte` ops
+            }
+            while (tail < prog.code.size() && prog.code[tail].op == opcode::save) {
+              ++tail;
+            }
+            const std::size_t suffix  {tail};
+            std::size_t       past    {tail};
+            bool              tail_cp {false};
+            if (suffix < prog.code.size() && prog.code[suffix].op == opcode::klass) {
+              past = suffix + 1;
+            }
+            else if (suffix < prog.code.size() && prog.code[suffix].op == opcode::klass_cp) {
+              past    = suffix + 4;
+              tail_cp = true;
+            }
+            if (past > suffix && past < prog.code.size() && prog.code[past].op == opcode::split
+                && prog.code[past].primary_target == static_cast<std::int32_t>(suffix)
+                && prog.code[past].secondary_target == static_cast<std::int32_t>(past) + 1) {
+              std::size_t end {past + 1};
+              while (end < prog.code.size() && prog.code[end].op == opcode::save) {
+                ++end;
+              }
+              if (end + 1 == prog.code.size() && prog.code[end].op == opcode::match) {
+                prog.hints.il_fwd_class = static_cast<std::int32_t>(prog.code[suffix].arg16);
+                prog.hints.il_fwd_is_cp = tail_cp;
+              }
+            }
           }
         }
       }

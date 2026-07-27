@@ -1108,6 +1108,42 @@ namespace real::detail {
           // not the reverse/forward-DFA cost the guard was built to bound).
           pos = h + 1;
         }
+        else if (prog_.hints.il_fwd_class >= 0) {
+          // TWO-RUN CONFIRM: the whole pattern is `class+ <literal> class+` (hints.il_fwd_class), and the
+          // backward walk above already proved the prefix run reaches `s`. What remains is the suffix run,
+          // so the match end is where that run stops — no match engine, no DFA, no one-pass table, which is
+          // what a storage with no per-regex cache could not otherwise reach. `+` needs one member, so a
+          // suffix run of length zero is no match at this candidate.
+          const std::size_t lit_end {h + prog_.hints.inner_literal_len};
+          std::size_t       e       {lit_end};
+          if (!prog_.hints.il_fwd_is_cp) {
+            const char_class& cc {prog_.classes[static_cast<std::size_t>(prog_.hints.il_fwd_class)]};
+            while (e < text.size() && cc.test(static_cast<std::uint8_t>(text[e]))) {
+              ++e;
+            }
+          }
+          else {
+            const cp_class& cc {prog_.cp_classes[static_cast<std::size_t>(prog_.hints.il_fwd_class)]};
+            while (e < text.size()) {
+              const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, e)};
+              if (!dc.valid || !cp_class_holds(cc, dc.cp)) {
+                break;
+              }
+              e += dc.length;
+            }
+          }
+          if (e > lit_end) {
+            out_slots.assign(prog_.slot_count, npos);
+            out_slots[0] = s;
+            out_slots[1] = e;
+            fill_two_run_saves(s, h, lit_end, e, out_slots);
+            return true;
+          }
+          // No suffix member: this candidate cannot match. min_pre_start is not advanced -- the walk reports
+          // where it stopped, but that is one class run, a hard-bounded check per candidate rather than the
+          // reverse/forward-DFA cost the linearity guard exists to bound (same argument as the fused verify).
+          pos = h + 1;
+        }
         else {
           std::size_t stop {s};
           if (confirm_at(text, s, out_slots, stop)) {
@@ -2907,6 +2943,45 @@ namespace real::detail {
         }
         else {
           break; // reached a trailing \b/\B or match
+        }
+      }
+    }
+
+    template <typename OutSlots>
+    /*!
+     * \brief Fills capture slots for a `class+ <literal> class+` match, by anchor rather than by offset.
+     *
+     * The two-run shape has no fixed widths, so \ref fill_fixed_saves's running offset does not apply — but
+     * every `save` in it still lands on one of four positions, and which one is decided by where the save
+     * sits relative to the two loops and the literal. Walking the program once per MATCH is the same trick
+     * \ref fill_fixed_saves uses, and the program is a dozen instructions.
+     * \param[in]  s        Match start (the prefix run's beginning).
+     * \param[in]  h        The literal's own start.
+     * \param[in]  lit_end  One past the literal.
+     * \param[in]  e        Match end (the suffix run's end).
+     * \param[out] out_slots Slots to fill.
+     */
+    constexpr void fill_two_run_saves(std::size_t s,
+                                      std::size_t h,
+                                      std::size_t lit_end,
+                                      std::size_t e,
+                                      OutSlots&   out_slots) const
+    {
+      if (prog_.slot_count <= 2) {
+        return;
+      }
+      std::size_t anchor        {s};
+      bool        after_literal {false};
+      for (const instr& instruction : prog_.code) {
+        if (instruction.op == opcode::save) {
+          out_slots[static_cast<std::size_t>(instruction.arg16)] = anchor;
+        }
+        else if (instruction.op == opcode::byte) {
+          anchor        = lit_end; // the literal's bytes; saves after them open at its end
+          after_literal = true;
+        }
+        else if (instruction.op == opcode::split) {
+          anchor = after_literal ? e : h; // a loop just closed: the prefix ends at h, the suffix at e
         }
       }
     }

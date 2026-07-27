@@ -480,6 +480,23 @@ namespace real {
       std::int32_t il_rev_class {-1};
       bool         il_rev_is_cp {}; //!< \ref il_rev_class indexes `cp_classes` (a `klass_cp` loop) rather than `classes`.
 
+      /*!
+       * \brief IL two-run confirm: set when the WHOLE pattern is `class+ <literal> class+` (capture groups
+       *        around either run are transparent), so a confirmed candidate needs no match engine at all.
+       *
+       * With \ref il_rev_class placing the start by walking the prefix class back from the literal, the rest
+       * of the match is the suffix class run forward from the literal's end — and every capture slot is one
+       * of four positions (`s`, the literal's start, the literal's end, `e`). Profiling the row this serves,
+       * `[a-z]+@[a-z]+` over a 64 KiB corpus of matches: 74% of `static_regex`'s instructions were the Pike
+       * VM (`add_thread` 33%, `step` 21%, `run_general` 13%, the copy-on-write capture pool 6% — on a pattern
+       * with no capture groups at all), against a dynamic regex that confirms through its lazy DFA and
+       * one-pass table. This shape needs neither, so a storage with no per-regex cache stops paying for one.
+       *
+       * -1 when the suffix is not a single greedy class loop reaching the end of the pattern.
+       */
+      std::int32_t il_fwd_class {-1};
+      bool         il_fwd_is_cp {}; //!< \ref il_fwd_class indexes `cp_classes` rather than `classes`.
+
       //! \brief Trailing lookaround on a groupless greedy `class+` body (`[a-z]+(?=[a-z])`,
       //!        `[0-9]+(?![0-9])`, …). Index into lookarounds; -1 = not this shape.
       //!        \ref trailing_la_class holds the body's class index. Intentionally does **not** set
