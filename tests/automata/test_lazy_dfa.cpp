@@ -418,3 +418,65 @@ TEST(lazy_dfa_routing_full_differential_vs_pure_pike)
     }
   }
 }
+
+TEST(range_intern_table_grows_and_keeps_every_key)
+{
+  // The UTF-8 edge-range intern table doubles at half load rather than capping, so a program with many
+  // distinct Unicode classes degrades in speed and not in correctness. Driven directly because no pattern
+  // in the suite reaches the first rehash: `(\w+)@(\w+)`, the heaviest, interns 476 distinct ranges against
+  // an initial 1024 slots. A fixed capacity would either spin on a full table or silently stop interning,
+  // and neither shows up as a wrong match — hence a test on the container itself.
+  real::detail::range_intern_table seen;
+
+  constexpr std::uint16_t total {4000}; // forces three doublings from the initial 1024
+  for (std::uint16_t k = 0; k < total; ++k) {
+    EXPECT_EQ(seen.find(k), real::detail::range_intern_table::absent);
+    seen.insert(k, static_cast<std::uint16_t>(k ^ 0x5A5AU));
+  }
+  EXPECT(seen.slots.size() > 1024U);
+  EXPECT_EQ(seen.count, static_cast<std::size_t>(total));
+
+  bool all_found {true};
+  for (std::uint16_t k = 0; k < total; ++k) {
+    all_found = all_found && seen.find(k) == static_cast<std::uint16_t>(k ^ 0x5A5AU);
+  }
+  EXPECT(all_found); // every key survives every rehash
+
+  // Key 0 is the range 0x00..0x00 and must not read as an empty slot.
+  real::detail::range_intern_table zero;
+  zero.insert(0, 0);
+  EXPECT_EQ(zero.find(0), 0U);
+  EXPECT_EQ(zero.find(1), real::detail::range_intern_table::absent);
+
+  // And it is usable in a constant expression, which is what lets the byte program be built at compile time.
+  constexpr std::uint16_t round_trip {[] {
+                                        real::detail::range_intern_table t;
+                                        for (std::uint16_t k = 0; k < 700; ++k) { // past half of 1024: rehashes during constant evaluation
+                                          t.insert(k, k);
+                                        }
+                                        return t.find(699);
+                                      }()};
+  static_assert(round_trip == 699);
+}
+
+TEST(byte_program_builds_during_constant_evaluation)
+{
+  // The byte-program builder -- the klass_cp UTF-8 expansion the DFA passes and the one-pass table derive
+  // from -- runs inside a constant expression. Pinned because the property is silent: a later non-constexpr
+  // call anywhere in that chain (a node-based container, an untagged helper) just stops static_storage from
+  // being able to precompute, with no diagnostic of its own.
+  //
+  // BUDGET, measured: only byte-class patterns fit the default -fconstexpr-steps. A klass_cp (Unicode \d,
+  // \w, \s) expands to a UTF-8 trie -- `(\w+)@(\w+)` is 6870 byte instructions over 476 classes -- and
+  // exceeds the limit, so those need the step cap raised by the consumer. Constexpr-callable is therefore
+  // necessary but not sufficient for a compile-time byte program; that is a constraint on any follow-up
+  // that wants to precompute the immutables for Unicode patterns.
+  constexpr auto built {[](auto storage) {
+                          const auto bp {real::detail::build_byte_program(storage.view(), false)};
+                          return bp.eligible ? bp.code.size() : 0U;
+                        }};
+  static_assert(built(real::detail::static_storage<"[a-z]+"> {}) > 0);
+  static_assert(built(real::detail::static_storage<R"([0-9]+\.[0-9]+)"> {}) > 0);
+  static_assert(built(real::detail::static_storage<"a[bc]d|ef"> {}) > 0);
+  EXPECT(built(real::detail::static_storage<R"([0-9]+\.[0-9]+)"> {}) > 0);
+}
