@@ -960,16 +960,18 @@ namespace real::detail {
         }
         if (first_candidate) {
           first_candidate = false;
-          // No immutables (static storage): IL is a NO-MATCH accelerator here and nothing more. Reaching
-          // this point means memmem found a candidate, and from here the route's own confirm has to beat
-          // the core scans -- which for this storage are the exactly-sized compile-time ones, and they
-          // win. Measured over a 64 KiB corpus, static vs the same pattern on the dynamic regex:
+          // No immutables AND no reverse-by-class: IL is a NO-MATCH accelerator here and nothing more.
+          // Reaching this point means memmem found a candidate, and without a way to place its match start
+          // the route's own confirm has to beat the core scans -- which for this storage are the
+          // exactly-sized compile-time ones, and they win. A prefix that IS one class loop does have a way
+          // (`il_rev_class`, the backward walk below), so it stays. Measured over a 64 KiB corpus, for the
+          // shapes that have no such prefix, static vs the same pattern on the dynamic regex:
           //   [0-9]{4}-[0-9]{2}-[0-9]{2}, dates present   core 30.9 us  vs  IL 37.9 us
           //   \d{4}-\d{2}-\d{2}, no date present         core  151 us  vs  IL  1.4 us
           // So: keep the memmem-only sweep, hand back the moment a candidate needs confirming. Sticky,
           // so the cost on a hit haystack is one candidate, once. A sparse-hit haystack would still
           // rather stay on IL; that needs a candidate-cost model this has no measurement for yet.
-          if (prog_.immut == nullptr) {
+          if (prog_.immut == nullptr && prog_.hints.il_rev_class < 0) {
             abandon             = true;
             state_.il_abandoned = true;
             return false;
@@ -1029,6 +1031,36 @@ namespace real::detail {
           // below the reverse floor, has no valid candidate here (mirrors reverse_start returning npos).
           const std::size_t prefix_w {prog_.hints.il_fused_prefix_width};
           s = (h >= prefix_w && h - prefix_w >= min_match_start) ? h - prefix_w : npos;
+        }
+        else if (boundary >= 1 && prog_.hints.il_rev_class >= 0) {
+          // IL REVERSE-BY-CLASS: the prefix is one greedy class loop, so the match start for this candidate
+          // is where the class run ending at `h` begins — a backward walk, no automaton and no per-regex
+          // cache, which is what lets a storage without immutables take this route at all. `+` needs at
+          // least one member, so a run of length zero yields no candidate here. Membership is tested
+          // against the class directly rather than through `class_table`/`cp_page`: those cache ONE class
+          // in the VM state, and the confirm that follows every candidate uses the pattern's other classes,
+          // so routing through them would refill a 256-byte table per candidate.
+          s = h;
+          if (!prog_.hints.il_rev_is_cp) {
+            const char_class& cc {prog_.classes[static_cast<std::size_t>(prog_.hints.il_rev_class)]};
+            while (s > min_match_start && cc.test(static_cast<std::uint8_t>(text[s - 1]))) {
+              --s;
+            }
+          }
+          else {
+            const cp_class& cc {prog_.cp_classes[static_cast<std::size_t>(prog_.hints.il_rev_class)]};
+            while (s > min_match_start) {
+              const std::size_t               w  {detail::codepoint_retreat(text, s, min_match_start)};
+              const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, s - w)};
+              if (!dc.valid || dc.length != w || !cp_class_holds(cc, dc.cp)) {
+                break;
+              }
+              s -= w;
+            }
+          }
+          if (s == h) {
+            s = npos; // no member immediately before the literal: this candidate has no start
+          }
         }
         else if (boundary >= 1) {
           // The prefix's byte program lives in the per-regex immutables — built once (call_once, already done
@@ -1455,6 +1487,41 @@ namespace real::detail {
         state_.table_class = key;
       }
       return state_.table.data();
+    }
+
+    /*!
+     * \brief Stateless membership of \p cp in \p cc — no VM-state cache touched.
+     *
+     * The cached paths (\ref cp_member_page, \ref cp_member_high) hold ONE class each in the state, which
+     * is right for a scan that stays on one class. The inner-literal reverse alternates with the confirm's
+     * classes on every candidate, so it reads the class directly: the ASCII bitmap for `cp < 0x80` (the
+     * overwhelming case), and a binary search of the class's own range span above it.
+     * \param[in] cc The code-point class.
+     * \param[in] cp The code point.
+     * \return `true` if \p cp is a member.
+     */
+    [[nodiscard]] constexpr bool cp_class_holds(const cp_class& cc,
+                                                char32_t        cp) const
+    {
+      if (cp < 0x80U) {
+        return cc.ascii.test(static_cast<std::uint8_t>(cp));
+      }
+      std::size_t lo {cc.range_begin};
+      std::size_t hi {static_cast<std::size_t>(cc.range_begin) + cc.range_count};
+      while (lo < hi) {
+        const std::size_t mid {lo + ((hi - lo) / 2)};
+        const code_range& r   {prog_.cp_ranges[mid]};
+        if (cp < r.lo) {
+          hi = mid;
+        }
+        else if (cp > r.hi) {
+          lo = mid + 1;
+        }
+        else {
+          return true;
+        }
+      }
+      return false;
     }
 
     //! \brief Highest code point covered by the `cp_page` bitmap (the 2-byte UTF-8 range).

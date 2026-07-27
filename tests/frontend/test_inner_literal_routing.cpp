@@ -151,3 +151,106 @@ TEST(inner_literal_fusion_d3_acid_stays_linear)
   EXPECT(ms < 5000); // generous even under sanitizers; a quadratic scan would not finish in time
   real::detail::inner_literal_route_disabled() = true;
 }
+
+//! IL.6: reverse-by-class. When the inner-literal PREFIX is exactly one greedy class loop the match start is
+//! the beginning of the class run ending at the candidate — a backward walk, so no prefix sub-program, no
+//! reverse DFA and no per-regex cache. That is what lets `static_regex`, which has none of those, take this
+//! route; and the same walk replaces the reverse DFA on the dynamic path.
+TEST(inner_literal_reverse_by_class_fires_on_exactly_the_class_loop_prefixes)
+{
+  const auto rev_class {[](const char* pattern) {
+                          const real::detail::ast tree {real::detail::parse(pattern, real::flags::none)};
+                          return real::detail::compile(tree, real::flags::none | tree.inline_flags).hints.il_rev_class;
+                        }};
+  const auto rev_is_cp {[](const char* pattern) {
+                          const real::detail::ast tree {real::detail::parse(pattern, real::flags::none)};
+                          return real::detail::compile(tree, real::flags::none | tree.inline_flags).hints.il_rev_is_cp;
+                        }};
+
+  EXPECT(rev_class("[a-z]+@[a-z]+") >= 0);  // byte class
+  EXPECT(!rev_is_cp("[a-z]+@[a-z]+"));
+  EXPECT(rev_class(R"(\w+-\w+)") >= 0);     // code-point class
+  EXPECT(rev_is_cp(R"(\w+-\w+)"));
+  EXPECT(rev_class(R"(\d+\.\d+)") >= 0);
+  EXPECT(rev_class(R"((\w+)@(\w+))") >= 0); // capture groups around the loop are transparent here
+
+  // A fixed repeat count emits the atom N times with NO split, so it is not a loop and must not be taken
+  // for one -- a backward walk would run past the four digits it is allowed.
+  EXPECT_EQ(rev_class(R"(\d{4}-\d{2}-\d{2})"), -1);
+  EXPECT_EQ(rev_class("[0-9]{4}-[0-9]{2}-[0-9]{2}"), -1);
+  EXPECT_EQ(rev_class("a+b+c"), -1);      // two children before the literal, not one
+  EXPECT_EQ(rev_class("(?:ab)+@x"), -1);  // the loop body is a sequence, not a class
+  EXPECT_EQ(rev_class("[a-z]+"), -1);     // no inner literal at all
+  EXPECT_EQ(rev_class("dog"), -1);        // literal at the head
+}
+
+TEST(inner_literal_reverse_by_class_matches_the_core)
+{
+  // Same differential as IL.2, aimed at the shapes the backward walk now serves, and at the edges where an
+  // off-by-one in it would show: a literal at position 0 (no prefix room), runs that reach the subject
+  // start, adjacent and repeated literals, multi-byte members either side of the boundary, and a truncated
+  // UTF-8 tail (the walk must not step into it).
+  const char* patterns[] = {"[a-z]+@[a-z]+", R"(\w+-\w+)", R"(\d+\.\d+)", R"((\w+)@(\w+))",
+                            "[a-z]+-[a-z]+", R"(\w+@\w+)", R"([A-Za-z]+:[A-Za-z]+)", "[^ ]+/[^ ]+"};
+  const char* subjects[] = {"a@b", "@", "@@@", "ab@", "@cd", "a@b@c", "aa@bb cc@dd", "x.y.z", "1.2.3.4",
+                            "..", "a..b", "élève@école", "naïve-café", "日本-語", "a/b//c/", "-a-b-",
+                            "9.9", "z-", "-z", "", " ", "@a@b@c@d@", "a-b-c-d-e-f-g", "ééé@ààà",
+                            "x@\xC3", "\x80@x", "aaaa@bbbb", "the quick fox@localhost 12.5 over-under, "};
+
+  std::size_t compared {0};
+  for (const char* pattern : patterns) {
+    const real::regex re {pattern};
+    for (const char* subject : subjects) {
+      const std::string_view text {subject};
+
+      real::detail::inner_literal_route_disabled() = false;
+      std::vector<std::pair<std::size_t, std::size_t>> routed;
+      for (const auto& m : re.find_iter(text)) {
+        routed.emplace_back(m.start(0), m.end(0));
+      }
+
+      real::detail::inner_literal_route_disabled() = true;
+      std::vector<std::pair<std::size_t, std::size_t>> core;
+      for (const auto& m : re.find_iter(text)) {
+        core.emplace_back(m.start(0), m.end(0));
+      }
+      real::detail::inner_literal_route_disabled() = false;
+
+      EXPECT(routed == core);
+      ++compared;
+    }
+  }
+  EXPECT_EQ(compared, sizeof(patterns) / sizeof(*patterns) * (sizeof(subjects) / sizeof(*subjects)));
+}
+
+TEST(static_regex_reverse_by_class_matches_the_dynamic_regex)
+{
+  // The point of the whole thing: a storage with no per-regex cache now places its own match starts, so its
+  // spans must equal the dynamic regex's on the shapes that route this way.
+  const std::string text = [] {
+                             std::string t;
+                             for (int i = 0; i < 30; ++i) {
+                               t += "on 2026-06-10 a-b root@localhost paid 19.99 then x9 élève@école, ";
+                             }
+                             return t;
+                           }();
+
+  const auto compare {[&text](const auto& stat, const char* pattern) {
+                        const real::regex                                dyn {pattern};
+                        std::vector<std::pair<std::size_t, std::size_t>> from_static;
+                        std::vector<std::pair<std::size_t, std::size_t>> from_dynamic;
+                        for (const auto& m : stat.find_iter(text)) {
+                          from_static.emplace_back(m.start(0), m.end(0));
+                        }
+                        for (const auto& m : dyn.find_iter(text)) {
+                          from_dynamic.emplace_back(m.start(0), m.end(0));
+                        }
+                        EXPECT(!from_static.empty());
+                        EXPECT(from_static == from_dynamic);
+                      }};
+
+  compare(real::static_regex<"[a-z]+@[a-z]+"> {}, "[a-z]+@[a-z]+");
+  compare(real::static_regex<R"(\w+-\w+)"> {}, R"(\w+-\w+)");
+  compare(real::static_regex<R"(\d+\.\d+)"> {}, R"(\d+\.\d+)");
+  compare(real::static_regex<R"((\w+)@(\w+))"> {}, R"((\w+)@(\w+))");
+}

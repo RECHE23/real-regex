@@ -462,6 +462,24 @@ namespace real {
       bool         il_fused_eligible     {};
       std::uint8_t il_fused_prefix_width {};
 
+      /*!
+       * \brief IL reverse-by-class: set when the inner-literal PREFIX is exactly one greedy class loop
+       *        (`[a-z]+@…`, `\w+-…`, `\d+\.…`), so the match start for a candidate literal at `h` is the
+       *        start of the class run ending at `h` — a backward scan, no automaton.
+       *
+       * This is the middle case between \ref il_fused_eligible (the whole pattern is fixed-width, so the
+       * start is arithmetic) and the general reverse pass (a reverse DFA over the prefix sub-program, which
+       * lives in the per-regex immutables). It needs neither: no sub-program, no DFA, no allocation, so a
+       * storage with no immutables — `static_regex` — can run it, which is the point. Leftmost semantics
+       * hold because the run's beginning IS the leftmost start for that candidate, and `confirm_at` verifies
+       * forward regardless, so a rejected candidate costs an advance and never a wrong match.
+       *
+       * -1 when the prefix is not that shape (a fixed repeat count has no `split`, so `\d{4}-…` is excluded
+       * here and stays on the general path).
+       */
+      std::int32_t il_rev_class {-1};
+      bool         il_rev_is_cp {}; //!< \ref il_rev_class indexes `cp_classes` (a `klass_cp` loop) rather than `classes`.
+
       //! \brief Trailing lookaround on a groupless greedy `class+` body (`[a-z]+(?=[a-z])`,
       //!        `[0-9]+(?![0-9])`, …). Index into lookarounds; -1 = not this shape.
       //!        \ref trailing_la_class holds the body's class index. Intentionally does **not** set

@@ -289,6 +289,40 @@ namespace real::detail {
       // lineage), which diverges from an ECMAScript backtracker's extra empty final iteration, so
       // compat routes replace/iterate to std for it (regex_core.hpp). regex_search/match are
       // unaffected by this hint — see COMPATIBILITY.md's nullable-loop group-capture section.
+      // IL reverse-by-class (hints.il_rev_class): recognise the shape `save… <class atom> split(back, out)
+      // save… byte(literal)` at the head of the program — one greedy class loop, then the required literal.
+      // Read off the COMPILED code rather than the AST because the answer is a class INDEX, which only
+      // exists after emission. A fixed repeat count emits the atom N times with no `split`, so `\d{4}-…`
+      // falls out here and keeps the general path.
+      if (il.len > 0 && il.prefix_child_count == 1) {
+        std::size_t pc {0};
+        while (pc < prog.code.size() && prog.code[pc].op == opcode::save) {
+          ++pc; // leading whole-match save, plus a capture group's open save
+        }
+        const std::size_t atom  {pc};
+        std::size_t       after {pc};
+        bool              is_cp {false};
+        if (atom < prog.code.size() && prog.code[atom].op == opcode::klass) {
+          after = atom + 1;
+        }
+        else if (atom < prog.code.size() && prog.code[atom].op == opcode::klass_cp) {
+          after = atom + 4; // klass_cp is a four-slot construct (see run_cp_class_loop's `pc += 3`)
+          is_cp = true;
+        }
+        if (after > atom && after < prog.code.size() && prog.code[after].op == opcode::split
+            && prog.code[after].primary_target == static_cast<std::int32_t>(atom)
+            && prog.code[after].secondary_target == static_cast<std::int32_t>(after) + 1) {
+          std::size_t lit {after + 1};
+          while (lit < prog.code.size() && prog.code[lit].op == opcode::save) {
+            ++lit; // the group's closing save, and the next group's opening one
+          }
+          if (lit < prog.code.size() && prog.code[lit].op == opcode::byte
+              && prog.code[lit].arg8 == prog.hints.inner_literal[0]) {
+            prog.hints.il_rev_class = static_cast<std::int32_t>(prog.code[atom].arg16);
+            prog.hints.il_rev_is_cp = is_cp;
+          }
+        }
+      }
       prog.hints.nullable_captured_repeat = ast_has_nullable_captured_repeat(tree_, tree_.root);
       if (prog.code.size() > max_program_size) {
         throw regex_error("program too large", 0);
