@@ -78,6 +78,16 @@ matrix-gate: ## Fast 64 KB subset of the 4-D veto matrix (used by full-local-gat
 # The C++ binary only measures and emits JSON; benchmarks/bench_engines.py (the consumer)
 # applies the shared stats module to produce the table, CIs, and ASCII box-plots. Manual,
 # not a CI gate. Tune samples via BENCH_SAMPLES / BENCH_BOOTSTRAP.
+# static_regex vs regex on the same patterns. Informational, not a gate: timings are host noise, and the
+# point is the SHAPE of the difference -- static_storage carries no regex_immutables, so a pattern whose
+# dynamic route needs the byte program / lazy-DFA alphabet / one-pass table cannot take it here and its row
+# reads far slower rather than faster. Match counts are cross-checked per row; a divergence exits non-zero,
+# because a ratio between two paths that disagree on what they found is not a comparison.
+bench-static: ## static_regex vs regex, same pattern (compile-time storage's routes and scratch)
+	@mkdir -p $(BUILD)
+	@cd $(ROOT) && c++ $(CXXSTD) -O2 $(INCLUDES) benchmarks/bench_static.cpp -o $(BUILD)/bench_static
+	@$(BUILD)/bench_static
+
 bench-engines: ## C++ throughput vs std::regex/PCRE2/RE2 (if present)
 	@mkdir -p $(BUILD)
 	@cd $(ROOT) && flags=""; \

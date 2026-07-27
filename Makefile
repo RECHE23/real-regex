@@ -67,7 +67,7 @@ include mk/help.mk
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
         lint misra fuzz fuzz-compat fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
-        bench-engines bench-multipattern bench-duel bench-matrix matrix-gate \
+        bench-engines bench-multipattern bench-duel bench-static bench-matrix matrix-gate \
         profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers
 
@@ -535,6 +535,9 @@ matrix-gate:
 
 bench-engines:
 	@$(MAKE) -C benchmarks bench-engines
+
+bench-static:
+	@$(MAKE) -C benchmarks bench-static
 
 bench-multipattern:
 	@$(MAKE) -C benchmarks bench-multipattern
