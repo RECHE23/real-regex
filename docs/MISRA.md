@@ -38,7 +38,8 @@ would inherit the wrong active member and double-free — cannot compile.
 
 ### `cppcoreguidelines-pro-type-member-init` / `hicpp-member-init` on `basic_pike_state`
 
-Suppressed at that one record (a scoped `NOLINTNEXTLINE`, not a profile-wide exclusion). Two of its members —
+Suppressed on that struct's own constexpr constructor (a scoped `NOLINTNEXTLINE`, not a profile-wide
+exclusion). Two of its members —
 `table`, a 256-byte byte-class lookup, and `cp_page`, a 240-byte code-point bitmap — carry no initializer.
 Each is filled **in full** on a miss against its own sentinel: `class_table()` writes all 256 entries when
 `table_class` does not match the requested class, `cp_page_table()` clears and rebuilds the bitmap when
@@ -62,9 +63,15 @@ and the suite rebuilt with clang's `-ftrivial-auto-var-init=pattern`, which fill
 pattern instead of zeros, passes 764 tests / 344 492 checks with none failing — so nothing depended on the
 value.
 
-Residual cost, stated because a record-scoped suppression is broader than a member-scoped one: a member
-added to `basic_pike_state` later *without* an initializer would not be flagged. Every other member there
-carries one.
+That constructor exists for a second reason, and it is the one that pins the deviation's shape: MSVC's
+constant evaluator refuses an object carrying an indeterminate subobject even where nothing reads it, so
+`static_regex`'s compile-time assertions failed with C2131 until the constructor value-initialized both
+members under `std::is_constant_evaluated()`. Compile-time evaluation is therefore fully initialized on
+every toolchain; only the run-time path — the one that was paying the clear — is trivially initialized.
+
+Residual cost, stated because the suppression sits on the constructor rather than on each member: a member
+added to `basic_pike_state` later *without* an initializer would not be flagged either. Every other member
+there carries one.
 
 `static_vec::data_` is left uninitialized for the same reason (nothing reads above `size_`, which starts at
 0) and is not flagged, because the synthetic MISRA translation unit instantiates `real::regex`, which uses

@@ -425,9 +425,29 @@ namespace real::detail {
   // every single search. Residual cost of suppressing at the record: a member added later WITHOUT an
   // initializer would not be flagged for this struct -- every other member here carries one.
   template <typename ThreadList, typename EpsVec>
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init,hicpp-member-init)
   struct basic_pike_state
   {
+    /*!
+     * \brief Value-initializes \ref table and \ref cp_page during constant evaluation only.
+     *
+     * Same reason as \ref real::detail::static_vec's own constructor: MSVC's constant evaluator rejects an
+     * object carrying an indeterminate subobject even where nothing reads it (C2131 on `static_regex`'s
+     * compile-time assertions), while clang and gcc accept it. The run-time path, which is the one that
+     * was paying a 496-byte clear per `search()`, keeps the trivial initialization everywhere.
+     */
+    // MISRA deviation, documented in docs/MISRA.md: \ref table and \ref cp_page are left trivially
+    // initialized at run time on purpose — each is filled in FULL on a miss against its own sentinel
+    // (\ref table_class / \ref cp_page_class, both -1 here), so the zeros were never read and cost a
+    // 496-byte clear on every state construction, which `search()` pays per call.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init,hicpp-member-init)
+    constexpr basic_pike_state() noexcept
+    {
+      if (std::is_constant_evaluated()) {
+        table   = {};
+        cp_page = {};
+      }
+    }
+
     ThreadList lists[2]; //!< Current and next thread lists (flipped by index).
     EpsVec     stack;    //!< Epsilon-closure DFS stack.
 

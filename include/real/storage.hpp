@@ -93,6 +93,22 @@ namespace real {
     public:
 
       /*!
+       * \brief Value-initializes \ref data_ during constant evaluation only.
+       *
+       * MSVC's constant evaluator refuses an object with an indeterminate subobject even when nothing
+       * reads it: `static_regex`'s compile-time `static_assert`s failed with C2131 (`expression did not
+       * evaluate to a constant`) when this storage was left trivially initialized everywhere. clang and
+       * gcc accept it (C++20 P1331R2), so the runtime path — where the whole point is not paying for the
+       * clear — keeps the trivial initialization on every toolchain.
+       */
+      constexpr static_vec() noexcept
+      {
+        if (std::is_constant_evaluated()) {
+          data_ = {};
+        }
+      }
+
+      /*!
        * \brief Appends \p value.
        * \param[in] value The element to append.
        * \throws std::length_error if the capacity `Cap` is exceeded.
@@ -211,7 +227,7 @@ namespace real {
     private:
 
       /*!
-       * \brief Inline element storage, deliberately NOT value-initialized.
+       * \brief Inline element storage, deliberately NOT value-initialized at run time.
        *
        * `static_regex` is stateless (`sizeof` 1), so a `search()` builds a fresh state on the stack every
        * call, and value-initializing here zeroed the whole worst-case capacity each time -- a cost the
