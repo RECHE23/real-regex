@@ -418,7 +418,14 @@ namespace real::detail {
    * \tparam ThreadList The thread-list type (a \ref basic_thread_list).
    * \tparam EpsVec     Container for the epsilon-closure stack.
    */
+  // MISRA deviation, documented in docs/MISRA.md: \ref table and \ref cp_page are deliberately left
+  // uninitialized -- each is a lookup table filled in full on a miss against its own sentinel
+  // (\ref table_class / \ref cp_page_class, both -1 here), so zeroing them was never observed and cost a
+  // 496-byte clear on every state construction. `search()` builds a fresh state per call, so that landed on
+  // every single search. Residual cost of suppressing at the record: a member added later WITHOUT an
+  // initializer would not be flagged for this struct -- every other member here carries one.
   template <typename ThreadList, typename EpsVec>
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init,hicpp-member-init)
   struct basic_pike_state
   {
     ThreadList lists[2]; //!< Current and next thread lists (flipped by index).
@@ -436,7 +443,7 @@ namespace real::detail {
      * so it adds nothing to the program or to the static binary.
      */
     std::int32_t                   table_class {-1};
-    std::array<std::uint8_t, 256>  table       {}; //!< 1 where the byte is in \ref table_class.
+    std::array<std::uint8_t, 256>  table;         //!< 1 where the byte is in \ref table_class (filled on a class_table miss).
 
     /*!
      * \brief Membership bitmap for a `cp_class` over the 2-byte UTF-8 range `[U+0080, U+07FF]`, and
@@ -450,7 +457,7 @@ namespace real::detail {
      *        lazily on the first high-cp membership probe.
      */
     std::int32_t                   cp_page_class {-1};
-    std::array<std::uint64_t, 30>  cp_page       {}; //!< 1 where the code point (U+0080..U+07FF) is a member.
+    std::array<std::uint64_t, 30>  cp_page;         //!< 1 where the code point (U+0080..U+07FF) is a member (filled on a cp_page_table miss).
   };
 
   /*!

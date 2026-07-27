@@ -34,6 +34,42 @@ not be usable in the constexpr engine. The union's copy/move special members are
 explicitly `= delete`d (see `storage.hpp`) so a value copy of `Storage` — which
 would inherit the wrong active member and double-free — cannot compile.
 
+## Deferred-initialisation deviation
+
+### `cppcoreguidelines-pro-type-member-init` / `hicpp-member-init` on `basic_pike_state`
+
+Suppressed at that one record (a scoped `NOLINTNEXTLINE`, not a profile-wide exclusion). Two of its members —
+`table`, a 256-byte byte-class lookup, and `cp_page`, a 240-byte code-point bitmap — carry no initializer.
+Each is filled **in full** on a miss against its own sentinel: `class_table()` writes all 256 entries when
+`table_class` does not match the requested class, `cp_page_table()` clears and rebuilds the bitmap when
+`cp_page_class` does not match, and both sentinels start at `-1`, which matches no class. So the zeros were
+never read.
+
+They were not free. `static_regex` is stateless (`sizeof` 1) and `search()` is `const` and thread-safe, so
+both storages build a fresh state per single search; value-initialising these two members put a 496-byte
+clear on every one. Measured on an 81-byte subject, arm64/clang, single `search()`:
+
+| pattern | static before | static after | dynamic before | dynamic after |
+|---------|---------------|--------------|----------------|---------------|
+| `dog`   | 39.6 ns | **18.5** | 55.7 ns | **48.7** |
+| `[0-9]+`| 189.0 ns | **163.7** | 206.1 ns | 209.0 |
+| `[^,]+` | 280.0 ns | **172.2** | 211.0 ns | **203.0** |
+
+Verified rather than argued: valgrind memcheck over the full suite on x86-64/g++ reports **zero**
+uninitialised-value errors and a byte-identical error profile to the pre-change build (78 errors / 23
+contexts either way, all `Mismatched free/delete` from `test_static.cpp`'s own instrumented `operator new`);
+and the suite rebuilt with clang's `-ftrivial-auto-var-init=pattern`, which fills those members with a poison
+pattern instead of zeros, passes 764 tests / 344 492 checks with none failing — so nothing depended on the
+value.
+
+Residual cost, stated because a record-scoped suppression is broader than a member-scoped one: a member
+added to `basic_pike_state` later *without* an initializer would not be flagged. Every other member there
+carries one.
+
+`static_vec::data_` is left uninitialized for the same reason (nothing reads above `size_`, which starts at
+0) and is not flagged, because the synthetic MISRA translation unit instantiates `real::regex`, which uses
+`small_vec`. The justification is the same one.
+
 ## Style / tooling deviations (pre-existing)
 
 These checks are disabled because they conflict with deliberate, idiomatic choices

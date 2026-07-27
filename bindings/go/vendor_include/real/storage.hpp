@@ -210,7 +210,21 @@ namespace real {
 
     private:
 
-      std::array<T, Cap> data_ {}; //!< Inline element storage.
+      /*!
+       * \brief Inline element storage, deliberately NOT value-initialized.
+       *
+       * `static_regex` is stateless (`sizeof` 1), so a `search()` builds a fresh state on the stack every
+       * call, and value-initializing here zeroed the whole worst-case capacity each time -- a cost the
+       * dynamic storage does not pay, since its state lives in the regex object and is reused. Nothing
+       * reads above \ref size_, which starts at 0, so the zeros were never observed. C++20 permits the
+       * trivial default initialization even in a constant expression (P1331R2); reading an element before
+       * writing it would be diagnosed there rather than silently returning garbage.
+       *
+       * Measured, single `search()` on an 81-byte subject, arm64/clang: `[^,]+` 262.0 -> 168.7 ns (which
+       * turns that row from losing to the dynamic regex into beating it), `dog` 39.8 -> 18.3, `[0-9]+`
+       * 192.6 -> 163.0.
+       */
+      std::array<T, Cap> data_;
       std::size_t        size_ {}; //!< Number of elements in use.
     };
 
