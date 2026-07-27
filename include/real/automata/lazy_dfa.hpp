@@ -497,6 +497,15 @@ namespace real::detail {
   {
     byte_program bp;
     bp.unicode_word = prog.unicode_word;
+    if (prog.code.empty()) {
+      // An empty program is not a recognizer, and saying `eligible` about one is worse than declining:
+      // every consumer reads that flag as "the byte automata can run this", so a reverse pass built over
+      // it answers npos at every position and the caller silently drops every candidate instead of
+      // falling back to the VM. Reachable only by a caller that hands over a program it never compiled --
+      // which is exactly what a storage with a cache but no inner-literal prefix sub-program would do.
+      bp.eligible = false;
+      return bp;
+    }
     for (const instr& in : prog.code) {
       if (in.op == opcode::assert_lookaround) {
         bp.eligible = false; // no byte automaton can carry a bounded lookaround (Tier-B stops at assertions)

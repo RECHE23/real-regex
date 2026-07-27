@@ -480,3 +480,26 @@ TEST(byte_program_builds_during_constant_evaluation)
   static_assert(built(real::detail::static_storage<"a[bc]d|ef"> {}) > 0);
   EXPECT(built(real::detail::static_storage<R"([0-9]+\.[0-9]+)"> {}) > 0);
 }
+
+TEST(byte_program_declines_an_empty_program)
+{
+  // `eligible` is read everywhere as "the byte automata can run this", so an empty program must decline.
+  // Claiming eligibility instead is a silent-wrong-answer shape rather than a slow one: a reverse pass built
+  // over an empty byte program answers npos at every position, so the inner-literal route drops every
+  // candidate it was given and reports no match at all, where declining sends it to the VM. No storage in
+  // the tree hands over an uncompiled program today; one that gained a per-regex cache without an
+  // inner-literal prefix sub-program would.
+  const real::detail::program_view empty {};
+  const auto                       bp    {real::detail::build_byte_program(empty)};
+  EXPECT(!bp.eligible);
+  EXPECT(bp.code.empty());
+
+  // And the shape it protects against, spelled out: eligible would have meant npos everywhere.
+  real::detail::reverse_dfa rev {bp.code, bp.classes};
+  EXPECT_EQ(rev.reverse_start("abc-def", 3, 0), std::string_view::npos);
+
+  // A one-instruction program is still a recognizer and still qualifies.
+  const real::detail::dynamic_program one {real::detail::compile(real::detail::parse("a", real::flags::none),
+                                                                 real::flags::none)};
+  EXPECT(real::detail::build_byte_program(one.view()).eligible);
+}
