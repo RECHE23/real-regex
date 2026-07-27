@@ -624,13 +624,24 @@ namespace real::detail {
       // `@`). Placed AFTER the literal / class-loop fast paths (an exact-literal `dog` must keep its own path)
       // but BEFORE the fixed-shape / DFA scans it beats. Search mode, runtime, dynamic-only. On a linearity
       // guard it abandons and falls through to the scans below.
+      // `il_text` as the proxy for "this state can track IL abandonment": every storage reaching this route
+      // needs the per-haystack guard fields, and only the reverse-confirm sub-case below needs a reverse
+      // DFA. Gating on the DFA instead would exclude a storage that profits from the literal sweep without
+      // ever confirming through it (see `wants_inner_literal` in storage.hpp).
       if constexpr (requires(State & s) {
-        s.il_prefix_rev;
+        s.il_text;
       }) {
+        // The prefix sub-program feeds the reverse confirm and nothing else, so it is required only of a
+        // storage that can run one. Without it the route is the memmem sweep plus a hand-back to the core
+        // on the first candidate, which needs no prefix program at all -- and not compiling one is what
+        // keeps a second compile out of the constant-evaluation budget.
+        constexpr bool confirms_by_reverse {requires(State & s) {
+                                              s.il_prefix_rev;
+                                            }};
         if (!std::is_constant_evaluated() && !inner_literal_route_disabled() && mode == run_mode::search
             && sem_ == match_semantics::first // longest semantics need the general loop (these routes are kFirstMatch)
             && prog_.hints.inner_literal_len > 0 && prog_.hints.inner_literal_prefix >= 1
-            && !prog_.prefix_code.empty()) {
+            && (!confirms_by_reverse || !prog_.prefix_code.empty())) {
           // A required literal at offset 0 (a match that DOES begin with a literal) is a *prefix*, not an inner
           // literal — it keeps the faster find_prefix path. Only a genuine inner literal (offset >= 1, for which
           // the compiler built a `prefix_code` for the reverse-confirm) takes this route; the old
@@ -922,6 +933,20 @@ namespace real::detail {
         }
         if (first_candidate) {
           first_candidate = false;
+          // No immutables (static storage): IL is a NO-MATCH accelerator here and nothing more. Reaching
+          // this point means memmem found a candidate, and from here the route's own confirm has to beat
+          // the core scans -- which for this storage are the exactly-sized compile-time ones, and they
+          // win. Measured over a 64 KiB corpus, static vs the same pattern on the dynamic regex:
+          //   [0-9]{4}-[0-9]{2}-[0-9]{2}, dates present   core 30.9 us  vs  IL 37.9 us
+          //   \d{4}-\d{2}-\d{2}, no date present         core  151 us  vs  IL  1.4 us
+          // So: keep the memmem-only sweep, hand back the moment a candidate needs confirming. Sticky,
+          // so the cost on a hit haystack is one candidate, once. A sparse-hit haystack would still
+          // rather stay on IL; that needs a candidate-cost model this has no measurement for yet.
+          if (prog_.immut == nullptr) {
+            abandon             = true;
+            state_.il_abandoned = true;
+            return false;
+          }
           // Small-haystack guard, once per scan (sticky via il_abandoned). Applies only when a match
           // candidate exists — no-match is memmem-only and never gated. Floor is cold vs warm: cold
           // first scan uses il_min_haystack (~94 KB email, amortizes reverse-DFA *build*); warm scans

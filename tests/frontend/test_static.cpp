@@ -6,6 +6,7 @@
 #include <new>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <sciforge/test/framework.hpp>
 #include "real/real.hpp"
@@ -221,4 +222,117 @@ TEST(static_regex_utf8_literals_and_classes_are_constexpr)
   static_assert(!real::static_regex<"[^é]">().search("é").matched());
   EXPECT(real::static_regex<"é+">().search("ééé").matched());
   EXPECT(real::static_regex<"[^é]">().fullmatch("€").matched());
+}
+
+TEST(static_regex_inner_literal_route_criterion)
+{
+  // Which patterns carry the literal-sweep route, and why. A required literal at offset >= 1 is necessary
+  // but not sufficient: `fixed_shape` means the core already scans the whole pattern by arithmetic width
+  // and the sweep adds nothing, while without it the core falls to the general VM, which is what the sweep
+  // rescues. Measured over a 64 KiB corpus, this storage with the route compiled in vs kept out:
+  //
+  //     pattern                     fixed | no match: out -> in | matches: out -> in
+  //     [a-z]+@[a-z]+                   0 |  1619.67 -> 1.33 us |  1063.54 -> 1053.92 us
+  //     \\w+-\\w+                         0 |  1585.38 -> 1.38 us |  1679.04 -> 1677.92 us
+  //     \\d+\\.\\d+                        0 |    29.42 -> 1.33 us |   592.75 ->  586.00 us
+  //     \\d{4}-\\d{2}-\\d{2}               0 |    29.50 -> 1.46 us |   629.08 ->  629.08 us
+  //     [0-9]{4}-[0-9]{2}-[0-9]{2}      1 |     1.42 -> 1.42 us |    29.50 ->   35.38 us
+  using date  = real::detail::static_storage<R"(\d{4}-\d{2}-\d{2})">;
+  using bdate = real::detail::static_storage<R"([0-9]{4}-[0-9]{2}-[0-9]{2})">;
+  using plain = real::detail::static_storage<R"([a-z]+)">;
+
+  static_assert(date::hints.inner_literal_prefix >= 1);
+  static_assert(!date::hints.fixed_shape);    // `\d` is a code-point class, so the core route is the general VM
+  static_assert(date::wants_inner_literal);
+  static_assert(bdate::hints.inner_literal_prefix >= 1);
+  static_assert(bdate::hints.fixed_shape);    // same pattern in byte classes: the core already has it
+  static_assert(!bdate::wants_inner_literal);
+  static_assert(!plain::wants_inner_literal); // no inner literal at all
+
+  // No prefix sub-program is built for this storage: it never runs the reverse confirm (that needs the
+  // per-regex immutables it has none of), and compiling one inside a constant expression is what the
+  // step budget cannot afford -- it pushed test_constexpr.cpp's flag_cases() past clang's limit.
+  static_assert(date {}.view().prefix_code.empty());
+  EXPECT(date::wants_inner_literal);
+}
+
+TEST(static_regex_inner_literal_matches_the_dynamic_regex)
+{
+  // Parity on both sides of the criterion, and on both corpora: a haystack with matches (where this
+  // storage hands back to the core on the first candidate) and one without (where the sweep runs to the
+  // end). Spans must agree with real::regex, not merely counts.
+  const std::string hits = [] {
+                             std::string t;
+                             for (int i = 0; i < 40; ++i) {
+                               t += "on 2026-06-10 root@localhost paid 19.99, then 1999-01-02 x@y again; ";
+                             }
+                             return t;
+                           }();
+  const std::string misses = [] {
+                               std::string t;
+                               for (int i = 0; i < 40; ++i) {
+                                 t += "the quick brown fox jumps over lazy dogs and cats meet again; ";
+                               }
+                               return t;
+                             }();
+
+  const auto compare {[](const auto& stat, const char* pattern, const std::string& text, bool expect_any) {
+                        const real::regex             dyn {pattern};
+                        std::vector<std::string_view> from_static;
+                        std::vector<std::string_view> from_dynamic;
+                        for (const auto& m : stat.find_iter(text)) {
+                          from_static.push_back(std::string_view {text}.substr(m.start(), m.end() - m.start()));
+                        }
+                        for (const auto& m : dyn.find_iter(text)) {
+                          from_dynamic.push_back(std::string_view {text}.substr(m.start(), m.end() - m.start()));
+                        }
+                        EXPECT_EQ(from_static.size(), from_dynamic.size());
+                        EXPECT(from_static == from_dynamic);
+                        EXPECT_EQ(!from_static.empty(), expect_any);
+                      }};
+
+  for (const auto* text : {&hits, &misses}) {
+    const bool any {text == &hits};
+    compare(real::static_regex<R"(\d{4}-\d{2}-\d{2})"> {}, R"(\d{4}-\d{2}-\d{2})", *text, any);
+    compare(real::static_regex<"[0-9]{4}-[0-9]{2}-[0-9]{2}"> {}, "[0-9]{4}-[0-9]{2}-[0-9]{2}", *text, any);
+    compare(real::static_regex<R"((\w+)@(\w+))"> {}, R"((\w+)@(\w+))", *text, any);
+    compare(real::static_regex<R"(\d+\.\d+)"> {}, R"(\d+\.\d+)", *text, any);
+  }
+}
+
+TEST(static_regex_inner_literal_walk_allocates_nothing)
+{
+  // The zero-allocation guarantee has to survive the inner-literal route, not only the core scans. Both
+  // halves of the route are walked here: a haystack with no candidate at all (the memmem-only sweep, which
+  // is where this storage wins) and one full of them (hand back to the core on the first).
+  const std::string misses = [] {
+                               std::string t;
+                               for (int i = 0; i < 200; ++i) {
+                                 t += "filler text with no date at all in it here, ";
+                               }
+                               return t;
+                             }(); // allocates
+  const std::string hits = [] {
+                             std::string t;
+                             for (int i = 0; i < 200; ++i) {
+                               t += "filler 2026-06-10 more filler text here, ";
+                             }
+                             return t;
+                           }();                                                             // allocates
+
+  constexpr real::static_regex<R"(\d{4}-\d{2}-\d{2})"> rx;
+  static_assert(real::detail::static_storage<R"(\d{4}-\d{2}-\d{2})">::wants_inner_literal); // this walk does take the route
+
+  const std::size_t before {alloc_count};
+  std::size_t       none   {0};
+  std::size_t       found  {0};
+  for (const auto& m : rx.find_iter(std::string_view {misses})) {
+    none += m.end() > m.start() ? 1U : 0U;
+  }
+  for (const auto& m : rx.find_iter(std::string_view {hits})) {
+    found += m.end() > m.start() ? 1U : 0U;
+  }
+  EXPECT_EQ(alloc_count - before, 0U);
+  EXPECT_EQ(none, 0U);
+  EXPECT_EQ(found, 200U);
 }

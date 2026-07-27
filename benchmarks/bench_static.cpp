@@ -10,6 +10,11 @@
 // The corpus unit is byte-identical to bindings/rust/benches/engines.rs, so rows here are comparable with
 // the criterion tables in docs/BENCHMARKS.md §E.4.
 //
+// Inner-literal patterns are measured on TWO corpora, because one is not enough to see them: the §E.4
+// corpus holds no date, so a `\d{4}-\d{2}-\d{2}` row there only ever exercises the no-candidate sweep and
+// says nothing about what happens once candidates appear. A first version of this bench had exactly that
+// blind spot and reported a large win for a change that cost 20% on a haystack full of matches.
+//
 // Not a gate: timings are host noise. Run with `make bench-static`.
 #include <real/real.hpp>
 
@@ -111,6 +116,33 @@ namespace {
                 label, sw, dw, dw / sw, ss, ds, ds / ss, sm,
                 diverged ? "  <-- COMPTES DIVERGENTS" : "");
   }
+  //! \brief One inner-literal row on one corpus. `route` is the compile-time criterion
+  //!        (`wants_inner_literal`): whether this pattern's `run()` carries the literal-sweep route at all.
+  template <typename StaticRe, typename Storage>
+  void il_row(const char*        label,
+              const char*        dyn_pattern,
+              const char*        corpus_kind,
+              const std::string& text,
+              bool               expect_matches)
+  {
+    constexpr StaticRe srx {};
+    const real::regex  drx {dyn_pattern};
+
+    std::size_t sm {0};
+    std::size_t dm {0};
+    const double sw {walk_us(srx, text, sm)};
+    const double dw {walk_us(drx, text, dm)};
+
+    // The corpus label is checked, not trusted: a row claiming "no match" on a haystack that in fact
+    // matches is how the blind spot in the header note happened.
+    const bool diverged   {sm != dm};
+    const bool mislabelled {(sm > 0) != expect_matches};
+    any_row_diverged = any_row_diverged || diverged || mislabelled;
+    std::printf("  %-26s %-9s %4s %9.2f %9.2f %7.2fx | %6zu%s%s\n",
+                label, corpus_kind, Storage::wants_inner_literal ? "yes" : "no", sw, dw, dw / sw, sm,
+                diverged ? "  <-- COMPTES DIVERGENTS" : "",
+                mislabelled ? "  <-- CORPUS MAL ÉTIQUETÉ" : "");
+  }
 } // namespace
 
 int main()
@@ -137,6 +169,32 @@ int main()
   row<real::static_regex<"\\b\\w+\\b">>("\\b\\w+\\b", "\\b\\w+\\b", text, subject);
   row<real::static_regex<"\\d{4}-\\d{2}-\\d{2}">>("\\d{4}-\\d{2}-\\d{2}", "\\d{4}-\\d{2}-\\d{2}", text, subject);
   row<real::static_regex<"(\\w+)@(\\w+)">>("(\\w+)@(\\w+)", "(\\w+)@(\\w+)", text, subject);
+
+  // --- inner-literal rows: the same pattern with and without candidates present -------------------
+  std::string dates;
+  while (dates.size() + 48U <= 64U * 1024U) {
+    dates += "on 2026-06-10 root@localhost paid 19.99 then x, ";
+  }
+  std::string nolit; // no date, no decimal, no '@': the no-candidate corpus for every row below
+  while (nolit.size() + 62U <= 64U * 1024U) {
+    nolit += "the quick brown fox jumps over lazy dogs and cats meet again; ";
+  }
+
+  std::printf("\n  Inner-literal rows — `route` is the compile-time criterion (static_storage::wants_inner_literal).\n\n");
+  std::printf("  %-26s %-9s %4s %9s %9s %7s | %6s\n",
+              "pattern", "corpus", "rte", "stat us", "dyn us", "walk", "match");
+  std::printf("  %-26s %-9s %4s %9s %9s %7s | %6s\n",
+              "--------------------------", "---------", "----", "---------", "---------", "-------",
+              "------");
+#define IL_PAIR(pat)                                                                                  \
+  il_row<real::static_regex<pat>, real::detail::static_storage<pat>>(pat, pat, "no match", nolit, false); \
+  il_row<real::static_regex<pat>, real::detail::static_storage<pat>>(pat, pat, "matches", dates, true)
+  IL_PAIR("\\d{4}-\\d{2}-\\d{2}");
+  IL_PAIR("[0-9]{4}-[0-9]{2}-[0-9]{2}");
+  IL_PAIR("\\d+\\.\\d+");
+  IL_PAIR("[a-z]+@[a-z]+");
+  IL_PAIR("(\\w+)@(\\w+)");
+#undef IL_PAIR
 
   std::printf("\n  sizeof(static_regex<\"[a-z]+\">) = %zu B, sizeof(regex) = %zu B\n",
               sizeof(real::static_regex<"[a-z]+">), sizeof(real::regex));
