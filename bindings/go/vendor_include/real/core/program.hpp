@@ -497,6 +497,19 @@ namespace real {
       std::int32_t il_fwd_class {-1};
       bool         il_fwd_is_cp {}; //!< \ref il_fwd_class indexes `cp_classes` rather than `classes`.
 
+      /*!
+       * \brief IL fixed code-point shape: the whole pattern is a fixed SEQUENCE of code-point atoms and
+       *        literal bytes — `\d{4}-\d{2}-\d{2}` and its kin — with no loop anywhere.
+       *
+       * \ref il_fused_eligible already covers the case where that sequence is fixed-width in BYTES, which a
+       * `klass_cp` never is (a Unicode `\d` matches multi-byte digits). But the code-point COUNT is fixed,
+       * so the match start is still arithmetic: step \ref il_cp_prefix_cps code points back from the
+       * candidate literal, then one forward walk verifies every atom and fills every capture. No loop means
+       * no reverse walk to bound and no engine to run.
+       */
+      bool         il_cp_shape_eligible {};
+      std::uint8_t il_cp_prefix_cps     {}; //!< Code points before the literal in \ref il_cp_shape_eligible.
+
       //! \brief Trailing lookaround on a groupless greedy `class+` body (`[a-z]+(?=[a-z])`,
       //!        `[0-9]+(?![0-9])`, …). Index into lookarounds; -1 = not this shape.
       //!        \ref trailing_la_class holds the body's class index. Intentionally does **not** set

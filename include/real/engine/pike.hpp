@@ -960,18 +960,20 @@ namespace real::detail {
         }
         if (first_candidate) {
           first_candidate = false;
-          // No immutables AND no reverse-by-class: IL is a NO-MATCH accelerator here and nothing more.
+          // No immutables, no reverse-by-class AND no fixed code-point shape: IL is a NO-MATCH accelerator
+          // here and nothing more.
           // Reaching this point means memmem found a candidate, and without a way to place its match start
           // the route's own confirm has to beat the core scans -- which for this storage are the
           // exactly-sized compile-time ones, and they win. A prefix that IS one class loop does have a way
-          // (`il_rev_class`, the backward walk below), so it stays. Measured over a 64 KiB corpus, for the
-          // shapes that have no such prefix, static vs the same pattern on the dynamic regex:
+          // (`il_rev_class`, the backward walk below); so does a fixed code-point shape, which steps back a
+          // known count. Both stay. Measured over a 64 KiB corpus, for the shapes that have neither, static
+          // vs the same pattern on the dynamic regex:
           //   [0-9]{4}-[0-9]{2}-[0-9]{2}, dates present   core 30.9 us  vs  IL 37.9 us
           //   \d{4}-\d{2}-\d{2}, no date present         core  151 us  vs  IL  1.4 us
           // So: keep the memmem-only sweep, hand back the moment a candidate needs confirming. Sticky,
           // so the cost on a hit haystack is one candidate, once. A sparse-hit haystack would still
           // rather stay on IL; that needs a candidate-cost model this has no measurement for yet.
-          if (prog_.immut == nullptr && prog_.hints.il_rev_class < 0) {
+          if (prog_.immut == nullptr && prog_.hints.il_rev_class < 0 && !prog_.hints.il_cp_shape_eligible) {
             abandon             = true;
             state_.il_abandoned = true;
             return false;
@@ -1062,6 +1064,21 @@ namespace real::detail {
             s = npos; // no member immediately before the literal: this candidate has no start
           }
         }
+        // Ordered after the class-loop reverse deliberately: putting this test first cost `\d+\.\d+` 5.5%
+        // and `[a-z]+@[a-z]+` 2.0% in x86-64 instructions -- shapes that reach neither branch but pay for
+        // the extra test ahead of theirs. This order leaves them within 0.5% of where they were.
+        else if (boundary >= 1 && prog_.hints.il_cp_shape_eligible) {
+          // FIXED CODE-POINT SHAPE: no loop anywhere, so the start is exactly `il_cp_prefix_cps` code
+          // points before the literal — arithmetic on UTF-8 boundaries, not a reverse pass. The forward
+          // walk below is what decides; this only proposes a boundary.
+          for (std::uint8_t k {0}; k < prog_.hints.il_cp_prefix_cps && s != npos; ++k) {
+            if (s <= min_match_start) {
+              s = npos; // the shape does not fit between the floor and this candidate
+              break;
+            }
+            s -= detail::codepoint_retreat(text, s, min_match_start);
+          }
+        }
         else if (boundary >= 1) {
           // The prefix's byte program lives in the per-regex immutables — built once (call_once, already done
           // by the first-candidate guard above), not per find_iter; the expensive klass_cp expansion is what a
@@ -1142,6 +1159,20 @@ namespace real::detail {
           // No suffix member: this candidate cannot match. min_pre_start is not advanced -- the walk reports
           // where it stopped, but that is one class run, a hard-bounded check per candidate rather than the
           // reverse/forward-DFA cost the linearity guard exists to bound (same argument as the fused verify).
+          pos = h + 1;
+        }
+        else if (prog_.hints.il_cp_shape_eligible) {
+          // One linear walk verifies every atom of the fixed shape from the start the step-back proposed,
+          // and fills every capture on the way — no engine, and no separate capture pass.
+          out_slots.assign(prog_.slot_count, npos);
+          const std::size_t match_end {match_cp_shape(text, s, out_slots)};
+          if (match_end != npos) {
+            out_slots[0] = s;
+            out_slots[1] = match_end;
+            return true;
+          }
+          // Same argument as the fused verify: the walk is a hard-bounded per-candidate check, not the
+          // reverse/forward-DFA cost the linearity guard exists to bound, so min_pre_start is not advanced.
           pos = h + 1;
         }
         else {
@@ -2945,6 +2976,61 @@ namespace real::detail {
           break; // reached a trailing \b/\B or match
         }
       }
+    }
+
+    template <typename OutSlots>
+    /*!
+     * \brief Verifies a fixed code-point shape forward from \p s, filling capture slots as it goes.
+     *
+     * The shape is a sequence of code-point atoms and literal bytes with no loop
+     * (\ref pattern_hints::il_cp_shape_eligible), so one linear walk decides the whole match and every
+     * `save` lands on the position the walk has reached — no engine, and no separate capture pass.
+     * \param[in]  text      Subject.
+     * \param[in]  s         Candidate match start.
+     * \param[out] out_slots Receives the slots (untouched unless the walk succeeds).
+     * \return The match end, or \ref real::npos if the shape does not hold at \p s.
+     */
+    [[nodiscard]] constexpr std::size_t match_cp_shape(std::string_view text,
+                                                       std::size_t      s,
+                                                       OutSlots&        out_slots) const
+    {
+      std::size_t at {s};
+      for (std::size_t pc {0}; pc < prog_.code.size();) {
+        const instr& instruction {prog_.code[pc]};
+        if (instruction.op == opcode::save) {
+          out_slots[static_cast<std::size_t>(instruction.arg16)] = at;
+          ++pc;
+        }
+        else if (instruction.op == opcode::match) {
+          return at;
+        }
+        else if (at >= text.size()) {
+          return npos;
+        }
+        else if (instruction.op == opcode::byte) {
+          if (static_cast<std::uint8_t>(text[at]) != instruction.arg8) {
+            return npos;
+          }
+          ++at;
+          ++pc;
+        }
+        else if (instruction.op == opcode::klass) {
+          if (!prog_.classes[instruction.arg16].test(static_cast<std::uint8_t>(text[at]))) {
+            return npos;
+          }
+          ++at;
+          ++pc;
+        }
+        else { // klass_cp: one whole code point, then past the four-slot construct
+          const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, at)};
+          if (!dc.valid || !cp_class_holds(prog_.cp_classes[instruction.arg16], dc.cp)) {
+            return npos;
+          }
+          at += dc.length;
+          pc += 4;
+        }
+      }
+      return npos;
     }
 
     template <typename OutSlots>

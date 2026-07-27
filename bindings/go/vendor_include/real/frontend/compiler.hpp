@@ -357,6 +357,52 @@ namespace real::detail {
           }
         }
       }
+      // IL fixed code-point shape (hints.il_cp_shape_eligible): the whole program is saves plus a fixed
+      // sequence of code-point atoms and literal bytes, with no split, jump or assertion anywhere. The
+      // byte-width-fixed case is il_fused_eligible's; this is the one a `klass_cp` puts out of its reach.
+      // No `!il_fused_eligible` guard here: that flag is set later, by compile() below, so it would read
+      // false whatever the pattern. Both hints may be set at once; run_inner_literal prefers the fused
+      // verify, which is the cheaper of the two when the shape is byte-width-fixed as well.
+      if (il.len > 0 && il.prefix_child_count >= 1) {
+        std::size_t pc          {0};
+        std::size_t cps         {0};
+        bool        ok          {true};
+        bool        hit_literal {false};
+        while (pc < prog.code.size() && ok) {
+          const opcode op {prog.code[pc].op};
+          if (op == opcode::save) {
+            ++pc;
+          }
+          else if (op == opcode::klass_cp) {
+            pc  += 4; // the four-slot construct (see run_cp_class_loop's `pc += 3`)
+            cps += hit_literal ? 0U : 1U;
+          }
+          else if (op == opcode::klass) {
+            ++pc;
+            cps += hit_literal ? 0U : 1U;
+          }
+          else if (op == opcode::byte) {
+            if (!hit_literal) {
+              // The first literal byte must be the inner literal's own first byte, else the count above
+              // does not describe the distance the route will walk back from a candidate.
+              ok          = prog.code[pc].arg8 == prog.hints.inner_literal[0];
+              hit_literal = true;
+            }
+            ++pc;
+          }
+          else if (op == opcode::match) {
+            break;
+          }
+          else {
+            ok = false; // a split, jump, assertion or lookaround: not a fixed sequence
+          }
+        }
+        if (ok && hit_literal && cps > 0 && cps <= 255 && pc < prog.code.size()
+            && prog.code[pc].op == opcode::match) {
+          prog.hints.il_cp_shape_eligible = true;
+          prog.hints.il_cp_prefix_cps     = static_cast<std::uint8_t>(cps);
+        }
+      }
       prog.hints.nullable_captured_repeat = ast_has_nullable_captured_repeat(tree_, tree_.root);
       if (prog.code.size() > max_program_size) {
         throw regex_error("program too large", 0);

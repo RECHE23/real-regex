@@ -315,3 +315,67 @@ TEST(inner_literal_two_run_confirm_fills_the_same_captures_as_the_core)
     }
   }
 }
+
+//! IL.8: the fixed code-point shape. `il_fused_eligible` covers a sequence whose BYTE width is fixed; a
+//! `klass_cp` never is (a Unicode `\d` matches multi-byte digits), but its code-point COUNT still is. These
+//! pin which patterns qualify — a shape wrongly admitted here would have its start placed by counting code
+//! points that the pattern does not in fact require.
+TEST(inner_literal_fixed_codepoint_shape_fires_on_exactly_the_loopless_sequences)
+{
+  const auto shape {[](const char* pattern) {
+                      const real::detail::ast tree {real::detail::parse(pattern, real::flags::none)};
+                      const auto              prog {real::detail::compile(tree, real::flags::none | tree.inline_flags)};
+                      return std::pair<bool, unsigned> {prog.hints.il_cp_shape_eligible,
+                                                        static_cast<unsigned>(prog.hints.il_cp_prefix_cps)};
+                    }};
+
+  EXPECT(shape(R"(\d{4}-\d{2}-\d{2})").first);
+  EXPECT_EQ(shape(R"(\d{4}-\d{2}-\d{2})").second, 4U); // four code points before the first `-`
+  EXPECT(shape(R"(\w{3}:\w{3})").first);
+  EXPECT_EQ(shape(R"(\w{3}:\w{3})").second, 3U);
+
+  // Any loop disqualifies it: a `+` makes the count before the literal variable, so a fixed step back
+  // would land somewhere the pattern never said.
+  EXPECT(!shape(R"(\d+\.\d+)").first);
+  EXPECT(!shape("[a-z]+@[a-z]+").first);
+  EXPECT(!shape(R"(\d{4}-\d{2}-\d*)").first);
+  EXPECT(!shape(R"(\d{2,4}-\d{2})").first); // a bounded repeat still compiles to a split
+  EXPECT(!shape(R"(\w{3}:\w{3}\b)").first); // a trailing assertion is not a consuming atom
+  EXPECT(!shape("dog").first);              // literal at the head, no prefix to step back over
+}
+
+TEST(inner_literal_fixed_codepoint_shape_matches_the_core)
+{
+  // Differential against the same engine with the route off, on the shapes the walk now serves and at the
+  // edges a fixed step back would get wrong: a candidate too close to the subject start, a multi-byte
+  // member inside the prefix (so the step back is not a byte count), repeated and adjacent literals.
+  const char* patterns[] = {R"(\d{4}-\d{2}-\d{2})", R"(\w{3}:\w{3})", R"(\d{2}/\d{2})", R"((\d{4})-(\d{2}))"};
+  const char* subjects[] = {"2026-06-10", "x2026-06-10y", "999-99-99", "ab:cd", "abc:def", "12/34 56/78",
+                            "élè:ves", "2026-06-1", "-2026-06-10", "--", "", "1", "2026-06-10 1999-01-02",
+                            "\xC3\xA9\xC3\xA9\xC3\xA9:abc", "0000-00-00-00"};
+
+  for (const char* pattern : patterns) {
+    const real::regex re {pattern};
+    for (const char* subject : subjects) {
+      const std::string_view text {subject};
+
+      const auto collect          {[&] {
+                                     std::vector<std::pair<std::size_t, std::size_t>> all;
+                                     for (const auto& m : re.find_iter(text)) {
+                                       for (std::size_t g = 0; g <= re.group_count(); ++g) {
+                                         all.emplace_back(m.start(g), m.end(g));
+                                       }
+                                     }
+                                     return all;
+                                   }};
+
+      real::detail::inner_literal_route_disabled() = false;
+      const auto routed {collect()};
+      real::detail::inner_literal_route_disabled() = true;
+      const auto core   {collect()};
+      real::detail::inner_literal_route_disabled() = false;
+
+      EXPECT(routed == core);
+    }
+  }
+}
