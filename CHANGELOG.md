@@ -2,6 +2,44 @@
 
 Per-train benchmark-impact log: what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s §A/§E/§B/§Unicode/§multi-pattern sections, carried verbatim from that file's Version row. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.7.57
+
+7.57 (**scan train — the inner-literal prefilter learns to place and confirm without an automaton**): §E.4
+re-stamped, under an interleaved A/B protocol against v2026.7.56 with the same bench file on both sides
+(one criterion group at a time, two rounds). The protocol is load-bearing: run inside the full suite
+instead, `find/word_bound` reads 409 µs against 319 on the *same binary*, so that row's absolute value
+depends on what else ran in the process.
+
+**The row this train was about.** `(\w+)@(\w+)` was the one family where the `regex` crate led on both
+operations. It is `class+ <literal> class+`, and the prefilter now places the match start by walking the
+prefix class back from the `@` and confirms by walking the suffix class forward — two class walks in place
+of a reverse DFA plus a one-pass extraction. `find/email` **132.4 → 46.2 µs (−65.1 %)**, `captures/email`
+**140.8 → 52.1 (−63.0 %)**: 3.06× behind becomes **1.07×**. Every other criterion row moves by at most
+2.8 %. Three shapes reached the same way, each recognised on the compiled program: one greedy class loop
+before the literal (the reverse), the same after it (the confirm), and a loopless fixed sequence of
+code-point atoms (`\d{4}-\d{2}-\d{2}`, placed by counting code points rather than bytes).
+
+**What it did for the compile-time engine.** `static_regex` has no per-regex cache, so it could reach none
+of the automaton-backed routes; every one of these three shapes needs no cache at all. With the VM scratch
+also no longer zeroed on each `search()` (it is worst-case sized and nothing reads it before writing),
+`make bench-static`'s eleven-row table and all ten inner-literal rows now favour the compile-time regex on
+both walk and single-shot, where five rows lost before — `(\w+)@(\w+)` went **2252 → 39 µs** on the walk.
+
+**Scan, separately.** The cp-class leftmost scan asked `width()` for a byte's worth of decode where one bit
+was wanted: `\d+` −36.2 %, `\w+` −5.4 % (arm64, each pattern alone in its TU), and the same fault fixed in
+the possessive loop, split by compiler because gcc measurably wants the old form there. `\b\w+\b` ends
+2.5 % ahead of 7.56 through the crate and remains the largest scan deficit at 2.42× behind.
+
+**Two faults this train introduced and caught.** MSVC rejects an object with an indeterminate subobject even
+where nothing reads it, which broke every compile-time `static_assert` — CI-only, the local gate has no MSVC
+leg. And the six new hint fields, added mid-struct next to the block they belong with, moved the class-loop
+fast path's hot fields across a cache line: `dog` +30 % and `\b\w+\b` +27.7 % through the crate, on
+patterns reading none of them. `pattern_hints` already documents that exact fault for its own `small_set`
+array and says "appended last" five times; the rule was read after the consequence was measured.
+
+**Disclosed, not chased:** `(\w+)@(\w+)` `first_use` is still **4.65× behind** (2.77 ms against 596 µs) —
+the lazily built one-pass table is untouched here, and the scan rows above no longer need it.
+
 ## v2026.7.56
 
 7.56 (**cold-path train — build and compile cost, no behaviour change**): §E.4 re-stamped and given two new
