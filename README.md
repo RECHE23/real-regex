@@ -97,7 +97,7 @@ More runnable programs — including the ReDoS demo — are in [`examples/`](htt
 | Go | `go get github.com/RECHE23/real-regex/bindings/go` |
 | Homebrew (macOS / Linux) | `brew install RECHE23/sci/real-regex` — the [`homebrew-sci`](https://github.com/RECHE23/homebrew-sci) tap |
 | vcpkg | via the [`vcpkg-sci`](https://github.com/RECHE23/vcpkg-sci) registry → `"dependencies": ["real-regex"]` |
-| CMake FetchContent | `FetchContent_Declare(real GIT_REPOSITORY https://github.com/RECHE23/real-regex GIT_TAG v2026.7.56)` |
+| CMake FetchContent | `FetchContent_Declare(real GIT_REPOSITORY https://github.com/RECHE23/real-regex GIT_TAG v2026.7.57)` |
 | Vendored | copy `include/` and compile with `-std=c++20 -I include` |
 
 REAL is header-only: installing just places the headers and package metadata.

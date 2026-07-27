@@ -19,7 +19,7 @@ answer is not a benchmark win.
 
 | | |
 | --- | --- |
-| Version | REAL `2026.7.56` — **re-measured for this stamp: §E.4 only** (the crate's own criterion rows, arm64, at `9c400e1`), because that is the only section the 7.56 cold-path train moved. §A, §Unicode, §B and §multi-pattern carry their **`2026.7.55` figures unchanged**, and the reason is measured rather than asserted: every 7.56 change is on a path taken once per `regex`, outside every scan loop, and `find_iter` over a 64 KiB corpus under x86 callgrind reads `[a-z]+` 45 249 882 → 45 249 867 instructions and `\b\w+\b` 79 627 285 → 79 627 260 across the whole train — identical to five decimals. What §E.4 gained: two families (`compile/`, `first_use/`) the scan rows structurally could not see, since `find`/`captures` build the pattern outside the timed closure and criterion's warm-up absorbs any lazy build — a quadratic Unicode word-subset test cost `\b\w+\b` 105 µs at compile and the one-pass table cost `(\w+)@(\w+)` 21.3 ms on first use, both invisible to every pre-existing row. Per-train benchmark-impact log: CHANGELOG.md (full release notes: docs/release-notes/ + GitHub Releases). **Disclosed, not chased:** `(\w+)@(\w+)` first use is still **4.94× behind** the `regex` crate (2.91 ms against 589 µs) after −86.8 %; declining the one-pass table instead was measured and rejected, it buys 3.3× on the scan with break-even near 900 KB. The `fields [^,]+` x86 layout note from the 7.55 stamp still stands and is unaffected by this train. |
+| Version | REAL `2026.7.57` — **re-measured for this stamp: §E.4 only** (the crate's own criterion rows, arm64, at `35cd546`), and this time by an interleaved A/B against `v2026.7.56` with the same bench file on both sides, one group at a time, two rounds. That protocol is not decoration: run inside the full suite instead, `find/word_bound` reads 409 µs against 319 on the *same binary*, so its absolute value depends on what else ran in the process and only a like-for-like comparison means anything there. §A, §Unicode, §B and §multi-pattern carry their earlier figures unchanged — this train's scan changes are visible in §E.4's own rows, and the C++ engine numbers those sections report were re-checked by direct harness (`\b\w+\b` 321 → 300 µs, `\d+` 179 → 114, six reference patterns unchanged or better on both ISAs) without moving any section's headline claim. **The row this train was about:** `(\w+)@(\w+)` was the one family where the `regex` crate led on both operations; the inner-literal prefilter now places its match start by walking the prefix class back from the `@` and confirms by walking the suffix class forward, so `find/email` is **−65.1 %** (132.4 → 46.2 µs) and `captures/email` **−63.0 %** — 3.06× behind becomes 1.07×. Every other criterion row moves by at most 2.8 %. Per-train benchmark-impact log: CHANGELOG.md (full release notes: docs/release-notes/ + GitHub Releases). **Disclosed, not chased:** `(\w+)@(\w+)` `first_use` is still **4.65× behind** (2.77 ms against 596 µs) — the one-pass table it builds lazily is untouched by this train, and the scan rows above no longer need it. `find/word_bound` remains the largest scan deficit at 2.42× behind after −2.5 %. **Caught while stamping, not before:** the six new hint fields were first added mid-struct and cost `dog` +30 % and `\b\w+\b` +27.7 % through the crate — a pure `pattern_hints` layout effect the struct's own `small_set` note already documents, invisible to every C++ harness this train was tuned against because they do not cross the C ABI per match. Fixed in `35cd546`. |
 | Machines | §A on **two ISAs**: devbox (`x86-64`, g++ 13.3.0) *and* Apple M1 Pro (`arm64`, Apple clang 16). §B / §E on M1 Pro (§E's x86-64 leg noted inline where it diverges — see §E). §multi-pattern measured on **x86-64 devbox** (g++ 13.3, RE2 + Hyperscan 5.4) |
 | Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (built from source on x86-64 to pin the exact version); RE2 (10.0 on x86-64, 11.0 on arm64 — version-differs-by-leg, uncontested given the margins). Multi-pattern: RE2::Set, Hyperscan (optional). §E: rust `regex` 1.12.4 |
 | Python | CPython 3.14.6, `re` (stdlib) vs the in-place REAL `2026.7.55` extension (§B re-measured for this stamp, arm64 M1 Pro, N = 40 paired samples, bootstrap CI) |
@@ -571,20 +571,32 @@ operations:
   **arm64 M1 Pro, criterion, 64 KiB corpus** — two trains' effect on this bench, against the `regex` crate in
   the same process:
 
-  | criterion row | v2026.7.55 (`3cd9c81`) | now (`9c400e1`) | vs `regex` |
+  | criterion row | v2026.7.56 (`9c400e1`) | now (`35cd546`) | vs `regex` now |
   | --- | ---: | ---: | :--- |
-  | `captures/class` | 207.9 µs | **186.45** | 1.10× → **1.00× (parity)** |
-  | `captures/digits` | 61.0 | **54.72** | 1.25× → **REAL 1.39× ahead** |
-  | `captures/fields` | 43.4 | **39.76** | 3.52× → **REAL 3.86× ahead** |
-  | `captures/email` | 143.6 | **137.15** | 3.33× → **3.16×** |
-  | `captures/literal` | 27.7 | **18.98** | 1.97× → **1.78×** |
-  | `find/literal` | 17.3 | **16.31** | 1.64× → **1.55×** |
+  | `find/email` | 132.36 µs | **46.20** | 3.06× behind → **1.07× behind** |
+  | `captures/email` | 140.75 | **52.10** | 3.25× behind → **1.21× behind** |
+  | `find/word_bound` | 327.05 | **318.80** | 2.42× behind (was 2.48×) |
+  | `find/class` | 160.07 | 161.95 | **REAL 1.16× ahead** |
+  | `find/digits` | 50.88 | 50.03 | **REAL 1.52× ahead** |
+  | `find/fields` | 36.35 | 36.29 | **REAL 4.77× ahead** |
+  | `find/literal` | 16.29 | 16.29 | 1.55× behind |
+  | `captures/class` | 186.20 | 180.95 | **REAL 1.03× ahead** |
+  | `captures/digits` | 55.35 | 54.31 | **REAL 1.41× ahead** |
+  | `captures/fields` | 40.49 | 39.66 | **REAL 4.35× ahead** |
+  | `captures/literal` | 19.34 | 18.97 | 1.77× behind |
 
-  Rows the table did not carry before, same run: `find/class` 161.13 µs vs 187.45 (**REAL 1.16× ahead**),
-  `find/digits` 50.07 vs 75.19 (**1.50× ahead**), `find/fields` 36.19 vs 154.39 (**4.27× ahead**),
-  `find/email` 131.85 vs 43.14 (3.06× behind). `email` is the one family where `regex` leads on both
-  operations; it is also the only row here with real capture groups, so `from_flat`'s two-store path does not
-  apply to it.
+  **`email` is the row this train was about, and it was the one family where `regex` led on both
+  operations.** `(\w+)@(\w+)` is `class+ <literal> class+`: the prefilter now places the match start by
+  walking the prefix class back from the `@` and confirms by walking the suffix class forward, so a
+  confirmed candidate costs two class walks instead of a reverse DFA plus a one-pass extraction — **−65.1 %
+  on `find`, −63.0 % on `captures`**, from 3.06× behind to 1.07×. Every other row moves by at most 2.8 %.
+
+  **Protocol, because one number here is context-dependent:** these are interleaved A/B runs — the same
+  bench file built against both trees, one criterion group at a time, alternating, two rounds. Run inside
+  the FULL suite instead, `find/word_bound` reads 409 µs rather than 319 on the same binary: its absolute
+  value depends on what else ran in the process (thermal and cache state), so only a like-for-like
+  comparison means anything on that row. The 7.55 → 7.56 column this table used to carry is dropped rather
+  than re-derived, since it was not measured under this protocol.
 
   `captures_read_iter` remains the right tool when the last allocation matters (it materializes no
   `Captures` at all): dense ~100 KB, med of 21, `[a-z]+` **≈0.43×** the wall of `captures_iter`,
