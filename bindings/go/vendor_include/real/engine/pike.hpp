@@ -2415,7 +2415,9 @@ namespace real::detail {
 
     //! \brief Possessive class+/++ loop over a CODE-POINT class
     //!        (`klass_cp_loop_possessive`). Mirrors \ref run_cp_class_loop's decode/membership
-    //!        primitives (no O2r-1b GCC split here yet -- measure-first; not in this train's scope).
+    //!        primitives, except that the scan predicate is now split by compiler (see `in_class` below):
+    //!        clang/MSVC read the ASCII table directly, gcc keeps the width round trip. Both directions are
+    //!        measured, and gcc's is the counter-intuitive one.
     //!        See \ref run_possessive_loop_generic for the shared algorithm.
     template <typename OutSlots>
     constexpr bool run_possessive_cp_class_loop(std::string_view  text,
@@ -2441,7 +2443,32 @@ namespace real::detail {
                               const bool m {dc.cp < 0x80U ? asc[dc.cp] != 0U : member_hi(dc.cp)};
                               return m ? dc.length : 0;
                             };
+#if defined(__GNUC__) && !defined(__clang__)
+      // gcc keeps the width round trip. Measured, and it is not the shape one would guess: the
+      // ASCII-direct predicate below costs g++ 13.3 +37% on a scan with no member (145.0 -> 202.8 us over
+      // 64 KiB) and +15% on `\d++` with members, while REDUCING its instruction count 3.89% -- fewer
+      // instructions, more time, which is the same trap O2r-1b's own note documents for this loop family.
       const auto in_class = [&](std::size_t i) { return i < text.size() && cp_width(i) != 0; };
+#else
+      // Membership only, no width, for the leftmost scan -- the sibling byte-class runner's `in_class` is
+      // one table load, and this one went through `cp_width`: a three-field decode result, a `valid` test,
+      // a re-branch on `cp < 0x80` and a length mapped back to the bit `asc[lead]` already held.
+      // arm64/clang, find_iter over 64 KiB, each pattern ALONE in its TU (best of 25, three repeats):
+      // `\d++` 192.9 -> 123.3 us, `\w++` 504.0 -> 471.3 us; isolating the scan on a corpus with no member
+      // at all, 122.0 -> 61.2 us, which is exact parity with the greedy cp-class route.
+      //
+      // No bounds check, which is the sibling byte-class runner's contract too: every call site in
+      // run_possessive_loop_generic guards `< text.size()` before asking. Carrying one here cost 2% and
+      // was unreachable -- zero executions over the whole suite.
+      const auto in_class = [&](std::size_t i) -> bool {
+                              const auto lead {static_cast<std::uint8_t>(text[i])};
+                              if (lead < 0x80U) {
+                                return asc[lead] != 0U;
+                              }
+                              const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, i)};
+                              return dc.valid && member_hi(dc.cp);
+                            };
+#endif
       const auto scan_end = [&](std::size_t from) -> std::size_t {
                               std::size_t e {from};
                               while (e < text.size()) {
