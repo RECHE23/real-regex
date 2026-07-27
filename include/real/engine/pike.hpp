@@ -2011,6 +2011,30 @@ namespace real::detail {
                          };
       // Success uses fill_span_slots (ensure_size, no npos fill). Fail still assigns (seam +
       // general-path slot parity when !matched).
+      /*!
+       * \brief Whether a class member starts at \p i — membership only, no width.
+       *
+       * The leftmost scan below needs one bit per byte, and asking \ref width for it built a three-field
+       * decode result, tested `valid`, re-branched on `cp < 0x80` and mapped a length back to the bit
+       * `asc[lead]` already held. A strict decode of a byte below 0x80 is exactly
+       * `{cp = lead, length = 1, valid = true}`, so that table entry IS the answer — the same shape
+       * \ref run_class_loop's own `in_class` has, which is why its scan costs a fraction of this one.
+       *
+       * Kept separate from \ref width rather than folded into it: `extend_run` needs the length, and one
+       * lambda returning a width cannot narrow to a bool for the scan. Measured on a 64 KiB corpus,
+       * find_iter, each pattern ALONE in its translation unit (arm64/clang, best of 25, two repeats):
+       * `\d+` 179.0 -> 114.4 us, `\w+` 338.0 -> 319.8 us, and `[a-z]+` / `[0-9]+` / `[^,]+` / `dog`
+       * byte-identical. Isolating the scan on a corpus with no member at all, this route cost 6.1x the
+       * byte-class route for the same work (125.8 vs 20.6 us) before this.
+       */
+      const auto in_class = [&](std::size_t i) -> bool {
+                              const auto lead {static_cast<std::uint8_t>(text[i])};
+                              if (lead < 0x80U) {
+                                return asc[lead] != 0U;
+                              }
+                              const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, i)};
+                              return dc.valid && member_hi(dc.cp);
+                            };
       const auto extend_run = [&](std::size_t match_start) -> std::size_t {
                                 const std::size_t first {width(match_start)};
                                 if (first == 0) {
@@ -2073,7 +2097,7 @@ namespace real::detail {
         std::size_t pos {start};
         while (pos < text.size()) {
           std::size_t match_start {pos};
-          while (match_start < text.size() && width(match_start) == 0) {
+          while (match_start < text.size() && !in_class(match_start)) {
             ++match_start;
           }
           if (match_start >= text.size()) {
@@ -2101,7 +2125,7 @@ namespace real::detail {
       std::size_t match_end   {};
       while (true) {
         if (mode == run_mode::search) {
-          while (match_start < text.size() && width(match_start) == 0) {
+          while (match_start < text.size() && !in_class(match_start)) {
             ++match_start;
           }
           if (match_start >= text.size()) {
