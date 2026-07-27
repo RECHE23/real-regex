@@ -6,6 +6,7 @@
 #include <new>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include <sciforge/test/framework.hpp>
@@ -389,4 +390,25 @@ TEST(static_regex_membership_tables_are_built_at_compile_time)
   constexpr real::static_regex<"dog"> plain;
   static_assert(plain.search("the dog").start() == 4);
   EXPECT_EQ(plain.search("the dog").start(), 4U);
+}
+
+TEST(static_regex_program_view_is_a_shared_compile_time_object)
+{
+  // `view()` hands back a reference to one `static constexpr program_view`, not a fresh copy. The property
+  // is pinned because it is invisible at the call site and worth 93 of the ~325 instructions a single
+  // `search()` spent: the view is 408 bytes, 232 of them `pattern_hints`, and it was being rebuilt per call.
+  using S = real::detail::static_storage<"[a-z]+">;
+  constexpr S storage {};
+
+  // Same address every time — a by-value return would give two distinct temporaries.
+  EXPECT_EQ(&storage.view(), &storage.view());
+  // And the same one across instances, since the object is static per instantiation.
+  constexpr S other {};
+  EXPECT_EQ(&storage.view(), &other.view());
+  static_assert(std::is_reference_v<decltype(storage.view())>);
+
+  // It really is a constant expression, which is what makes the reference free.
+  static_assert(S {}.view().slot_count == 2);
+  static_assert(S {}.view().immut == nullptr); // no per-regex cache: the routes that need one decline
+  static_assert(!S {}.view().code.empty());
 }

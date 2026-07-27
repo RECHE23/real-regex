@@ -1080,29 +1080,43 @@ namespace real {
       };
 
       /*!
-       * \brief Returns a non-owning view of the compile-time program.
+       * \brief Returns a non-owning view of the compile-time program, by reference.
+       *
+       * Every field is a compile-time constant here — the spans point at `static constexpr` arrays and
+       * `immut` is null — so the whole view is one too, and handing back a reference costs nothing where
+       * returning by value copied 408 bytes per call. 232 of those bytes are \ref pattern_hints, and
+       * `view()` is called once per `search()`: line-level profiling of a single `[a-z]+` search put that
+       * one aggregate initialiser at 93 of the ~325 instructions the call spends, against 17 for the class
+       * scan itself.
        */
-      [[nodiscard]] constexpr program_view view() const
+      [[nodiscard]] constexpr const program_view& view() const
       {
-        return {.code              = code,
-                .classes           = classes,
-                .names             = names,
-                .lookarounds       = {}, // static_regex rejects lookarounds at compile (always empty)
-                .cp_classes        = cp_classes,
-                .cp_ranges         = cp_ranges,
-                                         // IL: no prefix sub-program. This storage never runs the reverse confirm (that needs the
-                                         // per-regex immutables it has none of), and a second compile inside a constant expression
-                                         // is what the budget cannot afford -- it pushed tests/frontend/test_constexpr.cpp's
-                                         // flag_cases() past clang's step limit. See \ref wants_inner_literal.
-                .prefix_code       = {},
-                .prefix_classes    = {},
-                .prefix_cp_classes = {},
-                .prefix_cp_ranges  = {},
-                .slot_count        = slot_count,
-                .byte_mode         = has_flag(effective_flags, flags::bytes),
-                .unicode_word      = !has_flag(effective_flags, flags::bytes) && !has_flag(effective_flags, flags::ascii),
-                .hints             = hints};
+        return view_;
       }
+
+    private:
+
+      //! \brief The view itself, materialised once at compile time. See \ref view.
+      static constexpr program_view view_ {.code = code,
+                                           .classes           = classes,
+                                           .names             = names,
+                                           .lookarounds       = {}, // static_regex rejects lookarounds at compile (always empty)
+                                           .cp_classes        = cp_classes,
+                                           .cp_ranges         = cp_ranges,
+                                                                    // IL: no prefix sub-program. This storage never runs the reverse confirm (that needs the
+                                                                    // per-regex immutables it has none of), and a second compile inside a constant expression
+                                                                    // is what the budget cannot afford -- it pushed tests/frontend/test_constexpr.cpp's
+                                                                    // flag_cases() past clang's step limit. See \ref wants_inner_literal.
+                                           .prefix_code       = {},
+                                           .prefix_classes    = {},
+                                           .prefix_cp_classes = {},
+                                           .prefix_cp_ranges  = {},
+                                           .slot_count        = slot_count,
+                                           .byte_mode         = has_flag(effective_flags, flags::bytes),
+                                           .unicode_word      = !has_flag(effective_flags, flags::bytes) && !has_flag(effective_flags, flags::ascii),
+                                           .hints             = hints};
+
+    public:
 
       /*!
        * \brief Returns the pattern text.

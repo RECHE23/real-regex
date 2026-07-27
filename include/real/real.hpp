@@ -742,7 +742,7 @@ namespace real {
       if constexpr (requires(typename Storage::state_type & st) {
         st.lookaround;
       }) {
-        const auto prog {program_.view()};
+        const auto& prog {program_.view()};
         if (prog.hints.trailing_lookaround >= 0
             && (std::is_constant_evaluated() || !detail::trailing_la_route_disabled())) {
           for (const result_type& match :
@@ -778,7 +778,7 @@ namespace real {
       if constexpr (requires(typename Storage::state_type & st) {
         st.lookaround;
       }) {
-        const auto prog {program_.view()};
+        const auto& prog {program_.view()};
         if (prog.hints.trailing_lookaround >= 0
             && (std::is_constant_evaluated() || !detail::trailing_la_route_disabled())) {
           for (const result_type& match :
@@ -1137,7 +1137,10 @@ namespace real {
       const std::size_t              end {endpos < text.size() ? endpos : text.size()};
       typename Storage::state_type   state;
       typename Storage::slot_storage slots;
-      const detail::program_view     prog    {program_.view()};
+      // Reference, not a copy: `program_view` is 408 bytes and this line runs once per search.
+      // Binding to a const reference also covers the dynamic storage, whose view() still returns by
+      // value -- the temporary's lifetime extends to this reference's scope.
+      const detail::program_view&    prog    {program_.view()};
       detail::pike_vm                vm(prog, state);
       const auto                     subject {text.substr(0, end)};
       // P3c cold: trailing-LA outside pike_vm::run (keeps pure class-loop run() pre-P3c-sized).
