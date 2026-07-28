@@ -1114,7 +1114,14 @@ namespace real {
                                            .slot_count        = slot_count,
                                            .byte_mode         = has_flag(effective_flags, flags::bytes),
                                            .unicode_word      = !has_flag(effective_flags, flags::bytes) && !has_flag(effective_flags, flags::ascii),
-                                           .hints             = hints};
+                                           .hints             = hints,
+                                           // Deliberately empty: this storage reaches its membership tables through the state type,
+                                           // where their address is a link-time constant. Spelled out because gcc's
+                                           // -Werror=missing-field-initializers requires it, and because the emptiness is the contract
+                                           // `class_table` and its siblings read.
+                                           .class_tables      = {},
+                                           .cp_ascii_tables   = {},
+                                           .cp_page_tables    = {}};
 
     public:
 

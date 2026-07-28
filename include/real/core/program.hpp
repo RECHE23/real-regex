@@ -682,6 +682,11 @@ namespace real {
       bool                            unicode_word {};        //!< `\b \B \< \>` use Unicode word-ness (text mode, not bytes / `re.A`).
       pattern_hints                   hints;                  //!< Search-acceleration hints.
       regex_immutables*               immut        {nullptr}; //!< Per-regex DFA/one-pass cache (dynamic storage only; else null).
+      //! \brief Prebuilt membership tables (dynamic storage; empty for the compile-time storage, which
+      //!        reaches its own through the state type). APPENDED LAST, the rule 35cd546 paid to learn.
+      std::span<const std::uint8_t>   class_tables;
+      std::span<const std::uint8_t>   cp_ascii_tables;
+      std::span<const std::uint64_t>  cp_page_tables;
     };
 
     /*!
@@ -703,6 +708,48 @@ namespace real {
       bool                        byte_mode    {};   //!< \ref flags::bytes mode.
       bool                        unicode_word {};   //!< `\b \B \< \>` use Unicode word-ness (text mode).
       pattern_hints               hints;             //!< Search-acceleration hints.
+      /*!
+       * \brief Flat byte-class membership tables, `classes.size() * 256`, built ONCE with the program.
+       *
+       * `class_table` derived these per VM state, and a single `search()` builds a fresh state — so a
+       * 256-entry bitset walk landed on every short search. Line-level profiling of one `[a-z]+` search on
+       * the dynamic storage put it at **2562 of 3849 instructions, 66.5 %**. The pattern decides the
+       * contents, so the program is where they belong.
+       */
+      std::vector<std::uint8_t>   class_tables;
+      std::vector<std::uint8_t>   cp_ascii_tables;   //!< As \ref class_tables, for `cp_classes[i].ascii`.
+      std::vector<std::uint64_t>  cp_page_tables;    //!< U+0080..U+07FF membership bitmaps, 30 words per cp_class.
+
+      //! \brief Fills \ref class_tables, \ref cp_ascii_tables and \ref cp_page_tables from the interned
+      //!        classes. Called once, at the end of compilation.
+      constexpr void build_membership_tables()
+      {
+        class_tables.assign(classes.size() * 256, 0);
+        for (std::size_t i = 0; i < classes.size(); ++i) {
+          for (std::size_t b = 0; b < 256; ++b) {
+            class_tables[(i * 256) + b] = classes[i].test(static_cast<std::uint8_t>(b)) ? 1U : 0U;
+          }
+        }
+        cp_ascii_tables.assign(cp_classes.size() * 256, 0);
+        cp_page_tables.assign(cp_classes.size() * 30, 0);
+        for (std::size_t i = 0; i < cp_classes.size(); ++i) {
+          for (std::size_t b = 0; b < 256; ++b) {
+            cp_ascii_tables[(i * 256) + b] = cp_classes[i].ascii.test(static_cast<std::uint8_t>(b)) ? 1U : 0U;
+          }
+          for (std::uint32_t k = 0; k < cp_classes[i].range_count; ++k) {
+            const code_range& r {cp_ranges[cp_classes[i].range_begin + k]};
+            if (r.lo > 0x7FFU) {
+              break; // sorted: nothing more falls in the page
+            }
+            const std::uint32_t lo {r.lo < 0x80U ? 0x80U : r.lo};
+            const std::uint32_t hi {r.hi > 0x7FFU ? 0x7FFU : r.hi};
+            for (std::uint32_t c = lo; c <= hi; ++c) {
+              const std::uint32_t bit {c - 0x80U};
+              cp_page_tables[(i * 30) + (bit >> 6U)] |= std::uint64_t {1} << (bit & 63U);
+            }
+          }
+        }
+      }
 
       // Codepoint-class marker, set by `emit_any_codepoint_class` at emission so the
       // prefilter need not reverse-engineer the emitted block's bytecode shape (its
@@ -730,7 +777,10 @@ namespace real {
                 .slot_count        = slot_count,
                 .byte_mode         = byte_mode,
                 .unicode_word      = unicode_word,
-                .hints             = hints};
+                .hints             = hints,
+                .class_tables      = std::span<const std::uint8_t>(class_tables),
+                .cp_ascii_tables   = std::span<const std::uint8_t>(cp_ascii_tables),
+                .cp_page_tables    = std::span<const std::uint64_t>(cp_page_tables)};
       }
     };
   } // namespace detail
