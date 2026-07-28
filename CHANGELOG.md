@@ -2,6 +2,50 @@
 
 Per-train benchmark-impact log: what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s §A/§E/§B/§Unicode/§multi-pattern sections, carried verbatim from that file's Version row. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.7.58
+
+7.58 (**scan train — the membership accessors stop paying for themselves**): §E.4 re-stamped under the
+same interleaved A/B protocol as 7.57 (same bench file both sides, one group at a time, machine idle),
+two rounds for `find`/`compile`/`first_use` and four rounds of 5 s for `captures`, with `compile` carried
+as a control and flat within 1.8 %. The extra `captures` rounds were not decoration: `captures/digits`
+read +8.7 % on two rounds and +2.1 % on four, per-round dispersion falling to 0.1 %.
+
+**The row this train was about.** `\b\w+\b` has been the largest tracked scan deficit for three releases,
+disclosed and not chased each time; it moves here without touching `\b`. `find/word_bound` **317.8 →
+261.6 µs (−17.7 %)**, 1.90× behind the `regex` crate becomes **1.56×**; `captures/word_bound` **453.2 →
+318.5 (−29.7 %)**, 2.71× becomes **1.91×**. Direct harness, 64 KiB walk, arm64: `\d+` **−40.1 %**, `\w+`
+and `\b\w+\b` **−17.7 %**.
+
+**What it was.** Three things, all found by profiling per function — seven hypotheses were measured and
+refuted first, and every fix came from a profile. `class_table` was emitted out of line at 6.23 M
+instructions against 1.44 M inlined, because `derive_class_table` was split out without an attribute and
+the compiler inlined its 256-iteration loop straight back (`noinline` there, `always_inline` on all three
+accessors; clang was already inlining the byte one and neither code-point one, which is why the families
+gain on opposite ISAs). The per-regex "row filled" flags were three allocations where one atomic bit word
+does — a pattern with no code-point class still allocated two one-element vectors per construction
+(first use `[a-z]+` +10.8 % → +4.4 %). And the per-`run()` program-identity compare, which is per MATCH on
+a walk, is now folded away at compile time for callers that own their state (`StateBoundToProgram`,
+defaulting to false so embedders keep it).
+
+**What it costs.** `first_use/fields` +4.1 %, `/digits` +3.6 %, `/class` +3.3 %; `captures/class` +2.6 %,
+`find/digits` +2.5 %, `captures/digits` +2.1 %; `[a-z]+` 64 KiB walk +2.8 % on arm64 — and **−3.7 %** in
+x86-64 instructions, the one row where the two ISAs disagree in sign and the residual this train did not
+close. `dog` is neutral (distributions overlap over 12 runs). Every other criterion row within ±1.7 %.
+§A/§B/§Unicode/§multi-pattern carry their earlier figures; `static_regex` keeps 7.57's promise, all
+eleven table rows and all ten inner-literal rows still favouring the compile-time regex (walk 1.00×–1.19×,
+single shot 1.22×–72.76×).
+
+**Two faults this train introduced and caught.** Three cache fields added mid-struct in `basic_pike_state`
+shifted every field after them and cost `find/word_bound` **+32.3 %** then +28.4 % on a second round — on a
+pattern reading none of them, and visible only through the C ABI, which crosses per match where the C++
+harnesses do not. `pattern_hints` documents that exact fault and says "appended last" five times; the rule
+was read after the consequence was measured, for the second release running. And a directory-wide `git add`
+bumped `include/real/version.hpp` alone, which `preflight`'s version-check caught by failing two
+consecutive commits — the guard working as designed.
+
+**Disclosed, not chased:** `(\w+)@(\w+)` `first_use` is still **4.57× behind** (2.78 ms against 609 µs) —
+the lazily built one-pass table is untouched here, as in 7.57 and 7.56.
+
 ## v2026.7.57
 
 7.57 (**scan train — the inner-literal prefilter learns to place and confirm without an automaton**): §E.4
