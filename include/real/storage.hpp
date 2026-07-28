@@ -807,21 +807,30 @@ namespace real {
                                               std::vector<std::uint64_t>>,
                             small_vec<eps_entry, 32>>
       {
-        lookaround_scratch          lookaround;                    //!< Isolated sub-scratch for bounded lookaround evaluation.
-        capture_pool                pool;                          //!< copy-on-write capture blocks (heap-backed).
-        std::optional<lazy_dfa>     fwd_dfa;                       //!< Fallback when immut is null; prefer shared_fwd_dfa.
-        std::optional<reverse_dfa>  rev_dfa;                       //!< Fallback reverse; prefer shared_rev_dfa.
-        const void *                dfa_program         {nullptr}; //!< Program the per-state DFAs were built for (fallback).
-        std::optional<reverse_dfa>  il_prefix_rev;                 //!< Fallback IL prefix reverse; prefer shared_il_prefix_rev.
-        const void *                il_prefix_for       {nullptr}; //!< Fallback: prefix program il_prefix_rev was built for.
-        const void *                il_text             {nullptr}; //!< IL: the haystack \ref il_abandoned refers to.
-        bool                        il_abandoned        {false};   //!< IL: a linearity/density guard tripped on this haystack.
-        std::uint32_t               il_density_cands    {};        //!< O1: IL candidates seen on this haystack.
-        std::size_t                 il_density_origin   {npos};    //!< O1: first IL candidate byte offset this haystack.
-        const void *                rare_disc_text      {nullptr}; //!< Rare-disc: haystack \ref rare_disc_abandoned refers to.
-        bool                        rare_disc_abandoned {false};   //!< Rare-disc density guard: stay on prefix for this haystack.
-        std::optional<ac_automaton> ac_state;                      //!< The multi-literal automaton (built once per program).
-        const void*                 ac_state_for        {nullptr}; //!< the program \ref ac_state was built for.
+        /*!
+         * \brief Isolated sub-scratch for bounded lookaround evaluation, built on first use.
+         *
+         * Two thread lists and an epsilon stack, each with their own containers. A `search()` builds a
+         * fresh state, so constructing and destroying all of that landed on every search — for the
+         * overwhelming majority of patterns, which have no lookaround at all. Lazy: the `requires` gates
+         * that gate the lookaround routes still see the member, and the sub-VM emplaces it when it first
+         * actually runs.
+         */
+        std::optional<lookaround_scratch> lookaround;
+        capture_pool                      pool;                          //!< copy-on-write capture blocks (heap-backed).
+        std::optional<lazy_dfa>           fwd_dfa;                       //!< Fallback when immut is null; prefer shared_fwd_dfa.
+        std::optional<reverse_dfa>        rev_dfa;                       //!< Fallback reverse; prefer shared_rev_dfa.
+        const void       *                dfa_program         {nullptr}; //!< Program the per-state DFAs were built for (fallback).
+        std::optional<reverse_dfa>        il_prefix_rev;                 //!< Fallback IL prefix reverse; prefer shared_il_prefix_rev.
+        const void       *                il_prefix_for       {nullptr}; //!< Fallback: prefix program il_prefix_rev was built for.
+        const void       *                il_text             {nullptr}; //!< IL: the haystack \ref il_abandoned refers to.
+        bool                              il_abandoned        {false};   //!< IL: a linearity/density guard tripped on this haystack.
+        std::uint32_t                     il_density_cands    {};        //!< O1: IL candidates seen on this haystack.
+        std::size_t                       il_density_origin   {npos};    //!< O1: first IL candidate byte offset this haystack.
+        const void       *                rare_disc_text      {nullptr}; //!< Rare-disc: haystack \ref rare_disc_abandoned refers to.
+        bool                              rare_disc_abandoned {false};   //!< Rare-disc density guard: stay on prefix for this haystack.
+        std::optional<ac_automaton>       ac_state;                      //!< The multi-literal automaton (built once per program).
+        const void      *                 ac_state_for        {nullptr}; //!< the program \ref ac_state was built for.
       };
 
       std::string     pattern_text;                  //!< The original pattern text.

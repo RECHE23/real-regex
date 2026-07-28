@@ -504,19 +504,21 @@ namespace real::detail {
    */
   struct pike_state : basic_pike_state<thread_list, std::vector<eps_entry>>
   {
-    lookaround_scratch          lookaround;                    //!< Isolated sub-scratch for bounded lookaround evaluation.
-    capture_pool                pool;                          //!< copy-on-write capture blocks (heap-backed).
-    std::optional<lazy_dfa>     fwd_dfa;                       //!< Fallback when immut is null; prefer shared_fwd_dfa.
-    std::optional<reverse_dfa>  rev_dfa;                       //!< Fallback reverse; prefer shared_rev_dfa.
-    const void *                dfa_program         {nullptr}; //!< Program the per-state DFAs were built for (fallback).
-    std::optional<reverse_dfa>  il_prefix_rev;                 //!< Fallback IL prefix reverse; prefer shared_il_prefix_rev.
-    const void *                il_prefix_for       {nullptr}; //!< Fallback: prefix program il_prefix_rev was built for.
-    const void *                il_text             {nullptr}; //!< IL: the haystack \ref il_abandoned refers to (reset the flag when it changes).
-    bool                        il_abandoned        {false};   //!< IL: a linearity/density guard tripped on this haystack — stay on the core.
-    std::uint32_t               il_density_cands    {};        //!< O1: IL candidates seen on this haystack (density sample).
-    std::size_t                 il_density_origin   {npos};    //!< O1: byte offset of the first IL candidate this haystack.
-    const void *                rare_disc_text      {nullptr}; //!< Rare-disc: haystack \ref rare_disc_abandoned refers to.
-    bool                        rare_disc_abandoned {false};   //!< Rare-disc density guard: stay on prefix for this haystack.
+    //! \brief Isolated sub-scratch for bounded lookaround evaluation, built on first use — see
+    //!        \ref real::detail::dynamic_storage::state_type for the measurement that made it lazy.
+    std::optional<lookaround_scratch> lookaround;
+    capture_pool                      pool;                          //!< copy-on-write capture blocks (heap-backed).
+    std::optional<lazy_dfa>           fwd_dfa;                       //!< Fallback when immut is null; prefer shared_fwd_dfa.
+    std::optional<reverse_dfa>        rev_dfa;                       //!< Fallback reverse; prefer shared_rev_dfa.
+    const void       *                dfa_program         {nullptr}; //!< Program the per-state DFAs were built for (fallback).
+    std::optional<reverse_dfa>        il_prefix_rev;                 //!< Fallback IL prefix reverse; prefer shared_il_prefix_rev.
+    const void       *                il_prefix_for       {nullptr}; //!< Fallback: prefix program il_prefix_rev was built for.
+    const void       *                il_text             {nullptr}; //!< IL: the haystack \ref il_abandoned refers to (reset the flag when it changes).
+    bool                              il_abandoned        {false};   //!< IL: a linearity/density guard tripped on this haystack — stay on the core.
+    std::uint32_t                     il_density_cands    {};        //!< O1: IL candidates seen on this haystack (density sample).
+    std::size_t                       il_density_origin   {npos};    //!< O1: byte offset of the first IL candidate this haystack.
+    const void       *                rare_disc_text      {nullptr}; //!< Rare-disc: haystack \ref rare_disc_abandoned refers to.
+    bool                              rare_disc_abandoned {false};   //!< Rare-disc density guard: stay on prefix for this haystack.
     // AC fields placed LAST (own reason as pattern_hints::alternation_branch_count): inserting
     // here right after il_prefix_for would shift il_text/
     // il_abandoned/il_density_cands/il_density_origin (the inner-literal density-gate fields, read
@@ -2094,6 +2096,24 @@ namespace real::detail {
     }
 
   public:
+
+    /*!
+     * \brief The lookaround sub-scratch, built on first use.
+     *
+     * Two thread lists and an epsilon stack with their own containers. A `search()` builds a fresh state,
+     * so constructing and destroying all of that landed on every search — for every pattern, including the
+     * overwhelming majority with no lookaround at all. Measured -5.4 % to -7.4 % on a dynamic single search
+     * once it became lazy, with a pattern that DOES use lookarounds unchanged (1895.7 -> 1897.1 us over a
+     * 64 KiB walk: the emplace happens once per state, not once per evaluation).
+     * \return The scratch, engaged.
+     */
+    lookaround_scratch& lookaround_state()
+    {
+      if (!state_.lookaround.has_value()) {
+        state_.lookaround.emplace();
+      }
+      return *state_.lookaround;
+    }
 
     /*!
      * \brief Trailing-lookaround class+: body scan + longest end where lookaround holds.
@@ -4286,8 +4306,8 @@ namespace real::detail {
                                                    std::size_t           pos)
     {
       const std::size_t code_size {prog_.code.size()};
-      thread_list*      clist     {&state_.lookaround.lists[0]};
-      thread_list*      nlist     {&state_.lookaround.lists[1]};
+      thread_list*      clist     {&lookaround_state().lists[0]};
+      thread_list*      nlist     {&lookaround_state().lists[1]};
       clist->reset(code_size);
       nlist->reset(code_size);
       bool matched            {};
@@ -4363,8 +4383,8 @@ namespace real::detail {
                                                       std::size_t  pos)
     {
       const std::size_t code_size {prog_.code.size()};
-      thread_list*      clist     {&state_.lookaround.lists[0]};
-      thread_list*      nlist     {&state_.lookaround.lists[1]};
+      thread_list*      clist     {&lookaround_state().lists[0]};
+      thread_list*      nlist     {&lookaround_state().lists[1]};
       clist->reset(code_size);
       nlist->reset(code_size);
       bool here {false};
@@ -4415,7 +4435,7 @@ namespace real::detail {
      * Parks consuming (`byte`/`klass`) program counters in \p list and sets \p matched on
      * reaching the sub's `match`. A capture-free sub emits no `save` (handled defensively as
      * epsilon) and no `assert_lookaround` (nesting is rejected at compile time). Touches only
-     * `state_.lookaround.stack`, never the main `state_`. Linearity: `mark_seen` dedups
+     * `state_.lookaround->stack`, never the main `state_`. Linearity: `mark_seen` dedups
      * epsilon threads within a generation; once `p` advances, the same (pc,p) cannot recur,
      * so each `assert_lookaround` is evaluated at most once per position → O(n·k·L). No memo
      * table is needed (it would be redundant and break constexpr).
@@ -4430,7 +4450,7 @@ namespace real::detail {
                                   std::size_t  pos,
                                   bool&        matched)
     {
-      auto& stack {state_.lookaround.stack};
+      auto& stack {lookaround_state().stack};
       stack.clear();
       stack.push_back({.pc = pc0, .block = 0});
       while (!stack.empty()) {
