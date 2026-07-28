@@ -1624,10 +1624,12 @@ namespace real::detail {
       if constexpr (requires { State::ct_class_tables; }) {
         return State::ct_class_tables + (class_index * 256); // link-time constant address
       }
-      if (state_.table_class != static_cast<std::int32_t>(class_index)) {
-        fill_class_table(class_index);
+      else {
+        if (state_.table_class != static_cast<std::int32_t>(class_index)) {
+          fill_class_table(class_index);
+        }
+        return state_.table.data();
       }
-      return state_.table.data();
     }
 
     /*!
@@ -1643,11 +1645,13 @@ namespace real::detail {
       if constexpr (requires { State::ct_cp_ascii_tables; }) {
         return State::ct_cp_ascii_tables + (cp_index * 256); // link-time constant address
       }
-      const std::int32_t key {-2 - static_cast<std::int32_t>(cp_index)};
-      if (state_.table_class != key) {
-        fill_cp_ascii_table(cp_index, key);
+      else {
+        const std::int32_t key {-2 - static_cast<std::int32_t>(cp_index)};
+        if (state_.table_class != key) {
+          fill_cp_ascii_table(cp_index, key);
+        }
+        return state_.table.data();
       }
-      return state_.table.data();
     }
 
     /*!
@@ -1709,11 +1713,13 @@ namespace real::detail {
       if constexpr (requires { State::ct_cp_page_tables; }) {
         return State::ct_cp_page_tables + (cp_index * 30); // link-time constant address
       }
-      const std::int32_t key {-2 - static_cast<std::int32_t>(cp_index)};
-      if (state_.cp_page_class != key) {
-        fill_cp_page_table(cp_index, key);
+      else {
+        const std::int32_t key {-2 - static_cast<std::int32_t>(cp_index)};
+        if (state_.cp_page_class != key) {
+          fill_cp_page_table(cp_index, key);
+        }
+        return state_.cp_page.data();
       }
-      return state_.cp_page.data();
     }
 
     //! \brief Cache entry for \ref cp_hi_cached (thread-local, not on \ref basic_pike_state).
