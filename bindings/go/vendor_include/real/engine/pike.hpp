@@ -1552,10 +1552,19 @@ namespace real::detail {
 
     /*!
      * \brief Derives the byte row into the VM state — the constant-evaluation path, where no per-regex
-     *        cache exists. Outlined for the same reason as \ref verify_class_row.
+     *        cache exists.
+     *
+     * The attribute is load-bearing, for the same reason as \ref verify_class_row and more so: this is the
+     * body that holds the 256-iteration loop, so inlined back into \ref class_table it is what makes that
+     * accessor too large to enter `basic_match_iterator::advance`. Splitting the function out without the
+     * attribute buys nothing — the compiler simply undoes it, and `class_table` is emitted out of line at
+     * 6.2 M instructions against 0.85 M inlined on a 64 KiB `[a-z]+` walk.
      * \param[in] class_index Index into the program's interned byte classes.
      * \return The state's table.
      */
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
     constexpr const std::uint8_t* derive_class_table(std::size_t class_index)
     {
       if (state_.table_class != static_cast<std::int32_t>(class_index)) {
@@ -1685,7 +1694,15 @@ namespace real::detail {
      *
      * \param[in] class_index Index into the program's interned classes.
      * \return Pointer to a 256-entry table: 1 where the byte is in the class.
+     *
+     * Forced inline, and the attribute is load-bearing: left to its own judgement the compiler emits this
+     * out of line, where the call frame alone costs more than the whole accessor does inlined — 6.2 M
+     * instructions against 0.85 M on a 64 KiB `[a-z]+` walk. It only fits once \ref derive_class_table is
+     * kept out of it, which is what that function's own attribute is for.
      */
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((always_inline))
+#endif
     constexpr const std::uint8_t* class_table(std::size_t class_index)
     {
       if constexpr (requires { State::ct_class_tables; }) {
@@ -1715,6 +1732,9 @@ namespace real::detail {
      * \param[in] cp_index Index into the program's `cp_classes`.
      * \return Pointer to a 256-entry table: 1 where the byte (< 0x80) is a member.
      */
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((always_inline))
+#endif
     constexpr const std::uint8_t* cp_ascii_table(std::size_t cp_index)
     {
       if constexpr (requires { State::ct_cp_ascii_tables; }) {
@@ -1804,6 +1824,9 @@ namespace real::detail {
      * \param[in] cp_index Index into the program's `cp_classes`.
      * \return Pointer to the 30-word bitmap (bit `cp - 0x80`).
      */
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((always_inline))
+#endif
     constexpr const std::uint64_t* cp_page_table(std::size_t cp_index)
     {
       if constexpr (requires { State::ct_cp_page_tables; }) {
