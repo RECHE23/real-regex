@@ -1515,96 +1515,109 @@ namespace real::detail {
     using pool_type = std::remove_reference_t<decltype(std::declval<State&>().pool)>;
 
     /*!
-     * \brief Loads \ref basic_pike_state::table for \p class_index.
+     * \brief Sizes the per-regex membership rows for this program, if they are not already.
      *
-     * Outlined and cold on purpose. This runs once per state, while `class_table` itself is called once per
-     * `run()` — 11 327 times over a 64 KiB walk on `[a-z]+`. Letting the load inline into it grew that call
-     * by 14 instructions a match, measured as +7.6 % on the walk, against the whole point of prebuilding the
-     * table. Same shape as \ref cp_hi_build's own outlining.
-     * \param[in] class_index Index into the program's interned byte classes.
+     * Outlined and cold: it runs once per regex, behind an acquire load on the hot path.
+     * \param[in,out] cache The per-regex immutables.
      */
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((noinline, cold))
 #endif
-    constexpr void fill_class_table(std::size_t class_index)
+    void ensure_membership_rows(detail::regex_immutables& cache) const
     {
-      if (!prog_.class_tables.empty()) {
-        // std::copy_n, not a byte loop: for a trivially copyable element it resolves to a block move,
-        // where the loop stayed scalar and cost 1549 of the 2850 instructions a dynamic `search()` spent
-        // — 54% of the whole call, to move 256 bytes. Measured -52.5% on the search either way, and the
-        // `cold` attribute is NOT what caused it: dropping it changes the count by 0.07%.
-        std::copy_n(prog_.class_tables.data() + (class_index * 256), 256, state_.table.data());
+      const std::lock_guard<std::mutex> lock {detail::immut_build_mu(&cache)};
+      const void* const                 want {static_cast<const void*>(prog_.code.data())};
+      if (cache.rows_for.load(std::memory_order_relaxed) == want) {
+        return; // another thread sized them while we waited
       }
-      else {
-        // No prebuilt tables means a `real::regex` inside a CONSTANT EXPRESSION, where
-        // build_membership_tables() is skipped -- doing it there blows the constexpr step budget. Runtime
-        // coverage reports this branch unexecuted for exactly that reason: tests/frontend/test_constexpr.cpp
-        // drives it at compile time, where no counter reaches.
-        const char_class& klass {prog_.classes[class_index]};
-        for (std::size_t b {0}; b < 256; ++b) {
-          state_.table[b] = klass.test(static_cast<std::uint8_t>(b)) ? 1U : 0U;
-        }
-      }
-      state_.table_class = static_cast<std::int32_t>(class_index);
+      cache.class_rows.assign(prog_.classes.size() * 256, 0);
+      cache.cp_ascii_rows.assign(prog_.cp_classes.size() * 256, 0);
+      cache.cp_page_rows.assign(prog_.cp_classes.size() * 30, 0);
+      // Value-initialized, so every flag starts clear; assigning a fresh vector moves the buffer and
+      // never moves an atomic.
+      cache.class_row_ready    = std::vector<std::atomic<char>>(prog_.classes.size() + 1);
+      cache.cp_ascii_row_ready = std::vector<std::atomic<char>>(prog_.cp_classes.size() + 1);
+      cache.cp_page_row_ready  = std::vector<std::atomic<char>>(prog_.cp_classes.size() + 1);
+      cache.rows_for.store(want, std::memory_order_release);
     }
 
     /*!
-     * \brief Loads \ref basic_pike_state::table from a code-point class's ASCII half.
-     *
-     * Outlined and cold for the same measured reason as \ref fill_class_table.
-     * \param[in] cp_index Index into the program's code-point classes.
-     * \param[in] key      Sentinel value identifying this class in \ref basic_pike_state::table_class.
+     * \brief Fills one byte-class row of the per-regex cache, once.
+     * \param[in,out] cache       The per-regex immutables.
+     * \param[in]     class_index Index into the program's interned byte classes.
      */
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((noinline, cold))
 #endif
-    constexpr void fill_cp_ascii_table(std::size_t  cp_index,
-                                       std::int32_t key)
+    void fill_class_row(detail::regex_immutables& cache,
+                        std::size_t               class_index) const
     {
-      if (!prog_.cp_ascii_tables.empty()) {
-        const std::uint8_t* const src {prog_.cp_ascii_tables.data() + (cp_index * 256)};
-        std::copy_n(src, 256, state_.table.data());
+      const std::lock_guard<std::mutex> lock {detail::immut_build_mu(&cache)};
+      if (cache.class_row_ready[class_index].load(std::memory_order_relaxed) != 0) {
+        return; // filled while we waited
       }
-      else { // constant evaluation -- see \ref fill_class_table
-        const char_class& klass {prog_.cp_classes[cp_index].ascii};
-        for (std::size_t b {0}; b < 256; ++b) {
-          state_.table[b] = klass.test(static_cast<std::uint8_t>(b)) ? 1U : 0U;
-        }
+      const char_class& klass {prog_.classes[class_index]};
+      for (std::size_t b {0}; b < 256; ++b) {
+        cache.class_rows[(class_index * 256) + b] = klass.test(static_cast<std::uint8_t>(b)) ? 1U : 0U;
       }
-      state_.table_class = key;
+      cache.class_row_ready[class_index].store(1, std::memory_order_release);
     }
 
     /*!
-     * \brief Loads \ref basic_pike_state::cp_page from the program's prebuilt bitmap. Outlined and cold.
-     * \param[in] cp_index Index into the program's code-point classes.
-     * \param[in] key      Sentinel value identifying this class in \ref basic_pike_state::cp_page_class.
+     * \brief Fills one code-point-class ASCII row of the per-regex cache, once.
+     * \param[in,out] cache    The per-regex immutables.
+     * \param[in]     cp_index Index into the program's code-point classes.
      */
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((noinline, cold))
 #endif
-    constexpr void fill_cp_page_table(std::size_t  cp_index,
-                                      std::int32_t key)
+    void fill_cp_ascii_row(detail::regex_immutables& cache,
+                           std::size_t               cp_index) const
     {
-      if (!prog_.cp_page_tables.empty()) {
-        std::copy_n(prog_.cp_page_tables.data() + (cp_index * 30), 30, state_.cp_page.data());
+      const std::lock_guard<std::mutex> lock {detail::immut_build_mu(&cache)};
+      if (cache.cp_ascii_row_ready[cp_index].load(std::memory_order_relaxed) != 0) {
+        return;
       }
-      else { // constant evaluation -- see \ref fill_class_table
-        state_.cp_page.fill(0);
-        const detail::cp_class& cc {prog_.cp_classes[cp_index]};
-        for (std::uint32_t k {0}; k < cc.range_count; ++k) {
-          const detail::code_range& r {prog_.cp_ranges[cc.range_begin + k]};
-          if (r.lo > cp_page_max) {
-            break; // ranges are sorted: nothing more falls in the page
-          }
-          const std::uint32_t lo {r.lo < 0x80U ? 0x80U : r.lo};
-          const std::uint32_t hi {r.hi > cp_page_max ? cp_page_max : r.hi};
-          for (std::uint32_t c {lo}; c <= hi; ++c) {
-            const std::uint32_t bit {c - 0x80U};
-            state_.cp_page[bit >> 6U] |= std::uint64_t {1} << (bit & 63U);
-          }
+      const char_class& klass {prog_.cp_classes[cp_index].ascii};
+      for (std::size_t b {0}; b < 256; ++b) {
+        cache.cp_ascii_rows[(cp_index * 256) + b] = klass.test(static_cast<std::uint8_t>(b)) ? 1U : 0U;
+      }
+      cache.cp_ascii_row_ready[cp_index].store(1, std::memory_order_release);
+    }
+
+    /*!
+     * \brief Fills one U+0080..U+07FF membership bitmap of the per-regex cache, once.
+     * \param[in,out] cache    The per-regex immutables.
+     * \param[in]     cp_index Index into the program's code-point classes.
+     */
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline, cold))
+#endif
+    void fill_cp_page_row(detail::regex_immutables& cache,
+                          std::size_t               cp_index) const
+    {
+      const std::lock_guard<std::mutex> lock {detail::immut_build_mu(&cache)};
+      if (cache.cp_page_row_ready[cp_index].load(std::memory_order_relaxed) != 0) {
+        return;
+      }
+      std::uint64_t* const    row {cache.cp_page_rows.data() + (cp_index * 30)};
+      const detail::cp_class& cc  {prog_.cp_classes[cp_index]};
+      for (std::size_t w {0}; w < 30; ++w) {
+        row[w] = 0;
+      }
+      for (std::uint32_t k {0}; k < cc.range_count; ++k) {
+        const detail::code_range& r {prog_.cp_ranges[cc.range_begin + k]};
+        if (r.lo > cp_page_max) {
+          break; // ranges are sorted: nothing more falls in the page
+        }
+        const std::uint32_t lo {r.lo < 0x80U ? 0x80U : r.lo};
+        const std::uint32_t hi {r.hi > cp_page_max ? cp_page_max : r.hi};
+        for (std::uint32_t c {lo}; c <= hi; ++c) {
+          const std::uint32_t bit {c - 0x80U};
+          row[bit >> 6U] |= std::uint64_t {1} << (bit & 63U);
         }
       }
-      state_.cp_page_class = key;
+      cache.cp_page_row_ready[cp_index].store(1, std::memory_order_release);
     }
 
     /*!
@@ -1624,9 +1637,25 @@ namespace real::detail {
       if constexpr (requires { State::ct_class_tables; }) {
         return State::ct_class_tables + (class_index * 256); // link-time constant address
       }
+      else if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
+        detail::regex_immutables& cache {*prog_.immut};
+        if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
+          ensure_membership_rows(cache);
+        }
+        if (cache.class_row_ready[class_index].load(std::memory_order_acquire) == 0) {
+          fill_class_row(cache, class_index);
+        }
+        return cache.class_rows.data() + (class_index * 256);
+      }
       else {
+        // Constant evaluation, or a caller that handed over a view with no per-regex cache: derive into
+        // the state. `real::regex` in a constant expression takes this, which runtime coverage cannot see.
         if (state_.table_class != static_cast<std::int32_t>(class_index)) {
-          fill_class_table(class_index);
+          const char_class& klass {prog_.classes[class_index]};
+          for (std::size_t b {0}; b < 256; ++b) {
+            state_.table[b] = klass.test(static_cast<std::uint8_t>(b)) ? 1U : 0U;
+          }
+          state_.table_class = static_cast<std::int32_t>(class_index);
         }
         return state_.table.data();
       }
@@ -1645,10 +1674,24 @@ namespace real::detail {
       if constexpr (requires { State::ct_cp_ascii_tables; }) {
         return State::ct_cp_ascii_tables + (cp_index * 256); // link-time constant address
       }
-      else {
+      else if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
+        detail::regex_immutables& cache {*prog_.immut};
+        if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
+          ensure_membership_rows(cache);
+        }
+        if (cache.cp_ascii_row_ready[cp_index].load(std::memory_order_acquire) == 0) {
+          fill_cp_ascii_row(cache, cp_index);
+        }
+        return cache.cp_ascii_rows.data() + (cp_index * 256);
+      }
+      else { // constant evaluation -- see class_table
         const std::int32_t key {-2 - static_cast<std::int32_t>(cp_index)};
         if (state_.table_class != key) {
-          fill_cp_ascii_table(cp_index, key);
+          const char_class& klass {prog_.cp_classes[cp_index].ascii};
+          for (std::size_t b {0}; b < 256; ++b) {
+            state_.table[b] = klass.test(static_cast<std::uint8_t>(b)) ? 1U : 0U;
+          }
+          state_.table_class = key;
         }
         return state_.table.data();
       }
@@ -1713,10 +1756,34 @@ namespace real::detail {
       if constexpr (requires { State::ct_cp_page_tables; }) {
         return State::ct_cp_page_tables + (cp_index * 30); // link-time constant address
       }
-      else {
+      else if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
+        detail::regex_immutables& cache {*prog_.immut};
+        if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
+          ensure_membership_rows(cache);
+        }
+        if (cache.cp_page_row_ready[cp_index].load(std::memory_order_acquire) == 0) {
+          fill_cp_page_row(cache, cp_index);
+        }
+        return cache.cp_page_rows.data() + (cp_index * 30);
+      }
+      else { // constant evaluation -- see class_table
         const std::int32_t key {-2 - static_cast<std::int32_t>(cp_index)};
         if (state_.cp_page_class != key) {
-          fill_cp_page_table(cp_index, key);
+          state_.cp_page.fill(0);
+          const detail::cp_class& cc {prog_.cp_classes[cp_index]};
+          for (std::uint32_t k {0}; k < cc.range_count; ++k) {
+            const detail::code_range& r {prog_.cp_ranges[cc.range_begin + k]};
+            if (r.lo > cp_page_max) {
+              break;
+            }
+            const std::uint32_t lo {r.lo < 0x80U ? 0x80U : r.lo};
+            const std::uint32_t hi {r.hi > cp_page_max ? cp_page_max : r.hi};
+            for (std::uint32_t c {lo}; c <= hi; ++c) {
+              const std::uint32_t bit {c - 0x80U};
+              state_.cp_page[bit >> 6U] |= std::uint64_t {1} << (bit & 63U);
+            }
+          }
+          state_.cp_page_class = key;
         }
         return state_.cp_page.data();
       }

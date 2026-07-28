@@ -407,13 +407,6 @@ namespace real::detail {
       if (prog.code.size() > max_program_size) {
         throw regex_error("program too large", 0);
       }
-      if (!std::is_constant_evaluated()) {
-        // Once per program, not once per VM state. Guarded: `static_storage` carries its own tables as
-        // compile-time constants and never reads these, and doing the work here inside a constant
-        // expression pushes test_constexpr.cpp's flag_cases() past clang's step limit -- the same ceiling
-        // the inner-literal prefix compile above is guarded for.
-        prog.build_membership_tables();
-      }
       return prog;
     }
 

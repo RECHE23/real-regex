@@ -675,6 +675,37 @@ namespace real::detail {
     std::optional<onepass> op_table;           //!< one-pass extractor, present iff the pattern is one-pass.
     byte_program           il_prefix_prog;     //!< IL: the inner-literal prefix's byte program (ineligible until built). Per-regex so the reverse DFA that spans it is a cheap shared wrapper, not a per-find_iter rebuild.
     std::size_t            il_min_haystack {}; //!< IL cold floor: first candidate-scan on this regex only fires at or above this size when the haystack HAS a match (0 = always). Warm scans use \ref il_warm_floor (shared reverse DFA in \ref shared_dfa_slot). Checked ONLY after the first memmem hit — no-match is never gated. Scaled by prefix byte-program size; see \ref pike_vm::run_inner_literal.
+    /*!
+     * \brief Byte-indexed membership rows, filled ON FIRST USE of each class and kept for the regex's life.
+     *
+     * `class_table` derived a 256-entry row into the VM state, and a `search()` builds a fresh state — so
+     * that walk landed on every short search: 2562 of the 3849 instructions one `[a-z]+` search spent.
+     * Filling every row with the program instead traded it for a cost `first_use` sees in full, since
+     * `[^,]+` interns fourteen classes and a short search touches one: +82 % there, +98 % on compile. Per
+     * class, on demand, cached per regex is the only arrangement that pays for neither — measured against
+     * both alternatives on compile, first use, repeated search and a 64 KiB walk.
+     *
+     * THREAD SAFETY. \ref rows_for identifies the program the rows were sized for, exactly as \ref built_for
+     * does for the rest of this cache, so a copied or reassigned regex re-sizes rather than reading a
+     * stale table. A row's flag is release-stored after the row is filled under \ref immut_build_mu and
+     * acquire-loaded before the row is read; only the lock holder that observed the flag clear ever writes
+     * a row, so a published row is immutable and readers race with no one.
+     */
+    std::vector<std::uint8_t>            class_rows;
+    std::vector<std::uint8_t>            cp_ascii_rows;
+    std::vector<std::uint64_t>           cp_page_rows;
+    //! \brief One "row is filled" flag per class. A `std::vector` of atomics rather than a `unique_ptr`
+    //!        array: `unique_ptr`'s destructor is not constexpr, and this struct must stay a literal type
+    //!        for `real::regex` to be usable in a constant expression. `std::atomic_ref` over a plain
+    //!        vector would say it more directly but is absent from this clang's libc++.
+    std::vector<std::atomic<char>> class_row_ready;
+    std::vector<std::atomic<char>> cp_ascii_row_ready; //!< As \ref class_row_ready, for \ref cp_ascii_rows.
+    std::vector<std::atomic<char>> cp_page_row_ready;  //!< As \ref class_row_ready, for \ref cp_page_rows.
+    //! \brief \c prog.code.data() the rows above were SIZED for, or null. Same identity discipline as
+    //!        \ref built_for, and independent of it: the rows are needed by scan routes that never build
+    //!        the DFA caches.
+    std::atomic<const void*> rows_for {nullptr};
+
     //! \brief \c prog.code.data() this cache was built for, or null if never built / invalidated.
     //!        Hot path: one atomic load. Not \c once_flag — assignment reuses this object under a new
     //!        program; a spent once_flag would never rebuild (silent wrong matches).
@@ -684,11 +715,11 @@ namespace real::detail {
     // cache body is never transferred — pure runtime accelerator, cheap to rebuild.
     regex_immutables() = default;
     regex_immutables(const regex_immutables& /*other*/) noexcept
-      : built_for {nullptr}
+      : rows_for {nullptr}, built_for {nullptr}
     {}
 
     regex_immutables(regex_immutables&& /*other*/) noexcept
-      : built_for {nullptr}
+      : rows_for {nullptr}, built_for {nullptr}
     {}
 
     // Assignment keeps this object's cache storage but marks it invalid — the destination's program
@@ -699,6 +730,7 @@ namespace real::detail {
     regex_immutables& operator=(const regex_immutables& /*other*/) noexcept
     {
       built_for.store(nullptr, std::memory_order_relaxed);
+      rows_for.store(nullptr, std::memory_order_relaxed);
       return *this;
     }
 
@@ -706,6 +738,7 @@ namespace real::detail {
     regex_immutables& operator=(regex_immutables&& /*other*/) noexcept
     {
       built_for.store(nullptr, std::memory_order_relaxed);
+      rows_for.store(nullptr, std::memory_order_relaxed);
       return *this;
     }
 
