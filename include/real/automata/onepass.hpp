@@ -694,13 +694,25 @@ namespace real::detail {
     std::vector<std::uint8_t>            class_rows;
     std::vector<std::uint8_t>            cp_ascii_rows;
     std::vector<std::uint64_t>           cp_page_rows;
-    //! \brief One "row is filled" flag per class. A `std::vector` of atomics rather than a `unique_ptr`
-    //!        array: `unique_ptr`'s destructor is not constexpr, and this struct must stay a literal type
-    //!        for `real::regex` to be usable in a constant expression. `std::atomic_ref` over a plain
-    //!        vector would say it more directly but is absent from this clang's libc++.
-    std::vector<std::atomic<char>> class_row_ready;
-    std::vector<std::atomic<char>> cp_ascii_row_ready; //!< As \ref class_row_ready, for \ref cp_ascii_rows.
-    std::vector<std::atomic<char>> cp_page_row_ready;  //!< As \ref class_row_ready, for \ref cp_page_rows.
+    /*!
+     * \brief "This row is filled" flags: one bit per row, three runs packed into one word, plus an
+     *        overflow vector for the runs that do not fit.
+     *
+     * A fresh `real::regex` pays this whole block per construction, so the bit word matters more than it
+     * looks: as three separate `std::vector<std::atomic<char>>` a pattern with no cp_class still allocated
+     * two one-element vectors, and arm64 first use measured +10.8 % on `[a-z]+`. Bits cover the runs that
+     * fit in one word and allocate nothing; \ref row_ready_overflow carries the rest. The check is not on
+     * a hot path — the VM state remembers its last verified row, so this is read on a miss, not per call.
+     *
+     * A `std::vector` of atomics rather than a `unique_ptr` array: `unique_ptr`'s destructor is not
+     * constexpr, and this struct must stay a literal type for `real::regex` to be usable in a constant
+     * expression. `std::atomic_ref` over a plain vector would say it more directly but is absent from this
+     * clang's libc++.
+     */
+    std::atomic<std::uint64_t>     row_ready_bits    {0};
+    std::vector<std::atomic<char>> row_ready_overflow;    //!< Flags for row indices at or past \ref row_ready_bit_capacity.
+    std::size_t                    cp_ascii_ready_at {0}; //!< Where the cp_ascii run starts in the flag index space.
+    std::size_t                    cp_page_ready_at  {0}; //!< As \ref cp_ascii_ready_at, for cp_page.
     //! \brief \c prog.code.data() the rows above were SIZED for, or null. Same identity discipline as
     //!        \ref built_for, and independent of it: the rows are needed by scan routes that never build
     //!        the DFA caches.
@@ -710,6 +722,30 @@ namespace real::detail {
     //!        Hot path: one atomic load. Not \c once_flag — assignment reuses this object under a new
     //!        program; a spent once_flag would never rebuild (silent wrong matches).
     std::atomic<const void*> built_for {nullptr};
+
+    //! \brief How many flag indices \ref row_ready_bits covers; the rest live in \ref row_ready_overflow.
+    static constexpr std::size_t row_ready_bit_capacity {64};
+
+    //! \brief Reads the "filled" flag for flag index \p i, acquiring what the filling thread released.
+    [[nodiscard]] bool row_ready(std::size_t i) const noexcept
+    {
+      if (i < row_ready_bit_capacity) {
+        return ((row_ready_bits.load(std::memory_order_acquire) >> i) & 1ULL) != 0ULL;
+      }
+      return row_ready_overflow[i - row_ready_bit_capacity].load(std::memory_order_acquire) != 0;
+    }
+
+    //! \brief Publishes the "filled" flag for flag index \p i. Called only by the thread holding
+    //!        \ref immut_build_mu, so the read-modify-write on the bit word cannot race another writer.
+    void set_row_ready(std::size_t i) noexcept
+    {
+      if (i < row_ready_bit_capacity) {
+        row_ready_bits.fetch_or(1ULL << i, std::memory_order_release);
+      }
+      else {
+        row_ready_overflow[i - row_ready_bit_capacity].store(1, std::memory_order_release);
+      }
+    }
 
     // A copied regex is an independent regex: fresh unbuilt cache (built_for null). Copy/move of the
     // cache body is never transferred — pure runtime accelerator, cheap to rebuild.

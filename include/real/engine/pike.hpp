@@ -1542,7 +1542,7 @@ namespace real::detail {
       if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
         ensure_membership_rows(cache);
       }
-      if (cache.class_row_ready[class_index].load(std::memory_order_acquire) == 0) {
+      if (!cache.row_ready(class_index)) {
         fill_class_row(cache, class_index);
       }
       state_.table_class       = static_cast<std::int32_t>(class_index);
@@ -1598,9 +1598,13 @@ namespace real::detail {
       cache.cp_page_rows.assign(prog_.cp_classes.size() * 30, 0);
       // Value-initialized, so every flag starts clear; assigning a fresh vector moves the buffer and
       // never moves an atomic.
-      cache.class_row_ready    = std::vector<std::atomic<char>>(prog_.classes.size() + 1);
-      cache.cp_ascii_row_ready = std::vector<std::atomic<char>>(prog_.cp_classes.size() + 1);
-      cache.cp_page_row_ready  = std::vector<std::atomic<char>>(prog_.cp_classes.size() + 1);
+      cache.cp_ascii_ready_at = prog_.classes.size();
+      cache.cp_page_ready_at  = cache.cp_ascii_ready_at + prog_.cp_classes.size();
+      const std::size_t flags {cache.cp_page_ready_at + prog_.cp_classes.size()};
+      cache.row_ready_bits.store(0, std::memory_order_relaxed);
+      cache.row_ready_overflow = flags > detail::regex_immutables::row_ready_bit_capacity
+                                   ? std::vector<std::atomic<char>>(flags - detail::regex_immutables::row_ready_bit_capacity)
+                                   : std::vector<std::atomic<char>>();
       cache.rows_for.store(want, std::memory_order_release);
     }
 
@@ -1616,14 +1620,14 @@ namespace real::detail {
                         std::size_t               class_index) const
     {
       const std::lock_guard<std::mutex> lock {detail::immut_build_mu(&cache)};
-      if (cache.class_row_ready[class_index].load(std::memory_order_relaxed) != 0) {
+      if (cache.row_ready(class_index)) {
         return; // filled while we waited
       }
       const char_class& klass {prog_.classes[class_index]};
       for (std::size_t b {0}; b < 256; ++b) {
         cache.class_rows[(class_index * 256) + b] = klass.test(static_cast<std::uint8_t>(b)) ? 1U : 0U;
       }
-      cache.class_row_ready[class_index].store(1, std::memory_order_release);
+      cache.set_row_ready(class_index);
     }
 
     /*!
@@ -1638,14 +1642,14 @@ namespace real::detail {
                            std::size_t               cp_index) const
     {
       const std::lock_guard<std::mutex> lock {detail::immut_build_mu(&cache)};
-      if (cache.cp_ascii_row_ready[cp_index].load(std::memory_order_relaxed) != 0) {
+      if (cache.row_ready(cache.cp_ascii_ready_at + cp_index)) {
         return;
       }
       const char_class& klass {prog_.cp_classes[cp_index].ascii};
       for (std::size_t b {0}; b < 256; ++b) {
         cache.cp_ascii_rows[(cp_index * 256) + b] = klass.test(static_cast<std::uint8_t>(b)) ? 1U : 0U;
       }
-      cache.cp_ascii_row_ready[cp_index].store(1, std::memory_order_release);
+      cache.set_row_ready(cache.cp_ascii_ready_at + cp_index);
     }
 
     /*!
@@ -1660,7 +1664,7 @@ namespace real::detail {
                           std::size_t               cp_index) const
     {
       const std::lock_guard<std::mutex> lock {detail::immut_build_mu(&cache)};
-      if (cache.cp_page_row_ready[cp_index].load(std::memory_order_relaxed) != 0) {
+      if (cache.row_ready(cache.cp_page_ready_at + cp_index)) {
         return;
       }
       std::uint64_t* const    row {cache.cp_page_rows.data() + (cp_index * 30)};
@@ -1680,7 +1684,7 @@ namespace real::detail {
           row[bit >> 6U] |= std::uint64_t {1} << (bit & 63U);
         }
       }
-      cache.cp_page_row_ready[cp_index].store(1, std::memory_order_release);
+      cache.set_row_ready(cache.cp_page_ready_at + cp_index);
     }
 
     /*!
@@ -1748,7 +1752,7 @@ namespace real::detail {
           if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
             ensure_membership_rows(cache);
           }
-          if (cache.cp_ascii_row_ready[cp_index].load(std::memory_order_acquire) == 0) {
+          if (!cache.row_ready(cache.cp_ascii_ready_at + cp_index)) {
             fill_cp_ascii_row(cache, cp_index);
           }
           state_.table_class       = key;
@@ -1840,7 +1844,7 @@ namespace real::detail {
           if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
             ensure_membership_rows(cache);
           }
-          if (cache.cp_page_row_ready[cp_index].load(std::memory_order_acquire) == 0) {
+          if (!cache.row_ready(cache.cp_page_ready_at + cp_index)) {
             fill_cp_page_row(cache, cp_index);
           }
           state_.cp_page_class     = key;
