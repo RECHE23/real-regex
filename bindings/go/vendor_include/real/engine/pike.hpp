@@ -464,12 +464,7 @@ namespace real::detail {
      * so it adds nothing to the program or to the static binary.
      */
     std::int32_t                   table_class {-1};
-    //! \brief Program whose membership rows this state has already verified as filled. Lets a walk skip
-    //!        the two acquire loads `class_table` would otherwise do once per `run()` — see there.
-    const void*                    rows_verified_for {nullptr};
-    const std::uint8_t*            row_ptr           {nullptr}; //!< The verified byte row, cached so the hot path returns it without re-deriving the address.
-    const std::uint64_t*           page_ptr          {nullptr}; //!< As \ref row_ptr, for the two-byte page bitmap.
-    std::array<std::uint8_t, 256>  table;                       //!< 1 where the byte is in \ref table_class (filled on a class_table miss).
+    std::array<std::uint8_t, 256>  table;         //!< 1 where the byte is in \ref table_class (filled on a class_table miss).
 
     /*!
      * \brief Membership bitmap for a `cp_class` over the 2-byte UTF-8 range `[U+0080, U+07FF]`, and
@@ -484,6 +479,16 @@ namespace real::detail {
      */
     std::int32_t                   cp_page_class {-1};
     std::array<std::uint64_t, 30>  cp_page;         //!< 1 where the code point (U+0080..U+07FF) is a member (filled on a cp_page_table miss).
+    // Appended LAST, and it must stay that way -- same rule, and same reason, as pattern_hints states for
+    // its own trailing fields. Placed next to `table` where they belong by meaning, these three shift every
+    // field after them and cost `\b\w+\b` +28 % to +32 % through the crate, on a pattern that reads none of
+    // them. Only the C ABI path sees it: it crosses per match, where the C++ harnesses call the engine
+    // directly and measure the same change as neutral.
+    //! \brief Program whose membership rows this state has already verified as filled. Lets a walk skip
+    //!        the two acquire loads `class_table` would otherwise do once per `run()` — see there.
+    const void*                    rows_verified_for {nullptr};
+    const std::uint8_t*            row_ptr           {nullptr}; //!< The verified byte row, cached so the hot path returns it without re-deriving the address.
+    const std::uint64_t*           page_ptr          {nullptr}; //!< As \ref row_ptr, for the two-byte page bitmap.
   };
 
   /*!
