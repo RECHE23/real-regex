@@ -544,9 +544,16 @@ namespace real::detail {
   /*!
    * \brief The Pike VM, generic over the scratch-state container policy.
    * \tparam State A \ref basic_pike_state instantiation (vector- or static-backed).
+   * \tparam StateBoundToProgram The caller guarantees this state is never used with a second program —
+   *         it is either freshly constructed for this search or owned by a walk over one regex. The
+   *         membership-row accessors then need no program-identity compare: a fresh state's
+   *         `table_class` is already -1, so a row key matching is proof on its own. That compare is per
+   *         `run()`, and `run()` is per MATCH on a walk (11 327 times over 64 KiB on `[a-z]+`), which
+   *         measured 2.9 points of that walk. Defaults to \c false: an embedder holding a state across
+   *         regexes (the Python binding, the meta-seam harness) must keep the compare.
    */
 
-  template <typename State>
+  template <typename State, bool StateBoundToProgram = false>
   class pike_vm
   {
   public:
@@ -1525,6 +1532,29 @@ namespace real::detail {
     using pool_type = std::remove_reference_t<decltype(std::declval<State&>().pool)>;
 
     /*!
+     * \brief Is the state's cached row key stale for \p want?
+     *
+     * \c StateBoundToProgram is the whole point: when the caller guarantees this state never meets a
+     * second program, a matching key is proof on its own and the program-identity compare — a pointer
+     * chase through the view, per `run()`, so per MATCH on a walk — disappears entirely at compile time.
+     * Without the guarantee it is still required: a state carried across regexes would otherwise answer
+     * from the previous program's rows.
+     * \param[in] have The key the state last verified (\c table_class or \c cp_page_class).
+     * \param[in] want The key wanted now.
+     * \return \c true if the row must be re-verified.
+     */
+    [[nodiscard]] constexpr bool row_key_stale(std::int32_t have,
+                                               std::int32_t want) const
+    {
+      if constexpr (StateBoundToProgram) {
+        return have != want;
+      }
+      else {
+        return have != want || state_.rows_verified_for != static_cast<const void*>(prog_.code.data());
+      }
+    }
+
+    /*!
      * \brief Verifies (and if needed fills) the byte row for \p class_index, then caches it in the state.
      *
      * Must stay outlined: `class_table` has to remain small enough to inline into
@@ -1716,9 +1746,8 @@ namespace real::detail {
         detail::regex_immutables& cache {*prog_.immut};
         // Two acquire loads here would be per-`run()`, and `run()` is per MATCH on a walk — 11 327 times
         // over 64 KiB on `[a-z]+`. The state is single-threaded by construction, so it remembers which row
-        // it last verified and a walk that stays on one class pays two plain compares instead.
-        if (state_.table_class != static_cast<std::int32_t>(class_index)
-            || state_.rows_verified_for != static_cast<const void*>(prog_.code.data())) {
+        // it last verified, so a walk that stays on one class pays one compare.
+        if (row_key_stale(state_.table_class, static_cast<std::int32_t>(class_index))) {
           verify_class_row(cache, class_index);
         }
         return state_.row_ptr;
@@ -1747,8 +1776,7 @@ namespace real::detail {
       else if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
         detail::regex_immutables& cache {*prog_.immut};
         const std::int32_t        key {-2 - static_cast<std::int32_t>(cp_index)};
-        if (state_.table_class != key
-            || state_.rows_verified_for != static_cast<const void*>(prog_.code.data())) { // see class_table
+        if (row_key_stale(state_.table_class, key)) { // see class_table
           if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
             ensure_membership_rows(cache);
           }
@@ -1839,8 +1867,7 @@ namespace real::detail {
       else if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
         detail::regex_immutables& cache {*prog_.immut};
         const std::int32_t        key {-2 - static_cast<std::int32_t>(cp_index)};
-        if (state_.cp_page_class != key
-            || state_.rows_verified_for != static_cast<const void*>(prog_.code.data())) { // see class_table
+        if (row_key_stale(state_.cp_page_class, key)) { // see class_table
           if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
             ensure_membership_rows(cache);
           }

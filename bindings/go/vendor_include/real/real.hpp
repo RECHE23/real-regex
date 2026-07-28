@@ -413,8 +413,10 @@ namespace real {
         done_ = true;
         return;
       }
-      detail::pike_vm vm(prog_, state_);
-      bool            ok {};
+      // `state_` is this iterator's own member and `prog_` is fixed for the walk, so the state never
+      // meets a second program: the VM can drop its per-`run()` program-identity compare.
+      detail::pike_vm<typename Storage::state_type, true> vm(prog_, state_);
+      bool                                                ok {};
       if constexpr (TrailingLA) {
         // P3c cold path only — this specialization is never mixed into pure walks.
         ok = cascade_ ? current_.template engine_refill_trailing_la<true>(vm, text_, pos_)
@@ -1141,8 +1143,9 @@ namespace real {
       // Binding to a const reference also covers the dynamic storage, whose view() still returns by
       // value -- the temporary's lifetime extends to this reference's scope.
       const detail::program_view&    prog    {program_.view()};
-      detail::pike_vm                vm(prog, state);
-      const auto                     subject {text.substr(0, end)};
+      // `state` above is freshly constructed for this one search against `prog` — same guarantee.
+      detail::pike_vm<typename Storage::state_type, true> vm(prog, state);
+      const auto                                          subject {text.substr(0, end)};
       // P3c cold: trailing-LA outside pike_vm::run (keeps pure class-loop run() pre-P3c-sized).
       // if constexpr: static_storage has no lookaround scratch / rejects LA at compile.
       bool matched {};
