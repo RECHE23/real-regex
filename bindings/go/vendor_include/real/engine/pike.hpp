@@ -464,7 +464,12 @@ namespace real::detail {
      * so it adds nothing to the program or to the static binary.
      */
     std::int32_t                   table_class {-1};
-    std::array<std::uint8_t, 256>  table;         //!< 1 where the byte is in \ref table_class (filled on a class_table miss).
+    //! \brief Program whose membership rows this state has already verified as filled. Lets a walk skip
+    //!        the two acquire loads `class_table` would otherwise do once per `run()` — see there.
+    const void*                    rows_verified_for {nullptr};
+    const std::uint8_t*            row_ptr           {nullptr}; //!< The verified byte row, cached so the hot path returns it without re-deriving the address.
+    const std::uint64_t*           page_ptr          {nullptr}; //!< As \ref row_ptr, for the two-byte page bitmap.
+    std::array<std::uint8_t, 256>  table;                       //!< 1 where the byte is in \ref table_class (filled on a class_table miss).
 
     /*!
      * \brief Membership bitmap for a `cp_class` over the 2-byte UTF-8 range `[U+0080, U+07FF]`, and
@@ -1515,6 +1520,50 @@ namespace real::detail {
     using pool_type = std::remove_reference_t<decltype(std::declval<State&>().pool)>;
 
     /*!
+     * \brief Verifies (and if needed fills) the byte row for \p class_index, then caches it in the state.
+     *
+     * Must stay outlined: `class_table` has to remain small enough to inline into
+     * `basic_match_iterator::advance`, and this body inline is what pushes it over. Emitted out of line
+     * there instead, it costs 10.2 % of the instructions of a 64 KiB `[a-z]+` walk.
+     * \param[in,out] cache       The per-regex immutables.
+     * \param[in]     class_index Index into the program's interned byte classes.
+     */
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    void verify_class_row(detail::regex_immutables& cache,
+                          std::size_t               class_index)
+    {
+      if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
+        ensure_membership_rows(cache);
+      }
+      if (cache.class_row_ready[class_index].load(std::memory_order_acquire) == 0) {
+        fill_class_row(cache, class_index);
+      }
+      state_.table_class       = static_cast<std::int32_t>(class_index);
+      state_.rows_verified_for = static_cast<const void*>(prog_.code.data());
+      state_.row_ptr           = cache.class_rows.data() + (class_index * 256);
+    }
+
+    /*!
+     * \brief Derives the byte row into the VM state — the constant-evaluation path, where no per-regex
+     *        cache exists. Outlined for the same reason as \ref verify_class_row.
+     * \param[in] class_index Index into the program's interned byte classes.
+     * \return The state's table.
+     */
+    constexpr const std::uint8_t* derive_class_table(std::size_t class_index)
+    {
+      if (state_.table_class != static_cast<std::int32_t>(class_index)) {
+        const char_class& klass {prog_.classes[class_index]};
+        for (std::size_t b {0}; b < 256; ++b) {
+          state_.table[b] = klass.test(static_cast<std::uint8_t>(b)) ? 1U : 0U;
+        }
+        state_.table_class = static_cast<std::int32_t>(class_index);
+      }
+      return state_.table.data();
+    }
+
+    /*!
      * \brief Sizes the per-regex membership rows for this program, if they are not already.
      *
      * Outlined and cold: it runs once per regex, behind an acquire load on the hot path.
@@ -1639,25 +1688,17 @@ namespace real::detail {
       }
       else if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
         detail::regex_immutables& cache {*prog_.immut};
-        if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
-          ensure_membership_rows(cache);
+        // Two acquire loads here would be per-`run()`, and `run()` is per MATCH on a walk — 11 327 times
+        // over 64 KiB on `[a-z]+`. The state is single-threaded by construction, so it remembers which row
+        // it last verified and a walk that stays on one class pays two plain compares instead.
+        if (state_.table_class != static_cast<std::int32_t>(class_index)
+            || state_.rows_verified_for != static_cast<const void*>(prog_.code.data())) {
+          verify_class_row(cache, class_index);
         }
-        if (cache.class_row_ready[class_index].load(std::memory_order_acquire) == 0) {
-          fill_class_row(cache, class_index);
-        }
-        return cache.class_rows.data() + (class_index * 256);
+        return state_.row_ptr;
       }
       else {
-        // Constant evaluation, or a caller that handed over a view with no per-regex cache: derive into
-        // the state. `real::regex` in a constant expression takes this, which runtime coverage cannot see.
-        if (state_.table_class != static_cast<std::int32_t>(class_index)) {
-          const char_class& klass {prog_.classes[class_index]};
-          for (std::size_t b {0}; b < 256; ++b) {
-            state_.table[b] = klass.test(static_cast<std::uint8_t>(b)) ? 1U : 0U;
-          }
-          state_.table_class = static_cast<std::int32_t>(class_index);
-        }
-        return state_.table.data();
+        return derive_class_table(class_index);
       }
     }
 
@@ -1676,13 +1717,20 @@ namespace real::detail {
       }
       else if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
         detail::regex_immutables& cache {*prog_.immut};
-        if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
-          ensure_membership_rows(cache);
+        const std::int32_t        key {-2 - static_cast<std::int32_t>(cp_index)};
+        if (state_.table_class != key
+            || state_.rows_verified_for != static_cast<const void*>(prog_.code.data())) { // see class_table
+          if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
+            ensure_membership_rows(cache);
+          }
+          if (cache.cp_ascii_row_ready[cp_index].load(std::memory_order_acquire) == 0) {
+            fill_cp_ascii_row(cache, cp_index);
+          }
+          state_.table_class       = key;
+          state_.rows_verified_for = static_cast<const void*>(prog_.code.data());
+          state_.row_ptr           = cache.cp_ascii_rows.data() + (cp_index * 256);
         }
-        if (cache.cp_ascii_row_ready[cp_index].load(std::memory_order_acquire) == 0) {
-          fill_cp_ascii_row(cache, cp_index);
-        }
-        return cache.cp_ascii_rows.data() + (cp_index * 256);
+        return state_.row_ptr;
       }
       else { // constant evaluation -- see class_table
         const std::int32_t key {-2 - static_cast<std::int32_t>(cp_index)};
@@ -1758,13 +1806,20 @@ namespace real::detail {
       }
       else if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
         detail::regex_immutables& cache {*prog_.immut};
-        if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
-          ensure_membership_rows(cache);
+        const std::int32_t        key {-2 - static_cast<std::int32_t>(cp_index)};
+        if (state_.cp_page_class != key
+            || state_.rows_verified_for != static_cast<const void*>(prog_.code.data())) { // see class_table
+          if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
+            ensure_membership_rows(cache);
+          }
+          if (cache.cp_page_row_ready[cp_index].load(std::memory_order_acquire) == 0) {
+            fill_cp_page_row(cache, cp_index);
+          }
+          state_.cp_page_class     = key;
+          state_.rows_verified_for = static_cast<const void*>(prog_.code.data());
+          state_.page_ptr          = cache.cp_page_rows.data() + (cp_index * 30);
         }
-        if (cache.cp_page_row_ready[cp_index].load(std::memory_order_acquire) == 0) {
-          fill_cp_page_row(cache, cp_index);
-        }
-        return cache.cp_page_rows.data() + (cp_index * 30);
+        return state_.page_ptr;
       }
       else { // constant evaluation -- see class_table
         const std::int32_t key {-2 - static_cast<std::int32_t>(cp_index)};
