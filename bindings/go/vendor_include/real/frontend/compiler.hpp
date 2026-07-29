@@ -86,10 +86,22 @@ namespace real::detail {
         }
       }
     }
-    for (std::size_t i = 0; i < unicode_fold_table_size; ++i) {
-      const fold_entry& entry {unicode_fold_table[i]};
-      if (std::ranges::any_of(in.ranges,
-                              [&entry](const code_range& r) { return entry.cp >= r.lo && entry.cp <= r.hi; })) {
+    // Walk the fold table PER RANGE, not the whole table per class. The table is sorted by code point
+    // (\ref find_fold_index binary-searches it), so each range seeks its first entry and walks forward
+    // while the entry is still inside. Scanning the whole table and asking `any_of` over the ranges cost
+    // O(table x ranges) instead -- `\w` carries 771 ranges against ~1400 entries, so a single icase `\w`
+    // was over a million comparisons, and `\w{500}` folds the same class once per repeat: 326 ms to
+    // COMPILE that pattern, which CI's fuzzer reached as a 10-second timeout under sanitizers.
+    //
+    // The accepted set is unchanged. Overlapping input ranges can now visit one entry more than once
+    // where `any_of` short-circuited, which only pushes a duplicate degenerate {p, p} that
+    // `coalesce_ranges` below already merges.
+    for (const code_range& r : in.ranges) {
+      for (std::size_t i {find_fold_lower_bound(r.lo)}; i < unicode_fold_table_size; ++i) {
+        const fold_entry& entry {unicode_fold_table[i]};
+        if (entry.cp > r.hi) {
+          break;
+        }
         for (std::uint8_t k = 0; k < entry.count; ++k) {
           add_partner(entry.partner[k]);
         }
