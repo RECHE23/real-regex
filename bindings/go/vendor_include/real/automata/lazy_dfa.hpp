@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -166,14 +167,21 @@ namespace real::detail {
   constexpr utf8_trie build_utf8_trie(const cp_class&             cc,
                                       std::span<const code_range> cp_ranges)
   {
-    std::vector<std::vector<utf8_byte_range>> seqs;
+    // Sequences land in ONE buffer with an offset per sequence, not in a vector of vectors. Each sequence
+    // is 1 to 4 ranges and was its own vector growing from empty, so it re-allocated at 1, 2 and 4: over a
+    // `(\w+)@(\w+)` build those inner vectors were the single largest source of allocations, 164 220
+    // blocks holding 755 KB -- an average block of 4.6 bytes. Spans are taken only once the pool is
+    // complete, so no growth can invalidate one.
+    std::vector<utf8_byte_range> seq_pool;
+    std::vector<std::size_t>     seq_at {0};
     for (int b = 0; b < 0x80;) { // ASCII: each contiguous run of set bits is a one-byte sequence
       if (cc.ascii.test(static_cast<std::uint8_t>(b))) {
         const int lo {b};
         while (b < 0x80 && cc.ascii.test(static_cast<std::uint8_t>(b))) {
           ++b;
         }
-        seqs.push_back({utf8_byte_range {.lo = static_cast<std::uint8_t>(lo), .hi = static_cast<std::uint8_t>(b - 1)}});
+        seq_pool.push_back({.lo = static_cast<std::uint8_t>(lo), .hi = static_cast<std::uint8_t>(b - 1)});
+        seq_at.push_back(seq_pool.size());
       }
       else {
         ++b;
@@ -182,16 +190,15 @@ namespace real::detail {
     for (std::uint32_t k = 0; k < cc.range_count; ++k) { // non-ASCII: canonical byte-range sequences
       const code_range& r {cp_ranges[cc.range_begin + k]};
       for (const utf8_byte_seq& s : utf8_range_sequences(r.lo, r.hi)) {
-        std::vector<utf8_byte_range> seq;
         for (std::size_t j = 0; j < s.length; ++j) {
-          seq.push_back(s.parts[j]);
+          seq_pool.push_back(s.parts[j]);
         }
-        seqs.push_back(std::move(seq));
+        seq_at.push_back(seq_pool.size());
       }
     }
 
     utf8_trie trie;
-    if (seqs.empty()) {
+    if (seq_at.size() == 1) {
       return trie;
     }
     //! \brief A sequence's remaining byte ranges, as a view. The sequences in `seqs` outlive the whole
@@ -295,11 +302,12 @@ namespace real::detail {
     constexpr std::size_t     trie_memo_buckets {1024}; // chained buckets, sized for the bounded trie
     std::vector<std::int32_t> memo_head(trie_memo_buckets, -1);
     std::vector<std::int32_t> memo_next;
-    memo_next.reserve(seqs.size());
+    const std::size_t         seq_count {seq_at.size() - 1};
+    memo_next.reserve(seq_count);
     std::vector<seq_view>     roots;
-    roots.reserve(seqs.size());
-    for (const std::vector<utf8_byte_range>& s : seqs) {
-      roots.emplace_back(s);
+    roots.reserve(seq_count);
+    for (std::size_t i = 0; i < seq_count; ++i) {
+      roots.emplace_back(seq_pool.data() + seq_at[i], seq_at[i + 1] - seq_at[i]);
     }
     builder b {trie.nodes, memo_head, memo_next};
     trie.root = b.build(roots);
@@ -670,8 +678,12 @@ namespace real::detail {
       const char_class&   cc {class_preds[p]};
       const std::size_t   w  {p >> 6U};
       const std::uint64_t m  {std::uint64_t {1} << (p & 63U)};
-      for (unsigned b {0}; b < 256U; ++b) {
-        if (cc.test(static_cast<std::uint8_t>(b))) {
+      // Only the bytes the class HOLDS, read straight off its bitmap, rather than asking `test` for all
+      // 256. A `\w` predicate holds 63 of them, so this is 63 scatters against 256 tested branches per
+      // predicate -- and `(\w+)@(\w+)` carries 475 predicates.
+      for (std::size_t word {0}; word < cc.bits.size(); ++word) {
+        for (std::uint64_t rest {cc.bits[word]}; rest != 0; rest &= rest - 1U) {
+          const std::size_t b {(word * 64U) + static_cast<std::size_t>(std::countr_zero(rest))};
           sig[(b * sig_words) + w] |= m;
         }
       }
