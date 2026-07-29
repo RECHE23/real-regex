@@ -270,7 +270,7 @@ namespace real::detail {
     //!        misses, which is what every pattern did before.
     static constexpr std::size_t fold_cache_ways {4};
 
-    //! \brief Cache tag per way: the (class index, fold mode) key held there, or -1 for empty.
+    //! \brief Cache tag per way: the (class index, fold mode, negated) key held there, or -1 for empty.
     //!
     //!        `mutable` because the emit path reaches \ref effective_class through const member functions,
     //!        and WRITTEN ONLY outside constant evaluation. MSVC's constant evaluator has already broken
@@ -279,8 +279,8 @@ namespace real::detail {
     //!        fold's step count, not its repetition.
     mutable std::array<std::int32_t, fold_cache_ways> fold_key_ {-1, -1, -1, -1};
 
-    //! \brief Cached folded class per way. Default-constructed, so an unused way holds an empty
-    //!        \ref class_def and costs no allocation.
+    //! \brief Cached FINISHED class per way -- folded, coalesced and negated. Default-constructed, so an
+    //!        unused way holds an empty \ref class_def and costs no allocation.
     mutable std::array<class_def, fold_cache_ways> fold_val_ {};
 
   public:
@@ -773,10 +773,14 @@ namespace real::detail {
       // fold once -- they paid its allocation and never read it. Keyed by (class index, mode) because a
       // scoped `(?i:...)` can fold one class two ways in one pattern.
       if (mode != 0 && !std::is_constant_evaluated()) {
-        const auto        key {static_cast<std::int32_t>((klass_idx * 3U) + mode)};
+        // The FINISHED class is what is cached, negation included -- a repeat's copies share one node, so
+        // they share its negation too. Caching only the fold left `finish_class`'s `coalesce_ranges` sort
+        // running per repetition, which is why `[a-z]` with icase still cost 24x its plain marginal per
+        // repetition when the fold alone was memoized.
+        const auto        key {static_cast<std::int32_t>((klass_idx * 6U) + (mode * 2U) + (node.negated ? 1U : 0U))};
         const std::size_t way {static_cast<std::size_t>(key) % fold_cache_ways};
         if (fold_key_[way] == key) {
-          return finish_class(node, class_def {fold_val_[way]});
+          return fold_val_[way];
         }
         class_def folded {tree_.classes[klass_idx]};
         if (mode == 1) {
@@ -786,8 +790,8 @@ namespace real::detail {
           folded = unicode_casefold(folded); // text: full Unicode fold of the whole class, both directions
         }
         fold_key_[way] = key;
-        fold_val_[way] = folded;
-        return finish_class(node, std::move(folded));
+        fold_val_[way] = finish_class(node, std::move(folded));
+        return fold_val_[way];
       }
       class_def folded {tree_.classes[klass_idx]};
       if (mode == 1) {
