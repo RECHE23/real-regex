@@ -2,6 +2,45 @@
 
 Per-train benchmark-impact log: what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s §A/§E/§B/§Unicode/§multi-pattern sections, carried verbatim from that file's Version row. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.7.59
+
+7.59 (**build train — the one-pass table stops being expensive to build**): §E.4 re-stamped under the
+usual interleaved A/B protocol against v2026.7.58 (same bench file both sides, one group at a time,
+machine idle), three rounds for `first_use`, two for `captures`/`compile`, and four rounds of 5 s for
+`find` where two rows first read as regressions — `find/digits` +12.5 % and `find/word_bound` +4.2 % on
+two rounds became **+0.8 %** and **+0.3 %** on four, per-round dispersion 0.2 %.
+
+**The row this train was about.** `(\w+)@(\w+)` on first use had been disclosed and not chased in three
+consecutive releases. `first_use/email` **2.78 → 1.58 ms (−43.2 %)**, 4.57× behind the `regex` crate
+becomes **2.66×**. Direct harness, construct plus one search, arm64: `(\w+)@(\w+)` 2729.3 → 1538.2 µs
+(**−43.6 %**), `(\d+)@(\d+)` 189.7 → 105.0 (**−44.6 %**); x86-64 instructions **−39.7 %**; allocations
+601 486 → 236 566 blocks.
+
+**What it was.** Four steps, each picked by profiling per function rather than by inspection — and the
+profile contradicted the obvious guess twice. The largest cost was not the minimizer (19.1 %) but
+`compute_lazy_alphabet` (26.5 %), whose byte-equivalence pass compared each byte against every open class,
+re-walking all 475 predicates per pair; it now builds each byte's signature once and groups. Minimization
+rows are split by what varies, so a round hashes 41 words instead of 162 and reads a packed run of assigned
+targets instead of walking all 103 edges. The trie's sequences moved from a vector OF vectors (164 220
+blocks averaging 4.6 bytes) into one pool, and its recursion stopped re-allocating per interval per level.
+The alphabet transpose reads each class's bitmap instead of asking `test` for all 256 bytes.
+
+**A compile-time defect the fuzzer found.** CI timed out at 10 s on `\w{500}accc…` with icase inside
+`unicode_casefold` — pre-existing, verified by rebuilding the reproducer and measuring both commits
+(12.10 s and 12.00 s). The linear-time guarantee covers MATCHING; nothing covered compile. The fold loop
+scanned all 2940 table entries per class asking `any_of` over its 771 ranges, once per repetition. Now
+range-driven with a binary-search seek: `\w{800}a` icase **305 → 51 ms (−83 %)**, the reproducer
+**12.22 → 1.86 s**. Second train running where the fuzzer found a cost defect the bench suite structurally
+cannot — it measures the patterns people write, not the patterns that are merely legal.
+
+**What it costs.** Nothing measurable: every other criterion row within ±1.7 %, the walk unchanged on the
+direct harness (`\w+` and `[a-z]+` 0.0 %, `\d+` −0.1 %), and patterns whose build is already cheap unmoved.
+§A/§B/§Unicode/§multi-pattern carry their earlier figures.
+
+**Refuted and reverted, recorded so it is not retried:** callgrind put a `memset` in `minimize` at 4.87 %
+of the build; replacing it with a round stamp moved arm64 wall clock −0.2 % and x86-64 instructions −0.2 %.
+`rep stos` is a known callgrind over-count and this is what that looks like.
+
 ## v2026.7.58
 
 7.58 (**scan train — the membership accessors stop paying for themselves**): §E.4 re-stamped under the
