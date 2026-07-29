@@ -24,6 +24,23 @@ const CASES: &[(&str, &str)] = &[
     ("alternation", r"fox|dog|cat"),
     ("word_bound", r"\b\w+\b"),
     ("no_match", r"\d{4}-\d{2}-\d{2}"),
+    // A BOUNDED REPEAT. `\w+` and `\w{8}` look alike and are not: the counted form leaves the class-loop
+    // fast path and runs on the general VM, and it grows superlinearly in the count -- 247 us for `\w+`,
+    // 499 for `\w{4}`, 2369 for `\w{8}` over this corpus. Nothing above measured a counted repeat, so
+    // none of that was visible. Found while adding the icase rows below, and not an icase effect at all:
+    // `(?i)\w{8}` and `\w{8}` time identically.
+    ("repeat", r"\w{8}"),
+    // Case-insensitive families. The suite had none, and both compile-cost defects this project has
+    // shipped lived in the icase path: `unicode_casefold` scanning the whole fold table per class, and
+    // then folding the same class once per repetition of a bounded repeat. Neither was visible to any row
+    // above -- the same argument the header makes for the compile/ and first_use/ groups, applied to the
+    // flag rather than to the phase.
+    //
+    // Two shapes, because icase does different things to each: a literal folds to a small alternation of
+    // cases and stays cheap; `[a-z]` gains the long s and the Kelvin sign, so it stops being a pure ASCII
+    // class and emits as a code-point class -- which costs it 4.3x its plain form on the scan.
+    ("icase_literal", r"(?i)dog"),
+    ("icase_class", r"(?i)[a-z]+"),
 ];
 
 // A deterministic ~64 KiB corpus of mixed words / digits / emails / commas — representative for every family
