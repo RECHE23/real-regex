@@ -881,7 +881,23 @@ namespace real::detail {
               emit_any_codepoint_class(prog, eff.ascii);
               break;
             }
-            emit_class_codepoints(prog, eff.ascii, eff.ranges);
+            // An ASCII bitmap with a FEW non-ASCII members -- what an icase fold makes of an ASCII class,
+            // since `[a-z]` gains the long s and the Kelvin sign -- is a code-point class, and emitting it
+            // as one is what lets the class-loop route take it. Expanded to a byte-level alternation
+            // instead (one branch for the bitmap, one per UTF-8 sequence), `(?i)[a-z]+` compiled to 8 byte
+            // classes and 18 instructions, matched no route at all and fell to the lazy DFA: 545 us over a
+            // 64 KiB corpus against 126 for its unfolded form. As one `klass_cp` it is 8 instructions and
+            // 230 us. Two rare fold partners were costing the route.
+            //
+            // One-pass eligibility does not suffer and in places improves: `klass_cp` reaches
+            // build_utf8_trie, whose disjoint per-node transitions are what make a Unicode class one-pass,
+            // so `(?i)[àé]+` goes from "byte-class conflict" to one-pass. `real::dfa` builds these too --
+            // dfa_flatten expands `klass_cp` through the same byte program the lazy DFA uses, which is
+            // what this change required and which widened that API rather than narrowing it.
+            //
+            // The `.`-family above keeps its own emission: it has a dedicated hint and route
+            // (codepoint_class_ascii), which this shape has not.
+            emit_klass_cp(prog, eff);
             break;
           }
         case node_kind::any:

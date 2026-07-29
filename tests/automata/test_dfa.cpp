@@ -158,6 +158,44 @@ TEST(dfa_assertion_contract)
                 real::dfa_error);                                                       // \b
 }
 
+// A code-point class BUILDS here. It used to be refused outright ("no DFA can represent"), which was a
+// limit of this entry point and not of the DFA: `dfa_flatten` now expands `klass_cp` through the same
+// `build_byte_program` the lazy DFA has always used, so the deterministic UTF-8 trie recognising the class
+// becomes ordinary byte transitions. Text-mode `\w`/`\d`/`\s`, Unicode properties, non-ASCII classes and
+// case-folded ASCII classes are all constructible.
+TEST(dfa_accepts_code_point_classes)
+{
+  const std::vector<std::string> pats {R"(\w+)", R"(\d+)", R"(\s+)", R"(\p{Greek}+)", R"((?i)[a-z]+)",
+                                       R"([àéè]+)", R"((?i)[àé]+)", R"(\p{Han}+)"};
+  for (const std::string& p : pats) {
+    const std::vector<real::regex> one {real::regex(p)};
+    const real::dfa                d   {std::span<const real::regex>(one)};
+    EXPECT(d.state_count() > 0);
+  }
+}
+
+// And it AGREES with the engine, which is the part that matters: for each pattern, the DFA finds an
+// anchored non-empty match exactly when the engine does. Both are driven over the same subjects, ASCII and
+// not, including bytes that are not valid UTF-8 at all.
+TEST(dfa_code_point_classes_agree_with_the_engine)
+{
+  const std::vector<std::string> pats  {R"(\w+)", R"(\d+)", R"([a-z]+)", R"((?i)[a-z]+)", R"(\p{Greek}+)",
+                                        R"([àéè]+)", R"(\d{4})", R"((?i)[a-z]{3})"};
+  const std::vector<std::string> texts {"", "a", "abc", "ABC", "123", "  ", "café", "àéè", "ΑΒΓαβγ",
+                                        "\u65e5\u672c\u8a9e", "root@localhost", "\u017f\u212a", "x\xC3", "\x80x"};
+  for (const std::string& p : pats) {
+    const real::regex              re  {p};
+    const std::vector<real::regex> one {real::regex(p)};
+    const real::dfa                d   {std::span<const real::regex>(one)};
+    for (const std::string& t : texts) {
+      const auto md              {d.match(t)};
+      const auto mr              {re.search(t)};
+      const bool engine_anchored {mr.matched() && mr.start(0) == 0 && mr.end(0) > 0};
+      EXPECT_EQ(md.has_value(), engine_anchored);
+    }
+  }
+}
+
 TEST(dfa_state_cap_rejects_explosion)
 {
   // Subset construction is 2^NFA in the worst case; the state cap turns that into a clean
