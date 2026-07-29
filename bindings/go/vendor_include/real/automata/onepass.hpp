@@ -396,38 +396,88 @@ namespace real::detail {
       // `(\d+)@(\d+)` gives 42 against 202. Even the widest node measured (64 assigned) is 260, so
       // the encoding never loses.
       //
-      // Row at `row_at[i]`, `row_at[i + 1] - row_at[i]` words:
-      //   [0] cls[i]                                  <- per round
-      //   [1..3] matches, match_cap_mask, match_assert_mask
-      //   then per assigned class, in class order:
-      //   [+0] class index   [+1] cls[edge.next] + 1   <- per round
-      //   [+2] cap_mask      [+3] assert_mask
+      // Rows are split by WHAT VARIES. Only `cls[i]` and the `cls[edge.next]` of each assigned class
+      // change between rounds; the class indices and the capture/assert masks are fixed for the whole
+      // call. Those invariants are therefore grouped ONCE, into an `inv_id`, and a round's signature is
+      // `(inv_id, cls[i], nexts...)` -- 2 + assigned words against 4 + 4 x assigned. On `(\w+)@(\w+)`
+      // that is 41 words a round instead of 162, and every round hashes and compares the narrow form.
       //
-      // The assigned set never changes between rounds -- only the partition ids do -- so the layout
-      // and every invariant word are written ONCE here, and a round rewrites just 1 + assigned words
-      // per node rather than the whole row.
+      // The partition is unchanged, at every round and not merely at the fixpoint: `inv_id` is a
+      // bijection onto the invariant tuple, so grouping by it groups exactly what grouping by the raw
+      // invariant words did. Ids are still minted in node order, so the numbering is identical too.
+      //
+      // Invariant row at `inv_at[i]`:
+      //   [0..2] matches, match_cap_mask, match_assert_mask
+      //   then per assigned class, in class order: [+0] class index [+1] cap_mask [+2] assert_mask
+      // Round row at `row_at[i]`:
+      //   [0] inv_id[i]   [1] cls[i]   then per assigned class, in class order: cls[edge.next] + 1
       std::vector<std::size_t> row_at(n + 1, 0);
+      std::vector<std::size_t> inv_at(n + 1, 0);
       for (std::size_t i = 0; i < n; ++i) {
-        std::size_t w {4};
+        std::size_t assigned {0};
         for (const onepass_edge& e : nodes_[i].edge) {
-          w += e.assigned ? 4U : 0U;
+          assigned += e.assigned ? 1U : 0U;
         }
-        row_at[i + 1] = row_at[i] + w;
+        row_at[i + 1] = row_at[i] + 2U + assigned;
+        inv_at[i + 1] = inv_at[i] + 3U + (3U * assigned);
       }
-      std::vector<std::uint64_t> sigs(row_at[n], 0);
+
+      // The invariant half, written once and then collapsed to one id per distinct tuple.
+      std::vector<std::uint64_t> inv(inv_at[n], 0);
       for (std::size_t i = 0; i < n; ++i) {
-        std::uint64_t* s {sigs.data() + row_at[i]};
-        s[1] = nodes_[i].matches ? 1U : 0U;
-        s[2] = nodes_[i].match_cap_mask;
-        s[3] = nodes_[i].match_assert_mask;
-        std::size_t w {4};
+        std::uint64_t* v {inv.data() + inv_at[i]};
+        v[0] = nodes_[i].matches ? 1U : 0U;
+        v[1] = nodes_[i].match_cap_mask;
+        v[2] = nodes_[i].match_assert_mask;
+        std::size_t w {3};
         for (std::size_t c = 0; c < nodes_[i].edge.size(); ++c) {
           const onepass_edge& e {nodes_[i].edge[c]};
           if (e.assigned) {
-            s[w]     = c;
-            s[w + 2] = e.cap_mask;
-            s[w + 3] = e.assert_mask;
-            w       += 4;
+            v[w]     = c;
+            v[w + 1] = e.cap_mask;
+            v[w + 2] = e.assert_mask;
+            w       += 3;
+          }
+        }
+      }
+      std::vector<std::uint64_t> inv_id(n, 0);
+      {
+        std::vector<std::uint32_t> inv_head(minimize_buckets, no_node);
+        std::vector<std::uint32_t> inv_next(n, no_node);
+        std::uint64_t              inv_count {0};
+        for (std::size_t i = 0; i < n; ++i) {
+          const std::span<const std::uint64_t> row   {inv.data() + inv_at[i], inv_at[i + 1] - inv_at[i]};
+          std::uint32_t&                       head  {inv_head[sig_hash(row) % minimize_buckets]};
+          bool                                 found {false};
+          for (std::uint32_t j = head; j != no_node; j = inv_next[j]) {
+            const std::span<const std::uint64_t> other {inv.data() + inv_at[j], inv_at[j + 1] - inv_at[j]};
+            if (std::equal(row.begin(), row.end(), other.begin(), other.end())) {
+              inv_id[i] = inv_id[j];
+              found     = true;
+              break;
+            }
+          }
+          if (!found) {
+            inv_id[i]   = inv_count++;
+            inv_next[i] = head;
+            head        = static_cast<std::uint32_t>(i);
+          }
+        }
+      }
+
+      std::vector<std::uint64_t> sigs(row_at[n], 0);
+      // The assigned edges' TARGETS, gathered once at the offsets their signature words occupy. A round
+      // then reads a packed run of node indices instead of walking every class's `onepass_edge` to test
+      // `assigned`: 39.4 entries against 103 for `(\w+)@(\w+)`, over a 4-byte stride rather than the
+      // edge struct's. The assigned set is fixed for the call, so this is built once.
+      std::vector<std::uint32_t> nexts(row_at[n], 0);
+      for (std::size_t i = 0; i < n; ++i) {
+        sigs[row_at[i]] = inv_id[i];
+        std::size_t w {row_at[i] + 2U};
+        for (const onepass_edge& e : nodes_[i].edge) {
+          if (e.assigned) {
+            nexts[w] = e.next;
+            ++w;
           }
         }
       }
@@ -444,14 +494,12 @@ namespace real::detail {
         }
         work_done += round_work;
         for (std::size_t i = 0; i < n; ++i) {
-          std::uint64_t* s {sigs.data() + row_at[i]};
-          s[0] = cls[i];
-          std::size_t w    {5};
-          for (const onepass_edge& e : nodes_[i].edge) {
-            if (e.assigned) {
-              s[w] = static_cast<std::uint64_t>(cls[e.next]) + 1U;
-              w   += 4;
-            }
+          const std::size_t base {row_at[i]};
+          const std::size_t stop {row_at[i + 1]};
+          std::uint64_t*    s    {sigs.data() + base};
+          s[1] = cls[i]; // s[0] is inv_id, written once above
+          for (std::size_t w {base + 2U}; w < stop; ++w) {
+            s[w - base] = static_cast<std::uint64_t>(cls[nexts[w]]) + 1U;
           }
         }
         next_cls.assign(n, 0);
