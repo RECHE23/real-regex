@@ -2508,6 +2508,30 @@ namespace real::detail {
                                     match_end += dc.length;
                                   }
                                 }
+                                // A COUNTED repeat is mutually exclusive with the greedy loop -- `X{k}`
+                                // emits no self-loop -- so it sits in the `else` and the test above stays
+                                // exactly the one that was there. Tested FIRST instead, it cost `\w+` and
+                                // `\b\w+\b` 2.3 % of their instructions on gcc/x86-64, measured, on
+                                // patterns that can never reach it.
+                                else if (const std::size_t max_len {prog_.hints.greedy_cp_class_max};
+                                         max_len != 0) {
+                                  for (std::size_t n {1}; n < max_len && match_end < text.size(); ++n) {
+                                    const auto lead {static_cast<std::uint8_t>(text[match_end])};
+                                    if (lead < 0x80U) {
+                                      if (asc[lead] == 0U) {
+                                        break;
+                                      }
+                                      ++match_end;
+                                      continue;
+                                    }
+                                    const detail::decoded_codepoint dc {
+                                      detail::decode_codepoint_strict(text, match_end)};
+                                    if (!dc.valid || !member_hi(dc.cp)) {
+                                      break;
+                                    }
+                                    match_end += dc.length;
+                                  }
+                                }
                                 return match_end;
                               };
 #endif
