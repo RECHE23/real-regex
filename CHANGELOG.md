@@ -2,6 +2,56 @@
 
 Per-train benchmark-impact log: what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s §A/§E/§B/§Unicode/§multi-pattern sections, carried verbatim from that file's Version row. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.7.60
+
+7.60 (**route + measurement train — a counted repeat gets a route, and the suite learns to see it**):
+§E.4 re-stamped under the usual interleaved A/B against v2026.7.59, same bench file both sides (which is
+what lets this release's new families exist on both), one group at a time, two rounds, machine idle. No row
+regresses by more than 3 %; every row other than the three `repeat` gains lands within ±2.2 %.
+
+**The row this train was about did not exist before it.** The suite had eight families and not one counted
+repeat — every family used `+`, `*` or a literal — and no case-insensitive pattern at all, while both
+compile-cost defects this project has shipped lived in the icase path. Three families were added for the
+second reason and immediately found something bigger, for the first: `find/repeat` (`\w{8}`) **2.24 ms →
+123.9 µs (−94.5 %)**, 24.55× behind the `regex` crate becomes **1.35×**; `captures/repeat` 24.46× becomes
+1.33×; `first_use/repeat` 93.5× ahead becomes 113.4× ahead.
+
+**What it was.** `\w+` and `\w{8}` look alike and are not. Three shapes bracket the counted one and all
+three were already fast (`[a-z]{8}` via fixed_shape, `\w{8,}` and `\w+` via the code-point class loop),
+leaving exactly one combination unserved: a code-point class with a bounded count. It ran on the general
+Pike VM and grew superlinearly — 247 µs for `\w+`, 499 for `\w{4}`, 2369 for `\w{8}`. The recognizer
+declined that shape on purpose ("no MIN-only run to bound a search against"): the route bounded from BELOW
+and an exact count needs it stopped from above. arm64 walk: `\w{8}` **−95.1 %**, `\w{4}` −57.0 %, `\d{4}`
+−9.9 %, with `\w+`/`\w{8,}`/`[a-z]+`/`\b\w+\b` at 0.0 %; x86-64 `\w{8}` **−96.8 %** on the clock.
+
+**Compile cost, continued from 7.59.** That release made each case fold cheaper without stopping it
+happening once per repetition; a bounded repeat holds ONE class node and emits it k times, so `\w{500}`
+folded `\w` five hundred times. A four-way cache on (class, fold mode, negated), holding the FINISHED class
+so `coalesce_ranges` stops re-sorting too: `\w{64}` icase **3.84 → 0.128 ms (−96.7 %)**, `\w{256}` −20.1 %,
+`\d{4}-\d{2}-\d{2}` −51.0 %, and `\w{500}a` **−97.0 %** in x86-64 instructions. `\w{k}a` now grows
+sub-linearly in k where it was linear.
+
+**A net, and a fuzzer refuted before it shipped.** `tests/frontend/test_compile_scaling.cpp` gates the
+invariant both defects broke — compile cost scales with DISTINCT constructs, not repetitions — by comparing
+the marginal cost of one more repetition under icase against the same marginal without it, which cancels
+machine speed (`\d` 671.68× → 0.78×, `\w` 383.25× → 0.67×; bound 8×). Verified to FAIL on the tree the
+fixes landed on. It replaces a compile-cost fuzzer whose design its own first measurement refuted: a
+per-instruction budget cannot discriminate a 340× legitimate spread.
+
+**Caught by the differential, not shipped:** the first version of the route lost `\w{4}\b` over
+"abcdefghi" (matches at 5, returned nothing) because both retry loops advance by the whole run on failure —
+right for a maximal run, wrong for a bounded one. The counted shape now declines a word boundary and the
+code says what lifting it needs. Second release running where differencing a new route against the general
+VM is what caught the defect.
+
+**Disclosed, not chased:** `(?i)[a-z]+` scans **3.37× behind** the crate and 4.3× behind its own plain
+form — under icase `[a-z]` gains the long s and Kelvin sign and stops being a pure ASCII class; `(?i)dog`
+is 1.17× ahead, so it is the class widening and not the flag. Visible for the first time here.
+`(\w+)@(\w+)` first use stays 2.64× behind. **Disagreeing measurements, both stated:** on gcc/x86-64 the
+unbounded shapes read +2.3 % in INSTRUCTIONS (three branch orderings, all identical, so it is the code's
+presence not its position) while the clock reads −0.2 % for `\w+` and +1.3 % for `\b\w+\b`, and arm64 reads
+0.0 % for both.
+
 ## v2026.7.59
 
 7.59 (**build train — the one-pass table stops being expensive to build**): §E.4 re-stamped under the
