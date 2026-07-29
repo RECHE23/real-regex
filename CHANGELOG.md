@@ -2,6 +2,50 @@
 
 Per-train benchmark-impact log: what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s §A/§E/§B/§Unicode/§multi-pattern sections, carried verbatim from that file's Version row. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.7.61
+
+7.61 (**icase scan train — a folded ASCII class stops losing its route**): §E.4 re-stamped under the usual
+interleaved A/B against v2026.7.60, same bench file both sides, one group at a time, machine idle: two
+rounds per group and **four rounds of 5 s for `captures`**, which was load-bearing —
+`captures/word_bound` read +3.1 % on two rounds and **−0.3 % on four**. No row regresses; every row other
+than the four `icase_class` gains lands within ±1.6 %.
+
+**The row this train was about.** 7.60 added an `icase_class` family because the suite had no
+case-insensitive pattern at all, a gap two compile-cost defects had already come through; it read 3.37×
+behind the `regex` crate immediately. The profile refuted the obvious explanation — `(?i)[a-z]+` was not on
+the code-point scan but on the lazy DFA (`lazy_dfa::anchored_end`, 23.5 %). `find/icase_class` **631.8 →
+252.1 µs (−60.1 %)**, 3.37× behind becomes **1.34×**; `captures/icase_class` **680.0 → 295.8 (−56.5 %)**,
+3.66× → 1.57×; `compile/icase_class` −30.8 % (9.66× ahead → 14.01×); `first_use/icase_class` −39.6 %.
+
+**What it was.** Under icase `[a-z]` gains the long s and the Kelvin sign, both MULTI-BYTE, so the class was
+expanded to a byte-level alternation — one branch for the ASCII bitmap, one per UTF-8 sequence.
+`(?i)[a-z]+` compiled to 8 byte classes and 18 instructions against 1 and 5 for `[a-z]+`, stopped being a
+class loop and matched no route at all: two rare fold partners were costing the route. An ASCII bitmap with
+a few non-ASCII members IS a code-point class and is now emitted as one. arm64 walk: `(?i)[a-z]+` −57.7 %,
+`(?i)[a-zA-Z0-9_]+` −58.4 %; x86-64 instructions −58.2 % and −58.7 %; `[a-z]+`/`\w+`/`.`/`[^,]+`/`dog`/
+`(?i)dog`/`\b\w+\b` at 0.0 % on arm64 and within 0.7 % on x86-64. One-pass eligibility improves as a side
+effect: `(?i)[àé]+` goes from "byte-class conflict" to one-pass.
+
+**`real::dfa` widened, not narrowed.** That entry point refused `klass_cp` outright, so the change above
+would have made these patterns unconstructible there — a capability regression, not an acceptable price.
+The refusal was a limit of the entry point: `dfa_flatten` now expands `klass_cp` through the same
+`build_byte_program` the lazy DFA has always used, so text-mode `\d`/`\s`, Unicode properties, non-ASCII
+classes and folded ASCII classes all build there now, where that API had never accepted one.
+
+**A second-order cost the fuzzer found**, within the hour and through a path the change never touched:
+`regex_set` builds one of these DFAs internally, so widening what the DFA ACCEPTS widened what it ATTEMPTS —
+on `^\w` it spent 27.9 s where it had errored immediately. `max_dfa_states` bounds the RESULT of subset
+construction and nothing bounded the WORK, which is superlinear: a folded ASCII class expands to 26
+instructions and builds in 0.04 ms, `\d+` to 261 and 1.88 ms, and text-mode `\w+` to **3434 and 418 ms** —
+thirteen times the size for two hundred and twenty times the time. `max_dfa_byte_program` = 512 sits between
+them, and everything it refuses was already refused before `klass_cp` became expandable here. A repeat
+multiplies the expansion (each occurrence gets its own trie), so `\d{2}` is already 517. Reproducer:
+**27.91 s → 0.33 s**. Third cost defect this fuzzer has found, first one that was second-order.
+
+**Disclosed, not chased:** `(\w+)@(\w+)` first use stays **2.64× behind**; `no_match` 2.09×/2.05× (a ratio
+on 1.6 µs against 778 ns); `captures/word_bound` 1.82×; `find/literal` 1.57×; text-mode `\w` still declines
+in `real::dfa`, by the cap and as before.
+
 ## v2026.7.60
 
 7.60 (**route + measurement train — a counted repeat gets a route, and the suite learns to see it**):
