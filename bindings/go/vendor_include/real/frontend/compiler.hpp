@@ -23,6 +23,7 @@
 #include "real/version.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -261,6 +262,28 @@ namespace real::detail {
       : tree_(tree),
         flags_(compile_flags)
     {}
+
+  private:
+
+    //! \brief Ways in the case-fold cache \ref effective_class keeps. Four is enough for a repeat to hit
+    //!        its own way every time; a pattern alternating more distinct folded classes than this simply
+    //!        misses, which is what every pattern did before.
+    static constexpr std::size_t fold_cache_ways {4};
+
+    //! \brief Cache tag per way: the (class index, fold mode) key held there, or -1 for empty.
+    //!
+    //!        `mutable` because the emit path reaches \ref effective_class through const member functions,
+    //!        and WRITTEN ONLY outside constant evaluation. MSVC's constant evaluator has already broken
+    //!        this header once over an object whose shape it merely disliked (C2131 on an indeterminate
+    //!        subobject, v2026.7.57), and a `static_regex` gains nothing here: its budget problem is the
+    //!        fold's step count, not its repetition.
+    mutable std::array<std::int32_t, fold_cache_ways> fold_key_ {-1, -1, -1, -1};
+
+    //! \brief Cached folded class per way. Default-constructed, so an unused way holds an empty
+    //!        \ref class_def and costs no allocation.
+    mutable std::array<class_def, fold_cache_ways> fold_val_ {};
+
+  public:
 
     /*!
      * \brief Emits the full NFA program for the bound AST.
@@ -732,15 +755,62 @@ namespace real::detail {
       // stack), so a scoped (?i:...) / (?a:...) folds and picks tables per scope. bytes is not scopable
       // and stays global.
       const flags node_flags {static_cast<flags>(node.effective_flags)};
-      class_def   folded     {tree_.classes[static_cast<std::size_t>(node.klass)]};
+      const auto  klass_idx  {static_cast<std::size_t>(node.klass)};
+
+      // Fold mode: 0 none, 1 ASCII-only, 2 full Unicode. It is a function of the node's scope, so the
+      // same class under the same scope always folds to the same thing.
+      std::size_t mode {0};
       if (has_flag(node_flags, flags::icase)) {
-        if (has_flag(flags_, flags::bytes) || has_flag(node_flags, flags::ascii)) {
+        mode = (has_flag(flags_, flags::bytes) || has_flag(node_flags, flags::ascii)) ? 1U : 2U;
+      }
+
+      // A bounded repeat holds ONE class node and emits it once per REPETITION, so `\w{500}` asked for
+      // the same fold 500 times. Mode 2 walks the fold table per range of the class -- `\w` carries 771 --
+      // and that repetition was the whole of the cost.
+      //
+      // Four ways, direct-mapped, in a fixed array: a repeat hits the same way every time and nothing is
+      // allocated. A vector sized by the class table was tried first and cost 5 % to 19 % on patterns that
+      // fold once -- they paid its allocation and never read it. Keyed by (class index, mode) because a
+      // scoped `(?i:...)` can fold one class two ways in one pattern.
+      if (mode != 0 && !std::is_constant_evaluated()) {
+        const auto        key {static_cast<std::int32_t>((klass_idx * 3U) + mode)};
+        const std::size_t way {static_cast<std::size_t>(key) % fold_cache_ways};
+        if (fold_key_[way] == key) {
+          return finish_class(node, class_def {fold_val_[way]});
+        }
+        class_def folded {tree_.classes[klass_idx]};
+        if (mode == 1) {
           fold_ascii_case(folded.ascii);     // bytes / ASCII mode (re.A): ASCII-only fold, no Unicode partners
         }
         else {
           folded = unicode_casefold(folded); // text: full Unicode fold of the whole class, both directions
         }
+        fold_key_[way] = key;
+        fold_val_[way] = folded;
+        return finish_class(node, std::move(folded));
       }
+      class_def folded {tree_.classes[klass_idx]};
+      if (mode == 1) {
+        fold_ascii_case(folded.ascii);
+      }
+      else if (mode == 2) {
+        folded = unicode_casefold(folded);
+      }
+      return finish_class(node, std::move(folded));
+    }
+
+    /*!
+     * \brief Applies negation (and its mode-dependent complement) to an already-folded class.
+     *
+     * Split out of \ref effective_class so the fold can be memoized while this stays per node: negation is
+     * a property of the node, the fold a property of (class, scope).
+     * \param[in] node   The class node being emitted.
+     * \param[in] folded Its class after any case fold.
+     * \return The class as the node means it.
+     */
+    [[nodiscard]] constexpr class_def finish_class(const ast_node& node,
+                                                   class_def       folded) const
+    {
       // The fold is applied BEFORE negation (Python order): [^k] under icase is the complement of
       // {k, K, Kelvin}, so it rejects Kelvin.
       if (!node.negated) {
