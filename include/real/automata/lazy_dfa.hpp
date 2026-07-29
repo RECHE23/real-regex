@@ -246,9 +246,15 @@ namespace real::detail {
         return true;
       }
 
-      constexpr std::int32_t build(const std::vector<seq_view>& in) // all non-empty sequences
+      // Takes a span, not a vector: the recursive call then hands its child a prefix of its OWN `tails`
+      // rather than filling a second vector with the non-empty subset. Both vectors are also sized up
+      // front -- neither can exceed a bound known on entry -- so a level allocates twice and never
+      // re-allocates, against a growth series per interval per level. The trie's own vectors were the
+      // build's second-largest allocation source after the sequence pool.
+      constexpr std::int32_t build(std::span<const seq_view> in) // all non-empty sequences
       {
         std::vector<int> bounds;
+        bounds.reserve(in.size() * 2U);
         for (const seq_view& s : in) {
           bounds.push_back(s[0].lo);
           bounds.push_back(s[0].hi + 1);
@@ -256,12 +262,14 @@ namespace real::detail {
         std::sort(bounds.begin(), bounds.end());
         bounds.erase(std::unique(bounds.begin(), bounds.end()), bounds.end());
 
-        utf8_trie_node node;
+        utf8_trie_node        node;
+        std::vector<seq_view> tails;
+        tails.reserve(in.size());
         for (std::size_t i = 0; i + 1 < bounds.size(); ++i) {
-          const int                                 lo        {bounds[i]};
-          const int                                 hi        {bounds[i + 1] - 1};
-          std::vector<seq_view>                     tails;
-          bool                                      all_empty {true};
+          const int lo   {bounds[i]};
+          const int hi   {bounds[i + 1] - 1};
+          tails.clear();
+          bool all_empty {true};
           for (const seq_view& s : in) {
             if (s[0].lo <= lo && hi <= s[0].hi) { // this disjoint interval sits inside sequence s's first range
               const seq_view tail {s.subspan(1)};
@@ -274,13 +282,16 @@ namespace real::detail {
           }
           std::int32_t child {-1};
           if (!all_empty) { // UTF-8 is prefix-free, so within one interval the tails share a length
-            std::vector<seq_view> nonempty;
+            // Compact the non-empty tails to the front, order preserved, and recurse on that prefix.
+            // The child builds its own `tails`, so it never aliases this one.
+            std::size_t kept {0};
             for (const seq_view& t : tails) {
               if (!t.empty()) {
-                nonempty.push_back(t);
+                tails[kept] = t;
+                ++kept;
               }
             }
-            child = build(nonempty);
+            child = build(std::span<const seq_view> {tails.data(), kept});
           }
           node.trans.emplace_back(utf8_byte_range {.lo = static_cast<std::uint8_t>(lo), .hi = static_cast<std::uint8_t>(hi)}, child);
         }
