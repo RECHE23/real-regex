@@ -22,6 +22,8 @@
 #include "real/storage.hpp"
 #include "real/unicode/utf8.hpp"
 
+//! \brief REAL's public API: \ref real::regex, \ref real::static_regex, \ref real::flags and the
+//!        match/iterator types built on them.
 namespace real {
 
   /*!

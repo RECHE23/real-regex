@@ -73,6 +73,7 @@ namespace real {
     }
   };
 
+  //! \brief Storage-policy internals shared by \ref real::regex and \ref real::static_regex.
   namespace detail {
 
     /*!

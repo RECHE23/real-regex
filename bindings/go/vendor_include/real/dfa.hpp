@@ -78,6 +78,7 @@ namespace real {
     std::size_t   length;     //!< Byte length of the (non-empty) match.
   };
 
+  //! \brief DFA construction internals: subset construction over a flattened NFA. Not a stable API.
   namespace detail {
 
     //! \brief A flattened NFA instruction (global PCs, global class index).

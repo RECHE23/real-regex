@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <type_traits>
 
+//! \brief Opt-in route/work counters, compiled out unless the profiling build flag is set.
 namespace real::detail::prof {
 
   //! \brief Named once-per-dispatch routes (Tier 1). Always visible so tick call sites compile OFF.

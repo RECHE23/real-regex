@@ -13,6 +13,8 @@
 
 #include <iterator>
 
+//! \brief Drop-in replacements for `<regex>`: \c basic_regex, \c regex_search / \c regex_match /
+//!        \c regex_replace and the iterator types, on REAL's linear-time engine.
 namespace real::compat {
   /*!
    * \brief Iterates the non-overlapping matches of a pattern in a sequence (`std::regex_iterator`).

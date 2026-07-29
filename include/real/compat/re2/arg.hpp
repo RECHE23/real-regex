@@ -22,6 +22,7 @@
 #include <string_view>
 #include <type_traits>
 
+//! \brief Drop-in replacement for RE2's API surface, on REAL's engine.
 namespace real::compat::re2 {
 
   /*!
