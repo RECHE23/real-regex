@@ -105,6 +105,21 @@ namespace real {
      * \throws real::dfa_error if any program holds an assertion other than a head text_start,
      *         a lookaround, a code-point class, or a possessive/atomic construct.
      */
+    /*!
+     * \brief Cap on a pattern's expanded byte program before subset construction runs on it.
+     *
+     * \ref max_dfa_states bounds the RESULT; nothing bounded the work to reach it, and subset construction
+     * is superlinear in the input. Measured on this machine, release build, construction time against
+     * expanded size: a case-folded ASCII class is 7-69 instructions and 0.04-0.06 ms, `\p{Han}+` 210 and
+     * 1.23 ms, `\d+` 261 and 1.88 ms -- and text-mode `\w+` is **3434 and 418 ms**, which under the fuzzer's
+     * sanitized build is a 12-second timeout. Thirteen times the size for two hundred times the time.
+     *
+     * 512 sits above every shape that builds in about a millisecond and below the one that does not. A
+     * pattern past it declines with a message, exactly as `\w` did before `klass_cp` became expandable
+     * here -- so this is the previous behaviour for the wide classes and a widening for everything else.
+     */
+    inline constexpr std::size_t max_dfa_byte_program {512};
+
     inline dfa_nfa dfa_flatten(std::span<const program_view> programs)
     {
       dfa_nfa nfa;
@@ -143,10 +158,11 @@ namespace real {
         //
         // `keep_assertions`: the audit above already accepted only a head `\A`/`^`, and the closure below
         // resolves it. Stripping assertions here instead would silently drop that anchor.
-        const byte_program bp {build_byte_program(prog, true)};
+        const byte_program bp {build_byte_program(prog, true, max_dfa_byte_program)};
         if (!bp.eligible) {
-          throw dfa_error("pattern's byte expansion is too large for a DFA (a code-point class repeated "
-                          "many times), or holds a construct the byte automata decline");
+          throw dfa_error("pattern's byte expansion is too large for a DFA (a wide code-point class such "
+                          "as text-mode \\w, or one repeated many times), or holds a construct the byte "
+                          "automata decline");
         }
 
         const std::size_t base  {nfa.code.size()};

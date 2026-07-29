@@ -165,7 +165,7 @@ TEST(dfa_assertion_contract)
 // case-folded ASCII classes are all constructible.
 TEST(dfa_accepts_code_point_classes)
 {
-  const std::vector<std::string> pats {R"(\w+)", R"(\d+)", R"(\s+)", R"(\p{Greek}+)", R"((?i)[a-z]+)",
+  const std::vector<std::string> pats {R"(\d+)", R"(\s+)", R"(\p{Greek}+)", R"((?i)[a-z]+)",
                                        R"([àéè]+)", R"((?i)[àé]+)", R"(\p{Han}+)"};
   for (const std::string& p : pats) {
     const std::vector<real::regex> one {real::regex(p)};
@@ -179,8 +179,8 @@ TEST(dfa_accepts_code_point_classes)
 // not, including bytes that are not valid UTF-8 at all.
 TEST(dfa_code_point_classes_agree_with_the_engine)
 {
-  const std::vector<std::string> pats  {R"(\w+)", R"(\d+)", R"([a-z]+)", R"((?i)[a-z]+)", R"(\p{Greek}+)",
-                                        R"([àéè]+)", R"(\d{4})", R"((?i)[a-z]{3})"};
+  const std::vector<std::string> pats  {R"(\d+)", R"([a-z]+)", R"((?i)[a-z]+)", R"(\p{Greek}+)",
+                                        R"([àéè]+)", R"((?i)[a-z]{3})", R"((?i)[a-z]{8})"};
   const std::vector<std::string> texts {"", "a", "abc", "ABC", "123", "  ", "café", "àéè", "ΑΒΓαβγ",
                                         "\u65e5\u672c\u8a9e", "root@localhost", "\u017f\u212a", "x\xC3", "\x80x"};
   for (const std::string& p : pats) {
