@@ -19,7 +19,7 @@ answer is not a benchmark win.
 
 | | |
 | --- | --- |
-| Version | REAL `2026.7.61` — **re-measured for this stamp: §E.4 only** (the crate's own criterion rows, arm64, at `3cb085a`), by an interleaved A/B against `v2026.7.60` with the same bench file on both sides, one group at a time, machine otherwise idle: two rounds per group and **four rounds of 5 s for `captures`**, which was load-bearing — `captures/word_bound` read +3.1 % on two rounds and **−0.3 % on four**. No row regresses; every row other than the four `icase_class` gains lands within ±1.6 %. **The row this train was about:** 7.60 added an `icase_class` family because the suite had no case-insensitive pattern at all, a gap two compile-cost defects had already come through, and it read 3.37× behind the `regex` crate immediately. The profile refuted the obvious explanation — `(?i)[a-z]+` was not on the code-point scan but on the lazy DFA (`lazy_dfa::anchored_end`, 23.5 %). `find/icase_class` **631.8 → 252.1 µs (−60.1 %)**, and **3.37× behind becomes 1.34×**; `captures/icase_class` **680.0 → 295.8 (−56.5 %)**, 3.66× → 1.57×; `compile/icase_class` −30.8 % (9.66× ahead → 14.01×); `first_use/icase_class` −39.6 %. Under icase `[a-z]` gains the long s and the Kelvin sign, both MULTI-BYTE, so the class was expanded to a byte-level alternation — 8 byte classes and 18 instructions against 1 and 5 for `[a-z]+` — which stopped being a class loop and matched no route at all: two rare fold partners were costing the route. An ASCII bitmap with a few non-ASCII members IS a code-point class and is now emitted as one. arm64 walk `(?i)[a-z]+` −57.7 % and `(?i)[a-zA-Z0-9_]+` −58.4 %; x86-64 instructions −58.2 % and −58.7 %; `[a-z]+`/`\w+`/`.`/`[^,]+`/`dog`/`(?i)dog`/`\b\w+\b` at 0.0 % on arm64 and within 0.7 % on x86-64. **`real::dfa` widened, not narrowed:** it refused `klass_cp` outright, so this change would have made those patterns unconstructible there — a capability regression, not an acceptable price — and the refusal was a limit of the entry point, so `dfa_flatten` now expands `klass_cp` through the same `build_byte_program` the lazy DFA has always used. Text-mode `\d`/`\s`, Unicode properties, non-ASCII classes and folded ASCII classes all build there now, where that API had never accepted one. §A, §Unicode, §B and §multi-pattern carry their earlier figures unchanged. Per-train benchmark-impact log: CHANGELOG.md (full release notes: docs/release-notes/ + GitHub Releases). **A second-order cost the fuzzer found**, within the hour and through a path the change never touched: `regex_set` builds one of these DFAs internally, so widening what the DFA ACCEPTS widened what it ATTEMPTS — on `^\w` it spent 27.9 s where it had errored immediately. `max_dfa_states` bounds the RESULT of subset construction and nothing bounded the WORK, which is superlinear: a folded ASCII class expands to 26 instructions and builds in 0.04 ms, `\d+` to 261 and 1.88 ms, text-mode `\w+` to **3434 and 418 ms**. `max_dfa_byte_program` = 512 sits between them, and everything it refuses was already refused before; a repeat multiplies the expansion, so `\d{2}` is already 517. Reproducer **27.91 s → 0.33 s**. **Disclosed, not chased:** `(\w+)@(\w+)` first use stays **2.64× behind**, `no_match` 2.09×/2.05× (a ratio on 1.6 µs against 778 ns), `captures/word_bound` 1.82×, `find/literal` 1.57×. |
+| Version | REAL `2026.7.61` — **re-measured for this stamp: §E.4 only** (the crate's own criterion rows, arm64, at `3cb085a`), by an interleaved A/B against `v2026.7.60` with the same bench file on both sides, one group at a time, machine otherwise idle: two rounds per group and **four rounds of 5 s for `captures`**, which was load-bearing — `captures/word_bound` read +3.1 % on two rounds and **−0.3 % on four**. No row regresses; every row other than the four `icase_class` gains lands within ±1.6 %. **The row this train was about:** 7.60 added an `icase_class` family because the suite had no case-insensitive pattern at all, a gap two compile-cost defects had already come through, and it read 3.37× behind the `regex` crate immediately. The profile refuted the obvious explanation — `(?i)[a-z]+` was not on the code-point scan but on the lazy DFA (`lazy_dfa::anchored_end`, 23.5 %). `find/icase_class` **631.8 → 252.1 µs (−60.1 %)**, and **3.37× behind becomes 1.34×**; `captures/icase_class` **680.0 → 295.8 (−56.5 %)**, 3.66× → 1.57×; `compile/icase_class` −30.8 % (9.66× ahead → 14.01×); `first_use/icase_class` −39.6 %. Under icase `[a-z]` gains the long s and the Kelvin sign, both MULTI-BYTE, so the class was expanded to a byte-level alternation — 8 byte classes and 18 instructions against 1 and 5 for `[a-z]+` — which stopped being a class loop and matched no route at all: two rare fold partners were costing the route. An ASCII bitmap with a few non-ASCII members IS a code-point class and is now emitted as one. arm64 walk `(?i)[a-z]+` −57.7 % and `(?i)[a-zA-Z0-9_]+` −58.4 %; x86-64 instructions −58.2 % and −58.7 %; `[a-z]+`/`\w+`/`.`/`[^,]+`/`dog`/`(?i)dog`/`\b\w+\b` at 0.0 % on arm64 and within 0.7 % on x86-64. **`real::dfa` widened, not narrowed:** it refused `klass_cp` outright, so this change would have made those patterns unconstructible there — a capability regression, not an acceptable price — and the refusal was a limit of the entry point, so `dfa_flatten` now expands `klass_cp` through the same `build_byte_program` the lazy DFA has always used. Text-mode `\d`/`\s`, Unicode properties, non-ASCII classes and folded ASCII classes all build there now, where that API had never accepted one. §A, §Unicode, §B and §multi-pattern carry their earlier figures unchanged. Per-train benchmark-impact log: CHANGELOG.md (full release notes: docs/release-notes/ + GitHub Releases). **A second-order cost the fuzzer found**, within the hour and through a path the change never touched: `regex_set` builds one of these DFAs internally, so widening what the DFA ACCEPTS widened what it ATTEMPTS — on `^\w` it spent 27.9 s where it had errored immediately. `max_dfa_states` bounds the RESULT of subset construction and nothing bounded the WORK, which is superlinear: a folded ASCII class expands to 26 instructions and builds in 0.04 ms, `\d+` to 261 and 1.88 ms, text-mode `\w+` to **3434 and 418 ms**. `max_dfa_byte_program` = 512 sits between them, and everything it refuses was already refused before; a repeat multiplies the expansion, so `\d{2}` is already 517. Reproducer **27.91 s → 0.33 s**. **Disclosed, not chased:** `no_match` 2.09×/2.05× (a ratio on 1.6 µs against 778 ns), `captures/word_bound` 1.82×, `find/literal` 1.57×. (`(\w+)@(\w+)` first use was listed here at **2.64× behind**; it reached parity after this stamp — see §E.4.) |
 | Machines | §A on **two ISAs**: devbox (`x86-64`, g++ 13.3.0) *and* Apple M1 Pro (`arm64`, Apple clang 16). §B / §E on M1 Pro (§E's x86-64 leg noted inline where it diverges — see §E). §multi-pattern measured on **x86-64 devbox** (g++ 13.3, RE2 + Hyperscan 5.4) |
 | Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (built from source on x86-64 to pin the exact version); RE2 (10.0 on x86-64, 11.0 on arm64 — version-differs-by-leg, uncontested given the margins). Multi-pattern: RE2::Set, Hyperscan (optional). §E: rust `regex` 1.12.4 |
 | Python | CPython 3.14.6, `re` (stdlib) vs the in-place REAL `2026.7.55` extension (§B re-measured for this stamp, arm64 M1 Pro, N = 40 paired samples, bootstrap CI) |
@@ -624,17 +624,39 @@ operations:
   | `\b\w+\b` | 7.12 µs | 238 µs | **33.4×** | 7.56 µs | 267 µs | **35.3×** |
   | `(\w+)@(\w+)` | 11.2 µs | 559 µs | **49.7×** | **2.91 ms** | 589 µs | **0.20× — REAL 4.94× behind** |
 
-  REAL is ahead on **8 of 8** compile rows and **7 of 8** first-use rows. The exception is the one that
-  matters most to state plainly: `(\w+)@(\w+)` still pays **2.91 ms** on first use to build its one-pass
-  capture extractor, against 589 µs for the whole of `regex`'s eager work. That is down from **21.3 ms**
-  (34.9× behind) over five passes — flat scratch, sparse signatures, one interned class per byte range,
-  jump-chain resolution in the flood (which alone made the flood land *on* the minimal automaton, 660 nodes
-  in and 660 out where it was 2508 in), and dropping a duplicate Tier-A/Tier-B expansion — but 4.94× behind
-  is still behind. Declining the table instead is not the answer and was measured: it buys **3.3×** on the
-  scan (`find` 135 µs against 443 on a 64 KiB corpus), with a break-even near 900 KB.
+  REAL was ahead on **8 of 8** compile rows and **7 of 8** first-use rows, the exception being
+  `(\w+)@(\w+)`: **2.91 ms** on first use to build its one-pass capture extractor, against 589 µs for the
+  whole of `regex`'s eager work. That was already down from **21.3 ms** (34.9× behind) over five passes —
+  flat scratch, sparse signatures, one interned class per byte range, jump-chain resolution in the flood
+  (which alone made the flood land *on* the minimal automaton, 660 nodes in and 660 out where it was 2508
+  in), and dropping a duplicate Tier-A/Tier-B expansion — and it later reached **2.64× behind**, but behind
+  is behind. Declining the table instead is not the answer and was measured: it buys **3.3×** on the scan
+  (`find` 135 µs against 443 on a 64 KiB corpus), with a break-even near 900 KB.
 
-  Read the two families together: REAL's cost is overwhelmingly *eager and small*, `regex`'s is *eager and
-  large*, and the one place REAL is worse is a **lazy** build that a short-lived pattern pays in full.
+  **That row is now at parity, and it took a sixth pass to see why.** The profile said the cost was not the
+  table's construction but the DECISION to construct it: `ensure_immutables` built the extractor alongside
+  the byte program, so every route needing only the cheap half paid for the expensive one. The measurement
+  that settled it was the capture-free twin — `\w+@\w+` has 2 slots, no capture for an extractor to fill,
+  and cost the same 1487 µs. Built only where captures are actually extracted through it, a first search
+  drops **1490 → 573 µs on arm64 and 1958 → 813 on x86-64** (direct harness, both platforms), and
+  `\d{4}-\d{2}-\d{2}` follows it from 296 to 167 — six `\d` occurrences, and a no-match scan never
+  extracts. On this bench, in one run with both engines in the same process:
+
+  | criterion row | REAL | `regex` | |
+  | --- | ---: | ---: | :--- |
+  | `first_use/email` | 604.53 µs | 601.81 | **parity** — CIs overlap ([595.8, 615.4] vs [593.5, 612.5]) |
+  | `first_use/word_bound` | 7.73 | 269.85 | REAL **34.9× ahead** |
+  | `first_use/no_match` | 5.97 | 170.87 | REAL **28.6× ahead** |
+
+  Parity, not a lead: the intervals overlap, so the defensible claim is that the gap is gone. The scan rows
+  were re-measured to confirm the cost did not simply move — `find/email` 46.52 µs (46.20 before),
+  `captures/email` 51.98 (52.10), `find/no_match` 1.67 against the crate's 776 ns — all unchanged. Measured
+  on the same arm64 M1 Pro, one group at a time; NOT under the interleaved A/B protocol the table above
+  uses, which is why these sit in their own table rather than as a new column in it.
+
+  Read the two families together: REAL's cost is overwhelmingly *eager and small* and `regex`'s is *eager
+  and large*. The one place REAL was worse was a **lazy** build that a short-lived pattern paid in full, and
+  it was worse because it was built for callers that could not use it.
 
 So on span throughput the crate is competitive; on full capture extraction use the reusable buffer when it
 matters. Either way the pitch is not raw speed but the linear-time / ReDoS-safe guarantee and the
