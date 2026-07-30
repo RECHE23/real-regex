@@ -69,7 +69,7 @@ include mk/help.mk
         example-check \
         bench-engines bench-multipattern bench-duel bench-static bench-matrix matrix-gate \
         profile-sample profile-callgrind \
-        version-check install install-smoke uninstall release help check-layers check-doc-style
+        version-check install install-smoke uninstall release help check-layers check-doc-style check-bench-stamp
 
 .DEFAULT_GOAL := help
 
@@ -338,6 +338,12 @@ check-layers:
 check-doc-style:
 	@python3 tools/check_doc_style.py
 
+# Staleness of docs/BENCHMARKS.md against the engine, by SUBSTANCE (comments stripped) rather than by
+# touch -- eleven of the last fourteen commits under include/real/ were documentation-only, and warning
+# on those would train the reader to ignore it. Warns, never fails.
+check-bench-stamp:
+	@python3 tools/check_bench_stamp.py
+
 # Fail-fast gate of record: CHEAP / FAST first, expensive last. First non-zero aborts
 # the rest (no -k). Order is intentional — a Doxygen param miss or format drift must not
 # wait for sanitize/python. Compound steps (lint | tee) use `set -euo pipefail`.
@@ -442,6 +448,13 @@ full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate 
 	@$(MAKE) format-check
 	@echo "── [2/22] version-check"
 	@$(MAKE) version-check
+	# Complements version-check's bench-stamp line, which compares VERSION STRINGS and so only fires
+	# across a release bump. This one asks whether the engine changed in substance since the figures
+	# were stamped -- the case that actually happens between releases, and the one that let a closed
+	# deficit stay documented as open (d7d9485). Warns, never fails: benchmarks cannot be re-run per
+	# commit. Local only -- it reads git history, which a CI shallow clone does not have.
+	@echo "── [2b/22] check-bench-stamp (engine moved since the benchmarks were stamped?)"
+	@$(MAKE) check-bench-stamp
 	@echo "── [3/22] check-layers"
 	@$(MAKE) check-layers
 	@echo "── [4/22] check-pins"
