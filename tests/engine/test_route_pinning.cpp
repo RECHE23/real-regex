@@ -112,3 +112,49 @@ TEST(route_pin_class_fastpath_seam_falls_through)
   EXPECT_EQ(n_on, n_off);
   EXPECT(n_on > 0);
 }
+
+// The one-pass extractor is by far the most expensive thing the per-regex cache holds -- measured on a
+// first `(\w+)@(\w+)` search, 884 us against 331 for the byte program and 117 for the lazy DFA. It used
+// to be built by ensure_immutables() alongside the byte program, so EVERY route that needed the cheap
+// half paid for the expensive one, including patterns with no capture to extract at all. Splitting it
+// behind its own identity flag took that first search from 1490 to 573 us on arm64 and 1958 to 813 on
+// x86-64, and `\d{4}-\d{2}-\d{2}` (no match, memmem-only) from 296 to 167.
+//
+// This pins the split itself, not a duration: if a route change starts building the extractor on a
+// search that never extracts through it, the win is gone and nothing else would say so. A future route
+// that legitimately needs it here must show the measurement that justifies the cost.
+TEST(capture_free_search_does_not_build_the_onepass_extractor)
+{
+  // SHORT, deliberately: below lazy_dfa_min_input (512) the search does not take the lazy-DFA route,
+  // which DOES extract through the table and so builds it (correctly). The saving is on a short first
+  // search -- which is exactly what the criterion first_use/ group measures (its subject is 80 bytes)
+  // and what a program doing one small match pays. Padding this past 512 engages the DFA route and the
+  // table is built again; that is the route working as intended, not a regression.
+  const std::string text {"say alpha@beta now"};
+
+  // 2 slots: the whole-match span and nothing else -- there is no capture for an extractor to fill.
+  const real::regex bare(R"(\w+@\w+)");
+  EXPECT_EQ(bare.raw_program().slot_count, 2U);
+  EXPECT(bare.search(text).matched());
+  const real::detail::regex_immutables* const bi {bare.raw_program().immut};
+  EXPECT(bi != nullptr);
+  EXPECT(bi->built_for.load(std::memory_order_acquire) != nullptr); // the cheap half WAS built
+  EXPECT(bi->op_table_for.load(std::memory_order_acquire) == nullptr);
+  EXPECT(!bi->op_table.has_value());
+
+  // A no-match scan is memmem-only and likewise never extracts.
+  const real::regex nomatch(R"(\d{4}-\d{2}-\d{2})");
+  EXPECT(!nomatch.search(text).matched());
+  const real::detail::regex_immutables* const ni {nomatch.raw_program().immut};
+  EXPECT(ni != nullptr);
+  EXPECT(ni->op_table_for.load(std::memory_order_acquire) == nullptr);
+
+  // The extractor is still built where captures ARE filled through it, so the split cost nothing:
+  // an anchored full-match on a one-pass pattern is the route that consults it.
+  const real::regex anchored(R"((\w+)@(\w+))");
+  EXPECT(anchored.fullmatch("alpha@beta").matched());
+  const real::detail::regex_immutables* const ai {anchored.raw_program().immut};
+  EXPECT(ai != nullptr);
+  EXPECT(ai->op_table_for.load(std::memory_order_acquire) != nullptr);
+  EXPECT(ai->op_table.has_value());
+}

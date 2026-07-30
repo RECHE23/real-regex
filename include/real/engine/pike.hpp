@@ -823,7 +823,7 @@ namespace real::detail {
         // a single pass over that window; extract returns false (and we fall to the VM) if it does not one-pass
         // or the span does not in fact match there. Only the immutables are needed, so no DFA build is paid.
         if (!std::is_constant_evaluated() && !lazy_dfa_route_disabled() && mode == run_mode::full) {
-          ensure_immutables();
+          ensure_op_table();
           if (prog_.immut != nullptr && prog_.immut->op_table.has_value() && prog_.immut->op_table->eligible()
               && prog_.immut->op_table->extract(text, start, text.size(), out_slots)) {
             prof::tick_route(prof::route::onepass_full);
@@ -981,7 +981,7 @@ namespace real::detail {
             }
             const std::size_t e {match_end};
             stop = e;
-            ensure_immutables();
+            ensure_op_table();
             if (prog_.immut != nullptr && prog_.immut->op_table.has_value() && prog_.immut->op_table->eligible()
                 && prog_.immut->op_table->extract(text, s, e, out_slots)) {
               return true;
@@ -1341,32 +1341,14 @@ namespace real::detail {
       // op_table pointing at a freed buffer. Nothing dereferences it in that window today; closing the
       // window costs one statement and removes the need to know that.
       immut->op_table.reset();
-      immut->byte_prog = build_byte_program(prog_); // Tier-A: ineligible if assert/lookaround
+      immut->op_table_for.store(nullptr, std::memory_order_relaxed); // the extractor is gone with it
+      immut->byte_prog = build_byte_program(prog_);                  // Tier-A: ineligible if assert/lookaround
       if (immut->byte_prog.eligible) {
         immut->alphabet =
           compute_lazy_alphabet(immut->byte_prog.code, immut->byte_prog.classes); // shared by both DFAs
       }
       else {
         immut->alphabet = {};
-      }
-      // Tier-B differs from Tier-A ONLY at `assert_position`: build_byte_program reads keep_assertions
-      // nowhere else, and every other ineligibility (assert_lookaround, a Tier 1 possessive loop) is
-      // decided identically either way. So a program with no `assert_position` yields a byte-for-byte
-      // identical expansion, and rebuilding it means expanding every Unicode class's UTF-8 trie a second
-      // time -- measured, that was 2 of the 5 trie builds per regex, plus a second full
-      // compute_lazy_alphabet over the same input.
-      //
-      // Reusing immut->byte_prog is also the sounder lifetime: onepass keeps `code_` / `classes_` as spans
-      // over the program it was built from, and the Tier-B local died at the end of this block.
-      if (std::any_of(prog_.code.begin(), prog_.code.end(),
-                      [](const instr& in) { return in.op == opcode::assert_position; })) {
-        const byte_program tier_b {build_byte_program(prog_, /*keep_assertions=*/ true)};
-        if (tier_b.eligible) {
-          immut->op_table.emplace(tier_b); // one-pass extractor: Tier-A window + Tier-B anchored
-        }
-      }
-      else if (immut->byte_prog.eligible) {
-        immut->op_table.emplace(immut->byte_prog);
       }
       immut->il_prefix_prog  = {};
       immut->il_min_haystack = 0;
@@ -1391,6 +1373,62 @@ namespace real::detail {
       // Same immut address, new program: drop previous pattern's shared DFAs (not just address-reuse).
       reset_shared_dfas(immut);
       immut->built_for.store(want, std::memory_order_release);
+    }
+
+    /*!
+     * \brief Build (or rebuild) the one-pass capture extractor, on top of \ref ensure_immutables.
+     *
+     * Split out of \ref ensure_immutables because it is the expensive half and only some callers need it.
+     * Measured on a first `(\w+)@(\w+)` search: 884 us here against 331 for the byte program and 117 for
+     * the lazy DFA. Bundled, every route that wanted only the byte program paid all of it -- including a
+     * capture-free pattern, since `\w+@\w+` (2 slots, nothing to extract) measured the same 1487 us as its
+     * 6-slot twin. So the split is not a micro-optimisation: it stops a search from building a capture
+     * extractor it cannot consult.
+     *
+     * Guarded by its own \ref regex_immutables::op_table_for, exactly as the membership rows are guarded by
+     * \c rows_for and for the same reason -- an identity independent of \c built_for, because this is needed
+     * by a different subset of routes. \ref ensure_immutables clears both the extractor and this flag when
+     * it rebuilds, so a reassigned regex cannot read one built for the previous program.
+     */
+    void ensure_op_table()
+    {
+      ensure_immutables();
+      detail::regex_immutables* const immut {prog_.immut};
+      if (immut == nullptr) {
+        return;
+      }
+      const void* const want {prog_.code.data()};
+      if (immut->op_table_for.load(std::memory_order_acquire) == want) {
+        return; // hot path: one acquire load, no mutex
+      }
+      const std::lock_guard<std::mutex> lock {detail::immut_build_mu(immut)};
+      if (immut->op_table_for.load(std::memory_order_relaxed) == want) {
+        return; // double-check
+      }
+      // Tier-B differs from Tier-A ONLY at `assert_position`: build_byte_program reads keep_assertions
+      // nowhere else, and every other ineligibility (assert_lookaround, a Tier 1 possessive loop) is
+      // decided identically either way. So a program with no `assert_position` yields a byte-for-byte
+      // identical expansion, and rebuilding it means expanding every Unicode class's UTF-8 trie a second
+      // time -- measured, that was 2 of the 5 trie builds per regex, plus a second full
+      // compute_lazy_alphabet over the same input.
+      //
+      // Reusing immut->byte_prog is also the sounder lifetime: onepass keeps `code_` / `classes_` as spans
+      // over the program it was built from, and the Tier-B local dies at the end of this block. Those spans
+      // are read only by the constructor (build / minimize / build_edges / follow_jumps, all private), and
+      // `extract` touches the node table alone -- so the Tier-B spans dangle without ever being
+      // dereferenced. Latent, not live, and stated here because the next reader of `code_` would make it
+      // live.
+      if (std::any_of(prog_.code.begin(), prog_.code.end(),
+                      [](const instr& in) { return in.op == opcode::assert_position; })) {
+        const byte_program tier_b {build_byte_program(prog_, /*keep_assertions=*/ true)};
+        if (tier_b.eligible) {
+          immut->op_table.emplace(tier_b); // one-pass extractor: Tier-A window + Tier-B anchored
+        }
+      }
+      else if (immut->byte_prog.eligible) {
+        immut->op_table.emplace(immut->byte_prog);
+      }
+      immut->op_table_for.store(want, std::memory_order_release);
     }
 
     /*!
@@ -1438,7 +1476,11 @@ namespace real::detail {
       if (immut == nullptr) {
         return false; // no cache → no DFA route, same contract as the per-regex design
       }
-      ensure_immutables();
+      // ensure_op_table, not ensure_immutables: \p fn is try_shared_lazy_dfa_search, whose confirm steps
+      // DO extract through op_table. It must be built BEFORE slot.mu is taken -- ensure_op_table locks
+      // immut_build_mu, and reset_shared_dfas walks immut_build_mu -> map_mu/slot.mu, so building it inside
+      // the lambda would invert that order.
+      ensure_op_table();
       shared_dfa_slot&                  slot {shared_dfa_for(immut)};
       const std::lock_guard<std::mutex> lock {slot.mu};
       ensure_slot_search_dfas_unlocked(*immut, slot);

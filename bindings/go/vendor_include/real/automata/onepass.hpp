@@ -840,6 +840,15 @@ namespace real::detail {
     //!        the DFA caches.
     std::atomic<const void*> rows_for {nullptr};
 
+    //! \brief \c prog.code.data() \ref op_table was built for, or null. Same identity discipline as
+    //!        \ref rows_for and for the same reason: the extractor is needed only by the routes that
+    //!        actually fill captures through it, and it is by far the most expensive thing this cache
+    //!        holds -- 884 of the 1494 us a first `(\w+)@(\w+)` search spent, measured, against 331 for
+    //!        the byte program and 117 for the lazy DFA. Bundling it with \ref built_for made every route
+    //!        that needs only the byte program pay for it, including a 2-slot pattern with no capture to
+    //!        extract at all (`\w+@\w+` measured the same 1487 us as its 6-slot twin).
+    std::atomic<const void*> op_table_for {nullptr};
+
     //! \brief \c prog.code.data() this cache was built for, or null if never built / invalidated.
     //!        Hot path: one atomic load. Not \c once_flag — assignment reuses this object under a new
     //!        program; a spent once_flag would never rebuild (silent wrong matches).
