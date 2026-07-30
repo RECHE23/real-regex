@@ -10,8 +10,19 @@
 // range membership (the 23.1% Ir line) becomes the outlined, cold cp_class_hi_width below; the ASCII
 // fast path stays a plain asc[b] table load with no lambda/closure call. Elimination is partial by
 // design: width()/extend_run() (cpclass_gcc_loop.hpp) remain lambdas, and gcc still doesn't fully
-// inline them — a further ~23% Ir measured post-split, named as headroom for a future pass, not
-// touched here.
+// inline them — a further ~23% Ir measured post-split, named as headroom for a future pass.
+//
+// O2r-1c took part of that headroom, and NOT by inlining: forcing extend_run inline was tried and
+// refuted (x86 Ir -10% on \w+, wall clock +34..37% on \d+ and +8% on \w+ under an interleaved A/B,
+// with the untouched [a-z]+ also +5% — byte-identical in Ir, so the cost was code layout, not the
+// loop). What paid instead was making the call CHEAPER while leaving it out of line: extend_run
+// captured `[&]`, so each call walked a closure of references that itself held `width`, another
+// by-reference closure — two indirections per call. Explicit by-value capture of the scalars, with
+// width's three lines inlined into it, removes both. x86 g++-14: \d+ -13% wall / -7.4% Ir over three
+// interleaved rounds, \w+ within noise, [a-z]+ byte-identical in Ir. \d+ gains most because its
+// class has ten ASCII members against \w's sixty-three, so runs are shorter and the per-call cost is
+// paid more often per byte. M1 is unaffected by construction (clang never compiles this file:
+// `c++ -E` finds zero occurrences of cp_class_hi_width) and by measurement (arm64 A/B identical).
 //
 // Measured x86 devbox A/B (land threshold >=10%, paid): \w+ -24.7%, \d+ -66%; witnesses ([a-z]+,
 // trailing-LA) within noise. M1 is unaffected by construction: this file, and the branch selecting it

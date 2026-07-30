@@ -29,13 +29,25 @@ const auto                width = [&](std::size_t i) -> std::size_t {
 // [0-9]+, [^,]+ and dog, while a specialised copy here moved [a-z]+ by -0.54% and \w+ by 0.00003%.
 const auto in_class = [&](std::size_t i) -> bool { return width(i) != 0; };
 // Success: fill_span_slots ensure_size; fail assigns below (shared fail lambda after this splice).
-const auto extend_run = [&](std::size_t match_start) -> std::size_t {
-                          const std::size_t first {width(match_start)};
+// EXPERIMENT (O2r-1c): explicit by-VALUE capture of the scalars instead of `[&]`. gcc keeps this
+// lambda out of line, and `[&]` made every call traverse a closure of references -- including a
+// reference to `width`, itself a by-reference closure, so the width call inside was a second
+// indirection. Small by-value members let the one remaining call load them directly.
+const auto extend_run = [text, asc, cp_index, this,
+                         greedy = prog_.hints.greedy_cp_class_plus,
+                         max_len = prog_.hints.greedy_cp_class_max](std::size_t match_start) -> std::size_t {
+                          const auto width_at = [text, asc, cp_index, this](std::size_t i) -> std::size_t {
+                                                  const auto lead {static_cast<std::uint8_t>(text[i])};
+                                                  if (asc[lead] != 0U) { return 1; }
+                                                  if (lead < 0x80U) { return 0; }
+                                                  return cp_class_hi_width(text, i, cp_index);
+                                                };
+                          const std::size_t first {width_at(match_start)};
                           if (first == 0) {
                             return npos;
                           }
                           std::size_t match_end {match_start + first};
-                          if (prog_.hints.greedy_cp_class_plus) {
+                          if (greedy) {
                             while (match_end < text.size()) {
                               const auto lead {static_cast<std::uint8_t>(text[match_end])};
                               // Table FIRST — same soundness argument as `width` above.
@@ -55,8 +67,7 @@ const auto extend_run = [&](std::size_t match_start) -> std::size_t {
                           }
                           // A COUNTED repeat sits in the `else`; see the same split in pike.hpp's own
                           // extend_run for the 2.3 % that ordering it the other way cost right here.
-                          else if (const std::size_t max_len {prog_.hints.greedy_cp_class_max};
-                                   max_len != 0) {
+                          else if (max_len != 0) {
                             for (std::size_t n {1}; n < max_len && match_end < text.size(); ++n) {
                               const auto lead {static_cast<std::uint8_t>(text[match_end])};
                               // Table FIRST — same soundness argument as `width` above.
