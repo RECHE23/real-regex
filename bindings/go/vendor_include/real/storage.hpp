@@ -66,6 +66,7 @@ namespace real {
 
     /*!
      * \brief Returns a view of the string, excluding the trailing NUL.
+     * \return A view of the \c N-1 pattern characters.
      */
     [[nodiscard]] constexpr std::string_view view() const
     {
@@ -173,6 +174,7 @@ namespace real {
 
       /*!
        * \brief Returns the number of elements.
+       * \return The element count.
        */
       [[nodiscard]] constexpr std::size_t size() const
       {
@@ -181,6 +183,7 @@ namespace real {
 
       /*!
        * \brief Returns `true` if empty.
+       * \return Whether the vector holds no elements.
        */
       [[nodiscard]] constexpr bool empty() const
       {
@@ -209,6 +212,7 @@ namespace real {
 
       /*!
        * \brief Returns reference to the last element. Precondition: the vector is non-empty.
+       * \return A reference to the last element.
        */
       [[nodiscard]] constexpr T& back()
       {
@@ -301,8 +305,11 @@ namespace real {
       //!        out-of-bounds on \ref transfer_range).
       struct inline_block
       {
-        T elems[InlineCapacity];
+        T elems[InlineCapacity]; //!< The inline elements, as a plain C array the analyzer can bound.
       };
+
+      //! \brief The either-or storage: the inline buffer, or a pointer to the heap block once the
+      //!        vector has spilled. \ref is_heap_ says which member is active.
       union Storage
       {
         inline_block inline_buffer; //!< Inline storage (when not heap).
@@ -336,7 +343,7 @@ namespace real {
         Storage& operator=(const Storage&)  = delete;
         Storage(Storage &&)                 = delete;
         Storage& operator=(Storage&&)       = delete;
-      } storage_ {};
+      } storage_ {}; //!< The active storage, inline or heap.
 
       // Run-time cache of the active storage base (inline buffer or heap block), refreshed on
       // every state change via \ref refresh_data. The hot accessors (operator[], back, push_back)
@@ -345,7 +352,7 @@ namespace real {
       // *this is not a usable constant across copies, so the constexpr path keeps the is_heap_
       // branch (guarded by std::is_constant_evaluated). static_regex uses static_vec, not
       // small_vec, so this never participates in compile-time matching.
-      T* data_ {};
+      T* data_ {}; //!< Cached base of the active storage; see the note above, and \ref refresh_data.
 
       //! \brief Refreshes \ref data_ to the active storage base (run time only).
       constexpr void refresh_data() noexcept
@@ -357,6 +364,7 @@ namespace real {
 
       /*!
        * \brief Returns pointer to the inline buffer.
+       * \return A pointer to its first element, whether or not the inline state is active.
        */
       [[nodiscard]] constexpr T* inline_data() noexcept
       {
@@ -365,6 +373,7 @@ namespace real {
 
       /*!
        * \brief Returns const pointer to the inline buffer.
+       * \return A const pointer to its first element, whether or not the inline state is active.
        */
       [[nodiscard]] constexpr const T* inline_data() const noexcept
       {
@@ -578,6 +587,7 @@ namespace real {
 
       /*!
        * \brief Returns the number of elements.
+       * \return The element count.
        */
       [[nodiscard]] constexpr std::size_t size() const noexcept
       {
@@ -586,6 +596,7 @@ namespace real {
 
       /*!
        * \brief Returns `true` if empty.
+       * \return Whether the vector holds no elements.
        */
       [[nodiscard]] constexpr bool empty() const noexcept
       {
@@ -628,6 +639,7 @@ namespace real {
 
       /*!
        * \brief Returns reference to the last element. Precondition: the vector is non-empty.
+       * \return A reference to the last element.
        */
       [[nodiscard]] constexpr T& back() noexcept
       {
@@ -640,6 +652,7 @@ namespace real {
 
       /*!
        * \brief Returns const reference to the last element. Precondition: the vector is non-empty.
+       * \return A const reference to the last element.
        */
       [[nodiscard]] constexpr const T& back() const noexcept
       {
@@ -689,6 +702,7 @@ namespace real {
 
       /*!
        * \brief Move constructor: steals \p other's heap block or moves inline elements.
+       * \param[in,out] other The vector to move from; left empty and inline.
        */
       constexpr small_vec(small_vec&& other) noexcept
         : size_(other.size_),
@@ -739,6 +753,7 @@ namespace real {
 
       /*!
        * \brief Copy constructor (needed for `vector<match_result>` in find_all).
+       * \param[in] other The vector to copy.
        */
       constexpr small_vec(const small_vec& other)
         : size_(other.size_),
@@ -863,6 +878,7 @@ namespace real {
 
       /*!
        * \brief Returns a non-owning view of the compiled program.
+       * \return The view; valid as long as this storage is alive.
        */
       [[nodiscard]] constexpr program_view view() const
       {
@@ -873,6 +889,7 @@ namespace real {
 
       /*!
        * \brief Returns the original pattern text.
+       * \return The pattern, valid as long as this storage is alive.
        */
       [[nodiscard]] constexpr std::string_view pattern() const
       {
@@ -881,6 +898,7 @@ namespace real {
 
       /*!
        * \brief Returns the effective flags (constructor flags merged with (?ims)).
+       * \return The compiled flag set.
        */
       [[nodiscard]] constexpr flags compiled_flags() const
       {
@@ -911,6 +929,8 @@ namespace real {
        * Runs only at compile time (a `static_regex` instantiation), so it is invisible to the
        * runtime coverage report; it is exercised by the constexpr `static_assert`s in
        * tests/test_static.cpp and tests/test_constexpr.cpp.
+       *
+       * \return The compiled program.
        */
       static constexpr dynamic_program build()
       {
@@ -1014,10 +1034,12 @@ namespace real {
                         return t;
                       }()};
 
+      //! \brief Capture-slot storage, sized exactly to the program's slot count (no heap).
       using slot_storage = static_vec<std::size_t, slot_count>;
       // worst-case live capture blocks — every reference (a DFS stack frame or a thread in either
       // list) could point to a distinct block; freed blocks recycle through the pool's free list, so the
       // pool never grows past this. The stack is (3*code_size)+4, each list up to code_size threads.
+      //! \brief Worst-case live capture blocks, per the bound derived above.
       static constexpr std::size_t max_blocks {(5 * code_size) + 8};
 
       /*!
@@ -1098,6 +1120,8 @@ namespace real {
        * `view()` is called once per `search()`: line-level profiling of a single `[a-z]+` search put that
        * one aggregate initialiser at 93 of the ~325 instructions the call spends, against 17 for the class
        * scan itself.
+       *
+       * \return A reference to the single compile-time view; it outlives every caller.
        */
       [[nodiscard]] constexpr const program_view& view() const
       {
@@ -1130,6 +1154,7 @@ namespace real {
 
       /*!
        * \brief Returns the pattern text.
+       * \return A view of the compile-time pattern string.
        */
       [[nodiscard]] constexpr std::string_view pattern() const
       {
@@ -1138,6 +1163,7 @@ namespace real {
 
       /*!
        * \brief Returns the effective flags.
+       * \return The compiled flag set.
        */
       [[nodiscard]] constexpr flags compiled_flags() const
       {

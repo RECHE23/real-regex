@@ -106,6 +106,7 @@ namespace real::compat::re2 {
 
       //! \brief Approximate memory budget RE2 uses for its compiled program/DFA cache. Stored for API
       //!        shape; REAL has its own, unrelated internal budget knobs and does not consult this.
+      //! \return The stored budget, in bytes.
       [[nodiscard]] std::int64_t max_mem() const noexcept
       {
         return max_mem_;
@@ -119,6 +120,7 @@ namespace real::compat::re2 {
       }
 
       //! \brief The pattern/text encoding.
+      //! \return The configured encoding.
       [[nodiscard]] Encoding encoding() const noexcept
       {
         return encoding_;
@@ -133,6 +135,7 @@ namespace real::compat::re2 {
 
       //! \brief Whether the pattern is restricted to POSIX egrep syntax. Always rejected here (no
       //!        REAL-side equivalent grammar mode) if set to `true`.
+      //! \return Whether POSIX-ERE syntax is selected.
       [[nodiscard]] bool posix_syntax() const noexcept
       {
         return posix_syntax_;
@@ -147,6 +150,7 @@ namespace real::compat::re2 {
 
       //! \brief Whether to search for the longest match instead of the first. Honored for
       //!        `PartialMatch` (via `real::regex::search_longest()`); see the file-level doc comment.
+      //! \return Whether leftmost-longest semantics are selected.
       [[nodiscard]] bool longest_match() const noexcept
       {
         return longest_match_;
@@ -161,6 +165,7 @@ namespace real::compat::re2 {
 
       //! \brief Whether to log syntax/execution errors. Stored for API shape; this layer reports
       //!        errors through `RE2::error()` regardless, never a logging side-channel.
+      //! \return Whether construction failures are logged.
       [[nodiscard]] bool log_errors() const noexcept
       {
         return log_errors_;
@@ -175,6 +180,7 @@ namespace real::compat::re2 {
 
       //! \brief Whether the pattern is matched as a literal string rather than parsed as a regex.
       //!        Honored by escaping the pattern (`QuoteMeta`) before compiling.
+      //! \return Whether the pattern is treated as a literal string.
       [[nodiscard]] bool literal() const noexcept
       {
         return literal_;
@@ -189,6 +195,7 @@ namespace real::compat::re2 {
 
       //! \brief Whether the pattern must never match `\n`, even where the pattern text says it
       //!        should. Always rejected here (no REAL-side equivalent) if set to `true`.
+      //! \return Whether `.` and negated classes are barred from matching a newline.
       [[nodiscard]] bool never_nl() const noexcept
       {
         return never_nl_;
@@ -202,6 +209,7 @@ namespace real::compat::re2 {
       }
 
       //! \brief Whether `.` also matches `\n`. Honored via `flags::dotall`.
+      //! \return Whether `.` matches a newline.
       [[nodiscard]] bool dot_nl() const noexcept
       {
         return dot_nl_;
@@ -217,6 +225,7 @@ namespace real::compat::re2 {
       //! \brief Whether every `(...)` parses as non-capturing. Always rejected here (this layer
       //!        always captures every group; honoring `true` silently would change
       //!        `NumberOfCapturingGroups()` and which `Arg` extractions succeed) if set to `true`.
+      //! \return Whether capturing groups are demoted to non-capturing.
       [[nodiscard]] bool never_capture() const noexcept
       {
         return never_capture_;
@@ -231,6 +240,7 @@ namespace real::compat::re2 {
 
       //! \brief Whether matching is case-sensitive by default (overridable per-pattern with `(?i)`,
       //!        same interaction RE2 itself documents). Honored via `flags::icase` when `false`.
+      //! \return Whether matching is case-sensitive.
       [[nodiscard]] bool case_sensitive() const noexcept
       {
         return case_sensitive_;
@@ -245,6 +255,7 @@ namespace real::compat::re2 {
 
       //! \brief Only consulted by real RE2 under `posix_syntax`, which this layer rejects — inert
       //!        here for the same reason it is inert in real RE2 outside `posix_syntax` mode.
+      //! \return Whether Perl classes (`\\d`, `\\s`, `\\w`) are enabled.
       [[nodiscard]] bool perl_classes() const noexcept
       {
         return perl_classes_;
@@ -259,6 +270,7 @@ namespace real::compat::re2 {
 
       //! \brief Only consulted by real RE2 under `posix_syntax`, which this layer rejects — inert
       //!        here for the same reason it is inert in real RE2 outside `posix_syntax` mode.
+      //! \return Whether `\\b` and `\\B` are enabled.
       [[nodiscard]] bool word_boundary() const noexcept
       {
         return word_boundary_;
@@ -273,6 +285,7 @@ namespace real::compat::re2 {
 
       //! \brief Only consulted by real RE2 under `posix_syntax`, which this layer rejects — inert
       //!        here for the same reason it is inert in real RE2 outside `posix_syntax` mode.
+      //! \return Whether `^`/`$` match only at the text edges.
       [[nodiscard]] bool one_line() const noexcept
       {
         return one_line_;
@@ -488,36 +501,42 @@ namespace real::compat::re2 {
     }
 
     //! \brief Whether construction succeeded (`error_code() == ErrorCode::NoError`).
+    //! \return Whether the pattern compiled.
     [[nodiscard]] bool ok() const noexcept
     {
       return error_code_ == ErrorCode::NoError;
     }
 
     //! \brief The pattern text this `RE2` was built from.
+    //! \return The pattern, valid as long as this object is alive.
     [[nodiscard]] const std::string& pattern() const noexcept
     {
       return pattern_;
     }
 
     //! \brief The rejection reason, or an empty string if `ok()`.
+    //! \return The message, empty when construction succeeded.
     [[nodiscard]] const std::string& error() const noexcept
     {
       return error_;
     }
 
     //! \brief The coarse rejection category, or `ErrorCode::NoError` if `ok()`.
+    //! \return The category, `ErrorCode::NoError` when construction succeeded.
     [[nodiscard]] ErrorCode error_code() const noexcept
     {
       return error_code_;
     }
 
     //! \brief The construction options this `RE2` was built with.
+    //! \return The options, valid as long as this object is alive.
     [[nodiscard]] const Options& options() const noexcept
     {
       return options_;
     }
 
     //! \brief The number of capturing groups (excluding group 0), or `0` if `!ok()`.
+    //! \return The capturing-group count.
     [[nodiscard]] int NumberOfCapturingGroups() const noexcept
     {
       return num_captures_;
