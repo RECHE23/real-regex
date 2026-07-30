@@ -602,3 +602,36 @@ TEST(onepass_fullmatch_routed_equals_pike)
     }
   }
 }
+
+// onepass keeps `code_` / `classes_` as spans over the byte_program it was built from, and one caller --
+// the Tier-B branch of pike_vm::ensure_op_table -- builds it from a byte_program LOCAL to its own block.
+// Those spans therefore dangle the moment that local dies. Nothing dereferences them (every reader is
+// private and reachable only from build(), and extract answers from the node table alone), and the
+// constructor now empties them so that stays true by construction rather than by audit.
+//
+// This pins the property that argument protects: a table outlives the program it was built from and still
+// extracts correctly. Under the sanitizer build it is also a live use-after-free detector -- if a future
+// member starts reading code_ after construction, this test is where it surfaces.
+TEST(onepass_outlives_the_byte_program_it_was_built_from)
+{
+  const real::regex                    re(R"(\b(\w+)@(\w+)\b)"); // Tier-B: the \b forces keep_assertions
+  const std::string                    text {"say alpha@beta now"};
+  std::optional<real::detail::onepass> table;
+  {
+    // The exact shape ensure_op_table's Tier-B branch uses: a local the table then outlives.
+    const byte_program tier_b {real::detail::build_byte_program(re.raw_program(), /*keep_assertions=*/ true)};
+    EXPECT(tier_b.eligible);
+    table.emplace(tier_b);
+  } // tier_b dies here; any surviving span into it is now dangling
+
+  EXPECT(table->eligible());
+  std::vector<std::size_t> slots(re.raw_program().slot_count, real::npos);
+  // The window the caller would hand it: the whole-match span of the pattern in `text`.
+  const auto m = re.search(text);
+  EXPECT(m.matched());
+  EXPECT(table->extract(text, m.start(0), m.end(0), slots));
+  EXPECT_EQ(slots[0], m.start(0));
+  EXPECT_EQ(slots[1], m.end(0));
+  EXPECT_EQ(text.substr(slots[2], slots[3] - slots[2]), std::string {"alpha"});
+  EXPECT_EQ(text.substr(slots[4], slots[5] - slots[4]), std::string {"beta"});
+}
