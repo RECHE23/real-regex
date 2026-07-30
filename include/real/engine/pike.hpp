@@ -4396,17 +4396,13 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Tests a decoded code point against a `klass_cp` class: ASCII bitmap below 0x80, a binary
-     *        search of the class's range slice above. The class is already the effective set, so this
-     *        is a plain positive membership test.
+     * \brief Tests a decoded code point against a `klass_cp` class: ASCII bitmap below 0x80; above,
+     *        \ref cp_member_hi when a class index is known at runtime (page + sparse hi table), else
+     *        pure binary search of the class's range slice (constexpr / const paths). The class is
+     *        already the effective set, so this is a plain positive membership test.
      * \param[in] cc The code-point class (from `prog_.cp_classes`).
      * \param[in] cp The decoded code point.
      * \return Whether \p cp is a member.
-     */
-    /*!
-     * \brief Tests a decoded code point against a `klass_cp` class: ASCII bitmap below 0x80; above,
-     *        \ref cp_member_hi when a class index is known at runtime (page + sparse hi table), else
-     *        pure binary search of the class's range slice (constexpr / const paths).
      */
     [[nodiscard]] constexpr bool cp_class_matches(const detail::cp_class& cc,
                                                   char32_t                cp) const

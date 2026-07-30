@@ -174,12 +174,13 @@ namespace real::detail {
    */
   struct ast
   {
-    std::vector<ast_node>    nodes;                      //!< The node pool; \ref root indexes it.
-    std::vector<class_def>   classes;                    //!< Character classes as written, before negation.
-    std::vector<named_group> names;                      //!< Named capture groups.
-    flags                    inline_flags {flags::none}; //!< Added flags from a leading `(?imsxaU)` group (OR-only: it cannot represent a `-` removal).
-    std::int32_t             group_count  {};            //!< Number of capturing groups.
-    std::int32_t             root         {-1};          //!< Index of the root node.
+    std::vector<ast_node>    nodes;                        //!< The node pool; \ref root indexes it.
+    std::vector<class_def>   classes;                      //!< Character classes as written, before negation.
+    std::vector<named_group> names;                        //!< Named capture groups.
+    flags                    inline_flags   {flags::none}; //!< Flags a leading `(?imsxaU)` group ADDED (OR-only, hence the companion below).
+    flags                    inline_removed {flags::none}; //!< Flags a leading `(?flags-flags)` group REMOVED; the caller clears these after OR-ing \ref inline_flags.
+    std::int32_t             group_count    {};            //!< Number of capturing groups.
+    std::int32_t             root           {-1};          //!< Index of the root node.
   };
 
   /*!
@@ -482,11 +483,6 @@ namespace real::detail {
       return add_node(out, {.kind = node_kind::klass, .negated = negated, .klass = index});
     }
 
-    /*!
-     * \brief The non-ASCII (>= 0x80) code-point ranges of a Unicode property table (`\d`/`\s`/`\w`),
-     *        for a text-mode shorthand. In bytes or ASCII mode (`flags::ascii` == `re.A`) the shorthand
-     *        stays ASCII-only, so this returns nothing and the ASCII bitmap alone is used.
-     */
     /*!
      * \brief Whether a shorthand (`\d \w \s`) should be a text-mode Unicode code-point predicate:
      *        true in the default text mode, false in bytes mode or under `flags::ascii` (`re.A`).
@@ -1321,8 +1317,7 @@ namespace real::detail {
     static constexpr flags without(flags value,
                                    flags bit)
     {
-      return static_cast<flags>(
-        static_cast<std::uint16_t>(static_cast<unsigned>(value) & ~static_cast<unsigned>(bit)));
+      return flags_without(value, bit); // one implementation of the width rule, in program.hpp
     }
 
     /*!
@@ -1336,10 +1331,10 @@ namespace real::detail {
      * the added/`-`/removed parse in \ref parse_group's scoped-flags branch
      * (`(?flags-flags:...)`), minus its trailing `:` (a global prefix has none).
      *
-     * \param[in,out] out Receives the added letters into \ref ast::inline_flags — same
-     *                    convention as the pre-existing add-only path; the removed set
-     *                    only ever clears bits on the scope stack (see \ref ast::inline_flags
-     *                    itself, which is OR-only and cannot represent a removal).
+     * \param[in,out] out Receives the added letters into \ref ast::inline_flags and the removed ones
+     *                    into \ref ast::inline_removed. Two fields rather than one net set because
+     *                    \ref ast::inline_flags is OR-ed across calls and so cannot carry a removal;
+     *                    the caller applies them in order, adding then clearing.
      * \return `true` if a flags group was consumed (position advanced), else
      *         `false` (position restored, for \ref parse_group to handle).
      */
@@ -1378,7 +1373,8 @@ namespace real::detail {
         pos_ = saved_pos; // some other (?...) construct, or a scoped (?flags-flags:...): let parse_group decide
         return false;
       }
-      out.inline_flags = out.inline_flags | found;
+      out.inline_flags   = out.inline_flags | found;
+      out.inline_removed = out.inline_removed | removed;
       // A leading (?flags) group sets the base scope, so the rest of the pattern is parsed under it —
       // verbose affects tokenization, icase/ascii affect literal folding and the \w\d\s tables. This
       // mirrors the constructor flags, which seed the same base scope. The optional -removed clears

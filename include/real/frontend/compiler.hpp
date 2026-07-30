@@ -66,8 +66,7 @@ namespace real::detail {
    *
    * Idempotent on ASCII-only orbits (`[a]`↦`{a, A}`, no non-ASCII contamination). Partners that are
    * already present are harmlessly re-added (the compiler tolerates redundant ranges).
-   */
-  /*!
+   *
    * \param[in] in The class as written.
    * \return Its case-fold closure: the folded ASCII bitmap plus the coalesced non-ASCII ranges.
    */

@@ -295,9 +295,6 @@ namespace real {
       std::size_t capacity_ {InlineCapacity}; //!< Current capacity.
       bool        is_heap_  {};               //!< True once spilled to the heap.
 
-      /*!
-       * \brief Active member (inline buffer or heap pointer) per \ref is_heap_ state.
-       */
       //! \brief Inline element block. A struct (not a bare C array) so the union ctor can
       //!        activate it as a whole with \c construct_at in a constant expression, while
       //!        \ref inline_data still indexes a plain C array — which the static analyzer can
@@ -875,9 +872,14 @@ namespace real {
       {
         const ast   tree      {detail::parse(pattern, compile_flags)};
         const flags effective {compile_flags | tree.inline_flags};
+        // What the COMPILER is handed stays `effective` (added only) -- deliberately not the
+        // removal-adjusted set. The parser already applied any `(?-flags)` removal to its own base scope,
+        // so every folding and tokenization decision was made under the right flags; narrowing what
+        // `compile` sees here would change a behaviour that is already correct. What is REPORTED is the
+        // set in force, so the accessor and the engine agree on a global removal.
         return {.pattern_text    = std::string(pattern),
                 .program         = detail::compile(tree, effective),
-                .effective_flags = effective};
+                .effective_flags = flags_without(effective, tree.inline_removed)};
       }
 
       /*!
@@ -901,9 +903,9 @@ namespace real {
       }
 
       /*!
-       * \brief Returns the constructor flags OR-ed with the letters a leading global-flags group ADDED.
-       *        A `-removal` is honoured by matching but not reflected here -- see \ref real::basic_regex::compile_flags.
-       * \return The stored flag set.
+       * \brief Returns the flag set in force: constructor flags, plus a leading global-flags group's
+       *        additions, minus its `-removal` -- see \ref real::basic_regex::compile_flags.
+       * \return The effective flag set.
        */
       [[nodiscard]] constexpr flags compiled_flags() const
       {
@@ -969,7 +971,11 @@ namespace real {
 
     public:
 
-      static constexpr flags         effective_flags            {F | detail::parse(Pat.view(), F).inline_flags}; //!< Flags merged with a leading `(?imsxaU)` group.
+      //! \brief The flag set in force: \c F plus what a leading `(?imsxaU)` group added, minus what a
+      //!        `(?flags-flags)` removal cleared. Mirrors \ref dynamic_storage::compile, so the two
+      //!        storages report the same thing for the same pattern.
+      static constexpr flags         effective_flags            {flags_without(F | detail::parse(Pat.view(), F).inline_flags,
+                                                                               detail::parse(Pat.view(), F).inline_removed)};
       static constexpr pattern_hints hints                      {build().hints};                                 //!< Search hints.
       static constexpr std::size_t   code_size                  {build().code.size()};                           //!< Instruction count.
       static constexpr std::size_t   class_count                {build().classes.size()};                        //!< Distinct class count.
@@ -987,10 +993,6 @@ namespace real {
         take<cp_class, cp_class_count>(build().cp_classes);                                                      //!< Code-point classes.
       static constexpr std::array<code_range, cp_range_count> cp_ranges =
         take<code_range, cp_range_count>(build().cp_ranges);                                                     //!< Flat range buffer.
-
-      /*!
-       * \brief Capture-slot container: fixed-capacity, no heap.
-       */
 
       //! \brief Flat byte-class membership tables, built at compile time: `class_tables[i*256 + b]`.
       //!        Reuses the \ref classes member rather than calling \ref build again — an extra `build()` per
@@ -1166,9 +1168,9 @@ namespace real {
       }
 
       /*!
-       * \brief Returns the constructor flags OR-ed with the letters a leading global-flags group ADDED.
-       *        A `-removal` is honoured by matching but not reflected here -- see \ref real::basic_regex::compile_flags.
-       * \return The stored flag set.
+       * \brief Returns the flag set in force: constructor flags, plus a leading global-flags group's
+       *        additions, minus its `-removal` -- see \ref real::basic_regex::compile_flags.
+       * \return The effective flag set.
        */
       [[nodiscard]] constexpr flags compiled_flags() const
       {

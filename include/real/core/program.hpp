@@ -89,6 +89,27 @@ namespace real {
   }
 
   /*!
+   * \brief \p value with every flag in \p removed cleared -- the `(?flags-flags)` removal.
+   *
+   * There is no `operator~` for \ref flags on purpose: complementing a 16-bit enum would set every
+   * unassigned bit, and the result would be a flag set naming flags that do not exist. This states the
+   * whole operation instead. The intermediate width is `unsigned`, so the complement happens before the
+   * narrowing cast -- doing it in `std::uint16_t` would drop \ref flags::ungreedy (512) on a
+   * `std::uint8_t`-width intermediate, which is the exact bug the parser's own helper was written to
+   * avoid.
+   *
+   * \param[in] value   The flag set to clear from.
+   * \param[in] removed The flags to clear.
+   * \return \p value without \p removed.
+   */
+  constexpr flags flags_without(flags value,
+                                flags removed)
+  {
+    return static_cast<flags>(
+      static_cast<std::uint16_t>(static_cast<unsigned>(value) & ~static_cast<unsigned>(removed)));
+  }
+
+  /*!
    * \brief Tests whether \p flag is set in \p value.
    * \param[in] value The flag set to query.
    * \param[in] flag  The single flag to look for.
@@ -101,12 +122,6 @@ namespace real {
   }
 
   /*!
-   * \brief Exception thrown for an invalid pattern (or one exceeding a limit).
-   *
-   * In a constexpr context (`static_regex`), reaching the throw is a
-   * compile-time error, with the message appearing in the diagnostic trace.
-   */
-  /*!
    * \brief Whether a rejected pattern is malformed (`syntax`) or well-formed but beyond REAL's linear engine
    *        (`unsupported`: a backreference, `\p{…}`, a nested/unbounded lookaround). The distinction is a
    *        stable, machine-readable classification the C ABI exposes so a binding never has to grep `what()`.
@@ -117,8 +132,10 @@ namespace real {
     unsupported,
   };
 
-  //! \brief The exception every compile-time refusal throws: a message with the pattern offset it was found
-  //!        at, plus an \ref error_kind a caller can branch on without parsing \ref what.
+  //! \brief The exception every rejected pattern throws: a message with the pattern offset it was found at,
+  //!        plus an \ref error_kind a caller can branch on without parsing \ref what. In a constexpr context
+  //!        (`static_regex`) reaching the throw is a compile-time error, the message appearing in the
+  //!        diagnostic trace.
   class regex_error : public std::exception
   {
   public:
@@ -692,12 +709,6 @@ namespace real {
       std::int32_t end   {}; //!< End offset (exclusive) of the name.
     };
 
-    /*!
-     * \brief Non-owning view of a compiled program — what the engine executes.
-     *
-     * The spans point into storage that must outlive the view (the owning regex
-     * object). Both the dynamic and static storage policies expose one of these.
-     */
     //! \brief The per-regex immutable lazy-DFA/one-pass cache (defined in onepass.hpp; a forward declaration
     //!        keeps this low-level header independent of it). A dynamic storage owns one and points its view
     //!        at it, so the byte-program and one-pass table are built once per regex, not per find_iter.

@@ -974,16 +974,16 @@ namespace real {
     }
 
     /*!
-     * \brief Returns the constructor flags OR-ed with the letters a leading global-flags group ADDED.
+     * \brief Returns the flag set IN FORCE: the constructor flags, plus what a leading global-flags
+     *        group added, minus what its `-removal` cleared.
      *
-     * Additions only. A `-removal` in that group (`(?-i)`, `(?i-s)`) is honoured by matching but is
-     * **not** reflected here: `regex("(?-i)a", flags::icase)` matches case-sensitively, yet this still
-     * reports \ref flags::icase. The removal is applied to the parser's base scope, while the value
-     * returned here is built from \ref detail::ast::inline_flags, which is OR-only and cannot represent
-     * one. So this answers "what was requested and added", not "what is in force" — the two diverge
-     * exactly on a global removal.
+     * `regex("(?-i)a", flags::icase)` reports no \ref flags::icase and matches case-sensitively — the
+     * accessor and the engine agree. They did not always: the removal was applied to the parser's base
+     * scope while the reported value came from the add-only \ref detail::ast::inline_flags alone, so
+     * this over-reported exactly on a global removal. Removals are now carried separately
+     * (\ref detail::ast::inline_removed) and cleared here.
      *
-     * \return The stored flag set: constructor flags plus globally added ones.
+     * \return The effective flag set.
      */
     [[nodiscard]] constexpr flags compile_flags() const
     {

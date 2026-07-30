@@ -220,3 +220,48 @@ TEST(ungreedy_possessive_interaction_agrees_with_re2)
   // Without U the native possessive is untouched.
   EXPECT_EQ(real::regex("a++").search("aaa")[0], std::string_view {"aaa"});
 }
+
+// compile_flags() reports the set IN FORCE, so it must agree with what the engine actually did.
+// It did not always: the removal reached the parser's base scope (matching was correct) while the
+// reported value came from the add-only inline_flags, so a global removal was silently over-reported.
+TEST(compile_flags_reflects_a_global_removal)
+{
+  // Removal of a constructor flag: honoured by matching AND absent from the reported set.
+  const real::regex minus_i("(?-i)a", real::flags::icase);
+  EXPECT(!has_flag(minus_i.compile_flags(), real::flags::icase));
+  EXPECT(!minus_i.search("A").matched()); // the engine agrees: case-sensitive
+  EXPECT(minus_i.search("a").matched());
+
+  const real::regex minus_s("(?-s).", real::flags::dotall);
+  EXPECT(!has_flag(minus_s.compile_flags(), real::flags::dotall));
+  EXPECT(!minus_s.search("\n").matched());
+
+  // Add-then-remove in one group nets to removed, and only the named flag is touched.
+  const real::regex both("(?im-i)a", real::flags::none);
+  EXPECT(!has_flag(both.compile_flags(), real::flags::icase));
+  EXPECT(has_flag(both.compile_flags(), real::flags::multiline));
+
+  // A removal that names a flag nobody set is a no-op, not a corruption of the rest.
+  const real::regex noop("(?-x)a", real::flags::icase | real::flags::multiline);
+  EXPECT(has_flag(noop.compile_flags(), real::flags::icase));
+  EXPECT(has_flag(noop.compile_flags(), real::flags::multiline));
+  EXPECT(noop.search("A").matched());
+
+  // Additions still report, unchanged by this arc.
+  EXPECT(has_flag(real::regex("(?i)a").compile_flags(), real::flags::icase));
+}
+
+// static_regex computes effective_flags on its own path (a constexpr double-parse), so it needs its
+// own pin: the two storages must answer the same thing for the same pattern.
+TEST(static_regex_compile_flags_reflects_a_global_removal)
+{
+  static constexpr real::static_regex<"(?-i)a", real::flags::icase> minus_i;
+  // Asserted at COMPILE time: static_storage builds effective_flags in a constant expression, so a
+  // regression here is a build failure, not a test failure.
+  static_assert(!has_flag(minus_i.compile_flags(), real::flags::icase),
+                "static_storage must clear a global removal from effective_flags");
+  static_assert(has_flag(real::static_regex<"(?i)a"> {}.compile_flags(), real::flags::icase),
+                "an addition must still be reported");
+  EXPECT(!minus_i.search("A").matched());
+  EXPECT(minus_i.search("a").matched());
+}

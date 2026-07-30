@@ -923,11 +923,9 @@ namespace real::detail {
      * \param[in] classes The program's interned character classes (likewise held as a span).
      * \param[in] budget  Cached states before a flush; defaults to \ref state_budget. A smaller value is a
      *                    test hook to exercise eviction and thrash without a state-exploding pattern.
-     */
-    /*!
-     * \param[in] shared_alpha A precomputed alphabet the caller shares per regex, or null to compute it here.
-     *        Recomputing is O(256 x classes) and a Unicode byte-program has thousands, so the router passes
-     *        the shared one rather than paying it on every scan.
+     * \param[in] shared_alpha A precomputed alphabet the caller shares per regex, or null to compute it
+     *                    here. Recomputing is O(256 x classes) and a Unicode byte-program has thousands, so
+     *                    the router passes the shared one rather than paying it on every scan.
      */
     explicit constexpr lazy_dfa(std::span<const instr>      code,
                                 std::span<const char_class> classes,

@@ -300,6 +300,44 @@ def orphan_blocks(only: str | None) -> list[tuple[str, int, int]]:
     return found
 
 
+def adjacent_blocks(only: str | None) -> list[tuple[str, int, str]]:
+    """Doc comments that sit back to back with NO declaration between them, as (file, line, brief).
+
+    The orphaned-block defect in its second shape, which \\ref orphan_blocks cannot see: rather than two
+    ``\\brief`` inside one block, two SEPARATE blocks stack up and only the last one describes the
+    declaration below. Doxygen concatenates them silently, so the rendered entity carries a paragraph
+    about something else entirely -- eight were found this way, six of them dead text (a stranded
+    ``regex_error`` description sitting on ``error_kind``, a ``program_view`` description on a forward
+    declaration, a ``slot_storage`` description on a byte-class table) and two a single comment
+    needlessly split into brief-then-params.
+
+    All eight came from the same slip, made repeatedly during the completeness pass: appending a NEW
+    block to an entity that already had one, instead of extending the block already there.
+    """
+    found: list[tuple[str, int, str]] = []
+    for path in sorted(glob.glob(os.path.join(ROOT, "**", "*.hpp"), recursive=True)):
+        if only and only not in path:
+            continue
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().split("\n")
+        i = 0
+        while i < len(lines):
+            if not lines[i].strip().startswith("/*!"):
+                i += 1
+                continue
+            j = i
+            while j < len(lines) and not lines[j].strip().endswith("*/"):
+                j += 1
+            k = j + 1
+            while k < len(lines) and not lines[k].strip():
+                k += 1
+            if k < len(lines) and lines[k].strip().startswith(("/*!", "//!")):
+                brief = lines[i + 1].strip()[1:].strip() if i + 1 < len(lines) else ""
+                found.append((path, i + 1, brief[:60]))
+            i = j + 1
+    return found
+
+
 SENTENCE_END = re.compile(r"[.:;!?)\]`\"—]\s*$")
 
 
@@ -413,7 +451,11 @@ def main() -> int:
     splits = split_blocks(args.only)
     for path, line, tail in splits:
         print(f"{path}:{line}: doc block stops mid-sentence (...{tail}) -- a split comment?")
-    n_prose = len(orphans) + len(splits)
+    adjacent = adjacent_blocks(args.only)
+    for path, line, brief in adjacent:
+        print(f"{path}:{line}: doc block followed by another with no declaration between ({brief}) -- "
+              "one of them documents nothing")
+    n_prose = len(orphans) + len(splits) + len(adjacent)
 
     total = sum(len(v) for v in todo.values())
     if not total and not n_prose:
@@ -428,6 +470,8 @@ def main() -> int:
             parts.append(f"{len(orphans)} block(s) with more than one \\brief")
         if splits:
             parts.append(f"{len(splits)} block(s) stopping mid-sentence")
+        if adjacent:
+            parts.append(f"{len(adjacent)} stacked block pair(s)")
         print(
             f"\ncheck_doc_style: FAILED -- {' and '.join(parts)}. Doxygen warns about neither: it renders "
             "one \\brief and drops the rest, and a truncated block is well formed. Both need a human -- "
