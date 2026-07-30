@@ -107,6 +107,9 @@ namespace real {
 
     //! \brief Binds the invariant context (subject, pattern, named groups) once. For an iterator that refills
     //!        the same result many times, these never change within a walk — set them here, not per match.
+    //! \param[in] text    The subject the walk runs over.
+    //! \param[in] pattern The pattern text, for diagnostics and group naming.
+    //! \param[in] names   The pattern's named groups.
     constexpr void bind_context(std::string_view                     text,
                                 std::string_view                     pattern,
                                 std::span<const detail::named_group> names)
@@ -118,6 +121,15 @@ namespace real {
 
     //! \brief Per-match refill for an iterator whose context is already bound via \ref bind_context runs the
     //!        VM and records only the outcome (the invariant fields are already set), the find_iter hot path.
+    //! \tparam Cascade Whether the VM may take its memchr-cascade tail.
+    //! \tparam Vm      The engine type, deduced.
+    //! \param[in,out] vm     The engine to run.
+    //! \param[in]     text   The subject.
+    //! \param[in]     pos    Byte offset to attempt at.
+    //! \param[in]     mode   Anchoring: full, prefix or search.
+    //! \param[in]     forbid Offset at which a zero-length match is refused (the find_iter no-progress rule).
+    //! \param[in]     sem    Leftmost-first or leftmost-longest.
+    //! \return True on a match; the slots hold it.
     template <bool Cascade, typename Vm>
     constexpr bool engine_refill_hot(Vm&              vm,
                                      std::string_view text,
@@ -131,6 +143,12 @@ namespace real {
     }
 
     //! \brief P3c cold path for TrailingLA walks only (never referenced from pure walks).
+    //! \tparam Cascade Whether the VM may take its memchr-cascade tail.
+    //! \tparam Vm      The engine type, deduced.
+    //! \param[in,out] vm   The engine to run.
+    //! \param[in]     text The subject.
+    //! \param[in]     pos  Byte offset to attempt at.
+    //! \return True on a match; the slots hold it.
     template <bool Cascade, typename Vm>
     constexpr bool engine_refill_trailing_la(Vm&              vm,
                                              std::string_view text,
@@ -143,6 +161,7 @@ namespace real {
 
     /*!
      * \brief Returns `true` if the attempt matched.
+     * \return Whether the attempt matched.
      */
     [[nodiscard]] constexpr bool matched() const
     {
@@ -151,6 +170,7 @@ namespace real {
 
     /*!
      * \brief Returns `true` if the attempt matched (explicit bool conversion).
+     * \return Whether the attempt matched.
      */
     constexpr explicit operator bool() const {
       return matched_;
@@ -158,6 +178,7 @@ namespace real {
 
     /*!
      * \brief Returns the number of groups, including group 0 (the whole match).
+     * \return The group count.
      */
     [[nodiscard]] constexpr std::size_t size() const
     {
@@ -344,6 +365,7 @@ namespace real {
 
     /*!
      * \brief Returns the current match.
+     * \return A reference to the result, valid until the next increment.
      */
     [[nodiscard]] constexpr const value_type& operator*() const
     {
@@ -352,6 +374,7 @@ namespace real {
 
     /*!
      * \brief Returns pointer to the current match.
+     * \return A pointer to the result, valid until the next increment.
      */
     [[nodiscard]] constexpr const value_type* operator->() const
     {
@@ -485,6 +508,7 @@ namespace real {
 
     /*!
      * \brief Returns an iterator to the first match.
+     * \return An iterator positioned on the first match, or equal to \ref end when there is none.
      */
     [[nodiscard]] constexpr basic_match_iterator<Storage, TrailingLA> begin() const
     {
@@ -493,6 +517,7 @@ namespace real {
 
     /*!
      * \brief Returns the end sentinel.
+     * \return The past-the-end iterator.
      */
     [[nodiscard]] constexpr basic_match_iterator<Storage, TrailingLA> end() const
     {
@@ -578,6 +603,11 @@ namespace real {
      * \brief Region-aware `match`: anchored at \p pos within `text[0:endpos]` (Python
      *        `re.match` with `pos` / `endpos`). Byte offsets; \p pos is not a slice (see
      *        \ref run — `\A` fails at `pos > 0`); \p endpos defaults to the end of \p text.
+     *
+     * \param[in] text   Subject.
+     * \param[in] pos    Byte offset the match must start at.
+     * \param[in] endpos Byte offset the region ends at; defaults to the end of \p text.
+     * \return The match result; falsy when the pattern does not match at \p pos.
      */
     [[nodiscard]] constexpr result_type match(std::string_view text,
                                               std::size_t      pos,
@@ -588,6 +618,11 @@ namespace real {
 
     /*!
      * \brief Region-aware `fullmatch`: the whole region `[pos, endpos)` must match.
+     *
+     * \param[in] text   Subject.
+     * \param[in] pos    Byte offset the region starts at.
+     * \param[in] endpos Byte offset the region ends at; defaults to the end of \p text.
+     * \return The match result; falsy unless the whole region matches.
      */
     [[nodiscard]] constexpr result_type fullmatch(std::string_view text,
                                                   std::size_t      pos,
@@ -598,6 +633,11 @@ namespace real {
 
     /*!
      * \brief Region-aware `search`: leftmost match within `[pos, endpos)`.
+     *
+     * \param[in] text   Subject.
+     * \param[in] pos    Byte offset the search starts at.
+     * \param[in] endpos Byte offset the region ends at; defaults to the end of \p text.
+     * \return The leftmost match in the region; falsy when there is none.
      */
     [[nodiscard]] constexpr result_type search(std::string_view text,
                                                std::size_t      pos,
@@ -673,6 +713,11 @@ namespace real {
      *        `finditer` with `pos` / `endpos`). \p endpos truncates the subject to a view
      *        so iteration stops at it; \p pos is the start, not a slice (see \ref run).
      *        Byte offsets; \p endpos defaults to the end of \p text.
+     *
+     * \param[in] text   Subject.
+     * \param[in] pos    Byte offset iteration starts at.
+     * \param[in] endpos Byte offset the region ends at; defaults to the end of \p text.
+     * \return A range over the matches in the region.
      */
     [[nodiscard]] constexpr basic_match_range<Storage> find_iter(std::string_view text,
                                                                  std::size_t      pos,
@@ -688,6 +733,11 @@ namespace real {
      *        its prototype status (the `match_semantics` arc is not yet stable). Region semantics match \ref
      *        find_iter — \p endpos truncates the subject to a view, \p pos is the start (not a slice). Byte
      *        offsets; captures are the winning thread's, not POSIX submatch. Every fast path is bypassed.
+     *
+     * \param[in] text   Subject.
+     * \param[in] pos    Byte offset iteration starts at.
+     * \param[in] endpos Byte offset the region ends at; defaults to the end of \p text.
+     * \return A range over the leftmost-longest matches in the region.
      */
     [[nodiscard]] constexpr basic_match_range<Storage> find_iter_longest(std::string_view text,
                                                                          std::size_t      pos    = 0,
@@ -909,6 +959,7 @@ namespace real {
 
     /*!
      * \brief Returns the pattern text this regex was compiled from.
+     * \return The pattern, valid as long as this regex is alive.
      */
     [[nodiscard]] constexpr std::string_view pattern() const
     {
@@ -917,6 +968,7 @@ namespace real {
 
     /*!
      * \brief Returns the effective flags (constructor flags merged with a (?ims) prefix).
+     * \return The compiled flag set.
      */
     [[nodiscard]] constexpr flags compile_flags() const
     {
@@ -925,6 +977,7 @@ namespace real {
 
     /*!
      * \brief Returns the number of capturing groups (excluding group 0).
+     * \return The capturing-group count.
      */
     [[nodiscard]] constexpr std::size_t group_count() const
     {
@@ -1185,6 +1238,9 @@ namespace real {
      *        at that longest bound (not POSIX submatch). Runs on the general Pike loop (the first-match DFA /
      *        inner-literal fast paths are bypassed). A prototype for the `match_semantics` arc — not yet a stable
      *        API. Its iteration twin is \ref find_iter_longest.
+     *
+     * \param[in] text Subject.
+     * \return The leftmost-longest match; falsy when there is none.
      */
     [[nodiscard]] result_type search_longest(std::string_view text) const
     {
@@ -1194,6 +1250,11 @@ namespace real {
     /*!
      * \brief Region-aware form of \ref search_longest — leftmost-longest search within `[pos, endpos)`. \p pos is the
      *        start (not a slice, per \ref run); \p endpos truncates the subject. Byte offsets.
+     *
+     * \param[in] text   Subject.
+     * \param[in] pos    Byte offset the search starts at.
+     * \param[in] endpos Byte offset the region ends at; defaults to the end of \p text.
+     * \return The leftmost-longest match in the region; falsy when there is none.
      */
     [[nodiscard]] result_type search_longest(std::string_view text,
                                              std::size_t      pos,

@@ -107,6 +107,8 @@ namespace real::detail {
 
   //! \brief Sorts \p ranges and merges overlapping / adjacent ones into a minimal, sorted set (the
   //!        same set of code points, the fewest ranges). Used to keep folded / property classes compact.
+  //! \param[in] ranges The ranges to normalise; may be unsorted and overlapping.
+  //! \return The minimal sorted equivalent.
   constexpr std::vector<code_range> coalesce_ranges(std::vector<code_range> ranges)
   {
     // Fast path: already sorted and disjoint (no overlap, no adjacency). The shorthand / property tables come
@@ -140,6 +142,8 @@ namespace real::detail {
 
   //! \brief Complements a set of code-point ranges within `[0x80, 0x10FFFF]` (used by negated classes
   //!        and by an in-class `\W`/`\D`/`\S`). Input may be unsorted/overlapping; the gaps come sorted.
+  //! \param[in] ranges The ranges to complement.
+  //! \return The gaps between them within `[0x80, 0x10FFFF]`, sorted.
   constexpr std::vector<code_range> complement_code_ranges(std::vector<code_range> ranges)
   {
     const std::vector<code_range> merged {coalesce_ranges(std::move(ranges))};
@@ -289,6 +293,7 @@ namespace real::detail {
     bool               ecma_          {}; //!< ECMAScript grammar: `\A \Z \< \>` are identity-escape literals, not anchors.
 
     //! \brief The flag set in force at the current nesting level (the scope-stack top).
+    //! \return The active flags.
     [[nodiscard]] constexpr flags current_flags() const
     {
       return flag_scopes_.back();
@@ -296,6 +301,7 @@ namespace real::detail {
 
     //! \brief True when verbose mode (`re.X`) is in force here — read from the scope stack, so a
     //!        scoped `(?x:...)` is honoured without a global flag read.
+    //! \return Whether \ref flags::verbose is active here.
     [[nodiscard]] constexpr bool is_verbose() const
     {
       return has_flag(current_flags(), flags::verbose);
@@ -304,18 +310,21 @@ namespace real::detail {
     //! \brief True in the ECMAScript grammar. `flags::ecma` is not scopable, so the scope-stack
     //!        base always carries it; reading it here keeps the flag-scope ratchet's global-read
     //!        count at its terminal state (no new `ecma_` member reads).
+    //! \return Whether \ref flags::ecma is active.
     [[nodiscard]] constexpr bool is_ecma() const
     {
       return has_flag(current_flags(), flags::ecma);
     }
 
     //! \brief True when icase (`re.I`) is in force at the current scope (a scoped `(?i:...)` honoured).
+    //! \return Whether \ref flags::icase is active here.
     [[nodiscard]] constexpr bool is_icase() const
     {
       return has_flag(current_flags(), flags::icase);
     }
 
     //! \brief True when ascii (`re.A`) is in force at the current scope (a scoped `(?a:...)` honoured).
+    //! \return Whether \ref flags::ascii is active here.
     [[nodiscard]] constexpr bool is_ascii_mode() const
     {
       return has_flag(current_flags(), flags::ascii);
@@ -369,6 +378,7 @@ namespace real::detail {
     //! \brief Like \ref fail, but tags the error as `unsupported` (well-formed but beyond REAL's linear
     //!        engine — a backreference, `\p{…}`, a nested lookaround) so a binding can classify it without
     //!        matching on the message text. Templated like \ref fail so it stays a valid `constexpr`.
+    //! \param[in] message The diagnostic text, reported at the current read offset.
     template <typename = void>
     [[noreturn]] constexpr void fail_unsupported(const char* message) const
     {
@@ -377,6 +387,7 @@ namespace real::detail {
 
     /*!
      * \brief Returns `true` if the read offset is at or past the end of the pattern.
+     * \return Whether the pattern is exhausted.
      */
     [[nodiscard]] constexpr bool eof() const
     {
@@ -385,6 +396,7 @@ namespace real::detail {
 
     /*!
      * \brief Returns the current character without consuming it (undefined at eof()).
+     * \return The character at the read offset.
      */
     [[nodiscard]] constexpr char peek() const
     {
@@ -459,6 +471,7 @@ namespace real::detail {
      */
     //! \brief Whether a shorthand (`\d \w \s`) should be a text-mode Unicode code-point predicate:
     //!        true in the default text mode, false in bytes mode or under `flags::ascii` (`re.A`).
+    //! \return Whether the shorthand compiles as a code-point predicate rather than a byte class.
     [[nodiscard]] constexpr bool text_shorthand() const
     {
       return !bytes_ && !is_ascii_mode();
@@ -469,6 +482,13 @@ namespace real::detail {
      *        built: its ASCII bitmap (or the complement, negated) plus, in text mode, its non-ASCII
      *        ranges (or their complement). Sets \p property_derived so the class is emitted as a
      *        match-time `klass_cp` (text mode only). In bytes / ASCII mode it stays a byte class.
+     *
+     * \param[in,out] klass            The class being built, receiving the ASCII bitmap.
+     * \param[in,out] ranges           The class's non-ASCII ranges, appended to in text mode.
+     * \param[in]     prop_ascii       The shorthand's ASCII bitmap.
+     * \param[in]     table            The shorthand's full Unicode range table.
+     * \param[in]     negated          True for the uppercase form (`\W \D \S`).
+     * \param[out]    property_derived Set when the class must be emitted as a `klass_cp`.
      */
     constexpr void merge_property(char_class&                 klass,
                                   std::vector<code_range>&    ranges,
@@ -499,6 +519,10 @@ namespace real::detail {
       property_derived = property_derived || text_shorthand();
     }
 
+    //! \brief The non-ASCII part of a shorthand's range table, or nothing in bytes / ASCII mode.
+    //!        Wholly-ASCII ranges are dropped: the bitmap already covers them.
+    //! \param[in] table The shorthand's full Unicode range table.
+    //! \return Its ranges clipped to `>= 0x80`; empty when the shorthand stays ASCII-only.
     [[nodiscard]] constexpr std::vector<code_range> shorthand_ranges(std::span<const code_range> table) const
     {
       std::vector<code_range> out;
@@ -534,6 +558,7 @@ namespace real::detail {
     //!        RS/US) and fixed once at `space_set()` itself before this second bug (text mode then
     //!        losing them entirely) surfaced immediately in `test_classes.cpp`'s own regression suite —
     //!        the two modes generate genuinely different ASCII bitmaps, not one shared one.
+    //! \return The text-mode ASCII bitmap for `\s`.
     [[nodiscard]] static constexpr char_class space_set_text_ascii_component()
     {
       char_class result {space_set()};
@@ -555,6 +580,7 @@ namespace real::detail {
     //!                      component of `\s` legitimately differs between ASCII mode (`[ \t\n\r\f\v]`)
     //!                      and text mode (the same set plus `U+001C`-`U+001F`); `\w`/`\d` do not have
     //!                      this divergence, so they ignore the parameter.
+    //! \return The shorthand's bitmap, range table and negation flag.
     [[nodiscard]] static constexpr shorthand_spec shorthand_class(char letter,
                                                                   bool text_mode)
     {
@@ -580,14 +606,20 @@ namespace real::detail {
     //!        heap or `<string>` is needed at parse time. A name longer than the buffer simply fails to match.
     struct loose_buf
     {
-      std::array<char, 64> data {};
-      std::size_t          len  {};
+      std::array<char, 64> data {}; //!< The normalised bytes, the first \ref len of which are meaningful.
+      std::size_t          len  {}; //!< Bytes held in \ref data; a longer name is truncated and so matches nothing.
+
+      //! \brief The normalised key as a view into \ref data.
+      //! \return A view valid for this buffer's lifetime.
       [[nodiscard]] constexpr std::string_view view() const
       {
         return {data.data(), len};
       }
     };
 
+    //! \brief Loose-matches a property name (UAX44-LM3): drops `_`, `-` and spaces, lowercases the rest.
+    //! \param[in] s The name as written in the pattern.
+    //! \return The normalised key, truncated to the buffer's capacity.
     [[nodiscard]] static constexpr loose_buf loose_key(std::string_view s)
     {
       loose_buf b;
@@ -613,6 +645,9 @@ namespace real::detail {
      *        NOT partitions -- a code point can satisfy several). The alias resolvers are the generated,
      *        loose-keyed `resolve_gc` / `resolve_script` (shared by `sc=` and `scx=` -- same script names,
      *        long or short UAX24 code) / `resolve_binprop`.
+     *
+     * \param[in] name The property name as written, prefix and all.
+     * \return Its code-point ranges.
      */
     [[nodiscard]] constexpr std::vector<code_range> resolve_property(std::string_view name) const
     {
@@ -702,6 +737,7 @@ namespace real::detail {
     //!        `^` caret-negation (native dialects only), and resolves the remaining name to the property's
     //!        code-point ranges. Shared by the out-of-class atom and the in-class merge. On entry `pos_` is on
     //!        the `p`/`P`; on return it is just past the name (caret and all).
+    //! \return The resolved ranges and whether a caret-negation was stripped.
     constexpr property_table_result parse_property_table()
     {
       // Read bytes-mode from the scope stack, not the global `bytes_` member (the flag-scope ratchet): bytes is
@@ -750,6 +786,9 @@ namespace real::detail {
     //! \brief Splits a property's ranges into its ASCII bitmap (< 0x80) and its non-ASCII ranges. Unconditional:
     //!        unlike `\w`, `flags::ascii` (`re.A`) does not restrict a Unicode property, so both parts are always
     //!        used (bytes mode having already been rejected).
+    //! \param[in]  table The property's full range table.
+    //! \param[out] ascii Bitmap receiving its members below 0x80.
+    //! \param[out] high  Ranges receiving its members at or above 0x80.
     constexpr void property_ascii_high(const std::vector<code_range>& table,
                                        char_class&                    ascii,
                                        std::vector<code_range>&       high) const
@@ -773,6 +812,10 @@ namespace real::detail {
      *        `\W`, XORed with a caret-negation `\p{^Name}` stripped by \ref parse_property_table (so
      *        `\P{^L}` negates twice back to `\p{L}`, same as `\P{...}` on an already-negated property would).
      *        `pos_` is on the letter after `\`; `negated` distinguishes `\P` from `\p`.
+     *
+     * \param[in,out] out     The AST the class node is added to.
+     * \param[in]     negated True for `\P`, false for `\p`.
+     * \return The new node's index.
      */
     constexpr std::int32_t parse_unicode_property(ast& out,
                                                   bool negated)
@@ -792,6 +835,12 @@ namespace real::detail {
      *        plus the gaps between the non-ASCII ranges), exactly as `\W` negates in a class; an enclosing
      *        `[^...]` then negates the whole class on top (so `[^\P{L}]` == `[\p{L}]`). bytes mode is already
      *        rejected by \ref parse_property_table.
+     *
+     * \param[in,out] klass            The class being built, receiving the ASCII bitmap.
+     * \param[in,out] ranges           The class's non-ASCII ranges, appended to.
+     * \param[in]     table            The property's full range table.
+     * \param[in]     negated          True for `\P{...}`, merging the complement.
+     * \param[out]    property_derived Set so the class is emitted as a `klass_cp`.
      */
     constexpr void merge_unicode_property(char_class&                    klass,
                                           std::vector<code_range>&       ranges,
@@ -1230,6 +1279,9 @@ namespace real::detail {
     //! \brief \p value with \p bit cleared. The intermediate cast matches the enum's
     //!        `std::uint16_t` underlying type — a `std::uint8_t` here (the pre-widening
     //!        vestige) would silently drop `flags::ungreedy` (512) from every scope.
+    //! \param[in] value The flag set to clear from.
+    //! \param[in] bit   The flag to clear.
+    //! \return \p value without \p bit.
     static constexpr flags without(flags value,
                                    flags bit)
     {
@@ -1859,6 +1911,10 @@ namespace real::detail {
      * mode; a non-ASCII code point folds only in text mode (a bytes class carries no ranges). A
      * non-cased literal, or no `icase`, keeps the zero-overhead byte / UTF-8 path. `\\xHH` has byte
      * provenance and never routes here, so it is never folded — the deliberate provenance split.
+     *
+     * \param[in,out] out The AST the node is added to.
+     * \param[in]     cp  The literal's code point.
+     * \return The new node's index: a literal, or a foldable singleton class under `icase`.
      */
     constexpr std::int32_t emit_literal_codepoint(ast&         out,
                                                   std::int32_t cp)
