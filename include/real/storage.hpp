@@ -315,16 +315,18 @@ namespace real {
         inline_block inline_buffer; //!< Inline storage (when not heap).
         T*           heap_ptr;      //!< Heap storage (when \ref is_heap_).
 
-        //! \brief Starts in the inline state.
-        //!
-        //! At **run time** the inline buffer is left UNINITIALIZED: small_vec writes every
-        //! element through \c std::construct_at (placement-new) before any read (push_back and
-        //! assign), so the value-init was pure overhead — ~30 % of the instruction count on a
-        //! findall tokenizing workload (a fresh slot buffer per match, of which ~2 slots serve).
-        //! At **compile time** the member must be active and initialized for the constexpr
-        //! matching path (which assigns through \ref inline_data), so it is value-initialized
-        //! there via \c construct_at on the whole \ref inline_block — activating a class-type
-        //! member is what a constexpr union allows (an element-wise or bare C-array activation is not).
+        /*!
+         * \brief Starts in the inline state.
+         *
+         * At **run time** the inline buffer is left UNINITIALIZED: small_vec writes every
+         * element through \c std::construct_at (placement-new) before any read (push_back and
+         * assign), so the value-init was pure overhead — ~30 % of the instruction count on a
+         * findall tokenizing workload (a fresh slot buffer per match, of which ~2 slots serve).
+         * At **compile time** the member must be active and initialized for the constexpr
+         * matching path (which assigns through \ref inline_data), so it is value-initialized
+         * there via \c construct_at on the whole \ref inline_block — activating a class-type
+         * member is what a constexpr union allows (an element-wise or bare C-array activation is not).
+         */
         constexpr Storage() noexcept
         {
           if (std::is_constant_evaluated()) {
@@ -354,7 +356,9 @@ namespace real {
       // small_vec, so this never participates in compile-time matching.
       T* data_ {}; //!< Cached base of the active storage; see the note above, and \ref refresh_data.
 
-      //! \brief Refreshes \ref data_ to the active storage base (run time only).
+      /*!
+       * \brief Refreshes \ref data_ to the active storage base (run time only).
+       */
       constexpr void refresh_data() noexcept
       {
         if (!std::is_constant_evaluated()) {

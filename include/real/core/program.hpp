@@ -54,8 +54,10 @@ namespace real {
     ungreedy = 512,       //!< Ungreedy mode (RE2 `(?U)`): swap the default quantifier greediness — a bare quantifier becomes lazy and the explicit `?` suffix re-inverts back to greedy (`(?U)a+` matches minimally, `(?U)a+?` maximally). Resolved entirely at parse time into each repeat node's `lazy` bit (the compiler and VM never read this flag), and scoped like the other inline letters: `(?U:…)`, `(?-U:…)` and the constructor flag all work through the flag-scope stack.
   };
 
-  //! \brief Which match a search returns among those starting at the leftmost position (an experimental,
-  //!        opt-in, off-by-default engine mode — the default is unchanged).
+  /*!
+   * \brief Which match a search returns among those starting at the leftmost position (an experimental,
+   *        opt-in, off-by-default engine mode — the default is unchanged).
+   */
   enum class match_semantics : std::uint8_t
   {
     first   = 0, //!< Leftmost-first (Perl / Python `re` / the crate): source-order thread priority decides. Default.
@@ -104,9 +106,11 @@ namespace real {
    * In a constexpr context (`static_regex`), reaching the throw is a
    * compile-time error, with the message appearing in the diagnostic trace.
    */
-  //! \brief Whether a rejected pattern is malformed (`syntax`) or well-formed but beyond REAL's linear engine
-  //!        (`unsupported`: a backreference, `\p{…}`, a nested/unbounded lookaround). The distinction is a
-  //!        stable, machine-readable classification the C ABI exposes so a binding never has to grep `what()`.
+  /*!
+   * \brief Whether a rejected pattern is malformed (`syntax`) or well-formed but beyond REAL's linear engine
+   *        (`unsupported`: a backreference, `\p{…}`, a nested/unbounded lookaround). The distinction is a
+   *        stable, machine-readable classification the C ABI exposes so a binding never has to grep `what()`.
+   */
   enum class error_kind : std::uint8_t
   {
     syntax,
@@ -195,13 +199,15 @@ namespace real {
       std::uint64_t fingerprint {};
     };
 
-    //! \brief FNV-1a 64-bit content fingerprint of an ASCII bitmap + a contiguous range span.
-    //!        Used once at `intern_cp_class` (compile time / first intern); match time only reads
-    //!        \ref cp_class::fingerprint. Constexpr so `static_regex` stays happy.
-    //! \param[in] ascii       The class's ASCII bitmap.
-    //! \param[in] ranges      Pointer to its first non-ASCII range.
-    //! \param[in] range_count Ranges belonging to it.
-    //! \return The content hash, equal for two classes holding the same code points.
+    /*!
+     * \brief FNV-1a 64-bit content fingerprint of an ASCII bitmap + a contiguous range span.
+     *        Used once at `intern_cp_class` (compile time / first intern); match time only reads
+     *        \ref cp_class::fingerprint. Constexpr so `static_regex` stays happy.
+     * \param[in] ascii       The class's ASCII bitmap.
+     * \param[in] ranges      Pointer to its first non-ASCII range.
+     * \param[in] range_count Ranges belonging to it.
+     * \return The content hash, equal for two classes holding the same code points.
+     */
     [[nodiscard]] constexpr std::uint64_t fingerprint_cp_class_content(
       const char_class&                     ascii,
       const code_range*                     ranges,
@@ -326,9 +332,11 @@ namespace real {
       std::int32_t  secondary_target {}; //!< Secondary branch target (split).
     };
 
-    //! \brief Which operand space a `class_ref` indexes: `byte_loop_possessive`'s own literal
-    //!        byte value (not a table at all), `classes[]` (`klass_loop_possessive`), or
-    //!        `cp_classes[]` (`klass_cp_loop_possessive`). `none` = unarmed.
+    /*!
+     * \brief Which operand space a `class_ref` indexes: `byte_loop_possessive`'s own literal
+     *        byte value (not a table at all), `classes[]` (`klass_loop_possessive`), or
+     *        `cp_classes[]` (`klass_cp_loop_possessive`). `none` = unarmed.
+     */
     enum class class_kind : std::uint8_t
     {
       none,
@@ -353,8 +361,10 @@ namespace real {
       class_kind    kind  {class_kind::none}; //!< Which table \ref index refers to; `none` means unarmed.
       std::uint16_t index {};                 //!< classes[]/cp_classes[] index (kind == klass/klass_cp), or the literal byte value 0-255 (kind == byte).
 
-      //! \brief Whether this reference names anything at all.
-      //! \return False while \ref kind is \c class_kind::none.
+      /*!
+       * \brief Whether this reference names anything at all.
+       * \return False while \ref kind is \c class_kind::none.
+       */
       [[nodiscard]] constexpr bool armed() const noexcept
       {
         return kind != class_kind::none;

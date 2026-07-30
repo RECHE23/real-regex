@@ -41,12 +41,16 @@ namespace real::compat::re2 {
     //! \brief A parser: writes the `[text, text + length)` submatch into `dest`, or fails.
     using Parser = bool (*)(const char* text, std::size_t length, void* dest);
 
-    //! \brief Default-constructs a no-op `Arg` (same as `Arg(nullptr)`).
+    /*!
+     * \brief Default-constructs a no-op `Arg` (same as `Arg(nullptr)`).
+     */
     constexpr Arg() noexcept
       : Arg(nullptr)
     {}
 
-    //! \brief From `nullptr` — skips this submatch (always "succeeds", writes nothing).
+    /*!
+     * \brief From `nullptr` — skips this submatch (always "succeeds", writes nothing).
+     */
     constexpr Arg(std::nullptr_t) noexcept
       : dest_(nullptr),
         parser_(&parse_nothing)
@@ -91,8 +95,10 @@ namespace real::compat::re2 {
 
   private:
 
-    //! \brief The `nullptr`-destination parser: always succeeds, writes nothing.
-    //! \return `true`, unconditionally.
+    /*!
+     * \brief The `nullptr`-destination parser: always succeeds, writes nothing.
+     * \return `true`, unconditionally.
+     */
     static bool parse_nothing(const char* /*text*/,
                               std::size_t /*length*/,
                               void* /*dest*/)

@@ -263,16 +263,20 @@ namespace real::detail {
       free_list.clear();
     }
 
-    //! \brief Pointer to block \p b's `width` slots. Invalidated by any \ref allocate that grows `data`.
-    //! \param[in] b Block index.
-    //! \return Pointer to the block's first slot.
+    /*!
+     * \brief Pointer to block \p b's `width` slots. Invalidated by any \ref allocate that grows `data`.
+     * \param[in] b Block index.
+     * \return Pointer to the block's first slot.
+     */
     [[nodiscard]] constexpr std::size_t* slots(std::uint32_t b)
     {
       return &data[static_cast<std::size_t>(b) * width];
     }
 
-    //! \brief A fresh block with refcount 1 (a recycled index if available, else a grown one).
-    //! \return Index of the new block; its slots hold whatever the recycled block last held.
+    /*!
+     * \brief A fresh block with refcount 1 (a recycled index if available, else a grown one).
+     * \return Index of the new block; its slots hold whatever the recycled block last held.
+     */
     [[nodiscard]] constexpr std::uint32_t allocate()
     {
       if (!free_list.empty()) {
@@ -289,15 +293,19 @@ namespace real::detail {
       return b;
     }
 
-    //! \brief Take a reference on block \p b (each closure seeded into the next list holds its own).
-    //! \param[in] b Block index.
+    /*!
+     * \brief Take a reference on block \p b (each closure seeded into the next list holds its own).
+     * \param[in] b Block index.
+     */
     constexpr void incref(std::uint32_t b)
     {
       ++refcount[b];
     }
 
-    //! \brief Drop a reference on block \p b, recycling it into the free list at zero.
-    //! \param[in] b Block index.
+    /*!
+     * \brief Drop a reference on block \p b, recycling it into the free list at zero.
+     * \param[in] b Block index.
+     */
     constexpr void decref(std::uint32_t b)
     {
       if (--refcount[b] == 0) {
@@ -332,9 +340,11 @@ namespace real::detail {
       return b;
     }
 
-    //! \brief Sum of all live refcounts — the debug Σ-invariant checks this equals the references the VM
-    //!        actually holds (list blocks + stack frames), catching a leaked or double-freed block.
-    //! \return The sum, including the sentinel block's permanent reference.
+    /*!
+     * \brief Sum of all live refcounts — the debug Σ-invariant checks this equals the references the VM
+     *        actually holds (list blocks + stack frames), catching a leaked or double-freed block.
+     * \return The sum, including the sentinel block's permanent reference.
+     */
     [[nodiscard]] constexpr long long total_refs() const
     {
       long long sum {0};
@@ -1302,17 +1312,19 @@ namespace real::detail {
     //! \brief Candidate density, in candidates per 1000 bytes, at or above which the IL route yields to the DFA.
     static constexpr std::size_t   il_density_milli_threshold  {60};
 
-    //! \brief Build the forward/reverse DFAs into the reusable state on first eligible use, or rebuild them
-    //!        if the state is now bound to a different program (its `code` pointer changed). The cache then
-    //!        persists across a whole find_iter (where it pays), and forward_end resets its per-search thrash
-    //!        flag itself. Instantiated only for the dynamic state (the one carrying the optionals).
-    //! \brief Build (or rebuild) the per-regex immutables, race-free: the Tier-A byte-program the DFAs
-    //!        run over (and its shared alphabet), plus the one-pass extractor. Invalidation is by
-    //!        program identity (\ref regex_immutables::built_for == \c prog_.code.data()) — same pattern
-    //!        as \c state_type::dfa_program / \c il_prefix_for. Hot path is one atomic load; a spent
-    //!        \c once_flag would never rebuild after assign-onto-warmed (silent 0 matches). The
-    //!        extractor is Tier-B (assertions kept), so one table serves the search window and anchored
-    //!        match/fullmatch. Needs no DFA, so the anchored path can call this without the DFA build.
+    /*!
+     * \brief Build the forward/reverse DFAs into the reusable state on first eligible use, or rebuild them
+     *        if the state is now bound to a different program (its `code` pointer changed). The cache then
+     *        persists across a whole find_iter (where it pays), and forward_end resets its per-search thrash
+     *        flag itself. Instantiated only for the dynamic state (the one carrying the optionals).
+     * \brief Build (or rebuild) the per-regex immutables, race-free: the Tier-A byte-program the DFAs
+     *        run over (and its shared alphabet), plus the one-pass extractor. Invalidation is by
+     *        program identity (\ref regex_immutables::built_for == \c prog_.code.data()) — same pattern
+     *        as \c state_type::dfa_program / \c il_prefix_for. Hot path is one atomic load; a spent
+     *        \c once_flag would never rebuild after assign-onto-warmed (silent 0 matches). The
+     *        extractor is Tier-B (assertions kept), so one table serves the search window and anchored
+     *        match/fullmatch. Needs no DFA, so the anchored path can call this without the DFA build.
+     */
     void ensure_immutables()
     {
       detail::regex_immutables* const immut {prog_.immut};
@@ -1386,9 +1398,11 @@ namespace real::detail {
       immut->built_for.store(want, std::memory_order_release);
     }
 
-    //! \brief Warm shared search DFAs for \p immut into \p slot (caller holds \p slot.mu).
-    //! \param[in]     immut Per-regex immutables naming the program to build for.
-    //! \param[in,out] slot  Process-wide DFA slot to populate.
+    /*!
+     * \brief Warm shared search DFAs for \p immut into \p slot (caller holds \p slot.mu).
+     * \param[in]     immut Per-regex immutables naming the program to build for.
+     * \param[in,out] slot  Process-wide DFA slot to populate.
+     */
     void ensure_slot_search_dfas_unlocked(detail::regex_immutables& immut,
                                           shared_dfa_slot&          slot)
     {
@@ -1401,9 +1415,11 @@ namespace real::detail {
       }
     }
 
-    //! \brief Warm shared IL-prefix reverse DFA (caller holds \p slot.mu).
-    //! \param[in]     immut Per-regex immutables naming the program to build for.
-    //! \param[in,out] slot  Process-wide DFA slot to populate.
+    /*!
+     * \brief Warm shared IL-prefix reverse DFA (caller holds \p slot.mu).
+     * \param[in]     immut Per-regex immutables naming the program to build for.
+     * \param[in,out] slot  Process-wide DFA slot to populate.
+     */
     void ensure_slot_il_prefix_rev_unlocked(detail::regex_immutables& immut,
                                             shared_dfa_slot&          slot)
     {
@@ -1415,9 +1431,11 @@ namespace real::detail {
       }
     }
 
-    //! \brief Run \p fn with the shared search DFAs under the slot lock.
-    //! \param[in] fn Callable taking `(lazy_dfa& fwd, reverse_dfa& rev)`.
-    //! \return True when \p fn ran; false when the route must stay on the Pike VM (no immut / ineligible).
+    /*!
+     * \brief Run \p fn with the shared search DFAs under the slot lock.
+     * \param[in] fn Callable taking `(lazy_dfa& fwd, reverse_dfa& rev)`.
+     * \return True when \p fn ran; false when the route must stay on the Pike VM (no immut / ineligible).
+     */
     template <typename Fn>
     bool with_search_dfas(Fn&& fn)
     {
@@ -1441,13 +1459,15 @@ namespace real::detail {
       return true;
     }
 
-    //! \brief Lazy-DFA search route on the shared confirm DFAs. \c noinline so its body cannot
-    //!        inflate \ref run (x86 class-loop codegen neighbor — same shape as \ref ensure_ac_automaton).
-    //! \param[in]  text      Subject.
-    //! \param[in]  start     Byte offset to begin at.
-    //! \param[in]  mode      Anchoring: full, prefix or search.
-    //! \param[out] out_slots Capture slots, filled on a match.
-    //! \return matched / no-match when the route handled the search; empty when the caller must fall to Pike.
+    /*!
+     * \brief Lazy-DFA search route on the shared confirm DFAs. \c noinline so its body cannot
+     *        inflate \ref run (x86 class-loop codegen neighbor — same shape as \ref ensure_ac_automaton).
+     * \param[in]  text      Subject.
+     * \param[in]  start     Byte offset to begin at.
+     * \param[in]  mode      Anchoring: full, prefix or search.
+     * \param[out] out_slots Capture slots, filled on a match.
+     * \return matched / no-match when the route handled the search; empty when the caller must fall to Pike.
+     */
     template <bool Cascade, typename OutSlots>
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((noinline))
@@ -1548,24 +1568,26 @@ namespace real::detail {
     //!        there against the standalone POC — inside the closed-gap target of <=~1.5x).
     static constexpr std::uint16_t ac_branch_threshold {12};
 
-    //! \brief Build (or rebuild, on a program change) this iterator's Aho-Corasick automaton for a
-    //!        `fixed_alternation` program whose branch count has reached \ref ac_branch_threshold.
-    //!        Declines (leaves \ref pike_state::ac_state unset) if any branch's icase-fold
-    //!        expansion would exceed \ref ac_max_branch_expansion — the caller falls back to the
-    //!        existing \ref run_alternation, zero behavior change. Runs once per iterator/program,
-    //!        off the hot path, mirroring \ref with_search_dfas's cache-by-program-pointer contract.
-    //!
-    //!        `noinline`, deliberately NOT `cold` (round-2 x86 isolation A/B: neither the
-    //!        pattern_hints field alone nor the pike_state size growth alone regressed the
-    //!        non-alternation hot-corpus witnesses, isolating the cause to code called directly
-    //!        from `run()`'s own dispatch chain — a codegen-neighbor/inlining-bloat effect on
-    //!        `run_class_loop`, which shares the same translation unit and physically returns
-    //!        before ever reaching this call at runtime, so it's presence, not execution, doing the
-    //!        damage). `cold` would additionally deprioritize this function's OWN optimization —
-    //!        wrong here, since it (unlike the actual construction work in aho_corasick.hpp,
-    //!        already marked `cold`) is called on every AC-eligible search, not just once per
-    //!        program. `noinline` alone keeps it fully optimized while stopping the compiler from
-    //!        folding its body into `run()`'s.
+    /*!
+     * \brief Build (or rebuild, on a program change) this iterator's Aho-Corasick automaton for a
+     *        `fixed_alternation` program whose branch count has reached \ref ac_branch_threshold.
+     *        Declines (leaves \ref pike_state::ac_state unset) if any branch's icase-fold
+     *        expansion would exceed \ref ac_max_branch_expansion — the caller falls back to the
+     *        existing \ref run_alternation, zero behavior change. Runs once per iterator/program,
+     *        off the hot path, mirroring \ref with_search_dfas's cache-by-program-pointer contract.
+     *
+     *        `noinline`, deliberately NOT `cold` (round-2 x86 isolation A/B: neither the
+     *        pattern_hints field alone nor the pike_state size growth alone regressed the
+     *        non-alternation hot-corpus witnesses, isolating the cause to code called directly
+     *        from `run()`'s own dispatch chain — a codegen-neighbor/inlining-bloat effect on
+     *        `run_class_loop`, which shares the same translation unit and physically returns
+     *        before ever reaching this call at runtime, so it's presence, not execution, doing the
+     *        damage). `cold` would additionally deprioritize this function's OWN optimization —
+     *        wrong here, since it (unlike the actual construction work in aho_corasick.hpp,
+     *        already marked `cold`) is called on every AC-eligible search, not just once per
+     *        program. `noinline` alone keeps it fully optimized while stopping the compiler from
+     *        folding its body into `run()`'s.
+     */
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((noinline))
 #endif
@@ -1957,10 +1979,12 @@ namespace real::detail {
       }
     }
 
-    //! \brief Cache entry for \ref cp_hi_cached (thread-local, not on \ref basic_pike_state).
-    //!        Keyed by a content fingerprint of the class (never a pointer into a program):
-    //!        programs die while this cache lives for the thread, and the allocator can recycle
-    //!        the same `cp_ranges` address for a *different* class — a pointer key then returns
+    /*!
+     * \brief Cache entry for \ref cp_hi_cached (thread-local, not on \ref basic_pike_state).
+     *        Keyed by a content fingerprint of the class (never a pointer into a program):
+     *        programs die while this cache lives for the thread, and the allocator can recycle
+     *        the same `cp_ranges` address for a *different* class — a pointer key then returns
+     */
     //!        the wrong sparse table (false membership, e.g. emoji matching `[\w€]` after a prior
     //!        high-range class was destroyed). Seen as a deterministic wrong-match on macos-clang
     //!        CI after a long test binary has churned many classes (find_iter euro empty-alt pin).
@@ -1970,15 +1994,17 @@ namespace real::detail {
       std::unique_ptr<cp_hi_table> table;      //!< The sparse table built for that class, owned by the cache.
     };
 
-    //! \brief Cold path: build a sparse hi table and install it in the thread-local cache.
-    //!        Outlined so the hot membership check never inlines the range-walk builder.
-    //! \param[in]     prog     Program owning the class.
-    //! \param[in]     cp_index Index of the code-point class in \c prog.cp_classes.
-    //! \param[in]     key_fp   The class's content fingerprint, the cache key.
-    //! \param[in,out] cache    Thread-local entries, one of which is overwritten.
-    //! \param[out]    last_tab Sticky last-hit table pointer, set to the built table.
-    //! \param[out]    last_fp  Sticky last-hit fingerprint, set to \p key_fp.
-    //! \return The installed table, owned by \p cache.
+    /*!
+     * \brief Cold path: build a sparse hi table and install it in the thread-local cache.
+     *        Outlined so the hot membership check never inlines the range-walk builder.
+     * \param[in]     prog     Program owning the class.
+     * \param[in]     cp_index Index of the code-point class in \c prog.cp_classes.
+     * \param[in]     key_fp   The class's content fingerprint, the cache key.
+     * \param[in,out] cache    Thread-local entries, one of which is overwritten.
+     * \param[out]    last_tab Sticky last-hit table pointer, set to the built table.
+     * \param[out]    last_fp  Sticky last-hit fingerprint, set to \p key_fp.
+     * \return The installed table, owned by \p cache.
+     */
     [[nodiscard]]
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((noinline, cold))
@@ -2047,12 +2073,14 @@ namespace real::detail {
       return slot->table.get();
     }
 
-    //! \brief Thread-local sparse hi tables, keyed by \ref cp_class::fingerprint (set once at intern).
-    //!        Hot path: load `uint64` + sticky compare (cheap, like the pre-poisoning pointer key) —
-    //!        never re-hash ranges per codepoint. Keeps \ref basic_pike_state sizeof unchanged.
-    //! \param[in] prog     Program owning the class.
-    //! \param[in] cp_index Index of the code-point class in \c prog.cp_classes.
-    //! \return The class's sparse table, built on first use for this thread.
+    /*!
+     * \brief Thread-local sparse hi tables, keyed by \ref cp_class::fingerprint (set once at intern).
+     *        Hot path: load `uint64` + sticky compare (cheap, like the pre-poisoning pointer key) —
+     *        never re-hash ranges per codepoint. Keeps \ref basic_pike_state sizeof unchanged.
+     * \param[in] prog     Program owning the class.
+     * \param[in] cp_index Index of the code-point class in \c prog.cp_classes.
+     * \return The class's sparse table, built on first use for this thread.
+     */
     [[nodiscard]] static const cp_hi_table* cp_hi_cached(const program_view& prog,
                                                          std::size_t         cp_index)
     {
@@ -2083,11 +2111,13 @@ namespace real::detail {
     //!        classes (L=675, w=767, N=143).
     static constexpr std::uint32_t cp_hi_range_threshold {32U};
 
-    //! \brief Page-bitmap membership for U+0080..U+07FF. Kept separate so class-loop lambdas can
-    //!        inline it without pulling the sparse-hi path into the European hot stream (`\p{N}`, accented).
-    //! \param[in] cp_index Index of the code-point class.
-    //! \param[in] cp       Code point in U+0080..U+07FF; outside that range the bit index is meaningless.
-    //! \return True when \p cp is a member.
+    /*!
+     * \brief Page-bitmap membership for U+0080..U+07FF. Kept separate so class-loop lambdas can
+     *        inline it without pulling the sparse-hi path into the European hot stream (`\p{N}`, accented).
+     * \param[in] cp_index Index of the code-point class.
+     * \param[in] cp       Code point in U+0080..U+07FF; outside that range the bit index is meaningless.
+     * \return True when \p cp is a member.
+     */
     [[nodiscard]] constexpr bool cp_member_page(std::size_t cp_index,
                                                 char32_t    cp)
     {
@@ -2096,11 +2126,13 @@ namespace real::detail {
       return ((page[bit >> 6U] >> (bit & 63U)) & std::uint64_t {1}) != 0U;
     }
 
-    //! \brief Membership for cp > U+07FF: sparse 2-stage hi table, else bsearch (small classes / constexpr).
-    //!        The table *build* is cold-outlined; the per-cp probe is last-hit + bit test.
-    //! \param[in] cp_index Index of the code-point class.
-    //! \param[in] cp       Code point above \ref cp_page_max.
-    //! \return True when \p cp is a member.
+    /*!
+     * \brief Membership for cp > U+07FF: sparse 2-stage hi table, else bsearch (small classes / constexpr).
+     *        The table *build* is cold-outlined; the per-cp probe is last-hit + bit test.
+     * \param[in] cp_index Index of the code-point class.
+     * \param[in] cp       Code point above \ref cp_page_max.
+     * \return True when \p cp is a member.
+     */
     [[nodiscard]] constexpr bool cp_member_high(std::size_t cp_index,
                                                 char32_t    cp)
     {
@@ -2122,10 +2154,12 @@ namespace real::detail {
       return cp_class_matches(prog_.cp_classes[cp_index], cp);
     }
 
-    //! \brief Non-ASCII membership: European page bitmap, then sparse 2-stage hi / bsearch.
-    //! \param[in] cp_index Index of the code-point class.
-    //! \param[in] cp       Code point at or above U+0080.
-    //! \return True when \p cp is a member.
+    /*!
+     * \brief Non-ASCII membership: European page bitmap, then sparse 2-stage hi / bsearch.
+     * \param[in] cp_index Index of the code-point class.
+     * \param[in] cp       Code point at or above U+0080.
+     * \return True when \p cp is a member.
+     */
     [[nodiscard]] constexpr bool cp_member_hi(std::size_t cp_index,
                                               char32_t    cp)
     {
@@ -2192,13 +2226,15 @@ namespace real::detail {
       }
     }
 
-    //! \brief OPT-C run tail: the next stop byte at or after \p from, or the text end. Kept in its own
-    //!        function so the memchr-cascade never inlines into \ref run_class_loop's hot per-byte loop
-    //!        (that bloat measurably slowed stop-dense short runs). Reached only once a run has already
-    //!        passed \ref cascade_run_threshold accepted bytes, so the out-of-line call is free.
-    //! \param[in] text Subject.
-    //! \param[in] from Offset to search from.
-    //! \return Offset of the next stop byte, or `text.size()` when none remains.
+    /*!
+     * \brief OPT-C run tail: the next stop byte at or after \p from, or the text end. Kept in its own
+     *        function so the memchr-cascade never inlines into \ref run_class_loop's hot per-byte loop
+     *        (that bloat measurably slowed stop-dense short runs). Reached only once a run has already
+     *        passed \ref cascade_run_threshold accepted bytes, so the out-of-line call is free.
+     * \param[in] text Subject.
+     * \param[in] from Offset to search from.
+     * \return Offset of the next stop byte, or `text.size()` when none remains.
+     */
     [[nodiscard]] constexpr std::size_t run_cascade_stop(std::string_view text,
                                                          std::size_t      from) const
     {
@@ -2928,16 +2964,18 @@ namespace real::detail {
       return fail();
     }
 
-    //! \brief R2 (phase Raffinement): possessive literal-byte +/++ loop (`byte_loop_possessive`,
-    //!        e.g. `a++`) -- the asymmetry class_ref's typing made natural to close: this opcode was
-    //!        already emitted and executed by the general VM, but had no dedicated recognizer or
-    //!        runner, so `a++` fell back to the general VM despite the class/cp-class family
-    //!        already having one. See \ref run_possessive_loop_generic for the shared algorithm.
-    //! \param[in]  text      Subject.
-    //! \param[in]  start     Byte offset to begin at.
-    //! \param[in]  mode      Anchoring: full, prefix or search.
-    //! \param[out] out_slots Capture slots, filled on a match.
-    //! \return True on a match.
+    /*!
+     * \brief R2 (phase Raffinement): possessive literal-byte +/++ loop (`byte_loop_possessive`,
+     *        e.g. `a++`) -- the asymmetry class_ref's typing made natural to close: this opcode was
+     *        already emitted and executed by the general VM, but had no dedicated recognizer or
+     *        runner, so `a++` fell back to the general VM despite the class/cp-class family
+     *        already having one. See \ref run_possessive_loop_generic for the shared algorithm.
+     * \param[in]  text      Subject.
+     * \param[in]  start     Byte offset to begin at.
+     * \param[in]  mode      Anchoring: full, prefix or search.
+     * \param[out] out_slots Capture slots, filled on a match.
+     * \return True on a match.
+     */
     template <typename OutSlots>
     constexpr bool run_possessive_byte_loop(std::string_view  text,
                                             std::size_t       start,
@@ -2962,13 +3000,15 @@ namespace real::detail {
       return run_possessive_loop_generic(text, start, mode, out_slots, in_class, scan_end, last_width);
     }
 
-    //! \brief Possessive class+/++ loop over a BYTE class (`klass_loop_possessive`).
-    //!        See \ref run_possessive_loop_generic for the shared algorithm.
-    //! \param[in]  text      Subject.
-    //! \param[in]  start     Byte offset to begin at.
-    //! \param[in]  mode      Anchoring: full, prefix or search.
-    //! \param[out] out_slots Capture slots, filled on a match.
-    //! \return True on a match.
+    /*!
+     * \brief Possessive class+/++ loop over a BYTE class (`klass_loop_possessive`).
+     *        See \ref run_possessive_loop_generic for the shared algorithm.
+     * \param[in]  text      Subject.
+     * \param[in]  start     Byte offset to begin at.
+     * \param[in]  mode      Anchoring: full, prefix or search.
+     * \param[out] out_slots Capture slots, filled on a match.
+     * \return True on a match.
+     */
     template <typename OutSlots>
     constexpr bool run_possessive_class_loop(std::string_view  text,
                                              std::size_t       start,
@@ -2994,17 +3034,19 @@ namespace real::detail {
       return run_possessive_loop_generic(text, start, mode, out_slots, in_class, scan_end, last_width);
     }
 
-    //! \brief Possessive class+/++ loop over a CODE-POINT class
-    //!        (`klass_cp_loop_possessive`). Mirrors \ref run_cp_class_loop's decode/membership
-    //!        primitives, except that the scan predicate is now split by compiler (see `in_class` below):
-    //!        clang/MSVC read the ASCII table directly, gcc keeps the width round trip. Both directions are
-    //!        measured, and gcc's is the counter-intuitive one.
-    //!        See \ref run_possessive_loop_generic for the shared algorithm.
-    //! \param[in]  text      Subject.
-    //! \param[in]  start     Byte offset to begin at.
-    //! \param[in]  mode      Anchoring: full, prefix or search.
-    //! \param[out] out_slots Capture slots, filled on a match.
-    //! \return True on a match.
+    /*!
+     * \brief Possessive class+/++ loop over a CODE-POINT class
+     *        (`klass_cp_loop_possessive`). Mirrors \ref run_cp_class_loop's decode/membership
+     *        primitives, except that the scan predicate is now split by compiler (see `in_class` below):
+     *        clang/MSVC read the ASCII table directly, gcc keeps the width round trip. Both directions are
+     *        measured, and gcc's is the counter-intuitive one.
+     *        See \ref run_possessive_loop_generic for the shared algorithm.
+     * \param[in]  text      Subject.
+     * \param[in]  start     Byte offset to begin at.
+     * \param[in]  mode      Anchoring: full, prefix or search.
+     * \param[out] out_slots Capture slots, filled on a match.
+     * \return True on a match.
+     */
     template <typename OutSlots>
     constexpr bool run_possessive_cp_class_loop(std::string_view  text,
                                                 std::size_t       start,
@@ -3150,11 +3192,13 @@ namespace real::detail {
       return true;
     }
 
-    //! \brief Fixed-shape body match from \ref pattern_hints::body_pc, then B1 `\b`/`\B` wrap.
-    //! \tparam SkipSaves Skip capture writes when the caller only needs the span.
-    //! \param[in] text Subject.
-    //! \param[in] s    Candidate match start.
-    //! \return Match end offset, or \ref npos when the body or the boundary wrap fails.
+    /*!
+     * \brief Fixed-shape body match from \ref pattern_hints::body_pc, then B1 `\b`/`\B` wrap.
+     * \tparam SkipSaves Skip capture writes when the caller only needs the span.
+     * \param[in] text Subject.
+     * \param[in] s    Candidate match start.
+     * \return Match end offset, or \ref npos when the body or the boundary wrap fails.
+     */
     template <bool SkipSaves>
     [[nodiscard]] constexpr std::size_t match_fixed_body_wb(std::string_view text,
                                                             std::size_t      s) const
@@ -4139,11 +4183,13 @@ namespace real::detail {
       return real::detail::word_before(text_, pos, ascii_word); // shared free function (assert_eval.hpp)
     }
 
-    //! \brief Word-ness of the code point **starting at** \p pos — the right side of a boundary. False
-    //!        at the text end or on a malformed sequence; bytes / `re.A` stay byte-level.
-    //! \param[in] pos        Boundary position.
-    //! \param[in] ascii_word Restrict word-ness to ASCII (`re.A` / bytes mode).
-    //! \return `true` when the following code point is a word character.
+    /*!
+     * \brief Word-ness of the code point **starting at** \p pos — the right side of a boundary. False
+     *        at the text end or on a malformed sequence; bytes / `re.A` stay byte-level.
+     * \param[in] pos        Boundary position.
+     * \param[in] ascii_word Restrict word-ness to ASCII (`re.A` / bytes mode).
+     * \return `true` when the following code point is a word character.
+     */
     [[nodiscard]] constexpr bool word_after(std::size_t pos,
                                             bool        ascii_word) const
     {
@@ -4389,10 +4435,12 @@ namespace real::detail {
              cp >= prog_.cp_ranges[lo].lo && cp <= prog_.cp_ranges[lo].hi;
     }
 
-    //! \brief Membership by class index (ASCII + European page + sparse hi / bsearch).
-    //! \param[in] cp_index Index of the code-point class.
-    //! \param[in] cp       The decoded code point.
-    //! \return Whether \p cp is a member.
+    /*!
+     * \brief Membership by class index (ASCII + European page + sparse hi / bsearch).
+     * \param[in] cp_index Index of the code-point class.
+     * \param[in] cp       The decoded code point.
+     * \return Whether \p cp is a member.
+     */
     [[nodiscard]] constexpr bool cp_class_matches_idx(std::size_t cp_index,
                                                       char32_t    cp)
     {
@@ -4602,11 +4650,13 @@ namespace real::detail {
       return sub.negative ? !matched : matched;
     }
 
-    //! \brief L1 peephole — does the single consuming op \p body match the code point / byte AT \p pos (ahead)?
-    //!        Mirrors the per-op logic of \ref lookahead_matches for a one-instruction sub-program.
-    //! \param[in] body The sub-program's single consuming instruction.
-    //! \param[in] pos  Position the lookaround is evaluated at.
-    //! \return True when \p body accepts what starts at \p pos; false at the text end.
+    /*!
+     * \brief L1 peephole — does the single consuming op \p body match the code point / byte AT \p pos (ahead)?
+     *        Mirrors the per-op logic of \ref lookahead_matches for a one-instruction sub-program.
+     * \param[in] body The sub-program's single consuming instruction.
+     * \param[in] pos  Position the lookaround is evaluated at.
+     * \return True when \p body accepts what starts at \p pos; false at the text end.
+     */
     [[nodiscard]] constexpr bool single_class_ahead(const instr& body,
                                                     std::size_t  pos)
     {
@@ -4621,12 +4671,14 @@ namespace real::detail {
       return body.op == opcode::byte ? b == body.arg8 : prog_.classes[body.arg16].test(b);
     }
 
-    //! \brief L1 peephole — does \p body match the code point / byte ending EXACTLY at \p pos (behind)?
-    //!        The defining lookbehind trap: the match must END at \p pos, so the code point is the one whose
-    //!        aligned start s gives `s + length == pos` (byte mode: `pos - 1`).
-    //! \param[in] body The sub-program's single consuming instruction.
-    //! \param[in] pos  Position the lookaround is evaluated at.
-    //! \return True when \p body accepts the atom ending at \p pos; false at the text start.
+    /*!
+     * \brief L1 peephole — does \p body match the code point / byte ending EXACTLY at \p pos (behind)?
+     *        The defining lookbehind trap: the match must END at \p pos, so the code point is the one whose
+     *        aligned start s gives `s + length == pos` (byte mode: `pos - 1`).
+     * \param[in] body The sub-program's single consuming instruction.
+     * \param[in] pos  Position the lookaround is evaluated at.
+     * \return True when \p body accepts the atom ending at \p pos; false at the text start.
+     */
     [[nodiscard]] constexpr bool single_class_behind(const instr& body,
                                                      std::size_t  pos)
     {

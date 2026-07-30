@@ -105,11 +105,13 @@ namespace real {
       return ok;
     }
 
-    //! \brief Binds the invariant context (subject, pattern, named groups) once. For an iterator that refills
-    //!        the same result many times, these never change within a walk — set them here, not per match.
-    //! \param[in] text    The subject the walk runs over.
-    //! \param[in] pattern The pattern text, for diagnostics and group naming.
-    //! \param[in] names   The pattern's named groups.
+    /*!
+     * \brief Binds the invariant context (subject, pattern, named groups) once. For an iterator that refills
+     *        the same result many times, these never change within a walk — set them here, not per match.
+     * \param[in] text    The subject the walk runs over.
+     * \param[in] pattern The pattern text, for diagnostics and group naming.
+     * \param[in] names   The pattern's named groups.
+     */
     constexpr void bind_context(std::string_view                     text,
                                 std::string_view                     pattern,
                                 std::span<const detail::named_group> names)
@@ -119,17 +121,19 @@ namespace real {
       names_   = names;
     }
 
-    //! \brief Per-match refill for an iterator whose context is already bound via \ref bind_context runs the
-    //!        VM and records only the outcome (the invariant fields are already set), the find_iter hot path.
-    //! \tparam Cascade Whether the VM may take its memchr-cascade tail.
-    //! \tparam Vm      The engine type, deduced.
-    //! \param[in,out] vm     The engine to run.
-    //! \param[in]     text   The subject.
-    //! \param[in]     pos    Byte offset to attempt at.
-    //! \param[in]     mode   Anchoring: full, prefix or search.
-    //! \param[in]     forbid Offset at which a zero-length match is refused (the find_iter no-progress rule).
-    //! \param[in]     sem    Leftmost-first or leftmost-longest.
-    //! \return True on a match; the slots hold it.
+    /*!
+     * \brief Per-match refill for an iterator whose context is already bound via \ref bind_context runs the
+     *        VM and records only the outcome (the invariant fields are already set), the find_iter hot path.
+     * \tparam Cascade Whether the VM may take its memchr-cascade tail.
+     * \tparam Vm      The engine type, deduced.
+     * \param[in,out] vm     The engine to run.
+     * \param[in]     text   The subject.
+     * \param[in]     pos    Byte offset to attempt at.
+     * \param[in]     mode   Anchoring: full, prefix or search.
+     * \param[in]     forbid Offset at which a zero-length match is refused (the find_iter no-progress rule).
+     * \param[in]     sem    Leftmost-first or leftmost-longest.
+     * \return True on a match; the slots hold it.
+     */
     template <bool Cascade, typename Vm>
     constexpr bool engine_refill_hot(Vm&              vm,
                                      std::string_view text,
@@ -142,13 +146,15 @@ namespace real {
       return matched_;
     }
 
-    //! \brief P3c cold path for TrailingLA walks only (never referenced from pure walks).
-    //! \tparam Cascade Whether the VM may take its memchr-cascade tail.
-    //! \tparam Vm      The engine type, deduced.
-    //! \param[in,out] vm   The engine to run.
-    //! \param[in]     text The subject.
-    //! \param[in]     pos  Byte offset to attempt at.
-    //! \return True on a match; the slots hold it.
+    /*!
+     * \brief P3c cold path for TrailingLA walks only (never referenced from pure walks).
+     * \tparam Cascade Whether the VM may take its memchr-cascade tail.
+     * \tparam Vm      The engine type, deduced.
+     * \param[in,out] vm   The engine to run.
+     * \param[in]     text The subject.
+     * \param[in]     pos  Byte offset to attempt at.
+     * \return True on a match; the slots hold it.
+     */
     template <bool Cascade, typename Vm>
     constexpr bool engine_refill_trailing_la(Vm&              vm,
                                              std::string_view text,

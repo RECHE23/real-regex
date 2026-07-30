@@ -41,10 +41,12 @@ namespace real::detail {
   // The code-point-range → UTF-8 byte-range algorithm (utf8_byte_seq, utf8_range_sequences,
   // encode_utf8_bytes) now lives in utf8_ranges.hpp, shared with the lazy DFA's klass_cp expansion.
 
-  //! \brief Whether \p ranges is exactly the whole non-ASCII space `[U+0080, U+10FFFF]` — the
-  //!        "any non-ASCII code point" shape emitted by \ref compiler::emit_any_codepoint_class.
-  //! \param[in] ranges The class's non-ASCII ranges.
-  //! \return Whether they are exactly the one range covering all of non-ASCII.
+  /*!
+   * \brief Whether \p ranges is exactly the whole non-ASCII space `[U+0080, U+10FFFF]` — the
+   *        "any non-ASCII code point" shape emitted by \ref compiler::emit_any_codepoint_class.
+   * \param[in] ranges The class's non-ASCII ranges.
+   * \return Whether they are exactly the one range covering all of non-ASCII.
+   */
   constexpr bool is_any_non_ascii(const std::vector<code_range>& ranges)
   {
     return ranges.size() == 1 && ranges[0].lo == 0x80U && ranges[0].hi == 0x10FFFFU;
@@ -65,8 +67,10 @@ namespace real::detail {
    * Idempotent on ASCII-only orbits (`[a]`↦`{a, A}`, no non-ASCII contamination). Partners that are
    * already present are harmlessly re-added (the compiler tolerates redundant ranges).
    */
-  //! \param[in] in The class as written.
-  //! \return Its case-fold closure: the folded ASCII bitmap plus the coalesced non-ASCII ranges.
+  /*!
+   * \param[in] in The class as written.
+   * \return Its case-fold closure: the folded ASCII bitmap plus the coalesced non-ASCII ranges.
+   */
   constexpr class_def unicode_casefold(const class_def& in)
   {
     class_def               out;
@@ -119,17 +123,19 @@ namespace real::detail {
     return out;
   }
 
-  //! \brief True if the AST subtree rooted at \p idx can match the empty string. `concat`: every
-  //!        child nullable; `alternation`: some branch nullable; `group`: its body nullable;
-  //!        `repeat`: `min == 0` or its body nullable; `byte`/`klass`/`any`: never (they always
-  //!        consume exactly one unit). `empty`/`anchor`/`lookaround` are always zero-width by
-  //!        construction — never consuming input as part of the surrounding match — so they are
-  //!        always nullable here; not an approximation for those three, the exact contribution of
-  //!        those node kinds to the enclosing match's width. Used by \ref
-  //!        ast_has_nullable_captured_repeat to decide whether a capturing group's body is nullable.
-  //! \param[in] tree The AST.
-  //! \param[in] idx  Root of the subtree; a negative index reads as nullable (an absent body).
-  //! \return Whether the subtree can match the empty string.
+  /*!
+   * \brief True if the AST subtree rooted at \p idx can match the empty string. `concat`: every
+   *        child nullable; `alternation`: some branch nullable; `group`: its body nullable;
+   *        `repeat`: `min == 0` or its body nullable; `byte`/`klass`/`any`: never (they always
+   *        consume exactly one unit). `empty`/`anchor`/`lookaround` are always zero-width by
+   *        construction — never consuming input as part of the surrounding match — so they are
+   *        always nullable here; not an approximation for those three, the exact contribution of
+   *        those node kinds to the enclosing match's width. Used by \ref
+   *        ast_has_nullable_captured_repeat to decide whether a capturing group's body is nullable.
+   * \param[in] tree The AST.
+   * \param[in] idx  Root of the subtree; a negative index reads as nullable (an absent body).
+   * \return Whether the subtree can match the empty string.
+   */
   constexpr bool node_nullable(const ast&   tree,
                                std::int32_t idx)
   {
@@ -168,15 +174,17 @@ namespace real::detail {
     return true;
   }
 
-  //! \brief True if the AST subtree rooted at \p idx contains a CAPTURING group (`group >= 0`, i.e.
-  //!        not `(?:...)`) whose own body is nullable (\ref node_nullable). Descends through every
-  //!        node kind that can nest a group (including a further `repeat`/`lookaround`) so a group
-  //!        need not be the direct child of the `repeat` this is called from — only transitively
-  //!        underneath it. Used only from \ref ast_has_nullable_captured_repeat, on a `repeat`
-  //!        node's subtree.
-  //! \param[in] tree The AST.
-  //! \param[in] idx  Root of the subtree.
-  //! \return Whether a capturing group with a nullable body sits anywhere underneath.
+  /*!
+   * \brief True if the AST subtree rooted at \p idx contains a CAPTURING group (`group >= 0`, i.e.
+   *        not `(?:...)`) whose own body is nullable (\ref node_nullable). Descends through every
+   *        node kind that can nest a group (including a further `repeat`/`lookaround`) so a group
+   *        need not be the direct child of the `repeat` this is called from — only transitively
+   *        underneath it. Used only from \ref ast_has_nullable_captured_repeat, on a `repeat`
+   *        node's subtree.
+   * \param[in] tree The AST.
+   * \param[in] idx  Root of the subtree.
+   * \return Whether a capturing group with a nullable body sits anywhere underneath.
+   */
   constexpr bool subtree_has_nullable_capturing_group(const ast&   tree,
                                                       std::int32_t idx)
   {
@@ -211,19 +219,21 @@ namespace real::detail {
     return false;
   }
 
-  //! \brief True if the AST rooted at \p idx contains a capturing group with a nullable body,
-  //!        transitively under a quantifier (any quantifier, `?` included) — the frontend source of
-  //!        \ref pattern_hints::nullable_captured_repeat (compiler::compile() reads this after
-  //!        `analyze_program`, the same AST-derived-hint slot as the inner-literal fields below).
-  //!        At each `repeat` node, checks its whole subtree for a nullable capturing group (\ref
-  //!        subtree_has_nullable_capturing_group) — the group need not be the repeat's immediate
-  //!        child — and independently keeps walking for any other `repeat` elsewhere in the tree.
-  //!        Safe over-approximation: it does not prove the loop's empty iteration actually surfaces
-  //!        a divergent capture, only that the shape can (e.g. `(\b|x)+` counts: `\b` is nullable by
-  //!        \ref node_nullable, conservatively, same posture as `empty_match_possible`).
-  //! \param[in] tree The AST.
-  //! \param[in] idx  Root to walk from.
-  //! \return Whether some quantifier in the tree has a nullable capturing group under it.
+  /*!
+   * \brief True if the AST rooted at \p idx contains a capturing group with a nullable body,
+   *        transitively under a quantifier (any quantifier, `?` included) — the frontend source of
+   *        \ref pattern_hints::nullable_captured_repeat (compiler::compile() reads this after
+   *        `analyze_program`, the same AST-derived-hint slot as the inner-literal fields below).
+   *        At each `repeat` node, checks its whole subtree for a nullable capturing group (\ref
+   *        subtree_has_nullable_capturing_group) — the group need not be the repeat's immediate
+   *        child — and independently keeps walking for any other `repeat` elsewhere in the tree.
+   *        Safe over-approximation: it does not prove the loop's empty iteration actually surfaces
+   *        a divergent capture, only that the shape can (e.g. `(\b|x)+` counts: `\b` is nullable by
+   *        \ref node_nullable, conservatively, same posture as `empty_match_possible`).
+   * \param[in] tree The AST.
+   * \param[in] idx  Root to walk from.
+   * \return Whether some quantifier in the tree has a nullable capturing group under it.
+   */
   constexpr bool ast_has_nullable_captured_repeat(const ast&   tree,
                                                   std::int32_t idx)
   {
@@ -292,7 +302,9 @@ namespace real::detail {
     //!        fold's step count, not its repetition.
     mutable std::array<std::int32_t, fold_cache_ways> fold_key_ {-1, -1, -1, -1};
 
-    //! \brief Cached FINISHED class per way -- folded, coalesced and negated. Default-constructed, so an
+    /*!
+     * \brief Cached FINISHED class per way -- folded, coalesced and negated. Default-constructed, so an
+     */
     //!        unused way holds an empty \ref class_def and costs no allocation.
     mutable std::array<class_def, fold_cache_ways> fold_val_ {};
 
@@ -1356,20 +1368,24 @@ namespace real::detail {
              is_single_atom(node.child);
     }
 
-    //! \brief The bare atom Tier 1 should test: \p index itself, or its single captured child
-    //!        when \p index is a capturing-group wrapper. \ref is_tier1_body must hold.
-    //! \param[in] index The loop body's node index.
-    //! \return The bare atom's node index.
+    /*!
+     * \brief The bare atom Tier 1 should test: \p index itself, or its single captured child
+     *        when \p index is a capturing-group wrapper. \ref is_tier1_body must hold.
+     * \param[in] index The loop body's node index.
+     * \return The bare atom's node index.
+     */
     [[nodiscard]] constexpr std::int32_t tier1_atom(std::int32_t index) const
     {
       const ast_node& node {tree_.nodes[static_cast<std::size_t>(index)]};
       return node.kind == node_kind::group ? node.child : index;
     }
 
-    //! \brief The capture group number Tier 1 should wrap the loop in, or -1 for none.
-    //!        \ref is_tier1_body must hold.
-    //! \param[in] index The loop body's node index.
-    //! \return The enveloping group's number, or -1 when the body is not wrapped in one.
+    /*!
+     * \brief The capture group number Tier 1 should wrap the loop in, or -1 for none.
+     *        \ref is_tier1_body must hold.
+     * \param[in] index The loop body's node index.
+     * \return The enveloping group's number, or -1 when the body is not wrapped in one.
+     */
     [[nodiscard]] constexpr std::int32_t tier1_capture_group(std::int32_t index) const
     {
       const ast_node& node {tree_.nodes[static_cast<std::size_t>(index)]};

@@ -107,36 +107,46 @@ namespace real {
       build_from_views(views);
     }
 
-    //! \brief Number of patterns in the set (bitset length).
-    //! \return The member count.
+    /*!
+     * \brief Number of patterns in the set (bitset length).
+     * \return The member count.
+     */
     [[nodiscard]] std::size_t size() const noexcept
     {
       return members_.size();
     }
 
-    //! \brief True if the set has no patterns.
-    //! \return Whether the set is empty.
+    /*!
+     * \brief True if the set has no patterns.
+     * \return Whether the set is empty.
+     */
     [[nodiscard]] bool empty() const noexcept
     {
       return members_.empty();
     }
 
-    //! \brief Compilation flags shared by every member.
-    //! \return The flag set every member was compiled with.
+    /*!
+     * \brief Compilation flags shared by every member.
+     * \return The flag set every member was compiled with.
+     */
     [[nodiscard]] flags compile_flags() const noexcept
     {
       return flags_;
     }
 
-    //! \brief True when a fused single-pass DFA is active (eligible.count ≥ threshold).
-    //! \return Whether the eligible members share one DFA rather than being searched individually.
+    /*!
+     * \brief True when a fused single-pass DFA is active (eligible.count ≥ threshold).
+     * \return Whether the eligible members share one DFA rather than being searched individually.
+     */
     [[nodiscard]] bool uses_fused() const noexcept
     {
       return fused_.has_value();
     }
 
-    //! \brief Count of DFA-eligible members (fused subset size when uses_fused).
-    //! \return How many members the DFA accepted.
+    /*!
+     * \brief Count of DFA-eligible members (fused subset size when uses_fused).
+     * \return How many members the DFA accepted.
+     */
     [[nodiscard]] std::size_t eligible_count() const noexcept
     {
       return eligible_orig_.size();
@@ -261,10 +271,12 @@ namespace real {
 
   private:
 
-    //! \brief Compiles every pattern, then splits them into the DFA-eligible subset (fused when it
-    //!        reaches the threshold) and the ineligible remainder each query searches individually.
-    //! \param[in] patterns The patterns to compile, in construction order.
-    //! \throws regex_error if any pattern fails to compile.
+    /*!
+     * \brief Compiles every pattern, then splits them into the DFA-eligible subset (fused when it
+     *        reaches the threshold) and the ineligible remainder each query searches individually.
+     * \param[in] patterns The patterns to compile, in construction order.
+     * \throws regex_error if any pattern fails to compile.
+     */
     void build_from_views(std::span<const std::string_view> patterns)
     {
       members_.reserve(patterns.size());

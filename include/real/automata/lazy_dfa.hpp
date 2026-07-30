@@ -35,97 +35,115 @@
 
 namespace real::detail {
 
-  //! \brief Test seam: force the matcher off the lazy-DFA route onto the pure Pike VM, so a differential can
-  //!        assert that routed and unrouted searches give identical results within one binary. Not for
-  //!        production use — the routing is transparent by contract, and this only exists to prove it.
-  //! \return Reference to the process-wide seam flag; set it to true to take the route out.
+  /*!
+   * \brief Test seam: force the matcher off the lazy-DFA route onto the pure Pike VM, so a differential can
+   *        assert that routed and unrouted searches give identical results within one binary. Not for
+   *        production use — the routing is transparent by contract, and this only exists to prove it.
+   * \return Reference to the process-wide seam flag; set it to true to take the route out.
+   */
   inline bool& lazy_dfa_route_disabled()
   {
     static bool disabled {false};
     return disabled;
   }
 
-  //! \brief Test seam: force the matcher off the inner-literal search route (IL.2) onto the core search, so a
-  //!        differential can assert routed and unrouted searches agree. Not for production use — the route is
-  //!        transparent by contract (its reverse bound never advances mid-search, so it cannot miss a leftmost
-  //!        match), and this only exists to prove it.
-  //! \return Reference to the process-wide seam flag; set it to true to take the route out.
+  /*!
+   * \brief Test seam: force the matcher off the inner-literal search route (IL.2) onto the core search, so a
+   *        differential can assert routed and unrouted searches agree. Not for production use — the route is
+   *        transparent by contract (its reverse bound never advances mid-search, so it cannot miss a leftmost
+   *        match), and this only exists to prove it.
+   * \return Reference to the process-wide seam flag; set it to true to take the route out.
+   */
   inline bool& inner_literal_route_disabled()
   {
     static bool disabled {false};
     return disabled;
   }
 
-  //! \brief Test seam: force off the rare-discriminant prefilter (`https?://` memchr-`:` route)
-  //!        onto prefix/first-byte search, so a differential can assert routed and unrouted agree.
-  //! \return Reference to the process-wide seam flag; set it to true to take the route out.
+  /*!
+   * \brief Test seam: force off the rare-discriminant prefilter (`https?://` memchr-`:` route)
+   *        onto prefix/first-byte search, so a differential can assert routed and unrouted agree.
+   * \return Reference to the process-wide seam flag; set it to true to take the route out.
+   */
   inline bool& rare_disc_route_disabled()
   {
     static bool disabled {false};
     return disabled;
   }
 
-  //! \brief Test seam: force the inner-literal small-haystack guard off, so the route fires on any size. In
-  //!        production the guard uses a cold floor (\ref regex_immutables::il_min_haystack) on the first
-  //!        candidate-scan and \ref il_warm_floor thereafter (shared reverse DFA in \ref shared_dfa_slot).
-  //!        Correctness suites use tiny inputs, so they set this to exercise the route rather than the core
-  //!        fallback. Not for production use.
-  //! \return Reference to the process-wide seam flag; set it to true to take the route out.
+  /*!
+   * \brief Test seam: force the inner-literal small-haystack guard off, so the route fires on any size. In
+   *        production the guard uses a cold floor (\ref regex_immutables::il_min_haystack) on the first
+   *        candidate-scan and \ref il_warm_floor thereafter (shared reverse DFA in \ref shared_dfa_slot).
+   *        Correctness suites use tiny inputs, so they set this to exercise the route rather than the core
+   *        fallback. Not for production use.
+   * \return Reference to the process-wide seam flag; set it to true to take the route out.
+   */
   inline bool& inner_literal_guard_disabled()
   {
     static bool disabled {false};
     return disabled;
   }
 
-  //! \brief Test seam: force the matcher off the trailing-lookaround class+ route onto the pure Pike VM, so a
-  //!        differential can assert routed and unrouted searches agree. Not for production use — the route is
-  //!        transparent by contract (same leftmost-first spans as the general loop on the eligible shape).
-  //! \return Reference to the process-wide seam flag; set it to true to take the route out.
+  /*!
+   * \brief Test seam: force the matcher off the trailing-lookaround class+ route onto the pure Pike VM, so a
+   *        differential can assert routed and unrouted searches agree. Not for production use — the route is
+   *        transparent by contract (same leftmost-first spans as the general loop on the eligible shape).
+   * \return Reference to the process-wide seam flag; set it to true to take the route out.
+   */
   inline bool& trailing_la_route_disabled()
   {
     static bool disabled {false};
     return disabled;
   }
 
-  //! \brief Test seam: force the matcher off the heterogeneous fixed-shape pair-filter route onto the
-  //!        ordinary \c run_fixed_shape walk, so a differential can assert routed and unrouted agree.
-  //!        The route is transparent by contract (it only *filters* candidates; the same
-  //!        `match_fixed_body_wb` verify decides every one of them), and this seam is what proves it.
-  //!        Not for production use.
-  //! \return Reference to the process-wide seam flag; set it to true to take the route out.
+  /*!
+   * \brief Test seam: force the matcher off the heterogeneous fixed-shape pair-filter route onto the
+   *        ordinary \c run_fixed_shape walk, so a differential can assert routed and unrouted agree.
+   *        The route is transparent by contract (it only *filters* candidates; the same
+   *        `match_fixed_body_wb` verify decides every one of them), and this seam is what proves it.
+   *        Not for production use.
+   * \return Reference to the process-wide seam flag; set it to true to take the route out.
+   */
   inline bool& fixed_shape_pair_route_disabled()
   {
     static bool disabled {false};
     return disabled;
   }
 
-  //! \brief Test/profile seam: skip dedicated class-scan fast paths (byte class-loop, cp-class-loop,
-  //!        and codepoint_class / negated-class `.`/`[^,]+`) so a pattern that would take them falls
-  //!        through to lazy-DFA / general (dispatch-optimality audit; matrix4d class-scan rows). Not for
-  //!        production — same contract as the other route-disabled seams.
-  //! \return Reference to the process-wide seam flag; set it to true to take the route out.
+  /*!
+   * \brief Test/profile seam: skip dedicated class-scan fast paths (byte class-loop, cp-class-loop,
+   *        and codepoint_class / negated-class `.`/`[^,]+`) so a pattern that would take them falls
+   *        through to lazy-DFA / general (dispatch-optimality audit; matrix4d class-scan rows). Not for
+   *        production — same contract as the other route-disabled seams.
+   * \return Reference to the process-wide seam flag; set it to true to take the route out.
+   */
   inline bool& class_fastpath_disabled()
   {
     static bool disabled {false};
     return disabled;
   }
 
-  //! \brief Test/profile seam : force the matcher off the possessive-loop fast paths
-  //!        (bare/suffixed/delimited `X*+`/`X++`) onto the general VM, so a differential can assert
-  //!        route-auto and forced-general agree on every input — the route-agreement pattern applied to the new
-  //!        recognizers. Not for production use — same contract as the other route-disabled seams.
-  //! \return Reference to the process-wide seam flag; set it to true to take the route out.
+  /*!
+   * \brief Test/profile seam : force the matcher off the possessive-loop fast paths
+   *        (bare/suffixed/delimited `X*+`/`X++`) onto the general VM, so a differential can assert
+   *        route-auto and forced-general agree on every input — the route-agreement pattern applied to the new
+   *        recognizers. Not for production use — same contract as the other route-disabled seams.
+   * \return Reference to the process-wide seam flag; set it to true to take the route out.
+   */
   inline bool& possessive_fastpath_disabled()
   {
     static bool disabled {false};
     return disabled;
   }
 
-  //! \brief Test seam : force the matcher off the Aho-Corasick multi-literal route (past the
-  //!        branch-count threshold) onto the existing \ref pattern_hints::fixed_alternation
-  //!        `run_alternation` path, so a differential can assert routed and unrouted searches agree.
-  //!        Not for production use — same contract as the other route-disabled seams.
-  //! \return Reference to the process-wide seam flag; set it to true to take the route out.
+  /*!
+   * \brief Test seam : force the matcher off the Aho-Corasick multi-literal route (past the
+   *        branch-count threshold) onto the existing \ref pattern_hints::fixed_alternation
+   *        `run_alternation` path, so a differential can assert routed and unrouted searches agree.
+   *        Not for production use — same contract as the other route-disabled seams.
+   * \return Reference to the process-wide seam flag; set it to true to take the route out.
+   */
   inline bool& aho_corasick_route_disabled()
   {
     static bool disabled {false};
@@ -339,10 +357,12 @@ namespace real::detail {
     return trie;
   }
 
-  //! \brief The instruction count \ref emit_utf8_trie writes: an empty class is one dead `klass`; otherwise
-  //!        each node is a split-guarded chain of `k` byte ranges (`3k - 1` instructions).
-  //! \param[in] trie The trie to measure.
-  //! \return Instructions the emission will occupy.
+  /*!
+   * \brief The instruction count \ref emit_utf8_trie writes: an empty class is one dead `klass`; otherwise
+   *        each node is a split-guarded chain of `k` byte ranges (`3k - 1` instructions).
+   * \param[in] trie The trie to measure.
+   * \return Instructions the emission will occupy.
+   */
   constexpr std::size_t utf8_trie_emit_size(const utf8_trie& trie)
   {
     if (trie.root < 0) {
@@ -374,19 +394,21 @@ namespace real::detail {
     std::vector<std::uint32_t> slots      {std::vector<std::uint32_t>(1024U, 0U)}; //!< Power of two; 1024 covers the ~476 ranges a `\w`-heavy program interns without a rehash.
     std::size_t                count      {0};                                     //!< Occupied slots, for the load factor.
 
-    //! \brief Probe start for \p key: Fibonacci hashing — the key times 2^64/phi, keeping the high bits.
-    //!
-    //! The keys cluster hard and arrive in near-runs (`lo` walks a trie node's disjoint ranges in order,
-    //! and the continuation range `0x80..0xBF` sits on nearly every node), so the stride between
-    //! consecutive keys is what decides whether the table is used or a quarter of it is. Taking the high
-    //! bits of the 64-bit product gives a stride coprime with the table size; the 32-bit constant shifted
-    //! by a fixed amount does not — its stride shares a factor of 4 with 1024, so three of every four
-    //! buckets would be unreachable for a run of keys and the reachable quarter would be over 100% loaded
-    //! at the half-load rehash point. Wrapping is intended (it is the modular multiply).
-    //!
-    //! \param[in] key  The 16-bit packed byte range.
-    //! \param[in] mask `slots.size() - 1`, the table being a power of two.
-    //! \return The first bucket to probe.
+    /*!
+     * \brief Probe start for \p key: Fibonacci hashing — the key times 2^64/phi, keeping the high bits.
+     *
+     * The keys cluster hard and arrive in near-runs (`lo` walks a trie node's disjoint ranges in order,
+     * and the continuation range `0x80..0xBF` sits on nearly every node), so the stride between
+     * consecutive keys is what decides whether the table is used or a quarter of it is. Taking the high
+     * bits of the 64-bit product gives a stride coprime with the table size; the 32-bit constant shifted
+     * by a fixed amount does not — its stride shares a factor of 4 with 1024, so three of every four
+     * buckets would be unreachable for a run of keys and the reachable quarter would be over 100% loaded
+     * at the half-load rehash point. Wrapping is intended (it is the modular multiply).
+     *
+     * \param[in] key  The 16-bit packed byte range.
+     * \param[in] mask `slots.size() - 1`, the table being a power of two.
+     * \return The first bucket to probe.
+     */
     [[nodiscard]] static constexpr std::size_t bucket(std::uint16_t key,
                                                       std::size_t   mask) noexcept
     {
@@ -394,9 +416,11 @@ namespace real::detail {
       return static_cast<std::size_t>((static_cast<std::uint64_t>(key) * phi_inverse) >> 48U) & mask;
     }
 
-    //! \brief Returns the interned class index for \p key, or \ref absent.
-    //! \param[in] key The 16-bit packed byte range.
-    //! \return The class index recorded for \p key, or \ref absent when it was never interned.
+    /*!
+     * \brief Returns the interned class index for \p key, or \ref absent.
+     * \param[in] key The 16-bit packed byte range.
+     * \return The class index recorded for \p key, or \ref absent when it was never interned.
+     */
     [[nodiscard]] constexpr std::uint16_t find(std::uint16_t key) const noexcept
     {
       const std::size_t mask {slots.size() - 1U};
@@ -408,9 +432,11 @@ namespace real::detail {
       return absent;
     }
 
-    //! \brief Records \p idx for \p key, doubling the table first when it would pass half load.
-    //! \param[in] key The 16-bit packed byte range.
-    //! \param[in] idx The class index to record for it.
+    /*!
+     * \brief Records \p idx for \p key, doubling the table first when it would pass half load.
+     * \param[in] key The 16-bit packed byte range.
+     * \param[in] idx The class index to record for it.
+     */
     constexpr void insert(std::uint16_t key,
                           std::uint16_t idx)
     {
@@ -509,11 +535,13 @@ namespace real::detail {
     }
   }
 
-  //! Cap on the expanded byte-program's instruction count (the running `cur` total below, checked as it
-  //! grows). Each `klass_cp` occurrence gets its OWN freshly-built UTF-8 trie here (unshared even when many
-  //! occurrences reference the identical class — e.g. every copy of a `{k}`-repeated `\w`), so a large
-  //! repeat count multiplies the trie's several-hundred-to-thousand-node size by k with no cache to amortize
-  //! it. Left unbounded, that is O(k x trie size) wall-clock BEFORE onepass or the lazy DFA ever run (their
+  /*!
+   * Cap on the expanded byte-program's instruction count (the running `cur` total below, checked as it
+   * grows). Each `klass_cp` occurrence gets its OWN freshly-built UTF-8 trie here (unshared even when many
+   * occurrences reference the identical class — e.g. every copy of a `{k}`-repeated `\w`), so a large
+   * repeat count multiplies the trie's several-hundred-to-thousand-node size by k with no cache to amortize
+   * it. Left unbounded, that is O(k x trie size) wall-clock BEFORE onepass or the lazy DFA ever run (their
+   */
   //! own caps — \ref onepass::max_nodes, \ref onepass::max_minimize_work — sit downstream of this and never
   //! get a chance to bound it). Calibrated empirically (arm64, the sanitizer-instrumented `make fuzz` build,
   //! whose -timeout=10 is the real constraint): `\w{5}a` -> 17154 instrs/1.3s, `\w{10}a` -> 34304/3.9s,
@@ -636,11 +664,13 @@ namespace real::detail {
     std::uint16_t                 count {0};   //!< number of distinct classes.
   };
 
-  //! \brief Partition 0..255 by the program's consuming predicates (every `klass` test, every `byte`
-  //!        literal). Bytes with an identical signature collapse to one class.
-  //! \param[in] code    The program's instruction stream.
-  //! \param[in] classes The byte classes it indexes.
-  //! \return The alphabet: a byte-to-class map plus the class count.
+  /*!
+   * \brief Partition 0..255 by the program's consuming predicates (every `klass` test, every `byte`
+   *        literal). Bytes with an identical signature collapse to one class.
+   * \param[in] code    The program's instruction stream.
+   * \param[in] classes The byte classes it indexes.
+   * \return The alphabet: a byte-to-class map plus the class count.
+   */
   inline constexpr lazy_byte_alphabet compute_lazy_alphabet(std::span<const instr>      code,
                                                             std::span<const char_class> classes)
   {
@@ -790,14 +820,18 @@ namespace real::detail {
 
     std::vector<std::vector<std::uint32_t>> buckets;           //!< One chain of state ids per bucket.
 
-    //! \brief An empty cache with all \ref bucket_count chains allocated.
+    /*!
+     * \brief An empty cache with all \ref bucket_count chains allocated.
+     */
     constexpr pc_set_cache()
       : buckets(bucket_count)
     {}
 
-    //! \brief FNV-1a over the pc-set, truncated to `size_t`.
-    //! \param[in] v The pc-set to hash.
-    //! \return Its hash; the caller takes it modulo \ref bucket_count.
+    /*!
+     * \brief FNV-1a over the pc-set, truncated to `size_t`.
+     * \param[in] v The pc-set to hash.
+     * \return Its hash; the caller takes it modulo \ref bucket_count.
+     */
     static constexpr std::size_t hash(const std::vector<std::int32_t>& v)
     {
       // FNV-1a computed in a fixed 64-bit accumulator, truncated to size_t on return: the 64-bit
@@ -810,10 +844,12 @@ namespace real::detail {
       return static_cast<std::size_t>(h);
     }
 
-    //! \brief The state already interned for \p pcs, if any.
-    //! \param[in] pcs       The candidate pc-set.
-    //! \param[in] state_pcs The owner's per-state pc-sets, compared against on a bucket hit.
-    //! \return The matching state id, or \ref not_found.
+    /*!
+     * \brief The state already interned for \p pcs, if any.
+     * \param[in] pcs       The candidate pc-set.
+     * \param[in] state_pcs The owner's per-state pc-sets, compared against on a bucket hit.
+     * \return The matching state id, or \ref not_found.
+     */
     [[nodiscard]] constexpr std::uint32_t find(const std::vector<std::int32_t>&               pcs,
                                                const std::vector<std::vector<std::int32_t>>&  state_pcs) const
     {
@@ -825,16 +861,20 @@ namespace real::detail {
       return not_found;
     }
 
-    //! \brief Records \p id under \p pcs. The caller guarantees \p pcs is not already interned.
-    //! \param[in] pcs The state's pc-set.
-    //! \param[in] id  The state id to record.
+    /*!
+     * \brief Records \p id under \p pcs. The caller guarantees \p pcs is not already interned.
+     * \param[in] pcs The state's pc-set.
+     * \param[in] id  The state id to record.
+     */
     constexpr void insert(const std::vector<std::int32_t>& pcs,
                           std::uint32_t                    id)
     {
       buckets[hash(pcs) % bucket_count].push_back(id);
     }
 
-    //! \brief Empties every chain, keeping the bucket array allocated (paired with a state-cache flush).
+    /*!
+     * \brief Empties every chain, keeping the bucket array allocated (paired with a state-cache flush).
+     */
     constexpr void clear()
     {
       for (std::vector<std::uint32_t>& b : buckets) {
@@ -869,7 +909,9 @@ namespace real::detail {
     static constexpr std::size_t   state_budget   {4096};        //!< Cached states before a flush (the memory cap).
     static constexpr std::size_t   thrash_flushes {2};           //!< Flushes within one scan that trip \ref thrashing.
 
-    //! \brief Cache-behaviour counters, for the policy tests and later tuning.
+    /*!
+     * \brief Cache-behaviour counters, for the policy tests and later tuning.
+     */
     struct counters
     {
       std::size_t hits         {0};   //!< Transitions served from the cached row.
@@ -885,9 +927,11 @@ namespace real::detail {
      * \param[in] budget  Cached states before a flush; defaults to \ref state_budget. A smaller value is a
      *                    test hook to exercise eviction and thrash without a state-exploding pattern.
      */
-    //! \param[in] shared_alpha A precomputed alphabet the caller shares per regex, or null to compute it here.
-    //!        Recomputing is O(256 x classes) and a Unicode byte-program has thousands, so the router passes
-    //!        the shared one rather than paying it on every scan.
+    /*!
+     * \param[in] shared_alpha A precomputed alphabet the caller shares per regex, or null to compute it here.
+     *        Recomputing is O(256 x classes) and a Unicode byte-program has thousands, so the router passes
+     *        the shared one rather than paying it on every scan.
+     */
     explicit constexpr lazy_dfa(std::span<const instr>      code,
                                 std::span<const char_class> classes,
                                 std::size_t                 budget       = state_budget,
@@ -899,44 +943,56 @@ namespace real::detail {
       flush();                 // seeds the dead state (0) and the start state (1)
     }
 
-    //! \brief Whether the program can be represented at all (no assertion, `klass_cp` or lookaround).
-    //! \return False when the caller must keep the Pike VM.
+    /*!
+     * \brief Whether the program can be represented at all (no assertion, `klass_cp` or lookaround).
+     * \return False when the caller must keep the Pike VM.
+     */
     [[nodiscard]] bool eligible() const
     {
       return eligible_;
     }
 
-    //! \brief Width of one cached transition row.
-    //! \return The byte alphabet's class count.
+    /*!
+     * \brief Width of one cached transition row.
+     * \return The byte alphabet's class count.
+     */
     [[nodiscard]] std::uint16_t num_classes() const
     {
       return alpha_.count;
     }
 
-    //! \brief The state a scan starts in.
-    //! \return The start state's id (1; 0 is \ref dead_state).
+    /*!
+     * \brief The state a scan starts in.
+     * \return The start state's id (1; 0 is \ref dead_state).
+     */
     [[nodiscard]] std::uint32_t start_state() const
     {
       return start_state_;
     }
 
-    //! \brief Begin a search: clear the per-scan flush counter and the thrash flag. (No cache flush — the
-    //!        states carry over between searches on the same text, which is where the cache pays.)
+    /*!
+     * \brief Begin a search: clear the per-scan flush counter and the thrash flag. (No cache flush — the
+     *        states carry over between searches on the same text, which is where the cache pays.)
+     */
     void begin_scan()
     {
       stats_.scan_flushes = 0;
       thrashing_          = false;
     }
 
-    //! \brief Whether this scan crossed \ref thrash_flushes flushes — the cache is not paying for it.
-    //! \return True once the caller should abandon the DFA and finish the search on the Pike VM.
+    /*!
+     * \brief Whether this scan crossed \ref thrash_flushes flushes — the cache is not paying for it.
+     * \return True once the caller should abandon the DFA and finish the search on the Pike VM.
+     */
     [[nodiscard]] bool thrashing() const
     {
       return thrashing_;
     }
 
-    //! \brief Cache-behaviour counters.
-    //! \return A reference to the live \ref counters, valid for this object's lifetime.
+    /*!
+     * \brief Cache-behaviour counters.
+     * \return A reference to the live \ref counters, valid for this object's lifetime.
+     */
     [[nodiscard]] const counters& stats() const
     {
       return stats_;
@@ -1067,9 +1123,11 @@ namespace real::detail {
       return {.end = best_end, .scanned_to = pos};
     }
 
-    //! \brief Whether \p state accepts here (its ordered set contains a `match` PC).
-    //! \param[in] state The state id to test.
-    //! \return True when the state holds an accept.
+    /*!
+     * \brief Whether \p state accepts here (its ordered set contains a `match` PC).
+     * \param[in] state The state id to test.
+     * \return True when the state holds an accept.
+     */
     [[nodiscard]] bool is_match(std::uint32_t state) const
     {
       return state_match_idx_[state] != no_match_idx;
@@ -1112,12 +1170,14 @@ namespace real::detail {
 
   private:
 
-    //! \brief Like \ref step, but re-seeds: the unanchored-search variant appends pc 0's closure at the
-    //!        lowest priority, so a fresh thread starts at every position until a match is found. Cached in
-    //!        its own transition row (the pre-match state family).
-    //! \param[in] state The current state id.
-    //! \param[in] byte  The byte consumed.
-    //! \return The successor state, with a fresh thread appended at the lowest priority.
+    /*!
+     * \brief Like \ref step, but re-seeds: the unanchored-search variant appends pc 0's closure at the
+     *        lowest priority, so a fresh thread starts at every position until a match is found. Cached in
+     *        its own transition row (the pre-match state family).
+     * \param[in] state The current state id.
+     * \param[in] byte  The byte consumed.
+     * \return The successor state, with a fresh thread appended at the lowest priority.
+     */
     std::uint32_t step_seeded(std::uint32_t state,
                               std::uint8_t  byte)
     {
@@ -1145,11 +1205,13 @@ namespace real::detail {
       return result;
     }
 
-    //! \brief The priority-cut at an accept: intern the prefix of \p state's ordered pc-set before index
-    //!        \p m (dropping the accept and every lower-priority thread).
-    //! \param[in] state The accepting state id.
-    //! \param[in] m     Index of the accept in that state's ordered pc-set.
-    //! \return The interned prefix state, or \ref dead_state when the prefix is empty.
+    /*!
+     * \brief The priority-cut at an accept: intern the prefix of \p state's ordered pc-set before index
+     *        \p m (dropping the accept and every lower-priority thread).
+     * \param[in] state The accepting state id.
+     * \param[in] m     Index of the accept in that state's ordered pc-set.
+     * \return The interned prefix state, or \ref dead_state when the prefix is empty.
+     */
     std::uint32_t cut(std::uint32_t state,
                       std::uint32_t m)
     {
@@ -1164,12 +1226,14 @@ namespace real::detail {
       return intern(prefix);
     }
 
-    //! \brief The priority-cut of \p state at its own accept, memoized. `cut` is O(state size) — it rebuilds
-    //!        and re-interns the prefix — and a Unicode `klass_cp` byte-program makes states thousands of PCs
-    //!        wide, so recomputing it once per match (per find_iter step) dominated. Cached per state, it is
-    //!        computed once and then O(1). The state's accept index is fixed, so the cut is deterministic.
-    //! \param[in] state The accepting state id.
-    //! \return The cut state, memoized after the first call.
+    /*!
+     * \brief The priority-cut of \p state at its own accept, memoized. `cut` is O(state size) — it rebuilds
+     *        and re-interns the prefix — and a Unicode `klass_cp` byte-program makes states thousands of PCs
+     *        wide, so recomputing it once per match (per find_iter step) dominated. Cached per state, it is
+     *        computed once and then O(1). The state's accept index is fixed, so the cut is deterministic.
+     * \param[in] state The accepting state id.
+     * \return The cut state, memoized after the first call.
+     */
     std::uint32_t cut_cached(std::uint32_t state)
     {
       const std::uint32_t memo {state_cut_[state]};
@@ -1184,9 +1248,11 @@ namespace real::detail {
       return result;
     }
 
-    //! \brief Scan \p code for an op no forward DFA can represent.
-    //! \param[in] code The program's instruction stream.
-    //! \return True when every op is representable.
+    /*!
+     * \brief Scan \p code for an op no forward DFA can represent.
+     * \param[in] code The program's instruction stream.
+     * \return True when every op is representable.
+     */
     static constexpr bool compute_eligibility(std::span<const instr> code)
     {
       for (const instr& in : code) {
@@ -1203,10 +1269,12 @@ namespace real::detail {
       return true;
     }
 
-    //! \brief Whether the instruction at \p pc is a consuming edge that accepts \p byte.
-    //! \param[in] pc   Program counter to test.
-    //! \param[in] byte The byte offered to it.
-    //! \return True for a `byte`/`klass` op accepting it; false for any non-consuming op.
+    /*!
+     * \brief Whether the instruction at \p pc is a consuming edge that accepts \p byte.
+     * \param[in] pc   Program counter to test.
+     * \param[in] byte The byte offered to it.
+     * \return True for a `byte`/`klass` op accepting it; false for any non-consuming op.
+     */
     [[nodiscard]] bool consumes(std::int32_t pc,
                                 std::uint8_t byte) const
     {
@@ -1220,18 +1288,22 @@ namespace real::detail {
       return false;   // match / anything else: not a consuming edge
     }
 
-    //! \brief Instructions a consuming op occupies. Always 1 here: the byte program has no wider op left.
-    //! \return 1.
+    /*!
+     * \brief Instructions a consuming op occupies. Always 1 here: the byte program has no wider op left.
+     * \return 1.
+     */
     [[nodiscard]] static std::int32_t consumed_width(std::int32_t /*pc*/)
     {
       return 1;
     }
 
-    //! \brief Append the ordered epsilon-closure of \p pc to \p out (split priority; save/jump crossed),
-    //!        collecting the consuming and `match` PCs. Uses \p seen to dedup within this closure.
-    //! \param[in]     pc   Program counter to close over.
-    //! \param[in,out] out  Ordered pc-set the closure is appended to.
-    //! \param[in,out] seen Per-pc visited marks, sized to the program, deduping within this closure.
+    /*!
+     * \brief Append the ordered epsilon-closure of \p pc to \p out (split priority; save/jump crossed),
+     *        collecting the consuming and `match` PCs. Uses \p seen to dedup within this closure.
+     * \param[in]     pc   Program counter to close over.
+     * \param[in,out] out  Ordered pc-set the closure is appended to.
+     * \param[in,out] seen Per-pc visited marks, sized to the program, deduping within this closure.
+     */
     constexpr void close_into(std::int32_t               pc,
                               std::vector<std::int32_t>& out,
                               std::vector<char>&         seen) const
@@ -1277,10 +1349,12 @@ namespace real::detail {
       }
     }
 
-    //! \brief Intern an ordered pc-set into a state id (cached). Flushes the cache when the budget is hit.
-    //! \param[in] pcs The ordered pc-set.
-    //! \return Its state id, existing or freshly built; \ref dead_state for an empty set. A flush here
-    //!         invalidates every id the caller holds.
+    /*!
+     * \brief Intern an ordered pc-set into a state id (cached). Flushes the cache when the budget is hit.
+     * \param[in] pcs The ordered pc-set.
+     * \return Its state id, existing or freshly built; \ref dead_state for an empty set. A flush here
+     *         invalidates every id the caller holds.
+     */
     constexpr std::uint32_t intern(const std::vector<std::int32_t>& pcs)
     {
       if (pcs.empty()) {
@@ -1297,9 +1371,11 @@ namespace real::detail {
       return intern_fresh(pcs);
     }
 
-    //! \brief Append a new state for \p pcs: its two transition rows, its accept index and its empty cut memo.
-    //! \param[in] pcs The ordered pc-set, known not to be interned yet.
-    //! \return The new state's id.
+    /*!
+     * \brief Append a new state for \p pcs: its two transition rows, its accept index and its empty cut memo.
+     * \param[in] pcs The ordered pc-set, known not to be interned yet.
+     * \return The new state's id.
+     */
     constexpr std::uint32_t intern_fresh(const std::vector<std::int32_t>& pcs)
     {
       const auto id {static_cast<std::uint32_t>(state_pcs_.size())};
@@ -1319,7 +1395,9 @@ namespace real::detail {
       return id;
     }
 
-    //! \brief Empty the cache back to the dead + start states (the eviction: bounded memory).
+    /*!
+     * \brief Empty the cache back to the dead + start states (the eviction: bounded memory).
+     */
     constexpr void flush()
     {
       const bool first {state_pcs_.empty()};
@@ -1428,8 +1506,10 @@ namespace real::detail {
       flush();
     }
 
-    //! \brief Whether the program can be represented at all (no assertion, `klass_cp` or lookaround).
-    //! \return False when the caller must find the start another way.
+    /*!
+     * \brief Whether the program can be represented at all (no assertion, `klass_cp` or lookaround).
+     * \return False when the caller must find the start another way.
+     */
     [[nodiscard]] bool eligible() const
     {
       return eligible_;
@@ -1467,10 +1547,12 @@ namespace real::detail {
 
   private:
 
-    //! \brief Saturate \p set with its backward epsilon-closure, then sort it into a canonical key.
-    //!        Unordered by design: the reverse rule is longest, so priority carries no meaning here.
-    //! \param[in,out] set  The pc-set to close over, in place.
-    //! \param[in,out] seen Per-pc visited marks, sized to the program.
+    /*!
+     * \brief Saturate \p set with its backward epsilon-closure, then sort it into a canonical key.
+     *        Unordered by design: the reverse rule is longest, so priority carries no meaning here.
+     * \param[in,out] set  The pc-set to close over, in place.
+     * \param[in,out] seen Per-pc visited marks, sized to the program.
+     */
     constexpr void rev_closure(std::vector<std::int32_t>& set,
                                std::vector<char>&         seen) const
     {
@@ -1489,10 +1571,12 @@ namespace real::detail {
       std::sort(set.begin(), set.end()); // unordered: a canonical (sorted) key, no priority
     }
 
-    //! \brief Transition \p state backward over \p byte, computing and caching the edge on first use.
-    //! \param[in] state The current state id.
-    //! \param[in] byte  The byte consumed, read right-to-left.
-    //! \return The predecessor state, or \ref dead_state when nothing reaches back through \p byte.
+    /*!
+     * \brief Transition \p state backward over \p byte, computing and caching the edge on first use.
+     * \param[in] state The current state id.
+     * \param[in] byte  The byte consumed, read right-to-left.
+     * \return The predecessor state, or \ref dead_state when nothing reaches back through \p byte.
+     */
     std::uint32_t step(std::uint32_t state,
                        std::uint8_t  byte)
     {
@@ -1526,10 +1610,12 @@ namespace real::detail {
       return result;
     }
 
-    //! \brief Whether the instruction at \p pc is a consuming edge that accepts \p byte.
-    //! \param[in] pc   Program counter to test.
-    //! \param[in] byte The byte offered to it.
-    //! \return True for a `byte`/`klass` op accepting it; false for any non-consuming op.
+    /*!
+     * \brief Whether the instruction at \p pc is a consuming edge that accepts \p byte.
+     * \param[in] pc   Program counter to test.
+     * \param[in] byte The byte offered to it.
+     * \return True for a `byte`/`klass` op accepting it; false for any non-consuming op.
+     */
     [[nodiscard]] bool consumes(std::int32_t pc,
                                 std::uint8_t byte) const
     {
@@ -1540,9 +1626,11 @@ namespace real::detail {
       return in.op == opcode::klass && classes_[in.arg16].test(byte);
     }
 
-    //! \brief Scan \p code for an op the transposed program cannot represent.
-    //! \param[in] code The program's instruction stream.
-    //! \return True when every op is representable.
+    /*!
+     * \brief Scan \p code for an op the transposed program cannot represent.
+     * \param[in] code The program's instruction stream.
+     * \return True when every op is representable.
+     */
     static constexpr bool compute_eligibility(std::span<const instr> code)
     {
       for (const instr& in : code) {
@@ -1558,9 +1646,11 @@ namespace real::detail {
       return true;
     }
 
-    //! \brief Intern a sorted pc-set into a state id (cached), recording whether it reaches the program start.
-    //! \param[in] pcs The sorted pc-set.
-    //! \return Its state id, existing or freshly built; \ref dead_state for an empty set.
+    /*!
+     * \brief Intern a sorted pc-set into a state id (cached), recording whether it reaches the program start.
+     * \param[in] pcs The sorted pc-set.
+     * \return Its state id, existing or freshly built; \ref dead_state for an empty set.
+     */
     constexpr std::uint32_t intern(const std::vector<std::int32_t>& pcs)
     {
       if (pcs.empty()) {
@@ -1588,7 +1678,9 @@ namespace real::detail {
       return id;
     }
 
-    //! \brief Empty the cache back to the dead + start states (the eviction: bounded memory).
+    /*!
+     * \brief Empty the cache back to the dead + start states (the eviction: bounded memory).
+     */
     constexpr void flush()
     {
       ++flushes_;

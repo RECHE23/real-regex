@@ -66,8 +66,7 @@ namespace real::detail {
     }
   };
 
-  //! \brief The most bytes an inner literal keeps (a longer memmem target is diminishing returns and storage).
-  inline constexpr std::size_t inner_literal_max {16};
+  inline constexpr std::size_t inner_literal_max {16}; //!< The most bytes an inner literal keeps (a longer memmem target is diminishing returns and storage).
 
   //! \brief Helpers for \ref real::detail::extract_inner_literal; not part of any interface.
   namespace inner_literal_detail {
