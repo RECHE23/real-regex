@@ -473,9 +473,10 @@ def main() -> int:
         if adjacent:
             parts.append(f"{len(adjacent)} stacked block pair(s)")
         print(
-            f"\ncheck_doc_style: FAILED -- {' and '.join(parts)}. Doxygen warns about neither: it renders "
-            "one \\brief and drops the rest, and a truncated block is well formed. Both need a human -- "
-            "merging or rejoining prose is a judgment about which declaration the text belongs to."
+            f"\ncheck_doc_style: FAILED -- {', '.join(parts)}. Doxygen warns about none of these: it renders "
+            "one \\brief and silently drops the rest, and a truncated or stacked block is still well formed. "
+            "Each needs a human -- deciding which declaration a paragraph belongs to is a judgment, and "
+            "guessing would delete real prose."
         )
         return 1
 

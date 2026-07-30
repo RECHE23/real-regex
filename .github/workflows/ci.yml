@@ -42,7 +42,7 @@ jobs:
           tar -xzf /tmp/uc.tgz -C /tmp
           cmake -S /tmp/uncrustify-uncrustify-0.82.0 -B /tmp/uc-build && cmake --build /tmp/uc-build -j
           mkdir -p "$HOME/.local/bin" && cp /tmp/uc-build/uncrustify "$HOME/.local/bin/"
-      - name: preflight (format → version → layers → pins → capi-abi → doc)
+      - name: preflight (format → version → layers → pins → capi-abi → doc → doc-style)
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"
@@ -72,6 +72,14 @@ jobs:
           make -C real-regex check-features-probe
           echo "── doc-no-coverage (Doxygen WARN_AS_ERROR)"
           make -C real-regex doc-no-coverage
+          # Comment-FORM convention plus the three shapes of the orphaned-block defect (two \brief in
+          # one block, a block cut mid-sentence, two blocks stacked with no declaration between).
+          # Doxygen warns about NONE of them -- it renders one \brief and drops the rest, and a truncated
+          # or stacked block is well formed -- so WARN_AS_ERROR above cannot stand in for this. Must come
+          # after doc-no-coverage: that step runs the local Doxygen, and this script refuses to give a
+          # verdict against an XML older than the headers (a stale one produced a false clean once).
+          echo "── check-doc-style (objects /*! */, attributes //!<, no orphaned blocks)"
+          make -C real-regex check-doc-style
 
   # Lint (format + MISRA) via SciForge's reusable spine: it pins clang-tidy-18 and
   # runs this repo's own `make format-check` / `make misra` against the shared lint/
