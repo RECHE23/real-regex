@@ -14,7 +14,8 @@
 #include <iterator>
 
 //! \brief Drop-in replacements for `<regex>`: \c basic_regex, \c regex_search / \c regex_match /
-//!        \c regex_replace and the iterator types, on REAL's linear-time engine.
+//!        \c regex_replace and the iterator types -- backed by REAL's linear-time engine where it can
+//!        serve the pattern, and by `std::regex` otherwise, never by a silent divergence.
 namespace real::compat {
   /*!
    * \brief Iterates the non-overlapping matches of a pattern in a sequence (`std::regex_iterator`).
@@ -180,7 +181,8 @@ namespace real::compat {
     {
       const std::string_view sv     {std::to_address(begin_),
                                      static_cast<std::size_t>(std::distance(begin_, end_))};
-      // POSIX ERE drives the iteration with leftmost-longest bounds; the ECMAScript default keeps first.
+      // A POSIX grammar on REAL drives the iteration with leftmost-longest bounds; the ECMAScript
+      // default keeps leftmost-first.
       const real::regex&     engine {std::get<real::regex>(re_->engine())};
       const auto             result {re_->posix_longest() ? engine.search_longest(sv, real_pos_)
                                      : engine.search(sv, real_pos_)};

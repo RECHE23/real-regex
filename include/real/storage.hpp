@@ -901,8 +901,9 @@ namespace real {
       }
 
       /*!
-       * \brief Returns the effective flags (constructor flags merged with a leading `(?imsxaU)` group).
-       * \return The compiled flag set.
+       * \brief Returns the constructor flags OR-ed with the letters a leading global-flags group ADDED.
+       *        A `-removal` is honoured by matching but not reflected here -- see \ref real::basic_regex::compile_flags.
+       * \return The stored flag set.
        */
       [[nodiscard]] constexpr flags compiled_flags() const
       {
@@ -1165,8 +1166,9 @@ namespace real {
       }
 
       /*!
-       * \brief Returns the effective flags.
-       * \return The compiled flag set.
+       * \brief Returns the constructor flags OR-ed with the letters a leading global-flags group ADDED.
+       *        A `-removal` is honoured by matching but not reflected here -- see \ref real::basic_regex::compile_flags.
+       * \return The stored flag set.
        */
       [[nodiscard]] constexpr flags compiled_flags() const
       {
