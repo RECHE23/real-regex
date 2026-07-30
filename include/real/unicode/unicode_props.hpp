@@ -800,6 +800,7 @@ namespace real::detail {
     {0x30000, 0x3134A},
     {0x31350, 0x323AF},
   };
+  //! \brief Number of ranges in \ref word_ranges.
   inline constexpr std::size_t word_ranges_size {771};
 
   //! \brief Code-point ranges matched by `\d` (71 ranges, 760 code points).
@@ -876,6 +877,7 @@ namespace real::detail {
     {0x1E950, 0x1E959},
     {0x1FBF0, 0x1FBF9},
   };
+  //! \brief Number of ranges in \ref digit_ranges.
   inline constexpr std::size_t digit_ranges_size {71};
 
   //! \brief Code-point ranges matched by `\s` (10 ranges, 29 code points).
@@ -891,10 +893,14 @@ namespace real::detail {
     {0x205F, 0x205F},
     {0x3000, 0x3000},
   };
+  //! \brief Number of ranges in \ref space_ranges.
   inline constexpr std::size_t space_ranges_size {10};
 
   //! \brief Binary-searches a sorted, non-overlapping range table for \p cp. Returns a bool
   //!        (not a pointer into the table) so it stays constant-evaluable on every compiler.
+  //! \param[in] ranges Sorted, non-overlapping ranges to search.
+  //! \param[in] cp     The code point to look for.
+  //! \return Whether \p cp falls inside one of them.
   constexpr bool cp_in_ranges(std::span<const code_range> ranges,
                               char32_t                    cp)
   {
@@ -912,9 +918,19 @@ namespace real::detail {
     return lo < ranges.size() && cp >= ranges[lo].lo && cp <= ranges[lo].hi;
   }
 
-  //! \brief Whether \p cp is a Unicode word / digit / whitespace code point (== re `\w`/`\d`/`\s`).
+  //! \brief Whether \p cp is a Unicode word code point (== re `\w`).
+  //! \param[in] cp The code point to test.
+  //! \return Whether it is a member of \ref word_ranges.
   constexpr bool is_word_cp(char32_t cp) { return cp_in_ranges(word_ranges, cp); }
+
+  //! \brief Whether \p cp is a Unicode digit code point (== re `\d`).
+  //! \param[in] cp The code point to test.
+  //! \return Whether it is a member of \ref digit_ranges.
   constexpr bool is_digit_cp(char32_t cp) { return cp_in_ranges(digit_ranges, cp); }
+
+  //! \brief Whether \p cp is a Unicode whitespace code point (== re `\s`).
+  //! \param[in] cp The code point to test.
+  //! \return Whether it is a member of \ref space_ranges.
   constexpr bool is_space_cp(char32_t cp) { return cp_in_ranges(space_ranges, cp); }
 
 } // namespace real::detail

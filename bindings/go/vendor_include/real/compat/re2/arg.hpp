@@ -92,6 +92,7 @@ namespace real::compat::re2 {
   private:
 
     //! \brief The `nullptr`-destination parser: always succeeds, writes nothing.
+    //! \return `true`, unconditionally.
     static bool parse_nothing(const char* /*text*/,
                               std::size_t /*length*/,
                               void* /*dest*/)

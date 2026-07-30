@@ -33,6 +33,14 @@ namespace real::detail {
   //! construction — no separate capture-free compile is needed. Top-level `\b`/`\B` are peeled before the
   //! prefix is built (D1a, \ref extract_inner_literal / \ref build_prefix_ast with skip); other anchors and
   //! lookarounds still decline extraction, so an extracted pattern's prefix stays byte-program eligible.
+  //!
+  //! \param[in] tree          The pattern's AST, which the prefix is rebuilt from.
+  //! \param[in] count         Top-level children forming the prefix; 0 means the literal is at the head.
+  //! \param[in] compile_flags Flags to compile the prefix with, matching the whole pattern's.
+  //! \param[in] text          Subject.
+  //! \param[in] h             Offset of the literal candidate (the prefix must end here).
+  //! \param[in] min_start     Lower bound the reverse walk will not cross.
+  //! \return The match start, or \ref real::npos when the prefix cannot reach one.
   inline std::size_t prefix_reverse_start(const ast&       tree,
                                           std::int32_t     count,
                                           flags            compile_flags,

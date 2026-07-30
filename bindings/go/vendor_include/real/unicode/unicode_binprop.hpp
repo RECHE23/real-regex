@@ -11761,13 +11761,20 @@ namespace real::detail {
   };
 
   //! \brief Whether \p cp has the binary property \p prop (== the UCD).
+  //! \param[in] prop The property to test for.
+  //! \param[in] cp   The code point to test.
+  //! \return Whether \p cp has \p prop.
   constexpr bool is_binprop_cp(binprop prop, char32_t cp)
   {
     return cp_in_ranges(binprop_ranges[static_cast<std::size_t>(prop)], cp);
   }
 
   //! \brief A loose-normalized (lowercase, no _/-/space) binary-property name and its value.
-  struct binprop_alias_entry { std::string_view name; binprop prop; };
+  struct binprop_alias_entry
+  {
+    std::string_view name; //!< The loose-normalized name.
+    binprop          prop; //!< The property it names.
+  };
 
   //! \brief Binary-property names, loose-keyed; for the `\p{...}` parser (no namespace prefix,
   //!        same as PCRE2: `\p{Alphabetic}`, not `\p{bp=Alphabetic}`).
@@ -11838,6 +11845,8 @@ namespace real::detail {
   };
 
   //! \brief Resolve a loose-normalized binary-property name to its value, or `count` if unknown.
+  //! \param[in] loose A name already put through the parser's loose normalization.
+  //! \return The property, or `binprop::count` when no alias matches.
   constexpr binprop resolve_binprop(std::string_view loose)
   {
     for (const binprop_alias_entry& a : binprop_aliases) {

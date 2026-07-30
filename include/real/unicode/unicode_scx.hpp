@@ -2230,6 +2230,9 @@ namespace real::detail {
 
   //! \brief Whether \p cp is in the Script_Extensions of \p sc (== the UCD). NOT exclusive:
   //!        a code point can satisfy this for several \ref script values at once.
+  //! \param[in] sc The Script to test for.
+  //! \param[in] cp The code point to test.
+  //! \return Whether \p sc is in \p cp's Script_Extensions set.
   constexpr bool is_scx_cp(script sc, char32_t cp)
   {
     return cp_in_ranges(scx_ranges[static_cast<std::size_t>(sc)], cp);

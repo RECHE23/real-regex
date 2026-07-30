@@ -43,7 +43,9 @@
 // Stringization (#x) is a preprocessor-only operation — the suggested constexpr template cannot
 // express it — so macro-usage's advice does not apply here.
 // NOLINTBEGIN(cppcoreguidelines-macro-usage)
+//! \brief Inner half of the two-level stringize: turns its argument into a string literal.
 #define REAL_STRINGIZE_IMPL(x) #x
+//! \brief Stringizes the *expansion* of \p x, which the extra level is what makes possible.
 #define REAL_STRINGIZE(x)      REAL_STRINGIZE_IMPL(x)
 // NOLINTEND(cppcoreguidelines-macro-usage)
 

@@ -2984,6 +2984,8 @@ namespace real::detail {
   //!        \ref unicode_fold_table_size if none is. The seek half of \ref find_fold_index,
   //!        exposed on its own so a caller holding a RANGE enters the table once and walks
   //!        forward instead of scanning it whole -- see \c real::detail::unicode_casefold.
+  //! \param[in] cp The code point to seek.
+  //! \return The index of the first entry at or after \p cp; \ref unicode_fold_table_size when none is.
   constexpr std::size_t find_fold_lower_bound(std::uint32_t cp)
   {
     std::size_t lo {0};
@@ -3005,6 +3007,8 @@ namespace real::detail {
   //!        the table) keeps this usable in a constant expression on every compiler — g++
   //!        rejects a `&table[i] != nullptr` comparison inside a `static_regex`.
   //!        Shared by the parser (is a literal cased?) and the compiler (its fold partners).
+  //! \param[in] cp The code point to look up.
+  //! \return Its index in \ref unicode_fold_table, or \ref unicode_fold_table_size when uncased.
   constexpr std::size_t find_fold_index(std::uint32_t cp)
   {
     std::size_t lo {0};

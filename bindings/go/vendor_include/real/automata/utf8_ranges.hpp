@@ -35,6 +35,9 @@ namespace real::detail {
   };
 
   //! \brief Encodes \p cp to its UTF-8 bytes in \p out, returning the length (1–4).
+  //! \param[in]  cp  The code point to encode.
+  //! \param[out] out Receives its bytes; only the first \c return of them are written.
+  //! \return The encoded length, 1 to 4.
   constexpr std::size_t encode_utf8_bytes(std::uint32_t cp,
                                           std::uint8_t (&out)[4])
   {
@@ -65,6 +68,10 @@ namespace real::detail {
    *        byte-range sequences (RE2 / rust regex-syntax `Utf8Sequences`). Every produced sequence is
    *        canonical by construction — no overlong forms, no surrogates — which is exactly the
    *        security property qE needs. Appends to \p out.
+   *
+   * \param[in]     start First code point of the range.
+   * \param[in]     end   Last code point of the range, inclusive; an inverted range appends nothing.
+   * \param[in,out] out   Receives the sequences, appended.
    */
   constexpr void utf8_push_range(std::uint32_t               start,
                                  std::uint32_t               end,
@@ -110,6 +117,9 @@ namespace real::detail {
 
   //! \brief Canonical UTF-8 byte-range sequences for the code-point range `[lo, hi]`, excluding the
   //!        surrogate block `[U+D800, U+DFFF]` (so a negated class never matches a surrogate encoding).
+  //! \param[in] lo First code point of the range.
+  //! \param[in] hi Last code point of the range, inclusive.
+  //! \return The canonical sequences covering it, surrogates excluded.
   constexpr std::vector<utf8_byte_seq> utf8_range_sequences(std::uint32_t lo,
                                                             std::uint32_t hi)
   {
