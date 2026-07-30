@@ -790,6 +790,7 @@ namespace real::detail {
 
     std::vector<std::vector<std::uint32_t>> buckets;           //!< One chain of state ids per bucket.
 
+    //! \brief An empty cache with all \ref bucket_count chains allocated.
     constexpr pc_set_cache()
       : buckets(bucket_count)
     {}

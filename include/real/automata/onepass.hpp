@@ -917,8 +917,9 @@ namespace real::detail {
       return *this;
     }
 
-    // Runtime erase of this regex's shared DFA slot (reclaims match-time caches). Constexpr paths
-    // skip the map entirely — \c is_constant_evaluated so dynamic_storage::compile / static_assert stay valid.
+    //! \brief Runtime erase of this regex's shared DFA slot (reclaims match-time caches). Constexpr paths
+    //!        skip the map entirely — \c is_constant_evaluated so dynamic_storage::compile / static_assert
+    //!        stay valid.
     constexpr ~regex_immutables()
     {
       if (!std::is_constant_evaluated()) {

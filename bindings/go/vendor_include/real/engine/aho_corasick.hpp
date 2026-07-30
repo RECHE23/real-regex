@@ -59,6 +59,8 @@ namespace real::detail {
     std::int32_t                  pattern_len {0};  //!< Byte length of the pattern ending here; 0 when none does.
     std::int32_t                  output_link {-1}; //!< Next (strictly shorter) pattern-ending state on the fail chain.
 
+    //! \brief A trie node with no edges yet: every \ref goto_ entry is -1 until \ref ac_automaton::build
+    //!        makes the row total.
     ac_node()
     {
       goto_.fill(-1);

@@ -17,7 +17,12 @@ FILE_PATTERNS          = *.hpp *.dox *.md
 EXCLUDE                = docs/README.md docs/release-notes docs/site
 RECURSIVE              = YES
 USE_MDFILE_AS_MAINPAGE = README.md
-EXTRACT_ALL            = YES
+# NO, deliberately: YES extracts undocumented entities as if documented, which SILENTLY
+# neutralises WARN_IF_UNDOCUMENTED below -- the gate reported clean while the tree carried
+# 895 undocumented members. With NO the two settings work together and `make doc-check`
+# fails on the first entity that loses its comment. Do not set this back to YES to quiet a
+# warning: document the entity instead.
+EXTRACT_ALL            = NO
 EXTRACT_PRIVATE        = YES
 EXTRACT_STATIC         = YES
 EXTRACT_ANON_NSPACES   = YES
