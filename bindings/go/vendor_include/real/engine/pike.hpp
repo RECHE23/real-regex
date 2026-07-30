@@ -1978,10 +1978,10 @@ namespace real::detail {
      *        Keyed by a content fingerprint of the class (never a pointer into a program):
      *        programs die while this cache lives for the thread, and the allocator can recycle
      *        the same `cp_ranges` address for a *different* class — a pointer key then returns
+     *        the wrong sparse table (false membership, e.g. emoji matching `[\w€]` after a prior
+     *        high-range class was destroyed). Seen as a deterministic wrong-match on macos-clang
+     *        CI after a long test binary has churned many classes (find_iter euro empty-alt pin).
      */
-    //!        the wrong sparse table (false membership, e.g. emoji matching `[\w€]` after a prior
-    //!        high-range class was destroyed). Seen as a deterministic wrong-match on macos-clang
-    //!        CI after a long test binary has churned many classes (find_iter euro empty-alt pin).
     struct cp_hi_cache_entry
     {
       std::uint64_t                key_fp {0}; //!< The class's content fingerprint; 0 marks the entry unused.

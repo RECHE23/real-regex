@@ -534,13 +534,11 @@ namespace real::detail {
     }
   }
 
-  /*!
-   * Cap on the expanded byte-program's instruction count (the running `cur` total below, checked as it
-   * grows). Each `klass_cp` occurrence gets its OWN freshly-built UTF-8 trie here (unshared even when many
-   * occurrences reference the identical class — e.g. every copy of a `{k}`-repeated `\w`), so a large
-   * repeat count multiplies the trie's several-hundred-to-thousand-node size by k with no cache to amortize
-   * it. Left unbounded, that is O(k x trie size) wall-clock BEFORE onepass or the lazy DFA ever run (their
-   */
+  //! Cap on the expanded byte-program's instruction count (the running `cur` total below, checked as it
+  //! grows). Each `klass_cp` occurrence gets its OWN freshly-built UTF-8 trie here (unshared even when many
+  //! occurrences reference the identical class — e.g. every copy of a `{k}`-repeated `\w`), so a large
+  //! repeat count multiplies the trie's several-hundred-to-thousand-node size by k with no cache to amortize
+  //! it. Left unbounded, that is O(k x trie size) wall-clock BEFORE onepass or the lazy DFA ever run (their
   //! own caps — \ref onepass::max_nodes, \ref onepass::max_minimize_work — sit downstream of this and never
   //! get a chance to bound it). Calibrated empirically (arm64, the sanitizer-instrumented `make fuzz` build,
   //! whose -timeout=10 is the real constraint): `\w{5}a` -> 17154 instrs/1.3s, `\w{10}a` -> 34304/3.9s,

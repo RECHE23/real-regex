@@ -976,9 +976,7 @@ namespace real::detail {
     std::atomic<const regex_immutables*> owner {nullptr};
   };
 
-  /*!
-   * \brief Warm-regime IL min haystack (bytes). Shared reverse DFA amortizes after scan 1; below this
-   */
+  //! \brief Warm-regime IL min haystack (bytes). Shared reverse DFA amortizes after scan 1; below this
   //!        even warm IL may not win (measured ~4 KB email dense collapse, 2026-07). Cold first scan
   //!        still uses \ref regex_immutables::il_min_haystack (~94 KB email).
   inline constexpr std::size_t il_warm_floor {4UL * 1024};

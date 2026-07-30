@@ -559,7 +559,8 @@ namespace real {
     /*!
      * \brief Compiles \p pattern at run time (the `real::regex` constructor).
      * \param[in] pattern      The pattern text.
-     * \param[in] compile_flags Optional flags (merged with a leading (?ims)).
+     * \param[in] compile_flags Optional flags (merged with a leading global-flags group, `(?imsxaU)` or
+     *                          `(?flags-flags)`).
      * \throws real::regex_error on an invalid or over-limit pattern.
      */
     constexpr explicit basic_regex(std::string_view pattern,
@@ -973,7 +974,8 @@ namespace real {
     }
 
     /*!
-     * \brief Returns the effective flags (constructor flags merged with a (?ims) prefix).
+     * \brief Returns the effective flags: the constructor flags merged with a leading global-flags group
+     *        (`(?imsxaU)` / `(?flags-flags)`).
      * \return The compiled flag set.
      */
     [[nodiscard]] constexpr flags compile_flags() const

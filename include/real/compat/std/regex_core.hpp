@@ -207,11 +207,17 @@ namespace real::compat {
       std::is_same_v<CharT, char> && std::is_same_v<Traits, std::regex_traits<char>>;
 
     /*!
-     * \brief Grammars/options that force the std backend (real implements default-traits ECMAScript,
-     *        reporting every group — so `nosubs`, which std answers by exposing only group 0, also
-     *        routes to std to avoid a structural both-accept divergence).
+     * \brief Options that still force the std backend AFTER the POSIX translation attempt has declined.
+     *
+     * Order matters, and this predicate is only half the story on its own: the constructor first tries
+     * \ref translate_posix, which routes any of the five POSIX grammars onto REAL when the pattern
+     * translates. Only a pattern that translation refused reaches this filter, where the grammar bits
+     * then do force `std`. `collate` and `nosubs` force it unconditionally — real implements
+     * default-traits ECMAScript and reports every group, while std answers `nosubs` by exposing only
+     * group 0, so routing it avoids a structural both-accept divergence.
+     *
      * \param[in] f The syntax options requested.
-     * \return `true` if the grammar they select cannot be served by REAL, so the pattern routes to `std`.
+     * \return `true` if, translation having declined, these options cannot be served by REAL.
      */
     inline bool grammar_forces_std(regex_constants::syntax_option_type f) noexcept
     {

@@ -177,7 +177,7 @@ namespace real::detail {
     std::vector<ast_node>    nodes;                      //!< The node pool; \ref root indexes it.
     std::vector<class_def>   classes;                    //!< Character classes as written, before negation.
     std::vector<named_group> names;                      //!< Named capture groups.
-    flags                    inline_flags {flags::none}; //!< Flags from a leading `(?ims)`.
+    flags                    inline_flags {flags::none}; //!< Added flags from a leading `(?imsxaU)` group (OR-only: it cannot represent a `-` removal).
     std::int32_t             group_count  {};            //!< Number of capturing groups.
     std::int32_t             root         {-1};          //!< Index of the root node.
   };
@@ -1326,7 +1326,8 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Consumes a leading `(?ims)` or `(?ims-ims)` global-flags group, if present.
+     * \brief Consumes a leading global-flags group -- `(?imsxaU)`, or `(?flags-flags)` with a removal
+     *        suffix -- if present. The accepted letters are `i m s x a U` (\ref is_flag_letter).
      *
      * Like Python (3.11+), global flags are only legal at the very start of the
      * pattern; later occurrences are rejected in \ref parse_group. RE2 additionally

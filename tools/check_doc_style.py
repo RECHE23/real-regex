@@ -300,6 +300,46 @@ def orphan_blocks(only: str | None) -> list[tuple[str, int, int]]:
     return found
 
 
+SENTENCE_END = re.compile(r"[.:;!?)\]`\"—]\s*$")
+
+
+def split_blocks(only: str | None) -> list[tuple[str, int, str]]:
+    """Every ``/*! ... */`` block whose last text line stops mid-sentence, as (file, line, tail).
+
+    The signature of a doc comment CUT IN HALF. Four were produced in this tree by this very script,
+    before the guards above existed: reading a stale XML put the reported declaration inside a ``//!``
+    run, so only a prefix of the run was wrapped in the block and the remainder was left dangling after
+    the ``*/`` (or swept into the member's trailing ``//!<``). Doxygen renders the truncated half without
+    complaint -- the block is well formed, it just stops in the middle of a sentence -- so nothing else
+    in this repository could see it.
+
+    A heuristic, unlike the other checks here, so it can be wrong in one direction: a block legitimately
+    ending on a word (a bare identifier, a table row) reads as suspicious. It has no false NEGATIVES for
+    the damage it targets, which is the direction that matters; a false positive is fixed by ending the
+    sentence.
+    """
+    found: list[tuple[str, int, str]] = []
+    for path in sorted(glob.glob(os.path.join(ROOT, "**", "*.hpp"), recursive=True)):
+        if only and only not in path:
+            continue
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().split("\n")
+        i = 0
+        while i < len(lines):
+            if not lines[i].strip().startswith("/*!"):
+                i += 1
+                continue
+            j = i
+            while j < len(lines) and not lines[j].strip().endswith("*/"):
+                j += 1
+            text = [l.strip()[1:].strip() for l in lines[i + 1 : j] if l.strip().startswith("*")]
+            text = [t for t in text if t]
+            if text and not SENTENCE_END.search(text[-1]):
+                found.append((path, i + 1, text[-1][-60:]))
+            i = j + 1
+    return found
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--fix", action="store_true", help="rewrite violations in place")
@@ -325,6 +365,21 @@ def main() -> int:
         if lines is None or line - 1 >= len(lines):
             continue
         decl = line - 1
+        # A reported "declaration" that is itself a comment line means the XML does not describe this
+        # source. The staleness guard above should have caught it, but this is the invariant that
+        # actually matters, so it is asserted at the point of use: when it was absent, a stale XML put
+        # `decl` INSIDE a //! run, so doc_block_above returned a PREFIX of the run and to_block wrapped
+        # only that prefix -- leaving the tail as //! lines after the */ and cutting four doc comments
+        # mid-sentence (lazy_dfa's byte-program cap, onepass's il_warm_floor, pike's cp_hi_cache_entry,
+        # compiler's fold_val_). Silent damage: Doxygen sees a well-formed block and says nothing.
+        stripped = lines[decl].strip()
+        if stripped.startswith(("//", "/*", "*")) or stripped == "*/":
+            sys.exit(
+                f"check_doc_style: {path}:{line} is reported as {kind} '{name}' but that line is a "
+                f"COMMENT:\n    {lines[decl]}\n"
+                "  The XML does not match this source. Refusing to continue -- rewriting from it would "
+                "split doc comments. Run `doxygen Doxyfile`, or pass --refresh."
+            )
         form = classify(lines, decl)
         forms[kind][form] += 1
         if form != "slash_bang":
@@ -355,19 +410,28 @@ def main() -> int:
     orphans = orphan_blocks(args.only)
     for path, line, count in orphans:
         print(f"{path}:{line}: doc block carries {count} \\brief -- an orphaned or double-documented block")
+    splits = split_blocks(args.only)
+    for path, line, tail in splits:
+        print(f"{path}:{line}: doc block stops mid-sentence (...{tail}) -- a split comment?")
+    n_prose = len(orphans) + len(splits)
 
     total = sum(len(v) for v in todo.values())
-    if not total and not orphans:
+    if not total and not n_prose:
         print(
             f"check_doc_style: clean -- objects use /*! */, attributes use //!< where it fits "
             f"({allowed_block} attribute(s) keep a leading block, as the convention allows)"
         )
         return 0
     if not total:
+        parts = []
+        if orphans:
+            parts.append(f"{len(orphans)} block(s) with more than one \\brief")
+        if splits:
+            parts.append(f"{len(splits)} block(s) stopping mid-sentence")
         print(
-            f"\ncheck_doc_style: FAILED -- {len(orphans)} doc block(s) carry more than one \\brief. "
-            "Doxygen does not warn about this: it silently renders one of them. Merge each block into a "
-            "single description of the declaration it actually documents (not auto-fixable)."
+            f"\ncheck_doc_style: FAILED -- {' and '.join(parts)}. Doxygen warns about neither: it renders "
+            "one \\brief and drops the rest, and a truncated block is well formed. Both need a human -- "
+            "merging or rejoining prose is a judgment about which declaration the text belongs to."
         )
         return 1
 
@@ -390,10 +454,10 @@ def main() -> int:
                 f"  {n_generated} of them are in GENERATED headers: --fix skips those; edit the "
                 f"emitting tools/gen_unicode_*.py and regenerate (tools/REGEN.md)."
             )
-        if orphans:
+        if n_prose:
             print(
-                f"  plus {len(orphans)} doc block(s) with more than one \\brief, listed above -- those are "
-                "NOT auto-fixable and must be merged by hand."
+                f"  plus {n_prose} doc block(s) with a prose defect (double \\brief or split text), listed "
+                "above -- those are NOT auto-fixable and need a human."
             )
         return 1
 
@@ -425,10 +489,10 @@ def main() -> int:
     for path in written:
         print(f"  {path}")
     print("Now run `make format`, then `make doc-check`.")
-    if orphans:
+    if n_prose:
         print(
-            f"NOT fixed: {len(orphans)} doc block(s) with more than one \\brief, listed above -- merge those "
-            "by hand, then re-run."
+            f"NOT fixed: {n_prose} doc block(s) with a prose defect (double \\brief or split text), listed "
+            "above -- those need a human. Re-run after fixing them."
         )
         return 1
     return 0

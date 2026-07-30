@@ -855,7 +855,7 @@ namespace real {
 
       std::string     pattern_text;                  //!< The original pattern text.
       dynamic_program program;                       //!< The compiled program.
-      flags           effective_flags {flags::none}; //!< Constructor flags merged with any (?ims).
+      flags           effective_flags {flags::none}; //!< Constructor flags merged with any leading `(?imsxaU)` group.
 
       //! \brief Per-regex lazy-DFA/one-pass cache, built under program-identity invalidation (thread-safe)
       //!        and shared by every search on this regex — not rebuilt per find_iter. `mutable`: a const
@@ -866,7 +866,7 @@ namespace real {
       /*!
        * \brief Parses and compiles \p pattern with flags \p compile_flags.
        * \param[in] pattern       The pattern text.
-       * \param[in] compile_flags The requested flags (merged with a leading (?ims)).
+       * \param[in] compile_flags The requested flags (merged with a leading `(?imsxaU)` / `(?flags-flags)` group).
        * \return A populated storage object.
        * \throws real::regex_error on an invalid or over-limit pattern.
        */
@@ -901,7 +901,7 @@ namespace real {
       }
 
       /*!
-       * \brief Returns the effective flags (constructor flags merged with (?ims)).
+       * \brief Returns the effective flags (constructor flags merged with a leading `(?imsxaU)` group).
        * \return The compiled flag set.
        */
       [[nodiscard]] constexpr flags compiled_flags() const
@@ -968,7 +968,7 @@ namespace real {
 
     public:
 
-      static constexpr flags         effective_flags            {F | detail::parse(Pat.view(), F).inline_flags}; //!< Flags merged with (?ims).
+      static constexpr flags         effective_flags            {F | detail::parse(Pat.view(), F).inline_flags}; //!< Flags merged with a leading `(?imsxaU)` group.
       static constexpr pattern_hints hints                      {build().hints};                                 //!< Search hints.
       static constexpr std::size_t   code_size                  {build().code.size()};                           //!< Instruction count.
       static constexpr std::size_t   class_count                {build().classes.size()};                        //!< Distinct class count.

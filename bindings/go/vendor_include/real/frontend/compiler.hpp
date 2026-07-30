@@ -302,10 +302,9 @@ namespace real::detail {
     //!        fold's step count, not its repetition.
     mutable std::array<std::int32_t, fold_cache_ways> fold_key_ {-1, -1, -1, -1};
 
-    /*!
-     * \brief Cached FINISHED class per way -- folded, coalesced and negated. Default-constructed, so an
-     */
-    mutable std::array<class_def, fold_cache_ways> fold_val_ {}; //!< unused way holds an empty \ref class_def and costs no allocation.
+    //! \brief Cached FINISHED class per way -- folded, coalesced and negated. Default-constructed, so an
+    //!        unused way holds an empty \ref class_def and costs no allocation.
+    mutable std::array<class_def, fold_cache_ways> fold_val_ {};
 
   public:
 

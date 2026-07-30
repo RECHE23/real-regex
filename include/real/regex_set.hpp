@@ -144,8 +144,10 @@ namespace real {
     }
 
     /*!
-     * \brief Count of DFA-eligible members (fused subset size when uses_fused).
-     * \return How many members the DFA accepted.
+     * \brief Size of the FUSED eligible subset — not an eligibility count in general.
+     * \return How many members the fused DFA holds, or 0 when \ref uses_fused is false. Below the
+     *         threshold every member walks individually, so the subset is discarded and this answers 0
+     *         even for patterns the DFA would have accepted (pinned in test_regex_set_hybrid.cpp).
      */
     [[nodiscard]] std::size_t eligible_count() const noexcept
     {
