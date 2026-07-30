@@ -10,8 +10,15 @@
 const std::uint8_t* const asc {cp_ascii_table(cp_index)};
 const auto                width = [&](std::size_t i) -> std::size_t {
                                     const auto lead {static_cast<std::uint8_t>(text[i])};
+                                    // Table FIRST: `asc` is a full 256-entry row and a code-point class
+                                    // never sets a bit at or above 0x80, so a hit is necessarily a
+                                    // single-byte member and the `< 0x80` test cannot change the answer.
+                                    // Moving it after the table takes it off the accepted-byte path.
+                                    if (asc[lead] != 0U) {
+                                      return 1;
+                                    }
                                     if (lead < 0x80U) {
-                                      return asc[lead] != 0U ? std::size_t {1} : std::size_t {0};
+                                      return 0; // an ASCII byte this class does not hold
                                     }
                                     return cp_class_hi_width(text, i, cp_index);
                                   };
@@ -31,12 +38,13 @@ const auto extend_run = [&](std::size_t match_start) -> std::size_t {
                           if (prog_.hints.greedy_cp_class_plus) {
                             while (match_end < text.size()) {
                               const auto lead {static_cast<std::uint8_t>(text[match_end])};
-                              if (lead < 0x80U) {
-                                if (asc[lead] == 0U) {
-                                  break;
-                                }
+                              // Table FIRST — same soundness argument as `width` above.
+                              if (asc[lead] != 0U) {
                                 ++match_end;
                                 continue;
+                              }
+                              if (lead < 0x80U) {
+                                break; // an ASCII byte this class does not hold: the run ends
                               }
                               const std::size_t w {cp_class_hi_width(text, match_end, cp_index)};
                               if (w == 0) {
@@ -51,12 +59,13 @@ const auto extend_run = [&](std::size_t match_start) -> std::size_t {
                                    max_len != 0) {
                             for (std::size_t n {1}; n < max_len && match_end < text.size(); ++n) {
                               const auto lead {static_cast<std::uint8_t>(text[match_end])};
-                              if (lead < 0x80U) {
-                                if (asc[lead] == 0U) {
-                                  break;
-                                }
+                              // Table FIRST — same soundness argument as `width` above.
+                              if (asc[lead] != 0U) {
                                 ++match_end;
                                 continue;
+                              }
+                              if (lead < 0x80U) {
+                                break; // an ASCII byte this class does not hold: the run ends
                               }
                               const std::size_t w {cp_class_hi_width(text, match_end, cp_index)};
                               if (w == 0) {

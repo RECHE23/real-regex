@@ -2639,8 +2639,16 @@ namespace real::detail {
        */
       const auto in_class = [&](std::size_t i) -> bool {
                               const auto lead {static_cast<std::uint8_t>(text[i])};
+                              // Table FIRST, width test only on a miss. `asc` is a full 256-entry row, and a
+                              // code-point class never sets a bit at or above 0x80 -- its `ascii` half is
+                              // exactly that -- so a hit here is necessarily a single-byte member and the
+                              // `< 0x80` test cannot change the answer. Ordering it after the table takes it
+                              // off the accepted-byte path, where it was the second branch per byte.
+                              if (asc[lead] != 0U) {
+                                return true;
+                              }
                               if (lead < 0x80U) {
-                                return asc[lead] != 0U;
+                                return false; // an ASCII byte this class does not hold
                               }
                               const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, i)};
                               return dc.valid && member_hi(dc.cp);
@@ -2654,12 +2662,15 @@ namespace real::detail {
                                 if (prog_.hints.greedy_cp_class_plus) {
                                   while (match_end < text.size()) {
                                     const auto lead {static_cast<std::uint8_t>(text[match_end])};
-                                    if (lead < 0x80U) {
-                                      if (asc[lead] == 0U) {
-                                        break;
-                                      }
+                                    // Table FIRST — see in_class above for why the `< 0x80` test is sound
+                                    // to move off the accepted-byte path. This is the run extension, so it
+                                    // is the loop that runs once per matched byte of the whole corpus.
+                                    if (asc[lead] != 0U) {
                                       ++match_end;
                                       continue;
+                                    }
+                                    if (lead < 0x80U) {
+                                      break; // an ASCII byte this class does not hold: the run ends
                                     }
                                     const detail::decoded_codepoint dc {
                                       detail::decode_codepoint_strict(text, match_end)};
@@ -2678,12 +2689,13 @@ namespace real::detail {
                                          max_len != 0) {
                                   for (std::size_t n {1}; n < max_len && match_end < text.size(); ++n) {
                                     const auto lead {static_cast<std::uint8_t>(text[match_end])};
-                                    if (lead < 0x80U) {
-                                      if (asc[lead] == 0U) {
-                                        break;
-                                      }
+                                    // Table FIRST — same soundness argument as in_class above.
+                                    if (asc[lead] != 0U) {
                                       ++match_end;
                                       continue;
+                                    }
+                                    if (lead < 0x80U) {
+                                      break; // an ASCII byte this class does not hold
                                     }
                                     const detail::decoded_codepoint dc {
                                       detail::decode_codepoint_strict(text, match_end)};
@@ -3126,8 +3138,12 @@ namespace real::detail {
       // was unreachable -- zero executions over the whole suite.
       const auto in_class = [&](std::size_t i) -> bool {
                               const auto lead {static_cast<std::uint8_t>(text[i])};
+                              // Table FIRST — same soundness argument as run_cp_class_loop's in_class.
+                              if (asc[lead] != 0U) {
+                                return true;
+                              }
                               if (lead < 0x80U) {
-                                return asc[lead] != 0U;
+                                return false; // an ASCII byte this class does not hold
                               }
                               const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, i)};
                               return dc.valid && member_hi(dc.cp);
