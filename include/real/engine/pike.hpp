@@ -1309,8 +1309,7 @@ namespace real::detail {
      * across the haystack (sticky on \ref pike_state::il_density_cands).
      */
     static constexpr std::uint32_t il_density_probe_candidates {8};
-    //! \brief Candidate density, in candidates per 1000 bytes, at or above which the IL route yields to the DFA.
-    static constexpr std::size_t   il_density_milli_threshold  {60};
+    static constexpr std::size_t   il_density_milli_threshold  {60}; //!< Candidate density, in candidates per 1000 bytes, at or above which the IL route yields to the DFA.
 
     /*!
      * \brief Build the forward/reverse DFAs into the reusable state on first eligible use, or rebuild them
@@ -1913,8 +1912,7 @@ namespace real::detail {
       return false;
     }
 
-    //! \brief Highest code point covered by the `cp_page` bitmap (the 2-byte UTF-8 range).
-    static constexpr std::uint32_t cp_page_max {0x7FFU};
+    static constexpr std::uint32_t cp_page_max {0x7FFU}; //!< Highest code point covered by the `cp_page` bitmap (the 2-byte UTF-8 range).
 
     //! \brief Cap on how far a jump chain is followed to a loop head (empty-iteration exit routing);
     //!        a loop join reaches its split in one hop, so this is a generous bound, never a hot cost.

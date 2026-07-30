@@ -69,7 +69,7 @@ include mk/help.mk
         example-check \
         bench-engines bench-multipattern bench-duel bench-static bench-matrix matrix-gate \
         profile-sample profile-callgrind \
-        version-check install install-smoke uninstall release help check-layers
+        version-check install install-smoke uninstall release help check-layers check-doc-style
 
 .DEFAULT_GOAL := help
 
@@ -332,6 +332,12 @@ check-pins: ## [gates] Pin-drift lint: fail if workflows pin more than one SciFo
 check-layers:
 	@$(MAKE) -C tools check-layers
 
+# Comment-FORM convention: objects take /*! ... */, attributes take a trailing //!<.
+# Reads Doxygen's own XML for member kinds (never a regex over the source) and refuses to run
+# against an XML older than the headers -- a stale one silently reports a false clean.
+check-doc-style:
+	@python3 tools/check_doc_style.py
+
 # Fail-fast gate of record: CHEAP / FAST first, expensive last. First non-zero aborts
 # the rest (no -k). Order is intentional — a Doxygen param miss or format drift must not
 # wait for sanitize/python. Compound steps (lint | tee) use `set -euo pipefail`.
@@ -444,6 +450,13 @@ full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate 
 	@$(MAKE) check-capi-abi
 	@echo "── [6/22] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
 	@$(MAKE) doc-no-coverage
+	# Comment-FORM gate, deliberately right after doc-no-coverage: that step runs the LOCAL
+	# doxygen, so build/doc/xml is fresh here. It has to be, and the script enforces it --
+	# reading a stale XML made an earlier run report a false clean (line numbers drift, every
+	# entry fails the shape check, nothing is flagged). doc-check below cannot serve instead:
+	# it runs the CI Doxygen inside Docker and never refreshes the local XML.
+	@echo "── [6b/22] check-doc-style (objects /*! */, attributes //!<)"
+	@$(MAKE) check-doc-style
 	@echo "── [7/22] doc-check (CI-pinned Doxygen when Docker is available)"
 	@$(MAKE) doc-check
 	# docs/site's own net (-W --keep-going + linkcheck). Same shape as the

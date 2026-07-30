@@ -57,8 +57,8 @@ def file_header(*, filename, brief, generator, doc_lines, guard, includes, versi
         "",
         "namespace real::detail {",
         "",
-        f"  //! \\brief The Unicode data version these {version_kind} were generated from ({ver}).",
-        f'  inline constexpr const char* {version_const} {{"{ver}"}};',
+        f'  inline constexpr const char* {version_const} {{"{ver}"}}; '
+        f"//!< The Unicode data version these {version_kind} were generated from.",
         "",
     ]
     return out

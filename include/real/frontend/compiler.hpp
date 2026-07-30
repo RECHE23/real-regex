@@ -305,8 +305,7 @@ namespace real::detail {
     /*!
      * \brief Cached FINISHED class per way -- folded, coalesced and negated. Default-constructed, so an
      */
-    //!        unused way holds an empty \ref class_def and costs no allocation.
-    mutable std::array<class_def, fold_cache_ways> fold_val_ {};
+    mutable std::array<class_def, fold_cache_ways> fold_val_ {}; //!< unused way holds an empty \ref class_def and costs no allocation.
 
   public:
 

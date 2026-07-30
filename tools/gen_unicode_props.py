@@ -92,8 +92,8 @@ def emit_array(name, ranges):
     for lo, hi in ranges:
         lines.append(f"    {{0x{lo:04X}, 0x{hi:04X}}},")
     lines.append("  };")
-    lines.append(f"  //! \\brief Number of ranges in \\ref {name}_ranges.")
-    lines.append(f"  inline constexpr std::size_t {name}_ranges_size {{{len(ranges)}}};")
+    lines.append(f"  inline constexpr std::size_t {name}_ranges_size {{{len(ranges)}}}; "
+                 f"//!< Number of ranges in \\ref {name}_ranges.")
     lines.append("")
     return lines
 
@@ -121,11 +121,13 @@ def emit(tables, path):
     for name in ("word", "digit", "space"):
         out += emit_array(name, tables[name])
     out += [
-        "  //! \\brief Binary-searches a sorted, non-overlapping range table for \\p cp. Returns a bool",
-        "  //!        (not a pointer into the table) so it stays constant-evaluable on every compiler.",
-        "  //! \\param[in] ranges Sorted, non-overlapping ranges to search.",
-        "  //! \\param[in] cp     The code point to look for.",
-        "  //! \\return Whether \\p cp falls inside one of them.",
+        "  /*!",
+        "   * \\brief Binary-searches a sorted, non-overlapping range table for \\p cp. Returns a bool",
+        "   *        (not a pointer into the table) so it stays constant-evaluable on every compiler.",
+        "   * \\param[in] ranges Sorted, non-overlapping ranges to search.",
+        "   * \\param[in] cp     The code point to look for.",
+        "   * \\return Whether \\p cp falls inside one of them.",
+        "   */",
         "  constexpr bool cp_in_ranges(std::span<const code_range> ranges,",
         "                              char32_t                    cp)",
         "  {",
@@ -143,19 +145,25 @@ def emit(tables, path):
         "    return lo < ranges.size() && cp >= ranges[lo].lo && cp <= ranges[lo].hi;",
         "  }",
         "",
-        "  //! \\brief Whether \\p cp is a Unicode word code point (== re `\\w`).",
-        "  //! \\param[in] cp The code point to test.",
-        "  //! \\return Whether it is a member of \\ref word_ranges.",
+        "  /*!",
+        "   * \\brief Whether \\p cp is a Unicode word code point (== re `\\w`).",
+        "   * \\param[in] cp The code point to test.",
+        "   * \\return Whether it is a member of \\ref word_ranges.",
+        "   */",
         "  constexpr bool is_word_cp(char32_t cp) { return cp_in_ranges(word_ranges, cp); }",
         "",
-        "  //! \\brief Whether \\p cp is a Unicode digit code point (== re `\\d`).",
-        "  //! \\param[in] cp The code point to test.",
-        "  //! \\return Whether it is a member of \\ref digit_ranges.",
+        "  /*!",
+        "   * \\brief Whether \\p cp is a Unicode digit code point (== re `\\d`).",
+        "   * \\param[in] cp The code point to test.",
+        "   * \\return Whether it is a member of \\ref digit_ranges.",
+        "   */",
         "  constexpr bool is_digit_cp(char32_t cp) { return cp_in_ranges(digit_ranges, cp); }",
         "",
-        "  //! \\brief Whether \\p cp is a Unicode whitespace code point (== re `\\s`).",
-        "  //! \\param[in] cp The code point to test.",
-        "  //! \\return Whether it is a member of \\ref space_ranges.",
+        "  /*!",
+        "   * \\brief Whether \\p cp is a Unicode whitespace code point (== re `\\s`).",
+        "   * \\param[in] cp The code point to test.",
+        "   * \\return Whether it is a member of \\ref space_ranges.",
+        "   */",
         "  constexpr bool is_space_cp(char32_t cp) { return cp_in_ranges(space_ranges, cp); }",
         "",
     ]

@@ -843,10 +843,9 @@ namespace real::detail {
     //! \brief \c prog.code.data() this cache was built for, or null if never built / invalidated.
     //!        Hot path: one atomic load. Not \c once_flag — assignment reuses this object under a new
     //!        program; a spent once_flag would never rebuild (silent wrong matches).
-    std::atomic<const void*> built_for {nullptr};
+    std::atomic<const void*> built_for                  {nullptr};
 
-    //! \brief How many flag indices \ref row_ready_bits covers; the rest live in \ref row_ready_overflow.
-    static constexpr std::size_t row_ready_bit_capacity {64};
+    static constexpr std::size_t row_ready_bit_capacity {64}; //!< How many flag indices \ref row_ready_bits covers; the rest live in \ref row_ready_overflow.
 
     /*!
      * \brief Reads the "filled" flag for flag index \p i, acquiring what the filling thread released.

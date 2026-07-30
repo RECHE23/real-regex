@@ -935,8 +935,7 @@ namespace real::compat {
   private:
 
     // std backend first so the variant is default-constructible (real::regex has no default ctor).
-    //! \brief Whichever backend compiled this pattern; see \ref uses_real and \ref uses_fallback.
-    std::variant<std::basic_regex<CharT, Traits>, real::regex>           engine_;
+    std::variant<std::basic_regex<CharT, Traits>, real::regex>           engine_;                                                 //!< Whichever backend compiled this pattern; see \ref uses_real and \ref uses_fallback.
     string_type                                                          pattern_;                                                //!< Original pattern (for the lazy std build).
     flag_type                                                            flags_                    {regex_constants::ECMAScript}; //!< Syntax options it was compiled with (\ref flags).
     std::size_t                                                          mark_count_               {};                            //!< Capturing groups excluding the whole match (\ref mark_count).

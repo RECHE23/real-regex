@@ -473,8 +473,7 @@ namespace real {
       std::uint8_t                  skip_small_set_size {0};  //!< 0, or 2..4.
     };
 
-    //! \brief \ref dfa_tables::accept's "this state does not accept" marker.
-    inline constexpr std::uint32_t dfa_no_rule {std::numeric_limits<std::uint32_t>::max()};
+    inline constexpr std::uint32_t dfa_no_rule {std::numeric_limits<std::uint32_t>::max()}; //!< \ref dfa_tables::accept's "this state does not accept" marker.
 
     /*!
      * \brief Subset construction over byte-classes, then Moore minimization.

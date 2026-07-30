@@ -25,10 +25,11 @@
 
 namespace real::detail {
 
-  //! \brief The Unicode data version these tables were generated from (16.0.0).
-  inline constexpr const char* unicode_script_unidata_version {"16.0.0"};
+  inline constexpr const char* unicode_script_unidata_version {"16.0.0"}; //!< The Unicode data version these tables were generated from.
 
-  //! \brief A Unicode Script value; `Unknown` (0) is every code point no script assigns.
+  /*!
+   * \brief A Unicode Script value; `Unknown` (0) is every code point no script assigns.
+   */
   enum class script : std::uint8_t {
     Unknown,
     Adlam,
@@ -1195,9 +1196,11 @@ namespace real::detail {
     {0xE0100, 0xE01EF, script::Inherited},
   };
 
-  //! \brief The Script of \p cp (binary search; `Unknown` when no range covers it).
-  //! \param[in] cp The code point to look up.
-  //! \return Its Script, or `script::Unknown` when no range covers it.
+  /*!
+   * \brief The Script of \p cp (binary search; `Unknown` when no range covers it).
+   * \param[in] cp The code point to look up.
+   * \return Its Script, or `script::Unknown` when no range covers it.
+   */
   constexpr script script_of(char32_t cp)
   {
     std::size_t lo {0};
@@ -1218,10 +1221,12 @@ namespace real::detail {
     return script::Unknown;
   }
 
-  //! \brief Whether \p cp belongs to Script \p sc (== the UCD).
-  //! \param[in] sc The Script to test for.
-  //! \param[in] cp The code point to test.
-  //! \return Whether \ref script_of answers \p sc. Exclusive: a code point has exactly one Script.
+  /*!
+   * \brief Whether \p cp belongs to Script \p sc (== the UCD).
+   * \param[in] sc The Script to test for.
+   * \param[in] cp The code point to test.
+   * \return Whether \ref script_of answers \p sc. Exclusive: a code point has exactly one Script.
+   */
   constexpr bool is_script_cp(script sc, char32_t cp) { return script_of(cp) == sc; }
 
   //! \brief A loose-normalized (lowercase, no _/-/space) Script name and its value.
@@ -1570,9 +1575,11 @@ namespace real::detail {
     {"zyyy", script::Common},
   };
 
-  //! \brief Resolve a loose-normalized Script name to its value, or `count` if unknown.
-  //! \param[in] loose A name already put through the parser's loose normalization.
-  //! \return The Script, or `script::count` when no alias matches.
+  /*!
+   * \brief Resolve a loose-normalized Script name to its value, or `count` if unknown.
+   * \param[in] loose A name already put through the parser's loose normalization.
+   * \return The Script, or `script::count` when no alias matches.
+   */
   constexpr script resolve_script(std::string_view loose)
   {
     for (const script_alias_entry& a : script_aliases) {

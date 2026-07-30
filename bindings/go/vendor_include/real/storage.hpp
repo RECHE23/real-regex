@@ -1043,8 +1043,7 @@ namespace real {
       // worst-case live capture blocks — every reference (a DFS stack frame or a thread in either
       // list) could point to a distinct block; freed blocks recycle through the pool's free list, so the
       // pool never grows past this. The stack is (3*code_size)+4, each list up to code_size threads.
-      //! \brief Worst-case live capture blocks, per the bound derived above.
-      static constexpr std::size_t max_blocks {(5 * code_size) + 8};
+      static constexpr std::size_t max_blocks {(5 * code_size) + 8}; //!< Worst-case live capture blocks, per the bound derived above.
 
       /*!
        * \brief IL: the per-haystack guard fields the inner-literal route needs.

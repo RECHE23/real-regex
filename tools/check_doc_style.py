@@ -85,12 +85,53 @@ INTERVENING = re.compile(
 )
 
 
+def require_fresh_xml() -> None:
+    """Refuse to run against XML older than the headers it describes.
+
+    This guard exists because its absence produced a false clean. ``make doc-check`` runs the
+    CI Doxygen inside Docker and does NOT refresh ``build/doc/xml``, so this script silently
+    read an hours-old snapshot: every entry whose line number had drifted failed the shape
+    check below and was skipped, and the run reported clean while real violations remained.
+    Nothing was corrupted -- the rewrite verifies the comment shape at the reported line before
+    touching it, so a stale entry is dropped rather than mangled -- but the verdict was
+    worthless, which is the same failure mode as ``EXTRACT_ALL = YES`` neutralising
+    ``WARN_IF_UNDOCUMENTED``. Refresh with ``doxygen Doxyfile`` (writes build/doc/xml), or pass
+    ``--refresh``.
+    """
+    if not os.path.isdir(XML_DIR):
+        sys.exit(f"{XML_DIR} not found -- run `doxygen Doxyfile` first, or pass --refresh.")
+    xmls = glob.glob(os.path.join(XML_DIR, "*.xml"))
+    if not xmls:
+        sys.exit(f"{XML_DIR} holds no XML -- run `doxygen Doxyfile` first, or pass --refresh.")
+    oldest_xml = min(os.path.getmtime(p) for p in xmls)
+    stale = [
+        h
+        for h in glob.glob(os.path.join(ROOT, "**", "*.hpp"), recursive=True)
+        if os.path.getmtime(h) > oldest_xml
+    ]
+    if stale:
+        sys.exit(
+            f"check_doc_style: the Doxygen XML in {XML_DIR} is OLDER than "
+            f"{len(stale)} header(s), e.g. {stale[0]}.\n"
+            "  Line numbers would not match the source, entries would be silently skipped, and "
+            "the verdict would be a false clean.\n"
+            "  Run `doxygen Doxyfile` (note: `make doc-check` runs in Docker and does not "
+            "refresh this), or pass --refresh."
+        )
+
+
+def refresh_xml() -> None:
+    """Run the local doxygen so the XML matches the working tree."""
+    import subprocess
+
+    print("check_doc_style: refreshing build/doc/xml (doxygen Doxyfile) ...")
+    proc = subprocess.run(["doxygen", "Doxyfile"], capture_output=True, text=True)
+    if proc.returncode != 0:
+        sys.exit(f"doxygen failed:\n{proc.stderr[-2000:]}")
+
+
 def xml_members(only: str | None) -> list[tuple[str, int, str, str]]:
     """Every documented member Doxygen found under include/real/, as (file, line, kind, name)."""
-    if not os.path.isdir(XML_DIR):
-        sys.exit(
-            f"{XML_DIR} not found -- run `make doc-check` first (it generates the XML this reads)."
-        )
     out: list[tuple[str, int, str, str]] = []
     for path in glob.glob(os.path.join(XML_DIR, "*.xml")):
         try:
@@ -224,7 +265,12 @@ def main() -> int:
     ap.add_argument("--fix", action="store_true", help="rewrite violations in place")
     ap.add_argument("--stats", action="store_true", help="print the form distribution and exit 0")
     ap.add_argument("--only", metavar="SUBSTR", help="restrict to files whose path contains SUBSTR")
+    ap.add_argument("--refresh", action="store_true", help="run `doxygen Doxyfile` first")
     args = ap.parse_args()
+
+    if args.refresh:
+        refresh_xml()
+    require_fresh_xml()
 
     members = xml_members(args.only)
     src = Source()

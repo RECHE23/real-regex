@@ -170,8 +170,7 @@ namespace real::detail {
   //!        (a code point ends here — the run continues at the construct's successor).
   struct utf8_trie_node
   {
-    //! \brief Outgoing edges: a byte range paired with its target, `-1` meaning accept. Pairwise disjoint.
-    std::vector<std::pair<utf8_byte_range, std::int32_t>> trans;
+    std::vector<std::pair<utf8_byte_range, std::int32_t>> trans; //!< Outgoing edges: a byte range paired with its target, `-1` meaning accept. Pairwise disjoint.
   };
 
   //! \brief A minimal deterministic UTF-8 trie for a code-point class. `root == -1` means the class is empty.
