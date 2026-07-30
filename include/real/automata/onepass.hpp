@@ -998,12 +998,10 @@ namespace real::detail {
   }
 
   /*!
-   * \brief Bumped on every \ref erase_shared_dfas so a TLS last-hit cache never serves a destroyed
-   *        regex's slot to a new immutables that reuses the same address.
    * \brief Process-wide map. Intentionally never destroyed (leaky singleton): a static map would
    *        tear down at exit while other statics' \c ~regex_immutables still call \ref erase_shared_dfas.
-   * \return The map, keyed by \ref regex_immutables address.
    *        The OS reclaims the map at process exit — not an accumulating leak; entries are erased on dtor.
+   * \return The map, keyed by \ref regex_immutables address.
    */
   inline std::unordered_map<const regex_immutables*, std::shared_ptr<shared_dfa_slot>>& shared_dfa_map()
   {

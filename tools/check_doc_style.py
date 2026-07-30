@@ -260,6 +260,46 @@ def to_block(lines: list[str], first: int, last: int) -> list[str]:
     return out
 
 
+def orphan_blocks(only: str | None) -> list[tuple[str, int, int]]:
+    """Every ``/*! ... */`` block carrying more than one ``\\brief``, as (file, line, count).
+
+    Two ``\\brief`` in one block is the mechanical signature of an ORPHANED doc block: a comment
+    whose function was renamed or deleted, which then collapsed onto the next declaration and now
+    describes something it does not document. Three were found by hand in this tree (dfa.hpp's
+    \\throws contract sitting on a size cap, and the two emit_klass blocks in compiler.hpp), plus
+    two more later -- pike.hpp still carried the block of a removed ``ensure_search_dfas``, and
+    onepass.hpp described an epoch counter that a perf commit had deleted.
+
+    It also catches the inverse mistake, which is how eleven of the thirteen got here: appending a
+    fresh ``\\brief``+``\\return`` run to a function that already had a description, instead of
+    adding only the missing ``\\return`` to the block already there.
+
+    Doxygen NEVER warns about this -- it silently takes one of the two and renders it -- so the
+    defect is invisible to every other check in this repository. It is trivially detectable, which
+    is the whole argument for checking it here rather than re-auditing by eye.
+    """
+    found: list[tuple[str, int, int]] = []
+    for path in sorted(glob.glob(os.path.join(ROOT, "**", "*.hpp"), recursive=True)):
+        if only and only not in path:
+            continue
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().split("\n")
+        i = 0
+        while i < len(lines):
+            if not lines[i].strip().startswith("/*!"):
+                i += 1
+                continue
+            j = i
+            while j < len(lines) and not lines[j].strip().endswith("*/"):
+                j += 1
+            body = "\n".join(lines[i : j + 1])
+            count = len(re.findall(r"\\brief\b", body))
+            if count > 1:
+                found.append((path, i + 1, count))
+            i = j + 1
+    return found
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--fix", action="store_true", help="rewrite violations in place")
@@ -310,13 +350,26 @@ def main() -> int:
         print(f"\nattributes keeping a leading block by the convention: {allowed_block}")
         return 0
 
+    # Orphaned blocks are never auto-fixed: choosing which of two \brief survives is a judgment
+    # about which declaration the text belongs to, and guessing would silently delete real prose.
+    orphans = orphan_blocks(args.only)
+    for path, line, count in orphans:
+        print(f"{path}:{line}: doc block carries {count} \\brief -- an orphaned or double-documented block")
+
     total = sum(len(v) for v in todo.values())
-    if not total:
+    if not total and not orphans:
         print(
             f"check_doc_style: clean -- objects use /*! */, attributes use //!< where it fits "
             f"({allowed_block} attribute(s) keep a leading block, as the convention allows)"
         )
         return 0
+    if not total:
+        print(
+            f"\ncheck_doc_style: FAILED -- {len(orphans)} doc block(s) carry more than one \\brief. "
+            "Doxygen does not warn about this: it silently renders one of them. Merge each block into a "
+            "single description of the declaration it actually documents (not auto-fixable)."
+        )
+        return 1
 
     generated = {p: items for p, items in todo.items() if GENERATED.search(p)}
     n_generated = sum(len(v) for v in generated.values())
@@ -336,6 +389,11 @@ def main() -> int:
             print(
                 f"  {n_generated} of them are in GENERATED headers: --fix skips those; edit the "
                 f"emitting tools/gen_unicode_*.py and regenerate (tools/REGEN.md)."
+            )
+        if orphans:
+            print(
+                f"  plus {len(orphans)} doc block(s) with more than one \\brief, listed above -- those are "
+                "NOT auto-fixable and must be merged by hand."
             )
         return 1
 
@@ -367,6 +425,12 @@ def main() -> int:
     for path in written:
         print(f"  {path}")
     print("Now run `make format`, then `make doc-check`.")
+    if orphans:
+        print(
+            f"NOT fixed: {len(orphans)} doc block(s) with more than one \\brief, listed above -- merge those "
+            "by hand, then re-run."
+        )
+        return 1
     return 0
 
 

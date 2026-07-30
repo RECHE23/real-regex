@@ -1312,10 +1312,6 @@ namespace real::detail {
     static constexpr std::size_t   il_density_milli_threshold  {60}; //!< Candidate density, in candidates per 1000 bytes, at or above which the IL route yields to the DFA.
 
     /*!
-     * \brief Build the forward/reverse DFAs into the reusable state on first eligible use, or rebuild them
-     *        if the state is now bound to a different program (its `code` pointer changed). The cache then
-     *        persists across a whole find_iter (where it pays), and forward_end resets its per-search thrash
-     *        flag itself. Instantiated only for the dynamic state (the one carrying the optionals).
      * \brief Build (or rebuild) the per-regex immutables, race-free: the Tier-A byte-program the DFAs
      *        run over (and its shared alphabet), plus the one-pass extractor. Invalidation is by
      *        program identity (\ref regex_immutables::built_for == \c prog_.code.data()) — same pattern

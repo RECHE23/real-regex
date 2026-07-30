@@ -43,11 +43,11 @@ namespace real::compat {
       optimize   = 1U << 2U, //!< Hint to favour matching speed; honoured as a no-op.
       collate    = 1U << 3U, //!< Locale-sensitive ranges; forces the std backend.
       multiline  = 1U << 4U, //!< `^`/`$` match at line boundaries.
-      basic      = 1U << 5U, //!< POSIX basic — std backend.
-      extended   = 1U << 6U, //!< POSIX extended — std backend.
-      awk        = 1U << 7U, //!< awk grammar — std backend.
-      grep       = 1U << 8U, //!< grep grammar — std backend.
-      egrep      = 1U << 9U, //!< egrep grammar — std backend.
+      basic      = 1U << 5U, //!< POSIX BRE — translated onto REAL when the pattern translates, else the std backend.
+      extended   = 1U << 6U, //!< POSIX ERE — translated onto REAL when the pattern translates, else the std backend.
+      awk        = 1U << 7U, //!< awk grammar (ERE + C escapes) — translated onto REAL when it translates, else std.
+      grep       = 1U << 8U, //!< grep grammar (BRE, lines joined by `|`) — translated onto REAL when it translates, else std.
+      egrep      = 1U << 9U, //!< egrep grammar (ERE, lines joined by `|`) — translated onto REAL when it translates, else std.
     };
 
     /*!
@@ -776,7 +776,6 @@ namespace real::compat {
 
     /*!
      * \brief Number of marked sub-expressions (excluding group 0), as `std::basic_regex`.
-     * \brief Number of capturing groups, excluding the whole match (`std::basic_regex` parity).
      * \return The group count.
      */
     [[nodiscard]] std::size_t mark_count() const noexcept
@@ -786,7 +785,6 @@ namespace real::compat {
 
     /*!
      * \brief The flags this regex was built with.
-     * \brief The syntax options this pattern was compiled with.
      * \return Those flags.
      */
     [[nodiscard]] flag_type flags() const noexcept
@@ -813,7 +811,6 @@ namespace real::compat {
 
     /*!
      * \brief True if this regex is backed by the `real` engine (vs the std fallback).
-     * \brief Which backend compiled this pattern.
      * \return `true` if REAL's linear engine holds it.
      */
     [[nodiscard]] bool uses_real() const noexcept
@@ -824,7 +821,6 @@ namespace real::compat {
     /*!
      * \brief True if this regex fell back to `std::regex` (a `policy::fallback` regex on an ineligible
      *        pattern) — so this pattern is *not* linear-time / ReDoS-safe. Always false under `strict`.
-     * \brief Whether the pattern fell back to the standard library.
      * \return `true` if `std::basic_regex` holds it — in which case the linear-time guarantee does not apply.
      */
     [[nodiscard]] bool uses_fallback() const noexcept
@@ -834,7 +830,6 @@ namespace real::compat {
 
     /*!
      * \brief The drop-in policy this regex was constructed with.
-     * \brief The rejection policy this pattern was constructed with.
      * \return Strict or fallback.
      */
     [[nodiscard]] compat::policy policy() const noexcept
@@ -844,7 +839,6 @@ namespace real::compat {
 
     /*!
      * \brief Access the active backend (engine-facing; used by the free functions).
-     * \brief The engine itself, for the match functions that must dispatch on it.
      * \return The variant holding whichever backend compiled this pattern.
      */
     [[nodiscard]] const std::variant<std::basic_regex<CharT, Traits>, real::regex>& engine() const noexcept
@@ -859,7 +853,6 @@ namespace real::compat {
      * differ from ECMAScript. So a nullable real-backed pattern routes those operations to a lazily
      * built `std::regex` (\ref std_engine) — per operation, not at construction, so `search`/`match`
      * keep `real`'s linear-time guarantee even on nullable-ReDoS patterns like `(a*)*`.
-     * \brief Whether the pattern can match empty, which decides who traverses empty matches.
      * \return `true` if it is nullable; `regex_replace` then routes to `std`, whose empty-match
      *         traversal differs from REAL's Python-lineage one.
      */
@@ -869,10 +862,11 @@ namespace real::compat {
     }
 
     /*!
-     * \brief Whether this is a POSIX-ERE pattern routed to REAL: `search`/`match` must use leftmost-**longest**
-     *        bounds (the POSIX semantics), not the default leftmost-first. Set only for a translated `extended`.
-     * \brief Whether POSIX leftmost-longest semantics were requested.
-     * \return `true` under a POSIX grammar.
+     * \brief Whether this is a POSIX pattern routed to REAL: `search`/`match` must use leftmost-**longest**
+     *        bounds (the POSIX semantics), not the default leftmost-first. Set for any of the five POSIX
+     *        grammars once \ref detail::translate_posix has translated it onto REAL; a pattern that stays
+     *        on the std backend leaves it false, since std applies POSIX semantics itself.
+     * \return `true` under a POSIX grammar that REAL is running.
      */
     [[nodiscard]] bool posix_longest() const noexcept
     {
@@ -890,7 +884,6 @@ namespace real::compat {
      *        backtracker's extra empty final iteration on that GROUP's span — so it routes too, for the
      *        same reason: `regex_search`/`match` are unaffected (see the nullable-loop group-capture
      *        section of COMPATIBILITY.md — the search residue is intentional, not an oversight).
-     * \brief Whether an operation may use REAL's own match traversal rather than `std`'s.
      * \return `true` for a real-backed, non-nullable pattern.
      */
     [[nodiscard]] bool uses_real_traversal() const noexcept
@@ -908,7 +901,6 @@ namespace real::compat {
      * nullable AND non-nullable real-backed patterns. `std::once_flag` would be lighter but is
      * non-copyable, and `basic_regex` must stay copyable (`std::regex` is); a static mutex keeps the
      * value semantics defaulted. The build is per operation, cold relative to matching.
-     * \brief The standard-library engine, for the fallback paths.
      * \return The wrapped `std::basic_regex`; compiling one on demand if this pattern is real-backed.
      */
     [[nodiscard]] const std::basic_regex<CharT, Traits>& std_engine() const
@@ -941,7 +933,7 @@ namespace real::compat {
     std::size_t                                                          mark_count_               {};                            //!< Capturing groups excluding the whole match (\ref mark_count).
     bool                                                                 nullable_                 {};                            //!< empty_match_possible (real-backed).
     bool                                                                 nullable_captured_repeat_ {};                            //!< nullable_captured_repeat (real-backed) — a nullable capturing group under a quantifier; see \ref uses_real_traversal.
-    bool                                                                 posix_longest_            {};                            //!< POSIX ERE on REAL: search uses leftmost-longest bounds.
+    bool                                                                 posix_longest_            {};                            //!< A POSIX grammar translated onto REAL: search uses leftmost-longest bounds.
     mutable std::optional<std::basic_regex<CharT, Traits>>               lazy_std_;                                               //!< Lazy std for nullable replace/iterate.
     compat::policy                                                       policy_                   {policy::strict};              //!< strict rejects ineligible, fallback delegates to std.
 
@@ -962,7 +954,8 @@ namespace real::compat {
       posix_longest_            = false;
       if constexpr (detail::real_eligible<CharT, Traits>) {
         const std::string_view sv {pattern.data(), pattern.size()};
-        // PX1a/PX1b: a single POSIX grammar (extended -> ERE, basic -> BRE; awk/grep/egrep next) on the linear
+        // PX1a/PX1b: a single POSIX grammar (extended/egrep -> ERE, basic/grep -> BRE, awk -> ERE + C
+        // escapes; grep/egrep additionally join their lines with `|`) on the linear
         // engine when the pattern translates — run it on REAL with leftmost-LONGEST bounds (the POSIX semantics,
         // via search_longest / find_iter_longest) instead of delegating to std's backtracker. A `nullopt` (a
         // wrong grammar mix, or an untranslatable construct) or a real reject falls through to the std path below;
@@ -1026,7 +1019,6 @@ namespace real::compat {
      * \brief The policy branch for a pattern the linear engine cannot represent: `strict` throws
      *        `regex_error` with `error_complexity` and a REAL-identifiable message; `fallback` delegates
      *        it to `std::regex`.
-     * \brief Applies the policy to a pattern REAL declined: throw under strict, compile on `std` otherwise.
      * \param[in] sv     The pattern text.
      * \param[in] f      Syntax options.
      * \param[in] reason Message carried by the thrown \ref regex_error under strict policy.
