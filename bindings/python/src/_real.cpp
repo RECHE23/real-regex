@@ -84,10 +84,35 @@ struct PatternObject {
     int is_bytes;
 };
 
+// A UTF-8 walk position shared by every Match one scan yields, so converting byte offsets to
+// character offsets is O(subject) across the WHOLE iteration instead of O(offset) per match.
+// Without it, `for m in finditer(...): m.start()` on a non-ASCII subject is quadratic: measured
+// 11.3 / 41.4 / 192.6 / 633.2 ms as the subject doubles, against 1.6 / 1.6 / 3.3 / 7.0 for the same
+// loop reading only .group(). Held by the iterator and by every Match it produced, refcounted
+// because a Match legitimately outlives its iterator.
+struct char_cursor {
+    Py_ssize_t byte_at;  //!< How far into the subject the walk has advanced.
+    Py_ssize_t chars;    //!< Characters counted in [0, byte_at).
+    Py_ssize_t refs;     //!< Owners: the iterator plus every live Match from it.
+};
+
+char_cursor* cursor_new() {
+    auto* c = new (std::nothrow) char_cursor {0, 0, 1};
+    return c;  // nullptr is a valid "no acceleration" answer; the walk then starts from 0
+}
+char_cursor* cursor_incref(char_cursor* c) {
+    if (c != nullptr) { ++c->refs; }
+    return c;
+}
+void cursor_decref(char_cursor* c) {
+    if (c != nullptr && --c->refs == 0) { delete c; }
+}
+
 struct MatchObject {
     PyObject_HEAD
     PyObject* subject;  // str or bytes searched
     PyObject* pattern;  // owning PatternObject
+    char_cursor* cursor;  // shared monotone UTF-8 walk, or nullptr (then every conversion starts at 0)
     // 2*(groups+1) entries, -1 for unset. byte_spans index the UTF-8 data;
     // char_spans are what Python sees (equal for bytes and ASCII subjects).
     std::vector<Py_ssize_t>* byte_spans;
@@ -115,6 +140,7 @@ void Match_dealloc(PyObject* self) {
     MatchObject* match = as_match(self);
     delete match->byte_spans;
     delete match->char_spans;
+    cursor_decref(match->cursor);
     Py_XDECREF(match->subject);
     Py_XDECREF(match->pattern);
     PyObject_Free(self);
@@ -151,12 +177,14 @@ struct MatchIteratorObject {
     Py_ssize_t pos;      // the iterator's pos/endpos (char for str, byte for bytes), copied
     Py_ssize_t endpos;   // onto each yielded Match's .pos/.endpos
     match_iter_t* cur;   // heap cursor; its text_/prog_ borrow `subject` and the regex
+    char_cursor* chars;  // shared UTF-8 walk position handed to every Match this scan yields
 };
 
 void MatchIterator_dealloc(PyObject* self) {
     PyTypeObject* tp = Py_TYPE(self);
     auto* it = reinterpret_cast<MatchIteratorObject*>(self);
     delete it->cur;  // delete the cursor BEFORE releasing the refs it borrows from
+    cursor_decref(it->chars);
     Py_XDECREF(it->subject);
     Py_XDECREF(it->pattern);
     PyObject_Free(self);
@@ -197,7 +225,7 @@ int get_subject(int is_bytes, PyObject* obj, subject_view* out) {
 // Builds Python-visible spans from byte spans: identity when chars are
 // bytes, otherwise one pass over the subject counting codepoints.
 void compute_char_spans(const subject_view& sv, const std::vector<Py_ssize_t>& byte_spans,
-                        std::vector<Py_ssize_t>& out) {
+                        std::vector<Py_ssize_t>& out, char_cursor* cursor = nullptr) {
     out = byte_spans;
     if (sv.char_is_byte) {
         return;
@@ -217,8 +245,17 @@ void compute_char_spans(const subject_view& sv, const std::vector<Py_ssize_t>& b
         }
         order[b] = key;
     }
+    // Resume from the shared walk when it has not passed the first offset we need. finditer yields
+    // matches in increasing order, so this is the ordinary case and it makes the whole iteration one
+    // pass over the subject. Reading matches out of order (a saved list walked backwards) simply
+    // finds the cursor ahead of the target and restarts at 0 -- correct, just not accelerated.
     Py_ssize_t byte_at = 0;
     Py_ssize_t chars = 0;
+    const bool resumable = cursor != nullptr && !order.empty() && cursor->byte_at <= byte_spans[order.front()];
+    if (resumable) {
+        byte_at = cursor->byte_at;
+        chars = cursor->chars;
+    }
     for (const std::size_t slot : order) {
         const Py_ssize_t target = byte_spans[slot];
         while (byte_at < target) {
@@ -226,6 +263,12 @@ void compute_char_spans(const subject_view& sv, const std::vector<Py_ssize_t>& b
             ++byte_at;
         }
         out[slot] = chars;
+    }
+    // Publish only a forward move: a restart-from-0 conversion must not rewind the shared walk for
+    // the matches that still have it ahead of them.
+    if (cursor != nullptr && byte_at > cursor->byte_at) {
+        cursor->byte_at = byte_at;
+        cursor->chars = chars;
     }
 }
 
@@ -254,7 +297,7 @@ PyObject* empty_like(PatternObject* pat) {
 PyObject* set_cpp_error() { return sciforge::binding::set_cpp_error(error_type); }
 
 PyObject* make_match(PatternObject* pat, PyObject* subject, const auto& match,
-                     Py_ssize_t pos, Py_ssize_t endpos) {
+                     Py_ssize_t pos, Py_ssize_t endpos, char_cursor* cursor = nullptr) {
     auto* obj = PyObject_New(MatchObject, reinterpret_cast<PyTypeObject*>(match_type));
     if (obj == nullptr) {
         return nullptr;
@@ -263,10 +306,11 @@ PyObject* make_match(PatternObject* pat, PyObject* subject, const auto& match,
     // unwinds safely through Match_dealloc (delete on a nullptr span is fine).
     obj->byte_spans = nullptr;
     // char_spans is computed lazily (nullptr until the first .start()/.end()/.span()).
-    // .group()/__getitem__ read byte_spans, so a finditer that reads only .group() never
-    // pays compute_char_spans, which walks byte 0 -> match offset = O(position) per match
-    // (quadratic over a non-ASCII scan). See ensure_char_spans.
+    // .group()/__getitem__ read byte_spans, so a finditer that reads only .group() pays nothing
+    // at all; a scan that DOES read spans shares one monotone walk through `cursor`, so the whole
+    // iteration is O(subject) rather than O(offset) per match. See ensure_char_spans.
     obj->char_spans = nullptr;
+    obj->cursor = cursor_incref(cursor);  // null for a one-shot match: it has nothing to share with
     obj->pos = pos;
     obj->endpos = endpos;
     obj->subject = Py_NewRef(subject);
@@ -417,10 +461,12 @@ PyObject* Match_groupdict(PyObject* self, PyObject* args, PyObject* kwargs) {
     return out;
 }
 
-// Computes and caches char_spans on first use (lazy). make_match leaves it nullptr;
-// only .start()/.end()/.span() need it, so a finditer reading only .group() (which uses
-// byte_spans) never pays compute_char_spans -- O(match offset) per match, i.e. quadratic
-// over a non-ASCII scan. Runs under the GIL (every Match method does), so the
+// Computes and caches char_spans on first use (lazy). make_match leaves it nullptr; only
+// .start()/.end()/.span() need it, so a finditer reading only .group() (which uses byte_spans)
+// pays nothing here. When spans ARE read, the walk resumes from the scan's shared cursor instead
+// of restarting at byte 0 -- that restart was O(match offset) per match, i.e. quadratic over a
+// non-ASCII scan (measured 11.3 -> 633.2 ms as the subject grew 8x, against 1.6 -> 7.0 for the
+// same loop reading only .group()). Runs under the GIL (every Match method does), so the
 // check-compute-cache is serialized and idempotent; sv is re-derived like group_value.
 int ensure_char_spans(MatchObject* match) {
     if (match->char_spans != nullptr) {
@@ -432,7 +478,7 @@ int ensure_char_spans(MatchObject* match) {
     }
     try {
         match->char_spans = new std::vector<Py_ssize_t>();
-        compute_char_spans(sv, *match->byte_spans, *match->char_spans);
+        compute_char_spans(sv, *match->byte_spans, *match->char_spans, match->cursor);
     } catch (...) {
         delete match->char_spans;     // nullptr (new threw) or the partly-built vector
         match->char_spans = nullptr;  // leave it recomputable and dealloc-safe
@@ -951,7 +997,8 @@ PyObject* MatchIterator_iternext(PyObject* self) {
     }
     PyObject* obj = nullptr;
     try {
-        obj = make_match(as_pattern(it->pattern), it->subject, **it->cur, it->pos, it->endpos);
+        obj = make_match(as_pattern(it->pattern), it->subject, **it->cur, it->pos, it->endpos,
+                         it->chars);
         if (obj == nullptr) {
             return nullptr;
         }
@@ -1013,6 +1060,9 @@ PyObject* Pattern_finditer(PyObject* self, PyObject* args, PyObject* kwargs) {
     it->pos = pos;        // char/byte offsets, copied onto each yielded Match's .pos/.endpos
     it->endpos = endpos;
     it->cur = nullptr;
+    // One shared walk for the whole scan. A null allocation is not an error: every conversion then
+    // starts from byte 0, which is exactly the previous behaviour.
+    it->chars = sv.char_is_byte ? nullptr : cursor_new();
     try {
         it->cur = new match_iter_t(
             pat->rx->find_iter(it->sv.view(), char_to_byte(sv, pos), char_to_byte(sv, endpos)).begin());

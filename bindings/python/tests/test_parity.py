@@ -8,6 +8,7 @@ default (no re.ASCII); bytes patterns are compared byte-for-byte.
 
 import re
 import sys
+import time
 import unittest
 
 import real
@@ -927,3 +928,61 @@ class TestParity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCharOffsetScaling(unittest.TestCase):
+    """`.start()`/`.end()`/`.span()` over a finditer must stay LINEAR on a non-ASCII subject.
+
+    Converting a byte offset to a character offset means counting UTF-8 lead bytes, and each match
+    used to walk from byte 0 -- O(offset) per match, so quadratic across a scan. Measured before the
+    fix on 2000/4000/8000/16000 units: 11.3, 41.4, 192.6, 633.2 ms, against 1.6/1.6/3.3/7.0 for the
+    same loop reading only .group(). A linear-time engine with a quadratic offset API is the one
+    shape this project must not ship, and nothing else in the suite would have caught it.
+
+    The iterator now carries one monotone walk shared with every match it yields. This asserts the
+    SHAPE (the per-match cost stops growing with the subject), not a wall-clock budget, so it does
+    not turn into a flaky timing test on a loaded machine.
+    """
+
+    def _elapsed_ms(self, units, read_span):
+        text = "héllo wörld " * units
+        start = time.perf_counter()
+        for match in real.finditer(r"\w+", text):
+            if read_span:
+                match.start()
+        return (time.perf_counter() - start) * 1000.0
+
+    def test_span_reads_scale_linearly(self):
+        small, large = 4000, 16000  # 4x the subject
+        best_small = min(self._elapsed_ms(small, True) for _ in range(3))
+        best_large = min(self._elapsed_ms(large, True) for _ in range(3))
+        # Linear would be ~4x. Quadratic was ~15x (41.4 -> 633.2). A generous 8x ceiling separates
+        # the two by a wide margin while leaving room for scheduler noise on a busy machine.
+        self.assertLess(
+            best_large, best_small * 8.0,
+            f"span reads look super-linear: {best_small:.1f} ms at {small} units, "
+            f"{best_large:.1f} ms at {large} (4x the subject)")
+
+    def test_spans_agree_with_re_out_of_order(self):
+        # The monotone walk is an optimisation for in-order reads; reading a saved list backwards
+        # must still be correct, which is the case that would silently break if the cursor were
+        # allowed to rewind.
+        text = "héllo wörld " * 60
+        ours = list(real.finditer(r"\w+", text))
+        theirs = list(re.finditer(r"\w+", text))
+        self.assertEqual([(m.start(), m.end()) for m in reversed(ours)],
+                         [(m.start(), m.end()) for m in reversed(theirs)])
+
+    def test_match_outliving_its_iterator_keeps_correct_spans(self):
+        text = "héllo wörld encore " * 10
+
+        def third_match():
+            iterator = real.finditer(r"\w+", text)
+            next(iterator)
+            next(iterator)
+            return next(iterator)  # the iterator is released on return
+
+        expected = list(re.finditer(r"\w+", text))[2]
+        got = third_match()
+        self.assertEqual((got.start(), got.end(), got.group()),
+                         (expected.start(), expected.end(), expected.group()))
