@@ -168,11 +168,12 @@ def print_redos(doc):
     print("\nReDoS — (a+)+b over 'a'*N (no match): REAL/RE2 stay linear, std backtracks.")
     for item in doc["redos"]:
         engine, n, samples = item["engine"], int(item["n"]), item["samples"]
+        pat = item.get("pattern", "(a+)+b")
         if samples:
             ms = statistics.median(samples) / 1e6
-            print(f"  {engine:<5} N={n:<7} {ms:8.3f} ms")
+            print(f"  {engine:<5} {pat:<9} N={n:<7} {ms:8.3f} ms")
         else:
-            print(f"  {engine:<5} N={n:<7} refused (catastrophic backtracking)")
+            print(f"  {engine:<5} {pat:<9} N={n:<7} refused (catastrophic backtracking)")
 
 
 def main():

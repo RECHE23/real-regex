@@ -334,6 +334,45 @@ than older docs claimed (~0.52 ms was a stale figure that measured neither leg);
 bare-VM row is the guarantee without that short-circuit. This is the property REAL
 is built to guarantee.
 
+### PCRE2-JIT — the engine this table used to omit
+
+PCRE2-JIT is REAL's main throughput competitor everywhere else in this document (see the Unicode
+table below, where it leads the property/script band), and it was absent from exactly the section
+that states REAL's headline property. That asymmetry is corrected here, and the answer is not the
+one the classic demo implies.
+
+**`(a+)+b` does not discriminate against PCRE2 at all.** It answers in microseconds at N = 100 000,
+because two of its optimisations apply: `a` and `b` are disjoint, so `(a+)+` is auto-possessified
+and the ambiguity disappears, and `b` is a required literal it scans for first — the same
+short-circuit REAL's own prefilter uses. Any comparison built on this pattern flatters both engines
+for their optimisers rather than testing their guarantees.
+
+The shape that does discriminate removes both: anchored at each end, no required literal to scan
+for, and a subject that fails only at the last byte. `^(a+)+$` over `"a"×N + "b"`:
+
+| N | REAL | PCRE2-JIT (10.47) |
+| ---: | ---: | :--- |
+| 16 | 0.060 ms | 0.305 ms |
+| 20 | 0.002 | 4.428 |
+| 22 | 0.001 | 18.131 |
+| 24 | 0.001 | **refused** — `PCRE2_ERROR_MATCHLIMIT` at ~21.8 ms |
+| 100 000 | **4.047 ms** | **refused** |
+| 1 000 000 | **40.110 ms** (10× for 10× input — linear) | **refused** |
+
+`^(a\|aa)+$` on the same subjects traces the curve more finely before the limit bites — 0.014, 0.086,
+0.220, 0.575, 1.494, 3.918, 10.240, 27.053 ms at N = 16…32, roughly ×2.6 every two characters, then
+refused at N = 34.
+
+**So PCRE2-JIT does backtrack exponentially, and its default `match_limit` converts the blow-up into
+a refusal at ~20–30 ms rather than a hang.** That is materially better than `std::regex`, which
+spends 4107 ms at N = 26 and keeps climbing. It is not the same thing as an answer: the caller gets
+`PCRE2_ERROR_MATCHLIMIT`, a negative return code that is neither "match" nor "no match", and code
+that treats any negative rc as "no match" — a common shape — silently accepts a non-answer as a
+negative result. REAL returns the correct no-match at every N, in time linear in the input.
+
+Reproduce with `make bench-engines` (the `redos` block now carries both patterns and a `pattern`
+field per row; PCRE2 rows appear when `pkg-config --exists libpcre2-8`).
+
 ## D. real::dfa — capture-free maximal-munch DFA (opt-in)
 
 `real::dfa` (`<real/dfa.hpp>`, opt-in — not pulled in by `<real/real.hpp>`) fuses a set

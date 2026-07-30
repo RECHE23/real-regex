@@ -207,6 +207,29 @@ namespace {
   }
 
 #if defined(HAVE_PCRE2)
+  // Whether PCRE2-JIT ANSWERS this pattern on this subject, as opposed to refusing it. A backtracker
+  // bounded by match_limit returns PCRE2_ERROR_MATCHLIMIT, which is neither "match" nor "no match" --
+  // the caller has to tell it from a genuine no-match, and code that treats any negative rc as "no
+  // match" silently accepts a non-answer. Only a real match / no-match counts as completing here.
+  bool pcre2_redos_completes(const std::string& pat,
+                             const std::string& text)
+  {
+    int         errc   {};
+    PCRE2_SIZE  erroff {};
+    pcre2_code* re = pcre2_compile(reinterpret_cast<PCRE2_SPTR>(pat.c_str()),
+                                   PCRE2_ZERO_TERMINATED, 0, &errc, &erroff, nullptr);
+    if (re == nullptr) {
+      return false;
+    }
+    pcre2_jit_compile(re, PCRE2_JIT_COMPLETE);
+    pcre2_match_data* md {pcre2_match_data_create_from_pattern(re, nullptr)};
+    const int         rc {pcre2_jit_match(re, reinterpret_cast<PCRE2_SPTR>(text.data()), text.size(),
+                                          0, 0, md, nullptr)};
+    pcre2_match_data_free(md);
+    pcre2_code_free(re);
+    return rc >= 0 || rc == PCRE2_ERROR_NOMATCH;
+  }
+
   std::size_t pcre2_count(const std::string& pat,
                           const std::string& text)
   {
@@ -481,17 +504,50 @@ namespace {
   {
     std::vector<std::string> entries;
     const std::string        big(100000, 'a');
+    // The RESISTANT shape. `(a+)+b` alone flatters every engine with an optimiser: PCRE2
+    // auto-possessifies it (`a` and `b` are disjoint) AND prefilters the required `b`, so it answers
+    // instantly and its backtracking never shows. Anchored at both ends with a breaking suffix, there
+    // is no required literal to scan for and nothing to possessify -- which is what actually
+    // distinguishes a linear engine from a bounded backtracker.
+    const std::string big_broken {std::string(100000, 'a') + "b"};
 
     entries.push_back(json_object({
-      {"engine", json_string("real")}, {"n", json_number(100000)},
+      {"engine", json_string("real")}, {"pattern", json_string("(a+)+b")},
+      {"n", json_number(100000)},
       {"samples", json_array(collect([&] {
                                        const real::regex rx("(a+)+b");
                                        return rx.search(big).matched() ? 1U : 0U;
                                      }, n).samples)}}));
 
+    entries.push_back(json_object({
+      {"engine", json_string("real")}, {"pattern", json_string("^(a+)+$")},
+      {"n", json_number(100000)},
+      {"samples", json_array(collect([&] {
+                                       const real::regex rx("^(a+)+$");
+                                       return rx.search(big_broken).matched() ? 1U : 0U;
+                                     }, n).samples)}}));
+
+#if defined(HAVE_PCRE2)
+    // Both shapes, deliberately. On `(a+)+b` PCRE2-JIT answers in microseconds -- a real result, and a
+    // real property of its optimiser. On `^(a+)+$` over the same length it exceeds its default
+    // match_limit and returns PCRE2_ERROR_MATCHLIMIT: an ERROR, not "no match", which a caller must
+    // distinguish. Empty samples render as "refused" below, which is exactly what happened.
+    for (const auto& shape : {std::pair<const char*, const std::string*> {"(a+)+b", &big},
+                              std::pair<const char*, const std::string*> {"^(a+)+$", &big_broken}}) {
+      std::vector<double> samples;
+      if (pcre2_redos_completes(shape.first, *shape.second)) {
+        samples = collect([&] { return pcre2_redos_completes(shape.first, *shape.second) ? 1U : 0U; },
+                          3).samples;
+      }
+      entries.push_back(json_object({
+        {"engine", json_string("pcre2")}, {"pattern", json_string(shape.first)},
+        {"n", json_number(100000)}, {"samples", json_array(samples)}}));
+    }
+#endif
+
 #if defined(HAVE_RE2)
     entries.push_back(json_object({
-      {"engine", json_string("re2")}, {"n", json_number(100000)},
+      {"engine", json_string("re2")}, {"pattern", json_string("(a+)+b")}, {"n", json_number(100000)},
       {"samples", json_array(collect([&] {
                                        const RE2 re("(a+)+b");
                                        return RE2::PartialMatch(big, re) ? 1U : 0U;
@@ -511,7 +567,8 @@ namespace {
         // libc++ may abort catastrophic backtracking; leave the samples empty.
       }
       entries.push_back(json_object({
-        {"engine", json_string("std")}, {"n", json_number(static_cast<double>(small))},
+        {"engine", json_string("std")}, {"pattern", json_string("(a+)+b")},
+        {"n", json_number(static_cast<double>(small))},
         {"samples", json_array(samples)}}));
     }
     return "[" + json_join(entries) + "]";
