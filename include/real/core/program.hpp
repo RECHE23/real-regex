@@ -484,7 +484,7 @@ namespace real {
       //!        rather than quadratic on adversarial input (`id=[a-z0-9]*+;` fails this and stays general --
       //!        alphanumeric prefix bytes are members of the loop's own class).
       std::array<char, 8>   possessive_prefix       {};   //!< Required literal BEFORE the loop (0 len = none; the delimited/"quoted" shape).
-      std::uint8_t          possessive_prefix_size  {};
+      std::uint8_t          possessive_prefix_size  {};   //!< Meaningful bytes of \ref possessive_prefix; 0 selects the bare/suffixed shape, non-zero the delimited one.
       std::array<char, 8>   possessive_suffix       {};   //!< Required literal AFTER the loop (0 len = none; e.g. the 'x' in `\d++x`).
       std::uint8_t          possessive_suffix_size  {};
       class_ref             possessive_class        {};   //!< The loop body's class, typed by opcode.
@@ -496,8 +496,8 @@ namespace real {
       //!        exact_literal. 0 = none; 1 = `\b` (\ref assert_kind::word_boundary);
       //!        2 = `\B` (\ref assert_kind::not_word_boundary). Verified in O(1) at the match
       //!        start/end after the body fast-path accepts a candidate.
-      std::uint8_t wb_lead  {};
-      std::uint8_t wb_trail {};
+      std::uint8_t wb_lead  {}; //!< Leading wrap: 0 none, 1 `\b`, 2 `\B` — asserted at the match start.
+      std::uint8_t wb_trail {}; //!< Trailing wrap, same encoding as \ref wb_lead — asserted at the match end.
       //! \brief True when a genuine leading `\b` was dropped by the B-1 optimization (a maximal
       //!        greedy/possessive run can only legitimately START where the preceding character
       //!        is non-word, so the runtime check is redundant -- \ref resolve_class_wb_hints).
