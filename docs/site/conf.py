@@ -115,6 +115,13 @@ nitpick_ignore = [
     ("cpp:identifier", "regex_constants"),
     ("cpp:identifier", "real::compat::regex_constants"),
     ("cpp:identifier", "regex_constants::match_default"),
+    # Same shape as match_default above, and both surfaced the same way: an enum VALUE used as a default
+    # argument. basic_regex's four constructors take `flag_type f = regex_constants::ECMAScript` and
+    # `policy pol = policy::strict`, and they began rendering here only once they were given Doxygen
+    # comments -- the C++ domain does not register an enumerator as a resolvable target even though
+    # `doxygenenum::` renders both enums further down this same page.
+    ("cpp:identifier", "policy::strict"),
+    ("cpp:identifier", "regex_constants::ECMAScript"),
     ("cpp:identifier", "sub_match<BidirIt>"),
     ("ref", "namespacereal"),
     ("ref", "namespacereal_1_1compat_1_1re2"),

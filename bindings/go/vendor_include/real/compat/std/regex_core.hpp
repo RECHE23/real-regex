@@ -950,7 +950,7 @@ namespace real::compat {
     //! \param[in] sv     The pattern text.
     //! \param[in] f      Syntax options.
     //! \param[in] reason Message carried by the thrown \ref regex_error under strict policy.
-    //! \throws real::compat::regex_error under \ref policy::strict.
+    //! \throws real::compat::regex_error under `policy::strict`; compiles on `std` under `policy::fallback`.
     void reject_or_fallback(std::string_view   sv,
                             flag_type          f,
                             const std::string& reason)
