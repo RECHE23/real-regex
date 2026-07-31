@@ -769,19 +769,29 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   of a matching one. The cure is the same shape: materialise the metadata once per regex, indexed, rather
   than rebuilding it per query.
 
-- **`regex_set` construction spends ~98 % of its time on throwaway DFAs.** Building the set probes each
-  member's DFA-eligibility by *constructing a full single-pattern `real::dfa` and discarding it*
-  (`regex_set.hpp`, the partition loop). Measured: **1.06 ms / 11 240 allocations at 4 patterns,
-  7.19 ms / 44 954 at 16, 29.87 ms / 179 834 at 64**. Neutralising the probe as a diagnostic takes the
-  same builds to **22.6 µs / 204** and **92.8 µs / 810** — so the probe is 97.9 % and 98.7 % of the cost,
-  and roughly **50× is available**. Compilation cannot explain it: 64 regexes compile in ~723 µs and 5632
-  allocations, and copying 64 × 1512-byte objects is microseconds.
+- **`regex_set` construction is ~97 % eligibility probing, and only ~4 % of that is removable.** Building
+  the set probes each member by *constructing a full single-pattern `real::dfa` and discarding it*
+  (`regex_set.hpp`, the partition loop). At 16 patterns the whole construction is **2.60 ms**, of which
+  compiling the sixteen regexes is **83.8 µs** — so the probe is **~97 %**.
 
-  \note The probe is load-bearing, which the diagnostic proved rather than assumed: with it neutralised
-  the 64-pattern build **throws** `dfa_error` from the fused construction, because an ineligible member is
-  no longer partitioned out. So the fix is a *cheaper eligibility test*, not a removal — and the error it
-  must predict is a size limit (`max_dfa_byte_program`, added after 7.60's own `regex_set` incident),
-  which suggests measuring the byte expansion rather than building the automaton to find out.
+  \warning The obvious conclusion is wrong, and both halves of the correction are worth keeping.
+  *First*, the probe is load-bearing: a diagnostic build with it neutralised **throws** `dfa_error` from
+  the fused construction at 64 patterns, because ineligible members are no longer partitioned out.
+  *Second*, and this is what kills the idea of a lightweight probe: DFA eligibility is decided in three
+  phases — a linear audit for assertions, lookarounds and possessive loops, then
+  `build_byte_program(…, max_dfa_byte_program)`, then subset construction — and the first two cost
+  **2242 µs of the probe's 2335** at 16 patterns. Stopping before subset construction saves **4 %**. The
+  expensive part *is* the expansion that decides eligibility.
+
+  What remains is smaller and different: that expansion is performed **twice** for every eligible member —
+  once in the probe, once again inside the fused build — and `regex_immutables` already carries a
+  `byte_prog` field it could be cached in. That is a factor of about two on large sets, not the fifty an
+  earlier reading of these numbers suggested.
+
+  \note Those earlier numbers were inflated ~2.8× by the measurement itself: an `operator new` counter
+  used to attribute allocations is not inlinable, and at ~45 000 allocations per iteration it dominated
+  the timing it was meant to explain. Allocation counts from that harness are sound; **wall-clock figures
+  taken with it are not**, and the two must not be read off the same run.
 
 - **Heap cost per regex, and the one-byte cliff that has no warning in the pattern.** Measured with
   massif on the devbox, as the marginal cost of each additional regex held simultaneously:
