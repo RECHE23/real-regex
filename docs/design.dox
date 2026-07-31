@@ -750,6 +750,28 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   loop is dominated by match bookkeeping, not the inner scan — for thousands of lines of intrinsics and a
   portability burden. \note Wake condition: a workload provably dominated by long single-class runs (a
   columnar scanner over wide fixed fields), measured, not assumed.
+- **Heap cost per regex, and the one-byte cliff that has no warning in the pattern.** Measured with
+  massif on the devbox, as the marginal cost of each additional regex held simultaneously:
+
+  | pattern shape | per additional regex |
+  |:--|--:|
+  | `\p{L}+`, all identical | 10.1 KB |
+  | `(\w+)@(\w+)` | 16.0 KB |
+  | 24-branch alternation | 69.7 KB |
+  | `\p{sc=…}+` across eight different scripts | 148 KB |
+  | **`\p{L}+` followed by one literal byte** | **1027 KB** |
+
+  Content-keyed sharing works: thirty-two copies of the same `\p{L}+` cost 10 KB each on top of the
+  first. What does not is the last row, and it is a **user-facing trap rather than an internal
+  characteristic**. A bare `\p{L}+` is a whole-pattern code-point class and takes the class loop — one
+  regex, **105.7 KB**. Append a single literal (`\p{L}+a`) and the same regex costs **1259.8 KB**, twelve
+  times more, because the pattern is no longer that shape and falls to a route that expands the property
+  into a byte program — and `\p{L}` is 675 ranges, whose UTF-8 trie expansion this file already
+  documents as enormous *in instruction count* (`regex_set`'s `\w+` at 3434 instructions). What was
+  never documented is its cost in **memory**, nor that one byte is enough to trigger it. A service
+  holding a few dozen patterns of that shape pays tens of megabytes with nothing in the pattern to
+  suggest it.
+
 - **Crossing the Aho-Corasick branch threshold makes repeated `search()` ~200× slower**, because the
   automaton meant to accelerate the alternation is rebuilt on **every call**. On a 4000-byte subject, a
   24-branch alternation costs **29.5 µs per search and 584 heap allocations**, against **0.14 µs** for a
@@ -834,8 +856,11 @@ platforms, with budget refusals at N = 32 down from 19 195 to 1457. Measured res
 it leaves are at the end of this subsection.
 
 GCC caps how much a translation unit may grow from inlining: `--param inline-unit-growth`, **40 %** by
-default. This library exhausts it. In one benchmark TU, 22 534 inline decisions succeed and **3028 are
-refused for "inline-unit-growth limit reached"** — 2637 of those in `engine/pike.hpp` alone. Once the cap
+default. This library exhausted it. In one benchmark TU, 22 534 inline decisions succeeded and **3028 were
+refused for "inline-unit-growth limit reached"** — 2637 of those in `engine/pike.hpp` alone. *(Re-measured
+after the fix: **1768** on the same TU, 1395 in `pike.hpp`, and **1750** rather than 19 735 on a
+32-pattern heterogeneous unit. The figures through the rest of this subsection are the pre-fix ones —
+they are what the diagnosis was built from.)* Once the cap
 is hit, the remaining decisions are declined in traversal order, so *which* inlinings survive stops
 depending on their value.
 
