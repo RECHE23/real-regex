@@ -640,6 +640,12 @@ compile-time-pattern / runtime-text mode).
 
 Recorded, not scheduled — deliberate next steps the current design leaves room for:
 
+- **Lifting `state_type` out of `static_storage<P>`.** The largest scoped item on this list, and the only
+  one that changes a measured defect rather than tidying: a `static_regex`'s scratch type is nested in a
+  storage templated on the pattern's *value*, so every distinct pattern carries a private copy of every
+  `pike_vm` route — 82.4 % of the ~48 KB each one adds to `.text`. Parameterising it on dimensions instead
+  would cut that slope ~6×. Fully scoped with its costs, its open risk and its gating measurement in
+  \ref g_inlinebudget; not started.
 - **A public-API-surface check.** The layering gate (\ref g_map) governs *includes*; a sibling check could
   govern the *exposed surface* — assert that only the documented headers introduce names into `namespace
   real` (not `real::detail`), so the public API cannot grow by accident. The most durable extension of the
@@ -809,11 +815,41 @@ propagate, and removing inlining shrinks the unit, which shrinks the percentage 
 historically unstable results in this area, where the same row has read −25 % and +217 % across two
 environments. Read the untouched-pattern rows as a gauge before believing any small delta.
 
-The one lever left is the demand: making `state_type` depend on the *dimensions* a pattern needs (slot
-count, capacities) rather than on the pattern's value, so patterns of the same shape share route code
-instead of each carrying a copy. `program_view` already exists as the runtime abstraction that would make
-this possible. Design work, not an optimisation pass — and the only direction that reaches a consumer
-compiling through a plain `#include`.
+**The defect is `static_regex`-only.** The dynamic path already solves it: `dynamic_storage::state_type`
+fixes its SBO capacities as constants, so every `real::regex` in a TU shares one `pike_vm` instantiation.
+Sweeping the same N patterns through `real::regex` instead, `.text` goes **506 KB → 511 KB from N=0 to
+N=32** and the timing of an unrelated pattern never leaves 10.7–11.3 µs. Against `static_regex`'s 145 KB →
+1522 KB and its chaos, that is the whole finding: a consumer using runtime patterns is not exposed.
+
+The one lever left is therefore the demand *on the static side*: `state_type` is nested inside
+`static_storage<P>`, so it is distinct per pattern **value** by construction — two patterns of identical
+dimensions still get separate types, and with them a private copy of every route. Lifting it out, into a
+scratch type parameterised on the *dimensions* a pattern needs (tiered code size, slot count, block count)
+rather than on its value, lets patterns of the same shape share route code. `program_view` already exists
+as the runtime abstraction the three link-time table pointers in `state_type` would fall back to.
+
+Scoped, measured, not implemented — the numbers a decision needs:
+
+- **82.4 % of the per-pattern growth is shareable.** Diffing the symbol tables of a 1-pattern and a
+  9-pattern TU, of 48 007 bytes per additional pattern, **39 575 (82.4 %, 424 symbols) is `pike_vm` route
+  code**; 7013 is per-pattern data (program, class tables) and irreducible; the rest is noise. Had the split
+  been the other way round, the idea would be dead.
+- **Slope ÷ 6.** Route code becomes one constant term per *tier*: on 18 realistic patterns, 16 fall in a
+  32-instruction tier and 2 in a 64, with slots 2 everywhere but one — three scratch types instead of
+  eighteen. Per-pattern cost drops from ~48 KB to the ~8 KB of irreducible data. A 32-pattern TU goes from
+  ~1.5 MB to ~300 KB.
+- **It defers the defect rather than removing it.** Demand still grows, six times slower: configurations
+  that flip at N≈11 today would flip near N≈66, past what real code carries. That is the honest claim —
+  not elimination.
+- **The cost is footprint.** Tiering sizes the smallest patterns up: `[a-z]+` 1792 → ~6.8 KB (×3.8),
+  roughly the dynamic state's 7432. Zero-heap and `constexpr` survive; "sized exactly to this pattern"
+  does not.
+- **One risk stays open and un-costed:** dropping `ct_class_tables` / `ct_cp_ascii_tables` /
+  `ct_cp_page_tables` trades a link-time-constant address for a loaded span on the hot path, for every
+  static pattern. Its A/B is the only measurement that can still invert the balance, and it must be read
+  against untouched-row gauges for the reason this whole subsection exists.
+- **Named hazard:** tiered `static_vec` capacities consume more constexpr steps, and the
+  `-fconstexpr-steps` ceilings noted above are already tight on clang and MSVC.
 
 \section g_refs Further reading
 
