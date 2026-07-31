@@ -990,6 +990,13 @@ actual gate).
   minimum across independent runs is stable to **0.2 %** on every row and both with and
   without ASLR (which was tested and refuted as the cause), so 4–5 runs per arm restores a
   usable instrument.
+- **On GCC, an A/B measured inside an exhausted inlining budget is a lottery draw.** This library fills
+  `--param inline-unit-growth` (default 40 %) in a loaded translation unit — 3028 refused inline
+  decisions in one benchmark TU — and past the cap GCC declines in traversal order, so an unrelated
+  change re-shuffles which inlinings survive. A pattern that never executes the changed code can move
+  by **+220 %**, and the same row has read −25 % here and +217 % there. Before believing any delta,
+  read the rows the change *cannot* reach; if they moved too, the measurement is a draw, not a result.
+  Mechanism, cliff map and the six refuted escapes: `docs/design.dox` §10.1.
 - **That instrument's floor is ±3 %, and it is code layout, not noise.** Comparing two
   *different* binaries, rows the change cannot reach still move: on the `9a341ca` A/B,
   `the|fox|dog` read +3.0 %, `[0-9a-f]{8}` −2.1 % and `[a-z]+(?=[a-z])` −2.4 %, none of

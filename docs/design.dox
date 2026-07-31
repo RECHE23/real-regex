@@ -742,6 +742,79 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   33 554 432 (GCC's default is already enough). Consumers using such patterns at compile time may
   need the same flag; the dynamic `real::regex` at runtime is unaffected.
 
+\subsection g_inlinebudget 10.1 The inlining budget, and why a pattern you never touched can slow down
+
+GCC caps how much a translation unit may grow from inlining: `--param inline-unit-growth`, **40 %** by
+default. This library exhausts it. In one benchmark TU, 22 534 inline decisions succeed and **3028 are
+refused for "inline-unit-growth limit reached"** — 2637 of those in `engine/pike.hpp` alone. Once the cap
+is hit, the remaining decisions are declined in traversal order, so *which* inlinings survive stops
+depending on their value.
+
+The cause is instantiation multiplication, and the mangled names state it outright: a route is instantiated
+`[with State = static_storage<fixed_string<12>{"(\w+)@(\w+)"}>::state_type]`. **The pattern's value is a
+template argument**, so every distinct `static_regex` is a distinct `State`, a distinct `pike_vm<State,…>`,
+and a full private copy of every route — `run_class_loop`, `run_codepoint_class`, `run_fixed_shape`, the
+possessive family. Each `static_storage` instantiation measures ~6.1 KB of `.text`. Inlining demand
+therefore grows with the number of patterns in the TU while the allowance is a *percentage* of it — and
+as the sweep below shows, the growth is smooth but its consequence is not.
+
+The symptom is nasty because it is non-local. Measured on the devbox (g++ 13.3.0), one no-match ASCII scan
+of `(?i)cafe` — a pattern compiling to four byte classes and **zero** code-point classes, so it never enters
+the code under test:
+
+- alone in a TU: unaffected by an experimental change to the code-point loop (10.6 µs either way);
+- with ten other patterns instantiated beside it: **10.7 µs → 33.9 µs, +220 %**, from that same change.
+
+Same executed path, same working set, same binary layout for the scan itself. Only the TU's inlining
+pressure differed. Raising the cap removes it (at `--param inline-unit-growth=30` the *baseline* also reads
+33.7 µs; at 40, the default, it reads 10.7; at 50 both variants read ~10.7), which is what identifies the
+cap as the mechanism.
+
+**It is not a cliff you can stay away from.** Sweeping N patterns of identical *shape* and distinct *value*
+into one TU and timing an unrelated eleventh — refused-inline count and `.text` both grow smoothly with N
+(319 declines and 145 KB at N=1; 19 195 and 1522 KB at N=32, about 45 KB per pattern) — the timing does not
+follow:
+
+| N | 9 | 10 | **11** | **12** | 13 | **14** | 15 | 16 | 24 | 32 |
+|:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| µs/scan | 11.8 | 11.7 | **33.5** | **33.7** | 11.7 | **20.4** | 10.7 | 11.7 | 11.8 | 10.7 |
+
+Reproducible to ~1 % over three runs at every point, so it is a deterministic function of the translation
+unit — and a chaotic one of its contents. **There is no safe pattern count and no monotone margin to keep.**
+A greedy allocator with a global cap decides in traversal order, and the order changes discontinuously as
+the unit changes; whether a given TU lands well is not predictable from its size, its pattern count, or
+anything a consumer can inspect. Two thirds of the sampled configurations are fine and a third are 2–3×
+off, with no structure between them.
+
+\note This is the measurement counterpart of the `-fconstexpr-steps` note above: consumers who compile many
+patterns into one translation unit may land on the wrong side of the cliff with no change of their own.
+`--param inline-unit-growth=50` moves them back and buys real throughput where it was already lost
+(`[^,]+` −22.4 %, `(?i)café` −11.2 %, `[a-z]+` −5.2 %), but a header-only library used through a plain
+`#include` must not *require* a flag. The fix belongs in the demand, not in the consumer's build line.
+
+**Refuted, so they are not retried.** Six approaches were measured and all failed, which is what locates the
+cause: (1) dropping the `noinline, cold` pair on `cp_class_hi_width` — buys the Unicode band 12–16 % but
+costs the +220 % above; (2) splitting by call site, an inlinable copy for `extend_run` only — recovers the
+ASCII cost and delivers none of the Unicode gain; (3) a `<bool>`-templated loop with a runtime subject probe
+dispatching to a hot or cold body — the probe is paid per `search()` call, i.e. per match, and cost up to
++226 %; (4) `noinline` on the four possessive route entry points — declines 3028 → 2903; (5) `noinline` on
+all nine route bodies — declines 3028 → 2989, median +2.2 %, and `decode_codepoint_strict` went *from* 190
+declines *to* 260, the freed budget going where GCC pleased rather than where it was wanted; (6) **PGO**
+(`-fprofile-generate` / `-fprofile-use`) — median +7.1 % and the identical +217 % cliff, because a profile
+changes which inlines GCC *wants*, not the cap it runs into, and exhausts it faster (7112 declines).
+
+Two consequences worth keeping. **Annotations cannot redistribute this budget**: `noinline` does not
+propagate, and removing inlining shrinks the unit, which shrinks the percentage allowance with it. And
+**an A/B measured inside an exhausted budget is a lottery draw** — which is the standing explanation for
+historically unstable results in this area, where the same row has read −25 % and +217 % across two
+environments. Read the untouched-pattern rows as a gauge before believing any small delta.
+
+The one lever left is the demand: making `state_type` depend on the *dimensions* a pattern needs (slot
+count, capacities) rather than on the pattern's value, so patterns of the same shape share route code
+instead of each carrying a copy. `program_view` already exists as the runtime abstraction that would make
+this possible. Design work, not an optimisation pass — and the only direction that reaches a consumer
+compiling through a plain `#include`.
+
 \section g_refs Further reading
 
 - \ref divergences — every intentional difference from Python `re`, with its rationale.
