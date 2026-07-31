@@ -24,6 +24,30 @@
 // paid more often per byte. M1 is unaffected by construction (clang never compiles this file:
 // `c++ -E` finds zero occurrences of cp_class_hi_width) and by measurement (arm64 A/B identical).
 //
+// The `noinline, cold` pair below is load-bearing and must not be dropped, however wrong `cold` looks
+// on a Unicode-dominant corpus where this is the only path taken. Removing both attributes lets gcc
+// inline the body into all nine call sites (the symbol disappears entirely) and does buy the property/
+// script band 12-16%, reproduced across g++ 13.3, 13.4 and 14 on two machines. It also costs `(?i)cafe`
+// on an ASCII no-match scan 10.4 -> 33.0 us, +217%, and (\w+)@(\w+) +12.9% -- devbox g++ 13.3.0, eight
+// interleaved rounds, no overlap between the two sample sets. g++ 13.3 builds the manylinux wheels, so
+// that regression is the one that ships.
+//
+// The gain lives in `width`, the scan predicate: a variant keeping `width` outlined and inlining only
+// inside extend_run's three call sites delivers NONE of it (\p{N}+ +7.4%, sc=Han +6.9%, scx=Cyrl
+// +4.7% -- the wrong sign) while recovering most of the ASCII cost (+9.8% on (?i)cafe). The regression
+// does NOT live in this path at all: `(?i)cafe` compiles to four BYTE classes and zero cp classes
+// (raw_program().cp_classes.size() == 0), so it never enters this loop and never calls the function
+// below. What it pays is collateral codegen -- a large inlinable body in a header included everywhere
+// degrades layout for patterns that never touch it. The tell is the sign flip: that row read -25%
+// under g++ 14 in a container and +217% on the devbox under 13.3, while the Unicode band held
+// -12..-18% in every environment measured. A mechanism keeps its sign; a layout effect does not.
+//
+// So the trade is a real 12-16% mechanism against unbounded layout collateral on the toolchain that
+// ships, and it is the collateral that refuses it. Buying that band means shrinking what gets inlined
+// (cp_class::range_count is known when the program is built -- 2 ranges for (?i)cafe's accented twin
+// against 675 for \p{L}, and a two-compare membership test would inline for free where a binary search
+// cannot), not toggling an inlining hint on the general body.
+//
 // Measured x86 devbox A/B (land threshold >=10%, paid): \w+ -24.7%, \d+ -66%; witnesses ([a-z]+,
 // trailing-LA) within noise. M1 is unaffected by construction: this file, and the branch selecting it
 // (#if defined(__GNUC__) && !defined(__clang__); clang defines __GNUC__ too, hence the explicit

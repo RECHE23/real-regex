@@ -970,7 +970,14 @@ actual gate).
   misleading speed number.
 - **Not gated.** These *absolute-throughput* targets are excluded from `full-local-gate`
   on purpose: a noisy wall-time measurement must never turn a clean build red.
-- **On x86-64 under Docker, take the minimum across RUNS, not across samples within one.**
+- **Measure x86-64 on the devbox, not in Docker on the laptop.** Same six cores and the same
+  g++ 13.3 that builds the manylinux wheels, but the worst within-arm spread across every
+  row is **1.045×** against the container's **1.98×** — the difference between an
+  instrument and a lottery. Use Docker only when the devbox is unavailable, and then only
+  with the workaround below. The two disagree on more than precision: on the `cp_class_hi_width`
+  attribute A/B the container reported `(?i)cafe` **improving 25 %** where the devbox
+  measured it **regressing 217 %**, which is the sign error that matters most.
+- **In Docker as a fallback, take the minimum across RUNS, not across samples within one.**
   The harness already reports `min(samples)`, which is the right robust statistic and is
   enough on bare arm64. It is not enough in the x86-64 container, and the reason is
   specific rather than general: interference there arrives as **episodes lasting seconds**,
