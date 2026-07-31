@@ -103,11 +103,21 @@ def require_fresh_xml() -> None:
     xmls = glob.glob(os.path.join(XML_DIR, "*.xml"))
     if not xmls:
         sys.exit(f"{XML_DIR} holds no XML -- run `doxygen Doxyfile` first, or pass --refresh.")
-    oldest_xml = min(os.path.getmtime(p) for p in xmls)
+    # When Doxygen last RAN, not the oldest file it left behind: it rewrites only the XML whose
+    # content changed, so most files keep an old mtime after a clean run and `min()` here reported
+    # every header as stale forever -- a false STALE, the mirror of the false clean this guard was
+    # added to prevent, and just as useless. index.xml is regenerated on every run, so it dates the
+    # run; max() over the directory is the fallback if a future Doxygen stops rewriting it.
+    index_xml = os.path.join(XML_DIR, "index.xml")
+    run_time = (
+        os.path.getmtime(index_xml)
+        if os.path.isfile(index_xml)
+        else max(os.path.getmtime(p) for p in xmls)
+    )
     stale = [
         h
         for h in glob.glob(os.path.join(ROOT, "**", "*.hpp"), recursive=True)
-        if os.path.getmtime(h) > oldest_xml
+        if os.path.getmtime(h) > run_time
     ]
     if stale:
         sys.exit(
@@ -121,10 +131,19 @@ def require_fresh_xml() -> None:
 
 
 def refresh_xml() -> None:
-    """Run the local doxygen so the XML matches the working tree."""
+    """Regenerate the XML from scratch so it matches the working tree.
+
+    The directory is REMOVED first, because Doxygen's XML output is incremental: it leaves a
+    per-file XML untouched when it decides the compound is unchanged. A refresh that only re-ran
+    doxygen could therefore hand this script line numbers from a previous revision of a header it
+    had just edited -- which is how it came to report a declaration sitting on a comment line.
+    Deleting first costs a few seconds and makes `--refresh` mean what it says.
+    """
+    import shutil
     import subprocess
 
-    print("check_doc_style: refreshing build/doc/xml (doxygen Doxyfile) ...")
+    print("check_doc_style: refreshing build/doc/xml (clean doxygen Doxyfile) ...")
+    shutil.rmtree(XML_DIR, ignore_errors=True)
     proc = subprocess.run(["doxygen", "Doxyfile"], capture_output=True, text=True)
     if proc.returncode != 0:
         sys.exit(f"doxygen failed:\n{proc.stderr[-2000:]}")
