@@ -874,9 +874,20 @@ Scoped, measured, not implemented — the numbers a decision needs:
   hoistable, and no per-call check survives. Its cost is bounded and known in advance: a pattern with
   several byte classes pays to fill all of them even if the walk only ever consults one.
 
-  That is a design with a stated cost rather than an open risk, but it is **unmeasured** — testing it means
-  changing when the immutables build their rows, which belongs inside the lift, not to a throwaway
-  prototype.
+  **Its residual is nil, measured on both platforms.** The part that cannot be designed away — a base
+  *loaded* from a member instead of materialised as an immediate — isolates without any of the row-filling
+  plumbing: keep the `ct_*` constants, route them through a member initialised in the constructor behind an
+  `asm volatile` barrier so the compiler cannot fold them back, and measure. Against the same `dyn` gauge,
+  the rows whose gauge stays inside ±1.5 % read a median **+1.2 % on arm64/clang** (−0.5 %…+1.8 % on the
+  class rows) and **−1.9 % on x86-64/g++ 13.3** (−4.3 %…+0.0 %). Negative on x86 for a concrete reason:
+  materialising a 64-bit absolute address costs a 10-byte `movabs` at every site, where a loaded pointer
+  lives in a register and is reused — the link-time constant was never the cheaper form there.
+
+  That retroactively reclassifies the +30 %: it was never the load, it was the staleness machinery and the
+  codegen weight of the `verify_class_row` call site, both of which the specification removes. So volet 3
+  costs approximately nothing once built as specified, and the lift has no un-costed step left — only the
+  row-filling relocation, whose price (a pattern with several byte classes fills all of them) is stated
+  above and paid once per program.
 - **Named hazard:** tiered `static_vec` capacities consume more constexpr steps, and the
   `-fconstexpr-steps` ceilings noted above are already tight on clang and MSVC.
 
