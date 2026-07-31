@@ -1635,6 +1635,29 @@ namespace real::detail {
      *          would, and it is a routing-policy change with its own measurement campaign — not a
      *          tuning, and deliberately not attempted in the train that found it.
      *
+     *          **Reconnaissance for whoever builds it, so the shape is not re-derived.** No *static*
+     *          property can select correctly: AC's cost is flat while the cascade's swings by three
+     *          orders of magnitude on the same pattern, so only the SUBJECT decides, and only at run
+     *          time. The engine already has the right shape for that and it is not a threshold — the
+     *          inner-literal route starts on `memmem` and ABANDONS mid-scan when candidate density
+     *          betrays a bad haystack (\ref pike_state::il_density_cands, \ref pike_state::il_abandoned,
+     *          sticky per subject, pinned by `tests/engine/test_il_density_gate.cpp`). Adapting that
+     *          would delete \ref ac_branch_threshold rather than retune it, which is the point: a
+     *          threshold that gets adjusted is a threshold that will be adjusted again.
+     *
+     *          The obstacle is where the counter has to live. Alternation search has three scan paths,
+     *          and the false-start regime measured above takes **none** of the obvious one: with a
+     *          shared prefix the branches collapse to `single_first`, with 24 distinct heads to the
+     *          `first_bytes` bitmap — both inside \ref fast_search — and only 2..8 distinct heads reach
+     *          the L-SIMD `small_set` block loop. \ref fast_search verifies candidates through a
+     *          callback that cannot return from its caller, and it has four call sites across the
+     *          fixed-shape, class-loop and alternation routes. So the first step is to give it an
+     *          OPTIONAL abandon predicate, unwired by default, leaving the other three routes unchanged
+     *          by construction; then wire the counter to alternation alone, with a budget scaled to the
+     *          subject (AC is ~3.2 ns/byte, a missed candidate in the bad regime ~130 ns, which sets the
+     *          order of magnitude); then re-run the full matrix on both platforms, since it is the
+     *          matrix that has to validate the result.
+     *
      * \tparam Dummy Never named by a caller. A member TEMPLATE is instantiated only where it is actually
      *               called, and this one has a single `if constexpr`-gated call site — so the copies for
      *               `pike_vm` instantiations that never take the route are not emitted at all, instead of
