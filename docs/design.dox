@@ -844,10 +844,19 @@ Scoped, measured, not implemented — the numbers a decision needs:
 - **The cost is footprint.** Tiering sizes the smallest patterns up: `[a-z]+` 1792 → ~6.8 KB (×3.8),
   roughly the dynamic state's 7432. Zero-heap and `constexpr` survive; "sized exactly to this pattern"
   does not.
-- **One risk stays open and un-costed:** dropping `ct_class_tables` / `ct_cp_ascii_tables` /
-  `ct_cp_page_tables` trades a link-time-constant address for a loaded span on the hot path, for every
-  static pattern. Its A/B is the only measurement that can still invert the balance, and it must be read
-  against untouched-row gauges for the reason this whole subsection exists.
+- **The table pointers cannot simply be dropped — measured.** Removing `ct_class_tables` /
+  `ct_cp_ascii_tables` / `ct_cp_page_tables` lets the existing `program_view` fallback take over (the three
+  uses are `if constexpr (requires { State::ct_…; })` guards, so deleting the members is the whole A/B).
+  It costs **+34.1 % on `[0-9]+` and +31.5 % on `[a-z]+`** — the match-dense class loops, where `run()` is
+  entered per match, 11 327 times over 64 KiB — and grows `.text` by 32 KB, the fallback being larger than
+  a pointer add. The `dyn` column is the natural gauge here (dynamic patterns never had these members, so
+  they are untouched by construction) and it stays within +1.5 %/−8.2 % on those two rows;
+  `(\w+)@(\w+)` moved −19.1 % STAT against −17.9 % DYN and is therefore a draw, not a signal.
+  \note What this rules out is the *naive* substitution, not the refactor. The fallback measured here is
+  built for a shared, possibly-stale cache: it revalidates per call, with a staleness key and an acquire
+  load. A shared scratch type could instead carry the table base as a VM member set **once per search** —
+  neither a link-time constant nor a per-call revalidation. That middle path is unmeasured, and it is what
+  the lift would have to implement.
 - **Named hazard:** tiered `static_vec` capacities consume more constexpr steps, and the
   `-fconstexpr-steps` ceilings noted above are already tight on clang and MSVC.
 
