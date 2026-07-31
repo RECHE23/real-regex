@@ -24,29 +24,31 @@
 // paid more often per byte. M1 is unaffected by construction (clang never compiles this file:
 // `c++ -E` finds zero occurrences of cp_class_hi_width) and by measurement (arm64 A/B identical).
 //
-// The `noinline, cold` pair below is load-bearing and must not be dropped, however wrong `cold` looks
-// on a Unicode-dominant corpus where this is the only path taken. Removing both attributes lets gcc
-// inline the body into all nine call sites (the symbol disappears entirely) and does buy the property/
-// script band 12-16%, reproduced across g++ 13.3, 13.4 and 14 on two machines. It also costs `(?i)cafe`
-// on an ASCII no-match scan 10.4 -> 33.0 us, +217%, and (\w+)@(\w+) +12.9% -- devbox g++ 13.3.0, eight
-// interleaved rounds, no overlap between the two sample sets. g++ 13.3 builds the manylinux wheels, so
-// that regression is the one that ships.
+// O2r-1d dropped the `noinline, cold` pair, so gcc inlines the body into all nine call sites and the
+// out-of-line symbol disappears. It buys the property/script band, on the devbox under g++ 13.3.0:
+// sc=Han -22.7%, scx=Cyrl -20.6%, \p{N}+ -17.0%, mixed-script \w+ -14.3%; \p{L}+ -12.2% and [a-z-accented]+
+// -12.9% sit nearer the floor and are bounded rather than claimed. The gain lives in `width`, the scan
+// predicate, and not in extend_run: a variant inlining only inside extend_run's three call sites was
+// measured and delivered NONE of it (\p{N}+ +7.4%, sc=Han +6.9%, scx=Cyrl +4.7% -- the wrong sign).
 //
-// The gain lives in `width`, the scan predicate: a variant keeping `width` outlined and inlining only
-// inside extend_run's three call sites delivers NONE of it (\p{N}+ +7.4%, sc=Han +6.9%, scx=Cyrl
-// +4.7% -- the wrong sign) while recovering most of the ASCII cost (+9.8% on (?i)cafe). The regression
-// does NOT live in this path at all: `(?i)cafe` compiles to four BYTE classes and zero cp classes
-// (raw_program().cp_classes.size() == 0), so it never enters this loop and never calls the function
-// below. What it pays is collateral codegen -- a large inlinable body in a header included everywhere
-// degrades layout for patterns that never touch it. The tell is the sign flip: that row read -25%
-// under g++ 14 in a container and +217% on the devbox under 13.3, while the Unicode band held
-// -12..-18% in every environment measured. A mechanism keeps its sign; a layout effect does not.
+// This was REFUSED before the state_type lift, and the reason it was refused had nothing to do with this
+// file. Dropping the pair then cost `(?i)cafe` on an ASCII no-match scan 10.4 -> 33.0 us, +217%, on the
+// toolchain that builds the manylinux wheels -- a pattern that compiles to four BYTE classes and zero cp
+// classes, so it never enters this loop and never calls the function below. It was paying collateral
+// codegen: a large inlinable body in a header included everywhere consumed the last of gcc's
+// --param inline-unit-growth, and past that cap gcc declines in traversal order, so an unrelated scan lost
+// an inlining it needed. The tell was the sign flip -- the same row read -25% under g++ 14 in a container
+// against +217% on the devbox. A mechanism keeps its sign; a budget artefact does not.
 //
-// So the trade is a real 12-16% mechanism against unbounded layout collateral on the toolchain that
-// ships, and it is the collateral that refuses it. Buying that band means shrinking what gets inlined
-// (cp_class::range_count is known when the program is built -- 2 ranges for (?i)cafe's accented twin
-// against 675 for \p{L}, and a two-compare membership test would inline for free where a binary search
-// cannot), not toggling an inlining hint on the general body.
+// Keying a compile-time storage's scratch on dimensions instead of the pattern's value (\ref
+// g_inlinebudget) cut what a pattern adds to a TU from ~45 KB to 7.7 and the refusals in a 32-pattern unit
+// from 19 195 to 1457. Re-measured on the same devbox afterwards, the collateral is gone and inverted:
+// `(?i)cafe` -9.0%, \b\w+\b -7.4%, \w+ -3.2%, all with the dyn gauge inside 1%. Hence this change lands
+// now on evidence that was already valid, having been blocked by a defect elsewhere in the tree.
+//
+// Read the rows a change CANNOT reach before believing its numbers here: the floor in this translation
+// unit is still wide (-8.8%..+11.6% on non-cp-class rows), which is why only the four largest gains above
+// are stated as measured.
 //
 // Measured x86 devbox A/B (land threshold >=10%, paid): \w+ -24.7%, \d+ -66%; witnesses ([a-z]+,
 // trailing-LA) within noise. M1 is unaffected by construction: this file, and the branch selecting it
@@ -66,12 +68,12 @@
 // #if defined(__GNUC__) && !defined(__clang__) that guards this #include.
 
 // \brief Non-ASCII width for run_cp_class_loop (byte >= 0x80 only): decode + page-bitmap / range
-//        membership. Outlined and cold — see the file-level rationale above.
+//        membership. Left to gcc's own inlining judgement since O2r-1d, which it takes at every call
+//        site — see the file-level rationale above for what forcing it either way was measured to cost.
 // \param[in] text     The subject text.
 // \param[in] i        Index of the lead byte (>= 0x80); must be < text.size().
 // \param[in] cp_index Index into dynamic_program::cp_classes for the pattern's class.
 // \return The code point's byte width if it is a class member, or 0.
-__attribute__((noinline, cold))
 constexpr std::size_t cp_class_hi_width(std::string_view text,
                                         std::size_t      i,
                                         std::size_t      cp_index)
