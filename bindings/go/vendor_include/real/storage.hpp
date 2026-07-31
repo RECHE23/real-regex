@@ -934,6 +934,32 @@ namespace real {
     {};
 
     /*!
+     * \brief Rounds a program length up to the scratch capacity tier it shares with its neighbours.
+     *
+     * Sharing \ref static_pike_scratch is by exact template arguments, so keying it on the measured
+     * `code_size` means two patterns one instruction apart still instantiate every Pike VM route twice.
+     * Rounding to powers of two collapses neighbours onto one type while keeping the over-allocation
+     * small: on an 18-pattern sample spanning 5..47 instructions this yields four groups instead of
+     * eighteen, and the smallest pattern's scratch grows 1.6x rather than the 6.4x a coarse 32/64 ladder
+     * would cost. The floor of 8 keeps the ladder from splintering at the bottom, where the groups are
+     * densest and the absolute sizes smallest.
+     *
+     * Rounding UP only: every capacity derived from this is a bound the exact size must not exceed, so a
+     * tier is always safe where the measured value was.
+     *
+     * \param[in] code_size The program's exact instruction count.
+     * \return The tier capacity, a power of two and at least 8.
+     */
+    [[nodiscard]] constexpr std::size_t scratch_code_tier(std::size_t code_size)
+    {
+      std::size_t tier {8};
+      while (tier < code_size) {
+        tier <<= 1U;
+      }
+      return tier;
+    }
+
+    /*!
      * \brief Compile-time-storage VM scratch, all fixed-capacity (zero heap), keyed on DIMENSIONS ONLY.
      *
      * The epsilon DFS stack is bounded because each pc is processed once and pushes at most two explore
@@ -946,12 +972,12 @@ namespace real {
      *       the thin per-pattern type deriving from this, not here — see \ref g_inlinebudget for what the
      *       distinction costs when it is not maintained.
      *
-     * \tparam CodeSize  Program length in instructions.
+     * \tparam CodeSize  Scratch capacity in instructions — a TIER (see \ref scratch_code_tier), not the
+     *                   exact program length, so neighbouring shapes share one instantiation.
      * \tparam SlotCount Capture slots.
-     * \tparam MaxBlocks Worst-case live capture blocks.
      * \tparam WantsIL   Whether the inner-literal route is compiled in.
      */
-    template <std::size_t CodeSize, std::size_t SlotCount, std::size_t MaxBlocks, bool WantsIL>
+    template <std::size_t CodeSize, std::size_t SlotCount, bool WantsIL>
     struct static_pike_scratch : basic_pike_state<
                                    basic_thread_list<static_vec<std::int32_t, CodeSize>,
                                                      static_vec<std::size_t, CodeSize>,
@@ -959,9 +985,17 @@ namespace real {
                                    static_vec<eps_entry, (3 * CodeSize) + 4>>,
                                  std::conditional_t<WantsIL, static_il_guard_fields, static_no_il_guard_fields>
     {
-      basic_capture_pool<static_vec<std::size_t, MaxBlocks * SlotCount>,
-                         static_vec<std::int32_t, MaxBlocks>,
-                         static_vec<std::uint32_t, MaxBlocks>> pool; //!< COW capture blocks (zero heap).
+      //! \brief Worst-case live capture blocks: every reference (a DFS stack frame or a thread in either
+      //!        list) could point at a distinct block, and the stack is `(3*CodeSize)+4` with each list
+      //!        holding up to `CodeSize` threads. Freed blocks recycle through the pool's free list, so
+      //!        the pool never grows past this. Derived from `CodeSize` HERE rather than passed in, so it
+      //!        cannot disagree with the tier: a bound computed from the exact program length would vary
+      //!        between two patterns sharing a tier and split them back into separate types.
+      static constexpr std::size_t max_blocks {(5 * CodeSize) + 8};
+
+      basic_capture_pool<static_vec<std::size_t, max_blocks * SlotCount>,
+                         static_vec<std::int32_t, max_blocks>,
+                         static_vec<std::uint32_t, max_blocks>> pool; //!< COW capture blocks (zero heap).
     };
 
     /*!
@@ -1094,11 +1128,6 @@ namespace real {
 
       //! \brief Capture-slot storage, sized exactly to the program's slot count (no heap).
       using slot_storage = static_vec<std::size_t, slot_count>;
-      // worst-case live capture blocks — every reference (a DFS stack frame or a thread in either
-      // list) could point to a distinct block; freed blocks recycle through the pool's free list, so the
-      // pool never grows past this. The stack is (3*code_size)+4, each list up to code_size threads.
-      static constexpr std::size_t max_blocks {(5 * code_size) + 8}; //!< Worst-case live capture blocks, per the bound derived above.
-
       //! \brief IL guard fields for this storage — lifted to \ref static_il_guard_fields, which carries
       //!        the rationale; kept as a name here because \ref wants_inner_literal reads next to it.
       using il_guard_fields = static_il_guard_fields;
@@ -1139,7 +1168,7 @@ namespace real {
        * reaches them without a load. What that buys, and what it cost to establish, is in
        * \ref g_inlinebudget.
        */
-      using state_type = static_pike_scratch<code_size, slot_count, max_blocks, wants_inner_literal>;
+      using state_type = static_pike_scratch<scratch_code_tier(code_size), slot_count, wants_inner_literal>;
 
       /*!
        * \brief Returns a non-owning view of the compile-time program, by reference.
