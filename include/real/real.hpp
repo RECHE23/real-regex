@@ -1116,7 +1116,10 @@ namespace real {
      */
     [[nodiscard]] constexpr std::pair<std::string_view, std::size_t> named_group_at(std::size_t index) const
     {
-      const detail::named_group& named_group {program_.view().names[index]};
+      // By VALUE, not by reference: the dynamic storage's view() returns a prvalue, and binding a
+      // reference into its span trips gcc's -Wdangling-reference even though the span's target outlives
+      // the temporary. `named_group` is three int32s, so the copy costs nothing to avoid the argument.
+      const detail::named_group named_group {program_.view().names[index]};
       return {name_of(named_group), static_cast<std::size_t>(named_group.group)};
     }
 
