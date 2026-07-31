@@ -758,7 +758,9 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   iterator's state, and a state is fresh per `search()`. The cure is to cache it **per regex** rather than
   per state, on the same identity-guard contract `regex_immutables` already uses for the byte program and
   the one-pass table. It has to live in a cold region — a note on `ensure_ac_automaton` records that code
-  merely *neighbouring* `run()` cost measurable codegen there.
+  merely *neighbouring* `run()` cost measurable codegen there — and that same note now carries the full
+  design, including the reason the obvious shape is wrong: declining when `immut` is null would leave
+  `seam_run_aho_corasick` passing while no longer exercising the route it exists to test.
 
 - **The general Pike VM allocates 11–14 times per search**, and the fast routes allocate nothing. The
   dividing line is the *route*, not capture groups: `[a-z]+`, `(\w+)` and `user` allocate **zero**, while

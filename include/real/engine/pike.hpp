@@ -1608,6 +1608,35 @@ namespace real::detail {
     /*!
      * \brief Build (or rebuild, on a program change) this iterator's Aho-Corasick automaton for a
      *        `fixed_alternation` program whose branch count has reached \ref ac_branch_threshold.
+     *
+     * \warning **This cache is on the STATE, and a state is fresh per `search()`, so the automaton is
+     *          rebuilt on every call.** Crossing \ref ac_branch_threshold therefore makes repeated search
+     *          ~200x SLOWER, not faster: measured on a 4000-byte subject, a 24-branch alternation costs
+     *          **29.5 us and 584 heap allocations per search** against **0.14 us** for a 3-branch one below
+     *          the gate. `find_iter` does not rescue it — it amortises over one iteration, and a whole
+     *          iteration costs the same 29.7 us. This is the largest single defect priced in \ref g_perf.
+     *
+     *          **The design, so the next attempt does not have to re-derive it.** Move the automaton to
+     *          \ref detail::regex_immutables — per regex, shared across searches — as
+     *          `std::optional<ac_automaton> ac` plus its own `std::atomic<const void*> ac_for`. The
+     *          identity atomic must be SEPARATE, never folded into `built_for`: that file records what
+     *          bundling cost every route. `automata/` may include `engine/` (equal rank 3, and onepass.hpp
+     *          already includes `engine/assert_eval.hpp`), so there is no layering obstacle. The
+     *          publication contract is already written in \ref ensure_op_table and should be copied
+     *          verbatim: one acquire load on the hot path with no mutex, then `immut_build_mu`, a relaxed
+     *          double-check, and a release store after the build.
+     *
+     *          **The trap is the second consumer, and it is why the obvious shape is wrong.** Making the
+     *          route decline when `prog_.immut` is null would silently disarm
+     *          `tests/engine/test_fastpath_seam_matrix.cpp`'s `seam_run_aho_corasick`, which is a
+     *          differential: it agrees with itself on the general-VM path and would keep passing while no
+     *          longer exercising AC at all — the exact "a check that cannot see what it is for" failure
+     *          this engine spent a release removing. `pike_state` (harness-only) must therefore KEEP its
+     *          own `std::optional`, while `dynamic_storage::state_type` carries only a borrowed
+     *          `const ac_automaton*`; the two declarations are separate already, so `ensure_ac_automaton`
+     *          and the call site both need an `if constexpr` on the member's shape. Verify explicitly that
+     *          the differential still routes through AC on both legs after the change — passing is not
+     *          evidence here.
      *        Declines (leaves \ref pike_state::ac_state unset) if any branch's icase-fold
      *        expansion would exceed \ref ac_max_branch_expansion — the caller falls back to the
      *        existing \ref run_alternation, zero behavior change. Runs once per iterator/program,
