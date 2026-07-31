@@ -763,14 +763,30 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
 
   Content-keyed sharing works: thirty-two copies of the same `\p{L}+` cost 10 KB each on top of the
   first. What does not is the last row, and it is a **user-facing trap rather than an internal
-  characteristic**. A bare `\p{L}+` is a whole-pattern code-point class and takes the class loop — one
-  regex, **105.7 KB**. Append a single literal (`\p{L}+a`) and the same regex costs **1259.8 KB**, twelve
-  times more, because the pattern is no longer that shape and falls to a route that expands the property
-  into a byte program — and `\p{L}` is 675 ranges, whose UTF-8 trie expansion this file already
-  documents as enormous *in instruction count* (`regex_set`'s `\w+` at 3434 instructions). What was
-  never documented is its cost in **memory**, nor that one byte is enough to trigger it. A service
-  holding a few dozen patterns of that shape pays tens of megabytes with nothing in the pattern to
-  suggest it.
+  characteristic** — but it needs **two** conditions together, and stating only the first would be
+  misleading:
+
+  | pattern | subject | peak heap |
+  |:--|:--|--:|
+  | `\p{L}+` | matches | 103.2 KB |
+  | `\p{L}+a` | no match | 116.5 KB |
+  | **`\p{L}+a`** | **matches** | **1253.8 KB** |
+  | `[a-z]+a` | matches | 183.8 KB |
+  | `\w+a` | matches | 1366.9 KB |
+
+  The pattern must **lose the whole-pattern code-point-class route** *and* a match must actually occur.
+  A bare `\p{L}+` keeps that route and stays at 103 KB even while matching; `\p{L}+a` scanning a subject
+  it never matches stays at 116. Both together cost 1.25 MB. And the class's size is the multiplier, not
+  the loss of the route on its own: `[a-z]+a` loses it too, holds no property class, and stops at 184 KB.
+
+  The boundary for keeping the route is exact and narrow — the pattern must be **one code-point class and
+  nothing else** (a `+` is allowed, a capture around it is allowed, `{2,}` is allowed). A trailing
+  literal, a leading one, an anchor, a neighbouring class, even a trailing space all drop
+  `hints.greedy_cp_class` to -1. What then costs is expanding the property into a byte program on the
+  first match: `\p{L}` is 675 ranges, and this file already documents that expansion as enormous *in
+  instruction count* (`regex_set`'s `\w+` at 3434). Its cost in **memory** was never written down, nor
+  that the trigger is a match rather than the pattern alone. A service holding a few dozen such patterns
+  against matching input pays tens of megabytes, with nothing in the pattern to suggest it.
 
 - **Crossing the Aho-Corasick branch threshold makes repeated `search()` ~200× slower**, because the
   automaton meant to accelerate the alternation is rebuilt on **every call**. On a 4000-byte subject, a
