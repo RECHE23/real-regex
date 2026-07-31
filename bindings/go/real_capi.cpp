@@ -102,7 +102,11 @@ size_t real_group_name(const real_regex* re, size_t group, char* buf, size_t buf
     }
     return 0; // invalid handle: empty name (documented in real_capi.h)
   }
-  for (const auto& [name, number] : re->rx.named_groups()) {
+  // Indexed walk over the program's own span, not `named_groups()`: that materialises a vector per
+  // call, and a caller enumerating every name calls this once per group. Allocation-free here, 6-15x
+  // on that walk -- but the walk stays O(N^2), since this entry point is keyed by group NUMBER.
+  for (std::size_t i = 0; i < re->rx.named_group_count(); ++i) {
+    const auto [name, number] = re->rx.named_group_at(i);
     if (number == group) {
       if (buf != nullptr && buflen > 0) {
         const size_t n {name.size() < (buflen - 1) ? name.size() : (buflen - 1)};

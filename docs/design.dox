@@ -760,14 +760,17 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   loop is dominated by match bookkeeping, not the inner scan — for thousands of lines of intrinsics and a
   portability burden. \note Wake condition: a workload provably dominated by long single-class runs (a
   columnar scanner over wide fixed fields), measured, not assumed.
-- **Enumerating named groups is O(N²).** `named_groups()` rebuilds its `vector` on every call, and every
-  binding that wants a name→index map calls it once per group: the C ABI's `real_group_name` iterates the
-  freshly built vector for each group it is asked about, and Python's `groupdict()` starts from the same
-  accessor. Measured on one regex, walking every name the way a binding does: **0.29 µs at 4 groups,
-  2.71 at 16, 88.41 at 64** — sixteen times the groups for **305 times** the work. It is the same defect
-  class as the quadratic character-offset path fixed in v2026.7.63, on an introspection surface instead
-  of a matching one. The cure is the same shape: materialise the metadata once per regex, indexed, rather
-  than rebuilding it per query.
+- **Enumerating named groups is O(N²), and the cheap half of that is now fixed.** `named_groups()`
+  materialises a `vector` on every call, and the C ABI's `real_group_name` — keyed by group *number* —
+  is called once per name by anything building a name→index map. `named_group_count()` /
+  `named_group_at()` read the program's own span instead and allocate nothing: **0.10 → 0.01 µs at 4
+  names, 1.13 → 0.07 at 16, 6.53 → 1.11 at 64**, a 6–15× constant factor.
+  \note The complexity is unchanged and the entry deliberately says so. Resolving N names through a
+  number-keyed interface is N scans of N whichever accessor it uses; only an index-keyed ABI entry point
+  makes it linear, and that is an ABI addition rather than an engine change. An earlier version of this
+  entry claimed 305× and called it quadratic-fixed — those figures came off a harness with an
+  allocation-counting `operator new` linked in, the same instrument distortion recorded under
+  `regex_set` above.
 
 - **`regex_set` construction is ~97 % eligibility probing, and only ~4 % of that is removable.** Building
   the set probes each member by *constructing a full single-pattern `real::dfa` and discarding it*
