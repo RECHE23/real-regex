@@ -15,7 +15,13 @@
 // O2r-1c took part of that headroom, and NOT by inlining: forcing extend_run inline was tried and
 // refuted (x86 Ir -10% on \w+, wall clock +34..37% on \d+ and +8% on \w+ under an interleaved A/B,
 // with the untouched [a-z]+ also +5% — byte-identical in Ir, so the cost was code layout, not the
-// loop). What paid instead was making the call CHEAPER while leaving it out of line: extend_run
+// loop). RE-CHECKED after the inline-budget defect was fixed, because that refusal's own evidence
+// carried the defect's signature and could have been an artefact: the verdict stands, on cleaner
+// grounds. always_inline on extend_run now costs the property/script band \p{N}+ +11.5%, scx=Cyrl
+// +11.4%, sc=Han +11.2%, \w+ +9.3%, \p{L}+ +7.2% against a -9.4..+2.6% floor, and (\w+)@(\w+)
+// +32.7% with the dyn gauge at -1.8%. The ARGUMENT was contaminated even though the conclusion was
+// not: the [a-z]+ +5% cited above reads -4.7% today, a sign flip, so that row was never evidence
+// about this change. Do not retry it; do read \ref g_inlinebudget before citing any figure here. What paid instead was making the call CHEAPER while leaving it out of line: extend_run
 // captured `[&]`, so each call walked a closure of references that itself held `width`, another
 // by-reference closure — two indirections per call. Explicit by-value capture of the scalars, with
 // width's three lines inlined into it, removes both. x86 g++-14: \d+ -13% wall / -7.4% Ir over three
