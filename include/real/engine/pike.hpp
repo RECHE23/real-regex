@@ -796,8 +796,7 @@ namespace real::detail {
         }) {
           if (!std::is_constant_evaluated() && !aho_corasick_route_disabled() && mode == run_mode::search
               && prog_.hints.alternation_branch_count >= ac_branch_threshold) {
-            ensure_ac_automaton();
-            if (state_.ac_state.has_value()) {
+            if (ac_ready() != nullptr) {
               prof::tick_route(prof::route::aho_corasick);
               return run_aho_corasick(text, start, out_slots);
             }
@@ -1498,7 +1497,7 @@ namespace real::detail {
 
     /*!
      * \brief Lazy-DFA search route on the shared confirm DFAs. \c noinline so its body cannot
-     *        inflate \ref run (x86 class-loop codegen neighbor — same shape as \ref ensure_ac_automaton).
+     *        inflate \ref run (x86 class-loop codegen neighbor — same shape as \ref ac_ready).
      * \param[in]  text      Subject.
      * \param[in]  start     Byte offset to begin at.
      * \param[in]  mode      Anchoring: full, prefix or search.
@@ -1609,34 +1608,36 @@ namespace real::detail {
      * \brief Build (or rebuild, on a program change) this iterator's Aho-Corasick automaton for a
      *        `fixed_alternation` program whose branch count has reached \ref ac_branch_threshold.
      *
-     * \warning **This cache is on the STATE, and a state is fresh per `search()`, so the automaton is
-     *          rebuilt on every call.** Crossing \ref ac_branch_threshold therefore makes repeated search
-     *          ~200x SLOWER, not faster: measured on a 4000-byte subject, a 24-branch alternation costs
-     *          **29.5 us and 584 heap allocations per search** against **0.14 us** for a 3-branch one below
-     *          the gate. `find_iter` does not rescue it — it amortises over one iteration, and a whole
-     *          iteration costs the same 29.7 us. This is the largest single defect priced in \ref g_perf.
+     * \note **Cached per REGEX, in \ref detail::regex_immutables, not per state.** It lived on the
+     *       state until that was measured: a state is fresh per `search()`, so crossing
+     *       \ref ac_branch_threshold rebuilt the automaton on every call and made repeated search ~200x
+     *       SLOWER rather than faster — 29.5 us and 584 heap allocations against 0.14 us for a 3-branch
+     *       alternation below the gate, on the same 4000-byte subject, with `find_iter` offering no
+     *       rescue. Moving it here took that to 12.6 us and **zero** allocations. Its identity atomic is
+     *       its own, never folded into `built_for`: only this route consults it, and that cache's history
+     *       records what bundling a route-specific product into the shared flag cost every other route.
      *
-     *          **The design, so the next attempt does not have to re-derive it.** Move the automaton to
-     *          \ref detail::regex_immutables — per regex, shared across searches — as
-     *          `std::optional<ac_automaton> ac` plus its own `std::atomic<const void*> ac_for`. The
-     *          identity atomic must be SEPARATE, never folded into `built_for`: that file records what
-     *          bundling cost every route. `automata/` may include `engine/` (equal rank 3, and onepass.hpp
-     *          already includes `engine/assert_eval.hpp`), so there is no layering obstacle. The
-     *          publication contract is already written in \ref ensure_op_table and should be copied
-     *          verbatim: one acquire load on the hot path with no mutex, then `immut_build_mu`, a relaxed
-     *          double-check, and a release store after the build.
+     *       The per-state build is KEPT as the fallback for a null `prog_.immut` — the compile-time
+     *       storage and the meta-seam harness — and that is load-bearing rather than tidy. Declining the
+     *       route instead would leave `tests/engine/test_fastpath_seam_matrix.cpp`'s
+     *       `seam_run_aho_corasick` agreeing with itself on the general-VM leg and exercising nothing:
+     *       a green differential testing neither side, which is the failure this engine spent
+     *       v2026.7.62 removing.
      *
-     *          **The trap is the second consumer, and it is why the obvious shape is wrong.** Making the
-     *          route decline when `prog_.immut` is null would silently disarm
-     *          `tests/engine/test_fastpath_seam_matrix.cpp`'s `seam_run_aho_corasick`, which is a
-     *          differential: it agrees with itself on the general-VM path and would keep passing while no
-     *          longer exercising AC at all — the exact "a check that cannot see what it is for" failure
-     *          this engine spent a release removing. `pike_state` (harness-only) must therefore KEEP its
-     *          own `std::optional`, while `dynamic_storage::state_type` carries only a borrowed
-     *          `const ac_automaton*`; the two declarations are separate already, so `ensure_ac_automaton`
-     *          and the call site both need an `if constexpr` on the member's shape. Verify explicitly that
-     *          the differential still routes through AC on both legs after the change — passing is not
-     *          evidence here.
+     * \warning **Removing the rebuild exposed what the automaton actually costs, and the gate above
+     *          selects on the wrong property.** AC scans at ~3.2 ns/byte whatever the subject: it is
+     *          worst-case insurance, not a fast path. Measured against the same pattern with the route
+     *          disabled, on four 4000-byte subjects — no match **12.71 us against 0.14 (90x SLOWER)**,
+     *          one late match 12.35 against 0.25 (49x slower), match-dense 0.05 against 0.05 (a tie),
+     *          and a subject full of false starts **12.66 against 132.86 (10.5x FASTER)**. AC wins only
+     *          where the memchr cascade degrades, and \ref ac_branch_threshold gates on branch COUNT,
+     *          which does not predict that regime. Selecting on candidate density is the shape that
+     *          would, and it is a routing-policy change with its own measurement campaign — not a
+     *          tuning, and deliberately not attempted in the train that found it.
+     *
+     * \return The automaton to scan with, or `nullptr` when this program has none — either it is not a
+     *         fixed alternation past the threshold, or the build declined a pathological icase-fold
+     *         expansion. The caller falls back to \ref run_alternation, zero behaviour change.
      *        Declines (leaves \ref pike_state::ac_state unset) if any branch's icase-fold
      *        expansion would exceed \ref ac_max_branch_expansion — the caller falls back to the
      *        existing \ref run_alternation, zero behavior change. Runs once per iterator/program,
@@ -1654,19 +1655,40 @@ namespace real::detail {
      *        program. `noinline` alone keeps it fully optimized while stopping the compiler from
      *        folding its body into `run()`'s.
      */
+    [[nodiscard]]
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((noinline))
 #endif
-    void ensure_ac_automaton()
+    const ac_automaton* ac_ready()
     {
-      const auto* const program {static_cast<const void*>(prog_.code.data())};
-      if (state_.ac_state_for == program) {
-        return;
+      const auto* const                 program {static_cast<const void*>(prog_.code.data())};
+      detail::regex_immutables* const   immut   {prog_.immut};
+      const auto                        build = [this] {
+                                                  const std::size_t body_pc {
+                                                    prog_.hints.body_pc == 0
+                                                      ? std::size_t {1}
+                                                      : static_cast<std::size_t>(prog_.hints.body_pc)};
+                                                  return build_ac_automaton(prog_.code, prog_.classes, body_pc);
+                                                };
+      if (immut != nullptr) {
+        if (immut->ac_for.load(std::memory_order_acquire) == program) {
+          return immut->ac.has_value() ? &*immut->ac : nullptr;         // hot path: one acquire load, no mutex
+        }
+        const std::lock_guard<std::mutex> lock {detail::immut_build_mu(immut)};
+        if (immut->ac_for.load(std::memory_order_relaxed) != program) { // double-check
+          immut->ac = build();
+          immut->ac_for.store(program, std::memory_order_release);
+        }
+        return immut->ac.has_value() ? &*immut->ac : nullptr;
       }
-      const std::size_t body_pc {prog_.hints.body_pc == 0 ? std::size_t {1}
-                                                          : static_cast<std::size_t>(prog_.hints.body_pc)};
-      state_.ac_state     = build_ac_automaton(prog_.code, prog_.classes, body_pc);
-      state_.ac_state_for = program;
+      // No per-regex cache: the compile-time storage and the meta-seam harness. Keeping the per-state
+      // build here is what leaves seam_run_aho_corasick exercising this route -- declining instead would
+      // leave that differential agreeing with itself on the general-VM leg and testing nothing.
+      if (state_.ac_state_for != program) {
+        state_.ac_state     = build();
+        state_.ac_state_for = program;
+      }
+      return state_.ac_state.has_value() ? &*state_.ac_state : nullptr;
     }
 
     //! \brief The capture-block pool type of the bound `State` (COW) — heap-backed for dynamic,
@@ -3781,7 +3803,7 @@ namespace real::detail {
      * \param[out] out_slots Receives the matched span on success.
      * \return `true` if some branch matched.
      *
-     * `noinline`, deliberately NOT `cold` — same reasoning as \ref ensure_ac_automaton (called on
+     * `noinline`, deliberately NOT `cold` — same reasoning as \ref ac_ready (called on
      * every AC-eligible search, so it must stay fully optimized); only kept OUT of `run()`'s own
      * body, which is what a round-2 x86 isolation A/B (relayed) traced the "fields [^,]+ +39%"
      * finding to (neither the pattern_hints field nor the pike_state size growth alone regressed
@@ -3798,12 +3820,13 @@ namespace real::detail {
       // Called only from the dispatch site's own state_.ac_state.has_value() guard, but that
       // invariant is invisible across the call boundary to static analysis -- an explicit local
       // check keeps this function's own contract self-contained (defensive, not defensive-in-name).
-      if (!state_.ac_state.has_value()) {
+      const ac_automaton* const ac {ac_ready()};
+      if (ac == nullptr) {
         out_slots.assign(2, npos);
         return false;
       }
       const auto wb_ok = [&](std::size_t s, std::size_t e) { return wb_boundaries_ok(s, e); };
-      const auto m {state_.ac_state->search(text, start, wb_ok)};
+      const auto m {ac->search(text, start, wb_ok)};
       if (!m.matched) {
         out_slots.assign(2, npos);
         return false;

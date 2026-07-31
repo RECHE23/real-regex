@@ -40,6 +40,7 @@
 #include <string_view>
 #include <vector>
 
+#include "real/engine/aho_corasick.hpp"
 #include "real/engine/assert_eval.hpp"
 #include "real/automata/lazy_dfa.hpp"
 #include "real/core/program.hpp"
@@ -850,6 +851,20 @@ namespace real::detail {
     //!        \ref built_for, and independent of it: the rows are needed by scan routes that never build
     //!        the DFA caches.
     std::atomic<const void*> rows_for {nullptr};
+
+    //! \brief The multi-literal automaton for a `fixed_alternation` past the branch threshold, or empty
+    //!        when never built or declined (a pathological icase-fold expansion). Per REGEX, not per
+    //!        state: it lived on the state until it was measured, and a state is fresh per `search()`,
+    //!        so crossing the threshold rebuilt it on every call and cost 29.5 us and 584 allocations
+    //!        where a 3-branch alternation below the gate cost 0.14 -- a fast path that was ~200x slower
+    //!        than not taking it.
+    std::optional<ac_automaton> ac;
+
+    //! \brief \c prog.code.data() \ref ac was built for, or null. Its OWN identity atomic, deliberately
+    //!        not folded into \ref built_for — only the alternation route consults the automaton, and this
+    //!        cache's own history records what bundling a route-specific product into the shared flag
+    //!        cost every other route (see \ref op_table_for).
+    std::atomic<const void*> ac_for {nullptr};
 
     //! \brief \c prog.code.data() \ref op_table was built for, or null. Same identity discipline as
     //!        \ref rows_for and for the same reason: the extractor is needed only by the routes that
