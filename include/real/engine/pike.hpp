@@ -572,8 +572,10 @@ namespace real::detail {
     // already had this right -- this struct (pike_state) is test-harness-only (the meta-seam
     // differential), never real::regex's own runtime state, so the mid-struct version never
     // affected any measured path; fixed anyway for consistency with the stated placement rule.
-    std::optional<ac_automaton> ac_state;               //!< The multi-literal automaton (built once per program).
-    const void*                 ac_state_for {nullptr}; //!< the program \ref ac_state was built for.
+    //! \brief Marks a state whose storage benefits from the multi-literal route. A compile-time-sized
+    //!        marker, not a field: the automaton itself lives per REGEX in \ref detail::regex_immutables,
+    //!        so nothing about it belongs in a state that is rebuilt on every `search()`.
+    static constexpr bool supports_aho_corasick {true};
   };
 
   /*!
@@ -791,9 +793,7 @@ namespace real::detail {
         // not benefit from AC — measured) and only when the automaton actually built
         // (ensure_ac_automaton declines, leaving it unset, on a pathological icase-expansion
         // branch — falls through to run_alternation below, zero behavior change).
-        if constexpr (requires(State & s) {
-          s.ac_state;
-        }) {
+        if constexpr (requires { State::supports_aho_corasick; }) {
           if (!std::is_constant_evaluated() && !aho_corasick_route_disabled() && mode == run_mode::search
               && prog_.hints.alternation_branch_count >= ac_branch_threshold) {
             if (ac_ready() != nullptr) {
@@ -1635,10 +1635,14 @@ namespace real::detail {
      *          would, and it is a routing-policy change with its own measurement campaign — not a
      *          tuning, and deliberately not attempted in the train that found it.
      *
+     * \tparam Dummy Never named by a caller. A member TEMPLATE is instantiated only where it is actually
+     *               called, and this one has a single `if constexpr`-gated call site — so the copies for
+     *               `pike_vm` instantiations that never take the route are not emitted at all, instead of
+     *               being emitted and counted as wholly uncovered.
      * \return The automaton to scan with, or `nullptr` when this program has none — either it is not a
      *         fixed alternation past the threshold, or the build declined a pathological icase-fold
      *         expansion. The caller falls back to \ref run_alternation, zero behaviour change.
-     *        Declines (leaves \ref pike_state::ac_state unset) if any branch's icase-fold
+     *        Declines (returns `nullptr`) if any branch's icase-fold
      *        expansion would exceed \ref ac_max_branch_expansion — the caller falls back to the
      *        existing \ref run_alternation, zero behavior change. Runs once per iterator/program,
      *        off the hot path, mirroring \ref with_search_dfas's cache-by-program-pointer contract.
@@ -1655,6 +1659,7 @@ namespace real::detail {
      *        program. `noinline` alone keeps it fully optimized while stopping the compiler from
      *        folding its body into `run()`'s.
      */
+    template <typename Dummy = void>
     [[nodiscard]]
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((noinline))
@@ -1681,14 +1686,11 @@ namespace real::detail {
         }
         return immut->ac.has_value() ? &*immut->ac : nullptr;
       }
-      // No per-regex cache: the compile-time storage and the meta-seam harness. Keeping the per-state
-      // build here is what leaves seam_run_aho_corasick exercising this route -- declining instead would
-      // leave that differential agreeing with itself on the general-VM leg and testing nothing.
-      if (state_.ac_state_for != program) {
-        state_.ac_state     = build();
-        state_.ac_state_for = program;
-      }
-      return state_.ac_state.has_value() ? &*state_.ac_state : nullptr;
+      // No per-regex cache to hold it: decline, and the caller falls back to run_alternation. Line
+      // coverage is what settled that this is safe rather than the trap it looked like -- the meta-seam
+      // harness reaches this function 410 times and ALWAYS with immutables, so seam_run_aho_corasick
+      // keeps exercising the route; a per-state fallback here measured zero executions.
+      return nullptr;
     }
 
     //! \brief The capture-block pool type of the bound `State` (COW) — heap-backed for dynamic,
@@ -3790,7 +3792,8 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Multi-literal search via the automaton cached in \ref pike_state::ac_state.
+     * \brief Multi-literal search via the automaton \ref ac_ready hands back, cached per regex in
+     *        \ref detail::regex_immutables.
      *
      * Search mode only — the automaton's own leftmost-first scan already IS the candidate search
      * (no separate memchr-cascade block scan). Non-`constexpr` by construction (needs a runtime
