@@ -1852,8 +1852,8 @@ namespace real::detail {
 #endif
     constexpr const std::uint8_t* class_table(std::size_t class_index)
     {
-      if constexpr (requires { State::ct_class_tables; }) {
-        return State::ct_class_tables + (class_index * 256); // link-time constant address
+      if (!std::is_constant_evaluated() && prog_.class_tables != nullptr) {
+        return prog_.class_tables + (class_index * 256); // pre-built flat tables (compile-time storage)
       }
       else if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
         detail::regex_immutables& cache {*prog_.immut};
@@ -1883,8 +1883,8 @@ namespace real::detail {
 #endif
     constexpr const std::uint8_t* cp_ascii_table(std::size_t cp_index)
     {
-      if constexpr (requires { State::ct_cp_ascii_tables; }) {
-        return State::ct_cp_ascii_tables + (cp_index * 256); // link-time constant address
+      if (!std::is_constant_evaluated() && prog_.cp_ascii_tables != nullptr) {
+        return prog_.cp_ascii_tables + (cp_index * 256); // pre-built flat tables (compile-time storage)
       }
       else if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
         detail::regex_immutables& cache {*prog_.immut};
@@ -1973,8 +1973,8 @@ namespace real::detail {
 #endif
     constexpr const std::uint64_t* cp_page_table(std::size_t cp_index)
     {
-      if constexpr (requires { State::ct_cp_page_tables; }) {
-        return State::ct_cp_page_tables + (cp_index * 30); // link-time constant address
+      if (!std::is_constant_evaluated() && prog_.cp_page_tables != nullptr) {
+        return prog_.cp_page_tables + (cp_index * 30); // pre-built flat tables (compile-time storage)
       }
       else if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
         detail::regex_immutables& cache {*prog_.immut};

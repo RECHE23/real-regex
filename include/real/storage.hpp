@@ -1130,23 +1130,16 @@ namespace real {
                                                  && !hints.fixed_shape};
 
       /*!
-       * \brief This pattern's VM scratch: the dimension-keyed \ref static_pike_scratch, plus the members
-       *        that genuinely depend on the pattern's VALUE and so cannot be shared.
+       * \brief This pattern's VM scratch — nothing but \ref static_pike_scratch at this pattern's
+       *        dimensions, so two patterns of the same shape name the same type.
        *
-       * The split is the point. Everything sized — thread lists, epsilon stack, capture pool — lives in the
-       * base, keyed on `code_size` / `slot_count` / `max_blocks` / \ref wants_inner_literal, so two patterns
-       * of the same shape can reach one instantiation. What remains here is the three table addresses,
-       * which name *this* pattern's arrays. While they remain, this type is still distinct per pattern and
-       * the sharing is not yet realised; see \ref g_inlinebudget for what that costs and what replaces them.
+       * Nothing here depends on the pattern's *value* any more. The three byte-class table addresses that
+       * used to live in this type now travel in \ref real::detail::program_view, which is where runtime
+       * program data belongs; they remain `static constexpr` arrays, so a constant-folding compiler still
+       * reaches them without a load. What that buys, and what it cost to establish, is in
+       * \ref g_inlinebudget.
        */
-      struct state_type : static_pike_scratch<code_size, slot_count, max_blocks, wants_inner_literal>
-      {
-        //! \brief The compile-time byte-class tables, reachable from the VM through the STATE type so the
-        //!         address is a link-time constant rather than a span loaded from the program view.
-        static constexpr const std::uint8_t * ct_class_tables    {static_storage::class_tables.data()};
-        static constexpr const std::uint8_t*  ct_cp_ascii_tables {static_storage::cp_ascii_tables.data()}; //!< \ref static_storage::cp_ascii_tables.
-        static constexpr const std::uint64_t* ct_cp_page_tables  {static_storage::cp_page_tables.data()};  //!< \ref static_storage::cp_page_tables.
-      };
+      using state_type = static_pike_scratch<code_size, slot_count, max_blocks, wants_inner_literal>;
 
       /*!
        * \brief Returns a non-owning view of the compile-time program, by reference.
@@ -1185,7 +1178,15 @@ namespace real {
                                            .slot_count        = slot_count,
                                            .byte_mode         = has_flag(effective_flags, flags::bytes),
                                            .unicode_word      = !has_flag(effective_flags, flags::bytes) && !has_flag(effective_flags, flags::ascii),
-                                           .hints             = hints};
+                                           .hints             = hints,
+                                           .immut             = nullptr,
+                                           // The three table bases travel in the VIEW, not in the state type: a state
+                                           // naming this pattern's arrays cannot be shared, and every route is then
+                                           // instantiated per pattern. These stay `static constexpr` addresses, so a
+                                           // constant-folding compiler still reaches them without a load.
+                                           .class_tables      = class_tables.data(),
+                                           .cp_ascii_tables   = cp_ascii_tables.data(),
+                                           .cp_page_tables    = cp_page_tables.data()};
 
     public:
 

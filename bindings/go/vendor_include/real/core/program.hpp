@@ -734,6 +734,16 @@ namespace real {
       bool                            unicode_word {};        //!< `\b \B \< \>` use Unicode word-ness (text mode, not bytes / `re.A`).
       pattern_hints                   hints;                  //!< Search-acceleration hints.
       regex_immutables*               immut        {nullptr}; //!< Per-regex DFA/one-pass cache (dynamic storage only; else null).
+      //! \brief Flat byte-class membership tables, `class_tables[i * 256 + b]`, or null when the storage
+      //!        has none pre-built (dynamic, which fills them lazily through \ref immut instead).
+      //!
+      //! Carried here rather than reached through the state type: a state that names the pattern's own
+      //! arrays is a state that cannot be shared between patterns, and every Pike VM route is then
+      //! instantiated once per pattern. Compile-time storage points these at its `static constexpr`
+      //! arrays, so a constant-folding compiler still sees through to the same addresses.
+      const std::uint8_t*             class_tables    {nullptr};
+      const std::uint8_t*             cp_ascii_tables {nullptr}; //!< Flat ASCII tables per `cp_class`: `[i * 256 + b]`. Null as \ref class_tables.
+      const std::uint64_t*            cp_page_tables  {nullptr}; //!< Flat page bitmaps per `cp_class`: `[i * 30]`. Null as \ref class_tables.
     };
 
     /*!
