@@ -884,6 +884,29 @@ namespace real {
 
       /*!
        * \brief Returns a non-owning view of the compiled program.
+       *
+       * \note **Returning by value here is deliberate, and the alternatives are priced.** The
+       *       compile-time storage hands back a reference and explains why; this one builds 432 bytes per
+       *       call, and `view()` runs once per `search()`. Two ways to remove that were prototyped and
+       *       measured against the compile-time storage on the same pattern:
+       *       - *Materialise the view* behind an identity guard, so the construction happens once per
+       *         program: a 6-byte search goes 37.3 → 32.9 ns (−11.8 %), a 256-byte one 139.2 → 136.3
+       *         (−2.1 %). It costs **440 bytes per regex** — `sizeof(real::regex)` 1512 → 1952 — which is
+       *         the wrong direction for anyone holding many patterns, and it needs a guard that tests
+       *         `view_.immut != &immut_` as well as the program's identity: a MOVE leaves
+       *         `program.code.data()` unchanged, so the obvious one-condition guard validates a view
+       *         pointing into the moved-from object. That shape aborted the existing lifetime tests
+       *         immediately, as a double free.
+       *       - *Carry `pattern_hints` by pointer* instead of copying its 232 bytes into the view, which
+       *         would shrink the construction rather than remove it. Refused on arithmetic, not on taste:
+       *         removing the construction **entirely** is worth 4.4 ns, so shrinking it by 54 % is worth
+       *         at most ~2.4, against an indirection on every hot hint read and a 269-site change.
+       *
+       *       So the whole prize here is **4.4 ns per search**, and both standing proposals were competing
+       *       for that same budget without anyone having measured it. Recorded so the next reader gets the
+       *       number instead of re-deriving it. The dynamic path's real gap to the compile-time one is
+       *       ~25 ns on a short subject *after* materialising, so ~85 % of it is somewhere else entirely.
+       *
        * \return The view; valid as long as this storage is alive.
        */
       [[nodiscard]] constexpr program_view view() const
