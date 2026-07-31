@@ -852,11 +852,31 @@ Scoped, measured, not implemented — the numbers a decision needs:
   a pointer add. The `dyn` column is the natural gauge here (dynamic patterns never had these members, so
   they are untouched by construction) and it stays within +1.5 %/−8.2 % on those two rows;
   `(\w+)@(\w+)` moved −19.1 % STAT against −17.9 % DYN and is therefore a draw, not a signal.
-  \note What this rules out is the *naive* substitution, not the refactor. The fallback measured here is
-  built for a shared, possibly-stale cache: it revalidates per call, with a staleness key and an acquire
-  load. A shared scratch type could instead carry the table base as a VM member set **once per search** —
-  neither a link-time constant nor a per-call revalidation. That middle path is unmeasured, and it is what
-  the lift would have to implement.
+  On arm64/clang the same substitution costs only **+5.5 % / +7.0 % / +9.1 %** on those rows: GCC pays
+  four to five times what clang does for it, so this is a both-platforms result with a real spread, not one
+  machine's quirk.
+
+  \note What this rules out is the *naive* substitution, not the lift. The fallback measured here is built
+  for a shared, possibly-stale cache: it revalidates on every call, with a staleness key and an acquire
+  load. A shared scratch type does not need that — `cache.class_rows` is contiguous and indexed exactly
+  like the static array (`data() + class_index * 256`), so the base can be resolved once and the hot path
+  becomes `base + index` with no branch, the static shape with a load in place of an immediate.
+
+  **The specification, and the two prototypes that fixed it.** Both failed, and the way each failed is what
+  pins the design. Resolving the base *lazily on first use* leaves the member written inside the hot region,
+  so the compiler must reload it after any possibly-aliasing store and cannot hoist it out of the loop —
+  `[0-9]+` still read +31.1 % against +31.3 % for the plain fallback, gauge clean at −2.6 %. Resolving it
+  *in the VM constructor* fills every class row far too often, since a VM is constructed vastly more often
+  than a program is compiled, and it regressed the dynamic path it was not even meant to touch —
+  `[^,]+` moved **+123 %** on the `dyn` gauge, which is how the attempt was caught. So neither "per call"
+  nor "per VM" works, and what remains is the only place left: **fill the membership rows when the
+  per-regex immutables are built — once per program.** The base is then const after construction,
+  hoistable, and no per-call check survives. Its cost is bounded and known in advance: a pattern with
+  several byte classes pays to fill all of them even if the walk only ever consults one.
+
+  That is a design with a stated cost rather than an open risk, but it is **unmeasured** — testing it means
+  changing when the immutables build their rows, which belongs inside the lift, not to a throwaway
+  prototype.
 - **Named hazard:** tiered `static_vec` capacities consume more constexpr steps, and the
   `-fconstexpr-steps` ceilings noted above are already tight on clang and MSVC.
 
