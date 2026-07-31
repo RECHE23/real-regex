@@ -1146,10 +1146,12 @@ namespace real {
        *
        * Every field is a compile-time constant here — the spans point at `static constexpr` arrays and
        * `immut` is null — so the whole view is one too, and handing back a reference costs nothing where
-       * returning by value copied 408 bytes per call. 232 of those bytes are \ref pattern_hints, and
-       * `view()` is called once per `search()`: line-level profiling of a single `[a-z]+` search put that
-       * one aggregate initialiser at 93 of the ~325 instructions the call spends, against 17 for the class
-       * scan itself.
+       * returning by value copied the whole thing per call. 232 of its 432 bytes are \ref pattern_hints,
+       * and `view()` is called once per `search()`: line-level profiling of a single `[a-z]+` search put
+       * that one aggregate initialiser at 93 of the ~325 instructions the call spends, against 17 for the
+       * class scan itself. The measurement was taken at 408 bytes, before the three table bases moved into
+       * the view; the dynamic storage still returns by value and so still pays a construction of that size
+       * once per search — the one place this reasoning has not been applied.
        *
        * \return A reference to the single compile-time view; it outlives every caller.
        */
