@@ -640,12 +640,13 @@ compile-time-pattern / runtime-text mode).
 
 Recorded, not scheduled — deliberate next steps the current design leaves room for:
 
-- **Lifting `state_type` out of `static_storage<P>`.** The largest scoped item on this list, and the only
-  one that changes a measured defect rather than tidying: a `static_regex`'s scratch type is nested in a
-  storage templated on the pattern's *value*, so every distinct pattern carries a private copy of every
-  `pike_vm` route — 82.4 % of the ~48 KB each one adds to `.text`. Parameterising it on dimensions instead
-  would cut that slope ~6×. Fully scoped with its costs, its open risk and its gating measurement in
-  \ref g_inlinebudget; not started.
+- **Dimension tiering for `static_pike_scratch`.** What remains of the `state_type` lift, which is otherwise
+  **done** (\ref g_inlinebudget): a compile-time storage's scratch is now keyed on dimensions and patterns of
+  the same shape share every route, taking the `.text` a pattern adds from ~45 KB to 7.7. Sharing is by
+  *exact* dimensions, so a TU of heterogeneous patterns still pays ~50 KB each. Tiering `code_size` would
+  close that (16 of 18 sampled patterns fall in one tier), worth a further ~6.6× there. Held back on
+  purpose: it is a trade, not a fix — small patterns' scratch grows ×3.8 and tiered capacities cost
+  constexpr steps against ceilings that are already tight.
 - **A public-API-surface check.** The layering gate (\ref g_map) governs *includes*; a sibling check could
   govern the *exposed surface* — assert that only the documented headers introduce names into `namespace
   real` (not `real::detail`), so the public API cannot grow by accident. The most durable extension of the
@@ -749,6 +750,15 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   need the same flag; the dynamic `real::regex` at runtime is unaffected.
 
 \subsection g_inlinebudget 10.1 The inlining budget, and why a pattern you never touched can slow down
+
+\note **Fixed.** What follows is the diagnosis, kept because it explains years of unstable measurements in
+this area and because eight approaches were refuted along the way — none of them worth retrying. The cure
+shipped: a compile-time storage's scratch is now keyed on *dimensions*, not on the pattern's value, and the
+`.text` a pattern adds to a translation unit fell from ~45 KB to **7.7 KB on x86-64 / 7.2 KB on arm64**.
+The timing defect described below is gone from the swept range — an unrelated pattern read 33.5 / 33.7 /
+20.4 µs at N = 11 / 12 / 14 patterns in a TU and now reads 11.8 / 10.7 / 10.8, flat across N = 0…32 on both
+platforms, with budget refusals at N = 32 down from 19 195 to 1457. Measured residue and the one follow-up
+it leaves are at the end of this subsection.
 
 GCC caps how much a translation unit may grow from inlining: `--param inline-unit-growth`, **40 %** by
 default. This library exhausts it. In one benchmark TU, 22 534 inline decisions succeed and **3028 are
@@ -884,10 +894,33 @@ Scoped, measured, not implemented — the numbers a decision needs:
   lives in a register and is reused — the link-time constant was never the cheaper form there.
 
   That retroactively reclassifies the +30 %: it was never the load, it was the staleness machinery and the
-  codegen weight of the `verify_class_row` call site, both of which the specification removes. So volet 3
-  costs approximately nothing once built as specified, and the lift has no un-costed step left — only the
-  row-filling relocation, whose price (a pattern with several byte classes fills all of them) is stated
-  above and paid once per program.
+  codegen weight of the `verify_class_row` call site, both of which the specification removes.
+
+**What shipped, and where it landed.** The lift went in as two steps. The first moved everything merely
+*sized* — thread lists, epsilon stack, capture pool — into `static_pike_scratch<CodeSize, SlotCount,
+MaxBlocks, WantsIL>` at namespace scope, leaving a thin per-pattern type holding only the table addresses;
+purely mechanical, `sizeof` byte-identical on every probe pattern. The second moved those addresses into
+\ref real::detail::program_view, where a program's runtime data belongs, which emptied the per-pattern type
+entirely: `static_storage<Pat,F>::state_type` is now an *alias* for the dimension-keyed scratch. The static
+view is a `static constexpr` object, so the addresses stay compile-time constants a folding compiler reaches
+without a load — which is why the residual measured above is what it is. Sharing was then verified directly
+rather than inferred: `\w+a` and `\w+b` name one type, as do `[a-z]+` and `[0-9]+`.
+
+**The residue, and the one follow-up.** Sharing is by *exact* dimensions, so it is total for patterns of the
+same shape and nil for patterns of different ones. Sweeping N patterns each one instruction longer than the
+last — the adversarial case, no two shapes alike — the slope returns to **50.9 KB/pattern on x86-64** and
+34.6 on arm64, against 7.7 / 7.2 when the shapes match, and one residual bump survives at N = 11 (20.9 µs
+against a flat ~11). Real code sits between the two: the 18 patterns sampled for this analysis fall into
+three dimension groups, not eighteen.
+
+Closing that gap is **dimension tiering** — rounding `code_size` to tiers (16 of those 18 patterns land in a
+32-instruction tier, 2 in a 64) so neighbouring shapes share. It would take the heterogeneous case from
+50.9 KB/pattern to roughly the 7.7 the homogeneous case already gets, a further ~6.6×. It is deliberately
+*not* done: it is a trade rather than a fix, and its price is stated — tiering sizes small patterns up,
+`[a-z]+`'s scratch going from 1792 bytes to ~6.8 KB (×3.8, roughly the dynamic state's 7432), and tiered
+`static_vec` capacities consume more constexpr steps against the `-fconstexpr-steps` ceilings noted above.
+Worth doing on a translation unit full of heterogeneous compile-time patterns; not worth paying for one that
+is not.
 - **Named hazard:** tiered `static_vec` capacities consume more constexpr steps, and the
   `-fconstexpr-steps` ceilings noted above are already tight on clang and MSVC.
 
