@@ -640,6 +640,16 @@ compile-time-pattern / runtime-text mode).
 
 Recorded, not scheduled — deliberate next steps the current design leaves room for:
 
+- **The five audit items, priced before any of them is built.** Measuring the ceiling first is cheaper
+  than implementing to find out, and it re-ordered the list completely: caching the Aho-Corasick automaton
+  per regex is worth **~200× on repeated alternation searches** (\ref g_perf) and everything else is
+  small — the `regex_immutables` cold-split buys memory density (984 of `real::regex`'s 1512 bytes) and
+  **zero** throughput, since searches never touch it and a warm copy costs 0.366 µs either way; the shared
+  DFA map costs **0 allocations** per search; merging the membership row-buffers and compacting
+  `row_ready` sit inside an 11.3 µs compile paid **once per regex**. `cp_hi_table`'s dual representation is
+  the one still unpriced — the probe returned at the first match instead of scanning the band, so it needs
+  a full-scan measurement before anyone believes a number about it.
+
 - **Hot/cold split of `pattern_hints`.** The `state_type` lift is **done** (\ref g_inlinebudget) and the
   next layout work is now measurable because of it. `pattern_hints` is 232 of `program_view`'s 432 bytes and
   mixes fields read almost everywhere with cold arrays only a few routes consult; splitting it would cut what
@@ -740,6 +750,24 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   loop is dominated by match bookkeeping, not the inner scan — for thousands of lines of intrinsics and a
   portability burden. \note Wake condition: a workload provably dominated by long single-class runs (a
   columnar scanner over wide fixed fields), measured, not assumed.
+- **Crossing the Aho-Corasick branch threshold makes repeated `search()` ~200× slower**, because the
+  automaton meant to accelerate the alternation is rebuilt on **every call**. On a 4000-byte subject, a
+  24-branch alternation costs **29.5 µs per search and 584 heap allocations**, against **0.14 µs** for a
+  3-branch one below the threshold — the same work, on the wrong side of a fast path's own gate.
+  `find_iter` does not rescue it (29.7 µs for a whole iteration): the automaton is cached against the
+  iterator's state, and a state is fresh per `search()`. The cure is to cache it **per regex** rather than
+  per state, on the same identity-guard contract `regex_immutables` already uses for the byte program and
+  the one-pass table. It has to live in a cold region — a note on `ensure_ac_automaton` records that code
+  merely *neighbouring* `run()` cost measurable codegen there.
+
+- **The general Pike VM allocates 11–14 times per search**, and the fast routes allocate nothing. The
+  dividing line is the *route*, not capture groups: `[a-z]+`, `(\w+)` and `user` allocate **zero**, while
+  `\w+@\w+` — which has no groups at all — allocates 13 and costs 652 ns, of which **210 ns (32 %) is
+  malloc/free**. Whatever falls through to the general VM pays a fresh set of heap-backed scratch vectors
+  every call, because the state is constructed per `search()`. The known shape of the cure is a
+  thread-local scratch pool (what the rust `regex` crate calls its `Cache`), which is a design rather than
+  a tuning: it touches thread-safety and the const-ness of `search()`.
+
 - **`real::regex` pays a fixed ~29 ns per `search()` that `real::static_regex` does not**, and it is worth
   knowing where that goes before optimising into it. On a 6-byte subject the dynamic path costs 37.3 ns
   against the compile-time path's 7.8; on 256 bytes, 139 against 101. The gap is nearly constant, so it is
