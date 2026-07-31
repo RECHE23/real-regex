@@ -1168,7 +1168,7 @@ namespace real {
        * reaches them without a load. What that buys, and what it cost to establish, is in
        * \ref g_inlinebudget.
        */
-      using state_type = static_pike_scratch<scratch_code_tier(code_size), slot_count, wants_inner_literal>;
+      using state_type = static_pike_scratch<scratch_code_tier (code_size), slot_count, wants_inner_literal>;
 
       /*!
        * \brief Returns a non-owning view of the compile-time program, by reference.
