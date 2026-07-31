@@ -65,6 +65,7 @@ include $(ROOT)/mk/common.mk
 include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
+	full-local-gate-impl gcc-check \
         lint misra fuzz fuzz-compat fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-multipattern bench-duel bench-static bench-matrix matrix-gate \
@@ -443,10 +444,24 @@ gate-test: ## [gates] Calibrated gate for a tests/-only change (test + sanitize 
 	@echo "gate-test: PASS (test + sanitize + coverage-check)"
 
 full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate of record)
+	@mkdir -p $(BUILD); lock="$(BUILD)/.gate.lock"; \
+	 if ! mkdir "$$lock" 2>/dev/null; then \
+	   echo "full-local-gate: REFUSING -- another gate already holds $$lock."; \
+	   echo "  Two gates in one tree share build/ and contend for the machine, and step 12 is"; \
+	   echo "  matrix-gate: a TIMING bench whose red cells mean 'slower than the pinned figure'."; \
+	   echo "  Under contention it reads red for a reason the code has nothing to do with, and a"; \
+	   echo "  false red there is indistinguishable from a true one. Wait for the other run, or"; \
+	   echo "  'rmdir $$lock' if it is stale."; \
+	   exit 1; \
+	 fi; \
+	 trap 'rmdir "$$lock" 2>/dev/null || true' EXIT INT TERM; \
+	 $(MAKE) full-local-gate-impl
+
+full-local-gate-impl:
 	@echo "full-local-gate: start (fail-fast — cheap first, first red stops the train)"
-	@echo "── [1/22] format-check"
+	@echo "── [1/23] format-check"
 	@$(MAKE) format-check
-	@echo "── [2/22] version-check"
+	@echo "── [2/23] version-check"
 	@$(MAKE) version-check
 	# Complements version-check's bench-stamp line, which compares VERSION STRINGS and so only fires
 	# across a release bump. This one asks whether the engine changed in substance since the figures
@@ -455,13 +470,13 @@ full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate 
 	# commit. Local only -- it reads git history, which a CI shallow clone does not have.
 	@echo "── [2b/22] check-bench-stamp (engine moved since the benchmarks were stamped?)"
 	@$(MAKE) check-bench-stamp
-	@echo "── [3/22] check-layers"
+	@echo "── [3/23] check-layers"
 	@$(MAKE) check-layers
-	@echo "── [4/22] check-pins"
+	@echo "── [4/23] check-pins"
 	@$(MAKE) check-pins
-	@echo "── [5/22] check-capi-abi (C ABI golden vs real_capi.h)"
+	@echo "── [5/23] check-capi-abi (C ABI golden vs real_capi.h)"
 	@$(MAKE) check-capi-abi
-	@echo "── [6/22] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
+	@echo "── [6/23] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
 	@$(MAKE) doc-no-coverage
 	# Comment-FORM gate, deliberately right after doc-no-coverage: that step runs the LOCAL
 	# doxygen, so build/doc/xml is fresh here. It has to be, and the script enforces it --
@@ -470,38 +485,40 @@ full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate 
 	# it runs the CI Doxygen inside Docker and never refreshes the local XML.
 	@echo "── [6b/22] check-doc-style (objects /*! */, attributes //!<)"
 	@$(MAKE) check-doc-style
-	@echo "── [7/22] doc-check (CI-pinned Doxygen when Docker is available)"
+	@echo "── [7/23] doc-check (CI-pinned Doxygen when Docker is available)"
 	@$(MAKE) doc-check
 	# docs/site's own net (-W --keep-going + linkcheck). Same shape as the
 	# GXX/go legs below: skipped with a warning when sphinx-build is absent (a dev
 	# without the docs venv on PATH doesn't need to rougir tout le gate) -- the docs-site
 	# CI job (ci.yml) is the backstop, so this is never the ONLY net on the site.
-	@echo "── [8/22] docs-site-gate (sphinx -W --keep-going + linkcheck; skipped if sphinx-build absent)"
+	@echo "── [8/23] gcc-check (the diagnostics clang lacks — see the target)"
+	@$(MAKE) gcc-check
+	@echo "── [9/23] docs-site-gate (sphinx -W --keep-going + linkcheck; skipped if sphinx-build absent)"
 	@if command -v $(SPHINXBUILD) >/dev/null 2>&1; then $(MAKE) docs-site-gate; else echo "full-local-gate: WARN — $(SPHINXBUILD) absent, docs-site-gate skipped (CI covers it)"; fi
-	@echo "── [9/22] misra (single synthetic TU)"
+	@echo "── [10/23] misra (single synthetic TU)"
 	@$(MAKE) misra
-	@echo "── [10/22] c-test"
+	@echo "── [11/23] c-test"
 	@$(MAKE) c-test
 	# examples/cpp/*.cpp direct compile+run -- unconditional, not
 	# skip-if-absent: unlike the OPTIONAL alternate-compiler/toolchain legs below (GXX, go,
 	# sphinx-build), a default C++ compiler is already a hard prerequisite of this entire gate
 	# (build/test/misra/c-test above assume one unconditionally), so example-check rides the
 	# same assumption instead of the "warn and skip" shape reserved for genuinely optional tools.
-	@echo "── [11/22] example-check (examples/cpp/*.cpp direct compile+run)"
+	@echo "── [12/23] example-check (examples/cpp/*.cpp direct compile+run)"
 	@$(MAKE) example-check
-	@echo "── [12/22] matrix-gate"
+	@echo "── [13/23] matrix-gate"
 	@$(MAKE) matrix-gate
-	@echo "── [13/22] fowler-compat"
+	@echo "── [14/23] fowler-compat"
 	@$(MAKE) fowler-compat
-	@echo "── [14/22] exhaustive-compat"
+	@echo "── [15/23] exhaustive-compat"
 	@$(MAKE) exhaustive-compat
-	@echo "── [15/22] test (default CXX)"
+	@echo "── [16/23] test (default CXX)"
 	@$(MAKE) test
-	@echo "── [16/22] rust-test"
+	@echo "── [17/23] rust-test"
 	@$(MAKE) rust-test
-	@echo "── [17/22] rust-publish-check"
+	@echo "── [18/23] rust-publish-check"
 	@$(MAKE) rust-publish-check
-	@echo "── [18/22] python-test + python-stubtest (.pyi ≡ runtime; skipped if mypy absent)"
+	@echo "── [19/23] python-test + python-stubtest (.pyi ≡ runtime; skipped if mypy absent)"
 	@$(MAKE) python-test
 	@if $${MYPY_PYTHON:-$(PYTHON)} -c "import mypy" >/dev/null 2>&1; then \
 	   $(MAKE) python-stubtest; \
@@ -511,25 +528,42 @@ full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate 
 	# include/ here). Skipped with a warning when go is absent (the CI go job is the backstop), same
 	# shape as the GCC leg. Closes the gap where an include/ change that stales vendor_include/ was
 	# caught only in CI.
-	@echo "── [19/22] go-check-vendor + go-test (Go leg; skipped if go absent)"
+	@echo "── [20/23] go-check-vendor + go-test (Go leg; skipped if go absent)"
 	@if command -v go >/dev/null 2>&1; then $(MAKE) go-check-vendor && $(MAKE) go-test; else echo "full-local-gate: WARN — go absent, Go leg skipped (CI covers it)"; fi
-	@echo "── [20/22] lint"
+	@echo "── [21/23] lint"
 	@set -euo pipefail; \
 	  mkdir -p $(BUILD); \
 	  $(MAKE) lint 2>&1 | tee $(BUILD)/lint.log; \
 	  if grep -qE 'warning:|error:' $(BUILD)/lint.log; then \
 	    echo "full-local-gate: FAIL at lint (see $(BUILD)/lint.log)"; exit 1; \
 	  fi
-	@echo "── [21/22] test (GCC leg) + sanitize (slowest last)"
+	@echo "── [22/23] test (GCC leg) + sanitize (slowest last)"
 	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "full-local-gate: WARN — $(GXX) absent, GCC leg skipped (CI covers it)"; fi
 	@$(MAKE) sanitize
-	@echo "── [22/22] coverage-check (line floor $(COV_FLOOR)% — closes the P0 gate hole)"
+	@echo "── [23/23] coverage-check (line floor $(COV_FLOOR)% — closes the P0 gate hole)"
 	@$(MAKE) coverage-check
 	@echo "full-local-gate: ALL gates green (cheap→doc→tests→lint→sanitize→coverage; first red would have stopped the train)"
 
 # doc-check lives in docs/Makefile; thin delegation
 # below preserves the root-invocable name (full-local-gate step 7/22 above, and the
 # CI invariant, both call it by this name).
+# gcc-check exists because full-local-gate is MONO-COMPILER: it runs Apple clang on macOS, and a
+# whole family of gcc diagnostics is invisible to it. That is not hypothetical -- ac79a7d shipped a
+# `-Werror=dangling-reference` that clang does not implement, the local gate passed clean, and CI's
+# two cmake legs caught it after the push. One TU is enough to cover the engine headers: real_capi.cpp
+# pulls real/real.hpp, which pulls the rest. Docker rather than a local gcc, matching doc-check's
+# precedent, and skipping loudly rather than failing when it is absent -- CI still has the real legs.
+gcc-check: ## [gates] Compile the engine headers under gcc -Werror (the diagnostics clang lacks)
+	@if command -v docker >/dev/null 2>&1; then \
+	   docker run --rm --platform linux/amd64 -v "$(CURDIR)":/src -w /src gcc:14 \
+	     g++ -std=c++20 -O2 -Wall -Wextra -Werror -I include -I bindings/c \
+	         -c bindings/c/real_capi.cpp -o /dev/null \
+	   && echo "gcc-check: clean under g++ 14 (-Wall -Wextra -Werror)"; \
+	 else \
+	   echo "gcc-check: SKIPPED -- docker not found. The gcc-only diagnostics are unchecked locally;"; \
+	   echo "  CI's linux-gcc and cmake legs remain the backstop."; \
+	 fi
+
 doc-check:
 	@$(MAKE) -C docs doc-check
 
