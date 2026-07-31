@@ -650,6 +650,16 @@ Recorded, not scheduled — deliberate next steps the current design leaves room
   the one still unpriced — the probe returned at the first match instead of scanning the band, so it needs
   a full-scan measurement before anyone believes a number about it.
 
+- **The seven-item compat/`regex_set` audit, priced.** Same discipline as the previous round, same
+  outcome — the ranking came out of measurement, not intuition. `regex_set` dominates by 10–50×:
+  `is_match` costs **1237 ns and 13 allocations** to return a bool, `matches` 2329 / 31, `which`
+  2380 / 32. Everything else is small: `regex_replace` into an output iterator does buffer through a
+  string, but that is **+265 ns and 2 allocations** on a 1425 ns call, not the "medium to high" it was
+  billed as; `regex_token_iterator` with one submatch is 110 ns / 3; `named_groups()` is 42 ns / 2 *per
+  call* (its real defect is the quadratic above, not the call cost); and `sub_match` comparison allocates
+  **nothing** under small-string optimisation — the concern only bites past it, which the audit did not
+  say. Unmeasured: the Python `RegexSet` staging, and the compat layer's std-route result duplication.
+
 - **Hot/cold split of `pattern_hints`.** The `state_type` lift is **done** (\ref g_inlinebudget) and the
   next layout work is now measurable because of it. `pattern_hints` is 232 of `program_view`'s 432 bytes and
   mixes fields read almost everywhere with cold arrays only a few routes consult; splitting it would cut what
@@ -750,6 +760,29 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   loop is dominated by match bookkeeping, not the inner scan — for thousands of lines of intrinsics and a
   portability burden. \note Wake condition: a workload provably dominated by long single-class runs (a
   columnar scanner over wide fixed fields), measured, not assumed.
+- **Enumerating named groups is O(N²).** `named_groups()` rebuilds its `vector` on every call, and every
+  binding that wants a name→index map calls it once per group: the C ABI's `real_group_name` iterates the
+  freshly built vector for each group it is asked about, and Python's `groupdict()` starts from the same
+  accessor. Measured on one regex, walking every name the way a binding does: **0.29 µs at 4 groups,
+  2.71 at 16, 88.41 at 64** — sixteen times the groups for **305 times** the work. It is the same defect
+  class as the quadratic character-offset path fixed in v2026.7.63, on an introspection surface instead
+  of a matching one. The cure is the same shape: materialise the metadata once per regex, indexed, rather
+  than rebuilding it per query.
+
+- **`regex_set` construction spends ~98 % of its time on throwaway DFAs.** Building the set probes each
+  member's DFA-eligibility by *constructing a full single-pattern `real::dfa` and discarding it*
+  (`regex_set.hpp`, the partition loop). Measured: **1.06 ms / 11 240 allocations at 4 patterns,
+  7.19 ms / 44 954 at 16, 29.87 ms / 179 834 at 64**. Neutralising the probe as a diagnostic takes the
+  same builds to **22.6 µs / 204** and **92.8 µs / 810** — so the probe is 97.9 % and 98.7 % of the cost,
+  and roughly **50× is available**. Compilation cannot explain it: 64 regexes compile in ~723 µs and 5632
+  allocations, and copying 64 × 1512-byte objects is microseconds.
+
+  \note The probe is load-bearing, which the diagnostic proved rather than assumed: with it neutralised
+  the 64-pattern build **throws** `dfa_error` from the fused construction, because an ineligible member is
+  no longer partitioned out. So the fix is a *cheaper eligibility test*, not a removal — and the error it
+  must predict is a size limit (`max_dfa_byte_program`, added after 7.60's own `regex_set` incident),
+  which suggests measuring the byte expansion rather than building the automaton to find out.
+
 - **Heap cost per regex, and the one-byte cliff that has no warning in the pattern.** Measured with
   massif on the devbox, as the marginal cost of each additional regex held simultaneously:
 
