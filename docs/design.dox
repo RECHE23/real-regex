@@ -740,6 +740,29 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   loop is dominated by match bookkeeping, not the inner scan — for thousands of lines of intrinsics and a
   portability burden. \note Wake condition: a workload provably dominated by long single-class runs (a
   columnar scanner over wide fixed fields), measured, not assumed.
+- **`real::regex` pays a fixed ~29 ns per `search()` that `real::static_regex` does not**, and it is worth
+  knowing where that goes before optimising into it. On a 6-byte subject the dynamic path costs 37.3 ns
+  against the compile-time path's 7.8; on 256 bytes, 139 against 101. The gap is nearly constant, so it is
+  per-search setup rather than anything proportional to the subject — and it is **route-independent**: a
+  bare literal (`abc`, +27.9 ns), a class loop (`[a-z]+`, +29.7) and an alternation (`abc|xyz`, +32.0) all
+  pay about the same, which rules out the specialised half of the engine as the cause.
+
+  Decomposed: **10.2 ns is constructing and destroying the scratch state** (7432 bytes against 2328, and
+  the cost tracks the non-trivial members — vectors, optionals, the capture pool — not the byte count);
+  **4.4 ns is building `program_view`** per call (see `dynamic_storage::view()`, which prices the two
+  standing proposals against that number); ~0 is `slot_storage`. That leaves **~15 ns unattributed**. Two
+  hypotheses died on the way: a heap allocation per search (there are **zero** on both paths) and the
+  membership-row machinery the dynamic path runs where the compile-time one now short-circuits (refuted by
+  the literal, which touches no class table and pays the same).
+
+  \note The leading suspect for the remainder is the **route dispatch** itself: the compile-time storage's
+  view is a `static constexpr` object, so every hint the dispatch cascade tests is a compile-time constant
+  and the whole chain folds to the one route the pattern takes, while the dynamic path evaluates it on
+  every search. The supporting evidence is thin — the gap grows with the route's depth in the cascade
+  across three patterns — so it is a hypothesis, not a finding. Testing it means building a
+  route-memoised variant, which is code rather than measurement. The bounded form, if it holds, is to
+  resolve the route once per program and dispatch on the stored answer.
+
 - **Compile time:** the generated `unicode_fold.hpp` orbit table (~2900 entries) adds ~20 ms to a
   translation unit that includes `real/real.hpp`; a `static_regex` with `IGNORECASE` folds at
   compile time (constexpr), which is the usual constexpr cost, not a runtime one. A `static_regex`
