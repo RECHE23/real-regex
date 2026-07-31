@@ -914,6 +914,57 @@ namespace real {
     };
 
     /*!
+     * \brief IL: the per-haystack guard fields the inner-literal route needs, for a compile-time storage.
+     *
+     * Scalars only — no `il_prefix_rev`, because that storage has no per-regex immutables and so never
+     * builds a reverse DFA: the reverse-confirm sub-case declines and hands back to the core VM, while a
+     * candidate-free (no-match) sweep stays on memmem. Their presence in the scratch type is also what
+     * admits the storage to the route at all (the `requires` gate in \ref pike_vm::run).
+     */
+    struct static_il_guard_fields
+    {
+      const void*   il_text           {nullptr}; //!< IL: the haystack \ref il_abandoned refers to.
+      bool          il_abandoned      {false};   //!< IL: a guard tripped on this haystack — stay on the core.
+      std::uint32_t il_density_cands  {};        //!< O1: IL candidates seen on this haystack.
+      std::size_t   il_density_origin {npos};    //!< O1: first IL candidate byte offset this haystack.
+    };
+
+    //! \brief No IL fields: the route is not compiled for this pattern.
+    struct static_no_il_guard_fields
+    {};
+
+    /*!
+     * \brief Compile-time-storage VM scratch, all fixed-capacity (zero heap), keyed on DIMENSIONS ONLY.
+     *
+     * The epsilon DFS stack is bounded because each pc is processed once and pushes at most two explore
+     * entries plus one restore entry. Capture slots live in a copy-on-write \ref basic_capture_pool (a
+     * thread carries one block index, not a slot run), sized for the worst-case block count — the same
+     * zero-heap, compile-sized discipline.
+     *
+     * \note Deliberately parameterised on sizes rather than on the pattern, so two patterns of the same
+     *       shape can share one instantiation. Anything that depends on the pattern's *value* belongs in
+     *       the thin per-pattern type deriving from this, not here — see \ref g_inlinebudget for what the
+     *       distinction costs when it is not maintained.
+     *
+     * \tparam CodeSize  Program length in instructions.
+     * \tparam SlotCount Capture slots.
+     * \tparam MaxBlocks Worst-case live capture blocks.
+     * \tparam WantsIL   Whether the inner-literal route is compiled in.
+     */
+    template <std::size_t CodeSize, std::size_t SlotCount, std::size_t MaxBlocks, bool WantsIL>
+    struct static_pike_scratch : basic_pike_state<
+                                   basic_thread_list<static_vec<std::int32_t, CodeSize>,
+                                                     static_vec<std::size_t, CodeSize>,
+                                                     static_vec<std::uint64_t, CodeSize>>,
+                                   static_vec<eps_entry, (3 * CodeSize) + 4>>,
+                                 std::conditional_t<WantsIL, static_il_guard_fields, static_no_il_guard_fields>
+    {
+      basic_capture_pool<static_vec<std::size_t, MaxBlocks * SlotCount>,
+                         static_vec<std::int32_t, MaxBlocks>,
+                         static_vec<std::uint32_t, MaxBlocks>> pool; //!< COW capture blocks (zero heap).
+    };
+
+    /*!
      * \brief Storage policy backing `real::static_regex`: compile-time, stateless.
      *
      * Every array is a `static` `constexpr` member sized exactly by a measuring
@@ -1048,25 +1099,12 @@ namespace real {
       // pool never grows past this. The stack is (3*code_size)+4, each list up to code_size threads.
       static constexpr std::size_t max_blocks {(5 * code_size) + 8}; //!< Worst-case live capture blocks, per the bound derived above.
 
-      /*!
-       * \brief IL: the per-haystack guard fields the inner-literal route needs.
-       *
-       * Scalars only — no `il_prefix_rev`, because this storage has no per-regex immutables and so never
-       * builds a reverse DFA: the reverse-confirm sub-case declines and hands back to the core VM, while a
-       * candidate-free (no-match) sweep stays on memmem. Their presence in \ref state_type is also what
-       * admits this storage to the route at all (the `requires` gate in \ref pike_vm::run).
-       */
-      struct il_guard_fields
-      {
-        const void*   il_text           {nullptr}; //!< IL: the haystack \ref il_abandoned refers to.
-        bool          il_abandoned      {false};   //!< IL: a guard tripped on this haystack — stay on the core.
-        std::uint32_t il_density_cands  {};        //!< O1: IL candidates seen on this haystack.
-        std::size_t   il_density_origin {npos};    //!< O1: first IL candidate byte offset this haystack.
-      };
+      //! \brief IL guard fields for this storage — lifted to \ref static_il_guard_fields, which carries
+      //!        the rationale; kept as a name here because \ref wants_inner_literal reads next to it.
+      using il_guard_fields = static_il_guard_fields;
 
       //! \brief No IL fields: the route is not compiled for this pattern (see \ref wants_inner_literal).
-      struct no_il_guard_fields
-      {};
+      using no_il_guard_fields = static_no_il_guard_fields;
 
       /*!
        * \brief Whether the inner-literal route is worth compiling into this pattern's `run()`.
@@ -1092,24 +1130,17 @@ namespace real {
                                                  && !hints.fixed_shape};
 
       /*!
-       * \brief VM scratch state, all fixed-capacity (zero heap).
+       * \brief This pattern's VM scratch: the dimension-keyed \ref static_pike_scratch, plus the members
+       *        that genuinely depend on the pattern's VALUE and so cannot be shared.
        *
-       * The epsilon DFS stack is bounded because each pc is processed once and
-       * pushes at most two explore entries plus one restore entry. capture slots live in a
-       * copy-on-write \ref basic_capture_pool (a thread carries one block index, not a slot run), sized
-       * for the worst-case block count above — the same zero-heap, compile-sized discipline.
+       * The split is the point. Everything sized — thread lists, epsilon stack, capture pool — lives in the
+       * base, keyed on `code_size` / `slot_count` / `max_blocks` / \ref wants_inner_literal, so two patterns
+       * of the same shape can reach one instantiation. What remains here is the three table addresses,
+       * which name *this* pattern's arrays. While they remain, this type is still distinct per pattern and
+       * the sharing is not yet realised; see \ref g_inlinebudget for what that costs and what replaces them.
        */
-      struct state_type : basic_pike_state<
-                            basic_thread_list<static_vec<std::int32_t, code_size>,
-                                              static_vec<std::size_t, code_size>,
-                                              static_vec<std::uint64_t, code_size>>,
-                            static_vec<eps_entry, (3 * code_size) + 4>>,
-                          std::conditional_t<wants_inner_literal, il_guard_fields, no_il_guard_fields>
+      struct state_type : static_pike_scratch<code_size, slot_count, max_blocks, wants_inner_literal>
       {
-        basic_capture_pool<static_vec<std::size_t, max_blocks * slot_count>,
-                           static_vec<std::int32_t, max_blocks>,
-                           static_vec<std::uint32_t, max_blocks>> pool; //!< COW capture blocks (zero heap).
-
         //! \brief The compile-time byte-class tables, reachable from the VM through the STATE type so the
         //!         address is a link-time constant rather than a span loaded from the program view.
         static constexpr const std::uint8_t * ct_class_tables    {static_storage::class_tables.data()};
