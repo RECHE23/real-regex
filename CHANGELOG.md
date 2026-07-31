@@ -2,6 +2,70 @@
 
 Per-train benchmark-impact log: what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s §A/§E/§B/§Unicode/§multi-pattern sections, carried verbatim from that file's Version row. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.7.63
+
+7.63 (**the storage lift — a pattern stops multiplying the engine into your translation unit, and the
+Unicode gain it had been blocking**): §Unicode re-stamped on the devbox under g++ 13.3.0, min of five
+interleaved runs, against untouched-row gauges. `\p{sc=Han}` **13.12 → 10.14 ns/B (−22.7 %)**,
+`\p{scx=Cyrl}` 11.23 → 8.92 (−20.6 %), `\p{N}+` 7.32 → 6.08 (−17.0 %), mixed-script `\w+` 6.34 → 5.43
+(−14.3 %); `\p{L}+` (−12.2 %) and `[à-ÿ]+` (−12.9 %) sit nearer this TU's floor and are recorded as
+bounded, not claimed. arm64/clang unaffected **by construction** — the file is behind
+`__GNUC__ && !__clang__` and `c++ -E` finds zero occurrences under clang. §A, §E, §B and §multi-pattern
+carry their earlier figures; `bench_static` re-measured before/after the lift and reported as neutral on
+the leg that can discriminate (arm64 median +0.7 % stat / +0.0 % dyn, every row within −3.0…+3.8) and as
+**unable to discriminate** on x86-64 (−16.5…+17.7 % spread, nearly every large move a draw against its
+gauge) rather than averaged into a claim.
+
+**The row this train was about** was not in the tables at all. `static_regex`'s scratch type was nested in
+a storage templated on the pattern's *value*, so every distinct pattern carried a private copy of every
+Pike VM route — 82.4 % of the ~48 KB each added to `.text`. That exhausted GCC's
+`--param inline-unit-growth` (3028 refused inline decisions in one benchmark TU, 2637 in `pike.hpp`), and
+past the cap GCC declines in traversal order: a pattern that never executes a changed line moved **+220 %**,
+and the degradation was **non-monotone in pattern count** — fine at 9 and 10, 3× off at 11 and 12, fine at
+13 — so there was no safe count and no margin to watch. Fixed in three steps (dimension-keyed scratch,
+table bases into `program_view`, power-of-two capacity tiering): `.text` per pattern ~45 KB → **7.7**
+(x86-64) / 7.2 (arm64) for one shape and 50.9 → **10.8** / 9.3 for a unit of differing shapes, refusals in
+a 32-pattern unit 19 735 → **1457**, and the 11/12/14-pattern timings 33.5 / 33.7 / 20.4 µs → **11.8 /
+10.7 / 10.8**, flat across N = 0…32 on both platforms. Scratch footprint is the price: `[a-z]+` 1792 →
+2328 bytes (×1.30), powers of two chosen over a coarse 32/64 ladder that would have cost ×3.8.
+
+**Why the Unicode gain is in this train and not an earlier one:** dropping the cp-class inlining
+attributes had been measured, valid and reproduced across three compilers, and refused — it cost
+`(?i)cafe` on an ASCII no-match scan **+217 %**, a pattern with zero code-point classes that never enters
+the loop. That was the budget defect, not the change. Re-measured after the lift on the same devbox the
+collateral is gone and inverted: `(?i)cafe` −9.0 %, `\b\w+\b` −7.4 %, `\w+` −3.2 %, all with the `dyn`
+gauge inside 1 %. **Nine approaches were refuted** on the way and are recorded so none is retried,
+including PGO — which reproduces the identical cliff and exhausts the cap faster, because a profile
+changes which inlines GCC *wants*, not the cap it runs into.
+
+**Two measurement rules earned their place** and now sit in the methodology: read the rows a change
+*cannot* reach before believing any delta (this caught three would-be findings, one a 19 % "gain" that was
+the gauge moving with it), and measure x86-64 on the devbox rather than in Docker — worst within-arm
+spread 1.045× against 1.98×, and on the deciding A/B the two disagreed about the **sign**.
+
+**Not a benchmark row, but the user-visible fix of the train:** the Python binding's char-offset API was
+quadratic. `finditer(...).start()` on a non-ASCII subject at 32 000 matches **633.2 → 10.1 ms**, and the
+ratio to a `.group()`-only loop stops growing (1.5–1.6× across a 16× range, where it had gone 7× → 91×).
+Pinned by shape, not by a wall-clock budget.
+
+## v2026.7.62
+
+7.62 (**documentation becomes enforceable, and a lazy build stops being paid for nothing**): §E.4 only —
+five rows re-measured (`first_use/{email,word_bound,no_match}`, then `find/word_bound` and
+`captures/word_bound` after the cp-class scan change), arm64, one criterion group at a time with both
+engines in the same run, plus the `email` scan rows re-checked to confirm the cost went rather than moved
+(`find/email` 46.52 µs against 46.20 recorded, `captures/email` 51.98 against 52.10). NOT under the
+interleaved A/B protocol §E.4's main table uses, which is why those rows sit in their own table there.
+§A, §Unicode, §B and §multi-pattern carry their earlier figures unchanged.
+
+**The row this train was about:** `first_use/email` reaches **parity** with the `regex` crate (604.53 µs
+against 601.81, CIs overlapping) from 2.64× behind. Five earlier passes had made the one-pass table
+cheaper to build, 21.3 ms → 2.91; the sixth found that building it AT ALL was the cost. The capture-free
+twin settled it — `\w+@\w+` has two slots and no capture for an extractor to fill, and cost the same
+1487 µs — so `ensure_immutables` was building the extractor alongside the byte program and every route
+needing the cheap half paid for the expensive one. Built only where captures are extracted through it:
+first search **1490 → 573 µs on arm64**, **1958 → 813 on x86-64**, `\d{4}-\d{2}-\d{2}` 296 → 167.
+
 ## v2026.7.61
 
 7.61 (**icase scan train — a folded ASCII class stops losing its route**): §E.4 re-stamped under the usual
