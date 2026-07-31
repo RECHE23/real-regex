@@ -756,11 +756,30 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   3-branch one below the threshold — the same work, on the wrong side of a fast path's own gate.
   `find_iter` does not rescue it (29.7 µs for a whole iteration): the automaton is cached against the
   iterator's state, and a state is fresh per `search()`. The cure is to cache it **per regex** rather than
-  per state, on the same identity-guard contract `regex_immutables` already uses for the byte program and
-  the one-pass table. It has to live in a cold region — a note on `ensure_ac_automaton` records that code
-  merely *neighbouring* `run()` cost measurable codegen there — and that same note now carries the full
-  design, including the reason the obvious shape is wrong: declining when `immut` is null would leave
-  `seam_run_aho_corasick` passing while no longer exercising the route it exists to test.
+  per state. **Fixed**: the automaton now lives in `regex_immutables` behind its own identity atomic,
+  taking a 24-branch search from 29.5 µs and 584 allocations to **12.6 µs and zero**.
+
+  **What that exposed is larger than what it fixed: `ac_branch_threshold` gates on the wrong property.**
+  With the rebuild gone, the automaton's real cost is visible and it is *constant* — ~3.2 ns/byte on
+  arm64, ~3.6 on x86-64, whatever the subject. It is worst-case insurance, not a fast path. Measured
+  against the same patterns with the route disabled, over four literal shapes × four subject regimes ×
+  two subject sizes, on **both platforms** (24 branches throughout; ratios are route-off ÷ route-on, so
+  above 1 means AC wins):
+
+  | literal shape | no match | false starts | one late match | match-dense |
+  |:--|--:|--:|--:|--:|
+  | short, shared prefix (`worda…`) | 0.01× | **8.7× / 8.8×** | 0.01× | 0.91× |
+  | short, distinct heads | 0.15× / 0.22× | **11.2× / 13.2×** | 0.15× / 0.23× | 0.85× |
+  | long, shared prefix | 0.01× | **6.4× / 5.7×** | 0.02× | 0.62× |
+  | long, distinct heads | 0.15× / 0.23× | **13.1× / 12.3×** | 0.15× / 0.23× | 0.67× |
+
+  (arm64 / x86-64 where they differ; 4 KB and 64 KB subjects agreed to within a few percent throughout,
+  and the two platforms never disagree on which side wins.) AC wins **only** where the memchr cascade
+  degrades — a subject dense in prefixes of the literals that never complete — and loses by 4× to 100×
+  everywhere else. Branch count does not predict which of those a subject is; **candidate density does**,
+  and selecting on it is the shape a fix would take. Not attempted in the train that found this: it is a
+  routing-policy change and deserves its own campaign, not a tuning bolted onto the commit that measured
+  the problem.
 
 - **The general Pike VM allocates 11–14 times per search**, and the fast routes allocate nothing. The
   dividing line is the *route*, not capture groups: `[a-z]+`, `(\w+)` and `user` allocate **zero**, while
