@@ -258,6 +258,23 @@ namespace real::detail {
     constexpr void reset(std::uint16_t slot_count)
     {
       width = slot_count;
+      // Reserve a modest block budget before the first allocate(). Without it these three vectors
+      // grow by doubling DURING the search -- a general-VM search over `\w+@\w+` made 13 heap
+      // allocations, and the size sequence (4, 8, 32, 16, 64, 128 ...) is a doubling ladder, not
+      // work. Reserving takes that to 5 and the search itself -11.7 %; `(\w+)` and other fast-route
+      // patterns are untouched at 41 ns either way, which is the control that makes the number
+      // readable. A FLOOR, not a bound: allocate() still grows past it, so a capture-heavy walk is
+      // bounded by the same free-list recycling as before, not by this constant.
+      //
+      // The compile-time storage's pool is `static_vec` and has no reserve(): it is sized exactly at
+      // compile time and never allocates at all, which is why this is gated on the expression rather
+      // than on a storage trait.
+      constexpr std::size_t initial_blocks {8};
+      if constexpr (requires { data.reserve(std::size_t {}); }) {
+        data.reserve(static_cast<std::size_t>(slot_count) * initial_blocks);
+        refcount.reserve(initial_blocks);
+        free_list.reserve(initial_blocks);
+      }
       data.assign(slot_count, npos);
       refcount.assign(1, 1); // block 0, sentinel refcount 1 (never freed)
       free_list.clear();
