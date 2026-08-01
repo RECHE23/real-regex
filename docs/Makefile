@@ -87,6 +87,32 @@ docs-site: doc-no-coverage ## Build the themed Sphinx/Breathe site (docs/site) -
 # discipline for the Doxygen side. Separate output dirs from docs-site's release
 # build (_gate / _linkcheck) so a gate run never staleness-poisons a real build.
 #
+# Both are DELETED before each run, because separating them is not enough to keep them
+# clean. OBSERVED: this target failed with `breathe.file_state_cache.MTimeError: Cannot
+# find file: .../structreal_1_1detail_1_1static__storage_1_1il__guard__fields.xml` --
+# raised from `env-get-outdated`, before a single source was read, naming a struct that
+# had been removed from the code weeks earlier. Deleting build/doc/xml did NOT clear it;
+# deleting build/site did. So the surviving reference lived in the gate's own leftovers,
+# and the run before it is what poisoned the run after.
+#
+# The mechanism is inferred and not proven: the traceback points at Breathe's record of
+# the Doxygen compounds it last read, but THREE attempts to reproduce the state on demand
+# (deleting a compound file, adding then removing a namespace-scope struct, the same with
+# a nested one) all failed to raise it, so do not treat that reading as established. What
+# is measured is the repair -- and one supporting fact found while trying: Doxygen's XML
+# output is INCREMENTAL and does not remove compounds for entities deleted from the code.
+# Two probe structs added and then reverted kept their compound files across a subsequent
+# `doxygen Doxyfile`, and stale XML in that state is exactly what check-doc-style's
+# freshness guard exists to refuse -- it tripped on those leftovers minutes later. `-E` was tried first and is NOT a substitute -- with a
+# compound's XML gone while index.xml still lists it, the same MTimeError is raised on a
+# freshly built environment.
+#
+# Worth doing regardless of the mechanism: a gate that a previous run of itself can turn
+# red is reporting on its build directory rather than on the tree under test, and at the
+# point it prints, that red is indistinguishable from a real one. The cost is a full
+# re-read of ~29 pages, which this target pays in any case -- it regenerates the Doxygen
+# XML on every run, so its environment can go stale on every run.
+#
 # Two nets for the bespoke landing template (docs/site/_templates/
 # landing.html, served via html_additional_pages -- see conf.py):
 #
@@ -125,6 +151,7 @@ docs-site-gate: ## Sphinx -W --keep-going + linkcheck + built-HTML link check fo
 	  echo "docs-site-gate: '$(SPHINXBUILD)' not found -- install docs/requirements.txt into a venv" \
 	       "and put it on PATH (or pass SPHINXBUILD=/path/to/sphinx-build)"; exit 1; }
 	@mkdir -p $(BUILD)/doc && cd $(ROOT) && doxygen Doxyfile
+	@rm -rf $(BUILD)/site/_gate $(BUILD)/site/_linkcheck
 	$(SPHINXBUILD) $(SPHINXOPTS) -W --keep-going -b html $(ROOT)/docs/site $(BUILD)/site/_gate
 	$(SPHINXBUILD) $(SPHINXOPTS) -b linkcheck $(ROOT)/docs/site $(BUILD)/site/_linkcheck
 	@echo "── no-inline-quickstart (landing.html: injected {{ quickstart_* }} placeholders only, zero hardcoded snippet code)"
