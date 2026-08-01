@@ -846,6 +846,9 @@ namespace real {
         std::size_t                       il_density_origin   {npos};    //!< O1: first IL candidate byte offset this haystack.
         const void       *                rare_disc_text      {nullptr}; //!< Rare-disc: haystack \ref rare_disc_abandoned refers to.
         bool                              rare_disc_abandoned {false};   //!< Rare-disc density guard: stay on prefix for this haystack.
+        const void       *                ac_text             {nullptr}; //!< AC: the haystack \ref ac_dense was decided on.
+        bool                              ac_decided          {false};   //!< AC: the density sample has run on this haystack.
+        bool                              ac_dense            {false};   //!< AC: candidates are dense enough that the automaton wins.
         //! \brief This storage benefits from the multi-literal route (\ref pike_vm::ac_ready). A marker,
         //!        not a field: the automaton lives per regex in \ref detail::regex_immutables.
         static constexpr bool             supports_aho_corasick {true};

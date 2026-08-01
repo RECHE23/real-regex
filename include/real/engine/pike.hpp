@@ -581,6 +581,9 @@ namespace real::detail {
     std::size_t                       il_density_origin   {npos};    //!< O1: byte offset of the first IL candidate this haystack.
     const void       *                rare_disc_text      {nullptr}; //!< Rare-disc: haystack \ref rare_disc_abandoned refers to.
     bool                              rare_disc_abandoned {false};   //!< Rare-disc density guard: stay on prefix for this haystack.
+    const void       *                ac_text             {nullptr}; //!< AC: the haystack \ref ac_dense was decided on.
+    bool                              ac_decided          {false};   //!< AC: the density sample has run on this haystack.
+    bool                              ac_dense            {false};   //!< AC: candidates are dense enough that the automaton wins.
     // AC fields placed LAST (own reason as pattern_hints::alternation_branch_count): inserting
     // here right after il_prefix_for would shift il_text/
     // il_abandoned/il_density_cands/il_density_origin (the inner-literal density-gate fields, read
@@ -812,7 +815,8 @@ namespace real::detail {
         // branch — falls through to run_alternation below, zero behavior change).
         if constexpr (requires { State::supports_aho_corasick; }) {
           if (!std::is_constant_evaluated() && !aho_corasick_route_disabled() && mode == run_mode::search
-              && prog_.hints.alternation_branch_count >= ac_branch_threshold) {
+              && prog_.hints.alternation_branch_count >= ac_branch_threshold
+              && ac_density_favours_automaton(text, start)) {
             if (ac_ready() != nullptr) {
               prof::tick_route(prof::route::aho_corasick);
               return run_aho_corasick(text, start, out_slots);
@@ -1326,6 +1330,119 @@ namespace real::detail {
      */
     static constexpr std::uint32_t il_density_probe_candidates {8};
     static constexpr std::size_t   il_density_milli_threshold  {60}; //!< Candidate density, in candidates per 1000 bytes, at or above which the IL route yields to the DFA.
+
+    /*!
+     * \brief AC routing: sample window, and the candidate-work product at or above which the
+     *        automaton beats the memchr cascade.
+     *
+     * The branch COUNT cannot decide this and \ref ac_branch_threshold never could: AC scans at a
+     * flat ~3.15 ns/byte whatever the subject, while the cascade it replaces runs 2.04 us to 131 us
+     * on the SAME pattern and the same subject length. Only the haystack decides. What the haystack
+     * has to supply is candidate DENSITY, and `benchmarks/ac_regime.cpp` measures where that
+     * crosses over — including the part the reconnaissance did not predict, that the crossover moves
+     * with branch count, because the cascade tries branches in order while AC does not:
+     *
+     *     branches      12    14    16    18    20    24     product (density x branches)
+     *     arm64 d       89    76    65    58    39    33     1066 1062 1040 1041  789  802
+     *     x86-64 d      49    45    41    33    30    27      588  624  660  590  600  655
+     *
+     * So the rule is a PRODUCT, not a density: `(candidates per 1000 bytes) * branch_count`. The
+     * product is what is roughly invariant, and it is what this threshold is expressed in.
+     *
+     * **The constant is the measured MINIMUM (588), not a mid-point, and that choice is a
+     * consequence rather than a taste.** Today every alternation past \ref ac_branch_threshold takes
+     * AC unconditionally, so switching too EARLY can never be worse than the behaviour being
+     * replaced, while switching too LATE forfeits a win that exists today. Rounding below the
+     * earliest crossover on either platform therefore cannot regress any subject, and the platforms'
+     * 1.7x disagreement about the constant stops being a tuning argument. On arm the product is not
+     * one level but two -- ~1050 for 12..18 branches and ~795 for 20..24, each to within 1 % across
+     * four rounds -- a real discontinuity, reproducible and unexplained; it does not affect the
+     * choice, since the minimum is on the other platform either way.
+     */
+    static constexpr std::size_t ac_density_sample_bytes   {256};
+    static constexpr std::size_t ac_density_min_span       {64};  //!< Shortest span an early verdict may rest on.
+    static constexpr std::size_t ac_density_work_threshold {550}; //!< Product `(candidates per 1000 bytes) * branch_count` at or above which the automaton wins.
+
+    /*!
+     * \brief Decides ONCE PER HAYSTACK whether the Aho-Corasick automaton should take this
+     *        alternation's searches, by sampling candidate density at the search start.
+     *
+     * Sticky, for the same reason \ref pike_state::il_abandoned is: `find_iter` re-enters `search()`
+     * once per match, and on a match-dense subject each of those searches ends almost immediately,
+     * so a decision re-derived per search would never see the density that makes the automaton win
+     * -- and would pay for the sample every time. Keyed on the subject's data pointer, like every
+     * other per-haystack guard in this file.
+     *
+     * Sampling rather than an abandon predicate threaded through \ref fast_search -- the two designs
+     * measure the same quantity, but the abandon predicate has to cross \ref fast_search, which has
+     * four call sites across the fixed-shape, class-loop and alternation routes, and the SIMD
+     * `small_set` block loop besides. This one touches nothing any other route executes. It reuses
+     * \ref next_candidate, so "candidate" means exactly what it means to the cascade being measured
+     * -- a second definition would be a second thing to keep true.
+     *
+     * \param[in] text  Subject.
+     * \param[in] start Where this search begins; the window is measured from here.
+     * \return `true` when the automaton should take over. Storages without the guard fields (the
+     *         compile-time scratch) answer `true` unconditionally, preserving their behaviour.
+     */
+    template <typename Dummy = void>
+    [[nodiscard]] bool ac_density_favours_automaton(std::string_view text,
+                                                    std::size_t      start)
+    {
+      if constexpr (requires(State & s) {
+        s.ac_text;
+      }) {
+        if (ac_density_gate_disabled()) {
+          return true; // seam: route on branch count alone, the pre-gate behaviour
+        }
+        if (state_.ac_text != static_cast<const void*>(text.data())) {
+          state_.ac_text    = static_cast<const void*>(text.data());
+          state_.ac_decided = false;
+        }
+        if (state_.ac_decided) {
+          ac_density_last_verdict() = state_.ac_dense ? ac_verdict::automaton : ac_verdict::cascade;
+          return state_.ac_dense;
+        }
+        const std::size_t limit {text.size() < start + ac_density_sample_bytes
+                                   ? text.size()
+                                   : start + ac_density_sample_bytes};
+        const std::size_t branches {static_cast<std::size_t>(prog_.hints.alternation_branch_count)};
+        std::size_t       cands    {0};
+        std::size_t       pos      {start};
+        std::size_t       scanned  {limit > start ? limit - start : std::size_t {1}};
+        // A TRUNCATED view, not the whole subject: next_candidate scans until it finds a candidate
+        // or runs out of text, so bounding only what gets counted bounds nothing at all. On a
+        // candidate-free haystack the "256-byte sample" read all 4000 bytes and cost 2 us -- two
+        // thirds of the win this gate exists to deliver, spent finding out there was nothing to find.
+        const std::string_view window {text.substr(0, limit)};
+        while (pos < limit) {
+          pos = next_candidate(window, pos, start);
+          if (pos >= limit) {
+            break;
+          }
+          ++cands;
+          ++pos;
+          // Stop as soon as the verdict cannot change. The sample is not free -- next_candidate on
+          // the first-bytes bitmap tests a byte at a time -- and a dense haystack reaches certainty
+          // in a fraction of the window, which is exactly the case that must not pay for it.
+          const std::size_t seen {pos > start ? pos - start : std::size_t {1}};
+          if (seen >= ac_density_min_span && cands * 1000U * branches / seen >= ac_density_work_threshold) {
+            scanned = seen;
+            break;
+          }
+        }
+        const std::size_t span {scanned};
+        // (candidates per 1000 bytes) * branch_count, in one expression so the division rounds once.
+        const std::size_t work {cands * 1000U * branches / span};
+        state_.ac_dense           = work >= ac_density_work_threshold;
+        state_.ac_decided         = true;
+        ac_density_last_verdict() = state_.ac_dense ? ac_verdict::automaton : ac_verdict::cascade;
+        return state_.ac_dense;
+      }
+      else {
+        return true;
+      }
+    }
 
     /*!
      * \brief Build (or rebuild) the per-regex immutables, race-free: the Tier-A byte-program the DFAs

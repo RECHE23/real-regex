@@ -150,6 +150,56 @@ namespace real::detail {
     return disabled;
   }
 
+  /*!
+   * \brief Test seam : take the Aho-Corasick DENSITY gate out, so the route is chosen on branch
+   *        count alone — the behaviour that shipped before the gate existed.
+   *
+   * Distinct from \ref aho_corasick_route_disabled, and both are needed to say anything about the
+   * gate: that one answers "cascade or automaton", this one answers "who decided". Without it a
+   * harness setting `aho_corasick_route_disabled() = false` is not forcing the automaton at all, it
+   * is merely declining to forbid it, and the gate then routes the subject wherever it likes — so a
+   * column labelled "AC on" silently becomes a column measuring the gate. That happened, and the
+   * numbers looked like a regression in the automaton rather than a mislabelled arm.
+   *
+   * \return Reference to the process-wide seam flag; set it to true to route on branch count alone.
+   */
+  inline bool& ac_density_gate_disabled()
+  {
+    static bool disabled {false};
+    return disabled;
+  }
+
+  /*!
+   * \brief What the AC density gate last decided; `ac_density_last_verdict()` below reports it.
+   */
+  enum class ac_verdict : std::uint8_t
+  {
+    not_consulted = 0, //!< The gate has not run since the last reset.
+    cascade,           //!< Candidates too sparse: keep the memchr cascade.
+    automaton          //!< Candidates dense enough: take the Aho-Corasick walk.
+  };
+
+  /*!
+   * \brief Test observability : the AC density gate's most recent verdict.
+   *
+   * The gate decides only which of two routes runs, and both produce identical spans by contract --
+   * which is exactly what makes it untestable from the outside. The obvious substitute, asserting
+   * that the guarded run is much faster than the forced one, is not portable across build
+   * configurations: the margin is ~5.9x optimised and 1.4x under ASan/UBSan, because sanitizer
+   * overhead is additive per operation and so dilutes the advantage of a route whose whole merit is
+   * SKIPPING bytes. That assertion turned the sanitize leg red while the engine was correct. Timing
+   * belongs in `benchmarks/ac_regime.cpp`; a test asserts the decision.
+   *
+   * One store per haystack, on the same path as the guard fields it reports on.
+   *
+   * \return Reference to the process-wide verdict; assign \ref ac_verdict::not_consulted to arm it.
+   */
+  inline ac_verdict& ac_density_last_verdict()
+  {
+    static ac_verdict verdict {ac_verdict::not_consulted};
+    return verdict;
+  }
+
   //! \brief A byte-level program derived from a Pike program for the DFA passes: every `klass_cp` construct
   //!        is expanded into UTF-8 byte-range split/klass chains, so the whole thing is byte-transition-only
   //!        and a forward DFA can represent it. The Pike program itself is untouched (byte-identity); this

@@ -91,7 +91,11 @@ namespace {
   double drain_ns(const real::regex& re, const std::string& subject, bool ac_on, int reps,
                   std::size_t& matches)
   {
+    // Force the arm, both halves of it: the route flag alone only declines to FORBID the
+    // automaton -- the density gate would then re-decide, and this column would measure the gate
+    // rather than the automaton it claims to measure.
     real::detail::aho_corasick_route_disabled() = !ac_on;
+    real::detail::ac_density_gate_disabled()    = true;
     (void) re.search(subject); // warm the per-regex automaton cache; never charged to the timing
     std::size_t  seen {0};
     const double ns {bench::nanos(
@@ -105,6 +109,7 @@ namespace {
       },
       reps)};
     real::detail::aho_corasick_route_disabled() = false;
+    real::detail::ac_density_gate_disabled()    = false;
     matches                                     = seen;
     return ns;
   }
