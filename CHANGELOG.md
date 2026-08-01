@@ -2,6 +2,31 @@
 
 Per-train benchmark-impact log: what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s §A/§E/§B/§Unicode/§multi-pattern sections, carried verbatim from that file's Version row. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.8.1
+
+8.1 (**two routing decisions that were never measured, and a tool that finds the rest**): **§A again
+cannot have moved, by construction.** Its table carries no capture-carrying pattern and its one
+alternation row `the|fox|dog` has three branches -- below `ac_branch_floor`, which this train lowered
+to 4 and not below, so the routing change cannot reach it. The two throughput changes land on shapes
+this document does not publish and were measured on their own terms, both platforms, minimum across
+alternating rounds against an untouched gauge. **Aho-Corasick below twelve branches**, where the
+route was previously never taken at all: on 4000-byte subjects at 600 candidates per 1000 bytes,
+**3.48x/4.34x at 4 branches (arm64/x86-64)**, 4.36/6.29 at 6, 5.28/8.90 at 8 and **8.03/10.23 at
+11**; at 200 candidates 1.74/2.24; and at 50-100 candidates **0.99-1.01x arm64, 0.98-1.02x x86-64**,
+which is the row that matters -- the sample window is now sized by the verdict rather than fixed, and
+a fixed 256 had cost 2-5 % on exactly those sparse short alternations. The threshold in that region
+is the measured MAXIMUM rather than the minimum, because below twelve the automaton was taken never,
+so an early switch regresses where above twelve it could not; a static_assert holds the two constants
+in the right order. **`regex_set` construction** stops building one full munch DFA per pattern to
+discover a set too small to fuse: **214.4 -> 16.9 us at 20 patterns (12.7x)** and **446.9 -> 34.0 at
+40 (13.1x)**, 11.2 us per pattern of pure waste on every set under 56. Not carried further: replacing
+the probe for larger sets is worth 9-17 %, measured, because the fused subset construction dominates
+and grows superlinearly (49 us per pattern at 56, 100 at 120). **The compat regex_iterator is
+disclosed at 1.8-5.5x behind find_iter** and NOT fixed -- a fresh VM state per advance, where the
+walker embeds 8232 bytes against that iterator's 320 and std::regex_iterator requires independent
+copies; against the std::regex it replaces the same cases run 9.9x, 88.7x and 10.8x faster. §A,
+§Unicode, §B, §E and §multi-pattern carry their earlier figures unchanged.
+
 ## v2026.8.0
 
 8.0 (**routing decided by the subject, and allocation counts that stop depending on the pattern**):
