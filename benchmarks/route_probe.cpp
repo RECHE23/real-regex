@@ -8,6 +8,21 @@
 // failure, because correctness is identical on every route by construction (the seam differential
 // pins that).
 //
+// READ AN UNREACHED ROUTE AS A QUESTION ABOUT THIS FILE FIRST. The first run reported 6 of 20
+// unreached and every one was a blind spot in the generator, not a finding about the engine:
+//   - lazy_dfa_anchored, lazy_dfa_fwd_rev, general_window needed a subject past `lazy_dfa_min_input`
+//     = 512 bytes, and k_subjects topped out at 41. Unreachable by construction, with nothing in the
+//     output saying so.
+//   - codepoint_class needed a WHOLE-PATTERN `.` or negated class; free composition can produce one
+//     but only about once in 2300 draws, so a seed was the difference between 216 hits and zero.
+//   - onepass_window followed from the same seeds.
+//   - possessive_delimited needed a delimited possessive whose loop is min=0 (`"[a-z]*+"`), which is
+//     what the recognizer in prefilter.hpp requires; the seed list had `"[a-z]++"`, min=1, which
+//     falls to the general VM. No amount of staring at the seed list would have shown that -- the
+//     route table did, by staying at zero.
+// It reports 0 of 20 now. A tool that cannot reach a route must never be read as evidence that the
+// engine cannot either, so when a route goes NEVER, widen the generator before suspecting the gate.
+//
 // WHAT IT IS NOT. It reports ROUTES, not timings. Route identity is exact and reproducible; a
 // wall clock over randomly composed patterns is not, and pinning a figure per random pattern
 // would produce reds indistinguishable from real regressions. Allocation counts are the other

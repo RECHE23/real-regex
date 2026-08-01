@@ -54,6 +54,8 @@ namespace bench_gen {
     "[a-z]{3}[0-9]{2}", "(\\w+)@(\\w+)", "(\\w+)-(\\d+)",        // fixed-shape pair, capturing (one-pass)
     "cat|dog|fish", "[a-z]+(?=[0-9])", "a++", "[a-z]++",     // alternation, trailing LA, possessive
     "\\p{L}++", "\"[a-z]++\"", "^[a-z]+$", "(?i)[a-z]+",       // possessive cp / delimited / anchored / folded
+    ".", ".+", "[^,]", "[^,]+",                              // whole-pattern dot / negated class: codepoint_class
+    "\"[a-z]*+\"", "\"\\\\w*+\"",                              // delimited possessive: the loop must be min=0 (*+, not ++)
   };
 
   //! One edit on a seed: the mutation that made every boundary in this engine visible when done by
@@ -112,14 +114,43 @@ namespace bench_gen {
     return pick(k_anchor_pre) + body + pick(k_look) + pick(k_anchor_post);
   }
 
-  //! Subjects chosen so a route that needs a match can find one, and one that needs a miss can
-  //! miss: a route only reached on success is invisible against a corpus that never matches.
+  //! Repeats \p unit until the result is at least \p bytes long. Used for the long subjects below.
+  std::string pad_to(const std::string& unit, std::size_t bytes)
+  {
+    std::string s;
+    s.reserve(bytes + unit.size());
+    while (s.size() < bytes) {
+      s += unit;
+    }
+    return s;
+  }
+
+  /*!
+   * \brief Subjects chosen so a route that needs a match can find one, and one that needs a miss can
+   *        miss: a route only reached on success is invisible against a corpus that never matches.
+   *
+   * \note **Long subjects are not padding, they are the only way three routes exist at all.** The
+   *       lazy-DFA routing is skipped below `lazy_dfa_min_input` = 512 bytes, and the first cut of
+   *       this file topped out at 41 -- so `lazy_dfa_anchored`, `lazy_dfa_fwd_rev` and the
+   *       `general_window` that the DFA path dispatches into were reported NEVER REACHED by
+   *       construction of the probe, with nothing in the output to say so. A tool that cannot reach a
+   *       route must not be read as evidence the engine cannot either, and 3 of the 6 routes this
+   *       probe called unreached were its own blind spot.
+   *
+   *       Sized just over the threshold rather than at corpus scale: the allocation probe shares this
+   *       list and measures each subject 200 times per pattern, so bytes here are multiplied by tens
+   *       of thousands there. 1 KB clears 512 with margin and keeps that affordable.
+   */
   const std::vector<std::string> k_subjects {
     "the quick brown fox abc xyzzy 12345 a,b,c",
     "Ünïcödé tëxt with àccénts and 日本語 too",
     "\"quoted abc\" and w0a w1b w2c trailing",
     "",
     "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+    pad_to("the quick brown fox abc xyzzy 12345 a,b,c ", 1024),   // long, matches throughout
+    pad_to("................................", 1024),             // long, nothing matches
+    pad_to("Ünïcödé tëxt with àccénts and 日本語 too ", 1024),      // long, non-ASCII
+    pad_to("\"abc\" w0a w1b ", 1024),                              // long, delimited + branch heads
   };
 
 

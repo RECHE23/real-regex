@@ -1014,8 +1014,13 @@ actual gate).
   search performs. Both are exact and identical run to run: unlike a timing bench they cannot
   produce a red that means "the runner was busy", which is what makes them the right instrument for
   a question about *shape* rather than speed. `route-probe` answers "does anything reach this
-  route?", and currently reports **6 of 20 unreached** — each one either dead or gated more narrowly
-  than its author believed. `alloc-probe` asserts the stronger property: **how many allocations a
+  route?" It reported **6 of 20 unreached** and every one of them was the probe's own blind spot, not
+  the engine's: three needed a subject over 512 bytes (the lazy-DFA routing floor) against a corpus
+  that topped out at 41, and three needed a seed shape nobody had written — a whole-pattern `.` or
+  negated class, and a delimited possessive whose loop is `*+` rather than `++`, which the recognizer
+  requires and which reading the seed list would never have revealed. It reports **0 of 20** now, and
+  the lesson is worth more than the number: a tool that cannot reach a route must never be read as
+  evidence the engine cannot either. `alloc-probe` asserts the stronger property: **how many allocations a
   search performs must be a property of the ROUTE, not of the pattern that took it.** Every
   non-`general_*` route must be flat zero; the general VM is allowed a budget, but not a spread.
   That invariant is what caught the capture pool growing by doubling mid-search — `general_full`
