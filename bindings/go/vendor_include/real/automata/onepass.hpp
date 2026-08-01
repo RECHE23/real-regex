@@ -882,6 +882,16 @@ namespace real::detail {
 
     static constexpr std::size_t row_ready_bit_capacity {64}; //!< How many flag indices \ref row_ready_bits covers; the rest live in \ref row_ready_overflow.
 
+    // A RELATION, not a tuning knob: this is the WIDTH of the word above, and \ref row_ready shifts
+    // by `1ULL << i` for every index under it. Raise it without widening the type and the shift is
+    // undefined behaviour for i >= 64 while \ref row_ready_overflow is indexed from the wrong base --
+    // two silent faults, no diagnostic, and a suite that stays green because the overflow path is
+    // rarely reached. The sabotage sweep reported this constant unguarded, which is how it was
+    // looked at; a test could only ever sample one value of it, so the guard belongs here.
+    static_assert(row_ready_bit_capacity
+                  == sizeof(decltype(row_ready_bits)::value_type) * 8U,
+                  "row_ready_bit_capacity must be exactly the bit width of row_ready_bits");
+
     /*!
      * \brief Reads the "filled" flag for flag index \p i, acquiring what the filling thread released.
      * \param[in] i Flag index: a class row, or a cp_ascii / cp_page row at its own run's offset.
