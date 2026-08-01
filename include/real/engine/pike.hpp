@@ -815,7 +815,7 @@ namespace real::detail {
         // branch — falls through to run_alternation below, zero behavior change).
         if constexpr (requires { State::supports_aho_corasick; }) {
           if (!std::is_constant_evaluated() && !aho_corasick_route_disabled() && mode == run_mode::search
-              && prog_.hints.alternation_branch_count >= ac_branch_threshold
+              && prog_.hints.alternation_branch_count >= ac_branch_floor
               && ac_density_favours_automaton(text, start)) {
             if (ac_ready() != nullptr) {
               prof::tick_route(prof::route::aho_corasick);
@@ -1359,9 +1359,11 @@ namespace real::detail {
      * four rounds -- a real discontinuity, reproducible and unexplained; it does not affect the
      * choice, since the minimum is on the other platform either way.
      */
-    static constexpr std::size_t ac_density_sample_bytes   {256};
-    static constexpr std::size_t ac_density_min_span       {64};  //!< Shortest span an early verdict may rest on.
-    static constexpr std::size_t ac_density_work_threshold {550}; //!< Product `(candidates per 1000 bytes) * branch_count` at or above which the automaton wins.
+    static constexpr std::size_t   ac_density_sample_bytes       {256};
+    static constexpr std::size_t   ac_density_min_span           {64};   //!< Shortest span an early verdict may rest on.
+    static constexpr std::size_t   ac_density_work_threshold     {550};  //!< Product `(candidates per 1000 bytes) * branch_count` at or above which the automaton wins, at or above \ref ac_branch_threshold branches.
+    static constexpr std::uint16_t ac_branch_floor               {4};    //!< Fewest branches the automaton is ever considered for; below this nothing is measured.
+    static constexpr std::size_t   ac_density_work_threshold_low {1400}; //!< The same product for \ref ac_branch_floor .. \ref ac_branch_threshold branches, where the safe direction is reversed.
 
     /*!
      * \brief Decides ONCE PER HAYSTACK whether the Aho-Corasick automaton should take this
@@ -1403,10 +1405,27 @@ namespace real::detail {
           ac_density_last_verdict() = state_.ac_dense ? ac_verdict::automaton : ac_verdict::cascade;
           return state_.ac_dense;
         }
-        const std::size_t limit {text.size() < start + ac_density_sample_bytes
-                                   ? text.size()
-                                   : start + ac_density_sample_bytes};
         const std::size_t branches {static_cast<std::size_t>(prog_.hints.alternation_branch_count)};
+        // WHICH threshold: the safe direction depends on what this route did before. At or above
+        // ac_branch_threshold the automaton was taken UNCONDITIONALLY, so switching early cannot be
+        // worse than the behaviour being replaced and the constant is the measured MINIMUM. Below
+        // it the automaton was taken NEVER, so switching early is a regression against what ships
+        // today, and the constant there is the measured MAXIMUM. Same rule, opposite tail, because
+        // the risk is not symmetric between the two regions.
+        const std::size_t want {branches >= ac_branch_threshold ? ac_density_work_threshold
+                                                                : ac_density_work_threshold_low};
+        // The window is sized by what the verdict needs, not by one constant for every shape.
+        // Deciding on ~8 candidates takes `8000 * branches / want` bytes at threshold density: ~350
+        // for a 24-branch alternation, ~23 for a 4-branch one, because the low-branch region demands
+        // a far higher density and so reaches certainty in a fraction of the bytes. A fixed 256 made
+        // every sparse SHORT alternation pay a full-window scan it could not need -- measured at
+        // 2-5 % on subjects that stay on the cascade, which is the common case and therefore the one
+        // to protect.
+        const std::size_t needed   {8000U * branches / (want == 0 ? std::size_t {1} : want)};
+        const std::size_t span_cap {needed < ac_density_min_span       ? ac_density_min_span
+                                    : needed > ac_density_sample_bytes ? ac_density_sample_bytes
+                                                                       : needed};
+        const std::size_t limit    {text.size() < start + span_cap ? text.size() : start + span_cap};
         std::size_t       cands    {0};
         std::size_t       pos      {start};
         std::size_t       scanned  {limit > start ? limit - start : std::size_t {1}};
@@ -1426,7 +1445,7 @@ namespace real::detail {
           // the first-bytes bitmap tests a byte at a time -- and a dense haystack reaches certainty
           // in a fraction of the window, which is exactly the case that must not pay for it.
           const std::size_t seen {pos > start ? pos - start : std::size_t {1}};
-          if (seen >= ac_density_min_span && cands * 1000U * branches / seen >= ac_density_work_threshold) {
+          if (seen >= ac_density_min_span && cands * 1000U * branches / seen >= want) {
             scanned = seen;
             break;
           }
@@ -1434,7 +1453,7 @@ namespace real::detail {
         const std::size_t span {scanned};
         // (candidates per 1000 bytes) * branch_count, in one expression so the division rounds once.
         const std::size_t work {cands * 1000U * branches / span};
-        state_.ac_dense           = work >= ac_density_work_threshold;
+        state_.ac_dense           = work >= want;
         state_.ac_decided         = true;
         ac_density_last_verdict() = state_.ac_dense ? ac_verdict::automaton : ac_verdict::cascade;
         return state_.ac_dense;

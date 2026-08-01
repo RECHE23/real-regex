@@ -48,6 +48,34 @@ namespace {
     return s;
   }
 
+  //! An `n`-branch alternation of distinct words, and a subject whose candidate heads occur every
+  //! `stride` bytes without ever completing a branch.
+  std::string alternation_of(std::size_t n)
+  {
+    static constexpr std::string_view words[] {"alpha", "bravo", "charlie", "delta", "echo",
+                                               "foxtrot", "golf", "hotel", "india", "juliet",
+                                               "kilo", "lima"};
+    std::string out;
+    for (std::size_t i = 0; i < n; ++i) {
+      if (i != 0) {
+        out += '|';
+      }
+      out += words[i % (sizeof(words) / sizeof(words[0]))];
+    }
+    return out;
+  }
+
+  std::string heads_every(std::size_t n,
+                          std::size_t stride)
+  {
+    static constexpr std::string_view heads {"abcdefghijkl"};
+    std::string                       s(k_size, '_');
+    for (std::size_t i = stride, k = 0; i < k_size; i += stride, ++k) {
+      s[i] = heads[k % n];
+    }
+    return s;
+  }
+
   std::vector<std::pair<std::size_t, std::size_t>> spans(const real::regex& re,
                                                          std::string_view   text)
   {
@@ -164,4 +192,54 @@ TEST(ac_density_gate_still_takes_the_automaton_when_candidates_are_dense)
   real::detail::ac_density_last_verdict() = real::detail::ac_verdict::not_consulted;
   (void) spans(re, dense);
   EXPECT_EQ(verdict_name(), "automaton");
+}
+
+// Below twelve branches the automaton was never taken at all, so the gate's second threshold applies
+// there and it is the measured MAXIMUM rather than the minimum: switching early is a regression
+// against what ships, where above twelve it could not be. These three pin the three outcomes that
+// distinction produces.
+TEST(ac_density_gate_takes_the_automaton_below_twelve_branches_when_dense_enough)
+{
+  const real::regex re    {alternation_of(8)};
+  const std::string dense {heads_every(8, 2)}; // ~500 candidates per 1000 bytes, far past 1400/8
+
+  const seam_scope seam   {false, false};
+  real::detail::ac_density_last_verdict() = real::detail::ac_verdict::not_consulted;
+  (void) spans(re, dense);
+  EXPECT_EQ(verdict_name(), "automaton");
+}
+
+// The same eight branches on a subject BETWEEN the two thresholds must stay on the cascade. One head
+// every 10 bytes is 100 per 1000, so the product is 800: past the 550 that applies at twelve branches
+// and above, short of the 1400 that applies below it. A subject further out would pass against
+// EITHER constant and so would test nothing -- 800 fails if the low region ever adopts the high
+// region's number.
+TEST(ac_density_gate_stays_on_the_cascade_below_twelve_when_not_dense_enough)
+{
+  const real::regex re     {alternation_of(8)};
+  const std::string sparse {heads_every(8, 10)};
+
+  const seam_scope seam    {false, false};
+  real::detail::ac_density_last_verdict() = real::detail::ac_verdict::not_consulted;
+  (void) spans(re, sparse);
+  EXPECT_EQ(verdict_name(), "cascade");
+}
+
+// A three-branch alternation must never reach the automaton, however dense the subject: below four
+// branches nothing has been measured, and an unmeasured domain is not one to route into.
+//
+// This pins the OUTCOME and deliberately does not claim the mechanism. Lowering `ac_branch_floor` to
+// 2 leaves the verdict at `not_consulted`, so something upstream of the floor already excludes a
+// three-branch alternation and the floor is not what does the work here. Found by sabotaging the
+// constant and watching this test NOT fail -- which is the only reason the first version of this
+// comment, which did claim the mechanism, was caught. What that upstream condition is remains open.
+TEST(ac_density_gate_never_routes_a_three_branch_alternation_to_the_automaton)
+{
+  const real::regex re    {alternation_of(3)};
+  const std::string dense {heads_every(3, 2)};
+
+  const seam_scope seam   {false, false};
+  real::detail::ac_density_last_verdict() = real::detail::ac_verdict::not_consulted;
+  (void) spans(re, dense);
+  EXPECT(verdict_name() != "automaton");
 }
