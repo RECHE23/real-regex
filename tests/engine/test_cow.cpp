@@ -3,6 +3,7 @@
 // it writes, or a sibling / parked thread would see the mutation. These patterns produce WRONG captures if
 // that detach is missing — so they are the teeth guarding the refcount path (the Σ-invariant assert, live
 // in debug/sanitize builds, is the other half: it fires on a leaked or double-freed block).
+#include <string>
 #include <string_view>
 
 #include <sciforge/test/framework.hpp>
@@ -78,5 +79,21 @@ TEST(cow_static_regex_captures_constexpr)
   constexpr real::static_regex<"(a+)(a+)"> greedy;
   static_assert(greedy.search("aaaa")[1] == "aaa"sv);
   static_assert(greedy.search("aaaa")[2] == "a"sv);
-  EXPECT(true);
+
+  // The SAME two programs at runtime, over text the compiler cannot see through. The static_asserts
+  // above prove the COW pool under constant evaluation, where it is a compile-sized static_vec the
+  // compiler folds away entirely -- which leaves the runtime instantiation of that same pool
+  // compiled and never called, so a defect reachable only on the runtime path would pass this test
+  // silently. It was: the capture pool for this shape (2 groups, 6 slots) was the one
+  // basic_capture_pool::reset instantiation in the whole suite that no test executed.
+  const std::string xxb  {"xxb"};
+  const std::string aaaa {"aaaa"};
+  const auto        m    {rx.search(xxb)};
+  EXPECT(m.matched());
+  EXPECT_EQ(m[1], "xx"sv);
+  EXPECT_EQ(m[2], "b"sv);
+  const auto g {greedy.search(aaaa)};
+  EXPECT(g.matched());
+  EXPECT_EQ(g[1], "aaa"sv);
+  EXPECT_EQ(g[2], "a"sv);
 }
