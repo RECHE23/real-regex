@@ -176,6 +176,28 @@ namespace real::compat {
 
     /*!
      * \brief Advances the real path: next region search from \ref real_pos_.
+     *
+     * \note **This costs 1.8-5.5x what `find_iter` costs for the same walk, and the reason is
+     *       structural rather than an oversight.** Each advance is a fresh `search()`, which builds a
+     *       fresh VM state; `basic_match_iterator` builds ONE and reuses it across the whole walk.
+     *       That state is where every per-haystack decision lives -- the Aho-Corasick density
+     *       verdict, the inner-literal density gate, the DFA warmup -- so a fresh search per match
+     *       re-derives all of them once per match. Measured over an 8000-byte subject, identical
+     *       match counts on both paths: `[a-z]+` 14.7 us against 72.4 (4.9x), `(\w+)@(\w+)` 12.5
+     *       against 22.3 (1.8x), a 24-branch alternation 46.8 against 251.9 (5.4x) -- the worst case
+     *       being exactly the family whose routing gate is sticky per haystack.
+     *
+     * \note **Not fixed, and the constraint is the reason, so it does not get re-derived.**
+     *       `sizeof(basic_match_iterator)` is 8232 bytes against this iterator's 320, because it
+     *       embeds the VM scratch. `std::regex_iterator` requires copies to be independent and its
+     *       `operator++(int)` returns one, so embedding the walker would clone 8 KB plus heap on
+     *       every post-increment -- trading a win on `++it` for a loss on `it++`. The shape that
+     *       would work is a heap-held walker behind a pointer, detached copy-on-write so a copy that
+     *       never advances never clones; that is a real piece of work, not a tweak.
+     *
+     * \note **The drop-in promise is not what is at stake here.** Against the `std::regex` this
+     *       surface replaces, on the same three cases: 9.9x, 88.7x and 10.8x faster. The gap above is
+     *       a missed opportunity against REAL's own best path, not a failure of the compat layer.
      */
     void next_real()
     {
