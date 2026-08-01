@@ -161,5 +161,41 @@ int main(int argc, char** argv)
   std::printf("\nA routing policy is correct when it takes AC exactly where the ratio is < 1.\n"
               "Branch count is identical across all four rows above, which is the whole argument\n"
               "against gating on it.\n");
+
+  // --- crossover sweep ----------------------------------------------------------------------
+  //
+  // The four regimes above bracket the answer but do not locate it: their candidate densities are
+  // 0, ~0.25, 166 and 500 per 1000 bytes, so the crossover is somewhere inside a 600x gap. A
+  // routing threshold picked from those four rows would be a guess dressed as a measurement. This
+  // sweep plants FALSE-START heads at a controlled rate -- candidate first bytes that never
+  // complete a branch, which is the axis the cascade degrades along -- and reports where AC starts
+  // winning.
+  std::printf("\n\ncandidate-density sweep (false starts only, no matches)\n\n");
+  std::printf("%10s %10s %12s %12s %10s  %s\n", "1 head/N", "cand/1000B", "AC off (us)",
+              "AC on (us)", "AC/casc", "");
+  for (const std::size_t stride : {2000U, 400U, 100U, 60U, 50U, 45U, 40U, 36U, 32U, 28U, 25U, 20U, 12U, 6U, 2U}) {
+    std::string s(k_size, '_');
+    static const char* const heads {"abcdefghijklmnopqrstuvwx"};
+    std::size_t              planted {0};
+    for (std::size_t i = stride; i < k_size; i += stride) {
+      s[i] = heads[planted % 24]; // a head, but the bytes after it never complete the branch
+      ++planted;
+    }
+    const double milli {static_cast<double>(planted) * 1000.0 / static_cast<double>(k_size)};
+    std::size_t  n_off {0};
+    std::size_t  n_on {0};
+    const double off {drain_ns(re, s, false, reps, n_off) / 1000.0};
+    const double on {drain_ns(re, s, true, reps, n_on) / 1000.0};
+    if (n_off != n_on || n_off != 0) {
+      std::printf("%10zu  MISMATCH or unexpected match (%zu/%zu) -- sweep row invalid\n", stride,
+                  n_off, n_on);
+      continue;
+    }
+    const double ratio {off > 0.0 ? on / off : 0.0};
+    std::printf("%10zu %10.1f %12.2f %12.2f %10.2fx  %s\n", stride, milli, off, on, ratio,
+                ratio < 1.0 ? "<-- AC ahead" : "");
+  }
+  std::printf("\nThe threshold belongs where the ratio crosses 1, read off this table on BOTH\n"
+              "platforms -- not interpolated from the four regimes above.\n");
   return 0;
 }
