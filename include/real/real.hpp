@@ -409,6 +409,21 @@ namespace real {
     }
 
     /*!
+     * \brief Whether the walk is over, without materialising an end sentinel to compare against.
+     *
+     * `it == basic_match_iterator{}` answers the same question and reads naturally, but a
+     * default-constructed iterator carries a whole \c state_type -- 8232 bytes with heap-backed
+     * members -- so writing it in a loop condition builds and destroys one per iteration. The compat
+     * `regex_iterator` did exactly that for one round and paid 2.4x for the privilege.
+     *
+     * \return `true` once no further match will be produced.
+     */
+    [[nodiscard]] constexpr bool exhausted() const noexcept
+    {
+      return done_;
+    }
+
+    /*!
      * \brief Returns `true` if both denote the same position/end.
      * \param[in] other Another iterator.
      * \return `true` if both denote the same position/end.

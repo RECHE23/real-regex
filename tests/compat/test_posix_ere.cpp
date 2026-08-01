@@ -132,3 +132,59 @@ TEST(posix_ere_replace_equals_std)
   EXPECT_EQ(rc::regex_replace(s, real_re, std::string("X"), rc::regex_constants::format_first_only),
             std::regex_replace(s, std_re, std::string("X"), std::regex_constants::format_first_only));
 }
+
+// Copies of a regex_iterator must iterate INDEPENDENTLY -- the forward-iterator multipass guarantee,
+// and the property the walker optimisation puts at risk. The REAL path holds an owned walker that is
+// deliberately NOT copied (copying it would clone 8 KB; sharing it copy-on-write would clone on the
+// first advance, which post-increment performs every time). A copy therefore starts with none and
+// rebuilds one from its own position if it advances -- correct only if position, not the walker, is
+// the state. These check exactly that, against std::sregex_iterator doing the same thing.
+TEST(compat_regex_iterator_copies_advance_independently)
+{
+  const std::string s        {"alpha 12 bravo 34 charlie 56 delta 78"};
+  const rc::regex   real_re  {"[a-z]+"};
+  const std::regex  std_re   {"[a-z]+"};
+  EXPECT(real_re.uses_real_traversal()); // teeth: the walker path, not the std fallback
+
+  // Fork mid-walk: advance the original twice, the copy once, and each must be where it was left.
+  auto it   {rc::sregex_iterator(s.begin(), s.end(), real_re)};
+  auto sit  {std::sregex_iterator(s.begin(), s.end(), std_re)};
+  ++it;
+  ++sit;
+  auto fork  {it};  // copy: no walker
+  auto sfork {sit};
+  ++it;
+  ++sit;
+  EXPECT_EQ(it->position(0), sit->position(0));
+  EXPECT_EQ(fork->position(0), sfork->position(0));   // the copy did not move with the original
+  EXPECT(it->position(0) != fork->position(0));
+
+  // The copy then advances on its own -- rebuilding a walker from its own position -- and must
+  // rejoin the same sequence rather than restarting or skipping.
+  ++fork;
+  ++sfork;
+  EXPECT_EQ(fork->position(0), sfork->position(0));
+  EXPECT_EQ(fork->position(0), it->position(0));      // both now on the same match
+  EXPECT_EQ(fork->str(0), it->str(0));
+
+  // Post-increment yields the PREVIOUS match and leaves the original advanced -- the case the design
+  // is built around, since the returned copy is normally discarded without ever advancing.
+  auto before  {it++};
+  auto sbefore {sit++};
+  EXPECT_EQ(before->position(0), sbefore->position(0));
+  EXPECT_EQ(it->position(0), sit->position(0));
+  EXPECT(before->position(0) != it->position(0));
+
+  // And the whole remaining sequence still matches std, from a copy-assigned iterator.
+  rc::sregex_iterator assigned;
+  assigned = it;
+  std::sregex_iterator sassigned;
+  sassigned = sit;
+  for (; assigned != rc::sregex_iterator() && sassigned != std::sregex_iterator();
+       ++assigned, ++sassigned) {
+    EXPECT_EQ(assigned->position(0), sassigned->position(0));
+    EXPECT_EQ(assigned->str(0), sassigned->str(0));
+  }
+  EXPECT(assigned == rc::sregex_iterator());
+  EXPECT(sassigned == std::sregex_iterator());
+}

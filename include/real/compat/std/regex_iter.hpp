@@ -12,6 +12,7 @@
 #include "regex_match.hpp"
 
 #include <iterator>
+#include <memory>
 
 //! \brief Drop-in replacements for `<regex>`: \c basic_regex, \c regex_search / \c regex_match /
 //!        \c regex_replace and the iterator types -- backed by REAL's linear-time engine where it can
@@ -74,6 +75,54 @@ namespace real::compat {
       std_it_.emplace(first, last, re.std_engine(), detail::to_std_match(flags));
       sync_std();
     }
+
+    /*!
+     * \brief Copies the iteration position, but NOT the walker.
+     *
+     * The walker is an accelerator over \ref real_pos_, never the state itself, and that is what
+     * makes this cheap where the obvious designs are not. Copying it would clone 8 KB plus heap;
+     * sharing it copy-on-write would clone on the first advance, which `operator++(int)` performs on
+     * every call -- buying `++it` at the price of `it++`. Leaving the copy without one costs it a
+     * single walker construction IF it ever advances, and nothing at all if it does not, which is
+     * what a post-increment's discarded result actually does.
+     * \param[in] other The iterator to copy.
+     */
+    regex_iterator(const regex_iterator& other)
+      : begin_(other.begin_), end_(other.end_), re_(other.re_), flags_(other.flags_),
+        real_path_(other.real_path_), real_pos_(other.real_pos_), std_it_(other.std_it_),
+        match_(other.match_), at_end_(other.at_end_)
+    {}
+
+    /*!
+     * \brief Copy-assigns the iteration position, dropping any walker this iterator owned.
+     * \param[in] other The iterator to copy.
+     * \return `*this`.
+     */
+    regex_iterator& operator=(const regex_iterator& other)
+    {
+      if (this != &other) {
+        walker_.reset(); // rebuilt on the next advance, from real_pos_
+        begin_     = other.begin_;
+        end_       = other.end_;
+        re_        = other.re_;
+        flags_     = other.flags_;
+        real_path_ = other.real_path_;
+        real_pos_  = other.real_pos_;
+        std_it_    = other.std_it_;
+        match_     = other.match_;
+        at_end_    = other.at_end_;
+      }
+      return *this;
+    }
+
+    regex_iterator(regex_iterator&&) noexcept = default; //!< Moves the walker along with the position.
+
+    /*!
+     * \brief Move-assigns, carrying the walker along with the position.
+     * \return `*this`.
+     */
+    regex_iterator& operator=(regex_iterator&&) noexcept = default;
+    ~regex_iterator()                                    = default; //!< Releases the walker, if any.
 
     /*!
      * \brief Constructing from a temporary regex would dangle (std::regex_iterator parity).
@@ -164,6 +213,11 @@ namespace real::compat {
 
   private:
 
+    //! \brief The REAL walker, when this iterator owns one. ACCELERATION ONLY: \ref real_pos_ stays
+    //!        the source of truth, so a null walker costs correctness nothing and only speed.
+    using walker_type = real::basic_match_iterator<real::detail::dynamic_storage>;
+
+    std::unique_ptr<walker_type>                walker_;                                      //!< Owned, never copied -- see the copy constructor.
     BidirIt                                     begin_     {};                                //!< Start of the sequence.
     BidirIt                                     end_       {};                                //!< End of the sequence.
     const regex_type*                           re_        {nullptr};                         //!< The pattern, borrowed.
@@ -206,12 +260,24 @@ namespace real::compat {
       // A POSIX grammar on REAL drives the iteration with leftmost-longest bounds; the ECMAScript
       // default keeps leftmost-first.
       const real::regex&     engine {std::get<real::regex>(re_->engine())};
-      const auto             result {re_->posix_longest() ? engine.search_longest(sv, real_pos_)
-                                     : engine.search(sv, real_pos_)};
-      if (!result.matched()) {
+      if (walker_ == nullptr) {
+        // First advance, or the first after a copy: build the walker at the current position. It is
+        // self-contained (program view and text are values/views), so it outlives the range it came
+        // from. `find_iter`'s empty-match rules never come into play here: this path is taken only
+        // for a NON-NULLABLE pattern (see this file's header), which is also why repeated region
+        // searches agreed with it before.
+        auto range {re_->posix_longest() ? engine.find_iter_longest(sv, real_pos_)
+                                         : engine.find_iter(sv, real_pos_)};
+        walker_ = std::make_unique<walker_type>(range.begin());
+      }
+      else {
+        ++(*walker_);
+      }
+      if (walker_->exhausted()) {
         at_end_ = true;
         return;
       }
+      const auto& result {**walker_};
       match_.reset(begin_, end_);
       match_.fill_from_real(result);
       // Iteration: the prefix runs from the previous match end (== real_pos_ here), not the start.
