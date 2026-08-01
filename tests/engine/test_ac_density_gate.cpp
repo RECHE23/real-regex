@@ -229,11 +229,14 @@ TEST(ac_density_gate_stays_on_the_cascade_below_twelve_when_not_dense_enough)
 // A three-branch alternation must never reach the automaton, however dense the subject: below four
 // branches nothing has been measured, and an unmeasured domain is not one to route into.
 //
-// This pins the OUTCOME and deliberately does not claim the mechanism. Lowering `ac_branch_floor` to
-// 2 leaves the verdict at `not_consulted`, so something upstream of the floor already excludes a
-// three-branch alternation and the floor is not what does the work here. Found by sabotaging the
-// constant and watching this test NOT fail -- which is the only reason the first version of this
-// comment, which did claim the mechanism, was caught. What that upstream condition is remains open.
+// ac_branch_floor is exactly what excludes it, verified by instrumenting the dispatch (bc=3 against
+// floor=4, so the gate is never consulted) and by lowering the floor to 2, which makes this test
+// fail. An earlier version of this comment claimed the opposite -- that something upstream of the
+// floor did the work and the mechanism was unknown -- on the strength of an experiment that lowered
+// the floor with `sed 's/ac_branch_floor {4}/.../'` while the formatter had aligned the declaration
+// to `ac_branch_floor               {4}`. The pattern matched nothing, the tree was never modified,
+// and the unchanged behaviour read as evidence. Whitespace-tolerant patterns since; the same slip
+// also hid, for one round, that the high-region threshold's bracketing tests do work.
 TEST(ac_density_gate_never_routes_a_three_branch_alternation_to_the_automaton)
 {
   const real::regex re    {alternation_of(3)};
@@ -242,7 +245,7 @@ TEST(ac_density_gate_never_routes_a_three_branch_alternation_to_the_automaton)
   const seam_scope seam   {false, false};
   real::detail::ac_density_last_verdict() = real::detail::ac_verdict::not_consulted;
   (void) spans(re, dense);
-  EXPECT(verdict_name() != "automaton");
+  EXPECT_EQ(verdict_name(), "not_consulted");
 }
 
 // The high region's constant, pinned by BRACKETING it. The four-regime tests above fix only the SIGN
