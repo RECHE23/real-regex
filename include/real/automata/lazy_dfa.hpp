@@ -676,13 +676,34 @@ namespace real::detail {
 
     const std::size_t         n {prog.code.size()};
     std::vector<std::int32_t> map(n + 1, 0);                     // old pc -> new pc (n = the one-past end)
-    std::vector<utf8_trie>    tries(n);                          // the trie for each klass_cp pc (built once, reused when emitting)
-    std::size_t               cur {0};
+    // A trie PER CLASS, not per occurrence, and pointers into it per pc. A trie is a pure function of
+    // its code-point class, so `(\w+)X(\w+)` was building the identical structure twice. Devbox
+    // callgrind put build_utf8_trie at 4.6 % of a capture-pattern profile, and the wall clock puts
+    // that pattern's FIRST search at 1064 us against 3.9 for its byte-class twin `([a-z]+)X([a-z]+)`
+    // -- the cost is the lazy table build, not construction (15.8 us) and not steady-state (1.6 us).
+    // Deduplicating within the build takes it to 897 us, and `(\d+)X(\d+)` from 75.2 to 60.1.
+    // `by_class` is sized up front and never grows, so the pointers cannot dangle.
+    //
+    // NOT shared ACROSS the two expansions of the same program, and that is a decision rather than an
+    // omission. ensure_immutables builds Tier-A (assertions stripped) and ensure_op_table builds
+    // Tier-B (kept); the byte programs differ but the tries would not, so one cache would take three
+    // builds to one. They are separate functions called at different times, so sharing means holding
+    // the cache in regex_immutables -- kilobytes kept alive for the life of the regex to save a
+    // one-time build. Measured at roughly another 15 %, which does not buy that.
+    std::vector<utf8_trie>        by_class(prog.cp_classes.size());
+    std::vector<bool>             class_built(prog.cp_classes.size(), false);
+    std::vector<const utf8_trie*> tries(n, nullptr);              // the trie for each klass_cp pc
+    std::size_t                   cur {0};
     for (std::size_t pc = 0; pc < n; ++pc) {
       map[pc] = static_cast<std::int32_t>(cur);
       if (prog.code[pc].op == opcode::klass_cp) {
-        tries[pc]   = build_utf8_trie(prog.cp_classes[prog.code[pc].arg16], prog.cp_ranges);
-        cur        += utf8_trie_emit_size(tries[pc]);
+        const std::size_t ci {static_cast<std::size_t>(prog.code[pc].arg16)};
+        if (!class_built[ci]) {
+          by_class[ci]    = build_utf8_trie(prog.cp_classes[ci], prog.cp_ranges);
+          class_built[ci] = true;
+        }
+        tries[pc]   = &by_class[ci];
+        cur        += utf8_trie_emit_size(*tries[pc]);
         if (cur > max_size) {
           bp.eligible = false; // a large repeated class (e.g. `\w{k}` for a big k): decline before building
           return bp;           // any further trie -- the general Pike VM needs no byte-program expansion.
@@ -706,7 +727,7 @@ namespace real::detail {
     for (std::size_t pc = 0; pc < n; ++pc) {
       const instr& in {prog.code[pc]};
       if (in.op == opcode::klass_cp) {
-        emit_utf8_trie(bp, tries[pc], map[pc + 4], range_intern);
+        emit_utf8_trie(bp, *tries[pc], map[pc + 4], range_intern);
         pc += 3;
       }
       else {
