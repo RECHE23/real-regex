@@ -1007,6 +1007,31 @@ actual gate).
   which contain a code-point class. Those rows are the floor gauge — always read them
   before believing a small delta on the rows under test, and treat anything inside ±3 % as
   bounded rather than measured. This is the same layout sensitivity recorded in O2r-1.
+- **Two deterministic instruments sit beside the wall clock, and they answer questions it cannot.**
+  `make route-probe` and `make alloc-probe` compose patterns from one shared generator
+  (`benchmarks/pattern_gen.hpp`, so both tables describe the same population) and report,
+  respectively, which dispatch route each composition reaches and how many heap allocations its
+  search performs. Both are exact and identical run to run: unlike a timing bench they cannot
+  produce a red that means "the runner was busy", which is what makes them the right instrument for
+  a question about *shape* rather than speed. `route-probe` answers "does anything reach this
+  route?", and currently reports **6 of 20 unreached** — each one either dead or gated more narrowly
+  than its author believed. `alloc-probe` asserts the stronger property: **how many allocations a
+  search performs must be a property of the ROUTE, not of the pattern that took it.** Every
+  non-`general_*` route must be flat zero; the general VM is allowed a budget, but not a spread.
+  That invariant is what caught the capture pool growing by doubling mid-search — `general_full`
+  read min 4 / median 7 / max 17, and reserving a block budget in `reset()` took it to a flat
+  **5 / 5 / 5**, which is the figure a later regression should be read against. Neither probe ever
+  exits non-zero: an unreached route or a spread is a question for a human, and gating on it would
+  pin today's dispatch shape as if it were the contract.
+- **Allocation counts and timings must never come from one binary.** Counting allocations means
+  replacing global `operator new`, which is not inlinable and dominates the very wall clock it was
+  linked in to explain: one `regex_set` construction measured 7191 µs with the counter linked and
+  2601 µs without — a **2.8× inflation** that was read, and published, as a property of the code.
+  The mistake was made three times in one session, twice *after* the hazard had been written down,
+  so it is a compile error now rather than a note: `benchmarks/measure.hpp` accepts
+  `REAL_BENCH_TIME` xor `REAL_BENCH_ALLOCS` and `#error`s on both. Two binaries, two runs, two
+  tables — and say in the write-up which number came from which, because a reader cannot tell
+  afterwards.
 - **Matrices sweep sizes.** A hot-path optimisation's cost or benefit can invert across
   the haystack size (a per-search setup that amortises on 2 MB can dominate 16 KB) and
   across match density — so a bench that measures one slice hides a regression in another.
