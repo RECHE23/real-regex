@@ -85,6 +85,8 @@ namespace real::detail {
     static constexpr std::uint32_t no_node          {0xFFFFFFFFU};  //!< "No node yet" sentinel in the pc->node map.
     static constexpr std::size_t   max_nodes        {65000};        //!< Node cap (RE2's), a memory/DoS bound.
     static constexpr std::size_t   max_slots        {10};           //!< Slot-pointer cap: group 0 + four user groups.
+    // SIZING, not behaviour: a dedup hash width. Collisions cost time, never correctness, so
+    // the sabotage sweep reads it unguarded and there is nothing for a test to pin.
     static constexpr std::size_t   minimize_buckets {4096};         //!< Hash buckets for the Moore-refinement dedup.
     static constexpr std::size_t   max_table_bytes  {8U << 20};     //!< Table-memory cap (~8 MB): larger declines to the VM.
     //! Moore-refinement work cap (rounds x nodes x per-node signature width). A repeated large class (e.g.

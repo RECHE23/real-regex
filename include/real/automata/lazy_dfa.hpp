@@ -170,6 +170,25 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Test observability : whether the inner-literal density gate last abandoned the route.
+   *
+   * The gate decides only which of two routes runs, and both produce identical spans by contract --
+   * which is what leaves `tests/engine/test_il_density_gate.cpp` unable to see it at all. That file
+   * pins semantic transparency, correctly and thoroughly, and therefore cannot react to
+   * \ref real::detail::pike_vm::il_density_milli_threshold moving: the spans are equal whichever way
+   * the gate goes. The sabotage sweep reported that constant unguarded for exactly this reason.
+   *
+   * One store, on a path that already writes two sticky fields beside it.
+   *
+   * \return Reference to the process-wide flag; clear it before a search to arm it.
+   */
+  inline bool& il_density_last_abandoned()
+  {
+    static bool abandoned {false};
+    return abandoned;
+  }
+
+  /*!
    * \brief What the AC density gate last decided; `ac_density_last_verdict()` below reports it.
    */
   enum class ac_verdict : std::uint8_t
@@ -862,6 +881,9 @@ namespace real::detail {
    */
   struct pc_set_cache
   {
+    // SIZING, not behaviour: chaining absorbs any load factor, so no answer and no route
+    // depends on this number -- only speed. The sabotage sweep will always read it as
+    // unguarded, and correctly: there is nothing here for a test to hold.
     static constexpr std::size_t   bucket_count {2048};        //!< Fixed bucket count; chaining absorbs the load.
     static constexpr std::uint32_t not_found    {0xFFFFFFFFU}; //!< \ref find's miss answer (never a valid state id).
 

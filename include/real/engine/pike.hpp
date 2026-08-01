@@ -1106,8 +1106,9 @@ namespace real::detail {
             if (static_cast<std::size_t>(state_.il_density_cands) * 1000U / span >=
                 il_density_milli_threshold) {
               if (prog_.immut != nullptr && prog_.immut->byte_prog.eligible) {
-                abandon                 = true;
-                state_.il_abandoned     = true; // sticky: dense memmem stream loses to core for this haystack
+                abandon                     = true;
+                state_.il_abandoned         = true; // sticky: dense memmem stream loses to core for this haystack
+                il_density_last_abandoned() = true;
                 return false;
               }
             }
@@ -2204,6 +2205,11 @@ namespace real::detail {
 
     //! \brief Cap on how far a jump chain is followed to a loop head (empty-iteration exit routing);
     //!        a loop join reaches its split in one hop, so this is a generous bound, never a hot cost.
+    // A GENEROUS BOUND on an unreachable path, not a tuning knob: a loop join reaches its split
+    // in one hop, so eight is headroom against a shape the compiler does not emit. The sabotage
+    // sweep reads it unguarded because no pattern gets near it -- which is the intent, and a
+    // test that manufactured a nine-hop chain would be pinning the bound rather than any
+    // behaviour the engine has.
     static constexpr int max_loop_hops {8};
 
     //! \brief Accepted-byte count after which a `class+` run switches from the per-byte advance to a
