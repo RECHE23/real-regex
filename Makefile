@@ -65,7 +65,7 @@ include $(ROOT)/mk/common.mk
 include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-	full-local-gate-impl gcc-check route-probe alloc-probe \
+	full-local-gate-impl gcc-check route-probe alloc-probe ac-regime \
         lint misra fuzz fuzz-compat fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-multipattern bench-duel bench-static bench-matrix matrix-gate \
@@ -562,6 +562,11 @@ route-probe: ## [bench] Which dispatch routes do composed patterns actually reac
 	@mkdir -p $(BUILD)
 	@c++ $(CXXSTD) -O2 -DREAL_PROFILE $(INCLUDES) -I benchmarks benchmarks/route_probe.cpp -o $(BUILD)/route_probe
 	@$(BUILD)/route_probe $(if $(N),$(N),6000) $(if $(SEED),$(SEED),)
+
+ac-regime: ## [bench] Aho-Corasick routing: the four subject regimes, AC on vs off (dev tool)
+	@mkdir -p $(BUILD)
+	@c++ $(CXXSTD) -O2 $(INCLUDES) -I benchmarks benchmarks/ac_regime.cpp -o $(BUILD)/ac_regime
+	@$(BUILD)/ac_regime $(if $(REPS),$(REPS),9)
 
 gcc-check: ## [gates] Compile the engine headers under gcc -Werror (the diagnostics clang lacks)
 	@if command -v docker >/dev/null 2>&1; then \
