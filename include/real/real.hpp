@@ -1258,6 +1258,22 @@ namespace real {
                                             match_semantics         sem = match_semantics::first) const
     {
       const std::size_t              end {endpos < text.size() ? endpos : text.size()};
+      // FRESH PER SEARCH, and reusing it across searches was measured and refused rather than
+      // overlooked. Constructing plus destroying this state costs 9.5 ns -- 21 % of a short literal
+      // search (47.4 ns), 27 % of a short class search (36.8), 10 % of a 24-branch alternation
+      // (98.4), and 1.4 % once captures dominate (704.8). No single member accounts for it: the
+      // parts measure 0.3-0.9 ns each, so there is no lazy-init lever to pull, only reuse.
+      //
+      // Reuse is safe WITHIN one regex -- \ref basic_match_iterator already holds one state for a
+      // whole walk, which is where the compat regex_iterator's 1.5-4.5x came from. Reuse ACROSS
+      // regexes is not: a `static thread_local` state shared by two patterns segfaults on the first
+      // search with the second, and AddressSanitizer names it a heap-use-after-free through the
+      // class-table pointer `tbl` in run_class_loop (pike.hpp). The state carries program-derived
+      // pointers whose invalidation is not built for switching programs; which one is not
+      // established here and the note does not guess.
+      //
+      // So the only safe granularity is per regex per thread, and a lookup keyed that way costs more
+      // than the 9.5 ns it would save. Callers who want the saving already have it: `find_iter`.
       typename Storage::state_type   state;
       typename Storage::slot_storage slots;
       // Reference, not a copy: `program_view` is 432 bytes and this line runs once per search.
