@@ -2,6 +2,31 @@
 
 Per-train benchmark-impact log: what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s §A/§E/§B/§Unicode/§multi-pattern sections, carried verbatim from that file's Version row. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.8.0
+
+8.0 (**routing decided by the subject, and allocation counts that stop depending on the pattern**):
+**no published row was re-measured, and §A cannot have moved — by construction rather than by
+inspection.** Its table carries no capture-carrying pattern, so the capture-pool reservation cannot
+reach it, and its one alternation row `the|fox|dog` has three branches, below the Aho-Corasick
+routing floor of twelve, so the density gate cannot reach it either. The two changes that DO carry
+throughput land on shapes this document does not publish, and they were measured on their own terms,
+on both platforms, as the minimum across five alternating rounds against an untouched gauge.
+**Aho-Corasick routing** now selects on candidate density rather than branch count: a 24-branch
+alternation over a 4000-byte subject with no match goes **12.92 → 2.21 µs on arm64 (5.85×)** and
+**13.57 → 3.63 on x86-64 (3.74×)**, while match-dense and false-start subjects keep the automaton and
+their existing figures (0.97× arm64, 1.00× x86-64). The rule is a PRODUCT — `(candidates per 1000
+bytes) × branch_count` — because the crossover moves 3× between 12 and 24 branches; the constant is
+the measured minimum across both platforms, since the route was taken unconditionally before and so
+switching early cannot regress what it replaces. **The capture pool** stops growing by doubling
+mid-search: 13 heap allocations become 5, and the allocation probe reads the general route at
+**5/5/5 where it read 4/7/17**, which is the property worth the entry — allocation count is now a
+function of the ROUTE and not of the pattern. Timing on capture-carrying shapes not in §A:
+`((\w+))` **−20.0 % arm64 / −15.0 % x86-64**, `(\w+)@(\w+)` −7.0 / −6.2, `\w+@\w+` −9.4 / −6.1,
+against `[a-z]+` as the untouched gauge at 0.0 % / +2.3 %. **§E's `captures/*` rows are where the
+pool change would show in a published table and they were NOT re-run** — that is a criterion campaign
+against the rust crate, on its own protocol, and this train does not claim it. §A, §Unicode, §B and
+§multi-pattern carry their earlier figures unchanged.
+
 ## v2026.7.63
 
 7.63 (**the storage lift — a pattern stops multiplying the engine into your translation unit, and the
