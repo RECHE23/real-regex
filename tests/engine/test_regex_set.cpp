@@ -173,3 +173,68 @@ TEST(regex_set_is_not_dfa_munch)
   const auto             hit = set.matches("ab");
   EXPECT(hit[0] && hit[1]); // which-matched: both true
 }
+
+// The fused build's threshold, pinned at its edges and with a mixed set. Nothing pinned this before:
+// the partition that decides it runs, or does not run, entirely inside the constructor, and its only
+// externally visible consequences are uses_fused()/eligible_count() and the answers themselves.
+//
+// It became worth pinning when the constructor learned to skip the partition outright for a set
+// smaller than the threshold -- an exact short-circuit, since the eligible subset is at most the whole
+// set, so a smaller set can never reach it. That is provably behaviour-neutral and therefore has no
+// observable of its own to test; what CAN be tested is that the outcomes either side of the boundary
+// are what they were, which is what this does.
+TEST(regex_set_fused_threshold_edges_and_mixed_sets)
+{
+  const auto build = [](std::size_t n, std::size_t ineligible) {
+                       std::vector<std::string> pats;
+                       pats.reserve(n);
+                       for (std::size_t i = 0; i < n; ++i) {
+                         // A lookaround is DFA-ineligible; the rest are plain enough to fuse.
+                         pats.push_back(i < ineligible
+                                          ? "X" + std::to_string(i) + "(?=[0-9])"
+                                          : "ERR" + std::to_string(i) + "[0-9]{2}[a-z]+");
+                       }
+                       return pats;
+                     };
+  const auto make_set = [](const std::vector<std::string>& pats) {
+                          std::vector<std::string_view> views(pats.begin(), pats.end());
+                          return real::regex_set {std::span<const std::string_view> {views}};
+                        };
+
+  // Just under the threshold: no fused table, and eligible_count reports 0 rather than the count of
+  // patterns that WOULD have been eligible -- the set falls back to N-walks wholesale.
+  const auto under = build(55, 0);
+  const auto s55   = make_set(under);
+  EXPECT(!s55.uses_fused());
+  EXPECT_EQ(s55.eligible_count(), 0U);
+  EXPECT(s55.is_match("ERR942abc"));
+
+  // At the threshold and one past it: fused, and every member counted.
+  const auto at   = build(56, 0);
+  const auto s56  = make_set(at);
+  EXPECT(s56.uses_fused());
+  EXPECT_EQ(s56.eligible_count(), 56U);
+  EXPECT(s56.is_match("ERR942abc"));
+
+  const auto over = build(57, 0);
+  const auto s57  = make_set(over);
+  EXPECT(s57.uses_fused());
+  EXPECT_EQ(s57.eligible_count(), 57U);
+
+  // A big enough set whose ELIGIBLE subset falls short: the partition must run (the set is large
+  // enough that it might have qualified) and then decline. This is the case the short-circuit must
+  // not swallow -- 60 members, 10 of them ineligible, leaves 50 and the fused table stays unbuilt.
+  const auto mixed_short = build(60, 10);
+  const auto s60a        = make_set(mixed_short);
+  EXPECT(!s60a.uses_fused());
+  EXPECT_EQ(s60a.eligible_count(), 0U);
+  EXPECT(s60a.is_match("ERR1042abc")); // a member past the ineligible prefix still answers
+
+  // And the same size with few enough ineligibles to clear it.
+  const auto mixed_ok = build(60, 4);
+  const auto s60b     = make_set(mixed_ok);
+  EXPECT(s60b.uses_fused());
+  EXPECT_EQ(s60b.eligible_count(), 56U);
+  EXPECT(s60b.is_match("ERR942abc"));
+  EXPECT(s60b.is_match("X07")); // an ineligible member is still searched, by N-walk
+}
