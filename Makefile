@@ -487,12 +487,12 @@ full-local-gate-impl:
 	@$(MAKE) check-doc-style
 	@echo "── [7/23] doc-check (CI-pinned Doxygen when Docker is available)"
 	@$(MAKE) doc-check
+	@echo "── [8/23] gcc-check (the diagnostics clang lacks — see the target)"
+	@$(MAKE) gcc-check
 	# docs/site's own net (-W --keep-going + linkcheck). Same shape as the
 	# GXX/go legs below: skipped with a warning when sphinx-build is absent (a dev
 	# without the docs venv on PATH doesn't need to rougir tout le gate) -- the docs-site
 	# CI job (ci.yml) is the backstop, so this is never the ONLY net on the site.
-	@echo "── [8/23] gcc-check (the diagnostics clang lacks — see the target)"
-	@$(MAKE) gcc-check
 	@echo "── [9/23] docs-site-gate (sphinx -W --keep-going + linkcheck; skipped if sphinx-build absent)"
 	@if command -v $(SPHINXBUILD) >/dev/null 2>&1; then $(MAKE) docs-site-gate; else echo "full-local-gate: WARN — $(SPHINXBUILD) absent, docs-site-gate skipped (CI covers it)"; fi
 	@echo "── [10/23] misra (single synthetic TU)"
