@@ -65,7 +65,7 @@ include $(ROOT)/mk/common.mk
 include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-	full-local-gate-impl gcc-check route-probe \
+	full-local-gate-impl gcc-check route-probe alloc-probe \
         lint misra fuzz fuzz-compat fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-multipattern bench-duel bench-static bench-matrix matrix-gate \
@@ -553,9 +553,14 @@ full-local-gate-impl:
 # two cmake legs caught it after the push. One TU is enough to cover the engine headers: real_capi.cpp
 # pulls real/real.hpp, which pulls the rest. Docker rather than a local gcc, matching doc-check's
 # precedent, and skipping loudly rather than failing when it is absent -- CI still has the real legs.
+alloc-probe: ## [bench] Heap allocations per dispatch route — every non-general route must be 0 (dev tool)
+	@mkdir -p $(BUILD)
+	@c++ $(CXXSTD) -O2 -DREAL_PROFILE $(INCLUDES) -I benchmarks benchmarks/alloc_probe.cpp -o $(BUILD)/alloc_probe
+	@$(BUILD)/alloc_probe $(if $(N),$(N),3000) $(if $(SEED),$(SEED),)
+
 route-probe: ## [bench] Which dispatch routes do composed patterns actually reach? (dev tool, not a gate)
 	@mkdir -p $(BUILD)
-	@c++ $(CXXSTD) -O2 -DREAL_PROFILE $(INCLUDES) benchmarks/route_probe.cpp -o $(BUILD)/route_probe
+	@c++ $(CXXSTD) -O2 -DREAL_PROFILE $(INCLUDES) -I benchmarks benchmarks/route_probe.cpp -o $(BUILD)/route_probe
 	@$(BUILD)/route_probe $(if $(N),$(N),6000) $(if $(SEED),$(SEED),)
 
 gcc-check: ## [gates] Compile the engine headers under gcc -Werror (the diagnostics clang lacks)
