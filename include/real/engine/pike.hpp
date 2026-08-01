@@ -1365,6 +1365,13 @@ namespace real::detail {
     static constexpr std::uint16_t ac_branch_floor               {4};    //!< Fewest branches the automaton is ever considered for; below this nothing is measured.
     static constexpr std::size_t   ac_density_work_threshold_low {1400}; //!< The same product for \ref ac_branch_floor .. \ref ac_branch_threshold branches, where the safe direction is reversed.
 
+    // A RELATION, not a value. The sabotage sweep reports only that no test reacts to a 4x change in
+    // a constant; for a measured threshold the answer to that is a test, but for a relation between
+    // constants a test merely samples where an assertion covers every build. The window clamp is
+    // nonsense if its floor exceeds its cap, and nothing said so until now.
+    static_assert(ac_density_min_span <= ac_density_sample_bytes,
+                  "the sample window's floor must not exceed its cap");
+
     /*!
      * \brief Decides ONCE PER HAYSTACK whether the Aho-Corasick automaton should take this
      *        alternation's searches, by sampling candidate density at the search start.
@@ -1756,6 +1763,20 @@ namespace real::detail {
     //!        the N=10 repro stays correctly below threshold either way, AC/VM=1.16x
     //!        there against the standalone POC — inside the closed-gap target of <=~1.5x).
     static constexpr std::uint16_t ac_branch_threshold {12};
+
+    // These two relations live here rather than beside their siblings above: a static_assert at
+    // class scope is evaluated in declaration order, and ac_branch_threshold is declared far below
+    // them, so placing them earlier fails to compile and says so obscurely.
+    static_assert(ac_branch_floor <= ac_branch_threshold,
+                  "the low-branch region is empty unless the floor sits under the threshold");
+    // This one IS the safety argument in one line. At or above ac_branch_threshold the automaton was
+    // taken UNCONDITIONALLY, so switching early cannot regress what it replaced and the constant is
+    // the measured MINIMUM; below it the automaton was taken NEVER, so switching early DOES regress
+    // and the constant is the measured MAXIMUM. Swap the two and both halves become unsound while
+    // every test still passes -- each region would simply be routing on the other's number.
+    static_assert(ac_density_work_threshold_low >= ac_density_work_threshold,
+                  "below ac_branch_threshold the automaton was never taken, so that region must be "
+                  "the MORE conservative of the two");
 
     /*!
      * \brief Build (or rebuild, on a program change) this iterator's Aho-Corasick automaton for a

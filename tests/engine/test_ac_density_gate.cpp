@@ -52,9 +52,10 @@ namespace {
   //! `stride` bytes without ever completing a branch.
   std::string alternation_of(std::size_t n)
   {
-    static constexpr std::string_view words[] {"alpha", "bravo", "charlie", "delta", "echo",
-                                               "foxtrot", "golf", "hotel", "india", "juliet",
-                                               "kilo", "lima"};
+    static constexpr std::string_view words[] {
+      "alpha", "bravo",   "charlie", "delta",  "echo",    "foxtrot", "golf",    "hotel",
+      "india", "juliet",  "kilo",    "lima",   "mike",    "november", "oscar",  "papa",
+      "quebec", "romeo",  "sierra",  "tango",  "uniform", "victor",  "whiskey", "xray"};
     std::string out;
     for (std::size_t i = 0; i < n; ++i) {
       if (i != 0) {
@@ -68,7 +69,7 @@ namespace {
   std::string heads_every(std::size_t n,
                           std::size_t stride)
   {
-    static constexpr std::string_view heads {"abcdefghijkl"};
+    static constexpr std::string_view heads {"abcdefghijklmnopqrstuvwx"};
     std::string                       s(k_size, '_');
     for (std::size_t i = stride, k = 0; i < k_size; i += stride, ++k) {
       s[i] = heads[k % n];
@@ -242,4 +243,34 @@ TEST(ac_density_gate_never_routes_a_three_branch_alternation_to_the_automaton)
   real::detail::ac_density_last_verdict() = real::detail::ac_verdict::not_consulted;
   (void) spans(re, dense);
   EXPECT(verdict_name() != "automaton");
+}
+
+// The high region's constant, pinned by BRACKETING it. The four-regime tests above fix only the SIGN
+// of the decision -- their subjects sit at products 6 and 3996 against a threshold of 550, so the
+// constant can move by 4x in either direction without any of them noticing. The sabotage sweep
+// (tools/sabotage_sweep.py) reported exactly that, on tests written the same day, which is the whole
+// argument for the sweep: a test that passes for the right reason can still pin nothing.
+//
+// 24 branches, so one head every N bytes gives a product of 24000/N. Stride 34 -> 706, just past 550;
+// stride 60 -> 400, just short. Together they fail if the threshold moves materially either way.
+TEST(ac_density_gate_high_region_takes_the_automaton_just_past_the_threshold)
+{
+  const real::regex re    {alternation_of(24)};
+  const std::string dense {heads_every(24, 34)}; // product ~706
+
+  const seam_scope seam   {false, false};
+  real::detail::ac_density_last_verdict() = real::detail::ac_verdict::not_consulted;
+  (void) spans(re, dense);
+  EXPECT_EQ(verdict_name(), "automaton");
+}
+
+TEST(ac_density_gate_high_region_stays_on_the_cascade_just_short_of_the_threshold)
+{
+  const real::regex re     {alternation_of(24)};
+  const std::string sparse {heads_every(24, 60)}; // product ~400
+
+  const seam_scope seam    {false, false};
+  real::detail::ac_density_last_verdict() = real::detail::ac_verdict::not_consulted;
+  (void) spans(re, sparse);
+  EXPECT_EQ(verdict_name(), "cascade");
 }
