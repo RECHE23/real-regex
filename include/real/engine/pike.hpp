@@ -1341,6 +1341,24 @@ namespace real::detail {
      * (dens 0.06) sits conservatively above crossover so sparse IL wins (dens ≪ 0.01) stay on IL. Capture-free
      * only (\c slot_count ≤ 2): with groups, IL still beat forced DFA on dense (measured). Probe after K candidates
      * across the haystack (sticky on \ref pike_state::il_density_cands).
+     *
+     * \note **The threshold is calibrated against ONE alternative, and the crossover moves with which
+     *       route the gate is arbitrating against.** It was measured on `(?:\w+)_(?:\w+)`, whose
+     *       fallback is the DFA. `[0-9]{4}-[0-9]{2}-[0-9]{2}` falls back to \ref
+     *       pattern_hints::fixed_shape instead, which is far cheaper -- and on a date-dense corpus
+     *       that route is 1.15x faster than the inner-literal one (0.955 against 1.102 ns/byte, 64 KB)
+     *       while the gate never fires, because `-` at ~32 candidates per 1000 bytes sits under the
+     *       60 calibrated for the other shape. On a sparse corpus the two are equal, so the gate is
+     *       not wrong in general -- its single threshold is.
+     *
+     *       This is the same defect the Aho-Corasick gate had before 2026.8.0: one number where the
+     *       crossover depends on what is being compared against. The AC fix keyed on a PRODUCT once
+     *       the second variable was identified; the analogous variable here is the fallback route's
+     *       cost, not the branch count.
+     *
+     *       Worth chasing because it is on the engine's worst PUBLISHED row: §A's `date` reads 0.51x
+     *       against PCRE2-JIT on x86-64 and 0.59x on arm64, the largest gap in that table. 15 % does
+     *       not close it, but it is the part that is understood.
      */
     static constexpr std::uint32_t il_density_probe_candidates {8};
     static constexpr std::size_t   il_density_milli_threshold  {60}; //!< Candidate density, in candidates per 1000 bytes, at or above which the IL route yields to the DFA.
