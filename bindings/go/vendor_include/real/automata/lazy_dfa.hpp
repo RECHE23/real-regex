@@ -237,6 +237,28 @@ namespace real::detail {
   //!        ranges that are pairwise **disjoint**, so at most one edge matches any byte — that determinism is
   //!        what makes the byte-program one-pass-friendly. `child >= 0` is a node id; `child == -1` is accept
   //!        (a code point ends here — the run continues at the construct's successor).
+  /*!
+   * \brief One trie node's outgoing edges.
+   *
+   * \note **This vector is one heap block per node, and after the 2026-08 allocation work it is what
+   *       remains.** Phase-bracketed counting of a first `\w+@\w+` search over 8 KB puts 2761
+   *       allocations in a single `build_utf8_trie` call -- 5522 across the two `build_byte_program`
+   *       calls, against 5845 for the whole first search once the reverse transpose was CSR-packed
+   *       and the one-pass extractor stopped being built for capture-free patterns. So this is 94 %
+   *       of what is left.
+   *
+   *       It is NOT a flat-pool fix, which is why it is written down rather than attempted at the end
+   *       of the train that measured it. Two sources share the count: this per-node vector, and the
+   *       `bounds`/`tails` pair that `builder::build` allocates at every level -- and build is
+   *       RECURSIVE, so those cannot share one scratch buffer. The shape that works is a stack-
+   *       disciplined arena, each level taking a slice and releasing it on return, plus a flat
+   *       transition pool with the memo's hash/compare working over spans. Seven `trans` sites, two
+   *       scratch vectors, one recursion.
+   *
+   *       The root cause sits above all of it: for `\w`, over 99 % of what this trie recognises is
+   *       code points a pure-ASCII subject can never contain, and the subject is known at search
+   *       time. An ASCII-first expansion would delete the work rather than make it cheaper.
+   */
   struct utf8_trie_node
   {
     std::vector<std::pair<utf8_byte_range, std::int32_t>> trans; //!< Outgoing edges: a byte range paired with its target, `-1` meaning accept. Pairwise disjoint.
