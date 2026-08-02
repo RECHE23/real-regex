@@ -745,7 +745,26 @@ namespace real::detail {
         if (!std::is_constant_evaluated() && !inner_literal_route_disabled() && mode == run_mode::search
             && sem_ == match_semantics::first // longest semantics need the general loop (these routes are kFirstMatch)
             && prog_.hints.inner_literal_len > 0 && prog_.hints.inner_literal_prefix >= 1
+            && !prog_.hints.fixed_shape       // see the note below: IL never beats the fixed-shape route
             && (!confirms_by_reverse || !prog_.prefix_code.empty())) {
+          // NOT WHEN A FIXED-SHAPE ROUTE EXISTS. That route scans for the shape's own first-byte class
+          // and confirms a known width, and it is never slower than memmem-plus-reverse-confirm on the
+          // patterns that have both. Measured over 64 KB corpora, inner-literal against the same
+          // pattern with this route disabled:
+          //
+          //     [0-9]{4}-[0-9]{2}-[0-9]{2}   dense   0.859 -> 0.801 ns/B   IL 1.07x slower
+          //     [a-z]{3}-[0-9]{4}            dense   0.805 -> 0.718        IL 1.12x slower
+          //     [0-9]{3}[.][0-9]{3}                  0.554 -> 0.554        tie
+          //     [0-9]{4}-[0-9]{2}-[0-9]{2}   rare    0.022 -> 0.022        tie
+          //
+          // and across a density sweep on the date pattern the gap is widest where the OLD gate was
+          // most confident: 1.25x against fixed-shape at 33 candidates per 1000 bytes, well under the
+          // 60 that would have made il_density_milli_threshold abandon. The gate's threshold was
+          // calibrated against the DFA as the fallback; against fixed_shape the crossover is not
+          // merely elsewhere, it does not exist -- so the fix is a route condition, not a retune.
+          //
+          // Patterns the inner-literal route was built for are unaffected by construction: `\w+@\w+`
+          // and friends are variable-width and have no fixed_shape hint to trip this.
           // A required literal at offset 0 (a match that DOES begin with a literal) is a *prefix*, not an inner
           // literal — it keeps the faster find_prefix path. Only a genuine inner literal (offset >= 1, for which
           // the compiler built a `prefix_code` for the reverse-confirm) takes this route; the old
