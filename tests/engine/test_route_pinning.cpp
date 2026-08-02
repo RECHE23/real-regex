@@ -142,10 +142,20 @@ TEST(capture_free_search_does_not_build_the_onepass_extractor)
   // guard used to run AFTER ensure_immutables and then abandon on the very next line, so a short
   // subject paid the whole byte-program expansion to learn it was too short to want it. Moving the
   // guard above the build is exact -- il_min_haystack clamps at 64 KB and so is never below
-  // il_warm_floor's 4 KB, meaning a haystack under 4 KB abandons whichever floor applies. On arm64,
-  // first search: `\w+@\w+` on this 18-byte subject 440.71 -> 0.88 us, `(\w+)X(\w+)` on 13 bytes
-  // 440.00 -> 1.04, and the ASCII-class gauge `[a-z]+@[a-z]+` 2.17 -> 0.67 -- the gauge moves too
-  // because the saving is the build itself, not anything specific to Unicode classes.
+  // il_warm_floor's 4 KB, meaning a haystack under 4 KB abandons whichever floor applies. Measured on
+  // arm64 with one live regex per sample (200 kept alive, one first search each -- see
+  // docs/BENCHMARKS.md on why construct-and-destroy loops cannot measure a first search):
+  //
+  //     \w+@\w+      18 bytes   459.51 -> 0.71 us   647x
+  //     (\w+)X(\w+)  13 bytes   466.91 -> 1.23      380x
+  //     (\w+)@(\w+)  80 bytes   458.60 -> 2.97      154x
+  //     [a-z]+@[a-z]+ gauge        3.65 -> 2.16      1.7x
+  //     \w+@\w+      8 KB      1804.59 -> 1720.72   1.05x  (past the floor: guard never fires)
+  //
+  // The gauge moves too, because the saving is the BUILD, not anything specific to Unicode classes;
+  // the 8 KB row is the control that shows the guard is size-gated and not simply always-on. The
+  // mechanism is confirmed without a clock: a build counter reads 400 UTF-8 trie builds over those
+  // 200 searches before, and 0 after.
   EXPECT(bi->built_for.load(std::memory_order_acquire) == nullptr); // neither half was built
   EXPECT(bi->op_table_for.load(std::memory_order_acquire) == nullptr);
   EXPECT(!bi->op_table.has_value());

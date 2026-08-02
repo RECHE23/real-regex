@@ -1037,6 +1037,31 @@ actual gate).
   `REAL_BENCH_TIME` xor `REAL_BENCH_ALLOCS` and `#error`s on both. Two binaries, two runs, two
   tables — and say in the write-up which number came from which, because a reader cannot tell
   afterwards.
+- **A FIRST-search measurement needs one live regex per sample, never construct-and-destroy in a
+  loop.** The per-regex caches (byte program, lazy alphabet, one-pass table, Aho-Corasick automaton)
+  are invalidated by PROGRAM ADDRESS, so a loop that builds a regex, searches, destroys it and builds
+  another can hand the next iteration the previous one's address — and some iterations then skip the
+  build the measurement exists to time. Taking `min` over such a loop selects precisely the
+  iterations that skipped it. The shape that works: construct N regexes and keep them ALL alive, then
+  time one search each and divide.
+
+      std::vector<real::regex> v;  v.reserve(N);
+      for (int i = 0; i < N; ++i) { v.emplace_back(pattern); }   // all live: no address reuse
+      const auto t0 = clock::now();
+      for (auto& re : v) { (void) re.search(subject); }          // exactly one first search each
+      const auto t1 = clock::now();
+
+  Verify the sample count in the output (`200/200 matched`): a variant that stops matching never
+  reaches the route being measured, and a subject with no candidate never builds anything, so either
+  silently measures nothing. Both mistakes were made here in one sitting.
+- **Rebuilding the "before" arm with `git checkout <file>` AFTER committing the change measures the
+  change against itself.** It restores the COMMITTED content, which now contains the change. The two
+  arms then read identically, and that reads exactly like a refutation. Build both arms from explicit
+  revisions instead — `git archive <rev> include | tar x -C <dir>` — so each is named rather than
+  assumed. This produced a retraction of a correct result before the second measurement caught it.
+- **`callgrind_annotate` marks recursion depth with a trailing `'2`, and those lines are the SAME
+  function.** Summing them double-counts. A function reported at "20 %" across two such lines is at
+  10 %, and a cost model built on the inflated figure will point at the wrong place.
 - **Matrices sweep sizes.** A hot-path optimisation's cost or benefit can invert across
   the haystack size (a per-search setup that amortises on 2 MB can dominate 16 KB) and
   across match density — so a bench that measures one slice hides a regression in another.
