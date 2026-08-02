@@ -2824,9 +2824,36 @@ namespace real::detail {
                               };
 
         const auto sub_id {static_cast<std::uint16_t>(prog_.hints.trailing_lookaround)};
+        // Resolve the lookaround ONCE for the whole walk. `lookaround_holds` re-derives, per call,
+        // things that cannot change between calls with the same sub_id: the sub lookup, its code
+        // length, and its body's opcode. Callgrind on `[a-z]+(?=[a-z])` over 64 KB of prose puts it at
+        // 26.6 % of the workload across 1 649 430 calls -- 35 instructions each, of which 22 are
+        // prologue and epilogue and ~10 are that invariant re-checking. Only the class test varies
+        // with the position. Hoisting leaves the loop calling a small inlinable predicate instead of
+        // an out-of-line function; it removes the work rather than moving it, which is what
+        // force-inlining would have done (and that was measured as a regression -- see
+        // basic_match_iterator::advance).
+        const lookaround_sub& la_sub    {prog_.lookarounds[sub_id]};
+        const instr*          la_simple {nullptr};
+        if (la_sub.code_length == 2) {
+          const instr& body {prog_.code[static_cast<std::size_t>(la_sub.code_offset)]};
+          if (body.op == opcode::byte || body.op == opcode::klass
+              || (body.op == opcode::klass_cp && !prog_.byte_mode)) {
+            la_simple = &body;
+          }
+        }
+        const auto la_at = [&](std::size_t e) {
+                             if (la_simple == nullptr) {
+                               return lookaround_holds(sub_id, e);
+                             }
+                             const bool matched {la_sub.direction == look_dir::behind
+                                                   ? single_class_behind(*la_simple, e)
+                                                   : single_class_ahead(*la_simple, e)};
+                             return matched != la_sub.negative;
+                           };
         const auto try_ends = [&](std::size_t ms, std::size_t me) -> bool {
                                 for (std::size_t e = me; e > ms; --e) {
-                                  if (lookaround_holds(sub_id, e)) {
+                                  if (la_at(e)) {
                                     fill_span_slots(out_slots, ms, e);
                                     return true;
                                   }
@@ -2840,7 +2867,7 @@ namespace real::detail {
             return false;
           }
           const std::size_t match_end {scan_end(start)};
-          if (match_end != text.size() || !lookaround_holds(sub_id, match_end)) {
+          if (match_end != text.size() || !la_at(match_end)) {
             out_slots.assign(prog_.slot_count, npos);
             return false;
           }
