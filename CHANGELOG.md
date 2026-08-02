@@ -2,6 +2,28 @@
 
 Per-train benchmark-impact log: what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s §A/§E/§B/§Unicode/§multi-pattern sections, carried verbatim from that file's Version row. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.8.2
+
+8.2 (**a first search that stopped paying for work it was about to throw away**): **§A is untouched
+again, by construction** -- every change here is on the FIRST search a pattern performs, and §A's
+throughput rows are steady-state ns/byte over a warmed regex. What moves is the first-use axis, which
+§E.4 publishes rows for and which this train does not re-run against the rust crate; the figures below
+are REAL's own, measured with one live regex per sample (200 kept alive, one first search each --
+`docs/BENCHMARKS.md` now carries why a construct-and-destroy loop cannot measure this at all).
+**The inner-literal route** decided its small-haystack guard AFTER building the byte program and
+abandoned on the next line, so a short subject paid the whole expansion to learn it was too short:
+`\w+@\w+` on 18 bytes **459.51 -> 0.71 us (647x)**, `(\w+)X(\w+)` on 13 bytes **466.91 -> 1.23
+(380x)**, `(\w+)@(\w+)` on 80 bytes 458.60 -> 2.97 (154x), the ASCII gauge `[a-z]+@[a-z]+` 3.65 ->
+2.16, and an **8 KB subject 1804.59 -> 1720.72 (1.05x)** -- that last row the control showing the
+guard is size-gated rather than always-on. Confirmed without a clock: a build counter reads **400
+UTF-8 trie builds across those 200 searches before and 0 after**. **The UTF-8 trie** is now built once
+per CLASS rather than once per occurrence (**637.78 -> 476.48 us, -25 %**); sharing one cache across
+the program's two expansions was written, measured and refused, since it helps `\d` by 8.2 % and
+hurts `\w` by 2.0 %. **The compat regex_iterator** holds its walker instead of rebuilding a VM state
+per advance: `++it` **2.2x** on `[a-z]+` and **4.5x** on a 24-branch alternation, `it++` 1.8x and
+3.8x, with copy independence pinned against std::sregex_iterator. §A, §Unicode, §B, §E and
+§multi-pattern carry their earlier figures unchanged.
+
 ## v2026.8.1
 
 8.1 (**two routing decisions that were never measured, and a tool that finds the rest**): **§A again
