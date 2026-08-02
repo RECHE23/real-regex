@@ -668,6 +668,19 @@ namespace real::detail {
   // cheaper, it makes the whole pipeline trivial. The end-to-end gap it would close is the ~40x that
   // still separates a first `\w+@\w+` search from its byte-class twin.
   //
+  // THE OBVIOUS ROUTING IS REFUTED, MEASURED. A restricted program is correct only if the whole
+  // scanned region is ASCII, so the naive design pre-scans the subject. That scan costs more than the
+  // search it protects: 0.071 us against a 0.060 us steady-state search on 8 KB, and 0.635 against
+  // 0.057 on 64 KB -- eleven times, turning a 57 ns search into 692. Caching the verdict per haystack
+  // does not rescue the common case either, since the VM state is fresh per `search()` and would
+  // re-scan; that is the same trap the compat regex_iterator was found in.
+  //
+  // What is left is for the restricted DFA to derail ITSELF: map every byte >= 0x80 to one
+  // distinguished alphabet class whose transition is a sentinel meaning "cannot answer", so the scan
+  // bails on first contact and the caller falls back to the general VM, which handles Unicode
+  // natively. No pre-scan, and near-zero cost in a loop that already does one table lookup per byte.
+  // It touches the DFA's state semantics, which is why it is designed here and not written here.
+  //
   // WHAT IT NEEDS, and why the prototype stops at measuring: an ASCII-restricted program is valid
   // ONLY for an ASCII subject, so it needs a second cached program built lazily on the first
   // non-ASCII haystack, a per-haystack ASCII check (cheap, and cacheable exactly like the
