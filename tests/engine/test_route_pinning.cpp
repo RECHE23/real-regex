@@ -138,7 +138,15 @@ TEST(capture_free_search_does_not_build_the_onepass_extractor)
   EXPECT(bare.search(text).matched());
   const real::detail::regex_immutables* const bi {bare.raw_program().immut};
   EXPECT(bi != nullptr);
-  EXPECT(bi->built_for.load(std::memory_order_acquire) != nullptr); // the cheap half WAS built
+  // NOT built at all now, and that is the stronger property. The inner-literal route's small-haystack
+  // guard used to run AFTER ensure_immutables and then abandon on the very next line, so a short
+  // subject paid the whole byte-program expansion to learn it was too short to want it. Moving the
+  // guard above the build is exact -- il_min_haystack clamps at 64 KB and so is never below
+  // il_warm_floor's 4 KB, meaning a haystack under 4 KB abandons whichever floor applies. On arm64,
+  // first search: `\w+@\w+` on this 18-byte subject 440.71 -> 0.88 us, `(\w+)X(\w+)` on 13 bytes
+  // 440.00 -> 1.04, and the ASCII-class gauge `[a-z]+@[a-z]+` 2.17 -> 0.67 -- the gauge moves too
+  // because the saving is the build itself, not anything specific to Unicode classes.
+  EXPECT(bi->built_for.load(std::memory_order_acquire) == nullptr); // neither half was built
   EXPECT(bi->op_table_for.load(std::memory_order_acquire) == nullptr);
   EXPECT(!bi->op_table.has_value());
 

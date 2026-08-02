@@ -1078,6 +1078,19 @@ namespace real::detail {
           // (shared il_prefix_rev already in shared_dfa_slot) use il_warm_floor (~4 KB). Key is
           // slot.il_warmed ("this regex was candidate-scanned"), not "il_prefix_rev is built" — a
           // corpus always below the cold floor would never build the reverse and would never warm.
+          // Below the WARM floor the answer is the same whichever floor applies, so it is decided
+          // BEFORE ensure_immutables rather than after. il_min_haystack clamps at 64 KB, so it is
+          // never below il_warm_floor's 4 KB: a haystack under 4 KB abandons cold or warm. Deciding
+          // after the build meant paying for it -- and for a text-mode class that build is not small.
+          // Measured on the devbox, first search on a 13-byte subject: `(\w+)X(\w+)` spent 803 us
+          // constructing the UTF-8 machinery for `\w` and then abandoned this route on the very next
+          // line, against 4.3 us for the identical shape over an ASCII class. The warm flag is still
+          // set, since shared_dfa_for keys on the immutables ADDRESS and needs nothing built.
+          if (!inner_literal_guard_disabled() && prog_.immut != nullptr && text.size() < il_warm_floor) {
+            shared_dfa_for(prog_.immut).il_warmed.store(true, std::memory_order_relaxed);
+            abandon = true;
+            return false;
+          }
           ensure_immutables();
           if (!inner_literal_guard_disabled() && prog_.immut != nullptr) {
             shared_dfa_slot&  slot  {shared_dfa_for(prog_.immut)};
