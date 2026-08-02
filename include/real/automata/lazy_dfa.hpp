@@ -1427,10 +1427,13 @@ namespace real::detail {
       if (pc < 0 || static_cast<std::size_t>(pc) >= code_.size()) {
         return;
       }
-      std::vector<std::int32_t> stack {pc};
-      while (!stack.empty()) {
-        const std::int32_t cur {stack.back()};
-        stack.pop_back();
+      // The work stack is a MEMBER, not a local. This runs once per pc of the source state, so a
+      // local vector was one heap block per call -- and a single 8 KB first search was measured at
+      // 10 408 allocations across the two DFAs. `mutable`: pure scratch, empty in and empty out.
+      stack_.assign(1, pc);
+      while (!stack_.empty()) {
+        const std::int32_t cur {stack_.back()};
+        stack_.pop_back();
         if (cur < 0 || static_cast<std::size_t>(cur) >= code_.size() || seen[static_cast<std::size_t>(cur)] != 0) {
           continue;
         }
@@ -1443,14 +1446,14 @@ namespace real::detail {
             out.push_back(cur);
             break;
           case opcode::split:
-            stack.push_back(in.secondary_target);   // secondary pushed first -> primary explored first
-            stack.push_back(in.primary_target);
+            stack_.push_back(in.secondary_target);   // secondary pushed first -> primary explored first
+            stack_.push_back(in.primary_target);
             break;
           case opcode::jump:
-            stack.push_back(in.primary_target);
+            stack_.push_back(in.primary_target);
             break;
           case opcode::save:
-            stack.push_back(cur + 1);
+            stack_.push_back(cur + 1);
             break;
           default:
             break;   // assert / klass_cp / lookaround: only reachable for ineligible programs (not built)
@@ -1570,16 +1573,17 @@ namespace real::detail {
     // structure by reference and would have to learn the new shape, all of it inside the state
     // interning path that every DFA transition runs through. It wants its own train and its own
     // differential, not the tail of another one.
-    std::vector<std::vector<std::int32_t>>                                    state_pcs_;       //!< state id -> ordered pc-set.
-    std::vector<std::uint32_t>                                                trans_;           //!< flat [state*stride + class] -> next, unseeded (post-match); stride = alpha_.count.
-    std::vector<std::uint32_t>                                                trans_seeded_;    //!< flat [state*stride + class] -> next, re-seeding (pre-match).
-    std::vector<std::uint32_t>                                                state_match_idx_; //!< state id -> index of its first accept, or no_match_idx.
-    std::vector<std::uint32_t>                                                state_cut_;       //!< state id -> memoized priority-cut result (no_transition = not yet computed).
-    pc_set_cache                                                              cache_;           //!< pc-set -> state id, the memo behind \ref intern.
+    mutable std::vector<std::int32_t>                                          stack_;           //!< close_into's work stack, hoisted: it ran once per pc of the source state.
+    std::vector<std::vector<std::int32_t>>                                     state_pcs_;       //!< state id -> ordered pc-set.
+    std::vector<std::uint32_t>                                                 trans_;           //!< flat [state*stride + class] -> next, unseeded (post-match); stride = alpha_.count.
+    std::vector<std::uint32_t>                                                 trans_seeded_;    //!< flat [state*stride + class] -> next, re-seeding (pre-match).
+    std::vector<std::uint32_t>                                                 state_match_idx_; //!< state id -> index of its first accept, or no_match_idx.
+    std::vector<std::uint32_t>                                                 state_cut_;       //!< state id -> memoized priority-cut result (no_transition = not yet computed).
+    pc_set_cache                                                               cache_;           //!< pc-set -> state id, the memo behind \ref intern.
 
-    std::size_t budget_    {state_budget};                                                      //!< Cached states tolerated before a \ref flush.
-    counters    stats_     {};                                                                  //!< Live counters, exposed by \ref stats.
-    bool        thrashing_ {false};                                                             //!< Set once this scan crossed \ref thrash_flushes flushes.
+    std::size_t budget_    {state_budget};                                                       //!< Cached states tolerated before a \ref flush.
+    counters    stats_     {};                                                                   //!< Live counters, exposed by \ref stats.
+    bool        thrashing_ {false};                                                              //!< Set once this scan crossed \ref thrash_flushes flushes.
   };
 
   /*!
@@ -1615,27 +1619,64 @@ namespace real::detail {
     {
       // Transpose the program: rev_eps_[x] = the pcs with a forward epsilon edge to x; rev_consume_[x] = the
       // consuming pcs whose successor is x (a byte/klass at pc goes to pc+1).
-      rev_eps_.assign(code.size(), {});
-      rev_consume_.assign(code.size(), {});
-      for (std::int32_t pc = 0; pc < static_cast<std::int32_t>(code.size()); ++pc) {
+      // TWO PASSES INTO FOUR BUFFERS, not a vector of vectors. The transpose is an adjacency list, and
+      // as one inner vector per pc it was the single largest allocation COUNT in a first search: 7003
+      // blocks for `\w+@\w+` over 8 KB, because `\w` expands to a byte program of thousands of
+      // instructions and nearly every one gets a first push_back. Counting degrees, prefix-summing and
+      // filling gives the same structure in four allocations. Measured by counting, not timing.
+      const std::size_t n {code.size()};
+      rev_eps_at_.assign(n + 2, 0);
+      rev_consume_at_.assign(n + 2, 0);
+      const auto bump {[](std::vector<std::uint32_t>& at, std::size_t x) {
+                         if (x < at.size() - 1) {
+                           ++at[x + 1]; // counted one slot right: the prefix sum below shifts it into place
+                         }
+                       }};
+      for (std::int32_t pc = 0; pc < static_cast<std::int32_t>(n); ++pc) {
+        const instr& in {code[static_cast<std::size_t>(pc)]};
+        switch (in.op) {
+          case opcode::byte:
+          case opcode::klass:  bump(rev_consume_at_, static_cast<std::size_t>(pc) + 1); break;
+          case opcode::split:
+            bump(rev_eps_at_, static_cast<std::size_t>(in.primary_target));
+            bump(rev_eps_at_, static_cast<std::size_t>(in.secondary_target));
+            break;
+          case opcode::jump:   bump(rev_eps_at_, static_cast<std::size_t>(in.primary_target)); break;
+          case opcode::save:   bump(rev_eps_at_, static_cast<std::size_t>(pc) + 1); break;
+          case opcode::match:  match_pc_ = pc; break; // the reverse start
+          default:             break;
+        }
+      }
+      for (std::size_t i = 1; i < rev_eps_at_.size(); ++i) {
+        rev_eps_at_[i]     += rev_eps_at_[i - 1];
+        rev_consume_at_[i] += rev_consume_at_[i - 1];
+      }
+      rev_eps_pool_.assign(rev_eps_at_.back(), 0);
+      rev_consume_pool_.assign(rev_consume_at_.back(), 0);
+      std::vector<std::uint32_t> eps_cur {rev_eps_at_};
+      std::vector<std::uint32_t> con_cur {rev_consume_at_};
+      const auto                 put {[](std::vector<std::int32_t>& pool, std::vector<std::uint32_t>& cur,
+                                         const std::vector<std::uint32_t>& at, std::size_t x, std::int32_t pc) {
+                                        if (x < at.size() - 1) {
+                                          pool[cur[x]++] = pc;
+                                        }
+                                      }};
+      for (std::int32_t pc = 0; pc < static_cast<std::int32_t>(n); ++pc) {
         const instr& in {code[static_cast<std::size_t>(pc)]};
         switch (in.op) {
           case opcode::byte:
           case opcode::klass:
-            rev_consume_[static_cast<std::size_t>(pc) + 1].push_back(pc);
+            put(rev_consume_pool_, con_cur, rev_consume_at_, static_cast<std::size_t>(pc) + 1, pc);
             break;
           case opcode::split:
-            rev_eps_[static_cast<std::size_t>(in.primary_target)].push_back(pc);
-            rev_eps_[static_cast<std::size_t>(in.secondary_target)].push_back(pc);
+            put(rev_eps_pool_, eps_cur, rev_eps_at_, static_cast<std::size_t>(in.primary_target), pc);
+            put(rev_eps_pool_, eps_cur, rev_eps_at_, static_cast<std::size_t>(in.secondary_target), pc);
             break;
           case opcode::jump:
-            rev_eps_[static_cast<std::size_t>(in.primary_target)].push_back(pc);
+            put(rev_eps_pool_, eps_cur, rev_eps_at_, static_cast<std::size_t>(in.primary_target), pc);
             break;
           case opcode::save:
-            rev_eps_[static_cast<std::size_t>(pc) + 1].push_back(pc);
-            break;
-          case opcode::match:
-            match_pc_ = pc; // the reverse start
+            put(rev_eps_pool_, eps_cur, rev_eps_at_, static_cast<std::size_t>(pc) + 1, pc);
             break;
           default:
             break;
@@ -1694,15 +1735,19 @@ namespace real::detail {
     constexpr void rev_closure(std::vector<std::int32_t>& set,
                                std::vector<char>&         seen) const
     {
-      std::vector<std::int32_t> stack {set};
-      while (!stack.empty()) {
-        const std::int32_t pc {stack.back()};
-        stack.pop_back();
-        for (const std::int32_t pred : rev_eps_[static_cast<std::size_t>(pc)]) {
+      // Member stack, same reason as close_into's: one heap block per call otherwise. Seeded from the
+      // whole set here rather than a single pc, since the reverse closure starts from all of them.
+      stack_.assign(set.begin(), set.end());
+      while (!stack_.empty()) {
+        const std::int32_t pc {stack_.back()};
+        stack_.pop_back();
+        for (std::size_t k = rev_eps_at_[static_cast<std::size_t>(pc)];
+             k < rev_eps_at_[static_cast<std::size_t>(pc) + 1]; ++k) {
+          const std::int32_t pred {rev_eps_pool_[k]};
           if (seen[static_cast<std::size_t>(pred)] == 0) {
             seen[static_cast<std::size_t>(pred)] = 1;
             set.push_back(pred);
-            stack.push_back(pred);
+            stack_.push_back(pred);
           }
         }
       }
@@ -1727,7 +1772,9 @@ namespace real::detail {
       std::vector<std::int32_t>       next;
       std::vector<char>               seen(code_.size(), 0);
       for (const std::int32_t pc : pcs) {
-        for (const std::int32_t pred : rev_consume_[static_cast<std::size_t>(pc)]) {
+        for (std::size_t k = rev_consume_at_[static_cast<std::size_t>(pc)];
+             k < rev_consume_at_[static_cast<std::size_t>(pc) + 1]; ++k) {
+          const std::int32_t pred {rev_consume_pool_[k]};
           if (consumes(pred, byte) && seen[static_cast<std::size_t>(pred)] == 0) {
             seen[static_cast<std::size_t>(pred)] = 1;
             next.push_back(pred);
@@ -1839,20 +1886,23 @@ namespace real::detail {
       start_state_ = intern(start);
     }
 
-    std::span<const instr>                                                    code_;                       //!< The byte program, owned by the caller.
-    std::span<const char_class>                                               classes_;                    //!< Its byte classes, likewise borrowed.
-    lazy_byte_alphabet                                                        alpha_;                      //!< Byte-to-class map; its count is the row stride.
-    bool                                                                      eligible_    {false};        //!< \ref compute_eligibility's verdict, fixed at construction.
-    std::int32_t                                                              match_pc_    {-1};           //!< The forward `match` pc — this pass's start; -1 when absent.
-    std::uint32_t                                                             start_state_ {0};            //!< Id of \ref match_pc_'s backward closure, re-interned by each \ref flush.
-    std::size_t                                                               budget_      {state_budget}; //!< Cached states tolerated before a \ref flush.
-    std::size_t                                                               flushes_     {0};            //!< bumped by flush(); step()'s stale-state guard against a mid-call reset.
-    std::vector<std::vector<std::int32_t>>                                    rev_eps_;                    //!< transposed epsilon edges.
-    std::vector<std::vector<std::int32_t>>                                    rev_consume_;                //!< transposed consuming edges (the pred consuming pcs).
-    std::vector<std::vector<std::int32_t>>                                    state_pcs_;                  //!< state id -> sorted pc-set.
-    std::vector<std::uint32_t>                                                trans_;                      //!< flat [state*stride + class] -> next.
-    std::vector<char>                                                         state_has_start_;            //!< state -> reaches the program start (an accept).
-    pc_set_cache                                                              cache_;                      //!< pc-set -> state id, the memo behind \ref intern.
+    std::span<const instr>                                                     code_;                       //!< The byte program, owned by the caller.
+    std::span<const char_class>                                                classes_;                    //!< Its byte classes, likewise borrowed.
+    lazy_byte_alphabet                                                         alpha_;                      //!< Byte-to-class map; its count is the row stride.
+    bool                                                                       eligible_    {false};        //!< \ref compute_eligibility's verdict, fixed at construction.
+    std::int32_t                                                               match_pc_    {-1};           //!< The forward `match` pc — this pass's start; -1 when absent.
+    std::uint32_t                                                              start_state_ {0};            //!< Id of \ref match_pc_'s backward closure, re-interned by each \ref flush.
+    std::size_t                                                                budget_      {state_budget}; //!< Cached states tolerated before a \ref flush.
+    std::size_t                                                                flushes_     {0};            //!< bumped by flush(); step()'s stale-state guard against a mid-call reset.
+    std::vector<std::int32_t>                                                  rev_eps_pool_;               //!< transposed epsilon edges, CSR-packed.
+    std::vector<std::uint32_t>                                                 rev_eps_at_;                 //!< CSR offsets into \ref rev_eps_pool_, size code+2.
+    std::vector<std::int32_t>                                                  rev_consume_pool_;           //!< transposed consuming edges, CSR-packed.
+    std::vector<std::uint32_t>                                                 rev_consume_at_;             //!< CSR offsets into \ref rev_consume_pool_.
+    mutable std::vector<std::int32_t>                                          stack_;                      //!< rev_closure's work stack, hoisted for the same reason.
+    std::vector<std::vector<std::int32_t>>                                     state_pcs_;                  //!< state id -> sorted pc-set.
+    std::vector<std::uint32_t>                                                 trans_;                      //!< flat [state*stride + class] -> next.
+    std::vector<char>                                                          state_has_start_;            //!< state -> reaches the program start (an accept).
+    pc_set_cache                                                               cache_;                      //!< pc-set -> state id, the memo behind \ref intern.
   };
 } // namespace real::detail
 
