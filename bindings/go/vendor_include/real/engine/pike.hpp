@@ -1653,7 +1653,17 @@ namespace real::detail {
       // DO extract through op_table. It must be built BEFORE slot.mu is taken -- ensure_op_table locks
       // immut_build_mu, and reset_shared_dfas walks immut_build_mu -> map_mu/slot.mu, so building it inside
       // the lambda would invert that order.
-      ensure_op_table();
+      // The extractor is built ONLY when there is something to extract. `fn`'s confirm step fills
+      // out_slots through op_table, but a 2-slot program has nothing but the span the DFA already
+      // found -- and when the table is absent the confirm falls to run_general, which is the same
+      // path it takes whenever the extractor declines. Building it anyway cost 3330 allocations and
+      // 4.57 MB on a first `\w+@\w+` search over 8 KB, for a table that could not be consulted.
+      if (prog_.slot_count > 2) {
+        ensure_op_table();
+      }
+      else {
+        ensure_immutables(); // the DFAs still need the byte program and the shared alphabet
+      }
       shared_dfa_slot&                  slot {shared_dfa_for(immut)};
       const std::lock_guard<std::mutex> lock {slot.mu};
       ensure_slot_search_dfas_unlocked(*immut, slot);
