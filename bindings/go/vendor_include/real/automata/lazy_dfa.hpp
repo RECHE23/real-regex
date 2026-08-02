@@ -1541,6 +1541,35 @@ namespace real::detail {
     bool                        eligible_    {false};                                           //!< \ref compute_eligibility's verdict, fixed at construction.
     std::uint32_t               start_state_ {0};                                               //!< Id of the closure of pc 0, re-interned by each \ref flush.
 
+    // A VECTOR OF VECTORS, one heap block per DFA state, and it is the largest allocator in a first
+    // search over a large subject. Counted rather than timed: `\w+@\w+` on an 8 KB subject makes
+    // 16 146 allocations totalling 6.09 MB, against 187 and 163 KB for the ASCII twin
+    // `[a-z]+@[a-z]+`. Disabling routes attributes it -- with the lazy DFA off the same search makes
+    // 5738 allocations / 0.96 MB, and with the inner-literal route off as well, 91 / 117 KB. So the
+    // DFA's own construction is 10 408 allocations and 5.1 MB of that, essentially all of it here:
+    // one block per interned state, plus the full copy `step` takes at each transition because
+    // interning may reallocate this vector.
+    //
+    // TWO HYPOTHESES ABOUT THIS WERE MEASURED AND BOTH WERE WRONG, which is why they are written down.
+    // Reserving the OUTER vector saves 3 allocations of 16 146 and costs 98 KB -- the blocks are not
+    // the store's own growth. And FLATTENING this into one pool with an offset per state, the fix the
+    // trie builder uses, changes the count by exactly ZERO: 16 146 before and after. The interned
+    // states are simply not where the allocations are.
+    //
+    // They are the PER-CALL locals in the transition path: `step` and `step_seeded` each build a
+    // `next` and a `seen` sized to the byte program (which is also the memset that callgrind puts at
+    // 5 %), `step_seeded` copies the source pc-set defensively, and `close_into` allocates its own
+    // work stack -- once per pc of the source state, so many times per transition. Hoisting all of
+    // those into members, with a generation stamp replacing `seen`'s per-call zeroing, is the fix.
+    // It spans both lazy_dfa and reverse_dfa, changes close_into's constness, and lands in the path
+    // every DFA transition runs through: its own train, with its own differential.
+    //
+    // The fix is the one this file already applied to the trie builder a few hundred lines up -- one
+    // flat buffer with an offset per entry, which that comment records as having removed "164 220
+    // blocks holding 755 KB". NOT attempted here: 21 use sites plus `pc_set_cache`, which takes this
+    // structure by reference and would have to learn the new shape, all of it inside the state
+    // interning path that every DFA transition runs through. It wants its own train and its own
+    // differential, not the tail of another one.
     std::vector<std::vector<std::int32_t>>                                    state_pcs_;       //!< state id -> ordered pc-set.
     std::vector<std::uint32_t>                                                trans_;           //!< flat [state*stride + class] -> next, unseeded (post-match); stride = alpha_.count.
     std::vector<std::uint32_t>                                                trans_seeded_;    //!< flat [state*stride + class] -> next, re-seeding (pre-match).
