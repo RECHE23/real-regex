@@ -656,6 +656,25 @@ namespace real::detail {
    *                            seconds to build.
    * \return The expanded program, with \ref byte_program::eligible false when it declined.
    */
+  // AN ASCII-RESTRICTED EXPANSION WAS PROTOTYPED AND THE NUMBERS ARE NOT CLOSE. Emitting each
+  // `klass_cp` as a plain byte class built from `cp_class::ascii` -- which is already a `char_class`,
+  // so nothing needs converting -- instead of expanding its UTF-8 trie:
+  //
+  //     `\w+@\w+`   full expansion   2808 allocations   6866 instructions   476 classes
+  //                  ASCII-restricted    12                  8                 3
+  //
+  // 8 instructions against 6866. Everything downstream is sized by that program -- the lazy alphabet,
+  // the DFA's subset construction, the one-pass table -- so this does not merely make the trie build
+  // cheaper, it makes the whole pipeline trivial. The end-to-end gap it would close is the ~40x that
+  // still separates a first `\w+@\w+` search from its byte-class twin.
+  //
+  // WHAT IT NEEDS, and why the prototype stops at measuring: an ASCII-restricted program is valid
+  // ONLY for an ASCII subject, so it needs a second cached program built lazily on the first
+  // non-ASCII haystack, a per-haystack ASCII check (cheap, and cacheable exactly like the
+  // inner-literal and Aho-Corasick density verdicts already are), and routing that can never hand an
+  // ASCII program a subject that would fool it. That is a feature with a correctness obligation, not
+  // a local edit -- and it subsumes the trie-arena work above rather than competing with it.
+  //
   // THE EXPANSION IS BLIND TO THE SUBJECT, AND THAT IS WHERE THE COST IS. A text-mode class is
   // expanded here in full -- every code point it can match, as a UTF-8 trie -- before anything has
   // looked at what will be searched. Measured on the devbox (g++ 13.3), first search and first
