@@ -684,12 +684,15 @@ namespace real::detail {
     // Deduplicating within the build takes it to 897 us, and `(\d+)X(\d+)` from 75.2 to 60.1.
     // `by_class` is sized up front and never grows, so the pointers cannot dangle.
     //
-    // NOT shared ACROSS the two expansions of the same program, and that is a decision rather than an
-    // omission. ensure_immutables builds Tier-A (assertions stripped) and ensure_op_table builds
-    // Tier-B (kept); the byte programs differ but the tries would not, so one cache would take three
-    // builds to one. They are separate functions called at different times, so sharing means holding
-    // the cache in regex_immutables -- kilobytes kept alive for the life of the regex to save a
-    // one-time build. Measured at roughly another 15 %, which does not buy that.
+    // NOT shared across the program's TWO expansions -- Tier-A through ensure_immutables and Tier-B
+    // through ensure_op_table, which calls it, so one cache on the latter's stack would cover both
+    // with nothing outliving the build. That was written, wired and measured, and it does not pay:
+    // anchored first-match on the devbox went 167.3 -> 153.6 us for `(\d+)X(\d+)` but 1584.0 ->
+    // 1615.5 for `(\w+)X(\w+)`, against a byte-class gauge that did not move. Holding `\w`'s large
+    // tries alive across both builds costs more than rebuilding them, and the large classes are
+    // exactly the case worth fixing. Reverted; the earlier note that called this unreachable for a
+    // DIFFERENT reason (kilobytes kept in regex_immutables) was wrong about the mechanism and right
+    // about the conclusion.
     std::vector<utf8_trie>        by_class(prog.cp_classes.size());
     std::vector<bool>             class_built(prog.cp_classes.size(), false);
     std::vector<const utf8_trie*> tries(n, nullptr);              // the trie for each klass_cp pc
