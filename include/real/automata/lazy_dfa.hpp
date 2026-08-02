@@ -634,6 +634,24 @@ namespace real::detail {
    *                            seconds to build.
    * \return The expanded program, with \ref byte_program::eligible false when it declined.
    */
+  // THE EXPANSION IS BLIND TO THE SUBJECT, AND THAT IS WHERE THE COST IS. A text-mode class is
+  // expanded here in full -- every code point it can match, as a UTF-8 trie -- before anything has
+  // looked at what will be searched. Measured on the devbox (g++ 13.3), first search and first
+  // fullmatch, against the strict-ASCII equivalent of the same class:
+  //
+  //     \w   803.35 us / 1556.37      [A-Za-z0-9_]  4.31 / 6.53     186x
+  //     \d    57.23    /  146.08      [0-9]         2.75 / 6.90      21x
+  //     \s    11.12    /   26.82      [ \t\n]       2.93 / 6.62       3.8x
+  //
+  // For `\w` that is over 99 % of the cost, paid to recognise code points a pure-ASCII subject can
+  // never contain. The general Pike VM needs none of it -- `\w+` on its own costs 0.6 us because it
+  // takes a route with no byte program at all; this expansion exists only to feed the lazy DFA and
+  // the one-pass extractor.
+  //
+  // The shape that would fix it is an ASCII-first expansion upgraded on demand, since the subject IS
+  // known at search time and its ASCII-ness is a cheap scan. That is an architectural change to when
+  // the immutables are built, not a tweak here, and it is not attempted in this train -- but the
+  // measurement is recorded so the next person does not have to re-derive the size of the prize.
   constexpr byte_program build_byte_program(const program_view& prog,
                                             bool                keep_assertions = false,
                                             std::size_t         max_size        = max_byte_program_size)
