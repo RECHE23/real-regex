@@ -1062,6 +1062,17 @@ actual gate).
 - **`callgrind_annotate` marks recursion depth with a trailing `'2`, and those lines are the SAME
   function.** Summing them double-counts. A function reported at "20 %" across two such lines is at
   10 %, and a cost model built on the inflated figure will point at the wrong place.
+- **§A's `fields [^,]+` row is not a like-for-like comparison, and the gap is the difference in work.**
+  A negated class matches every code point but the excluded ones, so it routes to the code-point scan
+  rather than the byte class loop: 5.448 ns/B against 1.894 for `[a-z]+` on x86-64, 3.450 against
+  1.862 on arm64. Scanning it as bytes would be sound *if* every non-ASCII code point were a member --
+  which it is -- but it is not equivalent, because REAL excludes INVALID UTF-8 from a code-point
+  class and a byte scan would not. Measured: on `ab,c\xC3d,ef` the row's own pattern yields
+  `[3,4)` and `[5,6)`, breaking at the malformed byte, where a byte scan would return `[3,6)`.
+  So the 0.60× against PCRE2-JIT on that row is REAL doing encoding validation the comparison does
+  not require of the other engine, not REAL being slower at the same task. Read it that way before
+  treating it as a deficit, and if it is ever "fixed", check what the malformed-UTF-8 matrix says
+  first.
 - **Matrices sweep sizes.** A hot-path optimisation's cost or benefit can invert across
   the haystack size (a per-search setup that amortises on 2 MB can dominate 16 KB) and
   across match density — so a bench that measures one slice hides a regression in another.
