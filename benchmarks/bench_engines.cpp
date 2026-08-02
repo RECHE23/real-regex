@@ -586,6 +586,29 @@ namespace {
     return "[" + json_join(names) + "]";
   }
 
+  // The LIBRARY version of each optional engine actually LINKED, which is not the same question as
+  // unicode_versions() above and not answerable from the build line: the recipe resolves PCRE2 and
+  // RE2 through pkg-config, so whichever one is first on PKG_CONFIG_PATH wins, and a from-source
+  // build installed outside that path is silently not the one measured. docs/BENCHMARKS.md named a
+  // pinned PCRE2 version its x86-64 leg had not linked for exactly that reason, and nothing in the
+  // output could have contradicted it. RE2 has no runtime version API, so it stays absent here
+  // rather than being guessed.
+  std::string engine_versions()
+  {
+    std::vector<std::pair<std::string, std::string>> fields;
+#if defined(HAVE_PCRE2)
+    {
+      char buf[64] {};
+      pcre2_config(PCRE2_CONFIG_VERSION, buf);
+      fields.emplace_back("pcre2", json_string(buf));
+    }
+#endif
+    if (fields.empty()) {
+      return "{}";
+    }
+    return json_object(fields);
+  }
+
   const char* arch()
   {
 #if defined(__aarch64__) || defined(_M_ARM64)
@@ -640,6 +663,7 @@ namespace {
       {"compiler", json_string(__VERSION__)},
       {"flags", json_string(BENCH_FLAGS)},
       {"engines", present_engines()},
+      {"engine_versions", engine_versions()},
       {"unicode_versions", unicode_versions()},
       {"date", json_string(utc_date())},
       {"commit", json_string(BENCH_COMMIT)},

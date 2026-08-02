@@ -61,6 +61,12 @@ def print_meta(doc):
     print(f"engine throughput — REAL vs {', '.join(e for e in m['engines'] if e != 'real')}")
     print(f"cpu={m['cpu']}  compiler={m['compiler']}  flags={m['flags']}  "
           f"samples={int(m['samples'])}  bootstrap={BOOTSTRAP_B}")
+    # The linked library version, not the one the build line asked for: pkg-config resolution
+    # decides which PCRE2 is measured, and a from-source pin outside PKG_CONFIG_PATH loses to the
+    # system package without a word. Printed unconditionally so a stamp can be checked against it.
+    versions = m.get("engine_versions") or {}
+    if versions:
+        print("  linked: " + "  ".join(f"{k}={v}" for k, v in sorted(versions.items())))
     print("ns/byte (lower better); (x) = engine_time / REAL_time, >1 means REAL faster.\n")
 
 
