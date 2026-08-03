@@ -2235,33 +2235,45 @@ namespace real::detail {
 #endif
     constexpr const std::uint8_t* cp_ascii_table(std::size_t cp_index)
     {
+      // Key first, resolution outlined — see \ref class_table, whose shape this is exactly.
+      const std::int32_t key {-2 - static_cast<std::int32_t>(cp_index)};
+      if (!std::is_constant_evaluated() && !row_key_stale(state_.table_class, key)) {
+        return state_.row_ptr;
+      }
       if (!std::is_constant_evaluated() && prog_.cp_ascii_tables != nullptr) {
-        return prog_.cp_ascii_tables + (cp_index * 256); // pre-built flat tables (compile-time storage)
+        // Recorded in the state so the fast path above answers for compile-time storage too — the
+        // invariant is \ref class_table's: `table_class` names the row `row_ptr` points at.
+        state_.table_class       = key;
+        state_.rows_verified_for = static_cast<const void*>(prog_.code.data());
+        state_.row_ptr           = prog_.cp_ascii_tables + (cp_index * 256);
+        return state_.row_ptr;
       }
       else if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
         detail::regex_immutables& cache {*prog_.immut};
-        const std::int32_t        key {-2 - static_cast<std::int32_t>(cp_index)};
-        if (row_key_stale(state_.table_class, key)) { // see class_table
-          if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
-            ensure_membership_rows(cache);
-          }
-          if (!cache.row_ready(cache.cp_ascii_ready_at + cp_index)) {
-            fill_cp_ascii_row(cache, cp_index);
-          }
-          state_.table_class       = key;
-          state_.rows_verified_for = static_cast<const void*>(prog_.code.data());
-          state_.row_ptr           = cache.cp_ascii_rows.data() + (cp_index * 256);
+        if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
+          ensure_membership_rows(cache);
         }
+        if (!cache.row_ready(cache.cp_ascii_ready_at + cp_index)) {
+          fill_cp_ascii_row(cache, cp_index);
+        }
+        state_.table_class       = key;
+        state_.rows_verified_for = static_cast<const void*>(prog_.code.data());
+        state_.row_ptr           = cache.cp_ascii_rows.data() + (cp_index * 256);
         return state_.row_ptr;
       }
       else { // constant evaluation -- see class_table
-        const std::int32_t key {-2 - static_cast<std::int32_t>(cp_index)};
         if (state_.table_class != key) {
           const char_class& klass {prog_.cp_classes[cp_index].ascii};
           for (std::size_t b {0}; b < 256; ++b) {
             state_.table[b] = klass.test(static_cast<std::uint8_t>(b)) ? 1U : 0U;
           }
           state_.table_class = key;
+        }
+        // Runtime only, and only when neither storage kind is present: the fast path answers from
+        // `row_ptr`, so this path must leave it on the row it just claimed.
+        if (!std::is_constant_evaluated()) {
+          state_.rows_verified_for = static_cast<const void*>(prog_.code.data());
+          state_.row_ptr           = state_.table.data();
         }
         return state_.table.data();
       }
@@ -2330,27 +2342,33 @@ namespace real::detail {
 #endif
     constexpr const std::uint64_t* cp_page_table(std::size_t cp_index)
     {
+      // Key first, resolution outlined — see \ref class_table, whose shape this is exactly.
+      const std::int32_t key {-2 - static_cast<std::int32_t>(cp_index)};
+      if (!std::is_constant_evaluated() && !row_key_stale(state_.cp_page_class, key)) {
+        return state_.page_ptr;
+      }
       if (!std::is_constant_evaluated() && prog_.cp_page_tables != nullptr) {
-        return prog_.cp_page_tables + (cp_index * 30); // pre-built flat tables (compile-time storage)
+        // Recorded in the state so the fast path above answers for compile-time storage too — the
+        // invariant is \ref class_table's, on this accessor's own pair of fields.
+        state_.cp_page_class     = key;
+        state_.rows_verified_for = static_cast<const void*>(prog_.code.data());
+        state_.page_ptr          = prog_.cp_page_tables + (cp_index * 30);
+        return state_.page_ptr;
       }
       else if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
         detail::regex_immutables& cache {*prog_.immut};
-        const std::int32_t        key {-2 - static_cast<std::int32_t>(cp_index)};
-        if (row_key_stale(state_.cp_page_class, key)) { // see class_table
-          if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
-            ensure_membership_rows(cache);
-          }
-          if (!cache.row_ready(cache.cp_page_ready_at + cp_index)) {
-            fill_cp_page_row(cache, cp_index);
-          }
-          state_.cp_page_class     = key;
-          state_.rows_verified_for = static_cast<const void*>(prog_.code.data());
-          state_.page_ptr          = cache.cp_page_rows.data() + (cp_index * 30);
+        if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
+          ensure_membership_rows(cache);
         }
+        if (!cache.row_ready(cache.cp_page_ready_at + cp_index)) {
+          fill_cp_page_row(cache, cp_index);
+        }
+        state_.cp_page_class     = key;
+        state_.rows_verified_for = static_cast<const void*>(prog_.code.data());
+        state_.page_ptr          = cache.cp_page_rows.data() + (cp_index * 30);
         return state_.page_ptr;
       }
       else { // constant evaluation -- see class_table
-        const std::int32_t key {-2 - static_cast<std::int32_t>(cp_index)};
         if (state_.cp_page_class != key) {
           state_.cp_page.fill(0);
           const detail::cp_class& cc {prog_.cp_classes[cp_index]};
@@ -2367,6 +2385,12 @@ namespace real::detail {
             }
           }
           state_.cp_page_class = key;
+        }
+        // Runtime only, and only when neither storage kind is present: the fast path answers from
+        // `page_ptr`, so this path must leave it on the page it just claimed.
+        if (!std::is_constant_evaluated()) {
+          state_.rows_verified_for = static_cast<const void*>(prog_.code.data());
+          state_.page_ptr          = state_.cp_page.data();
         }
         return state_.cp_page.data();
       }
