@@ -145,9 +145,16 @@ namespace real::detail {
   //!        on a shape with no `\b`/`\B` support (e.g. a literal `byte` right after `save 0`).
   struct shape_lead
   {
-    std::size_t  body_start {}; //!< pc where the shape-specific body begins.
-    std::uint8_t wb_lead    {}; //!< 0/1/2, see \ref wb_hint_of.
-    bool         ok         {}; //!< false: no leading `save 0`, or a non-wb lead assert disqualifies.
+    std::size_t  body_start     {}; //!< pc where the shape-specific body begins.
+    std::uint8_t wb_lead        {}; //!< 0/1/2, see \ref wb_hint_of.
+    //! \brief A leading `\A`/`^` (NOT multiline `^`) was peeled: the shape may only match at 0.
+    //!
+    //! Reported rather than rejected, but every recognizer that does not itself honour the anchor
+    //! MUST refuse the shape when this is set -- arming a fast path that scans forward for a pattern
+    //! pinned to position 0 would return matches the program forbids. Only the class-loop recognizer
+    //! accepts it today, and the route it arms reads \ref pattern_hints::anchored_start.
+    bool         anchored_start {};
+    bool         ok             {}; //!< false: no leading `save 0`, or a non-wb lead assert disqualifies.
   };
 
   /*!
@@ -160,12 +167,22 @@ namespace real::detail {
     if (code.empty() || code[0].op != opcode::save || code[0].arg16 != 0) {
       return {};
     }
-    std::size_t  p       {1};
+    std::size_t p {1};
+    // A leading `\A`/`^` is PEELED and reported, not rejected. It pins the match to position 0, which
+    // is a mode rather than a shape: `^X` in search mode and `X` in prefix mode are the same question,
+    // and measured on 100 KB the second is 81x faster because only the second reaches the class loop.
+    // Multiline `^` (line_start) is a different assertion and stays disqualifying.
+    bool anchored {false};
+    if (p < code.size() && code[p].op == opcode::assert_position
+        && static_cast<assert_kind>(code[p].arg8) == assert_kind::text_start) {
+      anchored = true;
+      ++p;
+    }
     std::uint8_t wb_lead {0};
     if (!peel_optional_lead_wb(code, p, wb_lead)) {
       return {};
     }
-    return {.body_start = p, .wb_lead = wb_lead, .ok = true};
+    return {.body_start = p, .wb_lead = wb_lead, .anchored_start = anchored, .ok = true};
   }
 
   //! \brief The \ref shape_lead counterpart: optional trail `\b`/`\B` at \p from, then exactly
@@ -1018,7 +1035,9 @@ namespace real::detail {
     // broke the guarantee would just decline this shape, never misrecognize it.
     {
       const shape_lead lead {parse_shape_lead(code)};
-      if (lead.ok) {
+      // Refuses an anchored lead: this recognizer's route scans forward, which a pattern pinned to
+      // position 0 forbids. Only the class-loop shape above honours it (see shape_lead::anchored_start).
+      if (lead.ok && !lead.anchored_start) {
         std::size_t  p  {lead.body_start};
         std::int16_t gs {-1};
         if (p < code.size() && code[p].op == opcode::save) {
@@ -1131,9 +1150,9 @@ namespace real::detail {
       std::uint8_t       body_pc     {1};
       bool               saw_body    {}; // true once a consuming op has been seen (trail assert only after)
       const shape_lead   lead        {parse_shape_lead(code)};
-      std::size_t        i           {lead.ok ? lead.body_start : code.size()};
+      std::size_t        i           {lead.ok && !lead.anchored_start ? lead.body_start : code.size()};
       const std::uint8_t wb_lead     {lead.wb_lead};
-      if (lead.ok) {
+      if (lead.ok && !lead.anchored_start) {
         if (wb_lead != 0) {
           body_pc = static_cast<std::uint8_t>(i);
         }
@@ -1390,9 +1409,9 @@ namespace real::detail {
     // with an optional literal SUFFIX before save1+match, unlike \ref shape_close's immediate check.
     {
       const shape_lead   lead    {parse_shape_lead(code)};
-      const std::size_t  p       {lead.ok ? lead.body_start : code.size()};
+      const std::size_t  p       {lead.ok && !lead.anchored_start ? lead.body_start : code.size()};
       const std::uint8_t wb_lead {lead.wb_lead};
-      if (lead.ok) {
+      if (lead.ok && !lead.anchored_start) {
         const std::size_t mandatory_start {p};
         std::size_t       loop_pc         {mandatory_start};
         bool              has_mandatory   {false};

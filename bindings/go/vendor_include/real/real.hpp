@@ -388,9 +388,15 @@ namespace real {
       // lookaround walk (its own once-per-walk route). Constant evaluation stays on the general path,
       // where the route seams are honoured as written.
       if constexpr (!TrailingLA) {
+        // An ANCHORED shape is excluded, and the exclusion is load-bearing rather than tidy: the
+        // fillers scan forward, `run()` is where `\A`/`^` is turned into prefix anchoring, and a
+        // batched walk bypasses `run()` entirely. Without this, `^[a-z]+` over "  abc" reports a
+        // match at offset 2. It costs nothing to give up: an anchored pattern yields at most one
+        // match per walk, so there is no per-match return to amortise.
         batch_bytes_    = !std::is_constant_evaluated() && sem == match_semantics::first
                           && prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0
                           && !prog.hints.wb_lead_maximal_run && !detail::class_fastpath_disabled()
+                          && !prog.hints.anchored_start && !prog.hints.line_anchored
                           && prog.hints.greedy_class_loop >= 0
                           && prog.hints.greedy_class_loop_min <= 1;
         batch_eligible_ = batch_bytes_
@@ -398,6 +404,7 @@ namespace real {
                               && prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0
                               && !prog.hints.wb_lead_maximal_run
                               && !detail::class_fastpath_disabled()
+                              && !prog.hints.anchored_start && !prog.hints.line_anchored
                               && prog.hints.greedy_cp_class >= 0
                               && prog.hints.greedy_cp_class_min <= 1);
       }
