@@ -2524,9 +2524,16 @@ namespace real::detail {
     }
 
     //! \brief Below this many total ranges, high-cp membership stays on bsearch (small scripts).
-    //!        Measured: sc=Han=22, scx=Cyrl=18 already quasi-tie; the sparse table pays only for dense
-    //!        classes (L=675, w=767, N=143).
-    static constexpr std::uint32_t cp_hi_range_threshold {32U};
+    //!        Re-measured after this value stood at 32 on the strength of a quasi-tie: at 32 the two
+    //!        classes that straddle it are NOT a tie, they pull opposite ways. `sc=Han` (22 ranges)
+    //!        wants the sparse table -- 10.713 -> 9.147 ns/B on x86-64 (-14.6 %) and 5.729 -> 5.594
+    //!        on arm64 -- while `scx=Cyrl` (18) wants bsearch and loses 2.7 % on the table. So the
+    //!        crossover lies between 18 and 22, and this constant is that gap rather than either
+    //!        measurement: raising it past 22 costs `sc=Han` the figure above, lowering it past 18
+    //!        costs `scx=Cyrl`. Dense classes (L=675, w=767, N=143) are far above and unreachable by
+    //!        any value here -- they are the control, flat to 0.2 % across the change, which is what
+    //!        makes the -14.6 % readable as this decision's own.
+    static constexpr std::uint32_t cp_hi_range_threshold {20U};
 
     /*!
      * \brief Page-bitmap membership for U+0080..U+07FF. Kept separate so class-loop lambdas can

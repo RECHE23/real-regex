@@ -44,6 +44,49 @@ TEST(unicode_property_script)
   EXPECT(real::regex(R"(\P{sc=Greek})").fullmatch("A")); // negated script
 }
 
+// A mid-size script class -- `sc=Han` interns 22 code point ranges -- now resolves high-code-point
+// membership through the sparse two-stage table rather than a binary search, because the crossover
+// between the two sits between 18 ranges and 22 (see cp_hi_range_threshold). One character exercised
+// that class before, which pins nothing about a table this band had never used: the spread below
+// crosses every encoding width the table indexes, and every block boundary it has to get right.
+// Every expectation here was checked against an independent engine (PCRE2 in UTF+UCP mode) rather
+// than read out of REAL -- do not regenerate them from REAL, or this stops being able to fail.
+TEST(unicode_script_han_spans_the_sparse_table)
+{
+  const real::regex han {R"(\p{sc=Han})"};
+  const real::regex non {R"(\P{sc=Han})"};
+  // Members, one per contiguous Han block, at both ends where the block has a well-known edge.
+  for (const char* cp : {"\u4E00",        // CJK Unified Ideographs, first
+                         "\u9FA5",        // CJK Unified Ideographs, long-standing last of the original set
+                         "\u3400",        // Extension A, first
+                         "\u4DBF",        // Extension A, last
+                         "\uF900",        // CJK Compatibility Ideographs, first
+                         "\u3005",        // ideographic iteration mark, script=Han though not an ideograph
+                         "\u3007",        // ideographic number zero, same
+                         "\U00020000"}) { // Extension B: 4-byte UTF-8, the width bsearch and table
+                                          // index differently
+    EXPECT(han.fullmatch(cp));
+    EXPECT(!non.fullmatch(cp));
+  }
+  // Non-members chosen to sit just outside a Han block or inside a neighbouring script, which is
+  // where an off-by-one in a range table shows and a binary search would not.
+  for (const char* cp : {"\u2FFF",    // immediately below Extension A
+                         "\u4DC0",    // immediately above Extension A (Yijing hexagrams)
+                         "\u3000",    // ideographic SPACE -- Common, not Han, and adjacent to U+3005
+                         "\u3041",    // hiragana
+                         "\u30A2",    // katakana
+                         "\uFB00",    // Latin ligature, below the compatibility block
+                         "A",
+                         "\u0410"}) { // Cyrillic
+    EXPECT(!han.fullmatch(cp));
+    EXPECT(non.fullmatch(cp));
+  }
+  // The alias must resolve to the same class, on both sides of the answer.
+  const real::regex alias {R"(\p{Script=Han})"};
+  EXPECT(alias.fullmatch("\u4E00"));
+  EXPECT(!alias.fullmatch("\u3041"));
+}
+
 TEST(unicode_property_aliases_and_loose_matching)
 {
   EXPECT(real::regex(R"(\p{Letter})").fullmatch("é"));
