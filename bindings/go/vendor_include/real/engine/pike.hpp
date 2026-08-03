@@ -3001,6 +3001,16 @@ namespace real::detail {
      * \param[out] out   Buffer for the spans found.
      * \param[in]  cap   Capacity of \p out.
      * \return How many spans were written.
+     *
+     * \note A fourth filler for the whole-pattern `.`/negated-class route was written, verified and
+     *       REFUSED. On clang/arm64 it is the best of the three: `.` over an emoji corpus emits a
+     *       match every 1.7 bytes and read 4.664 -> 1.921 ns/B, −58.8 %, with every other row inside
+     *       1.7 %. On gcc/x86-64 the same patch gains almost nothing on its own row (8.532 -> 8.174)
+     *       and takes back most of what the byte filler had won: `words` 1.708 -> 3.155, `digits`
+     *       1.089 -> 1.933, the ASCII witness 1.694 -> 3.165. A third branch in `refill_batch` and a
+     *       fourth scan body in this file is what the translation unit could not absorb
+     *       (docs/design.dox §10.1). Two fillers is what fits; the emoji row keeps its +7 % and the
+     *       reason is written here rather than rediscovered.
      */
     template <bool Cascade>
     constexpr std::size_t fill_class_spans(std::string_view text,
