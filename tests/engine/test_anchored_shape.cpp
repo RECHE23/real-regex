@@ -89,3 +89,67 @@ TEST(anchored_shape_agrees_with_the_general_route)
     }
   }
 }
+
+TEST(end_anchored_class_shape_matches_only_at_the_limit)
+{
+  const real::regex rx {"[a-z]+$"};
+  // The leftmost match is the run that ENDS at the anchor, not the first run in the subject.
+  EXPECT(rx.search(std::string_view {"abc def"}).matched());
+  EXPECT(rx.search(std::string_view {"abc def"}).start(0) == 4);
+  EXPECT(rx.search(std::string_view {"abc def"}).end(0) == 7);
+  EXPECT(!rx.search(std::string_view {"abc123"}).matched()); // the run does not reach the end
+  EXPECT(!rx.search(std::string_view {""}).matched());
+  // `match` is prefix-anchored AND end-anchored: the run must span from the start to the limit.
+  EXPECT(!rx.match(std::string_view {"abc def"}).matched());
+  EXPECT(rx.match(std::string_view {"abc"}).matched());
+}
+
+TEST(dollar_accepts_one_final_newline_but_backslash_z_does_not)
+{
+  // This is why `^X$` is NOT fullmatch(X), and the difference is silent if the limit is computed
+  // wrong: `$` also matches just before ONE final newline; `\Z` is the strict end.
+  const real::regex dollar {"^[a-z]+$"};
+  const real::regex strict {"^[a-z]+\\Z"};
+  EXPECT(dollar.search(std::string_view {"abc"}).matched());
+  EXPECT(dollar.search(std::string_view {"abc\n"}).matched());
+  EXPECT(dollar.search(std::string_view {"abc\n"}).end(0) == 3);  // ends BEFORE the newline
+  EXPECT(!dollar.search(std::string_view {"abc\n\n"}).matched()); // only one
+  EXPECT(strict.search(std::string_view {"abc"}).matched());
+  EXPECT(!strict.search(std::string_view {"abc\n"}).matched());
+  // fullmatch spans the WHOLE subject, so the trailing newline is not excusable there.
+  EXPECT(!real::regex {"[a-z]+"}.fullmatch(std::string_view {"abc\n"}).matched());
+}
+
+TEST(end_anchored_shape_yields_one_match_per_walk)
+{
+  const real::regex                                rx {"[a-z]+$"};
+  std::vector<std::pair<std::size_t, std::size_t>> v;
+  for (const auto& m : rx.find_iter(std::string_view {"abc def"})) {
+    v.emplace_back(m.start(0), m.end(0));
+  }
+  EXPECT(v.size() == 1);
+  const std::pair<std::size_t, std::size_t> tail_run {4, 7};
+  EXPECT(v[0] == tail_run);
+}
+
+TEST(end_anchored_shape_agrees_with_the_general_route)
+{
+  for (const char* pat : {"[a-z]+$", "^[a-z]+$", "[a-z]+\\Z", "^[a-z]+\\Z", "[0-9]+$", "[a-z]{2,}$"}) {
+    for (const char* subj : {"", "a", "abc", "abc def", "abc\n", "abc\n\n", "  abc", "123abc",
+                             "abc123", "abc\ndef"}) {
+      real::detail::class_fastpath_disabled() = false;
+      const auto fast    {walk(real::regex {pat}, subj)};
+      real::detail::class_fastpath_disabled() = true;
+      const auto general {walk(real::regex {pat}, subj)};
+      real::detail::class_fastpath_disabled() = false;
+      EXPECT(fast == general);
+    }
+  }
+}
+
+TEST(multiline_dollar_is_not_peeled)
+{
+  const real::regex rx {"[a-z]+$", real::flags::multiline};
+  EXPECT(walk(rx, "abc\ndef").size() == 2);
+  EXPECT(walk(rx, "abc\ndef")[0].second == 3);
+}

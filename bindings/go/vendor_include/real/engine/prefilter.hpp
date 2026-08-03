@@ -147,7 +147,7 @@ namespace real::detail {
   {
     std::size_t  body_start     {}; //!< pc where the shape-specific body begins.
     std::uint8_t wb_lead        {}; //!< 0/1/2, see \ref wb_hint_of.
-    //! \brief A leading `\A`/`^` (NOT multiline `^`) was peeled: the shape may only match at 0.
+    //! \brief A leading `\A`/`^` (NOT multiline `^`) was peeled — the shape may only match at 0.
     //!
     //! Reported rather than rejected, but every recognizer that does not itself honour the anchor
     //! MUST refuse the shape when this is set -- arming a fast path that scans forward for a pattern
@@ -190,8 +190,14 @@ namespace real::detail {
   //!        caller's to supply -- only its shape-specific body walk knows where that is.
   struct shape_close
   {
-    std::uint8_t wb_trail {}; //!< 0/1/2, see \ref wb_hint_of.
-    bool         ok       {}; //!< false: not exactly `save 1`, `match` at the end after peeling.
+    std::uint8_t wb_trail   {}; //!< 0/1/2, see \ref wb_hint_of.
+    //! \brief A trailing end anchor was peeled — 0 none, 1 `\Z` (strict end), 2 `$` (end, or just
+    //!        before ONE final newline -- Python semantics, and the reason `^X$` is NOT `fullmatch(X)`).
+    //!
+    //! Same contract as the lead anchor above — reported, not rejected, and every recognizer
+    //! that does not itself honour it MUST refuse the shape.
+    std::uint8_t end_anchor {};
+    bool         ok         {}; //!< false: not exactly `save 1`, `match` at the end after peeling.
   };
 
   /*!
@@ -203,13 +209,35 @@ namespace real::detail {
   [[nodiscard]] constexpr shape_close parse_shape_close(std::span<const instr> code,
                                                         std::size_t            from) noexcept
   {
+    // Peeled inline rather than through peel_optional_trail_wb, which REFUSES any assertion that is
+    // not a word boundary -- so calling it first made the end-anchor peel below unreachable. The
+    // compiler emits the trail in this order (`X+\b$` -> klass, split, assert(\b), assert($)), and
+    // anything else that lands here simply fails the `save 1`/`match` check at the end.
     std::uint8_t wb_trail {0};
-    if (!peel_optional_trail_wb(code, from, wb_trail)) {
-      return {};
+    if (from < code.size() && code[from].op == opcode::assert_position
+        && is_word_boundary_kind(static_cast<assert_kind>(code[from].arg8))) {
+      wb_trail = wb_hint_of(static_cast<assert_kind>(code[from].arg8));
+      ++from;
+    }
+    // A trailing `\Z`/`$` pins where the match ENDS, which is a limit rather than a shape. Peeled and
+    // reported here for the same reason the lead anchor is: it lets the shape routes keep the pattern
+    // and honour the limit themselves. Multiline `$` (line_end) is a different assertion, is not
+    // peeled, and therefore still disqualifies the shape.
+    std::uint8_t end_anchor {0};
+    if (from < code.size() && code[from].op == opcode::assert_position) {
+      const auto kind {static_cast<assert_kind>(code[from].arg8)};
+      if (kind == assert_kind::text_end) {
+        end_anchor = 1;
+        ++from;
+      }
+      else if (kind == assert_kind::text_end_or_final_newline) {
+        end_anchor = 2;
+        ++from;
+      }
     }
     if (from + 1 < code.size() && code[from].op == opcode::save && code[from].arg16 == 1 &&
         code[from + 1].op == opcode::match && from + 2 == code.size()) {
-      return {.wb_trail = wb_trail, .ok = true};
+      return {.wb_trail = wb_trail, .end_anchor = end_anchor, .ok = true};
     }
     return {};
   }
@@ -977,6 +1005,7 @@ namespace real::detail {
                                          /*maximal_run=*/ true, lead.wb_lead, close.wb_trail, out_lead,
                                          out_trail)) {
                 hints.greedy_class_loop     = cls;
+                hints.greedy_class_loop_end = close.end_anchor;
                 hints.greedy_class_loop_min = static_cast<std::uint16_t>(k);
                 hints.greedy_group_start    = gs;
                 hints.greedy_group_end      = ge;
@@ -1091,7 +1120,9 @@ namespace real::detail {
           // this route against the general VM, which is the only reason the shape is narrowed here rather
           // than shipped wrong; lifting it means teaching those loops to step by one code point.
           const bool counted_wb {cp_max != 0 && (lead.wb_lead != 0 || close.wb_trail != 0)};
-          if (ok && close.ok && !counted_wb && cp_idx >= 0
+          // The code-point route does not honour an end anchor yet, so it must refuse one --
+          // same contract as the lead anchor: report, then refuse where unhandled.
+          if (ok && close.ok && close.end_anchor == 0 && !counted_wb && cp_idx >= 0
               && static_cast<std::size_t>(cp_idx) < cp_classes.size() && k <= 65535) {
             const bool has_wb {lead.wb_lead != 0 || close.wb_trail != 0};
             // Bare path: no Unicode table walk (keeps constexpr light for static_regex).

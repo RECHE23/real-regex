@@ -397,6 +397,7 @@ namespace real {
                           && prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0
                           && !prog.hints.wb_lead_maximal_run && !detail::class_fastpath_disabled()
                           && !prog.hints.anchored_start && !prog.hints.line_anchored
+                          && prog.hints.greedy_class_loop_end == 0
                           && prog.hints.greedy_class_loop >= 0
                           && prog.hints.greedy_class_loop_min <= 1;
         batch_eligible_ = batch_bytes_

@@ -709,6 +709,9 @@ namespace real::detail {
           out_slots.assign(prog_.slot_count, npos);
           return false;
         }
+        if (prog_.hints.greedy_class_loop_end != 0) {
+          return run_class_loop_end_anchored(text, start, mode, out_slots);
+        }
         return run_class_loop<Cascade>(text, start, anchored_mode(mode), out_slots);
       }
       if (sem_ == match_semantics::first && prog_.hints.greedy_cp_class >= 0
@@ -2208,6 +2211,76 @@ namespace real::detail {
         return state_.row_ptr;
       }
       return resolve_class_table(class_index);
+    }
+
+    /*!
+     * \brief `X+$` / `^X+$` in search mode: the run that ENDS at the anchor, found by walking back.
+     *
+     * A trailing `\Z`/`$` pins the end, so the leftmost match is the maximal class run that finishes
+     * exactly there -- one backward walk from the limit, not a forward scan that finds runs and
+     * discards each one whose end is wrong. `[a-z]+$` over 100 KB was 3.100 ms on the general VM.
+     *
+     * The limit is where `$` differs from `\Z` and from `fullmatch`, and getting it wrong is silent:
+     * `$` (kind 2) also matches just before ONE final newline, which is why `^a+$` matches `"aaa\n"`
+     * while `fullmatch(a+)` does not. `\Z` (kind 1) is the strict end.
+     * \tparam OutSlots Output slot container.
+     * \param[in]  text      The subject.
+     * \param[in]  start     Region start; the match may not begin before it.
+     * \param[in]  mode      Anchoring mode: search, prefix or full.
+     * \param[out] out_slots Receives the span on success.
+     * \return `true` when a run ends at the anchor.
+     */
+    template <typename OutSlots>
+    constexpr bool run_class_loop_end_anchored(std::string_view text,
+                                               std::size_t      start,
+                                               run_mode         mode,
+                                               OutSlots&        out_slots)
+    {
+      const std::uint8_t* const tbl {
+        class_table(static_cast<std::size_t>(prog_.hints.greedy_class_loop))};
+      std::size_t limit             {text.size()};
+      if (prog_.hints.greedy_class_loop_end == 2 && limit > 0 && text[limit - 1] == '\n') {
+        --limit; // `$`: the position before one final newline is also an end
+      }
+      const auto fail = [&]() {
+                          out_slots.assign(prog_.slot_count, npos);
+                          return false;
+                        };
+      if (limit <= start) {
+        return fail();
+      }
+      std::size_t match_start {limit};
+      while (match_start > start && tbl[static_cast<std::uint8_t>(text[match_start - 1])] != 0U) {
+        --match_start;
+      }
+      if (match_start == limit) {
+        return fail(); // nothing of the class immediately before the anchor
+      }
+      // `^X+$`: the run must also BEGIN at 0. anchored_impossible() has already refused start != 0.
+      if (prog_.hints.anchored_start && match_start != 0) {
+        return fail();
+      }
+      // ALL modes come here, not just search: the assertion has been peeled OUT of the program, so
+      // whoever handles the shape is the only thing left enforcing it. A prefix (`match`) call that
+      // fell through to the ordinary loop would answer `[a-z]+$` over "abc def" with "abc", which the
+      // pattern forbids.
+      if (mode == run_mode::prefix || mode == run_mode::full) {
+        if (match_start > start) {
+          return fail(); // the run ending at the anchor does not reach back to the required start
+        }
+        match_start = start;
+        if (mode == run_mode::full && limit != text.size()) {
+          return fail(); // a full match must span the WHOLE subject, final newline included
+        }
+      }
+      if (limit - match_start < prog_.hints.greedy_class_loop_min) {
+        return fail();
+      }
+      if (!wb_boundaries_ok(match_start, limit)) {
+        return fail();
+      }
+      fill_span_slots(out_slots, match_start, limit);
+      return true;
     }
 
     /*!
