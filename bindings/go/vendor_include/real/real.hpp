@@ -147,6 +147,22 @@ namespace real {
     }
 
     /*!
+     * \brief Refill from a span the engine already found in a batch, bypassing the VM entirely.
+     * \tparam Vm The engine type, deduced.
+     * \param[in,out] vm The engine, used only to reconstruct the slot layout for this span.
+     * \param[in]     s  Match start.
+     * \param[in]     e  Match end.
+     */
+    template <typename Vm>
+    constexpr void engine_refill_span(Vm&         vm,
+                                      std::size_t s,
+                                      std::size_t e)
+    {
+      vm.write_cp_span_slots(slots_, s, e);
+      matched_ = true;
+    }
+
+    /*!
      * \brief P3c cold path for TrailingLA walks only (never referenced from pure walks).
      * \tparam Cascade Whether the VM may take its memchr-cascade tail.
      * \tparam Vm      The engine type, deduced.
@@ -365,6 +381,19 @@ namespace real {
         cascade_(sem == match_semantics::first && prog.hints.stop_set_size >= 1),
         sem_(sem)
     {
+      // Batching eligibility, decided ONCE per walk like cascade_ above. Every exclusion here names a
+      // shape whose per-match bookkeeping fill_cp_class_spans does not reproduce: leftmost-longest
+      // (different answer), a `\b`/`\B` wrap or the maximal-run window guard (assertions checked per
+      // candidate), a `{k,}` minimum (a too-short run is skipped, not matched), and the trailing-
+      // lookaround walk (its own once-per-walk route). Constant evaluation stays on the general path,
+      // where the route seams are honoured as written.
+      if constexpr (!TrailingLA) {
+        batch_eligible_ = !std::is_constant_evaluated() && sem == match_semantics::first
+                          && prog.hints.greedy_cp_class >= 0 && prog.hints.wb_lead == 0
+                          && prog.hints.wb_trail == 0 && !prog.hints.wb_lead_maximal_run
+                          && prog.hints.greedy_cp_class_min <= 1
+                          && !detail::class_fastpath_disabled();
+      }
       current_.bind_context(text_, pattern_, prog_.names); // invariant across the walk — set once, not per match
       advance();
     }
@@ -446,6 +475,37 @@ namespace real {
     value_type                   current_;                                     //!< The current match.
     typename Storage::state_type state_;                                       //!< VM scratch, reused across the walk.
 
+    //! \brief Buffered spans for the code-point-class route — see \ref batch_eligible_.
+    //!        16 is where the per-match return stops dominating without making the iterator large:
+    //!        it is 256 bytes beside a VM state already measured in kilobytes.
+    static constexpr std::size_t                                          batch_cap         {4};
+    typename detail::pike_vm<typename Storage::state_type, true>::cp_span batch_[batch_cap] {}; //!< The buffered spans; indices \ref batch_i_ .. \ref batch_n_ are the unread ones.
+    std::size_t                                                           batch_n_          {}; //!< Spans currently buffered.
+    std::size_t                                                           batch_i_          {}; //!< Next span to hand out.
+    bool                                                                  batch_eligible_   {}; //!< Route/shape allows batching (decided once).
+
+    /*!
+     * \brief Cold half of the batched walk: refills \ref batch_ from the engine.
+     *
+     * Outlined, and the attribute is load-bearing for the same reason \ref advance is NOT
+     * force-inlined: this iterator's translation unit sits on gcc's per-unit inline budget
+     * (docs/design.dox §10.1). Inline, this refill grew `advance` enough to cost §A rows that never
+     * touch the batch at all -- `digits` +17.0 %, `words` +15.4 %, `date` +10.8 % on gcc/x86-64.
+     * Outlined, `advance`'s hot path is a compare, an index and a span copy, and it runs once per
+     * 16 matches instead of once per match.
+     * \return `true` if at least one span was buffered.
+     */
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    constexpr bool refill_batch()
+    {
+      detail::pike_vm<typename Storage::state_type, true> bvm {prog_, state_};
+      batch_n_ = bvm.fill_cp_class_spans(text_, pos_, batch_, batch_cap);
+      batch_i_ = 0;
+      return batch_n_ != 0;
+    }
+
     /*!
      * \brief Finds the next match, applying the empty-match advance rules.
      *
@@ -474,6 +534,28 @@ namespace real {
     {
       if (done_ || pos_ > text_.size()) {
         done_ = true;
+        return;
+      }
+      // Batched code-point-class walk: the route's cost is its per-match RETURN, not its scan (see
+      // pike.hpp's fill_cp_class_spans), so hand out a buffered span and only re-enter the engine
+      // once the buffer drains. Every shape this cannot reproduce is excluded by batch_eligible_,
+      // decided once per walk.
+      if (batch_eligible_) {
+        if (batch_i_ == batch_n_) {
+          detail::pike_vm<typename Storage::state_type, true> bvm {prog_, state_};
+          batch_n_ = bvm.fill_cp_class_spans(text_, pos_, batch_, batch_cap);
+          batch_i_ = 0;
+          if (batch_n_ == 0) {
+            done_ = true;
+            return;
+          }
+        }
+        detail::pike_vm<typename Storage::state_type, true> wvm {prog_, state_};
+        const auto&                                         sp  {batch_[batch_i_++]};
+        current_.engine_refill_span(wvm, sp.start, sp.end);
+        pos_ = sp.end;
+        // A code-point-class run is never empty, so the find_iter no-progress rule cannot apply here.
+        forbid_empty_until_ = 0;
         return;
       }
       // `state_` is this iterator's own member and `prog_` is fixed for the walk, so the state never

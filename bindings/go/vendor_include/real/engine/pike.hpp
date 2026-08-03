@@ -2979,6 +2979,125 @@ namespace real::detail {
       }
     }
 
+    //! \brief One buffered `cp_class_loop` match: the whole-match span, which for this route is the
+    //!        whole answer (a capturing wrap mirrors it, and \ref fill_span_slots reconstructs that).
+    struct cp_span
+    {
+      std::size_t start {}; //!< Match start, byte offset.
+      std::size_t end   {}; //!< Match end, byte offset.
+    };
+
+    /*!
+     * \brief Fills up to \p cap `cp_class_loop` matches from \p start without leaving the route.
+     *
+     * The route's per-match cost is not its scan. Holding the class and the bytes fixed and varying
+     * only how often a match must be emitted puts the inner scan at ~2.2 ns/B against 7.6 for the same
+     * bytes emitted one code point at a time: **71 % of those rows is the per-match return** through
+     * `run()`'s dispatch, `fill_span_slots` and the iterator's re-entry, paid once every three bytes
+     * for a single-code-point pattern. Filling a buffer amortises all of it over \p cap matches and
+     * hoists `asc` once for the batch instead of once per match.
+     *
+     * Narrow by construction, and the guard is the caller's (\ref basic_match_iterator): search
+     * semantics, no `\b`/`\B` wrap, no `{k,}` minimum. Those shapes have bookkeeping this loop does
+     * not reproduce, and batching them would answer a different question than the one asked.
+     * \param[in]  text  The subject.
+     * \param[in]  start Where to begin.
+     * \param[out] out   Buffer for the spans found.
+     * \param[in]  cap   Capacity of \p out; the walk stops there and resumes from the last end.
+     * \return How many spans were written.
+     */
+    constexpr std::size_t fill_cp_class_spans(std::string_view text,
+                                              std::size_t      start,
+                                              cp_span*         out,
+                                              std::size_t      cap)
+    {
+      const std::size_t         cp_index {static_cast<std::size_t>(prog_.hints.greedy_cp_class)};
+      const std::uint8_t* const asc {cp_ascii_table(cp_index)};
+      const auto                member_hi = [&](char32_t cp) -> bool {
+                                              if (cp <= cp_page_max) {
+                                                return cp_member_page(cp_index, cp);
+                                              }
+                                              return cp_member_high(cp_index, cp);
+                                            };
+      const auto width = [&](std::size_t i) -> std::size_t {
+                           const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, i)};
+                           if (!dc.valid) {
+                             return 0;
+                           }
+                           const bool m {dc.cp < 0x80U ? asc[dc.cp] != 0U : member_hi(dc.cp)};
+                           return m ? dc.length : 0;
+                         };
+      const bool        greedy  {prog_.hints.greedy_cp_class_plus};
+      const std::size_t max_len {prog_.hints.greedy_cp_class_max};
+      std::size_t       n       {0};
+      std::size_t       i       {start};
+      while (i < text.size()) {
+        const auto  lead {static_cast<std::uint8_t>(text[i])};
+        std::size_t w    {asc[lead] != 0U ? std::size_t {1}
+                                       : (lead < 0x80U ? std::size_t {0} : width(i))};
+        if (w == 0) {
+          ++i;
+          continue;
+        }
+        std::size_t end {i + w};
+        if (greedy) {
+          while (end < text.size()) {
+            const auto l2 {static_cast<std::uint8_t>(text[end])};
+            if (asc[l2] != 0U) {
+              ++end;
+              continue;
+            }
+            if (l2 < 0x80U) {
+              break;
+            }
+            const std::size_t w2 {width(end)};
+            if (w2 == 0) {
+              break;
+            }
+            end += w2;
+          }
+        }
+        else if (max_len != 0) {
+          for (std::size_t k {1}; k < max_len && end < text.size(); ++k) {
+            const auto l2 {static_cast<std::uint8_t>(text[end])};
+            if (asc[l2] != 0U) {
+              ++end;
+              continue;
+            }
+            if (l2 < 0x80U) {
+              break;
+            }
+            const std::size_t w2 {width(end)};
+            if (w2 == 0) {
+              break;
+            }
+            end += w2;
+          }
+        }
+        out[n] = cp_span {.start = i, .end = end};
+        ++n;
+        i = end;
+        if (n == cap) {
+          break;
+        }
+      }
+      return n;
+    }
+
+    /*!
+     * \brief Writes a buffered span into a caller's slots exactly as the per-match path would.
+     * \param[out] out_slots Slots to fill.
+     * \param[in]  s         Match start.
+     * \param[in]  e         Match end.
+     */
+    template <typename OutSlots>
+    constexpr void write_cp_span_slots(OutSlots&   out_slots,
+                                       std::size_t s,
+                                       std::size_t e)
+    {
+      fill_span_slots(out_slots, s, e);
+    }
+
     /*!
      * \brief Fast path for a whole-pattern code-point class `klass_cp`, optionally a greedy `+`.
      *
