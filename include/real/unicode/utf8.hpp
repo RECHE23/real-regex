@@ -29,6 +29,40 @@ namespace real::detail {
   };
 
   /*!
+   * \brief Per-lead-byte sequence length: 1–4 for a byte the mask tests accepted as a lead, 0 for one
+   *        they rejected outright (a continuation `0x80`–`0xBF`, or `0xF8`–`0xFF`).
+   *
+   * One load in place of the three mask tests the decoder used to walk, and it reproduces them
+   * EXACTLY — including for leads that are always malformed. `0xC0`/`0xC1` (every encoding overlong)
+   * and `0xF5`–`0xF7` (every code point past U+10FFFF) keep the lengths the mask tests gave them, 2
+   * and 4, because the failure `length` is part of this decoder's contract: callers report the bytes
+   * examined, and the malformed-UTF-8 matrix pins what a caller does with them. Rejecting them here
+   * on length 1 would be faster and would silently change that answer.
+   */
+  inline constexpr unsigned char utf8_lead_length[256] {
+    // 0x00-0x7F: ASCII, one byte.
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    // 0x80-0xBF: continuation bytes, never a lead.
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    // 0xC0-0xDF: two-byte leads (0xC0/0xC1 are overlong-only and the min_cp guard below rejects
+    // them, at the SAME reported length the mask tests used to give).
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    // 0xE0-0xEF: three bytes. 0xF0-0xF7: four (0xF5-0xF7 decode past U+10FFFF and the range
+    // check below rejects them, again at the length the mask tests reported). 0xF8-0xFF: never a lead.
+    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 0, 0, 0, 0, 0, 0, 0, 0,
+  };
+
+  inline constexpr unsigned char utf8_lead_bits[5] {
+    0, 0x7F, 0x1F, 0x0F, 0x07};     //!< Code-point bits the lead byte carries, indexed by its length.
+
+  inline constexpr std::uint32_t utf8_min_cp[5] {
+    0, 0, 0x80U, 0x800U, 0x10000U}; //!< Smallest code point each length may legally encode.
+
+  /*!
    * \brief Strictly decodes and validates the UTF-8 sequence at `text[pos]`.
    *
    * Unlike \ref codepoint_advance (a lenient forward-progress helper for match iteration), this
@@ -48,27 +82,17 @@ namespace real::detail {
     if (lead < 0x80U) {
       return {.cp = lead, .length = 1, .valid = true}; // ASCII
     }
-    std::size_t   length {};
-    std::uint32_t cp     {};
-    std::uint32_t min_cp {}; // smallest code point this length may legally encode (overlong guard)
-    if ((lead & 0xE0U) == 0xC0U) {
-      length = 2;
-      cp     = lead & 0x1FU;
-      min_cp = 0x80U;
+    // One table load decides the length, where three mask tests used to. This decoder is the largest
+    // single cost of the code-point scan on both of the slowest published Unicode rows -- 30.7 % of
+    // `\p{scx=Cyrl}` and 31.6 % of `\p{sc=Han}` on x86-64 -- and it is reached once per code point.
+    const std::size_t length {utf8_lead_length[lead]};
+    if (length == 0) {
+      // Lone continuation, an overlong-only lead (0xC0/0xC1), or an invalid one (0xF5-0xFF). The
+      // first two used to be rejected further down, after decoding bytes that could not help.
+      return {.cp = 0, .length = 1, .valid = false};
     }
-    else if ((lead & 0xF0U) == 0xE0U) {
-      length = 3;
-      cp     = lead & 0x0FU;
-      min_cp = 0x800U;
-    }
-    else if ((lead & 0xF8U) == 0xF0U) {
-      length = 4;
-      cp     = lead & 0x07U;
-      min_cp = 0x10000U;
-    }
-    else {
-      return {.cp = 0, .length = 1, .valid = false}; // lone continuation, or an invalid lead (0xF8–0xFF)
-    }
+    std::uint32_t       cp     {lead & static_cast<std::uint32_t>(utf8_lead_bits[length])};
+    const std::uint32_t min_cp {utf8_min_cp[length]}; // overlong guard, by length
     for (std::size_t i = 1; i < length; ++i) {
       if (pos + i >= text.size()) {
         return {.cp = 0, .length = i, .valid = false}; // truncated sequence
