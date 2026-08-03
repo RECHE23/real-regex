@@ -53,6 +53,24 @@ namespace real::detail {
    *       unrelated rows by more than it moves its own. An isolated probe cannot see that — it
    *       reported gains on both platforms for a change that loses on both. Measure any change to
    *       this file in `make bench-engines`, never in a probe alone.
+   *
+   * \note And it cannot be moved out of the blast radius, which was the next thing tried. A dedicated
+   *       translation unit is foreclosed by design — this library is header-only — so the only lever
+   *       left is the inlining decision itself, and the two supported compilers want it in OPPOSITE
+   *       directions. Refusing inlining (`noinline`, table kept) costs clang/arm64 `\p{N}+` +44.4 %,
+   *       `\w+` +20.7 %, `\p{scx=Cyrl}` +20.3 %, `\p{L}+` +13.6 % and `\p{sc=Han}` +11.9 %, with the
+   *       ASCII witness flat at −0.3 %: on clang this decoder MUST be inlined into the code-point
+   *       loops. On gcc/x86-64 the same build reads §Unicode `\p{L}+` +12.4 % and `\p{N}+` +6.8 %,
+   *       so it does not even buy the other platform.
+   *
+   *       Note what that rules out: the attribute changed rows by 12 % on a build where this function
+   *       was ALREADY emitted out of line (the profile shows it as its own symbol at 30 % of Ir). So
+   *       the cost is not this function's own inlining — it is what the attribute does to the unit's
+   *       remaining budget. Three packagings have now been measured and refused (256-entry table,
+   *       32-entry table, either plus `noinline`). The 30 % this function costs the two slowest
+   *       Unicode rows is real and is NOT reachable by rewriting the function; reaching it needs the
+   *       header-only constraint relaxed, or the call sites specialised, and neither is a decode
+   *       problem.
    * \param[in] text A byte sequence.
    * \param[in] pos  Index of the lead byte; must be `< text.size()`.
    * \return The decoded code point with `valid == true`, or `valid == false` on any malformation.
