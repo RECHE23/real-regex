@@ -754,6 +754,31 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   measure the same. The capture-slot half of that cost is now copy-on-write (§7.5); the closure-walk half
   is what the lazy-DFA investigation targets for the assertion and multi-group rows (see section E of
   BENCHMARKS.md, where a `\b\w+\b` / `(\w+)@(\w+)` duel against the rust `regex` crate records the gap).
+- **An explicit `^` or `$` costs 10-81x by disqualifying every shape route, and the routes can already
+  answer the question.** Measured on a 100 KB subject, arm64, with the route counters:
+
+      [a-z]+   search     class_loop      0.056 ms      [a-z]+  fullmatch  class_loop   0.059 ms
+      ^[a-z]+$ search     onepass_full    0.566 ms      ^[a-z]+ search     general_full 2.585 ms
+      \w+      search     cp_class_loop   0.067 ms      [a-z]+$ search     general_full 3.002 ms
+      ^\w+$    search     onepass_full    1.412 ms      [a-z]+  match      class_loop   0.032 ms
+
+  `^[a-z]+` in search mode and `[a-z]+` in prefix (`match`) mode are the same question, and the second
+  is **81x faster** because the first carries an explicit anchor and the second carries it in the mode.
+  Half-anchored shapes fall all the way to the general VM; fully anchored ones reach the one-pass DFA
+  and still pay 10-21x over the class loop. `anchored_start` already exists as a hint -- it currently
+  DISQUALIFIES the shape routes rather than arming them.
+  \note This is also the whole of the `^(a+)+$` gap against RE2 in BENCHMARKS.md §C (4.00 ms against
+  0.220): that pattern is on `general_full` for the same reason, and even `^a+$` -- no nesting at all
+  -- costs 2.25 ms there. The nesting is not what is expensive; the anchor is.
+  \note The rewrite is NOT `^X$` -> `fullmatch(X)`, and that was checked before proposing it: `^a+$`
+  matches `"aaa\n"` while `fullmatch(a+)` does not, because `$` accepts one trailing newline, and
+  under `multiline` both anchors mean something else entirely. The sound scope is therefore: no
+  `multiline` flag, and `^X` -> prefix mode (exact, no newline caveat, the 81x row), `^X$` -> full
+  mode over the subject less one optional trailing newline (the 10x row). Wake condition: a
+  measurement of how common anchored patterns are in the binding corpora -- validation patterns are
+  overwhelmingly `^...$`, so the answer is probably "very", and that is worth confirming rather than
+  assuming before touching the frontend.
+
 - **No hand-vectorization.** The prefilter leans on libc `memchr`/`memmem` (already SIMD internally); a
   hand-written SIMD class scanner was prototyped and removed. It was ~7.7× on a synthetic long single-class
   run (a 40 KB block of one class) but ~1.1× on representative word text — where runs are short and the
