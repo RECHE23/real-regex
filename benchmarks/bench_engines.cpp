@@ -559,30 +559,56 @@ namespace {
 #endif
 
 #if defined(HAVE_RE2)
+    // BOTH shapes, like REAL and PCRE2 above. Asking RE2 only the easy one left the resistant shape
+    // -- the one this block's own comment calls the distinguishing case -- measured for two engines
+    // out of four, which is not a comparison. RE2 is a linear-time engine and is expected to answer;
+    // the point is that the table says so from a measurement rather than from its architecture.
     entries.push_back(json_object({
       {"engine", json_string("re2")}, {"pattern", json_string("(a+)+b")}, {"n", json_number(100000)},
       {"samples", json_array(collect([&] {
                                        const RE2 re("(a+)+b");
                                        return RE2::PartialMatch(big, re) ? 1U : 0U;
                                      }, n).samples)}}));
+    entries.push_back(json_object({
+      {"engine", json_string("re2")}, {"pattern", json_string("^(a+)+$")}, {"n", json_number(100000)},
+      {"samples", json_array(collect([&] {
+                                       const RE2 re("^(a+)+$");
+                                       return RE2::FullMatch(big_broken, re) ? 1U : 0U;
+                                     }, n).samples)}}));
 #endif
 
-    for (const int small : {22, 24, 26}) {
-      const std::string   s(static_cast<std::size_t>(small), 'a');
-      std::vector<double> samples;
-      try {
-        samples = collect([&] {
-                            const std::regex re("(a+)+b");
-                            return std::regex_search(s, re) ? 1U : 0U;
-                          }, 3).samples; // a backtracker: keep reps small
+    // Same two shapes for std::regex, at the tiny N a backtracker survives. The resistant shape is
+    // asked here too rather than assumed: "it would obviously also blow up" is the reasoning this
+    // whole section exists to replace.
+    for (const char* shape : {"(a+)+b", "^(a+)+$"}) {
+      // Straddle libc++'s cutoff instead of sitting above it. Swept 8..26: the time DOUBLES per
+      // added character -- 0.072, 0.139, 0.282, 0.558, 1.116 ms at N = 8..12 on `(a+)+b` -- and
+      // then libc++ refuses outright from N = 13, on both shapes, on a complexity counter rather
+      // than a clock. Three points above the cutoff all read "refused" and show none of that;
+      // these show the exponential, the last measurable point, and that it stays refused.
+      for (const int small : {8, 10, 12, 13, 26}) {
+        // Each shape needs the subject that DEFEATS it -- the same pairing the large subjects use
+        // above (`big` for one, `big_broken` for the other). Give either shape the other's subject
+        // and it matches on the first path in microseconds, measuring a trivial success instead of
+        // backtracking: that is a measurement of nothing, and both directions of the mistake were
+        // made here before this comment existed.
+        const std::string   s {std::string(static_cast<std::size_t>(small), 'a')
+                               + (std::string_view {shape} == "(a+)+b" ? "" : "b")};
+        std::vector<double> samples;
+        try {
+          samples = collect([&] {
+                              const std::regex re(shape);
+                              return std::regex_search(s, re) ? 1U : 0U;
+                            }, 3).samples; // a backtracker: keep reps small
+        }
+        catch (const std::exception&) {
+          // libc++ may abort catastrophic backtracking; leave the samples empty.
+        }
+        entries.push_back(json_object({
+          {"engine", json_string("std")}, {"pattern", json_string(shape)},
+          {"n", json_number(static_cast<double>(small))},
+          {"samples", json_array(samples)}}));
       }
-      catch (const std::exception&) {
-        // libc++ may abort catastrophic backtracking; leave the samples empty.
-      }
-      entries.push_back(json_object({
-        {"engine", json_string("std")}, {"pattern", json_string("(a+)+b")},
-        {"n", json_number(static_cast<double>(small))},
-        {"samples", json_array(samples)}}));
     }
     return "[" + json_join(entries) + "]";
   }

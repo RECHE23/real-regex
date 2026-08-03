@@ -355,11 +355,51 @@ emits under `redos`.
 | REAL `(a+)+` (bare VM, no required literal) | N = 100 000 | **~4.9 ms** (linear) |
 | REAL `(a+)+` (bare VM, linearity check) | N = 1 000 000 | **~49 ms** (≈10× → linear) |
 | RE2 `(a+)+b` | N = 100 000 | ~0.22 ms (linear; this harness) |
-| `std::regex` (libstdc++) | N = 26 | 4107 ms (backtracks; libc++ instead *refuses* at "complexity exceeded") |
+| RE2 `^(a+)+$` | N = 100 000 | **~0.22 ms** (linear; the resistant shape) |
+| `std::regex` (libstdc++) | N = 26 | 4107 ms (backtracks; libc++ instead *refuses* from N = 13 — see the sweep below) |
 | Python `re` | n = 24 | 1397.76 ms (and climbing exponentially) |
 
 REAL and RE2 stay linear; the backtracking engines (`std::regex`, `re`) either refuse
-or blow up at trivially small inputs. The prefilter makes the classic demo *faster*
+or blow up at trivially small inputs.
+
+**The `^(a+)+$` row for RE2 was missing until now, and adding it cost REAL a claim.** This section's
+own text calls that shape the distinguishing one — anchored at both ends with a breaking suffix,
+there is no required literal to prefilter and nothing to auto-possessify — yet `make bench-engines`
+asked it only of REAL and PCRE2. Asked of all four, at N = 100 000:
+
+| engine | `(a+)+b` | `^(a+)+$` |
+| --- | ---: | ---: |
+| REAL | 0.003 ms | **4.00 ms** |
+| RE2 | 0.220 ms | **0.220 ms** |
+| PCRE2-JIT | 0.005 ms | refused (catastrophic backtracking) |
+| `std::regex` | see below — refuses from N = 13 | same |
+
+**`std::regex` is now measured straddling its cutoff rather than above it**, because three rows all
+reading "refused" show the refusal and none of the curve. Swept N = 8…26 on libc++, the time
+**doubles per added character** and then the implementation refuses outright — on a complexity
+counter, not a clock:
+
+| N | 8 | 10 | 12 | 13 | 26 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `(a+)+b` | 0.068 ms | 0.275 | 1.115 | refused | refused |
+| `^(a+)+$` | 0.041 ms | 0.157 | 0.630 | refused | refused |
+
+Each step of two characters is ×4.0, to within a percent, on both shapes. That is the property this
+whole section exists to contrast: REAL crosses 100 000 characters — nearly four orders of magnitude
+more input — in 4 ms, on the shape where PCRE2 gives up entirely.
+
+So the safety claim gets STRONGER — REAL and RE2 are the only two engines linear on both shapes, and
+that is now measured for all four rather than asserted for two — while the throughput claim on this
+row gets weaker: **RE2 answers the resistant shape 18× faster than REAL** (0.22 ms against 4.00), and
+the incomplete table was hiding that. Both engines are linear; RE2's constant on a nested-quantifier
+NFA is far better, which is its lazy DFA against REAL's thread list. Recorded as a gap, not an
+asterisk.
+
+A second defect of the same kind was fixed in the harness while adding those cells: the `std::regex`
+rows fed BOTH shapes the same subject, so whichever shape that subject happened to satisfy answered
+in microseconds and was reported as if it had survived backtracking. Each shape now gets the subject
+that defeats it — `"a"×N` for `(a+)+b`, `"a"×N + "b"` for `^(a+)+$` — which is the pairing the large
+subjects already used. The prefilter makes the classic demo *faster*
 than older docs claimed (~0.52 ms was a stale figure that measured neither leg); the
 bare-VM row is the guarantee without that short-circuit. This is the property REAL
 is built to guarantee.
