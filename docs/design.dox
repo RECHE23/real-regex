@@ -760,6 +760,18 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   loop is dominated by match bookkeeping, not the inner scan — for thousands of lines of intrinsics and a
   portability burden. \note Wake condition: a workload provably dominated by long single-class runs (a
   columnar scanner over wide fixed fields), measured, not assumed.
+  \note **Quantified, and it settles where the PCRE2-JIT gap actually lives.** Hold the class and the
+  bytes fixed and vary only how often a match must be emitted: `\p{sc=Han}` over a pure-Han corpus
+  costs **7.590 ns/B at 66 672 matches** and `\p{sc=Han}+` over the SAME bytes costs **2.181** at one.
+  `\p{L}`/`\p{L}+` read 7.601 and 2.186; `[a-z]`/`[a-z]+` read 9.301 and 2.111. The inner scan is
+  ~2.2 ns/B and **the remaining 71 % is per-match bookkeeping** -- the return through `run()`'s route
+  dispatch, `fill_span_slots`, and the iterator's re-entry, paid once per match and, for a
+  single-code-point pattern, once every three bytes. That is why the SIMD scanner measured 1.1 x on
+  representative text: it was optimising the 29 %. It is also the right frame for the PCRE2-JIT gap on
+  the Unicode rows -- on `\p{sc=Han}` PCRE2 spends ~16.6 ns per match against REAL's ~43.6, while the
+  scan itself is competitive. The structural lever is a route that emits MANY matches per call instead
+  of returning to the dispatcher for each one; every scan-side lever is bounded above by that 29 %
+  before it starts.
 - **Enumerating named groups is O(N²), and the cheap half of that is now fixed.** `named_groups()`
   materialises a `vector` on every call, and the C ABI's `real_group_name` — keyed by group *number* —
   is called once per name by anything building a name→index map. `named_group_count()` /
