@@ -1092,6 +1092,22 @@ actual gate).
 - **`callgrind_annotate` marks recursion depth with a trailing `'2`, and those lines are the SAME
   function.** Summing them double-counts. A function reported at "20 %" across two such lines is at
   10 %, and a cost model built on the inflated figure will point at the wrong place.
+- **The harness cannot be instrumented to measure faster, and this is measured rather than feared.**
+  Tonight's refutations kept turning on the same mechanism — a change to a header included everywhere
+  moves §A rows it cannot reach — so the obvious next step was a cheaper instrument: a runtime
+  `BENCH_REAL_ONLY` switch in `bench_engines.cpp`, timing only REAL while every other engine stays
+  compiled and linked, so the translation unit keeps its shape. **It moved `digits` by 12 %.** Same
+  engine tree, same corpus: 1.788 / 1.791 / 1.789 ns/B with the harness as it ships, 1.999 / 1.998 /
+  2.008 with the switch added, against a 1.786 baseline. One function, two branches and a `getenv`
+  spend from the same per-unit inline budget the engine's own inlining comes out of.
+
+  So the rule is: **numbers taken with a modified harness cannot be compared against numbers taken
+  with the shipped one**, in either direction, and an isolated probe is worse still — it reported
+  gains on BOTH platforms for a decoder change that lost on both. Measure engine changes with
+  `make bench-engines` unmodified, both arms, or do not claim them. The corollary is uncomfortable
+  and stated anyway: there is no cheap instrument for this engine, and the expensive one is the only
+  honest one.
+
 - **§A's `fields [^,]+` row is not a like-for-like comparison, and the gap is the difference in work.**
   A negated class matches every code point but the excluded ones, so it routes to the code-point scan
   rather than the byte class loop: 5.448 ns/B against 1.894 for `[a-z]+` on x86-64, 3.450 against

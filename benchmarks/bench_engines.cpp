@@ -16,6 +16,19 @@
 //       -DHAVE_RE2 $(pkg-config --cflags --libs re2 absl_strings ...) -o bench_engines
 //   BENCH_SAMPLES=30 ./bench_engines > engines.json
 
+// DO NOT INSTRUMENT THIS FILE TO MEASURE FASTER. Adding a runtime "time only REAL" switch here --
+// one function, two branches and a getenv, with every engine still compiled and linked so the
+// translation unit would be bit-identical in shape -- moved §A rows it cannot touch by 12 % on
+// gcc/x86-64. Measured, not feared: the same engine tree read `digits` 1.788/1.791/1.789 ns/B with
+// this file as it ships and 1.999/1.998/2.008 with the switch added, against a 1.786 baseline. This
+// unit includes <regex>, PCRE2, RE2 and real.hpp together and sits on gcc's per-unit inline budget
+// (docs/design.dox §10.1); anything added here spends from the same pot the engine's own inlining
+// comes out of.
+//
+// The consequence is a rule, not a warning: numbers taken with a MODIFIED harness cannot be compared
+// against numbers taken with the shipped one, in either direction. If this file must change, re-take
+// both arms of every comparison afterwards.
+
 #include <real/real.hpp>
 #include <sciforge/bench.hpp>
 
