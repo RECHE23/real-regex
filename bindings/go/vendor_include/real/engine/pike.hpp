@@ -2028,6 +2028,15 @@ namespace real::detail {
         }
         state_.table_class = static_cast<std::int32_t>(class_index);
       }
+      // Runtime only, and it is what keeps \ref class_table's leading fast path sound: that path
+      // answers from `row_ptr` whenever the key matches, so every path that claims the key must leave
+      // `row_ptr` on the row it claimed. Reached at runtime only when neither storage kind is present;
+      // under constant evaluation nothing reads `row_ptr`, and the guard keeps the pointer out of the
+      // constexpr state entirely.
+      if (!std::is_constant_evaluated()) {
+        state_.rows_verified_for = static_cast<const void*>(prog_.code.data());
+        state_.row_ptr           = state_.table.data();
+      }
       return state_.table.data();
     }
 
@@ -2163,17 +2172,49 @@ namespace real::detail {
 #endif
     constexpr const std::uint8_t* class_table(std::size_t class_index)
     {
+      const std::int32_t key {static_cast<std::int32_t>(class_index)};
+      // The row-key compare comes FIRST, ahead of both storage-mode tests. Two acquire loads here would
+      // be per-`run()`, and `run()` is per MATCH on a walk — 11 327 times over 64 KiB on `[a-z]+`; the
+      // state is single-threaded by construction, so it remembers which row it last verified and a walk
+      // that stays on one class pays one compare. The storage-mode tests are invariant for the whole
+      // walk while the key is not, so asking them first charged every match two branches that no
+      // compiler can hoist out of a per-match call — and being invariant is exactly why they must be
+      // asked last, not first. Every branch here answers the ONE question the caller asked; ordering is
+      // the whole optimisation.
+      if (!std::is_constant_evaluated() && !row_key_stale(state_.table_class, key)) {
+        return state_.row_ptr;
+      }
+      return resolve_class_table(class_index);
+    }
+
+    /*!
+     * \brief Cold half of \ref class_table — the storage-mode resolution, and the only path that writes
+     *        the state's row cache for a byte class.
+     *
+     * Outlined for the reason \ref class_table has an attribute of its own — what has to stay inlined is the
+     * row-key compare and the return, and every byte of resolution beside it competes for the budget
+     * that lets the accessor enter `basic_match_iterator::advance`. Inlined back in, it measured
+     * `[0-9]+` +7.2 % and `[^,]+` +3.9 % on gcc/x86-64 while helping the same rows on clang/arm64: the
+     * hot path was already right, and the cold path's SIZE was what decided the outcome.
+     * \param[in] class_index Index into the program's interned byte classes.
+     * \return Pointer to the 256-entry membership row, also cached in the state.
+     */
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    constexpr const std::uint8_t* resolve_class_table(std::size_t class_index)
+    {
       if (!std::is_constant_evaluated() && prog_.class_tables != nullptr) {
-        return prog_.class_tables + (class_index * 256); // pre-built flat tables (compile-time storage)
+        // Compile-time storage. Recorded in the state like every other path so the fast path above
+        // answers for this storage too: the invariant this accessor rests on is that `table_class`
+        // names the row `row_ptr` points at, whichever path filled it.
+        state_.table_class       = static_cast<std::int32_t>(class_index);
+        state_.rows_verified_for = static_cast<const void*>(prog_.code.data());
+        state_.row_ptr           = prog_.class_tables + (class_index * 256);
+        return state_.row_ptr;
       }
       else if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
-        detail::regex_immutables& cache {*prog_.immut};
-        // Two acquire loads here would be per-`run()`, and `run()` is per MATCH on a walk — 11 327 times
-        // over 64 KiB on `[a-z]+`. The state is single-threaded by construction, so it remembers which row
-        // it last verified, so a walk that stays on one class pays one compare.
-        if (row_key_stale(state_.table_class, static_cast<std::int32_t>(class_index))) {
-          verify_class_row(cache, class_index);
-        }
+        verify_class_row(*prog_.immut, class_index);
         return state_.row_ptr;
       }
       else {
