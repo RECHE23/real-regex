@@ -463,6 +463,11 @@ rebuild `benchmarks/duel/real_bench` against current headers (`-O3 -flto`), `car
 | email sparse `(\w+)@(\w+)` | 0.097 | 0.159 | **REAL 1.6×** |
 | key= `key=(\w+)` | 1.252 | 2.161 | **REAL 1.7×** |
 
+<!-- Keep this marker: docs/site/drop-in/regex.md slices from it, and anchoring that include on
+     wording instead broke the site build once when a re-stamp rewrote the sentence below. The
+     marker must stay the LAST line of this comment -- the extractor resumes at the next newline. -->
+<!-- [duel-reading] -->
+
 **Reading — verdict brut. REAL leads 11 of 12 rows on BOTH ISAs, and the row this table used to
 publish as its worst deficit is now a 3.7–4.8× win.**
 

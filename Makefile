@@ -70,7 +70,8 @@ include mk/help.mk
         example-check \
         bench-engines bench-multipattern bench-duel bench-static bench-matrix matrix-gate \
         profile-sample profile-callgrind \
-        version-check install install-smoke uninstall release help check-layers check-doc-style check-bench-stamp
+        version-check install install-smoke uninstall release help check-layers check-doc-style check-bench-stamp \
+        check-site-anchors
 
 .DEFAULT_GOAL := help
 
@@ -339,6 +340,13 @@ check-layers:
 check-doc-style:
 	@python3 tools/check_doc_style.py
 
+# Every :start-after:/:end-before: the site slices with must resolve, exactly once, in the file it
+# includes. Dependency-free on purpose: docs-site-gate needs sphinx-build and is SKIPPED without it,
+# so a prose rewrite that deleted an anchor reached CI unchallenged (Docs-site, regex.md). This runs
+# in the cheap section and fails locally instead.
+check-site-anchors:
+	@python3 tools/check_site_anchors.py
+
 # Staleness of docs/BENCHMARKS.md against the engine, by SUBSTANCE (comments stripped) rather than by
 # touch -- eleven of the last fourteen commits under include/real/ were documentation-only, and warning
 # on those would train the reader to ignore it. Warns, never fails.
@@ -485,6 +493,8 @@ full-local-gate-impl:
 	# it runs the CI Doxygen inside Docker and never refreshes the local XML.
 	@echo "── [6b/22] check-doc-style (objects /*! */, attributes //!<)"
 	@$(MAKE) check-doc-style
+	@echo "── [6c/22] check-site-anchors (site slices resolve in their sources)"
+	@$(MAKE) check-site-anchors
 	@echo "── [7/23] doc-check (CI-pinned Doxygen when Docker is available)"
 	@$(MAKE) doc-check
 	@echo "── [8/23] gcc-check (the diagnostics clang lacks — see the target)"

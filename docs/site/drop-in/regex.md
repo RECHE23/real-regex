@@ -55,9 +55,11 @@ Condensed — the full list with tables is the crate's own
 REAL's closest peer on the linear-time axis — the honest duel, both ISAs, full
 tables and method in {doc}`Performance <../performance/index>`:
 
-<!-- Anchor must be UNIQUE in BENCHMARKS.md: "**Reading — verdict brut" appears twice (§A and §E),
-     so it cannot be used here. -->
+<!-- Anchored on an explicit marker, not on wording: "**Reading — verdict brut" appears twice in
+     BENCHMARKS.md (§A and §E) so it cannot be used, and the sentence this used to slice on was
+     deleted by a re-stamp, breaking the site build. The marker is an HTML comment there, invisible
+     in the rendered document and stable across rewrites. -->
 ```{include} ../../BENCHMARKS.md
-:start-after: "The ISA no longer splits this table"
+:start-after: "[duel-reading]"
 :end-before: "Two things carry a caveat"
 ```

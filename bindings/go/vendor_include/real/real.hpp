@@ -388,11 +388,18 @@ namespace real {
       // lookaround walk (its own once-per-walk route). Constant evaluation stays on the general path,
       // where the route seams are honoured as written.
       if constexpr (!TrailingLA) {
-        batch_eligible_ = !std::is_constant_evaluated() && sem == match_semantics::first
-                          && prog.hints.greedy_cp_class >= 0 && prog.hints.wb_lead == 0
-                          && prog.hints.wb_trail == 0 && !prog.hints.wb_lead_maximal_run
-                          && prog.hints.greedy_cp_class_min <= 1
-                          && !detail::class_fastpath_disabled();
+        batch_bytes_    = !std::is_constant_evaluated() && sem == match_semantics::first
+                          && prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0
+                          && !prog.hints.wb_lead_maximal_run && !detail::class_fastpath_disabled()
+                          && prog.hints.greedy_class_loop >= 0
+                          && prog.hints.greedy_class_loop_min <= 1;
+        batch_eligible_ = batch_bytes_
+                          || (!std::is_constant_evaluated() && sem == match_semantics::first
+                              && prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0
+                              && !prog.hints.wb_lead_maximal_run
+                              && !detail::class_fastpath_disabled()
+                              && prog.hints.greedy_cp_class >= 0
+                              && prog.hints.greedy_cp_class_min <= 1);
       }
       current_.bind_context(text_, pattern_, prog_.names); // invariant across the walk — set once, not per match
       advance();
@@ -483,6 +490,7 @@ namespace real {
     std::size_t                                                           batch_n_          {}; //!< Spans currently buffered.
     std::size_t                                                           batch_i_          {}; //!< Next span to hand out.
     bool                                                                  batch_eligible_   {}; //!< Route/shape allows batching (decided once).
+    bool                                                                  batch_bytes_      {}; //!< Batch the BYTE-class route rather than the code-point one.
 
     /*!
      * \brief Cold half of the batched walk: refills \ref batch_ from the engine.
@@ -501,7 +509,13 @@ namespace real {
     constexpr bool refill_batch()
     {
       detail::pike_vm<typename Storage::state_type, true> bvm {prog_, state_};
-      batch_n_ = bvm.fill_cp_class_spans(text_, pos_, batch_, batch_cap);
+      if (batch_bytes_) {
+        batch_n_ = cascade_ ? bvm.template fill_class_spans<true>(text_, pos_, batch_, batch_cap)
+                            : bvm.template fill_class_spans<false>(text_, pos_, batch_, batch_cap);
+      }
+      else {
+        batch_n_ = bvm.fill_cp_class_spans(text_, pos_, batch_, batch_cap);
+      }
       batch_i_ = 0;
       return batch_n_ != 0;
     }
@@ -541,14 +555,9 @@ namespace real {
       // once the buffer drains. Every shape this cannot reproduce is excluded by batch_eligible_,
       // decided once per walk.
       if (batch_eligible_) {
-        if (batch_i_ == batch_n_) {
-          detail::pike_vm<typename Storage::state_type, true> bvm {prog_, state_};
-          batch_n_ = bvm.fill_cp_class_spans(text_, pos_, batch_, batch_cap);
-          batch_i_ = 0;
-          if (batch_n_ == 0) {
-            done_ = true;
-            return;
-          }
+        if (batch_i_ == batch_n_ && !refill_batch()) {
+          done_ = true;
+          return;
         }
         detail::pike_vm<typename Storage::state_type, true> wvm {prog_, state_};
         const auto&                                         sp  {batch_[batch_i_++]};

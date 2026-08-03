@@ -2988,6 +2988,61 @@ namespace real::detail {
     };
 
     /*!
+     * \brief Fills up to \p cap `class_loop` matches from \p start without leaving the route.
+     *
+     * The byte-class twin of \ref fill_cp_class_spans, and it exists for the same measurement: this
+     * route emits a match every few bytes on word text (`[a-z]+` over prose is 42 858 matches in
+     * 200 KB, ~9.9 ns each) and the scan is a table lookup per byte. What is left is the per-match
+     * return, and it is the same return.
+     *
+     * \tparam Cascade Whether the memchr stop-tail applies, chosen once per walk by the caller.
+     * \param[in]  text  The subject.
+     * \param[in]  start Where to begin.
+     * \param[out] out   Buffer for the spans found.
+     * \param[in]  cap   Capacity of \p out.
+     * \return How many spans were written.
+     */
+    template <bool Cascade>
+    constexpr std::size_t fill_class_spans(std::string_view text,
+                                           std::size_t      start,
+                                           cp_span*         out,
+                                           std::size_t      cap)
+    {
+      const std::uint8_t* const tbl {
+        class_table(static_cast<std::size_t>(prog_.hints.greedy_class_loop))};
+      std::size_t n                 {0};
+      std::size_t i                 {start};
+      while (i < text.size()) {
+        if (tbl[static_cast<std::uint8_t>(text[i])] == 0U) {
+          ++i;
+          continue;
+        }
+        std::size_t end {i + 1};
+        if constexpr (Cascade) {
+          while (end < text.size() && tbl[static_cast<std::uint8_t>(text[end])] != 0U) {
+            ++end;
+            if (end - i == cascade_run_threshold) {
+              end = run_cascade_stop(text, end);
+              break;
+            }
+          }
+        }
+        else {
+          while (end < text.size() && tbl[static_cast<std::uint8_t>(text[end])] != 0U) {
+            ++end;
+          }
+        }
+        out[n] = cp_span {.start = i, .end = end};
+        ++n;
+        i = end;
+        if (n == cap) {
+          break;
+        }
+      }
+      return n;
+    }
+
+    /*!
      * \brief Fills up to \p cap `cp_class_loop` matches from \p start without leaving the route.
      *
      * The route's per-match cost is not its scan. Holding the class and the bytes fixed and varying
