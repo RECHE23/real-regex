@@ -418,7 +418,7 @@ Patterns with a zero-width assertion no DFA can represent throw `real::dfa_error
 The rust `regex` crate (a lazy-DFA engine with literal prefilters) is REAL's closest peer on the
 linear-time-guarantee axis. This duel is honest about where REAL loses: the same patterns run through both
 engines over the same corpora (~1 MB), best of 15 batches, match counts cross-checked equal.
-**Stamp (re-stamp):** REAL **`3cd9c81`** (v2026.7.55 — the perf train: one-search exact-literal route,
+**Stamp (re-stamp):** REAL **`1ed00bf`** (v2026.8.3+, both sides re-run this pass; the previous stamp was `3cd9c81`/v2026.7.55 — the perf train: one-search exact-literal route,
 two-byte NEON literal prefilter, per-slot DFA ownership; and, from the two trains before it, the
 warm-aware inner-literal haystack floor that most of the sparse-row movement below belongs to),
 `rust regex 1.12.4` (`find_iter` on `regex::bytes`), both `-O3`/LTO, both ISAs measured this pass. **Method:** REAL matching-only (`count_matches`) vs rust
@@ -433,38 +433,54 @@ rebuild `benchmarks/duel/real_bench` against current headers (`-O3 -flto`), `car
 
 | case | REAL ns/B | rust ns/B | winner |
 | --- | ---: | ---: | :--- |
-| literal `dog` | 0.318 | 0.561 | **REAL 1.8×** |
-| alternation `fox\|dog\|cat` | 1.021 | 1.294 | **REAL 1.3×** |
-| class `[a-z]+` | 1.641 | 12.199 | **REAL 7.4×** |
-| digits `[0-9]+` | 2.119 | 17.228 | **REAL 8.1×** |
-| fields `[^,]+` | 2.894 | 9.382 | **REAL 3.2×** |
-| word-boundary `\b\w+\b` | 5.388 | 10.999 | **REAL 2.0×** |
-| email `(\w+)@(\w+)` | 4.651 | 5.236 | REAL 1.1× |
-| ident `(\w+)_(\w+)` | 53.542 | 30.786 | rust 1.7× |
+| literal `dog` | 0.318 | 0.628 | **REAL 2.0×** |
+| alternation `fox\|dog\|cat` | 1.053 | 1.297 | **REAL 1.2×** |
+| class `[a-z]+` | 1.648 | 12.000 | **REAL 7.3×** |
+| digits `[0-9]+` | 2.123 | 17.660 | **REAL 8.3×** |
+| fields `[^,]+` | 2.948 | 9.195 | **REAL 3.1×** |
+| word-boundary `\b\w+\b` | 2.722 | 10.985 | **REAL 4.0×** |
+| email `(\w+)@(\w+)` | 1.829 | 5.268 | **REAL 2.9×** |
+| ident `(\w+)_(\w+)` | 6.424 | 30.742 | **REAL 4.8×** |
 | date no-match `\d{4}-\d{2}-\d{2}` | 0.023 | 0.012 | rust 1.9× |
-| date sparse `\d{4}-\d{2}-\d{2}` | 0.128 | 0.077 | rust 1.7× |
-| email sparse `(\w+)@(\w+)` | 0.127 | 0.121 | rust 1.0× |
-| key= `key=(\w+)` | 1.017 | 1.444 | **REAL 1.4×** |
+| date sparse `\d{4}-\d{2}-\d{2}` | 0.059 | 0.077 | **REAL 1.3×** |
+| email sparse `(\w+)@(\w+)` | 0.061 | 0.121 | **REAL 2.0×** |
+| key= `key=(\w+)` | 1.072 | 1.440 | **REAL 1.3×** |
 
 **x86-64** — devbox, g++ 13.3.0, `-O3 -flto`:
 
 | case | REAL ns/B | rust ns/B | winner |
 | --- | ---: | ---: | :--- |
-| literal `dog` | 0.489 | 0.841 | **REAL 1.7×** |
-| alternation `fox\|dog\|cat` | 1.480 | 2.141 | **REAL 1.4×** |
-| class `[a-z]+` | 2.712 | 19.059 | **REAL 7.0×** |
-| digits `[0-9]+` | 3.293 | 23.471 | **REAL 7.1×** |
-| fields `[^,]+` | 4.089 | 15.874 | **REAL 3.9×** |
-| word-boundary `\b\w+\b` | 4.592 | 16.848 | **REAL 3.7×** |
-| email `(\w+)@(\w+)` | 5.242 | 6.321 | **REAL 1.2×** |
-| ident `(\w+)_(\w+)` | 113.178 | 46.355 | rust 2.4× |
-| date no-match `\d{4}-\d{2}-\d{2}` | 0.018 | 0.016 | rust 1.1× |
-| date sparse `\d{4}-\d{2}-\d{2}` | 0.144 | 0.102 | rust 1.4× |
-| email sparse `(\w+)@(\w+)` | 0.138 | 0.158 | REAL 1.1× |
-| key= `key=(\w+)` | 1.287 | 2.162 | **REAL 1.7×** |
+| literal `dog` | 0.464 | 0.820 | **REAL 1.8×** |
+| alternation `fox\|dog\|cat` | 1.471 | 2.215 | **REAL 1.5×** |
+| class `[a-z]+` | 2.273 | 18.913 | **REAL 8.3×** |
+| digits `[0-9]+` | 2.509 | 23.576 | **REAL 9.4×** |
+| fields `[^,]+` | 4.204 | 16.100 | **REAL 3.8×** |
+| word-boundary `\b\w+\b` | 4.330 | 16.751 | **REAL 3.9×** |
+| email `(\w+)@(\w+)` | 3.628 | 6.325 | **REAL 1.7×** |
+| ident `(\w+)_(\w+)` | 12.508 | 46.429 | **REAL 3.7×** |
+| date no-match `\d{4}-\d{2}-\d{2}` | 0.017 | 0.015 | rust 1.1× |
+| date sparse `\d{4}-\d{2}-\d{2}` | 0.097 | 0.102 | **REAL 1.1×** |
+| email sparse `(\w+)@(\w+)` | 0.097 | 0.159 | **REAL 1.6×** |
+| key= `key=(\w+)` | 1.252 | 2.161 | **REAL 1.7×** |
 
-**Reading — verdict brut. The ISA no longer splits this table the way it did; the trains since `a994ff9`
-closed most of the rows that used to flip.**
+**Reading — verdict brut. REAL leads 11 of 12 rows on BOTH ISAs, and the row this table used to
+publish as its worst deficit is now a 3.7–4.8× win.**
+
+- **`ident (\w+)_(\w+)` was the largest published deficit anywhere in this document and it no longer
+  exists.** It stood at 53.542 ns/B on arm64 and **113.178 on x86-64** against rust's 30.786 / 46.355
+  — rust 1.7× / 2.4× ahead. Re-measured with the same harness, same corpus, same flags: **6.424 and
+  12.508**, an 8.3× and 9.0× improvement, turning rust 2.4× ahead into REAL 3.7× ahead. Nothing in
+  this train touched it; it was carried by the capture and prefilter work of the trains between, and
+  nobody re-ran the row. Three other rows crossed the same way — `date sparse` (rust 1.7× → REAL
+  1.3×), `email sparse` (tie → REAL 2.0×), and `email` (1.1× → 2.9×) — and `word-boundary` doubled
+  its margin, 2.0× → 4.0×.
+- **The one row rust still wins is `date no-match`**, 0.023 against 0.012 ns/B on arm64. Both engines
+  cross a 1 MB corpus in under 25 microseconds without a match; the ratio is on work that has already
+  collapsed to nothing, and it is reported rather than dropped for exactly that reason.
+- **Read this against the previous stamp as a caution about stamps, not a victory lap.** A table
+  stamped at v2026.7.55 was still being read as current a dozen trains later, and it understated the
+  engine by up to 9×. §A had the same problem this month. A benchmark table that is not re-run is not
+  a measurement, it is a claim about the past.
 
 - **REAL now leads 8 of 12 rows on arm64 and 9 of 12 on x86-64.** The class/digit/field/word-boundary
   block is unchanged in shape and still the widest margin (`class` 7.4× arm64 / 7.0× x86-64; `digits`
