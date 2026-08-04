@@ -1155,6 +1155,32 @@ actual gate).
 - **`callgrind_annotate` marks recursion depth with a trailing `'2`, and those lines are the SAME
   function.** Summing them double-counts. A function reported at "20 %" across two such lines is at
   10 %, and a cost model built on the inflated figure will point at the wrong place.
+- **Every table in this document measures ns/BYTE over a 200 KB subject, and that is the only regime
+  where REAL beats PCRE2-JIT.** Measured per CALL on short subjects — the way a validation pattern is
+  actually used, once per record on a field of a few dozen bytes:
+
+  | subject | REAL arm64 | PCRE2 | | REAL x86-64 | PCRE2 | |
+  | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+  | 8 B | 42.6 ns | 15.8 | **0.37×** | 152.8 ns | 38.2 | **0.25×** |
+  | 64 B | 60.2 | 32.4 | 0.54× | 178.3 | 62.1 | 0.35× |
+  | 256 B | 142.6 | 107.3 | 0.75× | 282.7 | 161.2 | 0.57× |
+  | 1 KB | 388.4 | 353.9 | 0.91× | 670.1 | 548.3 | 0.82× |
+  | 16 KB | 5252.8 | 5237.3 | 1.00× | 8467.3 | 8325.1 | 0.98× |
+
+  REAL's per-byte rate is the better one — that is what §A shows and it is true. But PCRE2's fixed
+  per-call cost is far lower, so **REAL does not overtake it until roughly 16 KB**, and §A only ever
+  measures 200 KB. The pattern above is `^[a-z]+$`, the row §A publishes as REAL 1.35× ahead.
+
+  The anchored SHAPES are worse than the classes, and by an order of magnitude: on an 11-byte subject
+  `^[0-9]{4}-[0-9]{2}-[0-9]{2}$` costs **303 ns on arm64 and 603 on x86-64 against PCRE2's 16 and 38**
+  — 19× and 16× behind. `^[0-9a-f]{8}$` and `^(?:alpha|bravo|charlie)$` read the same way. Those
+  shapes are on the general VM: the anchoring work covered the two class routes only.
+
+  Even the unanchored witness `[a-z]+` reads 0.40× / 0.26×, so a fixed per-call cost of roughly 27 ns
+  on arm64 and 115 on x86-64 is paid before any pattern-specific work. Stated here rather than in a
+  row, because no row in this document is positioned to show it: a short-subject, per-call table is
+  the missing measurement, not a missing optimisation.
+
 - **The harness cannot be instrumented to measure faster, and this is measured rather than feared.**
   Tonight's refutations kept turning on the same mechanism — a change to a header included everywhere
   moves §A rows it cannot reach — so the obvious next step was a cheaper instrument: a runtime
