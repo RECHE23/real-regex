@@ -397,8 +397,18 @@ namespace real::detail {
 
     /*!
      * \brief Clears the list in O(1) by bumping the generation.
+     *
+     * `noinline`, and it buys codegen rather than cycles: this runs twice per search, so outlining
+     * it is free, while `mark.assign` inlined here is a per-element `construct_at` loop whose mere
+     * presence costs gcc/x86 ~10 % on the class-scan routes -- which never build a thread list at
+     * all. Measured alone it is a REGRESSION (+5.8 % on `words`); it pays only together with the SBO
+     * mark table, whose codegen it is repairing. The two belong together or not at all.
+     *
      * \param[in] code_size Number of instructions (sizes the mark table once).
      */
+#if defined(__GNUC__)
+    __attribute__((noinline))
+#endif
     constexpr void reset(std::size_t code_size)
     {
       if (mark.size() != code_size) {

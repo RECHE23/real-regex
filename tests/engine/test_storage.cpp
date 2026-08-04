@@ -71,6 +71,52 @@ TEST(small_vec_constexpr_roundtrip_runtime)
   EXPECT(small_vec_constexpr_roundtrip()); // same body, also at run time (uninitialized buffer path)
 }
 
+// Spilling to the heap DURING CONSTANT EVALUATION. This used to throw std::bad_alloc, which capped
+// every constexpr regex at the inline capacity of the VM's scratch containers -- a ceiling nothing
+// announced until a pattern crossed it and the build broke. `::operator new` is not available in a
+// constant expression, so the growth paths go through std::allocator, whose blocks are transient:
+// each must be released before the evaluation ends, or the whole constant expression is ill-formed.
+// This body therefore also pins that every spilled vector here is destroyed, including the ones
+// left behind by a move.
+//
+// Both growth paths are covered, because they allocate independently: push_back via
+// extend_capacity, assign/ensure_size via reserve.
+constexpr bool small_vec_constexpr_spills_to_heap()
+{
+  real::detail::small_vec<std::size_t, 4> v; // capacity 4, filled to 40
+  for (std::size_t i = 0; i < 40; ++i) {
+    v.push_back(i * 3);
+  }
+  if (v.size() != 40U || v.back() != 117U) { return false; }
+  for (std::size_t i = 0; i < 40; ++i) {
+    if (v[i] != i * 3) { return false; } // the union must read through heap_ptr, not the dead buffer
+  }
+
+  // reserve() path, and a re-spill from an already-spilled state (the old block must be freed).
+  v.assign(90, 7U);
+  if (v.size() != 90U || v[89] != 7U) { return false; }
+
+  const real::detail::small_vec<std::size_t, 4> copied {v};     // copy ctor, heap source
+  if (copied.size() != 90U || copied[89] != 7U) { return false; }
+
+  real::detail::small_vec<std::size_t, 4> moved {std::move(v)}; // steals the block; v left inline
+  if (moved.size() != 90U || moved[0] != 7U) { return false; }
+
+  // Heap target, inline source: cleanup() frees, then the inline member must be reactivated before
+  // anything writes through it.
+  real::detail::small_vec<std::size_t, 4> small;
+  small.push_back(11);
+  moved = std::move(small);
+  return moved.size() == 1U && moved[0] == 11U;
+}
+
+static_assert(small_vec_constexpr_spills_to_heap(), "small_vec must spill to the heap at compile time");
+
+TEST(small_vec_constexpr_spills_to_heap_runtime)
+{
+  EXPECT(small_vec_constexpr_spills_to_heap()); // same body at run time: operator new, cached data_
+}
+
 TEST(small_vec_spills_past_inline_buffer_preserving_all_elements)
 {
   real::detail::small_vec<int, 32> v;
