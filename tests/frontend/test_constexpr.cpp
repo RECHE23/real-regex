@@ -171,6 +171,43 @@ static_assert([] {
                 return v2[0];
               }() == 42);
 
+// A constexpr regex whose PROGRAM outgrows the VM scratch's inline capacities, so evaluating it
+// forces small_vec to spill to the heap inside a constant expression.
+//
+// That used to be a hard compile error, not a slow path: `reserve` threw std::bad_alloc during
+// constant evaluation, so a constexpr `real::regex` was silently capped at whatever the scratch
+// containers happened to hold inline -- a ceiling nothing announced until a pattern crossed it and
+// the BUILD broke. Growth now goes through std::allocator (see storage.hpp).
+//
+// This is deliberately far larger than any plausible inline capacity rather than just past the
+// current one: 36 branches compile to ~110 instructions, so the mark table alone (one entry per
+// instruction) must spill. The existing cases above happen to spill too -- `(\w+)@(\w+)` is 18
+// instructions against a mark capacity of 8, and it is what caught the ceiling in the first place --
+// but that coverage is incidental and would vanish the moment someone raised a capacity. This one
+// cannot: it holds for anything short of a 110-entry inline buffer.
+//
+// Offsets only, no std::string temporaries, so it needs no libstdc++ guard.
+constexpr bool large_program_spills_scratch_at_compile_time()
+{
+  const real::regex wide("z00|z01|z02|z03|z04|z05|z06|z07|z08|z09|"
+                         "z10|z11|z12|z13|z14|z15|z16|z17|z18|z19|"
+                         "z20|z21|z22|z23|z24|z25|z26|z27|z28|z29|"
+                         "z30|z31|z32|z33|z34|z35");
+  const auto last  {wide.search("--z35--")}; // the final branch: every earlier one stays live first
+  if (!last || last.start() != 2 || last.end() != 5) { return false; }
+  const auto first {wide.search("--z00--")};
+  if (!first || first.start() != 2 || first.end() != 5) { return false; }
+  return !wide.search("--z36--"); // no branch matches; the closure is walked and thrown away
+}
+
+static_assert(large_program_spills_scratch_at_compile_time(),
+              "a constexpr regex must be able to outgrow the scratch's inline buffers");
+
+TEST(large_constexpr_program_spills_scratch_also_at_runtime)
+{
+  EXPECT(large_program_spills_scratch_at_compile_time()); // same body, heap path via operator new
+}
+
 TEST(constexpr_literal_cases_also_pass_at_runtime)
 {
   EXPECT(literal_cases());
