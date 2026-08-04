@@ -81,7 +81,12 @@ namespace {
   // canonical utf8_range_sequences splitting (emit_class_codepoints), narrowing E0/ED/F0/F4's first
   // continuation byte to reject overlong/surrogate/out-of-range encodings -- more branches than the
   // old flat 4-branch emit_codepoint_class shape, a deliberate, intended program change.
-  constexpr std::uint64_t kGolden {0x4fdd7d76f94da5f9ULL};
+  // Moved again, deliberately: an UNBOUNDED quantifier over a literal byte (`a+`, `x*`, `a{2,}`)
+  // now emits a one-member byte CLASS instead of a `byte` op, because the shape recognizers match on
+  // `klass` and so a quantifier over a single character had no fast route at all -- `^a+$` measured
+  // 18.52 ns/B against 0.31 for the semantically identical `^[a]+$`. Bounded forms (`a{3}`) still
+  // emit bytes, so the literal runs this corpus also covers are unchanged.
+  constexpr std::uint64_t kGolden {0x141b86273abd5d6eULL};
 
   TEST(non_scoped_programs_are_byte_identical)
   {

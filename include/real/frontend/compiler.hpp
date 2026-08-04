@@ -1228,6 +1228,37 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Emits an UNBOUNDED quantifier's body, promoting a bare literal byte to a one-member
+     *        byte class so the shape routes can see it.
+     *
+     * `a+` compiled to a `byte` op, and the class-loop recognizer matches on `klass` only — so a
+     * quantifier over a single character had no fast route at all, while the semantically identical
+     * `[a]+` did. Over 100 000 bytes: `^a+$` **18.52 ns/B against 0.31** for `^[a]+$`, and `a+` 4.03
+     * against 0.31. A byte IS a one-member class; nothing but the opcode was in the way.
+     *
+     * Only for `max == -1` (`+`, `*`, `{n,}`), which is exactly what the class loop serves. A bounded
+     * form like `a{3}` keeps its bytes: those copies are a fixed literal run, and the literal routes
+     * that read them would not recognise three classes.
+     *
+     * \param[in,out] prog         The program being built.
+     * \param[in]     child        The quantifier's body node.
+     * \param[in]     capture_free Propagated to \ref emit_node.
+     */
+    constexpr void emit_unbounded_body(dynamic_program& prog,
+                                       std::int32_t     child,
+                                       bool             capture_free) const
+    {
+      const ast_node& c {tree_.nodes[static_cast<std::size_t>(child)]};
+      if (c.kind == node_kind::byte) {
+        char_class one;
+        one.set(c.byte);
+        emit_klass(prog, one);
+        return;
+      }
+      emit_node(prog, child, capture_free);
+    }
+
+    /*!
      * \brief Emits a quantifier (Thompson construction).
      *
      * Greedy prefers `split.primary_target` (enter the body); lazy swaps the branches.
@@ -1251,18 +1282,25 @@ namespace real::detail {
           // Last mandatory copy doubles as the loop body: e+ patterns
           // emit the body exactly once.
           const std::int32_t body {here(prog)};
-          emit_node(prog, node.child, capture_free);
+          emit_unbounded_body(prog, node.child, capture_free);
           const std::int32_t s    {emit_split(prog)};
           patch_primary(prog, s, node.lazy ? here(prog) : body);
           patch_secondary(prog, s, node.lazy ? body : here(prog));
           return;
         }
-        emit_node(prog, node.child, capture_free);
+        // `{k,}`'s mandatory copies must match the loop body's shape: the recognizer counts
+        // CONSECUTIVE identical `klass` ops to read the minimum off, so a byte here would hide it.
+        if (node.max == -1) {
+          emit_unbounded_body(prog, node.child, capture_free);
+        }
+        else {
+          emit_node(prog, node.child, capture_free);
+        }
       }
       if (node.max == -1) {                                  // min == 0: a star loop
         const std::int32_t s {emit_split(prog)};
         patch_primary(prog, s, node.lazy ? -1 : here(prog)); // body side set below
-        emit_node(prog, node.child, capture_free);
+        emit_unbounded_body(prog, node.child, capture_free);
         const std::int32_t j {emit_jump(prog)};
         patch_primary(prog, j, s);
         if (node.lazy) {
