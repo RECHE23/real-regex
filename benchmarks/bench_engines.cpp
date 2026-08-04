@@ -25,9 +25,17 @@
 // (docs/design.dox §10.1); anything added here spends from the same pot the engine's own inlining
 // comes out of.
 //
+// A DATA ROW COSTS THE SAME, which is worse and was not obvious. Adding one entry to the Unicode
+// case list -- no new code, one more brace-initialized struct in a table -- moved gcc/x86-64 `words`
+// +27.7 % and its ASCII witness +26.9 %, `digits` +23.7 %, `[à-ÿ]+` +16.5 %, on the SAME engine tree
+// with both binaries built and interleaved five times. arm64/clang did not move at all. So the
+// budget is spent by anything this unit contains, not merely by anything it executes, and the table
+// of cases is not a free place to put a new shape.
+//
 // The consequence is a rule, not a warning: numbers taken with a MODIFIED harness cannot be compared
 // against numbers taken with the shipped one, in either direction. If this file must change, re-take
-// both arms of every comparison afterwards.
+// both arms of every comparison afterwards -- and if the change is a row, expect to be re-taking a
+// table that no longer compares to any stamp before it.
 
 #include <real/real.hpp>
 #include <sciforge/bench.hpp>
