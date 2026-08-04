@@ -3460,13 +3460,6 @@ namespace real::detail {
 
       // Arc B-2: `\b`/`\B` on subset cp-class (e.g. `\b\d+\b`) — try successive runs.
       if (prog_.hints.wb_lead != 0 || prog_.hints.wb_trail != 0) {
-        // The limit a trailing `\Z`/`$` imposes. Peeled out of the program by the recognizer, so this
-        // is the only thing left enforcing it -- and `$` (kind 2) also accepts the position just
-        // before ONE final newline, which is why `^X$` is not fullmatch(X).
-        const std::size_t end_limit {
-          prog_.hints.greedy_cp_class_end == 2 && !text.empty() && text.back() == '\n'
-            ? text.size() - 1
-            : text.size()};
         if (mode == run_mode::full || mode == run_mode::prefix) {
           const std::size_t match_end {extend_run(start)};
           if (match_end == npos || (mode == run_mode::full && match_end != text.size()) ||

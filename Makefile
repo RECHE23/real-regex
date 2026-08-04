@@ -581,12 +581,16 @@ ac-regime: ## [bench] Aho-Corasick routing: the four subject regimes, AC on vs o
 sabotage-sweep: ## [bench] Perturb each decision constant; report the ones no test reacts to (dev tool, ~40 min)
 	@python3 tools/sabotage_sweep.py
 
+# -Wshadow is listed explicitly because it is in NEITHER -Wall nor -Wextra, and MSVC promotes the same
+# diagnostic (C4456) to an error under /WX -- so a shadowed local compiled clean through every local
+# step and through clang and gcc in CI, and failed only on the Windows leg. It cost a round trip; the
+# flag costs nothing.
 gcc-check: ## [gates] Compile the engine headers under gcc -Werror (the diagnostics clang lacks)
 	@if command -v docker >/dev/null 2>&1; then \
 	   docker run --rm --platform linux/amd64 -v "$(CURDIR)":/src -w /src gcc:14 \
-	     g++ -std=c++20 -O2 -Wall -Wextra -Werror -I include -I bindings/c \
+	     g++ -std=c++20 -O2 -Wall -Wextra -Wshadow -Werror -I include -I bindings/c \
 	         -c bindings/c/real_capi.cpp -o /dev/null \
-	   && echo "gcc-check: clean under g++ 14 (-Wall -Wextra -Werror)"; \
+	   && echo "gcc-check: clean under g++ 14 (-Wall -Wextra -Wshadow -Werror)"; \
 	 else \
 	   echo "gcc-check: SKIPPED -- docker not found. The gcc-only diagnostics are unchecked locally;"; \
 	   echo "  CI's linux-gcc and cmake legs remain the backstop."; \
