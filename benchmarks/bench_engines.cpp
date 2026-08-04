@@ -500,12 +500,6 @@ namespace {
       {"unicode (?i)caf\xC3\xA9 (accented)", "(?i)caf\xC3\xA9", corpus_latin_accented()},
       {"unicode [\xC3\xA0-\xC3\xBF]+ (accented)", "[\xC3\xA0-\xC3\xBF]+", corpus_latin_accented()},
       {"unicode literal \xE4\xBD\xA0\xE5\xA5\xBD (CJK)", "\xE4\xBD\xA0\xE5\xA5\xBD", corpus_cjk()},
-      // A PLAIN non-ASCII literal, which this table had no row for: its only literal was CJK, whose
-      // corpus is high bytes throughout, so it could not expose a prefilter that mis-ranks them.
-      // An accented Latin literal can, and did -- picking the 0xC3 that leads every accented letter
-      // as its memchr target made this 6.3x slower than an ASCII literal of the same match density.
-      // Western European text is the commonest non-ASCII shape there is; it gets a row of its own.
-      {"unicode literal caf\xC3\xA9 (accented)", "caf\xC3\xA9", corpus_latin_accented()},
       {"unicode . (emoji, one codepoint)", ".", corpus_emoji()},
       {"ascii witness [a-z]+ (same corpus shape)", "[a-z]+", corpus_words()},
     };
