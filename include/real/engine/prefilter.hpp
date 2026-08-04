@@ -1703,8 +1703,37 @@ namespace real::detail {
       case '&':                          return 10;
       case '#': case '\\': case '$':     return 8;
       case '~': case '@': case '^': case '`': return 3;
-      default:                           return 1; // control and high bytes: assume very rare
+      default:                           break;
     }
+    // UTF-8 bytes are NOT rare, and ranking them at 1 picked the single most common byte of an
+    // accented corpus as the memchr target: `café`'s rarest-ranked byte was the 0xC3 that leads
+    // EVERY Latin-1 letter, one per ~6 bytes of French prose. Measured against an ASCII literal of
+    // the same match density in the same corpus, that cost 6.3x (1.761 vs 0.279 ns/B).
+    //
+    // The ranking that matters is not corpus frequency but SELECTIVITY: a lead byte stands for 64 or
+    // more distinct characters, so it can never discriminate like one ASCII byte. These values put
+    // the Latin-1 leads and every continuation byte above the absolute threshold below, so they are
+    // no longer chosen at all, while the rarer leads stay eligible for scripts whose text is made of
+    // nothing else (CJK picks its lead exactly as before).
+    if (b >= 0x80U && b <= 0xBFU) {
+      return 200;             // continuation: as common as whatever leads it, and shared by every script
+    }
+    switch (b) {
+      case 0xC3U: return 250; // the Latin-1 letters: ubiquitous in Western European text
+      case 0xC2U: return 120; // Latin-1 punctuation/symbols (nbsp, guillemets, degree)
+      case 0xE2U: return 60;  // general punctuation: dashes, curly quotes, arrows
+      default:    break;
+    }
+    if (b >= 0xC4U && b <= 0xDFU) {
+      return 40; // Latin Extended, Greek, Cyrillic, Hebrew, Arabic leads
+    }
+    if (b >= 0xE0U && b <= 0xEFU) {
+      return 30; // 3-byte leads: CJK, Indic, Hangul
+    }
+    if (b >= 0xF0U && b <= 0xF4U) {
+      return 10; // 4-byte leads: astral planes and emoji
+    }
+    return 1; // control bytes and the two never-valid UTF-8 bytes: genuinely rare
   }
 
   /*!
