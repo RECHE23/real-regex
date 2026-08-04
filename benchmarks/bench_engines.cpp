@@ -140,6 +140,14 @@ namespace {
     return repeat_to("order 4821 placed on 2026-06-13 total 199 items 7 ref ab12 ", 200000);
   }
 
+  // Anchored validation: a whole subject that IS one class run, which is the shape `^X$` exists for
+  // (an identifier, a token, a field being checked end to end). Every engine must cross the whole
+  // 200 KB to answer, so the row measures the anchored scan rather than a prefilter.
+  std::string corpus_lower()
+  {
+    return repeat_to("abcdefghijklmnopqrstuvwxyz", 200000);
+  }
+
   std::string corpus_csv()
   {
     return repeat_to("alpha,bravo,charlie,delta,echo,foxtrot,golf,hotel,india,juliet,", 200000);
@@ -297,11 +305,22 @@ namespace {
   std::string engines_object(const std::string& pat,
                              const std::string& text,
                              int                n,
-                             bool               lookaround = false)
+                             bool               lookaround   = false,
+                             bool               std_overflow = false)
   {
     std::vector<std::pair<std::string, std::string>> fields;
     fields.emplace_back("real", engine_result(collect([&] { return real_count(pat, text); }, n)));
-    fields.emplace_back("std", engine_result(collect([&] { return std_count(pat, text); }, n)));
+    // `std_overflow` is not a capability gap, it is a CRASH, and it cannot be caught: libstdc++'s
+    // std::regex recurses once per input character, so the anchored 200 KB row overflows the stack --
+    // ~98 000 frames of _M_dfs before SIGSEGV, which takes the whole harness with it. libc++ survives
+    // the same row (62.9 ns/B on arm64), so this is an implementation property rather than a language
+    // one, and skipping is the only way to report it at all rather than losing every other row too.
+    if (std_overflow) {
+      fields.emplace_back("std", json_string("unsupported"));
+    }
+    else {
+      fields.emplace_back("std", engine_result(collect([&] { return std_count(pat, text); }, n)));
+    }
 #if defined(HAVE_PCRE2)
     fields.emplace_back("pcre2", engine_result(collect([&] { return pcre2_count(pat, text); }, n)));
 #endif
@@ -417,6 +436,8 @@ namespace {
     std::string pattern;
     std::string corpus;
     bool        lookaround = false;
+    //! Skip std::regex on this row: libstdc++ recurses once per input character and SIGSEGVs.
+    bool        std_overflow = false;
   };
 
   std::vector<bench_case> cases()
@@ -427,6 +448,11 @@ namespace {
       {"alt the|fox|dog", "alternation", "the|fox|dog", corpus_words()},
       {"hex [0-9a-f]{8}", "quantifier", "[0-9a-f]{8}", corpus_hex()},
       {"date {4}-{2}-{2}", "quantifier", "[0-9]{4}-[0-9]{2}-[0-9]{2}", corpus_mixed()},
+      // An ANCHORED row, added because this table had none: every case above is free-floating, so a
+      // 17-94x change on `^X$`/`X$` moved nothing here and an unmeasured row is one that regresses in
+      // silence -- the anchored path broke twice while being built, caught by a differential rather
+      // than by any table.
+      {"anchored ^[a-z]+$", "anchored", "^[a-z]+$", corpus_lower(), false, true},
       {"digits [0-9]+", "density", "[0-9]+", corpus_mixed()},
       {"literal", "literal", "charlie", corpus_csv()},
       // Differentiator: a bounded lookahead. REAL/std/PCRE2 support it; RE2 has no lookaround.
@@ -444,7 +470,7 @@ namespace {
         {"family", json_string(c.family)},
         {"pattern", json_string(c.pattern)},
         {"corpus_bytes", json_number(bytes)},
-        {"engines", engines_object(c.pattern, c.corpus, n, c.lookaround)},
+        {"engines", engines_object(c.pattern, c.corpus, n, c.lookaround, c.std_overflow)},
       }));
     }
     return "[" + json_join(entries) + "]";

@@ -680,21 +680,6 @@ namespace real::detail {
       // P3c trailing-LA is NOT dispatched here — it lives outside pike_vm::run (real.hpp /
       // find_iter) so this function stays pre-P3c-sized and keeps inlining into find_iter
       // (x86: +16–20 % when cold code bloated run() past the inline threshold).
-      // `\A`/`^` is a MODE, not a shape. The shape recognizers peel it (prefilter.hpp's
-      // shape_lead::anchored_start) so `^X+` still arms the class routes; honouring it here is the
-      // other half, and without this the route would scan forward for a match the program pins to
-      // position 0. Measured on 100 KB: `^[a-z]+` in search mode was on the general VM at 2.585 ms
-      // against 0.032 for the same question asked as `[a-z]+` in prefix mode.
-      const auto anchored_mode = [&](run_mode m) {
-                                   return prog_.hints.anchored_start && m == run_mode::search
-                                          ? run_mode::prefix
-                                          : m;
-                                 };
-      const auto anchored_impossible = [&]() {
-                                         // A region that starts past 0 cannot hold a `\A`-anchored
-                                         // match at all, in any mode.
-                                         return prog_.hints.anchored_start && start != 0;
-                                       };
       if (sem_ == match_semantics::first && prog_.hints.greedy_class_loop >= 0
           && (std::is_constant_evaluated() || !class_fastpath_disabled())) {
         // OPT-C: the memchr-cascade instantiation (Cascade) is selected ONCE by the caller (a whole
@@ -705,14 +690,14 @@ namespace real::detail {
         if (prog_.hints.wb_lead != 0 || prog_.hints.wb_trail != 0) {
           prof::tick_event(prof::event::wb_b2_wrap);
         }
-        if (anchored_impossible()) {
-          out_slots.assign(prog_.slot_count, npos);
-          return false;
+        // One branch, and everything an anchor implies is behind it. `run()` has to stay small enough
+        // to inline into find_iter (see basic_match_iterator::advance's own note), and an earlier
+        // shape of this -- two lambdas inline here -- cost §Unicode 6-17 % on clang/arm64 while
+        // gaining on gcc/x86-64, which is this translation unit's usual answer to being grown.
+        if (prog_.hints.anchored_start || prog_.hints.greedy_class_loop_end != 0) {
+          return run_class_loop_anchored<Cascade>(text, start, mode, out_slots);
         }
-        if (prog_.hints.greedy_class_loop_end != 0) {
-          return run_class_loop_end_anchored(text, start, mode, out_slots);
-        }
-        return run_class_loop<Cascade>(text, start, anchored_mode(mode), out_slots);
+        return run_class_loop<Cascade>(text, start, mode, out_slots);
       }
       if (sem_ == match_semantics::first && prog_.hints.greedy_cp_class >= 0
           && (std::is_constant_evaluated() || !class_fastpath_disabled())) {
@@ -720,11 +705,15 @@ namespace real::detail {
         if (prog_.hints.wb_lead != 0 || prog_.hints.wb_trail != 0) {
           prof::tick_event(prof::event::wb_b2_wrap);
         }
-        if (anchored_impossible()) {
-          out_slots.assign(prog_.slot_count, npos);
-          return false;
+        if (prog_.hints.anchored_start) {
+          if (start != 0) { // a region past 0 cannot hold a `\A`-anchored match, in any mode
+            out_slots.assign(prog_.slot_count, npos);
+            return false;
+          }
+          return run_cp_class_loop(text, start,
+                                   mode == run_mode::search ? run_mode::prefix : mode, out_slots);
         }
-        return run_cp_class_loop(text, start, anchored_mode(mode), out_slots);
+        return run_cp_class_loop(text, start, mode, out_slots);
       }
       // possessive class+/++ loop -- bare/suffixed or delimited/"quoted". A
       // possessive pattern can never also be greedy_class_loop/greedy_cp_class (mutually exclusive
@@ -2211,6 +2200,44 @@ namespace real::detail {
         return state_.row_ptr;
       }
       return resolve_class_table(class_index);
+    }
+
+    /*!
+     * \brief Cold half of the class-loop route: everything a `\A`/`^` or `\Z`/`$` implies.
+     *
+     * Outlined so the unanchored path pays exactly one branch. `\A`/`^` is a MODE (a search becomes
+     * prefix anchoring, and a region beginning past 0 cannot hold the match at all); `\Z`/`$` is a
+     * LIMIT, handled by \ref run_class_loop_end_anchored. Both were peeled out of the program by the
+     * shape recognizers, so this is the only thing left enforcing them.
+     * \tparam Cascade   Whether the memchr stop-tail applies.
+     * \tparam OutSlots  Output slot container.
+     * \param[in]  text      The subject.
+     * \param[in]  start     Region start.
+     * \param[in]  mode      Anchoring mode as the caller asked for it.
+     * \param[out] out_slots Receives the span on success.
+     * \return `true` on a match.
+     */
+    template <bool Cascade, typename OutSlots>
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    constexpr bool run_class_loop_anchored(std::string_view text,
+                                           std::size_t      start,
+                                           run_mode         mode,
+                                           OutSlots&        out_slots)
+    {
+      if (prog_.hints.anchored_start && start != 0) {
+        out_slots.assign(prog_.slot_count, npos);
+        return false;
+      }
+      if (prog_.hints.greedy_class_loop_end != 0) {
+        return run_class_loop_end_anchored(text, start, mode, out_slots);
+      }
+      return run_class_loop<Cascade>(text, start,
+                                     prog_.hints.anchored_start && mode == run_mode::search
+                                       ? run_mode::prefix
+                                       : mode,
+                                     out_slots);
     }
 
     /*!
