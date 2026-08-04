@@ -435,6 +435,9 @@ namespace real {
       std::uint16_t        greedy_class_loop_min     {1};  //!< P1: minimum run length (bytes) for \ref greedy_class_loop -- 1 for a bare `X+`, k for the `X{k,}` desugaring (k mandatory copies of the same atom then a loop of it, compiler.hpp's emit_repeat).
       std::int32_t         greedy_cp_class           {-1}; //!< cp_class index if the whole pattern is a code-point class `klass_cp` (optionally `+`), else -1.
       bool                 greedy_cp_class_plus      {};   //!< The \ref greedy_cp_class pattern is a greedy `+` loop (vs a single code point).
+      //! \brief Trailing end anchor on \ref greedy_cp_class — 0 none, 1 `\Z`, 2 `$` (which also
+      //!        accepts one final newline). Same meaning as \ref greedy_class_loop_end.
+      std::uint8_t         greedy_cp_class_end       {};
       std::uint16_t        greedy_cp_class_min       {1};  //!< P1: minimum run length (CODE POINTS, not bytes) for \ref greedy_cp_class when \ref greedy_cp_class_plus is set -- see \ref greedy_class_loop_min.
       std::int16_t         greedy_group_start        {-1}; //!< For a class-loop wrapped in one capturing group (`(\w+)`, `([a-z]+)`): the group's start slot to mirror the whole-match start into (-1 = no enveloping group).
       std::int16_t         greedy_group_end          {-1}; //!< The enveloping group's end slot (mirrors the whole-match end).

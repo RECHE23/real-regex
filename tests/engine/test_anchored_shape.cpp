@@ -153,3 +153,33 @@ TEST(multiline_dollar_is_not_peeled)
   EXPECT(walk(rx, "abc\ndef").size() == 2);
   EXPECT(walk(rx, "abc\ndef")[0].second == 3);
 }
+
+TEST(anchored_codepoint_class_end_and_both)
+{
+  // The code-point route honours the same two anchors as the byte one; `^\w+$` was the last shape
+  // still on the one-pass DFA (1.450 -> 0.065 ns/B over 100 KB).
+  const real::regex both {"^\\w+$"};
+  EXPECT(both.search(std::string_view {"abc"}).matched());
+  EXPECT(both.search(std::string_view {"abc\n"}).matched());        // `$` takes one final newline
+  EXPECT(!both.search(std::string_view {"abc def"}).matched());     // must span start to limit
+  EXPECT(!both.search(std::string_view {" abc"}).matched());
+  const real::regex tail {"\\w+$"};
+  EXPECT(tail.search(std::string_view {"abc def"}).start(0) == 4);  // the run ENDING at the limit
+  EXPECT(!tail.search(std::string_view {"abc ,"}).matched());
+}
+
+TEST(word_boundary_with_an_end_anchor_is_not_peeled)
+{
+  // `\b` takes its own branch in the routes and that branch never sees an end limit, so the peel is
+  // refused rather than combined -- a real divergence on `[a-z]+\b$` before that condition existed.
+  for (const char* pat : {"[a-z]+\\b$", "\\w+\\b$", "^[a-z]+\\b$"}) {
+    for (const char* subj : {"abc def", "abc", "abc ", "", "a"}) {
+      real::detail::class_fastpath_disabled() = false;
+      const auto fast    {walk(real::regex {pat}, subj)};
+      real::detail::class_fastpath_disabled() = true;
+      const auto general {walk(real::regex {pat}, subj)};
+      real::detail::class_fastpath_disabled() = false;
+      EXPECT(fast == general);
+    }
+  }
+}

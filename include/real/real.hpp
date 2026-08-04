@@ -406,6 +406,7 @@ namespace real {
                               && !prog.hints.wb_lead_maximal_run
                               && !detail::class_fastpath_disabled()
                               && !prog.hints.anchored_start && !prog.hints.line_anchored
+                              && prog.hints.greedy_cp_class_end == 0
                               && prog.hints.greedy_cp_class >= 0
                               && prog.hints.greedy_cp_class_min <= 1);
       }

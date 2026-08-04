@@ -993,7 +993,12 @@ namespace real::detail {
               ok = true;
             }
             const shape_close close {ok ? parse_shape_close(code, q) : shape_close {}};
-            if (ok && close.ok && cls >= 0 && static_cast<std::size_t>(cls) < classes.size()
+            // A `\b`/`\B` wrap and an end anchor together are REFUSED, never combined: the wrap takes its
+            // own branch in these routes (Arc B-2) and that branch never sees an end limit, while the
+            // assertion has already been peeled out of the program -- so nothing downstream could
+            // re-derive it. Both were measured as real divergences: `[a-z]+\b$` (trail) against the
+            // seam, and `\b(?>\w)$` (LEAD) against Python's re, by the binding's differential fuzz.
+            if (ok && close.ok && !(close.end_anchor != 0 && (lead.wb_lead != 0 || close.wb_trail != 0)) && cls >= 0 && static_cast<std::size_t>(cls) < classes.size()
                 && k <= 65535) {
               const char_class& cc        {classes[static_cast<std::size_t>(cls)]};
               std::uint8_t      out_lead  {0};
@@ -1004,6 +1009,13 @@ namespace real::detail {
               if (resolve_class_wb_hints(is_full_ascii_word_class(cc), is_ascii_word_subset_class(cc),
                                          /*maximal_run=*/ true, lead.wb_lead, close.wb_trail, out_lead,
                                          out_trail)) {
+                // A `\b`/`\B` wrap and an end anchor together are REFUSED, not combined: the wrap takes
+                // its own branch in the route (Arc B-2), that branch never sees the limit, and the
+                // assertion has already been peeled out of the program -- so nothing downstream could
+                // re-derive it. Measured as a real divergence on `[a-z]+\b$` before this guard.
+                if (close.end_anchor != 0 && (lead.wb_lead != 0 || close.wb_trail != 0)) {
+                  return; // see the note above: the wrap branch cannot honour a peeled limit
+                }
                 hints.greedy_class_loop     = cls;
                 hints.greedy_class_loop_end = close.end_anchor;
                 hints.greedy_class_loop_min = static_cast<std::uint16_t>(k);
@@ -1064,9 +1076,7 @@ namespace real::detail {
     // broke the guarantee would just decline this shape, never misrecognize it.
     {
       const shape_lead lead {parse_shape_lead(code)};
-      // Refuses an anchored lead: this recognizer's route scans forward, which a pattern pinned to
-      // position 0 forbids. Only the class-loop shape above honours it (see shape_lead::anchored_start).
-      if (lead.ok && !lead.anchored_start) {
+      if (lead.ok) {
         std::size_t  p  {lead.body_start};
         std::int16_t gs {-1};
         if (p < code.size() && code[p].op == opcode::save) {
@@ -1120,14 +1130,25 @@ namespace real::detail {
           // this route against the general VM, which is the only reason the shape is narrowed here rather
           // than shipped wrong; lifting it means teaching those loops to step by one code point.
           const bool counted_wb {cp_max != 0 && (lead.wb_lead != 0 || close.wb_trail != 0)};
-          // The code-point route does not honour an end anchor yet, so it must refuse one --
-          // same contract as the lead anchor: report, then refuse where unhandled.
-          if (ok && close.ok && close.end_anchor == 0 && !counted_wb && cp_idx >= 0
+          // A `\b`/`\B` wrap and an end anchor together are REFUSED, never combined: the wrap takes its
+          // own branch in these routes (Arc B-2) and that branch never sees an end limit, while the
+          // assertion has already been peeled out of the program -- so nothing downstream could
+          // re-derive it. Both were measured as real divergences: `[a-z]+\b$` (trail) against the
+          // seam, and `\b(?>\w)$` (LEAD) against Python's re, by the binding's differential fuzz.
+          if (ok && close.ok && !(close.end_anchor != 0 && (lead.wb_lead != 0 || close.wb_trail != 0)) && !counted_wb && cp_idx >= 0
               && static_cast<std::size_t>(cp_idx) < cp_classes.size() && k <= 65535) {
             const bool has_wb {lead.wb_lead != 0 || close.wb_trail != 0};
             // Bare path: no Unicode table walk (keeps constexpr light for static_regex).
             if (!has_wb) {
+              // A `\b`/`\B` wrap and an end anchor together are REFUSED, not combined: the wrap takes
+              // its own branch in the route (Arc B-2), that branch never sees the limit, and the
+              // assertion has already been peeled out of the program -- so nothing downstream could
+              // re-derive it. Measured as a real divergence on `[a-z]+\b$` before this guard.
+              if (close.end_anchor != 0 && (lead.wb_lead != 0 || close.wb_trail != 0)) {
+                return; // see the note above: the wrap branch cannot honour a peeled limit
+              }
               hints.greedy_cp_class      = cp_idx;
+              hints.greedy_cp_class_end  = close.end_anchor;
               hints.greedy_cp_class_plus = plus;
               hints.greedy_cp_class_min  = static_cast<std::uint16_t>(k);
               hints.greedy_cp_class_max  = cp_max;

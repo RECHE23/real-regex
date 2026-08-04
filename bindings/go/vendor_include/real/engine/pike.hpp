@@ -3435,6 +3435,14 @@ namespace real::detail {
                           return false;
                         };
 
+      // The limit a trailing `\Z`/`$` imposes. The recognizer peeled that assertion out of the
+      // program, so this is the only thing left enforcing it -- and `$` (kind 2) also accepts the
+      // position just before ONE final newline, which is why `^X$` is not fullmatch(X).
+      const std::size_t end_limit {
+        prog_.hints.greedy_cp_class_end == 2 && !text.empty() && text.back() == '\n'
+          ? text.size() - 1
+          : text.size()};
+
       // P1: counts code points in [s, e) -- only walked when min_len > 1 (the {k,} shape); the
       // range is already known to be a valid run of class-member code points (extend_run just
       // built it), so this simply re-walks UTF-8 lead bytes to count boundaries, never re-validates.
@@ -3452,9 +3460,17 @@ namespace real::detail {
 
       // Arc B-2: `\b`/`\B` on subset cp-class (e.g. `\b\d+\b`) — try successive runs.
       if (prog_.hints.wb_lead != 0 || prog_.hints.wb_trail != 0) {
+        // The limit a trailing `\Z`/`$` imposes. Peeled out of the program by the recognizer, so this
+        // is the only thing left enforcing it -- and `$` (kind 2) also accepts the position just
+        // before ONE final newline, which is why `^X$` is not fullmatch(X).
+        const std::size_t end_limit {
+          prog_.hints.greedy_cp_class_end == 2 && !text.empty() && text.back() == '\n'
+            ? text.size() - 1
+            : text.size()};
         if (mode == run_mode::full || mode == run_mode::prefix) {
           const std::size_t match_end {extend_run(start)};
           if (match_end == npos || (mode == run_mode::full && match_end != text.size()) ||
+              (prog_.hints.greedy_cp_class_end != 0 && match_end != end_limit) ||
               !wb_boundaries_ok(start, match_end) ||
               (min_len > 1 && count_cps(start, match_end) < min_len)) {
             return fail();
@@ -3527,6 +3543,17 @@ namespace real::detail {
         // anchored modes have no retry, so fail outright (mirrors run_class_loop's own min-check).
         if (min_len > 1 && count_cps(match_start, match_end) < min_len) {
           if (mode != run_mode::search) {
+            return fail();
+          }
+          match_start = match_end;
+          continue;
+        }
+        // Same retry shape for the end anchor: a maximal run that stops short of the limit can never
+        // be the match, so skip past it. Placed in the existing loop rather than replaced by a
+        // backward walk -- walking back through UTF-8 means decoding, and this scan's handling of a
+        // malformed sequence is already pinned by the seam differential.
+        if (prog_.hints.greedy_cp_class_end != 0 && match_end != end_limit) {
+          if (mode != run_mode::search || match_end <= match_start) {
             return fail();
           }
           match_start = match_end;
