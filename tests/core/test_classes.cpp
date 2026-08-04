@@ -593,3 +593,47 @@ TEST(octal_escapes_inside_a_class)
   EXPECT_THROWS(real::regex("[\\8]"), real::regex_error);   // 8/9 are not octal, no back-reference here
   EXPECT_THROWS(real::regex("[\\400]"), real::regex_error); // above 0o377, out of range (like re)
 }
+
+// A small non-ASCII class whose members all encode to the same UTF-8 length and differ in exactly
+// ONE byte is emitted as fixed-width bytes (one `klass` among plain `byte`s) rather than as a
+// variable-width code-point class -- see try_emit_fixed_width_class. That is a real change of
+// emitted program for a whole family, so what it must NOT do is widen the language: the byte form
+// accepts exactly the cross product of the fixed bytes with the varying byte's set, which equals the
+// member set precisely BECAUSE only one position varies.
+TEST(same_length_one_varying_byte_class_stays_exact)
+{
+  // é = C3 A9, É = C3 89: one shared lead, one differing continuation.
+  const std::string e_acute("\xC3\xA9");
+  const std::string E_acute("\xC3\x89");
+  const std::string a_grave("\xC3\xA0"); // C3 A0 — same lead, a continuation NOT in the class
+  const std::string ccedil("\xC3\xA7");  // C3 A7 — likewise
+
+  EXPECT(real::regex("[\xC3\xA9\xC3\x89]").fullmatch(e_acute).matched());
+  EXPECT(real::regex("[\xC3\xA9\xC3\x89]").fullmatch(E_acute).matched());
+  EXPECT(!real::regex("[\xC3\xA9\xC3\x89]").fullmatch(a_grave)); // the shared lead must not suffice
+  EXPECT(!real::regex("[\xC3\xA9\xC3\x89]").fullmatch(ccedil));
+
+  // The same set reached through an icase fold rather than written out.
+  EXPECT(real::regex("caf\xC3\xA9", real::flags::icase).fullmatch("caf\xC3\x89").matched());
+  EXPECT(real::regex("caf\xC3\xA9", real::flags::icase).fullmatch("CAF\xC3\xA9").matched());
+  EXPECT(!real::regex("caf\xC3\xA9", real::flags::icase).fullmatch("caf\xC3\xA0"));
+
+  // A lone lead byte, or a truncated sequence, must still not match.
+  EXPECT(!real::regex("[\xC3\xA9\xC3\x89]").fullmatch("\xC3"));
+  EXPECT(!real::regex("[\xC3\xA9\xC3\x89]").fullmatch("\xA9"));
+
+  // Members of DIFFERENT lengths keep the code-point class: é (2 bytes) and 𝄞 (4) cannot share a
+  // fixed width, and the byte-wise form would need an alternation -- which measures far worse.
+  const std::string clef("\xF0\x9D\x84\x9E");
+  EXPECT(real::regex("[\xC3\xA9\xF0\x9D\x84\x9E]").fullmatch(e_acute).matched());
+  EXPECT(real::regex("[\xC3\xA9\xF0\x9D\x84\x9E]").fullmatch(clef).matched());
+  EXPECT(!real::regex("[\xC3\xA9\xF0\x9D\x84\x9E]").fullmatch(a_grave));
+
+  // Two varying positions must also keep the code-point class: à (C3 A0) and ā (C4 81) differ in
+  // both bytes, so no single byte class can express the pair.
+  const std::string amacron("\xC4\x81");
+  EXPECT(real::regex("[\xC3\xA0\xC4\x81]").fullmatch(a_grave).matched());
+  EXPECT(real::regex("[\xC3\xA0\xC4\x81]").fullmatch(amacron).matched());
+  EXPECT(!real::regex("[\xC3\xA0\xC4\x81]").fullmatch("\xC3\x81")); // the cross product, refused
+  EXPECT(!real::regex("[\xC3\xA0\xC4\x81]").fullmatch("\xC4\xA0"));
+}
