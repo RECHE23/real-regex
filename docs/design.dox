@@ -942,13 +942,21 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   membership-row machinery the dynamic path runs where the compile-time one now short-circuits (refuted by
   the literal, which touches no class table and pays the same).
 
-  \note The leading suspect for the remainder is the **route dispatch** itself: the compile-time storage's
-  view is a `static constexpr` object, so every hint the dispatch cascade tests is a compile-time constant
-  and the whole chain folds to the one route the pattern takes, while the dynamic path evaluates it on
-  every search. The supporting evidence is thin — the gap grows with the route's depth in the cascade
-  across three patterns — so it is a hypothesis, not a finding. Testing it means building a
-  route-memoised variant, which is code rather than measurement. The bounded form, if it holds, is to
-  resolve the route once per program and dispatch on the stored answer.
+  \note The route dispatch was the leading suspect for the remainder, and it is **REFUTED**. The reasoning
+  was that the compile-time storage's view is a `static constexpr` object, so every hint the cascade tests
+  folds away, while the dynamic path evaluates all 22 decision points on every search — with the gap
+  seeming to grow with the route's depth across three patterns. Three was not enough. Measured on a
+  one-byte subject, where nearly all the time IS the per-call fixed cost, across seven patterns spanning
+  the whole cascade: class loop (first) **38.19 ns**, cp class (second) 41.40, possessive (~4th) 37.52,
+  exact literal (~7th) **36.62 — the fastest of the set**, alternation (deep) 38.46, general VM (last)
+  41.23 and 37.63. No trend with depth; the two LAST-route patterns differ from each other by 3.6 ns,
+  more than any depth effect in the data, and the spread tracks what each route does rather than how far
+  down it sits.
+
+  The mechanism is clear in hindsight and worth keeping: those 22 branches test hot, unchanging data and
+  are perfectly predicted — the same pattern takes the same route on every call. A chain of predicted
+  branches costs a few cycles, not 15 ns. So a route-memoised variant would restructure the hottest
+  dispatch function in the codebase to buy approximately nothing, and the ~15 ns is still unattributed.
 
 - **Compile time:** the generated `unicode_fold.hpp` orbit table (~2900 entries) adds ~20 ms to a
   translation unit that includes `real/real.hpp`; a `static_regex` with `IGNORECASE` folds at
