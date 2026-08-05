@@ -1410,6 +1410,13 @@ namespace real::detail {
         throw regex_error("lookaround sub-pattern too long", 0);
       }
       const std::size_t sub_id {prog.lookarounds.size()};
+      if (sub_id > 0xFFFF) {
+        // The instruction carries this index in a uint16. Truncating it silently retargets the
+        // assertion at a DIFFERENT sub-pattern: `(?=)`x65536 then `(?=b)a` matched "a", where the
+        // 'b' the pattern demands does not occur at all. Reachable under max_program_size because
+        // an empty lookaround costs only three instructions. Same guard as the class tables.
+        throw regex_error("too many lookarounds", 0);
+      }
       prog.lookarounds.push_back({});                  // placeholder, filled once the region is emitted
       emit(prog, {.op = opcode::assert_lookaround, .arg16 = static_cast<std::uint16_t>(sub_id)});
       const std::int32_t skip       {emit_jump(prog)}; // main flow jumps over the sub-region

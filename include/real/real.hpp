@@ -1531,6 +1531,13 @@ namespace real {
           std::size_t group {};
           while (i < replacement.size() && replacement[i] >= '0' &&
                  replacement[i] <= '9') {
+            // Unsigned overflow wraps, and a wrapped value can land back INSIDE the group range: the
+            // 20-digit `$18446744073709551616` is 2^64, which became group 0 and substituted the
+            // whole match, and the next integer up substituted group 1. Both silent, where Python
+            // raises. Guarding the multiply leaves every reference that fits untouched.
+            if (group > (npos - 9) / 10) {
+              throw regex_error("invalid group reference in replacement", i);
+            }
             group = (group * 10) + static_cast<std::size_t>(replacement[i] - '0');
             ++i;
           }
