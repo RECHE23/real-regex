@@ -809,10 +809,13 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   allocation-counting `operator new` linked in, the same instrument distortion recorded under
   `regex_set` above.
 
-- **`regex_set` construction is ~97 % eligibility probing, and only ~4 % of that is removable.** Building
+- **`regex_set` construction is ~90 % FUSED SUBSET CONSTRUCTION, not probing — this bullet said the
+  opposite and the correction is the point.** Building
   the set probes each member by *constructing a full single-pattern `real::dfa` and discarding it*
-  (`regex_set.hpp`, the partition loop). At 16 patterns the whole construction is **2.60 ms**, of which
-  compiling the sixteen regexes is **83.8 µs** — so the probe is **~97 %**.
+  (`regex_set.hpp`, the partition loop). The original reading of that — 2.60 ms at 16 patterns against
+  83.8 µs of regex compilation, hence "~97 % probe" — is retained here because the correction below is
+  what makes it useful, and because it is exactly the shape of figure that outlives the code it
+  describes.
 
   \warning The obvious conclusion is wrong, and both halves of the correction are worth keeping.
   *First*, the probe is load-bearing: a diagnostic build with it neutralised **throws** `dfa_error` from
@@ -822,6 +825,20 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   `build_byte_program(…, max_dfa_byte_program)`, then subset construction — and the first two cost
   **2242 µs of the probe's 2335** at 16 patterns. Stopping before subset construction saves **4 %**. The
   expensive part *is* the expansion that decides eligibility.
+
+  \warning **The ~97 % figure below was measured at 16 patterns, and the code no longer reaches that
+  state.** Since the early return added in 2026.8.1, the probe loop does not run at all under
+  `fused_min_eligible` (56) — so every set small enough to have produced that number now skips probing
+  entirely. Re-measured where the probe DOES run, by timing the two halves separately against the whole:
+  at **64 patterns** the set costs 7.47 ms, of which the fused build alone is **6.59 (88 %)** and probing
+  all 64 members is **0.78 (10 %)**; at **100 patterns**, 16.88 ms total, **15.52 fused (92 %)** against
+  1.20 probing (7 %). The halves sum to the whole (7.37 against 7.47; 16.71 against 16.88), so the split
+  is sound. The threshold is also a cliff worth knowing: 40 patterns build in **0.032 ms** and 56 in
+  **5.79** — 180x, by design, since crossing it buys the fused scan.
+
+  So the removable double expansion below is bounded by that 7-10 %, not by 97 %: worth perhaps 4-5 % of
+  construction, against an API change to thread precomputed byte programs into the fused build. The cost
+  that matters is the fused subset construction, and it is superlinear in the member count.
 
   What remains is smaller and different: that expansion is performed **twice** for every eligible member —
   once in the probe, once again inside the fused build — and `regex_immutables` already carries a
