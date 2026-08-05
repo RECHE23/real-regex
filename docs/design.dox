@@ -1074,6 +1074,17 @@ them (that would also break comparability with every published stamp). The discr
 reusing: if the out-of-line symbols are unchanged and forced alignment moves the delta somewhere
 else, it is placement, not inlining.
 
+
+\note **The same diagnostic RETRACTED a figure this project had already published, which is the
+warning worth keeping.** The arm64 leg of that same change was recorded as costing `words` +5.6 %,
+and the stated evidence was that its ASCII witness moved with it — "two instances of one pattern,
+therefore not layout noise". Rebuilt on two independent builds the pair reads −0.01 % / +0.03 % and
++0.02 % / +0.03 %. The witness argument is **invalid for this purpose**: two instances of one pattern
+compile to the SAME code and share its placement, so they move together under a placement shift
+exactly as they would under a real cost. A same-pattern witness separates per-row measurement noise
+— which is what it was introduced for — and separates nothing else. Before believing any delta of
+this size, rebuild and re-measure; a single build is a single draw.
+
 **The defect is `static_regex`-only.** The dynamic path already solves it: `dynamic_storage::state_type`
 fixes its SBO capacities as constants, so every `real::regex` in a TU shares one `pike_vm` instantiation.
 Sweeping the same N patterns through `real::regex` instead, `.text` goes **506 KB → 511 KB from N=0 to
