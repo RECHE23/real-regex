@@ -83,6 +83,62 @@ namespace {
   // pattern from a flat ~0.13 ms native run into a many-second smoke, with no new bug behind it.
   constexpr std::size_t max_counted_repeat_load {256};
 
+  // A quantifier applied to a group that itself contains an unbounded quantifier -- `(a+)+`, `(a*)*`,
+  // `(?:x+)*` -- is the shape that makes a BACKTRACKER exponential. real is linear and does not care;
+  // std::regex is the oracle here, and it does. Its safety valve (error_complexity / error_stack,
+  // already skipped at match time below) does NOT fire on this shape: libstdc++ simply keeps working,
+  // and the smoke run died on exactly that -- `libFuzzer: timeout after 12 seconds` with all 256 stack
+  // frames inside std::__detail::_Executor, on a corpus entry the fuzzer reached only after a codegen
+  // change moved its coverage. Nothing in real was wrong; the ORACLE ran out of time.
+  //
+  // Scanned, not parsed: a `)` (or `]`) directly followed by `*`, `+`, or `{`, with some unbounded
+  // quantifier seen since the matching opener. Escapes and classes are skipped so `\)` and `[+]` do
+  // not count. Approximate on purpose -- a false positive only shortens a subject.
+  bool nested_unbounded_quantifier(std::string_view pat)
+  {
+    int  depth      {0};
+    int  quant_at   {-1}; // depth at which an unbounded quantifier was last seen, -1 for none
+    bool in_class   {false};
+    for (std::size_t i = 0; i < pat.size(); ++i) {
+      const char c {pat[i]};
+      if (c == '\\') {
+        ++i;
+        continue;
+      }
+      if (in_class) {
+        in_class = (c != ']');
+        continue;
+      }
+      if (c == '[') {
+        in_class = true;
+      }
+      else if (c == '(') {
+        ++depth;
+      }
+      else if (c == ')') {
+        const bool quantified {i + 1 < pat.size()
+                               && (pat[i + 1] == '*' || pat[i + 1] == '+' || pat[i + 1] == '{')};
+        if (quantified && quant_at >= depth) {
+          return true; // an unbounded quantifier inside a group that is itself quantified
+        }
+        if (quant_at >= depth) {
+          quant_at = depth - 1; // that inner quantifier no longer nests once the group closes
+        }
+        if (depth > 0) {
+          --depth;
+        }
+      }
+      else if (c == '*' || c == '+') {
+        quant_at = depth;
+      }
+    }
+    return false;
+  }
+
+  // Long enough for a backtracker to go exponential, short enough that 2^n stays trivial. Only
+  // applied to the shape above, so ordinary patterns keep the full fuzzer-chosen subject.
+  constexpr std::size_t max_nested_quantifier_subject {16};
+
 } // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size)
@@ -101,6 +157,9 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   }
   if (counted_repeat_load(pattern) > max_counted_repeat_load) {
     return 0; // ASAN-allocator load, not a new divergence class -- see counted_repeat_load's comment
+  }
+  if (subject.size() > max_nested_quantifier_subject && nested_unbounded_quantifier(pattern)) {
+    return 0; // std, the oracle, has no bound for this shape -- see nested_unbounded_quantifier
   }
 
   real::compat::regex compat;
