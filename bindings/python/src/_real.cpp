@@ -779,7 +779,9 @@ PyObject* run_region(PyObject* self, PyObject* args, PyObject* kwargs, real::det
     // (below it the toggle would dominate a sub-microsecond scan).
     const real::detail::program_view prog = pat->rx->raw_program();
     real::detail::pike_state         state;
-    std::vector<std::size_t>         slots;
+    // The dynamic policy's own slot container, so `real::match_result` -- which names that policy's
+    // result type -- constructs straight from it. SBO, so a typical group count costs no allocation.
+    real::detail::dynamic_storage::slot_storage slots;
     real::detail::pike_vm            vm(prog, state);
     const std::size_t scan_len = pos_byte < end_byte ? end_byte - pos_byte : 0;
     try {
