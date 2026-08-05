@@ -82,6 +82,45 @@ fn bench(c: &mut Criterion) {
         });
         caps.finish();
 
+        // captures_read: the SAME question as `captures` above, asked through the allocation-free
+        // path both crates expose -- `captures_read_iter` here, `captures_read_at` in a manual loop
+        // there, since the `regex` crate has no read-iterator. It existed unmeasured: the crate has
+        // shipped `capture_locations` / `captures_read` / `captures_read_iter` while every published
+        // row went through `captures_iter`, so the path a caller is told to prefer in capture-dense
+        // loops had no standing figure at all. Both sides read a group span per match so neither can
+        // optimise the extraction away -- counting alone would measure the walk, not the reading.
+        let mut cread = c.benchmark_group(format!("captures_read/{name}"));
+        cread.throughput(Throughput::Bytes(text.len() as u64));
+        cread.bench_with_input(BenchmarkId::new("real", name), &text, |b, t| {
+            b.iter(|| {
+                let mut acc = 0usize;
+                let mut it = re.captures_read_iter(t);
+                while it.next().is_some() {
+                    if let Some((s, e)) = it.get(0) {
+                        acc += e - s;
+                    }
+                }
+                black_box(acc)
+            })
+        });
+        // The opponent is what a `regex` user would actually WRITE, not the closest-looking API. That
+        // crate has no read-iterator, and a hand-rolled `captures_read_at` loop -- the literal
+        // translation -- measures 412.7 us against its own `captures_iter` at 190.7 on `class`, because
+        // each call re-does the search setup an iterator keeps. Publishing that as the comparison would
+        // have been a win over a badly played opponent, so the arm below is the crate's idiomatic path.
+        cread.bench_with_input(BenchmarkId::new("regex", name), &text, |b, t| {
+            b.iter(|| {
+                let mut acc = 0usize;
+                for c in rx.captures_iter(t) {
+                    if let Some(m) = c.get(0) {
+                        acc += m.end() - m.start();
+                    }
+                }
+                black_box(acc)
+            })
+        });
+        cread.finish();
+
         // compile: the pattern alone. No throughput — bytes of corpus mean nothing here.
         let mut comp = c.benchmark_group(format!("compile/{name}"));
         comp.bench_function(BenchmarkId::new("real", name), |b| {
