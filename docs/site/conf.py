@@ -92,6 +92,7 @@ nitpicky = True
 nitpick_ignore = [
     ("ref", "structreal_1_1detail_1_1dynamic__storage"),
     ("ref", "structreal_1_1detail_1_1static__storage"),
+    ("ref", "structreal_1_1detail_1_1borrowed__names"),
     # Google-style prose tokens, not classes: napoleon turns "(int, optional)" /
     # "(… or callable)" / "Returns: iterator:" type fields into py:class xrefs.
     ("py:class", "optional"),
@@ -110,6 +111,7 @@ nitpick_ignore = [
     ("cpp:identifier", "detail::program_view"),
     ("cpp:identifier", "detail::dynamic_storage"),
     ("cpp:identifier", "detail::static_storage<Pattern, F>"),
+    ("cpp:identifier", "detail::borrowed_names"),
     ("cpp:identifier", "compat"),
     ("cpp:identifier", "real::compat"),
     ("cpp:identifier", "regex_constants"),

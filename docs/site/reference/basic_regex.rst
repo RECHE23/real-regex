@@ -23,7 +23,8 @@ Interface
 
 .. doxygenclass:: real::basic_regex
    :project: real
-   :members: basic_regex, match, fullmatch, search, find_iter, count_matches, replace, split
+   :members: basic_regex, result_type, owning_result_type, match, fullmatch, search, find_iter,
+             count_matches, replace, split
 
 The two aliases:
 
@@ -32,6 +33,11 @@ The two aliases:
 
 .. doxygentypedef:: real::static_regex
    :project: real
+
+Two result aliases go with them, both *derived* from the type ``real::regex`` actually
+returns rather than restated: ``real::match_result`` for an attempt on a live regex, which
+borrows its name tables, and ``real::owning_match_result`` for an attempt on a *temporary*
+one, which owns them.
 
 Complexity
 ----------

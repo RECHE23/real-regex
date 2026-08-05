@@ -41,9 +41,9 @@ namespace real {
    *
    * \tparam SlotStorage The capture-slot container (vector- or static-backed),
    *         supplied by the storage policy.
-   * \tparam NameOwner   The name-resolution owner, supplied by the same policy:
-   *         \ref real::detail::borrowed_names when the regex's tables outlive every result by
-   *         construction, or a shared handle when they do not (see \ref detach_from_regex).
+   * \tparam NameOwner   The name-resolution owner, supplied by the same policy: an empty
+   *         `detail::borrowed_names` when the regex's tables outlive every result by construction,
+   *         or an owning box when they do not.
    */
   template <typename SlotStorage, typename NameOwner = detail::borrowed_names>
   class basic_match_result
@@ -765,7 +765,7 @@ namespace real {
      * `words` +5.6 % and its ASCII witness +5.6 %, two instances of one pattern and therefore not
      * layout noise. The class scans never touch the owner; giving the result a non-trivial
      * destructor changed their codegen anyway. WHICH mechanism is not established here and this note
-     * does not guess: on arm64 it is not the per-unit inline budget of \ref g_inlinebudget, clang
+     * does not guess: on arm64 it is not the per-unit inline budget of docs/design.dox 10.1, clang
      * having none. Annotating the owner cold made it worse rather than better (+11.2 %), so whatever
      * it is, it does not answer to that lever either. The borrowing path therefore keeps the type it
      * had, byte for byte, and only the rvalue path pays.
