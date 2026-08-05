@@ -1059,6 +1059,21 @@ propagate, and removing inlining shrinks the unit, which shrinks the percentage 
 historically unstable results in this area, where the same row has read −25 % and +217 % across two
 environments. Read the untouched-pattern rows as a gauge before believing any small delta.
 
+\note **Not every unstable x86-64 delta is this budget: some are plain code PLACEMENT, and the two are
+separable.** A v2026.8.8 change that touched no engine code path measured `digits` +8.7 %, `alt`
++5.9 % and `\p{N}+` +5.0 % against `date` −6.1 % and `\p{sc=Han}` −3.2 %, reproducibly across
+independent draws. Three observations settle it. Every out-of-line `real::` symbol in the benchmark
+binary was **byte-identical**, `run_class_loop` included, and none appeared or disappeared — only
+`main` (where the harness's counting helper is inlined) and the harness's own functions changed.
+Forcing `-falign-loops`/`-falign-functions`/`-falign-jumps` to **16 or 32 bytes** collapsed the delta
+on every row that carried it, in three independent measurement sets. And under forced alignment the
+delta **reappeared on different rows** — `words` and its ASCII witness together, −7.3 % at 32 bytes
+and +5.4 % at 16 — which is what a placement effect does: it relocates rather than resolves. So the
+alignment flags are a DIAGNOSTIC here, not a fix, and the harness is deliberately not rebuilt with
+them (that would also break comparability with every published stamp). The discriminator worth
+reusing: if the out-of-line symbols are unchanged and forced alignment moves the delta somewhere
+else, it is placement, not inlining.
+
 **The defect is `static_regex`-only.** The dynamic path already solves it: `dynamic_storage::state_type`
 fixes its SBO capacities as constants, so every `real::regex` in a TU shares one `pike_vm` instantiation.
 Sweeping the same N patterns through `real::regex` instead, `.text` goes **506 KB → 511 KB from N=0 to

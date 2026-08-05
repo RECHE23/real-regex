@@ -41,13 +41,27 @@ was, and arm64 is flat throughout (`words` 1.16 → 1.16, `digits` 0.85 → 0.85
 0.75 → 0.70 and `literal` 0.44 → 0.43 moving the other way. A redistribution, not a tax — median
 +0.36 % across the A/B that measured it, on four independent draws that agree row by row.
 
-**The mechanism is NOT established, and this document does not guess at one.** On arm64 it is not the
-per-unit inline budget of design.dox §10.1 — clang has none — and marking the added type `cold` made
-it worse rather than better, so it does not answer to that lever either. Two recovery attempts were
-built and refuted on the numbers: de-templatising the hot `run`, and marking the new overloads
-`cold`; both left x86-64 unchanged. What IS established is the shape of the fix — folding the owner
-into the shared result type cost arm64 `words` **+5.6 %** and its ASCII witness +5.6 %, two instances
-of one pattern and so not layout noise, which is why the two result types are separate.
+**On x86-64 that redistribution is CODE PLACEMENT in this harness, not engine code — established,
+after two wrong guesses.** Three pieces. (1) Every one of the 16 out-of-line `real::` symbols is
+byte-identical between the two builds, `run_class_loop` included, and no symbol appears or
+disappears; what changed is `main`, where `real_count` is inlined, and the harness's own
+`engines_object`. (2) Forcing `-falign-loops`/`-falign-functions`/`-falign-jumps` to **16 or 32
+bytes** collapses the delta on every row that carried it, across three independent measurement sets:
+`digits` +8.7 / +9.5 % becomes +0.8 / −0.1 / +0.0 %, `alt` +5.9 / +4.2 % becomes +0.4 / −0.3 /
+−0.2 %, and the negatives close the same way (`date` −6.1 / −6.0 % → +3.0 / +0.5 / −1.2 %). (3) And
+the delta does not vanish — it **moves**: under forced alignment `words` and its ASCII witness pick
+it up instead, together, −7.3 % at 32 bytes and +5.4 % at 16. A placement effect relocates; it does
+not resolve.
+
+That also explains the two refuted recovery attempts — de-templatising the hot `run` and marking the
+new overloads `cold` both left x86-64 unchanged, because neither changes alignment. **The harness is
+NOT rebuilt with alignment flags**: it would break comparability with every stamp before this one,
+and the third finding says it would buy relocation rather than stability.
+
+**arm64 is a separate question and is still open.** Folding the owner into the shared result type
+cost `words` **+5.6 %** there and its ASCII witness +5.6 % — two instances of one pattern, so not
+noise — under clang, which has no per-unit inline budget for §10.1 to explain. That one is not
+guessed at here.
 
 **Protocol for this re-stamp:** three full harness runs per ISA, each already a median of N = 30
 paired batches, then the **minimum per cell across the three**. One run is not enough on either
