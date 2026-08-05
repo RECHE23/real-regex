@@ -52,10 +52,13 @@ TEST(the_match_result_alias_names_what_search_returns)
   EXPECT(m.matched());
   EXPECT_EQ(std::string {m["word"]}, std::string {"xxxx"});
 
+  // Both public aliases DERIVE their type rather than restating it, so they cannot drift from what
+  // they document -- which is exactly how the old spelling stayed wrong from the first commit.
   static_assert(std::is_same_v<real::match_result, real::regex::result_type>);
+  static_assert(std::is_same_v<real::owning_match_result, real::regex::owning_result_type>);
+  static_assert(std::is_same_v<decltype(re.search(text)), real::match_result>);
   static_assert(!std::is_same_v<real::regex::result_type, real::regex::owning_result_type>);
-  static_assert(std::is_same_v<decltype(real::regex {"a"}.search(text)),
-                               real::regex::owning_result_type>);
+  static_assert(std::is_same_v<decltype(real::regex {"a"}.search(text)), real::owning_match_result>);
   // On the compile-time policy there is nothing to own, so the two collapse into one type.
   using static_re = real::static_regex<"a">;
   static_assert(std::is_same_v<static_re::result_type, static_re::owning_result_type>);

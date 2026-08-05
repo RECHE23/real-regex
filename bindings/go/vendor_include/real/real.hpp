@@ -398,15 +398,6 @@ namespace real {
   };
 
   /*!
-   * \brief The result type of the default, runtime-compiled `real::regex`.
-   *
-   * This names exactly what `real::regex::search` returns, which it did not until v2026.8.8: it was
-   * spelled over `std::vector<std::size_t>` while the dynamic policy's slots are SBO-backed, so
-   * writing the documented type by name did not compile against the function it documented.
-   */
-  using match_result = basic_match_result<detail::dynamic_storage::slot_storage>;
-
-  /*!
    * \brief Forward iterator over the non-overlapping matches in a text.
    *
    * Follows Python's empty-match rules: an empty match is yielded (even right
@@ -1719,6 +1710,25 @@ namespace real {
    * \brief The runtime-compiled regex type — the primary entry point.
    */
   using regex = basic_regex<detail::dynamic_storage>;
+
+  /*!
+   * \brief The result type of the default, runtime-compiled \ref real::regex.
+   *
+   * DERIVED, not re-spelled, and that is the whole point. Until v2026.8.8 this alias named
+   * `basic_match_result<std::vector<std::size_t>>` while the dynamic policy's slots are SBO-backed,
+   * so the type documented as "what `real::regex` returns" was not that type and declaring a
+   * variable with it did not compile. Nothing detected it because the alias RESTATED a type instead
+   * of asking for it; the restatement and the thing it restated were free to drift apart, and did,
+   * from the first commit. Deriving it makes that class of drift unrepresentable rather than merely
+   * detectable — the same reason \ref real::regex and \ref real::static_regex never drifted.
+   */
+  using match_result = regex::result_type;
+
+  /*!
+   * \brief What a single attempt on a TEMPORARY \ref real::regex returns, owning its name context
+   *        rather than borrowing it (see \ref real::basic_regex::owning_result_type).
+   */
+  using owning_match_result = regex::owning_result_type;
 
   /*!
    * \brief A fully compile-time regex.
