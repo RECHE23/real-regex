@@ -379,3 +379,50 @@ TEST(inner_literal_fixed_codepoint_shape_matches_the_core)
     }
   }
 }
+
+// A byte equal to the inner literal's FIRST byte is not the inner literal, and two hints were derived
+// as if it were. `(?:a){2}ax` has literal `ax` with two `a` bytes ahead of it, so the prefix's own `a`
+// was taken for the literal's start; the derived walk-back distance was then wrong and the route
+// answered NO MATCH on a subject that matches.
+//
+// THIS IS THE SHAPE OF TEST THE SUITE WAS MISSING, not just the case. Every existing inner-literal
+// test uses a short dynamic subject, where the small-haystack guard abandons to the core VM before a
+// bad hint is ever consumed -- so the route under test does not run and the bug is invisible. It
+// fires wherever the route IS armed: `static_regex` at any size (it has no size guard), and a dynamic
+// regex past the floor. Both are exercised below, and the guard hook covers the dynamic path without
+// needing a 300 KB literal in the test source.
+TEST(inner_literal_hints_require_the_whole_literal_not_its_first_byte)
+{
+  const std::string a_sub {"\xC3\xA9" "1aaax"};  // é1aaax — Python: span (0,6) chars = (0,7) bytes
+  const std::string b_sub {"5xyxz"};
+
+  // static_regex: armed at every subject size, so it needs no haystack padding at all.
+  {
+    constexpr real::static_regex<"\\w\\d(?:a){2}ax"> rx {};
+    const auto                                       m  {rx.search(a_sub)};
+    EXPECT(m.matched());
+    EXPECT_EQ(m.start(), 0U);
+    EXPECT_EQ(m.end(), 7U);
+  }
+  {
+    constexpr real::static_regex<"(?:\\d+xy){1}xz"> rx {};
+    const auto                                      m  {rx.search(b_sub)};
+    EXPECT(m.matched());
+    EXPECT_EQ(m.start(), 0U);
+    EXPECT_EQ(m.end(), 5U);
+  }
+
+  // Dynamic, with the size guard disarmed so the route runs on a short subject.
+  real::detail::inner_literal_guard_disabled() = true;
+  {
+    const auto m {real::regex {"\\w\\d(?:a){2}ax"}.search(a_sub)};
+    EXPECT(m.matched());
+    EXPECT_EQ(m.end(), 7U);
+  }
+  {
+    const auto m {real::regex {"(?:\\d+xy){1}xz"}.search(b_sub)};
+    EXPECT(m.matched());
+    EXPECT_EQ(m.end(), 5U);
+  }
+  real::detail::inner_literal_guard_disabled() = false;
+}

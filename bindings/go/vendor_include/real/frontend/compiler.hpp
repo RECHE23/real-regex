@@ -312,6 +312,39 @@ namespace real::detail {
   public:
 
     /*!
+     * \brief True when the FULL inner literal starts at \p pc as consecutive `byte` ops.
+     *
+     * Both hint anchors below used to ask only whether `code[pc]` equalled `inner_literal[0]`, and a
+     * byte equal to the literal's FIRST byte is not the literal. `(?:a){2}ax` has the literal `ax` and
+     * two `a` bytes in front of it, so the prefix's own `a` was taken for the literal's start: the
+     * derived hint then described the wrong distance and the route walked back to the wrong place.
+     *
+     * The result was a SILENT FALSE NEGATIVE wherever the route actually runs — `static_regex` at any
+     * subject size, and a dynamic regex past the size floor. It is invisible on a short dynamic
+     * subject, because the small-haystack guard abandons to the core VM before the bad hint is used,
+     * which is why a probe on short subjects reports the pattern as fine.
+     *
+     * \param[in] prog The program being built.
+     * \param[in] pc   Index of the candidate first `byte` op.
+     * \return Whether the whole literal, all \ref pattern_hints::inner_literal_len bytes of it, is here.
+     */
+    static constexpr bool inner_literal_starts_at(const dynamic_program& prog,
+                                                  std::size_t            pc)
+    {
+      const std::size_t len {prog.hints.inner_literal_len};
+      if (len == 0 || pc + len > prog.code.size()) {
+        return false;
+      }
+      for (std::size_t k = 0; k < len; ++k) {
+        if (prog.code[pc + k].op != opcode::byte
+            || prog.code[pc + k].arg8 != prog.hints.inner_literal[k]) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    /*!
      * \brief Emits the full NFA program for the bound AST.
      * \return The compiled \ref dynamic_program (code, classes, names, hints).
      * \throws real::regex_error if the program exceeds \ref max_program_size.
@@ -377,8 +410,7 @@ namespace real::detail {
           while (lit < prog.code.size() && prog.code[lit].op == opcode::save) {
             ++lit; // the group's closing save, and the next group's opening one
           }
-          if (lit < prog.code.size() && prog.code[lit].op == opcode::byte
-              && prog.code[lit].arg8 == prog.hints.inner_literal[0]) {
+          if (inner_literal_starts_at(prog, lit)) {
             prog.hints.il_rev_class = static_cast<std::int32_t>(prog.code[atom].arg16);
             prog.hints.il_rev_is_cp = is_cp;
 
@@ -444,9 +476,10 @@ namespace real::detail {
           }
           else if (op == opcode::byte) {
             if (!hit_literal) {
-              // The first literal byte must be the inner literal's own first byte, else the count above
-              // does not describe the distance the route will walk back from a candidate.
-              ok          = prog.code[pc].arg8 == prog.hints.inner_literal[0];
+              // The WHOLE literal must start here, not merely a byte equal to its first: a prefix
+              // that repeats that byte (`(?:a){2}ax`) would otherwise be mistaken for the literal and
+              // the count would not describe the distance the route walks back from a candidate.
+              ok          = inner_literal_starts_at(prog, pc);
               hit_literal = true;
             }
             ++pc;
