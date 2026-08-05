@@ -429,6 +429,9 @@ namespace real::detail {
      *        masks by construction, so captures are unchanged. The dense per-node edge table is preserved,
      *        so `extract`'s O(1) lookup is unchanged — the whole point of not going sparse.
      */
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((cold)) // build-time only: see the note in prefilter.hpp's detect_fast_shapes
+#endif
     constexpr void minimize()
     {
       const std::size_t          n       {nodes_.size()};
