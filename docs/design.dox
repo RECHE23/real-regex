@@ -754,30 +754,31 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   measure the same. The capture-slot half of that cost is now copy-on-write (§7.5); the closure-walk half
   is what the lazy-DFA investigation targets for the assertion and multi-group rows (see section E of
   BENCHMARKS.md, where a `\b\w+\b` / `(\w+)@(\w+)` duel against the rust `regex` crate records the gap).
-- **An explicit `^` or `$` costs 10-81x by disqualifying every shape route, and the routes can already
-  answer the question.** Measured on a 100 KB subject, arm64, with the route counters:
+- **An explicit `^` or `$` used to cost 10-81x by disqualifying every shape route. FIXED in v2026.8.5,
+  and this entry is kept because the stale version of it misdirected three separate audits.** The
+  recognizers now peel a leading `\A`/`^` and a trailing `\Z`/`$` and report them, so an anchor is a
+  MODE and a LIMIT rather than a disqualifier. Re-measured on the same 100 KB subject, arm64:
 
-      [a-z]+   search     class_loop      0.056 ms      [a-z]+  fullmatch  class_loop   0.059 ms
-      ^[a-z]+$ search     onepass_full    0.566 ms      ^[a-z]+ search     general_full 2.585 ms
-      \w+      search     cp_class_loop   0.067 ms      [a-z]+$ search     general_full 3.002 ms
-      ^\w+$    search     onepass_full    1.412 ms      [a-z]+  match      class_loop   0.032 ms
+      [a-z]+   search  0.033 ms    ^[a-z]+$ search  0.033 ms    \w+   search  0.068 ms
+      [a-z]+   match   0.033        ^[a-z]+ search  0.033        ^\w+$ search  0.068
+      [a-z]+   fullmatch 0.033      [a-z]+$ search  0.033
 
-  `^[a-z]+` in search mode and `[a-z]+` in prefix (`match`) mode are the same question, and the second
-  is **81x faster** because the first carries an explicit anchor and the second carries it in the mode.
-  Half-anchored shapes fall all the way to the general VM; fully anchored ones reach the one-pass DFA
-  and still pay 10-21x over the class loop. `anchored_start` already exists as a hint -- it currently
-  DISQUALIFIES the shape routes rather than arming them.
-  \note This is also the whole of the `^(a+)+$` gap against RE2 in BENCHMARKS.md §C (4.00 ms against
-  0.220): that pattern is on `general_full` for the same reason, and even `^a+$` -- no nesting at all
-  -- costs 2.25 ms there. The nesting is not what is expensive; the anchor is.
-  \note The rewrite is NOT `^X$` -> `fullmatch(X)`, and that was checked before proposing it: `^a+$`
-  matches `"aaa\n"` while `fullmatch(a+)` does not, because `$` accepts one trailing newline, and
-  under `multiline` both anchors mean something else entirely. The sound scope is therefore: no
-  `multiline` flag, and `^X` -> prefix mode (exact, no newline caveat, the 81x row), `^X$` -> full
-  mode over the subject less one optional trailing newline (the 10x row). Wake condition: a
-  measurement of how common anchored patterns are in the binding corpora -- validation patterns are
-  overwhelmingly `^...$`, so the answer is probably "very", and that is worth confirming rather than
-  assuming before touching the frontend.
+  Every anchored form is at PARITY with its unanchored equivalent — where the old table read 0.566,
+  2.585, 3.002 and 1.412 against 0.056. The `anchored ^[a-z]+$` row published in BENCHMARKS.md §A
+  exists because none of that section's other rows could see this change.
+
+  \warning **The old entry's §C note said the opposite of what is true, and that is the part worth
+  keeping.** It claimed the `^(a+)+$` gap against RE2 was the anchor rather than the nesting, citing
+  `^a+$` at 2.25 ms. Re-measured on the same 100 001-byte subject: **`^a+$` costs 0.000 ms** (below
+  timer resolution, after the anchoring work and the byte-quantifier promotion of v2026.8.6) while
+  **`^(a+)+$` costs 4.361**. Same anchors, same subject, same corpus. The nesting is the whole of it
+  and the anchor is none of it — the exact inverse of what this file asserted. An external audit led
+  with the anchor rewrite as its top priority on the strength of that sentence.
+
+  What remains open there is `^(a+)+$` itself, and it is architectural rather than a shape route: RE2
+  answers the boolean question on a DFA and runs a capture VM only on a hit. `^(?:[a]+)+$`, whose atom
+  is already a class, still reads 23.6 ns/B — so the outer quantifier over a group defeats the routes
+  regardless of the atom, and no promotion reaches it.
 
 - **No hand-vectorization.** The prefilter leans on libc `memchr`/`memmem` (already SIMD internally); a
   hand-written SIMD class scanner was prototyped and removed. It was ~7.7× on a synthetic long single-class
@@ -919,13 +920,24 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   routing-policy change and deserves its own campaign, not a tuning bolted onto the commit that measured
   the problem.
 
-- **The general Pike VM allocates 11–14 times per search**, and the fast routes allocate nothing. The
-  dividing line is the *route*, not capture groups: `[a-z]+`, `(\w+)` and `user` allocate **zero**, while
-  `\w+@\w+` — which has no groups at all — allocates 13 and costs 652 ns, of which **210 ns (32 %) is
-  malloc/free**. Whatever falls through to the general VM pays a fresh set of heap-backed scratch vectors
-  every call, because the state is constructed per `search()`. The known shape of the cure is a
-  thread-local scratch pool (what the rust `regex` crate calls its `Cache`), which is a design rather than
-  a tuning: it touches thread-safety and the const-ness of `search()`.
+- **The general Pike VM allocates 5 times per search, and the fast routes allocate nothing.** The
+  dividing line is the *route*, not capture groups: `[a-z]+`, `(\w+)`, `hello` and `^[a-z]+$` allocate
+  **zero**, while `\w+@\w+` — which has no groups at all — allocates 5, and `(\w+)@(\w+)` also 5.
+  Whatever falls through to the general VM pays heap-backed scratch every call, because the state is
+  constructed per `search()`.
+
+  \warning **This bullet read "11–14 times, `\w+@\w+` allocates 13, of which 210 ns (32 %) is
+  malloc/free" until v2026.8.6, and that had been wrong since v2026.8.0**, which took the capture pool
+  from 13 allocations to 5 and said so in its own CHANGELOG entry. Re-measured with an `operator new`
+  counter: `\w+@\w+` **5**, `(\w+)@(\w+)` **5**, every fast route **0**. Three of the five are the
+  capture pool's containers; the other two are the thread lists' mark tables, which spill past their
+  inline capacity on any program above eight instructions.
+
+  The cure this bullet used to propose — a thread-local scratch pool, the rust crate's `Cache` — is
+  **refuted** for the cross-regex form: a `static thread_local` state shared by two patterns segfaults
+  on the first search with the second, which AddressSanitizer names as a heap-use-after-free through
+  the class-table pointer (see the note on `basic_regex::run`). Reuse is sound WITHIN one regex, and
+  `find_iter` already has it.
 
 - **`real::regex` pays a fixed ~29 ns per `search()` that `real::static_regex` does not**, and it is worth
   knowing where that goes before optimising into it. On a 6-byte subject the dynamic path costs 37.3 ns
