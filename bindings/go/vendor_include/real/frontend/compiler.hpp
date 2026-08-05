@@ -1248,8 +1248,27 @@ namespace real::detail {
                                        std::int32_t     child,
                                        bool             capture_free) const
     {
-      const ast_node& c {tree_.nodes[static_cast<std::size_t>(child)]};
-      if (c.kind == node_kind::byte) {
+      // Peel transparent wrappers first. A NON-CAPTURING, non-atomic group changes nothing any route
+      // cares about -- there is no slot to save and no give-back rule to honour -- but it hid the atom
+      // from the promotion below: `(?:a)+` measured **1.368 ns/B against `a+`'s 0.460**, a 3x gap for a
+      // pair of parentheses. Scoped flags survive the peel because `effective_flags` is stamped on every
+      // node as it is parsed, so the child already carries the scope it was written in.
+      //
+      // `(?>...)` is excluded: `possessive` on a group means atomic, which is a real semantic.
+      std::int32_t atom {child};
+      while (atom >= 0) {
+        const ast_node& w {tree_.nodes[static_cast<std::size_t>(atom)]};
+        if (w.kind != node_kind::group || w.group >= 0 || w.possessive) {
+          break;
+        }
+        atom = w.child;
+      }
+      if (atom < 0) {
+        emit_node(prog, child, capture_free);
+        return;
+      }
+      const ast_node& c {tree_.nodes[static_cast<std::size_t>(atom)]};
+      if (c.kind == node_kind::byte && c.next < 0) {
         char_class one;
         one.set(c.byte);
         emit_klass(prog, one);
