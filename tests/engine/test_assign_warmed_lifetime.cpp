@@ -193,3 +193,30 @@ TEST(aho_corasick_assign_onto_warmed_rebuilds_for_the_new_alternation)
   EXPECT_EQ(matches(re, v_corpus), w_hits);
   EXPECT_EQ(matches(re, w_corpus), 0U);    // a stale automaton would still find the w-words here
 }
+
+// COPY-assignment onto a warmed regex, which the test above does not reach: `re = real::regex{...}`
+// assigns a TEMPORARY, so it moves, and a move happens to give the destination a different program
+// address. Copy-assignment does not -- assigning a vector reuses the destination's buffer, so
+// `code.data()` is UNCHANGED, and every cache keyed on that pointer still passes its identity check.
+//
+// `regex_immutables::operator=` cleared `built_for` and `rows_for` but not `ac_for`, so the
+// Aho-Corasick automaton built for the OLD pattern was served for the new one. Through the public
+// API: `a` answered 3230 matches on a subject where its new pattern matches none, and 0 on one where
+// it matches 3125 -- wrong in both directions, silently. Warming BEFORE the assignment is what makes
+// this fire; a cold assignment cannot, because there is nothing stale to serve.
+TEST(copy_assign_onto_warmed_invalidates_the_aho_corasick_automaton)
+{
+  const std::string v_pattern {alt_pattern('v', 24)};
+  const std::string w_pattern {alt_pattern('w', 24)};
+  const std::string v_corpus  {alt_corpus('v', 24)};
+  const std::string w_corpus  {alt_corpus('w', 24)};
+
+  real::regex       re        {v_pattern};
+  const real::regex src       {w_pattern};           // a named lvalue: `re = src` COPIES
+  const std::size_t warm      {matches(re, v_corpus)};
+  EXPECT(warm > 0U);                                 // the automaton is now built for v_pattern
+
+  re = src;
+  EXPECT_EQ(matches(re, w_corpus), warm);            // must answer as w_pattern does
+  EXPECT_EQ(matches(re, v_corpus), 0U);              // a stale automaton would still find the v-words
+}
