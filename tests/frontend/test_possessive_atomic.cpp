@@ -431,3 +431,40 @@ TEST(parser_possessive_desugar_and_scoped_flags)
   EXPECT(real::regex("(?i:a*+)b").fullmatch("AAAb"));
   EXPECT(real::regex("(?i:(?>a+))b").fullmatch("AAAb"));
 }
+
+// A possessive quantifier over a NON-ASCII literal was rejected outright, while the same character
+// written as a class compiled: `é++` threw "possessive/atomic over a compound body" where `[é]++`
+// worked, and so did `(?i)é++` -- the fold already promotes the literal to a class in the parser.
+// The bodies are the same language; only their AST shape differed. Tier-1 eligibility is tested on
+// the node KIND, and a non-ASCII literal is a concat of UTF-8 bytes, so it could never qualify.
+//
+// Every expectation below is transcribed from CPython 3.14.6's live `re`, which has had possessive
+// quantifiers since 3.11 -- all eight discriminating cases agree.
+TEST(possessive_over_a_non_ascii_literal_is_tier1)
+{
+  // The defining property: the possessive keeps what it took, so the trailing atom starves.
+  EXPECT(!real::regex("é++é").search("ééé"));
+  EXPECT(real::regex("é+é").search("ééé"));                  // greedy gives back, so this matches
+  EXPECT(!real::regex("[é]++é").search("ééé"));              // the class spelling must agree
+  EXPECT(!real::regex("a++a").search("aaa"));                // the ASCII witness, unchanged
+
+  EXPECT_EQ(real::regex("é++").search("ééé").end(), 6U);     // three 2-byte characters
+  EXPECT_EQ(real::regex("é++x").search("éééx").end(), 7U);
+  EXPECT_EQ(real::regex("あ++").search("あああ").end(), 9U);     // 3-byte
+  EXPECT_EQ(real::regex("𝔘++").search("𝔘𝔘").end(), 8U);      // 4-byte, astral
+
+  // The other three possessive suffixes over the same atom.
+  EXPECT(!real::regex("é?+é").search("é"));
+  EXPECT(real::regex("é?+é").search("éé"));
+  EXPECT(!real::regex("é*+é").search("é"));
+  EXPECT(!real::regex("é{2,}+é").search("ééé"));
+  EXPECT(!real::regex("é{1,2}+é").search("éé"));
+  EXPECT(real::regex("é{1,2}+é").search("ééé"));
+  EXPECT(!real::regex("あ++あ").search("あああ"));
+  EXPECT(!real::regex("𝔘++𝔘").search("𝔘𝔘"));
+
+  // The promotion is scoped to ONE code point: a compound body is still a clean rejection, which is
+  // the wall emit_possessive_repeat documents rather than a shape this widens.
+  EXPECT_THROWS(real::regex("(?:éé)++"), real::regex_error);
+  EXPECT_THROWS(real::regex("(?:ab)++"), real::regex_error);
+}

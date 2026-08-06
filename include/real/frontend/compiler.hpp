@@ -1327,34 +1327,13 @@ namespace real::detail {
       // The strict decode is what keeps it honest, and it is why no separate length check is needed:
       // a concat holding MORE than one code point (`(?:ab)+`, `(?:éé)+`) decodes shorter than the
       // chain, so it is refused -- promoting it would change what the quantifier repeats.
-      if (c.kind == node_kind::concat && c.next < 0 && !has_flag(flags_, flags::bytes)) {
-        // `char`, not `uint8_t`: the strict decoder takes a string_view, and reinterpret_cast is
-        // forbidden during constant evaluation -- which a `static_regex` does.
-        std::array<char, 4> seq    {};
-        std::size_t         len    {0};
-        std::int32_t        walk   {c.child};
-        bool                plain  {true};
-        while (walk >= 0 && plain) {
-          const ast_node& w {tree_.nodes[static_cast<std::size_t>(walk)]};
-          if (w.kind != node_kind::byte || len == 4) {
-            plain = false;
-            break;
-          }
-          seq[len++] = static_cast<char>(w.byte);
-          walk       = w.next;
-        }
-        if (plain && len >= 2) {
-          // Strict decode, and the length must account for EVERY byte in the chain: a partial match
-          // would mean the chain held more than the one code point, and promoting it would change
-          // what the quantifier repeats.
-          const std::string_view          bytes {seq.data(), len};
-          const detail::decoded_codepoint dec   {detail::decode_codepoint_strict(bytes, 0)};
-          if (dec.valid && dec.length == len) {
-            class_def one;
-            one.ranges.push_back({.lo = dec.cp, .hi = dec.cp});
-            emit_klass_cp(prog, one);
-            return;
-          }
+      if (c.next < 0 && !has_flag(flags_, flags::bytes)) {
+        const std::uint32_t cp {single_codepoint_atom(tree_, atom)};
+        if (cp != not_a_single_codepoint) {
+          class_def one;
+          one.ranges.push_back({.lo = cp, .hi = cp});
+          emit_klass_cp(prog, one);
+          return;
         }
       }
       // A non-ASCII class that \ref try_emit_fixed_width_class would take must NOT take it here. That
