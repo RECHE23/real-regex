@@ -64,13 +64,59 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url || steps.deployment_retry.outputs.page_url }}
     steps:
-      # actions/deploy-pages intermittently fails with a transient "try again later" from the Pages
-      # deployment API (seen ~4× on release version-bump commits, where the built docs are unchanged).
-      # Try once, then retry once on failure — the retry has cleared it every time.
+      # TWO distinct failure modes, and only ONE of them is worth retrying.
+      #
+      # (1) A FAST API failure: the Pages deployment API answers "try again later" before the
+      #     deployment is created (seen ~4× on release version-bump commits, where the built docs are
+      #     unchanged). Retrying clears it, and always has. This is what the retry was written for.
+      #
+      # (2) A QUEUE STALL: the deployment IS created, then sits in `deployment_queued` until the
+      #     action's own timeout, which then CANCELS it. Retrying cannot help — and makes it worse.
+      #     `deploy-pages` keys the deployment on the commit SHA, so a retry recreates the SAME id and
+      #     reads back the cancellation the first attempt just wrote: "Deployment cancelled", a
+      #     guaranteed second failure under a step name that blames the wrong thing. Both 2026-08-06
+      #     failures (fe55b58, ab2b31c) were this, ten minutes queued apiece. The cause is the upstream
+      #     Pages queue; there is nothing in this repository to fix, only a longer wait to grant it.
+      #
+      # Hence: give the queue twice the default before abandoning it, and retry only when the first
+      # attempt failed WITHOUT having burned the timeout. The mode is told apart by elapsed time rather
+      # than by an output of the action — `timeout` and `error_count` are inputs it demonstrably has
+      # (it prints them), an error-message output is not something this has verified, and a condition
+      # resting on an output that does not exist would silently be always-true.
+      - name: Mark the deploy start (for telling a stall from a fast failure)
+        id: t0
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
       - id: deployment
         uses: actions/deploy-pages@v5
         continue-on-error: true
-      - name: Retry Pages deploy (the transient API flake)
+        with:
+          timeout: 1200000 # 20 min; the 600000 default is what the observed stalls outlast
+      - name: Classify the failure — fast API error, or queue stall?
+        id: mode
         if: steps.deployment.outcome == 'failure'
+        run: |
+          elapsed=$(( $(date +%s) - ${{ steps.t0.outputs.epoch }} ))
+          if [ "$elapsed" -ge 1100 ]; then
+            echo "first attempt failed after ${elapsed}s — a queue stall, which a retry cannot clear"
+            echo "retry=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "first attempt failed after ${elapsed}s — a fast API failure, which a retry clears"
+            echo "retry=yes" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Retry Pages deploy (fast API failures only)
+        if: steps.mode.outputs.retry == 'yes'
         id: deployment_retry
         uses: actions/deploy-pages@v5
+        with:
+          timeout: 1200000
+      # The first attempt is `continue-on-error`, and the retry may now be SKIPPED rather than run, so
+      # without this the job would report success on a deployment that never landed. A skipped retry
+      # has outcome 'skipped', which is not 'success', so the stall case fails here — loudly, once,
+      # and for the right reason.
+      - name: Fail unless the site actually deployed
+        if: steps.deployment.outcome != 'success' && steps.deployment_retry.outcome != 'success'
+        run: |
+          echo "::error::Pages deployment did not complete (first attempt:" \
+               "${{ steps.deployment.outcome }}, retry: ${{ steps.deployment_retry.outcome }})." \
+               "A queue stall is upstream and clears on its own; re-run this workflow."
+          exit 1
