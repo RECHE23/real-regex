@@ -1085,6 +1085,18 @@ exactly as they would under a real cost. A same-pattern witness separates per-ro
 — which is what it was introduced for — and separates nothing else. Before believing any delta of
 this size, rebuild and re-measure; a single build is a single draw.
 
+\note **The discriminator has a blind spot, and it is exactly the family of changes this section is
+about.** `cold`, `noinline` and section attributes ARE placement directives — moving code out of the
+hot path's neighbourhood is their whole mechanism — so "forced alignment moves the delta, therefore
+placement" cannot separate cause from effect for them. Audited that way, the `cold` marking of the
+build-time functions reproduces its published `words` −11.8 % on two independent unaligned builds
+(−11.95 %, −12.14 %), yet the same comparison under `-falign-*=16` — a mere 1 % of code inflation —
+reads **+5.70 %**, sign reversed, and −3.34 % at 32 bytes. The annotations are kept: those functions
+are cold, and the median across the table is +0.15 % / +0.19 %, neutral. What cannot be claimed is the
+MAGNITUDE as a property of the change rather than of the build. For a placement directive, the
+honest report is the shipped configuration's number plus its alignment sensitivity — not a single
+figure.
+
 **The defect is `static_regex`-only.** The dynamic path already solves it: `dynamic_storage::state_type`
 fixes its SBO capacities as constants, so every `real::regex` in a TU shares one `pike_vm` instantiation.
 Sweeping the same N patterns through `real::regex` instead, `.text` goes **506 KB → 511 KB from N=0 to
