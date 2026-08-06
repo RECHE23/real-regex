@@ -40,7 +40,7 @@ def _count_reads():
     include_dir = pathlib.Path(__file__).resolve().parents[3] / "include" / "real"
     counts = dict.fromkeys(_FLAGS, 0)
     for name in _HEADERS:
-        code = _strip_comments((include_dir / name).read_text())
+        code = _strip_comments((include_dir / name).read_text(encoding="utf-8"))
         for flag in _FLAGS:
             counts[flag] += len(re.findall(r"\b" + flag + r"\b", code))
     return counts

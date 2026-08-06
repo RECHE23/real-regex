@@ -100,7 +100,7 @@ def main():
         print("  [{}] {!r}\n      real={} re={}".format(name, pattern, rr, oo))
     if args.json:
         report["bugs"] = [{"corpus": n, "pattern": p, "real": r, "re": o} for n, p, r, o in bugs]
-        args.json.write_text(json.dumps(report, indent=2))
+        args.json.write_text(json.dumps(report, indent=2), encoding="utf-8")
         print("wrote", args.json)
 
 

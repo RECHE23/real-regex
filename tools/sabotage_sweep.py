@@ -56,7 +56,7 @@ def injectable(name):
 def collect():
     out = []
     for f in sorted(ROOT.glob("include/real/**/*.hpp")):
-        txt = f.read_text()
+        txt = f.read_text(encoding="utf-8")
         for m in PAT.finditer(txt):
             if m.group(1).startswith("npos"):
                 continue
@@ -69,13 +69,14 @@ def run(cmd, timeout=1800):
 
 
 def trial(path, original, decl, old, new):
-    path.write_text(original.replace(decl, decl.replace("{%d}" % old, "{%d}" % new), 1))
+    path.write_text(original.replace(decl, decl.replace("{%d}" % old, "{%d}" % new), 1),
+                    encoding="utf-8")
     # The EXIT CODE, not the text. The first cut grepped `make test | tail -5` for ctest's summary
     # line, which make pushes out of the last five lines with its own error output whenever the run
     # fails -- so every genuine catch read as a miss and the whole table came back uniformly
     # "unguarded". Calibrating against a constant already proven guarded by hand is what caught it.
     result = run("make test")
-    path.write_text(original)
+    path.write_text(original, encoding="utf-8")
     blob = result.stdout + result.stderr
     if "error:" in blob and "tests passed" not in blob:
         return "no-compile"
@@ -92,7 +93,7 @@ def main():
     print(f"{'constant':<34}{'value':>8}  {'/4':>10}{'x4':>10}   verdict", flush=True)
     unguarded = []
     for path, name, val, decl in consts:
-        original = path.read_text()
+        original = path.read_text(encoding="utf-8")
         lo = max(1, val // 4) if val > 1 else 0
         hi = val * 4 if val > 0 else 8
         r1 = trial(path, original, decl, val, lo)
