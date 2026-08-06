@@ -86,7 +86,16 @@ namespace {
   // `klass` and so a quantifier over a single character had no fast route at all -- `^a+$` measured
   // 18.52 ns/B against 0.31 for the semantically identical `^[a]+$`. Bounded forms (`a{3}`) still
   // emit bytes, so the literal runs this corpus also covers are unchanged.
-  constexpr std::uint64_t kGolden {0x141b86273abd5d6eULL};
+  // Moved a third time, deliberately: an UNBOUNDED quantifier over a non-ASCII CODE POINT now emits a
+  // one-member code-point class instead of the literal's UTF-8 byte sequence. Same reasoning as the
+  // byte case above, one encoding wider -- `é+` repeated a two-byte sequence, a shape no route
+  // recognises, and the route counters showed it dispatching `lazy_dfa_anchored` 18 896 times over a
+  // 180 KB corpus where `[à-ÿ]+` needed no per-match dispatch at all. A class that
+  // `try_emit_fixed_width_class` would take byte-wise is likewise emitted as a code-point class under
+  // such a quantifier, for the same reason (the fixed-width form stays for a BARE class, where it
+  // routes as an exact literal). Bounded forms are untouched, and a concat holding more than one code
+  // point is refused by the strict decode.
+  constexpr std::uint64_t kGolden {0x3f26b923d54a5166ULL};
 
   TEST(non_scoped_programs_are_byte_identical)
   {
