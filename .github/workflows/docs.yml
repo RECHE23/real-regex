@@ -78,26 +78,31 @@ jobs:
       #     failures (fe55b58, ab2b31c) were this, ten minutes queued apiece. The cause is the upstream
       #     Pages queue; there is nothing in this repository to fix, only a longer wait to grant it.
       #
-      # Hence: give the queue twice the default before abandoning it, and retry only when the first
-      # attempt failed WITHOUT having burned the timeout. The mode is told apart by elapsed time rather
-      # than by an output of the action — `timeout` and `error_count` are inputs it demonstrably has
-      # (it prints them), an error-message output is not something this has verified, and a condition
-      # resting on an output that does not exist would silently be always-true.
+      # GRANTING THE QUEUE LONGER IS NOT AVAILABLE, and that was tried: `timeout: 1200000` is refused
+      # by the action itself — "timeout value is greater than the allowed maximum - timeout set to the
+      # maximum of 600000 milliseconds". Ten minutes is the ceiling, so a stall that outlasts it cannot
+      # be waited out from here at all. What is left is to stop turning one failure into two, and to
+      # fail once, clearly, for the right reason.
+      #
+      # The mode is told apart by ELAPSED TIME, not by an output of the action: `timeout` and
+      # `error_count` are inputs it demonstrably has (it prints them), an error-message output is not
+      # something this verified, and a condition resting on an output that does not exist would
+      # silently be always-true. The threshold sits far below the 600 s ceiling because the two modes
+      # are nowhere near each other — a stall burns the whole ten minutes, a fast API refusal returns
+      # in seconds.
       - name: Mark the deploy start (for telling a stall from a fast failure)
         id: t0
         run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
       - id: deployment
         uses: actions/deploy-pages@v5
-        continue-on-error: true
-        with:
-          timeout: 1200000 # 20 min; the 600000 default is what the observed stalls outlast
+        continue-on-error: true # the default timeout is also the maximum; raising it is refused
       - name: Classify the failure — fast API error, or queue stall?
         id: mode
         if: steps.deployment.outcome == 'failure'
         run: |
           elapsed=$(( $(date +%s) - ${{ steps.t0.outputs.epoch }} ))
-          if [ "$elapsed" -ge 1100 ]; then
-            echo "first attempt failed after ${elapsed}s — a queue stall, which a retry cannot clear"
+          if [ "$elapsed" -ge 120 ]; then
+            echo "first attempt failed after ${elapsed}s — a queue stall (the 600 s ceiling), which a retry cannot clear"
             echo "retry=no" >> "$GITHUB_OUTPUT"
           else
             echo "first attempt failed after ${elapsed}s — a fast API failure, which a retry clears"
@@ -107,8 +112,6 @@ jobs:
         if: steps.mode.outputs.retry == 'yes'
         id: deployment_retry
         uses: actions/deploy-pages@v5
-        with:
-          timeout: 1200000
       # The first attempt is `continue-on-error`, and the retry may now be SKIPPED rather than run, so
       # without this the job would report success on a deployment that never landed. A skipped retry
       # has outcome 'skipped', which is not 'success', so the stall case fails here — loudly, once,
