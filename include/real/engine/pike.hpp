@@ -4462,6 +4462,14 @@ namespace real::detail {
                            return 0;
                          };
 
+      // The recompute below is DELIBERATE, and removing it was measured and refused. The search loop
+      // stops on a non-zero width and could hand it over -- callgrind agrees it is redundant, and
+      // carrying it (`while (... && (first_width = width(i)) == 0)`) cut total instructions on `[^,]+`
+      // by 21 % (119.5M -> 94.5M, 343 -> 271 Ir per match, the lambda being a real call rather than
+      // inlined). It also made this path SLOWER, reproducibly on two independent builds: `\w+`
+      // +20.6 % / +19.4 %, `[à-ÿ]+` +12.5 % / +12.6 %, while the row it targeted (`[^,]+`) moved
+      // -0.6 % / -2.8 %. Fewer instructions is not faster; the extra variable live across the loop
+      // costs more than the call it saves. Do not "simplify" this again without timing it.
       std::size_t match_start {start};
       if (mode == run_mode::search) {
         while (match_start < text.size() && width(match_start) == 0) {

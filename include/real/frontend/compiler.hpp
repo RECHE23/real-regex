@@ -1279,9 +1279,18 @@ namespace real::detail {
      *
      * Extracted so the alternation fusion cannot diverge from a class written by hand: `(?:é|à|è)`
      * and `[éàè]` are the same language and must become the same program. Emitting the fused set
-     * directly as a code-point class instead measured FASTER on the bare form (1.85 against 4.42
-     * ns/B) precisely because it took a different route -- which is a finding about the bare class,
-     * not a licence for one spelling to compile differently from the other.
+     * directly as a code-point class instead measured FASTER on the bare form (arm64 1.85 against
+     * 4.42 ns/B) precisely because it took a different route -- a licence for one spelling to compile
+     * differently from the other, not a reason, and refused for that.
+     *
+     * That observation was then chased on its own terms and REFUTED, so it is not retried: the two
+     * ISAs DISAGREE about which emission a standalone non-ASCII class wants. Measured both ways on
+     * both machines -- `[éÉ]` arm64 2.157 fixed-width against 1.260 code-point, but x86-64 2.544
+     * against 2.932; `(?i)é` identical figures; `[àèù]` arm64 1.949 against 1.283, x86-64 2.279
+     * against 3.018. arm64 wants the code-point class by 1.5-2.4x, x86-64 wants fixed-width by
+     * 1.15-1.3x, and no single choice wins on both. Where a literal PRECEDES the class they agree
+     * emphatically (`(?i)café` 0.44/0.64 against 1.13/1.67; `caf[éÉ]` 0.48/0.63 against 0.82/1.18),
+     * which is the case the fixed-width form was introduced for and the one it keeps.
      *
      * \param[in,out] prog The program being built.
      * \param[in]     eff  The effective class (ASCII bitmap + non-ASCII ranges).
