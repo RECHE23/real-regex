@@ -114,3 +114,42 @@ TEST(scoped_flags_and_bytes_mode_are_unaffected)
   EXPECT(shape_of("(?:a|b|c)+", real::flags::bytes) == shape_of("[abc]+", real::flags::bytes));
   EXPECT_EQ(real::regex("(?:a|b|c)+", real::flags::bytes).count_matches("abcabc"), 1U);
 }
+
+// The same fusion, one encoding wider: a branch that is one non-ASCII CODE POINT is a member too.
+// `(?:é|à|è)+` measured 7.47 ns/B against `[éàè]+`'s 1.83 -- the same 4x-shaped gap the ASCII form
+// had, from the same cause, because a non-ASCII literal is a concat of UTF-8 bytes and so was not a
+// `byte` branch. It now asks the predicate the parser and emit_unbounded_body already ask.
+//
+// The property to hold onto is not the speed but the CONSISTENCY: `(?:é|à|è)` and `[éàè]` are the
+// same language, so they must compile to the same program in every context. Emitting the fused set
+// directly as a code-point class was measurably faster on the bare form (1.85 against 4.42) and was
+// REFUSED for exactly that reason -- one spelling routing differently from the other is the drift,
+// not the win. The class emission is shared instead, and the quantifier body asks the same fusion
+// with its own emission, which is where the 4x actually belongs.
+TEST(a_single_codepoint_alternation_is_the_class_it_is)
+{
+  // Same program as the hand-written class, quantified and bare, mixed and pure.
+  EXPECT(shape_of("(?:é|à|è)+") == shape_of("[éàè]+"));
+  EXPECT(shape_of("(?:é|à|è)") == shape_of("[éàè]"));
+  EXPECT(shape_of("(?:é|a)+") == shape_of("[éa]+"));
+  EXPECT(shape_of("(?:あ|い)+") == shape_of("[あい]+"));
+  EXPECT(shape_of("(?:𝔘|𝔙)+") == shape_of("[𝔘𝔙]+"));
+
+  // …and the answers agree, including where branch order could have mattered.
+  const std::string subject {"café résumé naïve façade élève"};
+  EXPECT_EQ(real::regex {"(?:é|à|è)+"}.count_matches(subject),
+            real::regex {"[éàè]+"}.count_matches(subject));
+  EXPECT_EQ(real::regex {"(?:è|é|à)+"}.count_matches(subject),
+            real::regex {"[éàè]+"}.count_matches(subject));
+  EXPECT_EQ(real::regex {"(?:é|a)+"}.count_matches(subject),
+            real::regex {"[éa]+"}.count_matches(subject));
+
+  // The refusals are unchanged by the widening: a multi-CHARACTER branch is still a sequence.
+  EXPECT(shape_of("(?:é|àè)+") != shape_of("[éàè]+"));
+  EXPECT_EQ(real::regex {"(?:é|àè)+"}.search("àèé").end(), 6U);
+  EXPECT(shape_of("é|") != shape_of("[é]"));
+  EXPECT_EQ(real::regex {"é|"}.search("zz").end(), 0U);
+
+  // Bytes mode has no code points: there the branches are raw bytes and only those fuse.
+  EXPECT_EQ(real::regex("(?:a|b)+", real::flags::bytes).count_matches("abab"), 1U);
+}
