@@ -4391,6 +4391,130 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Batched twin of \ref run_codepoint_class — fills up to \p cap maximal spans in ONE call.
+     *
+     * The `.`/negated-class shape was the only class scan without a batch filler, so it paid a full
+     * route entry PER MATCH where the byte- and code-point-class routes pay one per sixteen. Measured
+     * on their own fast paths: `[a-z]+` 5.55 ns per match, `[^ ]+` 19.04, `[^,]+` 19.45 -- and
+     * `fields [^,]+` and `.` are the two weakest rows in docs/BENCHMARKS.md against PCRE2-JIT.
+     *
+     * A NEW function rather than a flag threaded through the existing one: an earlier attempt to widen
+     * a shared scan lambda with one extra branch cost `\p{L}+` +79 % and `\p{N}+` +92 % on the paths
+     * that did not even use it. Nothing here is on any other route's codegen.
+     *
+     * Search semantics only, which is what the batched walk uses -- \ref basic_match_iterator excludes
+     * anchored shapes from batching, and `run_mode::full` keeps \ref run_codepoint_class.
+     *
+     * \tparam Cascade Select the memchr-cascade run scan, chosen once per walk.
+     * \param[in]  text  The subject.
+     * \param[in]  start Byte offset to begin at.
+     * \param[out] out   Receives the spans.
+     * \param[in]  cap   Capacity of \p out.
+     * \return How many spans were written (0 = no further match).
+     */
+    template <bool Cascade>
+    constexpr std::size_t fill_codepoint_class_spans(std::string_view text,
+                                                     std::size_t      start,
+                                                     cp_span*         out,
+                                                     std::size_t      cap)
+    {
+      const std::uint8_t* const ascii {
+        class_table(static_cast<std::size_t>(prog_.hints.codepoint_class_ascii))};
+      const auto cont = [&](std::size_t i) {
+                          const auto cont_byte {static_cast<std::uint8_t>(text[i])};
+                          return cont_byte >= 0x80 && cont_byte <= 0xBF;
+                        };
+      const auto width = [&](std::size_t i) -> std::size_t {
+                           const auto byte_value {static_cast<std::uint8_t>(text[i])};
+                           if (byte_value < 0x80) {
+                             return ascii[byte_value] != 0U ? 1 : 0;
+                           }
+                           if (byte_value >= 0xC2 && byte_value <= 0xDF) {
+                             return i + 1 < text.size() && cont(i + 1) ? 2 : 0;
+                           }
+                           if (byte_value >= 0xE0 && byte_value <= 0xEF) {
+                             if (i + 2 >= text.size()) {
+                               return 0;
+                             }
+                             const detail::utf8_second_byte_bounds& b {
+                               detail::utf8_second_byte_bounds_table[byte_value]};
+                             const auto b2                            {static_cast<std::uint8_t>(text[i + 1])};
+                             return b2 >= b.lo && b2 <= b.hi && cont(i + 2) ? 3 : 0;
+                           }
+                           if (byte_value >= 0xF0 && byte_value <= 0xF4) {
+                             if (i + 3 >= text.size()) {
+                               return 0;
+                             }
+                             const detail::utf8_second_byte_bounds& b {
+                               detail::utf8_second_byte_bounds_table[byte_value]};
+                             const auto b2                            {static_cast<std::uint8_t>(text[i + 1])};
+                             return b2 >= b.lo && b2 <= b.hi && cont(i + 2) && cont(i + 3) ? 4 : 0;
+                           }
+                           return 0;
+                         };
+      std::size_t n {0};
+      std::size_t i {start};
+      while (n < cap && i < text.size()) {
+        std::size_t w {width(i)};
+        while (w == 0) {
+          ++i;
+          if (i >= text.size()) {
+            return n;
+          }
+          w = width(i);
+        }
+        const std::size_t match_start {i};
+        std::size_t       match_end   {i + w};
+        if (prog_.hints.codepoint_class_plus) {
+          const auto scalar_scan = [&]() {
+                                     while (match_end < text.size()) {
+                                       const std::size_t cw {width(match_end)};
+                                       if (cw == 0) {
+                                         break;
+                                       }
+                                       match_end += cw;
+                                     }
+                                   };
+          if constexpr (Cascade) {
+            if (!std::is_constant_evaluated()) {
+              const std::size_t stop {find_bytes_cascade(text, match_end, prog_.hints.stop_set.data(),
+                                                         prog_.hints.stop_set_size)};
+              const std::size_t p1   {stop == npos ? text.size() : stop};
+              bool              bad  {false};
+              while (match_end < p1) {
+                const std::size_t high {first_high_byte(text, match_end, p1)};
+                if (high == p1) {
+                  break;
+                }
+                match_end = high;
+                const std::size_t cw {width(match_end)};
+                if (cw == 0) {
+                  bad = true;
+                  break;
+                }
+                match_end += cw;
+              }
+              if (!bad) {
+                match_end = p1;
+              }
+            }
+            else {
+              scalar_scan();
+            }
+          }
+          else {
+            scalar_scan();
+          }
+        }
+        out[n].start = match_start;
+        out[n].end   = match_end;
+        ++n;
+        i = match_end;
+      }
+      return n;
+    }
+
+    /*!
      * \brief Fast path for `.` / a negated class, optionally a greedy `+`.
      *
      * Scans codepoints directly, mirroring the byte-level expansion the VM would

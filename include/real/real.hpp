@@ -469,7 +469,13 @@ namespace real {
                           && prog.hints.greedy_class_loop_end == 0
                           && prog.hints.greedy_class_loop >= 0
                           && prog.hints.greedy_class_loop_min <= 1;
-        batch_eligible_ = batch_bytes_
+        batch_cp_ascii_ = !std::is_constant_evaluated() && sem == match_semantics::first
+                          && prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0
+                          && !prog.hints.wb_lead_maximal_run && !detail::class_fastpath_disabled()
+                          && !prog.hints.anchored_start && !prog.hints.line_anchored
+                          && prog.hints.greedy_class_loop < 0 && prog.hints.greedy_cp_class < 0
+                          && prog.hints.codepoint_class_ascii >= 0;
+        batch_eligible_ = batch_bytes_ || batch_cp_ascii_
                           || (!std::is_constant_evaluated() && sem == match_semantics::first
                               && prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0
                               && !prog.hints.wb_lead_maximal_run
@@ -569,6 +575,12 @@ namespace real {
     std::size_t                                                           batch_i_          {}; //!< Next span to hand out.
     bool                                                                  batch_eligible_   {}; //!< Route/shape allows batching (decided once).
     bool                                                                  batch_bytes_      {}; //!< Batch the BYTE-class route rather than the code-point one.
+    //! \brief Batch the `.`/negated-class route (\ref real::detail::pike_vm::fill_codepoint_class_spans).
+    //!
+    //! It was the one class scan with no filler, so it paid a full route entry per match where the
+    //! other two pay one per \ref batch_cap. Measured on their own fast paths: `[a-z]+` 5.55 ns per
+    //! match against `[^,]+` 19.45.
+    bool                                                                  batch_cp_ascii_   {};
 
     /*!
      * \brief Cold half of the batched walk: refills \ref batch_ from the engine.
@@ -590,6 +602,11 @@ namespace real {
       if (batch_bytes_) {
         batch_n_ = cascade_ ? bvm.template fill_class_spans<true>(text_, pos_, batch_, batch_cap)
                             : bvm.template fill_class_spans<false>(text_, pos_, batch_, batch_cap);
+      }
+      else if (batch_cp_ascii_) {
+        batch_n_ = cascade_
+                     ? bvm.template fill_codepoint_class_spans<true>(text_, pos_, batch_, batch_cap)
+                     : bvm.template fill_codepoint_class_spans<false>(text_, pos_, batch_, batch_cap);
       }
       else {
         batch_n_ = bvm.fill_cp_class_spans(text_, pos_, batch_, batch_cap);
