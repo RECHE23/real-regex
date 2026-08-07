@@ -3176,15 +3176,14 @@ namespace real::detail {
      * \param[in]  cap   Capacity of \p out.
      * \return How many spans were written.
      *
-     * \note A fourth filler for the whole-pattern `.`/negated-class route was written, verified and
-     *       REFUSED. On clang/arm64 it is the best of the three: `.` over an emoji corpus emits a
-     *       match every 1.7 bytes and read 4.664 -> 1.921 ns/B, −58.8 %, with every other row inside
-     *       1.7 %. On gcc/x86-64 the same patch gains almost nothing on its own row (8.532 -> 8.174)
-     *       and takes back most of what the byte filler had won: `words` 1.708 -> 3.155, `digits`
-     *       1.089 -> 1.933, the ASCII witness 1.694 -> 3.165. A third branch in `refill_batch` and a
-     *       fourth scan body in this file is what the translation unit could not absorb
-     *       (docs/design.dox §10.1). Two fillers is what fits; the emoji row keeps its +7 % and the
-     *       reason is written here rather than rediscovered.
+     * \note **A filler for the `.`/negated-class route was refused here once, then landed.** The first
+     *       attempt gained −58.8 % on clang/arm64 and almost nothing on gcc/x86-64, where it took back
+     *       most of what this filler had won (`words` 1.708 -> 3.155, `digits` 1.089 -> 1.933) — a
+     *       translation-unit inline-budget effect, not a property of the scan (docs/design.dox §10.1).
+     *       \ref fill_codepoint_class_spans is the version that did land, and it disclosed its own
+     *       residual cost on unrelated rows rather than hiding it. The lesson that survives is the
+     *       measurement discipline, not the conclusion "two fillers is what fits": each added branch
+     *       in `refill_batch` must be re-measured on BOTH ISAs against rows that never touch it.
      */
     template <bool Cascade>
     constexpr std::size_t fill_class_spans(std::string_view text,
@@ -3219,6 +3218,50 @@ namespace real::detail {
         out[n] = cp_span {.start = i, .end = end};
         ++n;
         i = end;
+        if (n == cap) {
+          break;
+        }
+      }
+      return n;
+    }
+
+    /*!
+     * \brief Fills up to \p cap bare single byte-class matches from \p start without leaving the route.
+     *
+     * The unquantified sibling of \ref fill_class_spans, and the reason it exists is the same one, in
+     * its sharpest form: `[a-z]` has no `+` to amortise anything over, so every single accepted byte
+     * was a full route entry — 1.000 entries per match, 7.882 ns/B, slower per byte than `.`, which
+     * matches at every position. `[a-z]+` over the same corpus reads 1.110.
+     *
+     * There is no run to coalesce and so no `Cascade` variant: one accepted byte is one match, spans
+     * are exactly one byte wide, and consecutive matches are consecutive positions. The accept test is
+     * \ref class_table on \ref pattern_hints::single_class — the SAME table the general route consults,
+     * not a second copy of the membership rule.
+     *
+     * Narrow by construction, and the guard is the caller's (\ref real::basic_match_iterator): search
+     * semantics, no anchor, no `\b`/`\B` wrap. The shape itself (a 4-opcode program) rules out capture
+     * groups and a `{k,}` minimum, so unlike its siblings this filler has no bookkeeping it could fail
+     * to reproduce.
+     *
+     * \param[in]  text  The subject.
+     * \param[in]  start Where to begin.
+     * \param[out] out   Buffer for the spans found.
+     * \param[in]  cap   Capacity of \p out; the walk stops there and resumes from the last end.
+     * \return How many spans were written.
+     */
+    constexpr std::size_t fill_single_class_spans(std::string_view text,
+                                                  std::size_t      start,
+                                                  cp_span*         out,
+                                                  std::size_t      cap)
+    {
+      const std::uint8_t* const tbl               {class_table(static_cast<std::size_t>(prog_.hints.single_class))};
+      std::size_t               n                 {0};
+      for (std::size_t i {start}; i < text.size(); ++i) {
+        if (tbl[static_cast<std::uint8_t>(text[i])] == 0U) {
+          continue;
+        }
+        out[n] = cp_span {.start = i, .end = i + 1};
+        ++n;
         if (n == cap) {
           break;
         }

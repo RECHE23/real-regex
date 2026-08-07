@@ -475,7 +475,14 @@ namespace real {
                           && !prog.hints.anchored_start && !prog.hints.line_anchored
                           && prog.hints.greedy_class_loop < 0 && prog.hints.greedy_cp_class < 0
                           && prog.hints.codepoint_class_ascii >= 0;
-        batch_eligible_ = batch_bytes_ || batch_cp_ascii_
+        // The bare single byte-class (`[a-z]`, no quantifier). It needs no `{k,}` or capture exclusion:
+        // the 4-opcode shape pattern_hints::single_class recognizes admits neither.
+        batch_single_cl_ = !std::is_constant_evaluated() && sem == match_semantics::first
+                           && prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0
+                           && !prog.hints.wb_lead_maximal_run && !detail::class_fastpath_disabled()
+                           && !prog.hints.anchored_start && !prog.hints.line_anchored
+                           && prog.hints.single_class >= 0;
+        batch_eligible_ = batch_bytes_ || batch_cp_ascii_ || batch_single_cl_
                           || (!std::is_constant_evaluated() && sem == match_semantics::first
                               && prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0
                               && !prog.hints.wb_lead_maximal_run
@@ -567,8 +574,11 @@ namespace real {
     typename Storage::state_type state_;                                       //!< VM scratch, reused across the walk.
 
     //! \brief Buffered spans for the code-point-class route — see \ref batch_eligible_.
-    //!        16 is where the per-match return stops dominating without making the iterator large:
-    //!        it is 256 bytes beside a VM state already measured in kilobytes.
+    //!
+    //! **4, and the value was tuned rather than picked.** 16 captured the same Unicode gain but charged
+    //! §A rows that never touch the batch (gcc/x86-64: +16.8 %); 4 took that to +10.2 % with the gain
+    //! intact, which points at the ITERATOR's own size, not the refill's. Outlining the refill behind
+    //! `noinline` changed nothing (+16.8 % vs +17.0 %), which is what ruled out \ref advance's size.
     static constexpr std::size_t                                          batch_cap         {4};
     typename detail::pike_vm<typename Storage::state_type, true>::cp_span batch_[batch_cap] {}; //!< The buffered spans; indices \ref batch_i_ .. \ref batch_n_ are the unread ones.
     std::size_t                                                           batch_n_          {}; //!< Spans currently buffered.
@@ -581,6 +591,12 @@ namespace real {
     //! other two pay one per \ref batch_cap. Measured on their own fast paths: `[a-z]+` 5.55 ns per
     //! match against `[^,]+` 19.45.
     bool                                                                  batch_cp_ascii_   {};
+    //! \brief Batch the bare single byte-class route (\ref real::detail::pike_vm::fill_single_class_spans).
+    //!
+    //! `[a-z]` crossed one full route entry per accepted byte — 7.882 ns/B, slower than `.` — because
+    //! \ref real::detail::pattern_hints::greedy_class_loop describes `class+` only and carries no
+    //! "single" flag to batch on.
+    bool                                                                  batch_single_cl_  {};
 
     /*!
      * \brief Cold half of the batched walk: refills \ref batch_ from the engine.
@@ -590,7 +606,7 @@ namespace real {
      * (docs/design.dox §10.1). Inline, this refill grew `advance` enough to cost §A rows that never
      * touch the batch at all -- `digits` +17.0 %, `words` +15.4 %, `date` +10.8 % on gcc/x86-64.
      * Outlined, `advance`'s hot path is a compare, an index and a span copy, and it runs once per
-     * 16 matches instead of once per match.
+     * \ref batch_cap matches instead of once per match.
      * \return `true` if at least one span was buffered.
      */
 #if defined(__GNUC__) || defined(__clang__)
@@ -607,6 +623,9 @@ namespace real {
         batch_n_ = cascade_
                      ? bvm.template fill_codepoint_class_spans<true>(text_, pos_, batch_, batch_cap)
                      : bvm.template fill_codepoint_class_spans<false>(text_, pos_, batch_, batch_cap);
+      }
+      else if (batch_single_cl_) {
+        batch_n_ = bvm.fill_single_class_spans(text_, pos_, batch_, batch_cap);
       }
       else {
         batch_n_ = bvm.fill_cp_class_spans(text_, pos_, batch_, batch_cap);

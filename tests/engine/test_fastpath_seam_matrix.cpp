@@ -442,6 +442,20 @@ TEST(seam_matrix_coverage_manifest)
   // under flags::allow_raw_byte alone (no flags::bytes) -- the gate widened, not the recognizer.
   EXPECT(dynamic_storage::compile(R"(\C+)", real::flags::allow_raw_byte).program.hints.greedy_class_loop >= 0);
   EXPECT(hints_of("[0-9a-f]{4}").fixed_shape);
+  // The bare single byte-class arms its own selector, and every neighbouring spelling declines. The
+  // refusals are the load-bearing half: this shape's whole safety argument is that the 4-opcode
+  // program admits no capture wrap, no `\b`, no anchor and no minimum -- so each of those must be
+  // shown NOT to arm, or the argument is asserted rather than enforced.
+  EXPECT(hints_of("[a-z]").single_class >= 0);
+  EXPECT(hints_of("[aeiou]").single_class >= 0);   // 3+ ranges: no SIMD, still batchable
+  EXPECT(hints_of("[a-z]+").single_class < 0);     // quantified: greedy_class_loop's job
+  EXPECT(hints_of("([a-z])").single_class < 0);    // capture wrap adds saves
+  EXPECT(hints_of(R"(\b[a-z]\b)").single_class < 0);
+  EXPECT(hints_of("^[a-z]").single_class < 0);
+  EXPECT(hints_of("[a-z]{2}").single_class < 0);   // two positions
+  EXPECT(hints_of("a").single_class < 0);          // `byte`, not `klass` -- exact_literal's route
+  EXPECT(hints_of(".").single_class < 0);          // klass_cp -- codepoint_class_ascii's route
+  EXPECT(hints_of("[a-z](?=x)").single_class < 0); // lookaround wipe
   EXPECT(hints_of(".+").codepoint_class_ascii >= 0);
   EXPECT(hints_of("dog|fox|cat").fixed_alternation);
   // The small_set cap actually arms at 8, not silently staying at the old

@@ -66,7 +66,7 @@ namespace {
 } // namespace
 
 // The batched walk and the unbatched search must agree, span for span, across the batch boundary.
-// `batch_cap` is 16, so 200 fields crosses it a dozen times — and the first field of each refill is
+// `batch_cap` is 4, so 200 fields crosses it fifty times — and the first field of each refill is
 // the one a mis-carried `pos_` would drop or duplicate.
 TEST(the_batched_walk_agrees_with_repeated_search)
 {
@@ -135,6 +135,78 @@ TEST(single_and_empty_capable_forms_agree)
     EXPECT_EQ(by_iteration(re, text), by_search(re, text));
   }
   EXPECT_EQ(real::regex {"[^,]"}.count_matches(text), 6U); // a b b c c c
+}
+
+// The bare single byte-class (`[a-z]`, no quantifier) is the fourth batched shape, and the one with
+// the least margin for error: every span is exactly one byte, so a filler off by one position drops or
+// duplicates a match instead of merely mis-sizing a run. Same differential as above — the batched walk
+// against searching again from the previous end.
+TEST(the_single_class_walk_agrees_with_repeated_search)
+{
+  const std::string text {csv(200)};
+  for (const char* p : {"[a-z]", "[aeiou]", "[a-zA-Z]", "[a-z0-9]", "[^a-z]"}) {
+    const real::regex re {p};
+    EXPECT_EQ(by_iteration(re, text), by_search(re, text));
+  }
+  // Spans are one byte wide and consecutive matches are consecutive positions -- the property the
+  // filler exploits, asserted rather than assumed.
+  const auto runs {by_iteration(real::regex {"[a-z]"}, std::string {"abc,de"})};
+  EXPECT_EQ(runs.size(), 5U);
+  for (const auto& s : runs) {
+    EXPECT_EQ(s.second - s.first, 1U);
+  }
+  EXPECT_EQ(runs[2].first, 2U); // 'c', then the comma is skipped
+  EXPECT_EQ(runs[3].first, 4U);
+}
+
+// A single byte-class over non-ASCII input: the class is a BYTE class, so a multi-byte character's
+// bytes are tested individually. Whatever the general route decides there, the filler must decide
+// identically -- this is where a filler that assumed character alignment would diverge.
+TEST(the_single_class_filler_agrees_on_multi_byte_subjects)
+{
+  const std::string text {"café 世界,Привет 😀,naïve résumé"};
+  for (const char* p : {"[a-z]", "[^a-z]", "[a-zA-Z]", "[aeiou]"}) {
+    const real::regex re {p};
+    EXPECT_EQ(by_iteration(re, text), by_search(re, text));
+  }
+  const std::string bogus {"ab\xC3\xC3\xA9 cd\x80\x80gh"};
+  for (const char* p : {"[a-z]", "[^a-z]"}) {
+    const real::regex re {p};
+    EXPECT_EQ(by_iteration(re, bogus), by_search(re, bogus));
+  }
+}
+
+// The shapes the single-class filler must decline, each pinned by BEHAVIOUR rather than by the hint:
+// an anchor (the filler scans forward and would report a match past it), a capture wrap (slots the
+// filler does not fill), a `\b` wrap (a per-candidate assertion), and the non-search modes.
+TEST(the_single_class_shapes_batching_declines)
+{
+  const std::string text {"  abc def"};
+  EXPECT_EQ(by_iteration(real::regex {"^[a-z]"}, text), by_search(real::regex {"^[a-z]"}, text));
+  EXPECT(!real::regex {"^[a-z]"}.search(text).matched());
+
+  const real::regex captured {"([a-z])"};
+  const auto        cm       {captured.search(text)};
+  EXPECT(cm.matched());
+  EXPECT_EQ(cm.start(1), 2U); // the group is filled, which the filler never does
+  EXPECT_EQ(cm.end(1), 3U);
+  EXPECT_EQ(by_iteration(captured, text), by_search(captured, text));
+
+  const real::regex bounded {R"(\b[a-z]\b)"};
+  EXPECT_EQ(by_iteration(bounded, std::string {"a bc d"}), by_search(bounded, std::string {"a bc d"}));
+  EXPECT_EQ(by_iteration(bounded, std::string {"a bc d"}).size(), 2U); // 'a' and 'd', not b/c
+
+  EXPECT(real::regex {"[a-z]"}.fullmatch("a"));
+  EXPECT(!real::regex {"[a-z]"}.fullmatch("ab"));
+  EXPECT_EQ(real::regex {"[a-z]"}.match("abc").end(), 1U);
+
+  const real::regex region_re {"[a-z]"};
+  const std::string subject   {"abcdefghi"};
+  const auto        region    {region_re.search(subject, 4, 7)};
+  EXPECT(region.matched());
+  EXPECT_EQ(region.start(), 4U);
+  EXPECT_EQ(region.end(), 5U);
+  EXPECT_EQ(region_re.count_matches(subject), 9U);
 }
 
 // count_matches and find_all read the same walk, so they must report the same thing the iteration does

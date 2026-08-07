@@ -462,6 +462,12 @@ namespace {
       // than by any table.
       {"anchored ^[a-z]+$", "anchored", "^[a-z]+$", corpus_lower(), false, true},
       {"digits [0-9]+", "density", "[0-9]+", corpus_mixed()},
+      // An UNQUANTIFIED class row, added for the reason the anchored row above was: every class-scan
+      // case here carries a `+`, so the bare form -- a different route, and for a long time the slowest
+      // per-byte class scan in the engine at 7.882 ns/B against `.`'s 8.518 while producing fewer
+      // matches -- moved nothing in this table. It is the shape `re.findall(r'[a-z]', s)` and
+      // `re.sub(r'[^a-z]', '', s)` actually run.
+      {"single [a-z]", "class-scan", "[a-z]", corpus_words()},
       {"literal", "literal", "charlie", corpus_csv()},
       // Differentiator: a bounded lookahead. REAL/std/PCRE2 support it; RE2 has no lookaround.
       {"lookahead [a-z]+(?=[a-z])", "differentiator", "[a-z]+(?=[a-z])", corpus_words(), true},

@@ -1262,6 +1262,18 @@ namespace real::detail {
           hints.wb_lead     = wb_lead;
           hints.wb_trail    = wb_trail;
           hints.body_pc     = body_pc;
+          // A bare single byte-class (`[a-z]`, `[aeiou]`) -- the batchable sub-case of the shape just
+          // armed. The test is the whole program, not a property of it: exactly `save 0`, `klass`,
+          // `save 1`, `match`. That excludes a capture wrap (`([a-z])`, 6 ops), a `\b` wrap, an anchor
+          // and a single literal byte (`byte`, which takes exact_literal). See
+          // pattern_hints::single_class for why this is its own field rather than a flag on
+          // greedy_class_loop.
+          // `code.size() == 4` already implies slot_count 2: any inner capturing group contributes its
+          // own pair of saves, which would push the program past four instructions.
+          if (code.size() == 4 && wb_lead == 0 && wb_trail == 0 && body_pc == 1
+              && code[1].op == opcode::klass) {
+            hints.single_class = code[1].arg16;
+          }
         }
       }
 
@@ -1989,6 +2001,7 @@ namespace real::detail {
       hints.exact_literal_len     = 0;
       hints.fixed_shape           = false;
       hints.fs_pair_width         = 0;    // paired with fixed_shape: never read without it
+      hints.single_class          = -1;   // likewise paired with fixed_shape
       hints.codepoint_class_ascii = -1;
       hints.fixed_alternation     = false;
     }
