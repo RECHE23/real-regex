@@ -1247,6 +1247,36 @@ namespace real::detail {
                                     const ast_node&  node,
                                     bool             capture_free) const
     {
+      // An alternation whose every branch is ONE literal byte is a byte class written the long way,
+      // and the long way has no route: the split chain matches no shape recognizer while the class
+      // does. `(?:a|b|c)+` measured 3.029 ns/B against `[abc]+`'s 0.663 -- 4.6x -- and the unquantified
+      // form pays too (2.591). This is the fusion RE2 runs as a standard pass.
+      //
+      // EXACT, not approximate, and the argument is short: every branch consumes exactly one byte and
+      // none captures, so leftmost-first preference among them has no observable effect -- the span is
+      // the same whichever branch a backtracker would have picked. Anything else refuses: a class, a
+      // sequence, a group, and above all an EMPTY branch, since `a|` matches the empty string and no
+      // byte class can. Two branches minimum, so `(?:a)` is left to the path that already handles it.
+      {
+        char_class   fused;
+        bool         all_bytes {true};
+        std::int32_t scan      {node.child};
+        std::size_t  n         {0};
+        while (scan != -1) {
+          const ast_node& b {tree_.nodes[static_cast<std::size_t>(scan)]};
+          if (b.kind != node_kind::byte) {
+            all_bytes = false;
+            break;
+          }
+          fused.set(b.byte);
+          ++n;
+          scan = b.next;
+        }
+        if (all_bytes && n >= 2) {
+          emit_klass(prog, fused);
+          return;
+        }
+      }
       std::vector<std::int32_t> jumps;
       std::int32_t              branch {node.child};
       while (branch != -1) {
