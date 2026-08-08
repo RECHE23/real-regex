@@ -86,22 +86,28 @@ namespace real::detail {
   }
 
   /*!
-   * \brief Peel an optional lead `\b`/`\B` at \p p (typically after `save 0`).
+   * \brief Peel an optional `\b`/`\B` assertion at \p p.
    *
-   * If \p p is not an assert, leaves \p lead at 0 and returns true. If it is a word-boundary
-   * assert, records the hint, advances \p p, returns true. If it is any other assert, returns
-   * false (shape disqualified for wb-wrapping fast paths).
+   * If \p p is not an assert, leaves \p hint at 0 and returns true. If it is a word-boundary assert,
+   * records the hint, advances \p p, returns true. If it is any other assert, returns false (shape
+   * disqualified for wb-wrapping fast paths).
+   *
+   * **Lead and trail are the same operation.** This was two functions, `peel_optional_lead_wb` and
+   * `peel_optional_trail_wb`, byte-identical but for the out-parameter's name — nothing here looks at
+   * WHERE \p p points, so the position is entirely the caller's. Their doc comments already said "same
+   * contract as", and the risk was not the duplicate lines but a fix landing on one of two copies that
+   * both feed load-bearing hint decisions.
    *
    * \param[in]     code Instruction stream.
-   * \param[in,out] p    Program counter (advanced past the lead assert when peeled).
-   * \param[out]    lead Hint 0/1/2.
-   * \return false if a non-wb lead assert blocks the shape.
+   * \param[in,out] p    Program counter (advanced past the assert when peeled).
+   * \param[out]    hint Hint 0/1/2 — see \ref wb_hint_of.
+   * \return false if a non-wb assert blocks the shape.
    */
-  [[nodiscard]] constexpr bool peel_optional_lead_wb(std::span<const instr> code,
-                                                     std::size_t&           p,
-                                                     std::uint8_t&          lead) noexcept
+  [[nodiscard]] constexpr bool peel_optional_wb(std::span<const instr> code,
+                                                std::size_t&           p,
+                                                std::uint8_t&          hint) noexcept
   {
-    lead = 0;
+    hint = 0;
     if (p >= code.size() || code[p].op != opcode::assert_position) {
       return true;
     }
@@ -109,34 +115,7 @@ namespace real::detail {
     if (!is_word_boundary_kind(k)) {
       return false;
     }
-    lead = wb_hint_of(k);
-    ++p;
-    return true;
-  }
-
-  /*!
-   * \brief Peel an optional trail `\b`/`\B` at \p p (before closing `save 1` / exit).
-   *
-   * Same contract as \ref peel_optional_lead_wb for a trailing assert.
-   *
-   * \param[in]     code  Instruction stream.
-   * \param[in,out] p     Program counter (advanced past the trail assert when peeled).
-   * \param[out]    trail Hint 0/1/2.
-   * \return false if a non-wb trail assert blocks the shape.
-   */
-  [[nodiscard]] constexpr bool peel_optional_trail_wb(std::span<const instr> code,
-                                                      std::size_t&           p,
-                                                      std::uint8_t&          trail) noexcept
-  {
-    trail = 0;
-    if (p >= code.size() || code[p].op != opcode::assert_position) {
-      return true;
-    }
-    const auto k {static_cast<assert_kind>(code[p].arg8)};
-    if (!is_word_boundary_kind(k)) {
-      return false;
-    }
-    trail = wb_hint_of(k);
+    hint = wb_hint_of(k);
     ++p;
     return true;
   }
@@ -179,7 +158,7 @@ namespace real::detail {
       ++p;
     }
     std::uint8_t wb_lead {0};
-    if (!peel_optional_lead_wb(code, p, wb_lead)) {
+    if (!peel_optional_wb(code, p, wb_lead)) {
       return {};
     }
     return {.body_start = p, .wb_lead = wb_lead, .anchored_start = anchored, .ok = true};
@@ -209,7 +188,7 @@ namespace real::detail {
   [[nodiscard]] constexpr shape_close parse_shape_close(std::span<const instr> code,
                                                         std::size_t            from) noexcept
   {
-    // Peeled inline rather than through peel_optional_trail_wb, which REFUSES any assertion that is
+    // Peeled inline rather than through peel_optional_wb, which REFUSES any assertion that is
     // not a word boundary -- so calling it first made the end-anchor peel below unreachable. The
     // compiler emits the trail in this order (`X+\b$` -> klass, split, assert(\b), assert($)), and
     // anything else that lands here simply fails the `save 1`/`match` check at the end.
@@ -564,13 +543,13 @@ namespace real::detail {
     // Optional trail \b/\B immediately before save 1 (branches jump to it).
     if (exit_pc >= 2 && code[exit_pc - 1].op == opcode::assert_position) {
       std::size_t t {exit_pc - 1};
-      if (!peel_optional_trail_wb(code, t, wb_trail)) {
+      if (!peel_optional_wb(code, t, wb_trail)) {
         return false;
       }
       exit_pc = exit_pc - 1;
     }
     // Optional lead \b/\B immediately after save 0.
-    if (!peel_optional_lead_wb(code, body, wb_lead)) {
+    if (!peel_optional_wb(code, body, wb_lead)) {
       return false;
     }
     if (body >= exit_pc) {
@@ -1241,7 +1220,7 @@ namespace real::detail {
             // just the prefix (fuzz-compat crash 86573f5 / pattern `\w{2}\bthe` on "…ox").
             std::size_t  probe      {i};
             std::uint8_t trail_hint {0};
-            if (!peel_optional_trail_wb(code, probe, trail_hint)) {
+            if (!peel_optional_wb(code, probe, trail_hint)) {
               break; // non-wb assert
             }
             if (probe + 1 < code.size() && code[probe].op == opcode::save && code[probe].arg16 == 1
@@ -1538,7 +1517,7 @@ namespace real::detail {
               exit_pc == after_loop + 1) {
             std::size_t  q        {exit_pc};
             std::uint8_t wb_trail {0};
-            if (!peel_optional_trail_wb(code, q, wb_trail)) {
+            if (!peel_optional_wb(code, q, wb_trail)) {
               q = code.size(); // disqualify below
             }
             std::array<char, 8>  suffix      {};

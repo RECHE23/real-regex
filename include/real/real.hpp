@@ -462,35 +462,37 @@ namespace real {
         // batched walk bypasses `run()` entirely. Without this, `^[a-z]+` over "  abc" reports a
         // match at offset 2. It costs nothing to give up: an anchored pattern yields at most one
         // match per walk, so there is no per-match return to amortise.
-        batch_bytes_    = !std::is_constant_evaluated() && sem == match_semantics::first
-                          && prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0
-                          && !prog.hints.wb_lead_maximal_run && !detail::class_fastpath_disabled()
-                          && !prog.hints.anchored_start && !prog.hints.line_anchored
-                          && prog.hints.greedy_class_loop_end == 0
-                          && prog.hints.greedy_class_loop >= 0
-                          && prog.hints.greedy_class_loop_min <= 1;
-        batch_cp_ascii_ = !std::is_constant_evaluated() && sem == match_semantics::first
-                          && prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0
-                          && !prog.hints.wb_lead_maximal_run && !detail::class_fastpath_disabled()
-                          && !prog.hints.anchored_start && !prog.hints.line_anchored
-                          && prog.hints.greedy_class_loop < 0 && prog.hints.greedy_cp_class < 0
-                          && prog.hints.codepoint_class_ascii >= 0;
-        // The bare single byte-class (`[a-z]`, no quantifier). It needs no `{k,}` or capture exclusion:
+        // The prerequisites EVERY batched route shares, named once. They were written out four times,
+        // identically, and the copies were not merely long: a shape excluded from one route and not
+        // the next would have been a silent wrong answer, not a slow one. Nothing here is hot — this
+        // is the constructor, once per walk, never per match.
+        // DECLARED then ASSIGNED, which is required rather than stylistic: as a `const bool`
+        // INITIALIZER this expression is manifestly constant-evaluated, and clang rejects
+        // `std::is_constant_evaluated()` there under -Werror=constant-evaluated ("will always
+        // evaluate to true"). The two-step form is not manifestly constant-evaluated and keeps the
+        // runtime/constexpr split the original four copies had.
+        bool batchable {};
+        batchable = !std::is_constant_evaluated() && sem == match_semantics::first
+                    && prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0
+                    && !prog.hints.wb_lead_maximal_run && !detail::class_fastpath_disabled()
+                    && !prog.hints.anchored_start && !prog.hints.line_anchored;
+        // Each route then adds only its OWN selector, which is what the four lines below now read as.
+        batch_bytes_     = batchable && prog.hints.greedy_class_loop >= 0
+                           && prog.hints.greedy_class_loop_end == 0
+                           && prog.hints.greedy_class_loop_min <= 1;
+        batch_cp_ascii_  = batchable && prog.hints.codepoint_class_ascii >= 0
+                           && prog.hints.greedy_class_loop < 0 && prog.hints.greedy_cp_class < 0;
+        // The bare single byte-class (`[a-z]`, no quantifier) needs no `{k,}` or capture exclusion:
         // the 4-opcode shape pattern_hints::single_class recognizes admits neither.
-        batch_single_cl_ = !std::is_constant_evaluated() && sem == match_semantics::first
-                           && prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0
-                           && !prog.hints.wb_lead_maximal_run && !detail::class_fastpath_disabled()
-                           && !prog.hints.anchored_start && !prog.hints.line_anchored
-                           && prog.hints.single_class >= 0;
-        batch_eligible_ = batch_bytes_ || batch_cp_ascii_ || batch_single_cl_
-                          || (!std::is_constant_evaluated() && sem == match_semantics::first
-                              && prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0
-                              && !prog.hints.wb_lead_maximal_run
-                              && !detail::class_fastpath_disabled()
-                              && !prog.hints.anchored_start && !prog.hints.line_anchored
-                              && prog.hints.greedy_cp_class_end == 0
-                              && prog.hints.greedy_cp_class >= 0
-                              && prog.hints.greedy_cp_class_min <= 1);
+        batch_single_cl_ = batchable && prog.hints.single_class >= 0;
+        // The code-point class loop is the fourth batched route and deliberately gets NO member of its
+        // own: it is \ref refill_batch's `else`, so naming it would grow the iterator for nothing —
+        // and this iterator's size is measured, not assumed (see \ref batch_cap).
+        const bool cp_class {batchable && prog.hints.greedy_cp_class >= 0
+                             && prog.hints.greedy_cp_class_end == 0
+                             && prog.hints.greedy_cp_class_min <= 1}; // no is_constant_evaluated here: see above
+
+        batch_eligible_  = batch_bytes_ || batch_cp_ascii_ || batch_single_cl_ || cp_class;
       }
       current_.bind_context(text_, pattern_, prog_.names); // invariant across the walk — set once, not per match
       advance();
@@ -628,6 +630,9 @@ namespace real {
         batch_n_ = bvm.fill_single_class_spans(text_, pos_, batch_, batch_cap);
       }
       else {
+        // The code-point class loop — the fourth eligible route, reached as the `else` rather than
+        // through a flag of its own (see the constructor's `cp_class`). Nothing else can arrive here:
+        // batch_eligible_ is the disjunction of exactly these four.
         batch_n_ = bvm.fill_cp_class_spans(text_, pos_, batch_, batch_cap);
       }
       batch_i_ = 0;

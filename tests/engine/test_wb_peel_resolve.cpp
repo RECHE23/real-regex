@@ -254,13 +254,12 @@ TEST(wb_peel_helpers_direct_lead_trail_absent_and_reject)
   using real::detail::instr;
   using real::detail::opcode;
   using real::detail::assert_kind;
-  using real::detail::peel_optional_lead_wb;
-  using real::detail::peel_optional_trail_wb;
+  using real::detail::peel_optional_wb;
 
   // Empty stream: peel is no-op success.
   std::uint8_t lead {9};
   std::size_t  p    {0};
-  EXPECT(peel_optional_lead_wb({}, p, lead));
+  EXPECT(peel_optional_wb({}, p, lead));
   EXPECT_EQ(static_cast<int>(lead), 0);
   EXPECT_EQ(p, 0U);
 
@@ -271,7 +270,7 @@ TEST(wb_peel_helpers_direct_lead_trail_absent_and_reject)
   };
   p    = 0;
   lead = 0;
-  EXPECT(peel_optional_lead_wb(stream_b, p, lead));
+  EXPECT(peel_optional_wb(stream_b, p, lead));
   EXPECT_EQ(static_cast<int>(lead), 1);
   EXPECT_EQ(p, 1U);
 
@@ -281,7 +280,7 @@ TEST(wb_peel_helpers_direct_lead_trail_absent_and_reject)
   };
   p    = 0;
   lead = 0;
-  EXPECT(peel_optional_lead_wb(stream_B, p, lead));
+  EXPECT(peel_optional_wb(stream_B, p, lead));
   EXPECT_EQ(static_cast<int>(lead), 2);
   EXPECT_EQ(p, 1U);
 
@@ -291,17 +290,40 @@ TEST(wb_peel_helpers_direct_lead_trail_absent_and_reject)
   };
   p    = 0;
   lead = 0;
-  EXPECT(!peel_optional_lead_wb(stream_caret, p, lead));
+  EXPECT(!peel_optional_wb(stream_caret, p, lead));
   EXPECT_EQ(p, 0U); // not advanced
 
-  // Trail helpers mirror lead.
+  // Lead and trail are ONE function, and the property that licenses that is what is pinned here: the
+  // peel is indifferent to WHERE `p` points. Starting mid-stream on the same assert must give the same
+  // answer as starting at 0 did above — if the peel ever stops being position-agnostic, this fails
+  // rather than two callers silently disagreeing.
+  const instr mid_stream[] {
+    {.op = opcode::byte, .arg8 = 'a'},
+    {.op = opcode::assert_position, .arg8 = static_cast<std::uint8_t>(assert_kind::word_boundary)},
+    {.op = opcode::byte, .arg8 = 'b'},
+  };
   std::uint8_t trail {0};
-  p = 0;
-  EXPECT(peel_optional_trail_wb(stream_b, p, trail));
+  p = 1;
+  EXPECT(peel_optional_wb(mid_stream, p, trail));
   EXPECT_EQ(static_cast<int>(trail), 1);
-  p     = 0;
+  EXPECT_EQ(p, 2U);
+
+  // A non-wb assert is refused wherever it sits, and leaves `p` where it was.
+  const instr mid_caret[] {
+    {.op = opcode::byte, .arg8 = 'a'},
+    {.op = opcode::assert_position, .arg8 = static_cast<std::uint8_t>(assert_kind::line_start)},
+  };
+  p     = 1;
   trail = 0;
-  EXPECT(!peel_optional_trail_wb(stream_caret, p, trail));
+  EXPECT(!peel_optional_wb(mid_caret, p, trail));
+  EXPECT_EQ(p, 1U);
+
+  // Past the end is a no-op success, not a read past the span.
+  p     = 2;
+  trail = 9;
+  EXPECT(peel_optional_wb(mid_caret, p, trail));
+  EXPECT_EQ(static_cast<int>(trail), 0);
+  EXPECT_EQ(p, 2U);
 }
 
 TEST(wb_resolve_helpers_direct_policy_matrix)
@@ -384,7 +406,7 @@ TEST(wb_peel_trail_B_and_absent_direct)
   using real::detail::instr;
   using real::detail::opcode;
   using real::detail::assert_kind;
-  using real::detail::peel_optional_trail_wb;
+  using real::detail::peel_optional_wb;
 
   // Trail \B.
   const instr stream_B[] {
@@ -393,21 +415,21 @@ TEST(wb_peel_trail_B_and_absent_direct)
   };
   std::size_t  p     {0};
   std::uint8_t trail {0};
-  EXPECT(peel_optional_trail_wb(stream_B, p, trail));
+  EXPECT(peel_optional_wb(stream_B, p, trail));
   EXPECT_EQ(static_cast<int>(trail), 2);
   EXPECT_EQ(p, 1U);
 
   // Absent trail assert (save 1 at p) — success, trail stays 0.
   p     = 1;
   trail = 9;
-  EXPECT(peel_optional_trail_wb(stream_B, p, trail));
+  EXPECT(peel_optional_wb(stream_B, p, trail));
   EXPECT_EQ(static_cast<int>(trail), 0);
   EXPECT_EQ(p, 1U);
 
   // Empty stream at EOF.
   p     = 0;
   trail = 9;
-  EXPECT(peel_optional_trail_wb({}, p, trail));
+  EXPECT(peel_optional_wb({}, p, trail));
   EXPECT_EQ(static_cast<int>(trail), 0);
 }
 

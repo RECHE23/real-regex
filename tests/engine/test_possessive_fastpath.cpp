@@ -186,7 +186,7 @@ TEST(route_pin_bounded_count_possessive_stays_general)
 TEST(route_pin_non_wb_trailing_assert_stays_general)
 {
   // A non-\b/\B assert_position (here `$`) sitting right after the loop's jump is exactly what
-  // peel_optional_trail_wb's "any other assert disqualifies" branch exists for.
+  // peel_optional_wb's "any other assert disqualifies" branch exists for.
   const real::regex re   {"[a-z]++$"};
   const auto        prog {re.raw_program()};
   EXPECT(!prog.hints.possessive_class.armed());

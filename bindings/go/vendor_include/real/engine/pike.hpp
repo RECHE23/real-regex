@@ -2108,25 +2108,51 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Expands \p klass into one flat 256-byte membership row of the per-regex cache, once.
+     *
+     * The shared body of \ref fill_class_row and \ref fill_cp_ascii_row, which differed only in which
+     * `char_class` they read, which array they wrote, and the offset their ready-bit sits at. Both are
+     * `noinline, cold` and reached only through the once-per-class miss path, so collapsing them costs
+     * nothing at run time and stops a fix from landing on one of two copies. \ref fill_cp_page_row is
+     * deliberately NOT folded in: it builds a 30-word bitmap over a code-point page from range pairs,
+     * sharing only the lock-and-ready-bit frame.
+     *
+     * \param[in,out] cache       The per-regex immutables.
+     * \param[in]     ready_index Index of this row's ready bit.
+     * \param[in]     klass       The membership set to expand.
+     * \param[out]    row         Destination, 256 bytes.
+     */
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline, cold))
+#endif
+    static void fill_byte_row(detail::regex_immutables& cache,
+                              std::size_t               ready_index,
+                              const char_class&         klass,
+                              std::uint8_t*             row)
+    {
+      const std::lock_guard<std::mutex> lock {detail::immut_build_mu(&cache)};
+      if (cache.row_ready(ready_index)) {
+        return; // filled while we waited
+      }
+      for (std::size_t b {0}; b < 256; ++b) {
+        row[b] = klass.test(static_cast<std::uint8_t>(b)) ? 1U : 0U;
+      }
+      cache.set_row_ready(ready_index);
+    }
+
+    /*!
      * \brief Fills one byte-class row of the per-regex cache, once.
      * \param[in,out] cache       The per-regex immutables.
      * \param[in]     class_index Index into the program's interned byte classes.
      */
 #if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline, cold))
+    __attribute__((noinline, cold)) // as before the factoring: see verify_class_row's own note
 #endif
     void fill_class_row(detail::regex_immutables& cache,
                         std::size_t               class_index) const
     {
-      const std::lock_guard<std::mutex> lock {detail::immut_build_mu(&cache)};
-      if (cache.row_ready(class_index)) {
-        return; // filled while we waited
-      }
-      const char_class& klass {prog_.classes[class_index]};
-      for (std::size_t b {0}; b < 256; ++b) {
-        cache.class_rows[(class_index * 256) + b] = klass.test(static_cast<std::uint8_t>(b)) ? 1U : 0U;
-      }
-      cache.set_row_ready(class_index);
+      fill_byte_row(cache, class_index, prog_.classes[class_index],
+                    cache.class_rows.data() + (class_index * 256));
     }
 
     /*!
@@ -2135,20 +2161,13 @@ namespace real::detail {
      * \param[in]     cp_index Index into the program's code-point classes.
      */
 #if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline, cold))
+    __attribute__((noinline, cold)) // as before the factoring: see verify_class_row's own note
 #endif
     void fill_cp_ascii_row(detail::regex_immutables& cache,
                            std::size_t               cp_index) const
     {
-      const std::lock_guard<std::mutex> lock {detail::immut_build_mu(&cache)};
-      if (cache.row_ready(cache.cp_ascii_ready_at + cp_index)) {
-        return;
-      }
-      const char_class& klass {prog_.cp_classes[cp_index].ascii};
-      for (std::size_t b {0}; b < 256; ++b) {
-        cache.cp_ascii_rows[(cp_index * 256) + b] = klass.test(static_cast<std::uint8_t>(b)) ? 1U : 0U;
-      }
-      cache.set_row_ready(cache.cp_ascii_ready_at + cp_index);
+      fill_byte_row(cache, cache.cp_ascii_ready_at + cp_index, prog_.cp_classes[cp_index].ascii,
+                    cache.cp_ascii_rows.data() + (cp_index * 256));
     }
 
     /*!
