@@ -619,6 +619,11 @@ namespace {
       // read the same as `\w+`: the recognizer redirects it to the same selector because it is the
       // same language, so a row that reads differently means that redirect has been lost.
       {"unicode \\w++ (mixed-script)", "\\w++", corpus_mixed_script()},
+      // The COUNTED-MINIMUM code-point row. Its route was declined by batching until the cost that
+      // declined it was shown to belong to THIS binary rather than to the library (MEASUREMENT.md
+      // §5.5), so it is also the row on which the two instruments are expected to disagree -- and
+      // the reason the table now has to say which one a number came from.
+      {"unicode \\w{2,} (mixed-script)", "\\w{2,}", corpus_mixed_script()},
       {"unicode \\p{L}+ (CJK)", "\\p{L}+", corpus_cjk()},
       {"unicode \\p{N}+ (arabic digits)", "\\p{N}+", corpus_arabic()},
       {"unicode \\p{sc=Han} (CJK)", "\\p{sc=Han}", corpus_cjk()},

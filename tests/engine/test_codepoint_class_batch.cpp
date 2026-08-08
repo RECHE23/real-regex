@@ -309,6 +309,29 @@ TEST(the_possessive_shapes_the_redirect_refuses)
   EXPECT_EQ(by_iteration(captured, text), by_search(captured, text));
 }
 
+// The `{k,}` counted minimum on the CODE-POINT class route (`\w{2,}`, `\p{L}{3,}`). `min` is counted in
+// CODE POINTS there, not bytes, so a run of three 2-byte characters satisfies `{3,}` while six ASCII
+// bytes of a 7-minimum does not -- the discriminating property, and the one a byte-length shortcut
+// would get wrong on exactly the multi-byte input this engine exists for.
+TEST(the_codepoint_counted_minimum_agrees_with_repeated_search)
+{
+  const std::string text {"a ab abc caf\xC3\xA9 na\xC3\xAFve \xE4\xB8\xAD\xE6\x96\x87 \xD0\x9F\xD1\x80\xD0\xB8 x_1"};
+  for (const char* p : {R"(\w{2,})", R"(\w{3,})", R"(\w{6,})", R"(\p{L}{2,})", R"(\p{L}{3,})"}) {
+    const real::regex re {p};
+    EXPECT_EQ(by_iteration(re, text), by_search(re, text));
+  }
+  // Counted in CODE POINTS: "中文" is two characters in six bytes, so it satisfies `{2,}` and not
+  // `{3,}`. A byte-length check would accept both.
+  const std::string cjk {"\xE4\xB8\xAD\xE6\x96\x87"};
+  EXPECT_EQ(real::regex {R"(\p{L}{2,})"}.count_matches(cjk), 1U);
+  EXPECT_EQ(real::regex {R"(\p{L}{3,})"}.count_matches(cjk), 0U);
+  // A too-short run must be SKIPPED, not merely trimmed: the next run is still found.
+  const auto spans {by_iteration(real::regex {R"(\w{3,})"}, std::string {"ab cdef gh ijkl"})};
+  EXPECT_EQ(spans.size(), 2U);
+  EXPECT_EQ(spans[0].first, 3U);  // "cdef"
+  EXPECT_EQ(spans[1].first, 11U); // "ijkl"
+}
+
 // count_matches and find_all read the same walk, so they must report the same thing the iteration does
 // — this is the API surface the batched path actually serves.
 TEST(the_public_counters_agree_with_the_walk)

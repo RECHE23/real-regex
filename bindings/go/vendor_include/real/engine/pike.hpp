@@ -3224,16 +3224,18 @@ namespace real::detail {
       // it pay a register compare and no hint-struct access -- the distinction that cost 17 % when
       // the wb guard was first written the other way (see this file's WbEdge note).
       //
-      // THE CODE-POINT TWIN OF THIS DOES NOT EXIST, and that is a measured decision, not an omission.
-      // `min` is in CODE POINTS there, so the check needs a count over the run, and both spellings of
-      // it cost `\p{L}+` -- a pattern whose min is 1, which never runs the check -- **+4.9 % with the
-      // counter as a closure outside the loop, and +7.6 % once templated away**, 16 draws of 16
-      // against a 0.7 % floor, judged by benchmarks/bench_layout.py. Templating made it WORSE, which
-      // is the finding: the cost is the translation unit carrying two more filler bodies, not the
-      // check, so more `if constexpr` is the wrong direction. `\w{2,}` and `\p{L}{3,}` therefore stay
-      // on the general route, forgoing 34-39 % by local probe, until someone counts code points
-      // DURING the run scan rather than re-walking it after -- which adds no instantiation.
-      // `greedy_cp_class_min <= 1` in the iterator's eligibility is what holds that line.
+      // THE CODE-POINT TWIN EXISTS NOW, and how it got here is the part worth keeping. It was refused
+      // twice -- a counter as a closure outside the loop, then the same templated away -- because each
+      // charged `\p{L}+`, a pattern whose min is 1 and which never runs the check, **+4.9 % and then
+      // +7.6 %**, 16 draws of 16 against a 0.7 % floor. Both readings were correct FOR THE INSTRUMENT
+      // that produced them: benchmarks/bench_engines.cpp links <regex>, PCRE2 and RE2 beside real.hpp
+      // and sits on the per-unit inlining budget. A consumer compiles only real.hpp. Re-judged in
+      // benchmarks/bench_minimal.cpp -- which is that unit -- the same change reads `\w{2,}` −38.1 %
+      // and `\p{L}{3,}` −36.2 % over 24 paired draws, with `\p{L}+` at −0.3 %, indistinguishable.
+      // The cost belonged to the harness, not to the library. docs/MEASUREMENT.md §5.5.
+      //
+      // The refusals are kept rather than deleted because the reasoning was sound and only the
+      // instrument was wrong; deleting them would erase the one case that shows how that happens.
       const std::size_t min_len           {prog_.hints.greedy_class_loop_min};
       bool              wb_edge           {WbEdge && start > 0};
       std::size_t       n                 {0};
@@ -3388,6 +3390,16 @@ namespace real::detail {
                            const bool m {dc.cp < 0x80U ? asc[dc.cp] != 0U : member_hi(dc.cp)};
                            return m ? dc.length : 0;
                          };
+      const std::size_t min_len {prog_.hints.greedy_cp_class_min};
+      const auto        count_cps = [&](std::size_t s, std::size_t e) -> std::size_t {
+                                      std::size_t k {0};
+                                      for (std::size_t j {s}; j < e; ++k) {
+                                        const auto lead {static_cast<std::uint8_t>(text[j])};
+                                        j += lead < 0x80U ? std::size_t {1}
+                                                          : detail::decode_codepoint_strict(text, j).length;
+                                      }
+                                      return k;
+                                    };
       const bool        greedy  {prog_.hints.greedy_cp_class_plus};
       const std::size_t max_len {prog_.hints.greedy_cp_class_max};
       // A TEMPLATE parameter, so the guard below compiles away entirely for every pattern that does
@@ -3470,6 +3482,10 @@ namespace real::detail {
               continue;
             }
           }
+        }
+        if (min_len > 1 && count_cps(i, end) < min_len) {
+          i = end;
+          continue;
         }
         out[n] = cp_span {.start = i, .end = end};
         ++n;

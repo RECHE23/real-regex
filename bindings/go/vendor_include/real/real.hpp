@@ -499,11 +499,12 @@ namespace real {
         // The code-point class loop is the fourth batched route and deliberately gets NO member of its
         // own: it is \ref refill_batch's `else`, so naming it would grow the iterator for nothing —
         // and this iterator's size is measured, not assumed (see \ref batch_cap).
-        // The code-point route still declines a `{k,}` minimum -- see fill_class_spans's note for the
-        // +4.9 %/+7.6 % on `\p{L}+` that both attempts cost. The BYTE route accepts it, free.
+        // BOTH class routes now accept a `{k,}` minimum. The code-point one had been declined twice on
+        // a cost measured in the four-engine harness that does not exist in a consumer-shaped
+        // translation unit -- see fill_cp_class_spans's note and docs/MEASUREMENT.md §5.5.
         const bool cp_class {batchable && prog.hints.greedy_cp_class >= 0
                              && prog.hints.greedy_cp_class_end == 0
-                             && prog.hints.greedy_cp_class_min <= 1}; // no is_constant_evaluated: see above
+        }; // no is_constant_evaluated: see above
 
         batch_eligible_  = batch_bytes_ || batch_cp_ascii_ || batch_single_cl_ || cp_class;
       }
