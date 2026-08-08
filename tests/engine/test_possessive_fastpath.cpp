@@ -125,9 +125,18 @@ TEST(route_pin_bare_class_possessive_redirects_to_greedy)
   const auto captured {real::regex {"([a-z]++)"}.raw_program().hints};
   EXPECT(captured.greedy_class_loop < 0);
 
+  // The CODE-POINT kind redirects too, to greedy_cp_class. An earlier version of this test asserted
+  // the opposite -- that `\w++` keeps a possessive hint -- on the reasoning that the cp route was not
+  // batched. It is: greedy_cp_class is what `\w+` takes. That exclusion was wrong and is gone.
   const auto cp {real::regex {R"(\w++)"}.raw_program().hints};
-  EXPECT(cp.possessive_class.kind == real::detail::class_kind::klass_cp);
-  EXPECT(cp.greedy_class_loop < 0);
+  EXPECT(!cp.possessive_class.armed());
+  EXPECT(cp.greedy_cp_class >= 0);
+  EXPECT(cp.greedy_cp_class_plus);
+  EXPECT_EQ(cp.greedy_cp_class_min, std::uint16_t {1});
+  EXPECT_EQ(static_cast<int>(cp.greedy_cp_class_end), 0);
+  EXPECT(cp.greedy_class_loop < 0); // the BYTE selector stays untouched for a cp class
+  EXPECT_EQ(real::regex {R"(\w++)"}.count_matches(std::string {"ab, c_1 \xC3\xA9x"}),
+            real::regex {R"(\w+)"}.count_matches(std::string {"ab, c_1 \xC3\xA9x"}));
 }
 
 TEST(route_pin_star_possessive_needs_nonempty_consumption)
@@ -144,11 +153,15 @@ TEST(route_pin_star_possessive_needs_nonempty_consumption)
   EXPECT_EQ(prog.hints.possessive_suffix_size, 1U);
 }
 
+// A BARE `\w++` is redirected to greedy_cp_class (same language, and that selector is batched), so the
+// possessive cp hint is armed only by the shapes the redirect refuses. `\w*+x` is one: min 0 plus a
+// required suffix.
 TEST(route_pin_unicode_word_class_possessive)
 {
-  const real::regex re   {R"(\w++)"};
-  const auto        prog {re.raw_program()};
-  EXPECT(prog.hints.possessive_class.kind == real::detail::class_kind::klass_cp);
+  EXPECT(!real::regex {R"(\w++)"}.raw_program().hints.possessive_class.armed());
+  const auto suffixed {real::regex {R"(\w*+x)"}.raw_program().hints};
+  EXPECT(suffixed.possessive_class.kind == real::detail::class_kind::klass_cp);
+  EXPECT(suffixed.greedy_cp_class < 0);
 }
 
 TEST(route_pin_quoted_delimited_possessive)

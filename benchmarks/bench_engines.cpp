@@ -579,6 +579,10 @@ namespace {
       // proves a leading `\b` redundant on a maximal run -- so any gap between the two rows is pure
       // routing, which is what makes the pair worth publishing side by side.
       {"unicode \\b\\w+\\b (mixed-script)", "\\b\\w+\\b", corpus_mixed_script()},
+      // The bare POSSESSIVE twin of the `\w+` row. Like `words [a-z]++` in the ASCII table, it must
+      // read the same as `\w+`: the recognizer redirects it to the same selector because it is the
+      // same language, so a row that reads differently means that redirect has been lost.
+      {"unicode \\w++ (mixed-script)", "\\w++", corpus_mixed_script()},
       {"unicode \\p{L}+ (CJK)", "\\p{L}+", corpus_cjk()},
       {"unicode \\p{N}+ (arabic digits)", "\\p{N}+", corpus_arabic()},
       {"unicode \\p{sc=Han} (CJK)", "\\p{sc=Han}", corpus_cjk()},

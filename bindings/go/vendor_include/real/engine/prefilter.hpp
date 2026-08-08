@@ -1589,11 +1589,26 @@ namespace real::detail {
               // possessive_group_start, which the greedy path does not read. A `\b` wrap is excluded
               // upstream (`arm` is false). And the code-point kind is left alone: its own route is not
               // batched for `{k,}` either, for the same budget reason.
-              if (arm && loop_ref.kind == class_kind::klass && suffix_len == 0 && gs < 0
-                  && has_mandatory && !has_wb) {
+              const bool redirect {arm && suffix_len == 0 && gs < 0 && has_mandatory && !has_wb
+                                   && (loop_ref.kind == class_kind::klass
+                                       || loop_ref.kind == class_kind::klass_cp)};
+              if (redirect && loop_ref.kind == class_kind::klass) {
                 hints.greedy_class_loop     = loop_ref.index;
                 hints.greedy_class_loop_min = 1;
                 hints.greedy_class_loop_end = 0;
+              }
+              else if (redirect) {
+                // The CODE-POINT twin, and it is here because the first version of this redirect left
+                // it out on a reason that does not survive reading: "its own route is not batched
+                // either". \ref pattern_hints::greedy_cp_class IS batched -- it is what `\w+` takes,
+                // at 1.365 ns/B with zero route entries per match. What was actually costly was
+                // teaching the cp FILLER a new parameter (that charged `\p{L}+` 6 to 9 %), and a hint
+                // decided here pays none of it. `\w++` was 4.700 ns/B against `\w+`'s 1.365.
+                hints.greedy_cp_class      = loop_ref.index;
+                hints.greedy_cp_class_plus = true; // a possessive loop is unbounded by construction
+                hints.greedy_cp_class_min  = 1;
+                hints.greedy_cp_class_end  = 0;
+                hints.greedy_cp_class_max  = 0;
               }
               else if (arm) {
                 hints.possessive_class        = loop_ref;

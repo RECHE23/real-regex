@@ -253,6 +253,62 @@ TEST(the_dropped_lead_word_boundary_agrees_from_every_offset)
   EXPECT(solo.begin().exhausted());
 }
 
+// A BARE unbounded possessive loop is REDIRECTED by the recognizer to the greedy selector -- byte and
+// code-point kinds both -- because it is the same language: possessive takes the maximal run and never
+// gives it back, and with nothing after the loop there is nothing to give back to. That makes these
+// patterns take a batched route they never used to, so the spans need the same differential every
+// other batched shape gets here, not just the hint pins in test_possessive_fastpath.cpp.
+TEST(the_redirected_possessive_walk_agrees_with_repeated_search)
+{
+  const std::string text {"abc,de f 42 ghij caf\xC3\xA9 \xE4\xB8\xAD\xE6\x96\x87 x_y1"};
+  for (const char* p : {"[a-z]++", R"(\w++)", "(?>[a-z]+)", R"((?>\w+))", "[a-z0-9]++"}) {
+    const real::regex re {p};
+    EXPECT_EQ(by_iteration(re, text), by_search(re, text));
+  }
+  // The equivalence the redirect rests on, span for span rather than by count.
+  EXPECT_EQ(by_iteration(real::regex {"[a-z]++"}, text), by_iteration(real::regex {"[a-z]+"}, text));
+  EXPECT_EQ(by_iteration(real::regex {R"(\w++)"}, text), by_iteration(real::regex {R"(\w+)"}, text));
+  EXPECT_EQ(by_iteration(real::regex {"(?>[a-z]+)"}, text), by_iteration(real::regex {"[a-z]+"}, text));
+  EXPECT_EQ(by_iteration(real::regex {R"((?>\w+))"}, text), by_iteration(real::regex {R"(\w+)"}, text));
+  // Region search from an offset must agree too -- the redirect changes the route, not the bounds.
+  const real::regex bp {R"(\w++)"};
+  for (std::size_t pos {0}; pos <= text.size(); ++pos) {
+    const auto poss {bp.search(text, pos)};
+    const auto grdy {real::regex {R"(\w+)"}.search(text, pos)};
+    EXPECT_EQ(poss.matched(), grdy.matched());
+    if (poss.matched()) {
+      EXPECT_EQ(poss.start(), grdy.start());
+      EXPECT_EQ(poss.end(), grdy.end());
+    }
+  }
+}
+
+// The shapes the redirect refuses, each pinned by behaviour: `X*+` can match empty, a required suffix
+// means the match is not the run, and an enveloping capture keeps its slots where the greedy path does
+// not look.
+TEST(the_possessive_shapes_the_redirect_refuses)
+{
+  const std::string text {"ab,,cd;ef 12"};
+  for (const char* p : {"[a-z]*+", "[a-z]++;", R"(\w*+x)", R"(\d++x)"}) {
+    const real::regex re {p};
+    EXPECT_EQ(by_iteration(re, text), by_search(re, text));
+  }
+  EXPECT(by_iteration(real::regex {"[a-z]*+"}, text).size()
+         > by_iteration(real::regex {"[a-z]++"}, text).size()); // `*+` matches empty, `++` does not
+
+  const real::regex delim {"[a-z]++;"};
+  const auto        dm    {delim.search(text)};
+  EXPECT(dm.matched());
+  EXPECT_EQ(dm.end(), 7U); // the semicolon is part of the match
+
+  const real::regex captured {"([a-z]++)"};
+  const auto        cm       {captured.search(text)};
+  EXPECT(cm.matched());
+  EXPECT_EQ(cm.start(1), cm.start());
+  EXPECT_EQ(cm.end(1), cm.end());
+  EXPECT_EQ(by_iteration(captured, text), by_search(captured, text));
+}
+
 // count_matches and find_all read the same walk, so they must report the same thing the iteration does
 // — this is the API surface the batched path actually serves.
 TEST(the_public_counters_agree_with_the_walk)
