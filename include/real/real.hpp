@@ -484,9 +484,11 @@ namespace real {
         // The other two routes have not been taught the guard and still decline.
         // Each route then adds only its OWN selector, which is what the four lines below now read as.
         wb_edge_         = prog.hints.wb_lead_maximal_run;
+        // A `{k,}` minimum no longer disqualifies either class-run route: the fillers now apply the
+        // same "a too-short maximal run cannot satisfy X{k,}, skip it" rule the general route does.
+        // It cost `[a-z]{2,}` 2.338 ns/B against `[a-z]+`'s 1.148 -- 2.0x for a length comparison.
         batch_bytes_     = batchable && prog.hints.greedy_class_loop >= 0
-                           && prog.hints.greedy_class_loop_end == 0
-                           && prog.hints.greedy_class_loop_min <= 1;
+                           && prog.hints.greedy_class_loop_end == 0;
         batch_cp_ascii_  = batchable && !prog.hints.wb_lead_maximal_run
                            && prog.hints.codepoint_class_ascii >= 0
                            && prog.hints.greedy_class_loop < 0 && prog.hints.greedy_cp_class < 0;
@@ -497,9 +499,11 @@ namespace real {
         // The code-point class loop is the fourth batched route and deliberately gets NO member of its
         // own: it is \ref refill_batch's `else`, so naming it would grow the iterator for nothing —
         // and this iterator's size is measured, not assumed (see \ref batch_cap).
+        // The code-point route still declines a `{k,}` minimum -- see fill_class_spans's note for the
+        // +4.9 %/+7.6 % on `\p{L}+` that both attempts cost. The BYTE route accepts it, free.
         const bool cp_class {batchable && prog.hints.greedy_cp_class >= 0
                              && prog.hints.greedy_cp_class_end == 0
-                             && prog.hints.greedy_cp_class_min <= 1}; // no is_constant_evaluated here: see above
+                             && prog.hints.greedy_cp_class_min <= 1}; // no is_constant_evaluated: see above
 
         batch_eligible_  = batch_bytes_ || batch_cp_ascii_ || batch_single_cl_ || cp_class;
       }

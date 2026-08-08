@@ -2303,9 +2303,9 @@ namespace real::detail {
                                                run_mode         mode,
                                                OutSlots&        out_slots)
     {
-      const std::uint8_t* const tbl {
+      const std::uint8_t* const tbl       {
         class_table(static_cast<std::size_t>(prog_.hints.greedy_class_loop))};
-      std::size_t limit             {text.size()};
+      std::size_t       limit             {text.size()};
       if (prog_.hints.greedy_class_loop_end == 2 && limit > 0 && text[limit - 1] == '\n') {
         --limit; // `$`: the position before one final newline is also an end
       }
@@ -3219,9 +3219,25 @@ namespace real::detail {
       // `\p{L}+` +13.4 % (it re-read the hint struct on every span emitted); hoisting it to a
       // runtime local still cost +6 to +8 % on five class-scan rows, all judged REAL. Only
       // `if constexpr` leaves those rows compiling to what they compiled to before.
-      bool        wb_edge           {WbEdge && start > 0};
-      std::size_t n                 {0};
-      std::size_t i                 {start};
+      // P1 `{k,}`: the minimum run length, in BYTES, read ONCE outside the loop. A bare `+` leaves
+      // it 1, where the compare can never fire (a run is non-empty), so the shapes that do not use
+      // it pay a register compare and no hint-struct access -- the distinction that cost 17 % when
+      // the wb guard was first written the other way (see this file's WbEdge note).
+      //
+      // THE CODE-POINT TWIN OF THIS DOES NOT EXIST, and that is a measured decision, not an omission.
+      // `min` is in CODE POINTS there, so the check needs a count over the run, and both spellings of
+      // it cost `\p{L}+` -- a pattern whose min is 1, which never runs the check -- **+4.9 % with the
+      // counter as a closure outside the loop, and +7.6 % once templated away**, 16 draws of 16
+      // against a 0.7 % floor, judged by benchmarks/bench_layout.py. Templating made it WORSE, which
+      // is the finding: the cost is the translation unit carrying two more filler bodies, not the
+      // check, so more `if constexpr` is the wrong direction. `\w{2,}` and `\p{L}{3,}` therefore stay
+      // on the general route, forgoing 34-39 % by local probe, until someone counts code points
+      // DURING the run scan rather than re-walking it after -- which adds no instantiation.
+      // `greedy_cp_class_min <= 1` in the iterator's eligibility is what holds that line.
+      const std::size_t min_len           {prog_.hints.greedy_class_loop_min};
+      bool              wb_edge           {WbEdge && start > 0};
+      std::size_t       n                 {0};
+      std::size_t       i                 {start};
       while (i < text.size()) {
         if (tbl[static_cast<std::uint8_t>(text[i])] == 0U) {
           ++i;
@@ -3269,6 +3285,13 @@ namespace real::detail {
               continue;
             }
           }
+        }
+        // P1: a maximal run shorter than the required minimum can never satisfy `X{k,}` starting
+        // here, so skip past the whole run and try the next one -- exactly what run_class_loop's
+        // search mode does.
+        if (end - i < min_len) {
+          i = end;
+          continue;
         }
         out[n] = cp_span {.start = i, .end = end};
         ++n;

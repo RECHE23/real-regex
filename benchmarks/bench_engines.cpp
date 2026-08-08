@@ -36,6 +36,13 @@
 // against numbers taken with the shipped one, in either direction. If this file must change, re-take
 // both arms of every comparison afterwards -- and if the change is a row, expect to be re-taking a
 // table that no longer compares to any stamp before it.
+//
+// THE TWO FIGURES ABOVE ARE SINGLE BUILDS, and docs/MEASUREMENT.md now says what that is worth: the
+// same method was measured, on this harness, to report +16.7 % on a row that provably cannot be
+// affected. So read "+27.7 % from adding a row" as one draw, not as the cost of a row. The rule it
+// motivates survives intact and is if anything stronger -- but the way to keep it now is
+// benchmarks/bench_layout.py, which puts the SAME harness on both arms of a comparison so a row
+// addition cancels instead of being argued about.
 
 #include <real/real.hpp>
 #include <sciforge/bench.hpp>
@@ -516,6 +523,11 @@ namespace {
       // matches -- moved nothing in this table. It is the shape `re.findall(r'[a-z]', s)` and
       // `re.sub(r'[^a-z]', '', s)` actually run.
       {"single [a-z]", "class-scan", "[a-z]", corpus_words()},
+      // A `{k,}` COUNTED-MINIMUM row, added for the reason the anchored, unquantified and `\b`-wrapped
+      // rows were: it is its own batching case (a maximal run shorter than k cannot satisfy the
+      // pattern and must be skipped), it is what `\w{3,}`-style validators actually run, and every
+      // other quantifier row here is an EXACT count (`{8}`, `{4}-{2}-{2}`), which is a different shape.
+      {"words [a-z]{4,}", "class-scan", "[a-z]{4,}", corpus_words()},
       {"literal", "literal", "charlie", corpus_csv()},
       // Differentiator: a bounded lookahead. REAL/std/PCRE2 support it; RE2 has no lookaround.
       {"lookahead [a-z]+(?=[a-z])", "differentiator", "[a-z]+(?=[a-z])", corpus_words(), true},
