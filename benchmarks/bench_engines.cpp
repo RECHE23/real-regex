@@ -382,17 +382,53 @@ namespace {
       fields.emplace_back("std", json_string("unsupported"));
     }
     else {
-      fields.emplace_back("std", engine_result(collect([&] { return std_count(pat, text); }, n)));
+      // A GRAMMAR gap is caught here, exactly as the Unicode path already caught it, and this was a
+      // latent crash rather than a precaution: `[a-z]++` is a possessive quantifier, which ECMAScript
+      // has no notion of. libstdc++ happens to accept the spelling, so a possessive row ran fine on
+      // the x86-64 devbox; libc++ throws "One of *?+{ was not preceded by a valid regular expression"
+      // and the uncaught regex_error aborted the whole harness on macOS, taking every other row with
+      // it. An engine that cannot compile the pattern is `unsupported`, never a crash.
+      bool std_ok {true};
+      try {
+        const std::regex probe(pat, std::regex::ECMAScript | std::regex::optimize);
+      }
+      catch (const std::regex_error&) {
+        std_ok = false;
+      }
+      fields.emplace_back("std", std_ok
+                                ? engine_result(collect([&] { return std_count(pat, text); }, n))
+                                : json_string("unsupported"));
     }
+    // COMPILE PROBES, not precautions. Without them this path reports a FABRICATED number for any
+    // pattern an engine cannot compile, which is worse than a crash because it looks like data:
+    // `[a-z]++` is a possessive quantifier RE2 has no notion of, `re2_count` returned 0 matches, and
+    // the table published "0.01 ns/B, 0.01x" with a count column reading 42108/—/42108/0. The Unicode
+    // path below has probed its engines from the start; this one had only ever been given patterns
+    // every engine happened to accept, so the gap sat latent until a possessive row was added.
 #if defined(HAVE_PCRE2)
-    fields.emplace_back("pcre2", engine_result(collect([&] { return pcre2_count(pat, text); }, n)));
+    {
+      int         perrc   {};
+      PCRE2_SIZE  perroff {};
+      pcre2_code* probe = pcre2_compile(reinterpret_cast<PCRE2_SPTR>(pat.c_str()),
+                                        PCRE2_ZERO_TERMINATED, 0, &perrc, &perroff, nullptr);
+      const bool  pcre2_ok {probe != nullptr};
+      if (probe != nullptr) {
+        pcre2_code_free(probe);
+      }
+      fields.emplace_back("pcre2", pcre2_ok
+                                  ? engine_result(collect([&] { return pcre2_count(pat, text); }, n))
+                                  : json_string("unsupported"));
+    }
 #endif
 #if defined(HAVE_RE2)
     if (lookaround) {
       fields.emplace_back("re2", json_string("unsupported")); // RE2 has no lookaround
     }
     else {
-      fields.emplace_back("re2", engine_result(collect([&] { return re2_count(pat, text); }, n)));
+      const RE2 re2_probe(pat);
+      fields.emplace_back("re2", re2_probe.ok()
+                                ? engine_result(collect([&] { return re2_count(pat, text); }, n))
+                                : json_string("unsupported"));
     }
 #else
     (void) lookaround;
