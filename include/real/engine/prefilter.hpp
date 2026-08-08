@@ -1568,7 +1568,34 @@ namespace real::detail {
                                                out_trail);
                 }
               }
-              if (arm) {
+              // A BARE unbounded possessive byte-CLASS loop (`[a-z]++`, `(?>[a-z]+)`) is redirected to
+              // the GREEDY class-loop selector instead of arming a possessive one, because it is the
+              // same language: possessive means "take the maximal run and never give it back", and
+              // with nothing after the loop there is nothing to give back to. Verified by match count
+              // rather than by argument -- `[a-z]+` and `[a-z]++` both report 4 on "abc,de f 42 ghij".
+              //
+              // The gain is that the greedy selector is BATCHED, and the possessive one is not:
+              // `[a-z]++` measured 4.013 ns/B against `[a-z]+`'s 1.177, a quantifier doing strictly
+              // LESS work being 3.4x slower. Doing it HERE, in the recognizer, is what makes it
+              // affordable: three attempts to reach the same result from the runtime side -- teaching
+              // the fillers a class-index parameter, with and without the code-point half -- each cost
+              // the Unicode class rows 5.7 to 9.1 % (`\p{L}+`, `\p{N}+`, `\w+`, all 16 draws of 16
+              // against their floors, benchmarks/bench_layout.py). This translation unit is at its
+              // inlining budget; a hint set at compile time spends none of it.
+              //
+              // Scope is deliberately the byte class only, and bare only. `X*+` can match empty (the
+              // guard above already requires has_mandatory here for a suffix-free shape). A suffix
+              // (`[a-z]++x`) means the match is not the run. An enveloping capture keeps its slots in
+              // possessive_group_start, which the greedy path does not read. A `\b` wrap is excluded
+              // upstream (`arm` is false). And the code-point kind is left alone: its own route is not
+              // batched for `{k,}` either, for the same budget reason.
+              if (arm && loop_ref.kind == class_kind::klass && suffix_len == 0 && gs < 0
+                  && has_mandatory && !has_wb) {
+                hints.greedy_class_loop     = loop_ref.index;
+                hints.greedy_class_loop_min = 1;
+                hints.greedy_class_loop_end = 0;
+              }
+              else if (arm) {
                 hints.possessive_class        = loop_ref;
                 hints.possessive_group_start  = gs;
                 hints.possessive_group_end    = gs < 0 ? std::int16_t {-1}

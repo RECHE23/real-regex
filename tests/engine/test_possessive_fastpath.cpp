@@ -93,13 +93,41 @@ namespace {
 
 // --- route pinning: the new hints arm on the exact shapes they are meant for ------------------
 
-TEST(route_pin_bare_class_possessive)
+// A BARE unbounded possessive byte-class loop no longer arms a possessive hint at all: the recognizer
+// REDIRECTS it to the greedy class-loop selector, because it is the same language (nothing follows the
+// loop, so there is nothing to give back) and that selector is batched where the possessive one is not.
+// This test pins the redirect and, just as importantly, that the shapes it must NOT touch still arm
+// possessive -- a suffix, an enveloping capture, and the code-point kind.
+TEST(route_pin_bare_class_possessive_redirects_to_greedy)
 {
-  const real::regex re   {"[a-z]++"};
-  const auto        prog {re.raw_program()};
-  EXPECT(prog.hints.possessive_class.kind == real::detail::class_kind::klass);
-  EXPECT(prog.hints.possessive_min_nonzero);
-  EXPECT_EQ(static_cast<int>(prog.hints.possessive_prefix_size), 0);
+  const auto h {real::regex {"[a-z]++"}.raw_program().hints};
+  EXPECT(!h.possessive_class.armed());
+  EXPECT(h.greedy_class_loop >= 0);
+  EXPECT_EQ(h.greedy_class_loop_min, std::uint16_t {1});
+  EXPECT_EQ(static_cast<int>(h.greedy_class_loop_end), 0);
+  // The atomic-group spelling is the same shape and redirects identically.
+  EXPECT(real::regex {"(?>[a-z]+)"}.raw_program().hints.greedy_class_loop >= 0);
+
+  // Same language as the greedy twin, which is the whole justification -- asserted, not argued.
+  const std::string subject {"abc,de f 42 ghij"};
+  EXPECT_EQ(real::regex {"[a-z]++"}.count_matches(subject),
+            real::regex {"[a-z]+"}.count_matches(subject));
+  EXPECT_EQ(real::regex {"(?>[a-z]+)"}.count_matches(subject),
+            real::regex {"[a-z]+"}.count_matches(subject));
+
+  // NOT redirected, and each for its own reason: a required suffix means the match is not the run,
+  // an enveloping capture keeps its slots in possessive_group_start, and the code-point kind is left
+  // on its own route deliberately.
+  const auto suffixed {real::regex {"[a-z]++x"}.raw_program().hints};
+  EXPECT(suffixed.possessive_class.kind == real::detail::class_kind::klass);
+  EXPECT(suffixed.greedy_class_loop < 0);
+
+  const auto captured {real::regex {"([a-z]++)"}.raw_program().hints};
+  EXPECT(captured.greedy_class_loop < 0);
+
+  const auto cp {real::regex {R"(\w++)"}.raw_program().hints};
+  EXPECT(cp.possessive_class.kind == real::detail::class_kind::klass_cp);
+  EXPECT(cp.greedy_class_loop < 0);
 }
 
 TEST(route_pin_star_possessive_needs_nonempty_consumption)

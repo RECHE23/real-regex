@@ -528,6 +528,12 @@ namespace {
       // pattern and must be skipped), it is what `\w{3,}`-style validators actually run, and every
       // other quantifier row here is an EXACT count (`{8}`, `{4}-{2}-{2}`), which is a different shape.
       {"words [a-z]{4,}", "class-scan", "[a-z]{4,}", corpus_words()},
+      // A BARE POSSESSIVE row. It now measures the same as `words [a-z]+` above, which is the point:
+      // the recognizer redirects the bare form to the greedy selector because they are the same
+      // language, so a row that reads DIFFERENTLY means that redirect has been lost. `[a-z]+` cannot
+      // catch that; only this row can. PCRE2 supports `++`; std::regex (ECMAScript) and RE2 do not and
+      // report `unsupported` by auto-detection.
+      {"words [a-z]++", "class-scan", "[a-z]++", corpus_words()},
       {"literal", "literal", "charlie", corpus_csv()},
       // Differentiator: a bounded lookahead. REAL/std/PCRE2 support it; RE2 has no lookaround.
       {"lookahead [a-z]+(?=[a-z])", "differentiator", "[a-z]+(?=[a-z])", corpus_words(), true},
