@@ -64,6 +64,54 @@
 #  define BENCH_COMMIT "unknown"
 #endif
 
+// --- Layout draw ------------------------------------------------------------------------------
+//
+// A SEMANTICS-FREE size knob, used by benchmarks/bench_layout.py to compile the same source into
+// several different code layouts. Nothing below is ever called; the point is only that `used` keeps
+// N small functions in the object file, which shifts the address of everything emitted after them.
+//
+// Why this exists: this library is header-only, so every route body is inlined into the consumer's
+// translation unit, and its address, alignment and I-cache colour are decided by code we do not
+// control. A single build is therefore one sample from a distribution, not "the" performance — and
+// a single-build A/B has been shown here to report double-digit deltas on rows that provably cannot
+// be affected (deleting 21 lines of compile-time-only code moved `digits [0-9]+` by +16.7 %).
+// Averaging over draws is what makes a comparison mean something: see docs/MEASUREMENT.md and
+// Curtsinger & Berger, "STABILIZER: Statistically Sound Performance Evaluation" (ASPLOS 2013).
+//
+// Default 0 — the reference tables in docs/BENCHMARKS.md build with no padding at all, so this knob
+// changes nothing unless a sweep asks for it.
+#ifndef BENCH_LAYOUT_PAD
+#  define BENCH_LAYOUT_PAD 0
+#endif
+#if BENCH_LAYOUT_PAD > 0
+namespace {
+  volatile int layout_sink {0}; //!< Keeps the pad bodies from folding away.
+
+  //! One pad body. `noinline` + `used` so it survives to occupy address space.
+  template <int I>
+#  if defined(__GNUC__) || defined(__clang__)
+  __attribute__((noinline, used, cold))
+#  endif
+  void layout_pad()
+  {
+    layout_sink += I;
+  }
+
+  //! Instantiates \p N pad bodies. Never called.
+  template <int N>
+  void layout_pads()
+  {
+    layout_pad<N>();
+    if constexpr (N > 0) {
+      layout_pads<N - 1>();
+    }
+  }
+
+  //! Forces the instantiation without a call site in any hot path.
+  [[maybe_unused]] void (*const layout_anchor)() {&layout_pads<BENCH_LAYOUT_PAD>};
+} // namespace
+#endif
+
 namespace {
 
   // The timing primitives and the comma-safe JSON emitter now live in SciForge's shared C++

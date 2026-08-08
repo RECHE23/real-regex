@@ -88,6 +88,25 @@ bench-static: ## static_regex vs regex, same pattern (compile-time storage's rou
 	@cd $(ROOT) && c++ $(CXXSTD) -O2 $(INCLUDES) benchmarks/bench_static.cpp -o $(BUILD)/bench_static
 	@$(BUILD)/bench_static
 
+# Layout-robust judging. `bench-engines` above publishes the reference tables; these two decide
+# whether a CHANGE moved anything, which is a different question and needs a different instrument --
+# see docs/MEASUREMENT.md for why a single-build A/B does not answer it.
+#
+# bench-layout-null must be run ONCE PER MACHINE before any verdict: it runs the tree against itself
+# (true delta exactly zero) to measure each row's noise floor. Floors land in $(BUILD)/floors.json.
+bench-layout-null: ## [bench] Calibrate this machine's per-row noise floor (run before bench-layout)
+	@mkdir -p $(BUILD)
+	@cd $(ROOT) && $(PYTHON) benchmarks/bench_layout.py --base . --null \
+	   --sciforge $(abspath $(SCIFORGE_INCLUDE)) --save-floors $(BUILD)/floors.json
+
+# BASE and CAND are trees (git worktrees are the easy way to get two). Requires bench-layout-null.
+bench-layout: ## [bench] Judge BASE=<tree> CAND=<tree> against the calibrated floors
+	@test -n "$(BASE)" -a -n "$(CAND)" || { echo "usage: make bench-layout BASE=<tree> CAND=<tree>"; exit 2; }
+	@test -f $(BUILD)/floors.json || { echo "run 'make bench-layout-null' on this machine first"; exit 2; }
+	@cd $(ROOT) && $(PYTHON) benchmarks/bench_layout.py --base $(BASE) --cand $(CAND) \
+	   --sciforge $(abspath $(SCIFORGE_INCLUDE)) --floors $(BUILD)/floors.json \
+	   --save-deltas $(BUILD)/deltas.json
+
 bench-engines: ## C++ throughput vs std::regex/PCRE2/RE2 (if present)
 	@mkdir -p $(BUILD)
 	@cd $(ROOT) && flags=""; \

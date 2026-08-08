@@ -1097,6 +1097,26 @@ MAGNITUDE as a property of the change rather than of the build. For a placement 
 honest report is the shipped configuration's number plus its alignment sensitivity — not a single
 figure.
 
+\note **Everything above is now a DIAGNOSTIC, not a verdict, and one rule in this area has been
+retired outright.** The reasoning in these notes — unchanged out-of-line symbols, forced alignment
+relocating a delta, a same-pattern witness — investigates *why* a number moved. None of it establishes
+*whether* it moved, and this section repeatedly treated a single build's delta as the change's
+property. It is not: a single build is one sample from a distribution of layouts, and for a
+header-only library that distribution is the consumer's, not ours.
+\n
+The rule stated elsewhere in this repository — "rows moving the same way on both ISAs are real work,
+rows disagreeing are placement" — is **falsified and withdrawn**. A change that deleted only
+compile-time-only code, reached once per `regex` construction and never on any scan path, moved
+`digits [0-9]+` by +16.7 % on x86-64 and +3.0 % on arm64: same direction on both ISAs, and incapable
+of costing anything. Direction agreement measures how *systematic* an artefact is, not whether it is
+one.
+\n
+Verdicts now come from `benchmarks/bench_layout.py`, which compiles the same source into several
+layouts, pairs and interleaves the two sides, and — decisively — calibrates each row's noise floor by
+running the tree against **itself**, where the true delta is zero by construction. Those floors span
+0.1 % to 7.3 % depending on the row. **docs/MEASUREMENT.md is the authority**; it also lists which
+figures in this project's history do and do not survive contact with them.
+
 **The defect is `static_regex`-only.** The dynamic path already solves it: `dynamic_storage::state_type`
 fixes its SBO capacities as constants, so every `real::regex` in a TU shares one `pike_vm` instantiation.
 Sweeping the same N patterns through `real::regex` instead, `.text` goes **506 KB → 511 KB from N=0 to

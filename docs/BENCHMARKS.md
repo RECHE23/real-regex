@@ -15,6 +15,28 @@ Reproduce with **`make bench-engines`** (C++, in-process) and **`make python-ben
 (binding vs `re`). Both check result/match-count equality before timing — a fast wrong
 answer is not a benchmark win.
 
+> ### Read this before reading any delta below
+>
+> Every **absolute** number in this document (the `ns/B` columns, the ratios against `std::regex`,
+> PCRE2-JIT and RE2) is a straightforward measurement and stands as published.
+>
+> Every **before/after delta** in the version notes below — "−26.8 %", "+15.3 %", "+5.1 %" — was
+> produced by compiling twice and comparing. That method has since been calibrated **on this very
+> harness** and found to report **double-digit deltas on rows that provably cannot be affected**:
+> deleting 21 lines of compile-time-only code moved `digits [0-9]+` by +16.7 %. The cause is that
+> `real` is header-only, so a single build is one sample from a distribution of code layouts that
+> belongs to the consumer, not to us.
+>
+> **`docs/MEASUREMENT.md` is now the authority on what a timing claim here is allowed to say.** It
+> gives each row's measured noise floor — they range from **0.1 % to 7.3 %** — and lists, claim by
+> claim, which figures in the history below survive contact with those floors and which do not. Two
+> decision rules this project used are retired there, including "same direction on both ISAs means
+> real work".
+>
+> Deltas in the stamps below are kept rather than deleted: they are the record of what was tried, and
+> the refutations among them are the most useful part. Treat each as *one draw*, not as the change's
+> property, and re-judge with `make bench-layout` before relying on one.
+
 ## Conditions of this baseline
 
 | | |

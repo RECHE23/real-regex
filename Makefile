@@ -628,6 +628,12 @@ matrix-gate:
 bench-engines:
 	@$(MAKE) -C benchmarks bench-engines
 
+bench-layout-null:
+	@$(MAKE) -C benchmarks bench-layout-null
+
+bench-layout:
+	@$(MAKE) -C benchmarks bench-layout BASE=$(BASE) CAND=$(CAND)
+
 bench-static:
 	@$(MAKE) -C benchmarks bench-static
 
