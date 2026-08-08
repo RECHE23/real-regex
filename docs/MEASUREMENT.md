@@ -64,8 +64,8 @@ that bias from **+3.9 % to +0.6 %** at the worst row.
 
 **Null calibration, which is the part that makes any of it honest.** `--null` runs the tree against
 *itself*. The true delta is exactly zero by construction, so whatever comes out is the instrument
-talking, measured **per row** — rows do not share a floor, and it turns out they differ by a factor of
-seventy.
+talking, measured **per row** — rows do not share a floor. §4 gives the measured ones and, just as
+importantly, how much to trust them.
 
 ## 4. The decision rule, and the measured floors
 
@@ -77,41 +77,105 @@ A row's movement is reported as **REAL** only when both hold:
 Anything else is **indistinguishable**, which is not the same statement as "no change" and is not
 written as one.
 
-Condition 2 is not taste. Condition 1 alone is insufficient at this K because the null hands some rows
-an implausibly *tight* floor by luck: `hex [0-9a-f]{8}` calibrated at ±0.1 %, and the first judged
-comparison duly flagged it REAL on a +0.2 % median whose spread was [−0.8, +1.8]. On the null, **not
-one of the twenty rows produced a single-signed spread** — so requiring one costs nothing in false
-negatives and removes that failure.
+Condition 2 entered as a patch and stays on its own merits. It entered because the first floor
+estimator (a maximum over 8 readings) handed `hex [0-9a-f]{8}` an implausibly tight ±0.1 %, and the
+first judged comparison duly flagged that row REAL on a +0.2 % median whose spread was [−0.8, +1.8].
+The converging estimator removes that particular failure — `hex` now calibrates at 1.1 % — but the
+condition is kept, because a spread straddling zero is not evidence of a shift whatever its median
+does, and because it is checked rather than assumed: on the 24-reading null, **0 of 20 rows produced a
+single-signed spread**. It therefore costs no sensitivity on a true-zero change.
 
-Floors measured on **arm64 (Apple M1 Pro, Apple clang 16), 8 draws, interleaved**:
+### The floor's estimator, and a design fault this page shipped with
 
-| row | null median | null spread | floor |
-| --- | ---: | ---: | ---: |
-| `hex [0-9a-f]{8}` | +0.0 % | [−0.1, +0.1] | **0.1 %** |
-| `\p{N}+` (arabic digits) | −0.0 % | [−0.1, +0.5] | **0.5 %** |
-| `\p{sc=Han}` (CJK) | +0.1 % | [−0.4, +0.5] | **0.5 %** |
-| `date {4}-{2}-{2}` | −0.0 % | [−0.4, +0.5] | **0.5 %** |
-| `lookahead [a-z]+(?=[a-z])` | +0.1 % | [−0.8, +0.5] | **0.8 %** |
-| `digits [0-9]+` | −0.0 % | [−0.6, +1.0] | **1.0 %** |
-| `alt the\|fox\|dog` | −0.0 % | [−0.7, +1.1] | **1.1 %** |
-| `anchored ^[a-z]+$` | +0.0 % | [−1.4, +0.1] | **1.4 %** |
-| ascii witness `[a-z]+` | −0.0 % | [−1.7, +0.1] | **1.7 %** |
-| `[à-ÿ]+` (accented) | +0.0 % | [−2.0, +1.8] | **2.0 %** |
-| `\w+` (mixed-script) | +0.5 % | [−2.4, +1.3] | **2.4 %** |
-| `.` (emoji) | −0.3 % | [−2.5, +2.1] | **2.5 %** |
-| literal `你好` (CJK) | +0.0 % | [−2.5, +0.5] | **2.5 %** |
-| `words [a-z]+` | +0.0 % | [−0.4, +3.0] | **3.0 %** |
-| `fields [^,]+` | +0.3 % | [−4.1, +1.2] | **4.1 %** |
-| `\p{L}+` (CJK) | +0.6 % | [−1.5, +4.5] | **4.5 %** |
-| `literal` | −0.0 % | [−4.7, +3.9] | **4.7 %** |
-| `(?i)café` (accented) | +0.1 % | [−0.4, +5.7] | **5.7 %** |
-| `single [a-z]` | −0.4 % | [−5.8, +2.2] | **5.8 %** |
-| `\p{scx=Cyrl}` (mixed-script) | +0.1 % | [−0.6, +7.3] | **7.3 %** |
+The floor is the **95th percentile of |paired delta|** over the sweep. It was a *maximum* for one
+afternoon, and that was wrong in a way worth recording: the widest excursion **grows with the sample
+size**, so a max-based floor is not a consistent estimator and cannot be stabilised by collecting more
+data. Measured on the same configuration: `digits [0-9]+` calibrated at **1.0 % from 8 readings and
+6.0 % from 24**. This page simultaneously advised raising `--reps` "until it settles" — advice that
+could never be satisfied. A high quantile converges; that is the whole requirement for a threshold.
 
-**Read that table before reading any delta in `BENCHMARKS.md`.** A 4 % move on `hex` is forty times
-its floor and worth discussing. The same 4 % on `\p{scx=Cyrl}` is *below* its floor and means nothing
-whatsoever. The rows this harness can actually resolve finely are the ones with tight floors; the
-Unicode property rows and `single [a-z]` are, on this instrument, coarse.
+**A claim this page made and now withdraws:** it said the floors "span a factor of seventy". That was
+an artefact of the max estimator on 8 readings. With a converging estimator on 24, the span is a
+factor of **seven** — and the row it named as worst, `\p{scx=Cyrl}` at 7.3 %, is in fact the **best**
+at 0.6 %. The lesson generalises: the instrument's own statistics need the same scepticism as the
+engine's.
+
+Floors on **arm64** (Apple M1 Pro, Apple clang 16), 8 layout draws × 3 interleaved reps = 24 paired
+readings:
+
+| row | floor (q95) | max | half 1 | half 2 |
+| --- | ---: | ---: | ---: | ---: |
+| `literal` | **4.5 %** | 5.8 % | 4.1 % | 2.5 % |
+| `[à-ÿ]+` (accented) | **3.1 %** | 3.7 % | 3.4 % | 3.0 % |
+| `digits [0-9]+` | **3.1 %** | 6.0 % | 4.4 % | 1.5 % |
+| literal `你好` (CJK) | **2.8 %** | 4.8 % | 2.7 % | 1.5 % |
+| `fields [^,]+` | **2.7 %** | 5.9 % | 4.2 % | 1.6 % |
+| `\w+` (mixed-script) | **2.7 %** | 5.9 % | 4.2 % | 1.6 % |
+| `date {4}-{2}-{2}` | **2.6 %** | 4.4 % | 3.6 % | 0.8 % |
+| `words [a-z]+` | **2.5 %** | 3.8 % | 3.1 % | 0.5 % |
+| `\p{N}+` (arabic digits) | **2.4 %** | 3.6 % | 2.6 % | 1.3 % |
+| `single [a-z]` | **2.2 %** | 2.8 % | 2.5 % | 1.6 % |
+| `anchored ^[a-z]+$` | **2.1 %** | 2.6 % | 1.2 % | 1.5 % |
+| `lookahead [a-z]+(?=[a-z])` | **1.9 %** | 2.7 % | 2.3 % | 0.7 % |
+| `alt the\|fox\|dog` | **1.8 %** | 2.4 % | 2.1 % | 0.5 % |
+| `.` (emoji) | **1.8 %** | 1.9 % | 1.6 % | 1.7 % |
+| `\p{L}+` (CJK) | **1.5 %** | 4.3 % | 2.5 % | 1.4 % |
+| `hex [0-9a-f]{8}` | **1.1 %** | 2.9 % | 1.9 % | 0.8 % |
+| `\p{sc=Han}` (CJK) | **0.9 %** | 1.7 % | 1.3 % | 0.4 % |
+| `(?i)café` (accented) | **0.7 %** | 2.0 % | 1.3 % | 0.3 % |
+| ascii witness `[a-z]+` | **0.7 %** | 1.5 % | 1.0 % | 0.4 % |
+| `\p{scx=Cyrl}` (mixed-script) | **0.6 %** | 0.9 % | 0.7 % | 0.4 % |
+
+**Read the two half-sweep columns before trusting any single floor.** They are the same statistic on
+each half of the same data, and they disagree by up to **6.2×** (`words`: 3.1 % against 0.5 %). So:
+
+* a floor here is good enough to be a **conservative threshold** — its job is to stop a claim, and it
+  is on the safe side for that;
+* it is **not** precise enough to compare configurations. Three attempts to do so — arm64 against
+  x86-64, four engines against REAL-only — each produced floors moving in *both* directions, which is
+  what an unstable estimate looks like, not a property of the build. `bench_layout.py` now prints this
+  split-half ratio and says so.
+
+Floors on **x86-64** (devbox container, g++ 13.3.0), same 24 paired readings:
+
+| row | floor (q95) | arm64 for comparison | half 1 | half 2 |
+| --- | ---: | ---: | ---: | ---: |
+| literal `你好` (CJK) | **4.2 %** | 2.8 % | 2.2 % | 5.4 % |
+| `literal` | **3.0 %** | 4.5 % | 3.5 % | 2.1 % |
+| `.` (emoji) | **2.2 %** | 1.8 % | 1.2 % | 2.5 % |
+| `fields [^,]+` | **2.1 %** | 2.7 % | 1.4 % | 2.2 % |
+| `words [a-z]+` | **2.0 %** | 2.5 % | 2.5 % | 1.8 % |
+| `lookahead [a-z]+(?=[a-z])` | **1.9 %** | 1.9 % | 1.0 % | 2.8 % |
+| `[à-ÿ]+` (accented) | **1.7 %** | 3.1 % | 1.8 % | 1.3 % |
+| `single [a-z]` | **1.6 %** | 2.2 % | 1.7 % | 1.3 % |
+| `alt the\|fox\|dog` | **1.5 %** | 1.8 % | 1.7 % | 1.2 % |
+| `\w+` (mixed-script) | **1.4 %** | 2.7 % | 0.6 % | 1.8 % |
+| `\p{scx=Cyrl}` (mixed-script) | **1.3 %** | 0.6 % | 1.0 % | 1.9 % |
+| `\p{sc=Han}` (CJK) | **0.8 %** | 0.9 % | 0.5 % | 1.3 % |
+| `date {4}-{2}-{2}` | **0.7 %** | 2.6 % | 0.7 % | 0.7 % |
+| ascii witness `[a-z]+` | **0.7 %** | 0.7 % | 0.7 % | 0.6 % |
+| `\p{N}+` (arabic digits) | **0.7 %** | 2.4 % | 1.5 % | 0.5 % |
+| `(?i)café` (accented) | **0.7 %** | 0.7 % | 1.3 % | 0.6 % |
+| `\p{L}+` (CJK) | **0.6 %** | 1.5 % | 0.3 % | 0.7 % |
+| `digits [0-9]+` | **0.5 %** | 3.1 % | 1.4 % | 0.4 % |
+| `hex [0-9a-f]{8}` | **0.4 %** | 1.1 % | 0.4 % | 0.3 % |
+| `anchored ^[a-z]+$` | **0.2 %** | 2.1 % | 0.2 % | 0.4 % |
+
+**A prediction of this project's, falsified, and the correction matters more than the prediction.**
+The expectation was that x86-64 floors would be systematically *wider* — that being the leg where the
+impossible deltas showed up, in a container, under gcc's punishing per-unit inline budget. The
+opposite holds: x86-64 is **tighter on 12 of 20 rows**, several by a factor of 3 to 6 (`digits` 0.5 %
+against 3.1 %, `anchored` 0.2 % against 2.1 %, `date` 0.7 % against 2.6 %), and its split-half
+stability is better as well (worst ratio **3.3× against arm64's 6.2×**).
+
+So **the devbox is the more sensitive instrument and the laptop is the noisy leg** — which inverts this
+project's habit of treating the local arm64 machine as primary and the devbox as the awkward
+confirmation. It is also the expected direction on reflection: a dedicated container against a laptop
+with thermal management, background load and performance/efficiency core migration.
+
+Two consequences for practice. **Judge on the devbox** when the two disagree about whether something
+cleared its floor. And **do not read the historical "x86-64 regressions that never reproduced" as x86
+noise** — that leg is the quiet one, so whatever those readings were, this is not the explanation.
 
 ## 5. What this retires
 
@@ -140,6 +204,8 @@ the floor** of the row they were measured on. Applying it:
 | v2026.8.10's "six rows regress 3–15 % on arm64" | **mostly unsupported** — of those rows, `\p{L}+` (floor 4.5 %), `words` (3.0 %) and `digits` (1.0 %) were quoted at 3–15 %; only the largest survive contact with their floors, and none was measured as a distribution |
 | v2026.8.11's "`alternation` costs +5.1 % x86 / +1.0 % arm64" | **withdrawn** — `alt`'s arm64 floor is 1.1 %, so the arm64 figure was noise, and the pair was the whole basis for calling it a price |
 | the batching train's "+16.8 % → +10.2 % when `batch_cap` went 16 → 4" | **plausible, not established** — the deltas are far above the relevant floors, but they are single draws and the *difference between them* (6.6 points) is not |
+| this page's own "the floors span a factor of seventy" | **withdrawn by this page** — an artefact of a max-based estimator on 8 readings; see §4 |
+| this page's own "x86-64 floors are probably wider" | **falsified by this page** — x86-64 is tighter on 12 of 20 rows; see §4 |
 | "`noinline`/`cold` placement matters" | **stands, and independently** — removing those attributes moved four Unicode rows and restoring them returned all four to ≈0, a mechanism already documented at `verify_class_row`, and the effect is reproducible rather than a single reading |
 | "fewer instructions is not faster" (−21 % Ir, +20 % time) | **stands** — instruction counts are deterministic, so that half needs no distribution, and a +20 % time change is above every floor in the table |
 | the `exhaustive-compat` / correctness results | **untouched** — this document is about timing only; correctness is decided by differentials and oracles, which layout cannot perturb |
@@ -159,10 +225,17 @@ Named so the gaps are visible rather than implied:
 - **Front-end performance counters.** `perf stat` on `instructions` plus front-end stall and iTLB
   counters would tell placement from real work *directly* rather than by distribution. x86-only in
   practice (macOS does not expose them through `perf`). This is the next thing to build.
-- **One binary per engine.** The harness links REAL, `std::regex`, PCRE2 and RE2 into a single
-  executable, so REAL's layout depends on how much competitor code sits beside it. `BENCHMARKS.md`
-  already suspected this for the `fields` row. Splitting removes a whole confound class cheaply.
-- **More null reps.** Eight draws give some rows a floor estimated from too little data (§4's `hex`).
+- ~~**One binary per engine.**~~ **Measured and closed.** The suspicion was that linking four engines
+  into one executable widens REAL's floor. Two findings retire it: dropping PCRE2 and RE2 removes only
+  **4.3 %** of the binary (`std::regex` is header-only and compiled either way; the other two are
+  dynamically linked), and a `--null --real-only` sweep moved floors in **both directions** rather than
+  tightening them — `\p{scx=Cyrl}` 7.3 → 2.0 % but `date` 0.5 → 3.3 %, on the unstable max estimator
+  that §4 has since replaced. There is no evidence of a systematic gain, and the change would break
+  comparability with every published stamp. Not worth doing.
+- **A floor estimator with a known standard error.** The q95 quantile converges where the old maximum
+  did not, but §4's split-half columns still disagree by up to 6.2× on arm64. Bootstrapping the floor
+  from the saved per-draw deltas (`--save-deltas` writes them) would give each threshold an interval
+  instead of a point, which is what "is this above the floor?" actually needs.
 - **Coz** (Curtsinger & Berger, SOSP 2015) for *where to optimise*: causal profiling measures the
   speed-up a line would buy, differentially inside one binary, so layout cancels.
 - **PGO, then BOLT/Propeller, on the bindings**, where the layout is ours to ship (§1).

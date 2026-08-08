@@ -94,19 +94,59 @@ DRAWS: list[tuple[int, int]] = [
 ]
 
 
-def build(tree: Path, out: Path, align: int, pad: int, sciforge: Path, extra_env: dict[str, str]) -> None:
-    """Compiles one layout draw of the engine benchmark."""
-    flags = ["-std=c++20", "-O2", f"-falign-functions={align}", f"-DBENCH_LAYOUT_PAD={pad}",
-             '-DBENCH_FLAGS="-O2"', '-DBENCH_COMMIT="layout-sweep"',
-             "-I", str(tree / "include"), "-I", str(sciforge)]
-    for pkg, macro in (("libpcre2-8", "HAVE_PCRE2"), ("re2", "HAVE_RE2")):
-        probe = subprocess.run(["pkg-config", "--exists", pkg], check=False)
+# The null floor's estimator. NOT a maximum, and the reason is a design fault this tool shipped with
+# for one afternoon: the widest excursion GROWS WITH THE SAMPLE SIZE, so a max-based floor is not a
+# consistent estimator and cannot be stabilised by taking more data. Measured: at 8 readings
+# `digits [0-9]+` calibrated at 1.0 %, at 24 readings the same configuration gave 6.0 %, and the tool
+# was at that moment advising the reader to "raise --reps until the ratio settles" -- advice that
+# could never be satisfied. A high quantile converges to a fixed value instead, which is what a
+# threshold has to do to mean anything.
+FLOOR_QUANTILE = 0.95
+
+
+def floor_of(deltas: list[float]) -> float:
+    """The noise floor for one row: a high quantile of |delta|, linearly interpolated."""
+    mags = sorted(abs(d) for d in deltas)
+    if not mags:
+        return 0.0
+    if len(mags) == 1:
+        return mags[0]
+    pos = FLOOR_QUANTILE * (len(mags) - 1)
+    lo = int(pos)
+    hi = min(lo + 1, len(mags) - 1)
+    return mags[lo] + (mags[hi] - mags[lo]) * (pos - lo)
+
+
+def build(tree: Path, out: Path, align: int, pad: int, sciforge: Path, extra_env: dict[str, str],
+          real_only: bool = False) -> None:
+    """Compiles one layout draw of the engine benchmark.
+
+    `real_only` drops the optional competitor engines, which is a METHODOLOGY experiment rather than a
+    convenience: MEASUREMENT.md §6 suspected that linking four engines into one executable widens
+    REAL's noise floor, because REAL's code then sits beside whatever the competitors brought. Running
+    `--null --real-only` and comparing the floors answers that. (A first check tempers the
+    expectation: dropping PCRE2 and RE2 removes only 4.3 % of the binary -- `std::regex` is
+    header-only and compiled either way, and the other two are dynamically linked.)
+    """
+    cflags = ["-std=c++20", "-O2", f"-falign-functions={align}", f"-DBENCH_LAYOUT_PAD={pad}",
+              '-DBENCH_FLAGS="-O2"', '-DBENCH_COMMIT="layout-sweep"',
+              "-I", str(tree / "include"), "-I", str(sciforge)]
+    libs: list[str] = []
+    for pkg, macro in (() if real_only else (("libpcre2-8", "HAVE_PCRE2"), ("re2", "HAVE_RE2"))):
+        probe = subprocess.run(["pkg-config", "--exists", pkg], check=False,
+                               capture_output=True, env={**extra_env})
         if probe.returncode == 0:
-            flags.append(f"-D{macro}")
-            cfg = subprocess.run(["pkg-config", "--cflags", "--libs", pkg],
-                                 capture_output=True, text=True, check=True)
-            flags.extend(cfg.stdout.split())
-    cmd = ["c++", *flags, str(tree / "benchmarks" / "bench_engines.cpp"), "-o", str(out)]
+            cflags.append(f"-D{macro}")
+            cf = subprocess.run(["pkg-config", "--cflags", pkg], capture_output=True, text=True,
+                                check=True, env={**extra_env})
+            cflags.extend(cf.stdout.split())
+            lf = subprocess.run(["pkg-config", "--libs", pkg], capture_output=True, text=True,
+                                check=True, env={**extra_env})
+            libs.extend(lf.stdout.split())
+    # Libraries go AFTER the translation unit, which is required rather than conventional: GNU ld
+    # resolves left to right, so `-lpcre2-8 source.cpp` links cleanly on macOS and fails on Linux with
+    # "undefined reference" for every symbol the source needs. Found the hard way on the x86 devbox.
+    cmd = ["c++", *cflags, str(tree / "benchmarks" / "bench_engines.cpp"), "-o", str(out), *libs]
     subprocess.run(cmd, check=True, env={**extra_env})
 
 
@@ -129,7 +169,7 @@ def measure(binary: Path, env: dict[str, str]) -> dict[str, float]:
 
 
 def sweep_pair(tree_a: Path, tree_b: Path, draws: list[tuple[int, int]], sciforge: Path,
-               env: dict[str, str], reps: int) -> tuple[list[dict[str, float]], list[dict[str, float]]]:
+               env: dict[str, str], reps: int, real_only: bool = False) -> tuple[list[dict[str, float]], list[dict[str, float]]]:
     """Builds every draw of both sides, then runs them INTERLEAVED.
 
     Interleaving is not a nicety. The first version of this tool ran side A's whole sweep and then
@@ -146,8 +186,8 @@ def sweep_pair(tree_a: Path, tree_b: Path, draws: list[tuple[int, int]], sciforg
             a = Path(tmp) / f"A_{i}"
             b = Path(tmp) / f"B_{i}"
             print(f"  build draw {i + 1}/{len(draws)}  align={align} pad={pad}", file=sys.stderr)
-            build(tree_a, a, align, pad, sciforge, env)
-            build(tree_b, b, align, pad, sciforge, env)
+            build(tree_a, a, align, pad, sciforge, env, real_only)
+            build(tree_b, b, align, pad, sciforge, env, real_only)
             bins.append((a, b))
         ra: list[dict[str, float]] = []
         rb: list[dict[str, float]] = []
@@ -212,6 +252,9 @@ def main() -> int:
     ap.add_argument("--save-deltas", type=Path,
                     help="write the raw per-draw deltas here, so a rule change can be re-applied "
                          "to an existing sweep instead of paying for another one")
+    ap.add_argument("--real-only", action="store_true",
+                    help="build without PCRE2/RE2 -- see build() for the methodology question this "
+                         "answers")
     ap.add_argument("--reps", type=int, default=1,
                     help="timed repetitions of the interleaved run over every draw")
     args = ap.parse_args()
@@ -235,15 +278,44 @@ def main() -> int:
     other = args.base if args.null else args.cand
     print(f"side A: {args.base}\nside B: {other}" + ("  (null calibration)" if args.null else ""),
           file=sys.stderr)
-    a, b = sweep_pair(args.base, other, draws, args.sciforge, env, args.reps)
+    a, b = sweep_pair(args.base, other, draws, args.sciforge, env, args.reps, args.real_only)
     k = len(a)
 
     if args.null:
         deltas = paired_deltas(a, b)
         report(deltas, None, k)
-        floors = {n: max(abs(min(ds)), abs(max(ds))) for n, ds in deltas.items()}
-        print("\nnoise floor per row = the widest excursion this null sweep produced.")
+        floors = {n: floor_of(ds) for n, ds in deltas.items()}
+        print(f"\nnoise floor per row = the {FLOOR_QUANTILE:.0%} quantile of |delta| over this sweep")
+        print("(a quantile, NOT the widest excursion -- see floor_of for why a max cannot work).")
         print("A candidate must beat its row's floor to be reported as REAL.")
+        print(f"\n{'case':44} {'floor':>7} {'max':>7}")
+        for n, ds in sorted(floors.items(), key=lambda kv: -kv[1]):
+            print(f"{n[:44]:44} {ds:6.1f}% {max(abs(x) for x in deltas[n]):6.1f}%")
+        # SPLIT-HALF CHECK: the floor is a MAXIMUM over readings, which is a high-variance statistic.
+        # Comparing the two halves of this sweep says how much to trust it. This exists because three
+        # cross-configuration comparisons (arm64 vs x86-64, four engines vs REAL-only) each showed
+        # floors moving in BOTH directions, which is what an unstable estimator looks like -- and the
+        # tempting conclusion "configuration X is noisier" was not supported by it.
+        if k >= 4:
+            half = k // 2
+            worst_ratio = 0.0
+            worst_row = ""
+            for name, ds in deltas.items():
+                lo = floor_of(ds[:half])
+                hi = floor_of(ds[half:])
+                if min(lo, hi) > 0.0 and max(lo, hi) / min(lo, hi) > worst_ratio:
+                    worst_ratio, worst_row = max(lo, hi) / min(lo, hi), name
+            print(f"\nsplit-half stability: the two halves of this sweep disagree by up to "
+                  f"{worst_ratio:.1f}x ({worst_row}).")
+            if worst_ratio > 2.0:
+                print("  ^ that is a LOT. The floors remain usable as thresholds (they are conservative")
+                print("    by construction), but do NOT compare them against another configuration's")
+                print("    floors to conclude which is noisier: three such comparisons here -- arm64 vs")
+                print("    x86-64, four engines vs REAL-only -- each moved floors in BOTH directions,")
+                print("    which is what an unstable estimate looks like, not a property of the build.")
+        if args.save_deltas:
+            args.save_deltas.write_text(json.dumps(deltas, indent=2, sort_keys=True))
+            print(f"raw per-draw deltas written to {args.save_deltas}")
         if args.save_floors:
             args.save_floors.write_text(json.dumps(floors, indent=2, sort_keys=True))
             print(f"floors written to {args.save_floors}")
