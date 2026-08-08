@@ -3204,7 +3204,7 @@ namespace real::detail {
      *       measurement discipline, not the conclusion "two fillers is what fits": each added branch
      *       in `refill_batch` must be re-measured on BOTH ISAs against rows that never touch it.
      */
-    template <bool Cascade>
+    template <bool Cascade, bool WbEdge>
     constexpr std::size_t fill_class_spans(std::string_view text,
                                            std::size_t      start,
                                            cp_span*         out,
@@ -3212,6 +3212,14 @@ namespace real::detail {
     {
       const std::uint8_t* const tbl {
         class_table(static_cast<std::size_t>(prog_.hints.greedy_class_loop))};
+      // A TEMPLATE parameter, so the guard below compiles away entirely for every pattern that does
+      // not carry a dropped leading `\b` -- which is nearly all of them. Two weaker versions were
+      // measured and REFUSED first, both by benchmarks/bench_layout.py against this machine's own
+      // floors: written inline per iteration it cost `digits` +17.3 %, `words` +13.6 % and
+      // `\p{L}+` +13.4 % (it re-read the hint struct on every span emitted); hoisting it to a
+      // runtime local still cost +6 to +8 % on five class-scan rows, all judged REAL. Only
+      // `if constexpr` leaves those rows compiling to what they compiled to before.
+      bool        wb_edge           {WbEdge && start > 0};
       std::size_t n                 {0};
       std::size_t i                 {start};
       while (i < text.size()) {
@@ -3232,6 +3240,34 @@ namespace real::detail {
         else {
           while (end < text.size() && tbl[static_cast<std::uint8_t>(text[end])] != 0U) {
             ++end;
+          }
+        }
+        // B-1 window-edge guard, and it fires at exactly ONE position per walk. A candidate reached
+        // by scanning forward past a non-member byte is provably preceded by one, so B-1's
+        // redundancy argument (a maximal run can only start where the preceding character is
+        // non-word) holds for it unconditionally. The single exception is the first candidate when
+        // it coincides with `start` and `start > 0`, because a caller-supplied `pos` does NOT assert
+        // that `text[pos - 1]` is absent or non-word -- see pattern_hints::wb_lead_maximal_run. On a
+        // refill, `start` is the previous span's end, whose byte the scan just rejected, so the
+        // condition cannot hold there; this is the same test, at the same position, that
+        // run_class_loop applies.
+        // The guard, and it is a REGISTER test that goes false after the first span. Written the
+        // obvious way -- the whole condition inline, per iteration -- it read `prog_.hints` out of the
+        // hint struct on every span emitted and cost `digits` +17.3 %, `words` +13.6 % and `\p{L}+`
+        // +13.4 % on x86-64, all four judged REAL by benchmarks/bench_layout.py against their measured
+        // floors. Hoisted, those rows are back inside noise. The assertion evaluator is the FREE
+        // function given this filler's own `text`, not the member wrapper: the wrapper reads `text_`,
+        // which `run()` binds and a filler never does, so calling it here segfaults in word_before on
+        // a null view (ASan caught it the first time). `ascii_word` mirrors the wrapper exactly for a
+        // non-flipped site.
+        if constexpr (WbEdge) {
+          if (wb_edge) {
+            wb_edge = false; // can only ever be the FIRST candidate -- see the pre-loop initialiser
+            if (i == start
+                && !detail::assertion_holds(assert_kind::word_boundary, text, i, !prog_.unicode_word)) {
+              i = end; // no genuine boundary here: skip this whole run, as the general route does
+              continue;
+            }
           }
         }
         out[n] = cp_span {.start = i, .end = end};
@@ -3307,6 +3343,7 @@ namespace real::detail {
      * \param[in]  cap   Capacity of \p out; the walk stops there and resumes from the last end.
      * \return How many spans were written.
      */
+    template <bool WbEdge>
     constexpr std::size_t fill_cp_class_spans(std::string_view text,
                                               std::size_t      start,
                                               cp_span*         out,
@@ -3330,6 +3367,14 @@ namespace real::detail {
                          };
       const bool        greedy  {prog_.hints.greedy_cp_class_plus};
       const std::size_t max_len {prog_.hints.greedy_cp_class_max};
+      // A TEMPLATE parameter, so the guard below compiles away entirely for every pattern that does
+      // not carry a dropped leading `\b` -- which is nearly all of them. Two weaker versions were
+      // measured and REFUSED first, both by benchmarks/bench_layout.py against this machine's own
+      // floors: written inline per iteration it cost `digits` +17.3 %, `words` +13.6 % and
+      // `\p{L}+` +13.4 % (it re-read the hint struct on every span emitted); hoisting it to a
+      // runtime local still cost +6 to +8 % on five class-scan rows, all judged REAL. Only
+      // `if constexpr` leaves those rows compiling to what they compiled to before.
+      bool              wb_edge {WbEdge && start > 0};
       std::size_t       n       {0};
       std::size_t       i       {start};
       while (i < text.size()) {
@@ -3373,6 +3418,34 @@ namespace real::detail {
               break;
             }
             end += w2;
+          }
+        }
+        // B-1 window-edge guard, and it fires at exactly ONE position per walk. A candidate reached
+        // by scanning forward past a non-member byte is provably preceded by one, so B-1's
+        // redundancy argument (a maximal run can only start where the preceding character is
+        // non-word) holds for it unconditionally. The single exception is the first candidate when
+        // it coincides with `start` and `start > 0`, because a caller-supplied `pos` does NOT assert
+        // that `text[pos - 1]` is absent or non-word -- see pattern_hints::wb_lead_maximal_run. On a
+        // refill, `start` is the previous span's end, whose byte the scan just rejected, so the
+        // condition cannot hold there; this is the same test, at the same position, that
+        // run_cp_class_loop applies.
+        // The guard, and it is a REGISTER test that goes false after the first span. Written the
+        // obvious way -- the whole condition inline, per iteration -- it read `prog_.hints` out of the
+        // hint struct on every span emitted and cost `digits` +17.3 %, `words` +13.6 % and `\p{L}+`
+        // +13.4 % on x86-64, all four judged REAL by benchmarks/bench_layout.py against their measured
+        // floors. Hoisted, those rows are back inside noise. The assertion evaluator is the FREE
+        // function given this filler's own `text`, not the member wrapper: the wrapper reads `text_`,
+        // which `run()` binds and a filler never does, so calling it here segfaults in word_before on
+        // a null view (ASan caught it the first time). `ascii_word` mirrors the wrapper exactly for a
+        // non-flipped site.
+        if constexpr (WbEdge) {
+          if (wb_edge) {
+            wb_edge = false; // can only ever be the FIRST candidate -- see the pre-loop initialiser
+            if (i == start
+                && !detail::assertion_holds(assert_kind::word_boundary, text, i, !prog_.unicode_word)) {
+              i = end; // no genuine boundary here: skip this whole run, as the general route does
+              continue;
+            }
           }
         }
         out[n] = cp_span {.start = i, .end = end};

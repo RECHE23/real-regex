@@ -209,6 +209,50 @@ TEST(the_single_class_shapes_batching_declines)
   EXPECT_EQ(region_re.count_matches(subject), 9U);
 }
 
+// The dropped-leading-`\b` shape (`\b\w+\b`, where the recognizer proves the assertion redundant on
+// a maximal run and removes it, setting pattern_hints::wb_lead_maximal_run). Batching used to decline
+// it outright; the fillers now carry the same one-position window-edge guard the general route does,
+// and THIS TEST IS THAT GUARD'S ONLY PROOF. The whole risk lives at a caller-supplied `pos > 0`: `pos`
+// restricts where a match may start, it does NOT assert that `text[pos - 1]` is absent or non-word, so
+// a run beginning exactly at `pos` inside a word must be refused even though B-1's redundancy argument
+// would otherwise accept it. Found live by differential fuzzing before the guard existed.
+TEST(the_dropped_lead_word_boundary_agrees_from_every_offset)
+{
+  const std::string text {"the quick_brown fox42 caf\xC3\xA9 na\xC3\xAFve, w\xC3\xB6rld"};
+  for (const char* p : {R"(\b\w+\b)", R"(\b\w+)", R"(\w+\b)", R"(\b[A-Za-z0-9_]+\b)"}) {
+    const real::regex re {p};
+    EXPECT_EQ(by_iteration(re, text), by_search(re, text));
+    // EVERY offset, not a sampled few: the guard fires only when the batch's first candidate
+    // coincides with `pos`, so the offsets that exercise it are exactly the ones interior to a word.
+    // `find_iter(text, pos)` is the BATCHED path; `search(text, pos)` is the general route, which is
+    // therefore the oracle. They must agree on the first match at every single offset.
+    for (std::size_t pos {0}; pos <= text.size(); ++pos) {
+      const auto general {re.search(text, pos)};
+      auto       range   {re.find_iter(text, pos)};
+      const auto it      {range.begin()};
+      const bool batched {!it.exhausted()};
+      EXPECT_EQ(batched, general.matched());
+      if (batched && general.matched()) {
+        EXPECT_EQ(it->start(), general.start());
+        EXPECT_EQ(it->end(), general.end());
+      }
+    }
+  }
+  // The discriminating case in the open, so a regression names itself: searching `\b\w+` from inside
+  // a word must NOT match at that offset -- there is no boundary there -- and must skip the whole run.
+  const real::regex bw   {R"(\b\w+)"};
+  const std::string word {"hello world"};
+  EXPECT_EQ(bw.search(word, 2).start(), 6U); // inside "hello" -> "world", not "llo"
+  EXPECT_EQ(bw.search(word, 0).start(), 0U);
+  EXPECT_EQ(bw.search(word, 6).start(), 6U); // AT a boundary: accepted
+  // A subject that is one long word has no second run to fall back on.
+  const std::string one {"abcdef"};
+  EXPECT(!bw.search(one, 3).matched());
+  // ... and the batched walk must reach the same conclusion, not merely the general route.
+  auto solo {bw.find_iter(one, 3)};
+  EXPECT(solo.begin().exhausted());
+}
+
 // count_matches and find_all read the same walk, so they must report the same thing the iteration does
 // — this is the API surface the batched path actually serves.
 TEST(the_public_counters_agree_with_the_walk)

@@ -474,17 +474,26 @@ namespace real {
         bool batchable {};
         batchable = !std::is_constant_evaluated() && sem == match_semantics::first
                     && prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0
-                    && !prog.hints.wb_lead_maximal_run && !detail::class_fastpath_disabled()
+                    && !detail::class_fastpath_disabled()
                     && !prog.hints.anchored_start && !prog.hints.line_anchored;
+        // A DROPPED leading `\b` (\ref real::detail::pattern_hints::wb_lead_maximal_run) no longer
+        // disqualifies the two class-run routes: their fillers now carry the same one-position
+        // window-edge guard the general route does. It cost `\b\w+\b` 18.81 ns per match against
+        // `\w+`'s 6.80 on the same corpus with the same match count -- 2.8x for an assertion the
+        // recognizer had already proved redundant everywhere except at a caller-supplied `pos`.
+        // The other two routes have not been taught the guard and still decline.
         // Each route then adds only its OWN selector, which is what the four lines below now read as.
+        wb_edge_         = prog.hints.wb_lead_maximal_run;
         batch_bytes_     = batchable && prog.hints.greedy_class_loop >= 0
                            && prog.hints.greedy_class_loop_end == 0
                            && prog.hints.greedy_class_loop_min <= 1;
-        batch_cp_ascii_  = batchable && prog.hints.codepoint_class_ascii >= 0
+        batch_cp_ascii_  = batchable && !prog.hints.wb_lead_maximal_run
+                           && prog.hints.codepoint_class_ascii >= 0
                            && prog.hints.greedy_class_loop < 0 && prog.hints.greedy_cp_class < 0;
         // The bare single byte-class (`[a-z]`, no quantifier) needs no `{k,}` or capture exclusion:
         // the 4-opcode shape pattern_hints::single_class recognizes admits neither.
-        batch_single_cl_ = batchable && prog.hints.single_class >= 0;
+        batch_single_cl_ = batchable && !prog.hints.wb_lead_maximal_run
+                           && prog.hints.single_class >= 0;
         // The code-point class loop is the fourth batched route and deliberately gets NO member of its
         // own: it is \ref refill_batch's `else`, so naming it would grow the iterator for nothing —
         // and this iterator's size is measured, not assumed (see \ref batch_cap).
@@ -599,6 +608,11 @@ namespace real {
     //! \ref real::detail::pattern_hints::greedy_class_loop describes `class+` only and carries no
     //! "single" flag to batch on.
     bool                                                                  batch_single_cl_  {};
+    //! \brief The walk's pattern carries a DROPPED leading `\b` (\ref
+    //!        real::detail::pattern_hints::wb_lead_maximal_run), so its filler needs the
+    //!        one-position window-edge guard. Decided once, and passed as a template argument rather
+    //!        than tested in the scan loop.
+    bool                                                                  wb_edge_          {};
 
     /*!
      * \brief Cold half of the batched walk: refills \ref batch_ from the engine.
@@ -618,8 +632,17 @@ namespace real {
     {
       detail::pike_vm<typename Storage::state_type, true> bvm {prog_, state_};
       if (batch_bytes_) {
-        batch_n_ = cascade_ ? bvm.template fill_class_spans<true>(text_, pos_, batch_, batch_cap)
-                            : bvm.template fill_class_spans<false>(text_, pos_, batch_, batch_cap);
+        // Four instantiations, chosen once per walk. `wb_edge_` is nearly always false, and when it
+        // is the guard is not merely untaken but ABSENT -- see fill_class_spans's own note for the
+        // two runtime spellings that were measured and refused.
+        if (wb_edge_) {
+          batch_n_ = cascade_ ? bvm.template fill_class_spans<true, true>(text_, pos_, batch_, batch_cap)
+                              : bvm.template fill_class_spans<false, true>(text_, pos_, batch_, batch_cap);
+        }
+        else {
+          batch_n_ = cascade_ ? bvm.template fill_class_spans<true, false>(text_, pos_, batch_, batch_cap)
+                              : bvm.template fill_class_spans<false, false>(text_, pos_, batch_, batch_cap);
+        }
       }
       else if (batch_cp_ascii_) {
         batch_n_ = cascade_
@@ -633,7 +656,8 @@ namespace real {
         // The code-point class loop — the fourth eligible route, reached as the `else` rather than
         // through a flag of its own (see the constructor's `cp_class`). Nothing else can arrive here:
         // batch_eligible_ is the disjunction of exactly these four.
-        batch_n_ = bvm.fill_cp_class_spans(text_, pos_, batch_, batch_cap);
+        batch_n_ = wb_edge_ ? bvm.template fill_cp_class_spans<true>(text_, pos_, batch_, batch_cap)
+                            : bvm.template fill_cp_class_spans<false>(text_, pos_, batch_, batch_cap);
       }
       batch_i_ = 0;
       return batch_n_ != 0;

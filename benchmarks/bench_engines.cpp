@@ -555,6 +555,12 @@ namespace {
   {
     return {
       {"unicode \\w+ (mixed-script)", "\\w+", corpus_mixed_script()},
+      // The `\b`-WRAPPED twin of the row above, added for the reason the anchored and unquantified
+      // rows were: it is a different route, it is the canonical word tokenizer, and this table
+      // measured only the bare form. It matches exactly what `\w+` matches here -- the recognizer
+      // proves a leading `\b` redundant on a maximal run -- so any gap between the two rows is pure
+      // routing, which is what makes the pair worth publishing side by side.
+      {"unicode \\b\\w+\\b (mixed-script)", "\\b\\w+\\b", corpus_mixed_script()},
       {"unicode \\p{L}+ (CJK)", "\\p{L}+", corpus_cjk()},
       {"unicode \\p{N}+ (arabic digits)", "\\p{N}+", corpus_arabic()},
       {"unicode \\p{sc=Han} (CJK)", "\\p{sc=Han}", corpus_cjk()},
