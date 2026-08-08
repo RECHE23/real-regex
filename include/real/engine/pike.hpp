@@ -4901,6 +4901,23 @@ namespace real::detail {
      * \param[in]  mode      Anchoring mode.
      * \param[out] out_slots Receives the matched span on success.
      * \return `true` if some branch matched.
+     *
+     * \note **This route is 99 % per-match RETURN at density, and that is measured rather than
+     *       inferred.** Holding the pattern (`cat|dog|fish`) and 200 KB of bytes fixed and varying only
+     *       how often a match must be emitted gives a clean line across five densities (50 000 / 25 000
+     *       / 12 500 / 6 250 / 3 125 matches): the fit is **19.13 ns per match of return** against
+     *       **5 776 ns of scanning for the whole 200 KB** (0.0289 ns/byte). At the densest point the
+     *       scan is 0.6 % of the work. Even §A's `alt` row, on sparse prose, is ~71 % return -- which
+     *       is why it loses to PCRE2-JIT on both ISAs while the scan itself is nearly free.
+     *
+     *       So the opportunity here is a BATCH FILLER, exactly as for the class routes, and the
+     *       recoverable amount is the one the class routes actually recovered: `[^,]+` went 19.45 ns
+     *       per match to 4.58 when batched. Not attempted yet, and two things make it the heaviest
+     *       item on that list rather than the obvious next one -- the search body below is a SIMD
+     *       block scan with a carried mask plus a scalar tail plus a non-SIMD fallback, so a filler
+     *       reproduces all three; and a new filler body is the change shape that charged unrelated
+     *       rows every time it was tried during the batching work (docs/MEASUREMENT.md §5.4, §5.5).
+     *       Judge it on BOTH instruments if it is built.
      */
     template <typename OutSlots>
     constexpr bool run_alternation(std::string_view text,
