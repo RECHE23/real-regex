@@ -218,6 +218,32 @@ single-build evidence** — up to +17.8 % on x86-64 — and then **exonerated by
 row's median within ±0.9 %, every row below its floor. It was the measurement that was wrong, not the
 change.
 
+### 5.4 What the instrument is actually for: three spellings of one guard
+
+The clearest case so far, because none of these calls could have been made by reading the code. Teaching
+the batch fillers a one-position word-boundary guard (so `\b\w+\b` stops paying 2.8× its own bare
+form) was written three ways. The *feature* was identical each time; only its spelling differed:
+
+| spelling | target row | rows judged REAL against their floors |
+| --- | ---: | --- |
+| condition inline, evaluated per iteration | −25.6 % | **five regressions**: `digits` +17.3 %, `words` +13.6 %, witness +13.6 %, `\p{L}+` +13.4 % |
+| hoisted to a runtime local, false after the first span | −26.1 % | **five regressions**: `words` +7.7 %, witness +7.4 %, `\p{L}+` +7.3 %, `\w+` +6.8 %, `digits` +6.2 % |
+| `if constexpr` on a template parameter | **−28.6 %** | **none** |
+
+Three things this shows that a single-build A/B could not have.
+
+**The regressions were real, not noise.** Sixteen of sixteen draws agreed in sign, and the medians sat
+three to twenty times above the affected rows' floors. The old method would have produced *a* number
+for each spelling with no way to tell which of them meant anything.
+
+**The mechanism was findable from the measurement.** The inline spelling re-read the hint struct on
+every span emitted, in loops that emit a span every few bytes. That is why hoisting halved the cost —
+and why halving was not enough.
+
+**"Indistinguishable" is the useful verdict, not a shrug.** The accepted spelling's other twenty rows
+came back indistinguishable, several with negative medians. That is precisely the claim the change
+needed, and it is a claim, not an absence of one.
+
 ## 6. What is still missing
 
 Named so the gaps are visible rather than implied:
