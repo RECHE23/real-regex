@@ -100,6 +100,23 @@ bench-layout-null: ## [bench] Calibrate this machine's per-row noise floor (run 
 	   --sciforge $(abspath $(SCIFORGE_INCLUDE)) --save-floors $(BUILD)/floors.json
 
 # BASE and CAND are trees (git worktrees are the easy way to get two). Requires bench-layout-null.
+# The MINIMAL unit (real.hpp only, no competitor engines) -- the instrument that answers "does this
+# help a consumer", where bench-layout answers "what does this project publish". They disagree: three
+# changes refused on the four-engine harness for costing `\p{L}+` 5-9 % cost it NOTHING here. See
+# docs/MEASUREMENT.md §5.5 and benchmarks/bench_minimal.cpp's own header. Needs its OWN null run.
+bench-layout-min-null: ## [bench] Calibrate the minimal (real.hpp-only) unit's noise floor
+	@mkdir -p $(BUILD)
+	@cd $(ROOT) && $(PYTHON) benchmarks/bench_layout.py --base . --null --reps 3 \
+	   --source bench_minimal.cpp --sciforge $(abspath $(SCIFORGE_INCLUDE)) \
+	   --save-floors $(BUILD)/floors_min.json
+
+bench-layout-min: ## [bench] Judge BASE/CAND in the minimal unit (needs bench-layout-min-null)
+	@test -n "$(BASE)" -a -n "$(CAND)" || { echo "usage: make bench-layout-min BASE=<tree> CAND=<tree>"; exit 2; }
+	@test -f $(BUILD)/floors_min.json || { echo "run 'make bench-layout-min-null' on this machine first"; exit 2; }
+	@cd $(ROOT) && $(PYTHON) benchmarks/bench_layout.py --base $(BASE) --cand $(CAND) --reps 3 \
+	   --source bench_minimal.cpp --sciforge $(abspath $(SCIFORGE_INCLUDE)) \
+	   --floors $(BUILD)/floors_min.json --save-deltas $(BUILD)/deltas_min.json
+
 bench-layout: ## [bench] Judge BASE=<tree> CAND=<tree> against the calibrated floors
 	@test -n "$(BASE)" -a -n "$(CAND)" || { echo "usage: make bench-layout BASE=<tree> CAND=<tree>"; exit 2; }
 	@test -f $(BUILD)/floors.json || { echo "run 'make bench-layout-null' on this machine first"; exit 2; }

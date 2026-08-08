@@ -634,6 +634,12 @@ bench-layout-null:
 bench-layout:
 	@$(MAKE) -C benchmarks bench-layout BASE=$(BASE) CAND=$(CAND)
 
+bench-layout-min-null:
+	@$(MAKE) -C benchmarks bench-layout-min-null
+
+bench-layout-min:
+	@$(MAKE) -C benchmarks bench-layout-min BASE=$(BASE) CAND=$(CAND)
+
 bench-static:
 	@$(MAKE) -C benchmarks bench-static
 

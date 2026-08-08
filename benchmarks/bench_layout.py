@@ -118,7 +118,7 @@ def floor_of(deltas: list[float]) -> float:
 
 
 def build(tree: Path, out: Path, align: int, pad: int, sciforge: Path, extra_env: dict[str, str],
-          real_only: bool = False) -> None:
+          real_only: bool = False, source: str = "bench_engines.cpp") -> None:
     """Compiles one layout draw of the engine benchmark.
 
     `real_only` drops the optional competitor engines, which is a METHODOLOGY experiment rather than a
@@ -146,7 +146,7 @@ def build(tree: Path, out: Path, align: int, pad: int, sciforge: Path, extra_env
     # Libraries go AFTER the translation unit, which is required rather than conventional: GNU ld
     # resolves left to right, so `-lpcre2-8 source.cpp` links cleanly on macOS and fails on Linux with
     # "undefined reference" for every symbol the source needs. Found the hard way on the x86 devbox.
-    cmd = ["c++", *cflags, str(tree / "benchmarks" / "bench_engines.cpp"), "-o", str(out), *libs]
+    cmd = ["c++", *cflags, str(tree / "benchmarks" / source), "-o", str(out), *libs]
     subprocess.run(cmd, check=True, env={**extra_env})
 
 
@@ -169,7 +169,8 @@ def measure(binary: Path, env: dict[str, str]) -> dict[str, float]:
 
 
 def sweep_pair(tree_a: Path, tree_b: Path, draws: list[tuple[int, int]], sciforge: Path,
-               env: dict[str, str], reps: int, real_only: bool = False) -> tuple[list[dict[str, float]], list[dict[str, float]]]:
+               env: dict[str, str], reps: int, real_only: bool = False,
+               source: str = "bench_engines.cpp") -> tuple[list[dict[str, float]], list[dict[str, float]]]:
     """Builds every draw of both sides, then runs them INTERLEAVED.
 
     Interleaving is not a nicety. The first version of this tool ran side A's whole sweep and then
@@ -186,8 +187,8 @@ def sweep_pair(tree_a: Path, tree_b: Path, draws: list[tuple[int, int]], sciforg
             a = Path(tmp) / f"A_{i}"
             b = Path(tmp) / f"B_{i}"
             print(f"  build draw {i + 1}/{len(draws)}  align={align} pad={pad}", file=sys.stderr)
-            build(tree_a, a, align, pad, sciforge, env, real_only)
-            build(tree_b, b, align, pad, sciforge, env, real_only)
+            build(tree_a, a, align, pad, sciforge, env, real_only, source)
+            build(tree_b, b, align, pad, sciforge, env, real_only, source)
             bins.append((a, b))
         ra: list[dict[str, float]] = []
         rb: list[dict[str, float]] = []
@@ -252,6 +253,11 @@ def main() -> int:
     ap.add_argument("--save-deltas", type=Path,
                     help="write the raw per-draw deltas here, so a rule change can be re-applied "
                          "to an existing sweep instead of paying for another one")
+    ap.add_argument("--source", default="bench_engines.cpp",
+                    help="translation unit to measure. bench_minimal.cpp includes ONLY real.hpp, which "
+                         "is what a consumer's unit looks like; the default includes <regex>, PCRE2 and "
+                         "RE2 and is the instrument the published tables use. The two answer different "
+                         "questions -- see bench_minimal.cpp's own header.")
     ap.add_argument("--real-only", action="store_true",
                     help="build without PCRE2/RE2 -- see build() for the methodology question this "
                          "answers")
@@ -278,7 +284,8 @@ def main() -> int:
     other = args.base if args.null else args.cand
     print(f"side A: {args.base}\nside B: {other}" + ("  (null calibration)" if args.null else ""),
           file=sys.stderr)
-    a, b = sweep_pair(args.base, other, draws, args.sciforge, env, args.reps, args.real_only)
+    a, b = sweep_pair(args.base, other, draws, args.sciforge, env, args.reps, args.real_only,
+                      args.source)
     k = len(a)
 
     if args.null:

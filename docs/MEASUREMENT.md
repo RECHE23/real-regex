@@ -244,10 +244,58 @@ and why halving was not enough.
 came back indistinguishable, several with negative medians. That is precisely the claim the change
 needed, and it is a claim, not an absence of one.
 
+### 5.5 TWO instruments, because the harness is not shaped like a consumer
+
+The single most consequential finding of the day, and it invalidated three of this project's own
+refusals within an hour of being measured.
+
+Every layout verdict above was taken against `benchmarks/bench_engines.cpp`, which includes `<regex>`,
+PCRE2 and RE2 alongside `real.hpp`. Three changes were refused during one session because they charged
+the code-point class rows 5 to 9 % **there**: a counted-minimum check for `X{k,}` (twice, once
+templated), and a class-index parameter so the bare possessive loop could reuse a filler. Each refusal
+was correctly reasoned *from that instrument*. The instrument was the problem.
+
+A consumer includes only `real.hpp`. `benchmarks/bench_minimal.cpp` is that translation unit — nothing
+else in it — and `bench_layout.py --source bench_minimal.cpp` judges against it. Re-judging the
+counted-minimum change there, 8 draws × 3 reps = 24 paired readings on x86-64:
+
+| row | four-engine harness | minimal unit |
+| --- | ---: | ---: |
+| `\w{2,}` (the target) | not measured — no row existed | **−38.1 %**, 24/24, REAL |
+| `\p{L}{3,}` (the target) | not measured | **−36.2 %**, 24/24, REAL |
+| `\p{L}+` (the row that caused the refusal) | **+4.9 %, then +7.6 %** | **−0.3 %, indistinguishable** |
+
+The cost that drove the decision does not exist in a unit shaped like the one users compile.
+
+**Note what this does NOT say.** The harness is not "wrong": it is a four-engine comparison binary, and
+the absolute numbers and competitor ratios in `BENCHMARKS.md` are what they are precisely because that
+is the binary. Nor is the minimal unit a truer instrument in general — its own split-half stability is
+worse (13.9× on `\w+` against the harness's 3.3×), because with fewer rows and less code there is less
+to average over.
+
+So: **two instruments, each authoritative for its own question.**
+
+* *Does this change help the people who use the library?* → `bench_minimal.cpp`. This governs whether a
+  change lands.
+* *What number does this project publish?* → `bench_engines.cpp`. This governs `BENCHMARKS.md`.
+
+When they disagree, both get reported. A change that gains in the minimal unit and costs a published
+row is still worth landing — and the published row's movement must then be labelled as what it is, a
+property of the comparison binary, not of the engine.
+
+**A caution against over-correcting.** One measured disagreement does not license re-opening every
+refusal in this repository. `docs/BENCHMARKS.md` and `design.dox` record refutations taken with the
+single-build method, which §5.1 and §5.2 already downgrade on their own grounds; this section adds a
+second reason to re-check the ones that turned on small costs in the harness, not a licence to assume
+they were all artefacts. Re-judge them, one at a time, with both instruments.
+
 ## 6. What is still missing
 
 Named so the gaps are visible rather than implied:
 
+- **A minimal-unit floor set per machine.** §5.5's instrument needs its own `--null` run wherever it is
+  used, and its split-half stability (13.9×) is worse than the harness's -- more reps, or more rows,
+  before leaning on a single floor from it.
 - **Front-end performance counters.** `perf stat` on `instructions` plus front-end stall and iTLB
   counters would tell placement from real work *directly* rather than by distribution. x86-only in
   practice (macOS does not expose them through `perf`). This is the next thing to build.
