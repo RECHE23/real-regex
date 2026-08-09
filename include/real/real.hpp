@@ -659,6 +659,15 @@ namespace real {
      * touch the batch at all -- `digits` +17.0 %, `words` +15.4 %, `date` +10.8 % on gcc/x86-64.
      * Outlined, `advance`'s hot path is a compare, an index and a span copy, and it runs once per
      * \ref batch_cap matches instead of once per match.
+     *
+     * Each branch bills its route to \ref real::detail::prof::tick_route, which the unbatched routes in
+     * \ref real::detail::pike_vm::run also do — the SAME identifier on purpose, so `entries / matches`
+     * stays one number across both. The reading changes meaning, though: a batched route bills once per
+     * REFILL, so an effective batch reads `1 / batch_cap` (0.25 at four) where an unbatched route reads
+     * 1.000. That ratio is therefore the batch's efficiency, and 1.000 on a route that should batch is
+     * the signal that it stopped. Billing nothing here — which is what this walk did until now — makes a
+     * batched route indistinguishable from one never entered, and it hid every route this file batches
+     * from the one instrument that is indifferent to machine load.
      * \return `true` if at least one span was buffered.
      */
 #if defined(__GNUC__) || defined(__clang__)
@@ -674,6 +683,7 @@ namespace real {
         // `wb_edge_` (a DROPPED wrap needing the one-position guard) and `wb_kept_` (a wrap the
         // recognizer could not drop, needing a check per span) are mutually exclusive by
         // construction, so three instantiation pairs cover every case and the fourth never exists.
+        detail::prof::tick_route(detail::prof::route::class_loop);
         if (wb_kept_) {
           batch_n_ = cascade_ ? bvm.template fill_class_spans<true, false, true>(text_, pos_, batch_, batch_cap)
                               : bvm.template fill_class_spans<false, false, true>(text_, pos_, batch_, batch_cap);
@@ -688,20 +698,24 @@ namespace real {
         }
       }
       else if (batch_cp_ascii_) {
+        detail::prof::tick_route(detail::prof::route::codepoint_class);
         batch_n_ = cascade_
                      ? bvm.template fill_codepoint_class_spans<true>(text_, pos_, batch_, batch_cap)
                      : bvm.template fill_codepoint_class_spans<false>(text_, pos_, batch_, batch_cap);
       }
       else if (batch_single_cl_) {
+        detail::prof::tick_route(detail::prof::route::class_loop);
         batch_n_ = bvm.fill_single_class_spans(text_, pos_, batch_, batch_cap);
       }
       else if (batch_alt_) {
+        detail::prof::tick_route(detail::prof::route::alternation);
         batch_n_ = bvm.fill_alternation_spans(text_, pos_, batch_, batch_cap);
       }
       else {
         // The code-point class loop — the fourth eligible route, reached as the `else` rather than
         // through a flag of its own (see the constructor's `cp_class`). Nothing else can arrive here:
         // batch_eligible_ is the disjunction of exactly these four.
+        detail::prof::tick_route(detail::prof::route::cp_class_loop);
         batch_n_ = wb_edge_ ? bvm.template fill_cp_class_spans<true>(text_, pos_, batch_, batch_cap)
                             : bvm.template fill_cp_class_spans<false>(text_, pos_, batch_, batch_cap);
       }
