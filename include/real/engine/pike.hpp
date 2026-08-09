@@ -5271,6 +5271,28 @@ namespace real::detail {
      * \param[in]  len       The literal's length (`hints.exact_literal_len`, >= 2 by the hint).
      * \param[out] out_slots Receives `[cand, cand + len]` on success.
      * \return `true` if the literal occurs at or after \p start.
+     *
+     * \note **A span filler for this shape was written, measured and REFUSED — the gain is real and the
+     *       price is higher.** The route bills one entry per match (`dog`: 2001 entries against 2000
+     *       matches) where every batched class route bills one per `batch_cap`, and this subset is the
+     *       ideal candidate: the `literal_one_search` hint already excludes captures, assertions,
+     *       anchors and one-byte literals, so a filler is `find_prefix` plus two stores, with no
+     *       confirm and no retry. Correctness was never the problem — `exhaustive-compat` returned
+     *       byte-identical counts (3 218 434 cases, 4 548 documented divergences, 0 serious) and a
+     *       both-ways differential over the batch seam agreed on every span.
+     *
+     *       On `benchmarks/bench_minimal.cpp` against this machine's calibrated floors, 24 paired
+     *       draws: `literal` **−29.4 %** [−32.2, −24.6] at 24/24 — and `single [a-z]` **+10.7 %**,
+     *       `\b\w+\b` **+4.0 %**, `\w+` **+3.7 %**, `\w{2,}` **+3.2 %**, `fields [^,]+` **+2.8 %**, all
+     *       five above their own floors at 24/24, with **14 of 15 rows leaning positive**. That spread
+     *       is the per-unit inline budget, not layout — the same signature that refused three earlier
+     *       fillers (see \ref fill_codepoint_class_spans's note). The trade is what settles it: the gain
+     *       lands on a row already ahead of PCRE2-JIT (1.29× / 1.94×) while the costs land on rows near
+     *       parity, four of which are the previous train's own wins.
+     *
+     *       Worth one campaign before anyone rewrites the filler: the attempt added BOTH a filler body
+     *       and a `bool` to the iterator's hot type, and those were never separated. If the cost is the
+     *       member rather than the body, folding the flag into an existing field changes the answer.
      */
     template <typename OutSlots>
 #if defined(__GNUC__) || defined(__clang__)
