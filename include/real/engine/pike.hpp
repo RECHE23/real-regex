@@ -5112,26 +5112,39 @@ namespace real::detail {
         // Block scan. A match may end inside a later block, so the walk always RESUMES from the
         // match end rather than continuing the current mask -- the mask's carry is worth having
         // within a block of misses, not across an emitted span.
-        for (; pos + 16 <= sz; pos += 16) {
-          std::array<std::uint8_t, 16> buf {};
-          std::memcpy(buf.data(), text.data() + pos, 16);
-          mask_t mask                      {load_members_mask(buf.data(), mem.data(), cnt)};
-          while (!empty(mask)) {
-            const std::size_t lane {first_lane(mask)};
-            const std::size_t me   {match_at(pos + lane)};
-            if (me != npos) {
-              hit = pos + lane;
-              end = me;
+        //
+        // GUARDED, and the guard is not decoration: `mask_t` and its accessors only exist behind this
+        // condition (simd.hpp), and the first version of this filler copied run_alternation's block
+        // WITHOUT copying its `#if`. Every CI leg here defines one of the two macros, so the omission
+        // was invisible locally and on both benchmark legs; a translation unit with neither failed to
+        // compile with "'mask_t' was not declared in this scope". Where the block is absent the scalar
+        // loop below covers the whole subject rather than only a tail -- same answers, no vectors.
+#if defined(__ARM_NEON) || defined(__SSE2__)
+        if (!std::is_constant_evaluated()) {
+          for (; pos + 16 <= sz; pos += 16) {
+            std::array<std::uint8_t, 16> buf {};
+            std::memcpy(buf.data(), text.data() + pos, 16);
+            mask_t mask                      {load_members_mask(buf.data(), mem.data(), cnt)};
+            while (!empty(mask)) {
+              const std::size_t lane {first_lane(mask)};
+              const std::size_t me   {match_at(pos + lane)};
+              if (me != npos) {
+                hit = pos + lane;
+                end = me;
+                break;
+              }
+              mask = clear_first(mask);
+            }
+            if (hit != npos) {
               break;
             }
-            mask = clear_first(mask);
-          }
-          if (hit != npos) {
-            break;
           }
         }
+#endif
         if (hit == npos) {
-          for (; pos < sz; ++pos) { // scalar tail, same boundary as run_alternation's
+          // The whole scan when no vector block ran (no SIMD, or constant evaluation), the tail
+          // otherwise -- run_alternation draws the same boundary.
+          for (; pos < sz; ++pos) {
             const std::uint8_t b      {static_cast<std::uint8_t>(text[pos])};
             bool               member {false};
             for (std::size_t i = 0; i < cnt; ++i) {
