@@ -42,26 +42,65 @@ namespace {
   constexpr double tolerance   {1.05}; //!< route-on may be up to 5% over core (noise floor) and still pass.
   constexpr double nomatch_win {0.50}; //!< on no-match the route must be at least 2x the core (memmem-only).
 
-  //! One find_iter sweep, ns per byte, best of three (noise floor, not a distribution — a gate, not a report).
-  double ns_per_byte(const real::regex& re,
-                     std::string_view   text,
-                     int                iters)
+  //! One find_iter sweep, ns per byte.
+  double one_sweep(const real::regex& re,
+                   std::string_view   text,
+                   int                iters)
   {
-    double best {1e30};
-    for (int rep = 0; rep < 3; ++rep) {
-      std::size_t  sink {0};
-      const auto   t0   {clk::now()};
-      for (int i = 0; i < iters; ++i) {
-        for (const auto& m : re.find_iter(text)) {
-          sink += m.start();
-        }
+    std::size_t  sink {0};
+    const auto   t0   {clk::now()};
+    for (int i = 0; i < iters; ++i) {
+      for (const auto& m : re.find_iter(text)) {
+        sink += m.start();
       }
-      const auto            t1   {clk::now()};
-      const volatile size_t keep {sink};
-      static_cast<void>(keep);
-      const double per           {std::chrono::duration<double, std::nano>(t1 - t0).count() / (double(iters) * double(text.size()))};
-      best = std::min(best, per);
     }
+    const auto            t1   {clk::now()};
+    const volatile size_t keep {sink};
+    static_cast<void>(keep);
+    return std::chrono::duration<double, std::nano>(t1 - t0).count() / (double(iters) * double(text.size()));
+  }
+
+  //! Both sides of one cell, each keeping its own minimum (a noise floor, not a distribution — a
+  //! gate, not a report).
+  struct pair_reading
+  {
+    double route {1e30};
+    double core  {1e30};
+  };
+
+  /*!
+   * \brief Measure a cell's route and core sides INTERLEAVED, three slots each.
+   *
+   * The two sides must not be measured one to completion and then the other: drift over the cell's
+   * run then lands entirely on whichever side held the machine while it happened, and the ratio moves
+   * without the code moving. Six readings of `date dense` at a true delta of zero span 1.007 to 1.017,
+   * while one loaded run read 1.095 — past \ref tolerance, purely because the route side ran during
+   * the burst. Slots therefore alternate `route,core` / `core,route` across reps, spreading a
+   * transient over both sides. Six sweeps total, the same count as measuring the sides in sequence.
+   *
+   * \param re        The compiled pattern under test.
+   * \param text      The corpus to sweep.
+   * \param iters     Sweeps per timed slot.
+   * \param set_route Enables (`true`) or disables (`false`) the route under test; left enabled on return.
+   */
+  template <class SetRoute>
+  pair_reading sweep_pair(const real::regex& re,
+                          std::string_view   text,
+                          int                iters,
+                          SetRoute&&         set_route)
+  {
+    pair_reading best {};
+    for (int rep = 0; rep < 3; ++rep) {
+      const bool route_first {rep % 2 == 0};
+      for (int slot = 0; slot < 2; ++slot) {
+        const bool on {(slot == 0) == route_first};
+        set_route(on);
+        const double per  {one_sweep(re, text, iters)};
+        double&      side {on ? best.route : best.core};
+        side = std::min(side, per);
+      }
+    }
+    set_route(true);
     return best;
   }
 
@@ -130,22 +169,14 @@ namespace {
         const std::string text  {corpus(r.unit, kb)};
         const int         iters {kb <= 64 ? 1500 : (kb <= 256 ? 250 : 40)};
 
-        double route {};
-        double core  {};
-        if (r.seam == baseline::class_fastpath) {
-          real::detail::class_fastpath_disabled() = false;
-          route                                   = ns_per_byte(*r.re, text, iters);
-          real::detail::class_fastpath_disabled() = true;
-          core                                    = ns_per_byte(*r.re, text, iters);
-          real::detail::class_fastpath_disabled() = false;
-        }
-        else {
-          real::detail::inner_literal_route_disabled() = false;
-          route                                        = ns_per_byte(*r.re, text, iters);
-          real::detail::inner_literal_route_disabled() = true;
-          core                                         = ns_per_byte(*r.re, text, iters);
-          real::detail::inner_literal_route_disabled() = false;
-        }
+        const pair_reading pr {
+          r.seam == baseline::class_fastpath
+            ? sweep_pair(*r.re, text, iters,
+                         [](bool on) { real::detail::class_fastpath_disabled() = !on; })
+            : sweep_pair(*r.re, text, iters,
+                         [](bool on) { real::detail::inner_literal_route_disabled() = !on; })};
+        double route {pr.route};
+        double core  {pr.core};
 
         // Synthetic regression past TOLERANCE: route becomes 10% slower than core on prove-target
         // cells (word short / cpcls short). A mild ×1.10 of an already-fast route would still pass —

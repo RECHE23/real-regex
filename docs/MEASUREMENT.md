@@ -62,6 +62,18 @@ a comparison whose true delta is exactly zero — because the second sweep ran o
 Alternating A, B, B, A within each draw and taking the minimum of each side's two readings collapsed
 that bias from **+3.9 % to +0.6 %** at the worst row.
 
+This is a rule for **every paired timing instrument in this repository, not just this one** — and the
+repository had a second one that broke it. `benchmarks/matrix4d` (the `matrix-gate` step) times a route
+against the same pattern with that route forced off, and it measured the route side to completion and
+then the core side. Its verdict is a *ratio*, so a burst during one side moves the ratio with the code
+unmoved: `date dense`, at a true delta of zero, read 1.095 against a 1.05 tolerance and stopped a gate
+on a regression that did not exist, while six clean readings of the same two trees spanned 1.007–1.017.
+Its slots now alternate `route,core` / `core,route` across reps — six sweeps, the same count as before —
+and the worst cell's ratio went from a 4.5-point spread (worst 1.0455, half a point from red) to 0.7
+(worst 1.0217). The demonstration to keep: a run where **both** sides inflated 11 % together held the
+ratio at 1.018. The 5 % tolerance was deliberately **not** loosened — that would have weakened the gate
+instead of the noise.
+
 **Null calibration, which is the part that makes any of it honest.** `--null` runs the tree against
 *itself*. The true delta is exactly zero by construction, so whatever comes out is the instrument
 talking, measured **per row** — rows do not share a floor. §4 gives the measured ones and, just as
