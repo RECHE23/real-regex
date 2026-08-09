@@ -5288,6 +5288,27 @@ namespace real::detail {
      * \param[in]  mode      Anchoring mode.
      * \param[out] out_slots Receives the capture slots on success.
      * \return `true` if a match was found.
+     *
+     * \note **A one-byte whole-pattern literal is NOT redirected to the batched single-class route,
+     *       and that is measured rather than an oversight.** `e` and `[e]` are the same language, and
+     *       `single_class` is batched where this route is not, so the redirect looks free -- the same
+     *       argument that made the bare-possessive redirect a 72 % win. It is not free here, because
+     *       which route wins depends on the SUBJECT, not the pattern:
+     *
+     *           byte  matches/100 KB   exact_literal   batched class
+     *           e       10 447          4.274 ns/B     0.953   class wins 4.5x
+     *           ,       16 949          4.919          1.467   class wins 3.4x
+     *           q        1 493          0.418          0.673   LITERAL wins 1.6x
+     *           z        1 492          0.414          0.669   LITERAL wins 1.6x
+     *           @        1 516          0.399          0.679   LITERAL wins 1.7x
+     *
+     *       `memchr` skips whole regions, which is worth more than batching when matches are rare,
+     *       and sparse one-byte literals are at least as common as dense ones. A blanket redirect
+     *       would trade a 4.5x dense win for a 1.6x sparse loss.
+     *
+     *       So the shape of the answer is a DENSITY GATE -- what \ref ac_density_favours_automaton
+     *       already is for Aho-Corasick -- not a recognition-time redirect. That is a design of its
+     *       own, needing its own threshold measurement, and it is not attempted here.
      */
     template <typename OutSlots>
     constexpr bool run_exact_literal(std::string_view text,
