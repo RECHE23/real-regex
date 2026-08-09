@@ -1307,15 +1307,43 @@ namespace real {
         const auto& prog {program_.view()};
         if (prog.hints.trailing_lookaround >= 0
             && (std::is_constant_evaluated() || !detail::trailing_la_route_disabled())) {
-          for (const result_type& match :
-               basic_match_range<Storage, /*TrailingLA=*/ true> {prog, pattern(), region, pos}) {
-            (void) match;
-            ++n;
-          }
-          return n;
+          return count_trailing_la(region, pos);
         }
       }
       for (const result_type& match : find_iter(text, pos, endpos)) {
+        (void) match;
+        ++n;
+      }
+      return n;
+    }
+
+    /*!
+     * \brief \ref count_matches over the trailing-lookaround walk, outlined.
+     *
+     * OUTLINED AND COLD for the same reason \ref basic_match_iterator::decide_batching is: this branch is
+     * taken only when `pattern_hints::trailing_lookaround` is armed, yet inline it put a SECOND fully
+     * inlined walk inside `count_matches` -- the function every throughput measurement runs. That made
+     * `count_matches` large enough to sit on a codegen cliff: adding a single branch to the batched
+     * dispatch (no new function body, eligibility already outlined) recompiled it from 610 to 606
+     * instructions, and the campaign that measured that state charged `single [a-z]` +10.7 %,
+     * `\b\w+\b` +4.0 %, `\w+` +3.7 %, `\w{2,}` +3.2 % and `fields [^,]+` +2.8 %, all above their own
+     * floors at 24 of 24 draws, on rows whose own code was byte-identical. The toll was not the change --
+     * it was this function being re-decided.
+     *
+     * \param[in] region The already-clamped subject.
+     * \param[in] pos    Where the walk starts.
+     * \return The match count.
+     */
+    [[nodiscard]]
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline, cold))
+#endif
+    constexpr std::size_t count_trailing_la(std::string_view region,
+                                            std::size_t      pos) const
+    {
+      std::size_t n {};
+      for (const result_type& match :
+           basic_match_range<Storage, /*TrailingLA=*/ true> {program_.view(), pattern(), region, pos}) {
         (void) match;
         ++n;
       }
