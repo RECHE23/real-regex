@@ -137,6 +137,16 @@ int main()
                                    100000)};
 
   // The rows a batching change is judged on: the ones it targets, and the ones it must not charge.
+  //
+  // The last three exist because their absence was a hole, not an oversight to leave standing. Every
+  // row above is served by a batched route and reads one route entry per `batch_cap` matches, so none of
+  // them has any per-match dispatch left to recover — while `date`, `lookahead` and `alternation` are
+  // exactly the rows docs/BENCHMARKS.md §A has REAL behind PCRE2-JIT, and the first two still cross a
+  // full route entry per match (1.0003 and 1.0001, measured under REAL_PROFILE). They were judgeable only
+  // on the four-engine harness, which sits on a different inlining budget than a consumer does
+  // (docs/MEASUREMENT.md §5.5) — so the two targets worth pursuing could not be judged by the instrument
+  // that decides whether a change lands. Patterns and corpora are the harness's own, so a row here and a
+  // row there measure the same thing.
   const std::vector<probe_case> cases {
     {"words [a-z]+", "[a-z]+", prose},
     {"words [a-z]{4,}", "[a-z]{4,}", prose},
@@ -153,6 +163,9 @@ int main()
     {"unicode \\p{L}{3,}", "\\p{L}{3,}", mixed},
     {"unicode \\p{N}+", "\\p{N}+", mixed},
     {"unicode .", ".", mixed},
+    {"date {4}-{2}-{2}", "[0-9]{4}-[0-9]{2}-[0-9]{2}", mixed},
+    {"lookahead [a-z]+(?=[a-z])", "[a-z]+(?=[a-z])", prose},
+    {"alt the|fox|dog", "the|fox|dog", prose},
   };
 
   std::string out {"{\"cases\":["};
