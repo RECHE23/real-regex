@@ -506,7 +506,26 @@ namespace real {
                              && prog.hints.greedy_cp_class_end == 0
         }; // no is_constant_evaluated: see above
 
-        batch_eligible_  = batch_bytes_ || batch_cp_ascii_ || batch_single_cl_ || cp_class;
+        // The fixed ALTERNATION, small-set shape only (2..8 distinct branch first bytes -- what the
+        // filler's mask scan needs; outside that range run_alternation takes a different scan and this
+        // route declines rather than growing a second body there). It was **99 % per-match return**:
+        // 19.13 ns per match against 5 776 ns to scan 200 KB, fitted across five densities.
+        // fixed_alternation already excludes captures and asserts by construction, so slot_count is 2.
+        // Branch count BELOW the Aho-Corasick floor, and that bound is the load-bearing one. The AC
+        // gate is consulted inside `run()`, which a batched walk bypasses entirely, so batching a
+        // shape the gate could claim would silently overrule a routing decision that was measured --
+        // and the gate takes the automaton below twelve branches too when the subject is dense enough
+        // (tests/engine/test_ac_density_gate.cpp pins exactly that). Under four branches the automaton
+        // is never considered at all, so nothing is overruled. That subset is also the common one and
+        // contains §A's own `alt the|fox|dog` row. Batching the AC route is a separate piece of work,
+        // not a widening of this condition.
+        batch_alt_       = batchable && prog.hints.fixed_alternation
+                           && prog.hints.alternation_branch_count > 0
+                           && prog.hints.alternation_branch_count < 4
+                           && prog.hints.small_set_size >= 2 && prog.hints.small_set_size <= 8
+                           && prog.hints.greedy_class_loop < 0 && prog.hints.greedy_cp_class < 0
+                           && prog.hints.codepoint_class_ascii < 0 && prog.hints.single_class < 0;
+        batch_eligible_  = batch_bytes_ || batch_cp_ascii_ || batch_single_cl_ || cp_class || batch_alt_;
       }
       current_.bind_context(text_, pattern_, prog_.names); // invariant across the walk — set once, not per match
       advance();
@@ -618,6 +637,9 @@ namespace real {
     //!        one-position window-edge guard. Decided once, and passed as a template argument rather
     //!        than tested in the scan loop.
     bool                                                                  wb_edge_          {};
+    //! \brief Batch the fixed-alternation route (\ref real::detail::pike_vm::fill_alternation_spans).
+    //!        Its per-match return was 99 % of the row at density -- see that filler's own note.
+    bool                                                                  batch_alt_        {};
 
     /*!
      * \brief Cold half of the batched walk: refills \ref batch_ from the engine.
@@ -656,6 +678,9 @@ namespace real {
       }
       else if (batch_single_cl_) {
         batch_n_ = bvm.fill_single_class_spans(text_, pos_, batch_, batch_cap);
+      }
+      else if (batch_alt_) {
+        batch_n_ = bvm.fill_alternation_spans(text_, pos_, batch_, batch_cap);
       }
       else {
         // The code-point class loop — the fourth eligible route, reached as the `else` rather than

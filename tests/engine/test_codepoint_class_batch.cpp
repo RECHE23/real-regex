@@ -332,6 +332,50 @@ TEST(the_codepoint_counted_minimum_agrees_with_repeated_search)
   EXPECT_EQ(spans[1].first, 11U); // "ijkl"
 }
 
+// The fixed ALTERNATION route, batched below the Aho-Corasick branch floor. Two properties matter and
+// neither is obvious from the spans alone: branches are leftmost-FIRST in source order (so `the|then`
+// matches "the" inside "then", not the longer one), and a match may end inside a later 16-byte block,
+// so the walk must resume from the match END rather than from the mask it was scanning.
+TEST(the_alternation_walk_agrees_with_repeated_search)
+{
+  const std::string text {"the fox and the dog then thefox catdogfish caf\xC3\xA9 dogma foxtrot"};
+  for (const char* p : {"the|fox|dog", "cat|dog", "the|then", "fox|f", "a|b|c"}) {
+    const real::regex re {p};
+    EXPECT_EQ(by_iteration(re, text), by_search(re, text));
+  }
+  // Leftmost-first among branches, not longest: "then" yields "the".
+  const auto tf {by_iteration(real::regex {"the|then"}, std::string {"then"})};
+  EXPECT_EQ(tf.size(), 1U);
+  EXPECT_EQ(tf[0].second, 3U);
+  // A subject long enough that matches land across many 16-byte blocks, including one that STRADDLES
+  // a block boundary -- the case a mask-carried scan gets wrong if it resumes from the mask.
+  std::string wide;
+  for (int i = 0; i < 40; ++i) {
+    wide += "xxxxxxxxxxxxxxdog";
+  }
+  const real::regex dg {"cat|dog"};
+  EXPECT_EQ(by_iteration(dg, wide), by_search(dg, wide));
+  EXPECT_EQ(by_iteration(dg, wide).size(), 40U);
+}
+
+// The alternation shapes batching must decline. The branch-count bound is the load-bearing one: a
+// batched walk bypasses run(), so a shape the Aho-Corasick density gate could claim must NOT be
+// batched, or a measured routing decision would be silently overruled.
+TEST(the_alternation_shapes_batching_declines)
+{
+  const std::string text {"cat dog fish bird owl rat hen cat dog fish bird owl rat hen"};
+  for (const char* p : {"cat|dog|fish|bird", "cat|dog|fish|bird|owl|rat|hen", "(cat|dog)", "^cat|dog"}) {
+    const real::regex re {p};
+    EXPECT_EQ(by_iteration(re, text), by_search(re, text));
+  }
+  // A capturing alternation keeps its group, which the batched path does not fill.
+  const real::regex captured {"(cat|dog)"};
+  const auto        cm       {captured.search(text)};
+  EXPECT(cm.matched());
+  EXPECT_EQ(cm.start(1), cm.start());
+  EXPECT_EQ(cm.end(1), cm.end());
+}
+
 // count_matches and find_all read the same walk, so they must report the same thing the iteration does
 // — this is the API surface the batched path actually serves.
 TEST(the_public_counters_agree_with_the_walk)

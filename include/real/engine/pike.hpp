@@ -5024,6 +5024,123 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Fills up to \p cap `fixed_alternation` matches from \p start without leaving the route.
+     *
+     * The measurement that motivates it is recorded on \ref run_alternation -- holding `cat|dog|fish` and 200 KB
+     * of bytes fixed and varying only how often a match must be emitted fits **19.13 ns per match of
+     * return against 5 776 ns to scan the whole 200 KB** -- at density the scan is 0.6 % of the work.
+     * This route was 99 % per-match return, where the class routes had been 71 %.
+     *
+     * Scope is the SMALL-SET shape only (2..8 distinct branch first bytes, \ref
+     * pattern_hints::small_set_size), which is what the mask scan below needs. An alternation outside
+     * that range takes `run_alternation`'s `fast_search` fallback, and the caller declines to batch it
+     * rather than have this body grow a second scan -- adding bodies to this translation unit is the
+     * change shape that charged unrelated rows repeatedly during the batching work
+     * (docs/MEASUREMENT.md §5.4).
+     *
+     * The scan is deliberately a COPY of run_alternation's rather than a refactor of it. Both were
+     * available; the existing route is measured and working, and relocating its hot body risks a
+     * regression there that would be worse than this filler's whole gain. If the duplication proves
+     * costly on either instrument, the refactor is the fallback, not the other way round.
+     *
+     * \param[in]  text  The subject.
+     * \param[in]  start Where to begin.
+     * \param[out] out   Buffer for the spans found.
+     * \param[in]  cap   Capacity of \p out; the walk stops there and resumes from the last end.
+     * \return How many spans were written.
+     */
+    constexpr std::size_t fill_alternation_spans(std::string_view text,
+                                                 std::size_t      start,
+                                                 cp_span*         out,
+                                                 std::size_t      cap)
+    {
+      const auto& code {prog_.code};
+      // Leftmost-FIRST among branches, read from the split chain in source order, exactly as
+      // run_alternation's own `match_at` does -- same helper calls, same order, same wb test.
+      const auto match_at = [&](std::size_t match_start) -> std::size_t {
+                              std::size_t pc {prog_.hints.body_pc == 0
+                                                ? std::size_t {1}
+                                                : static_cast<std::size_t>(prog_.hints.body_pc)};
+                              while (true) {
+                                const bool        is_split {code[pc].op == opcode::split};
+                                const std::size_t branch   {is_split
+                                                            ? static_cast<std::size_t>(code[pc].primary_target)
+                                                            : pc};
+                                const std::size_t me {match_byte_klass_run(text, branch, match_start)};
+                                if (me != npos && wb_boundaries_ok(match_start, me)) {
+                                  return me;
+                                }
+                                if (!is_split) {
+                                  return npos;
+                                }
+                                pc = static_cast<std::size_t>(code[pc].secondary_target);
+                              }
+                            };
+      const std::size_t           cnt {prog_.hints.small_set_size};
+      std::array<std::uint8_t, 8> mem {};
+      for (std::size_t i = 0; i < cnt; ++i) {
+        mem[i] = static_cast<std::uint8_t>(prog_.hints.small_set[i]);
+      }
+      const std::size_t sz  {text.size()};
+      std::size_t       n   {0};
+      std::size_t       pos {start};
+      while (pos < sz && n < cap) {
+        std::size_t hit {npos};
+        std::size_t end {npos};
+        // Block scan. A match may end inside a later block, so the walk always RESUMES from the
+        // match end rather than continuing the current mask -- the mask's carry is worth having
+        // within a block of misses, not across an emitted span.
+        for (; pos + 16 <= sz; pos += 16) {
+          std::array<std::uint8_t, 16> buf {};
+          std::memcpy(buf.data(), text.data() + pos, 16);
+          mask_t mask                      {load_members_mask(buf.data(), mem.data(), cnt)};
+          while (!empty(mask)) {
+            const std::size_t lane {first_lane(mask)};
+            const std::size_t me   {match_at(pos + lane)};
+            if (me != npos) {
+              hit = pos + lane;
+              end = me;
+              break;
+            }
+            mask = clear_first(mask);
+          }
+          if (hit != npos) {
+            break;
+          }
+        }
+        if (hit == npos) {
+          for (; pos < sz; ++pos) { // scalar tail, same boundary as run_alternation's
+            const std::uint8_t b      {static_cast<std::uint8_t>(text[pos])};
+            bool               member {false};
+            for (std::size_t i = 0; i < cnt; ++i) {
+              if (b == mem[i]) {
+                member = true;
+                break;
+              }
+            }
+            if (member) {
+              const std::size_t me {match_at(pos)};
+              if (me != npos) {
+                hit = pos;
+                end = me;
+                break;
+              }
+            }
+          }
+        }
+        if (hit == npos) {
+          break;
+        }
+        out[n] = cp_span {.start = hit, .end = end};
+        ++n;
+        // An alternation branch is a non-empty byte/klass run, so `end > hit` always and the walk
+        // cannot stall; the find_iter empty-match rule has nothing to apply here.
+        pos = end;
+      }
+      return n;
+    }
+
+    /*!
      * \brief Tests whether the fixed literal prefix occurs at \p cand.
      * \param[in] text The subject text.
      * \param[in] cand Candidate start offset.
