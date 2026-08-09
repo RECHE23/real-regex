@@ -3708,6 +3708,13 @@ namespace real::detail {
       // Arc B-2: `\b`/`\B` on subset cp-class (e.g. `\b\d+\b`) — try successive runs.
       if (prog_.hints.wb_lead != 0 || prog_.hints.wb_trail != 0) {
         if (mode == run_mode::full || mode == run_mode::prefix) {
+          // `extend_run` decodes at its argument, which requires a byte to be there; anchored modes
+          // have no forward scan to establish that, so the window edge must be tested here (the
+          // search branch below gets it from its own scan). The route's minimum is at least one code
+          // point by construction, so an exhausted window can never match.
+          if (start >= text.size()) {
+            return fail();
+          }
           const std::size_t match_end {extend_run(start)};
           if (match_end == npos || (mode == run_mode::full && match_end != text.size()) ||
               (prog_.hints.greedy_cp_class_end != 0 && match_end != end_limit) ||

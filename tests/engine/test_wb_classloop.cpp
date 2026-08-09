@@ -287,3 +287,31 @@ TEST(wb_class_junction_maximal_run_unaffected)
     }
   }
 }
+
+// Arc B-2's anchored branch has no forward scan to establish that a byte exists at `start`, so an
+// exhausted window must be tested before the run is extended.
+//
+// A subject held in padded storage -- a string literal's NUL, a std::string's terminator, a slice of
+// a larger buffer -- hides a read at `start == size()`: it happens and returns a readable byte. The
+// zero-length heap view below has no such padding, which is what makes this test able to fail. It is
+// the `sanitize` step that turns that read into an error; the assertions alone pass either way.
+TEST(wb_class_anchored_empty_window_stays_in_bounds)
+{
+  const std::vector<std::string> b2_shapes {
+    R"(K\b)",  R"(\bK)",   R"(K\B)",   R"(s\b)",     R"(\d\b)",     R"(\b\d)",
+    R"(\w\b)", R"(\b\w+)", R"(\d+\b)", R"(\b\p{L})", R"(\p{L}+\b)", R"(\B\d)"};
+  for (const auto& p : b2_shapes) {
+    for (const auto f : {real::flags::none, real::flags::icase}) {
+      const real::regex re {p, f};
+      // An empty view whose data pointer sits at the end of its own allocation: `substr` past the
+      // only byte keeps the pointer and drops the length, so a read at `start` lands in the redzone.
+      auto* const            cell = new char[1];
+      const std::string_view empty {std::string_view {cell, 1}.substr(1)};
+      EXPECT(!static_cast<bool>(re.match(empty)));
+      EXPECT(!static_cast<bool>(re.fullmatch(empty)));
+      EXPECT(!static_cast<bool>(re.search(empty)));
+      EXPECT_EQ(re.count_matches(empty), 0U);
+      delete[] cell;
+    }
+  }
+}
