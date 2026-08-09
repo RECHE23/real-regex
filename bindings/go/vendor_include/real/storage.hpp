@@ -1415,6 +1415,17 @@ namespace real {
       //! \brief Flat byte-class membership tables, built at compile time: `class_tables[i*256 + b]`.
       //!        Reuses the \ref classes member rather than calling \ref build again — an extra `build()` per
       //!        table pushes the whole instantiation past clang's constexpr step budget.
+      //!
+      //! \note **A pack-expansion `tabulate<N>(f)` here was written, measured and REFUSED.** The loop
+      //!       below cannot be one pass: constant evaluation rejects indeterminate subobjects, so the
+      //!       array is zeroed and then overwritten — 2N element operations where a pack expansion
+      //!       needs N. The argument is sound and buys nothing. Compile time on a five-`static_regex`
+      //!       unit: 4.38 s against 4.40 s, and on a class-heavy unit 2.48 s against 2.38 s, with the
+      //!       direction flipping between paired runs in both — indistinguishable. And the capability
+      //!       argument fails too: bisecting `-fconstexpr-steps` to the failure point gives **177 734
+      //!       for both forms**, exactly, so there is no budget headroom in it either. The compiler's
+      //!       cost for a 2048-element pack cancels the halved element count. The loop stays: same
+      //!       speed, same budget, no helper to maintain.
       static constexpr std::array < std::uint8_t, (class_count == 0 ? 1 : class_count) * 256 > class_tables {[] {
                                                                                                                std::array < std::uint8_t, (class_count == 0 ? 1 : class_count) * 256 > t {};
                                                                                                                for (std::size_t i = 0; i < class_count; ++i) {
