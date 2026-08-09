@@ -334,6 +334,23 @@ check-pins: ## [gates] Pin-drift lint: fail if workflows pin more than one SciFo
 check-layers:
 	@$(MAKE) -C tools check-layers
 
+# The headers compile where NEITHER SIMD macro is defined. This exists because a real defect shipped
+# through every other check: a filler copied run_alternation's mask-carried block scan and not its
+# `#if defined(__ARM_NEON) || defined(__SSE2__)`, so `mask_t` and its accessors were referenced where
+# they do not exist. Nothing local could see it -- arm64 always defines __ARM_NEON, x86-64 always
+# __SSE2__ -- so the 23-step gate, both benchmark legs and every layout campaign reported green, and
+# CI's 32-bit leg (i386 has no __SSE2__ baseline) was the first thing to fail. That made SIMD-guarded
+# header code pushable while broken.
+#
+# NOT equivalent to CI's leg, and the difference is stated so nobody reads it as one: `g++ -m32` tests
+# the absent SSE2 baseline AND a 32-bit size_t. This tests only the first. It catches today's class of
+# error, not pointer-width assumptions -- those still belong to CI.
+check-no-simd: ## [gate] Headers must compile with neither __ARM_NEON nor __SSE2__ defined
+	@mkdir -p $(BUILD)
+	@printf '#include "real/real.hpp"\n#include "real/dfa.hpp"\nint main() {}\n' > $(BUILD)/no_simd_tu.cpp
+	@$(CXX) $(CXXSTD) -U__ARM_NEON -U__SSE2__ -Werror $(INCLUDES) -fsyntax-only $(BUILD)/no_simd_tu.cpp
+	@echo "check-no-simd: OK — headers compile with no vector ISA macro"
+
 # Comment-FORM convention: objects take /*! ... */, attributes take a trailing //!<.
 # Reads Doxygen's own XML for member kinds (never a regex over the source) and refuses to run
 # against an XML older than the headers -- a stale one silently reports a false clean.
@@ -467,9 +484,9 @@ full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate 
 
 full-local-gate-impl:
 	@echo "full-local-gate: start (fail-fast — cheap first, first red stops the train)"
-	@echo "── [1/23] format-check"
+	@echo "── [1/24] format-check"
 	@$(MAKE) format-check
-	@echo "── [2/23] version-check"
+	@echo "── [2/24] version-check"
 	@$(MAKE) version-check
 	# Complements version-check's bench-stamp line, which compares VERSION STRINGS and so only fires
 	# across a release bump. This one asks whether the engine changed in substance since the figures
@@ -478,13 +495,15 @@ full-local-gate-impl:
 	# commit. Local only -- it reads git history, which a CI shallow clone does not have.
 	@echo "── [2b/22] check-bench-stamp (engine moved since the benchmarks were stamped?)"
 	@$(MAKE) check-bench-stamp
-	@echo "── [3/23] check-layers"
+	@echo "── [3/24] check-layers"
 	@$(MAKE) check-layers
-	@echo "── [4/23] check-pins"
+	@echo "── [4/24] check-no-simd (no vector ISA macro — the hole CI's 32-bit leg caught)"
+	@$(MAKE) check-no-simd
+	@echo "── [5/24] check-pins"
 	@$(MAKE) check-pins
-	@echo "── [5/23] check-capi-abi (C ABI golden vs real_capi.h)"
+	@echo "── [6/24] check-capi-abi (C ABI golden vs real_capi.h)"
 	@$(MAKE) check-capi-abi
-	@echo "── [6/23] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
+	@echo "── [7/24] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
 	@$(MAKE) doc-no-coverage
 	# Comment-FORM gate, deliberately right after doc-no-coverage: that step runs the LOCAL
 	# doxygen, so build/doc/xml is fresh here. It has to be, and the script enforces it --
@@ -495,40 +514,40 @@ full-local-gate-impl:
 	@$(MAKE) check-doc-style
 	@echo "── [6c/22] check-site-anchors (site slices resolve in their sources)"
 	@$(MAKE) check-site-anchors
-	@echo "── [7/23] doc-check (CI-pinned Doxygen when Docker is available)"
+	@echo "── [8/24] doc-check (CI-pinned Doxygen when Docker is available)"
 	@$(MAKE) doc-check
-	@echo "── [8/23] gcc-check (the diagnostics clang lacks — see the target)"
+	@echo "── [9/24] gcc-check (the diagnostics clang lacks — see the target)"
 	@$(MAKE) gcc-check
 	# docs/site's own net (-W --keep-going + linkcheck). Same shape as the
 	# GXX/go legs below: skipped with a warning when sphinx-build is absent (a dev
 	# without the docs venv on PATH doesn't need to rougir tout le gate) -- the docs-site
 	# CI job (ci.yml) is the backstop, so this is never the ONLY net on the site.
-	@echo "── [9/23] docs-site-gate (sphinx -W --keep-going + linkcheck; skipped if sphinx-build absent)"
+	@echo "── [10/24] docs-site-gate (sphinx -W --keep-going + linkcheck; skipped if sphinx-build absent)"
 	@if command -v $(SPHINXBUILD) >/dev/null 2>&1; then $(MAKE) docs-site-gate; else echo "full-local-gate: WARN — $(SPHINXBUILD) absent, docs-site-gate skipped (CI covers it)"; fi
-	@echo "── [10/23] misra (single synthetic TU)"
+	@echo "── [11/24] misra (single synthetic TU)"
 	@$(MAKE) misra
-	@echo "── [11/23] c-test"
+	@echo "── [12/24] c-test"
 	@$(MAKE) c-test
 	# examples/cpp/*.cpp direct compile+run -- unconditional, not
 	# skip-if-absent: unlike the OPTIONAL alternate-compiler/toolchain legs below (GXX, go,
 	# sphinx-build), a default C++ compiler is already a hard prerequisite of this entire gate
 	# (build/test/misra/c-test above assume one unconditionally), so example-check rides the
 	# same assumption instead of the "warn and skip" shape reserved for genuinely optional tools.
-	@echo "── [12/23] example-check (examples/cpp/*.cpp direct compile+run)"
+	@echo "── [13/24] example-check (examples/cpp/*.cpp direct compile+run)"
 	@$(MAKE) example-check
-	@echo "── [13/23] matrix-gate"
+	@echo "── [14/24] matrix-gate"
 	@$(MAKE) matrix-gate
-	@echo "── [14/23] fowler-compat"
+	@echo "── [15/24] fowler-compat"
 	@$(MAKE) fowler-compat
-	@echo "── [15/23] exhaustive-compat"
+	@echo "── [16/24] exhaustive-compat"
 	@$(MAKE) exhaustive-compat
-	@echo "── [16/23] test (default CXX)"
+	@echo "── [17/24] test (default CXX)"
 	@$(MAKE) test
-	@echo "── [17/23] rust-test"
+	@echo "── [18/24] rust-test"
 	@$(MAKE) rust-test
-	@echo "── [18/23] rust-publish-check"
+	@echo "── [19/24] rust-publish-check"
 	@$(MAKE) rust-publish-check
-	@echo "── [19/23] python-test + python-stubtest (.pyi ≡ runtime; skipped if mypy absent)"
+	@echo "── [20/24] python-test + python-stubtest (.pyi ≡ runtime; skipped if mypy absent)"
 	@$(MAKE) python-test
 	@if $${MYPY_PYTHON:-$(PYTHON)} -c "import mypy" >/dev/null 2>&1; then \
 	   $(MAKE) python-stubtest; \
@@ -538,19 +557,19 @@ full-local-gate-impl:
 	# include/ here). Skipped with a warning when go is absent (the CI go job is the backstop), same
 	# shape as the GCC leg. Closes the gap where an include/ change that stales vendor_include/ was
 	# caught only in CI.
-	@echo "── [20/23] go-check-vendor + go-test (Go leg; skipped if go absent)"
+	@echo "── [21/24] go-check-vendor + go-test (Go leg; skipped if go absent)"
 	@if command -v go >/dev/null 2>&1; then $(MAKE) go-check-vendor && $(MAKE) go-test; else echo "full-local-gate: WARN — go absent, Go leg skipped (CI covers it)"; fi
-	@echo "── [21/23] lint"
+	@echo "── [22/24] lint"
 	@set -euo pipefail; \
 	  mkdir -p $(BUILD); \
 	  $(MAKE) lint 2>&1 | tee $(BUILD)/lint.log; \
 	  if grep -qE 'warning:|error:' $(BUILD)/lint.log; then \
 	    echo "full-local-gate: FAIL at lint (see $(BUILD)/lint.log)"; exit 1; \
 	  fi
-	@echo "── [22/23] test (GCC leg) + sanitize (slowest last)"
+	@echo "── [23/24] test (GCC leg) + sanitize (slowest last)"
 	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "full-local-gate: WARN — $(GXX) absent, GCC leg skipped (CI covers it)"; fi
 	@$(MAKE) sanitize
-	@echo "── [23/23] coverage-check (line floor $(COV_FLOOR)% — closes the P0 gate hole)"
+	@echo "── [24/24] coverage-check (line floor $(COV_FLOOR)% — closes the P0 gate hole)"
 	@$(MAKE) coverage-check
 	@echo "full-local-gate: ALL gates green (cheap→doc→tests→lint→sanitize→coverage; first red would have stopped the train)"
 
