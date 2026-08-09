@@ -473,9 +473,15 @@ namespace real {
         // runtime/constexpr split the original four copies had.
         bool batchable {};
         batchable = !std::is_constant_evaluated() && sem == match_semantics::first
-                    && prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0
                     && !detail::class_fastpath_disabled()
                     && !prog.hints.anchored_start && !prog.hints.line_anchored;
+        // A KEPT `\b`/`\B` wrap is handled by the BYTE class filler and by nothing else, so the other
+        // routes still require its absence. `\b[a-z]+\b` was 4.485 ns/B against `[a-z]+`'s 1.169 for
+        // an assertion a word-SUBSET class genuinely needs: a maximal `[a-z]+` run can start after `_`
+        // or a digit, so unlike `\b\w+\b`'s this one is not redundant, cannot be dropped at
+        // recognition time, and has to be evaluated on every span.
+        const bool no_wrap {prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0};
+        wb_kept_ = !no_wrap;
         // A DROPPED leading `\b` (\ref real::detail::pattern_hints::wb_lead_maximal_run) no longer
         // disqualifies the two class-run routes: their fillers now carry the same one-position
         // window-edge guard the general route does. It cost `\b\w+\b` 18.81 ns per match against
@@ -489,12 +495,12 @@ namespace real {
         // It cost `[a-z]{2,}` 2.338 ns/B against `[a-z]+`'s 1.148 -- 2.0x for a length comparison.
         batch_bytes_     = batchable && prog.hints.greedy_class_loop >= 0
                            && prog.hints.greedy_class_loop_end == 0;
-        batch_cp_ascii_  = batchable && !prog.hints.wb_lead_maximal_run
+        batch_cp_ascii_  = batchable && no_wrap && !prog.hints.wb_lead_maximal_run
                            && prog.hints.codepoint_class_ascii >= 0
                            && prog.hints.greedy_class_loop < 0 && prog.hints.greedy_cp_class < 0;
         // The bare single byte-class (`[a-z]`, no quantifier) needs no `{k,}` or capture exclusion:
         // the 4-opcode shape pattern_hints::single_class recognizes admits neither.
-        batch_single_cl_ = batchable && !prog.hints.wb_lead_maximal_run
+        batch_single_cl_ = batchable && no_wrap && !prog.hints.wb_lead_maximal_run
                            && prog.hints.single_class >= 0;
         // The code-point class loop is the fourth batched route and deliberately gets NO member of its
         // own: it is \ref refill_batch's `else`, so naming it would grow the iterator for nothing —
@@ -502,7 +508,7 @@ namespace real {
         // BOTH class routes now accept a `{k,}` minimum. The code-point one had been declined twice on
         // a cost measured in the four-engine harness that does not exist in a consumer-shaped
         // translation unit -- see fill_cp_class_spans's note and docs/MEASUREMENT.md §5.5.
-        const bool cp_class {batchable && prog.hints.greedy_cp_class >= 0
+        const bool cp_class {batchable && no_wrap && prog.hints.greedy_cp_class >= 0
                              && prog.hints.greedy_cp_class_end == 0
         }; // no is_constant_evaluated: see above
 
@@ -519,7 +525,7 @@ namespace real {
         // is never considered at all, so nothing is overruled. That subset is also the common one and
         // contains §A's own `alt the|fox|dog` row. Batching the AC route is a separate piece of work,
         // not a widening of this condition.
-        batch_alt_       = batchable && prog.hints.fixed_alternation
+        batch_alt_       = batchable && no_wrap && prog.hints.fixed_alternation
                            && prog.hints.alternation_branch_count > 0
                            && prog.hints.alternation_branch_count < 4
                            && prog.hints.small_set_size >= 2 && prog.hints.small_set_size <= 8
@@ -640,6 +646,9 @@ namespace real {
     //! \brief Batch the fixed-alternation route (\ref real::detail::pike_vm::fill_alternation_spans).
     //!        Its per-match return was 99 % of the row at density -- see that filler's own note.
     bool                                                                  batch_alt_        {};
+    //! \brief The walk's pattern KEEPS a `\b`/`\B` wrap, so the byte-class filler evaluates it on every
+    //!        span. Only that filler handles it; the other batched routes decline such patterns.
+    bool                                                                  wb_kept_          {};
 
     /*!
      * \brief Cold half of the batched walk: refills \ref batch_ from the engine.
@@ -662,13 +671,20 @@ namespace real {
         // Four instantiations, chosen once per walk. `wb_edge_` is nearly always false, and when it
         // is the guard is not merely untaken but ABSENT -- see fill_class_spans's own note for the
         // two runtime spellings that were measured and refused.
-        if (wb_edge_) {
-          batch_n_ = cascade_ ? bvm.template fill_class_spans<true, true>(text_, pos_, batch_, batch_cap)
-                              : bvm.template fill_class_spans<false, true>(text_, pos_, batch_, batch_cap);
+        // `wb_edge_` (a DROPPED wrap needing the one-position guard) and `wb_kept_` (a wrap the
+        // recognizer could not drop, needing a check per span) are mutually exclusive by
+        // construction, so three instantiation pairs cover every case and the fourth never exists.
+        if (wb_kept_) {
+          batch_n_ = cascade_ ? bvm.template fill_class_spans<true, false, true>(text_, pos_, batch_, batch_cap)
+                              : bvm.template fill_class_spans<false, false, true>(text_, pos_, batch_, batch_cap);
+        }
+        else if (wb_edge_) {
+          batch_n_ = cascade_ ? bvm.template fill_class_spans<true, true, false>(text_, pos_, batch_, batch_cap)
+                              : bvm.template fill_class_spans<false, true, false>(text_, pos_, batch_, batch_cap);
         }
         else {
-          batch_n_ = cascade_ ? bvm.template fill_class_spans<true, false>(text_, pos_, batch_, batch_cap)
-                              : bvm.template fill_class_spans<false, false>(text_, pos_, batch_, batch_cap);
+          batch_n_ = cascade_ ? bvm.template fill_class_spans<true, false, false>(text_, pos_, batch_, batch_cap)
+                              : bvm.template fill_class_spans<false, false, false>(text_, pos_, batch_, batch_cap);
         }
       }
       else if (batch_cp_ascii_) {

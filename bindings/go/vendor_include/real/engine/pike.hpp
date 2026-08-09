@@ -3204,7 +3204,7 @@ namespace real::detail {
      *       measurement discipline, not the conclusion "two fillers is what fits": each added branch
      *       in `refill_batch` must be re-measured on BOTH ISAs against rows that never touch it.
      */
-    template <bool Cascade, bool WbEdge>
+    template <bool Cascade, bool WbEdge, bool WbKept>
     constexpr std::size_t fill_class_spans(std::string_view text,
                                            std::size_t      start,
                                            cp_span*         out,
@@ -3236,10 +3236,23 @@ namespace real::detail {
       //
       // The refusals are kept rather than deleted because the reasoning was sound and only the
       // instrument was wrong; deleting them would erase the one case that shows how that happens.
-      const std::size_t min_len           {prog_.hints.greedy_class_loop_min};
-      bool              wb_edge           {WbEdge && start > 0};
-      std::size_t       n                 {0};
-      std::size_t       i                 {start};
+      // A KEPT `\b`/`\B` wrap, checked per span. `wb_boundaries_ok` is the member the general route
+      // calls; it reads `text_`, which `run()` binds and a filler never does, so this mirrors it
+      // against this filler's own `text` -- the same null-view trap the WbEdge guard hit.
+      // `\b[a-z]+\b` is where it pays: 4.485 ns/B against `[a-z]+`'s 1.169. A maximal run of a word
+      // SUBSET can legitimately start after `_` or a digit, so unlike `\b\w+\b`'s this assertion is
+      // NOT redundant and cannot be dropped at recognition time -- it has to be evaluated here.
+      const bool         wb_ascii          {!prog_.unicode_word};
+      const assert_kind  wb_lead_k         {prog_.hints.wb_lead == 2 ? assert_kind::not_word_boundary
+                                                              : assert_kind::word_boundary};
+      const assert_kind  wb_trail_k        {prog_.hints.wb_trail == 2 ? assert_kind::not_word_boundary
+                                                               : assert_kind::word_boundary};
+      const std::uint8_t wb_lead_h         {prog_.hints.wb_lead};
+      const std::uint8_t wb_trail_h        {prog_.hints.wb_trail};
+      const std::size_t  min_len           {prog_.hints.greedy_class_loop_min};
+      bool               wb_edge           {WbEdge && start > 0};
+      std::size_t        n                 {0};
+      std::size_t        i                 {start};
       while (i < text.size()) {
         if (tbl[static_cast<std::uint8_t>(text[i])] == 0U) {
           ++i;
@@ -3294,6 +3307,15 @@ namespace real::detail {
         if (end - i < min_len) {
           i = end;
           continue;
+        }
+        // The same retry the general route uses: a run whose wrap does not hold cannot match starting
+        // here, so skip the WHOLE run and try the next. Absent entirely when WbKept is false.
+        if constexpr (WbKept) {
+          if ((wb_lead_h != 0 && !detail::assertion_holds(wb_lead_k, text, i, wb_ascii))
+              || (wb_trail_h != 0 && !detail::assertion_holds(wb_trail_k, text, end, wb_ascii))) {
+            i = end;
+            continue;
+          }
         }
         out[n] = cp_span {.start = i, .end = end};
         ++n;

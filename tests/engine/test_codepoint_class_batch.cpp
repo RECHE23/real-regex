@@ -376,6 +376,44 @@ TEST(the_alternation_shapes_batching_declines)
   EXPECT_EQ(cm.end(1), cm.end());
 }
 
+// A KEPT `\b`/`\B` wrap on a byte class (`\b[a-z]+\b`). Unlike `\b\w+\b`, whose leading assertion the
+// recognizer proves redundant and drops, a maximal `[a-z]+` run can legitimately begin after `_` or a
+// digit -- both word characters -- so the wrap is real and the filler must evaluate it on EVERY span,
+// skipping whole runs that fail it. That is the property under test, and `_` and digits are the
+// discriminating neighbours.
+TEST(the_kept_word_boundary_walk_agrees_with_repeated_search)
+{
+  const std::string text {"abc _def 9ghi jkl_ mno9 pqr caf\xC3\xA9 stu"};
+  for (const char* p : {R"(\b[a-z]+\b)", R"(\b[a-z]+)", R"([a-z]+\b)", R"(\B[a-z]+\B)",
+                        R"(\b[a-z0-9]+\b)"}) {
+    const real::regex re {p};
+    EXPECT_EQ(by_iteration(re, text), by_search(re, text));
+  }
+  // The discriminating cases in the open. `_def`: the run "def" starts after `_`, a word character,
+  // so there is no boundary and `\b[a-z]+\b` must NOT match it. Same for "ghi" after `9`, and for
+  // "jkl" before `_`, and "mno" before `9`.
+  const auto spans {by_iteration(real::regex {R"(\b[a-z]+\b)"}, text)};
+  EXPECT_EQ(spans.size(), 3U); // abc, pqr, stu -- and nothing else
+  EXPECT_EQ(spans[0].first, 0U);
+  EXPECT_EQ(text.substr(spans[1].first, spans[1].second - spans[1].first), std::string {"pqr"});
+  EXPECT_EQ(text.substr(spans[2].first, spans[2].second - spans[2].first), std::string {"stu"});
+  // A failing wrap must skip the WHOLE run, not retry inside it: "_def" yields nothing at all, and
+  // the next accepted run is found.
+  EXPECT_EQ(by_iteration(real::regex {R"(\b[a-z]+\b)"}, std::string {"_abcdef ghi"}).size(), 1U);
+  // Region search from every offset, against the general route as oracle.
+  const real::regex bw {R"(\b[a-z]+\b)"};
+  for (std::size_t pos {0}; pos <= text.size(); ++pos) {
+    const auto general {bw.search(text, pos)};
+    auto       range   {bw.find_iter(text, pos)};
+    const auto it      {range.begin()};
+    EXPECT_EQ(!it.exhausted(), general.matched());
+    if (general.matched() && !it.exhausted()) {
+      EXPECT_EQ(it->start(), general.start());
+      EXPECT_EQ(it->end(), general.end());
+    }
+  }
+}
+
 // count_matches and find_all read the same walk, so they must report the same thing the iteration does
 // — this is the API surface the batched path actually serves.
 TEST(the_public_counters_agree_with_the_walk)
