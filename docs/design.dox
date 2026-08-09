@@ -978,6 +978,47 @@ NFA instructions a pattern compiles to (a small constant per byte matched).
   33 554 432 (GCC's default is already enough). Consumers using such patterns at compile time may
   need the same flag; the dynamic `real::regex` at runtime is unaffected.
 
+\subsection g_cceshapes 10.0 The 67 constant-evaluation branches are not a refactoring target
+
+Audited, because they look like one: 67 occurrences across the headers, 34 in `pike.hpp` alone, and a
+staged-types proposal offered to replace them with a single named dispatch. They do not fit, and the
+reasons are worth having written down so the idea is not re-proposed as free.
+
+**The shapes are not what a dispatch helper serves.** Counted:
+
+| shape | sites |
+| --- | ---: |
+| `if (!%std::is_constant_evaluated() && …)` — a runtime fast-path GUARD | 35 |
+| `if (%std::is_constant_evaluated()) { … }` — statement | 16 |
+| part of a larger condition | 9 |
+| an assignment | 1 |
+
+A `select(at_compile, at_run)` helper serves the *expression* form — two thunks yielding one type. The
+dominant form has no second branch to pass: the constant-evaluation path is "fall through to the
+general code", which is a statement-level structure, not a value.
+
+**The most repeated remaining idiom resists extraction for a load-bearing reason.** Nine sites read
+`(std::is_constant_evaluated() || !some_route_disabled())`. Those `*_disabled()` accessors return a
+reference to a mutable function-local static — they are runtime test seams, and reading one during
+constant evaluation is ill-formed. The `||` short-circuit is precisely what keeps them out of it. A
+helper taking `bool disabled` would evaluate its argument eagerly and break every constexpr caller;
+one taking a thunk would put a callable where a short-circuit is today. The repetition is the price of
+the seam, not an oversight.
+
+**What the audit did find** is one assignment-form site, `basic_match_iterator`'s `batchable`, and it
+already carries its own comment: as a `const bool` INITIALIZER the expression is manifestly
+constant-evaluated and clang rejects `std::is_constant_evaluated()` there under
+`-Werror=constant-evaluated`. It is written declare-then-assign for that reason. Note that a wrapper
+FUNCTION would have hidden that diagnostic rather than helped — the warning is doing real work.
+
+**The C++23 story, stated honestly.** `if consteval` (P1938) is the right spelling for all 51 statement
+and guard sites, and it turns the trap above into a compile error instead of a silent truth. That
+migration is a mechanical, one-time edit when this project raises `CXXSTD`; a macro seam would not
+shorten it, and would mean touching `pike.hpp` 34 times now for a rename later — in the file
+\ref g_inlinebudget exists to warn about. The two-phase in \ref real::detail::static_storage is a
+separate matter and does NOT go away in C++23 or C++26: persistent constexpr allocation is still
+forbidden, so measure-then-freeze stays regardless of reflection.
+
 \subsection g_inlinebudget 10.1 The inlining budget, and why a pattern you never touched can slow down
 
 \note **Fixed, in three steps** (lift, table bases into the view, capacity tiering). What follows is the
