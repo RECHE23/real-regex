@@ -457,84 +457,110 @@ namespace real {
       // lookaround walk (its own once-per-walk route). Constant evaluation stays on the general path,
       // where the route seams are honoured as written.
       if constexpr (!TrailingLA) {
-        // An ANCHORED shape is excluded, and the exclusion is load-bearing rather than tidy: the
-        // fillers scan forward, `run()` is where `\A`/`^` is turned into prefix anchoring, and a
-        // batched walk bypasses `run()` entirely. Without this, `^[a-z]+` over "  abc" reports a
-        // match at offset 2. It costs nothing to give up: an anchored pattern yields at most one
-        // match per walk, so there is no per-match return to amortise.
-        // The prerequisites EVERY batched route shares, named once. They were written out four times,
-        // identically, and the copies were not merely long: a shape excluded from one route and not
-        // the next would have been a silent wrong answer, not a slow one. Nothing here is hot — this
-        // is the constructor, once per walk, never per match.
-        // DECLARED then ASSIGNED, which is required rather than stylistic: as a `const bool`
-        // INITIALIZER this expression is manifestly constant-evaluated, and clang rejects
-        // `std::is_constant_evaluated()` there under -Werror=constant-evaluated ("will always
-        // evaluate to true"). The two-step form is not manifestly constant-evaluated and keeps the
-        // runtime/constexpr split the original four copies had.
-        bool batchable {};
-        batchable = !std::is_constant_evaluated() && sem == match_semantics::first
-                    && !detail::class_fastpath_disabled()
-                    && !prog.hints.anchored_start && !prog.hints.line_anchored;
-        // A KEPT `\b`/`\B` wrap is handled by the BYTE class filler and by nothing else, so the other
-        // routes still require its absence. `\b[a-z]+\b` was 4.485 ns/B against `[a-z]+`'s 1.169 for
-        // an assertion a word-SUBSET class genuinely needs: a maximal `[a-z]+` run can start after `_`
-        // or a digit, so unlike `\b\w+\b`'s this one is not redundant, cannot be dropped at
-        // recognition time, and has to be evaluated on every span.
-        const bool no_wrap {prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0};
-        wb_kept_ = !no_wrap;
-        // A DROPPED leading `\b` (\ref real::detail::pattern_hints::wb_lead_maximal_run) no longer
-        // disqualifies the two class-run routes: their fillers now carry the same one-position
-        // window-edge guard the general route does. It cost `\b\w+\b` 18.81 ns per match against
-        // `\w+`'s 6.80 on the same corpus with the same match count -- 2.8x for an assertion the
-        // recognizer had already proved redundant everywhere except at a caller-supplied `pos`.
-        // The other two routes have not been taught the guard and still decline.
-        // Each route then adds only its OWN selector, which is what the four lines below now read as.
-        wb_edge_         = prog.hints.wb_lead_maximal_run;
-        // A `{k,}` minimum no longer disqualifies either class-run route: the fillers now apply the
-        // same "a too-short maximal run cannot satisfy X{k,}, skip it" rule the general route does.
-        // It cost `[a-z]{2,}` 2.338 ns/B against `[a-z]+`'s 1.148 -- 2.0x for a length comparison.
-        batch_bytes_     = batchable && prog.hints.greedy_class_loop >= 0
-                           && prog.hints.greedy_class_loop_end == 0;
-        batch_cp_ascii_  = batchable && no_wrap && !prog.hints.wb_lead_maximal_run
-                           && prog.hints.codepoint_class_ascii >= 0
-                           && prog.hints.greedy_class_loop < 0 && prog.hints.greedy_cp_class < 0;
-        // The bare single byte-class (`[a-z]`, no quantifier) needs no `{k,}` or capture exclusion:
-        // the 4-opcode shape pattern_hints::single_class recognizes admits neither.
-        batch_single_cl_ = batchable && no_wrap && !prog.hints.wb_lead_maximal_run
-                           && prog.hints.single_class >= 0;
-        // The code-point class loop is the fourth batched route and deliberately gets NO member of its
-        // own: it is \ref refill_batch's `else`, so naming it would grow the iterator for nothing —
-        // and this iterator's size is measured, not assumed (see \ref batch_cap).
-        // BOTH class routes now accept a `{k,}` minimum. The code-point one had been declined twice on
-        // a cost measured in the four-engine harness that does not exist in a consumer-shaped
-        // translation unit -- see fill_cp_class_spans's note and docs/MEASUREMENT.md §5.5.
-        const bool cp_class {batchable && no_wrap && prog.hints.greedy_cp_class >= 0
-                             && prog.hints.greedy_cp_class_end == 0
-        }; // no is_constant_evaluated: see above
-
-        // The fixed ALTERNATION, small-set shape only (2..8 distinct branch first bytes -- what the
-        // filler's mask scan needs; outside that range run_alternation takes a different scan and this
-        // route declines rather than growing a second body there). It was **99 % per-match return**:
-        // 19.13 ns per match against 5 776 ns to scan 200 KB, fitted across five densities.
-        // fixed_alternation already excludes captures and asserts by construction, so slot_count is 2.
-        // Branch count BELOW the Aho-Corasick floor, and that bound is the load-bearing one. The AC
-        // gate is consulted inside `run()`, which a batched walk bypasses entirely, so batching a
-        // shape the gate could claim would silently overrule a routing decision that was measured --
-        // and the gate takes the automaton below twelve branches too when the subject is dense enough
-        // (tests/engine/test_ac_density_gate.cpp pins exactly that). Under four branches the automaton
-        // is never considered at all, so nothing is overruled. That subset is also the common one and
-        // contains §A's own `alt the|fox|dog` row. Batching the AC route is a separate piece of work,
-        // not a widening of this condition.
-        batch_alt_       = batchable && no_wrap && prog.hints.fixed_alternation
-                           && prog.hints.alternation_branch_count > 0
-                           && prog.hints.alternation_branch_count < 4
-                           && prog.hints.small_set_size >= 2 && prog.hints.small_set_size <= 8
-                           && prog.hints.greedy_class_loop < 0 && prog.hints.greedy_cp_class < 0
-                           && prog.hints.codepoint_class_ascii < 0 && prog.hints.single_class < 0;
-        batch_eligible_  = batch_bytes_ || batch_cp_ascii_ || batch_single_cl_ || cp_class || batch_alt_;
+        decide_batching(prog, sem);
       }
       current_.bind_context(text_, pattern_, prog_.names); // invariant across the walk — set once, not per match
       advance();
+    }
+
+    /*!
+     * \brief Decides, once per walk, whether the batched walk is eligible and which filler serves it.
+     *
+     * OUTLINED AND COLD, and both are load-bearing rather than tidy. This is the constructor's cold
+     * half -- it runs once per walk, never per match -- but `count_matches` inlines the constructor, so
+     * as constructor-body code it was absorbed into the hot measurement loop. The consequence was
+     * measured: appending ONE route to the dispatch left every scan filler byte-identical (398 function
+     * bodies compared, five changed, none of them a scan loop) yet moved `single [a-z]` +10.7 %,
+     * `\b\w+\b` +4.0 %, `\w+` +3.7 %, `\w{2,}` +3.2 % and `fields [^,]+` +2.8 %, each above its own
+     * calibrated floor at 24 of 24 paired draws. The two functions that changed were this constructor
+     * and `count_matches` -- so the toll for touching the dispatch was paid by rows whose own code never
+     * moved. Behind a call the compiler does not inline, the eligibility logic can grow without
+     * recompiling what runs per match.
+     *
+     * \param[in] prog The compiled program, for its hints.
+     * \param[in] sem  The walk's match semantics.
+     */
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline, cold))
+#endif
+    constexpr void decide_batching(detail::program_view prog,
+                                   match_semantics      sem)
+    {
+      // An ANCHORED shape is excluded, and the exclusion is load-bearing rather than tidy: the
+      // fillers scan forward, `run()` is where `\A`/`^` is turned into prefix anchoring, and a
+      // batched walk bypasses `run()` entirely. Without this, `^[a-z]+` over "  abc" reports a
+      // match at offset 2. It costs nothing to give up: an anchored pattern yields at most one
+      // match per walk, so there is no per-match return to amortise.
+      // The prerequisites EVERY batched route shares, named once. They were written out four times,
+      // identically, and the copies were not merely long: a shape excluded from one route and not
+      // the next would have been a silent wrong answer, not a slow one. Nothing here is hot — this
+      // is the constructor, once per walk, never per match.
+      // DECLARED then ASSIGNED, which is required rather than stylistic: as a `const bool`
+      // INITIALIZER this expression is manifestly constant-evaluated, and clang rejects
+      // `std::is_constant_evaluated()` there under -Werror=constant-evaluated ("will always
+      // evaluate to true"). The two-step form is not manifestly constant-evaluated and keeps the
+      // runtime/constexpr split the original four copies had.
+      bool batchable {};
+      batchable = !std::is_constant_evaluated() && sem == match_semantics::first
+                  && !detail::class_fastpath_disabled()
+                  && !prog.hints.anchored_start && !prog.hints.line_anchored;
+      // A KEPT `\b`/`\B` wrap is handled by the BYTE class filler and by nothing else, so the other
+      // routes still require its absence. `\b[a-z]+\b` was 4.485 ns/B against `[a-z]+`'s 1.169 for
+      // an assertion a word-SUBSET class genuinely needs: a maximal `[a-z]+` run can start after `_`
+      // or a digit, so unlike `\b\w+\b`'s this one is not redundant, cannot be dropped at
+      // recognition time, and has to be evaluated on every span.
+      const bool no_wrap {prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0};
+      wb_kept_ = !no_wrap;
+      // A DROPPED leading `\b` (\ref real::detail::pattern_hints::wb_lead_maximal_run) no longer
+      // disqualifies the two class-run routes: their fillers now carry the same one-position
+      // window-edge guard the general route does. It cost `\b\w+\b` 18.81 ns per match against
+      // `\w+`'s 6.80 on the same corpus with the same match count -- 2.8x for an assertion the
+      // recognizer had already proved redundant everywhere except at a caller-supplied `pos`.
+      // The other two routes have not been taught the guard and still decline.
+      // Each route then adds only its OWN selector, which is what the four lines below now read as.
+      wb_edge_         = prog.hints.wb_lead_maximal_run;
+      // A `{k,}` minimum no longer disqualifies either class-run route: the fillers now apply the
+      // same "a too-short maximal run cannot satisfy X{k,}, skip it" rule the general route does.
+      // It cost `[a-z]{2,}` 2.338 ns/B against `[a-z]+`'s 1.148 -- 2.0x for a length comparison.
+      batch_bytes_     = batchable && prog.hints.greedy_class_loop >= 0
+                         && prog.hints.greedy_class_loop_end == 0;
+      batch_cp_ascii_  = batchable && no_wrap && !prog.hints.wb_lead_maximal_run
+                         && prog.hints.codepoint_class_ascii >= 0
+                         && prog.hints.greedy_class_loop < 0 && prog.hints.greedy_cp_class < 0;
+      // The bare single byte-class (`[a-z]`, no quantifier) needs no `{k,}` or capture exclusion:
+      // the 4-opcode shape pattern_hints::single_class recognizes admits neither.
+      batch_single_cl_ = batchable && no_wrap && !prog.hints.wb_lead_maximal_run
+                         && prog.hints.single_class >= 0;
+      // The code-point class loop is the fourth batched route and deliberately gets NO member of its
+      // own: it is \ref refill_batch's `else`, so naming it would grow the iterator for nothing —
+      // and this iterator's size is measured, not assumed (see \ref batch_cap).
+      // BOTH class routes now accept a `{k,}` minimum. The code-point one had been declined twice on
+      // a cost measured in the four-engine harness that does not exist in a consumer-shaped
+      // translation unit -- see fill_cp_class_spans's note and docs/MEASUREMENT.md §5.5.
+      const bool cp_class {batchable && no_wrap && prog.hints.greedy_cp_class >= 0
+                           && prog.hints.greedy_cp_class_end == 0
+      }; // no is_constant_evaluated: see above
+
+      // The fixed ALTERNATION, small-set shape only (2..8 distinct branch first bytes -- what the
+      // filler's mask scan needs; outside that range run_alternation takes a different scan and this
+      // route declines rather than growing a second body there). It was **99 % per-match return**:
+      // 19.13 ns per match against 5 776 ns to scan 200 KB, fitted across five densities.
+      // fixed_alternation already excludes captures and asserts by construction, so slot_count is 2.
+      // Branch count BELOW the Aho-Corasick floor, and that bound is the load-bearing one. The AC
+      // gate is consulted inside `run()`, which a batched walk bypasses entirely, so batching a
+      // shape the gate could claim would silently overrule a routing decision that was measured --
+      // and the gate takes the automaton below twelve branches too when the subject is dense enough
+      // (tests/engine/test_ac_density_gate.cpp pins exactly that). Under four branches the automaton
+      // is never considered at all, so nothing is overruled. That subset is also the common one and
+      // contains §A's own `alt the|fox|dog` row. Batching the AC route is a separate piece of work,
+      // not a widening of this condition.
+      batch_alt_       = batchable && no_wrap && prog.hints.fixed_alternation
+                         && prog.hints.alternation_branch_count > 0
+                         && prog.hints.alternation_branch_count < 4
+                         && prog.hints.small_set_size >= 2 && prog.hints.small_set_size <= 8
+                         && prog.hints.greedy_class_loop < 0 && prog.hints.greedy_cp_class < 0
+                         && prog.hints.codepoint_class_ascii < 0 && prog.hints.single_class < 0;
+      batch_eligible_  = batch_bytes_ || batch_cp_ascii_ || batch_single_cl_ || cp_class || batch_alt_;
     }
 
     /*!

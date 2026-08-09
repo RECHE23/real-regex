@@ -5284,15 +5284,28 @@ namespace real::detail {
      *       On `benchmarks/bench_minimal.cpp` against this machine's calibrated floors, 24 paired
      *       draws: `literal` **−29.4 %** [−32.2, −24.6] at 24/24 — and `single [a-z]` **+10.7 %**,
      *       `\b\w+\b` **+4.0 %**, `\w+` **+3.7 %**, `\w{2,}` **+3.2 %**, `fields [^,]+` **+2.8 %**, all
-     *       five above their own floors at 24/24, with **14 of 15 rows leaning positive**. That spread
-     *       is the per-unit inline budget, not layout — the same signature that refused three earlier
-     *       fillers (see \ref fill_codepoint_class_spans's note). The trade is what settles it: the gain
-     *       lands on a row already ahead of PCRE2-JIT (1.29× / 1.94×) while the costs land on rows near
-     *       parity, four of which are the previous train's own wins.
+     *       five above their own floors at 24/24, with **14 of 15 rows leaning positive**. The trade is
+     *       what settles it: the gain lands on a row already ahead of PCRE2-JIT (1.29× / 1.94×) while the
+     *       costs land on rows near parity, four of which are the previous train's own wins.
      *
-     *       Worth one campaign before anyone rewrites the filler: the attempt added BOTH a filler body
-     *       and a `bool` to the iterator's hot type, and those were never separated. If the cost is the
-     *       member rather than the body, folding the flag into an existing field changes the answer.
+     *       **The mechanism was then pinned by comparing machine code rather than argued, and it is not
+     *       the diffuse "per-unit inline budget" this note first blamed.** Of 398 function bodies in the
+     *       consumer unit, five changed and NONE of them is a scan loop: every filler, and `advance`,
+     *       are byte-identical. What moved is `refill_batch` (379 → 389 instructions), the iterator's
+     *       constructor, and `count_matches` (610 → 606) — and `count_matches` is what
+     *       `benchmarks/bench_minimal.cpp` measures for every row. So the rows that "regressed" do not do
+     *       more work; the shared entry point they all pass through was recompiled.
+     *
+     *       Two follow-ups were tried against that mechanism and both failed, which is why the refusal
+     *       stands rather than waiting on one more idea. Folding the flag away cannot help: the added
+     *       `bool` lands in existing padding, `sizeof` the iterator is unchanged at 8664 either way.
+     *       Replacing the dispatch chain with a `switch` on a dense enum does not help either — clang
+     *       emits a branch tree rather than a jump table, and the variant reproduced the SAME
+     *       379 → 389 and 610 → 606 for no gain at all. Outlining the constructor's cold eligibility
+     *       half (\ref real::basic_match_iterator::decide_batching) does keep `count_matches`
+     *       byte-identical on its own, but not with this filler on top: the toll is `refill_batch`'s to
+     *       pay, and nothing shields it. Anyone reopening this needs a filler that does not enlarge
+     *       `refill_batch`, not a cheaper flag.
      */
     template <typename OutSlots>
 #if defined(__GNUC__) || defined(__clang__)
