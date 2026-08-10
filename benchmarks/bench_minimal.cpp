@@ -77,33 +77,52 @@ namespace {
   {
     count,     //!< `count_matches` -- the throughput surface every row used before.
     find_iter, //!< the lazy iterator, which yields full results and selects routes on its own.
+    search,    //!< one `search` per call: the per-CALL regime, where a fixed cost is not amortised.
+    match,     //!< one `match` per call: validation, where the answer is often NO.
+    replace,   //!< one `replace` per call: the operation a trim/normalise pass actually performs.
   };
 
-  //! One case: the pattern, the corpus, and which API measures it.
+  //! One case: the pattern, the corpus, which API measures it, and whether a match is expected.
+  //!
+  //! `expect_hit` exists for the REJECT rows. A validation call that correctly answers NO is a regime in
+  //! its own right -- and the one where `std::regex` is furthest ahead, because a backtracker rejects on
+  //! the first byte while this engine pays its walk. Refusing to measure a zero-match case (which this
+  //! harness did) means never seeing that.
   struct probe_case
   {
     const char* name;
     const char* pattern;
     std::string corpus;
     surface     api {surface::count};
+    bool        expect_hit {true};
   };
 
   //! Discards a warm-up scan, then returns \p n per-scan times in nanoseconds.
   std::vector<double> collect(const real::regex& re,
                               const std::string& text,
                               int                n,
-                              surface            api)
+                              surface            api,
+                              bool               expect_hit)
   {
     const auto scan = [&re, &text](surface api) -> std::size_t {
-      if (api == surface::count) {
-        return re.count_matches(text);
+      switch (api) {
+        case surface::count:
+          return re.count_matches(text);
+        case surface::search:
+          return static_cast<bool>(re.search(text)) ? 1U : 0U;
+        case surface::match:
+          return static_cast<bool>(re.match(text)) ? 1U : 0U;
+        case surface::replace:
+          return re.replace(text, "X").size();
+        default: {
+          std::size_t hits {0};
+          for (const auto& m : re.find_iter(text)) {
+            (void) m;
+            ++hits;
+          }
+          return hits;
+        }
       }
-      std::size_t hits {0};
-      for (const auto& m : re.find_iter(text)) {
-        (void) m;
-        ++hits;
-      }
-      return hits;
     };
     (void) scan(api);
     std::vector<double> out;
@@ -113,7 +132,7 @@ namespace {
       const auto hits {scan(api)};
       const auto t1 {std::chrono::steady_clock::now()};
       out.push_back(std::chrono::duration<double, std::nano>(t1 - t0).count());
-      if (hits == 0) {
+      if (expect_hit && hits == 0) {
         std::fprintf(stderr, "no match: corpus does not exercise this case\n");
         std::exit(2);
       }
@@ -158,6 +177,13 @@ int main()
                                      "deadbeefcafe a1b2, Fox! ", 100000)};
   const std::string csv {repeat_to("alpha,beta,gamma,delta,epsilon,zeta,charlie,eta,theta,iota,",
                                    100000)};
+  // SHORT subjects, and they are the point of the rows at the end: a fixed per-CALL cost is invisible at
+  // 100 KB (400 ns is 0.004 ns/byte) and dominant at 60 (6.7 ns/byte). Every row above amortises over a
+  // large corpus, so this file could not see the regime a caller reaches when it validates one field at a
+  // time -- which is how a real deployment reported 3x against std::regex on a shape nothing here measured.
+  const std::string stamp_exact {"2026-08-10_11:43:27"};                                  // the subject IS the match
+  const std::string stamp_in    {"champ = 2026-08-10_11:43:27 ; suite de la ligne"};       // the match is inside it
+  const std::string pad_line    {"   nomDuChampAvecUnPeuDeLongueur   "};
 
   // The rows a batching change is judged on: the ones it targets, and the ones it must not charge.
   //
@@ -195,12 +221,25 @@ int main()
     // against `count_matches`' 4.41 while every non-lookaround pattern had the two surfaces within 1 %.
     // A row that only ever measures one API cannot see a route the other one misses.
     {"lookahead find_iter", "[a-z]+(?=[a-z])", prose, surface::find_iter},
+    // The per-CALL regime. Patterns and subjects come from a deployment's own profile (timestamped field
+    // names and a whitespace trim), and the two `search` rows are the two regimes a reconciliation had to
+    // separate: on a subject that IS the match an anchored pattern loses to std::regex, on a subject that
+    // merely CONTAINS it the same pattern wins, because std::regex retries every position and this engine
+    // refuses immediately. `match reject` is the row where a backtracker is furthest ahead: it answers NO on
+    // the first byte where this engine pays a walk, and a fixed-width shape should be rejectable on its
+    // LENGTH alone. `trim replace` is measured because it is the operation such a pass actually calls --
+    // measuring `search` there described work the caller never does.
+    {"short stamp search exact", R"(^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}:[0-9]{2}:[0-9]{2}$)", stamp_exact, surface::search},
+    {"short stamp search in", R"([0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}:[0-9]{2}:[0-9]{2})", stamp_in, surface::search},
+    {"short stamp match hit", R"(^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}:[0-9]{2}:[0-9]{2}$)", stamp_exact, surface::match},
+    {"short stamp match reject", R"(^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}:[0-9]{2}:[0-9]{2}$)", stamp_in, surface::match, false},
+    {"short trim replace", R"(^[\t \n\r]+|[\t \n\r]+$)", pad_line, surface::replace},
   };
 
   std::string out {"{\"cases\":["};
   for (std::size_t i {0}; i < cases.size(); ++i) {
     const real::regex re {cases[i].pattern};
-    const auto        samples {collect(re, cases[i].corpus, n, cases[i].api)};
+    const auto        samples {collect(re, cases[i].corpus, n, cases[i].api, cases[i].expect_hit)};
     char              head[256];
     std::snprintf(head, sizeof head, "%s{\"name\":\"%s\",\"corpus_bytes\":%zu,\"engines\":{\"real\":{",
                   i ? "," : "", json_name(cases[i].name).c_str(), cases[i].corpus.size());
