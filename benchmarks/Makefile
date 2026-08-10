@@ -134,6 +134,22 @@ bench-engines: ## C++ throughput vs std::regex/PCRE2/RE2 (if present)
 	 c++ -std=c++20 -O2 -DBENCH_FLAGS='"-O2"' -DBENCH_COMMIT="\"$$commit\"" $(INCLUDES) -I$(SCIFORGE_INCLUDE) benchmarks/bench_engines.cpp $$flags -o $(BUILD)/bench_engines
 	cd $(ROOT) && $(PYRUN) benchmarks/bench_engines.py $(BUILD)/bench_engines
 
+# Per-call duel against std::regex. Its own translation unit, NOT part of bench-engines: that unit
+# measures 100 KB corpora, which divides a fixed per-call cost away, and it carries its own standing
+# prohibition against being extended. Every compiler found is timed, because a per-call cost one
+# compiler elides and another does not is exactly what this regime exposes.
+bench-percall: ## [bench] REAL's std::regex swap-in vs std::regex, per call (short subjects)
+	@mkdir -p $(BUILD)
+	@cd $(ROOT) && for cc in c++ g++ g++-15 g++-14 clang++; do \
+	   command -v $$cc >/dev/null 2>&1 || continue; \
+	   ver=$$($$cc --version 2>/dev/null | head -1); \
+	   case "$$seen" in *"$$ver"*) continue;; esac; seen="$$seen$$ver"; \
+	   echo "== $$cc: $$ver"; \
+	   $$cc -std=c++20 -O2 -DNDEBUG $(INCLUDES) -I$(SCIFORGE_INCLUDE) benchmarks/bench_percall.cpp \
+	     -o $(BUILD)/bench_percall_$$cc 2>/dev/null || { echo "   (build failed, skipped)"; continue; }; \
+	   $(BUILD)/bench_percall_$$cc $(or $(SAMPLES),15); echo; \
+	 done
+
 # Multi-pattern which-matched (TABLE A) + extraction count (TABLE B). Informational only —
 # not a CI gate. RE2 and Hyperscan optional via pkg-config (libhs / hyperscan names vary).
 bench-multipattern: ## multi-pattern which-matched / extraction (RE2/HS optional)
