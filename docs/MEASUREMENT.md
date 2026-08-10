@@ -191,6 +191,14 @@ because both are easy to get wrong:
   function's inlining context. Per-call numbers taken before the batch are not comparable to numbers
   taken after it, and neither is a floor calibrated under the old loop.
 
+**What the batch bought, beyond measurability.** The calibrated floors say the per-call rows are now
+the *most* sensitive rows in the minimal unit, not the least: `short stamp match hit` and `short stamp
+match reject` both floor at **0.1 %**, `short stamp search exact` at 0.6 %, against 2.7-3.1 % for the
+throughput rows over 100 KB corpora. Each sample averages thousands of calls, so layout noise is
+averaged inside the sample rather than between samples. A one-percent movement in the per-call regime is
+therefore a judgeable claim here -- which is what makes the fixed per-call cost a tractable target at
+all, rather than something only a profiler can see.
+
 ## 4. The decision rule, and the measured floors
 
 A row's movement is reported as **REAL** only when both hold:
