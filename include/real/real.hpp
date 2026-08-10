@@ -464,7 +464,7 @@ namespace real {
         trailing_la_walk_ = true;
       }
       else {
-        decide_batching(prog, sem);
+        decide_batching(prog, sem, text_.size());
       }
       current_.bind_context(text_, pattern_, prog_.names); // invariant across the walk — set once, not per match
       advance();
@@ -484,14 +484,21 @@ namespace real {
      * moved. Behind a call the compiler does not inline, the eligibility logic can grow without
      * recompiling what runs per match.
      *
-     * \param[in] prog The compiled program, for its hints.
-     * \param[in] sem  The walk's match semantics.
+     * \param[in] prog       The compiled program, for its hints.
+     * \param[in] sem        The walk's match semantics.
+     * \param[in] text_bytes The subject's length. Only the lazy-DFA route needs it, and it needs it here
+     *                       rather than per refill: that route declines under
+     *                       \ref detail::pike_vm::lazy_dfa_min_input bytes of runway, so on a short
+     *                       subject its filler can only fail -- once per match, for nothing. That cost is
+     *                       measured: `short trim replace` **+9.7 %** [+7.4, +12.9] at 24 of 24 draws
+     *                       against a 4.5 % floor, purely from attempting a refill that could not succeed.
      */
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((noinline, cold))
 #endif
     constexpr void decide_batching(detail::program_view prog,
-                                   match_semantics      sem)
+                                   match_semantics      sem,
+                                   std::size_t          text_bytes)
     {
       // Decided here rather than in the constructor body on purpose: this function is already outlined and
       // cold, so the flag costs the constructor nothing (verified — the constructor's body is unchanged).
@@ -573,7 +580,50 @@ namespace real {
                          && prog.hints.small_set_size >= 2 && prog.hints.small_set_size <= 8
                          && prog.hints.greedy_class_loop < 0 && prog.hints.greedy_cp_class < 0
                          && prog.hints.codepoint_class_ascii < 0 && prog.hints.single_class < 0;
-      batch_eligible_  = batch_bytes_ || batch_cp_ascii_ || batch_single_cl_ || cp_class || batch_alt_;
+      // The LAZY-DFA route, last in the cascade because every shape above it is faster: this is what a
+      // pattern falls to when no recognizer claims it, and it was the only route with no filler at all
+      // -- 0.9949 engine entries per match against 0.2501 for every batched route (see
+      // fill_lazy_dfa_spans for the two-density fit that says the return, not the scan, is the cost).
+      // The conditions MIRROR the route's own gate in `run()` rather than inventing a set, because a
+      // batched walk bypasses that gate entirely and any divergence is a wrong answer, not a slow one:
+      //   * `first_bytes_valid` -- the filler carries only the anchored-from-candidate sub-scan.
+      //   * `slot_count <= 2`   -- the route writes slots directly only there; with captures it calls
+      //                            run_general per match, which IS the cost this would amortise.
+      //   * not nullable        -- a zero-width match needs `forbid_empty_until_`, and the batched span
+      //                            path does not apply it. The route's own gate refuses to run once
+      //                            that is non-zero; this takes the same exclusion one step earlier.
+      //   * the seam            -- `lazy_dfa_route_disabled()` must take this out with the route.
+      // Nothing is required of the OTHER routes' hints beyond their flags being clear: this arms only
+      // where none of them did, so any shape they claim keeps its faster filler.
+      //   * NOT a shape the Aho-Corasick gate could claim, and this one is load-bearing exactly as it is
+      //     for `batch_alt_`: that gate is consulted INSIDE `run()`, per search, on the subject's own
+      //     density, so a batched walk silently overrules a routing decision that was measured -- and
+      //     tests/engine/test_ac_density_gate.cpp reads the verdict, so it reports `not_consulted`
+      //     rather than a wrong answer. Same bound as there: below the branch floor the automaton is
+      //     never considered at all.
+      //   * NOT a trailing-lookaround shape. That route is chosen by \ref trailing_la_walk_ and lives on
+      //     `advance`'s per-match path, which the batched path preempts; the two cannot both own the
+      //     walk. `[a-z]+(?=[a-z])` and `[0-9]+(?![0-9])` diverged across the enumerating surfaces
+      //     until this line existed (make route-surface-parity).
+      //   * the route must be the one `run()` would TAKE -- \ref detail::pike_vm::lazy_dfa_is_the_route,
+      //     which states one condition per route sitting above it in the cascade. Stated as a residue
+      //     instead ("whatever the four recognizers left"), this charged `literal charlie` +81.1 %: a
+      //     plain literal has neither a class loop nor a fixed alternation, so it fell through here and
+      //     lost its memmem. The predicate lives beside the cascade it mirrors, not here.
+      //   * enough RUNWAY. The route declines under `lazy_dfa_min_input` bytes, so on a shorter subject
+      //     the filler can only fail -- once per match, for nothing: `short trim replace` +9.7 %.
+      batch_lazy_dfa_  = batchable && no_wrap && !prog.hints.wb_lead_maximal_run
+                         && !detail::lazy_dfa_route_disabled()
+                         && prog.hints.first_bytes_valid && !prog.hints.empty_match_possible
+                         && prog.slot_count <= 2
+                         && prog.hints.alternation_branch_count < 4
+                         && prog.hints.trailing_lookaround < 0
+                         && detail::pike_vm<typename Storage::state_type, true>::lazy_dfa_is_the_route(prog.hints)
+                         && text_bytes >= detail::pike_vm<typename Storage::state_type, true>::lazy_dfa_min_input
+                         && !batch_bytes_ && !batch_cp_ascii_ && !batch_single_cl_ && !cp_class
+                         && !batch_alt_;
+      batch_eligible_  = batch_bytes_ || batch_cp_ascii_ || batch_single_cl_ || cp_class || batch_alt_
+                         || batch_lazy_dfa_;
     }
 
     /*!
@@ -722,6 +772,13 @@ namespace real {
     //! \brief Batch the fixed-alternation route (\ref real::detail::pike_vm::fill_alternation_spans).
     //!        Its per-match return was 99 % of the row at density -- see that filler's own note.
     bool                                                                  batch_alt_        {};
+    //! \brief Batch the lazy-DFA route (\ref detail::pike_vm::fill_lazy_dfa_spans) — the fifth, and the
+    //!        one shape recognition never reaches.
+    bool                                                                  batch_lazy_dfa_   {};
+    //! \brief That filler stopped WITHOUT proving the subject spent, so an empty buffer means "resume on
+    //!        the per-match path", not "the walk is over". Never set by the other four fillers, whose
+    //!        scans cover the whole subject and for which an empty buffer IS exhaustion.
+    bool                                                                  batch_partial_    {};
     //! \brief The walk's pattern KEEPS a `\b`/`\B` wrap, so the byte-class filler evaluates it on every
     //!        span. Only that filler handles it; the other batched routes decline such patterns.
     bool                                                                  wb_kept_          {};
@@ -800,6 +857,10 @@ namespace real {
         detail::prof::tick_route(detail::prof::route::alternation);
         batch_n_ = bvm.fill_alternation_spans(text_, pos_, batch_, batch_cap);
       }
+      else if (batch_lazy_dfa_) {
+        detail::prof::tick_route(detail::prof::route::lazy_dfa_anchored);
+        batch_n_ = bvm.fill_lazy_dfa_spans(text_, pos_, batch_, batch_cap, batch_partial_);
+      }
       else {
         // The code-point class loop — the fourth eligible route, reached as the `else` rather than
         // through a flag of its own (see the constructor's `cp_class`). Nothing else can arrive here:
@@ -847,17 +908,35 @@ namespace real {
       // once the buffer drains. Every shape this cannot reproduce is excluded by batch_eligible_,
       // decided once per walk.
       if (batch_eligible_) {
+        // The partial test sits INSIDE the exhausted branch, not beside the hot one, and that placement
+        // was measured. Written as two sequential tests -- refill, then `batch_i_ < batch_n_` -- it put a
+        // second comparison on the path every batched route walks per match, and the per-row rule saw
+        // nothing while the cross-row sign test did: 17 of 21 medians positive on rows this change cannot
+        // touch, p = 0.007, median +1.3 % (docs/MEASUREMENT.md §3.2 is the instrument for exactly that).
+        // In this shape the four shape-recognized fillers execute what they always did, and the extra
+        // test is reached once per walk, when a refill comes back empty.
         if (batch_i_ == batch_n_ && !refill_batch()) {
-          done_ = true;
+          // An empty buffer means the walk is over for those four, whose scan covers the whole subject.
+          // The lazy-DFA filler can stop with matches still ahead -- its declined fallback sub-scan, a
+          // tail under lazy_dfa_min_input, DFAs not built yet -- and says so with `batch_partial_`. There
+          // the answer is to fall through to the per-match path below, which re-enters the full gate in
+          // `run()`; concluding the subject was spent would silently drop the rest of the matches.
+          if (!batch_partial_) {
+            done_ = true;
+            return;
+          }
+        }
+        else {
+          detail::pike_vm<typename Storage::state_type, true> wvm {prog_, state_};
+          const auto&                                         sp  {batch_[batch_i_++]};
+          current_.engine_refill_span(wvm, sp.start, sp.end);
+          pos_ = sp.end;
+          // No batched filler emits an empty span (each one's own note says why), so the find_iter
+          // no-progress rule cannot apply here.
+          forbid_empty_until_ = 0;
           return;
         }
-        detail::pike_vm<typename Storage::state_type, true> wvm {prog_, state_};
-        const auto&                                         sp  {batch_[batch_i_++]};
-        current_.engine_refill_span(wvm, sp.start, sp.end);
-        pos_ = sp.end;
-        // A code-point-class run is never empty, so the find_iter no-progress rule cannot apply here.
-        forbid_empty_until_ = 0;
-        return;
+        // Batched route, refill came back empty, subject NOT spent: the per-match path below takes it.
       }
       // `state_` is this iterator's own member and `prog_` is fixed for the walk, so the state never
       // meets a second program: the VM can drop its per-`run()` program-identity compare.

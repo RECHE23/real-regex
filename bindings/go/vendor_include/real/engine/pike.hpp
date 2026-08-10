@@ -1378,9 +1378,17 @@ namespace real::detail {
      */
     using list_type = std::remove_reference_t<decltype(std::declval<State&>().list_a)>;
 
+  public:
+
     //! \brief Below this input length the lazy-DFA routing is skipped (the two-pass setup does not amortise
     //!        on a short subject — the Pike VM goes direct). A measured, documented threshold.
+    //!
+    //!        PUBLIC because \ref real::basic_match_iterator reads it when deciding whether to batch this
+    //!        route: below this length the route is not taken, so its filler could only fail once per
+    //!        match. Paired with \ref lazy_dfa_is_the_route, which is public for the same reason.
     static constexpr std::size_t lazy_dfa_min_input {512};
+
+  private:
 
     /*!
      * \brief O1 density-gate sample size and threshold (inner-literal → core/DFA when candidate density is high).
@@ -5173,6 +5181,125 @@ namespace real::detail {
         // An alternation branch is a non-empty byte/klass run, so `end > hit` always and the walk
         // cannot stall; the find_iter empty-match rule has nothing to apply here.
         pos = end;
+      }
+      return n;
+    }
+
+    /*!
+     * \brief Is the lazy-DFA route the one `run()` would actually take for this program?
+     *
+     * MIRRORS `run()`'s CASCADE, and it has to: a batched walk bypasses `run()` entirely, so batching a
+     * shape that some EARLIER route claims does not merely fail to help, it takes the pattern off a
+     * faster route. Written first as "whatever the four shape recognizers did not claim", which cost
+     * `literal charlie` **+81.1 %** [+72.4, +87.2] at 24 of 24 paired draws against a 3.5 % floor: a
+     * plain literal has no class loop and no fixed alternation, so it fell through to here and left its
+     * `memmem` behind. The conditions below are therefore stated positively, one per route that sits
+     * above the lazy DFA in the cascade, and NOT as a residue.
+     *
+     * \warning **Adding a route to `run()` above the lazy DFA means adding its hint here.** Nothing
+     *          enforces that automatically; the failure mode is a silent slowdown on exactly the shape
+     *          the new route was written for, and the only instrument that sees it is a per-row layout
+     *          judgement on a row that exercises that shape.
+     *
+     * \param[in] hints The program's shape hints.
+     * \return True when no earlier route in the cascade claims this shape.
+     */
+    [[nodiscard]] static constexpr bool lazy_dfa_is_the_route(const pattern_hints& hints) noexcept
+    {
+      return hints.exact_literal_len == 0     // exact-literal search (`charlie`)
+             && hints.prefix_size == 0        // literal-prefix skip
+             && hints.inner_literal_len == 0  // inner-literal memmem (`\d+\.\d+`)
+             && !hints.literal_one_search     // single-occurrence literal walk
+             && !hints.fixed_shape            // fixed-width shape (`[0-9a-f]{8}`)
+             && hints.fs_pair_width == 0      // the fixed-shape PAIR route
+             && hints.rare_disc < 0           // rare-discriminant scan
+             && !hints.fixed_alternation;     // run_alternation / Aho-Corasick territory
+    }
+
+    /*!
+     * \brief Fills up to \p cap lazy-DFA matches from \p start without re-entering the route gate.
+     *
+     * The fifth batched route, and the one the other four made conspicuous. A pattern whose branches are
+     * not all literals -- `[a-z]+|[0-9]+`, the plain tokenizer idiom -- matches none of the four
+     * shape recognizers and lands here, where it was billing **0.9949 engine entries per match** against
+     * 0.2501 for every batched route. On 100 KB of prose that reads 10.00 ns/B against `[a-z]+`'s 1.20
+     * for the same match count, and the excess fits a per-match constant on two independent densities:
+     * 44 ns/match at one match every 5.2 bytes (`[a-z]+|zzzz`), 37.8 ns/match at one every 62
+     * (`[0-9]+|zzzz`). The DFA scan is not the cost; the return is.
+     *
+     * ONLY THE ANCHORED-FROM-CANDIDATE SUB-SCAN, deliberately. \ref try_shared_lazy_dfa_search has a
+     * second sub-scan (`forward_end` then `reverse_start`) for when the first bytes do not carry the
+     * search, and reproducing it here would put a second body in this translation unit -- the change
+     * shape that repeatedly charged unrelated rows during the batching work (docs/MEASUREMENT.md §5.4).
+     * Declining it costs nothing, because of \p partial.
+     *
+     * WHY \p partial EXISTS, and why the other four fillers need no such thing. Returning zero spans is
+     * how a filler says "the subject is spent", and \ref basic_match_iterator::advance ends the walk on
+     * it. For the four shape routes that is sound: their scan covers the whole subject, so nothing found
+     * means nothing there. This route can stop with matches still to come -- the fallback sub-scan's
+     * territory, fewer than \ref lazy_dfa_min_input bytes left, no shared DFAs built yet -- and ending
+     * the walk there would drop them. So \p partial is set unless exhaustion was PROVEN (no candidate
+     * remains in the whole subject), and the caller resumes on the per-match path, which re-enters the
+     * full gate. Pessimistic by construction: only one branch clears it.
+     *
+     * \param[in]  text    The subject.
+     * \param[in]  start   Where to begin.
+     * \param[out] out     Buffer for the spans found.
+     * \param[in]  cap     Capacity of \p out; the walk stops there and resumes from the last end.
+     * \param[out] partial True unless the subject was proven spent; see above.
+     * \return How many spans were written.
+     */
+    std::size_t fill_lazy_dfa_spans(std::string_view text,
+                                    std::size_t      start,
+                                    cp_span        * out,
+                                    std::size_t      cap,
+                                    bool           & partial)
+    {
+      partial = true;
+      std::size_t n    {0};
+      const bool  used {
+        with_search_dfas([&](lazy_dfa& fwd, reverse_dfa& rev) {
+                           // The reverse DFA serves the fallback sub-scan only, which this filler declines; naming it
+                           // keeps the callback signature `with_search_dfas` hands out.
+                           static_cast<void>(rev);
+                           fwd.begin_scan();
+                           std::size_t pos {start};
+                           while (n < cap && pos <= text.size() && text.size() - pos >= lazy_dfa_min_input) {
+                             std::size_t hit {npos};
+                             std::size_t end {npos};
+                             std::size_t c   {pos};
+                             while (true) {
+                               c = next_candidate(text, c, pos);
+                               if (c > text.size()) {
+                                 partial = false; // PROVEN spent: no candidate byte remains anywhere ahead
+                                 return;
+                               }
+                               const auto anchored {fwd.anchored_end(text, c)};
+                               prefilter_note_scan(anchored.scanned_to - c);
+                               if (anchored.end != npos) {
+                                 hit = c;
+                                 end = anchored.end;
+                                 break;
+                               }
+                               if (anchored.scanned_to >= text.size()) {
+                                 return; // the fallback sub-scan's territory; partial stays set
+                               }
+                               ++c;
+                             }
+                             if (end == hit) {
+                               // A zero-width match carries the find_iter empty-match rule (`forbid_empty_until_`),
+                               // which the batched span path does not apply. The caller's arming condition already
+                               // excludes a nullable pattern, so this is a belt rather than a road -- and if it ever
+                               // trips, stopping is the answer that stays correct.
+                               return;
+                             }
+                             out[n] = cp_span {.start = hit, .end = end};
+                             ++n;
+                             pos = end;
+                           }
+                         })};
+      if (!used) {
+        n = 0; // no shared DFAs on this regex yet: nothing found and nothing proven
       }
       return n;
     }
