@@ -682,6 +682,23 @@ namespace real {
      * It also says why the defect survived: `benchmarks/bench_minimal.cpp` measures `count_matches` for
      * every row, so §A's `lookahead` figure described the fast path while the iterator API ran 12x slower
      * and no table showed it. That instrument now carries a `find_iter` row for exactly this reason.
+     *
+     * **WHAT IT COSTS, AND TWO ATTEMPTS TO REMOVE THAT COST THAT FAILED.** The test this flag adds sits in
+     * `advance`'s general path, so the routes that are NOT batched pay it once per match. Judged on the
+     * 19-row consumer instrument against calibrated floors, 24 paired draws: `lookahead find_iter`
+     * **−93.1 %** [−93.2, −92.8] and `unicode .` −7.8 %, both REAL — against **`literal charlie` +17.2 %**
+     * [+7.6, +24.8], also REAL, with `date` +14.1 % indistinguishable. `literal charlie` is `exact_literal`,
+     * which is unbatched and whose matches are short and frequent, so it is the row most exposed to a
+     * per-match test; the arithmetic fits (~23 ns per match, +4 ns measured).
+     *
+     * Two ways out were tried and both made it WORSE, established by disassembly before any campaign:
+     * folding this flag and `batch_eligible_` into one dense `enum` field -- they are mutually exclusive,
+     * so one field should mean one load -- grew `count_matches` from 372 to 381 instructions, because a
+     * compare-to-constant costs more than a test-nonzero; and moving the fold's assignment into the cold
+     * `decide_batching` recovered only the constructor, leaving the same +9. So the trade STANDS and is
+     * recorded rather than quietly carried: 14x on an API path a caller cannot avoid, against 17 % on a row
+     * that leads PCRE2-JIT by 1.29x / 1.94x and can afford it. Anyone reopening this needs a way to select
+     * the walk WITHOUT a per-match test, not a cheaper flag.
      */
     bool                                                                  trailing_la_walk_ {};
     bool                                                                  batch_bytes_      {}; //!< Batch the BYTE-class route rather than the code-point one.
