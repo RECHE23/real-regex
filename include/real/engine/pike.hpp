@@ -849,8 +849,24 @@ namespace real::detail {
       }
 #endif
       if (sem_ == match_semantics::first && prog_.hints.fixed_shape) {
+        if (prog_.hints.anchored_start && start != 0) {
+          out_slots.assign(prog_.slot_count, npos);
+          return false;
+        }
         prof::tick_route(prof::route::fixed_shape);
-        return run_fixed_shape(text, start, mode, out_slots);
+        const bool matched {run_fixed_shape(text, start,
+                                            prog_.hints.anchored_start && mode == run_mode::search
+                                              ? run_mode::prefix : mode, out_slots)};
+        if (matched && prog_.hints.fs_end_anchor != 0) {
+          const std::size_t e      {out_slots[1]};
+          const bool        at_end {e == text.size()
+                                    || (prog_.hints.fs_end_anchor == 2 && e + 1 == text.size() && text[e] == 0x0A)};
+          if (!at_end) {
+            out_slots.assign(prog_.slot_count, npos);
+            return false;
+          }
+        }
+        return matched;
       }
       if (sem_ == match_semantics::first && prog_.hints.codepoint_class_ascii >= 0
           && (std::is_constant_evaluated() || !class_fastpath_disabled())) {

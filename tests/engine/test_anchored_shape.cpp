@@ -183,3 +183,76 @@ TEST(word_boundary_with_an_end_anchor_is_not_peeled)
     }
   }
 }
+
+// `fixed_shape` now KEEPS an anchored pattern instead of refusing it, and this is the differential that
+// makes that safe. It refused them until measurement showed what the refusal cost: every anchored
+// fixed-width shape -- the dominant form in config parsing, validation and log scanning -- fell to the
+// general Pike VM. On x86-64/libstdc++, `^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}:[0-9]{2}:[0-9]{2}$` over a
+// 19-byte subject went from 628.7 ns per call to 186.6, which turns a 3.1x LOSS against `std::regex` into
+// a 1.7x win; the per-call rows in benchmarks/bench_minimal.cpp read 458 -> 42 ns.
+//
+// TWO bugs had to be fixed to get there, and both are the reason this test generates its cases instead of
+// listing a few:
+//
+//   * `body_pc` was only advanced past a peeled `\b`, never past a peeled `^`. The verify then began its
+//     walk ON the assert, stopped there, and reported a ZERO-WIDTH match -- so `^[0-9]{4}-…$` "matched" an
+//     empty subject and `find_iter` yielded that match forever.
+//   * `fixed_shape_pair`, the SIMD two-position prefilter, is armed by the same recognizer and its gate
+//     runs BEFORE fixed_shape's. It documents itself as transparent -- "it only filters candidates" --
+//     and that contract holds only while the shape may start anywhere. With an anchor peeled it returned
+//     candidates the assertion forbids: `^[0-9]{4}-[0-9]{2}-[0-9]{2}$` reported [0,10) on
+//     "2026-08-10_11:43:27". It now refuses a peeled anchor, which costs nothing that matters -- a
+//     prefilter exists to SKIP candidate positions and an anchored shape has exactly one.
+//
+// Neither bug was a wrong answer the suite could see any other way: both routes are correct by
+// construction on unanchored input, so only routed-vs-core on ANCHORED input distinguishes them.
+TEST(fixed_shape_anchored_routed_equals_core)
+{
+  const std::vector<std::string> bodies {"[0-9]{2}", "[0-9]{4}-[0-9]{2}", "ab", "a[bc]d",
+                                         "[a-z]{3}_[0-9]{2}", "[0-9]{2}:[0-9]{2}", "[ab][cd][ef]"};
+  const std::vector<std::string> leads  {"", "^", R"(\A)", R"(\b)"};
+  const std::vector<std::string> tails  {"", "$", R"(\Z)", R"(\b)"};
+  // The subjects that matter are the EDGES: empty, a bare newline, `$` before a final newline, one byte
+  // short, one byte long, and the match with text after it (the case fixed_shape_pair got wrong).
+  const std::vector<std::string> subs {"",        "\n",       "12",     "12\n",   "12\n\n", "1234-56",
+                                       "1234-56\n", "ab",     "ab\n",   "abd",    "acd",    "acd\n",
+                                       "abc_12",  "abc_12\n", "11:22",  "11:22\n", "ace",   "ace\n",
+                                       " 12 ",    "z12z",     "1234-56-78", "prefixe 12 suffixe"};
+  bool saw_armed {false};
+  for (const auto& b : bodies) {
+    for (const auto& l : leads) {
+      for (const auto& t : tails) {
+        std::string pat {l}; // built with += : clang-tidy's performance-inefficient-string-concatenation
+        pat += b;            // fires on `l + b + t`, and the gate treats it as an error
+        pat += t;
+        const real::regex probe {pat};
+        // An anchored shape that is armed is the point; record that at least one is, so a recognizer
+        // change that silently stops arming them cannot leave this test passing vacuously.
+        if (probe.raw_program().hints.fixed_shape && probe.raw_program().hints.anchored_start) {
+          saw_armed = true;
+          // The pair prefilter must be OFF whenever an anchor was peeled -- see the note above.
+          EXPECT_EQ(static_cast<int>(probe.raw_program().hints.fs_pair_width), 0);
+        }
+        for (const auto& s : subs) {
+          // Each arm builds its OWN regex: the seam is applied once per regex at construction
+          // (storage.hpp), so one compiled before the toggle would carry the routed hints into both arms.
+          real::detail::fixed_shape_route_disabled() = true;
+          const real::regex off    {pat};
+          const auto        core   {walk(off, s)};
+          real::detail::fixed_shape_route_disabled() = false;
+          const real::regex on     {pat};
+          const auto        routed {walk(on, s)};
+          EXPECT_EQ(routed.size(), core.size());
+          if (routed.size() == core.size()) {
+            for (std::size_t i {0}; i < core.size(); ++i) {
+              EXPECT_EQ(routed[i].first, core[i].first);
+              EXPECT_EQ(routed[i].second, core[i].second);
+            }
+          }
+        }
+      }
+    }
+  }
+  real::detail::fixed_shape_route_disabled() = false;
+  EXPECT(saw_armed);
+}

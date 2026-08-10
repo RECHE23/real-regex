@@ -522,11 +522,21 @@ namespace real {
       std::uint8_t fixed_shape_hi1      {};  //!< Second range's high byte, when one is present.
       std::uint8_t fixed_shape_simd_len {};  //!< The run length (1..16) when eligible, else 0.
 
-      //! \brief Two bytes held where the retired IL-fusion pair sat, so removing dead code does not
-      //!        reflow every field after it. See the layout note further down: a mid-struct reflow of this
-      //!        struct once cost `dog` 16.33 -> 21.23 us through the Rust bench. Reclaiming them is a
+      //! \brief A `fixed_shape` whose trailing end anchor was peeled — 0 none, 1 `\Z` (strict end), 2 `$`
+      //!        (end, or just before ONE final newline: Python's semantics, and why `^X$` is NOT
+      //!        `fullmatch(X)`).
+      //!
+      //!        Only ever set together with \ref anchored_start, and that pairing is the whole reason the
+      //!        end test is cheap: with the start pinned there is exactly ONE candidate position, so a
+      //!        failed end test owes no retry. A trailing `$` WITHOUT `^` stays on the general VM.
+      //!
+      //!        This byte and the one below it are the pair held where the retired IL-fusion fields sat, so
+      //!        that removing dead code did not reflow every field after it — see the layout note further
+      //!        down: a mid-struct reflow of this struct once cost `dog` 16.33 -> 21.23 us through the Rust
+      //!        bench. One of the two is now spent on something real; reclaiming the other is a
       //!        measurement, not a cleanup.
-      std::uint8_t reserved_layout_hold [2] {};
+      std::uint8_t fs_end_anchor            {};
+      std::uint8_t reserved_layout_hold [1] {}; //!< The remaining held byte; see \ref fs_end_anchor.
 
       //! \brief Trailing lookaround on a groupless greedy `class+` body (`[a-z]+(?=[a-z])`,
       //!        `[0-9]+(?![0-9])`, …). Index into lookarounds; -1 = not this shape.
