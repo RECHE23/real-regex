@@ -29,6 +29,8 @@
 
 #include <real/compat/std/regex.hpp>
 
+#include "bench_warmup.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -81,6 +83,7 @@ namespace {
 
 int main(int argc, char** argv)
 {
+  bench::ramp_and_pin();
   const int         samples {argc > 1 ? std::atoi(argv[1]) : 15};
   const std::string stamp {"2026-08-10_14:52:47"};
   const std::string embedded {"log 2026-08-10_14:52:47 end"};

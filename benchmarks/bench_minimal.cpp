@@ -19,6 +19,8 @@
 
 #include <real/real.hpp>
 
+#include "bench_warmup.hpp"
+
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -195,6 +197,9 @@ namespace {
 
 int main()
 {
+  // Ramps the governor and pins the core BEFORE any row is timed; on a powersave host the per-call rows
+  // otherwise carry up to 3.8x of pure frequency noise. See benchmarks/bench_warmup.hpp.
+  bench::ramp_and_pin();
   const char* env {std::getenv("BENCH_SAMPLES")};
   const int   n   {env != nullptr && std::atoi(env) > 0 ? std::atoi(env) : 30};
 

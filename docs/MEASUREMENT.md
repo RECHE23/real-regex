@@ -199,6 +199,36 @@ averaged inside the sample rather than between samples. A one-percent movement i
 therefore a judgeable claim here -- which is what makes the fixed per-call cost a tractable target at
 all, rather than something only a profiler can see.
 
+### 3.4 On Linux, ramp the clock and pin the core, or measure the governor instead
+
+Discovered while trying to compare two ISAs and finding the comparison had no ground to stand on. A host
+under the `powersave` governor idles at its minimum multiplier -- 1.2 GHz on a part whose base is 3.7 --
+and ramps only under sustained load. A per-call row is a few hundred microseconds of work, so it can
+complete entirely below the ramp, and which side of the ramp it lands on is chance. Five runs of a
+SINGLE unchanged binary on the same row:
+
+    163.9   230.2   300.1   301.8   315.5 ns        (and 83.2 seen earlier the same hour)
+
+3.8x of spread, none of it attributable to any code. Every x86-64 per-call number taken before this was
+found had to be discarded, including one already written into a commit message.
+
+**It takes two things, and neither is optional.** The ramp is per core, so ramping without pinning lets
+the process migrate onto a core that has not ramped:
+
+    ramp only, unpinned    82.7   83.3   83.9   231.2          <- one run in four is worthless
+    ramp + pinned          77.1   83.5   83.6   83.8   85.1   85.2
+
+`benchmarks/bench_warmup.hpp` does both, called once from `main` before any row is timed: pin to the
+core we are already on (so an outer `taskset` stays in charge), then spin 800 ms. `bench_minimal` and
+`bench_percall` both call it.
+
+**What it does not fix.** A longer timed region substitutes for none of this -- growing the batch from
+50 us to 5 ms changed nothing once ramped and pinned, because the batch exists to clear the clock's
+granularity (§3.3), which is a different problem. And even ramped and pinned, the spread is 1.1x rather
+than 1.0x, so on such a host **take the minimum across runs**, never a single run's median. The
+arm64 development machine needs none of this and shows none of the instability; that asymmetry is
+exactly why it went unnoticed.
+
 ## 4. The decision rule, and the measured floors
 
 A row's movement is reported as **REAL** only when both hold:
