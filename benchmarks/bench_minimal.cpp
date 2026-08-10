@@ -58,6 +58,13 @@ namespace {
 
 namespace {
 
+  //! \brief Sink for every scan result, so no compiler can hoist a loop-invariant scan out of the timed
+  //!        loop or elide it as dead. It is not decoration: the per-call rows read 0.0 ns under g++ before
+  //!        this existed -- same regex, same subject each iteration, so g++ hoisted the whole call and the
+  //!        readings measured nothing while clang's (which did not hoist) looked fine. A benchmark that one
+  //!        compiler optimises away reports a 0 that is indistinguishable from "infinitely fast".
+  volatile std::size_t scan_sink {0};
+
   std::string repeat_to(const char* unit,
                         std::size_t target)
   {
@@ -125,13 +132,33 @@ namespace {
       }
     };
     (void) scan(api);
+    // BATCH THE TIMED REGION, calibrated per case. A per-call row measures ~40 ns, and reading the clock
+    // around a single call of that length measures the CLOCK: the per-call rows read 0.0 ns under one
+    // compiler and 42 under another, from nothing but where each landed relative to the tick, and the
+    // minimum of such samples is 0. Growing the batch until it spans ~50 us puts the reading three orders
+    // of magnitude above the granularity; a throughput row over 100 KB already exceeds that at one
+    // iteration, so it keeps `inner == 1` and its numbers are unchanged.
+    int inner {1};
+    for (; inner < (1 << 20); inner *= 2) {
+      const auto c0 {std::chrono::steady_clock::now()};
+      for (int k = 0; k < inner; ++k) {
+        scan_sink = scan(api);
+      }
+      if (std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - c0).count() >= 50.0) {
+        break;
+      }
+    }
     std::vector<double> out;
     out.reserve(static_cast<std::size_t>(n));
     for (int i = 0; i < n; ++i) {
       const auto t0 {std::chrono::steady_clock::now()};
-      const auto hits {scan(api)};
+      std::size_t hits {0};
+      for (int k = 0; k < inner; ++k) {
+        hits = scan(api);
+        scan_sink = hits; // see scan_sink: g++ hoists the invariant scan out of this loop otherwise
+      }
       const auto t1 {std::chrono::steady_clock::now()};
-      out.push_back(std::chrono::duration<double, std::nano>(t1 - t0).count());
+      out.push_back(std::chrono::duration<double, std::nano>(t1 - t0).count() / inner);
       if (expect_hit && hits == 0) {
         std::fprintf(stderr, "no match: corpus does not exercise this case\n");
         std::exit(2);

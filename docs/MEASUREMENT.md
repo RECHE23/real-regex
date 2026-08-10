@@ -154,6 +154,43 @@ dispatch* is not the way. And the cost of finding out is now seconds: if §3.1's
 `count_matches` and `refill_batch` byte-identical, a mechanism is viable; if it does not, it is not, and no
 campaign is needed to know.
 
+### 3.3 A second compiler is a second instrument, and the per-call rows needed a batched clock
+
+`make bench-compilers` builds `bench_minimal.cpp` with every compiler on the PATH, runs each, and
+prints the per-row ratio against the first. It exists because this project measured itself with one
+compiler for its whole life: local development and `bench_layout.py` both use the platform clang, and
+the CI matrix's GCC leg builds and tests but never times anything. Whatever GCC does differently was
+therefore invisible by construction, and what it does differently is not small:
+
+| row | clang++ 16 | g++-14 | ratio |
+| --- | ---: | ---: | ---: |
+| `short stamp search exact` | 54.9 ns | 103.5 ns | **1.89x** |
+| `short stamp match reject` | 34.6 ns | 83.0 ns | **2.40x** |
+| `short trim replace` | 681.3 ns | 765.6 ns | 1.12x |
+| the nineteen throughput rows | -- | -- | 0.90x to 1.22x |
+
+The per-call rows carry the whole difference; the throughput rows are within ordinary compiler
+variance. The cause is a per-call fixed cost that one compiler removes and the other does not, which is
+why it hides in throughput rows: over 100 KB it is divided by the corpus.
+
+**The rule this establishes.** When an optimisation's own comment claims a saving, that claim has to
+hold on both legs, or say which leg it holds on. A number measured under one compiler is a statement
+about that compiler.
+
+**And the rule that made the leg possible at all.** A per-call row measures tens of nanoseconds. Read
+the clock around a single such call and the reading is dominated by the clock: the five per-call rows
+came back at **exactly 0.0 ns** under g++-14 and 42 ns under clang, from nothing but where each landed
+relative to the tick — and a minimum-of-samples estimator then reports the zero. So the timed region is
+a batch, sized per case until it spans 50 us, and the total is divided. Two consequences worth stating
+because both are easy to get wrong:
+
+* A row reading 0.0 ns is never a fast row. It is an unmeasured row, and the harness must be fixed
+  before any comparison drawn from it is used for anything.
+* Batching moves the absolute numbers of the affected rows (42 ns became 55 ns here) for two
+  independent reasons -- the granularity artefact is gone, and an inner loop changes the enclosing
+  function's inlining context. Per-call numbers taken before the batch are not comparable to numbers
+  taken after it, and neither is a floor calibrated under the old loop.
+
 ## 4. The decision rule, and the measured floors
 
 A row's movement is reported as **REAL** only when both hold:
