@@ -486,6 +486,12 @@ namespace real {
     constexpr void decide_batching(detail::program_view prog,
                                    match_semantics      sem)
     {
+      // Decided here rather than in the constructor body on purpose: this function is already outlined and
+      // cold, so the flag costs the constructor nothing (verified — the constructor's body is unchanged).
+      if (!std::is_constant_evaluated() && prog.hints.trailing_lookaround >= 0
+          && !detail::trailing_la_route_disabled()) {
+        trailing_la_walk_ = true;
+      }
       // An ANCHORED shape is excluded, and the exclusion is load-bearing rather than tidy: the
       // fillers scan forward, `run()` is where `\A`/`^` is turned into prefix anchoring, and a
       // batched walk bypasses `run()` entirely. Without this, `^[a-z]+` over "  abc" reports a
@@ -651,6 +657,26 @@ namespace real {
     std::size_t                                                           batch_n_          {}; //!< Spans currently buffered.
     std::size_t                                                           batch_i_          {}; //!< Next span to hand out.
     bool                                                                  batch_eligible_   {}; //!< Route/shape allows batching (decided once).
+
+    /*!
+     * \brief This walk takes the trailing-lookaround route, chosen once here rather than by
+     *        specialization — which is what lets \ref basic_regex::find_iter reach it at all.
+     *
+     * The route exists for `[a-z]+(?=[a-z])` and its family, and three of the four entry points took it:
+     * `count_matches` and `find_all` branch internally onto
+     * `basic_match_range<Storage, TrailingLA = true>`. `find_iter` could NOT — its return type names the
+     * specialization, so a runtime hint cannot pick one — and it fell to the general Pike VM instead.
+     * Measured on an 88 KB prose corpus, `[a-z]+(?=[a-z])`: `count_matches` 4.41 ns/B against
+     * `find_iter` **53.84**, a **12.2x** gap for the same pattern and the same 18 000 matches, where every
+     * pattern WITHOUT a trailing lookaround has the two surfaces within 1 % of each other (`[a-z]+`
+     * 1.189/1.189, `\w+` 1.407/1.448, `dog` 0.368/0.367 — so result construction costs nothing and the
+     * whole gap was the missed route). With this flag `find_iter` reads 4.51 and the surfaces meet again.
+     *
+     * It also says why the defect survived: `benchmarks/bench_minimal.cpp` measures `count_matches` for
+     * every row, so §A's `lookahead` figure described the fast path while the iterator API ran 12x slower
+     * and no table showed it. That instrument now carries a `find_iter` row for exactly this reason.
+     */
+    bool                                                                  trailing_la_walk_ {};
     bool                                                                  batch_bytes_      {}; //!< Batch the BYTE-class route rather than the code-point one.
     //! \brief Batch the `.`/negated-class route (\ref real::detail::pike_vm::fill_codepoint_class_spans).
     //!
@@ -814,7 +840,18 @@ namespace real {
       detail::pike_vm<typename Storage::state_type, true> vm(prog_, state_);
       bool                                                ok {};
       if constexpr (TrailingLA) {
-        // P3c cold path only — this specialization is never mixed into pure walks.
+        // P3c cold path. The claim that once stood here -- "this specialization is never mixed into pure
+        // walks" -- is RETIRED by measurement: keeping the walk out of the pure specialization is what
+        // left `find_iter` on the general VM at 12x the cost of `count_matches` for the same pattern, since
+        // a return type cannot name a specialization a runtime hint picks. The pure walk now selects the
+        // same route through \ref trailing_la_walk_; this branch remains for the callers that can and do
+        // name the specialization at compile time.
+        ok = cascade_ ? current_.template engine_refill_trailing_la<true>(vm, text_, pos_)
+                      : current_.template engine_refill_trailing_la<false>(vm, text_, pos_);
+      }
+      else if (trailing_la_walk_) {
+        // The trailing-lookaround route, reached at RUNTIME so `find_iter` gets it too — see
+        // \ref trailing_la_walk_ for the 12x this closes and why no table showed it.
         ok = cascade_ ? current_.template engine_refill_trailing_la<true>(vm, text_, pos_)
                       : current_.template engine_refill_trailing_la<false>(vm, text_, pos_);
       }

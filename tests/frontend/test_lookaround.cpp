@@ -290,3 +290,61 @@ TEST(trailing_la_class_loop_modes)
   EXPECT(neg.fullmatch("abc"));   // negative holds at end-of-text
   EXPECT(!neg.fullmatch("abc ")); // trailing space not in body
 }
+
+// Every ENTRY POINT must reach the trailing-lookaround route, not just the three that could name the
+// specialization at compile time. `count_matches` and `find_all` branch onto
+// basic_match_range<Storage, TrailingLA = true> internally; `find_iter` cannot -- its return type names
+// the specialization -- so it ran the general Pike VM instead, at 53.84 ns/B against count_matches' 4.41
+// on the same pattern and the same matches, while every pattern WITHOUT a trailing lookaround has the two
+// surfaces within 1 %. The route is now selected at runtime so the iterator reaches it too.
+//
+// This pins AGREEMENT across the four surfaces rather than the route, because agreement is what a caller
+// is owed: whichever API you reach for, the same spans. It would have failed before the fix only if the
+// two walks disagreed -- they did not -- so it is a guard against the NEXT divergence, and the row
+// `lookahead find_iter` in benchmarks/bench_minimal.cpp is what makes the cost visible.
+TEST(trailing_la_every_surface_agrees)
+{
+  const std::vector<std::string> pats {R"([a-z]+(?=[a-z]))",
+                                       R"([0-9]+(?![0-9]))",
+                                       R"([a-z]+(?=[0-9]))",
+                                       R"([a-z]+(?![a-z]))"};
+  std::string text;
+  for (int i = 0; i < 400; ++i) {
+    text += "abc 42 de9 x7y zz 100 q ";
+  }
+  for (const auto& p : pats) {
+    const real::regex re {p};
+    EXPECT(re.raw_program().hints.trailing_lookaround >= 0); // else this test proves nothing
+
+    std::vector<std::pair<std::size_t, std::size_t>> by_iter;
+    for (const auto& m : re.find_iter(text)) {
+      by_iter.emplace_back(m.start(), m.end());
+    }
+    const auto by_all  {re.find_all(text)};
+    const auto counted {re.count_matches(text)};
+
+    EXPECT_EQ(by_iter.size(), by_all.size());
+    EXPECT_EQ(by_iter.size(), counted);
+    if (by_iter.size() == by_all.size()) {
+      for (std::size_t i {0}; i < by_all.size(); ++i) {
+        EXPECT_EQ(by_iter[i].first, by_all[i].start());
+        EXPECT_EQ(by_iter[i].second, by_all[i].end());
+      }
+    }
+    // The seam takes the route out; every surface must still agree with itself off-route.
+    real::detail::trailing_la_route_disabled() = true;
+    const real::regex                                off {p};
+    std::vector<std::pair<std::size_t, std::size_t>> unrouted;
+    for (const auto& m : off.find_iter(text)) {
+      unrouted.emplace_back(m.start(), m.end());
+    }
+    real::detail::trailing_la_route_disabled() = false;
+    EXPECT_EQ(unrouted.size(), by_iter.size());
+    if (unrouted.size() == by_iter.size()) {
+      for (std::size_t i {0}; i < by_iter.size(); ++i) {
+        EXPECT_EQ(unrouted[i].first, by_iter[i].first);
+        EXPECT_EQ(unrouted[i].second, by_iter[i].second);
+      }
+    }
+  }
+}
