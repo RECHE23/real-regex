@@ -694,6 +694,19 @@ namespace real {
      * the signal that it stopped. Billing nothing here — which is what this walk did until now — makes a
      * batched route indistinguishable from one never entered, and it hid every route this file batches
      * from the one instrument that is indifferent to machine load.
+     *
+     * \warning **Do not add a route here without reading docs/MEASUREMENT.md §3.2 first.** This function is
+     *          entered once per \ref batch_cap matches by every batched route and is reached from
+     *          `count_matches`, which is what every throughput measurement runs. Adding ONE branch --
+     *          calling an existing filler, flag computed in the cold outlined \ref decide_batching, no struct
+     *          reflow -- leaves `advance` and all six fillers byte-identical and moves only this function
+     *          (+10 instructions) and `count_matches` (−2), and that was enough to put **17 of 18** rows'
+     *          medians positive (+0.2 % to +9.7 %, 21 of 24 draws on most) where the same base without the
+     *          branch read 13 of 18 negative. No row is REAL by \ref real's decision rule, and the sign
+     *          across rows is not noise either. Three routes still bill one entry per MATCH --
+     *          `exact_literal`, `inner_literal` and `fixed_shape` (which serves `date`, the weakest published
+     *          row) -- and batching any of them through here taxes the other seventeen by about what it might
+     *          win on one. §3.2 also records why the obvious doors around it are not free.
      * \return `true` if at least one span was buffered.
      */
 #if defined(__GNUC__) || defined(__clang__)

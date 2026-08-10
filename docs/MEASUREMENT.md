@@ -123,6 +123,37 @@ Two rules came out of it that are worth more than the measurements they came fro
   reserved bytes at the same offset collapsed the diff to the bodies actually edited and turned the same
   stack into a **REAL −5.2 % on `words [a-z]{4,}`**. Dead code and dead layout are separate decisions.
 
+### 3.2 A sign test across rows sees what the per-row rule cannot — and it closed three targets
+
+§4's rule judges each row on its own, which is right for a claim about that row and blind to a small effect
+spread over all of them. The batched walk's dispatch is where that mattered.
+
+`basic_match_iterator::refill_batch` is entered once per `batch_cap` matches by EVERY batched route, and it
+is reached from `count_matches`, which is what every throughput measurement runs. Adding ONE branch to it --
+calling a filler that already exists, so no new function body; the flag computed in the already-outlined
+cold `decide_batching`, so the constructor is unmoved; the struct reflow held out -- leaves `advance` and all
+six span fillers byte-identical, and moves only `refill_batch` (+10 instructions) and `count_matches` (−2).
+
+On the 18-row consumer instrument that reads **0 rows REAL**. Every spread straddles zero, so by §4 nothing
+is proven. But **17 of the 18 medians are positive**, +0.2 % to +9.7 %, at 21 of 24 draws on most of them --
+where the same base without the branch had read 13 of 18 NEGATIVE. Under the null, 17-or-more of 18 sharing
+a sign has probability about 1e-4. The per-row rule cannot see a ~4 % effect against these floors; the sign
+across rows can, and the two independent perturbations that produced it (a real filler, and this deliberately
+minimal probe) agree.
+
+**So the batched dispatch is closed to new routes, and this is the conclusion to keep rather than re-derive.**
+Three routes still bill one route entry per match -- `exact_literal` (1.0005), `inner_literal` (1.0003),
+`fixed_shape` (1.0003, and it serves `date`, §A's weakest row at 0.83x / 0.79x) -- and batching any of them
+through `refill_batch` taxes the other seventeen rows by about the same amount it might win on one. Nor is
+there a free door around it: a branch in `advance` is worse (it is inlined into `count_matches`), a
+function-pointer dispatch has to convert `refill_batch` first and pays the toll once, and a separate walk in
+the `TrailingLA` style adds its selector to `count_matches`. Every entrance touches a hot shared function.
+
+What this does NOT say is that those routes are unimprovable -- only that *batching them through the shared
+dispatch* is not the way. And the cost of finding out is now seconds: if §3.1's comparison shows
+`count_matches` and `refill_batch` byte-identical, a mechanism is viable; if it does not, it is not, and no
+campaign is needed to know.
+
 ## 4. The decision rule, and the measured floors
 
 A row's movement is reported as **REAL** only when both hold:
