@@ -456,7 +456,14 @@ namespace real {
       // candidate), a `{k,}` minimum (a too-short run is skipped, not matched), and the trailing-
       // lookaround walk (its own once-per-walk route). Constant evaluation stays on the general path,
       // where the route seams are honoured as written.
-      if constexpr (!TrailingLA) {
+      if constexpr (TrailingLA) {
+        // This specialization IS the trailing-lookaround walk, so it sets the same flag the pure walk
+        // computes -- one mechanism, not two. Before, the choice was a template parameter here and a
+        // runtime flag there, with byte-identical branch bodies (clang-tidy's bugprone-branch-clone saw
+        // it before a reader would).
+        trailing_la_walk_ = true;
+      }
+      else {
         decide_batching(prog, sem);
       }
       current_.bind_context(text_, pattern_, prog_.names); // invariant across the walk — set once, not per match
@@ -839,19 +846,13 @@ namespace real {
       // meets a second program: the VM can drop its per-`run()` program-identity compare.
       detail::pike_vm<typename Storage::state_type, true> vm(prog_, state_);
       bool                                                ok {};
-      if constexpr (TrailingLA) {
-        // P3c cold path. The claim that once stood here -- "this specialization is never mixed into pure
-        // walks" -- is RETIRED by measurement: keeping the walk out of the pure specialization is what
-        // left `find_iter` on the general VM at 12x the cost of `count_matches` for the same pattern, since
-        // a return type cannot name a specialization a runtime hint picks. The pure walk now selects the
-        // same route through \ref trailing_la_walk_; this branch remains for the callers that can and do
-        // name the specialization at compile time.
-        ok = cascade_ ? current_.template engine_refill_trailing_la<true>(vm, text_, pos_)
-                      : current_.template engine_refill_trailing_la<false>(vm, text_, pos_);
-      }
-      else if (trailing_la_walk_) {
-        // The trailing-lookaround route, reached at RUNTIME so `find_iter` gets it too — see
-        // \ref trailing_la_walk_ for the 12x this closes and why no table showed it.
+      if (trailing_la_walk_) {
+        // The trailing-lookaround route, selected by a FLAG rather than by specialization -- which is what
+        // lets `find_iter` reach it (a return type cannot name a specialization a runtime hint picks). The
+        // claim that once stood here, "this specialization is never mixed into pure walks", is RETIRED by
+        // measurement: keeping the walk out of the pure specialization is exactly what left `find_iter` on
+        // the general VM at 12x the cost of `count_matches` for the same pattern. See
+        // \ref trailing_la_walk_.
         ok = cascade_ ? current_.template engine_refill_trailing_la<true>(vm, text_, pos_)
                       : current_.template engine_refill_trailing_la<false>(vm, text_, pos_);
       }
