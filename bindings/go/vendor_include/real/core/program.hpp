@@ -514,16 +514,11 @@ namespace real {
       std::uint8_t fixed_shape_hi1      {};  //!< Second range's high byte, when one is present.
       std::uint8_t fixed_shape_simd_len {};  //!< The run length (1..16) when eligible, else 0.
 
-      //! \brief IL-fusion (`run_inner_literal`): when the inner-literal route applies
-      //!        (`inner_literal_prefix >= 1`) AND the WHOLE pattern is \ref fixed_shape AND its total
-      //!        width is small (see `il_fused_max_width`), the byte-width of the PREFIX (everything
-      //!        before the literal) -- so a memmem hit's match start is pure arithmetic (`hit -
-      //!        il_fused_prefix_width`) and the whole span verifies in one `match_byte_klass_run` pass:
-      //!        no reverse DFA, no forward DFA, no one-pass extraction. \ref il_fused_eligible is false
-      //!        (prefix width unset) for a variable-width neighbor, a `klass_cp`, or an oversized run --
-      //!        the existing reverse-DFA/forward-DFA/one-pass route stays exactly as it was for those.
-      bool         il_fused_eligible     {}; //!< Whether \ref il_fused_prefix_width is set and the fused route applies.
-      std::uint8_t il_fused_prefix_width {}; //!< Byte width of everything before the literal; subtracted from a memmem hit to get the match start.
+      //! \brief Two bytes held where the retired IL-fusion pair sat, so removing dead code does not
+      //!        reflow every field after it. See the layout note further down: a mid-struct reflow of this
+      //!        struct once cost `dog` 16.33 -> 21.23 us through the Rust bench. Reclaiming them is a
+      //!        measurement, not a cleanup.
+      std::uint8_t reserved_layout_hold [2] {};
 
       //! \brief Trailing lookaround on a groupless greedy `class+` body (`[a-z]+(?=[a-z])`,
       //!        `[0-9]+(?![0-9])`, …). Index into lookarounds; -1 = not this shape.
@@ -651,7 +646,8 @@ namespace real {
       std::uint8_t fs_pair_b_hi1 {};  //!< Position B, second range's high byte.
 
       // The six IL fields below are APPENDED LAST, and that placement is the change rather than a detail:
-      // inserting them mid-struct (after il_fused_prefix_width) reflowed every field after them and moved
+      // inserting them mid-struct (where the retired IL-fusion pair used to sit) reflowed every field
+      // after them and moved
       // the class-loop fast path's own hot fields across a cache line. Measured through the Rust crate's
       // criterion bench, same bench file both sides: `find/literal` (`dog`) 16.33 -> 21.23 us and
       // `find/word_bound` (`\b\w+\b`) 325.5 -> 415.8 us, a pure layout effect on patterns that read none
@@ -661,7 +657,7 @@ namespace real {
        *        (`[a-z]+@…`, `\w+-…`, `\d+\.…`), so the match start for a candidate literal at `h` is the
        *        start of the class run ending at `h` — a backward scan, no automaton.
        *
-       * This is the middle case between \ref il_fused_eligible (the whole pattern is fixed-width, so the
+       * This is the middle case between a `fixed_shape` program (fixed-width throughout, so the
        * start is arithmetic) and the general reverse pass (a reverse DFA over the prefix sub-program, which
        * lives in the per-regex immutables). It needs neither: no sub-program, no DFA, no allocation, so a
        * storage with no immutables — `static_regex` — can run it, which is the point. Leftmost semantics
@@ -695,7 +691,7 @@ namespace real {
        * \brief IL fixed code-point shape: the whole pattern is a fixed SEQUENCE of code-point atoms and
        *        literal bytes — `\d{4}-\d{2}-\d{2}` and its kin — with no loop anywhere.
        *
-       * \ref il_fused_eligible already covers the case where that sequence is fixed-width in BYTES, which a
+       * `fixed_shape` and its own route already cover the case where that sequence is fixed-width in BYTES, which a
        * `klass_cp` never is (a Unicode `\d` matches multi-byte digits). But the code-point COUNT is fixed,
        * so the match start is still arithmetic: step \ref il_cp_prefix_cps code points back from the
        * candidate literal, then one forward walk verifies every atom and fills every capture. No loop means

@@ -1188,16 +1188,7 @@ namespace real::detail {
           return false;
         }
         std::size_t s {h}; // boundary 0 = head literal: the reverse is the identity
-        if (boundary >= 1 && prog_.hints.il_fused_eligible) {
-          // IL-FUSION: the whole pattern (prefix + literal + suffix) is a plain fixed-width byte/klass
-          // sequence (prog_.hints.fixed_shape, checked at compile time -- compiler.hpp's il_fused_eligible
-          // wiring), so the match start is pure arithmetic: no reverse DFA. Bounds-guarded both ways -- a
-          // hit closer to the text start than the prefix's width, or whose only possible start falls
-          // below the reverse floor, has no valid candidate here (mirrors reverse_start returning npos).
-          const std::size_t prefix_w {prog_.hints.il_fused_prefix_width};
-          s = (h >= prefix_w && h - prefix_w >= min_match_start) ? h - prefix_w : npos;
-        }
-        else if (boundary >= 1 && prog_.hints.il_rev_class >= 0) {
+        if (boundary >= 1 && prog_.hints.il_rev_class >= 0) {
           // IL REVERSE-BY-CLASS: the prefix is one greedy class loop, so the match start for this candidate
           // is where the class run ending at `h` begins — a backward walk, no automaton and no per-regex
           // cache, which is what lets a storage without immutables take this route at all. `+` needs at
@@ -1265,28 +1256,6 @@ namespace real::detail {
         }
         if (s == npos) {
           pos = h + 1; // the prefix reaches no start within [min_match_start, h] -> next candidate
-        }
-        else if (prog_.hints.il_fused_eligible) {
-          // The fused verify: one match_byte_klass_run pass over the WHOLE span (prefix + literal +
-          // suffix, all byte/klass ops by construction) -- no forward DFA, no one-pass extraction. A
-          // fixed-width match has every save at a compile-time-constant offset from the start, exactly
-          // like run_fixed_shape's own grouped path, so fill_fixed_saves (no re-match) fills captures.
-          const std::size_t match_end {prog_.slot_count <= 2 ? match_byte_klass_run<false>(text, 1, s)
-                                                              : match_byte_klass_run<true>(text, 1, s)};
-          if (match_end != npos) {
-            out_slots.assign(prog_.slot_count, npos);
-            out_slots[0] = s;
-            out_slots[1] = match_end;
-            if (prog_.slot_count > 2) {
-              fill_fixed_saves(s, out_slots);
-            }
-            return true;
-          }
-          // min_pre_start intentionally not advanced here: match_byte_klass_run reports pass/fail only,
-          // not how far it got, so there is no sound tighter floor to claim (and none is needed for
-          // linearity -- the fused verify is a hard-bounded O(il_fused_max_width) check per candidate,
-          // not the reverse/forward-DFA cost the guard was built to bound).
-          pos = h + 1;
         }
         else if (prog_.hints.il_fwd_class >= 0) {
           // TWO-RUN CONFIRM: the whole pattern is `class+ <literal> class+` (hints.il_fwd_class), and the

@@ -42,18 +42,20 @@ TEST(inner_literal_routed_equals_core)
     {.pat = R"((a?)a)",              .text = "aaa baa aXa aaaa"},                                   // adjacent literal, optional prefix
     {.pat = R"(.+@)",                .text = "aaaa@x bb@ c@d@e no @"},                              // greedy prefix: reverse must not over-bound
     {.pat = R"(id=[0-9a-f]{8})",     .text = "id=abc12345 id=00000000 x id=deadbeef no id= id=zz"}, // offset-0 literal
-    // IL-FUSION cases: the whole pattern is fixed_shape, so these take the
-    // arithmetic-verify fast path (match_byte_klass_run, no reverse/forward DFA) instead of the
-    // reverse-DFA + confirm_at route the cases above still exercise. `\d` is deliberately NOT used here:
-    // the Unicode shorthand compiles to klass_cp, which fixed_shape (and so il_fused_eligible) always
-    // excludes -- explicit byte classes are what the fused path (and the benchmarked "date" case,
-    // bench_engines.cpp) actually compiles to.
+    // FIXED-SHAPE cases: the whole pattern is fixed_shape, so these do NOT take the inner-literal route
+    // at all -- that route's gate excludes fixed_shape, because run_fixed_shape beats it. They are kept
+    // here because they are the shapes an inner literal would otherwise claim, and because the benchmarked
+    // "date" row (bench_engines.cpp) is one of them; the loop below therefore toggles the fixed-shape seam
+    // as well, so each of these has a real route-off arm. It previously toggled only the inner-literal
+    // seam, which does nothing for a fixed_shape pattern: both arms ran run_fixed_shape and the assertion
+    // compared a result with itself. `\d` is deliberately NOT used -- the Unicode shorthand compiles to
+    // klass_cp, which fixed_shape excludes, and explicit byte classes are what the benchmark compiles to.
     {.pat = R"([0-9]{4}-[0-9]{2}-[0-9]{2})", .text = "x2026-07-04y 2026-13-99 no-date 99-99-99 z2026-12-25w"},  // hits abutting non-digit/dash noise
-    {.pat = R"(([0-9]{4})-([0-9]{2})-([0-9]{2}))", .text = "log 2026-07-04 x 2026-99-99 bad-date 2099-01-01!"}, // grouped: exercises fill_fixed_saves on the fused path
+    {.pat = R"(([0-9]{4})-([0-9]{2})-([0-9]{2}))", .text = "log 2026-07-04 x 2026-99-99 bad-date 2099-01-01!"}, // grouped: exercises run_fixed_shape's constant-offset saves
     {.pat = R"([0-9]{4}-[0-9]{2}-[0-9]{2})", .text = "2026-07-04"},                                             // literal hit at h == prefix width exactly (h - prefix_w == 0, the tightest bounds-guard case)
     {.pat = R"([0-9]{4}-[0-9]{2}-[0-9]{2})", .text = "9-04"},                                                   // prefix cannot fit before the hit at all (h < prefix_w) -- must decline, not underflow
-    {.pat = R"([0-9]{10}-[0-9]{10}-[0-9]{10})", .text = "x0123456789-0123456789-01234567890y bad"},             // total width 32 (== il_fused_max_width, the boundary): still fused
-    {.pat = R"([0-9]{15}-[0-9]{15}-[0-9]{15})", .text = "012345678901234-012345678901234-012345678901234"},     // total width 47 (> il_fused_max_width): stays on the pre-fusion route, must still match correctly
+    {.pat = R"([0-9]{10}-[0-9]{10}-[0-9]{10})", .text = "x0123456789-0123456789-01234567890y bad"},             // wide fixed run: the shape holds well past any prefix bound
+    {.pat = R"([0-9]{15}-[0-9]{15}-[0-9]{15})", .text = "012345678901234-012345678901234-012345678901234"},     // wider still: must match correctly whichever route claims it
     // Pure-lit alt: StatusLine arms IL `req=`; URL (`s?`) deliberately declines IL (measured).
     // Both stay 0-div route-on vs core.
     {.pat  = R"(https?://[^\s]+)", .text = "see http://a.com and https://b.org/x end no-url http:/bad"},
@@ -65,32 +67,44 @@ TEST(inner_literal_routed_equals_core)
   // the core and the comparison would be trivially true. Disable it: the point is to exercise the route.
   real::detail::inner_literal_guard_disabled() = true;
   for (const testcase& tc : cases) {
+    // BOTH seams: the list mixes inner-literal shapes with fixed_shape ones, and each seam is inert for
+    // the other family. Toggling only one leaves half the cases comparing a result with itself.
     real::detail::inner_literal_route_disabled() = true;
-    const auto core   {spans(tc.pat, tc.text)};
+    real::detail::fixed_shape_route_disabled()   = true;
+    const auto core {spans(tc.pat, tc.text)};
     real::detail::inner_literal_route_disabled() = false;
+    real::detail::fixed_shape_route_disabled()   = false;
     const auto routed {spans(tc.pat, tc.text)};
     EXPECT(core == routed);
   }
   real::detail::inner_literal_route_disabled() = false;
+  real::detail::fixed_shape_route_disabled()   = false;
   real::detail::inner_literal_guard_disabled() = false;
 }
 
-TEST(inner_literal_fusion_group_captures_match_core)
+TEST(fixed_shape_group_captures_match_core)
 {
-  // The span-only differential above does not read sub-groups; the fused path fills them via
-  // fill_fixed_saves (constant offsets from the match start, no re-match) instead of one-pass
-  // extraction, so pin the GROUP VALUES themselves, routed vs core, on a fixed-shape pattern with an
-  // inner literal and multiple captures. Explicit byte classes, not \d (klass_cp -- not fixed_shape).
-  const real::regex re   {R"(([0-9]{4})-([0-9]{2})-([0-9]{2}))"};
+  // The span-only differential above does not read sub-groups; run_fixed_shape fills them at constant
+  // offsets from the match start (no re-match, no one-pass extraction), so pin the GROUP VALUES
+  // themselves, routed vs core. Explicit byte classes, not \d (klass_cp -- not fixed_shape).
+  //
+  // This asserted nothing before: it toggled the inner-literal seam on a fixed_shape pattern, which that
+  // route's gate excludes, so `core` and `routed` were the same run. The fixed-shape seam is what takes
+  // this pattern off its route -- verified with the route counters: billed fixed_shape with the seam on,
+  // lazy_dfa_anchored + general_full with it off, same match count.
   const std::string text {"log 2026-07-04 x bad-date 2099-12-25 end"};
 
-  real::detail::inner_literal_guard_disabled() = true;
-  real::detail::inner_literal_route_disabled() = true;
-  const auto core   {re.find_all(text)};
-  real::detail::inner_literal_route_disabled() = false;
-  const auto routed {re.find_all(text)};
-  real::detail::inner_literal_route_disabled() = false;
-  real::detail::inner_literal_guard_disabled() = false;
+  // The regex is built INSIDE each arm on purpose: the fixed-shape seam is applied once per regex at
+  // construction (storage.hpp) rather than per dispatch, because in run()'s gate it cost this very row
+  // 8.4 %. A regex compiled before the toggle would carry the routed hints into both arms.
+  // Each arm NAMES its regex: `find_all` is deleted on a temporary (the borrowed-pattern lifetime
+  // guard), which is that guard working rather than an inconvenience.
+  real::detail::fixed_shape_route_disabled() = true;
+  const real::regex unrouted {R"(([0-9]{4})-([0-9]{2})-([0-9]{2}))"};
+  const auto        core     {unrouted.find_all(text)};
+  real::detail::fixed_shape_route_disabled() = false;
+  const real::regex on_route {R"(([0-9]{4})-([0-9]{2})-([0-9]{2}))"};
+  const auto        routed   {on_route.find_all(text)};
 
   EXPECT_EQ(core.size(), 2U);
   EXPECT_EQ(routed.size(), core.size());
@@ -126,18 +140,16 @@ TEST(inner_literal_d3_acid_stays_linear)
   real::detail::inner_literal_route_disabled() = true;
 }
 
-TEST(inner_literal_fusion_d3_acid_stays_linear)
+TEST(fixed_shape_d3_acid_stays_linear)
 {
-  // The same D3 acid, but on a fixed_shape pattern (explicit byte classes, not \d) so it actually
-  // exercises the FUSED verify's own linearity, not just the pre-fusion reverse-DFA route's: the fused
-  // path deliberately does not advance min_pre_start on a failed candidate (match_byte_klass_run
-  // reports pass/fail only), so this pins that the omission does not reopen the quadratic risk the
-  // guard exists for -- linear because each candidate is a hard-bounded O(il_fused_max_width) check,
-  // not because the guard caught it.
+  // The same D3 acid on a fixed_shape pattern (explicit byte classes, not \d), which is what such a
+  // shape actually routes to: run_fixed_shape, never the inner-literal path, whose gate excludes it.
+  // Every candidate here fails, so this pins that a dense field of near-misses stays linear on that
+  // route rather than reopening the quadratic risk the inner-literal guard exists for.
   real::detail::inner_literal_route_disabled() = false; // undo the previous test's trailing state
   std::string text;
   for (int i = 0; i < 50000; ++i) {
-    text += "x-"; // "-" every two bytes, never preceded by four digits -> every fused verify fails
+    text += "x-"; // "-" every two bytes, never preceded by four digits -> every candidate fails
   }
   const real::regex re {R"([0-9]{4}-[0-9]{2})"};
   const auto        t0 {std::chrono::steady_clock::now()};
@@ -316,7 +328,7 @@ TEST(inner_literal_two_run_confirm_fills_the_same_captures_as_the_core)
   }
 }
 
-//! IL.8: the fixed code-point shape. `il_fused_eligible` covers a sequence whose BYTE width is fixed; a
+//! IL.8: the fixed code-point shape. `fixed_shape` covers a sequence whose BYTE width is fixed; a
 //! `klass_cp` never is (a Unicode `\d` matches multi-byte digits), but its code-point COUNT still is. These
 //! pin which patterns qualify — a shape wrongly admitted here would have its start placed by counting code
 //! points that the pattern does not in fact require.

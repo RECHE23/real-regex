@@ -802,12 +802,6 @@ namespace real::detail {
     hints.empty_match_possible = empty_match_possible;
   }
 
-  //! \brief IL-fusion cap (compiler.hpp, `pattern_hints::il_fused_eligible`): the largest total width
-  //!        (prefix + literal + suffix) that takes the fused arithmetic verify instead of the
-  //!        reverse/forward-DFA route. A generous bound for the emails/dates/keys the route targets,
-  //!        not a hard architectural limit -- kept narrow deliberately (scope, predictability).
-  inline constexpr std::int32_t il_fused_max_width {32};
-
   /*!
    * \brief Total consuming width (in bytes) of a straight-line byte/klass program: `save 0`, an
    *        interleaved byte/klass/save sequence with no nested capturing groups, `save 1`, `match` --

@@ -1136,8 +1136,26 @@ namespace real {
         // so every folding and tokenization decision was made under the right flags; narrowing what
         // `compile` sees here would change a behaviour that is already correct. What is REPORTED is the
         // set in force, so the accessor and the engine agree on a global removal.
+        dynamic_program prog {detail::compile(tree, effective)};
+        // The fixed-shape test seam is applied HERE, once per regex, and NOT in run()'s dispatch gate.
+        // It was in that gate first, and the cost is why it moved: `run()` is entered once per MATCH for
+        // this route (it bills 1.0003 entries per match where every batched route bills one per four), so
+        // the four instructions the check added were paid per match -- `date {4}-{2}-{2}` +8.4 %
+        // [+2.9, +23.9] at 24 of 24 paired draws against a 2.5 % floor, on bench_minimal against this
+        // machine's calibrated floors. The seven other route seams sit in gates too and cost nothing
+        // measurable, because their routes ARE batched and amortise the check over `batch_cap` matches.
+        // Clearing the hint takes the route out with no per-match test at all, and `fs_pair_width` goes
+        // with it exactly as prefilter.hpp's lookaround wipe pairs them.
+        //
+        // The AGGREGATE return below is required, not stylistic: a named local returned by value needs
+        // dynamic_storage's own constructor, which is not constexpr, and `real::regex` IS used in constant
+        // evaluation (tests/engine/test_prefilter.cpp's static_asserts caught exactly that).
+        if (!std::is_constant_evaluated() && detail::fixed_shape_route_disabled()) {
+          prog.hints.fixed_shape   = false;
+          prog.hints.fs_pair_width = 0;
+        }
         return {.pattern_text    = std::string(pattern),
-                .program         = detail::compile(tree, effective),
+                .program         = std::move(prog),
                 .effective_flags = flags_without(effective, tree.inline_removed)};
       }
 

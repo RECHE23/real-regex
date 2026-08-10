@@ -112,6 +112,26 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Test seam: force the matcher off the fixed-shape walk (\c run_fixed_shape) onto the general
+   *        Pike loop, so a differential can assert routed and unrouted agree.
+   *
+   *        This route had NO seam, and that gap was not harmless: it is what `date`
+   *        (`[0-9]{4}-[0-9]{2}-[0-9]{2}`, docs/BENCHMARKS.md §A's weakest row) actually takes, and the
+   *        test that claimed to cover the shape reached for \ref inner_literal_route_disabled instead --
+   *        which does nothing for a `fixed_shape` pattern, because the inner-literal gate excludes them.
+   *        Both arms of that differential therefore ran the same code and asserted nothing. Verified with
+   *        the route counters: routed and unrouted both billed `fixed_shape` 3092 times over 3091
+   *        matches.
+   *        Not for production use.
+   * \return Reference to the process-wide seam flag; set it to true to take the route out.
+   */
+  inline bool& fixed_shape_route_disabled()
+  {
+    static bool disabled {false};
+    return disabled;
+  }
+
+  /*!
    * \brief Test/profile seam: skip dedicated class-scan fast paths (byte class-loop, cp-class-loop,
    *        and codepoint_class / negated-class `.`/`[^,]+`) so a pattern that would take them falls
    *        through to lazy-DFA / general (dispatch-optimality audit; matrix4d class-scan rows). Not for
