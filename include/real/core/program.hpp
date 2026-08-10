@@ -216,6 +216,14 @@ namespace real {
       std::uint64_t fingerprint {};
     };
 
+    //! \brief FNV-1a 64-bit offset basis. Named once because it was written out SIX times and two of the
+    //!        copies disagreed: five sites carried `1469598103934665603`, this value with the final digit
+    //!        dropped, which still hashes but is not FNV-1a and made the repository's own hashes
+    //!        inconsistent with each other. A constant copied by hand is a constant that drifts.
+    inline constexpr std::uint64_t fnv1a_offset_basis {14695981039346656037ULL};
+
+    inline constexpr std::uint64_t fnv1a_prime        {1099511628211ULL}; //!< FNV-1a 64-bit prime, paired with \ref fnv1a_offset_basis.
+
     /*!
      * \brief FNV-1a 64-bit content fingerprint of an ASCII bitmap + a contiguous range span.
      *        Used once at `intern_cp_class` (compile time / first intern); match time only reads
@@ -230,10 +238,10 @@ namespace real {
       const code_range*                     ranges,
       std::uint32_t                         range_count)
     {
-      std::uint64_t h {14695981039346656037ULL};
+      std::uint64_t h {fnv1a_offset_basis};
       const auto    mix {[&h](std::uint64_t v) constexpr {
                            h ^= v;
-                           h *= 1099511628211ULL;
+                           h *= fnv1a_prime;
                          }};
       for (const std::uint64_t word : ascii.bits) {
         mix(word);

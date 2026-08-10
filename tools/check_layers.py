@@ -55,11 +55,36 @@ def main() -> int:
                 violations.append(f"  {from_layer}/{path.stem}.hpp includes {to_layer}/{base}.hpp "
                                   f"(a tier {RANK.get(to_layer, 5)} header from tier {RANK.get(from_layer, 5)})")
 
+    # The engine headers avoid std::hash / std::unordered_map: their out-of-line libc++ symbols (e.g.
+    # __hash_memory) drift across toolchains, and lazy_dfa.hpp's hash_trans states the rule. It was being
+    # broken in the very file that documents it, with nothing checking -- so it is checked here. One line
+    # per genuine exception carries REAL_ALLOW_STD_HASH and says why; anything else is a violation.
+    hash_uses = []
+    for path in sorted(root.rglob("*.hpp")):
+        rel = path.relative_to(root)
+        if rel.parts[0] == "compat":
+            continue  # the compat shims mirror foreign APIs and are not on any scan path
+        for num, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            stripped = line.strip()
+            if stripped.startswith(("//", "*", "/*")):
+                continue  # prose NAMING the rule is not a use of it -- lazy_dfa.hpp and onepass.hpp both explain it
+            if "REAL_ALLOW_STD_HASH" in line:
+                continue
+            if re.search(r"\bstd::hash\b|\bstd::unordered_(map|set)\b|#include <unordered_(map|set)>", line):
+                hash_uses.append(f"  {rel}:{num}: {line.strip()[:88]}")
+
     if violations:
         print("check-layers: forbidden upward include(s) — the layering contract is broken:")
         print("\n".join(violations))
         return 1
-    print("check-layers: the include layering holds (core < unicode < runtime < frontend < root).")
+    if hash_uses:
+        print("check-layers: std::hash / std::unordered_* in an engine header (libc++ symbols drift across")
+        print("  toolchains — see lazy_dfa.hpp's hash_trans). Use the in-house FNV, or mark the line")
+        print("  REAL_ALLOW_STD_HASH with the reason it is safe there:")
+        print("\n".join(hash_uses))
+        return 1
+    print("check-layers: the include layering holds (core < unicode < runtime < frontend < root), and no")
+    print("  unmarked std::hash / std::unordered_* in the engine headers.")
     return 0
 
 
