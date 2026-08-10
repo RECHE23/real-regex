@@ -79,6 +79,50 @@ instead of the noise.
 talking, measured **per row** — rows do not share a floor. §4 gives the measured ones and, just as
 importantly, how much to trust them.
 
+### 3.1 The cheaper instrument, and it must run FIRST: compare the machine code
+
+A layout campaign costs half an hour and answers "is this row faster?". A far cheaper instrument answers
+a different question in seconds — **"did the code that row executes even change?"** — and asking it first
+retires most hypotheses before a campaign is spent on them. Compile the consumer unit before and after,
+disassemble both, strip addresses and symbol offsets, and diff **function bodies keyed by mangled name**
+so an inserted function does not make everything downstream look different:
+
+```sh
+objdump -d --no-show-raw-insn before.o   # then: normalise 0x… and <sym+0x…>, split on `<name>:`,
+objdump -d --no-show-raw-insn after.o    # compare bodies for names present in both
+```
+
+Three readings, and each means something different:
+
+- **No body differs** → the change cannot affect runtime at all. This is a *proof*, not a measurement, and
+  it is stronger than any campaign: `real.hpp`'s route-billing ticks and the benchmark's three added rows
+  were both established this way, on both gate compilers.
+- **Only the bodies you edited differ** → nothing else can move, so a campaign has one hypothesis to test
+  instead of eighteen.
+- **Bodies you did not touch differ at IDENTICAL instruction counts** → a struct reflow changing field
+  offsets, not new work. Treat it as a separate change with its own cost.
+
+**In one session this retired five hypotheses that were each about to cost a campaign**, three of them the
+author's own: that a diffuse "per-unit inline budget" explained a cost (no — five bodies changed, none of
+them a scan loop); that a `bool` added to the hot iterator cost layout (no — it landed in padding,
+`sizeof` unchanged at 8664); that outlining the constructor would make a filler free (no — the toll is
+`refill_batch`'s and nothing shields it); that a memory cliff was unbounded (no — the lazy-DFA cache
+flushes at `state_budget`); and that a `switch` on a dense enum would give a jump table (no — clang emits
+a branch tree).
+
+Two rules came out of it that are worth more than the measurements they came from:
+
+- **A test seam in a gate that is crossed per MATCH costs about as much as the route it guards.**
+  `fixed_shape_route_disabled()` in `run()`'s gate added four instructions and cost `date` **+8.4 %**
+  [+2.9, +23.9] at 24/24. The seven other route seams sit in gates too and cost nothing measurable — their
+  routes are BATCHED, so the check amortises over `batch_cap` matches. Consult such a seam once per regex
+  (see `dynamic_storage::compile`) or once per walk, never per match.
+- **Removing bytes from a hot struct costs more than the dead code it accompanies.** Deleting two retired
+  `pattern_hints` fields reflowed twelve function bodies at identical instruction counts and left `date`
+  +5.5 % and `literal` +6.1 % — medians above their own floors at 23 and 22 of 24 draws. Holding two
+  reserved bytes at the same offset collapsed the diff to the bodies actually edited and turned the same
+  stack into a **REAL −5.2 % on `words [a-z]{4,}`**. Dead code and dead layout are separate decisions.
+
 ## 4. The decision rule, and the measured floors
 
 A row's movement is reported as **REAL** only when both hold:
@@ -308,9 +352,14 @@ Named so the gaps are visible rather than implied:
 - **A minimal-unit floor set per machine.** §5.5's instrument needs its own `--null` run wherever it is
   used, and its split-half stability (13.9×) is worse than the harness's -- more reps, or more rows,
   before leaning on a single floor from it.
-- **Front-end performance counters.** `perf stat` on `instructions` plus front-end stall and iTLB
-  counters would tell placement from real work *directly* rather than by distribution. x86-only in
-  practice (macOS does not expose them through `perf`). This is the next thing to build.
+- ~~**Front-end performance counters.**~~ **Wanted, and verified UNAVAILABLE here — do not plan around
+  it.** `perf stat` on `instructions` plus front-end stall and iTLB counters would tell placement from real
+  work directly rather than by distribution, and it is x86-only in practice (macOS does not expose them
+  through `perf`). The x86 devbox is an LXC container whose `perf` binary does not match the Proxmox
+  kernel, so every counter read fails asking for `linux-tools-<kernel>`; installing that is a change to
+  the hypervisor host, not to this project. What DOES work there, and is the substitute actually reachable
+  today: `valgrind` (so callgrind/cachegrind, deterministic and load-independent) and §3.1's machine-code
+  comparison, which answers the placement-versus-work question structurally rather than statistically.
 - ~~**One binary per engine.**~~ **Measured and closed.** The suspicion was that linking four engines
   into one executable widens REAL's floor. Two findings retire it: dropping PCRE2 and RE2 removes only
   **4.3 %** of the binary (`std::regex` is header-only and compiled either way; the other two are
