@@ -247,6 +247,12 @@ int main()
     {"date {4}-{2}-{2}", "[0-9]{4}-[0-9]{2}-[0-9]{2}", mixed},
     {"lookahead [a-z]+(?=[a-z])", "[a-z]+(?=[a-z])", prose},
     {"alt the|fox|dog", "the|fox|dog", prose},
+    // The lazy-DFA route, which had no row here at all -- and it was also the only route with no batch
+    // filler, which is not a coincidence: an unmeasured route is where an unamortised per-match return
+    // survives. A literal alternation (the row above) is claimed by the alternation recognizer; put a
+    // CLASS in a branch and no recognizer claims it, so it lands on the DFA. It billed 0.9949 engine
+    // entries per match against 0.2501 for every batched route, and 10.00 ns/B against `[a-z]+`'s 1.20.
+    {"alt class [a-z]+|[0-9]+", "[a-z]+|[0-9]+", prose},
     // The SAME pattern as the row above it, through the iterator instead of `count_matches`. It exists
     // because its absence hid a 12x: `find_iter` could not reach the trailing-lookaround route (a return
     // type cannot name a specialization a runtime hint picks), so it ran the general VM at 53.84 ns/B
