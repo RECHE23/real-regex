@@ -511,8 +511,18 @@ namespace real::detail {
       }
     }
 
-    ThreadList lists[2]; //!< Current and next thread lists (flipped by index).
-    EpsVec     stack;    //!< Epsilon-closure DFS stack.
+    // TWO NAMED MEMBERS, NOT `ThreadList lists[2]`, and it must stay that way. An array of two is
+    // constructed by a loop, and gcc widens that loop body's sparse zero-stores (each list's handful of
+    // bookkeeping words) into a `memset` spanning the whole element -- 2472 bytes per list, 4944 per
+    // state, which is exactly the inline buffers this file documents as deliberately left
+    // uninitialized. The layout is unchanged (two consecutive ThreadLists either way), so this is a
+    // codegen constraint and nothing else; a single list, or two named ones, gets scalar stores at the
+    // real offsets. `std::array<ThreadList, 2>` does NOT avoid it -- it is the loop that does it, not
+    // the C array. Every access site takes `&list_a`/`&list_b` once and then rotates POINTERS, so
+    // nothing indexes these with a runtime value and naming them costs no access.
+    ThreadList list_a; //!< One of the two thread lists; the run rotates pointers, not indices.
+    ThreadList list_b; //!< The other one — see \ref list_a.
+    EpsVec     stack;  //!< Epsilon-closure DFS stack.
 
     /*!
      * \brief Flat 256-byte membership table for the hot single-class scan, and
@@ -966,8 +976,8 @@ namespace real::detail {
     {
       text_ = text;
       const std::size_t code_size {prog_.code.size()};
-      auto*             clist     {&state_.lists[0]};
-      auto*             nlist     {&state_.lists[1]};
+      auto*             clist     {&state_.list_a};
+      auto*             nlist     {&state_.list_b};
       clist->reset(code_size);
       nlist->reset(code_size);
       out_slots.assign(prog_.slot_count, npos);
@@ -1366,7 +1376,7 @@ namespace real::detail {
     /*!
      * \brief The concrete thread-list type taken from the bound `State`.
      */
-    using list_type = std::remove_reference_t<decltype(std::declval<State&>().lists[0])>;
+    using list_type = std::remove_reference_t<decltype(std::declval<State&>().list_a)>;
 
     //! \brief Below this input length the lazy-DFA routing is skipped (the two-pass setup does not amortise
     //!        on a short subject — the Pike VM goes direct). A measured, documented threshold.
