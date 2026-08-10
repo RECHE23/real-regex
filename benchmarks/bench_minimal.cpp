@@ -69,25 +69,48 @@ namespace {
     return s;
   }
 
-  //! One case: the pattern, a corpus name for the report, and the corpus itself.
+  //! Which API a row measures. Rows measured through `count_matches` cannot see a route that only
+  //! `find_iter` misses -- which is how a 12x gap on `[a-z]+(?=[a-z])` survived: three of four entry
+  //! points took the trailing-lookaround route and the iterator did not, while every row here measured
+  //! one of the three that did.
+  enum class surface : std::uint8_t
+  {
+    count,     //!< `count_matches` -- the throughput surface every row used before.
+    find_iter, //!< the lazy iterator, which yields full results and selects routes on its own.
+  };
+
+  //! One case: the pattern, the corpus, and which API measures it.
   struct probe_case
   {
-    const char*  name;
-    const char*  pattern;
-    std::string  corpus;
+    const char* name;
+    const char* pattern;
+    std::string corpus;
+    surface     api {surface::count};
   };
 
   //! Discards a warm-up scan, then returns \p n per-scan times in nanoseconds.
   std::vector<double> collect(const real::regex& re,
                               const std::string& text,
-                              int                n)
+                              int                n,
+                              surface            api)
   {
-    (void) re.count_matches(text);
+    const auto scan = [&re, &text](surface api) -> std::size_t {
+      if (api == surface::count) {
+        return re.count_matches(text);
+      }
+      std::size_t hits {0};
+      for (const auto& m : re.find_iter(text)) {
+        (void) m;
+        ++hits;
+      }
+      return hits;
+    };
+    (void) scan(api);
     std::vector<double> out;
     out.reserve(static_cast<std::size_t>(n));
     for (int i = 0; i < n; ++i) {
       const auto t0 {std::chrono::steady_clock::now()};
-      const auto hits {re.count_matches(text)};
+      const auto hits {scan(api)};
       const auto t1 {std::chrono::steady_clock::now()};
       out.push_back(std::chrono::duration<double, std::nano>(t1 - t0).count());
       if (hits == 0) {
@@ -166,12 +189,18 @@ int main()
     {"date {4}-{2}-{2}", "[0-9]{4}-[0-9]{2}-[0-9]{2}", mixed},
     {"lookahead [a-z]+(?=[a-z])", "[a-z]+(?=[a-z])", prose},
     {"alt the|fox|dog", "the|fox|dog", prose},
+    // The SAME pattern as the row above it, through the iterator instead of `count_matches`. It exists
+    // because its absence hid a 12x: `find_iter` could not reach the trailing-lookaround route (a return
+    // type cannot name a specialization a runtime hint picks), so it ran the general VM at 53.84 ns/B
+    // against `count_matches`' 4.41 while every non-lookaround pattern had the two surfaces within 1 %.
+    // A row that only ever measures one API cannot see a route the other one misses.
+    {"lookahead find_iter", "[a-z]+(?=[a-z])", prose, surface::find_iter},
   };
 
   std::string out {"{\"cases\":["};
   for (std::size_t i {0}; i < cases.size(); ++i) {
     const real::regex re {cases[i].pattern};
-    const auto        samples {collect(re, cases[i].corpus, n)};
+    const auto        samples {collect(re, cases[i].corpus, n, cases[i].api)};
     char              head[256];
     std::snprintf(head, sizeof head, "%s{\"name\":\"%s\",\"corpus_bytes\":%zu,\"engines\":{\"real\":{",
                   i ? "," : "", json_name(cases[i].name).c_str(), cases[i].corpus.size());
