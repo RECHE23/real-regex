@@ -66,7 +66,7 @@ include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
 	full-local-gate-impl gcc-check route-probe alloc-probe ac-regime sabotage-sweep \
-        lint misra fuzz fuzz-compat fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
+        lint misra route-surface-parity fuzz fuzz-compat fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-multipattern bench-duel bench-static bench-matrix matrix-gate \
         profile-sample profile-callgrind \
@@ -586,6 +586,12 @@ alloc-probe: ## [bench] Heap allocations per dispatch route — every non-genera
 	@mkdir -p $(BUILD)
 	@c++ $(CXXSTD) -O2 -DREAL_PROFILE $(INCLUDES) -I benchmarks benchmarks/alloc_probe.cpp -o $(BUILD)/alloc_probe
 	@$(BUILD)/alloc_probe $(if $(N),$(N),3000) $(if $(SEED),$(SEED),)
+
+route-surface-parity: ## [bench] Every enumerating API must reach the same route (deterministic, no timing)
+	@mkdir -p $(BUILD)
+	@c++ $(CXXSTD) -O2 -DREAL_PROFILE $(INCLUDES) -I benchmarks benchmarks/route_surface_parity.cpp \
+	    -o $(BUILD)/route_surface_parity
+	@$(BUILD)/route_surface_parity
 
 route-probe: ## [bench] Which dispatch routes do composed patterns actually reach? (dev tool, not a gate)
 	@mkdir -p $(BUILD)
