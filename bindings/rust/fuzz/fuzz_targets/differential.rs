@@ -124,7 +124,82 @@ fn crate_dropped_a_leftmost_it_confirms(pattern: &str, text: &str,
         Ok(r) => r,
         Err(_) => return false,
     };
-    anchored.find(tail).map_or(false, |m| m.start() == 0 && rs + m.end() == re_end)
+    if anchored.find(tail).map_or(false, |m| m.start() == 0 && rs + m.end() == re_end) {
+        return true;
+    }
+    crate_confirms_leftmost_branch(pattern, text, rs, re_end)
+}
+
+/// The same class, in the one manifestation the whole-pattern anchored check above cannot see: when the crate's
+/// leftmost-first bug reproduces UNDER anchoring too, `^(?:pat)` confirms the crate's own shorter answer rather
+/// than REAL's, and the check returns false on a case where REAL is demonstrably right. Observed on
+/// `.A+A\n#\x01A@|.A+Azz\x00|.A+A\n#\x01A@|.A+`, where REAL and CPython both report (36, 44) -- the FIRST
+/// alternative -- and the crate reports (36, 39) then (41, 43), the FOURTH alternative, anchored or not.
+///
+/// So the confirmation is taken branch by branch, which is what leftmost-first MEANS: among the top-level
+/// alternatives, the first one that matches anchored at the start wins, whatever its length. Each branch is
+/// handed to the crate on its own, where the meta-engine has no alternation to mis-resume through, and REAL's
+/// span must equal that branch's anchored match exactly.
+///
+/// This still cannot swallow a REAL bug, which is the property the class predicate exists to keep: a span the
+/// first matching branch does not confirm returns false and the differential panics, as does a REAL span whose
+/// branch fails to compile, and as does a pattern with no top-level alternation at all.
+fn crate_confirms_leftmost_branch(pattern: &str, text: &str, rs: usize, re_end: usize) -> bool {
+    let branches = top_level_branches(pattern);
+    if branches.len() < 2 {
+        return false; // no alternation -> not this manifestation
+    }
+    let tail = match text.get(rs..) {
+        Some(t) => t,
+        None => return false,
+    };
+    for branch in branches {
+        let anchored = match regex::Regex::new(&format!("^(?:{branch})")) {
+            Ok(r) => r,
+            Err(_) => return false, // a branch the crate cannot compile alone: prove nothing, panic
+        };
+        if let Some(m) = anchored.find(tail) {
+            // The FIRST branch that matches decides the whole alternation's answer. REAL must agree with it
+            // exactly; if it does not, this is not the upstream class and the caller must panic.
+            return rs + m.end() == re_end;
+        }
+    }
+    false
+}
+
+/// Splits `pattern` on its TOP-LEVEL `|`, respecting escapes, character classes and groups. A mis-tracked class
+/// can only produce a branch the crate refuses to compile, which the caller reads as "prove nothing" -- the safe
+/// direction. Slicing on ASCII delimiters only, so every boundary is a char boundary even in a UTF-8 pattern.
+fn top_level_branches(pattern: &str) -> Vec<&str> {
+    let bytes = pattern.as_bytes();
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0i32;
+    let mut in_class = false;
+    let mut escaped = false;
+    for i in 0..bytes.len() {
+        let c = bytes[i];
+        if escaped {
+            escaped = false;
+        } else if c == b'\\' {
+            escaped = true;
+        } else if in_class {
+            if c == b']' {
+                in_class = false;
+            }
+        } else if c == b'[' {
+            in_class = true;
+        } else if c == b'(' {
+            depth += 1;
+        } else if c == b')' {
+            depth -= 1;
+        } else if c == b'|' && depth == 0 {
+            out.push(&pattern[start..i]);
+            start = i + 1;
+        }
+    }
+    out.push(&pattern[start..]);
+    out
 }
 
 /// Whether `pattern` has a `{` that does NOT open a STRICT `{n}` / `{n,}` / `{n,m}` (ASCII digits only, no
@@ -345,7 +420,7 @@ fuzz_target!(|data: &[u8]| {
             // The crate's #1345 leftmost bug — not a REAL error. Logged (its count is the wake signal: a merged
             // upstream fix should drive it to zero), and skip the rest (captures/replace/split would differ the
             // same way, downstream of the same search).
-            eprintln!("UPSTREAM-#1345 skip: crate dropped a leftmost it confirms anchored; \
+            eprintln!("UPSTREAM-#1345 skip: crate dropped a leftmost it confirms anchored (whole pattern, or its first matching top-level branch); \
                        pat={pattern:?} text={text:?} real={ours:?} crate={theirs:?}");
             return;
         }

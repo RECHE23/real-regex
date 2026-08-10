@@ -81,3 +81,53 @@ TEST(match_semantics_find_iter_longest)
     ++i;
   }
 }
+
+// A leftmost-first case that the `regex` crate answers differently, pinned here because the answer is not a
+// matter of taste: CPython's `re` reports exactly what REAL reports, span for span, and the crate reports a
+// FOURTH alternative where the FIRST one matches at the same start. Reached by the Rust differential fuzzer
+// (CI run 31441986955); the crate's bug is rust-lang/regex #1345's class, and it reproduces there even under
+// anchoring, which is why that harness's exemption had to learn to confirm branch by branch.
+//
+// Byte arrays rather than string literals on purpose: the pattern and the subject both carry NUL and control
+// bytes, and a concatenated escape sequence silently produced a 38-byte pattern out of a 31-byte one while
+// this case was being reduced.
+TEST(leftmost_first_prefers_the_first_alternative_over_a_shorter_later_one)
+{
+  static const unsigned char pattern_bytes[] {
+    0x2E, 0x41, 0x2B, 0x41, 0x0A, 0x23, 0x01, 0x41, 0x40, 0x7C, 0x2E, 0x41, 0x2B, 0x41, 0x7A, 0x7A,
+    0x00, 0x7C, 0x2E, 0x41, 0x2B, 0x41, 0x0A, 0x23, 0x01, 0x41, 0x40, 0x7C, 0x2E, 0x41, 0x2B
+  };
+  static const unsigned char subject_bytes[] {
+    0x41, 0x7A, 0x7A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x45, 0x41, 0x0A, 0x23, 0x01, 0x41,
+    0x40, 0x7C, 0x2E, 0x41, 0x2B, 0x41, 0x7A, 0x7A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x2E, 0x41, 0x41, 0x0A, 0x23, 0x01, 0x41, 0x40, 0x7C, 0x2E, 0x41, 0x2B,
+    0x41, 0x7A, 0x7A, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x03, 0x45, 0x31
+  };
+  const std::string_view pattern {reinterpret_cast<const char*>(pattern_bytes), sizeof(pattern_bytes)};
+  const std::string_view subject {reinterpret_cast<const char*>(subject_bytes), sizeof(subject_bytes)};
+
+  const real::regex rx           {pattern};
+  // CPython 3: [(10, 12), (14, 16), (18, 20), (20, 22), (36, 44), (45, 47), (47, 49)].
+  // The crate:  ... (36, 39), (41, 43) ... -- the fourth branch `.A+` where the first branch matches 36..44.
+  const std::size_t want_start[] {10, 14, 18, 20, 36, 45, 47};
+  const std::size_t want_end[]   {12, 16, 20, 22, 44, 47, 49};
+  std::size_t       i            {0};
+  for (const auto& m : rx.find_iter(subject)) {
+    EXPECT(i < 7);
+    if (i < 7) {
+      EXPECT(m.start(0) == want_start[i]);
+      EXPECT(m.end(0) == want_end[i]);
+    }
+    ++i;
+  }
+  EXPECT(i == 7);
+  // The same answer on the other enumerating surfaces, and with the lazy-DFA route pulled: this subject is
+  // 61 bytes, far under the route's runway, so no batched walk is involved either way -- the pin is on the
+  // general path's alternation priority.
+  EXPECT(rx.count_matches(subject) == 7);
+  EXPECT(rx.find_all(subject).size() == 7);
+  const auto first {rx.search(subject)};
+  EXPECT(first.matched());
+  EXPECT(first.start(0) == 10);
+  EXPECT(first.end(0) == 12);
+}

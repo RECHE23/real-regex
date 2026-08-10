@@ -488,7 +488,7 @@ namespace real {
      * \param[in] sem        The walk's match semantics.
      * \param[in] text_bytes The subject's length. Only the lazy-DFA route needs it, and it needs it here
      *                       rather than per refill: that route declines under
-     *                       \ref detail::pike_vm::lazy_dfa_min_input bytes of runway, so on a short
+     *                       %pike.hpp's `lazy_dfa_min_input` bytes of runway, so on a short
      *                       subject its filler can only fail -- once per match, for nothing. That cost is
      *                       measured: `short trim replace` **+9.7 %** [+7.4, +12.9] at 24 of 24 draws
      *                       against a 4.5 % floor, purely from attempting a refill that could not succeed.
@@ -605,7 +605,7 @@ namespace real {
       //     `advance`'s per-match path, which the batched path preempts; the two cannot both own the
       //     walk. `[a-z]+(?=[a-z])` and `[0-9]+(?![0-9])` diverged across the enumerating surfaces
       //     until this line existed (make route-surface-parity).
-      //   * the route must be the one `run()` would TAKE -- \ref detail::pike_vm::lazy_dfa_is_the_route,
+      //   * the route must be the one `run()` would TAKE -- pike.hpp's `lazy_dfa_is_the_route`,
       //     which states one condition per route sitting above it in the cascade. Stated as a residue
       //     instead ("whatever the four recognizers left"), this charged `literal charlie` +81.1 %: a
       //     plain literal has neither a class loop nor a fixed alternation, so it fell through here and
@@ -772,7 +772,7 @@ namespace real {
     //! \brief Batch the fixed-alternation route (\ref real::detail::pike_vm::fill_alternation_spans).
     //!        Its per-match return was 99 % of the row at density -- see that filler's own note.
     bool                                                                  batch_alt_        {};
-    //! \brief Batch the lazy-DFA route (\ref detail::pike_vm::fill_lazy_dfa_spans) — the fifth, and the
+    //! \brief Batch the lazy-DFA route (%pike.hpp's `fill_lazy_dfa_spans`) — the fifth, and the
     //!        one shape recognition never reaches.
     bool                                                                  batch_lazy_dfa_   {};
     //! \brief That filler stopped WITHOUT proving the subject spent, so an empty buffer means "resume on
