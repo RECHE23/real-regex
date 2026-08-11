@@ -5474,13 +5474,21 @@ namespace real::detail {
      * \param[out] out     Buffer for the spans found.
      * \param[in]  cap     Capacity of \p out; the walk stops there and resumes from the last end.
      * \param[out] partial True unless the subject was proven spent; see above.
+     * \param[out] disarm  Set when the route has ABANDONED this haystack, meaning every further attempt
+     *                      on it is wasted work. The caller must then stop calling this filler for the
+     *                      rest of the walk. Without it the walk pays one failed refill per match on top
+     *                      of the real work: measured 3634 attempts against 7 on the veto matrix's dense
+     *                      date cell, which took `date dense` from 2.617 to 2.883 -- the route slower
+     *                      than the core it replaces, which is exactly what that cell vetoes. The sticky
+     *                      abandon was doing its job; the walk was not listening.
      * \return How many spans were written.
      */
     std::size_t fill_inner_literal_spans(std::string_view text,
                                          std::size_t      start,
                                          cp_span        * out,
                                          std::size_t      cap,
-                                         bool           & partial)
+                                         bool           & partial,
+                                         bool           & disarm)
     {
       partial = true;
       // Same guard as il_reset_on_new_haystack, and the same reason: a static tier that does not want IL
@@ -5494,12 +5502,19 @@ namespace real::detail {
         static_cast<void>(start);
         static_cast<void>(out);
         static_cast<void>(cap);
+        disarm = true;
         return 0;
       }
       else {
-        il_reset_on_new_haystack(text);
+        // NO RESET HERE. `run()`'s gate owns the per-haystack reset, and doing it here too makes the two
+        // callers ping-pong: this filler cleared an abandon the gate had just set, so a route that had
+        // given up on this haystack was retried on EVERY match. Measured on the veto matrix's dense date
+        // cell: 3637 entries against 7, and `date dense` went 2.617 -> 2.883 (route slower than the core
+        // it replaces, which is what that cell vetoes). Declining until the gate resets costs one wasted
+        // refill per haystack.
         if (state_.il_abandoned) {
-          return 0; // sticky for this haystack: the per-match path re-enters and falls through to the core
+          disarm = true; // and the caller stops asking: see \p disarm
+          return 0;
         }
         slot_pair   scratch;
         std::size_t n   {0};

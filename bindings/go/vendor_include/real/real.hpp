@@ -898,7 +898,17 @@ namespace real {
       }
       else if (batch_inner_lit_) {
         detail::prof::tick_route(detail::prof::route::inner_literal);
-        batch_n_ = bvm.fill_inner_literal_spans(text_, pos_, batch_, batch_cap, batch_partial_);
+        bool disarm {false};
+        batch_n_ = bvm.fill_inner_literal_spans(text_, pos_, batch_, batch_cap, batch_partial_, disarm);
+        if (disarm) {
+          // The route gave up on this haystack, and its abandon is sticky there. Every further refill
+          // would repeat the same wasted memmem before handing the match back to the per-match path, so
+          // the walk stops batching for the rest of its life -- which is exactly the behaviour that
+          // existed before this filler. Not doing this cost `date dense` +10 % on the veto matrix (3634
+          // attempts against 7) while the row the filler targets kept its win.
+          batch_inner_lit_ = false;
+          batch_eligible_  = false;
+        }
       }
       else {
         // The code-point class loop — the fourth eligible route, reached as the `else` rather than
