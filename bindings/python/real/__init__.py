@@ -31,7 +31,7 @@ __all__ = [
     "get_config",
 ]
 
-__version__ = "2026.8.11"
+__version__ = "2026.8.12"
 
 NOFLAG = 0
 I = IGNORECASE = 2
