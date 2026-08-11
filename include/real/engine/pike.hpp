@@ -1467,6 +1467,29 @@ namespace real::detail {
      * So the rule is a PRODUCT, not a density: `(candidates per 1000 bytes) * branch_count`. The
      * product is what is roughly invariant, and it is what this threshold is expressed in.
      *
+     * **A LATER MEASUREMENT SHOWS THIS QUANTITY CANNOT DECIDE ALONE, and the harness that shows it is
+     * `benchmarks/ac_regime.cpp`'s third sweep.** Candidate density counts positions where a branch
+     * HEAD occurs and cannot tell a false start from a completed match -- and those two pull in
+     * OPPOSITE directions: a false start punishes the cascade (verify, reject, resume) and leaves the
+     * automaton indifferent, while a match rewards the cascade (it stops there) and costs the
+     * automaton a per-match return. Holding candidate density FIXED at 99.8 per 1000 bytes on twelve
+     * branches and varying only the fraction that completes, the verdict FLIPS:
+     *
+     *     matched %        0     25     50     75    100
+     *     arm64 AC/casc  0.87   1.09   1.43   1.75   2.19
+     *     x86-64         0.56   0.76   1.00   1.34   1.90
+     *
+     * The cascade accelerates along that row (arm64 15.00 -> 9.08 us) while the automaton slows
+     * (13.04 -> 19.88), so one number is arbitrating two forces that oppose each other. This is the
+     * same argument the branch COUNT lost, now applying to what replaced it. A counter-example in the
+     * wild: a nine-branch alternation over ordinary prose reads 3.56 ns/B on the automaton against
+     * 1.87 on the cascade -- a 1.9x loss on the side of the threshold that is supposed to be a win.
+     *
+     * **NOT ACTED ON YET, deliberately.** Fixing it means giving the gate a second quantity (a
+     * completion rate estimated in the same 256-byte sample, not a retuned constant), and the two
+     * constants below are still the best available calibration of the one quantity it has. Retuning
+     * them against these tables would move the error, not remove it.
+     *
      * **The constant is the measured MINIMUM (588), not a mid-point, and that choice is a
      * consequence rather than a taste.** Today every alternation past \ref ac_branch_threshold takes
      * AC unconditionally, so switching too EARLY can never be worse than the behaviour being
