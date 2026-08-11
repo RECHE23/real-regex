@@ -162,3 +162,22 @@ TEST(lazy_dfa_batch_agrees_with_captures_populated)
   }
   EXPECT(seen > 100);
 }
+
+TEST(lazy_dfa_batch_agrees_with_a_prefix_skip_or_a_rare_discriminant)
+{
+  // `next_candidate`'s scan STRATEGIES -- a literal prefix skip (`prefix_size`) and the rare-discriminant
+  // scan (`rare_disc`) -- were excluded from the arming condition at first, on the mistaken reading that
+  // they are routes sitting above this one. They are branches of the very function the filler calls, so
+  // the filler gets them for free; excluding them only declined shapes that take this route anyway
+  // (`https?://` billed 0.996 engine entries per match, against 0.255 once armed). Both carry
+  // per-haystack sticky state, which is what makes a differential worth having here rather than a
+  // reading: the state is reset inside `next_candidate`, so a batched walk and a per-match walk must
+  // arrive at the same spans across many resumes.
+  const std::string subject {padded("visit https://a.io/x then http://b.dev/y and gopher://c ", 6144,
+                                    " last https://z.io/end")};
+  for (const char* pat : {"https?://", "http[a-z]*://", "[a-z]+://[a-z]"}) {
+    const auto [routed, core] {both_ways(pat, subject)};
+    EXPECT(routed == core);
+    EXPECT(!routed.empty());
+  }
+}

@@ -818,12 +818,7 @@ namespace real::detail {
           // No size guard: on a no-match haystack the route is memmem-only (the reverse setup is lazy, built on
           // the first candidate, never here), so it wins at every size; and the prefix byte-program is a
           // per-regex immutable (built once, amortized by any later use — the lazy-DFA warmup's own contract).
-          if (state_.il_text != static_cast<const void*>(text.data())) {
-            state_.il_abandoned      = false; // a fresh haystack: re-enable the route and re-evaluate its guards
-            state_.il_density_cands  = 0;
-            state_.il_density_origin = npos;
-            state_.il_text           = static_cast<const void*>(text.data());
-          }
+          il_reset_on_new_haystack(text);
           if (!state_.il_abandoned) {
             bool       abandon {false};
             const bool matched {run_inner_literal(text, start, out_slots, abandon)};
@@ -1092,6 +1087,39 @@ namespace real::detail {
         }
       }
       return run_general<false>(text, s, run_mode::prefix, out_slots, &stop);
+    }
+
+    /*!
+     * \brief Re-enables the inner-literal route and clears its density counters on a new haystack.
+     *
+     * ONE MECHANISM, not two: the route's guards are sticky per haystack (`il_abandoned`, and the density
+     * pair behind it), and both `run()`'s gate and \ref fill_inner_literal_spans have to observe the same
+     * reset at the same moment. Written out in each place, a guard re-enabled in one and not the other is a
+     * silent behaviour difference between a batched walk and a per-match walk -- the exact shape of defect
+     * the batching work has produced twice already.
+     *
+     * \param[in] text The subject being scanned.
+     */
+    constexpr void il_reset_on_new_haystack(std::string_view text)
+    {
+      // GUARDED, and the guard is the whole reason this compiles for both storages: the IL fields exist on
+      // the dynamic state and on a static one only when its tier wants IL (`static_il_guard_fields`), so an
+      // unguarded body here fails to compile for `static_pike_scratch<…, WantsIL = false>`. The route's own
+      // gate had the guard by living inside a discarded `if constexpr` branch; factoring the body out moved
+      // the obligation here.
+      if constexpr (requires(State & st) {
+        st.il_abandoned;
+      }) {
+        if (state_.il_text != static_cast<const void*>(text.data())) {
+          state_.il_abandoned      = false; // a fresh haystack: re-enable and re-evaluate its guards
+          state_.il_density_cands  = 0;
+          state_.il_density_origin = npos;
+          state_.il_text           = static_cast<const void*>(text.data());
+        }
+      }
+      else {
+        static_cast<void>(text);
+      }
     }
 
     /*!
@@ -5211,6 +5239,102 @@ namespace real::detail {
     }
 
     /*!
+     * \brief A two-slot sink, for a filler that must call a route function expecting a slot container.
+     *
+     * The batched routes all arm on `slot_count == 2`, so the whole-match span is every slot the program
+     * has. This exists so \ref fill_inner_literal_spans can reuse \ref run_inner_literal verbatim -- one
+     * mechanism rather than a copy of its confirm logic -- without pulling `real::detail::small_vec` into
+     * this header, which `storage.hpp` cannot do (it includes this one), and without putting a 256-byte
+     * inline buffer on `refill_batch`'s frame.
+     *
+     * It satisfies exactly what the route touches: `assign`, `resize`, `size` and indexing.
+     */
+    struct slot_pair
+    {
+      std::size_t slots[2] {npos, npos}; //!< `[0]` is the match start, `[1]` the match end.
+
+      /*!
+       * \brief Sets both slots to \p value.
+       * \param[in] n     The route's `slot_count`; must be 2, and is ignored.
+       * \param[in] value The value written to both slots (the route passes \ref real::npos).
+       */
+      constexpr void assign(std::size_t n,
+                            std::size_t value) noexcept
+      {
+        static_cast<void>(n);
+        slots[0] = value;
+        slots[1] = value;
+      }
+
+      /*!
+       * \brief No-op: the pair is already at its final size.
+       * \param[in] n The requested size; must be 2, and is ignored.
+       */
+      constexpr void resize(std::size_t n) noexcept
+      {
+        static_cast<void>(n);
+      }
+
+      /*!
+       * \brief The slot count.
+       * \return Always 2.
+       */
+      [[nodiscard]] constexpr std::size_t size() const noexcept
+      {
+        return 2;
+      }
+
+      /*!
+       * \brief Slot access.
+       * \param[in] i Slot index, 0 or 1.
+       * \return A reference to that slot.
+       */
+      [[nodiscard]] constexpr std::size_t& operator[](std::size_t i) noexcept
+      {
+        return slots[i];
+      }
+
+      /*!
+       * \brief Slot access, const.
+       * \param[in] i Slot index, 0 or 1.
+       * \return A const reference to that slot.
+       */
+      [[nodiscard]] constexpr const std::size_t& operator[](std::size_t i) const noexcept
+      {
+        return slots[i];
+      }
+    };
+
+    /*!
+     * \brief Is the inner-literal route the one `run()` would take for this program?
+     *
+     * Mirrors that route's own gate, and only the routes with their own `run_*` body above it in the
+     * cascade -- the two class loops, the three possessive loops, the exact literal. A scan STRATEGY is
+     * not a route: that distinction is what the lazy-DFA predicate got wrong at first (see there), and
+     * nothing of the kind applies here anyway.
+     *
+     * `prefix_code` is required non-empty unconditionally, which is conservative rather than exact: the
+     * gate requires it only where the state confirms by reverse, which is the dynamic storage. A static
+     * regex with an inner literal and no prefix program therefore keeps the per-match walk. Batching it is
+     * separate work with its own measurement, not a widening of this line.
+     *
+     * \param[in] prog The compiled program view.
+     * \return True when no earlier route in the cascade claims this shape.
+     */
+    [[nodiscard]] static constexpr bool inner_literal_is_the_route(const program_view& prog) noexcept
+    {
+      const pattern_hints& hints {prog.hints};
+      return hints.inner_literal_len > 0
+             && hints.inner_literal_prefix >= 1                  // a literal at offset 0 is a PREFIX and keeps find_prefix
+             && !hints.fixed_shape                               // the route's own gate: IL never beats the fixed-shape scan
+             && !prog.prefix_code.empty()                        // the reverse start-finder must exist
+             && hints.exact_literal_len == 0                     // exact-literal search sits above
+             && hints.greedy_class_loop < 0                      // the byte-class loop sits above
+             && hints.greedy_cp_class < 0                        // so does the code-point one
+             && hints.possessive_class.kind == class_kind::none; // and the three possessive loops
+    }
+
+    /*!
      * \brief Is the lazy-DFA route the one `run()` would actually take for this program?
      *
      * MIRRORS `run()`'s CASCADE, and it has to: a batched walk bypasses `run()` entirely, so batching a
@@ -5231,13 +5355,18 @@ namespace real::detail {
      */
     [[nodiscard]] static constexpr bool lazy_dfa_is_the_route(const pattern_hints& hints) noexcept
     {
+      // WHAT BELONGS HERE IS A ROUTE, NOT A SCAN STRATEGY, and the first version of this predicate confused
+      // the two. `rare_disc` and a literal `prefix_size` are branches of \ref next_candidate -- the
+      // candidate-scan this filler itself calls, whose per-haystack sticky state is reset inside that same
+      // function -- so excluding them declined shapes that take THIS route anyway and get their scan for
+      // free: `https?://` (rare_disc = 58, prefix_size = 4) billed 0.996 engine entries per match while
+      // both clauses stood. What remains is one clause per route with its own `run_*` body above this one
+      // in the cascade.
       return hints.exact_literal_len == 0     // exact-literal search (`charlie`)
-             && hints.prefix_size == 0        // literal-prefix skip
              && hints.inner_literal_len == 0  // inner-literal memmem (`\d+\.\d+`)
              && !hints.literal_one_search     // single-occurrence literal walk
              && !hints.fixed_shape            // fixed-width shape (`[0-9a-f]{8}`)
              && hints.fs_pair_width == 0      // the fixed-shape PAIR route
-             && hints.rare_disc < 0           // rare-discriminant scan
              && !hints.fixed_alternation;     // run_alternation / Aho-Corasick territory
     }
 
@@ -5292,6 +5421,84 @@ namespace real::detail {
         pos = cand + len;
       }
       return n;
+    }
+
+    /*!
+     * \brief Fills up to \p cap inner-literal matches from \p start without re-entering the route gate.
+     *
+     * The route bills **one engine entry per match** (1.001 on a prose corpus) where every batched route
+     * bills one per `batch_cap`, and the cost is that return rather than the scan: `\d+\.\d+` reads
+     * 34.3 ns/match at one match every 20 bytes, 41.2 at one every 60 and 44.1 at one every 200 -- flat
+     * across densities, which is what a per-match constant looks like. At the dense end that constant IS
+     * the whole 1.80 ns/B.
+     *
+     * IT CALLS \ref run_inner_literal RATHER THAN COPYING IT, which is the opposite of what
+     * \ref fill_alternation_spans chose, and for a reason that differs in kind: that filler's twin is a
+     * mask scan whose hot body relocating would risk the working route, while this route's per-call work is
+     * a linearity backstop, a density guard, a warm/cold size floor and a reverse confirm -- four pieces of
+     * state whose duplication is exactly how a batched walk and a per-match walk come to disagree. The
+     * route is already written to be re-entered per match in a walk (its own comment calls `start` "the
+     * finditer resume"), so calling it in a loop asks nothing new of it. The per-haystack reset is shared
+     * through \ref il_reset_on_new_haystack for the same reason.
+     *
+     * \p partial follows the lazy-DFA filler's contract, and this route needs it more: it ABANDONS -- on
+     * the density guard, on the linearity backstop, on the size floor, or when there is no way to place a
+     * candidate's start -- and every one of those leaves matches ahead that another route will find. Only a
+     * memmem that ran out of candidates proves exhaustion, and that is the one branch which clears it.
+     *
+     * \param[in]  text    The subject.
+     * \param[in]  start   Where to begin.
+     * \param[out] out     Buffer for the spans found.
+     * \param[in]  cap     Capacity of \p out; the walk stops there and resumes from the last end.
+     * \param[out] partial True unless the subject was proven spent; see above.
+     * \return How many spans were written.
+     */
+    std::size_t fill_inner_literal_spans(std::string_view text,
+                                         std::size_t      start,
+                                         cp_span        * out,
+                                         std::size_t      cap,
+                                         bool           & partial)
+    {
+      partial = true;
+      // Same guard as il_reset_on_new_haystack, and the same reason: a static tier that does not want IL
+      // has no `il_abandoned` to read. Such a storage never arms this route either (the caller's condition
+      // needs a `prefix_code`, which those programs do not carry), so declining here is unreachable rather
+      // than a behaviour choice -- it exists to keep the template well-formed.
+      if constexpr (!requires(State & st) {
+        st.il_abandoned;
+      }) {
+        static_cast<void>(text);
+        static_cast<void>(start);
+        static_cast<void>(out);
+        static_cast<void>(cap);
+        return 0;
+      }
+      else {
+        il_reset_on_new_haystack(text);
+        if (state_.il_abandoned) {
+          return 0; // sticky for this haystack: the per-match path re-enters and falls through to the core
+        }
+        slot_pair   scratch;
+        std::size_t n   {0};
+        std::size_t pos {start};
+        while (n < cap && pos <= text.size()) {
+          bool       abandon {false};
+          const bool matched {run_inner_literal(text, pos, scratch, abandon)};
+          if (abandon) {
+            return n;        // a guard tripped; partial stays set and the caller re-enters through the gate
+          }
+          if (!matched) {
+            partial = false; // PROVEN spent: memmem found no further candidate anywhere ahead
+            return n;
+          }
+          out[n] = cp_span {.start = scratch[0], .end = scratch[1]};
+          ++n;
+          // A match contains the required literal, so it is never empty and the walk cannot stall; the
+          // find_iter empty-match rule has nothing to apply.
+          pos = scratch[1];
+        }
+        return n;
+      }
     }
 
     /*!

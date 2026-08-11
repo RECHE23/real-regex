@@ -631,8 +631,18 @@ namespace real {
       batch_exact_lit_ = batchable && no_wrap && !prog.hints.wb_lead_maximal_run
                          && prog.slot_count == 2
                          && detail::pike_vm<typename Storage::state_type, true>::exact_literal_is_the_route(prog.hints);
+      // The INNER-LITERAL route, seventh. Same signature as the two above it -- one engine entry per match
+      // (1.001), a per-match constant of 34-44 ns flat across three densities -- and the same arming
+      // discipline: %pike.hpp's `inner_literal_is_the_route` states one clause per route above it in the
+      // cascade. `slot_count == 2` is what lets the filler use a two-slot sink and reuse the route function
+      // verbatim; a nullable pattern is excluded because the batched span path applies no empty-match rule,
+      // and the route's own seam must take this out with it.
+      batch_inner_lit_ = batchable && no_wrap && !prog.hints.wb_lead_maximal_run
+                         && !detail::inner_literal_route_disabled()
+                         && !prog.hints.empty_match_possible && prog.slot_count == 2
+                         && detail::pike_vm<typename Storage::state_type, true>::inner_literal_is_the_route(prog);
       batch_eligible_  = batch_bytes_ || batch_cp_ascii_ || batch_single_cl_ || cp_class || batch_alt_
-                         || batch_lazy_dfa_ || batch_exact_lit_;
+                         || batch_lazy_dfa_ || batch_exact_lit_ || batch_inner_lit_;
     }
 
     /*!
@@ -787,6 +797,9 @@ namespace real {
     //! \brief Batch the exact-literal route (%pike.hpp's `fill_exact_literal_spans`) — the sixth, and a
     //!        refusal reopened on a contrary measurement rather than on a new idea; see there.
     bool                                                                  batch_exact_lit_  {};
+    //! \brief Batch the inner-literal route (%pike.hpp's `fill_inner_literal_spans`) — the seventh, and the
+    //!        second to need \ref batch_partial_ (its guards abandon).
+    bool                                                                  batch_inner_lit_  {};
     //! \brief That filler stopped WITHOUT proving the subject spent, so an empty buffer means "resume on
     //!        the per-match path", not "the walk is over". Never set by the other four fillers, whose
     //!        scans cover the whole subject and for which an empty buffer IS exhaustion.
@@ -876,6 +889,10 @@ namespace real {
       else if (batch_exact_lit_) {
         detail::prof::tick_route(detail::prof::route::exact_literal);
         batch_n_ = bvm.fill_exact_literal_spans(text_, pos_, batch_, batch_cap);
+      }
+      else if (batch_inner_lit_) {
+        detail::prof::tick_route(detail::prof::route::inner_literal);
+        batch_n_ = bvm.fill_inner_literal_spans(text_, pos_, batch_, batch_cap, batch_partial_);
       }
       else {
         // The code-point class loop — the fourth eligible route, reached as the `else` rather than
