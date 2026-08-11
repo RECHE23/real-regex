@@ -797,7 +797,11 @@ PyObject* run_region(PyObject* self, PyObject* args, PyObject* kwargs, real::det
             Py_RETURN_NONE;
         }
         // Built over the FULL subject so capture offsets are absolute (slots are in [0, endpos)).
-        const real::match_result match(sv.view(), slots, true, pat->rx->pattern(), prog.names);
+        // `std::move`: the result constructor takes its slot storage by RVALUE REFERENCE, which is
+        // what removed one of two bulk copies per call on the C++ side. `slots` is a local this
+        // function is done with -- nothing below reads it.
+        const real::match_result match(sv.view(), std::move(slots), true, pat->rx->pattern(),
+                                       prog.names);
         return make_match(pat, string, match, pos, endpos);  // .pos/.endpos = the clamped offsets
     } catch (...) {
         return set_cpp_error();  // e.g. bad_alloc growing the scratch -> Python error, never UB
