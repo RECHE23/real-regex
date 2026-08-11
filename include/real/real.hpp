@@ -104,6 +104,47 @@ namespace real {
         names_(other.names_)
     {}
 
+    /*!
+     * \brief Engine-internal: an empty, unmatched result whose slot storage is built IN PLACE.
+     *
+     * Paired with \ref engine_slots and \ref engine_set_matched, this is what lets
+     * \ref basic_regex::run hand the engine the FINAL slot storage instead of filling a local and
+     * moving it in. The move it removes was the last bulk copy per call: gcc lowered it to a
+     * `rep movsq` worth **12.02 % of the inlined per-call path** (`small_vec::transfer_range<true>`
+     * through `transfer_inline_from`), and `rep movs` pays a fixed startup whatever the volume — which
+     * for a groupless pattern is sixteen bytes. `run()` has a single return statement, so the result is
+     * NRVO-constructed in the caller's storage and the engine writes straight into it.
+     *
+     * \param[in] text    The searched text (borrowed; must outlive the result).
+     * \param[in] pattern The pattern text (for named-group resolution).
+     * \param[in] names   The regex's named-group table (borrowed).
+     */
+    constexpr basic_match_result(std::string_view                     text,
+                                 std::string_view                     pattern,
+                                 std::span<const detail::named_group> names)
+      : text_(text),
+        pattern_(pattern),
+        names_(names)
+    {}
+
+    /*!
+     * \brief Engine-internal: the slot storage, for the engine to fill in place.
+     * \return A mutable reference to the flattened capture slots.
+     */
+    [[nodiscard]] constexpr SlotStorage& engine_slots() noexcept
+    {
+      return slots_;
+    }
+
+    /*!
+     * \brief Engine-internal: records whether the fill that just ran produced a match.
+     * \param[in] matched Whether a match occurred.
+     */
+    constexpr void engine_set_matched(bool matched) noexcept
+    {
+      matched_ = matched;
+    }
+
     //! The twin specialisation reads these fields to adopt them; nothing else does.
     template <typename, typename>
     friend class basic_match_result;
@@ -2015,11 +2056,14 @@ namespace real {
       // So the only safe granularity is per regex per thread, and a lookup keyed that way costs more
       // than the 9.5 ns it would save. Callers who want the saving already have it: `find_iter`.
       typename Storage::state_type   state;
-      typename Storage::slot_storage slots;
       // Reference, not a copy: `program_view` is 432 bytes and this line runs once per search.
       // Binding to a const reference also covers the dynamic storage, whose view() still returns by
       // value -- the temporary's lifetime extends to this reference's scope.
       const detail::program_view&    prog    {program_.view()};
+      // The result is declared HERE, BEFORE the engine runs, so its slot storage is the one the engine
+      // fills — see the note at the return statement for the copy this removes. It has to follow `prog`,
+      // whose named-group table it borrows.
+      result_type                    out {text, pattern(), prog.names};
       // `state` above is freshly constructed for this one search against `prog` — same guarantee.
       detail::pike_vm<typename Storage::state_type, true> vm(prog, state);
       const auto                                          subject {text.substr(0, end)};
@@ -2033,38 +2077,36 @@ namespace real {
             && (std::is_constant_evaluated() || !detail::trailing_la_route_disabled())) {
           detail::prof::tick_route(detail::prof::route::trailing_la);
           matched = prog.hints.stop_set_size >= 1
-                      ? vm.template run_class_loop_trailing_la<true>(subject, pos, mode, slots)
-                      : vm.template run_class_loop_trailing_la<false>(subject, pos, mode, slots);
+                      ? vm.template run_class_loop_trailing_la<true>(subject, pos, mode, out.engine_slots())
+                      : vm.template run_class_loop_trailing_la<false>(subject, pos, mode, out.engine_slots());
         }
         else {
           matched = prog.hints.stop_set_size >= 1
-                      ? vm.template run<true>(subject, pos, mode, slots, 0, sem)
-                      : vm.template run<false>(subject, pos, mode, slots, 0, sem);
+                      ? vm.template run<true>(subject, pos, mode, out.engine_slots(), 0, sem)
+                      : vm.template run<false>(subject, pos, mode, out.engine_slots(), 0, sem);
         }
       }
       else {
         // OPT-C Cascade is chosen once here (a single search), never in the per-byte scan.
         matched = prog.hints.stop_set_size >= 1
-                    ? vm.template run<true>(subject, pos, mode, slots, 0, sem)
-                    : vm.template run<false>(subject, pos, mode, slots, 0, sem);
+                    ? vm.template run<true>(subject, pos, mode, out.engine_slots(), 0, sem)
+                    : vm.template run<false>(subject, pos, mode, out.engine_slots(), 0, sem);
       }
-      // MEASURED COST, RECORDED HERE BECAUSE NOTHING ELSE RECORDS IT. On x86-64 under gcc this move
-      // and the result's own materialisation lower to TWO `rep movsq` in the caller, and `perf`
-      // attributes both to `small_vec<std::size_t, 32>::transfer_range<true>` -- the slot vector's
-      // move -- at 12.15 % and 10.20 % of `main`, so **22.4 % of the inlined per-call path** for a
-      // groupless pattern where each move carries sixteen bytes. `rep movs` pays a fixed startup of
-      // tens of cycles whatever the volume, which is why sixteen bytes cost that much; arm64 has no
-      // such instruction and emits stores, which is the whole of the ISA asymmetry here (the per-call
-      // rows read 1.5x-2.1x of the machine factor on x86-64 and the excess is this).
+      // THE RESULT IS BUILT FIRST AND THE ENGINE FILLS IT IN PLACE, which is what removed the last bulk
+      // copy per call. Filling a local `slots` and moving it into the result cost one `rep movsq` on
+      // x86-64 under gcc -- 12.02 % of the inlined per-call path, attributed to
+      // `small_vec::transfer_range<true>` through `transfer_inline_from` -- because `rep movs` pays a
+      // fixed startup whatever the volume, and for a groupless pattern the volume is sixteen bytes. The
+      // by-value parameter had already been narrowed to an rvalue reference, which removed the FIRST of
+      // two such copies (x86-64 -13.2 % / -10.0 % / -9.6 %, arm64 -11.8 % / -8.2 % / -7.9 % / -7.2 % on
+      // the per-call rows); this removes the second. There is exactly one return statement here, so the
+      // result is NRVO-constructed in the caller's storage and the engine writes to its final address.
       //
-      // ONE ATTEMPT IS ALREADY REFUTED: making the copy cheaper for small counts -- a bounded loop in
-      // `transfer_range` below eight elements -- cost 12 rows between +7.3 % and +19.7 % at 24 of 24
-      // draws (`single [a-z]` +19.7 %, `unicode .` +15.7 %, `words [a-z]++` +11.5 %) and returned
-      // nothing measurable on the five per-call rows, because `transfer_range` also serves the thread
-      // lists in their hot path and every one of them then paid a branch. The remaining direction is
-      // to REMOVE the moves rather than speed them up: construct the result first and let the engine
-      // fill its slots in place, which touches nothing the thread lists use. Not attempted yet.
-      return {text, std::move(slots), matched, pattern(), prog.names};
+      // ONE ATTEMPT IS REFUTED and stays refuted: making the copy cheaper for small counts -- a bounded
+      // loop in `transfer_range` below eight elements -- cost twelve rows between +7.3 % and +19.7 % at
+      // 24 of 24 draws, because `transfer_range` also serves the thread lists in their hot path.
+      out.engine_set_matched(matched);
+      return out;
     }
 
   public:
