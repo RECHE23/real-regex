@@ -253,6 +253,12 @@ int main()
     // CLASS in a branch and no recognizer claims it, so it lands on the DFA. It billed 0.9949 engine
     // entries per match against 0.2501 for every batched route, and 10.00 ns/B against `[a-z]+`'s 1.20.
     {"alt class [a-z]+|[0-9]+", "[a-z]+|[0-9]+", prose},
+    // The INNER-LITERAL route, which had no row either, for the same reason and with the same consequence:
+    // it billed 1.001 engine entries per match. `\w+@\w+` is the shape the route was built for -- a match
+    // that does not START with a literal but requires one inside it, so no prefix skip applies and the `@`
+    // is the most selective thing available. It reuses the `mixed` corpus (one address per ~57 bytes)
+    // rather than adding a fourth 100 KB one, because a data row in this unit is not free.
+    {"inner lit \\w+@\\w+", R"(\w+@\w+)", mixed},
     // The SAME pattern as the row above it, through the iterator instead of `count_matches`. It exists
     // because its absence hid a 12x: `find_iter` could not reach the trailing-lookaround route (a return
     // type cannot name a specialization a runtime hint picks), so it ran the general VM at 53.84 ns/B
