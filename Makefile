@@ -66,7 +66,7 @@ include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
 	full-local-gate-impl gcc-check route-probe alloc-probe ac-regime sabotage-sweep \
-        lint misra route-surface-parity bench-compilers fuzz fuzz-compat fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
+        lint misra check-state-zeroing route-surface-parity bench-compilers fuzz fuzz-compat fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate \
         profile-sample profile-callgrind \
@@ -334,6 +334,15 @@ check-pins: ## [gates] Pin-drift lint: fail if workflows pin more than one SciFo
 check-layers:
 	@$(MAKE) -C tools check-layers
 
+# The one gate this repository lacked, and the defect it guards against shipped: a member ARRAY in the
+# hot VM state makes gcc widen the constructor's sparse zero-stores into a 4944-byte memset per
+# `search()` call, which clang does not do and which no other check here can see. Validated in BOTH
+# directions -- it fails on 38954f7~1 and passes on the fix -- because the first two versions of the
+# script reported OK on that defective tree (a local `LFB` label ended the extracted body before it
+# began, then a `\bmemset` pattern could not match Mach-O's `_memset`). Skips loudly without a real GCC.
+check-state-zeroing:
+	@$(PYTHON) tools/check_state_zeroing.py
+
 # The headers compile where NEITHER SIMD macro is defined. This exists because a real defect shipped
 # through every other check: a filler copied run_alternation's mask-carried block scan and not its
 # `#if defined(__ARM_NEON) || defined(__SSE2__)`, so `mask_t` and its accessors were referenced where
@@ -499,6 +508,8 @@ full-local-gate-impl:
 	@$(MAKE) check-layers
 	@echo "── [4/24] check-no-simd (no vector ISA macro — the hole CI's 32-bit leg caught)"
 	@$(MAKE) check-no-simd
+	@echo "── [4b/24] check-state-zeroing (gcc bulk-zeroes the VM state if a member array returns)"
+	@$(MAKE) check-state-zeroing
 	@echo "── [5/24] check-pins"
 	@$(MAKE) check-pins
 	@echo "── [6/24] check-capi-abi (C ABI golden vs real_capi.h)"
