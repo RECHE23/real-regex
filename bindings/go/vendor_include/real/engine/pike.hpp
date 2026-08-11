@@ -5186,6 +5186,31 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Is the exact-literal route the one `run()` would take, in its one-search subset?
+     *
+     * Mirrors `run()`'s cascade for the same reason lazy_dfa_is_the_route does. Only three kinds of route
+     * sit ABOVE this one -- the byte-class loop, the code-point class loop, and the three possessive
+     * loops -- so the list is short; everything below it (inner literal, fixed shape, the DFAs) is
+     * territory this route already wins and must keep.
+     *
+     * The `literal_one_search` bit carries the rest by itself: it is set only when the program has no
+     * capture, no assertion, no anchor, a literal of two bytes or more, and `prefix_size ==
+     * exact_literal_len`. That is exactly the subset where the answer is `find_prefix` plus two stores,
+     * with nothing to confirm and no occurrence to retry.
+     *
+     * \param[in] hints The program's shape hints.
+     * \return True when no earlier route in the cascade claims this shape.
+     */
+    [[nodiscard]] static constexpr bool exact_literal_is_the_route(const pattern_hints& hints) noexcept
+    {
+      return hints.exact_literal_len > 0
+             && hints.literal_one_search                         // no capture / assertion / anchor, len >= 2
+             && hints.greedy_class_loop < 0                      // the byte-class loop sits above
+             && hints.greedy_cp_class < 0                        // so does the code-point one
+             && hints.possessive_class.kind == class_kind::none; // and the three possessive loops
+    }
+
+    /*!
      * \brief Is the lazy-DFA route the one `run()` would actually take for this program?
      *
      * MIRRORS `run()`'s CASCADE, and it has to: a batched walk bypasses `run()` entirely, so batching a
@@ -5214,6 +5239,59 @@ namespace real::detail {
              && hints.fs_pair_width == 0      // the fixed-shape PAIR route
              && hints.rare_disc < 0           // rare-discriminant scan
              && !hints.fixed_alternation;     // run_alternation / Aho-Corasick territory
+    }
+
+    /*!
+     * \brief Fills up to \p cap exact-literal matches from \p start without re-entering the route gate.
+     *
+     * REOPENS A DOCUMENTED REFUSAL, and the reason is recorded in \ref run_literal_one_search — this filler
+     * was written, measured and refused once. It was never wrong -- `exhaustive-compat` was byte-identical
+     * over 3 218 434 cases and a both-ways differential agreed on every span -- and it read `literal`
+     * -29.4 % [-32.2, -24.6] at 24 of 24 draws. It was refused for what it charged elsewhere: five rows
+     * from +2.8 % to +10.7 %, all above their floors at 24 of 24, with 14 of 15 rows leaning positive.
+     * The mechanism was pinned by machine code rather than argued -- no scan loop changed; `refill_batch`
+     * grew 379 -> 389 instructions and `count_matches` 610 -> 606, and `count_matches` is what every row
+     * measures -- and the note closes by saying a reopening needs a filler that does not enlarge
+     * `refill_batch`.
+     *
+     * What reopens it is not a cheaper flag but a CONTRARY MEASUREMENT: a fifth route was since added to
+     * `refill_batch`, enlarging it, and the judgement showed no cross-row toll at all (12 of 19 medians
+     * positive, p = 0.36). What charged the rows in that work was the shape of `advance`'s HOT path -- one
+     * extra comparison there cost 17 of 21 rows, p = 0.007, median +1.3 %, and moving it into the branch
+     * reached once per walk removed it entirely. So "enlarging refill_batch charges every row" is not a
+     * law, and the original refusal deserves one re-test under the current shape.
+     *
+     * NO PARTIAL STATE, unlike the lazy-DFA filler: `find_prefix` scans to the end of the subject, so an
+     * empty return means no occurrence remains anywhere ahead. Exhaustion is proven, and the caller's
+     * "empty buffer ends the walk" reading is correct here.
+     *
+     * \param[in]  text  The subject.
+     * \param[in]  start Where to begin.
+     * \param[out] out   Buffer for the spans found.
+     * \param[in]  cap   Capacity of \p out; the walk stops there and resumes from the last end.
+     * \return How many spans were written.
+     */
+    std::size_t fill_exact_literal_spans(std::string_view text,
+                                         std::size_t      start,
+                                         cp_span        * out,
+                                         std::size_t      cap)
+    {
+      const std::size_t      len {static_cast<std::size_t>(prog_.hints.exact_literal_len)};
+      const std::string_view lit {prog_.hints.prefix.data(), len};
+      std::size_t            n   {0};
+      std::size_t            pos {start};
+      while (n < cap) {
+        const std::size_t cand {find_prefix(text, pos, lit)};
+        if (cand == npos) {
+          break;
+        }
+        out[n] = cp_span {.start = cand, .end = cand + len};
+        ++n;
+        // Non-overlapping, as the walk requires. The hint guarantees len >= 2, so the position always
+        // advances and the loop cannot stall on a zero-width answer.
+        pos = cand + len;
+      }
+      return n;
     }
 
     /*!
@@ -5394,14 +5472,16 @@ namespace real::detail {
      * \param[out] out_slots Receives `[cand, cand + len]` on success.
      * \return `true` if the literal occurs at or after \p start.
      *
-     * \note **A span filler for this shape was written, measured and REFUSED — the gain is real and the
-     *       price is higher.** The route bills one entry per match (`dog`: 2001 entries against 2000
-     *       matches) where every batched class route bills one per `batch_cap`, and this subset is the
-     *       ideal candidate: the `literal_one_search` hint already excludes captures, assertions,
-     *       anchors and one-byte literals, so a filler is `find_prefix` plus two stores, with no
-     *       confirm and no retry. Correctness was never the problem — `exhaustive-compat` returned
-     *       byte-identical counts (3 218 434 cases, 4 548 documented divergences, 0 serious) and a
-     *       both-ways differential over the batch seam agreed on every span.
+     * \note **A span filler for this shape WAS refused, and is now in place — the refusal was overturned by
+     *       measurement, not by argument.** The history is kept because it is the clearest case this
+     *       repository has of a refusal that was right when taken and wrong later, and of what changed. The
+     *       route bills one entry per match (`dog`: 2001 entries against 2000 matches) where every batched
+     *       route bills one per `batch_cap`, and this subset is the ideal candidate: the
+     *       `literal_one_search` hint already excludes captures, assertions, anchors and one-byte
+     *       literals, so a filler is `find_prefix` plus two stores, with no confirm and no retry.
+     *       Correctness was never the problem — `exhaustive-compat` returned byte-identical counts
+     *       (3 218 434 cases, 4 548 documented divergences, 0 serious) and a both-ways differential over
+     *       the batch seam agreed on every span.
      *
      *       On `benchmarks/bench_minimal.cpp` against this machine's calibrated floors, 24 paired
      *       draws: `literal` **−29.4 %** [−32.2, −24.6] at 24/24 — and `single [a-z]` **+10.7 %**,
@@ -5419,15 +5499,31 @@ namespace real::detail {
      *       more work; the shared entry point they all pass through was recompiled.
      *
      *       Two follow-ups were tried against that mechanism and both failed, which is why the refusal
-     *       stands rather than waiting on one more idea. Folding the flag away cannot help: the added
-     *       `bool` lands in existing padding, `sizeof` the iterator is unchanged at 8664 either way.
+     *       stood at the time rather than waiting on one more idea. Folding the flag away cannot help: the
+     *       added `bool` lands in existing padding, `sizeof` the iterator is unchanged at 8664 either way.
      *       Replacing the dispatch chain with a `switch` on a dense enum does not help either — clang
      *       emits a branch tree rather than a jump table, and the variant reproduced the SAME
      *       379 → 389 and 610 → 606 for no gain at all. Outlining the constructor's cold eligibility
-     *       half (\ref real::basic_match_iterator::decide_batching) does keep `count_matches`
-     *       byte-identical on its own, but not with this filler on top: the toll is `refill_batch`'s to
-     *       pay, and nothing shields it. Anyone reopening this needs a filler that does not enlarge
-     *       `refill_batch`, not a cheaper flag.
+     *       half (\ref real::basic_match_iterator::decide_batching) kept `count_matches` byte-identical on
+     *       its own but NOT with this filler on top, so the note closed by asking for a filler that does
+     *       not enlarge `refill_batch`.
+     *
+     *       **WHAT OVERTURNED IT.** Not a cheaper flag: the diagnosis was right and the condition it named
+     *       came true on its own. `count_matches` has since been cut from 610 instructions to 377 — its two
+     *       cold halves were outlined (`decide_batching`, and the trailing-lookaround walk's counter) for
+     *       unrelated reasons — and at that size the filler no longer moves it at all. Re-measured on the
+     *       machine-code instrument first, as this note's own method requires: of 407 function bodies in the
+     *       consumer unit, THREE change size — `refill_batch` 391 → 401, the cold `decide_batching`
+     *       160 → 187, and `count_matches` **377 → 377**. Enlarging `refill_batch` was never the mechanism;
+     *       recompiling the entry point every row measures was.
+     *
+     *       The layout judgement then agreed, 25 rows against recalibrated floors, 24 paired draws:
+     *       `literal charlie` **−24.1 %** [−27.6, −15.1] at 24/24, the ONLY row judged REAL, and the five
+     *       rows the first attempt charged now read +0.3 %, +0.8 %, +0.7 %, +1.8 % and −0.6 % — every one
+     *       indistinguishable. No cross-row toll either: 13 of 21 medians positive, p = 0.38, against
+     *       14 of 15 leaning positive the first time. A fifth batched route had also been added to
+     *       `refill_batch` shortly before, enlarging it, and charged nothing measurable — which is what
+     *       made re-testing this defensible rather than hopeful.
      */
     template <typename OutSlots>
 #if defined(__GNUC__) || defined(__clang__)

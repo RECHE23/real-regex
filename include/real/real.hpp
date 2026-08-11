@@ -622,8 +622,17 @@ namespace real {
                          && text_bytes >= detail::pike_vm<typename Storage::state_type, true>::lazy_dfa_min_input
                          && !batch_bytes_ && !batch_cp_ascii_ && !batch_single_cl_ && !cp_class
                          && !batch_alt_;
+      // The EXACT-LITERAL route, sixth, and a REOPENED REFUSAL rather than a new idea -- %pike.hpp's
+      // `fill_exact_literal_spans` carries the whole record, including the five rows the first attempt
+      // charged and the machine-code mechanism that was blamed. What reopens it is the fifth route above:
+      // it enlarged `refill_batch` too and charged nothing measurable, so the law the refusal rested on
+      // does not hold as stated. If the +10.7 % reproduces, this line goes and the second refutation is
+      // recorded with it.
+      batch_exact_lit_ = batchable && no_wrap && !prog.hints.wb_lead_maximal_run
+                         && prog.slot_count == 2
+                         && detail::pike_vm<typename Storage::state_type, true>::exact_literal_is_the_route(prog.hints);
       batch_eligible_  = batch_bytes_ || batch_cp_ascii_ || batch_single_cl_ || cp_class || batch_alt_
-                         || batch_lazy_dfa_;
+                         || batch_lazy_dfa_ || batch_exact_lit_;
     }
 
     /*!
@@ -775,6 +784,9 @@ namespace real {
     //! \brief Batch the lazy-DFA route (%pike.hpp's `fill_lazy_dfa_spans`) — the fifth, and the
     //!        one shape recognition never reaches.
     bool                                                                  batch_lazy_dfa_   {};
+    //! \brief Batch the exact-literal route (%pike.hpp's `fill_exact_literal_spans`) — the sixth, and a
+    //!        refusal reopened on a contrary measurement rather than on a new idea; see there.
+    bool                                                                  batch_exact_lit_  {};
     //! \brief That filler stopped WITHOUT proving the subject spent, so an empty buffer means "resume on
     //!        the per-match path", not "the walk is over". Never set by the other four fillers, whose
     //!        scans cover the whole subject and for which an empty buffer IS exhaustion.
@@ -860,6 +872,10 @@ namespace real {
       else if (batch_lazy_dfa_) {
         detail::prof::tick_route(detail::prof::route::lazy_dfa_anchored);
         batch_n_ = bvm.fill_lazy_dfa_spans(text_, pos_, batch_, batch_cap, batch_partial_);
+      }
+      else if (batch_exact_lit_) {
+        detail::prof::tick_route(detail::prof::route::exact_literal);
+        batch_n_ = bvm.fill_exact_literal_spans(text_, pos_, batch_, batch_cap);
       }
       else {
         // The code-point class loop — the fourth eligible route, reached as the `else` rather than
