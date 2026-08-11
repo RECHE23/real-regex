@@ -63,8 +63,14 @@ namespace real {
      * \param[in] pattern The pattern text (for named-group resolution).
      * \param[in] names   The regex's named-group table (borrowed).
      */
+    // \p slots is an RVALUE REFERENCE, not a by-value parameter, and the difference is measured. By
+    // value, the single caller's `std::move` constructs the parameter (one move) and the member is then
+    // move-constructed from it (a second): on x86-64 under gcc those two lower to two `rep movsq`, 12.15 %
+    // and 10.20 % of the inlined per-call path, for a groupless pattern where each carries sixteen bytes.
+    // `rep movs` pays a fixed startup whatever the volume. The reference removes one of the two outright.
+    // The only caller is \ref basic_regex::run, which always passes a local it is done with.
     constexpr basic_match_result(std::string_view                     text,
-                                 SlotStorage                          slots,
+                                 SlotStorage                       && slots,
                                  bool                                 matched,
                                  std::string_view                     pattern,
                                  std::span<const detail::named_group> names)
@@ -2032,6 +2038,22 @@ namespace real {
                     ? vm.template run<true>(subject, pos, mode, slots, 0, sem)
                     : vm.template run<false>(subject, pos, mode, slots, 0, sem);
       }
+      // MEASURED COST, RECORDED HERE BECAUSE NOTHING ELSE RECORDS IT. On x86-64 under gcc this move
+      // and the result's own materialisation lower to TWO `rep movsq` in the caller, and `perf`
+      // attributes both to `small_vec<std::size_t, 32>::transfer_range<true>` -- the slot vector's
+      // move -- at 12.15 % and 10.20 % of `main`, so **22.4 % of the inlined per-call path** for a
+      // groupless pattern where each move carries sixteen bytes. `rep movs` pays a fixed startup of
+      // tens of cycles whatever the volume, which is why sixteen bytes cost that much; arm64 has no
+      // such instruction and emits stores, which is the whole of the ISA asymmetry here (the per-call
+      // rows read 1.5x-2.1x of the machine factor on x86-64 and the excess is this).
+      //
+      // ONE ATTEMPT IS ALREADY REFUTED: making the copy cheaper for small counts -- a bounded loop in
+      // `transfer_range` below eight elements -- cost 12 rows between +7.3 % and +19.7 % at 24 of 24
+      // draws (`single [a-z]` +19.7 %, `unicode .` +15.7 %, `words [a-z]++` +11.5 %) and returned
+      // nothing measurable on the five per-call rows, because `transfer_range` also serves the thread
+      // lists in their hot path and every one of them then paid a branch. The remaining direction is
+      // to REMOVE the moves rather than speed them up: construct the result first and let the engine
+      // fill its slots in place, which touches nothing the thread lists use. Not attempted yet.
       return {text, std::move(slots), matched, pattern(), prog.names};
     }
 
