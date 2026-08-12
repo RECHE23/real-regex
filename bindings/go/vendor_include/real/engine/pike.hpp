@@ -1013,6 +1013,7 @@ namespace real::detail {
           ++pos;
           continue;
         }
+        detail::prof::tick_thread_count(clist->pcs.size());
         step(*clist, *nlist, pos, mode, matched, out_slots);
         auto* swap {clist};
         clist = nlist;

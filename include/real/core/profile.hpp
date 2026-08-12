@@ -79,6 +79,13 @@ namespace real::detail::prof {
     std::uint64_t prefilter_candidates                            {};
     std::uint64_t prefilter_rejected                              {};
     std::uint64_t run_len_hist[8]                                 {}; //!< log2 buckets for maximal class/cp runs
+    //! \brief log2 buckets for the LIVE THREAD COUNT the general VM carries into each `step()`.
+    //!
+    //! The question this exists for: a general-VM step measures 12 to 25 ns per byte where a routed class
+    //! loop measures ~1, and whether that is the list machinery or genuine NFA parallelism depends entirely
+    //! on how many threads are actually live. One thread per position means the cost is overhead the shape
+    //! does not need; many means it is the automaton doing real work.
+    std::uint64_t thread_hist[8]                                  {};
   };
 
   [[nodiscard]] inline counters& tls() noexcept
@@ -110,6 +117,17 @@ namespace real::detail::prof {
   inline void add_bytes(std::uint64_t n) noexcept
   {
     tls().bytes_examined += n;
+  }
+
+  inline void record_thread_count(std::size_t n) noexcept
+  {
+    unsigned    b {0};
+    std::size_t x {n};
+    while (x > 1 && b < 7U) {
+      x >>= 1;
+      ++b;
+    }
+    ++tls().thread_hist[b];
   }
 
   inline void record_prefilter_candidate() noexcept
@@ -212,6 +230,24 @@ namespace real::detail::prof {
     }
 #else
     (void)e;
+#endif
+  }
+
+#if defined(__GNUC__) || defined(__clang__)
+  __attribute__((always_inline))
+#endif
+  /*!
+   * \brief Bill one `step()` carrying \p n live threads. Erased entirely unless \c REAL_PROFILE is defined.
+   * \param[in] n Threads in the current list as the step begins.
+   */
+  constexpr void tick_thread_count(std::size_t n) noexcept
+  {
+#if defined(REAL_PROFILE)
+    if (!std::is_constant_evaluated()) {
+      record_thread_count(n);
+    }
+#else
+    (void)n;
 #endif
   }
 
