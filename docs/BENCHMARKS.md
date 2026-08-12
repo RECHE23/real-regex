@@ -42,7 +42,7 @@ answer is not a benchmark win.
 | | |
 | --- | --- |
 | Version | REAL `2026.8.13+` — **A veto this repository wrote for exactly one case was crossed by v2026.8.12, and this train puts it back.** `matrix-gate`'s `date dense` cell fails when the routed path is slower than the core it replaces; v2026.8.12's inner-literal batch filler made it so — **route 2.883 against core 2.563**, where v2026.8.11 read 2.617 / 2.584 — and the release shipped because a hand-picked subset of gates was run instead of the canonical twenty-four. The route's sticky abandon was working; the WALK was not listening, so a route that had given up on the haystack was retried on every match (**3637 attempts against 7**) and each attempt was a wasted memmem before the per-match path did the real work. The filler now disarms for the rest of the walk when the route abandons: **`date dense` 2.883 → 2.609**, its pre-train value, with `email dense` unchanged at 2.044 against the core's 8.730 and `\w+@\w+` still batched at 0.251 engine entries per match. **MATRIX CLEAN.** **THE TABLES BELOW ARE UNCHANGED AND THAT IS A MEASURED CLAIM, not an omission:** of the five commits since v2026.8.12 only one touches a hot path, and its judgement against calibrated floors read **22 of 26 rows indistinguishable on BOTH ISAs**, every REAL row being a per-call one — a regime whose fixed cost is 0.0004 ns/byte over the 100 KB corpora §A measures. **NOT IN THESE TABLES, for want of a row rather than for want of a number:** the slot storage is now taken by rvalue reference instead of by value, which removes one of two bulk copies per call (gcc lowered them to two `rep movsq`, 12.15 % and 10.20 % of the inlined per-call path). Judged on both instruments — **x86-64 −13.2 % / −10.0 % / −9.6 %** and **arm64 −11.8 % / −8.2 % / −7.9 % / −7.2 %** on the per-call rows, everything else indistinguishable, no cross-row toll — and this is the first change this project has judged on x86-64 at all: that host's floors fell from 27–59 % to **1.8–8.3 %** once its governor was set to `performance`, so the same change was unjudgeable there a day earlier. **§B, RE-MEASURED AND UNMOVED** over three passes: five headline rows inside 2 % (`words · findall @100KB` 2.16–2.24× against 2.13×, `digits · sparse` 12.22–12.33× against 12.33×, `literal · hit` 11.79–11.82× against 11.89×, `anchored miss` 0.91–0.92× against 0.90×, `date · search` 428–436× against 432.86×), the sixth being that section's known-unstable `sub · dates with refs` at 57.35–79.68× across the three, straddling the 56.84–76.08× spread already documented for it. **AND ONE CONFIDENCE WITHDRAWN WITHOUT ANY NUMBER MOVING:** the Aho-Corasick gate arbitrates on candidate density, and that quantity provably cannot arbitrate — holding it FIXED and varying only the fraction of candidates that complete flips the verdict (arm64 0.87× → 2.19×, x86-64 0.56× → 1.90×), because a false start punishes the cascade while a match rewards it. No constant was retuned: the fix needs a second quantity, and retuning against those tables would move the error rather than remove it. See the gate's own note. |
-| Machines | §A on **two ISAs**: devbox (`x86-64`, g++ 13.3.0) *and* Apple M1 Pro (`arm64`, Apple clang 16). §B / §E on M1 Pro (§E's x86-64 leg noted inline where it diverges — see §E). §multi-pattern measured on **x86-64 devbox** (g++ 13.3, RE2 + Hyperscan 5.4) |
+| Machines | §A on **two ISAs**: devbox (`x86-64`, g++ 13.3.0) *and* Apple M1 Pro (`arm64`, Apple clang 16, **on AC power** — see `docs/MEASUREMENT.md` §3.5 for why the state is declared and why its cost must not be assumed). §B / §E on M1 Pro (§E's x86-64 leg noted inline where it diverges — see §E). §multi-pattern measured on **x86-64 devbox** (g++ 13.3, RE2 + Hyperscan 5.4) |
 | Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (built from source on x86-64 to pin the exact version — and the pin only applies when `PKG_CONFIG_PATH` points at that build, since the recipe resolves the library through `pkg-config` and the system package otherwise wins silently; `make bench-engines` now prints the version it actually LINKED, because this document named 10.47 for a leg that had measured 10.42 and nothing in the output could contradict it); RE2 (10.0 on x86-64, 11.0 on arm64 — version-differs-by-leg, uncontested given the margins). Multi-pattern: RE2::Set, Hyperscan (optional). §E: rust `regex` 1.12.4 |
 | Python | CPython 3.14.6, `re` (stdlib) vs the in-place REAL `2026.8.13` extension (§B re-measured at this stamp over three passes and unmoved; five of six headline rows inside 2 %, the sixth being its known-unstable `sub · dates with refs` — see §B) |
 | Method | §A: median of N = 30 paired batches, bootstrap CI, **three full runs per ISA with the minimum taken per cell** (both ISAs, this re-stamp — one run does not survive the x86-64 container's episodic interference); match counts equal on every case, both ISAs. §E: best-of-15, REAL `count_matches` vs rust `find_iter`/`captures_iter`, match counts equal. §multi-pattern: best-of-7, `make bench-multipattern`. **Every ratio below is computed from the raw ns/B pair, and `benchmarks/verify_bench_ratios.py` re-derives all of them plus §A's reading bullets — `make check-bench-ratios`, step 7b of the local gate, part of `gate-doc` whenever this file is touched, and a step of the **Docs-site** workflow — which is the one CI net with no `paths-ignore`, so it fires on the doc-only pushes that edit this file.** That wiring is new, and the sentence it replaces was not true when it was written: the script was called from nothing at all, and running it for the first time failed on two cells — a third once its rounding rule was made exact — while every range, per-row pair and count in §A's bullets had been stale for three stamps. A checker nothing runs is a claim, not a check |
@@ -146,21 +146,35 @@ version read 10.47. Do not trust a compile-time probe here; trust the line the h
 | alternation `the\|fox\|dog` | 1.77 | 117.90 (**66.55×**) | 1.58 (0.89×) | 6.40 (**3.61×**) |
 | date `{4}-{2}-{2}` | 0.55 | 72.59 (**131.47×**) | 0.39 (0.71×) | 3.42 (**6.19×**) |
 | hex `[0-9a-f]{8}` | 1.42 | 81.26 (**57.14×**) | 1.26 (0.88×) | 3.42 (**2.41×**) |
-| literal | 0.205 | 31.12 (**151.97×**) | 0.50 (**2.42×**) | 1.43 (**6.99×**) |
+| literal | 0.20 | 31.12 (**151.97×**) | 0.50 (**2.42×**) | 1.43 (**6.99×**) |
 | anchored `^[a-z]+$` | 0.32 | unsupported | 0.42 (**1.31×**) | 2.22 (**6.95×**) |
 | lookahead `[a-z]+(?=[a-z])` | 4.50 | 160.22 (**35.63×**) | 3.67 (0.82×) | unsupported |
 
-**Why one arm64 cell carries three decimals.** `literal`'s two precise ratios pin its raw value at
-**0.2046–0.2048 ns/B** (31.12 ÷ 151.97 and 1.43 ÷ 6.99); the PCRE2 ratio gives 0.2066, which agrees
-within the ±0.005 a two-digit `0.50` cell allows and so cannot narrow it further. And **two decimals
-cannot represent that value consistently with its own row**: displayed as 0.21 the largest
-`std::regex` ratio arithmetic permits is 151.83, below the 151.97 printed beside it, so a reader
-re-deriving the row would find it broken. The extra digit is the smallest fix that keeps the row
-self-consistent, and `verify_bench_ratios.py` now enforces exactly that property. **The arm64 leg's
-absolute figures are due for re-measurement anyway** — this table's arm64 column was taken on battery,
-where the M1 throttles ~29 %, so its ns/B are uniformly too slow while the ratios (all engines
-throttled together) hold. v2026.8.12's stamp rounded the same row to 0.21 and that line is left as
-published: it records what that train reported, not what this cell must be.
+**The arm64 leg was re-measured on AC power, and the premise for re-measuring it was wrong.** This
+column was taken on 2026-08-07 (tree `47dccc2`) with the machine's power state unrecorded, and after an
+M1 was caught throttling ~29 % on battery elsewhere in this project, these figures were declared
+uniformly too slow pending a fresh run. **They are not.** Three passes on AC — same recipe, same
+protocol, minimum per cell, `linked: pcre2=10.47 2025-10-21`, match counts equal on every row and every
+engine — reproduce the published column within **−2.4 % to +3.6 % on REAL** and **−6.3 % to +0.9 % on
+the three competitors**, every row inside the 1.00×–1.08× arm64 inter-run amplitude this document
+already declares. The largest single deviation is RE2 on `alternation` (−6.3 %), a third-party column,
+which is drift and not a change.
+
+**The published cells therefore STAND and are not replaced by the confirming run**: swapping in a
+second set that differs by less than the declared noise would advertise a change that did not happen.
+The conditions of that run are on the record rather than assumed — AC power, Apple clang 16,
+samples = 30 × 3 passes, one-minute load 3.9 / 4.8 / 5.1 at the start of each pass. **That is not an
+idle machine, and it is the useful direction to be imperfect in**: contamination only inflates, so a
+run taken under load that comes out no slower cannot be flattering the column it confirms.
+
+What the fresh passes do settle is `literal`, whose cell read 0.21 while its own two precise ratios pin
+the raw value at **0.2046–0.2048 ns/B** (31.12 ÷ 151.97 and 1.43 ÷ 6.99 — the PCRE2 ratio gives 0.2066,
+which agrees within the ±0.005 a two-digit `0.50` cell allows and cannot narrow it). Displayed as 0.21
+the largest `std::regex` ratio arithmetic permits is 151.83, below the 151.97 printed beside it, so the
+row could not be re-derived; corrected to **0.20**, the honest two-decimal rounding, consistent with all
+three of its ratios under the interval rule `check-bench-ratios` applies. The AC passes read 0.197
+independently. v2026.8.12's stamp rounded the same row to 0.21 and that line stays as published: it
+records what that train reported, not what this cell must be.
 
 **Reading — verdict brut, no dressing up. Every ratio in these bullets is checked against the cells
 above by `make check-bench-ratios`** (local gate step 7b), because the bullets below were wrong for

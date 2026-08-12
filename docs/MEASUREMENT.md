@@ -229,6 +229,28 @@ than 1.0x, so on such a host **take the minimum across runs**, never a single ru
 arm64 development machine needs none of this and shows none of the instability; that asymmetry is
 exactly why it went unnoticed.
 
+### 3.5 On the laptop, declare the power state — and do not assume what it costs
+
+The arm64 machine has no governor to set, so §3.4 skipped it entirely and left a hole this section
+closes. A MacBook on battery throttles, and the effect is large enough to invalidate a comparison:
+scilex's per-call lexer figures read **6.99 on battery against 9.02 MB/s on AC**, a 29 % gap with
+nothing else changed, and an entire refresh had to be discarded and re-run because the power state was
+not recorded when it was taken. `pmset -g batt` is one line and belongs beside the compiler and the
+sample count in any stamp.
+
+**But the size of the effect is a property of the WORKLOAD, not of the machine, and assuming otherwise
+costs just as much.** Having learned the 29 %, this project then declared §A's whole arm64 column
+"uniformly too slow" because its power state was unrecorded — and re-measuring it on AC refuted that:
+three passes reproduced every published cell within **−2.4 % to +3.6 % on REAL** and −6.3 % to +0.9 %
+on the competitors, inside the inter-run amplitude already declared for that host. The two regimes
+differ in what they are: 100 KB scan rows are sustained work that ramps and stays ramped, while a
+per-call row is a few hundred microseconds and can complete entirely inside the throttled window —
+which is the same distinction §3.4 draws about the Linux ramp, arrived at from the other side.
+
+So the rule is **declare it, then measure it** — never "battery costs 29 %", and never a table
+invalidated on an inference about a condition that was merely unknown. An unrecorded condition makes a
+figure *unverified*, which is a reason to re-run it, not a licence to state which way it is wrong.
+
 ## 4. The decision rule, and the measured floors
 
 A row's movement is reported as **REAL** only when both hold:
