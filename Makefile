@@ -873,7 +873,11 @@ release: ## [release] Cut the complete calendar release (bump all, tag engine + 
 	         bindings/go/vendor_include docs/BENCHMARKS.md docs/release-notes/; \
 	 if [ "$(DRY_RUN)" = "1" ]; then \
 	   echo "release: DRY RUN -- tree bumped+staged for v$$version; STOPPED before commit/tag/push."; \
-	   echo "release: verify with 'make version-check go-check-vendor', then revert: git reset --hard (and remove the untracked notes file)"; \
+	   echo "release: verify with 'make version-check go-check-vendor'."; \
+	   echo "release: TO REVERT, back up the two human inputs FIRST -- this dry run STAGED them, so they are"; \
+	   echo "  no longer untracked and 'git reset --hard' DELETES the notes file and reverts the BENCHMARKS.md"; \
+	   echo "  stamp. Recovering a staged-then-reset file needs 'git fsck --lost-found'; copying it costs nothing:"; \
+	   echo "    cp docs/release-notes/v$$version.md docs/BENCHMARKS.md /tmp/ && git reset --hard"; \
 	   exit 0; \
 	 fi; \
 	 body=$$(mktemp); printf 'release: v%s\n\n' "$$version" > "$$body"; cat "$(BODY)" >> "$$body"; \
