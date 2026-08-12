@@ -999,8 +999,13 @@ namespace real::detail {
         if (seeding && seed_viable(text, pos, start)) {
           // a seed shares the canonical all-npos block (one incref, no allocation); the first save
           // in its closure copies-on-write off it, so block 0 is never mutated.
-          state_.pool.incref(pool_type::npos_block);
-          add_thread(*clist, 0, pos, pool_type::npos_block);
+          if (!prog_.hints.capture_free_walk) {
+            state_.pool.incref(pool_type::npos_block);
+          }
+          // Capture-free: `pos` is what `save 0` at pc 0 will set anyway; passing it keeps the parameter
+          // meaningful rather than a sentinel the walk happens to ignore.
+          add_thread(*clist, 0, pos,
+                     prog_.hints.capture_free_walk ? pos : std::size_t {pool_type::npos_block});
         }
         if (clist->pcs.empty()) {
           // The seed itself may die in the closure (failed assertion):
@@ -6223,11 +6228,16 @@ namespace real::detail {
               if (mode == run_mode::full && pos != text_.size()) {
                 break; // must consume the whole text: thread dies
               }
-              // The winning thread's capture slots — its COW block.
-              const std::size_t* const won {thread_slots(clist, i)};
+              // The winning thread's group-0 span. Capture-free: the start is what the thread carries and
+              // the end IS `pos` -- the walk that pushed this thread ran at this same position, which is
+              // what `save 1` would have recorded. Otherwise: read the COW block.
+              const bool               cf   {prog_.hints.capture_free_walk};
+              const std::size_t* const won  {cf ? nullptr : thread_slots(clist, i)};
+              const std::size_t        won0 {cf ? clist.slots[i] : won[0]};
+              const std::size_t        won1 {cf ? pos : won[1]};
               // Reject an empty match forbidden at this position; a lower-priority
               // thread may still consume a byte and win a non-empty match here.
-              if (pos == won[0] && won[0] < forbid_empty_until_) {
+              if (pos == won0 && won0 < forbid_empty_until_) {
                 break;
               }
               if (sem_ == match_semantics::longest) {
@@ -6236,18 +6246,30 @@ namespace real::detail {
                 // thread may still extend it. Seeding has already stopped (matched), so no start past the
                 // leftmost survives. A lazy quantifier therefore behaves greedily here (the longest end wins).
                 const bool better {!matched
-                                   || won[0] < out_slots[0]
-                                   || (won[0] == out_slots[0] && won[1] > out_slots[1])};
+                                   || won0 < out_slots[0]
+                                   || (won0 == out_slots[0] && won1 > out_slots[1])};
                 if (better) {
-                  for (std::uint16_t s = 0; s < slot_count; ++s) {
-                    out_slots[s] = won[s];
+                  if (cf) {
+                    out_slots[0] = won0;
+                    out_slots[1] = won1;
+                  }
+                  else {
+                    for (std::uint16_t s = 0; s < slot_count; ++s) {
+                      out_slots[s] = won[s];
+                    }
                   }
                 }
                 matched = true;
                 break; // the match thread dies; the rest of the list and later positions may lengthen it
               }
-              for (std::uint16_t s = 0; s < slot_count; ++s) {
-                out_slots[s] = won[s];
+              if (cf) {
+                out_slots[0] = won0;
+                out_slots[1] = won1;
+              }
+              else {
+                for (std::uint16_t s = 0; s < slot_count; ++s) {
+                  out_slots[s] = won[s];
+                }
               }
               matched = true;
               return; // drop lower-priority threads
@@ -6312,9 +6334,11 @@ namespace real::detail {
                                   std::int32_t next_pc,
                                   std::size_t  next_pos)
     {
-      const std::uint32_t block {static_cast<std::uint32_t>(clist.slots[i])};
-      state_.pool.incref(block); // the new closure holds its own ref (paired with cow_release_blocks)
-      add_thread(nlist, next_pc, next_pos, block);
+      if (!prog_.hints.capture_free_walk) {
+        state_.pool.incref(static_cast<std::uint32_t>(clist.slots[i])); // the new closure holds its own ref
+      }
+      // Capture-free: this is group 0's start, full width, and no ref exists to take.
+      add_thread(nlist, next_pc, next_pos, clist.slots[i]);
     }
 
     /*!
@@ -6390,24 +6414,39 @@ namespace real::detail {
      * \param[in,out] list          The thread list to populate (its `slots` hold one block index per pc).
      * \param[in]     pc0           The program counter to seed from.
      * \param[in]     pos           The current input position.
-     * \param[in]     initial_block The block the walk starts on — the caller passes an already-owned ref.
+     * \param[in]     initial       What the seed carries: capture-free, group 0's START — full width, which
+     *                              is why this is a `std::size_t` and not the `std::uint32_t` an `eps_entry`
+     *                              field would have been. Otherwise the block the walk starts on, on which
+     *                              the caller passes an already-owned ref.
      */
-    constexpr void add_thread(list_type&    list,
-                              std::int32_t  pc0,
-                              std::size_t   pos,
-                              std::uint32_t initial_block)
+    constexpr void add_thread(list_type&   list,
+                              std::int32_t pc0,
+                              std::size_t  pos,
+                              std::size_t  initial)
     {
       auto& pool  {state_.pool};
       auto& stack {state_.stack};
+      // CAPTURE-FREE WALK (\ref pattern_hints::capture_free_walk): a thread's whole capture state is group
+      // 0's start, so no refcounted block travels along and the pool is never touched. The start is a
+      // full-width `std::size_t` LOCAL rather than a field of `eps_entry` for two reasons: that field is a
+      // `std::uint32_t`, which would silently truncate an offset past 4 GiB, and widening it would grow the
+      // per-call epsilon stack -- the `mark` experiment measured +128 bytes of this state at +4 % to +5 % on
+      // the per-call rows. A single local is correct because `save 0` is the program's FIRST instruction
+      // (the guard checks exactly that): every thread one call adds therefore shares one start, either the
+      // one passed in or `pos` if the walk crossed the head.
+      const bool  cf    {prog_.hints.capture_free_walk};
+      std::size_t start {initial};
       stack.clear();
-      stack.push_back({.pc = pc0, .block = initial_block});
+      stack.push_back({.pc = pc0, .block = cf ? 0U : static_cast<std::uint32_t>(initial)});
       while (!stack.empty()) {
         const auto          entry {stack.back()};
         stack.pop_back();
         const std::int32_t  pc    {entry.pc};
         const std::uint32_t block {entry.block}; // this frame owns 1 ref
         if (list.seen(pc)) {
-          pool.decref(block);
+          if (!cf) {
+            pool.decref(block);
+          }
           continue;
         }
         list.mark_seen(pc);
@@ -6429,13 +6468,25 @@ namespace real::detail {
             }
             break;
           case opcode::split:
-            detail::prof::tick_event(detail::prof::event::pool_incref);
-            pool.incref(block); // one held ref -> two pushed frames
+            if (!cf) {
+              detail::prof::tick_event(detail::prof::event::pool_incref);
+              pool.incref(block); // one held ref -> two pushed frames
+            }
             stack.push_back({.pc = instruction.secondary_target, .block = block});
             stack.push_back({.pc = instruction.primary_target, .block = block});
             break;
           case opcode::save:
             {
+              if (cf) {
+                // Slot 0 is the start; slot 1 is the end, which needs no storage -- it IS `pos` when the
+                // `match` opcode is reached, because the walk that pushes a thread and the step that runs
+                // it share one position.
+                if (instruction.arg16 == 0U) {
+                  start = pos;
+                }
+                stack.push_back({.pc = pc + 1, .block = block});
+                break;
+              }
               // The one write: copy-on-write off the block if shared, then record pos in the slot.
               detail::prof::tick_event(detail::prof::event::pool_cow_write);
               const std::uint32_t written {pool.cow_write(block, instruction.arg16, pos)};
@@ -6446,7 +6497,7 @@ namespace real::detail {
             if (assertion_holds(static_cast<assert_kind>(instruction.arg8), pos, instruction.arg16 != 0U)) {
               stack.push_back({.pc = pc + 1, .block = block});
             }
-            else {
+            else if (!cf) {
               pool.decref(block); // thread dies here
             }
             break;
@@ -6457,11 +6508,11 @@ namespace real::detail {
               if (lookaround_holds(instruction.arg16, pos)) {
                 stack.push_back({.pc = pc + 1, .block = block});
               }
-              else {
+              else if (!cf) {
                 pool.decref(block);
               }
             }
-            else {
+            else if (!cf) {
               pool.decref(block); // unreachable (this walk is instantiated only for the pool-bearing state)
             }
             break;
@@ -6470,7 +6521,8 @@ namespace real::detail {
           case opcode::klass_cp:
           case opcode::match:
             list.pcs.push_back(pc);
-            list.slots.push_back(block); // transfer the ref to the thread: one block handle per pc
+            // Capture-free: the thread carries group 0's START. Otherwise the block handle, ref transferred.
+            list.slots.push_back(cf ? start : static_cast<std::size_t>(block));
             break;
           case opcode::byte_loop_possessive:
             // Tier 1: the match/no-match decision is made HERE, at insertion
@@ -6492,7 +6544,7 @@ namespace real::detail {
             // in spirit to how `jump`'s target is pushed above.
             if (pos < text_.size() && static_cast<std::uint8_t>(text_[pos]) == instruction.arg8) {
               list.pcs.push_back(pc);
-              list.slots.push_back(block);
+              list.slots.push_back(cf ? start : static_cast<std::size_t>(block));
             }
             else {
               stack.push_back({.pc = instruction.secondary_target, .block = block});
@@ -6502,7 +6554,7 @@ namespace real::detail {
             if (pos < text_.size() &&
                 prog_.classes[instruction.arg16].test(static_cast<std::uint8_t>(text_[pos]))) {
               list.pcs.push_back(pc);
-              list.slots.push_back(block);
+              list.slots.push_back(cf ? start : static_cast<std::size_t>(block));
             }
             else {
               stack.push_back({.pc = instruction.secondary_target, .block = block});
@@ -6517,7 +6569,7 @@ namespace real::detail {
               }
               if (matched_here) {
                 list.pcs.push_back(pc);
-                list.slots.push_back(block);
+                list.slots.push_back(cf ? start : static_cast<std::size_t>(block));
               }
               else {
                 stack.push_back({.pc = instruction.secondary_target, .block = block});
@@ -6537,6 +6589,9 @@ namespace real::detail {
      */
     constexpr void cow_release_blocks(list_type& list)
     {
+      if (prog_.hints.capture_free_walk) {
+        return; // the threads carry a start, not a block: there is no reference to drop
+      }
       for (std::size_t i = 0; i < list.pcs.size(); ++i) {
         state_.pool.decref(static_cast<std::uint32_t>(list.slots[i]));
       }

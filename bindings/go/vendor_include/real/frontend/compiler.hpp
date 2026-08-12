@@ -363,6 +363,15 @@ namespace real::detail {
       prog.hints        = analyze_program(prog.code, prog.classes, prog.cp_classes, prog.cp_ranges,
                                           prog.codepoint_mark_ascii, prog.codepoint_mark_offset,
                                           prog.codepoint_mark_end, prog.lookarounds);
+      // AND slot_count == 2 -- which analyze_program cannot see, because it is handed the CODE and a program
+      // can record captures WITHOUT `save` opcodes: a Tier-1 possessive with a `\b` wrap (`\b(\w)*+`) writes
+      // its group from the fast path. The save scan alone therefore called that pattern capture-free and lost
+      // both its group AND group 0's start; tests/engine/test_fixed_shape_wb_captures.cpp caught it on the
+      // first run. Placed AFTER the assignment above for the reason the first attempt got wrong: `prog.hints`
+      // is overwritten wholesale there, so a condition applied before it silently does nothing.
+      if (prog.slot_count != 2U) {
+        prog.hints.capture_free_walk = false;
+      }
       // The required inner literal + its prefix boundary (a single AST walk). Recorded in hints for the
       // inner-literal search route (pike_vm::run dispatches to run_inner_literal); kept off the program
       // code, so byte-identity is untouched.

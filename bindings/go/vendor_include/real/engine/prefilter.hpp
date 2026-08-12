@@ -1992,11 +1992,16 @@ namespace real::detail {
     // Derived by SCAN, not from the group count: any `save` past slot 1 means a thread carries capture
     // positions someone asked for, and the epsilon walk must keep its refcounted block. See
     // \ref pattern_hints::capture_free_walk for what the negative case licenses.
-    hints.capture_free_walk = true;
-    for (const instr& in : code) {
-      if (in.op == opcode::save && in.arg16 > 1U) {
+    // Two conditions, and the SECOND is the one the walk's single scalar rests on: `save 0` must be the
+    // program's first instruction. If it sat behind a split, a branch that skipped it would inherit its
+    // sibling's start -- a wrong ANSWER. Every other `save` must write slot 1, which capture-free ignores
+    // because the end IS `pos` at the match. Lookaround sub-programs are regions of this same `code` and
+    // emit no saves of their own (checked: `a(?=b)` and `a(?<=b)c` both carry exactly [pc=0 slot=0] and
+    // [pc=n-2 slot=1]), so a bounded lookaround does not disqualify a pattern here.
+    hints.capture_free_walk = !code.empty() && code[0].op == opcode::save && code[0].arg16 == 0U;
+    for (std::size_t i = 1; hints.capture_free_walk && i < code.size(); ++i) {
+      if (code[i].op == opcode::save && code[i].arg16 != 1U) {
         hints.capture_free_walk = false;
-        break;
       }
     }
 
