@@ -70,7 +70,7 @@ include mk/help.mk
         example-check \
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate \
         profile-sample profile-callgrind \
-        version-check install install-smoke uninstall release help check-layers check-doc-style check-bench-stamp check-bench-ratios \
+        version-check install install-smoke uninstall release help check-layers check-doc-style check-bench-stamp check-bench-ratios gate-venv \
         check-site-anchors
 
 .DEFAULT_GOAL := help
@@ -242,7 +242,9 @@ check-features-probe:
 # SPHINXBUILD stays defined here too (not just in docs/Makefile): full-local-gate's own
 # "is sphinx-build on PATH" guard (below) reads $(SPHINXBUILD) directly, so this
 # repo-level default must exist independently of docs/Makefile's own copy.
-SPHINXBUILD ?= sphinx-build
+# SPHINXBUILD / MYPY_PYTHON now come from mk/common.mk, which prefers `make gate-venv`'s venv when
+# it exists (a bare `?=` here would win by being read first and pin the PATH name, so the two steps
+# that depend on them would keep skipping for a developer who created the venv).
 
 doc: coverage-html
 	@$(MAKE) -C docs doc
@@ -389,6 +391,25 @@ check-bench-ratios:
 	@python3 benchmarks/verify_bench_ratios.py
 	@python3 benchmarks/verify_unicode_ratios.py
 
+# The gate's optional PYTHON tools in one venv, so the two steps that silently skip without them stop
+# skipping. mk/common.mk points SPHINXBUILD and MYPY_PYTHON here when it exists. Built from
+# docs/requirements.txt (the SAME pins ci.yml's Docs-site job installs -- a local sphinx newer than
+# CI's would gate against warnings CI does not raise, and vice versa), plus mypy for stubtest.
+# `regex` is installed here too, but it CANNOT close step 20's cross-oracle from here: the Unicode
+# generators run inside the python test suite, which must import the built extension and therefore runs
+# under $(PYTHON). Closing that one means either `regex` in $(PYTHON) -- refused by PEP 668 on a
+# brew/system interpreter unless --break-system-packages, which the pip note itself warns can break the
+# OS python -- or running the suite under this venv (`make python-test PYTHON=$(GATE_VENV)/bin/python`,
+# valid because the venv shares $(PYTHON)'s ABI, so the in-place .so imports). Left as the developer's
+# call rather than done silently: the end-of-gate summary names it either way.
+gate-venv: ## [gates] Create $(GATE_VENV) with the gate's optional python tools (sphinx pins + mypy)
+	$(PYTHON) -m venv $(GATE_VENV)
+	$(GATE_VENV)/bin/pip install --quiet --upgrade pip
+	$(GATE_VENV)/bin/pip install --quiet -r $(ROOT)/docs/requirements.txt mypy regex
+	@echo "gate-venv: ready — full-local-gate finds sphinx-build and mypy here (steps 10 and 20 stop skipping)"
+	@$(PYTHON) -c "import regex" >/dev/null 2>&1 \
+	  || echo "gate-venv: step 20's Unicode cross-oracle stays parse-only — it needs 'regex' in $(PYTHON) itself (the interpreter that imports the extension), or run 'make python-test PYTHON=$(GATE_VENV)/bin/python'"
+
 # Fail-fast gate of record: CHEAP / FAST first, expensive last. First non-zero aborts
 # the rest (no -k). Order is intentional — a Doxygen param miss or format drift must not
 # wait for sanitize/python. Compound steps (lint | tee) use `set -euo pipefail`.
@@ -487,7 +508,7 @@ gate-test: ## [gates] Calibrated gate for a tests/-only change (test + sanitize 
 	@$(MAKE) coverage-check
 	@echo "gate-test: PASS (test + sanitize + coverage-check)"
 
-full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate of record)
+full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate of record; GATE_STRICT=1 refuses to pass with any step skipped)
 	@mkdir -p $(BUILD); lock="$(BUILD)/.gate.lock"; \
 	 if ! mkdir "$$lock" 2>/dev/null; then \
 	   echo "full-local-gate: REFUSING -- another gate already holds $$lock."; \
@@ -503,6 +524,7 @@ full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate 
 
 full-local-gate-impl:
 	@echo "full-local-gate: start (fail-fast — cheap first, first red stops the train)"
+	@mkdir -p $(dir $(GATE_SKIPS)) && : > $(GATE_SKIPS)
 	@echo "── [1/24] format-check"
 	@$(MAKE) format-check
 	@echo "── [2/24] version-check"
@@ -550,7 +572,7 @@ full-local-gate-impl:
 	# without the docs venv on PATH doesn't need to rougir tout le gate) -- the docs-site
 	# CI job (ci.yml) is the backstop, so this is never the ONLY net on the site.
 	@echo "── [10/24] docs-site-gate (sphinx -W --keep-going + linkcheck; skipped if sphinx-build absent)"
-	@if command -v $(SPHINXBUILD) >/dev/null 2>&1; then $(MAKE) docs-site-gate; else echo "full-local-gate: WARN — $(SPHINXBUILD) absent, docs-site-gate skipped (CI covers it)"; fi
+	@if command -v $(SPHINXBUILD) >/dev/null 2>&1; then $(MAKE) docs-site-gate; else echo "step 10: docs-site-gate -- $(SPHINXBUILD) absent (sphinx: make gate-venv)" | tee -a $(GATE_SKIPS); fi
 	@echo "── [11/24] misra (single synthetic TU)"
 	@$(MAKE) misra
 	@echo "── [12/24] c-test"
@@ -576,16 +598,16 @@ full-local-gate-impl:
 	@$(MAKE) rust-publish-check
 	@echo "── [20/24] python-test + python-stubtest (.pyi ≡ runtime; skipped if mypy absent)"
 	@$(MAKE) python-test
-	@if $${MYPY_PYTHON:-$(PYTHON)} -c "import mypy" >/dev/null 2>&1; then \
+	@if $(MYPY_PYTHON) -c "import mypy" >/dev/null 2>&1; then \
 	   $(MAKE) python-stubtest; \
-	 else echo "   (stubtest skipped: mypy absent — pip install mypy, or set MYPY_PYTHON)"; fi
+	 else echo "step 20: python-stubtest (.pyi = runtime) -- mypy absent (make gate-venv)" | tee -a $(GATE_SKIPS); fi
 	# Go leg: go-check-vendor regenerates the committed vendor tree from the live headers and fails
 	# on drift — the one binding NOT otherwise in this gate (its sources are vendored, not built from
 	# include/ here). Skipped with a warning when go is absent (the CI go job is the backstop), same
 	# shape as the GCC leg. Closes the gap where an include/ change that stales vendor_include/ was
 	# caught only in CI.
 	@echo "── [21/24] go-check-vendor + go-test (Go leg; skipped if go absent)"
-	@if command -v go >/dev/null 2>&1; then $(MAKE) go-check-vendor && $(MAKE) go-test; else echo "full-local-gate: WARN — go absent, Go leg skipped (CI covers it)"; fi
+	@if command -v go >/dev/null 2>&1; then $(MAKE) go-check-vendor && $(MAKE) go-test; else echo "step 21: go-check-vendor + go-test -- go absent" | tee -a $(GATE_SKIPS); fi
 	@echo "── [22/24] lint"
 	@set -euo pipefail; \
 	  mkdir -p $(BUILD); \
@@ -594,11 +616,34 @@ full-local-gate-impl:
 	    echo "full-local-gate: FAIL at lint (see $(BUILD)/lint.log)"; exit 1; \
 	  fi
 	@echo "── [23/24] test (GCC leg) + sanitize (slowest last)"
-	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "full-local-gate: WARN — $(GXX) absent, GCC leg skipped (CI covers it)"; fi
+	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "step 23: test on the GCC leg -- $(GXX) absent" | tee -a $(GATE_SKIPS); fi
 	@$(MAKE) sanitize
 	@echo "── [24/24] coverage-check (line floor $(COV_FLOOR)% — closes the P0 gate hole)"
 	@$(MAKE) coverage-check
-	@echo "full-local-gate: ALL gates green (cheap→doc→tests→lint→sanitize→coverage; first red would have stopped the train)"
+	# A SKIP IS NOT A PASS, and inside a numbered list it reads exactly like one -- which is how a
+	# machine without sphinx-build ran this gate as "24 steps green" while step 10, the net for the
+	# site, never executed. Each optional leg appends its own line as it skips, so this block only
+	# reads a ledger and can never disagree with the branch that wrote it. The Unicode cross-oracle
+	# is the one PROBE here: it skips inside the test run, not in a branch this file owns.
+	@set -eu; \
+	 if ! $(PYTHON) -c "import regex" >/dev/null 2>&1; then \
+	   echo "step 20: Unicode property cross-oracle is parse-only -- python 'regex' module absent" >> $(GATE_SKIPS); \
+	 fi; \
+	 n=$$(awk 'END{print NR+0}' $(GATE_SKIPS) 2>/dev/null || echo 0); \
+	 if [ "$$n" -gt 0 ]; then \
+	   echo; \
+	   echo "full-local-gate: $$n STEP(S) DID NOT RUN -- unverified locally, not green:"; \
+	   sed 's/^/  · /' $(GATE_SKIPS); \
+	   echo "  Close the python ones with 'make gate-venv'; the rest need docker / go / $(GXX)."; \
+	   echo "  Before a release, run GATE_STRICT=1 make full-local-gate -- it refuses to pass with any of these open."; \
+	   if [ -n "$${GATE_STRICT:-}" ]; then \
+	     echo "full-local-gate: REFUSED — GATE_STRICT is set and $$n step(s) were skipped."; \
+	     exit 1; \
+	   fi; \
+	   echo "full-local-gate: the steps that RAN are green; $$n skipped above (CI covers those)"; \
+	 else \
+	   echo "full-local-gate: ALL gates green, NONE skipped (cheap→doc→tests→lint→sanitize→coverage; first red would have stopped the train)"; \
+	 fi
 
 # doc-check lives in docs/Makefile; thin delegation
 # below preserves the root-invocable name (full-local-gate step 7/22 above, and the
@@ -647,7 +692,7 @@ gcc-check: ## [gates] Compile the engine headers under gcc -Werror (the diagnost
 	         -c bindings/c/real_capi.cpp -o /dev/null \
 	   && echo "gcc-check: clean under g++ 14 (-Wall -Wextra -Wshadow -Werror)"; \
 	 else \
-	   echo "gcc-check: SKIPPED -- docker not found. The gcc-only diagnostics are unchecked locally;"; \
+	   echo "step 9: gcc-check (the diagnostics clang lacks) -- docker absent" | tee -a $(GATE_SKIPS); \
 	   echo "  CI's linux-gcc and cmake legs remain the backstop."; \
 	 fi
 

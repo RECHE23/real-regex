@@ -53,7 +53,7 @@ doc-check: ## Build docs under the exact CI Doxygen (Docker) to catch version-dr
 	@if command -v docker >/dev/null 2>&1 && test -x $(SCIFORGE_TOOLS)/doxygen-check.sh; then \
 	   $(SCIFORGE_TOOLS)/doxygen-check.sh $(ROOT) Doxyfile; \
 	 else \
-	   echo "doc-check: WARN — Docker or $(SCIFORGE_TOOLS)/doxygen-check.sh absent, CI-Doxygen check skipped (the Docs CI job is the backstop)"; \
+	   echo "step 8: doc-check (CI-pinned Doxygen) -- docker or $(SCIFORGE_TOOLS)/doxygen-check.sh absent" | tee -a $(GATE_SKIPS); \
 	 fi
 
 # --- docs/site (Sphinx + Breathe + pydata-sphinx-theme) -------
