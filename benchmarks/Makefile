@@ -26,7 +26,7 @@ include $(ROOT)/mk/help.mk
 CXXSTD   := -std=c++20
 INCLUDES := -Iinclude
 
-.PHONY: bench-duel bench-engines bench-multipattern bench-matrix matrix-gate \
+.PHONY: bench-duel bench-engines bench-multipattern bench-matrix matrix-gate bench-ac-gate \
         profile-sample-build profile-sample profile-callgrind help
 .DEFAULT_GOAL := help
 
@@ -83,6 +83,16 @@ matrix-gate: ## Fast 64 KB subset of the 4-D veto matrix (used by full-local-gat
 # dynamic route needs the byte program / lazy-DFA alphabet / one-pass table cannot take it here and its row
 # reads far slower rather than faster. Match counts are cross-checked per row; a divergence exits non-zero,
 # because a ratio between two paths that disagree on what they found is not a comparison.
+# The AC gate's THREE regimes through normal dispatch. ac_regime.cpp beside it cannot answer this: it
+# forces the automaton on and off to compare the two strategies, so the gate's own choice never runs --
+# and the gate's choice is what ac_completion_pct changed. Informational, not a gate: the numbers are
+# host noise, and what matters is the difference between two TREES (see the file's header for the
+# interleaved form).
+bench-ac-gate: ## [bench] The AC gate's completing / false-start / prose regimes, via normal dispatch
+	@mkdir -p $(BUILD)
+	@cd $(ROOT) && c++ $(CXXSTD) -O2 $(INCLUDES) benchmarks/ac_gate_probe.cpp -o $(BUILD)/ac_gate_probe
+	@$(BUILD)/ac_gate_probe $(if $(REPS),$(REPS),15)
+
 bench-static: ## static_regex vs regex, same pattern (compile-time storage's routes and scratch)
 	@mkdir -p $(BUILD)
 	@cd $(ROOT) && c++ $(CXXSTD) -O2 $(INCLUDES) benchmarks/bench_static.cpp -o $(BUILD)/bench_static

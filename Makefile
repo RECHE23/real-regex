@@ -68,7 +68,7 @@ include mk/help.mk
 	full-local-gate-impl gcc-check route-probe alloc-probe ac-regime sabotage-sweep \
         lint misra check-state-zeroing route-surface-parity bench-compilers fuzz fuzz-compat fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
-        bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate \
+        bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate \
         profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers check-doc-style check-bench-stamp check-bench-ratios gate-venv \
         check-site-anchors
@@ -745,6 +745,9 @@ bench-layout-min:
 
 bench-static:
 	@$(MAKE) -C benchmarks bench-static
+
+bench-ac-gate:
+	@$(MAKE) -C benchmarks bench-ac-gate
 
 bench-multipattern:
 	@$(MAKE) -C benchmarks bench-multipattern

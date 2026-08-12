@@ -2,6 +2,78 @@
 
 Per-train benchmark-impact log: what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s §A/§E/§B/§Unicode/§multi-pattern sections, carried verbatim from that file's Version row. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## Unreleased
+
+**The two x86-64 legs owed since v2026.8.13 are measured, and the host they were owed on says something
+about measurement itself.** Both changes had landed with their arm64 judgement published and the x86-64
+side stated as owed rather than fudged.
+
+**The second bulk copy per call (`7c62765`)** — the slot storage filled IN PLACE instead of moved in —
+judged on `bench_minimal`, 24 paired interleaved draws against floors calibrated on the same host, same
+four per-call rows as the arm64 leg:
+
+| per-call row | x86-64 / gcc 15.2 | arm64 / Apple clang (published) |
+| --- | ---: | ---: |
+| `short stamp match reject` | **−27.8 %** [−31.9, −24.9] | −9.4 % [−12.4, −9.0] |
+| `short stamp match hit` | **−16.0 %** [−22.0, −5.9] | −7.4 % [−11.6, −6.6] |
+| `short stamp search exact` | **−15.6 %** [−24.0, −8.6] | −6.4 % [−10.2, −5.6] |
+| `short stamp search in` | **−14.1 %** [−20.3, −9.0] | −8.4 % [−10.7, −7.8] |
+
+24 of 24 draws agree in sign on every one of them, floors 7.3–8.3 %, and the other 22 rows are
+indistinguishable with medians inside ±1.0 % — no cross-row toll. **The x86-64 gain is two to three times
+the arm64 one, and the two legs differ by COMPILER as much as by ISA**: gcc lowered that move to a `rep
+movsq` measured at 12.02 % of the inlined per-call path, and `rep movs` pays a fixed startup whatever the
+volume, which for a groupless pattern is sixteen bytes. Apple clang emits no such instruction, so its
+leg only ever recovered the move itself. Per `docs/MEASUREMENT.md` §3.3, a second compiler is a second
+instrument; this is that reading, not a claim about the ISA alone.
+
+**The AC gate's second quantity (`312e740`)** — two things, because the gate's own routing decision is
+not a row `bench_minimal` carries. Cross-row cost, same instrument and floors: **0 rows REAL out of 26**,
+medians −1.6 % to +1.2 %, which is the x86-64 confirmation of what the arm64 leg established by machine
+code and forced alignment (its apparent +1.0 % was placement). And the routing gain, on the new
+`make bench-ac-gate` probe through NORMAL dispatch, five interleaved passes per tree, minimum per cell,
+match counts identical on every row:
+
+| regime | base | with the gate | x86-64 | arm64 (published) |
+| --- | ---: | ---: | ---: | ---: |
+| candidates that complete | 6.288 | 5.130 ns/B | **−18.4 %** | −30.0 % |
+| false starts only | 3.268 | 3.272 | **+0.12 %** | +3.4 % |
+| prose, no candidate | 0.530 | 0.530 | **+0.00 %** | −3.7 % |
+
+Every pass on the gain row is negative, −17.2 % to −20.1 %, against a per-row repeatability of ±2.4 %
+the passes themselves measure. **The verification cost on x86-64 is +0.12 %, not the +3.4 % arm64
+charged** — all five passes agree in sign on a row that repeats to ±0.03 %, which is why so small a
+figure can be stated at all. Prose is unchanged to three decimals, so **arm64's −3.7 % there does not
+reproduce** and stays an arm64 reading. A smaller gain than arm64 is the expected direction: the
+derivation table has the automaton at 2.19× the cascade on arm64 at full completion against 1.90× on
+x86-64.
+
+**Those three figures were first taken under `powersave` and were unreadable** — ±7 % to ±9 %
+repeatability, giving +2.2 % and +0.2 % for the two flat rows with the per-pass spread straddling zero.
+They were published in this entry's first draft as NOT RESOLVABLE. Re-run with the governor at
+`performance` and nothing else changed, the same probe repeats to **±0.03 %** on those rows. The gain
+row is the control: −19.4 % then −18.4 %, the same answer both times.
+
+**AND A CONTROLLED PAIR SPLITS WHAT THE GOVERNOR IS ACTUALLY FOR.** v2026.8.13 published that this
+host's floors "fell from 27–59 % to 1.8–8.3 % once its governor was set to `performance`", which reads as
+a cause. Both states were then calibrated on the same idle host with nothing else changed:
+
+| | floors, 26 rows | median | probe re-run, flat rows |
+| --- | ---: | ---: | ---: |
+| `powersave`, idle | 6.7–9.1 % | 7.0 % | ±7 % |
+| `performance`, idle | 4.5–9.2 % | 6.7 % | **±0.03 %** |
+
+**The governor barely moves the calibrated floors and transforms single-binary repeatability**, and both
+halves make sense: those floors are measured across PERMUTED code layouts (`-falign-functions`, padding),
+so they price placement variance, which no clock policy touches — 22 of 26 rows do improve, a consistent
+sign, but the median moves 0.3 points. Re-running ONE fixed binary is the opposite case: its variance was
+the clock ramp of §3.4, and pinning the multiplier removes essentially all of it.
+
+So the published sentence is refuted as stated — an idle host under `powersave` already calibrates at
+6.7–9.1 %, so the 27–59 % belongs to the host's OCCUPANCY, not its governor — while the governor keeps a
+decisive role that the floors number cannot show. `docs/MEASUREMENT.md` §3.4 carries both, beside the
+claim they qualify.
+
 ## v2026.8.13
 
 8.13 (**a veto restored, and a per-call copy removed**): **A veto this repository wrote for exactly one case was crossed by v2026.8.12, and this train puts it back.** `matrix-gate`'s `date dense` cell fails when the routed path is slower than the core it replaces; v2026.8.12's inner-literal batch filler made it so — **route 2.883 against core 2.563**, where v2026.8.11 read 2.617 / 2.584 — and the release shipped because a hand-picked subset of gates was run instead of the canonical twenty-four. The route's sticky abandon was working; the WALK was not listening, so a route that had given up on the haystack was retried on every match (**3637 attempts against 7**) and each attempt was a wasted memmem before the per-match path did the real work. The filler now disarms for the rest of the walk when the route abandons: **`date dense` 2.883 → 2.609**, its pre-train value, with `email dense` unchanged at 2.044 against the core's 8.730 and `\w+@\w+` still batched at 0.251 engine entries per match. **MATRIX CLEAN.** **THE TABLES BELOW ARE UNCHANGED AND THAT IS A MEASURED CLAIM, not an omission:** of the five commits since v2026.8.12 only one touches a hot path, and its judgement against calibrated floors read **22 of 26 rows indistinguishable on BOTH ISAs**, every REAL row being a per-call one — a regime whose fixed cost is 0.0004 ns/byte over the 100 KB corpora §A measures. **NOT IN THESE TABLES, for want of a row rather than for want of a number:** the slot storage is now taken by rvalue reference instead of by value, which removes one of two bulk copies per call (gcc lowered them to two `rep movsq`, 12.15 % and 10.20 % of the inlined per-call path). Judged on both instruments — **x86-64 −13.2 % / −10.0 % / −9.6 %** and **arm64 −11.8 % / −8.2 % / −7.9 % / −7.2 %** on the per-call rows, everything else indistinguishable, no cross-row toll — and this is the first change this project has judged on x86-64 at all: that host's floors fell from 27–59 % to **1.8–8.3 %** once its governor was set to `performance`, so the same change was unjudgeable there a day earlier. **§B, RE-MEASURED AND UNMOVED** over three passes: five headline rows inside 2 % (`words · findall @100KB` 2.16–2.24× against 2.13×, `digits · sparse` 12.22–12.33× against 12.33×, `literal · hit` 11.79–11.82× against 11.89×, `anchored miss` 0.91–0.92× against 0.90×, `date · search` 428–436× against 432.86×), the sixth being that section's known-unstable `sub · dates with refs` at 57.35–79.68× across the three, straddling the 56.84–76.08× spread already documented for it. **AND ONE CONFIDENCE WITHDRAWN WITHOUT ANY NUMBER MOVING:** the Aho-Corasick gate arbitrates on candidate density, and that quantity provably cannot arbitrate — holding it FIXED and varying only the fraction of candidates that complete flips the verdict (arm64 0.87× → 2.19×, x86-64 0.56× → 1.90×), because a false start punishes the cascade while a match rewards it. No constant was retuned: the fix needs a second quantity, and retuning against those tables would move the error rather than remove it. See the gate's own note.

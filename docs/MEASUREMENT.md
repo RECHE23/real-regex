@@ -229,6 +229,32 @@ than 1.0x, so on such a host **take the minimum across runs**, never a single ru
 arm64 development machine needs none of this and shows none of the instability; that asymmetry is
 exactly why it went unnoticed.
 
+**What the governor is actually for — a controlled pair, since the first attribution was wrong.**
+`docs/BENCHMARKS.md` and v2026.8.13's notes report this host's floors falling from **27–59 % to
+1.8–8.3 %** "once its governor was set to `performance`", and that sentence reads as a cause. Both states
+were then calibrated on the same IDLE host with nothing else changed:
+
+    governor        floors (26 rows)   median   re-running ONE fixed binary
+    powersave           6.7 - 9.1 %     7.0 %   +/-7 %
+    performance         4.5 - 9.2 %     6.7 %   +/-0.03 %
+
+**Two findings, not one, and they pull apart.** The calibrated floors barely move -- 22 of 26 rows do
+improve, a consistent sign, but the median shifts 0.3 points -- because these floors are measured across
+PERMUTED code layouts (`-falign-functions`, padding), so what they price is placement variance, and no
+clock policy touches that. Re-running one fixed binary is the opposite case: its variance was the ramp
+described above, and pinning the multiplier removes essentially all of it. On the probe used to judge the
+AC gate, the flat rows went from ±7 % to ±0.03 % repeatability, which turned two figures that had been
+published as unreadable into +0.12 % and +0.00 %.
+
+So the original sentence is refuted as stated: an idle host under `powersave` already calibrates at
+6.7–9.1 %, so the **27–59 % belongs to the host's OCCUPANCY**, not to its governor. The governor still
+matters decisively — for the kind of measurement the floors number cannot see.
+
+**Declare the governor and the load, calibrate on the host you will judge on, and note which KIND of
+variance you are fighting** — a floor is cheap (minutes), and it is the only thing that says whether a
+judgement is possible at all. This is the same error as §3.5's, in the other direction: there an
+unrecorded condition was assumed to be costly, here a recorded one was assumed to be the cause.
+
 ### 3.5 On the laptop, declare the power state — and do not assume what it costs
 
 The arm64 machine has no governor to set, so §3.4 skipped it entirely and left a hole this section
