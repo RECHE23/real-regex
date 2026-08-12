@@ -62,9 +62,12 @@ namespace real::detail::prof {
     cascade,
     rare_byte,
     memmem,
-    wb_b1_drop, //!< compile-time drop observed at first dispatch
-    wb_b2_wrap, //!< runtime wrap: class/cp loop with wb_lead|wb_trail
+    wb_b1_drop,     //!< compile-time drop observed at first dispatch
+    wb_b2_wrap,     //!< runtime wrap: class/cp loop with wb_lead|wb_trail
     il_abandoned,
+    pool_incref,    //!< COW capture-block refcount taken (one per `split` in the epsilon walk)
+    pool_decref,    //!< COW capture-block refcount dropped (one per thread death)
+    pool_cow_write, //!< COW capture-block written (one per `save`, group 0 included)
     count_
   };
 
@@ -189,6 +192,9 @@ namespace real::detail::prof {
       case event::wb_b1_drop: return "wb_b1_drop";
       case event::wb_b2_wrap: return "wb_b2_wrap";
       case event::il_abandoned: return "il_abandoned";
+      case event::pool_incref: return "pool_incref";
+      case event::pool_decref: return "pool_decref";
+      case event::pool_cow_write: return "pool_cow_write";
       case event::count_: return "?";
     }
     return "?";

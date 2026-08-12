@@ -6429,6 +6429,7 @@ namespace real::detail {
             }
             break;
           case opcode::split:
+            detail::prof::tick_event(detail::prof::event::pool_incref);
             pool.incref(block); // one held ref -> two pushed frames
             stack.push_back({.pc = instruction.secondary_target, .block = block});
             stack.push_back({.pc = instruction.primary_target, .block = block});
@@ -6436,6 +6437,7 @@ namespace real::detail {
           case opcode::save:
             {
               // The one write: copy-on-write off the block if shared, then record pos in the slot.
+              detail::prof::tick_event(detail::prof::event::pool_cow_write);
               const std::uint32_t written {pool.cow_write(block, instruction.arg16, pos)};
               stack.push_back({.pc = pc + 1, .block = written});
             }
