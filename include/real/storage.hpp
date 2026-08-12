@@ -1089,21 +1089,45 @@ namespace real {
          * actually runs.
          */
         std::optional<lookaround_scratch> lookaround;
-        capture_pool                      pool;                          //!< copy-on-write capture blocks (heap-backed).
-        std::optional<lazy_dfa>           fwd_dfa;                       //!< Fallback when immut is null; prefer shared_fwd_dfa.
-        std::optional<reverse_dfa>        rev_dfa;                       //!< Fallback reverse; prefer shared_rev_dfa.
-        const void       *                dfa_program         {nullptr}; //!< Program the per-state DFAs were built for (fallback).
-        std::optional<reverse_dfa>        il_prefix_rev;                 //!< Fallback IL prefix reverse; prefer shared_il_prefix_rev.
-        const void       *                il_prefix_for       {nullptr}; //!< Fallback: prefix program il_prefix_rev was built for.
-        const void       *                il_text             {nullptr}; //!< IL: the haystack \ref il_abandoned refers to.
-        bool                              il_abandoned        {false};   //!< IL: a linearity/density guard tripped on this haystack.
-        std::uint32_t                     il_density_cands    {};        //!< O1: IL candidates seen on this haystack.
-        std::size_t                       il_density_origin   {npos};    //!< O1: first IL candidate byte offset this haystack.
-        const void       *                rare_disc_text      {nullptr}; //!< Rare-disc: haystack \ref rare_disc_abandoned refers to.
-        bool                              rare_disc_abandoned {false};   //!< Rare-disc density guard: stay on prefix for this haystack.
-        const void       *                ac_text             {nullptr}; //!< AC: the haystack \ref ac_dense was decided on.
-        bool                              ac_decided          {false};   //!< AC: the density sample has run on this haystack.
-        bool                              ac_dense            {false};   //!< AC: candidates are dense enough that the automaton wins.
+        /*!
+         * \brief Copy-on-write capture blocks, SBO rather than `pike.hpp`'s heap-vector alias.
+         *
+         * The pool's own `reset` comment records taking a general-VM search from thirteen heap
+         * allocations to five by reserving a block budget up front. Those five were then measured, by
+         * size and by symbol, on `^[\t \n\r]+|[\t \n\r]+$` over a 28-byte subject: **three of them are
+         * this pool** — 128 bytes of `data`, 32 of `refcount`, 32 of `free_list` — and they recur on
+         * every call at every subject length, which is what a per-call fixed cost looks like. The other
+         * two are the thread lists' `mark`.
+         *
+         * `pike.hpp` cannot fix this itself: it sits BELOW this header in the layering contract, so its
+         * `capture_pool` alias has no `small_vec` to reach for. The pool is not a member of
+         * \ref real::detail::basic_pike_state either — each concrete state declares its own — so
+         * choosing the container here is the whole change.
+         *
+         * The inline capacity is the SMALLEST that covers the reserve: `reset` asks for
+         * `slot_count * 8`, and a capture-free pattern has `slot_count == 2`, so sixteen values fit a
+         * groupless walk exactly. Patterns WITH groups still spill, deliberately — growing this state is
+         * what has repeatedly cost gcc/x86 its class-scan codegen (see the `mark` capacity note in the
+         * thread list above), and a bigger inline block would trade a measured regression on routes
+         * that never build a pool for an allocation on patterns that do.
+         */
+        basic_capture_pool<small_vec<std::size_t, 16>,
+                           small_vec<std::int32_t, 8>,
+                           small_vec<std::uint32_t, 8>> pool;
+        std::optional<lazy_dfa>                         fwd_dfa;                       //!< Fallback when immut is null; prefer shared_fwd_dfa.
+        std::optional<reverse_dfa>                      rev_dfa;                       //!< Fallback reverse; prefer shared_rev_dfa.
+        const void                     *                dfa_program         {nullptr}; //!< Program the per-state DFAs were built for (fallback).
+        std::optional<reverse_dfa>                      il_prefix_rev;                 //!< Fallback IL prefix reverse; prefer shared_il_prefix_rev.
+        const void                     *                il_prefix_for       {nullptr}; //!< Fallback: prefix program il_prefix_rev was built for.
+        const void                     *                il_text             {nullptr}; //!< IL: the haystack \ref il_abandoned refers to.
+        bool                                            il_abandoned        {false};   //!< IL: a linearity/density guard tripped on this haystack.
+        std::uint32_t                                   il_density_cands    {};        //!< O1: IL candidates seen on this haystack.
+        std::size_t                                     il_density_origin   {npos};    //!< O1: first IL candidate byte offset this haystack.
+        const void                     *                rare_disc_text      {nullptr}; //!< Rare-disc: haystack \ref rare_disc_abandoned refers to.
+        bool                                            rare_disc_abandoned {false};   //!< Rare-disc density guard: stay on prefix for this haystack.
+        const void                     *                ac_text             {nullptr}; //!< AC: the haystack \ref ac_dense was decided on.
+        bool                                            ac_decided          {false};   //!< AC: the density sample has run on this haystack.
+        bool                                            ac_dense            {false};   //!< AC: candidates are dense enough that the automaton wins.
         //! \brief This storage benefits from the multi-literal route (\ref pike_vm::ac_ready). A marker,
         //!        not a field: the automaton lives per regex in \ref detail::regex_immutables.
         static constexpr bool             supports_aho_corasick {true};
