@@ -1467,28 +1467,21 @@ namespace real::detail {
      * So the rule is a PRODUCT, not a density: `(candidates per 1000 bytes) * branch_count`. The
      * product is what is roughly invariant, and it is what this threshold is expressed in.
      *
-     * **A LATER MEASUREMENT SHOWS THIS QUANTITY CANNOT DECIDE ALONE, and the harness that shows it is
-     * `benchmarks/ac_regime.cpp`'s third sweep.** Candidate density counts positions where a branch
-     * HEAD occurs and cannot tell a false start from a completed match -- and those two pull in
-     * OPPOSITE directions: a false start punishes the cascade (verify, reject, resume) and leaves the
-     * automaton indifferent, while a match rewards the cascade (it stops there) and costs the
-     * automaton a per-match return. Holding candidate density FIXED at 99.8 per 1000 bytes on twelve
-     * branches and varying only the fraction that completes, the verdict FLIPS:
+     * **THIS QUANTITY CANNOT DECIDE ALONE, and the gate no longer asks it to.** Candidate density
+     * counts positions where a branch HEAD occurs and cannot tell a false start from a completed
+     * match, and those two pull in OPPOSITE directions: a false start punishes the cascade (verify,
+     * reject, resume) and leaves the automaton indifferent, while a match rewards the cascade (it
+     * stops there) and costs the automaton a per-match return. One number was arbitrating two forces
+     * that oppose each other -- the same argument the branch COUNT lost, now applying to what replaced
+     * it. A counter-example in the wild: a nine-branch alternation over ordinary prose reads 3.56 ns/B
+     * on the automaton against 1.87 on the cascade, a 1.9x loss on the side of the threshold that is
+     * supposed to be a win.
      *
-     *     matched %        0     25     50     75    100
-     *     arm64 AC/casc  0.87   1.09   1.43   1.75   2.19
-     *     x86-64         0.56   0.76   1.00   1.34   1.90
-     *
-     * The cascade accelerates along that row (arm64 15.00 -> 9.08 us) while the automaton slows
-     * (13.04 -> 19.88), so one number is arbitrating two forces that oppose each other. This is the
-     * same argument the branch COUNT lost, now applying to what replaced it. A counter-example in the
-     * wild: a nine-branch alternation over ordinary prose reads 3.56 ns/B on the automaton against
-     * 1.87 on the cascade -- a 1.9x loss on the side of the threshold that is supposed to be a win.
-     *
-     * **NOT ACTED ON YET, deliberately.** Fixing it means giving the gate a second quantity (a
-     * completion rate estimated in the same 256-byte sample, not a retuned constant), and the two
-     * constants below are still the best available calibration of the one quantity it has. Retuning
-     * them against these tables would move the error, not remove it.
+     * The gate therefore samples a SECOND quantity beside this one and takes the automaton only when
+     * BOTH agree -- see \ref ac_completion_pct , which carries the sweep that measures it, the
+     * derivation of its constant and the cost of asking. The two constants here were NOT retuned when
+     * that landed: retuning them against that sweep's tables would have moved the error rather than
+     * removed it.
      *
      * **The constant is the measured MINIMUM (588), not a mid-point, and that choice is a
      * consequence rather than a taste.** Today every alternation past \ref ac_branch_threshold takes
@@ -1504,6 +1497,31 @@ namespace real::detail {
     static constexpr std::size_t   ac_density_min_span           {64};   //!< Shortest span an early verdict may rest on.
     static constexpr std::size_t   ac_density_work_threshold     {550};  //!< Product `(candidates per 1000 bytes) * branch_count` at or above which the automaton wins, at or above \ref ac_branch_threshold branches.
     static constexpr std::uint16_t ac_branch_floor               {4};    //!< Fewest branches the automaton is ever considered for; below this nothing is measured.
+    /*!
+     * \brief Percentage of sampled candidates that may COMPLETE a branch and still leave the automaton
+     *        ahead. Above it the cascade wins whatever the candidate density says.
+     *
+     * The second quantity the gate needed, and the reason it needed one is measured rather than argued
+     * (`benchmarks/ac_regime.cpp`'s third sweep): candidate density counts positions where a branch HEAD
+     * occurs and cannot tell a false start from a match, yet those pull in OPPOSITE directions. A false
+     * start punishes the cascade -- verify, reject, resume -- and leaves the automaton indifferent; a
+     * match REWARDS the cascade, which stops there, and charges the automaton a per-match return. Holding
+     * candidate density fixed at 99.8 per 1000 bytes on twelve branches and varying only the completed
+     * fraction, the verdict flips:
+     *
+     *     completed %        0     25     50     75    100
+     *     arm64 AC/casc    0.87   1.09   1.43   1.75   2.19
+     *     x86-64           0.56   0.76   1.00   1.34   1.90
+     *
+     * Interpolated, the balance sits at **15 % on arm64 and 50 % on x86-64**, and the constant takes the
+     * CONSERVATIVE platform: below the true crossover on either one, so it can decline where the automaton
+     * would still have won but never take it where the cascade wins. That is the same safety direction
+     * \ref ac_density_work_threshold_low argues for and for the same reason -- below
+     * \ref ac_branch_threshold the automaton was historically never taken, so switching early regresses
+     * what ships while switching late only forfeits.
+     */
+    static constexpr std::size_t   ac_completion_pct             {15};
+
     static constexpr std::size_t   ac_density_work_threshold_low {1400}; //!< The same product for \ref ac_branch_floor .. \ref ac_branch_threshold branches, where the safe direction is reversed.
 
     // A RELATION, not a value. The sabotage sweep reports only that no test reacts to a 4x change in
@@ -1512,6 +1530,43 @@ namespace real::detail {
     // nonsense if its floor exceeds its cap, and nothing said so until now.
     static_assert(ac_density_min_span <= ac_density_sample_bytes,
                   "the sample window's floor must not exceed its cap");
+
+    /*!
+     * \brief Does a branch of the alternation COMPLETE at \p at?
+     *
+     * The gate's second quantity needs to tell a false start from a match, and a candidate is only a head
+     * byte until something is tried at it. This walks the split chain in source order and asks
+     * \ref match_byte_klass_run for each branch, exactly as `run_alternation` and
+     * \ref fill_alternation_spans do -- one attempt per branch, no thread lists, no capture work.
+     *
+     * A COPY of that walk rather than a call into one, for the reason \ref fill_alternation_spans states
+     * about its own: both routes are measured and working, and relocating a hot body to share it risks a
+     * regression there that would cost more than this gate can win. Twelve lines, and the three copies
+     * agree by construction because they ask the same primitive in the same order.
+     *
+     * \param[in] text The subject.
+     * \param[in] at   A candidate position (a branch head byte occurs there).
+     * \return True when some branch matches at \p at.
+     */
+    [[nodiscard]] bool ac_candidate_completes(std::string_view text,
+                                              std::size_t      at)
+    {
+      const auto& code {prog_.code};
+      std::size_t pc   {prog_.hints.body_pc == 0 ? std::size_t {1}
+                                               : static_cast<std::size_t>(prog_.hints.body_pc)};
+      while (true) {
+        const bool        is_split  {code[pc].op == opcode::split};
+        const std::size_t branch    {is_split ? static_cast<std::size_t>(code[pc].primary_target) : pc};
+        const std::size_t match_end {match_byte_klass_run(text, branch, at)};
+        if (match_end != npos && wb_boundaries_ok(at, match_end)) {
+          return true;
+        }
+        if (!is_split) {
+          return false;
+        }
+        pc = static_cast<std::size_t>(code[pc].secondary_target);
+      }
+    }
 
     /*!
      * \brief Decides ONCE PER HAYSTACK whether the Aho-Corasick automaton should take this
@@ -1573,10 +1628,12 @@ namespace real::detail {
         const std::size_t span_cap {needed < ac_density_min_span       ? ac_density_min_span
                                     : needed > ac_density_sample_bytes ? ac_density_sample_bytes
                                                                        : needed};
-        const std::size_t limit    {text.size() < start + span_cap ? text.size() : start + span_cap};
-        std::size_t       cands    {0};
-        std::size_t       pos      {start};
-        std::size_t       scanned  {limit > start ? limit - start : std::size_t {1}};
+        const std::size_t limit              {text.size() < start + span_cap ? text.size() : start + span_cap};
+        std::size_t       cands              {0};
+        std::size_t       completed          {0};
+        bool              completion_decided {false};
+        std::size_t       pos                {start};
+        std::size_t       scanned            {limit > start ? limit - start : std::size_t {1}};
         // A TRUNCATED view, not the whole subject: next_candidate scans until it finds a candidate
         // or runs out of text, so bounding only what gets counted bounds nothing at all. On a
         // candidate-free haystack the "256-byte sample" read all 4000 bytes and cost 2 us -- two
@@ -1588,8 +1645,24 @@ namespace real::detail {
             break;
           }
           ++cands;
+          // THE SECOND QUANTITY, and its cost is asymmetric BY DESIGN. Verifying a candidate costs one
+          // walk of the split chain -- what the cascade pays there anyway -- and the expensive direction
+          // is verifying many of them, which only happens when few complete: exactly the regime where the
+          // automaton then wins and amortises it. The direction that must stay cheap is the one that ENDS
+          // on the cascade, and it does: two completions are enough to exceed the threshold on any sample
+          // this window can hold, so a matching subject bails out after two walks.
+          if (ac_candidate_completes(window, pos)) {
+            ++completed;
+            if (completed * 100U > cands * ac_completion_pct + 100U) {
+              // The completed fraction is already past the threshold and more candidates can only be
+              // read as more evidence for the cascade. Decline now, before paying for the rest.
+              scanned            = pos > start ? pos - start : std::size_t {1};
+              completion_decided = true;
+              break;
+            }
+          }
           ++pos;
-          // Stop as soon as the verdict cannot change. The sample is not free -- next_candidate on
+          // Stop as soon as the DENSITY verdict cannot change. The sample is not free -- next_candidate on
           // the first-bytes bitmap tests a byte at a time -- and a dense haystack reaches certainty
           // in a fraction of the window, which is exactly the case that must not pay for it.
           const std::size_t seen {pos > start ? pos - start : std::size_t {1}};
@@ -1601,7 +1674,11 @@ namespace real::detail {
         const std::size_t span {scanned};
         // (candidates per 1000 bytes) * branch_count, in one expression so the division rounds once.
         const std::size_t work {cands * 1000U * branches / span};
-        state_.ac_dense           = work >= want;
+        // BOTH quantities must favour the automaton. Density alone provably cannot decide (see
+        // ac_completion_pct), so a dense sample whose candidates keep completing stays on the cascade.
+        const bool        completion_ok {!completion_decided
+                                         && completed * 100U <= cands * ac_completion_pct};
+        state_.ac_dense           = work >= want && completion_ok;
         state_.ac_decided         = true;
         ac_density_last_verdict() = state_.ac_dense ? ac_verdict::automaton : ac_verdict::cascade;
         return state_.ac_dense;
