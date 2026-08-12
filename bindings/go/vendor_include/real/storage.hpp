@@ -1076,6 +1076,25 @@ namespace real {
                                               // capacity is deliberately small: growing the state
                                               // is what costs gcc/x86 its class-scan codegen, and
                                               // the saving does not depend on the capacity.
+                                              //
+                                              // RAISING IT TO 16 WAS TRIED AND REFUSED, on the
+                                              // measurement rather than on this argument. Eight is
+                                              // below every program that reaches the general VM --
+                                              // measured at 11 to 73 instructions across eight
+                                              // realistic shapes -- so these two tables allocate
+                                              // 88 bytes each on such a call, and 16 would close
+                                              // the 9..16 band. It costs more than it buys: 24
+                                              // paired draws on an idle x86-64 host with the
+                                              // governor pinned put the four per-call rows at
+                                              // +4.1 % to +5.6 % (19-22 of 24 draws agreeing,
+                                              // floors 4.5-6.8 %) against -3.1 % on the row it was
+                                              // aimed at. No row is REAL by the two-condition rule,
+                                              // but the reward side is sub-floor too, and the tie
+                                              // goes to not growing a per-call object for 176 bytes
+                                              // of allocation. The tier that would cover the
+                                              // measured band is 64 or 128, i.e. +896 or +1920
+                                              // bytes on a state already near 4944 -- a worse
+                                              // version of the same trade, so it was not attempted.
                                               small_vec<std::uint64_t, 8>>,
                             small_vec<eps_entry, 32>>
       {
