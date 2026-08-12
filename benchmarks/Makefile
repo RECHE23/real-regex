@@ -26,7 +26,7 @@ include $(ROOT)/mk/help.mk
 CXXSTD   := -std=c++20
 INCLUDES := -Iinclude
 
-.PHONY: bench-duel bench-engines bench-multipattern bench-matrix matrix-gate bench-ac-gate \
+.PHONY: bench-duel bench-engines bench-multipattern bench-matrix matrix-gate bench-ac-gate bench-route-cliff \
         profile-sample-build profile-sample profile-callgrind help
 .DEFAULT_GOAL := help
 
@@ -88,6 +88,15 @@ matrix-gate: ## Fast 64 KB subset of the 4-D veto matrix (used by full-local-gat
 # and the gate's choice is what ac_completion_pct changed. Informational, not a gate: the numbers are
 # host noise, and what matters is the difference between two TREES (see the file's header for the
 # interleaved form).
+# Route identity, per-byte cost and MATCH COUNT in one table. route-probe reports routes without a
+# timing (deliberately, for reachability); this one pairs them, because a route label cannot say whether
+# falling off it is expensive. Informational, never a gate -- pinning a figure per row would produce reds
+# indistinguishable from host noise.
+bench-route-cliff: ## [bench] Where a pattern loses its route, and what that costs (route + ns/B + matches)
+	@mkdir -p $(BUILD)
+	@cd $(ROOT) && c++ $(CXXSTD) -O2 -DREAL_PROFILE $(INCLUDES) -I benchmarks -I$(SCIFORGE_INCLUDE) benchmarks/route_cliff.cpp -o $(BUILD)/route_cliff
+	@$(BUILD)/route_cliff $(if $(N),$(N),15)
+
 bench-ac-gate: ## [bench] The AC gate's completing / false-start / prose regimes, via normal dispatch
 	@mkdir -p $(BUILD)
 	@cd $(ROOT) && c++ $(CXXSTD) -O2 $(INCLUDES) benchmarks/ac_gate_probe.cpp -o $(BUILD)/ac_gate_probe
