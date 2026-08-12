@@ -73,6 +73,17 @@ def parse_table(lines, start_idx, ncols):
     return rows
 
 
+def duplicate_rows(names, where):
+    """A repeated row LABEL, which cell arithmetic cannot see. §Unicode once carried `\\w+` twice
+    (1.946 and 2.239 ns/B, a leftover from replacing rows) and both copies were internally consistent,
+    so every ratio check passed on a table that published one pattern under two different speeds."""
+    seen, dups = set(), []
+    for n in names:
+        (dups.append(n) if n in seen else seen.add(n))
+    return [f"{where}: row {n!r} appears more than once -- cell arithmetic cannot see a duplicate"
+            for n in dict.fromkeys(dups)]
+
+
 def normalise_case(name):
     """'words `[a-z]+`' and a prose '`words [a-z]+`' are the same row; backticks are formatting."""
     return " ".join(name.replace("`", " ").split())
@@ -100,7 +111,9 @@ def section_a_tables(lines):
             errors.append(f"§A: table at line {i} has no '**x86-64**' / '**arm64**' heading above it")
             continue
         table[isa] = {}
-        for cells in parse_table(lines, i, 5):
+        parsed = parse_table(lines, i, 5)
+        errors += duplicate_rows([normalise_case(c[0]) for c in parsed], f"§A/{isa}")
+        for cells in parsed:
             name, real_s = normalise_case(cells[0]), cells[1]
             table[isa][name] = {}
             for label, cell in zip(("std", "pcre2", "re2"), cells[2:5]):
@@ -230,7 +243,9 @@ def section_e_tables(lines):
         if not line.startswith("| case | REAL ns/B | rust ns/B | winner |"):
             continue
         found += 1
-        for cells in parse_table(lines, i, 4):
+        parsed = parse_table(lines, i, 4)
+        errors += duplicate_rows([normalise_case(c[0]) for c in parsed], f"§E table {found}")
+        for cells in parsed:
             name, real_s, rust_s, winner = cells[0], cells[1], cells[2], cells[3]
             real, rust = float(real_s), float(rust_s)
             ratio = rust / real  # >1 => REAL faster

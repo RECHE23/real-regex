@@ -30,11 +30,25 @@ def parse_table(lines, start_idx, ncols):
     return rows
 
 
+def duplicate_rows(names, where):
+    """A repeated row LABEL, which cell arithmetic cannot see -- and the defect this table HAD: `\\w+`
+    appeared twice (1.946 and 2.239 ns/B) after a row replacement, each copy consistent with its own
+    pair, so the ratio check was satisfied by both while the section published one pattern at two
+    different speeds."""
+    seen, dups = set(), []
+    for n in names:
+        (dups.append(n) if n in seen else seen.add(n))
+    return [f"{where}: row {n!r} appears more than once -- cell arithmetic cannot see a duplicate"
+            for n in dict.fromkeys(dups)]
+
+
 def check_bench_engines(lines):
     errors = []
     for i, line in enumerate(lines):
         if line.startswith("| case | REAL ns/B | std::regex |"):
-            for cells in parse_table(lines, i, 5):
+            parsed = parse_table(lines, i, 5)
+            errors += duplicate_rows([c[0] for c in parsed], "§Unicode engines")
+            for cells in parsed:
                 name, real_s, std_s, pcre2_s, re2_s = cells[0], cells[1], cells[2], cells[3], cells[4]
                 real = float(real_s)
                 for label, cell in (("std", std_s), ("pcre2", pcre2_s), ("re2", re2_s)):
@@ -61,7 +75,9 @@ def check_duel(lines):
     errors = []
     for i, line in enumerate(lines):
         if line.startswith("| case | REAL ns/B | rust ns/B | winner |"):
-            for cells in parse_table(lines, i, 4):
+            parsed = parse_table(lines, i, 4)
+            errors += duplicate_rows([c[0] for c in parsed], "§Unicode duel")
+            for cells in parsed:
                 name, real_s, rust_s, winner = cells[0], cells[1], cells[2], cells[3]
                 real, rust = float(real_s), float(rust_s)
                 ratio = rust / real
