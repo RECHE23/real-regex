@@ -1989,6 +1989,17 @@ namespace real::detail {
   {
     pattern_hints hints;
 
+    // Derived by SCAN, not from the group count: any `save` past slot 1 means a thread carries capture
+    // positions someone asked for, and the epsilon walk must keep its refcounted block. See
+    // \ref pattern_hints::capture_free_walk for what the negative case licenses.
+    hints.capture_free_walk = true;
+    for (const instr& in : code) {
+      if (in.op == opcode::save && in.arg16 > 1U) {
+        hints.capture_free_walk = false;
+        break;
+      }
+    }
+
     // A lookaround forces the general Pike VM: no DFA, no pure class-loop — EXCEPT the measured
     // trailing-LA class+ shape, which arms trailing_lookaround + trailing_la_class (not
     // greedy_class_loop) so the pure [a-z]+ gate stays a single compare.

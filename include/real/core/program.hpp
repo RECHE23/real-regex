@@ -511,6 +511,25 @@ namespace real {
       std::uint8_t                 inner_literal_len    {};   //!< Bytes held in \ref inner_literal; 0 means the pattern has no required inner literal.
       std::int32_t                 inner_literal_prefix {-1}; //!< Top-level children before the literal; 0 = at the head, -1 = nested with no clean boundary.
 
+      /*!
+       * \brief Every `save` in this program writes slot 0 or slot 1, so a thread's whole capture state is
+       *        the group-0 START and nothing else.
+       *
+       * STRUCTURAL, not empirical: `compile()` emits `save 0` at pc 0 and `save 1` immediately before
+       * `match`, and emits no other `save` unless the pattern has a capture GROUP. So "no save past slot 1"
+       * is exactly "no groups" -- but it is derived here by SCANNING the code rather than from
+       * `group_count`, so it holds for any producer of a program, including one added later.
+       *
+       * What it licenses: the epsilon walk need not carry a refcounted capture block per branch. `save 0`
+       * sits at pc 0, so every thread one `add_thread` call adds shares one start -- either the one passed
+       * in, or `pos` if the walk crossed the head -- and both are single `std::size_t` values in the call
+       * frame. That is why this must be a GUARD and not an assumption: a program whose `save 0` sat behind
+       * a split would let one branch inherit its sibling's start, which is a wrong ANSWER, and this
+       * repository has already been bitten three times by a value that no longer fits going unchecked
+       * (tests/frontend/test_index_and_range_limits.cpp).
+       */
+      bool                         capture_free_walk    {false};
+
       //! \brief For a \ref fixed_shape run that is also HOMOGENEOUS -- every position accepts the
       //!        identical byte set, itself expressible as <= 2 contiguous ranges (`[0-9a-f]{8}`,
       //!        `\d{4}`) -- the shared range bounds and run length, driving the SIMD scan+verify
