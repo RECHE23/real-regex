@@ -61,6 +61,14 @@ jobs:
           python -m venv .venv-docs
           .venv-docs/bin/pip install --upgrade pip
           .venv-docs/bin/pip install -r real-regex/docs/requirements.txt
+      # HERE and not in ci.yml's preflight, for the reason this whole workflow exists: ci.yml's
+      # trigger ignores 'docs/**', so a preflight step could not see the edit that breaks a ratio.
+      # Pure arithmetic over docs/BENCHMARKS.md -- no toolchain, seconds -- and it re-derives §A's
+      # reading bullets from §A's cells, which is the half that was wrong for three stamps while the
+      # tables were right. Before docs-site-gate: a stale ratio should fail in five seconds, not after
+      # a Sphinx build.
+      - name: check-bench-ratios (§A/§E/§Unicode ratios, and §A's prose against its cells)
+        run: make -C real-regex check-bench-ratios
       - name: docs-site-gate (sphinx -W --keep-going + linkcheck)
         # SPHINXBUILD override, not venv-on-PATH: the venv python would shadow
         # python3 for every non-sphinx recipe -- python-build needs the system

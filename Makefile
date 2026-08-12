@@ -70,7 +70,7 @@ include mk/help.mk
         example-check \
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate \
         profile-sample profile-callgrind \
-        version-check install install-smoke uninstall release help check-layers check-doc-style check-bench-stamp \
+        version-check install install-smoke uninstall release help check-layers check-doc-style check-bench-stamp check-bench-ratios \
         check-site-anchors
 
 .DEFAULT_GOAL := help
@@ -379,6 +379,16 @@ check-site-anchors:
 check-bench-stamp:
 	@python3 tools/check_bench_stamp.py
 
+# Arithmetic of docs/BENCHMARKS.md's §A/§E tables AND of §A's reading bullets. The script existed and
+# was wired to NOTHING -- not this Makefile, not ci.yml -- while §A claimed in print that it
+# "re-derives and checks all of them"; run for the first time it failed on two cells and, once its
+# rounding rule was made exact, on a third. Its twin verify_unicode_ratios.py was already called from
+# gate-doc, which is what makes the omission an omission rather than a decision. Fails, never warns:
+# unlike check-bench-stamp above, nothing here needs a benchmark re-run -- it is division.
+check-bench-ratios:
+	@python3 benchmarks/verify_bench_ratios.py
+	@python3 benchmarks/verify_unicode_ratios.py
+
 # Fail-fast gate of record: CHEAP / FAST first, expensive last. First non-zero aborts
 # the rest (no -k). Order is intentional — a Doxygen param miss or format drift must not
 # wait for sanitize/python. Compound steps (lint | tee) use `set -euo pipefail`.
@@ -455,8 +465,8 @@ gate-doc: ## [gates] Calibrated gate for a doc-only change (doc-check/format-che
 	@set -euo pipefail; \
 	 files="$$(git diff --name-only $(GATE_BASE) -- .)"; \
 	 if printf '%s\n' "$$files" | grep -qE '^docs/BENCHMARKS\.md$$'; then \
-	   echo "── verify_unicode_ratios.py (BENCHMARKS.md touched)"; python3 benchmarks/verify_unicode_ratios.py; \
-	 else echo "gate-doc: skip verify_unicode_ratios.py (BENCHMARKS.md untouched)"; fi
+	   echo "── check-bench-ratios (BENCHMARKS.md touched)"; $(MAKE) check-bench-ratios; \
+	 else echo "gate-doc: skip check-bench-ratios (BENCHMARKS.md untouched)"; fi
 	@echo "gate-doc: PASS"
 
 gate-test: ## [gates] Calibrated gate for a tests/-only change (test + sanitize + coverage-check)
@@ -502,7 +512,7 @@ full-local-gate-impl:
 	# were stamped -- the case that actually happens between releases, and the one that let a closed
 	# deficit stay documented as open (d7d9485). Warns, never fails: benchmarks cannot be re-run per
 	# commit. Local only -- it reads git history, which a CI shallow clone does not have.
-	@echo "── [2b/22] check-bench-stamp (engine moved since the benchmarks were stamped?)"
+	@echo "── [2b/24] check-bench-stamp (engine moved since the benchmarks were stamped?)"
 	@$(MAKE) check-bench-stamp
 	@echo "── [3/24] check-layers"
 	@$(MAKE) check-layers
@@ -521,10 +531,16 @@ full-local-gate-impl:
 	# reading a stale XML made an earlier run report a false clean (line numbers drift, every
 	# entry fails the shape check, nothing is flagged). doc-check below cannot serve instead:
 	# it runs the CI Doxygen inside Docker and never refreshes the local XML.
-	@echo "── [6b/22] check-doc-style (objects /*! */, attributes //!<)"
+	@echo "── [6b/24] check-doc-style (objects /*! */, attributes //!<)"
 	@$(MAKE) check-doc-style
-	@echo "── [6c/22] check-site-anchors (site slices resolve in their sources)"
+	@echo "── [6c/24] check-site-anchors (site slices resolve in their sources)"
 	@$(MAKE) check-site-anchors
+	# Arithmetic, so it belongs in the cheap section beside the other doc gates: it re-derives every
+	# ratio in BENCHMARKS.md §A/§E/§Unicode from the ns/B pair beside it AND every range, per-row pair
+	# and count in §A's reading bullets from the cells above them. The prose half is the one that
+	# matters -- checking cells alone reported OK for three stamps while every bullet was stale.
+	@echo "── [7b/24] check-bench-ratios (§A/§E/§Unicode ratios, and §A's prose against its cells)"
+	@$(MAKE) check-bench-ratios
 	@echo "── [8/24] doc-check (CI-pinned Doxygen when Docker is available)"
 	@$(MAKE) doc-check
 	@echo "── [9/24] gcc-check (the diagnostics clang lacks — see the target)"

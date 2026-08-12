@@ -45,7 +45,7 @@ answer is not a benchmark win.
 | Machines | §A on **two ISAs**: devbox (`x86-64`, g++ 13.3.0) *and* Apple M1 Pro (`arm64`, Apple clang 16). §B / §E on M1 Pro (§E's x86-64 leg noted inline where it diverges — see §E). §multi-pattern measured on **x86-64 devbox** (g++ 13.3, RE2 + Hyperscan 5.4) |
 | Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (built from source on x86-64 to pin the exact version — and the pin only applies when `PKG_CONFIG_PATH` points at that build, since the recipe resolves the library through `pkg-config` and the system package otherwise wins silently; `make bench-engines` now prints the version it actually LINKED, because this document named 10.47 for a leg that had measured 10.42 and nothing in the output could contradict it); RE2 (10.0 on x86-64, 11.0 on arm64 — version-differs-by-leg, uncontested given the margins). Multi-pattern: RE2::Set, Hyperscan (optional). §E: rust `regex` 1.12.4 |
 | Python | CPython 3.14.6, `re` (stdlib) vs the in-place REAL `2026.8.13` extension (§B re-measured at this stamp over three passes and unmoved; five of six headline rows inside 2 %, the sixth being its known-unstable `sub · dates with refs` — see §B) |
-| Method | §A: median of N = 30 paired batches, bootstrap CI, **three full runs per ISA with the minimum taken per cell** (both ISAs, this re-stamp — one run does not survive the x86-64 container's episodic interference); match counts equal on every case, both ISAs. §E: best-of-15, REAL `count_matches` vs rust `find_iter`/`captures_iter`, match counts equal. §multi-pattern: best-of-7, `make bench-multipattern`. **Every ratio below is computed programmatically from the raw ns/B pair — `benchmarks/verify_bench_ratios.py` re-derives and checks all of them** |
+| Method | §A: median of N = 30 paired batches, bootstrap CI, **three full runs per ISA with the minimum taken per cell** (both ISAs, this re-stamp — one run does not survive the x86-64 container's episodic interference); match counts equal on every case, both ISAs. §E: best-of-15, REAL `count_matches` vs rust `find_iter`/`captures_iter`, match counts equal. §multi-pattern: best-of-7, `make bench-multipattern`. **Every ratio below is computed from the raw ns/B pair, and `benchmarks/verify_bench_ratios.py` re-derives all of them plus §A's reading bullets — `make check-bench-ratios`, step 7b of the local gate, part of `gate-doc` whenever this file is touched, and a step of the **Docs-site** workflow — which is the one CI net with no `paths-ignore`, so it fires on the doc-only pushes that edit this file.** That wiring is new, and the sentence it replaces was not true when it was written: the script was called from nothing at all, and running it for the first time failed on two cells — a third once its rounding rule was made exact — while every range, per-row pair and count in §A's bullets had been stale for three stamps. A checker nothing runs is a claim, not a check |
 
 ## A. C++ engine throughput
 
@@ -141,33 +141,58 @@ version read 10.47. Do not trust a compile-time probe here; trust the line the h
 | digits `[0-9]+` | 0.89 | 83.70 (**94.50×**) | 1.45 (**1.64×**) | 8.48 (**9.58×**) |
 | fields `[^,]+` | 2.29 | 75.73 (**33.07×**) | 1.89 (0.82×) | 11.10 (**4.85×**) |
 | single `[a-z]` | 4.37 | 66.94 (**15.31×**) | 8.13 (**1.86×**) | 42.13 (**9.64×**) |
-| words `[a-z]{4,}` | 0.92 | 73.35 (**80.19×**) | 2.04 (**2.23×**) | 8.34 (**9.12×**) |
+| words `[a-z]{4,}` | 0.91 | 73.35 (**80.19×**) | 2.04 (**2.23×**) | 8.34 (**9.12×**) |
 | words `[a-z]++` | 1.20 | unsupported | 2.36 (**1.97×**) | unsupported |
 | alternation `the\|fox\|dog` | 1.77 | 117.90 (**66.55×**) | 1.58 (0.89×) | 6.40 (**3.61×**) |
 | date `{4}-{2}-{2}` | 0.55 | 72.59 (**131.47×**) | 0.39 (0.71×) | 3.42 (**6.19×**) |
 | hex `[0-9a-f]{8}` | 1.42 | 81.26 (**57.14×**) | 1.26 (0.88×) | 3.42 (**2.41×**) |
-| literal | 0.21 | 31.12 (**151.97×**) | 0.50 (**2.42×**) | 1.43 (**6.99×**) |
+| literal | 0.205 | 31.12 (**151.97×**) | 0.50 (**2.42×**) | 1.43 (**6.99×**) |
 | anchored `^[a-z]+$` | 0.32 | unsupported | 0.42 (**1.31×**) | 2.22 (**6.95×**) |
 | lookahead `[a-z]+(?=[a-z])` | 4.50 | 160.22 (**35.63×**) | 3.67 (0.82×) | unsupported |
 
-**Reading — verdict brut, no dressing up.**
+**Why one arm64 cell carries three decimals.** `literal`'s two precise ratios pin its raw value at
+**0.2046–0.2048 ns/B** (31.12 ÷ 151.97 and 1.43 ÷ 6.99); the PCRE2 ratio gives 0.2066, which agrees
+within the ±0.005 a two-digit `0.50` cell allows and so cannot narrow it further. And **two decimals
+cannot represent that value consistently with its own row**: displayed as 0.21 the largest
+`std::regex` ratio arithmetic permits is 151.83, below the 151.97 printed beside it, so a reader
+re-deriving the row would find it broken. The extra digit is the smallest fix that keeps the row
+self-consistent, and `verify_bench_ratios.py` now enforces exactly that property. **The arm64 leg's
+absolute figures are due for re-measurement anyway** — this table's arm64 column was taken on battery,
+where the M1 throttles ~29 %, so its ns/B are uniformly too slow while the ratios (all engines
+throttled together) hold. v2026.8.12's stamp rounded the same row to 0.21 and that line is left as
+published: it records what that train reported, not what this cell must be.
 
-- **REAL ≫ `std::regex`**, always: 8.4–35.1× on x86-64, 15.8–147.6× on arm64 (libc++'s
-  `std::regex` falls even further behind on arm64). Never below 8.4×. These two ranges were **wrong in
-  the previous stamp** — it read "4.1–37.6× / 23.5–139.3×", bounds that no row of the table printed
-  directly above them supported. They are recomputed here from the published cells and are now
-  regenerated with the tables rather than carried by hand.
-- **REAL > RE2**, always where RE2 supports the pattern: 3.0–18.1× on x86-64, 2.4–12.1× on arm64.
-  (Same correction: the previous stamp said 3.1–9.9× / 2.4–6.6×, understating REAL against RE2 on
-  its own table's numbers.)
-- **REAL vs PCRE2-JIT: five rows are REAL's on both ISAs now**, where the previous stamp had four.
-  `single` (**4.67×** x86-64 / **1.92×** arm64) is the new one and enters the table already ahead;
-  `words` (**4.13×** / **2.00×**), `digits` (**3.48×** / **1.70×**), `literal` (**1.38×** /
-  **1.90×**), and `anchored` (**1.01×** / **1.32×**) — that x86-64 cell is a hair over parity, not a
-  win worth leaning on. `fields` and `hex` are REAL's on x86-64 only (**1.65×** / 0.85× and
-  **1.38×** / 0.88×). PCRE2 keeps `alternation` (0.94× / 0.78×), `date` (0.90× / 0.79×) and
-  `lookahead` (0.89× / **0.96×**) — that last row within 4 % on arm64, and it is the one PCRE2 wins
-  by backtracking.
+**Reading — verdict brut, no dressing up. Every ratio in these bullets is checked against the cells
+above by `make check-bench-ratios`** (local gate step 7b), because the bullets below were wrong for
+three consecutive stamps while the tables were right — see each bullet's own note.
+
+<!-- [std-regex-reading] — drop-in/std-regex-tour.md slices from here to the RE2 bullet. Placed
+     BEFORE the list, not between two items: an HTML comment inside a list splits it in two when
+     rendered. Same reason as the duel-reading marker further down — the wording this used to anchor
+     on was the heading above, and extending that heading by one sentence broke the site build. A
+     marker's own name is never spelled in brackets outside its marker: two occurrences and the
+     extractor silently takes the first, which check-site-anchors refuses. -->
+- **REAL ≫ `std::regex`**, always: **8.20–41.97×** on x86-64, **15.31–151.97×** on arm64 (libc++'s
+  `std::regex` falls even further behind on arm64). Never below 8.20×. **These bounds have now drifted
+  from the table twice in a row.** An earlier stamp read "4.1–37.6× / 23.5–139.3×"; the correction that
+  replaced it read "8.4–35.1× / 15.8–147.6×" and claimed to be "regenerated with the tables rather than
+  carried by hand", which is precisely what did not happen — three re-measures later, neither bound on
+  either ISA matched a cell. The intention was never the mechanism; the checker is.
+- **REAL > RE2**, always where RE2 supports the pattern: **2.90–16.34×** on x86-64, **2.41–11.53×** on
+  arm64. (Same drift: this bullet read "3.0–18.1× / 2.4–12.1×", inventing a high bound on each ISA that
+  no row of the table printed.)
+- **REAL vs PCRE2-JIT: seven of twelve rows are REAL's on BOTH ISAs** — `words [a-z]+` (**3.35×**
+  x86-64 / **1.92×** arm64), `digits` (**2.76×** / **1.64×**), `single` (**4.32×** / **1.86×**),
+  `words [a-z]{4,}` (**2.89×** / **2.23×**), `words [a-z]++` (**3.53×** / **1.97×**), `literal`
+  (**1.65×** / **2.42×**) and `anchored` (**1.02×** / **1.31×**) — that last x86-64 cell being a hair
+  over parity, not a win worth leaning on. Three more are REAL's on **x86-64 only**: `fields`
+  (**1.62×** / 0.82×), `alternation` (**1.38×** / 0.89×) and `hex` (**1.35×** / 0.88×). PCRE2 keeps
+  exactly two, on both ISAs: `date` (0.71× / 0.71×) and `lookahead` (0.92× / 0.82×), the shape it wins
+  by backtracking. **This bullet said "five rows" and listed pre-v2026.8.11 ratios for every one of
+  them**: it filed `alternation` as a PCRE2 win at 0.94× x86-64, where the table has read a REAL win
+  since v2026.8.11 announced that crossing, and `literal` on arm64 at 1.90× against the table's
+  **2.42×** — which v2026.8.12's own stamp published as a gain. The three rows that same train ADDED
+  to the table (`single`, `words [a-z]{4,}`, `words [a-z]++`) were never counted here at all.
 - **What moved these rows is one accessor, and it moved every route that shares it.** `class_table`
   runs once per MATCH on a walk, and it was asking two storage-mode questions — both invariant for
   the whole walk — before the row-key question that actually varies. Bisected on executed conditional
@@ -192,17 +217,32 @@ version read 10.47. Do not trust a compile-time probe here; trust the line the h
   multi-engine harness binary, it is not what the isolated scan does, so **do not read it as scan
   throughput and do not chase it from the engine side**. The next move on it is a harness question —
   median-vs-minimum, or layout in a binary that links four engines — not a routing one.
-- **The lookahead line is now within 3 % of PCRE2-JIT on arm64** (0.97×) and 0.90× on x86-64, against
-  the pre-P3c general-VM order (~92 / ~48 ns/B), and against 8.08 / 4.24 at the previous stamp of this table. REAL does a **bounded lookaround in linear time**;
+- **The lookahead line is PCRE2's on both ISAs, and the arm64 gap is a trade this project chose rather
+  than a loss it suffered.** The cells read `lookahead` (**0.92×** x86-64 / **0.82×** arm64) — REAL
+  7.47 / 4.50 ns/B against PCRE2's 6.88 / 3.67 — against the pre-P3c general-VM order (~92 / ~48 ns/B), and against
+  8.08 / 4.24 at the previous stamp of this table. **This bullet claimed "within 3 % of PCRE2-JIT on
+  arm64 (0.97×)", and that stopped being true at v2026.8.12** — whose stamp published the move itself:
+  **+18 % on this row in exchange for −91.8 % on `find_iter`**, because the trailing-lookaround rework
+  pays on `count_matches` to return on iteration. Reading 0.97× here while the release notes said 0.82×
+  was the drift showing its cost: it hid a trade the project had already disclosed. REAL does a
+  **bounded lookaround in linear time**;
   PCRE2 is faster here but by **backtracking** (itself ReDoS-able on a crafted lookaround), and
   **RE2 and the rust crate cannot compile the pattern at all** (`unsupported`). `find_iter` / Python
   `finditer` do not get the P3c fast path by construction (return type fixed at compile time so pure
   `[a-z]+` does not regress) — this row is `count_matches` only, stated plainly so it is not read as
   a `find_iter` number.
-- **The gauge that makes the above readable:** `std::regex` and RE2 are third-party constants here,
-  so their columns are the drift witness. Across this re-stamp and the one before it, RE2 lands
-  within 1 % on every x86-64 row (28.24, 16.89, 22.74, 10.39, 4.08, 4.08, 2.38 against 28.26, 16.81,
-  22.95, 10.39, 4.09, 4.09, 2.38), which is what licenses reading a −16.8 % REAL row as REAL's.
+- **The gauge that makes the above readable, and it is looser than this bullet used to claim.**
+  `std::regex` and RE2 are third-party constants here, so their columns are the drift witness. This
+  bullet read "RE2 lands within 1 % on every x86-64 row" and listed `28.24, 16.89, 22.74, 10.39, 4.08,
+  4.08, 2.38` as the current values — **a set the table above does not contain**, since it was re-measured
+  after the bullet was written. Against the table's actual RE2 x86-64 cells the same seven rows read
+  **28.39, 16.78, 23.80, 10.59, 4.09, 4.08, 2.45** against that older `28.26, 16.81, 22.95, 10.39, 4.09,
+  4.09, 2.38`: five rows inside 0.5 % (`words` +0.5 %, `digits` −0.2 %, `date` 0.0 %, `hex` −0.2 %, and
+  `alternation` the outlier of those at +1.9 %), with **`fields` +3.7 % and `literal` +2.9 %** outside any
+  1 % claim. So the license holds for a −16.8 % REAL row but not for a 3 % one, and the two rows that
+  spend it are `fields` — the row the bullet three above says is not measuring scan throughput in this
+  binary at all — and `literal`, the row whose ratios needed a third decimal. Both point at the harness,
+  not at RE2.
 
 ## Multi-pattern — which-matched + extraction (Stage-1 `regex_set`)
 

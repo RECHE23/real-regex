@@ -77,8 +77,12 @@ Object-level reference: {doc}`std::regex compatibility <../reference/compat-std>
 From the shared four-engine benchmark — full tables, method and machine in
 {doc}`Performance <../performance/index>`:
 
+<!-- Anchored on an explicit marker, not on wording, for the reason regex.md's own note gives: this
+     slice used to start after "**Reading — verdict brut, no dressing up.**" and broke the moment that
+     heading gained a sentence. The end is still prose, but it is a bullet LEAD that
+     check-site-anchors verifies on every push. -->
 ```{include} ../../BENCHMARKS.md
-:start-after: "**Reading — verdict brut, no dressing up.**"
+:start-after: "[std-regex-reading]"
 :end-before: "- **REAL > RE2**"
 ```
 
