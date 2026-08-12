@@ -2,77 +2,9 @@
 
 Per-train benchmark-impact log: what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s §A/§E/§B/§Unicode/§multi-pattern sections, carried verbatim from that file's Version row. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
-## Unreleased
+## v2026.8.14
 
-**The two x86-64 legs owed since v2026.8.13 are measured, and the host they were owed on says something
-about measurement itself.** Both changes had landed with their arm64 judgement published and the x86-64
-side stated as owed rather than fudged.
-
-**The second bulk copy per call (`7c62765`)** — the slot storage filled IN PLACE instead of moved in —
-judged on `bench_minimal`, 24 paired interleaved draws against floors calibrated on the same host, same
-four per-call rows as the arm64 leg:
-
-| per-call row | x86-64 / gcc 15.2 | arm64 / Apple clang (published) |
-| --- | ---: | ---: |
-| `short stamp match reject` | **−27.8 %** [−31.9, −24.9] | −9.4 % [−12.4, −9.0] |
-| `short stamp match hit` | **−16.0 %** [−22.0, −5.9] | −7.4 % [−11.6, −6.6] |
-| `short stamp search exact` | **−15.6 %** [−24.0, −8.6] | −6.4 % [−10.2, −5.6] |
-| `short stamp search in` | **−14.1 %** [−20.3, −9.0] | −8.4 % [−10.7, −7.8] |
-
-24 of 24 draws agree in sign on every one of them, floors 7.3–8.3 %, and the other 22 rows are
-indistinguishable with medians inside ±1.0 % — no cross-row toll. **The x86-64 gain is two to three times
-the arm64 one, and the two legs differ by COMPILER as much as by ISA**: gcc lowered that move to a `rep
-movsq` measured at 12.02 % of the inlined per-call path, and `rep movs` pays a fixed startup whatever the
-volume, which for a groupless pattern is sixteen bytes. Apple clang emits no such instruction, so its
-leg only ever recovered the move itself. Per `docs/MEASUREMENT.md` §3.3, a second compiler is a second
-instrument; this is that reading, not a claim about the ISA alone.
-
-**The AC gate's second quantity (`312e740`)** — two things, because the gate's own routing decision is
-not a row `bench_minimal` carries. Cross-row cost, same instrument and floors: **0 rows REAL out of 26**,
-medians −1.6 % to +1.2 %, which is the x86-64 confirmation of what the arm64 leg established by machine
-code and forced alignment (its apparent +1.0 % was placement). And the routing gain, on the new
-`make bench-ac-gate` probe through NORMAL dispatch, five interleaved passes per tree, minimum per cell,
-match counts identical on every row:
-
-| regime | base | with the gate | x86-64 | arm64 (published) |
-| --- | ---: | ---: | ---: | ---: |
-| candidates that complete | 6.288 | 5.130 ns/B | **−18.4 %** | −30.0 % |
-| false starts only | 3.268 | 3.272 | **+0.12 %** | +3.4 % |
-| prose, no candidate | 0.530 | 0.530 | **+0.00 %** | −3.7 % |
-
-Every pass on the gain row is negative, −17.2 % to −20.1 %, against a per-row repeatability of ±2.4 %
-the passes themselves measure. **The verification cost on x86-64 is +0.12 %, not the +3.4 % arm64
-charged** — all five passes agree in sign on a row that repeats to ±0.03 %, which is why so small a
-figure can be stated at all. Prose is unchanged to three decimals, so **arm64's −3.7 % there does not
-reproduce** and stays an arm64 reading. A smaller gain than arm64 is the expected direction: the
-derivation table has the automaton at 2.19× the cascade on arm64 at full completion against 1.90× on
-x86-64.
-
-**Those three figures were first taken under `powersave` and were unreadable** — ±7 % to ±9 %
-repeatability, giving +2.2 % and +0.2 % for the two flat rows with the per-pass spread straddling zero.
-They were published in this entry's first draft as NOT RESOLVABLE. Re-run with the governor at
-`performance` and nothing else changed, the same probe repeats to **±0.03 %** on those rows. The gain
-row is the control: −19.4 % then −18.4 %, the same answer both times.
-
-**AND A CONTROLLED PAIR SPLITS WHAT THE GOVERNOR IS ACTUALLY FOR.** v2026.8.13 published that this
-host's floors "fell from 27–59 % to 1.8–8.3 % once its governor was set to `performance`", which reads as
-a cause. Both states were then calibrated on the same idle host with nothing else changed:
-
-| | floors, 26 rows | median | probe re-run, flat rows |
-| --- | ---: | ---: | ---: |
-| `powersave`, idle | 6.7–9.1 % | 7.0 % | ±7 % |
-| `performance`, idle | 4.5–9.2 % | 6.7 % | **±0.03 %** |
-
-**The governor barely moves the calibrated floors and transforms single-binary repeatability**, and both
-halves make sense: those floors are measured across PERMUTED code layouts (`-falign-functions`, padding),
-so they price placement variance, which no clock policy touches — 22 of 26 rows do improve, a consistent
-sign, but the median moves 0.3 points. Re-running ONE fixed binary is the opposite case: its variance was
-the clock ramp of §3.4, and pinning the multiplier removes essentially all of it.
-
-So the published sentence is refuted as stated — an idle host under `powersave` already calibrates at
-6.7–9.1 %, so the 27–59 % belongs to the host's OCCUPANCY, not its governor — while the governor keeps a
-decisive role that the floors number cannot show. `docs/MEASUREMENT.md` §3.4 carries both, beside the
-claim they qualify.
+8.14 (**a per-call copy, a routing quantity, three allocations — and three instruments that were reporting silence as success**): **The instruments were lying, and the last one to be fixed found the engine's largest single cost.** **THE TABLES BELOW DO NOT MOVE IN THIS TRAIN, AND THAT IS MEASURED:** the two engine changes are a per-call copy and one routing decision, neither of which has a row here, and the third — an allocation removed from the general VM — was judged on the 26-row consumer instrument at **0 rows REAL** on an idle x86-64 host with the governor pinned. **WHAT MOVED, WITH NO ROW HERE TO SHOW IT:** the second bulk slot copy per call is gone (the engine fills the result in place), and its OWED x86-64 leg is paid — **−27.8 % / −16.0 % / −15.6 % / −14.1 %** on the four per-call rows, 24 of 24 draws agreeing, against arm64's −9.4 / −8.4 / −7.4 / −6.4 %; the x86 gain is two to three times the arm64 one because gcc lowers that move to a `rep movsq` worth 12.02 % of the inlined per-call path and Apple clang emits no such instruction, so **the two legs differ by COMPILER as much as by ISA**. The Aho-Corasick gate gained the second quantity v2026.8.13 recorded and deliberately withheld: **−30.0 % arm64 / −18.4 % x86-64** on the mis-routed regime, against a verification cost of +3.4 % / +0.12 %, with verdicts moving automaton→cascade ONLY across ten density/completion combinations. And the COW capture pool stopped allocating three times per general-VM call — **five allocations become two, 368 bytes become 176** — found by counting, resolved by size AND by symbol, fixed in `storage.hpp` because `pike.hpp` sits below it and has no `small_vec` within reach. **ONE REFUSAL, PUBLISHED WITH THE TABLE THAT REFUSED IT:** raising the `mark` inline capacity to 16 would close the last two allocations and charges the four per-call rows **+4.1 % to +5.6 %** (19–22 of 24 draws) for −3.1 % on its target. No row is REAL either way, and with both sides under the bar the tie goes to not growing a per-call object; the tier that would cover the measured 11–73 instruction band is 64 or 128, i.e. +896 or +1920 bytes on a state already near 4944. **§A's PROSE WAS WRONG FOR THREE STAMPS WHILE THESE TABLES WERE RIGHT**, and two bullets said the OPPOSITE of the cells above them (`alternation` filed as a PCRE2 win at 0.94× where the table has read a REAL win since v2026.8.11; `lookahead` claiming 0.97× where it reads 0.82×, a trade the notes had already published). The checker that would have caught it was **wired to nothing** while this section claimed in print that it re-derives every ratio; it failed on two cells the first time it ran, a third once its rounding rule was made exact, and it now reads the PROSE too — 65 cell ratios and 18 bullet claims, plus row-label uniqueness — from `make check-bench-ratios`, local gate step 7b, `gate-doc`, and the Docs-site workflow. **AND THIS COLUMN'S arm64 LEG WAS RE-MEASURED AND CONFIRMED, NOT CORRECTED:** declared uniformly too slow on the unrecorded-power-state inference, three passes on AC reproduce every published cell within **−2.4 % to +3.6 % on REAL** and −6.3 % to +0.9 % on the competitors, inside the 1.00×–1.08× inter-run amplitude already declared — so the cells stand, and the premise for doubting them does not. **NOT FIXED, AND NAMED AS THE NEXT TARGET:** the general VM costs **12 to 25 ns per byte stepped** against ~1 for a routed class loop and takes 4911 of 7406 composed patterns; the trim shape carries ONE live thread on 100 % of its 2050 steps and performs 4833 refcount/COW operations to report a single match, with no capture groups. Nothing measured exceeds 15 live threads and no program exceeds 73 instructions.
 
 ## v2026.8.13
 
