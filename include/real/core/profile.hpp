@@ -112,6 +112,16 @@ namespace real::detail::prof {
     tls().bytes_examined += n;
   }
 
+  inline void record_prefilter_candidate() noexcept
+  {
+    ++tls().prefilter_candidates;
+  }
+
+  inline void record_prefilter_rejected() noexcept
+  {
+    ++tls().prefilter_rejected;
+  }
+
   inline void note_run_len(std::size_t len) noexcept
   {
     unsigned    b {0};
@@ -202,6 +212,48 @@ namespace real::detail::prof {
     }
 #else
     (void)e;
+#endif
+  }
+
+#if defined(__GNUC__) || defined(__clang__)
+  __attribute__((always_inline))
+#endif
+  /*!
+   * \brief Bill one candidate a prefilter produced. Erased entirely unless \c REAL_PROFILE is defined.
+   *
+   * WIRED LATE, AND THE COUNTER IT FILLS WAS DEAD BEFORE. `counters::prefilter_candidates` and
+   * `counters::prefilter_rejected` (visible only in a \c REAL_PROFILE build, which is why they are named
+   * here as code rather than cross-referenced) were declared and incremented nowhere, so a probe that read
+   * them got a false zero -- which is exactly what happened while diagnosing whether a head literal is
+   * prefiltered at all: the reading was the instrument's silence, not the engine's answer.
+   *
+   * SCOPE, STATED because a counter whose meaning is guessed is barely better than a dead one: these two
+   * cover the INNER-LITERAL route's memmem loop and nothing else. One candidate is one hit `find_literal`
+   * returned; one rejection is one hit whose reverse walk reached no match start, so the loop advanced.
+   * Other routes have their own notions of a candidate and are deliberately not folded in here.
+   */
+  constexpr void tick_prefilter_candidate() noexcept
+  {
+#if defined(REAL_PROFILE)
+    if (!std::is_constant_evaluated()) {
+      record_prefilter_candidate();
+    }
+#endif
+  }
+
+#if defined(__GNUC__) || defined(__clang__)
+  __attribute__((always_inline))
+#endif
+  /*!
+   * \brief Bill one prefilter candidate REJECTED by confirmation. See \ref tick_prefilter_candidate
+   *        for the scope these two share.
+   */
+  constexpr void tick_prefilter_rejected() noexcept
+  {
+#if defined(REAL_PROFILE)
+    if (!std::is_constant_evaluated()) {
+      record_prefilter_rejected();
+    }
 #endif
   }
 

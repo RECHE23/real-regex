@@ -1157,6 +1157,9 @@ namespace real::detail {
       bool              first_candidate {true};
       while (true) {
         const std::size_t h {find_literal(text, pos, lit)};
+        if (h != npos) {
+          detail::prof::tick_prefilter_candidate();
+        }
         if (h == npos) {
           out_slots.assign(prog_.slot_count, npos);
           return false;   // no more candidates (no-match): memmem-only — the guard below was never reached
@@ -1309,6 +1312,7 @@ namespace real::detail {
           }
         }
         if (s == npos) {
+          detail::prof::tick_prefilter_rejected();
           pos = h + 1; // the prefix reaches no start within [min_match_start, h] -> next candidate
         }
         else if (prog_.hints.il_fwd_class >= 0) {
