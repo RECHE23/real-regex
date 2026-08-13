@@ -1931,14 +1931,25 @@ namespace real {
                                      std::size_t      endpos) const
     {
       const std::size_t end {endpos < text.size() ? endpos : text.size()};
-      std::size_t       n   {};
-      for (const result_type& match : basic_match_range<Storage> {program_.view(),
-                                                                  pattern(),
-                                                                  text.substr(0, end),
-                                                                  pos,
-                                                                  match_semantics::first,
-                                                                  true}) {
-        (void) match;
+      // NOT a range-for, and the loop condition is the reason. `basic_match_range::end()` returns a
+      // default-constructed iterator -- the same type, carrying the same `state_type` -- built once per
+      // range-for purely to be compared against, and no comparison ever reads its state (\ref
+      // basic_match_iterator::operator== looks at `done_` and `pos_` only). Measured on a 35-byte
+      // no-match subject, x86-64/gcc 15.2: `find_iter` costs 189 ns per call against 127 for the
+      // identical walk written without that sentinel. `exhausted()` asks the same question and builds
+      // nothing.
+      //
+      // `find_iter` still pays it, and that is left standing rather than papered over: making the state
+      // lazy so the sentinel becomes cheap was tried TWICE and refused by measurement -- `std::optional`
+      // and a `construct_at` union both charged the WORKING iterator about 26 %, indistinguishably, on a
+      // walk that builds no sentinel at all. The remaining vehicle is a distinct sentinel type, which
+      // this API cannot take: the C binding stores an iterator and its end in one `real_iter`, and every
+      // `std::` algorithm wanting a homogeneous pair would stop compiling. So the saving is taken where
+      // it costs nothing to take -- here, on a private walk with no iterator type to preserve.
+      basic_match_range<Storage> range {program_.view(), pattern(), text.substr(0, end),
+                                        pos,            match_semantics::first, true};
+      std::size_t                n     {};
+      for (auto it = range.begin(); !it.exhausted(); ++it) {
         ++n;
       }
       return n;
