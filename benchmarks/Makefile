@@ -26,7 +26,7 @@ include $(ROOT)/mk/help.mk
 CXXSTD   := -std=c++20
 INCLUDES := -Iinclude
 
-.PHONY: bench-duel bench-engines bench-multipattern bench-matrix matrix-gate bench-ac-gate bench-route-cliff \
+.PHONY: bench-duel bench-engines bench-multipattern bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census \
         profile-sample-build profile-sample profile-callgrind help
 .DEFAULT_GOAL := help
 
@@ -92,6 +92,12 @@ matrix-gate: ## Fast 64 KB subset of the 4-D veto matrix (used by full-local-gat
 # timing (deliberately, for reachability); this one pairs them, because a route label cannot say whether
 # falling off it is expensive. Informational, never a gate -- pinning a figure per row would produce reds
 # indistinguishable from host noise.
+# What a bit-parallel engine could actually take, weighted by cost. Informational, never a gate.
+bench-census: ## [bench] Shift-OR eligibility census: four bits, ns/B weighting, VM-vs-DFA share
+	@mkdir -p $(BUILD)
+	@cd $(ROOT) && c++ $(CXXSTD) -O2 -DREAL_PROFILE $(INCLUDES) -I benchmarks -I$(SCIFORGE_INCLUDE) benchmarks/shift_or_census.cpp -o $(BUILD)/shift_or_census
+	@$(BUILD)/shift_or_census $(if $(N),$(N),11)
+
 bench-route-cliff: ## [bench] Where a pattern loses its route, and what that costs (route + ns/B + matches)
 	@mkdir -p $(BUILD)
 	@cd $(ROOT) && c++ $(CXXSTD) -O2 -DREAL_PROFILE $(INCLUDES) -I benchmarks -I$(SCIFORGE_INCLUDE) benchmarks/route_cliff.cpp -o $(BUILD)/route_cliff
