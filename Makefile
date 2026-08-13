@@ -356,9 +356,16 @@ check-state-zeroing:
 # NOT equivalent to CI's leg, and the difference is stated so nobody reads it as one: `g++ -m32` tests
 # the absent SSE2 baseline AND a 32-bit size_t. This tests only the first. It catches today's class of
 # error, not pointer-width assumptions -- those still belong to CI.
+# The TU lists every PUBLIC top-level header, and regex_set.hpp was missing from it -- real.hpp does not
+# pull the set, so nothing here compiled it without a vector ISA. The hole was latent (the set uses no
+# intrinsics today), and latent is the only kind worth closing before it is not: this gate exists because a
+# copy of simd.hpp's mask loop without its `#if` broke the i386 leg once, and the set is exactly where the
+# next such copy would go -- a byte-filter over the members' first bytes wants `load_members_mask`, whose
+# NEON/SSE2 pair has no fallback. storage.hpp and version.hpp need no line of their own: real.hpp includes
+# both, so the TU already compiles them.
 check-no-simd: ## [gate] Headers must compile with neither __ARM_NEON nor __SSE2__ defined
 	@mkdir -p $(BUILD)
-	@printf '#include "real/real.hpp"\n#include "real/dfa.hpp"\nint main() {}\n' > $(BUILD)/no_simd_tu.cpp
+	@printf '#include "real/real.hpp"\n#include "real/dfa.hpp"\n#include "real/regex_set.hpp"\nint main() {}\n' > $(BUILD)/no_simd_tu.cpp
 	@$(CXX) $(CXXSTD) -U__ARM_NEON -U__SSE2__ -Werror $(INCLUDES) -fsyntax-only $(BUILD)/no_simd_tu.cpp
 	@echo "check-no-simd: OK — headers compile with no vector ISA macro"
 
