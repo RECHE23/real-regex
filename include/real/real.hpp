@@ -1858,16 +1858,36 @@ namespace real {
     // contract, with no caller anywhere in the repository, the bindings included -- and `count_walk`
     // would have repeated it. Nothing outside should be able to pick a walk.
     /*!
-     * \brief \ref count_matches's ordinary walk, outlined.
+     * \brief \ref count_matches's walk: the ordinary one, run MATCHING-ONLY.
      *
-     * OUTLINED WITH NO BEHAVIOUR CHANGE, and deliberately as its own step. The body is what it always was --
-     * iterate, discard the result, count -- moved out so that a later change can give this walk a different
-     * capture policy without adding a branch to `count_matches` itself. That function's own note records
-     * why: adding a single branch to it once recompiled it from 610 to 606 instructions and charged
-     * `single [a-z]` +10.7 %, `\b\w+\b` +4.0 %, `\w+` +3.7 % and `fields [^,]+` +2.8 %, all above their
-     * floors at 24 of 24 draws, on rows whose own code was byte-identical. The toll was not the change, it
-     * was this function being re-decided. So the shape of the eventual change is fixed first, at zero
-     * behaviour, and judged flat before anything is put inside it.
+     * OUTLINED FIRST, AT ZERO BEHAVIOUR, AND JUDGED BEFORE ANYTHING WAS PUT IN IT. Adding a single branch to
+     * `count_matches` once recompiled it from 610 to 606 instructions and charged `single [a-z]` +10.7 %,
+     * `\b\w+\b` +4.0 %, `\w+` +3.7 % and `fields [^,]+` +2.8 %, all above their floors at 24 of 24 draws, on
+     * rows whose own code was byte-identical: the toll was that function being re-decided, not the branch. So
+     * the container went in alone and measured flat over 26 rows (medians -0.3 % to +0.8 %, 0 rows REAL)
+     * before this policy was added, which is why the policy needs no branch in `count_matches` at all.
+     *
+     * THE POLICY. This function returns a NUMBER: no caller can observe a capture group, so writing them is
+     * pure loss. The walk therefore runs on a private copy of the program whose
+     * \ref detail::pattern_hints::capture_free_walk is set — the same walk `(?:...)`-only patterns already
+     * get, where a thread's whole capture state is group 0's start in one scalar and the refcounted COW pool
+     * is never touched. Measured on `\b(\w+)@(\w+)\.(com|org)\b`, 4096-byte subject: 24.63 -> 17.60 ns/B,
+     * 1906 increfs and 2714 copy-on-writes -> zero, with the VM stepping the SAME 2684 positions. That last
+     * number is the point — the walk is identical, only its bookkeeping is gone.
+     *
+     * ONE FIELD, DELIBERATELY. `slot_count` is left alone even though the walk now fills only two slots: the
+     * batched span routes arm on `slot_count == 2`, so lowering it would ROUTE the pattern somewhere else and
+     * the measurement would be of a different engine. The same trap in reverse is what made the census's
+     * headline finding an illusion: `(foo|bar)+baz` costs 29.5 ns/B and `(?:foo|bar)+baz` 7.6, but the second
+     * is a different PROGRAM taking `inner_literal` + `lazy_dfa_anchored` where the first takes `inner_literal`
+     * alone, and its VM steps 310 positions against 2560. No walk flag can produce that; rewriting a user's
+     * groups to non-capturing at compile time might, and is a separate question with its own answers to give.
+     * With only this field moved, that row is expected to sit exactly where it was.
+     *
+     * The structural condition is still asked (\ref detail::capture_free_walk_structural) rather than assumed:
+     * it is a property of the program, and a program whose `save 0` can be skipped would give a wrong answer,
+     * not a slow one. What this drops is the other half of the compiler's guard — no `save` past slot 1, and
+     * `slot_count == 2` — which exists to protect captures nobody here is going to read.
      *
      * `noinline` but NOT `cold`, unlike \ref count_trailing_la -- that branch is taken only when a hint is
      * armed, this one is the ordinary path.
@@ -1885,8 +1905,12 @@ namespace real {
                                      std::size_t      pos,
                                      std::size_t      endpos) const
     {
-      std::size_t n {};
-      for (const result_type& match : find_iter(text, pos, endpos)) {
+      const std::size_t    end  {endpos < text.size() ? endpos : text.size()};
+      detail::program_view view {program_.view()};
+      view.hints.capture_free_walk = detail::capture_free_walk_structural(view.code);
+      std::size_t n             {};
+      for (const result_type& match :
+           basic_match_range<Storage> {view, pattern(), text.substr(0, end), pos}) {
         (void) match;
         ++n;
       }
