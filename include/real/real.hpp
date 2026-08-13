@@ -1083,23 +1083,40 @@ namespace real {
 
     /*!
      * \brief Binds the range to a program and text.
+     *
+     * \p matching_only is applied to the STORED view, after the copy this constructor was going to make
+     * anyway, and that placement is the whole point of the parameter. A caller cannot mutate a view it owns
+     * and then hand it over without paying a second copy of it -- the view is 440 bytes, and on x86-64/gcc
+     * that copy measured a FIXED +12 to +13 ns per \ref real::basic_regex::count_matches call, flat across
+     * 3-, 8- and 24-byte subjects, 6 of 6 paired draws agreeing with non-overlapping ranges. Taking the
+     * intent instead costs one copy, exactly what \ref real::basic_regex::find_iter pays.
+     *
      * \param[in] prog    The compiled program.
      * \param[in] pattern The pattern text (for named-group resolution).
      * \param[in] text    The text to iterate over (borrowed).
      * \param[in] start   Byte offset to begin iterating from (0 = the whole text).
      * \param[in] sem     Match semantics: leftmost-first (default) or the experimental leftmost-longest.
+     * \param[in] matching_only Run the capture-free walk even on a program that has user groups, for a
+     *        caller that reads none (\ref real::basic_regex::count_matches). Ignored unless the program is
+     *        structurally eligible -- its first instruction must be the whole-match start save, which the
+     *        capture-free walk's single-scalar start rests on.
      */
     constexpr basic_match_range(detail::program_view prog,
                                 std::string_view     pattern,
                                 std::string_view     text,
-                                std::size_t          start = 0,
-                                match_semantics      sem   = match_semantics::first)
+                                std::size_t          start          = 0,
+                                match_semantics      sem            = match_semantics::first,
+                                bool                 matching_only  = false)
       : prog_(prog),
         pattern_(pattern),
         text_(text),
         start_(start),
         sem_(sem)
-    {}
+    {
+      if (matching_only) {
+        prog_.hints.capture_free_walk = detail::capture_free_walk_structural(prog_.code);
+      }
+    }
 
     /*!
      * \brief Returns an iterator to the first match.
@@ -1889,6 +1906,14 @@ namespace real {
      * not a slow one. What this drops is the other half of the compiler's guard — no `save` past slot 1, and
      * `slot_count == 2` — which exists to protect captures nobody here is going to read.
      *
+     * THE FLAG IS SET BY THE RANGE, NOT HERE, and that is a measured requirement rather than a preference.
+     * Mutating a local view and handing it over costs a SECOND copy of a 440-byte `program_view`, which on
+     * x86-64/gcc charged a fixed +12 to +13 ns per call -- flat across 3-, 8- and 24-byte subjects, 6 of 6
+     * paired draws agreeing with ranges that do not overlap, a constant with no proportional work behind it.
+     * The canonical rows never saw it: they measure this surface as THROUGHPUT on 4 KiB subjects, where one
+     * fixed copy amortises under the noise floor. Passing the intent instead of a mutated view leaves
+     * exactly \ref find_iter's one copy.
+     *
      * `noinline` but NOT `cold`, unlike \ref count_trailing_la -- that branch is taken only when a hint is
      * armed, this one is the ordinary path.
      *
@@ -1905,12 +1930,14 @@ namespace real {
                                      std::size_t      pos,
                                      std::size_t      endpos) const
     {
-      const std::size_t    end  {endpos < text.size() ? endpos : text.size()};
-      detail::program_view view {program_.view()};
-      view.hints.capture_free_walk = detail::capture_free_walk_structural(view.code);
-      std::size_t n             {};
-      for (const result_type& match :
-           basic_match_range<Storage> {view, pattern(), text.substr(0, end), pos}) {
+      const std::size_t end {endpos < text.size() ? endpos : text.size()};
+      std::size_t       n   {};
+      for (const result_type& match : basic_match_range<Storage> {program_.view(),
+                                                                  pattern(),
+                                                                  text.substr(0, end),
+                                                                  pos,
+                                                                  match_semantics::first,
+                                                                  true}) {
         (void) match;
         ++n;
       }
