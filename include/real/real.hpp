@@ -1537,7 +1537,6 @@ namespace real {
     {
       const std::size_t      end    {endpos < text.size() ? endpos : text.size()};
       const std::string_view region {text.substr(0, end)};
-      std::size_t            n      {};
       if constexpr (requires(typename Storage::state_type & st) {
         st.lookaround;
       }) {
@@ -1547,44 +1546,7 @@ namespace real {
           return count_trailing_la(region, pos);
         }
       }
-      for (const result_type& match : find_iter(text, pos, endpos)) {
-        (void) match;
-        ++n;
-      }
-      return n;
-    }
-
-    /*!
-     * \brief \ref count_matches over the trailing-lookaround walk, outlined.
-     *
-     * OUTLINED AND COLD for the same reason \ref basic_match_iterator::decide_batching is: this branch is
-     * taken only when `pattern_hints::trailing_lookaround` is armed, yet inline it put a SECOND fully
-     * inlined walk inside `count_matches` -- the function every throughput measurement runs. That made
-     * `count_matches` large enough to sit on a codegen cliff: adding a single branch to the batched
-     * dispatch (no new function body, eligibility already outlined) recompiled it from 610 to 606
-     * instructions, and the campaign that measured that state charged `single [a-z]` +10.7 %,
-     * `\b\w+\b` +4.0 %, `\w+` +3.7 %, `\w{2,}` +3.2 % and `fields [^,]+` +2.8 %, all above their own
-     * floors at 24 of 24 draws, on rows whose own code was byte-identical. The toll was not the change --
-     * it was this function being re-decided.
-     *
-     * \param[in] region The already-clamped subject.
-     * \param[in] pos    Where the walk starts.
-     * \return The match count.
-     */
-    [[nodiscard]]
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline, cold))
-#endif
-    constexpr std::size_t count_trailing_la(std::string_view region,
-                                            std::size_t      pos) const
-    {
-      std::size_t n {};
-      for (const result_type& match :
-           basic_match_range<Storage, /*TrailingLA=*/ true> {program_.view(), pattern(), region, pos}) {
-        (void) match;
-        ++n;
-      }
-      return n;
+      return count_walk(text, pos, endpos);
     }
 
     /*!
@@ -1890,6 +1852,79 @@ namespace real {
     }
 
   private:
+
+    // Implementation calices, private: `count_matches` is the surface, these two are how its walk is
+    // shaped. `count_trailing_la` had been public since it was outlined -- an oversight rather than a
+    // contract, with no caller anywhere in the repository, the bindings included -- and `count_walk`
+    // would have repeated it. Nothing outside should be able to pick a walk.
+    /*!
+     * \brief \ref count_matches's ordinary walk, outlined.
+     *
+     * OUTLINED WITH NO BEHAVIOUR CHANGE, and deliberately as its own step. The body is what it always was --
+     * iterate, discard the result, count -- moved out so that a later change can give this walk a different
+     * capture policy without adding a branch to `count_matches` itself. That function's own note records
+     * why: adding a single branch to it once recompiled it from 610 to 606 instructions and charged
+     * `single [a-z]` +10.7 %, `\b\w+\b` +4.0 %, `\w+` +3.7 % and `fields [^,]+` +2.8 %, all above their
+     * floors at 24 of 24 draws, on rows whose own code was byte-identical. The toll was not the change, it
+     * was this function being re-decided. So the shape of the eventual change is fixed first, at zero
+     * behaviour, and judged flat before anything is put inside it.
+     *
+     * `noinline` but NOT `cold`, unlike \ref count_trailing_la -- that branch is taken only when a hint is
+     * armed, this one is the ordinary path.
+     *
+     * \param[in] text   The subject.
+     * \param[in] pos    Where the walk starts.
+     * \param[in] endpos Region end, as \ref find_iter takes it.
+     * \return The match count.
+     */
+    [[nodiscard]]
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    constexpr std::size_t count_walk(std::string_view text,
+                                     std::size_t      pos,
+                                     std::size_t      endpos) const
+    {
+      std::size_t n {};
+      for (const result_type& match : find_iter(text, pos, endpos)) {
+        (void) match;
+        ++n;
+      }
+      return n;
+    }
+
+    /*!
+     * \brief \ref count_matches over the trailing-lookaround walk, outlined.
+     *
+     * OUTLINED AND COLD for the same reason \ref basic_match_iterator::decide_batching is: this branch is
+     * taken only when `pattern_hints::trailing_lookaround` is armed, yet inline it put a SECOND fully
+     * inlined walk inside `count_matches` -- the function every throughput measurement runs. That made
+     * `count_matches` large enough to sit on a codegen cliff: adding a single branch to the batched
+     * dispatch (no new function body, eligibility already outlined) recompiled it from 610 to 606
+     * instructions, and the campaign that measured that state charged `single [a-z]` +10.7 %,
+     * `\b\w+\b` +4.0 %, `\w+` +3.7 %, `\w{2,}` +3.2 % and `fields [^,]+` +2.8 %, all above their own
+     * floors at 24 of 24 draws, on rows whose own code was byte-identical. The toll was not the change --
+     * it was this function being re-decided.
+     *
+     * \param[in] region The already-clamped subject.
+     * \param[in] pos    Where the walk starts.
+     * \return The match count.
+     */
+    [[nodiscard]]
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline, cold))
+#endif
+    constexpr std::size_t count_trailing_la(std::string_view region,
+                                            std::size_t      pos) const
+    {
+      std::size_t n {};
+      for (const result_type& match :
+           basic_match_range<Storage, /*TrailingLA=*/ true> {program_.view(), pattern(), region, pos}) {
+        (void) match;
+        ++n;
+      }
+      return n;
+    }
 
     Storage program_; //!< The storage policy holding the compiled program.
 
