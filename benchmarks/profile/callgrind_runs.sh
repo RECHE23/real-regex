@@ -10,7 +10,7 @@ OUT="$BUILD/callgrind"
 mkdir -p "$OUT" "$BUILD/corpora"
 
 if ! command -v valgrind >/dev/null 2>&1; then
-  echo "valgrind not found — skip callgrind (devbox 106 pve2 is the source of truth)"
+  echo "valgrind not found — skip callgrind (an x86-64 host with valgrind is the source of truth)"
   exit 0
 fi
 
