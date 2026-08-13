@@ -28,12 +28,20 @@
 //
 // THE ANSWER, on arm64, 4096-byte subjects (see the table the program prints for the per-row detail):
 //
-//     eligible for Shift-OR       21.2 %   of the general-VM ns/byte in this panel
-//     ineligible: user captures   40.9 %
-//     ineligible: la / cp / \b    37.9 %
+//     eligible for Shift-OR       23.6 %   of the general-VM ns/byte in this panel
+//     ineligible: user captures   36.2 %
+//     ineligible: la / cp / \b    40.2 %
 //
-// So roughly four fifths is out of reach, and a month of work would address a fifth. That is the decision:
-// Shift-OR is not the next train.
+// So roughly three quarters is out of reach, and a month of work would address a quarter. That is the
+// decision: Shift-OR is not the next train.
+//
+// THOSE SHARES MOVED ONCE ALREADY, AND THE REASON IS THE POINT. The first run read 21.2 / 40.9 / 37.9. The
+// open question at the foot of this comment was then answered -- `count_matches` now walks matching-only
+// (real.hpp's count_walk) -- and the two capturing rows got cheaper: `(foo|bar)+baz` 25 -> 20.6 ns/B, the
+// email row 23 -> 17.5, both with their VM step counts unchanged. The captures bucket shrank because that
+// cost was COLLECTED, not because it was reclassified. Read the split as a budget for a bit-parallel engine
+// and it is smaller than it was; read it as an account of where the general VM's time goes and one of its
+// three parts was just spent.
 //
 // TWO THINGS THIS PANEL DOES NOT SAY, stated because the numbers invite both.
 //
@@ -42,12 +50,14 @@
 //
 // And "ineligible: captures" is the FIRST reason, not the only one. `\b(\w+)@(\w+)\.(com|org)\b` also
 // carries `\w` (klass_cp) and `\b`; ignoring its groups would not free it. In this panel the only expensive
-// row closed SOLELY by captures is `(foo|bar)+baz` at 25 ns/B -- about a fifth of the total, not two fifths.
+// row closed SOLELY by captures is `(foo|bar)+baz` -- about a fifth of the total, not two fifths.
 //
-// AND ONE OPEN QUESTION IT RAISES. This measures `count_matches`, which reads no group. `(foo|bar)+baz`'s
-// 25 ns/B is therefore copy-on-write for captures nobody asked for: the capture-free walk skipped it because
-// the PROGRAM has saves past slot 1, not because the CALLER wanted them. That is a walk policy, not a
-// language property, and it is the next thing to measure.
+// THE OPEN QUESTION IT RAISED IS CLOSED, and the rows above are already the post-answer numbers. This panel
+// measures `count_matches`, which reads no group, so the copy-on-write those two rows paid was for captures
+// nobody asked for: the capture-free walk skipped them because the PROGRAM has saves past slot 1, not
+// because the CALLER wanted them. That is a walk policy rather than a language property, and it is now the
+// caller's to set -- see real.hpp's count_walk. The rows stay ineligible here regardless: what changed is
+// what they cost, not whether Shift-OR could take them.
 //
 // BUILD: needs -DREAL_PROFILE for the route and thread counters --
 //     c++ -std=c++20 -O2 -DREAL_PROFILE -I include -I benchmarks benchmarks/shift_or_census.cpp
