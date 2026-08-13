@@ -62,6 +62,12 @@ jobs:
           # compile the same scalar path.
           echo "── check-sse2-floor (x86-64: SSE2 without AVX2)"
           make -C real-regex check-sse2-floor
+          # A per-CALL cost is FIXED, so it hides in every throughput measurement this project owns: the
+          # regression this guards against charged 6.8 % on a 3-byte subject and moved none of the 26
+          # layout rows. The short row that would have caught it cannot be built (no cheap count_matches
+          # exists -- it is iterator entry, ~140 ns before any scan), so the shape is counted, not timed.
+          echo "── check-percall-copies (count_walk passes the intent, not a mutated 440-byte view)"
+          make -C real-regex check-percall-copies
           echo "── check-pins"
           make -C real-regex check-pins SCIFORGE_TOOLS="$TOOLS"
           # Hardening #4: golden GENERATED from bindings/c/real_capi.h must match the header

@@ -828,6 +828,29 @@ namespace real {
     };
 
     /*!
+     * \brief This view is COPIED ON EVERY `find_iter` AND `count_matches` CALL, so its size is a per-call
+     *        cost and growing it is a decision, not a detail.
+     *
+     * A ceiling rather than a stopwatch, and that is the point. A per-call cost of this shape is fixed:
+     * it does not scale with the subject, so it vanishes into the noise of any throughput row and shows up
+     * only on short inputs. `benchmarks/bench_minimal.cpp` records the attempt to guard it by timing --
+     * the two candidate rows' measured noise floors were 6.2 % and 6.6 %, the worst two of 28, against an
+     * effect worth about 6.5 %. Counting is what works here, which is the same conclusion v2026.8.14
+     * reached when it found five allocations per call by size and by symbol rather than by stopwatch.
+     *
+     * The number is not a target to hit but a line to notice crossing: 10 spans (160) + \ref pattern_hints
+     * (240) + the scalars and pointers. Lower it when the view shrinks, and raise it only with the reason
+     * written down -- a change that adds a span here charges 16 bytes to every call on both surfaces.
+     *
+     * Guarded on the pointer width because `std::span` is two pointers: a literal byte count would fail on
+     * a 32-bit target for no reason (this project has a `win32-narrowing` CI leg), and the concern -- do
+     * not silently make the per-call copy bigger -- is the same on any width.
+     */
+    static_assert(sizeof(void*) != 8 || sizeof(program_view) <= 440,
+                  "program_view grew: it is copied once per find_iter/count_matches call. See the note "
+                  "above -- raise this ceiling deliberately, with the per-call cost accepted in writing.");
+
+    /*!
      * \brief Owning, heap-allocated program: the storage backing `real::regex`.
      */
     struct dynamic_program

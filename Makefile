@@ -66,7 +66,7 @@ include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
 	full-local-gate-impl gcc-check route-probe alloc-probe ac-regime sabotage-sweep \
-        lint misra check-state-zeroing route-surface-parity bench-compilers fuzz fuzz-compat fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
+        lint misra check-state-zeroing check-percall-copies route-surface-parity bench-compilers fuzz fuzz-compat fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census \
         profile-sample profile-callgrind \
@@ -345,6 +345,13 @@ check-layers:
 check-state-zeroing:
 	@$(PYTHON) tools/check_state_zeroing.py
 
+# A per-CALL cost is fixed, so no benchmark here can hold it: it vanishes into every throughput row, and
+# the short `count_matches` row that would catch it cannot be built (benchmarks/bench_minimal.cpp records
+# the measurement that refused it -- floors of 6.2 % and 6.6 % against an effect worth 6.5 %). So the
+# shape is counted instead of timed. See tools/check_percall_copies.py.
+check-percall-copies:
+	@$(PYTHON) tools/check_percall_copies.py
+
 # The headers compile where NEITHER SIMD macro is defined. This exists because a real defect shipped
 # through every other check: a filler copied run_alternation's mask-carried block scan and not its
 # `#if defined(__ARM_NEON) || defined(__SSE2__)`, so `mask_t` and its accessors were referenced where
@@ -573,6 +580,8 @@ full-local-gate-impl:
 	@$(MAKE) check-sse2-floor
 	@echo "── [4b/24] check-state-zeroing (gcc bulk-zeroes the VM state if a member array returns)"
 	@$(MAKE) check-state-zeroing
+	@echo "── [4d/24] check-percall-copies (count_walk must pass the intent, not a mutated 440-byte view)"
+	@$(MAKE) check-percall-copies
 	@echo "── [5/24] check-pins"
 	@$(MAKE) check-pins
 	@echo "── [6/24] check-capi-abi (C ABI golden vs real_capi.h)"

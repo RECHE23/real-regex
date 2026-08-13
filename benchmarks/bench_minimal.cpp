@@ -278,6 +278,30 @@ int main()
     {"short stamp match hit", R"(^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}:[0-9]{2}:[0-9]{2}$)", stamp_exact, surface::match},
     {"short stamp match reject", R"(^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}:[0-9]{2}:[0-9]{2}$)", stamp_in, surface::match, false},
     {"short trim replace", R"(^[\t \n\r]+|[\t \n\r]+$)", pad_line, surface::replace},
+
+    // THERE IS NO SHORT `count_matches` ROW HERE, AND THAT IS A MEASURED REFUSAL RATHER THAN AN OVERSIGHT.
+    // The four rows above reach the per-CALL regime through `search`, `match` and `replace`, so the
+    // obvious missing row is the same regime through `count_matches` -- the surface every throughput row
+    // uses. Two were written and then withdrawn, because they cannot do the job they would be added for.
+    //
+    // A short `count_matches` is not short. Seven shapes were measured -- literal miss, anchored miss,
+    // fixed-shape hit and miss, class hit and miss, subjects from 19 to 47 bytes -- and every one landed
+    // between 185 and 245 ns per call. The reason is not the scan: on the SAME miss over 35 bytes,
+    // `search` costs 70 ns and `count_matches` 214, while `find_iter` costs 213. What separates them is
+    // the range-plus-iterator entry, about 140 ns of it, and no choice of pattern or subject makes it
+    // cheaper. `short stamp match reject` is short in the sense this file means (31 ns, a 0.5 % noise
+    // floor); nothing on this surface is.
+    //
+    // So the fixed per-call cost such a row would guard against is ~6.5 % of it, and the two candidates'
+    // measured noise floors were 6.2 % and 6.6 % -- the WORST two of the 28 rows, against a next-worst of
+    // 3.6 %. A guard whose floor sits at the size of the effect reports the truth about half the time, and
+    // would have made every future layout judgment noisier to do it. Capture-free patterns were the right
+    // instinct (a pattern with groups now saves copy-on-write per match, which MASKS a per-call tax) and
+    // do not rescue an instrument this noisy.
+    //
+    // A fixed per-call cost is guarded by COUNTING, not by timing -- the same conclusion v2026.8.14
+    // reached when it found five allocations per call by size and by symbol rather than by stopwatch. The
+    // pins live where the cost does: see `program_view`'s size assertion in core/program.hpp.
   };
 
   std::string out {"{\"cases\":["};
