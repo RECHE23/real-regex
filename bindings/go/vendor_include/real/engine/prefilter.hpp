@@ -1962,6 +1962,27 @@ namespace real::detail {
   }
 
   /*!
+   * \brief The STRUCTURAL half of \ref pattern_hints::capture_free_walk -- `save 0` is the program's first
+   *        instruction.
+   *
+   * Split out because the two halves have different owners. This half is a property of the PROGRAM and is
+   * never negotiable: the capture-free walk keeps group 0's start in one `std::size_t` local shared by a
+   * whole epsilon closure, which is only correct while `save 0` cannot be skipped. Behind a split, a branch
+   * that bypassed it would inherit its sibling's start — a wrong ANSWER, not a slow one. The other half
+   * (no `save` past slot 1, and `slot_count == 2`) is a property of what the CALLER WANTS: it says the
+   * pattern has no user groups, so ignoring their writes costs nothing. A caller that does not read
+   * captures — \ref real::basic_regex::count_matches — may set the flag on its own view of the program on
+   * this condition alone.
+   *
+   * \param[in] code The instruction stream.
+   * \return True when the capture-free walk's single-scalar start is sound for \p code.
+   */
+  [[nodiscard]] constexpr bool capture_free_walk_structural(std::span<const instr> code) noexcept
+  {
+    return !code.empty() && code[0].op == opcode::save && code[0].arg16 == 0U;
+  }
+
+  /*!
    * \brief Walks a compiled program once to derive its search hints.
    * \param[in] code           The instruction stream.
    * \param[in] classes        The interned character classes referenced by \p code.
@@ -1998,7 +2019,7 @@ namespace real::detail {
     // because the end IS `pos` at the match. Lookaround sub-programs are regions of this same `code` and
     // emit no saves of their own (checked: `a(?=b)` and `a(?<=b)c` both carry exactly [pc=0 slot=0] and
     // [pc=n-2 slot=1]), so a bounded lookaround does not disqualify a pattern here.
-    hints.capture_free_walk = !code.empty() && code[0].op == opcode::save && code[0].arg16 == 0U;
+    hints.capture_free_walk = capture_free_walk_structural(code);
     for (std::size_t i = 1; hints.capture_free_walk && i < code.size(); ++i) {
       if (code[i].op == opcode::save && code[i].arg16 != 1U) {
         hints.capture_free_walk = false;

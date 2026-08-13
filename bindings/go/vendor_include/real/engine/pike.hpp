@@ -6307,7 +6307,13 @@ namespace real::detail {
                                           std::size_t   start,
                                           std::size_t   end)
     {
-      if (capture_start_slot < 0) {
+      if (capture_start_slot < 0 || prog_.hints.capture_free_walk) {
+        // Capture-free: `clist.slots[i]` is group 0's START, not a block handle. Handing it to `cow_write`
+        // would read a refcount off an offset. The second half of the guard was implicit while the flag
+        // could only be set by the compiler — that guard demands `slot_count == 2`, so an armed Tier 1
+        // capture and the flag could not coexist — and is written out because a CALLER may now set the
+        // flag on a pattern that does have groups (\ref real::basic_regex::count_matches). Nothing is
+        // lost: on such a walk no capture is read.
         return;
       }
       const auto    slot  {static_cast<std::uint16_t>(capture_start_slot)};

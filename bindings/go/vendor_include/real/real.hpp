@@ -1537,7 +1537,6 @@ namespace real {
     {
       const std::size_t      end    {endpos < text.size() ? endpos : text.size()};
       const std::string_view region {text.substr(0, end)};
-      std::size_t            n      {};
       if constexpr (requires(typename Storage::state_type & st) {
         st.lookaround;
       }) {
@@ -1547,44 +1546,7 @@ namespace real {
           return count_trailing_la(region, pos);
         }
       }
-      for (const result_type& match : find_iter(text, pos, endpos)) {
-        (void) match;
-        ++n;
-      }
-      return n;
-    }
-
-    /*!
-     * \brief \ref count_matches over the trailing-lookaround walk, outlined.
-     *
-     * OUTLINED AND COLD for the same reason \ref basic_match_iterator::decide_batching is: this branch is
-     * taken only when `pattern_hints::trailing_lookaround` is armed, yet inline it put a SECOND fully
-     * inlined walk inside `count_matches` -- the function every throughput measurement runs. That made
-     * `count_matches` large enough to sit on a codegen cliff: adding a single branch to the batched
-     * dispatch (no new function body, eligibility already outlined) recompiled it from 610 to 606
-     * instructions, and the campaign that measured that state charged `single [a-z]` +10.7 %,
-     * `\b\w+\b` +4.0 %, `\w+` +3.7 %, `\w{2,}` +3.2 % and `fields [^,]+` +2.8 %, all above their own
-     * floors at 24 of 24 draws, on rows whose own code was byte-identical. The toll was not the change --
-     * it was this function being re-decided.
-     *
-     * \param[in] region The already-clamped subject.
-     * \param[in] pos    Where the walk starts.
-     * \return The match count.
-     */
-    [[nodiscard]]
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline, cold))
-#endif
-    constexpr std::size_t count_trailing_la(std::string_view region,
-                                            std::size_t      pos) const
-    {
-      std::size_t n {};
-      for (const result_type& match :
-           basic_match_range<Storage, /*TrailingLA=*/ true> {program_.view(), pattern(), region, pos}) {
-        (void) match;
-        ++n;
-      }
-      return n;
+      return count_walk(text, pos, endpos);
     }
 
     /*!
@@ -1890,6 +1852,103 @@ namespace real {
     }
 
   private:
+
+    // Implementation calices, private: `count_matches` is the surface, these two are how its walk is
+    // shaped. `count_trailing_la` had been public since it was outlined -- an oversight rather than a
+    // contract, with no caller anywhere in the repository, the bindings included -- and `count_walk`
+    // would have repeated it. Nothing outside should be able to pick a walk.
+    /*!
+     * \brief \ref count_matches's walk: the ordinary one, run MATCHING-ONLY.
+     *
+     * OUTLINED FIRST, AT ZERO BEHAVIOUR, AND JUDGED BEFORE ANYTHING WAS PUT IN IT. Adding a single branch to
+     * `count_matches` once recompiled it from 610 to 606 instructions and charged `single [a-z]` +10.7 %,
+     * `\b\w+\b` +4.0 %, `\w+` +3.7 % and `fields [^,]+` +2.8 %, all above their floors at 24 of 24 draws, on
+     * rows whose own code was byte-identical: the toll was that function being re-decided, not the branch. So
+     * the container went in alone and measured flat over 26 rows (medians -0.3 % to +0.8 %, 0 rows REAL)
+     * before this policy was added, which is why the policy needs no branch in `count_matches` at all.
+     *
+     * THE POLICY. This function returns a NUMBER: no caller can observe a capture group, so writing them is
+     * pure loss. The walk therefore runs on a private copy of the program whose
+     * \ref detail::pattern_hints::capture_free_walk is set — the same walk `(?:...)`-only patterns already
+     * get, where a thread's whole capture state is group 0's start in one scalar and the refcounted COW pool
+     * is never touched. Measured on `\b(\w+)@(\w+)\.(com|org)\b`, 4096-byte subject: 24.63 -> 17.60 ns/B,
+     * 1906 increfs and 2714 copy-on-writes -> zero, with the VM stepping the SAME 2684 positions. That last
+     * number is the point — the walk is identical, only its bookkeeping is gone.
+     *
+     * ONE FIELD, DELIBERATELY. `slot_count` is left alone even though the walk now fills only two slots: the
+     * batched span routes arm on `slot_count == 2`, so lowering it would ROUTE the pattern somewhere else and
+     * the measurement would be of a different engine. The same trap in reverse is what made the census's
+     * headline finding an illusion: `(foo|bar)+baz` costs 29.5 ns/B and `(?:foo|bar)+baz` 7.6, but the second
+     * is a different PROGRAM taking `inner_literal` + `lazy_dfa_anchored` where the first takes `inner_literal`
+     * alone, and its VM steps 310 positions against 2560. No walk flag can produce that; rewriting a user's
+     * groups to non-capturing at compile time might, and is a separate question with its own answers to give.
+     * With only this field moved, that row is expected to sit exactly where it was.
+     *
+     * The structural condition is still asked (\ref detail::capture_free_walk_structural) rather than assumed:
+     * it is a property of the program, and a program whose `save 0` can be skipped would give a wrong answer,
+     * not a slow one. What this drops is the other half of the compiler's guard — no `save` past slot 1, and
+     * `slot_count == 2` — which exists to protect captures nobody here is going to read.
+     *
+     * `noinline` but NOT `cold`, unlike \ref count_trailing_la -- that branch is taken only when a hint is
+     * armed, this one is the ordinary path.
+     *
+     * \param[in] text   The subject.
+     * \param[in] pos    Where the walk starts.
+     * \param[in] endpos Region end, as \ref find_iter takes it.
+     * \return The match count.
+     */
+    [[nodiscard]]
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    constexpr std::size_t count_walk(std::string_view text,
+                                     std::size_t      pos,
+                                     std::size_t      endpos) const
+    {
+      const std::size_t    end  {endpos < text.size() ? endpos : text.size()};
+      detail::program_view view {program_.view()};
+      view.hints.capture_free_walk = detail::capture_free_walk_structural(view.code);
+      std::size_t n             {};
+      for (const result_type& match :
+           basic_match_range<Storage> {view, pattern(), text.substr(0, end), pos}) {
+        (void) match;
+        ++n;
+      }
+      return n;
+    }
+
+    /*!
+     * \brief \ref count_matches over the trailing-lookaround walk, outlined.
+     *
+     * OUTLINED AND COLD for the same reason \ref basic_match_iterator::decide_batching is: this branch is
+     * taken only when `pattern_hints::trailing_lookaround` is armed, yet inline it put a SECOND fully
+     * inlined walk inside `count_matches` -- the function every throughput measurement runs. That made
+     * `count_matches` large enough to sit on a codegen cliff: adding a single branch to the batched
+     * dispatch (no new function body, eligibility already outlined) recompiled it from 610 to 606
+     * instructions, and the campaign that measured that state charged `single [a-z]` +10.7 %,
+     * `\b\w+\b` +4.0 %, `\w+` +3.7 %, `\w{2,}` +3.2 % and `fields [^,]+` +2.8 %, all above their own
+     * floors at 24 of 24 draws, on rows whose own code was byte-identical. The toll was not the change --
+     * it was this function being re-decided.
+     *
+     * \param[in] region The already-clamped subject.
+     * \param[in] pos    Where the walk starts.
+     * \return The match count.
+     */
+    [[nodiscard]]
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline, cold))
+#endif
+    constexpr std::size_t count_trailing_la(std::string_view region,
+                                            std::size_t      pos) const
+    {
+      std::size_t n {};
+      for (const result_type& match :
+           basic_match_range<Storage, /*TrailingLA=*/ true> {program_.view(), pattern(), region, pos}) {
+        (void) match;
+        ++n;
+      }
+      return n;
+    }
 
     Storage program_; //!< The storage policy holding the compiled program.
 
