@@ -3,12 +3,14 @@
 // Secondary RE2::Set cross-check lives in the multi-pattern bench (optional dep), not here —
 // so the unit suite stays free of RE2 link requirements.
 #include <algorithm>
+#include <array>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include <sciforge/test/framework.hpp>
+#include "real/engine/prefilter.hpp"
 #include "real/regex_set.hpp"
 #include "real/real.hpp"
 
@@ -237,4 +239,82 @@ TEST(regex_set_fused_threshold_edges_and_mixed_sets)
   EXPECT_EQ(s60b.eligible_count(), 56U);
   EXPECT(s60b.is_match("ERR942abc"));
   EXPECT(s60b.is_match("X07")); // an ineligible member is still searched, by N-walk
+}
+
+// --- byte filter: the SKIP path, which nothing above exercises ---------------------------------
+//
+// Every subject in this file so far contains a byte one member can start with, so the filter finds a
+// candidate and the N-walk resumes exactly as before -- the skip itself, which is the whole reason the
+// filter exists, went unpinned. These two tests take the two halves: the scan primitive on its own, and a
+// set whose union is provably absent from the subject.
+
+TEST(find_members_scan_hit_miss_and_boundaries)
+{
+  const std::array<std::uint8_t, 8> one   {{'z'}};
+  const std::array<std::uint8_t, 8> eight {{'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'}};
+
+  // Long enough for the 16-byte block loop, then a short one for the scalar tail: the boundary is where a
+  // block-scan-then-tail loop gets its off-by-one, and neither half is reachable from the other.
+  const std::string long_no   {"....................................."}; // 37 bytes, no member
+  const std::string long_hit  {"...................z................."};
+  const std::string short_no  {"....."};
+  const std::string short_hit {"..z.."};
+
+  EXPECT_EQ(real::detail::find_members(long_no, 0, one, 1), real::npos);
+  EXPECT_EQ(real::detail::find_members(long_hit, 0, one, 1), 19U);
+  EXPECT_EQ(real::detail::find_members(short_no, 0, one, 1), real::npos);
+  EXPECT_EQ(real::detail::find_members(short_hit, 0, one, 1), 2U);
+
+  // `pos` must be honoured: the hit before it is not a hit.
+  EXPECT_EQ(real::detail::find_members(long_hit, 20, one, 1), real::npos);
+  EXPECT_EQ(real::detail::find_members(long_hit, 19, one, 1), 19U);
+
+  // Eight members, the widest the scan carries, and the last one declared is still found.
+  const std::string eight_hit {"zzzzzzzzzzzzzzzzzzzzzzzzhzzzz"};
+  EXPECT_EQ(real::detail::find_members(eight_hit, 0, eight, 8), 24U);
+  EXPECT_EQ(real::detail::find_members("zzzz", 0, eight, 8), real::npos);
+
+  // Degenerate arguments answer rather than read out of range.
+  EXPECT_EQ(real::detail::find_members("abc", 3, one, 1), real::npos);
+  EXPECT_EQ(real::detail::find_members("", 0, one, 1), real::npos);
+  EXPECT_EQ(real::detail::find_members("abc", 0, one, 0), real::npos);
+}
+
+TEST(regex_set_byte_filter_skips_and_agrees_with_the_n_walk)
+{
+  // Two rare-prefix literals: both are single-first-byte members, so where the filter is ARMED
+  // (`detail::have_members_scan`, NEON only -- see its note for the x86-64 measurement that disarms it)
+  // its union is {E, W} and this subject, holding neither, exercises the skip. Where it is not armed the
+  // set N-walks and the same assertions still hold: they check the ANSWER, which must not depend on
+  // whether a filter ran. Only the coverage claim is conditional, not the expectations.
+  const std::vector<std::string_view> pats {"ERROR", "WARN"};
+  const real::regex_set               set {std::span<const std::string_view> {pats}};
+  const std::string                   absent {"quiet log line with nothing of interest here at all"};
+
+  const auto oracle {[&](std::string_view text, std::size_t pos, std::size_t endpos) {
+                       std::vector<bool> want(pats.size(), false);
+                       for (std::size_t i = 0; i < pats.size(); ++i) {
+                         const real::regex re {pats[i]};
+                         want[i] = static_cast<bool>(re.search(text, pos, endpos)); // explicit: the result is not implicitly bool
+                       }
+                       return want;
+                     }};
+
+  EXPECT(!set.is_match(absent));
+  EXPECT(set.matches(absent) == oracle(absent, 0, real::npos));
+
+  // And it must not skip when the union IS present, whether or not a full match follows: `E` occurs here,
+  // so the filter admits and the walk decides.
+  const std::string near_miss {"quiet log with an E and a W, neither word spelled"};
+  EXPECT(!set.is_match(near_miss));
+  EXPECT(set.matches(near_miss) == oracle(near_miss, 0, real::npos));
+
+  const std::string hit {"line: WARN queue depth"};
+  EXPECT(set.is_match(hit));
+  EXPECT(set.matches(hit) == oracle(hit, 0, real::npos));
+
+  // Regions take the same walk (a fused set with pos/endpos falls here too), so the skip must hold there.
+  EXPECT(set.matches(hit, 0, 6U) == oracle(hit, 0, 6U));   // "line: " — WARN is past the region
+  EXPECT(set.matches(hit, 6U, real::npos) == oracle(hit, 6U, real::npos));
+  EXPECT_EQ(set.is_match(hit, 0, 6U), false);
 }

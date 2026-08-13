@@ -19,6 +19,8 @@
 #include "real/dfa.hpp"
 #include "real/real.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <initializer_list>
 #include <optional>
@@ -52,6 +54,7 @@ namespace real {
      * Heuristic — re-measure with \c benchmarks/s2a_measure.cpp when retuning.
      */
     static constexpr std::size_t fused_min_eligible {56};
+
 
     /*!
      * \brief Compiles every pattern in \p patterns (construction order = bitset order).
@@ -172,8 +175,33 @@ namespace real {
     {
       // Region or no fused path: pure N-walks (any-stop).
       if (!fused_ || pos != 0 || endpos != npos) {
-        for (const regex& re : members_) {
-          if (re.search(text, pos, endpos)) {
+        // The walk order is untouched and THE FIRST SERVED MEMBER IS SEARCHED WITHOUT CONSULTING THE
+        // FILTER, which is the whole difference from `matches` below. On a subject where that member
+        // matches, the filter CANNOT have excluded it -- a match implies one of its own leading bytes is
+        // present -- so a scan run first computes an identically-false answer and the search happens
+        // anyway. Measured, that dead scan cost the early-exit path +7 ns on 55, which is what an
+        // any-match walk over a set is fastest at. Searching first buys the witness back and costs one
+        // extra member sweep when nothing matches: 1.9x there instead of 2.6x, against a witness inside
+        // the noise.
+        bool scanned {false};
+        bool skip    {false};
+        bool probed  {false};
+        for (std::size_t i = 0; i < members_.size(); ++i) {
+          if (is_sparse(i)) {
+            if (!probed) {
+              probed = true; // this one answers for itself; the filter serves the ones after it
+            }
+            else {
+              if (!scanned) {
+                skip    = filter_excludes(text, pos, endpos);
+                scanned = true;
+              }
+              if (skip) {
+                continue; // proven: no byte this member can start with occurs in the region
+              }
+            }
+          }
+          if (members_[i].search(text, pos, endpos)) {
             return true;
           }
         }
@@ -214,7 +242,19 @@ namespace real {
       }
       // Region: DFA which_matched is whole-subject mid-stream restart — use N-walks.
       if (!fused_ || pos != 0 || endpos != npos) {
+        // One scan for every member the filter serves; see is_match for why it is on demand.
+        bool scanned {false};
+        bool skip    {false};
         for (std::size_t i = 0; i < members_.size(); ++i) {
+          if (is_sparse(i)) {
+            if (!scanned) {
+              skip    = filter_excludes(text, pos, endpos);
+              scanned = true;
+            }
+            if (skip) {
+              continue;
+            }
+          }
           if (members_[i].search(text, pos, endpos)) {
             hit[i] = true;
           }
@@ -288,6 +328,7 @@ namespace real {
       if (members_.empty()) {
         return;
       }
+      arm_byte_filter();
       // No set smaller than the threshold can ever reach it, because the eligible subset is at most
       // the whole set -- so the partition below cannot change the outcome, and every DFA it builds
       // would be discarded by the `else` branch at the end of this function. It was: a 40-pattern set
@@ -322,11 +363,136 @@ namespace real {
       }
     }
 
+    /*!
+     * \brief Widest first-byte union the byte filter carries: one 16-byte masked block's capacity.
+     *
+     * PRIVATE, unlike \ref fused_min_eligible. That one is a contract a caller can reason about -- how many
+     * eligible members it takes before a set fuses. This is the width of a scan, and nothing outside should
+     * depend on it being eight. It was public in the first cut, which put its brief on the generated
+     * reference page and broke the site build: the rationale referenced `detail::` symbols the public
+     * inventory has no anchor for.
+     */
+    static constexpr std::uint8_t filter_union_max {8};
+
+    /*!
+     * \brief Classifies members into a SPARSE partition one scan can serve, and arms the filter.
+     *
+     * ZERO WORK PER CALL is the design constraint, not an optimisation: the first attempt classified inside
+     * the walk (a binary search per member) and charged the early-hit witness +45 % -- 55 ns to 85 -- on a
+     * set where the first member matches immediately. That regression had nothing to do with the scan
+     * primitive and would have survived a faster one. Everything here happens once, in the constructor, and
+     * the walks below test one bit.
+     *
+     * THE CLASSIFICATION IS THE ENGINE'S OWN, not a re-derivation. `first_bytes_valid` plus either
+     * `single_first` or a `small_set_size` of 2..8 is exactly "this pattern has at most eight possible
+     * leading bytes, enumerated". Soundness rests on the hint builder: it walks all 256 bytes of
+     * `first_bytes` and sets `small_set` ONLY when the count lands in 2..8, so in that case the array is the
+     * COMPLETE set rather than a sample -- which is what makes skipping a member safe. Past eight, neither
+     * hint is set, so the member falls to the wide partition. A nullable pattern has `first_bytes_valid`
+     * false and is wide with no special case.
+     *
+     * THE UNION IS CAPPED IN CONSTRUCTION ORDER. Taking narrowest-first looks better and is worse: it
+     * reorders which members the filter serves for no gain, and the cap is what stops several 5-byte members
+     * from combining into a 20-byte union -- dense again, one level later, which is the very gate this
+     * mechanism replaces. Measured on the three sizing corpora: eight rare-prefix literals union to 7 bytes
+     * and all eight are served; a mixed log set unions to 124 (one `\w`-leading member alone contributes
+     * 114) so only its literals are served; six wide members union to 179 and none are.
+     */
+    void arm_byte_filter()
+    {
+      if constexpr (!detail::have_members_scan) {
+        // The scan EXISTS on x86-64 -- `find_members` is compiled under SSE2 and the tests exercise it
+        // there. What does not exist is a reason to arm on it: eight member sweeps cost 747 ns against
+        // this loop's 3949, because glibc's memchr is AVX2 and twice its width. See
+        // `detail::have_members_scan` for both measurements. The walk stays exactly as it was.
+        return;
+      }
+      else {
+        std::vector<char> uni;
+        std::vector<bool> sparse(members_.size(), false);
+        for (std::size_t i = 0; i < members_.size(); ++i) {
+          const detail::pattern_hints& h {members_[i].raw_program().hints};
+          if (!h.first_bytes_valid) {
+            continue;
+          }
+          std::vector<char> mine;
+          if (h.single_first >= 0) {
+            mine.push_back(static_cast<char>(h.single_first));
+          }
+          else if (h.small_set_size >= 2U && h.small_set_size <= filter_union_max) {
+            for (std::size_t k = 0; k < h.small_set_size; ++k) {
+              mine.push_back(h.small_set[k]);
+            }
+          }
+          else {
+            continue; // more than eight possible leading bytes, or none enumerated
+          }
+          std::vector<char> merged {uni};
+          for (const char byte : mine) {
+            if (std::find(merged.begin(), merged.end(), byte) == merged.end()) {
+              merged.push_back(byte);
+            }
+          }
+          if (merged.size() > filter_union_max) {
+            continue; // this one would not fit: it keeps being walked, the ones already in stay
+          }
+          uni       = std::move(merged);
+          sparse[i] = true;
+        }
+        std::size_t served {0};
+        for (std::size_t i = 0; i < members_.size(); ++i) {
+          served += sparse[i] ? 1U : 0U;
+        }
+        if (served < 2U) {
+          return; // one member gains nothing: its own search already prefilters on the same bytes
+        }
+        sparse_bits_.assign((members_.size() + 63U) / 64U, 0U);
+        for (std::size_t i = 0; i < members_.size(); ++i) {
+          if (sparse[i]) {
+            sparse_bits_[i / 64U] |= (std::uint64_t {1} << (i % 64U));
+          }
+        }
+        filter_count_ = static_cast<std::uint8_t>(uni.size());
+        for (std::size_t k = 0; k < uni.size(); ++k) {
+          filter_bytes_[k] = static_cast<std::uint8_t>(uni[k]);
+        }
+      }
+    }
+
+    /*!
+     * \brief One bit, no search: is member \p i served by the byte filter?
+     * \param[in] i Construction index of the member.
+     * \return Whether the filter's union covers every byte this member can start with.
+     */
+    [[nodiscard]] bool is_sparse(std::size_t i) const noexcept
+    {
+      return filter_count_ != 0U && ((sparse_bits_[i / 64U] >> (i % 64U)) & std::uint64_t {1}) != 0U;
+    }
+
+    /*!
+     * \brief True when the filter PROVES no member it serves can match in the region.
+     * \param[in] text   Subject.
+     * \param[in] pos    Start offset, as \ref regex::search takes it.
+     * \param[in] endpos Region end, as \ref regex::search takes it (truncates the view).
+     * \return Whether every served member can be skipped.
+     */
+    [[nodiscard]] bool filter_excludes(std::string_view text,
+                                       std::size_t      pos,
+                                       std::size_t      endpos) const
+    {
+      const std::size_t      end    {endpos < text.size() ? endpos : text.size()};
+      const std::string_view region {text.substr(0, end)};
+      return detail::find_members(region, pos, filter_bytes_, filter_count_) == npos;
+    }
+
     std::vector<regex>          members_;             //!< Every compiled pattern, in construction order.
     flags                       flags_ {flags::none}; //!< Flags shared by every member.
     std::optional<dfa>          fused_;               //!< Present when eligible ≥ threshold.
     std::vector<std::size_t>    eligible_orig_;       //!< fused rule k → construction index.
     std::vector<std::size_t>    ineligible_orig_;     //!< construction indices needing search.
+    std::vector<std::uint64_t>  sparse_bits_;         //!< Bit i set when the byte filter serves member i.
+    std::array<std::uint8_t, 8> filter_bytes_ {};     //!< The served members' first-byte union, in the mask load's layout.
+    std::uint8_t                filter_count_ {0};    //!< Valid entries in \ref filter_bytes_; 0 = filter off.
   };
 } // namespace real
 
