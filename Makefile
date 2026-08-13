@@ -70,7 +70,7 @@ include mk/help.mk
         example-check \
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff \
         profile-sample profile-callgrind \
-        version-check install install-smoke uninstall release help check-layers check-doc-style check-bench-stamp check-bench-ratios gate-venv \
+        version-check install install-smoke uninstall release help check-layers check-doc-style check-bench-stamp check-bench-ratios gate-venv check-sse2-floor \
         check-site-anchors
 
 .DEFAULT_GOAL := help
@@ -366,8 +366,30 @@ check-state-zeroing:
 check-no-simd: ## [gate] Headers must compile with neither __ARM_NEON nor __SSE2__ defined
 	@mkdir -p $(BUILD)
 	@printf '#include "real/real.hpp"\n#include "real/dfa.hpp"\n#include "real/regex_set.hpp"\nint main() {}\n' > $(BUILD)/no_simd_tu.cpp
-	@$(CXX) $(CXXSTD) -U__ARM_NEON -U__SSE2__ -Werror $(INCLUDES) -fsyntax-only $(BUILD)/no_simd_tu.cpp
+	@$(CXX) $(CXXSTD) -U__ARM_NEON -U__SSE2__ -U__AVX2__ -Werror $(INCLUDES) -fsyntax-only $(BUILD)/no_simd_tu.cpp
 	@echo "check-no-simd: OK — headers compile with no vector ISA macro"
+
+# THE x86-64 FLOOR, which check-no-simd above cannot stand in for. That target turns every vector ISA off
+# at once; this one keeps SSE2 ALIVE and only takes AVX2 away, which is the configuration a plain x86-64
+# build has had since forever and the one an AVX2 leg is most likely to break: an `_mm256_*` that leaks
+# into the `#elif defined(__SSE2__)` branch, or a `#if defined(__AVX2__)` someone forgot to pair. Neither
+# is visible on arm64, and neither is visible with SSE2 also disabled -- the all-off TU compiles the
+# scalar path in both cases and says nothing about the SSE2 one.
+#
+# x86-64 hosts only, by construction: `-mno-avx2` is not a flag an arm64 compiler accepts, and there is no
+# way to make an arm64 build exercise the SSE2 branch. Skips loudly elsewhere; ci.yml's preflight runs on
+# ubuntu-latest and is where this actually fires.
+check-sse2-floor: ## [gate] x86-64: headers must compile with SSE2 but NOT AVX2 (the plain-x86 floor)
+	@mkdir -p $(BUILD)
+	@printf '#include "real/real.hpp"\n#include "real/dfa.hpp"\n#include "real/regex_set.hpp"\nint main() {}\n' > $(BUILD)/sse2_floor_tu.cpp
+	@arch="$$(uname -m)"; \
+	 case "$$arch" in \
+	   x86_64|amd64) \
+	     $(CXX) $(CXXSTD) -msse2 -mno-avx2 -Werror $(INCLUDES) -fsyntax-only $(BUILD)/sse2_floor_tu.cpp \
+	     && echo "check-sse2-floor: OK — headers compile with SSE2 and no AVX2" ;; \
+	   *) echo "check-sse2-floor: SKIPPED -- $$arch is not x86-64, the SSE2 branch cannot be reached here" \
+	      | tee -a $(GATE_SKIPS) ;; \
+	 esac
 
 # Comment-FORM convention: objects take /*! ... */, attributes take a trailing //!<.
 # Reads Doxygen's own XML for member kinds (never a regex over the source) and refuses to run
@@ -547,6 +569,8 @@ full-local-gate-impl:
 	@$(MAKE) check-layers
 	@echo "── [4/24] check-no-simd (no vector ISA macro — the hole CI's 32-bit leg caught)"
 	@$(MAKE) check-no-simd
+	@echo "── [4c/24] check-sse2-floor (x86-64 with SSE2 but no AVX2; skips off x86)"
+	@$(MAKE) check-sse2-floor
 	@echo "── [4b/24] check-state-zeroing (gcc bulk-zeroes the VM state if a member array returns)"
 	@$(MAKE) check-state-zeroing
 	@echo "── [5/24] check-pins"

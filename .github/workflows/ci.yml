@@ -54,6 +54,14 @@ jobs:
           make -C real-regex version-check
           echo "── check-layers"
           make -C real-regex check-layers
+          # The x86-64 floor: SSE2 alive, AVX2 off. full-local-gate runs this too but SKIPS on the
+          # maintainer's arm64 machine by construction -- `-mno-avx2` is not an arm64 flag and no arm64
+          # build can reach the SSE2 branch at all. This runner is where it actually fires, and it is the
+          # only thing standing between an `_mm256_*` leaking into the `#elif __SSE2__` arm and a plain
+          # x86-64 build. check-no-simd cannot cover it: with every vector ISA off, both configurations
+          # compile the same scalar path.
+          echo "── check-sse2-floor (x86-64: SSE2 without AVX2)"
+          make -C real-regex check-sse2-floor
           echo "── check-pins"
           make -C real-regex check-pins SCIFORGE_TOOLS="$TOOLS"
           # Hardening #4: golden GENERATED from bindings/c/real_capi.h must match the header
