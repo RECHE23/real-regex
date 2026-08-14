@@ -12,8 +12,33 @@
 // route_probe.cpp already carries in its own header, and this file inherits it.
 //
 // ============================================================================================
-// READ THIS BEFORE READING A PERCENTAGE. TWO TRAPS, BOTH OF WHICH THIS FILE FELL INTO FIRST.
+// READ THIS FIRST. THIS PANEL CANNOT ANSWER THE QUESTION, AND THE RUN SAYS SO IN ONE LINE.
 // ============================================================================================
+//
+// `compose()` injects three things, and the byte-program expander declines all three: a lookaround, a
+// position assertion (via the anchor fragments), and a Tier-1 possessive loop. Measured on 8000 draws:
+// NOT ONE pattern in the whole general_full population is free of all three. The stratum with none of
+// them is EMPTY. So every "0 %" below is an artifact of the generator, not a verdict on the scanner --
+// it was never handed a pattern it could be asked about. Read the strata as what they are: an accounting
+// of what blocks, never a share of anything.
+//
+// TWO OF THE THREE ARE NOT ARTIFACTS THOUGH -- but they are not the same KIND of blocker, and the
+// difference decides what a DFA core could ever aim at. Both are declined at both tiers; the reasons
+// are not equivalent.
+//
+//   * A bounded lookaround is an ALGORITHMIC ceiling: no byte automaton over the main pattern carries a
+//     sub-match decision at a position. A core cannot absorb it at any encoding, so the VM keeps it.
+//   * A Tier-1 possessive loop is an ENCODING refusal, specific to this expander: its `primary_target`
+//     holds a capture-slot index rather than a branch target, and the generic pc remap would corrupt it,
+//     so `build_byte_program` declines outright. A possessive is SIMPLER than a greedy loop -- there is
+//     no backtrack to represent -- and the 250 counted here are the ones that fell to the VM, not the
+//     ones `run_possessive_*` already takes. A core could absorb them by changing the opcode, without
+//     giving up the DFA.
+//
+// So do not read "the two constructs that distinguish this engine are both unabsorbable". One is a
+// ceiling; the other is a representation this repository chose and could change.
+//
+// THE TWO TRAPS THIS FILE FELL INTO FIRST, kept because both are easy to repeat:
 //
 // 1. `byte_program::eligible` IS NOT `lazy_dfa`'s ELIGIBILITY. They are different predicates and
 //    conflating them inflates the answer by construction. `build_byte_program` says whether the pattern
@@ -98,6 +123,10 @@ int main(int argc, char** argv)
   std::size_t compiled {}, rejected {}, general {}, look_all {};
   std::size_t elig {}, elig_caps {}, tier_a {}, inelig_look {}, inelig_other {};
   std::size_t nolook {}, nolook_elig {}, nolook_elig_nocaps {}, nolook_tier_a {}, nolook_single {};
+  // The doubly-clean stratum: no lookaround AND no `assert_position`. It is the only one on which the
+  // scanning DFA's own predicate can be read, because those are the two things it declines.
+  std::size_t assert_general {}, clean {}, clean_tier_a {}, clean_elig {}, clean_single {};
+  std::size_t poss_general {}, clean_poss {}, bare {}, bare_tier_a {};
   std::vector<std::size_t> bp_code, bp_classes;
 
   for (int it = 0; it < iterations; ++it) {
@@ -107,6 +136,24 @@ int main(int argc, char** argv)
       ++compiled;
       const auto prog {re.raw_program()};
       const bool has_look {!prog.lookarounds.empty()};
+      // READ FROM THE PROGRAM, NEVER FROM THE COMPOSED TEXT. What Tier-A declines is the OPCODE, and the
+      // two do not correspond: a `\b` can be peeled away at compile time and leave none, while a `^` can
+      // survive as one. Counting `k_anchor_pre` hits would be re-reading the generator -- the exact
+      // mistake this file's header warns about, one level down. The lookaround stratum above already
+      // reads the program's own table; this does the same for position assertions.
+      const bool has_assert {std::any_of(prog.code.begin(), prog.code.end(), [](const auto& in) {
+        return in.op == real::detail::opcode::assert_position;
+      })};
+      // The THIRD blocker, and the one that is not a generator artifact: a Tier-1 possessive loop is
+      // declined by BOTH tiers, with the reason in build_byte_program -- its `primary_target` carries a
+      // capture-slot index rather than a branch target, so the generic pc remap would corrupt it. So the
+      // two constructs this engine is distinctive for -- bounded lookarounds and possessive/atomic
+      // quantifiers -- are both hard stops for any byte automaton.
+      const bool has_poss {std::any_of(prog.code.begin(), prog.code.end(), [](const auto& in) {
+        return in.op == real::detail::opcode::byte_loop_possessive
+               || in.op == real::detail::opcode::klass_loop_possessive
+               || in.op == real::detail::opcode::klass_cp_loop_possessive;
+      })};
       if (has_look) {
         ++look_all;
       }
@@ -147,6 +194,33 @@ int main(int argc, char** argv)
         ++inelig_other;
       }
 
+      if (has_assert) {
+        ++assert_general;
+      }
+      if (has_poss) {
+        ++poss_general;
+      }
+      if (!has_look && !has_assert && has_poss) {
+        ++clean_poss;
+      }
+      if (!has_look && !has_assert && !has_poss) {
+        ++bare;
+        if (a.eligible) {
+          ++bare_tier_a;
+        }
+      }
+      if (!has_look && !has_assert) {
+        ++clean;
+        if (a.eligible) {
+          ++clean_tier_a;
+        }
+        if (eligible) {
+          ++clean_elig;
+        }
+        if (single) {
+          ++clean_single;
+        }
+      }
       if (!has_look) {
         ++nolook;
         if (eligible) {
@@ -199,6 +273,27 @@ int main(int argc, char** argv)
               nolook_tier_a, pct(nolook_tier_a, nolook));
   std::printf("    single live thread                     %6zu  %5.1f %%\n", nolook_single,
               pct(nolook_single, nolook));
+  std::printf("    carrying an assert_position OPCODE     %6zu  %5.1f %%  <- what the line above still\n"
+              "                                                           mixes in\n",
+              assert_general, pct(assert_general, general));
+
+  std::printf("\n  THE DOUBLY-CLEAN STRATUM -- no lookaround, no assert_position: %zu patterns.\n", clean);
+  std::printf("  This is the only stratum on which the SCANNER's predicate can be read: those two ops are\n"
+              "  exactly what it declines, so anything still ineligible here is blocked by something else.\n");
+  std::printf("    taken by today's scanning DFA (Tier-A) %6zu  %5.1f %%\n", clean_tier_a,
+              pct(clean_tier_a, clean));
+  std::printf("    expander-representable (either tier)   %6zu  %5.1f %%\n", clean_elig,
+              pct(clean_elig, clean));
+  std::printf("    single live thread                     %6zu  %5.1f %%\n", clean_single,
+              pct(clean_single, clean));
+  std::printf("    of which carry a POSSESSIVE loop       %6zu  %5.1f %%  <- declined by BOTH tiers\n",
+              clean_poss, pct(clean_poss, clean));
+  std::printf("\n  AND WITH POSSESSIVES REMOVED TOO -- %zu patterns, nothing left that either tier declines:\n",
+              bare);
+  std::printf("    taken by today's scanning DFA (Tier-A) %6zu  %5.1f %%\n", bare_tier_a,
+              pct(bare_tier_a, bare));
+  std::printf("  (possessive loops in the whole population: %zu, %.1f %%)\n", poss_general,
+              pct(poss_general, general));
 
   if (!bp_code.empty()) {
     std::sort(bp_code.begin(), bp_code.end());
