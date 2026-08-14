@@ -77,6 +77,54 @@ namespace bench_gen {
   //! One composed pattern. Deliberately not uniformly random: alternations and concatenations are
   //! drawn often enough to reach the multi-branch and fixed-shape routes, which a flat draw over
   //! atoms would starve.
+  //! \brief A composition with the constructs the byte-program expander declines left OUT, so a census
+  //!        of DFA eligibility has a non-empty stratum to read.
+  //!
+  //! WHY A VARIANT AND NOT A CHANGE TO \ref compose. That one exists to reach ROUTES, and it reaches them
+  //! precisely because it injects anchors, lookarounds and possessive quantifiers -- route_probe.cpp went
+  //! from 6 unreached routes to 0 on the strength of exactly those fragments. Removing them there would
+  //! trade one blind spot for another.
+  //!
+  //! WHAT IT LEAVES OUT, and why each. `build_byte_program` declines a bounded lookaround (an algorithmic
+  //! ceiling: no byte automaton over the main pattern carries a sub-match decision at a position), a
+  //! position assertion at Tier-A, and a Tier-1 possessive loop (an ENCODING refusal -- `primary_target`
+  //! holds a capture-slot index there). Measured on the unmodified generator, those three cover 100 % of
+  //! the general-VM population: the stratum free of all three is EMPTY, so the census could not read the
+  //! scanner's own predicate at all. This variant drops `k_look`, both anchor lists, and the two
+  //! possessive quantifiers.
+  //!
+  //! WHAT IT KEEPS ON PURPOSE. `(?>...)` stays in the wrap list: whether an atomic group compiles to the
+  //! same declined opcode family is a question this census should ANSWER, not assume. And the seed list
+  //! is skipped entirely -- seeds carry the three constructs by design, which is what they are for.
+  std::string compose_plain(std::mt19937& rng)
+  {
+    const auto pick = [&rng](const std::vector<std::string>& v) -> const std::string& {
+                        return v[std::uniform_int_distribution<std::size_t>(0, v.size() - 1)(rng)];
+                      };
+    static const std::vector<std::string> k_quants_plain {"", "+", "*", "?", "{2,}", "{3}"};
+    const int shape {std::uniform_int_distribution<int>(0, 9)(rng)};
+    std::string body;
+    if (shape <= 4) {
+      const int n {std::uniform_int_distribution<int>(1, 3)(rng)};
+      for (int i = 0; i < n; ++i) {
+        body += wrap(pick(k_wrap), pick(k_atoms)) + pick(k_quants_plain);
+      }
+    }
+    else if (shape <= 7) {
+      const int n {std::uniform_int_distribution<int>(2, 24)(rng)};
+      for (int i = 0; i < n; ++i) {
+        if (i != 0) {
+          body += '|';
+        }
+        body += "w" + std::to_string(i) + static_cast<char>('a' + (i % 26));
+      }
+    }
+    else {
+      body = "\"" + wrap(pick(k_wrap), pick(k_atoms)) + pick(k_quants_plain) + "\"";
+    }
+    return body;
+  }
+
   std::string compose(std::mt19937& rng)
   {
     const auto pick = [&rng](const std::vector<std::string>& v) -> const std::string& {

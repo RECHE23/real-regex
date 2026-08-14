@@ -12,8 +12,29 @@
 // route_probe.cpp already carries in its own header, and this file inherits it.
 //
 // ============================================================================================
-// READ THIS FIRST. THIS PANEL CANNOT ANSWER THE QUESTION, AND THE RUN SAYS SO IN ONE LINE.
+// READ THIS FIRST. THE ANSWER INVERTS THE PREMISE, AND IT TAKES TWO PANELS TO SEE IT.
 // ============================================================================================
+//
+// The premise was that the general VM holds a broad swath of ordinary patterns the route cascade
+// misses, so one machine plus prefilters could take them. It does not. Run the same census on a
+// composition with three constructs removed -- lookaround, position assertion, possessive quantifier --
+// and the general-VM population collapses to 1 pattern in 4000. The cascade takes essentially
+// everything else: `[a-z]+[0-9]*` goes to lazy_dfa_anchored, `([a-z])+(\d){2,}` to onepass_window,
+// `\w+@\w+` to inner_literal. Verified by route, not inferred from a zero.
+//
+// So the general VM's population is not "what the routes miss". It is, to a first approximation, THE
+// THREE CONSTRUCTS THEMSELVES -- and one of them, the bounded lookaround, is exactly what distinguishes
+// this engine from RE2 and rust-regex. A DFA core would not be taking work away from twenty routes; it
+// would be competing with them for patterns they already take, while still not carrying the construct
+// that put most of this population there.
+//
+// CAVEAT, STATED SO THE NUMBER IS NOT OVERSOLD: the plain variant builds three shapes (quantified-atom
+// concatenation, literal alternation, delimited literal) and skips the seed list. "The cascade takes
+// everything" is true of that repertoire. Generalising it needs a real caller corpus, which is now the
+// next step for a good reason rather than a bad one.
+//
+// ============================================================================================
+// AND THE ROUTE-COVERAGE PANEL CANNOT ANSWER THE QUESTION AT ALL, WHICH IS WHY BOTH ARE PRINTED.
 //
 // `compose()` injects three things, and the byte-program expander declines all three: a lookaround, a
 // position assertion (via the anchor fragments), and a Tier-1 possessive loop. Measured on 8000 draws:
@@ -109,13 +130,9 @@ namespace {
 
 }  // namespace
 
-int main(int argc, char** argv)
+void census(const char* label, std::string (*make)(std::mt19937&), int iterations, std::uint32_t seed)
 {
-  const int  iterations {argc > 1 ? std::atoi(argv[1]) : 8000};
-  const auto seed {argc > 2 ? static_cast<std::uint32_t>(std::atoi(argv[2])) : 20260814U};
-
   std::mt19937 rng {seed};
-  using bench_gen::compose;
   using bench_gen::k_subjects;
 
   const std::string haystack {long_subject(k_subjects.front())};
@@ -130,7 +147,7 @@ int main(int argc, char** argv)
   std::vector<std::size_t> bp_code, bp_classes;
 
   for (int it = 0; it < iterations; ++it) {
-    const std::string pat {compose(rng)};
+    const std::string pat {make(rng)};
     try {
       const real::regex re {pat};
       ++compiled;
@@ -144,11 +161,10 @@ int main(int argc, char** argv)
       const bool has_assert {std::any_of(prog.code.begin(), prog.code.end(), [](const auto& in) {
         return in.op == real::detail::opcode::assert_position;
       })};
-      // The THIRD blocker, and the one that is not a generator artifact: a Tier-1 possessive loop is
-      // declined by BOTH tiers, with the reason in build_byte_program -- its `primary_target` carries a
-      // capture-slot index rather than a branch target, so the generic pc remap would corrupt it. So the
-      // two constructs this engine is distinctive for -- bounded lookarounds and possessive/atomic
-      // quantifiers -- are both hard stops for any byte automaton.
+      // The THIRD blocker: a Tier-1 possessive loop is declined by BOTH tiers, with the reason in
+      // build_byte_program -- its `primary_target` carries a capture-slot index rather than a branch
+      // target, so the generic pc remap would corrupt it. An encoding refusal, not a ceiling; see the
+      // header for why that distinction decides what a core could aim at.
       const bool has_poss {std::any_of(prog.code.begin(), prog.code.end(), [](const auto& in) {
         return in.op == real::detail::opcode::byte_loop_possessive
                || in.op == real::detail::opcode::klass_loop_possessive
@@ -246,6 +262,7 @@ int main(int argc, char** argv)
     return n != 0U ? 100.0 * static_cast<double>(x) / static_cast<double>(n) : 0.0;
   };
 
+  std::printf("\n================ %s ================\n", label);
   std::printf("# DFA census of general_full -- %d draws, seed %u\n\n", iterations, seed);
   std::printf("  compiled %zu   rejected %zu   general_full %zu (%.1f %%)\n", compiled, rejected, general,
               pct(general, compiled));
@@ -309,5 +326,20 @@ int main(int argc, char** argv)
   }
   std::printf("\n  A representable figure is an upper bound on a FUTURE search automaton, never a count of\n"
               "  what routes today. The Tier-A line is the one that says what routes today.\n");
+}
+
+int main(int argc, char** argv)
+{
+  const int  iterations {argc > 1 ? std::atoi(argv[1]) : 8000};
+  const auto seed {argc > 2 ? static_cast<std::uint32_t>(std::atoi(argv[2])) : 20260814U};
+
+  // BOTH PANELS, always, because either one alone misleads. The route-coverage generator is what the
+  // published "4911 of 7406" comes from and it cannot answer the DFA question -- its stratum is empty.
+  // The plain variant can answer it but reaches fewer routes. Printing one without the other is how the
+  // first four readings of this census went wrong.
+  census("ROUTE-COVERAGE GENERATOR (compose) -- cannot answer the DFA question", bench_gen::compose,
+         iterations, seed);
+  census("PLAIN VARIANT (compose_plain) -- no lookaround, no anchor, no possessive quantifier",
+         bench_gen::compose_plain, iterations, seed);
   return 0;
 }
