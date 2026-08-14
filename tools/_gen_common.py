@@ -15,6 +15,66 @@ def unidata_version():
     return unicodedata.unidata_version
 
 
+def _norm_version(v):
+    """`16.0` and `16.0.0` are the same UCD; compare on the numeric tuple, not the string."""
+    parts = [int(x) for x in str(v).split(".") if x.isdigit()]
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3])
+
+
+def cross_oracle_skew(source_version):
+    """A reason string when the interpreter's UCD differs from the tables' source version, else None.
+
+    The FIRST of the two skews a gen-time cross-oracle can face, and the only one with a version string
+    on both sides: the tables are parsed from committed UCD sources, while everything asked of
+    `unicodedata` answers for the interpreter. When those disagree, nothing built here can be checked
+    against anything read there, so the oracle skips and says which two versions it declined to mix.
+    The second skew -- the `regex` module's own property data -- has no version to read and is settled
+    by behaviour instead; see `regex_version_skew`.
+
+    Same shape as the guard bindings/python/tests/test_unicode_property_fuzz.py already applies to its
+    own oracle: an honest skip on version skew rather than a failure that would accuse the tables.
+    """
+    if _norm_version(unicodedata.unidata_version) != _norm_version(source_version):
+        return (f"interpreter unicodedata {unicodedata.unidata_version} != these tables' UCD sources "
+                f"{source_version}; the assigned-code-point filter the cross-oracle needs cannot be "
+                f"trusted across that skew")
+    return None
+
+
+def regex_version_skew(regex_module):
+    r"""A reason string when the `regex` module's property data is a different Unicode than ours.
+
+    WHY A BEHAVIOURAL PROBE AND NOT A VERSION STRING. The module ships its own property tables and
+    exposes no version for them -- `regex._regex_core.unicodedata` is just the stdlib module it
+    imports, which reports the INTERPRETER's Unicode, not the tables'. So the question is asked the
+    only way it can be answered: does the module agree with this UCD about which code points EXIST?
+    `\p{Cn}` is that question, and one disagreement settles it.
+
+    WHY THIS AND NOT A DOMAIN FILTER, which was tried first and is not enough. Skipping code points
+    unassigned here removes the obvious half -- U+1CEF0 and U+1F8D0..U+1F8D8 for `\p{Math}`, ten code
+    points UCD 16.0 does not define at all -- and it took the binary-property disagreements from 10 to
+    1 and the `scx` ones from 44 to 6. The remainder are ASSIGNED code points whose property VALUE
+    moved between versions: U+0306, U+0308, U+0320, U+0331 are combining marks whose Script_Extensions
+    set grows as new scripts are added. No domain filter can see that. When the two sides are different
+    Unicodes, a disagreement is not evidence of a bug and the oracle has nothing to say.
+
+    Exhaustive rather than sampled: it must not report "same version" on a skew it happened not to
+    sample, since that is exactly when it would turn a version difference into a false table bug.
+    """
+    unassigned = regex_module.compile(r"\p{Cn}")
+    for cp in range(0, 0x110000):
+        if 0xD800 <= cp <= 0xDFFF:
+            continue
+        ch = chr(cp)
+        if (unicodedata.category(ch) == "Cn") != bool(unassigned.match(ch)):
+            return (f"the `regex` module and UCD {unicodedata.unidata_version} disagree on whether "
+                    f"U+{cp:04X} is assigned, so its bundled property data is a different Unicode than "
+                    f"these tables; a mismatch would say nothing about this generator")
+    return None
+
+
 def file_header(*, filename, brief, generator, doc_lines, guard, includes, version_kind, version_const):
     """The GENERATED-header preamble shared by both tables, up to and including the version constant.
 

@@ -139,14 +139,22 @@ def _in_ranges(ranges, cp):
     return lo < len(ranges) and ranges[lo][0] <= cp <= ranges[lo][1]
 
 
-def _cross_check_regex(tables):
+def _cross_check_regex(tables, version):
     """Gen-time cross-oracle: every code point's parsed membership must equal the `regex` module's, per
     property, if importable. Optional -- absence does not affect the emitted bytes."""
+    skew = common.cross_oracle_skew(version)
+    if skew is not None:
+        print(f"gen_unicode_binprop_tables: cross-oracle SKIPPED -- {skew}.", file=sys.stderr)
+        return
     try:
         import regex  # noqa: PLC0415 - optional, gen-time only
     except ImportError:
         print("gen_unicode_binprop_tables: `regex` module absent, skipping the cross-oracle (parse-only).",
               file=sys.stderr)
+        return
+    skew = common.regex_version_skew(regex)
+    if skew is not None:
+        print(f"gen_unicode_binprop_tables: cross-oracle SKIPPED -- {skew}.", file=sys.stderr)
         return
     for name, ranges in tables.items():
         try:
@@ -295,7 +303,7 @@ def generate(path):
     for name, ranges in tables.items():
         _validate_structure(name, ranges)
     _check_no_collisions(tables.keys())
-    _cross_check_regex(tables)
+    _cross_check_regex(tables, version)
     _emit(tables, version, path)
 
 

@@ -136,16 +136,24 @@ def _validate_structure(name, ranges):
         prev_hi = hi
 
 
-def _cross_check_regex(scx_ranges, names):
+def _cross_check_regex(scx_ranges, names, version):
     """Gen-time cross-oracle: a sample of code points' parsed scx membership must equal the `regex`
     module's `\\p{scx=Name}`, if importable. Optional -- absence does not affect the emitted bytes. Full
     exhaustive per-script check like the sibling generators would be O(170 x 0x110000); instead every
     OVERRIDDEN code point (where a mistake would actually show up) plus a coarse per-script sample."""
+    skew = common.cross_oracle_skew(version)
+    if skew is not None:
+        print(f"gen_unicode_scx_tables: cross-oracle SKIPPED -- {skew}.", file=sys.stderr)
+        return
     try:
         import regex  # noqa: PLC0415 - optional, gen-time only
     except ImportError:
         print("gen_unicode_scx_tables: `regex` module absent, skipping the cross-oracle (parse-only).",
               file=sys.stderr)
+        return
+    skew = common.regex_version_skew(regex)
+    if skew is not None:
+        print(f"gen_unicode_scx_tables: cross-oracle SKIPPED -- {skew}.", file=sys.stderr)
         return
     mismatches = 0
     for name in names:
@@ -269,7 +277,7 @@ def generate(path):
         _validate_structure(name, ranges)
         scx_ranges[name] = ranges
 
-    _cross_check_regex(scx_ranges, names)
+    _cross_check_regex(scx_ranges, names, scripts_version)
     _emit(scx_ranges, names, scripts_version, path)
 
 
