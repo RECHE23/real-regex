@@ -98,6 +98,15 @@ bench-census: ## [bench] Shift-OR eligibility census: four bits, ns/B weighting,
 	@cd $(ROOT) && c++ $(CXXSTD) -O2 -DREAL_PROFILE $(INCLUDES) -I benchmarks -I$(SCIFORGE_INCLUDE) benchmarks/shift_or_census.cpp -o $(BUILD)/shift_or_census
 	@$(BUILD)/shift_or_census $(if $(N),$(N),11)
 
+# Counts, never times: the population that reaches the general VM, split by what would block a DFA.
+# Two traps are documented in the source and both must be read before any percentage: the expander's
+# `eligible` is NOT lazy_dfa's, and the generator injects a lookaround into 3 of 4 free compositions
+# while a lookaround forces the general VM. Informational, never a gate.
+bench-dfa-census: ## [bench] What could a DFA take of the general-VM population? (counting, not timing)
+	@mkdir -p $(BUILD)
+	@cd $(ROOT) && c++ $(CXXSTD) -O2 -DREAL_PROFILE $(INCLUDES) -I benchmarks -I$(SCIFORGE_INCLUDE) benchmarks/dfa_census.cpp -o $(BUILD)/dfa_census
+	@$(BUILD)/dfa_census $(if $(N),$(N),8000)
+
 bench-route-cliff: ## [bench] Where a pattern loses its route, and what that costs (route + ns/B + matches)
 	@mkdir -p $(BUILD)
 	@cd $(ROOT) && c++ $(CXXSTD) -O2 -DREAL_PROFILE $(INCLUDES) -I benchmarks -I$(SCIFORGE_INCLUDE) benchmarks/route_cliff.cpp -o $(BUILD)/route_cliff
