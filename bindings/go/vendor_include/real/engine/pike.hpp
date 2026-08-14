@@ -1141,13 +1141,18 @@ namespace real::detail {
      * \param[out] out_slots Capture slots, filled on a match.
      * \param[out] abandon   Set when a linearity guard trips, so the caller retries the whole search
      *                       on the core VM.
+     * \param[in]  density_gate Whether to consult the candidate-density gate. False only for the batched
+     *                       filler: that counter is read before reverse/confirm, so it cannot tell a
+     *                       candidate that fails from one that completes, and the filler's stream is the
+     *                       latter.
      * \return True on a match; false on none, and false with \p abandon set when the route gave up.
      */
     template <typename OutSlots>
     bool run_inner_literal(std::string_view text,
                            std::size_t      start,
                            OutSlots&        out_slots,
-                           bool&            abandon)
+                           bool&            abandon,
+                           bool             density_gate = true)
     {
       abandon = false;
       std::array<char, 16> lit_buf {}; // copy the literal into char storage (no pointer cast to appease both lints)
@@ -1193,18 +1198,27 @@ namespace real::detail {
           // Small-haystack guard, once per scan (sticky via il_abandoned). Applies only when a match
           // candidate exists — no-match is memmem-only and never gated. Floor is cold vs warm: cold
           // first scan uses il_min_haystack (~94 KB email, amortizes reverse-DFA *build*); warm scans
-          // (shared il_prefix_rev already in shared_dfa_slot) use il_warm_floor (~4 KB). Key is
-          // slot.il_warmed ("this regex was candidate-scanned"), not "il_prefix_rev is built" — a
-          // corpus always below the cold floor would never build the reverse and would never warm.
+          // (shared il_prefix_rev already in shared_dfa_slot) use il_warm_floor (~4 KB). WHICH
+          // floor applies keys on slot.il_warmed ("this regex was candidate-scanned"), not
+          // "il_prefix_rev is built" — a corpus always below the cold floor would never build the
+          // reverse and would never warm. Whether EITHER applies is a different question, and keys on
+          // `built_for` instead: see the note at the check itself.
           // Below the WARM floor the answer is the same whichever floor applies, so it is decided
           // BEFORE ensure_immutables rather than after. il_min_haystack clamps at 64 KB, so it is
-          // never below il_warm_floor's 4 KB: a haystack under 4 KB abandons cold or warm. Deciding
+          // never below il_warm_floor's 4 KB: while the build is unpaid, a haystack under 4 KB abandons
+          // whichever floor applies. Deciding
           // after the build meant paying for it -- and for a text-mode class that build is not small.
           // Measured on the devbox, first search on a 13-byte subject: `(\w+)X(\w+)` spent 803 us
           // constructing the UTF-8 machinery for `\w` and then abandoned this route on the very next
           // line, against 4.3 us for the identical shape over an ASCII class. The warm flag is still
           // set, since shared_dfa_for keys on the immutables ADDRESS and needs nothing built.
-          if (!inner_literal_guard_disabled() && prog_.immut != nullptr && text.size() < il_warm_floor) {
+          // Both floors lift once the build is PAID, and the predicate is `built_for`, never `il_warmed`:
+          // the branch below sets `il_warmed` on its way out, so keying the lift on it would let the
+          // second short call through and charge it the build this placement exists to avoid.
+          const bool built {prog_.immut != nullptr
+                            && prog_.immut->built_for.load(std::memory_order_acquire) == prog_.code.data()};
+          if (!inner_literal_guard_disabled() && prog_.immut != nullptr && !built
+              && text.size() < il_warm_floor) {
             shared_dfa_for(prog_.immut).il_warmed.store(true, std::memory_order_relaxed);
             abandon = true;
             return false;
@@ -1215,7 +1229,10 @@ namespace real::detail {
             const bool        warm  {slot.il_warmed.load(std::memory_order_relaxed)};
             const std::size_t floor {warm ? il_warm_floor : prog_.immut->il_min_haystack};
             slot.il_warmed.store(true, std::memory_order_relaxed); // next scan is warm even if we abandon
-            if (text.size() < floor) {
+            // THE floor decision; the check before `ensure_immutables` only avoids paying for a build
+            // this one would then discard. `built` lifts both, and is read before that call so a scan
+            // that builds here still meets the floor it met before.
+            if (!built && text.size() < floor) {
               abandon = true;
               return false;
             }
@@ -1231,7 +1248,17 @@ namespace real::detail {
             state_.il_density_origin = h;
           }
           ++state_.il_density_cands;
-          if (state_.il_density_cands == il_density_probe_candidates && prog_.slot_count <= 2) {
+          // `density_gate` is false only for the batched filler, and the reason is the corpus rather
+          // than the surface. This counter is read BEFORE reverse/confirm (see the note above), so it
+          // cannot tell a candidate that fails from one that completes -- the same single-quantity defect
+          // the Aho-Corasick gate carried until v2026.8.13 measured it and v2026.8.14 gave it
+          // `ac_candidate_completes`. `run()` counts `@`s that mostly fail and is right to yield; the
+          // filler emits matches that mostly succeed and yields on its own success. Measured, both ISAs:
+          // muting it there is 4.7x to 27.1x across every density and size in the grid, with no losing
+          // cell. `run()`'s gate is untouched at 60 -- buying its 14x at 111 candidates per 1000 bytes
+          // would cost 0.27x at 330, and that recalibration needs a second quantity, not a second number.
+          if (density_gate && state_.il_density_cands == il_density_probe_candidates
+              && prog_.slot_count <= 2) {
             const std::size_t origin {state_.il_density_origin};
             const std::size_t span   {(h >= origin) ? (h - origin + 1) : 1};
             if (static_cast<std::size_t>(state_.il_density_cands) * 1000U / span >=
@@ -5608,7 +5635,7 @@ namespace real::detail {
         std::size_t pos {start};
         while (n < cap && pos <= text.size()) {
           bool       abandon {false};
-          const bool matched {run_inner_literal(text, pos, scratch, abandon)};
+          const bool matched {run_inner_literal(text, pos, scratch, abandon, /*density_gate=*/ false)};
           if (abandon) {
             return n;        // a guard tripped; partial stays set and the caller re-enters through the gate
           }
