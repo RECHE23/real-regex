@@ -441,7 +441,11 @@ check-bench-ratios:
 gate-venv: ## [gates] Create $(GATE_VENV) with the gate's optional python tools (sphinx pins + mypy)
 	$(PYTHON) -m venv $(GATE_VENV)
 	$(GATE_VENV)/bin/pip install --quiet --upgrade pip
-	$(GATE_VENV)/bin/pip install --quiet -r $(ROOT)/docs/requirements.txt mypy regex
+	# setuptools/wheel are NOT optional extras here: the comment above offers this venv as the way to
+	# run the python suite (`PYTHON=$(GATE_VENV)/bin/python`), and that path builds the extension through
+	# setup.py. A venv created by `python -m venv` on 3.12+ ships neither, so the offer failed on
+	# `ModuleNotFoundError: No module named 'setuptools'` before reaching the cross-oracle it exists to close.
+	$(GATE_VENV)/bin/pip install --quiet -r $(ROOT)/docs/requirements.txt mypy regex setuptools wheel
 	@echo "gate-venv: ready — full-local-gate finds sphinx-build and mypy here (steps 10 and 20 stop skipping)"
 	@$(PYTHON) -c "import regex" >/dev/null 2>&1 \
 	  || echo "gate-venv: step 20's Unicode cross-oracle stays parse-only — it needs 'regex' in $(PYTHON) itself (the interpreter that imports the extension), or run 'make python-test PYTHON=$(GATE_VENV)/bin/python'"
