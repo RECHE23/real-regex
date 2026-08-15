@@ -1,6 +1,11 @@
 Python API
 ==========
 
+.. Declares the module so Sphinx's own py-modindex has a target to link to. `automodule`
+   used to create it as a side effect, and rendering the module docstring with it; this
+   directive creates the anchor and renders nothing.
+.. py:module:: real
+
 .. currentmodule:: real
 
 Synopsis
