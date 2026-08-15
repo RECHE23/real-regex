@@ -57,7 +57,7 @@ namespace real {
 
   /*!
    * \brief Which match a search returns among those starting at the leftmost position. Opt-in:
-   *        \ref match_semantics::first is what a search uses unless asked otherwise.
+   *        `first` below is what a search uses unless asked otherwise.
    */
   enum class match_semantics : std::uint8_t
   {
