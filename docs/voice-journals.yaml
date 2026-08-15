@@ -1,0 +1,9 @@
+# Files under docs/*.md / docs/*.dox that are allowed to talk like a bench
+# log. check_doc_voice_source.py still SCANS them (the counts are the work
+# list) but does not fail on them. A path without a reason here is fail-closed.
+#
+# These two are the ledger and the measurement doctrine. They stay journals
+# until a later wagon splits / trims them. design.dox is deliberately absent.
+
+docs/BENCHMARKS.md: the competitive ledger -- ns/B and stamp deltas belong here until the file is split
+docs/MEASUREMENT.md: the permit for every remaining number, plus the refutation archive
