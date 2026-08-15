@@ -135,8 +135,99 @@ namespace {
     return false;
   }
 
+  // The OTHER exponential shape, and the one the rule above cannot see: a quantified group that can
+  // match EMPTY -- `(b|)+`, `(|b)+`, `()+`, `(a?)+`. There is no quantifier inside the group, so
+  // `nested_unbounded_quantifier` returns false, yet a backtracker must still try every way to
+  // distribute iterations that consume nothing. libstdc++ does exactly that: the smoke run died on
+  // `(b|)+` over a 23-byte run of `b`, all 256 stack frames inside std::__detail::_Executor, with
+  // real linear and correct throughout. Same remedy as above: the ORACLE has no bound here.
+  //
+  // Scanned per depth, one pass. A branch "can be empty" until a MANDATORY atom is seen; `|` starts a
+  // fresh branch and remembers that the previous one could be empty. An atom is optional when `?`,
+  // `*` or `{0` follows it, so `(a?)+` is nullable and `(ab)+` is not. A nested group is an atom of
+  // its parent, mandatory only when it is itself non-nullable and unquantified.
+  bool quantified_nullable_group(std::string_view pat)
+  {
+    std::vector<bool> branch_empty {true};  // per depth: the branch so far consumes nothing
+    std::vector<bool> group_empty {false};  // per depth: some completed branch consumed nothing
+    bool              in_class {false};
+    // `i` indexes the atom just consumed; returns whether what follows makes it optional.
+    const auto optional_after {[&pat](std::size_t i) {
+                                 if (i + 1 >= pat.size()) {
+                                   return false;
+                                 }
+                                 const char q {pat[i + 1]};
+                                 return q == '?' || q == '*'
+                                        || (q == '{' && i + 2 < pat.size() && pat[i + 2] == '0');
+                               }};
+    for (std::size_t i = 0; i < pat.size(); ++i) {
+      const char c {pat[i]};
+      if (in_class) {
+        if (c == '\\') {
+          ++i;
+        }
+        else if (c == ']') {
+          in_class = false;
+          if (!optional_after(i)) {
+            branch_empty.back() = false; // the class is a mandatory atom of this branch
+          }
+        }
+        continue;
+      }
+      if (c == '\\') {
+        if (!optional_after(i + 1)) {
+          branch_empty.back() = false;
+        }
+        ++i;
+        continue;
+      }
+      if (c == '[') {
+        in_class = true;
+        continue;
+      }
+      if (c == '(') {
+        branch_empty.push_back(true);
+        group_empty.push_back(false);
+        continue;
+      }
+      if (c == '|') {
+        group_empty.back()  = group_empty.back() || branch_empty.back();
+        branch_empty.back() = true;
+        continue;
+      }
+      if (c == ')') {
+        const bool nullable {group_empty.back() || branch_empty.back()};
+        if (branch_empty.size() > 1) {
+          branch_empty.pop_back();
+          group_empty.pop_back();
+        }
+        const bool quantified {i + 1 < pat.size()
+                               && (pat[i + 1] == '*' || pat[i + 1] == '+' || pat[i + 1] == '{')};
+        if (nullable && quantified) {
+          return true; // a group that can consume nothing, repeated
+        }
+        if (!nullable && !optional_after(i)) {
+          branch_empty.back() = false; // the group is a mandatory atom of its parent branch
+        }
+        continue;
+      }
+      if (c == '{') {
+        const std::size_t close {pat.find('}', i)};
+        i = (close == std::string_view::npos) ? pat.size() : close;
+        continue; // the whole `{n,m}` is the previous atom's quantifier: its digits are not literals
+      }
+      if (c == '*' || c == '+' || c == '?' || c == '^' || c == '$') {
+        continue; // quantifiers and anchors consume nothing on their own
+      }
+      if (!optional_after(i)) {
+        branch_empty.back() = false; // an ordinary literal, mandatory unless quantified away
+      }
+    }
+    return false;
+  }
+
   // Long enough for a backtracker to go exponential, short enough that 2^n stays trivial. Only
-  // applied to the shape above, so ordinary patterns keep the full fuzzer-chosen subject.
+  // applied to the shapes above, so ordinary patterns keep the full fuzzer-chosen subject.
   constexpr std::size_t max_nested_quantifier_subject {16};
 
 } // namespace
@@ -158,8 +249,9 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   if (counted_repeat_load(pattern) > max_counted_repeat_load) {
     return 0; // ASAN-allocator load, not a new divergence class -- see counted_repeat_load's comment
   }
-  if (subject.size() > max_nested_quantifier_subject && nested_unbounded_quantifier(pattern)) {
-    return 0; // std, the oracle, has no bound for this shape -- see nested_unbounded_quantifier
+  if (subject.size() > max_nested_quantifier_subject
+      && (nested_unbounded_quantifier(pattern) || quantified_nullable_group(pattern))) {
+    return 0; // std, the oracle, has no bound for these shapes -- see the two predicates above
   }
 
   real::compat::regex compat;
