@@ -206,12 +206,20 @@ docs-site-gate: ## Sphinx -W --keep-going + linkcheck + built-HTML link check fo
 	@test -f $(BUILD)/site/html/coverage/index.html || { echo "docs-site-gate: coverage/index.html missing -- the published /coverage tree (run make coverage-html first)"; exit 1; }
 	@test ! -e $(BUILD)/site/html/api/coverage || { echo "docs-site-gate: FAIL -- api/coverage must not exist; one copy lives at /coverage"; exit 1; }
 	@test ! -d $(BUILD)/site/html/.doctrees || { echo "docs-site-gate: FAIL -- .doctrees must not ship inside html/"; exit 1; }
-	@test ! -e $(BUILD)/site/html/api/pike_8hpp_source.html || { echo "docs-site-gate: FAIL -- VERBATIM_HEADERS must stay NO (pike_8hpp_source.html is the witness)"; exit 1; }
-	@test ! -e $(BUILD)/site/html/api/regex_8hpp__incl_org.svg || { echo "docs-site-gate: FAIL -- INTERACTIVE_SVG must stay NO (regex_8hpp__incl_org.svg is the witness)"; exit 1; }
+	@if find $(BUILD)/site/html -name '*_source.html' | grep -q .; then \
+	  echo "docs-site-gate: FAIL -- *_source.html must not ship (VERBATIM_HEADERS/SOURCE_BROWSER)"; \
+	  find $(BUILD)/site/html -name '*_source.html' | sed 's/^/  /' | head; \
+	  exit 1; \
+	fi
+	@if find $(BUILD)/site/html -name '*_org.svg' | grep -q .; then \
+	  echo "docs-site-gate: FAIL -- *_org.svg must not ship (INTERACTIVE_SVG)"; \
+	  find $(BUILD)/site/html -name '*_org.svg' | sed 's/^/  /' | head; \
+	  exit 1; \
+	fi
 	@grep -q 'src="../coverage/index.html"' $(BUILD)/site/html/api/coverage.html || { echo "docs-site-gate: FAIL -- /api/coverage.html iframe was not relocated to ../coverage/"; exit 1; }
-	@if grep -R --include='*.html' -l -E '/Users/|/home/' $(BUILD)/site/html/coverage >/dev/null; then \
-	  echo "docs-site-gate: FAIL -- coverage HTML embeds machine paths"; \
-	  grep -R --include='*.html' -l -E '/Users/|/home/' $(BUILD)/site/html/coverage | sed 's/^/  /' | head; \
+	@if grep -R --include='*.html' -l -E '/Users/|/home/' $(BUILD)/site/html >/dev/null; then \
+	  echo "docs-site-gate: FAIL -- published HTML embeds machine paths"; \
+	  grep -R --include='*.html' -l -E '/Users/|/home/' $(BUILD)/site/html | sed 's/^/  /' | head; \
 	  exit 1; \
 	fi
 	@test ! -e $(BUILD)/site/html/coverage/coverage/Users || { echo "docs-site-gate: FAIL -- coverage tree still has coverage/Users"; exit 1; }
