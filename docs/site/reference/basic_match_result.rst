@@ -20,8 +20,9 @@ Complexity
 ----------
 
 Every accessor is O(1) -- the spans are computed by the match itself, the
-result only reads them. ``group_index`` resolves a name against the pattern's
-named-group table.
+result only reads them. ``group_index`` resolves a name against the
+pattern's named-group table. Group views (``m[0]``, ``m["year"]``) borrow
+the subject, which must outlive the result.
 
 Example
 -------

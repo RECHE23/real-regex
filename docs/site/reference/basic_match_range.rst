@@ -12,30 +12,35 @@ empty-match advance rules.
 Interface
 ---------
 
+The range is what ``find_iter`` returns. Constructing one from a
+``program_view`` is the engine's job; user code only iterates.
+
 .. doxygenclass:: real::basic_match_range
    :project: real
-   :members:
+   :members: begin, end
 
 .. doxygenclass:: real::basic_match_iterator
    :project: real
-   :members:
+   :members: value_type, operator*, operator->, operator++, exhausted, operator==
 
 Complexity
 ----------
 
 Lazy: each increment advances to the next match. A full traversal is one
 **guaranteed linear** scan of the text -- O(len(text)) -- and never
-backtracks (ReDoS-safe by construction).
+backtracks (ReDoS-safe by construction). Prefer ``exhausted()`` over
+comparing against a default-constructed end iterator in a hand-rolled loop.
 
 Example
 -------
 
-Compiled and run by the ``example-check`` gate on every push:
+Compiled and run by the ``example-check`` gate on every push -- empty-match
+advance and a region (``pos`` is a start offset, not a slice):
 
 .. literalinclude:: ../../../examples/cpp/reference_basic_regex.cpp
    :language: cpp
-   :start-after: // [reference]
-   :end-before: // [/reference]
+   :start-after: // [range]
+   :end-before: // [/range]
 
 See also
 --------

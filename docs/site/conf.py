@@ -105,6 +105,7 @@ nitpick_ignore = [
     # them — all engine-internal, all permanent (the exhaustive /api tree has
     # every symbol; every PUBLIC object is curated, this list masks no debt).
     ("cpp:identifier", "result_type"),
+    ("cpp:identifier", "value_type"),
     ("cpp:identifier", "npos"),
     ("cpp:identifier", "real"),
     ("cpp:identifier", "detail"),

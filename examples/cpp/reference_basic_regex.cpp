@@ -40,6 +40,26 @@ int main()
   }
   // [/match-result]
 
-  const bool ok = counter.count_matches("retries: 12, errors: 3") == 2 && m["month"] == "07"sv;
+  // [range]
+  // Empty-match rule (Python): yield the empty match, then advance one codepoint.
+  const real::regex maybe {R"(a*)"};
+  std::size_t empties = 0;
+  for (const auto& hit : maybe.find_iter("bb")) {
+    if (hit.start() == hit.end()) {
+      ++empties;
+    }
+  }
+  // "bb" has three cursor positions, including the end: [0,0) [1,1) [2,2).
+
+  // pos is a start offset, not a slice -- iteration begins at byte 4.
+  const real::regex word {R"(\w+)"};
+  constexpr auto phrase = "one two three"sv;
+  for (const auto& hit : word.find_iter(phrase, 4)) {
+    std::cout << hit[0] << "\n";  // two, then three
+  }
+  // [/range]
+
+  const bool ok = counter.count_matches("retries: 12, errors: 3") == 2 && m["month"] == "07"sv
+                  && empties == 3 && word.count_matches(phrase, 4) == 2;
   return ok ? 0 : 1;
 }

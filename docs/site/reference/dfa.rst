@@ -33,7 +33,9 @@ Complexity
 
 Matching is **guaranteed linear** -- one table transition per input byte,
 never backtracking (ReDoS-safe). The price is capture-freedom: the result
-names the winning rule and its length, nothing inside it. Numbers live in
+names the winning rule and its length, nothing inside it. Use
+:doc:`basic_regex` when you need groups, or :doc:`regex_set` when you need
+which-matched without the DFA restrictions. Numbers live in
 :doc:`Performance <../performance/index>`.
 
 Raises

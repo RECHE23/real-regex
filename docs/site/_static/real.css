@@ -544,6 +544,29 @@ html[data-theme="light"] .highlight td.linenos .normal, html[data-theme="dark"] 
   margin-bottom: 1.5rem;
 }
 
+/* ============================ Breathe / C++ domain ============================
+ * The curated /reference/ pages dump Breathe signatures. Keep them readable:
+ * wrap long templates, quiet the Doxygen [in] classifiers, and give parameter
+ * lists the same ink as the rest of the page.
+ */
+dl.cpp dt,
+dl.cpp dd,
+.sig {
+  overflow-wrap: anywhere;
+}
+.sig {
+  font-family: var(--font-mono);
+  font-size: .9em;
+}
+dl.field-list > dt {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+dl.field-list .classifier {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+
 /* ============================ bespoke landing blocks ============================
  * Scoped under .real-landing so nothing here leaks onto other pages (api/index.rst
  * etc.) that use the theme's own prose/typography untouched.

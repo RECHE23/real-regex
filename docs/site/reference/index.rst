@@ -1,15 +1,40 @@
 API reference
 =============
 
-Authoritative, curated pages for the public surface. The matter -- signatures,
-parameters, returns -- renders straight from the header comments (Breathe) and
-the binding's docstrings (autodoc), never hand-transcribed; the pages arrange
-it by task and add the guarantees and tested examples. The exhaustive Doxygen
-tree always has every symbol:
+Signatures, parameters and returns render from the header comments (Breathe)
+and the binding's docstrings (autodoc), never hand-transcribed. These pages
+arrange that matter by task and add the guarantees and tested examples. The
+exhaustive Doxygen tree has every symbol, including internals:
 
 .. raw:: html
 
    <p><a href="../api/index.html">Browse the full Doxygen reference (/api)</a>.</p>
+
+Which type
+----------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 46 24 30
+
+   * - I want to…
+     - Type
+     - Page
+   * - Compile a pattern and search
+     - ``real::regex``
+     - :doc:`basic_regex`
+   * - Put the pattern in the type (``constexpr``, no heap)
+     - ``real::static_regex``
+     - :doc:`basic_regex`
+   * - Know which of N patterns matched
+     - ``real::regex_set``
+     - :doc:`regex_set`
+   * - Tokenize: longest match wins
+     - ``real::dfa``
+     - :doc:`dfa`
+   * - Read groups and offsets
+     - ``real::match_result``
+     - :doc:`basic_match_result`
 
 Pattern syntax
 --------------
@@ -20,22 +45,12 @@ Pattern syntax
 C++ core
 --------
 
-- **Compile a pattern** -- at run time: :doc:`basic_regex <basic_regex>`
-  (``real::regex``); or in the type, at compile time: ``real::static_regex``
-  (same page -- an invalid pattern is a compile error, matching is
-  ``constexpr``-ready).
 - **Match, search, anchor** -- ``match()`` / ``fullmatch()`` / ``search()``
   on :doc:`basic_regex <basic_regex>`.
 - **Iterate every match** -- ``find_iter()``, a lazy
   :doc:`range <basic_match_range>`.
 - **Count without allocating** -- ``count_matches()``.
 - **Replace or split** -- ``replace()`` / ``split()``.
-- **Inspect a match** -- groups, spans, truthiness:
-  :doc:`basic_match_result <basic_match_result>`.
-- **Match many patterns at once** -- which-matched:
-  :doc:`regex_set <regex_set>`.
-- **Tokenize, maximal-munch** -- the lexer-grade automaton:
-  :doc:`dfa <dfa>`.
 - **Flags, the pattern literal, the exception** -- the auxiliary types:
   :doc:`Support types <support>`.
 

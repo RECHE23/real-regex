@@ -32,20 +32,19 @@ namespace real {
    * \brief The result of a match attempt: success, spans and captures.
    *
    * Group views point into the searched text, which must outlive the result —
-   * the rvalue `std::string` overloads on the regex are deleted to catch the
-   * common dangling mistake at compile time.
+   * the rvalue `std::string` overloads on the regex are deleted so the common
+   * dangling mistake is a compile error.
    *
-   * Named-group lookups need the regex's pattern text and name table. This type borrows both, which
-   * is free and correct while the regex is alive. A single attempt on a TEMPORARY regex yields
-   * \ref real::basic_regex::owning_result_type instead — the same class with an owning \p NameOwner
-   * — so that a result outliving the temporary it came from still resolves names. `find_iter` and
-   * `find_all` have no such twin: they are deleted on an rvalue regex outright.
+   * Named-group lookups need the regex's pattern text and name table. A result
+   * from a live regex borrows both. A result from a temporary regex is
+   * \ref real::basic_regex::owning_result_type — the same class, owning those
+   * tables — so names still resolve after the regex dies. `find_iter` and
+   * `find_all` have no such twin: they are deleted on an rvalue regex.
    *
    * \tparam SlotStorage The capture-slot container (vector- or static-backed),
    *         supplied by the storage policy.
-   * \tparam NameOwner   The name-resolution owner, supplied by the same policy: an empty
-   *         `detail::borrowed_names` when the regex's tables outlive every result by construction,
-   *         or an owning box when they do not.
+   * \tparam NameOwner   How name tables are held: borrowed from a live regex,
+   *         or owned after a temporary regex dies.
    */
   template <typename SlotStorage, typename NameOwner = detail::borrowed_names>
   class basic_match_result
@@ -454,10 +453,7 @@ namespace real {
    * and the text must outlive the iterator. Obtained from \ref basic_match_range.
    *
    * \tparam Storage    The regex's storage policy (selects the result/scratch types).
-   * \tparam TrailingLA When `true`, this walk is the trailing-lookahead class+ path only
-   *                    (a once-per-walk choice, like \ref cascade_). Pure walks use
-   *                    `TrailingLA = false` so their `advance` holds no lookaround code at all —
-   *                    a per-step runtime branch on the hint measurably regresses a bare `[a-z]+`.
+   * \tparam TrailingLA Engine-internal walk specialization. Callers never set this.
    */
   template <typename Storage, bool TrailingLA = false>
   class basic_match_iterator
@@ -520,28 +516,25 @@ namespace real {
     }
 
     /*!
-     * \brief Decides, once per walk, whether the batched walk is eligible and which filler serves it.
-     *
-     * OUTLINED AND COLD, and both are load-bearing rather than tidy. This is the constructor's cold
-     * half -- it runs once per walk, never per match -- but `count_matches` inlines the constructor, so
-     * as constructor-body code it was absorbed into the hot measurement loop. The consequence was
-     * measured: appending ONE route to the dispatch left every scan filler byte-identical (398 function
-     * bodies compared, five changed, none of them a scan loop) yet moved `single [a-z]` +10.7 %,
-     * `\b\w+\b` +4.0 %, `\w+` +3.7 %, `\w{2,}` +3.2 % and `fields [^,]+` +2.8 %, each above its own
-     * calibrated floor at 24 of 24 paired draws. The two functions that changed were this constructor
-     * and `count_matches` -- so the toll for touching the dispatch was paid by rows whose own code never
-     * moved. Behind a call the compiler does not inline, the eligibility logic can grow without
-     * recompiling what runs per match.
-     *
+     * \internal
+     * \brief Once per walk: which batched filler, if any, serves this scan.
      * \param[in] prog       The compiled program, for its hints.
      * \param[in] sem        The walk's match semantics.
-     * \param[in] text_bytes The subject's length. Only the lazy-DFA route needs it, and it needs it here
-     *                       rather than per refill: that route declines under
-     *                       %pike.hpp's `lazy_dfa_min_input` bytes of runway, so on a short
-     *                       subject its filler can only fail -- once per match, for nothing. That cost is
-     *                       measured: `short trim replace` **+9.7 %** [+7.4, +12.9] at 24 of 24 draws
-     *                       against a 4.5 % floor, purely from attempting a refill that could not succeed.
+     * \param[in] text_bytes Subject length; the lazy-DFA filler needs a minimum runway.
      */
+    // OUTLINED AND COLD, and both are load-bearing rather than tidy. This is the constructor's cold
+    // half -- it runs once per walk, never per match -- but `count_matches` inlines the constructor, so
+    // as constructor-body code it was absorbed into the hot measurement loop. The consequence was
+    // measured: appending ONE route to the dispatch left every scan filler byte-identical (398 function
+    // bodies compared, five changed, none of them a scan loop) yet moved `single [a-z]` +10.7 %,
+    // `\b\w+\b` +4.0 %, `\w+` +3.7 %, `\w{2,}` +3.2 % and `fields [^,]+` +2.8 %, each above its own
+    // calibrated floor at 24 of 24 paired draws. The two functions that changed were this constructor
+    // and `count_matches` -- so the toll for touching the dispatch was paid by rows whose own code never
+    // moved. Behind a call the compiler does not inline, the eligibility logic can grow without
+    // recompiling what runs per match.
+    // The lazy-DFA route declines under pike.hpp's `lazy_dfa_min_input` bytes of runway, so on a short
+    // subject its filler can only fail -- once per match, for nothing. That cost is measured:
+    // `short trim replace` +9.7 % [+7.4, +12.9] at 24 of 24 draws against a 4.5 % floor.
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((noinline, cold))
 #endif
@@ -732,15 +725,17 @@ namespace real {
     }
 
     /*!
-     * \brief Whether the walk is over, without materialising an end sentinel to compare against.
+     * \brief Whether the walk is over, without building an end sentinel to compare against.
      *
-     * `it == basic_match_iterator{}` answers the same question and reads naturally, but a
-     * default-constructed iterator carries a whole \c state_type -- 8232 bytes with heap-backed
-     * members -- so writing it in a loop condition builds and destroys one per iteration. The compat
-     * `regex_iterator` did exactly that for one round and paid 2.4x for the privilege.
+     * Prefer this in a hand-rolled loop: `it == basic_match_iterator{}` answers
+     * the same question, but a default-constructed iterator is a full walker
+     * and is expensive to materialise just to test.
      *
      * \return `true` once no further match will be produced.
      */
+    // A default-constructed iterator carries a whole state_type (heap-backed
+    // members). The compat regex_iterator compared against one per step for a
+    // round and paid 2.4x.
     [[nodiscard]] constexpr bool exhausted() const noexcept
     {
       return done_;
@@ -1066,8 +1061,12 @@ namespace real {
 
   /*!
    * \brief A range of matches, returned by `find_iter()` and usable in range-for.
+   *
+   * The regex and the text must outlive the range. Empty matches follow Python:
+   * an empty match is yielded, then the scan advances one codepoint.
+   *
    * \tparam Storage    The regex's storage policy.
-   * \tparam TrailingLA Once-per-walk trailing-lookahead path (see \ref basic_match_iterator).
+   * \tparam TrailingLA Engine-internal walk specialization. Callers never set this.
    */
   template <typename Storage, bool TrailingLA = false>
   class basic_match_range
@@ -1075,25 +1074,25 @@ namespace real {
   public:
 
     /*!
-     * \brief Binds the range to a program and text.
+     * \internal
+     * \brief Binds the range to a compiled program and a subject.
      *
-     * \p matching_only is applied to the STORED view, after the copy this constructor was going to make
-     * anyway, and that placement is the whole point of the parameter. A caller cannot mutate a view it owns
-     * and then hand it over without paying a SECOND copy of it -- and a program view is large enough that
-     * the copy is a fixed per-call cost, flat in the subject length, which is exactly the shape that hides
-     * under any throughput row (see the size ceiling on \ref real::detail::program_view). Taking the intent
-     * instead costs one copy, exactly what \ref real::basic_regex::find_iter pays.
+     * Called by \ref basic_regex::find_iter; not constructed by user code.
      *
      * \param[in] prog    The compiled program.
      * \param[in] pattern The pattern text (for named-group resolution).
      * \param[in] text    The text to iterate over (borrowed).
      * \param[in] start   Byte offset to begin iterating from (0 = the whole text).
-     * \param[in] sem     Match semantics: leftmost-first (default) or the experimental leftmost-longest.
-     * \param[in] matching_only Run the capture-free walk even on a program that has user groups, for a
-     *        caller that reads none (\ref real::basic_regex::count_matches). Ignored unless the program is
-     *        structurally eligible -- its first instruction must be the whole-match start save, which the
-     *        capture-free walk's single-scalar start rests on.
+     * \param[in] sem     Match semantics: leftmost-first (default) or leftmost-longest.
+     * \param[in] matching_only Capture-free walk for a caller that reads no groups
+     *        (\ref basic_regex::count_matches). Ignored unless the program is
+     *        structurally eligible.
      */
+    // matching_only is applied to the STORED view, after the copy this constructor
+    // was going to make anyway. Mutating a caller-owned view and handing it over
+    // would copy the view a second time -- a fixed per-call cost, flat in the
+    // subject length (see the size ceiling on detail::program_view). Taking the
+    // intent instead costs one copy, exactly what find_iter pays.
     constexpr basic_match_range(detail::program_view prog,
                                 std::string_view     pattern,
                                 std::string_view     text,
@@ -1155,30 +1154,21 @@ namespace real {
 
     using result_type = basic_match_result<typename Storage::slot_storage>; //!< This regex's match-result type.
     /*!
-     * \brief What a single attempt on a TEMPORARY regex yields: the same result, plus ownership of
-     *        the name context it would otherwise borrow from a regex that is about to die.
+     * \brief What a single attempt on a temporary regex yields.
      *
-     * A DISTINCT type, and deliberately so — but NOT for the cost first claimed here. Folding the owner
-     * into \ref result_type was recorded as a measurable regression, and that does NOT reproduce: rebuilt
-     * independently it sits at zero, witness included. The original reading was one build's code PLACEMENT,
-     * the effect docs/design.dox 10.1 now carries a discriminator for. The reasoning that dismissed it as
-     * layout noise -- "two instances of one pattern, so not noise" -- was itself wrong: two instances of
-     * one pattern share the same compiled code, so they move TOGETHER under a placement shift exactly as
-     * they would under a real cost.
+     * Same spans and groups as \ref result_type, plus ownership of the name
+     * tables the regex would otherwise lend. Bind it with `auto`. Spelling
+     * \ref result_type (or `real::match_result`) does not compile, which is
+     * the point: there is no conversion that could drop the ownership and
+     * leave dangling views.
      *
-     * What stands on its own is the API: a distinct type means no conversion exists that could
-     * quietly drop the ownership and hand back the dangling views it exists to prevent, and the
-     * borrowing path — every walk, every attempt on a live regex — keeps a trivially destructible
-     * result rather than one carrying an owning box it can never use. That is the reason to read
-     * here; the benchmark number that was once given is retracted.
-     *
-     * On the compile-time policy the two are THE SAME type: its tables are `static constexpr` and a
-     * result from a temporary `static_regex` borrows them safely, so there is nothing to own.
-     *
-     * Bind one with `auto`. Spelling \ref result_type (or `real::match_result`) for a temporary
-     * regex's result does not compile, which is the point: there is no conversion that could quietly
-     * drop the ownership and hand back the dangling views this type exists to prevent.
+     * On `static_regex` the two aliases are the same type: the tables have
+     * static storage duration, so a result from a temporary is already safe.
      */
+    // Distinct from result_type so no conversion can drop ownership. Folding
+    // the owner into result_type was recorded as a regression and did not
+    // reproduce (code placement; design.dox 10.1). The borrowing path stays
+    // trivially destructible.
     using owning_result_type = basic_match_result<typename Storage::slot_storage,
                                                   typename Storage::name_owner>;
 
@@ -1433,20 +1423,17 @@ namespace real {
     /*!
      * \brief Lazy range over all non-overlapping matches (Python `re.finditer`).
      *
-     * Only callable on an lvalue regex: calling on a temporary would dangle in a
-     * C++20 range-for (the range initializer's temporaries die before the loop
-     * body), so that misuse is a compile error (deleted rvalue overloads).
-     *
-     * \note Pure monomorphic walk (`TrailingLA = false`). The trailing-LA class+
-     *       fast path is intentionally not taken here — the range's return type is
-     *       fixed at compile time so pure `[a-z]+` codegen stays pristine. For the
-     *       LA-fast route use \ref count_matches, \ref find_all, \ref search,
-     *       \ref match, or \ref replace (once-per-walk dispatch). Correctness is
-     *       identical; only throughput differs on eligible patterns.
+     * Only callable on an lvalue regex: a C++20 range-for would dangle if the
+     * regex were a temporary (the range initializer dies before the loop body),
+     * so the rvalue overloads are deleted.
      *
      * \param[in] text The subject text (must outlive the range).
      * \return A \ref basic_match_range usable directly in a range-for.
      */
+    // The range's return type is fixed at compile time (`TrailingLA = false`) so
+    // a bare `[a-z]+` walk carries no lookaround code. Eligible trailing-LA
+    // patterns take the faster route on count_matches / find_all / search /
+    // match / replace; correctness is identical.
     [[nodiscard]] constexpr basic_match_range<Storage> find_iter(std::string_view text) const&
     {
       return {program_.view(), pattern(), text};
@@ -1524,22 +1511,19 @@ namespace real {
     /*!
      * \brief Count non-overlapping matches without allocating result objects.
      *
-     * Matching-only counter: once-per-walk dispatch (cascade_ model) — pure
-     * monomorphic walk for ordinary patterns; TrailingLA monomorphic walk when
-     * the trailing-lookaround class+ hint is set. Fair for multi-engine benches
-     * (unlike \ref find_all, which builds a vector of Match objects and can
-     * dominate high-cardinality scans). Prefer this over counting \ref find_iter
-     * when measuring trailing-LA throughput — \ref find_iter stays pure by design.
-     *
-     * Region semantics match \ref find_iter — \p endpos truncates the subject to a
-     * view; \p pos is the start offset (not a slice — \c \\A / \c ^ still see the
-     * absolute position).
+     * Prefer this over walking \ref find_iter when only the count is needed.
+     * Region semantics match \ref find_iter -- \p pos is a start offset, not a
+     * slice (`\\A` / `^` still see the absolute position).
      *
      * \param[in] text   The subject text.
      * \param[in] pos    Byte offset to begin counting from (0 = start of text).
      * \param[in] endpos Exclusive end of the region; \ref npos = end of text.
      * \return The number of non-overlapping matches in the region.
      */
+    // Matching-only walk. Once-per-walk TrailingLA dispatch when the hint is
+    // set; find_iter stays TrailingLA=false so a bare [a-z]+ does not carry
+    // that code. find_all builds a vector of results and can dominate a
+    // high-cardinality scan.
     [[nodiscard]] constexpr std::size_t count_matches(std::string_view text,
                                                       std::size_t      pos    = 0,
                                                       std::size_t      endpos = npos) const
@@ -1559,12 +1543,11 @@ namespace real {
     }
 
     /*!
-     * \brief All matches, eagerly (like Python `re.findall` but full results).
+     * \brief All matches, eagerly (like Python `re.findall`, but full results).
      *
-     * Lvalue-only for the same reason as \ref find_iter (results reference this
-     * regex's name table). Once-per-walk TrailingLA dispatch when eligible (same
-     * route as \ref count_matches); vector construction cost is on top of the
-     * scan — high match counts can dominate ns/B.
+     * Lvalue-only, same reason as \ref find_iter. High match counts allocate
+     * one result per hit; prefer \ref count_matches when only the number
+     * matters, and \ref find_iter when you can stream.
      *
      * \param[in] text The subject text (must outlive the results).
      * \return A vector of match results.

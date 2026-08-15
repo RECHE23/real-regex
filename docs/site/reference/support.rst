@@ -11,6 +11,12 @@ returns), ``fixed_string`` (the compile-time pattern literal behind
 ``error_kind`` (the exception every rejection raises -- never a silent
 divergence). Data types: no runtime cost of their own.
 
+The everyday flags are ``icase``, ``multiline``, ``dotall``, ``ascii`` and
+``verbose`` -- the same letters as ``(?imsxa)`` in the pattern. ``bytes``,
+``ecma``, ``dollar_endonly``, ``allow_raw_byte`` and ``ungreedy`` exist for
+drop-in parity with another surface; you rarely set them on
+``real::regex`` directly.
+
 Interface
 ---------
 

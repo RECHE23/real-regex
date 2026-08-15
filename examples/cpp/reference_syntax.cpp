@@ -15,9 +15,14 @@ int main()
   // A possessive quantifier never gives back -- and stays linear.
   const real::regex quoted {R"("[^"]*+")"};
   std::cout << quoted.search(R"(say "hi" now)")[0] << "\n";  // "hi"
+
+  // Named groups and Unicode properties are native.
+  const real::regex ident {R"((?P<name>\p{L}+))"};
+  std::cout << ident.search("café")["name"] << "\n";  // café
   // [/reference]
 
   const bool ok = price.search("cost: $42 total")[0] == std::string_view {"42"} &&
-                  quoted.search(R"(say "hi" now)")[0] == std::string_view {"\"hi\""};
+                  quoted.search(R"(say "hi" now)")[0] == std::string_view {"\"hi\""} &&
+                  ident.search("café")["name"] == std::string_view {"café"};
   return ok ? 0 : 1;
 }

@@ -22,28 +22,29 @@
 #include "real/storage.hpp"
 #include "real/unicode/utf8.hpp"
 
-//! \brief REAL's public API: \ref real::regex, \ref real::static_regex, \ref real::flags and the
-//!        match/iterator types built on them.
+/*!
+ * \brief REAL's public API: \ref real::regex, \ref real::static_regex, \ref real::flags and the
+ *        match/iterator types built on them.
+ */
 namespace real {
 
   /*!
    * \brief The result of a match attempt: success, spans and captures.
    *
    * Group views point into the searched text, which must outlive the result —
-   * the rvalue `std::string` overloads on the regex are deleted to catch the
-   * common dangling mistake at compile time.
+   * the rvalue `std::string` overloads on the regex are deleted so the common
+   * dangling mistake is a compile error.
    *
-   * Named-group lookups need the regex's pattern text and name table. This type borrows both, which
-   * is free and correct while the regex is alive. A single attempt on a TEMPORARY regex yields
-   * \ref real::basic_regex::owning_result_type instead — the same class with an owning \p NameOwner
-   * — so that a result outliving the temporary it came from still resolves names. `find_iter` and
-   * `find_all` have no such twin: they are deleted on an rvalue regex outright.
+   * Named-group lookups need the regex's pattern text and name table. A result
+   * from a live regex borrows both. A result from a temporary regex is
+   * \ref real::basic_regex::owning_result_type — the same class, owning those
+   * tables — so names still resolve after the regex dies. `find_iter` and
+   * `find_all` have no such twin: they are deleted on an rvalue regex.
    *
    * \tparam SlotStorage The capture-slot container (vector- or static-backed),
    *         supplied by the storage policy.
-   * \tparam NameOwner   The name-resolution owner, supplied by the same policy: an empty
-   *         `detail::borrowed_names` when the regex's tables outlive every result by construction,
-   *         or an owning box when they do not.
+   * \tparam NameOwner   How name tables are held: borrowed from a live regex,
+   *         or owned after a temporary regex dies.
    */
   template <typename SlotStorage, typename NameOwner = detail::borrowed_names>
   class basic_match_result
@@ -65,9 +66,9 @@ namespace real {
      */
     // \p slots is an RVALUE REFERENCE, not a by-value parameter, and the difference is measured. By
     // value, the single caller's `std::move` constructs the parameter (one move) and the member is then
-    // move-constructed from it (a second): on x86-64 under gcc those two lower to two `rep movsq`, 12.15 %
-    // and 10.20 % of the inlined per-call path, for a groupless pattern where each carries sixteen bytes.
-    // `rep movs` pays a fixed startup whatever the volume. The reference removes one of the two outright.
+    // move-constructed from it (a second). Those two lower to a pair of block moves, each paying a fixed
+    // startup whatever the volume -- and for a groupless pattern the volume is a couple of words, so the
+    // startup IS the cost. The reference removes one of the two outright.
     // The only caller is \ref basic_regex::run, which always passes a local it is done with.
     constexpr basic_match_result(std::string_view                     text,
                                  SlotStorage                       && slots,
@@ -188,7 +189,7 @@ namespace real {
      * reused one). A user-held copy of a previous match stays independent: copying a result deep-copies
      * its slots, so refilling this one never disturbs it.
      *
-     * \tparam Cascade Select the OPT-C memchr-cascade class-run variant (chosen once per walk).
+     * \tparam Cascade Select the memchr-cascade class-run variant (chosen once per walk).
      * \tparam Vm      The Pike VM type (kept a template to avoid a header cycle).
      * \param[in] vm      The VM to run.
      * \param[in] text    The searched text (borrowed).
@@ -274,7 +275,7 @@ namespace real {
     }
 
     /*!
-     * \brief P3c cold path for TrailingLA walks only (never referenced from pure walks).
+     * \brief Cold path for TrailingLA walks only (never referenced from pure walks).
      * \tparam Cascade Whether the VM may take its memchr-cascade tail.
      * \tparam Vm      The engine type, deduced.
      * \param[in,out] vm   The engine to run.
@@ -452,10 +453,7 @@ namespace real {
    * and the text must outlive the iterator. Obtained from \ref basic_match_range.
    *
    * \tparam Storage    The regex's storage policy (selects the result/scratch types).
-   * \tparam TrailingLA When `true`, this walk is the P3c trailing-LA class+ path only
-   *                    (once-per-walk choice, like \ref cascade_). Pure walks use
-   *                    `TrailingLA = false` so their `advance` has zero LA code — a per-step
-   *                    runtime branch on trailing_lookaround regressed pure `[a-z]+` ~16 % on x86.
+   * \tparam TrailingLA Engine-internal walk specialization. Callers never set this.
    */
   template <typename Storage, bool TrailingLA = false>
   class basic_match_iterator
@@ -518,28 +516,25 @@ namespace real {
     }
 
     /*!
-     * \brief Decides, once per walk, whether the batched walk is eligible and which filler serves it.
-     *
-     * OUTLINED AND COLD, and both are load-bearing rather than tidy. This is the constructor's cold
-     * half -- it runs once per walk, never per match -- but `count_matches` inlines the constructor, so
-     * as constructor-body code it was absorbed into the hot measurement loop. The consequence was
-     * measured: appending ONE route to the dispatch left every scan filler byte-identical (398 function
-     * bodies compared, five changed, none of them a scan loop) yet moved `single [a-z]` +10.7 %,
-     * `\b\w+\b` +4.0 %, `\w+` +3.7 %, `\w{2,}` +3.2 % and `fields [^,]+` +2.8 %, each above its own
-     * calibrated floor at 24 of 24 paired draws. The two functions that changed were this constructor
-     * and `count_matches` -- so the toll for touching the dispatch was paid by rows whose own code never
-     * moved. Behind a call the compiler does not inline, the eligibility logic can grow without
-     * recompiling what runs per match.
-     *
+     * \internal
+     * \brief Once per walk: which batched filler, if any, serves this scan.
      * \param[in] prog       The compiled program, for its hints.
      * \param[in] sem        The walk's match semantics.
-     * \param[in] text_bytes The subject's length. Only the lazy-DFA route needs it, and it needs it here
-     *                       rather than per refill: that route declines under
-     *                       %pike.hpp's `lazy_dfa_min_input` bytes of runway, so on a short
-     *                       subject its filler can only fail -- once per match, for nothing. That cost is
-     *                       measured: `short trim replace` **+9.7 %** [+7.4, +12.9] at 24 of 24 draws
-     *                       against a 4.5 % floor, purely from attempting a refill that could not succeed.
+     * \param[in] text_bytes Subject length; the lazy-DFA filler needs a minimum runway.
      */
+    // OUTLINED AND COLD, and both are load-bearing rather than tidy. This is the constructor's cold
+    // half -- it runs once per walk, never per match -- but `count_matches` inlines the constructor, so
+    // as constructor-body code it was absorbed into the hot measurement loop. The consequence was
+    // measured: appending ONE route to the dispatch left every scan filler byte-identical (398 function
+    // bodies compared, five changed, none of them a scan loop) yet moved `single [a-z]` +10.7 %,
+    // `\b\w+\b` +4.0 %, `\w+` +3.7 %, `\w{2,}` +3.2 % and `fields [^,]+` +2.8 %, each above its own
+    // calibrated floor at 24 of 24 paired draws. The two functions that changed were this constructor
+    // and `count_matches` -- so the toll for touching the dispatch was paid by rows whose own code never
+    // moved. Behind a call the compiler does not inline, the eligibility logic can grow without
+    // recompiling what runs per match.
+    // The lazy-DFA route declines under pike.hpp's `lazy_dfa_min_input` bytes of runway, so on a short
+    // subject its filler can only fail -- once per match, for nothing. That cost is measured:
+    // `short trim replace` +9.7 % [+7.4, +12.9] at 24 of 24 draws against a 4.5 % floor.
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((noinline, cold))
 #endif
@@ -572,23 +567,21 @@ namespace real {
                   && !detail::class_fastpath_disabled()
                   && !prog.hints.anchored_start && !prog.hints.line_anchored;
       // A KEPT `\b`/`\B` wrap is handled by the BYTE class filler and by nothing else, so the other
-      // routes still require its absence. `\b[a-z]+\b` was 4.485 ns/B against `[a-z]+`'s 1.169 for
-      // an assertion a word-SUBSET class genuinely needs: a maximal `[a-z]+` run can start after `_`
-      // or a digit, so unlike `\b\w+\b`'s this one is not redundant, cannot be dropped at
-      // recognition time, and has to be evaluated on every span.
+      // routes still require its absence. The assertion is one a word-SUBSET class genuinely needs: a
+      // maximal `[a-z]+` run can start after `_` or a digit, so unlike `\b\w+\b`'s this one is not
+      // redundant, cannot be dropped at recognition time, and has to be evaluated on every span.
       const bool no_wrap {prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0};
       wb_kept_ = !no_wrap;
-      // A DROPPED leading `\b` (\ref real::detail::pattern_hints::wb_lead_maximal_run) no longer
-      // disqualifies the two class-run routes: their fillers now carry the same one-position
-      // window-edge guard the general route does. It cost `\b\w+\b` 18.81 ns per match against
-      // `\w+`'s 6.80 on the same corpus with the same match count -- 2.8x for an assertion the
-      // recognizer had already proved redundant everywhere except at a caller-supplied `pos`.
-      // The other two routes have not been taught the guard and still decline.
+      // A DROPPED leading `\b` (\ref real::detail::pattern_hints::wb_lead_maximal_run) does not
+      // disqualify the two class-run routes: their fillers carry the same one-position window-edge
+      // guard the general route does. Without it, a pattern the recognizer had already proved the
+      // assertion redundant for -- everywhere except at a caller-supplied `pos` -- lost its route
+      // entirely. The other two routes have not been taught the guard and still decline.
       // Each route then adds only its OWN selector, which is what the four lines below now read as.
       wb_edge_         = prog.hints.wb_lead_maximal_run;
-      // A `{k,}` minimum no longer disqualifies either class-run route: the fillers now apply the
-      // same "a too-short maximal run cannot satisfy X{k,}, skip it" rule the general route does.
-      // It cost `[a-z]{2,}` 2.338 ns/B against `[a-z]+`'s 1.148 -- 2.0x for a length comparison.
+      // A `{k,}` minimum does not disqualify either class-run route: the fillers apply the same "a
+      // too-short maximal run cannot satisfy X{k,}, skip it" rule the general route does. Declining
+      // instead costs the pattern its route -- for a length comparison.
       batch_bytes_     = batchable && prog.hints.greedy_class_loop >= 0
                          && prog.hints.greedy_class_loop_end == 0;
       batch_cp_ascii_  = batchable && no_wrap && !prog.hints.wb_lead_maximal_run
@@ -610,8 +603,8 @@ namespace real {
 
       // The fixed ALTERNATION, small-set shape only (2..8 distinct branch first bytes -- what the
       // filler's mask scan needs; outside that range run_alternation takes a different scan and this
-      // route declines rather than growing a second body there). It was **99 % per-match return**:
-      // 19.13 ns per match against 5 776 ns to scan 200 KB, fitted across five densities.
+      // route declines rather than growing a second body there). Its cost is almost entirely per MATCH
+      // rather than per byte, which is what makes batching it worth a route at all.
       // fixed_alternation already excludes captures and asserts by construction, so slot_count is 2.
       // Branch count BELOW the Aho-Corasick floor, and that bound is the load-bearing one. The AC
       // gate is consulted inside `run()`, which a batched walk bypasses entirely, so batching a
@@ -678,8 +671,8 @@ namespace real {
       batch_exact_lit_ = batchable && no_wrap && !prog.hints.wb_lead_maximal_run
                          && prog.slot_count == 2
                          && detail::pike_vm<typename Storage::state_type, true>::exact_literal_is_the_route(prog.hints);
-      // The INNER-LITERAL route, seventh. Same signature as the two above it -- one engine entry per match
-      // (1.001), a per-match constant of 34-44 ns flat across three densities -- and the same arming
+      // The INNER-LITERAL route, seventh. Same signature as the two above it -- one engine entry per
+      // match, a per-match constant flat across densities -- and the same arming
       // discipline: %pike.hpp's `inner_literal_is_the_route` states one clause per route above it in the
       // cascade. `slot_count == 2` is what lets the filler use a two-slot sink and reuse the route function
       // verbatim; a nullable pattern is excluded because the batched span path applies no empty-match rule,
@@ -732,15 +725,17 @@ namespace real {
     }
 
     /*!
-     * \brief Whether the walk is over, without materialising an end sentinel to compare against.
+     * \brief Whether the walk is over, without building an end sentinel to compare against.
      *
-     * `it == basic_match_iterator{}` answers the same question and reads naturally, but a
-     * default-constructed iterator carries a whole \c state_type -- 8232 bytes with heap-backed
-     * members -- so writing it in a loop condition builds and destroys one per iteration. The compat
-     * `regex_iterator` did exactly that for one round and paid 2.4x for the privilege.
+     * Prefer this in a hand-rolled loop: `it == basic_match_iterator{}` answers
+     * the same question, but a default-constructed iterator is a full walker
+     * and is expensive to materialise just to test.
      *
      * \return `true` once no further match will be produced.
      */
+    // A default-constructed iterator carries a whole state_type (heap-backed
+    // members). The compat regex_iterator compared against one per step for a
+    // round and paid 2.4x.
     [[nodiscard]] constexpr bool exhausted() const noexcept
     {
       return done_;
@@ -764,17 +759,17 @@ namespace real {
     std::size_t                  pos_                {};                       //!< Current scan offset.
     std::size_t                  forbid_empty_until_ {};                       //!< Empty-match guard (see pike.hpp).
     bool                         done_               {true};                   //!< True once exhausted.
-    bool                         cascade_            {};                       //!< OPT-C: chosen once — run the memchr-cascade class-run variant for this whole walk.
+    bool                         cascade_            {};                       //!< Chosen once — run the memchr-cascade class-run variant for this whole walk.
     match_semantics              sem_                {match_semantics::first}; //!< leftmost-first (default) or longest (find_iter_longest).
     value_type                   current_;                                     //!< The current match.
     typename Storage::state_type state_;                                       //!< VM scratch, reused across the walk.
 
     //! \brief Buffered spans for the code-point-class route — see \ref batch_eligible_.
     //!
-    //! **4, and the value was tuned rather than picked.** 16 captured the same Unicode gain but charged
-    //! §A rows that never touch the batch (gcc/x86-64: +16.8 %); 4 took that to +10.2 % with the gain
-    //! intact, which points at the ITERATOR's own size, not the refill's. Outlining the refill behind
-    //! `noinline` changed nothing (+16.8 % vs +17.0 %), which is what ruled out \ref advance's size.
+    //! **Tuned, not picked.** A wider buffer captures the same Unicode gain but charges the rows that
+    //! never touch the batch at all, and outlining the refill does not recover that -- which is what
+    //! rules out \ref advance's own size as the cause and points at the ITERATOR's, this array being
+    //! part of every walk's state whether or not the walk batches.
     static constexpr std::size_t                                          batch_cap         {4};
     typename detail::pike_vm<typename Storage::state_type, true>::cp_span batch_[batch_cap] {}; //!< The buffered spans; indices \ref batch_i_ .. \ref batch_n_ are the unread ones.
     std::size_t                                                           batch_n_          {}; //!< Spans currently buffered.
@@ -789,23 +784,20 @@ namespace real {
      * `count_matches` and `find_all` branch internally onto
      * `basic_match_range<Storage, TrailingLA = true>`. `find_iter` could NOT — its return type names the
      * specialization, so a runtime hint cannot pick one — and it fell to the general Pike VM instead.
-     * Measured on an 88 KB prose corpus, `[a-z]+(?=[a-z])`: `count_matches` 4.41 ns/B against
-     * `find_iter` **53.84**, a **12.2x** gap for the same pattern and the same 18 000 matches, where every
-     * pattern WITHOUT a trailing lookaround has the two surfaces within 1 % of each other (`[a-z]+`
-     * 1.189/1.189, `\w+` 1.407/1.448, `dog` 0.368/0.367 — so result construction costs nothing and the
-     * whole gap was the missed route). With this flag `find_iter` reads 4.51 and the surfaces meet again.
+     * The gap that opened was an order of magnitude, for the same pattern and the same match count, where
+     * every pattern WITHOUT a trailing lookaround has the two surfaces within noise of each other -- so
+     * result construction costs nothing and the whole gap was the missed route. With this flag the two
+     * surfaces meet again.
      *
-     * It also says why the defect survived: `benchmarks/bench_minimal.cpp` measures `count_matches` for
-     * every row, so §A's `lookahead` figure described the fast path while the iterator API ran 12x slower
-     * and no table showed it. That instrument now carries a `find_iter` row for exactly this reason.
+     * It also says why the defect survived: the benchmark measured `count_matches` for every row, so the
+     * published figure described the fast path while the iterator API ran an order of magnitude slower and
+     * no table showed it. That instrument now carries a `find_iter` row for exactly this reason.
      *
      * **WHAT IT COSTS, AND TWO ATTEMPTS TO REMOVE THAT COST THAT FAILED.** The test this flag adds sits in
-     * `advance`'s general path, so the routes that are NOT batched pay it once per match. Judged on the
-     * 19-row consumer instrument against calibrated floors, 24 paired draws: `lookahead find_iter`
-     * **−93.1 %** [−93.2, −92.8] and `unicode .` −7.8 %, both REAL — against **`literal charlie` +17.2 %**
-     * [+7.6, +24.8], also REAL, with `date` +14.1 % indistinguishable. `literal charlie` is `exact_literal`,
-     * which is unbatched and whose matches are short and frequent, so it is the row most exposed to a
-     * per-match test; the arithmetic fits (~23 ns per match, +4 ns measured).
+     * `advance`'s general path, so the routes that are NOT batched pay it once per match. The trade is
+     * lopsided but not free: the target row gains almost all of its time back, while the row most exposed
+     * to a per-match test loses measurably -- `exact_literal`, unbatched, whose matches are short and
+     * frequent, so a per-match constant lands on it hardest.
      *
      * Two ways out were tried and both made it WORSE, established by disassembly before any campaign:
      * folding this flag and `batch_eligible_` into one dense `enum` field -- they are mutually exclusive,
@@ -820,15 +812,14 @@ namespace real {
     bool                                                                  batch_bytes_      {}; //!< Batch the BYTE-class route rather than the code-point one.
     //! \brief Batch the `.`/negated-class route (\ref real::detail::pike_vm::fill_codepoint_class_spans).
     //!
-    //! It was the one class scan with no filler, so it paid a full route entry per match where the
-    //! other two pay one per \ref batch_cap. Measured on their own fast paths: `[a-z]+` 5.55 ns per
-    //! match against `[^,]+` 19.45.
+    //! It was the one class scan with no filler, so it paid a full route entry per match where the other
+    //! two pay one per \ref batch_cap -- several times the per-match cost of its own batched neighbours.
     bool                                                                  batch_cp_ascii_   {};
     //! \brief Batch the bare single byte-class route (\ref real::detail::pike_vm::fill_single_class_spans).
     //!
-    //! `[a-z]` crossed one full route entry per accepted byte — 7.882 ns/B, slower than `.` — because
-    //! \ref real::detail::pattern_hints::greedy_class_loop describes `class+` only and carries no
-    //! "single" flag to batch on.
+    //! An unquantified `[a-z]` crossed one full route entry per accepted BYTE — slower per byte than
+    //! `.`, which matches at every position — because \ref real::detail::pattern_hints::greedy_class_loop
+    //! describes `class+` only and carries no "single" flag to batch on.
     bool                                                                  batch_single_cl_  {};
     //! \brief The walk's pattern carries a DROPPED leading `\b` (\ref
     //!        real::detail::pattern_hints::wb_lead_maximal_run), so its filler needs the
@@ -860,9 +851,9 @@ namespace real {
      *
      * Outlined, and the attribute is load-bearing for the same reason \ref advance is NOT
      * force-inlined: this iterator's translation unit sits on gcc's per-unit inline budget
-     * (docs/design.dox §10.1). Inline, this refill grew `advance` enough to cost §A rows that never
-     * touch the batch at all -- `digits` +17.0 %, `words` +15.4 %, `date` +10.8 % on gcc/x86-64.
-     * Outlined, `advance`'s hot path is a compare, an index and a span copy, and it runs once per
+     * (docs/design.dox §10.1). Inline, this refill grows `advance` enough to charge rows that never touch
+     * the batch at all. Outlined, `advance`'s hot path is a compare, an index and a span copy, and it runs
+     * once per
      * \ref batch_cap matches instead of once per match.
      *
      * Each branch bills its route to \ref real::detail::prof::tick_route, which the unbatched routes in
@@ -967,25 +958,22 @@ namespace real {
      * \brief Finds the next match, applying the empty-match advance rules.
      *
      * \c TrailingLA is fixed for the whole walk (constructor / range). Pure walks
-     * (`TrailingLA = false`) contain zero trailing-LA symbols — required for x86
-     * class-loop codegen (see pattern_hints::trailing_lookaround).
+     * (`TrailingLA = false`) contain no trailing-lookahead symbols at all — what the class-loop codegen
+     * needs (see pattern_hints::trailing_lookaround).
      *
-     * \note **Not force-inlined, and that was measured rather than assumed.** Callgrind on a
-     *       steady-state `\w+` scan over 64 KB of prose puts this function at 25.2 % of the workload
-     *       -- 549 810 calls, 49 instructions each against 190 for the scan itself -- and roughly half
-     *       of its own cost is prologue and epilogue, 23 instructions of stack frame per match. The
-     *       obvious fix is `always_inline`.
+     * \note **Not force-inlined, and that was measured rather than assumed.** This function is a large
+     *       share of a steady-state class scan, and about half of its own cost is prologue and epilogue --
+     *       a stack frame per match, against a body of a few dozen instructions. The obvious fix is
+     *       `always_inline`.
      *
-     *       It is a regression. On arm64 it reads -11.3 % on the target (3.467 -> 3.076 ns/B) with
-     *       gauges inside the +-3 % layout floor, which looks like a win. On x86-64 under g++ 13.3,
-     *       three identical rounds: the TARGET itself +9.4 % (4.661 -> 5.098), `[a-z]+` **+27 %**
-     *       (2.297 -> 2.923), `the|fox|dog` +12 %, `\d+` +5.8 %. Inlining this into its callers
-     *       bloats the translation unit past `--param inline-unit-growth` and the compiler starts
-     *       declining inlines that mattered more -- the cliff documented in docs/design.dox 10.1,
-     *       reproduced here in one experiment.
+     *       It is a regression. One ISA reads it as a win with its gauges inside the layout floor; the
+     *       other regresses the TARGET itself, and regresses unrelated class rows further still. Inlining
+     *       this into its callers bloats the translation unit past `--param inline-unit-growth`, and the
+     *       compiler then starts declining inlines that mattered more -- the cliff documented in
+     *       docs/design.dox 10.1, reproduced here in one experiment.
      *
-     *       So the 23 instructions per match are real and stay. Removing them needs the frame to
-     *       shrink, not the call to disappear.
+     *       So the per-match frame is real and stays. Removing it needs the frame to shrink, not the call
+     *       to disappear.
      */
     constexpr void advance()
     {
@@ -1043,7 +1031,7 @@ namespace real {
                       : current_.template engine_refill_trailing_la<false>(vm, text_, pos_);
       }
       else {
-        // Pure walk — pre-P3c shape. Cascade chosen once; both arms are the same hot family.
+        // Pure walk. Cascade chosen once; both arms are the same hot family.
         ok = cascade_ ? current_.template engine_refill_hot<true>(vm, text_, pos_, detail::run_mode::search,
                                                                   forbid_empty_until_, sem_)
                       : current_.template engine_refill_hot<false>(vm, text_, pos_, detail::run_mode::search,
@@ -1073,8 +1061,12 @@ namespace real {
 
   /*!
    * \brief A range of matches, returned by `find_iter()` and usable in range-for.
+   *
+   * The regex and the text must outlive the range. Empty matches follow Python:
+   * an empty match is yielded, then the scan advances one codepoint.
+   *
    * \tparam Storage    The regex's storage policy.
-   * \tparam TrailingLA Once-per-walk P3c path (see \ref basic_match_iterator).
+   * \tparam TrailingLA Engine-internal walk specialization. Callers never set this.
    */
   template <typename Storage, bool TrailingLA = false>
   class basic_match_range
@@ -1082,25 +1074,25 @@ namespace real {
   public:
 
     /*!
-     * \brief Binds the range to a program and text.
+     * \internal
+     * \brief Binds the range to a compiled program and a subject.
      *
-     * \p matching_only is applied to the STORED view, after the copy this constructor was going to make
-     * anyway, and that placement is the whole point of the parameter. A caller cannot mutate a view it owns
-     * and then hand it over without paying a second copy of it -- the view is 440 bytes, and on x86-64/gcc
-     * that copy measured a FIXED +12 to +13 ns per \ref real::basic_regex::count_matches call, flat across
-     * 3-, 8- and 24-byte subjects, 6 of 6 paired draws agreeing with non-overlapping ranges. Taking the
-     * intent instead costs one copy, exactly what \ref real::basic_regex::find_iter pays.
+     * Called by \ref basic_regex::find_iter; not constructed by user code.
      *
      * \param[in] prog    The compiled program.
      * \param[in] pattern The pattern text (for named-group resolution).
      * \param[in] text    The text to iterate over (borrowed).
      * \param[in] start   Byte offset to begin iterating from (0 = the whole text).
-     * \param[in] sem     Match semantics: leftmost-first (default) or the experimental leftmost-longest.
-     * \param[in] matching_only Run the capture-free walk even on a program that has user groups, for a
-     *        caller that reads none (\ref real::basic_regex::count_matches). Ignored unless the program is
-     *        structurally eligible -- its first instruction must be the whole-match start save, which the
-     *        capture-free walk's single-scalar start rests on.
+     * \param[in] sem     Match semantics: leftmost-first (default) or leftmost-longest.
+     * \param[in] matching_only Capture-free walk for a caller that reads no groups
+     *        (\ref basic_regex::count_matches). Ignored unless the program is
+     *        structurally eligible.
      */
+    // matching_only is applied to the STORED view, after the copy this constructor
+    // was going to make anyway. Mutating a caller-owned view and handing it over
+    // would copy the view a second time -- a fixed per-call cost, flat in the
+    // subject length (see the size ceiling on detail::program_view). Taking the
+    // intent instead costs one copy, exactly what find_iter pays.
     constexpr basic_match_range(detail::program_view prog,
                                 std::string_view     pattern,
                                 std::string_view     text,
@@ -1162,31 +1154,21 @@ namespace real {
 
     using result_type = basic_match_result<typename Storage::slot_storage>; //!< This regex's match-result type.
     /*!
-     * \brief What a single attempt on a TEMPORARY regex yields: the same result, plus ownership of
-     *        the name context it would otherwise borrow from a regex that is about to die.
+     * \brief What a single attempt on a temporary regex yields.
      *
-     * A DISTINCT type, and deliberately so — but NOT for the reason first given here. Folding the
-     * owner into \ref result_type was measured at arm64 `words` +5.6 % when this was written, and
-     * that number does NOT reproduce: rebuilt on two independent builds it reads -0.01 % and
-     * +0.03 %, with its ASCII witness at +0.02 % and +0.03 %. The original was one build's code
-     * PLACEMENT, the effect docs/design.dox 10.1 now carries a discriminator for. The argument that
-     * it was "two instances of one pattern and therefore not layout noise" was simply wrong — two
-     * instances of one pattern share the same compiled code, so they move TOGETHER under a placement
-     * shift exactly as they would under a real cost.
+     * Same spans and groups as \ref result_type, plus ownership of the name
+     * tables the regex would otherwise lend. Bind it with `auto`. Spelling
+     * \ref result_type (or `real::match_result`) does not compile, which is
+     * the point: there is no conversion that could drop the ownership and
+     * leave dangling views.
      *
-     * What stands on its own is the API: a distinct type means no conversion exists that could
-     * quietly drop the ownership and hand back the dangling views it exists to prevent, and the
-     * borrowing path — every walk, every attempt on a live regex — keeps a trivially destructible
-     * result rather than one carrying an owning box it can never use. That is the reason to read
-     * here; the benchmark number that was once given is retracted.
-     *
-     * On the compile-time policy the two are THE SAME type: its tables are `static constexpr` and a
-     * result from a temporary `static_regex` borrows them safely, so there is nothing to own.
-     *
-     * Bind one with `auto`. Spelling \ref result_type (or `real::match_result`) for a temporary
-     * regex's result does not compile, which is the point: there is no conversion that could quietly
-     * drop the ownership and hand back the dangling views this type exists to prevent.
+     * On `static_regex` the two aliases are the same type: the tables have
+     * static storage duration, so a result from a temporary is already safe.
      */
+    // Distinct from result_type so no conversion can drop ownership. Folding
+    // the owner into result_type was recorded as a regression and did not
+    // reproduce (code placement; design.dox 10.1). The borrowing path stays
+    // trivially destructible.
     using owning_result_type = basic_match_result<typename Storage::slot_storage,
                                                   typename Storage::name_owner>;
 
@@ -1441,20 +1423,17 @@ namespace real {
     /*!
      * \brief Lazy range over all non-overlapping matches (Python `re.finditer`).
      *
-     * Only callable on an lvalue regex: calling on a temporary would dangle in a
-     * C++20 range-for (the range initializer's temporaries die before the loop
-     * body), so that misuse is a compile error (deleted rvalue overloads).
-     *
-     * \note Pure monomorphic walk (`TrailingLA = false`). The trailing-LA class+
-     *       fast path is intentionally not taken here — the range's return type is
-     *       fixed at compile time so pure `[a-z]+` codegen stays pristine. For the
-     *       LA-fast route use \ref count_matches, \ref find_all, \ref search,
-     *       \ref match, or \ref replace (once-per-walk dispatch). Correctness is
-     *       identical; only throughput differs on eligible patterns.
+     * Only callable on an lvalue regex: a C++20 range-for would dangle if the
+     * regex were a temporary (the range initializer dies before the loop body),
+     * so the rvalue overloads are deleted.
      *
      * \param[in] text The subject text (must outlive the range).
      * \return A \ref basic_match_range usable directly in a range-for.
      */
+    // The range's return type is fixed at compile time (`TrailingLA = false`) so
+    // a bare `[a-z]+` walk carries no lookaround code. Eligible trailing-LA
+    // patterns take the faster route on count_matches / find_all / search /
+    // match / replace; correctness is identical.
     [[nodiscard]] constexpr basic_match_range<Storage> find_iter(std::string_view text) const&
     {
       return {program_.view(), pattern(), text};
@@ -1492,7 +1471,7 @@ namespace real {
     /*!
      * \brief Experimental leftmost-**longest** `find_iter`: iterate matches with POSIX (leftmost-longest)
      *        bounds rather than the default leftmost-first — the iterator twin of \ref search_longest, sharing
-     *        its prototype status (the `match_semantics` arc is not yet stable). Region semantics match \ref
+     *        its prototype status. Region semantics match \ref
      *        find_iter — \p endpos truncates the subject to a view, \p pos is the start (not a slice). Byte
      *        offsets; captures are the winning thread's, not POSIX submatch. Every fast path is bypassed.
      *
@@ -1532,22 +1511,19 @@ namespace real {
     /*!
      * \brief Count non-overlapping matches without allocating result objects.
      *
-     * Matching-only counter: once-per-walk dispatch (cascade_ model) — pure
-     * monomorphic walk for ordinary patterns; TrailingLA monomorphic walk when
-     * the trailing-lookaround class+ hint is set. Fair for multi-engine benches
-     * (unlike \ref find_all, which builds a vector of Match objects and can
-     * dominate high-cardinality scans). Prefer this over counting \ref find_iter
-     * when measuring trailing-LA throughput — \ref find_iter stays pure by design.
-     *
-     * Region semantics match \ref find_iter — \p endpos truncates the subject to a
-     * view; \p pos is the start offset (not a slice — \c \\A / \c ^ still see the
-     * absolute position).
+     * Prefer this over walking \ref find_iter when only the count is needed.
+     * Region semantics match \ref find_iter -- \p pos is a start offset, not a
+     * slice (`\\A` / `^` still see the absolute position).
      *
      * \param[in] text   The subject text.
      * \param[in] pos    Byte offset to begin counting from (0 = start of text).
      * \param[in] endpos Exclusive end of the region; \ref npos = end of text.
      * \return The number of non-overlapping matches in the region.
      */
+    // Matching-only walk. Once-per-walk TrailingLA dispatch when the hint is
+    // set; find_iter stays TrailingLA=false so a bare [a-z]+ does not carry
+    // that code. find_all builds a vector of results and can dominate a
+    // high-cardinality scan.
     [[nodiscard]] constexpr std::size_t count_matches(std::string_view text,
                                                       std::size_t      pos    = 0,
                                                       std::size_t      endpos = npos) const
@@ -1567,12 +1543,11 @@ namespace real {
     }
 
     /*!
-     * \brief All matches, eagerly (like Python `re.findall` but full results).
+     * \brief All matches, eagerly (like Python `re.findall`, but full results).
      *
-     * Lvalue-only for the same reason as \ref find_iter (results reference this
-     * regex's name table). Once-per-walk TrailingLA dispatch when eligible (same
-     * route as \ref count_matches); vector construction cost is on top of the
-     * scan — high match counts can dominate ns/B.
+     * Lvalue-only, same reason as \ref find_iter. High match counts allocate
+     * one result per hit; prefer \ref count_matches when only the number
+     * matters, and \ref find_iter when you can stream.
      *
      * \param[in] text The subject text (must outlive the results).
      * \return A vector of match results.
@@ -1839,8 +1814,7 @@ namespace real {
      * With \ref named_group_at, this is the allocation-free way to enumerate them. \ref named_groups
      * materialises a `vector` on every call, so a caller walking the names one at a time — which is what
      * a name-by-number ABI does — paid a fresh vector per name. Reading the program's own span instead
-     * measures **0.10 → 0.01 µs at 4 names, 1.13 → 0.07 at 16, 6.53 → 1.11 at 64**: a 6–15× constant
-     * factor.
+     * removes the allocation entirely, a constant factor that grows with the name count.
      *
      * \note It is a constant factor and **not** a complexity fix, which is worth being precise about:
      *       resolving N names through an interface keyed by group NUMBER is N scans of N either way.
@@ -1888,18 +1862,17 @@ namespace real {
      * pure loss. The walk therefore runs on a private copy of the program whose
      * \ref detail::pattern_hints::capture_free_walk is set — the same walk `(?:...)`-only patterns already
      * get, where a thread's whole capture state is group 0's start in one scalar and the refcounted COW pool
-     * is never touched. Measured on `\b(\w+)@(\w+)\.(com|org)\b`, 4096-byte subject: 24.63 -> 17.60 ns/B,
-     * 1906 increfs and 2714 copy-on-writes -> zero, with the VM stepping the SAME 2684 positions. That last
-     * number is the point — the walk is identical, only its bookkeeping is gone.
+     * is never touched. On a capture-heavy pattern that takes the general VM, the increfs and
+     * copy-on-writes drop to ZERO while the VM steps exactly the same positions. That last part is the
+     * point — the walk is identical, only its bookkeeping is gone.
      *
      * ONE FIELD, DELIBERATELY. `slot_count` is left alone even though the walk now fills only two slots: the
      * batched span routes arm on `slot_count == 2`, so lowering it would ROUTE the pattern somewhere else and
      * the measurement would be of a different engine. The same trap in reverse is what made the census's
-     * headline finding an illusion: `(foo|bar)+baz` costs 29.5 ns/B and `(?:foo|bar)+baz` 7.6, but the second
-     * is a different PROGRAM taking `inner_literal` + `lazy_dfa_anchored` where the first takes `inner_literal`
-     * alone, and its VM steps 310 positions against 2560. No walk flag can produce that; rewriting a user's
-     * groups to non-capturing at compile time might, and is a separate question with its own answers to give.
-     * With only this field moved, that row is expected to sit exactly where it was.
+     * headline finding an illusion: `(?:foo|bar)+baz` is far cheaper than `(foo|bar)+baz`, but the second is
+     * a different PROGRAM taking a different route, and its VM steps an order of magnitude fewer positions.
+     * No walk flag can produce that; rewriting a user's groups to non-capturing at compile time might, and
+     * is a separate question with its own answers to give.
      *
      * The structural condition is still asked (\ref detail::capture_free_walk_structural) rather than assumed:
      * it is a property of the program, and a program whose `save 0` can be skipped would give a wrong answer,
@@ -1907,11 +1880,10 @@ namespace real {
      * `slot_count == 2` — which exists to protect captures nobody here is going to read.
      *
      * THE FLAG IS SET BY THE RANGE, NOT HERE, and that is a measured requirement rather than a preference.
-     * Mutating a local view and handing it over costs a SECOND copy of a 440-byte `program_view`, which on
-     * x86-64/gcc charged a fixed +12 to +13 ns per call -- flat across 3-, 8- and 24-byte subjects, 6 of 6
-     * paired draws agreeing with ranges that do not overlap, a constant with no proportional work behind it.
-     * The canonical rows never saw it: they measure this surface as THROUGHPUT on 4 KiB subjects, where one
-     * fixed copy amortises under the noise floor. Passing the intent instead of a mutated view leaves
+     * Mutating a local view and handing it over costs a SECOND copy of a `program_view`, a fixed per-call
+     * cost with no proportional work behind it -- flat in the subject length. The canonical rows never saw
+     * it: they measure this surface as THROUGHPUT on multi-kilobyte subjects, where one fixed copy amortises
+     * under the noise floor. Passing the intent instead of a mutated view leaves
      * exactly \ref find_iter's one copy.
      *
      * `noinline` but NOT `cold`, unlike \ref count_trailing_la -- that branch is taken only when a hint is
@@ -1934,10 +1906,9 @@ namespace real {
       // NOT a range-for, and the loop condition is the reason. `basic_match_range::end()` returns a
       // default-constructed iterator -- the same type, carrying the same `state_type` -- built once per
       // range-for purely to be compared against, and no comparison ever reads its state (\ref
-      // basic_match_iterator::operator== looks at `done_` and `pos_` only). Measured on a 35-byte
-      // no-match subject, x86-64/gcc 15.2: `find_iter` costs 189 ns per call against 127 for the
-      // identical walk written without that sentinel. `exhausted()` asks the same question and builds
-      // nothing.
+      // basic_match_iterator::operator== looks at `done_` and `pos_` only). On a short subject that
+      // construction is a large share of the whole call, since the state is sized for the worst case and
+      // the work is not. `exhausted()` asks the same question and builds nothing.
       //
       // `find_iter` still pays it, and that is left standing rather than papered over: making the state
       // lazy so the sentinel becomes cheap was tried TWICE and refused by measurement -- `std::optional`
@@ -2137,21 +2108,21 @@ namespace real {
     {
       const std::size_t              end {endpos < text.size() ? endpos : text.size()};
       // FRESH PER SEARCH, and reusing it across searches was measured and refused rather than
-      // overlooked. Constructing plus destroying this state costs 9.5 ns -- 21 % of a short literal
-      // search (47.4 ns), 27 % of a short class search (36.8), 10 % of a 24-branch alternation
-      // (98.4), and 1.4 % once captures dominate (704.8). No single member accounts for it: the
-      // parts measure 0.3-0.9 ns each, so there is no lazy-init lever to pull, only reuse.
+      // overlooked. Constructing plus destroying this state is a per-call constant: a fifth to a quarter
+      // of a SHORT search, and negligible once captures dominate. No single member accounts for it --
+      // every part is small -- so there is no lazy-init lever to pull, only reuse.
       //
       // Reuse is safe WITHIN one regex -- \ref basic_match_iterator already holds one state for a
-      // whole walk, which is where the compat regex_iterator's 1.5-4.5x came from. Reuse ACROSS
+      // whole walk, which is where the iterator surfaces' advantage over repeated searches comes from.
+      // Reuse ACROSS
       // regexes is not: a `static thread_local` state shared by two patterns segfaults on the first
       // search with the second, and AddressSanitizer names it a heap-use-after-free through the
       // class-table pointer `tbl` in run_class_loop (pike.hpp). The state carries program-derived
       // pointers whose invalidation is not built for switching programs; which one is not
       // established here and the note does not guess.
       //
-      // So the only safe granularity is per regex per thread, and a lookup keyed that way costs more
-      // than the 9.5 ns it would save. Callers who want the saving already have it: `find_iter`.
+      // So the only safe granularity is per regex per thread, and a lookup keyed that way costs more than
+      // the construction it would save. Callers who want the saving already have it: `find_iter`.
       typename Storage::state_type   state;
       // Reference, not a copy: `program_view` is 432 bytes and this line runs once per search.
       // Binding to a const reference also covers the dynamic storage, whose view() still returns by
@@ -2164,7 +2135,8 @@ namespace real {
       // `state` above is freshly constructed for this one search against `prog` — same guarantee.
       detail::pike_vm<typename Storage::state_type, true> vm(prog, state);
       const auto                                          subject {text.substr(0, end)};
-      // P3c cold: trailing-LA outside pike_vm::run (keeps pure class-loop run() pre-P3c-sized).
+      // Cold path: the trailing-lookahead walk stays outside pike_vm::run, so a pure class-loop run()
+      // carries none of its code.
       // if constexpr: static_storage has no lookaround scratch / rejects LA at compile.
       bool matched {};
       if constexpr (requires(typename Storage::state_type & st) {
@@ -2184,24 +2156,22 @@ namespace real {
         }
       }
       else {
-        // OPT-C Cascade is chosen once here (a single search), never in the per-byte scan.
+        // The memchr-cascade variant is chosen once here (a single search), never in the per-byte scan.
         matched = prog.hints.stop_set_size >= 1
                     ? vm.template run<true>(subject, pos, mode, out.engine_slots(), 0, sem)
                     : vm.template run<false>(subject, pos, mode, out.engine_slots(), 0, sem);
       }
       // THE RESULT IS BUILT FIRST AND THE ENGINE FILLS IT IN PLACE, which is what removed the last bulk
-      // copy per call. Filling a local `slots` and moving it into the result cost one `rep movsq` on
-      // x86-64 under gcc -- 12.02 % of the inlined per-call path, attributed to
-      // `small_vec::transfer_range<true>` through `transfer_inline_from` -- because `rep movs` pays a
-      // fixed startup whatever the volume, and for a groupless pattern the volume is sixteen bytes. The
-      // by-value parameter had already been narrowed to an rvalue reference, which removed the FIRST of
-      // two such copies (x86-64 -13.2 % / -10.0 % / -9.6 %, arm64 -11.8 % / -8.2 % / -7.9 % / -7.2 % on
-      // the per-call rows); this removes the second. There is exactly one return statement here, so the
-      // result is NRVO-constructed in the caller's storage and the engine writes to its final address.
+      // copy per call. Filling a local `slots` and moving it into the result costs a block move through
+      // `small_vec::transfer_range`, and a block move pays a fixed startup whatever the volume -- for a
+      // groupless pattern the volume is a couple of words, so the startup IS the cost. Narrowing the
+      // by-value parameter to an rvalue reference had already removed the FIRST of two such copies; this
+      // removes the second. There is exactly one return statement here, so the result is NRVO-constructed
+      // in the caller's storage and the engine writes to its final address.
       //
       // ONE ATTEMPT IS REFUTED and stays refuted: making the copy cheaper for small counts -- a bounded
-      // loop in `transfer_range` below eight elements -- cost twelve rows between +7.3 % and +19.7 % at
-      // 24 of 24 draws, because `transfer_range` also serves the thread lists in their hot path.
+      // loop in `transfer_range` below eight elements -- regressed a dozen rows, because `transfer_range`
+      // also serves the thread lists in their hot path, where the bound is never the common case.
       out.engine_set_matched(matched);
       return out;
     }

@@ -1,15 +1,13 @@
 Python API
 ==========
 
-.. automodule:: real
-
 .. currentmodule:: real
 
 Synopsis
 --------
 
 ``import real`` and use it like ``re`` -- the same functions, the same
-``Pattern`` / ``Match`` shapes, rendered here straight from the binding's own
+``Pattern`` / ``Match`` shapes, rendered here from the binding's own
 docstrings (the text ``help()`` shows). Everything runs on the linear-time,
 ReDoS-safe engine by default; the opt-in ``fallback`` policy delegates a
 pattern REAL would reject to the standard-library ``re`` and forfeits that
@@ -67,21 +65,48 @@ Python.
 Flags and module data
 ---------------------
 
-.. autodata:: fallback
+The flag integers match ``re`` (``real.I is 2``, same as ``re.I``). Pair
+aliases (``I`` / ``IGNORECASE``, …) are the same object.
 
-.. autodata:: NOFLAG
-.. autodata:: A
-.. autodata:: ASCII
-.. autodata:: I
-.. autodata:: IGNORECASE
-.. autodata:: M
-.. autodata:: MULTILINE
-.. autodata:: S
-.. autodata:: DOTALL
-.. autodata:: U
-.. autodata:: UNICODE
-.. autodata:: X
-.. autodata:: VERBOSE
+.. list-table::
+   :header-rows: 1
+   :widths: 28 16 56
+
+   * - Name
+     - ``re`` twin
+     - Meaning
+   * - ``NOFLAG``
+     - ``re.NOFLAG``
+     - No flags.
+   * - ``I`` / ``IGNORECASE``
+     - ``re.I``
+     - Case-insensitive (Unicode fold in text mode; ASCII under ``A``).
+   * - ``M`` / ``MULTILINE``
+     - ``re.M``
+     - ``^`` and ``$`` also match at line boundaries.
+   * - ``S`` / ``DOTALL``
+     - ``re.S``
+     - ``.`` also matches a newline.
+   * - ``X`` / ``VERBOSE``
+     - ``re.X``
+     - Ignore unescaped whitespace and ``#`` comments outside classes.
+   * - ``A`` / ``ASCII``
+     - ``re.A``
+     - Keep ``\w \d \s \b`` and case folding ASCII, even in ``str`` mode.
+   * - ``U`` / ``UNICODE``
+     - ``re.U``
+     - No-op: Unicode is the ``str``-mode default.
+
+.. py:data:: fallback
+   :type: bool
+   :value: False
+
+   Module-level policy for a pattern the linear engine cannot represent
+   (backreferences, conditionals, an unbounded lookaround). The default is
+   strict: such a pattern raises :class:`error`. Set ``real.fallback = True``,
+   or pass ``fallback=True`` to :func:`compile` / the module functions, to
+   delegate that pattern to the standard-library ``re`` -- which may accept
+   it but forfeits the linear-time guarantee. A per-call argument wins.
 
 Complexity
 ----------

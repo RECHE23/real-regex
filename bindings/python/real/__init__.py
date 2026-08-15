@@ -1,19 +1,8 @@
-r"""REAL — Regular Expression Algorithmic Library.
+r"""Linear-time, ReDoS-safe regex with an ``re``-compatible API.
 
-A linear-time (ReDoS-safe) regex engine with an ``re``-compatible API:
-
-    import real
-    real.search(r"(\d{4})-(\d{2})", text)
-    real.compile(r"\w+").findall(text)
-
-Supported flags: IGNORECASE/I, MULTILINE/M, DOTALL/S, VERBOSE/X, ASCII/A (like
-re.A: keeps \\w \\W \\d \\D \\s \\S \\b \\B and case folding ASCII in str mode,
-where they are otherwise Unicode). UNICODE/U stays a no-op (Unicode is the
-str-mode default). Bounded
-lookarounds — lookahead ``(?=...)``/``(?!...)`` and lookbehind ``(?<=...)``/``(?<!...)``
-— are supported in linear time (each sub-pattern must be length-bounded and is
-capture-free). The remaining ``re`` features raise :class:`real.error` at compile
-time: backreferences and re.L. See the project README.
+``import real as re``, then ``compile`` / ``search`` / ``finditer`` / ``sub``
+as usual. Patterns the engine cannot represent raise :class:`real.error`
+unless ``fallback=True``.
 """
 
 import functools
@@ -41,11 +30,8 @@ U = UNICODE = 32
 X = VERBOSE = 64
 A = ASCII = 256
 
-# The drop-in policy for a pattern the linear engine cannot represent (backreferences, conditionals, an
-# unbounded lookaround, …). The default is STRICT: such a pattern raises real.error, so every compiled
-# pattern is a linear-time, ReDoS-safe guarantee. Set real.fallback = True (or pass fallback=True to
-# compile / the module functions) to delegate ineligible patterns to the standard library's re — which may
-# accept them but forfeits the linear-time guarantee for that pattern. A per-call kwarg wins over this.
+#: Module-level policy for a pattern the linear engine cannot represent.
+#: ``False`` (default) raises :class:`error`; ``True`` delegates to stdlib ``re``.
 fallback = False
 
 
@@ -155,12 +141,8 @@ class RegexSet:
     are not reported — re-run the individual :class:`Pattern` if groups are
     needed.
 
-    Wraps ``real::regex_set`` directly (the C++ engine's own multi-pattern
-    set, not a Python-level loop over individual :class:`Pattern` objects):
-    Stage-1 is N independent searches with per-pattern early-exit, but a
-    large-enough DFA-eligible subset (``fused_min_eligible`` in
-    ``regex_set.hpp``) instead runs as a single fused multi-accept DFA pass
-    (Stage-2) — the bitset stays in construction order either way.
+    Wraps ``real::regex_set`` directly, not a Python loop over individual
+    :class:`Pattern` objects. The bitset is always in construction order.
     """
 
     def __init__(self, patterns, flags=0):
@@ -302,8 +284,8 @@ def compile(pattern, flags=0, fallback=None):  # noqa: A001 - mirrors re.compile
 
     Args:
         pattern (str, bytes, or Pattern): The regular expression to compile.
-        flags (int, optional): Bitwise OR of flags such as :data:`IGNORECASE`,
-            :data:`MULTILINE`, :data:`DOTALL`, :data:`VERBOSE`. Defaults to 0.
+        flags (int, optional): Bitwise OR of flags such as ``IGNORECASE``,
+            ``MULTILINE``, ``DOTALL``, ``VERBOSE``. Defaults to 0.
         fallback (bool, optional): Policy for a pattern the linear engine cannot
             represent. ``None`` (default) uses the module-level :data:`real.fallback`
             (itself ``False`` = strict). ``True`` delegates such a pattern to the
@@ -404,12 +386,8 @@ def findall(pattern, string, flags=0):
 def count_matches(pattern, string, flags=0):
     """Count non-overlapping matches without building Match objects.
 
-    Extension beyond ``re``.
-
-    Matching-only counter (C++ ``regex::count_matches``). Prefer this over
-    ``len(findall(...))`` or counting ``finditer`` when only the count matters,
-    and for trailing-lookahead class+ patterns where the fast path lives on
-    this surface (not on ``finditer``).
+    Extension beyond ``re``. Prefer this over ``len(findall(...))`` or
+    counting ``finditer`` when only the count matters.
 
     Args:
         pattern (str or bytes): Regular expression pattern.

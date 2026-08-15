@@ -48,12 +48,11 @@ namespace real {
   public:
 
     /*!
-     * \brief Minimum DFA-eligible count to build a fused single-pass.
+     * \brief Eligible-member count at which the set builds a fused single-pass DFA.
      *
-     * A calibrated threshold, not a law. One fused automaton costs a build and a full scan; N walks
-     * cost N prefiltered searches that each stop early. The fused form only wins once N is large
-     * enough to pay for that build, and this is where the two cross for log-like patterns.
-     * Re-measure with \c benchmarks/s2a_measure.cpp before moving it.
+     * A calibrated threshold: one fused automaton costs a build and a full
+     * scan; N walks cost N searches that can each stop early. Below this
+     * count every member is searched individually.
      */
     static constexpr std::size_t fused_min_eligible {56};
 
@@ -149,10 +148,11 @@ namespace real {
     }
 
     /*!
-     * \brief Size of the FUSED eligible subset — not an eligibility count in general.
-     * \return How many members the fused DFA holds, or 0 when \ref uses_fused is false. Below the
-     *         threshold every member walks individually, so the subset is discarded and this answers 0
-     *         even for patterns the DFA would have accepted (pinned in test_regex_set_hybrid.cpp).
+     * \brief How many members the fused DFA holds, or 0 when \ref uses_fused is false.
+     *
+     * Below the threshold every member walks individually, so this is 0 even
+     * for patterns a DFA would have accepted.
+     * \return The fused subset size, or 0.
      */
     [[nodiscard]] std::size_t eligible_count() const noexcept
     {
@@ -223,8 +223,8 @@ namespace real {
     /*!
      * \brief Which patterns match at least once (construction-order bitset).
      *
-     * Index \c i is true iff pattern \c i matched. Fused eligible bits are remapped
-     * to original construction indices; ineligibles use per-pattern search.
+     * Index \c i is true iff pattern \c i matched. Order is always construction
+     * order, whether the set walks members individually or through a fused scan.
      *
      * \param[in] text   Subject.
      * \param[in] pos    Byte offset the search starts at.

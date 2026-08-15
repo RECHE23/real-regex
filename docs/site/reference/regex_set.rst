@@ -15,17 +15,17 @@ Interface
 
 .. doxygenclass:: real::regex_set
    :project: real
-   :members:
+   :members: regex_set, size, empty, compile_flags, is_match, matches, which,
+             operator[]
 
 Complexity
 ----------
 
 Every scan is **guaranteed linear** in the text and never backtracks -- each
-member keeps the engine's ReDoS-safe contract. A small set runs per-pattern
-walks with early exit; once enough members are DFA-eligible (the calibrated
-``fused_min_eligible`` threshold), the set switches to a fused single-pass
-scan that stays flat as the set grows. Measured against Google's
-``RE2::Set`` it is near parity -- the numbers live in
+member keeps the engine's ReDoS-safe contract. A small set walks members
+individually (``is_match`` stops at the first hit). A large enough
+DFA-eligible subset shares one fused pass; the bitset stays in construction
+order either way. Numbers against ``RE2::Set`` live in
 :doc:`Performance <../performance/index>`.
 
 Example

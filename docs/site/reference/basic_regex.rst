@@ -18,13 +18,26 @@ a Python-``re``-shaped surface. Two aliases cover its storage policies:
   and exactly sized at compile time, matching allocates nothing and works in
   ``constexpr`` -- an invalid pattern is a compile error.
 
+Lifetime and regions
+--------------------
+
+- Group views borrow the subject: it must outlive the result. A temporary
+  ``std::string`` is a compile error.
+- ``find_iter`` / ``find_all`` are lvalue-only -- a C++20 range-for would
+  dangle on a temporary regex.
+- ``match`` / ``search`` / ``fullmatch`` on a temporary regex return
+  ``owning_result_type``; bind it with ``auto``.
+- ``pos`` / ``endpos`` are byte offsets, not a slice. ``\A`` and ``^``
+  (without multiline) still see the absolute position, so they fail when
+  ``pos > 0``.
+
 Interface
 ---------
 
 .. doxygenclass:: real::basic_regex
    :project: real
    :members: basic_regex, result_type, owning_result_type, match, fullmatch, search, find_iter,
-             count_matches, replace, split
+             find_all, count_matches, replace, split
 
 The two aliases:
 
@@ -42,9 +55,15 @@ one, which owns them.
 Complexity
 ----------
 
-Every matching call above is **guaranteed linear** in the searched text --
-O(len(text)) -- and never backtracks: ReDoS-safe by construction, for every
-pattern the engine accepts.
+Every matching call is **guaranteed linear** in the searched text --
+O(len(text)) -- and never backtracks (ReDoS-safe by construction).
+
+- **Allocation.** ``real::regex`` allocates when it compiles. ``static_regex``
+  does not. ``count_matches`` allocates no result objects. ``replace``
+  returns an owning ``std::string``. ``split`` and group views borrow the
+  subject.
+- **Sharing.** A compiled regex is immutable and can be used from many
+  threads. An iterator is not shared.
 
 Example
 -------
@@ -65,10 +84,4 @@ See also
 - The lazy range ``find_iter`` returns: :doc:`basic_match_range`.
 - Migrating from another engine: :doc:`Drop-in <../drop-in/index>`.
 - The same surface from Python: :doc:`python`.
-
-.. raw:: html
-
-   <ul>
-   <li>Multi-pattern which-matched:
-       <a href="../api/classreal_1_1regex__set.html">regex_set</a>.</li>
-   </ul>
+- Multi-pattern which-matched: :doc:`regex_set`.

@@ -1607,10 +1607,8 @@ PyMethodDef pattern_methods[] = {
      METH_VARARGS | METH_KEYWORDS,
      "count_matches($self, string, pos=0, endpos=sys.maxsize)\n--\n\n"
      "Count non-overlapping matches in [pos, endpos) without building Match objects.\n\n"
-     "Extension beyond re.\n\n"
-     "Matching-only: uses the trailing-LA class+ fast path when eligible (unlike\n"
-     "finditer, which stays on the pure monomorphic walk). Prefer this over\n"
-     "len(findall(...)) or sum(1 for _ in finditer(...)) for throughput.\n\n"
+     "Extension beyond re. Prefer this over len(findall(...)) or\n"
+     "sum(1 for _ in finditer(...)) when only the count matters.\n\n"
      "Args:\n"
      "    string (str or bytes): Text to search.\n"
      "    pos (int): Where to start. Character offset for str, byte offset for bytes.\n"

@@ -51,7 +51,8 @@ rejected in every escape form.
 |---|---|
 | `(…)` `(?:…)` | capturing / non-capturing group |
 | `(?P<name>…)` `(?<name>…)` | named capturing group (Python and .NET styles) |
-| `a\|b` | alternation, leftmost branch preferred |
+
+Alternation is written `a|b` — leftmost branch preferred.
 
 ## Anchors and boundaries
 
@@ -64,17 +65,31 @@ rejected in every escape form.
 
 ## Lookarounds
 
-**Bounded lookarounds match in linear time — REAL's differentiator.** Lookahead
-`(?=…)` / `(?!…)` and lookbehind `(?<=…)` / `(?<!…)`, each length-bounded and
-capture-free. Variable-width lookbehind such as `(?<=a|bb)` is accepted —
-beyond `re`/PCRE's fixed-width limit.
+**Bounded lookarounds match in linear time — REAL's differentiator.** Each
+sub-pattern must be length-bounded and capture-free. Variable-width
+lookbehind such as `(?<=a|bb)` is accepted — beyond `re`/PCRE's fixed-width
+limit.
+
+| Syntax | Meaning |
+|---|---|
+| `(?=…)` `(?!…)` | lookahead, positive / negative |
+| `(?<=…)` `(?<!…)` | lookbehind, positive / negative |
+
+An unbounded or capturing lookaround is rejected with `real::regex_error`,
+never silently approximated.
 
 ## Unicode properties
 
 **`\p{…}` / `\P{…}` match natively and linearly** — a superset of `re`, which
-has none of this: General_Category (`\p{L}`, `\p{Nd}`, …), Script (`sc=`,
-short ISO codes), Script_Extensions (`scx=`), and the 63 standard binary
-properties (`\p{Alphabetic}`, `\p{Emoji}`, …).
+has none of this.
+
+| Syntax | Meaning |
+|---|---|
+| `\p{L}` `\p{Nd}` `\p{Lu}` … | General_Category (long or short) |
+| `\p{sc=Latn}` `\p{Latin}` | Script (`sc=`, or the script name) |
+| `\p{scx=Cyrl}` | Script_Extensions |
+| `\p{Alphabetic}` `\p{Emoji}` … | the 63 standard binary properties |
+| `\P{…}` | negation of any of the above |
 
 Matching is UTF-8 code-point-aware throughout: classes and `.` accept
 non-ASCII, `\w \d \s \b` and `IGNORECASE` are Unicode in text mode (ASCII
@@ -110,5 +125,4 @@ Compiled and run by the `example-check` gate on every push:
   {doc}`Differences from re <../differences-from-re>`.
 - The APIs that consume these patterns: {doc}`basic_regex <basic_regex>`,
   {doc}`the Python API <python>`.
-- The compat status tables:
-  [`docs/COMPATIBILITY.md`](https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md).
+- Drop-in status for each host API: {doc}`Drop-in <../drop-in/index>`.
