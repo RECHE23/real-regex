@@ -102,6 +102,21 @@ TEST(arg_floating_parse_fails_on_trailing_garbage)
   EXPECT(!rc2::RE2::FullMatch("1.2.3", R"(([\d.]+))", &d));
 }
 
+TEST(arg_floating_parse_rejects_overflow_of_its_own_type)
+{
+  // The conversion must match the destination, not always go through double: 1e40 fits a double and
+  // does not fit a float, so a float destination has to REFUSE it rather than store an infinity.
+  float  f {};
+  double d {};
+  EXPECT(!rc2::RE2::FullMatch("1e40", R"(([\de+.]+))", &f));
+  EXPECT(rc2::RE2::FullMatch("1e40", R"(([\de+.]+))", &d));
+  EXPECT(d > 9e39 && d < 1.1e40);
+  EXPECT(!rc2::RE2::FullMatch("1e400", R"(([\de+.]+))", &d));
+  // A value the type does hold still parses, so the stricter conversion costs nothing legitimate.
+  EXPECT(rc2::RE2::FullMatch("1e30", R"(([\de+.]+))", &f));
+  EXPECT(f > 9e29F && f < 1.1e30F);
+}
+
 TEST(arg_default_constructor_and_explicit_parser)
 {
   const rc2::Arg noop;

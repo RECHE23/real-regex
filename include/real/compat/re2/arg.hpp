@@ -150,18 +150,21 @@ namespace real::compat::re2 {
     }
 
     /*!
-     * \brief Parses into a floating-point type via `std::strtod` on a NUL-terminated buffer.
+     * \brief Parses into a floating-point type via the `strto*` matching \p T, on a NUL-terminated buffer.
      *
      * Not `std::from_chars`: some standard libraries explicitly delete its floating-point overload, so
-     * `strtod` is the portable floor rather than a preference. `strtod` is locale-sensitive in general,
-     * but this call site only ever sees digits, `.`, `e`, `+` and `-` from a regex submatch, and on
-     * those every locale agrees with "C".
+     * the `strto*` family is the portable floor rather than a preference. They are locale-sensitive in
+     * general, but this call site only ever sees digits, `.`, `e`, `+` and `-` from a regex submatch, and
+     * on those every locale agrees with "C".
+     *
+     * The conversion is picked to match \p T rather than always going through `double`: parsing a `float`
+     * with `strtod` would accept a value the destination cannot hold and silently narrow it to infinity,
+     * where `strtof` reports the overflow through `ERANGE`. RE2 dispatches the same way.
      * \tparam    T      A floating-point destination type.
      * \param[in]  text   The submatch's first byte.
      * \param[in]  length The submatch's length in bytes.
      * \param[out] out    Set on success only.
-     * \return `true` when the whole submatch is consumed and the value is within `double` range. A
-     *         value inside `double` but outside \p T is narrowed by the cast, not rejected.
+     * \return `true` when the whole submatch is consumed and the value is within \p T's range.
      */
     template <typename T>
     static bool parse_floating(const char* text,
@@ -173,12 +176,21 @@ namespace real::compat::re2 {
       }
       const std::string buffer(text, length);
       errno = 0;
-      char*        end   {};
-      const double value {std::strtod(buffer.c_str(), &end)};
+      char* end   {};
+      T     value {};
+      if constexpr (std::is_same_v<T, float>) {
+        value = std::strtof(buffer.c_str(), &end);
+      }
+      else if constexpr (std::is_same_v<T, long double>) {
+        value = std::strtold(buffer.c_str(), &end);
+      }
+      else {
+        value = static_cast<T>(std::strtod(buffer.c_str(), &end));
+      }
       if (end != buffer.c_str() + buffer.size() || errno == ERANGE) {
         return false;
       }
-      out = static_cast<T>(value);
+      out = value;
       return true;
     }
 
