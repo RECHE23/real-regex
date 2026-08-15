@@ -255,10 +255,10 @@ variance you are fighting** — a floor is cheap (minutes), and it is the only t
 judgement is possible at all. This is the same error as §3.5's, in the other direction: there an
 unrecorded condition was assumed to be costly, here a recorded one was assumed to be the cause.
 
-### 3.5 On the laptop, declare the power state — and do not assume what it costs
+### 3.5 On arm64, declare the power state — and do not assume what it costs
 
-The arm64 machine has no governor to set, so §3.4 skipped it entirely and left a hole this section
-closes. A MacBook on battery throttles, and the effect is large enough to invalidate a comparison:
+The arm64 host has no governor to set, so §3.4 skipped it entirely and left a hole this section
+closes. The arm64 host on battery throttles, and the effect is large enough to invalidate a comparison:
 scilex's per-call lexer figures read **6.99 on battery against 9.02 MB/s on AC**, a 29 % gap with
 nothing else changed, and an entire refresh had to be discarded and re-run because the power state was
 not recorded when it was taken. `pmset -g batt` is one line and belongs beside the compiler and the
@@ -310,7 +310,7 @@ factor of **seven** — and the row it named as worst, `\p{scx=Cyrl}` at 7.3 %, 
 at 0.6 %. The lesson generalises: the instrument's own statistics need the same scepticism as the
 engine's.
 
-Floors on **arm64** (Apple M1 Pro, Apple clang 16), 8 layout draws × 3 interleaved reps = 24 paired
+Floors on **arm64** (Apple clang 16), 8 layout draws × 3 interleaved reps = 24 paired
 readings:
 
 | row | floor (q95) | max | half 1 | half 2 |
@@ -346,7 +346,7 @@ each half of the same data, and they disagree by up to **6.2×** (`words`: 3.1 %
   what an unstable estimate looks like, not a property of the build. `bench_layout.py` now prints this
   split-half ratio and says so.
 
-Floors on **x86-64** (devbox container, g++ 13.3.0), same 24 paired readings:
+Floors on **x86-64** (g++ 13.3.0, container), same 24 paired readings:
 
 | row | floor (q95) | arm64 for comparison | half 1 | half 2 |
 | --- | ---: | ---: | ---: | ---: |
@@ -378,12 +378,12 @@ opposite holds: x86-64 is **tighter on 12 of 20 rows**, several by a factor of 3
 against 3.1 %, `anchored` 0.2 % against 2.1 %, `date` 0.7 % against 2.6 %), and its split-half
 stability is better as well (worst ratio **3.3× against arm64's 6.2×**).
 
-So **the devbox is the more sensitive instrument and the laptop is the noisy leg** — which inverts this
-project's habit of treating the local arm64 machine as primary and the devbox as the awkward
-confirmation. It is also the expected direction on reflection: a dedicated container against a laptop
+So **the x86-64 container is the more sensitive instrument and the arm64 host is the noisy leg** — which inverts this
+project's habit of treating arm64 as primary and the x86-64 container as the awkward
+confirmation. It is also the expected direction on reflection: a dedicated container against an arm64 host
 with thermal management, background load and performance/efficiency core migration.
 
-Two consequences for practice. **Judge on the devbox** when the two disagree about whether something
+Two consequences for practice. **Judge on the x86-64 / g++ 13.3 leg** when the two disagree about whether something
 cleared its floor. And **do not read the historical "x86-64 regressions that never reproduced" as x86
 noise** — that leg is the quiet one, so whatever those readings were, this is not the explanation.
 
@@ -509,8 +509,8 @@ Named so the gaps are visible rather than implied:
 - ~~**Front-end performance counters.**~~ **Wanted, and verified UNAVAILABLE here — do not plan around
   it.** `perf stat` on `instructions` plus front-end stall and iTLB counters would tell placement from real
   work directly rather than by distribution, and it is x86-only in practice (macOS does not expose them
-  through `perf`). The x86 devbox is an LXC container whose `perf` binary does not match the Proxmox
-  kernel, so every counter read fails asking for `linux-tools-<kernel>`; installing that is a change to
+  through `perf`). The x86-64 host is a container whose `perf` binary does not match the
+  hypervisor kernel, so every counter read fails asking for `linux-tools-<kernel>`; installing that is a change to
   the hypervisor host, not to this project. What DOES work there, and is the substitute actually reachable
   today: `valgrind` (so callgrind/cachegrind, deterministic and load-independent) and §3.1's machine-code
   comparison, which answers the placement-versus-work question structurally rather than statistically.
@@ -528,4 +528,4 @@ Named so the gaps are visible rather than implied:
 - **Coz** (Curtsinger & Berger, SOSP 2015) for *where to optimise*: causal profiling measures the
   speed-up a line would buy, differentially inside one binary, so layout cancels.
 - **PGO, then BOLT/Propeller, on the bindings**, where the layout is ours to ship (§1).
-- **The floors are arm64's.** An x86-64 calibration must be run on the devbox before any x86 verdict.
+- **The floors are arm64's.** An x86-64 calibration must be run on the x86-64 / g++ 13.3 host before any x86 verdict.

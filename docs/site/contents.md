@@ -3,9 +3,11 @@ title: "real::regex documentation"
 ---
 
 <!--
-The Sphinx root document -- NOT the landing. The bespoke landing template renders
-to "index.html" via html_additional_pages (conf.py); Sphinx cannot render a source
-document and an additional page to the same output name, so the root lives here.
+The Sphinx root document -- NOT the landing, and not a deployed page
+(`make docs-site` deletes the built contents.html). The bespoke landing
+template renders to "index.html" via html_additional_pages (conf.py);
+Sphinx cannot render a source document and an additional page to the
+same output name, so the root lives here.
 
 THE TOCTREE BELOW IS THE SITE'S SINGLE NAV SOURCE. pydata_sphinx_theme builds its
 header from the root document's direct toctree entries only (one entry = one flat

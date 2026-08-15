@@ -93,6 +93,8 @@ doc-xml: doc-no-coverage doc-site-xml ## Both Doxygen XML trees (developer + use
 # One llvm-cov tree, at /coverage. cp -R into api/ nests a third copy when
 # api/coverage already exists, and Doxygen's own `make doc` copy rides along
 # if that ran first -- delete it either way, then rewrite the iframe.
+# contents.html is the Sphinx root_doc artefact, not a page; bindings/ is
+# the leftover orphan stub. Neither ships.
 docs-site: doc-no-coverage doc-site-xml ## Build the themed Sphinx/Breathe site (docs/site) -> build/site/html
 	@command -v $(SPHINXBUILD) >/dev/null 2>&1 || { \
 	  echo "docs-site: '$(SPHINXBUILD)' not found -- install docs/requirements.txt into a venv" \
@@ -105,6 +107,7 @@ docs-site: doc-no-coverage doc-site-xml ## Build the themed Sphinx/Breathe site 
 	@rm -rf $(BUILD)/site/html/api && cp -R $(BUILD)/doc/html $(BUILD)/site/html/api
 	@rm -rf $(BUILD)/site/html/api/coverage
 	@python3 $(ROOT)/tools/relocate_coverage_iframe.py $(BUILD)/site/html/api/coverage.html
+	@python3 $(ROOT)/tools/strip_sphinx_artefacts.py $(BUILD)/site/html
 	@echo "docs-site: $(BUILD)/site/html/index.html"
 
 # The site's own gate: -W (every warning fatal) + --keep-going (report all of them,
@@ -213,6 +216,8 @@ docs-site-gate: ## Sphinx -W --keep-going + linkcheck + built-HTML link check fo
 	@test -f $(BUILD)/site/html/coverage/index.html || { echo "docs-site-gate: coverage/index.html missing -- the published /coverage tree (run make coverage-html first)"; exit 1; }
 	@test ! -e $(BUILD)/site/html/api/coverage || { echo "docs-site-gate: FAIL -- api/coverage must not exist; one copy lives at /coverage"; exit 1; }
 	@test ! -d $(BUILD)/site/html/.doctrees || { echo "docs-site-gate: FAIL -- .doctrees must not ship inside html/"; exit 1; }
+	@test ! -e $(BUILD)/site/html/contents.html || { echo "docs-site-gate: FAIL -- contents.html is the Sphinx root artefact, not a page"; exit 1; }
+	@test ! -e $(BUILD)/site/html/bindings || { echo "docs-site-gate: FAIL -- bindings/ stub must not ship"; exit 1; }
 	@if find $(BUILD)/site/html -name '*_source.html' | grep -q .; then \
 	  echo "docs-site-gate: FAIL -- *_source.html must not ship (VERBATIM_HEADERS/SOURCE_BROWSER)"; \
 	  find $(BUILD)/site/html -name '*_source.html' | sed 's/^/  /' | head; \

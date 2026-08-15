@@ -258,11 +258,11 @@ def _check_nav_equality(site_root: Path) -> list[str]:
     Returns human-readable error strings; empty = PASS.
     """
     landing = site_root / "index.html"
-    # The inner witness is the ROOT DOC's own page (root_doc = "contents",
-    # conf.py): it exists on every build by construction and can never be
-    # renamed by a content change -- unlike a hardcoded content page. pydata
-    # renders the same header on every page.
-    inner = site_root / "contents.html"
+    # The inner witness is Features -- a direct root-toctree entry, so it
+    # exists on every build and carries the same pydata header as every
+    # other inner page. contents.html is the Sphinx root_doc artefact and
+    # is stripped from the deployed tree (docs-site); do not use it here.
+    inner = site_root / "features.html"
     for page in (landing, inner):
         if not page.is_file():
             return [f"nav-equality: {page} missing (run `make docs-site` first)"]
