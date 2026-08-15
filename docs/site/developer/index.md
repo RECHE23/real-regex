@@ -11,9 +11,9 @@ Everything for reading, extending, and trusting the engine.
 
 - **Symbol reference** — the exhaustive, per-symbol Doxygen rendition of the
   headers: <a href="../api/index.html">/api</a>.
-- **Architecture** — <a href="../api/design.html">How REAL Works</a>, the
-  guided tour: Thompson NFA construction, the Pike VM, the prefilter, the
-  fast paths.
+- **Architecture** — {doc}`How REAL works <how-it-works>`, then the full
+  guided tour on <a href="../api/design.html">/api/design.html</a>
+  (Thompson NFA, Pike VM, prefilter, every fast path).
 - **Coverage** — <a href="../api/coverage.html">the coverage report</a>: LLVM
   source-based instrumentation, how to read it, and the full per-line report.
 - **Performance** — the capability picture and how to read a number:
@@ -30,5 +30,6 @@ Everything for reading, extending, and trusting the engine.
 :hidden:
 :maxdepth: 1
 
+how-it-works
 workflow
 ```

@@ -39,19 +39,87 @@ real::regex_error:
   publish_all: exception surface; kind/what/position are the whole type
 
 real::compat::basic_regex:
-  publish_all: std::regex drop-in; the page is the full class face
+  value_type: std trait
+  flag_type: std trait
+  string_type: std trait
+  uses_fallback: complement of uses_real
+  posix_longest: POSIX routing bit; search/match honour it, callers do not set it
+  engine: embedder hook -- the free functions read the variant
+  std_engine: lazy std::regex accessor for the fallback / nullable-replace path
 real::compat::match_results:
-  publish_all: std::regex drop-in; the page is the full class face
+  value_type: iterator trait
+  const_reference: iterator trait
+  reference: iterator trait
+  const_iterator: iterator trait
+  iterator: iterator trait
+  difference_type: iterator trait
+  size_type: iterator trait
+  char_type: iterator trait
+  string_type: iterator trait
+  cbegin: twin of begin
+  cend: twin of end
+  reset: engine-facing fill hook
+  set_ready_no_match: engine-facing fill hook
+  rebase_prefix: engine-facing fill hook
+  fill_from_real: engine-facing fill hook
+  fill_from_std: engine-facing fill hook
 real::compat::sub_match:
-  publish_all: std::regex drop-in; the page is the full class face
-real::compat::regex_error:
-  publish_all: std::regex drop-in; the page is the full class face
+  iterator: iterator trait
+  value_type: iterator trait
+  difference_type: iterator trait
+  string_type: iterator trait
+  operator string_type: conversion twin of str
+  view: non-std extra; str covers the usual case
 real::compat::regex_iterator:
-  publish_all: std::regex drop-in; the page is the full class face
+  value_type: iterator trait
+  difference_type: iterator trait
+  pointer: iterator trait
+  reference: iterator trait
+  iterator_category: iterator trait
+  regex_type: iterator trait
+  operator=: copy/move
+  ~regex_iterator: default destructor
+  operator->: twin of operator*
+  operator!=: twin of operator==
 real::compat::regex_token_iterator:
-  publish_all: std::regex drop-in; the page is the full class face
+  regex_type: iterator trait
+  value_type: iterator trait
+  difference_type: iterator trait
+  pointer: iterator trait
+  reference: iterator trait
+  iterator_category: iterator trait
+  operator->: twin of operator*
+  operator!=: twin of operator==
 
 real::compat::re2::RE2:
-  publish_all: RE2 drop-in; the page is the full class face
+  ErrorCode: return type of error_code; the method is on the page
+  Anchor: unused by the curated statics
 real::compat::re2::Arg:
-  publish_all: RE2 drop-in; the page is the full class face
+  Parser: function-pointer type the constructors take
+  parse: engine-facing decoder
+real::compat::re2::RE2::Options:
+  Encoding: encoding enum; construction rejects non-UTF-8
+  max_mem: RE2 knob REAL does not honour
+  set_max_mem: RE2 knob REAL does not honour
+  encoding: see Encoding
+  set_encoding: rejected at construction unless UTF-8
+  posix_syntax: rejected at construction
+  set_posix_syntax: rejected at construction
+  log_errors: RE2 knob REAL does not honour
+  set_log_errors: RE2 knob REAL does not honour
+  literal: RE2 knob REAL does not honour
+  set_literal: RE2 knob REAL does not honour
+  never_nl: rejected at construction
+  set_never_nl: rejected at construction
+  dot_nl: RE2 knob REAL does not honour
+  set_dot_nl: RE2 knob REAL does not honour
+  never_capture: rejected at construction
+  set_never_capture: rejected at construction
+  case_sensitive: covered by the pattern / Options ctor
+  set_case_sensitive: covered by the pattern / Options ctor
+  perl_classes: inert outside POSIX, as in RE2
+  set_perl_classes: inert outside POSIX, as in RE2
+  word_boundary: inert outside POSIX, as in RE2
+  set_word_boundary: inert outside POSIX, as in RE2
+  one_line: inert outside POSIX, as in RE2
+  set_one_line: inert outside POSIX, as in RE2

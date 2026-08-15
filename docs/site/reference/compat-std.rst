@@ -17,27 +17,29 @@ Interface
 
 .. doxygenclass:: real::compat::basic_regex
    :project: real
-   :members:
+   :members: basic_regex, mark_count, flags, swap, uses_real, uses_real_traversal,
+             nullable, policy
 
 .. doxygenclass:: real::compat::match_results
    :project: real
-   :members:
+   :members: ready, size, empty, operator[], position, length, str, prefix, suffix,
+             begin, end
 
 .. doxygenclass:: real::compat::sub_match
    :project: real
-   :members:
+   :members: first, second, matched, length, str, compare
 
 .. doxygenclass:: real::compat::regex_error
    :project: real
-   :members:
+   :members: regex_error, what
 
 .. doxygenclass:: real::compat::regex_iterator
    :project: real
-   :members:
+   :members: regex_iterator, operator*, operator++, operator==
 
 .. doxygenclass:: real::compat::regex_token_iterator
    :project: real
-   :members:
+   :members: regex_token_iterator, operator*, operator++, operator==
 
 Matching and replacing
 ----------------------

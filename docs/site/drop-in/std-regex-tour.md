@@ -1,9 +1,9 @@
 <!--
 The Drop-in target page for std::regex, on the shared per-target template
 (verdict · adopt/swap · API offered · differences & limitations · comparison).
-Site-owned: docs/std_regex_dropin.dox remains the /api rendition, but this page
-is no longer its byte-mirror -- the template and the {include} slice below are
-MyST-only. std-regex-reference.md stays the linked deep reference.
+Site-owned tour. docs/std_regex_dropin.dox is a pointer on /api so deep
+links do not 404 -- this page is the tour. std-regex-reference.md is the
+linked deep reference (remirror of docs/COMPATIBILITY.md).
 -->
 
 # Drop-in for std::regex

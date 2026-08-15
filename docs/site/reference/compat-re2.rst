@@ -15,11 +15,21 @@ Interface
 
 .. doxygenclass:: real::compat::re2::RE2
    :project: real
-   :members:
+   :members: RE2, ok, pattern, error, error_code, NumberOfCapturingGroups, options,
+             FullMatch, PartialMatch, Consume, FindAndConsume, Replace,
+             GlobalReplace, QuoteMeta
 
 .. doxygenclass:: real::compat::re2::Arg
    :project: real
-   :members:
+   :members: Arg
+
+.. doxygenclass:: real::compat::re2::RE2::Set
+   :project: real
+   :members: Set, Add, Compile, Match
+
+.. doxygenclass:: real::compat::re2::RE2::Options
+   :project: real
+   :members: Options, longest_match, set_longest_match
 
 Complexity
 ----------
