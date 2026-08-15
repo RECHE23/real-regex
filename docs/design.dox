@@ -315,24 +315,14 @@ pair immediately inside the outer one and records the group slots; the scan loop
 one shared helper. Strictly scoped — a lazy body `(\w+?)`, a trailing atom `(\w+)x`, nesting
 `((\w+))`, a second group `(\w+)(\w+)`, and a non-capturing `(?:\w+)` all stay on the general VM.
 
-Two candidate optimizations were measured on the general VM (`find_iter`, 2&nbsp;MB ASCII, min of
-7–9; ratios are the point). The enveloping-group scan loop shipped; a bulk-copy of the capture-slot
-snapshot did not clear its bar:
+Two candidate optimizations were measured on the general VM (`find_iter`, 2&nbsp;MB ASCII). The
+enveloping-group scan loop shipped; a bulk-copy of the capture-slot snapshot did not clear its bar
+and the slot snapshot stays a plain per-element loop:
 
 | Optimization | Representative case | Before | After | Verdict |
 |---|---|---|---|---|
 | **Enveloping-group scan loop** | `(\w+)` | 31.5 MB/s | **751 MB/s (24×, ≈ the `\w+` fast path 825)** | shipped |
 | Enveloping-group scan loop | `([a-z]+)` | 32 | **660** | shipped |
-| Bulk block-copy of the slot snapshot (`add_thread`) and reload (`load_working`) | `(a\|b\|c\|d)+` (slot 2) | 14.6 | 15.0 (+2.7%) | **rejected** |
-| Bulk block-copy | `(\w)(\w)(\w)(\w)+` (slot 10) | 19.1 | 20.2 (+5.7%) | rejected |
-| Bulk block-copy | `(abcd\|abc\|ab\|a)+` (slot 4) | 12.5 | 12.1 (−3%) | rejected |
-
-The bulk-copy replaced the per-slot `push_back`/reload loops with a one-shot block append/copy. It
-cleared its target (+20–35%) on no case but a single high-thread × high-slot outlier
-(`((a|b)(c|d)(e|f))+`, +22%); the median was ~5% — exactly the `stl_construct` share the control
-profile attributed to it, so the bytes still had to be copied and only the per-element call overhead
-could go — and it even regressed some small-slot alternations. Measured, under threshold, not a pure
-win → rejected, so the slot snapshot stays a plain per-element loop.
 
 \subsection g_fixedgroups 7.2 Fixed-width concatenation with inner groups
 
@@ -351,79 +341,6 @@ text-mode Unicode shorthand (`\d`, `\w`) is a `klass_cp` code-point predicate of
 it does **not** qualify and stays on the general VM; likewise a variable count (`{n,m}`, `+`, `*`,
 `?`), a nested group, an alternation, or a lookaround. So `(\d{1,3}\.){3}\d{1,3}` (an IPv4-shaped
 pattern) is excluded by construction.
-
-\subsection g_anchoredoracle 7.3 Retired: the anchored-oracle two-pass loop
-
-An idea for capture-heavy parsing patterns that the general VM handles slowly (5–40&nbsp;MB/s): use
-the existing `real::dfa` as a cheap boolean *oracle* — scan for the smallest position where any match
-starts — then run the anchored Pike VM only there, for the exact spans and groups. Prototyped
-standalone (no engine change); the property-net was a clean **0 divergence** vs `find_iter` over acid
-cases plus ~9,600 random eligible patterns × texts (the `oracle ⇒ pike-match` assertion never fired),
-and on representative parsing text it hit the throughput target:
-
-| Pattern | Engine | Prototype | Speedup |
-|---|---|---|---|
-| `[a-z]+(::[a-z]+)+` (qualified name) | 34 MB/s | 143 | **4.2×** |
-| `([a-z]+):([0-9]+):([a-z]+)` (3 groups) | 26 | 139 | **5.3×** |
-| `const\|static\|volatile\|…` (keyword alt) | 206 | 284 | 1.4× (already fast-pathed) |
-| `"[^"]*"` (few false candidates) | 146 | 134 | 0.9× |
-
-**Why it was retired anyway.** The win is real only when there are *many* false candidates that are
-*costly to reject* — and rejecting them means the oracle re-scans the class run from **every** start,
-which is **O(n·k)**. On an adversarial long class run (`[a-z]+(::[a-z]+)+` over a 40&nbsp;KB run of `a`) the
-prototype collapsed to **0.02&nbsp;MB/s — ~1500× slower than the engine at that size, and quadratic
-from there** — while `find_iter` stayed flat at ~30&nbsp;MB/s (measured linear at 40/80/160&nbsp;KB).
-That is the exact worst case the linear-time Pike VM exists to forbid: the two-pass oracle trades away
-REAL's central ReDoS-safety guarantee for a constant-factor win on structured input. No constant-factor
-speedup justifies reintroducing quadratic time, even opt-in, so the approach is **shelved**. DFA build
-cost was negligible (≤0.1&nbsp;ms, one-shot).
-
-\note **Wake condition.** Revisit only with a *linear* oracle: a single streaming leftmost-longest DFA
-pass over the text (lexer-style, no per-position re-scan), rather than a per-position boolean probe.
-That is a different algorithm from the one prototyped here; until it exists, the general VM — linear by
-construction — stays the one match loop.
-
-\subsection g_flattrace 7.4 Retired: the flattened epsilon-trace
-
-The general VM's hot inner loop is `add_thread` — the epsilon-closure walk that, from a program counter,
-follows `split`/`jump`/`save`/assertion edges (a stack-driven DFS in priority order) until it reaches the
-consuming instructions, snapshotting capture slots for each. An idea to shrink it, RE2-style: when the
-closure from a program counter is a **tree** (acyclic, every pc reached once), linearise it *once*, at
-compile, into a flat side-table and interpret that — no DFS stack, no per-node opcode dispatch, just a
-forward scan with a seen-check per node and save/close bracketing. A cycle (an empty loop such as
-`(a*)*`) or a re-convergence keeps the DFS walk.
-
-**The mechanism was proven, not asserted.** A `REAL_TRACE_ORACLE` build ran *both* walks at every seed and
-asserted identical output (the same threads, order, and slots) — the DFS is the oracle. Over the whole
-test corpus and the exhaustive differential fuzzer this held for **3&nbsp;218&nbsp;434 cases at 0
-divergence**; a deliberately corrupted flatten aborted it (teeth-verified). So correctness was never the
-question — only whether it pays.
-
-**Why it was retired anyway — it does not pay, and the terrain says why.** Two measurements settle it:
-
-- *Seed closures (implemented, measured).* Flattening the closure from pc&nbsp;0 — called at every search
-  position — moved throughput by **~0&nbsp;%** (+0.1&nbsp;/+0.5&nbsp;/+1.7&nbsp;% on `\d{1,3}(\.\d{1,3}){3}`,
-  `(a|b)+`, `\b\w+\b`; noise). A seed closure is **3–7 nodes** — it stops at the first consuming
-  instruction — so the stack and dispatch it removes were already a sliver of the per-position cost.
-- *General closures (probed, not built).* A build-local classifier tallied, by walk-nodes, what the
-  post-consumption closures are on the representative capture-heavy loads. The result was **100&nbsp;%
-  tree** — maximally flatten-able, and (a bonus) needing no dynamic loop-back routing, since the hot loops
-  are `+`-style split-backs the seen-check already dedups; the empty-loop cases that *would* need it
-  classify as re-convergent and keep the DFS. But those tree closures are **3.3–8.5 nodes each** — the
-  same size regime the seed already measured at ~0&nbsp;%. The closure walk is ~a fifth to a third of total
-  runtime, spread across *many tiny* closures, and a flatten only removes their stack-and-dispatch part
-  (~40&nbsp;% of that) — an **8–12&nbsp;% ceiling**, below the bar that would justify a permanent second
-  interpreter in the match loop.
-
-That interpreter is the real cost: dead weight the oracle would force every future engine change to keep
-byte-for-byte correct, bought for noise. The purity rule wins — the DFS closure walk, one code path, stays
-the only one.
-
-\note **Wake condition.** Revisit if a workload appears whose closures are *large* trees — deep
-alternations or long fixed-width concatenations that stay acyclic, so each closure is tens of nodes rather
-than a handful. There the stack-and-dispatch elimination has something to remove. The mechanism, the
-oracle harness, and the tree/loop-back/DAG classifier are specified above and were shown correct at
-3.2&nbsp;M cases; reviving them is one slice, not a redesign.
 
 \subsection g_cowcaptures 7.5 Delivered: copy-on-write capture blocks
 
@@ -507,11 +424,11 @@ the groups and the empty-match rule. Eligibility is *no position assertion and n
 byte-range sub-automaton in a **byte-program** the DFAs own — the Pike program stays byte-identical. That
 byte-program is large (a `\w` is thousands of instructions), which surfaced one trap worth recording: the
 priority cut is `O(state size)`, so on those wide states it must be **memoized per state** or it dominates
-(it did: 499 → 33 ns/B on dense `(\w+)@(\w+)`).
+(it did: the cut dominated the walk until it was memoized).
 
 **The bilan — what the arc bought, measured (`(\w+)@(\w+)`, default flags).** Against REAL's own pre-arc
 Pike VM: no-match **7.0×**, sparse **6.0×**, dense **1.3×**. The no-match and sparse subjects — validation,
-log scanning — are the real win; the DFA rejects or skips at ~5–6 ns/B where the VM ground at ~40. The
+log scanning — are the real win; the DFA rejects or skips an order of magnitude faster than the VM on those subjects. The
 dense-extraction row barely moves, and the three-column duel against the rust crate (BENCHMARKS.md §E.1)
 says why and names the two engines REAL has not built, both **parked follow-ups**:
 
@@ -527,8 +444,8 @@ most one thread crosses any byte matched anchored (RE2's `onepass.cc`); its capt
 left-to-right pass, no thread lists. \ref real::detail::onepass classifies a pattern (over the same
 byte-program the DFAs use, so the default-flags Unicode `\w \d \s` — made deterministic by the UTF-8 trie —
 qualifies) and, when eligible, tabulates a capture-writing automaton the router runs on the located window
-instead of the windowed Pike VM. On dense `(\w+)@(\w+)` the arc took the full find_iter from 33.4 to ~8.0
-ns/B (4.2×), to 1.14× of the rust crate's `captures_iter` — engine parity (BENCHMARKS.md §E.2).
+instead of the windowed Pike VM. On dense `(\w+)@(\w+)` the arc took the full find_iter 4.2× closer to the rust
+crate's `captures_iter` — engine parity (BENCHMARKS.md §E.2).
 
 Four findings, each surfaced by profiling *before* it was fixed (the discipline this arc kept):
 
@@ -701,567 +618,29 @@ size, nesting depth, repeat and group counts.
 
 \section g_perf 10. Known performance characteristics
 
-Everything is linear in the subject length; the notes below are about *program size* — how many
-NFA instructions a pattern compiles to (a small constant per byte matched).
-
-- **ASCII, and non-cased patterns:** unchanged by `IGNORECASE`. `abc` is 3 byte ops; `[0-9]+` and
-  `[b-d]+` compile to the same program with or without `i`.
-- **Case folding (text-mode `i`):** a cased ASCII literal or class gains its Unicode fold partners.
-  A literal costs a few ops (`k+` is ~10 — it folds to `{k, K, Kelvin}`); a class costs one branch
-  per code-point range it accepts (`[a-z]+` ≈ 18, `[A-Za-z]+` ≈ 39). Folding a **range** pulls in the
-  partners of every cased member; the ranges are coalesced (sorted + merged) so the result stays
-  compact — `[a-é]+` is ~43 ops, `[à-ÿ]+` ~23, `[U+0080-U+FFFF]+` ~29. These are tens of ops, far
-  below the `max_program_size` cap in config.hpp, and the byte-class DFA collapses them to a handful
-  of states (7–12). A pattern that ever did approach the DFA-state cap degrades to the general Pike
-  VM (`dfa_error` → fallback), never to OOM.
-- **Unicode shorthands (text-mode `\d \s`):** a Unicode shorthand expands to one branch per
-  code-point range it accepts, so it is far larger than its ASCII form. Measured program size
-  (instructions / interned classes), text vs `flags::ascii`: `\d+` 386/60 vs 5/1; `\s+` 43/14 vs 5/1;
-  `[\d.]+` 386/60 vs 5/1; `\D` 1108/128 vs 19/5 (a complement spans the gaps between digit ranges).
-  Consequences: the single-class scan-loop fast path does not apply (a Unicode `\d+` runs on the
-  general VM — still linear); the fixed-width lookbehind budget (255 bytes) tightens because `\d`
-  now spans up to 4 bytes (`(?<=\d{63})` compiles, `\d{64}` is rejected); and a `static_regex` over
-  a Unicode shorthand needs a raised constexpr budget (see below). Use `flags::ascii` (`re.A`) or an
-  explicit ASCII class (`[0-9]`) where the ASCII form suffices. The larger `\w` (771 ranges) only
-  sharpens this, as the throughput measurements below show.
-- **Match throughput scales with the class count — and this vetoed a naive Unicode `\w`.** In the
-  byte-level Pike VM each thread is stepped one byte at a time and every alternative class branch is
-  evaluated per position, so a large code-point class costs *O(number of classes)* per byte. Measured
-  `find_all` throughput, text vs `flags::ascii` (200 KB subject): `\s+` (14 classes) 106 vs 319 MB/s
-  (≈3× slower — fine); `\d+` (60 classes) 1.9 vs 311 MB/s (≈163×); `\w+` (472 classes) **0.1 vs
-  344 MB/s (≈2280×)**. A Unicode `\w+` also compiles to ~5042 instructions (`\w{3,10}` ≈ 50 000,
-  `\w+@\w+\.\w+` ≈ 15 000) and costs ~0.9 ms/pattern to build. `\w` on the byte-NFA path is therefore
-  **unusable** for its dominant job (tokenising ASCII text), which vetoed wiring it that way.
-- **The `klass_cp` opcode is the fix (measured).** A text-mode Unicode shorthand emits a single
-  match-time code-point predicate: decode one code point, test membership (ASCII bitmap below 0x80, a
-  binary search of the range table above), apply negation, then walk the continuation bytes through a
-  computed skip — *O(≤4 bytes + log ranges)* per position, independent of the class count. `\w+`,
-  `\d+`, `\s+` each compile to **8 instructions** (from 5042 / 386 / 43), one interned class. A
-  whole-pattern shorthand (optionally `+`) also takes a code-point scan-loop fast path (the analog of
-  the ASCII `class+` loop). That loop uses the same tricks as the byte-NFA scan: an ASCII byte tests a
-  byte-indexed table (no decode), and a non-ASCII code point in the two-byte range `[U+0080, U+07FF]`
-  — where European text lives (Latin, Greek, Cyrillic, Hebrew, Arabic…) — tests a lazily-built page
-  bitmap in one load rather than a ~771-range search; only CJK / astral code points search. Measured
-  `find_all` throughput vs the `flags::ascii` ceiling (2 MB subject): `\w+` on ASCII text ~**88–90%**
-  of the ceiling (~890 vs ~1000 MB/s), on mixed accented text ~810 MB/s, on heavy non-ASCII ~330
-  MB/s. The tiny program also lets a text-mode `static_regex<"\\w+">` compile within the default
-  constexpr budgets again (no `-fconstexpr-steps` bump). `\b`/`\B` word-ness likewise takes an ASCII
-  shortcut (a byte below 0x80 is a whole code point, so it skips the back-decode), bringing `\b\w+\b`
-  back to exact parity with the byte-NFA `\b[a-z]+\b`.
-- **Assertions run on the general VM.** A pattern with `\b`/`\B` (or `^`/`$` in a way the fast paths
-  do not cover) cannot take a scan-loop, so it runs the general Pike VM, whose per-position cost
-  (thread lists, capture slots) is ~20 ns/byte regardless of the class — `\b\w+\b` and `\b[a-z]+\b`
-  measure the same. The capture-slot half of that cost is now copy-on-write (§7.5); the closure-walk half
-  is what the lazy-DFA investigation targets for the assertion and multi-group rows (see section E of
-  BENCHMARKS.md, where a `\b\w+\b` / `(\w+)@(\w+)` duel against the rust `regex` crate records the gap).
-- **An explicit `^` or `$` used to cost 10-81x by disqualifying every shape route. FIXED in v2026.8.5,
-  and this entry is kept because the stale version of it misdirected three separate audits.** The
-  recognizers now peel a leading `\A`/`^` and a trailing `\Z`/`$` and report them, so an anchor is a
-  MODE and a LIMIT rather than a disqualifier. Re-measured on the same 100 KB subject, arm64:
-
-      [a-z]+   search  0.033 ms    ^[a-z]+$ search  0.033 ms    \w+   search  0.068 ms
-      [a-z]+   match   0.033        ^[a-z]+ search  0.033        ^\w+$ search  0.068
-      [a-z]+   fullmatch 0.033      [a-z]+$ search  0.033
-
-  Every anchored form is at PARITY with its unanchored equivalent — where the old table read 0.566,
-  2.585, 3.002 and 1.412 against 0.056. The `anchored ^[a-z]+$` row published in BENCHMARKS.md §A
-  exists because none of that section's other rows could see this change.
-
-  \warning **The old entry's §C note said the opposite of what is true, and that is the part worth
-  keeping.** It claimed the `^(a+)+$` gap against RE2 was the anchor rather than the nesting, citing
-  `^a+$` at 2.25 ms. Re-measured on the same 100 001-byte subject: **`^a+$` costs 0.000 ms** (below
-  timer resolution, after the anchoring work and the byte-quantifier promotion of v2026.8.6) while
-  **`^(a+)+$` costs 4.361**. Same anchors, same subject, same corpus. The nesting is the whole of it
-  and the anchor is none of it — the exact inverse of what this file asserted. An external audit led
-  with the anchor rewrite as its top priority on the strength of that sentence.
-
-  What remains open there is `^(a+)+$` itself, and it is architectural rather than a shape route: RE2
-  answers the boolean question on a DFA and runs a capture VM only on a hit. `^(?:[a]+)+$`, whose atom
-  is already a class, still reads 23.6 ns/B — so the outer quantifier over a group defeats the routes
-  regardless of the atom, and no promotion reaches it.
-
-- **No hand-vectorization.** The prefilter leans on libc `memchr`/`memmem` (already SIMD internally); a
-  hand-written SIMD class scanner was prototyped and removed. It was ~7.7× on a synthetic long single-class
-  run (a 40 KB block of one class) but ~1.1× on representative word text — where runs are short and the
-  loop is dominated by match bookkeeping, not the inner scan — for thousands of lines of intrinsics and a
-  portability burden. \note Wake condition: a workload provably dominated by long single-class runs (a
-  columnar scanner over wide fixed fields), measured, not assumed.
-  \note **Quantified, and it settles where the PCRE2-JIT gap actually lives.** Hold the class and the
-  bytes fixed and vary only how often a match must be emitted: `\p{sc=Han}` over a pure-Han corpus
-  costs **7.590 ns/B at 66 672 matches** and `\p{sc=Han}+` over the SAME bytes costs **2.181** at one.
-  `\p{L}`/`\p{L}+` read 7.601 and 2.186; `[a-z]`/`[a-z]+` read 9.301 and 2.111. The inner scan is
-  ~2.2 ns/B and **the remaining 71 % is per-match bookkeeping** -- the return through `run()`'s route
-  dispatch, `fill_span_slots`, and the iterator's re-entry, paid once per match and, for a
-  single-code-point pattern, once every three bytes. That is why the SIMD scanner measured 1.1 x on
-  representative text: it was optimising the 29 %. It is also the right frame for the PCRE2-JIT gap on
-  the Unicode rows -- on `\p{sc=Han}` PCRE2 spends ~16.6 ns per match against REAL's ~43.6, while the
-  scan itself is competitive. The structural lever is a route that emits MANY matches per call instead
-  of returning to the dispatcher for each one; every scan-side lever is bounded above by that 29 %
-  before it starts.
-- **Enumerating named groups is O(N²), and the cheap half of that is now fixed.** `named_groups()`
-  materialises a `vector` on every call, and the C ABI's `real_group_name` — keyed by group *number* —
-  is called once per name by anything building a name→index map. `named_group_count()` /
-  `named_group_at()` read the program's own span instead and allocate nothing: **0.10 → 0.01 µs at 4
-  names, 1.13 → 0.07 at 16, 6.53 → 1.11 at 64**, a 6–15× constant factor.
-  \note The complexity is unchanged and the entry deliberately says so. Resolving N names through a
-  number-keyed interface is N scans of N whichever accessor it uses; only an index-keyed ABI entry point
-  makes it linear, and that is an ABI addition rather than an engine change. An earlier version of this
-  entry claimed 305× and called it quadratic-fixed — those figures came off a harness with an
-  allocation-counting `operator new` linked in, the same instrument distortion recorded under
-  `regex_set` above.
-
-- **`regex_set` construction is ~90 % FUSED SUBSET CONSTRUCTION, not probing — this bullet said the
-  opposite and the correction is the point.** Building
-  the set probes each member by *constructing a full single-pattern `real::dfa` and discarding it*
-  (`regex_set.hpp`, the partition loop). The original reading of that — 2.60 ms at 16 patterns against
-  83.8 µs of regex compilation, hence "~97 % probe" — is retained here because the correction below is
-  what makes it useful, and because it is exactly the shape of figure that outlives the code it
-  describes.
-
-  \warning The obvious conclusion is wrong, and both halves of the correction are worth keeping.
-  *First*, the probe is load-bearing: a diagnostic build with it neutralised **throws** `dfa_error` from
-  the fused construction at 64 patterns, because ineligible members are no longer partitioned out.
-  *Second*, and this is what kills the idea of a lightweight probe: DFA eligibility is decided in three
-  phases — a linear audit for assertions, lookarounds and possessive loops, then
-  `build_byte_program(…, max_dfa_byte_program)`, then subset construction — and the first two cost
-  **2242 µs of the probe's 2335** at 16 patterns. Stopping before subset construction saves **4 %**. The
-  expensive part *is* the expansion that decides eligibility.
-
-  \warning **The ~97 % figure below was measured at 16 patterns, and the code no longer reaches that
-  state.** Since the early return added in 2026.8.1, the probe loop does not run at all under
-  `fused_min_eligible` (56) — so every set small enough to have produced that number now skips probing
-  entirely. Re-measured where the probe DOES run, by timing the two halves separately against the whole:
-  at **64 patterns** the set costs 7.47 ms, of which the fused build alone is **6.59 (88 %)** and probing
-  all 64 members is **0.78 (10 %)**; at **100 patterns**, 16.88 ms total, **15.52 fused (92 %)** against
-  1.20 probing (7 %). The halves sum to the whole (7.37 against 7.47; 16.71 against 16.88), so the split
-  is sound. The threshold is also a cliff worth knowing: 40 patterns build in **0.032 ms** and 56 in
-  **5.79** — 180x, by design, since crossing it buys the fused scan.
-
-  So the removable double expansion below is bounded by that 7-10 %, not by 97 %: worth perhaps 4-5 % of
-  construction, against an API change to thread precomputed byte programs into the fused build. The cost
-  that matters is the fused subset construction, and it is superlinear in the member count.
-
-  What remains is smaller and different: that expansion is performed **twice** for every eligible member —
-  once in the probe, once again inside the fused build — and `regex_immutables` already carries a
-  `byte_prog` field it could be cached in. That is a factor of about two on large sets, not the fifty an
-  earlier reading of these numbers suggested.
-
-  \note Those earlier numbers were inflated ~2.8× by the measurement itself: an `operator new` counter
-  used to attribute allocations is not inlinable, and at ~45 000 allocations per iteration it dominated
-  the timing it was meant to explain. Allocation counts from that harness are sound; **wall-clock figures
-  taken with it are not**, and the two must not be read off the same run.
-
-- **Heap cost per regex, and the one-byte cliff that has no warning in the pattern.** Measured with
-  massif on the devbox, as the marginal cost of each additional regex held simultaneously:
-
-  | pattern shape | per additional regex |
-  |:--|--:|
-  | `\p{L}+`, all identical | 10.1 KB |
-  | `(\w+)@(\w+)` | 16.0 KB |
-  | 24-branch alternation | 69.7 KB |
-  | `\p{sc=…}+` across eight different scripts | 148 KB |
-  | **`\p{L}+` followed by one literal byte** | **1027 KB** |
-
-  Content-keyed sharing works: thirty-two copies of the same `\p{L}+` cost 10 KB each on top of the
-  first. What does not is the last row, and it is a **user-facing trap rather than an internal
-  characteristic** — but it needs **two** conditions together, and stating only the first would be
-  misleading:
-
-  | pattern | subject | peak heap |
-  |:--|:--|--:|
-  | `\p{L}+` | matches | 103.2 KB |
-  | `\p{L}+a` | no match | 116.5 KB |
-  | **`\p{L}+a`** | **matches** | **1253.8 KB** |
-  | `[a-z]+a` | matches | 183.8 KB |
-  | `\w+a` | matches | 1366.9 KB |
-
-  The pattern must **lose the whole-pattern code-point-class route** *and* a match must actually occur.
-  A bare `\p{L}+` keeps that route and stays at 103 KB even while matching; `\p{L}+a` scanning a subject
-  it never matches stays at 116. Both together cost 1.25 MB. And the class's size is the multiplier, not
-  the loss of the route on its own: `[a-z]+a` loses it too, holds no property class, and stops at 184 KB.
-
-  The boundary for keeping the route is exact and narrow — the pattern must be **one code-point class and
-  nothing else** (a `+` is allowed, a capture around it is allowed, `{2,}` is allowed). A trailing
-  literal, a leading one, an anchor, a neighbouring class, even a trailing space all drop
-  `hints.greedy_cp_class` to -1. What then costs is expanding the property into a byte program on the
-  first match: `\p{L}` is 675 ranges, and this file already documents that expansion as enormous *in
-  instruction count* (`regex_set`'s `\w+` at 3434). Its cost in **memory** was never written down, nor
-  that the trigger is a match rather than the pattern alone. A service holding a few dozen such patterns
-  against matching input pays tens of megabytes, with nothing in the pattern to suggest it.
-
-- **Crossing the Aho-Corasick branch threshold makes repeated `search()` ~200× slower**, because the
-  automaton meant to accelerate the alternation is rebuilt on **every call**. On a 4000-byte subject, a
-  24-branch alternation costs **29.5 µs per search and 584 heap allocations**, against **0.14 µs** for a
-  3-branch one below the threshold — the same work, on the wrong side of a fast path's own gate.
-  `find_iter` does not rescue it (29.7 µs for a whole iteration): the automaton is cached against the
-  iterator's state, and a state is fresh per `search()`. The cure is to cache it **per regex** rather than
-  per state. **Fixed**: the automaton now lives in `regex_immutables` behind its own identity atomic,
-  taking a 24-branch search from 29.5 µs and 584 allocations to **12.6 µs and zero**.
-
-  **What that exposed is larger than what it fixed: `ac_branch_threshold` gates on the wrong property.**
-  With the rebuild gone, the automaton's real cost is visible and it is *constant* — ~3.2 ns/byte on
-  arm64, ~3.6 on x86-64, whatever the subject. It is worst-case insurance, not a fast path. Measured
-  against the same patterns with the route disabled, over four literal shapes × four subject regimes ×
-  two subject sizes, on **both platforms** (24 branches throughout; ratios are route-off ÷ route-on, so
-  above 1 means AC wins):
-
-  | literal shape | no match | false starts | one late match | match-dense |
-  |:--|--:|--:|--:|--:|
-  | short, shared prefix (`worda…`) | 0.01× | **8.7× / 8.8×** | 0.01× | 0.91× |
-  | short, distinct heads | 0.15× / 0.22× | **11.2× / 13.2×** | 0.15× / 0.23× | 0.85× |
-  | long, shared prefix | 0.01× | **6.4× / 5.7×** | 0.02× | 0.62× |
-  | long, distinct heads | 0.15× / 0.23× | **13.1× / 12.3×** | 0.15× / 0.23× | 0.67× |
-
-  (arm64 / x86-64 where they differ; 4 KB and 64 KB subjects agreed to within a few percent throughout,
-  and the two platforms never disagree on which side wins.) AC wins **only** where the memchr cascade
-  degrades — a subject dense in prefixes of the literals that never complete — and loses by 4× to 100×
-  everywhere else. Branch count does not predict which of those a subject is; **candidate density does**,
-  and selecting on it is the shape a fix would take. Not attempted in the train that found this: it is a
-  routing-policy change and deserves its own campaign, not a tuning bolted onto the commit that measured
-  the problem.
-
-- **The general Pike VM allocates 5 times per search, and the fast routes allocate nothing.** The
-  dividing line is the *route*, not capture groups: `[a-z]+`, `(\w+)`, `hello` and `^[a-z]+$` allocate
-  **zero**, while `\w+@\w+` — which has no groups at all — allocates 5, and `(\w+)@(\w+)` also 5.
-  Whatever falls through to the general VM pays heap-backed scratch every call, because the state is
-  constructed per `search()`.
-
-  \warning **This bullet read "11–14 times, `\w+@\w+` allocates 13, of which 210 ns (32 %) is
-  malloc/free" until v2026.8.6, and that had been wrong since v2026.8.0**, which took the capture pool
-  from 13 allocations to 5 and said so in its own CHANGELOG entry. Re-measured with an `operator new`
-  counter: `\w+@\w+` **5**, `(\w+)@(\w+)` **5**, every fast route **0**. Three of the five are the
-  capture pool's containers; the other two are the thread lists' mark tables, which spill past their
-  inline capacity on any program above eight instructions.
-
-  The cure this bullet used to propose — a thread-local scratch pool, the rust crate's `Cache` — is
-  **refuted** for the cross-regex form: a `static thread_local` state shared by two patterns segfaults
-  on the first search with the second, which AddressSanitizer names as a heap-use-after-free through
-  the class-table pointer (see the note on `basic_regex::run`). Reuse is sound WITHIN one regex, and
-  `find_iter` already has it.
-
-- **`real::regex` pays a fixed ~29 ns per `search()` that `real::static_regex` does not**, and it is worth
-  knowing where that goes before optimising into it. On a 6-byte subject the dynamic path costs 37.3 ns
-  against the compile-time path's 7.8; on 256 bytes, 139 against 101. The gap is nearly constant, so it is
-  per-search setup rather than anything proportional to the subject — and it is **route-independent**: a
-  bare literal (`abc`, +27.9 ns), a class loop (`[a-z]+`, +29.7) and an alternation (`abc|xyz`, +32.0) all
-  pay about the same, which rules out the specialised half of the engine as the cause.
-
-  Decomposed: **10.2 ns is constructing and destroying the scratch state** (7432 bytes against 2328, and
-  the cost tracks the non-trivial members — vectors, optionals, the capture pool — not the byte count);
-  **4.4 ns is building `program_view`** per call (see `dynamic_storage::view()`, which prices the two
-  standing proposals against that number); ~0 is `slot_storage`. That leaves **~15 ns unattributed**. Two
-  hypotheses died on the way: a heap allocation per search (there are **zero** on both paths) and the
-  membership-row machinery the dynamic path runs where the compile-time one now short-circuits (refuted by
-  the literal, which touches no class table and pays the same).
-
-  \note The route dispatch was the leading suspect for the remainder, and it is **REFUTED**. The reasoning
-  was that the compile-time storage's view is a `static constexpr` object, so every hint the cascade tests
-  folds away, while the dynamic path evaluates all 22 decision points on every search — with the gap
-  seeming to grow with the route's depth across three patterns. Three was not enough. Measured on a
-  one-byte subject, where nearly all the time IS the per-call fixed cost, across seven patterns spanning
-  the whole cascade: class loop (first) **38.19 ns**, cp class (second) 41.40, possessive (~4th) 37.52,
-  exact literal (~7th) **36.62 — the fastest of the set**, alternation (deep) 38.46, general VM (last)
-  41.23 and 37.63. No trend with depth; the two LAST-route patterns differ from each other by 3.6 ns,
-  more than any depth effect in the data, and the spread tracks what each route does rather than how far
-  down it sits.
-
-  The mechanism is clear in hindsight and worth keeping: those 22 branches test hot, unchanging data and
-  are perfectly predicted — the same pattern takes the same route on every call. A chain of predicted
-  branches costs a few cycles, not 15 ns. So a route-memoised variant would restructure the hottest
-  dispatch function in the codebase to buy approximately nothing, and the ~15 ns is still unattributed.
-
-- **Compile time:** the generated `unicode_fold.hpp` orbit table (~2900 entries) adds ~20 ms to a
-  translation unit that includes `real/real.hpp`; a `static_regex` with `IGNORECASE` folds at
-  compile time (constexpr), which is the usual constexpr cost, not a runtime one. A `static_regex`
-  over a text-mode Unicode shorthand builds a large constexpr program: it exceeds clang's default
-  `-fconstexpr-steps` (~1M) and MSVC's `/constexpr:steps` (100k) — the test build raises both to
-  33 554 432 (GCC's default is already enough). Consumers using such patterns at compile time may
-  need the same flag; the dynamic `real::regex` at runtime is unaffected.
-
-\subsection g_cceshapes 10.0 The 67 constant-evaluation branches are not a refactoring target
-
-Audited, because they look like one: 67 occurrences across the headers, 34 in `pike.hpp` alone, and a
-staged-types proposal offered to replace them with a single named dispatch. They do not fit, and the
-reasons are worth having written down so the idea is not re-proposed as free.
-
-**The shapes are not what a dispatch helper serves.** Counted:
-
-| shape | sites |
-| --- | ---: |
-| `if (!%std::is_constant_evaluated() && …)` — a runtime fast-path GUARD | 35 |
-| `if (%std::is_constant_evaluated()) { … }` — statement | 16 |
-| part of a larger condition | 9 |
-| an assignment | 1 |
-
-A `select(at_compile, at_run)` helper serves the *expression* form — two thunks yielding one type. The
-dominant form has no second branch to pass: the constant-evaluation path is "fall through to the
-general code", which is a statement-level structure, not a value.
-
-**The most repeated remaining idiom resists extraction for a load-bearing reason.** Nine sites read
-`(std::is_constant_evaluated() || !some_route_disabled())`. Those `*_disabled()` accessors return a
-reference to a mutable function-local static — they are runtime test seams, and reading one during
-constant evaluation is ill-formed. The `||` short-circuit is precisely what keeps them out of it. A
-helper taking `bool disabled` would evaluate its argument eagerly and break every constexpr caller;
-one taking a thunk would put a callable where a short-circuit is today. The repetition is the price of
-the seam, not an oversight.
-
-**What the audit did find** is one assignment-form site, `basic_match_iterator`'s `batchable`, and it
-already carries its own comment: as a `const bool` INITIALIZER the expression is manifestly
-constant-evaluated and clang rejects `std::is_constant_evaluated()` there under
-`-Werror=constant-evaluated`. It is written declare-then-assign for that reason. Note that a wrapper
-FUNCTION would have hidden that diagnostic rather than helped — the warning is doing real work.
-
-**The C++23 story, stated honestly.** `if consteval` (P1938) is the right spelling for all 51 statement
-and guard sites, and it turns the trap above into a compile error instead of a silent truth. That
-migration is a mechanical, one-time edit when this project raises `CXXSTD`; a macro seam would not
-shorten it, and would mean touching `pike.hpp` 34 times now for a rename later — in the file
-\ref g_inlinebudget exists to warn about. The two-phase in \ref real::detail::static_storage is a
-separate matter and does NOT go away in C++23 or C++26: persistent constexpr allocation is still
-forbidden, so measure-then-freeze stays regardless of reflection.
-
-\subsection g_inlinebudget 10.1 The inlining budget, and why a pattern you never touched can slow down
-
-\note **Fixed, in three steps** (lift, table bases into the view, capacity tiering). What follows is the
-diagnosis, kept because it explains years of unstable measurements in
-this area and because eight approaches were refuted along the way — none of them worth retrying. The cure
-shipped: a compile-time storage's scratch is now keyed on *dimensions*, not on the pattern's value, and the
-`.text` a pattern adds to a translation unit fell from ~45 KB to **7.7 KB on x86-64 / 7.2 KB on arm64** for
-patterns of one shape, and from 50.9 KB to 10.8 for a unit whose patterns all differ.
-The timing defect described below is gone from the swept range — an unrelated pattern read 33.5 / 33.7 /
-20.4 µs at N = 11 / 12 / 14 patterns in a TU and now reads 11.8 / 10.7 / 10.8, flat across N = 0…32 on both
-platforms, with budget refusals at N = 32 down from 19 195 to 1457. Measured residue and the one follow-up
-it leaves are at the end of this subsection.
-
-GCC caps how much a translation unit may grow from inlining: `--param inline-unit-growth`, **40 %** by
-default. This library exhausted it. In one benchmark TU, 22 534 inline decisions succeeded and **3028 were
-refused for "inline-unit-growth limit reached"** — 2637 of those in `engine/pike.hpp` alone. *(Re-measured
-after the fix: **1768** on the same TU, 1395 in `pike.hpp`, and **1750** rather than 19 735 on a
-32-pattern heterogeneous unit. The figures through the rest of this subsection are the pre-fix ones —
-they are what the diagnosis was built from.)* Once the cap
-is hit, the remaining decisions are declined in traversal order, so *which* inlinings survive stops
-depending on their value.
-
-The cause is instantiation multiplication, and the mangled names state it outright: a route is instantiated
-`[with State = static_storage<fixed_string<12>{"(\w+)@(\w+)"}>::state_type]`. **The pattern's value is a
-template argument**, so every distinct `static_regex` is a distinct `State`, a distinct `pike_vm<State,…>`,
-and a full private copy of every route — `run_class_loop`, `run_codepoint_class`, `run_fixed_shape`, the
-possessive family. Each `static_storage` instantiation measures ~6.1 KB of `.text`. Inlining demand
-therefore grows with the number of patterns in the TU while the allowance is a *percentage* of it — and
-as the sweep below shows, the growth is smooth but its consequence is not.
-
-The symptom is nasty because it is non-local. Measured on the devbox (g++ 13.3.0), one no-match ASCII scan
-of `(?i)cafe` — a pattern compiling to four byte classes and **zero** code-point classes, so it never enters
-the code under test:
-
-- alone in a TU: unaffected by an experimental change to the code-point loop (10.6 µs either way);
-- with ten other patterns instantiated beside it: **10.7 µs → 33.9 µs, +220 %**, from that same change.
-
-Same executed path, same working set, same binary layout for the scan itself. Only the TU's inlining
-pressure differed. Raising the cap removes it (at `--param inline-unit-growth=30` the *baseline* also reads
-33.7 µs; at 40, the default, it reads 10.7; at 50 both variants read ~10.7), which is what identifies the
-cap as the mechanism.
-
-**It is not a cliff you can stay away from.** Sweeping N patterns of identical *shape* and distinct *value*
-into one TU and timing an unrelated eleventh — refused-inline count and `.text` both grow smoothly with N
-(319 declines and 145 KB at N=1; 19 195 and 1522 KB at N=32, about 45 KB per pattern) — the timing does not
-follow:
-
-| N | 9 | 10 | **11** | **12** | 13 | **14** | 15 | 16 | 24 | 32 |
-|:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
-| µs/scan | 11.8 | 11.7 | **33.5** | **33.7** | 11.7 | **20.4** | 10.7 | 11.7 | 11.8 | 10.7 |
-
-Reproducible to ~1 % over three runs at every point, so it is a deterministic function of the translation
-unit — and a chaotic one of its contents. **There is no safe pattern count and no monotone margin to keep.**
-A greedy allocator with a global cap decides in traversal order, and the order changes discontinuously as
-the unit changes; whether a given TU lands well is not predictable from its size, its pattern count, or
-anything a consumer can inspect. Two thirds of the sampled configurations are fine and a third are 2–3×
-off, with no structure between them.
-
-\note This is the measurement counterpart of the `-fconstexpr-steps` note above: consumers who compile many
-patterns into one translation unit may land on the wrong side of the cliff with no change of their own.
-`--param inline-unit-growth=50` moves them back and buys real throughput where it was already lost
-(`[^,]+` −22.4 %, `(?i)café` −11.2 %, `[a-z]+` −5.2 %), but a header-only library used through a plain
-`#include` must not *require* a flag. The fix belongs in the demand, not in the consumer's build line.
-
-**Refuted, so they are not retried.** Six approaches were measured and all failed, which is what locates the
-cause: (1) dropping the `noinline, cold` pair on `cp_class_hi_width` — buys the Unicode band 12–16 % but
-costs the +220 % above; (2) splitting by call site, an inlinable copy for `extend_run` only — recovers the
-ASCII cost and delivers none of the Unicode gain; (3) a `<bool>`-templated loop with a runtime subject probe
-dispatching to a hot or cold body — the probe is paid per `search()` call, i.e. per match, and cost up to
-+226 %; (4) `noinline` on the four possessive route entry points — declines 3028 → 2903; (5) `noinline` on
-all nine route bodies — declines 3028 → 2989, median +2.2 %, and `decode_codepoint_strict` went *from* 190
-declines *to* 260, the freed budget going where GCC pleased rather than where it was wanted; (6) **PGO**
-(`-fprofile-generate` / `-fprofile-use`) — median +7.1 % and the identical +217 % cliff, because a profile
-changes which inlines GCC *wants*, not the cap it runs into, and exhausts it faster (7112 declines).
-
-Two consequences worth keeping. **Annotations cannot redistribute this budget**: `noinline` does not
-propagate, and removing inlining shrinks the unit, which shrinks the percentage allowance with it. And
-**an A/B measured inside an exhausted budget is a lottery draw** — which is the standing explanation for
-historically unstable results in this area, where the same row has read −25 % and +217 % across two
-environments. Read the untouched-pattern rows as a gauge before believing any small delta.
-
-\note **Not every unstable x86-64 delta is this budget: some are plain code PLACEMENT, and the two are
-separable.** A v2026.8.8 change that touched no engine code path measured `digits` +8.7 %, `alt`
-+5.9 % and `\p{N}+` +5.0 % against `date` −6.1 % and `\p{sc=Han}` −3.2 %, reproducibly across
-independent draws. Three observations settle it. Every out-of-line `real::` symbol in the benchmark
-binary was **byte-identical**, `run_class_loop` included, and none appeared or disappeared — only
-`main` (where the harness's counting helper is inlined) and the harness's own functions changed.
-Forcing `-falign-loops`/`-falign-functions`/`-falign-jumps` to **16 or 32 bytes** collapsed the delta
-on every row that carried it, in three independent measurement sets. And under forced alignment the
-delta **reappeared on different rows** — `words` and its ASCII witness together, −7.3 % at 32 bytes
-and +5.4 % at 16 — which is what a placement effect does: it relocates rather than resolves. So the
-alignment flags are a DIAGNOSTIC here, not a fix, and the harness is deliberately not rebuilt with
-them (that would also break comparability with every published stamp). The discriminator worth
-reusing: if the out-of-line symbols are unchanged and forced alignment moves the delta somewhere
-else, it is placement, not inlining.
-
-
-\note **The same diagnostic RETRACTED a figure this project had already published, which is the
-warning worth keeping.** The arm64 leg of that same change was recorded as costing `words` +5.6 %,
-and the stated evidence was that its ASCII witness moved with it — "two instances of one pattern,
-therefore not layout noise". Rebuilt on two independent builds the pair reads −0.01 % / +0.03 % and
-+0.02 % / +0.03 %. The witness argument is **invalid for this purpose**: two instances of one pattern
-compile to the SAME code and share its placement, so they move together under a placement shift
-exactly as they would under a real cost. A same-pattern witness separates per-row measurement noise
-— which is what it was introduced for — and separates nothing else. Before believing any delta of
-this size, rebuild and re-measure; a single build is a single draw.
-
-\note **The discriminator has a blind spot, and it is exactly the family of changes this section is
-about.** `cold`, `noinline` and section attributes ARE placement directives — moving code out of the
-hot path's neighbourhood is their whole mechanism — so "forced alignment moves the delta, therefore
-placement" cannot separate cause from effect for them. Audited that way, the `cold` marking of the
-build-time functions reproduces its published `words` −11.8 % on two independent unaligned builds
-(−11.95 %, −12.14 %), yet the same comparison under `-falign-*=16` — a mere 1 % of code inflation —
-reads **+5.70 %**, sign reversed, and −3.34 % at 32 bytes. The annotations are kept: those functions
-are cold, and the median across the table is +0.15 % / +0.19 %, neutral. What cannot be claimed is the
-MAGNITUDE as a property of the change rather than of the build. For a placement directive, the
-honest report is the shipped configuration's number plus its alignment sensitivity — not a single
-figure.
-
-\note **Everything above is now a DIAGNOSTIC, not a verdict, and one rule in this area has been
-retired outright.** The reasoning in these notes — unchanged out-of-line symbols, forced alignment
-relocating a delta, a same-pattern witness — investigates *why* a number moved. None of it establishes
-*whether* it moved, and this section repeatedly treated a single build's delta as the change's
-property. It is not: a single build is one sample from a distribution of layouts, and for a
-header-only library that distribution is the consumer's, not ours.
-\n
-The rule stated elsewhere in this repository — "rows moving the same way on both ISAs are real work,
-rows disagreeing are placement" — is **falsified and withdrawn**. A change that deleted only
-compile-time-only code, reached once per `regex` construction and never on any scan path, moved
-`digits [0-9]+` by +16.7 % on x86-64 and +3.0 % on arm64: same direction on both ISAs, and incapable
-of costing anything. Direction agreement measures how *systematic* an artefact is, not whether it is
-one.
-\n
-Verdicts now come from `benchmarks/bench_layout.py`, which compiles the same source into several
-layouts, pairs and interleaves the two sides, and — decisively — calibrates each row's noise floor by
-running the tree against **itself**, where the true delta is zero by construction. Those floors span
-0.1 % to 7.3 % depending on the row. **docs/MEASUREMENT.md is the authority**; it also lists which
-figures in this project's history do and do not survive contact with them.
-
-**The defect is `static_regex`-only.** The dynamic path already solves it: `dynamic_storage::state_type`
-fixes its SBO capacities as constants, so every `real::regex` in a TU shares one `pike_vm` instantiation.
-Sweeping the same N patterns through `real::regex` instead, `.text` goes **506 KB → 511 KB from N=0 to
-N=32** and the timing of an unrelated pattern never leaves 10.7–11.3 µs. Against `static_regex`'s 145 KB →
-1522 KB and its chaos, that is the whole finding: a consumer using runtime patterns is not exposed.
-
-The one lever left is therefore the demand *on the static side*: `state_type` is nested inside
-`static_storage<P>`, so it is distinct per pattern **value** by construction — two patterns of identical
-dimensions still get separate types, and with them a private copy of every route. Lifting it out, into a
-scratch type parameterised on the *dimensions* a pattern needs (tiered code size, slot count, block count)
-rather than on its value, lets patterns of the same shape share route code. `program_view` already exists
-as the runtime abstraction the three link-time table pointers in `state_type` would fall back to.
-
-Scoped, measured, not implemented — the numbers a decision needs:
-
-- **82.4 % of the per-pattern growth is shareable.** Diffing the symbol tables of a 1-pattern and a
-  9-pattern TU, of 48 007 bytes per additional pattern, **39 575 (82.4 %, 424 symbols) is `pike_vm` route
-  code**; 7013 is per-pattern data (program, class tables) and irreducible; the rest is noise. Had the split
-  been the other way round, the idea would be dead.
-- **Slope ÷ 6.** Route code becomes one constant term per *tier*: on 18 realistic patterns, 16 fall in a
-  32-instruction tier and 2 in a 64, with slots 2 everywhere but one — three scratch types instead of
-  eighteen. Per-pattern cost drops from ~48 KB to the ~8 KB of irreducible data. A 32-pattern TU goes from
-  ~1.5 MB to ~300 KB.
-- **It defers the defect rather than removing it.** Demand still grows, six times slower: configurations
-  that flip at N≈11 today would flip near N≈66, past what real code carries. That is the honest claim —
-  not elimination.
-- **The cost is footprint.** Tiering sizes the smallest patterns up: `[a-z]+` 1792 → ~6.8 KB (×3.8),
-  roughly the dynamic state's 7432. Zero-heap and `constexpr` survive; "sized exactly to this pattern"
-  does not.
-- **The table pointers cannot simply be dropped — measured.** Removing `ct_class_tables` /
-  `ct_cp_ascii_tables` / `ct_cp_page_tables` lets the existing `program_view` fallback take over (the three
-  uses are `if constexpr (requires { State::ct_…; })` guards, so deleting the members is the whole A/B).
-  It costs **+34.1 % on `[0-9]+` and +31.5 % on `[a-z]+`** — the match-dense class loops, where `run()` is
-  entered per match, 11 327 times over 64 KiB — and grows `.text` by 32 KB, the fallback being larger than
-  a pointer add. The `dyn` column is the natural gauge here (dynamic patterns never had these members, so
-  they are untouched by construction) and it stays within +1.5 %/−8.2 % on those two rows;
-  `(\w+)@(\w+)` moved −19.1 % STAT against −17.9 % DYN and is therefore a draw, not a signal.
-  On arm64/clang the same substitution costs only **+5.5 % / +7.0 % / +9.1 %** on those rows: GCC pays
-  four to five times what clang does for it, so this is a both-platforms result with a real spread, not one
-  machine's quirk.
-
-  \note What this rules out is the *naive* substitution, not the lift. The fallback measured here is built
-  for a shared, possibly-stale cache: it revalidates on every call, with a staleness key and an acquire
-  load. A shared scratch type does not need that — `cache.class_rows` is contiguous and indexed exactly
-  like the static array (`data() + class_index * 256`), so the base can be resolved once and the hot path
-  becomes `base + index` with no branch, the static shape with a load in place of an immediate.
-
-  **The specification, and the two prototypes that fixed it.** Both failed, and the way each failed is what
-  pins the design. Resolving the base *lazily on first use* leaves the member written inside the hot region,
-  so the compiler must reload it after any possibly-aliasing store and cannot hoist it out of the loop —
-  `[0-9]+` still read +31.1 % against +31.3 % for the plain fallback, gauge clean at −2.6 %. Resolving it
-  *in the VM constructor* fills every class row far too often, since a VM is constructed vastly more often
-  than a program is compiled, and it regressed the dynamic path it was not even meant to touch —
-  `[^,]+` moved **+123 %** on the `dyn` gauge, which is how the attempt was caught. So neither "per call"
-  nor "per VM" works, and what remains is the only place left: **fill the membership rows when the
-  per-regex immutables are built — once per program.** The base is then const after construction,
-  hoistable, and no per-call check survives. Its cost is bounded and known in advance: a pattern with
-  several byte classes pays to fill all of them even if the walk only ever consults one.
-
-  **Its residual is nil, measured on both platforms.** The part that cannot be designed away — a base
-  *loaded* from a member instead of materialised as an immediate — isolates without any of the row-filling
-  plumbing: keep the `ct_*` constants, route them through a member initialised in the constructor behind an
-  `asm volatile` barrier so the compiler cannot fold them back, and measure. Against the same `dyn` gauge,
-  the rows whose gauge stays inside ±1.5 % read a median **+1.2 % on arm64/clang** (−0.5 %…+1.8 % on the
-  class rows) and **−1.9 % on x86-64/g++ 13.3** (−4.3 %…+0.0 %). Negative on x86 for a concrete reason:
-  materialising a 64-bit absolute address costs a 10-byte `movabs` at every site, where a loaded pointer
-  lives in a register and is reused — the link-time constant was never the cheaper form there.
-
-  That retroactively reclassifies the +30 %: it was never the load, it was the staleness machinery and the
-  codegen weight of the `verify_class_row` call site, both of which the specification removes.
-
-**What shipped, and where it landed.** The lift went in as two steps. The first moved everything merely
-*sized* — thread lists, epsilon stack, capture pool — into `static_pike_scratch<CodeSize, SlotCount,
-MaxBlocks, WantsIL>` at namespace scope, leaving a thin per-pattern type holding only the table addresses;
-purely mechanical, `sizeof` byte-identical on every probe pattern. The second moved those addresses into
-\ref real::detail::program_view, where a program's runtime data belongs, which emptied the per-pattern type
-entirely: `static_storage<Pat,F>::state_type` is now an *alias* for the dimension-keyed scratch. The static
-view is a `static constexpr` object, so the addresses stay compile-time constants a folding compiler reaches
-without a load — which is why the residual measured above is what it is. Sharing was then verified directly
-rather than inferred: `\w+a` and `\w+b` name one type, as do `[a-z]+` and `[0-9]+`.
-
-**The residue, and the one follow-up.** Sharing is by *exact* dimensions, so it is total for patterns of the
-same shape and nil for patterns of different ones. Sweeping N patterns each one instruction longer than the
-last — the adversarial case, no two shapes alike — the slope returns to **50.9 KB/pattern on x86-64** and
-34.6 on arm64, against 7.7 / 7.2 when the shapes match, and one residual bump survives at N = 11 (20.9 µs
-against a flat ~11). Real code sits between the two: the 18 patterns sampled for this analysis fall into
-three dimension groups, not eighteen.
-
-That gap is closed by **dimension tiering** — rounding the scratch capacity to a tier so neighbouring shapes
-share one instantiation. The ladder is what decides the price, and powers of two (floor 8) beat the coarse
-32/64 one the scoping had sketched: roughly the same collapse, four groups against three on the 18-pattern
-sample, at a fraction of the over-allocation — `[a-z]+`'s scratch 1792 → 2328 bytes (**×1.30**) where the
-coarse ladder would have cost ×3.8. `max_blocks` had to move into the scratch and be derived from the tier
-there: computed as `(5 * code_size) + 8` from the *exact* length it made two patterns sharing a tier disagree
-and split back apart (`\p{L}+` at code 8 and `\p{sc=Han}` at 7 shared a tier and still had distinct scratch
-until then). Rounding up is safe throughout — every capacity here is an upper bound the exact value must not
-exceed.
-
-Measured, heterogeneous case: **50.9 → 10.8 KB/pattern on x86-64** (×4.7 flatter), `.text` at N = 32
-1732 → 487 KB, budget refusals 19 735 → 2251, and the residual bump that survived at N = 11 (20.9 µs against
-a flat ~11) now reads 11.9. On arm64, 34.6 → 9.3 KB/pattern. The `-fconstexpr-steps` hazard named above did
-not fire: the constexpr suite builds and passes at the larger tiered capacities.
-- **Named hazard:** tiered `static_vec` capacities consume more constexpr steps, and the
-  `-fconstexpr-steps` ceilings noted above are already tight on clang and MSVC.
+Everything is linear in the subject length. Constants, competitive tables and
+stamp history live in BENCHMARKS.md; what a timing claim is allowed to say
+lives in MEASUREMENT.md. This section names the *structural* properties only.
+
+- ASCII and non-cased patterns are unchanged by `IGNORECASE`.
+- Text-mode Unicode shorthands (`\d \s \w`) compile to a single `klass_cp`
+  predicate, not one branch per range. Wired as a byte-NFA they are unusable
+  on their dominant job (tokenising ASCII text).
+- A fast path is an optimization, never a second source of truth: the Pike
+  VM stays the oracle.
+- No hand-vectorization. The prefilter uses libc `memchr`/`memmem`.
+
+\subsection g_inlinebudget 10.1 The inlining budget
+
+`static_regex` puts the pattern in the type, so each distinct pattern is a
+distinct `State` and a private copy of every route. GCC's
+`--param inline-unit-growth` is a fraction of the translation unit: when the
+cap is hit, remaining inlines are declined in traversal order, and a pattern
+whose executed path never changed can slow down because of *other* patterns
+in the same TU. The `state_type` lift closed the worst of that multiplication.
+The diagnosis, the refutations, and the figures are in MEASUREMENT.md and in
+the comments on \ref real::detail::static_storage. Do not cite a number about
+this file without reading those.
 
 \section g_refs Further reading
 
