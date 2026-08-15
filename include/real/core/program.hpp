@@ -123,9 +123,12 @@ namespace real {
   }
 
   /*!
-   * \brief Whether a rejected pattern is malformed (`syntax`) or well-formed but beyond REAL's linear engine
-   *        (`unsupported`: a backreference, `\p{…}`, a nested/unbounded lookaround). The distinction is a
-   *        stable, machine-readable classification the C ABI exposes so a binding never has to grep `what()`.
+   * \brief Whether a rejected pattern is malformed (`syntax`) or well formed but beyond REAL's linear
+   *        engine (`unsupported`).
+   *
+   * `unsupported` covers a backreference, a conditional, and a lookaround that is not bounded — the
+   * constructs a linear-time engine cannot represent at all. It is a stable, machine-readable
+   * classification the C ABI exposes, so a binding never has to grep \ref regex_error::what.
    */
   enum class error_kind : std::uint8_t
   {
