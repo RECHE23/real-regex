@@ -81,10 +81,14 @@ coverage-build:
 
 coverage: coverage-build ## Line-coverage text summary + HTML report
 	$(LLVM_COV) report $(COV_DIR)/real_tests_bin -instr-profile=$(COV_DIR)/tests.profdata
+	@rm -rf $(COV_DIR)/html
 	$(LLVM_COV) show $(COV_DIR)/real_tests_bin -instr-profile=$(COV_DIR)/tests.profdata \
 	    -format=html -output-dir=$(COV_DIR)/html -show-line-counts-or-regions
 	@cd $(ROOT) && grep -q "REAL dark-coverage theme" $(COV_DIR)/html/style.css 2>/dev/null || \
 	    cat docs/coverage-style.css >> $(COV_DIR)/html/style.css
+	@python3 $(ROOT)/tools/anonymize_coverage_html.py $(COV_DIR)/html \
+	    $(ROOT),real-regex \
+	    $(abspath $(ROOT)/../sciforge),sciforge
 	@echo "HTML coverage report: $(COV_DIR)/html/index.html"
 
 # Minimum line coverage enforced by `coverage-check` (the CI gate). `make coverage` itself
@@ -123,13 +127,23 @@ coverage-check: coverage-build ## Enforce the line-coverage floor (CI gate)
 
 # Silent variant used by the root's `doc`/`docs-site-gate` (via their own coverage-html
 # delegation): keeps the terminal focused on the doc output.
+#
+# llvm-cov 16's -path-equivalence remaps coverage data onto local sources; it
+# does not rewrite the output hrefs or the coverage/Users/... tree (measured:
+# the flag left every published URL carrying /Users/rchenard). The HTML is
+# wiped then post-processed so a previous machine-path tree cannot linger
+# beside the published names.
 coverage-html:
 	@mkdir -p $(COV_DIR)
 	@$(MAKE) --silent coverage-build > $(COV_DIR)/build.log 2>&1 || (cat $(COV_DIR)/build.log; exit 1)
+	@rm -rf $(COV_DIR)/html
 	@$(LLVM_COV) show $(COV_DIR)/real_tests_bin -instr-profile=$(COV_DIR)/tests.profdata \
 	    -format=html -output-dir=$(COV_DIR)/html -show-line-counts-or-regions
 	@cd $(ROOT) && grep -q "REAL dark-coverage theme" $(COV_DIR)/html/style.css 2>/dev/null || \
 	    cat docs/coverage-style.css >> $(COV_DIR)/html/style.css
+	@python3 $(ROOT)/tools/anonymize_coverage_html.py $(COV_DIR)/html \
+	    $(ROOT),real-regex \
+	    $(abspath $(ROOT)/../sciforge),sciforge
 	@echo "HTML coverage report: $(COV_DIR)/html/index.html"
 
 # ThreadSanitizer smoke: a standalone multi-threaded program (tests/compat/tsan_compat.cpp) that hammers the

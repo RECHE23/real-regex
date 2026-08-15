@@ -3,7 +3,8 @@
 
 The C++ test suite is built with LLVM source-based coverage instrumentation.
 The detailed HTML report is embedded below; it is generated next to this
-documentation by `make doc`.
+documentation by `make doc`. The published site rewrites the iframe to
+`../coverage/` so /api does not carry a second copy of the report.
 
 \htmlonly
 <iframe src="coverage/index.html" width="100%" height="800px"

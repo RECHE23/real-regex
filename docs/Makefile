@@ -30,8 +30,11 @@ COV_HTML := $(BUILD)/coverage/html
 .PHONY: doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate help
 .DEFAULT_GOAL := help
 
+# HTML output is incremental: flipping SOURCE_BROWSER / VERBATIM_HEADERS /
+# INTERACTIVE_SVG leaves the old *_source.html and *_org.svg until wiped.
 doc: ## Generate API reference (Doxygen) with embedded coverage (root runs coverage-html first)
 	mkdir -p $(BUILD)/doc
+	rm -rf $(BUILD)/doc/html
 	cd $(ROOT) && doxygen Doxyfile
 	@rm -rf $(BUILD)/doc/html/coverage
 	@cp -R $(COV_HTML) $(BUILD)/doc/html/coverage
@@ -41,6 +44,7 @@ doc: ## Generate API reference (Doxygen) with embedded coverage (root runs cover
 # needs the API reference). It does not rebuild the coverage report.
 doc-no-coverage: ## Generate API reference without coverage report
 	mkdir -p $(BUILD)/doc
+	rm -rf $(BUILD)/doc/html
 	cd $(ROOT) && doxygen Doxyfile
 	@echo "API reference: $(BUILD)/doc/html/index.html"
 
@@ -84,16 +88,23 @@ doc-site-xml: ## User-facing Doxygen XML (INTERNAL_DOCS=NO) -> build/doc/xml-sit
 # command for a session that then wants style + voice + curated-members.
 doc-xml: doc-no-coverage doc-site-xml ## Both Doxygen XML trees (developer + user)
 
+# -d keeps Sphinx's pickle cache out of the deployed tree (html/.doctrees
+# was 4 MiB on Pages). rm is the leftover from a build that used the default.
+# One llvm-cov tree, at /coverage. cp -R into api/ nests a third copy when
+# api/coverage already exists, and Doxygen's own `make doc` copy rides along
+# if that ran first -- delete it either way, then rewrite the iframe.
 docs-site: doc-no-coverage doc-site-xml ## Build the themed Sphinx/Breathe site (docs/site) -> build/site/html
 	@command -v $(SPHINXBUILD) >/dev/null 2>&1 || { \
 	  echo "docs-site: '$(SPHINXBUILD)' not found -- install docs/requirements.txt into a venv" \
 	       "and put it on PATH (or pass SPHINXBUILD=/path/to/sphinx-build)"; exit 1; }
-	$(SPHINXBUILD) $(SPHINXOPTS) -b html $(ROOT)/docs/site $(BUILD)/site/html
+	$(SPHINXBUILD) $(SPHINXOPTS) -d $(BUILD)/site/doctrees -b html $(ROOT)/docs/site $(BUILD)/site/html
+	@rm -rf $(BUILD)/site/html/.doctrees
 	@if [ -d $(COV_HTML) ]; then \
 	  rm -rf $(BUILD)/site/html/coverage && cp -R $(COV_HTML) $(BUILD)/site/html/coverage; \
 	fi
 	@rm -rf $(BUILD)/site/html/api && cp -R $(BUILD)/doc/html $(BUILD)/site/html/api
-	@if [ -d $(COV_HTML) ]; then cp -R $(COV_HTML) $(BUILD)/site/html/api/coverage; fi
+	@rm -rf $(BUILD)/site/html/api/coverage
+	@python3 $(ROOT)/tools/relocate_coverage_iframe.py $(BUILD)/site/html/api/coverage.html
 	@echo "docs-site: $(BUILD)/site/html/index.html"
 
 # The site's own gate: -W (every warning fatal) + --keep-going (report all of them,
@@ -191,9 +202,22 @@ docs-site-gate: ## Sphinx -W --keep-going + linkcheck + built-HTML link check fo
 	 fi
 	@echo "── built-HTML link check (build/site/html/*.html, site-wide -- linkcheck can't see the bespoke landing template or any #anchor)"
 	@$(MAKE) docs-site
-	@test -f $(BUILD)/site/html/api/coverage/index.html || { echo "docs-site-gate: api/coverage/index.html missing -- the \\page coverage iframe would 404 (run make coverage-html first)"; exit 1; }
+	@echo "── published-tree hygiene (one coverage copy, no .doctrees, no source browser, no machine paths)"
+	@test -f $(BUILD)/site/html/coverage/index.html || { echo "docs-site-gate: coverage/index.html missing -- the published /coverage tree (run make coverage-html first)"; exit 1; }
+	@test ! -e $(BUILD)/site/html/api/coverage || { echo "docs-site-gate: FAIL -- api/coverage must not exist; one copy lives at /coverage"; exit 1; }
+	@test ! -d $(BUILD)/site/html/.doctrees || { echo "docs-site-gate: FAIL -- .doctrees must not ship inside html/"; exit 1; }
+	@test ! -e $(BUILD)/site/html/api/pike_8hpp_source.html || { echo "docs-site-gate: FAIL -- VERBATIM_HEADERS must stay NO (pike_8hpp_source.html is the witness)"; exit 1; }
+	@test ! -e $(BUILD)/site/html/api/regex_8hpp__incl_org.svg || { echo "docs-site-gate: FAIL -- INTERACTIVE_SVG must stay NO (regex_8hpp__incl_org.svg is the witness)"; exit 1; }
+	@grep -q 'src="../coverage/index.html"' $(BUILD)/site/html/api/coverage.html || { echo "docs-site-gate: FAIL -- /api/coverage.html iframe was not relocated to ../coverage/"; exit 1; }
+	@if grep -R --include='*.html' -l -E '/Users/|/home/' $(BUILD)/site/html/coverage >/dev/null; then \
+	  echo "docs-site-gate: FAIL -- coverage HTML embeds machine paths"; \
+	  grep -R --include='*.html' -l -E '/Users/|/home/' $(BUILD)/site/html/coverage | sed 's/^/  /' | head; \
+	  exit 1; \
+	fi
+	@test ! -e $(BUILD)/site/html/coverage/coverage/Users || { echo "docs-site-gate: FAIL -- coverage tree still has coverage/Users"; exit 1; }
+	@test ! -e $(BUILD)/site/html/coverage/coverage/home || { echo "docs-site-gate: FAIL -- coverage tree still has coverage/home"; exit 1; }
 	@python3 $(ROOT)/tools/check_site_links.py $(BUILD)/site/html
-	@echo "docs-site-gate: PASS (sphinx -W --keep-going + linkcheck + no-inline-quickstart + built-HTML link check)"
+	@echo "docs-site-gate: PASS (sphinx -W --keep-going + linkcheck + no-inline-quickstart + built-HTML link check + published-tree hygiene)"
 
 help: ## Show these targets
 	@$(HELP_RECIPE)

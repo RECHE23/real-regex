@@ -59,7 +59,14 @@ USE_MATHJAX            = YES
 GENERATE_HTML          = YES
 GENERATE_LATEX         = NO
 HTML_OUTPUT            = html
-SOURCE_BROWSER         = YES
+# NO at publication: *_source.html was 9 MiB of the published /api tree and
+# the 13 largest pages. SOURCE_BROWSER=NO alone is not enough -- Doxygen's
+# default VERBATIM_HEADERS=YES still emits one *_source.html per header
+# (measured: 36 files, 9.1 MiB, after SOURCE_BROWSER flipped). The headers
+# live on GitHub; the curated /reference/ pages do not need a second copy.
+# `make doc` shares this file.
+SOURCE_BROWSER         = NO
+VERBATIM_HEADERS       = NO
 ALPHABETICAL_INDEX     = YES
 # XML sidecar for check-doc-style (member kinds, the full tree). Breathe does
 # NOT read this directory -- see Doxyfile.site / build/doc/xml-site.
@@ -83,7 +90,9 @@ HTML_COLORSTYLE        = AUTO_LIGHT
 # off as they are noisy for this engine.
 HAVE_DOT               = YES
 DOT_IMAGE_FORMAT       = svg
-INTERACTIVE_SVG        = YES
+# NO: INTERACTIVE_SVG=YES emits a sibling *_org.svg per graph (~2 MiB of
+# duplicates on the published /api tree) for a hover the site does not use.
+INTERACTIVE_SVG        = NO
 INCLUDE_GRAPH          = YES
 INCLUDED_BY_GRAPH      = NO
 CALL_GRAPH             = NO
