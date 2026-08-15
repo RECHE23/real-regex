@@ -14,7 +14,7 @@ Interface
 
 .. doxygenclass:: real::basic_match_result
    :project: real
-   :members: matched, size, start, end, group_index, operator[], operator bool
+   :members: basic_match_result, matched, size, start, end, group_index, operator[], operator bool, spans
 
 Complexity
 ----------

@@ -11,6 +11,8 @@ the methodology.
 | **Format** (`format` / `format-check`) | Uncrustify over `include/` + `tests/` (generated Unicode tables excluded), against the shared config SciForge owns (`$(SCIFORGE_LINT)/uncrustify.cfg`). `format` rewrites in place; `format-check` is the dry-run CI uses. |
 | **Layering** (`check-layers`) | Enforces the `include/real/` header dependency-tier contract (`check_layers.py`) — a header may only include from its own tier or a lower one. |
 | **C ABI golden** (`check-capi-abi`) | Regenerates and diffs the frozen C ABI surface pin (`gen_capi_abi_golden.py`) against `bindings/c/real_capi.h` — enum ordinals, documented flag bits, normalized prototypes. Golden lives at `tests/bindings/capi_abi_golden.txt`; enum/flag value pins live in `tests/bindings/test_capi_abi.cpp`. |
+| **Doc voice** (`check-doc-voice`) | Fails if a Doxygen comment published by `Doxyfile.site` (public, non-`\internal`) still talks like a bench log. Implementation notes stay in `//`. |
+| **Curated members** (`check-curated-members`) | Fails if a `:members:` allowlist silently drops a published symbol. Omissions live in `docs/site/reference/unpublished.yaml` with a reason. |
 
 ## Running
 

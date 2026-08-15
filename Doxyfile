@@ -1,6 +1,13 @@
-# Doxygen configuration for REAL — API reference generation (`make doc`).
+# Doxygen configuration for REAL — the exhaustive developer tree (`make doc`).
 # Style: banner-block comments whose first sentence is the brief (no autobrief),
 # in-place attribute docs (`//!<`), and exhaustive extraction of the whole library.
+#
+# TWO PROFILES. This file is the developer tree: INTERNAL_DOCS=YES, private
+# members extracted, HTML at build/doc/html (copied to the site as /api).
+# Doxyfile.site is the user tree Breathe consumes (XML only, build/doc/xml-site).
+# \internal hides a comment, not a symbol -- Doxyfile.site excludes engine
+# hooks by EXCLUDE_SYMBOLS and #ifndef DOXYGEN_SHOULD_SKIP_THIS. Do not
+# point conf.py at this file's XML.
 
 PROJECT_NAME           = "REAL"
 PROJECT_BRIEF          = "Regular Expression Algorithmic Library — constexpr C++20 regex"
@@ -54,9 +61,8 @@ GENERATE_LATEX         = NO
 HTML_OUTPUT            = html
 SOURCE_BROWSER         = YES
 ALPHABETICAL_INDEX     = YES
-# XML sidecar for Breathe (docs/site) -- consumed by Sphinx via
-# breathe_projects = {"real": "../../build/doc/xml"}. Additive to the HTML output above;
-# does not change what `make doc` (the live Doxygen HTML site) produces or where.
+# XML sidecar for check-doc-style (member kinds, the full tree). Breathe does
+# NOT read this directory -- see Doxyfile.site / build/doc/xml-site.
 GENERATE_XML           = YES
 XML_OUTPUT             = xml
 

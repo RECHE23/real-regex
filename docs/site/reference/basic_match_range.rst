@@ -21,7 +21,7 @@ The range is what ``find_iter`` returns. Constructing one from a
 
 .. doxygenclass:: real::basic_match_iterator
    :project: real
-   :members: value_type, operator*, operator->, operator++, exhausted, operator==
+   :members: basic_match_iterator, value_type, operator*, operator->, operator++, exhausted, operator==
 
 Complexity
 ----------

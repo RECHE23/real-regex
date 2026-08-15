@@ -1,0 +1,69 @@
+# User-facing Doxygen XML for Breathe (docs/site /reference/).
+#
+# Standalone on purpose. Doxygen's XML still lists documented private
+# members even with EXTRACT_PRIVATE=NO; check-doc-voice therefore reads
+# only prot=public. This file restates the keys it needs rather than
+# @INCLUDE-and-override, so INPUT / EXCLUDE_SYMBOLS cannot be silently
+# widened by the developer Doxyfile.
+#
+# \internal only hides a comment, not the symbol. Members that must not
+# appear here are named in EXCLUDE_SYMBOLS, or wrapped in
+# #ifndef DOXYGEN_SHOULD_SKIP_THIS (constructors share the class name).
+#
+# Run from the repository root (same CWD rule as Doxyfile):
+#   rm -rf build/doc/xml-site && doxygen Doxyfile.site
+
+PROJECT_NAME           = "REAL"
+PROJECT_BRIEF          = "Regular Expression Algorithmic Library — constexpr C++20 regex"
+OUTPUT_DIRECTORY       = build/doc
+OUTPUT_LANGUAGE        = English
+
+INPUT                  = include/real/real.hpp \
+                         include/real/regex_set.hpp \
+                         include/real/dfa.hpp \
+                         include/real/version.hpp \
+                         include/real/storage.hpp \
+                         include/real/core/program.hpp \
+                         include/real/compat
+FILE_PATTERNS          = *.hpp
+RECURSIVE              = YES
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+INTERNAL_DOCS          = NO
+PREDEFINED             = DOXYGEN_SHOULD_SKIP_THIS
+
+EXCLUDE_SYMBOLS        = engine_* \
+                         decide_batching \
+                         bind_context \
+                         detach_from_regex \
+                         count_walk \
+                         count_trailing_la \
+                         cascade_ \
+                         trailing_la_walk_ \
+                         refill_batch \
+                         advance \
+                         real::detail \
+                         real::detail::*
+
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = NO
+JAVADOC_AUTOBRIEF      = NO
+QT_AUTOBRIEF           = NO
+MULTILINE_CPP_IS_BRIEF = NO
+OPTIMIZE_OUTPUT_FOR_C  = NO
+
+QUIET                  = YES
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = NO
+WARN_IF_DOC_ERROR      = NO
+WARN_AS_ERROR          = NO
+
+GENERATE_HTML          = NO
+GENERATE_LATEX         = NO
+GENERATE_XML           = YES
+XML_OUTPUT             = xml-site
+HAVE_DOT               = NO
+SOURCE_BROWSER         = NO
+GENERATE_TREEVIEW      = NO

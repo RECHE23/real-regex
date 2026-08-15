@@ -1,0 +1,28 @@
+# Public, not \internal, and intentionally absent from a curated :members: list.
+# check_curated_members.py fails if a published member is in neither that list
+# nor here. A reason is required: an omission without one is the silent
+# allowlist failure this file exists to stop.
+#
+# Names are Doxygen <name> text (operator[], find_iter_longest, …).
+# Classes that render with bare `:members:` (everything public) are not checked.
+
+real::basic_regex:
+  find_iter_longest: experimental leftmost-longest; not the default surface
+  search_longest: experimental leftmost-longest; not the default surface
+  raw_program: embedder hook for bindings that drive the VM themselves
+  has_first_byte_set: embedder prefilter query
+  unique_first_byte: embedder prefilter query
+  may_start_with: embedder prefilter query
+  named_group_count: allocation-free walk of names; named_groups covers the usual case
+  named_group_at: pair of named_group_count
+
+real::basic_match_iterator:
+  iterator_category: iterator trait
+  difference_type: iterator trait
+  reference: iterator trait
+  pointer: iterator trait
+
+real::regex_set:
+  fused_min_eligible: calibrated fused-scan threshold; not part of the which-matched contract
+  uses_fused: instrumentation -- whether this instance took the fused path
+  eligible_count: instrumentation -- fused subset size

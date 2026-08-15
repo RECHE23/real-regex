@@ -27,7 +27,7 @@ include $(ROOT)/mk/help.mk
 # (COV_CXX/PROFDATA/LLVM_COV/COV_FLOOR etc., which stay root-only/tests-domain).
 COV_HTML := $(BUILD)/coverage/html
 
-.PHONY: doc doc-no-coverage doc-check docs-site docs-site-gate help
+.PHONY: doc doc-no-coverage doc-check doc-site-xml docs-site docs-site-gate help
 .DEFAULT_GOAL := help
 
 doc: ## Generate API reference (Doxygen) with embedded coverage (root runs coverage-html first)
@@ -70,7 +70,15 @@ doc-check: ## Build docs under the exact CI Doxygen (Docker) to catch version-dr
 SPHINXBUILD ?= sphinx-build
 SPHINXOPTS  ?=
 
-docs-site: doc-no-coverage ## Build the themed Sphinx/Breathe site (docs/site) -> build/site/html
+# User-facing XML for Breathe. Deleted first: Doxygen's XML output is incremental
+# and will otherwise leave compounds for \internal members that just became hidden.
+doc-site-xml: ## User-facing Doxygen XML (INTERNAL_DOCS=NO) -> build/doc/xml-site
+	mkdir -p $(BUILD)/doc
+	rm -rf $(BUILD)/doc/xml-site
+	cd $(ROOT) && doxygen Doxyfile.site
+	@echo "docs-site XML: $(BUILD)/doc/xml-site"
+
+docs-site: doc-no-coverage doc-site-xml ## Build the themed Sphinx/Breathe site (docs/site) -> build/site/html
 	@command -v $(SPHINXBUILD) >/dev/null 2>&1 || { \
 	  echo "docs-site: '$(SPHINXBUILD)' not found -- install docs/requirements.txt into a venv" \
 	       "and put it on PATH (or pass SPHINXBUILD=/path/to/sphinx-build)"; exit 1; }
@@ -151,6 +159,11 @@ docs-site-gate: ## Sphinx -W --keep-going + linkcheck + built-HTML link check fo
 	  echo "docs-site-gate: '$(SPHINXBUILD)' not found -- install docs/requirements.txt into a venv" \
 	       "and put it on PATH (or pass SPHINXBUILD=/path/to/sphinx-build)"; exit 1; }
 	@mkdir -p $(BUILD)/doc && cd $(ROOT) && doxygen Doxyfile
+	@rm -rf $(BUILD)/doc/xml-site && cd $(ROOT) && doxygen Doxyfile.site
+	@echo "── check-doc-voice (no route vocabulary in published Doxygen XML)"
+	@python3 $(ROOT)/tools/check_doc_voice.py
+	@echo "── check-curated-members (allowlist omissions are explicit)"
+	@python3 $(ROOT)/tools/check_curated_members.py
 	@rm -rf $(BUILD)/site/_gate $(BUILD)/site/_linkcheck
 	$(SPHINXBUILD) $(SPHINXOPTS) -W --keep-going -b html $(ROOT)/docs/site $(BUILD)/site/_gate
 	$(SPHINXBUILD) $(SPHINXOPTS) -b linkcheck $(ROOT)/docs/site $(BUILD)/site/_linkcheck

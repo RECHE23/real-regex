@@ -66,11 +66,11 @@ include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
 	full-local-gate-impl gcc-check route-probe alloc-probe ac-regime sabotage-sweep \
-        lint misra check-state-zeroing check-percall-copies route-surface-parity bench-compilers fuzz fuzz-compat fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
+        lint misra check-state-zeroing check-percall-copies route-surface-parity bench-compilers fuzz fuzz-compat fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
-        version-check install install-smoke uninstall release help check-layers check-doc-style check-bench-stamp check-bench-ratios gate-venv check-sse2-floor \
+        version-check install install-smoke uninstall release help check-layers check-doc-style check-doc-voice check-curated-members check-bench-stamp check-bench-ratios gate-venv check-sse2-floor \
         check-site-anchors
 
 .DEFAULT_GOAL := help
@@ -404,6 +404,16 @@ check-sse2-floor: ## [gate] x86-64: headers must compile with SSE2 but NOT AVX2 
 check-doc-style:
 	@python3 tools/check_doc_style.py
 
+# Route vocabulary in a Doxygen block that Doxyfile.site publishes (public,
+# non-\internal). Implementation notes belong in //, which this XML never sees.
+check-doc-voice:
+	@python3 tools/check_doc_voice.py
+
+# A public non-\internal member of a curated class must be in that page's
+# :members: list or in docs/site/reference/unpublished.yaml -- never silent.
+check-curated-members:
+	@python3 tools/check_curated_members.py
+
 # Every :start-after:/:end-before: the site slices with must resolve, exactly once, in the file it
 # includes. Dependency-free on purpose: docs-site-gate needs sphinx-build and is SKIPPED without it,
 # so a prose rewrite that deleted an anchor reached CI unchallenged (Docs-site, regex.md). This runs
@@ -515,7 +525,7 @@ gate-doc: ## [gates] Calibrated gate for a doc-only change (doc-check/format-che
 	 echo "gate-doc: category OK (doc-only / comment-only diff)"
 	@set -euo pipefail; \
 	 files="$$(git diff --name-only $(GATE_BASE) -- .)"; \
-	 if printf '%s\n' "$$files" | grep -qE '\.hpp$$|Doxyfile$$'; then \
+	 if printf '%s\n' "$$files" | grep -qE '\.hpp$$|Doxyfile'; then \
 	   echo "── doc-check (headers or Doxyfile touched)"; $(MAKE) doc-check; \
 	 else echo "gate-doc: skip doc-check (no headers/Doxyfile touched)"; fi
 	@set -euo pipefail; \
@@ -601,6 +611,10 @@ full-local-gate-impl:
 	@$(MAKE) check-doc-style
 	@echo "── [6c/24] check-site-anchors (site slices resolve in their sources)"
 	@$(MAKE) check-site-anchors
+	@echo "── [6d/24] doc-site-xml + check-doc-voice + check-curated-members"
+	@$(MAKE) doc-site-xml
+	@$(MAKE) check-doc-voice
+	@$(MAKE) check-curated-members
 	# Arithmetic, so it belongs in the cheap section beside the other doc gates: it re-derives every
 	# ratio in BENCHMARKS.md §A/§E/§Unicode from the ns/B pair beside it AND every range, per-row pair
 	# and count in §A's reading bullets from the cells above them. The prose half is the one that
@@ -742,6 +756,9 @@ gcc-check: ## [gates] Compile the engine headers under gcc -Werror (the diagnost
 
 doc-check:
 	@$(MAKE) -C docs doc-check
+
+doc-site-xml:
+	@$(MAKE) -C docs doc-site-xml
 
 # --- benchmarks/ (throughput/duel/matrix/profile — dev-only; matrix-gate is the one CI-relevant gate) ---
 #

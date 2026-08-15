@@ -56,7 +56,9 @@ namespace real {
      */
     constexpr basic_match_result() = default;
 
+#ifndef DOXYGEN_SHOULD_SKIP_THIS
     /*!
+     * \internal
      * \brief Constructs a result from raw slots (used internally by the engine).
      * \param[in] text    The searched text (borrowed; must outlive the result).
      * \param[in] slots   Flattened capture slots (byte offsets, npos for unset).
@@ -83,6 +85,7 @@ namespace real {
     {}
 
     /*!
+     * \internal
      * \brief Engine-internal: adopts the fields of the borrowing twin, to be detached next.
      *
      * A template, and constrained, so that it exists only for the owning specialisation -- the
@@ -106,6 +109,7 @@ namespace real {
     {}
 
     /*!
+     * \internal
      * \brief Engine-internal: an empty, unmatched result whose slot storage is built IN PLACE.
      *
      * Paired with \ref engine_slots and \ref engine_set_matched, this is what lets
@@ -127,8 +131,10 @@ namespace real {
         pattern_(pattern),
         names_(names)
     {}
+#endif
 
     /*!
+     * \internal
      * \brief Engine-internal: the slot storage, for the engine to fill in place.
      * \return A mutable reference to the flattened capture slots.
      */
@@ -138,6 +144,7 @@ namespace real {
     }
 
     /*!
+     * \internal
      * \brief Engine-internal: records whether the fill that just ran produced a match.
      * \param[in] matched Whether a match occurred.
      */
@@ -151,6 +158,7 @@ namespace real {
     friend class basic_match_result;
 
     /*!
+     * \internal
      * \brief Engine-internal: stop borrowing the regex's name tables, because it is about to die.
      *
      * `search`, `match` and `fullmatch` are callable on a temporary regex, and must stay so -- the
@@ -180,6 +188,7 @@ namespace real {
     }
 
     /*!
+     * \internal
      * \brief Engine-internal: re-run the search into this result's OWN slot buffer, reusing its
      *        capacity. Not part of the public API.
      *
@@ -218,6 +227,7 @@ namespace real {
     }
 
     /*!
+     * \internal
      * \brief Binds the invariant context (subject, pattern, named groups) once. For an iterator that refills
      *        the same result many times, these never change within a walk — set them here, not per match.
      * \param[in] text    The subject the walk runs over.
@@ -234,6 +244,7 @@ namespace real {
     }
 
     /*!
+     * \internal
      * \brief Per-match refill for an iterator whose context is already bound via \ref bind_context runs the
      *        VM and records only the outcome (the invariant fields are already set), the find_iter hot path.
      * \tparam Cascade Whether the VM may take its memchr-cascade tail.
@@ -259,6 +270,7 @@ namespace real {
     }
 
     /*!
+     * \internal
      * \brief Refill from a span the engine already found in a batch, bypassing the VM entirely.
      * \tparam Vm The engine type, deduced.
      * \param[in,out] vm The engine, used only to reconstruct the slot layout for this span.
@@ -275,6 +287,7 @@ namespace real {
     }
 
     /*!
+     * \internal
      * \brief Cold path for TrailingLA walks only (never referenced from pure walks).
      * \tparam Cascade Whether the VM may take its memchr-cascade tail.
      * \tparam Vm      The engine type, deduced.
@@ -408,23 +421,21 @@ namespace real {
     }
 
     /*!
-     * \brief The capture slots as one flat `[start0, end0, start1, end1, …]` view — the raw storage,
-     *        for a caller that copies every group out in one pass.
+     * \brief The capture slots as one flat `[start0, end0, start1, end1, …]` view.
      *
-     * Same layout and length as the C ABI's `spans` buffer, so the shim fills it by reading straight
-     * across instead of calling \ref start / \ref end per group — each of those re-tests
-     * `matched()` and the group bound, which a caller that has *already* established a match (the
-     * ABI checks the return code first) pays for nothing. Measured on the C shim: `\b\w+\b`
-     * −20.7 % per match, `[a-z]+` −7.1 %, multi-group patterns neutral.
-     *
-     * This is the raw storage, so it is only meaningful on a matched result — an unmatched one
-     * carries whatever the last fill left (\ref start / \ref end are the safe accessors, and return
-     * \ref real::npos there). Copy it **pairwise** (`spans[2g]`, `spans[2g+1]`) rather than with one
-     * `memcpy`: the length is a runtime value, so `memcpy` compiles to a real libc call that costs
-     * more than the stores for the 1–2 slot shapes that dominate.
+     * For a caller that copies every group in one pass (the C ABI's `spans`
+     * buffer is this layout). Only meaningful on a matched result — an unmatched
+     * one carries whatever the last fill left. Prefer \ref start / \ref end when
+     * reading a single group; those return \ref real::npos if it did not
+     * participate. Copy pairwise (`spans[2g]`, `spans[2g+1]`).
      *
      * \return A view of `2 * size()` slot values; empty when there are no slots.
      */
+    // The C shim fills its buffer by walking this view instead of calling
+    // start/end per group (each re-tests matched() and the bound). memcpy of a
+    // runtime length is a libc call that costs more than the stores for the
+    // 1–2 slot shapes that dominate. Measured on the C shim: `\b\w+\b`
+    // −20.7 % per match, `[a-z]+` −7.1 %, multi-group patterns neutral.
     [[nodiscard]] constexpr std::span<const std::size_t> spans() const noexcept
     {
       if (slots_.empty()) {
@@ -452,9 +463,9 @@ namespace real {
    * after a non-empty one), then the scan advances by one codepoint. The regex
    * and the text must outlive the iterator. Obtained from \ref basic_match_range.
    *
-   * \tparam Storage    The regex's storage policy (selects the result/scratch types).
-   * \tparam TrailingLA Engine-internal walk specialization. Callers never set this.
+   * \tparam Storage The regex's storage policy (selects the result/scratch types).
    */
+  // TrailingLA is an engine-internal walk specialization. Callers never set it.
   template <typename Storage, bool TrailingLA = false>
   class basic_match_iterator
   {
@@ -471,7 +482,9 @@ namespace real {
      */
     constexpr basic_match_iterator() = default;
 
+#ifndef DOXYGEN_SHOULD_SKIP_THIS
     /*!
+     * \internal
      * \brief Constructs a begin iterator and finds the first match.
      * \param[in] prog    The compiled program to run.
      * \param[in] pattern The pattern text (for named-group resolution).
@@ -514,6 +527,8 @@ namespace real {
       current_.bind_context(text_, pattern_, prog_.names); // invariant across the walk — set once, not per match
       advance();
     }
+
+#endif
 
     /*!
      * \internal
@@ -1065,14 +1080,15 @@ namespace real {
    * The regex and the text must outlive the range. Empty matches follow Python:
    * an empty match is yielded, then the scan advances one codepoint.
    *
-   * \tparam Storage    The regex's storage policy.
-   * \tparam TrailingLA Engine-internal walk specialization. Callers never set this.
+   * \tparam Storage The regex's storage policy.
    */
+  // TrailingLA is an engine-internal walk specialization. Callers never set it.
   template <typename Storage, bool TrailingLA = false>
   class basic_match_range
   {
   public:
 
+#ifndef DOXYGEN_SHOULD_SKIP_THIS
     /*!
      * \internal
      * \brief Binds the range to a compiled program and a subject.
@@ -1109,6 +1125,8 @@ namespace real {
         prog_.hints.capture_free_walk = detail::capture_free_walk_structural(prog_.code);
       }
     }
+
+#endif
 
     /*!
      * \brief Returns an iterator to the first match.
@@ -1694,14 +1712,11 @@ namespace real {
     }
 
     /*!
-     * \brief Returns the flag set IN FORCE: the constructor flags, plus what a leading global-flags
-     *        group added, minus what its `-removal` cleared.
+     * \brief The flag set in force: constructor flags, plus a leading `(?imsxa)`
+     *        group, minus its `-removal`.
      *
-     * `regex("(?-i)a", flags::icase)` reports no \ref flags::icase and matches case-sensitively — the
-     * accessor and the engine agree. They did not always: the removal was applied to the parser's base
-     * scope while the reported value came from the add-only \ref detail::ast::inline_flags alone, so
-     * this over-reported exactly on a global removal. Removals are now carried separately
-     * (\ref detail::ast::inline_removed) and cleared here.
+     * `regex("(?-i)a", flags::icase)` reports no \ref flags::icase and matches
+     * case-sensitively — the accessor and the engine agree.
      *
      * \return The effective flag set.
      */

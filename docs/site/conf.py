@@ -106,6 +106,7 @@ nitpick_ignore = [
     # every symbol; every PUBLIC object is curated, this list masks no debt).
     ("cpp:identifier", "result_type"),
     ("cpp:identifier", "value_type"),
+    ("cpp:identifier", "fixed_string"),
     ("cpp:identifier", "npos"),
     ("cpp:identifier", "real"),
     ("cpp:identifier", "detail"),
@@ -149,9 +150,12 @@ copybutton_prompt_is_regexp = True
 pygments_style = "tango"
 
 # -- Breathe (Doxygen-XML -> Sphinx bridge) -----------------------------------
-# Consumes the XML sidecar Doxyfile now produces (P0: GENERATE_XML/XML_OUTPUT).
-# `make docs-site` runs `doxygen Doxyfile` before sphinx-build so this path exists.
-breathe_projects = {"real": "../../build/doc/xml"}
+# Consumes the USER Doxygen profile (Doxyfile.site): INTERNAL_DOCS=NO, so
+# \internal members are absent. The developer tree (Doxyfile, build/doc/xml)
+# is what /api and check-doc-style read -- pointing Breathe at THAT xml made
+# \internal decorative. `make docs-site` / `docs-site-gate` run Doxyfile.site
+# before sphinx-build so this path exists.
+breathe_projects = {"real": "../../build/doc/xml-site"}
 breathe_default_project = "real"
 
 # -- HTML output ---------------------------------------------------------------

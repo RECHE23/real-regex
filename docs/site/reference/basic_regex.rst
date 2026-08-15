@@ -37,7 +37,8 @@ Interface
 .. doxygenclass:: real::basic_regex
    :project: real
    :members: basic_regex, result_type, owning_result_type, match, fullmatch, search, find_iter,
-             find_all, count_matches, replace, split
+             find_all, count_matches, replace, split, pattern, compile_flags, group_count,
+             group_index, named_groups
 
 The two aliases:
 
