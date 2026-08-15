@@ -6687,7 +6687,7 @@ namespace real::detail {
     return cp_in_ranges(gc_property_ranges[static_cast<std::size_t>(prop)], cp);
   }
 
-  //! \brief A loose-normalized (lowercase, no _/-/space) General_Category name and its property.
+  /*! \brief A loose-normalized (lowercase, no _/-/space) General_Category name and its property. */
   struct gc_alias_entry
   {
     std::string_view name; //!< The loose-normalized name (short code or long name).

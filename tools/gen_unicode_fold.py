@@ -139,7 +139,7 @@ def emit(orbits, path):
         version_kind="orbits",
         version_const="unicode_fold_unidata_version")
     lines += [
-        "  //! \\brief A code point and the other members of its case-fold orbit (up to 3; orbits <= 4).",
+        "  /*! \\brief A code point and the other members of its case-fold orbit (up to 3; orbits <= 4). */",
         "  struct fold_entry",
         "  {",
         "    std::uint32_t cp;         //!< The code point.",

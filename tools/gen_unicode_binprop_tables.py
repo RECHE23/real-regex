@@ -253,7 +253,7 @@ def _emit(tables, version, path):
     out += ["  {"]
     out += ["    return cp_in_ranges(binprop_ranges[static_cast<std::size_t>(prop)], cp);"]
     out += ["  }", ""]
-    out += ["  //! \\brief A loose-normalized (lowercase, no _/-/space) binary-property name and its value."]
+    out += ["  /*! \\brief A loose-normalized (lowercase, no _/-/space) binary-property name and its value. */"]
     out += ["  struct binprop_alias_entry"]
     out += ["  {"]
     out += ["    std::string_view name; //!< The loose-normalized name."]

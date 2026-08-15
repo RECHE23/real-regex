@@ -166,7 +166,7 @@ def _emit(tables, path):
         if name in _GC_LONG:
             aliases.append((_loose(_GC_LONG[name]), name))
     aliases.sort()
-    out += ["  //! \\brief A loose-normalized (lowercase, no _/-/space) General_Category name and its property."]
+    out += ["  /*! \\brief A loose-normalized (lowercase, no _/-/space) General_Category name and its property. */"]
     out += ["  struct gc_alias_entry"]
     out += ["  {"]
     out += ["    std::string_view name; //!< The loose-normalized name (short code or long name)."]

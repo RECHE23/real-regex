@@ -11773,7 +11773,7 @@ namespace real::detail {
     return cp_in_ranges(binprop_ranges[static_cast<std::size_t>(prop)], cp);
   }
 
-  //! \brief A loose-normalized (lowercase, no _/-/space) binary-property name and its value.
+  /*! \brief A loose-normalized (lowercase, no _/-/space) binary-property name and its value. */
   struct binprop_alias_entry
   {
     std::string_view name; //!< The loose-normalized name.

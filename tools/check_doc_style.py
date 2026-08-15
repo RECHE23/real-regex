@@ -341,7 +341,20 @@ def adjacent_blocks(only: str | None) -> list[tuple[str, int, str]]:
             lines = fh.read().split("\n")
         i = 0
         while i < len(lines):
-            if not lines[i].strip().startswith("/*!"):
+            stripped = lines[i].strip()
+            if stripped.startswith("//!") and not stripped.startswith("//!<"):
+                j = i  # a `//!` run: consume it, then look at what follows
+                while j + 1 < len(lines) and lines[j + 1].strip().startswith("//!") \
+                        and not lines[j + 1].strip().startswith("//!<"):
+                    j += 1
+                k = j + 1
+                while k < len(lines) and not lines[k].strip():
+                    k += 1
+                if k < len(lines) and lines[k].strip().startswith("/*!"):
+                    found.append((path, i + 1, stripped[3:].strip()[:60]))
+                i = j + 1
+                continue
+            if not stripped.startswith("/*!"):
                 i += 1
                 continue
             j = i
@@ -354,6 +367,81 @@ def adjacent_blocks(only: str | None) -> list[tuple[str, int, str]]:
                 brief = lines[i + 1].strip()[1:].strip() if i + 1 < len(lines) else ""
                 found.append((path, i + 1, brief[:60]))
             i = j + 1
+    return found
+
+
+# A compound declaration: these are Doxygen COMPOUNDS, not members, so `memberdef` kinds never
+# describe them and OBJECT_KINDS cannot reach them. They are objects by the project's convention.
+COMPOUND = re.compile(r"^\s*(template\s*<.*>\s*)?(struct|class|enum(\s+class)?|union|namespace)\s+\w+")
+# A line that continues into the declaration below it rather than ending a statement.
+DECL_FRAGMENT = re.compile(r"^\s*(template\s*<|\[\[)")
+
+
+def compound_attribute_form(only: str | None) -> list[tuple[str, int, str]]:
+    """Compounds documented with a leading ``//!`` run -- the attribute form on an object.
+
+    Two blind spots meet here. The kinds this script reads come from ``memberdef`` entries, and a
+    struct, class, enum, union or namespace is a ``compounddef``: no member kind ever describes one,
+    so OBJECT_KINDS cannot reach it. And any declaration behind ``#if defined(__ARM_NEON)``,
+    ``__SSE2__`` or ``__GNUC__ && !__clang__`` is absent from the XML entirely, because the Doxyfile
+    predefines no vector ISA and no compiler macro. Both are checked from the SOURCE here, which needs
+    neither. Whole files drifted through the gap: simd.hpp's primitives, both cpclass_gcc splices, and
+    six structs in ast.hpp.
+    """
+    found: list[tuple[str, int, str]] = []
+    for path in sorted(glob.glob(os.path.join(ROOT, "**", "*.hpp"), recursive=True)):
+        if only and only not in path:
+            continue
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().split("\n")
+        for i, line in enumerate(lines):
+            if not COMPOUND.match(line) or line.rstrip().endswith(";"):
+                continue  # a forward declaration ends in `;` and carries no body to document
+            j = i - 1
+            while j >= 0 and (not lines[j].strip() or DECL_FRAGMENT.match(lines[j])
+                              or lines[j].lstrip().startswith("#")):
+                j -= 1
+            if j < 0:
+                continue
+            prev = lines[j].strip()
+            if prev.startswith("//!") and not prev.startswith("//!<"):
+                found.append((path, j + 1, line.strip()[:60]))
+    return found
+
+
+def wedged_blocks(only: str | None) -> list[tuple[str, int, str]]:
+    """Doc blocks sitting BETWEEN a declaration's own lines, as (file, line, fragment).
+
+    A ``/*! */`` block whose preceding line is a declaration FRAGMENT -- a template header, or a
+    return type on its own line -- splits the declaration in half. Doxygen still attaches the block to
+    what follows, so nothing warns; the source is what suffers, and so does anyone editing the
+    signature. Three shapes of it were found in one pass: a block between ``[[nodiscard]] inline
+    <return type>`` and the function name, and two between ``template <typename OutSlots>`` and the
+    declaration it parameterises.
+    """
+    found: list[tuple[str, int, str]] = []
+    for path in sorted(glob.glob(os.path.join(ROOT, "**", "*.hpp"), recursive=True)):
+        if only and only not in path:
+            continue
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().split("\n")
+        for i, line in enumerate(lines):
+            if not line.strip().startswith("/*!"):
+                continue
+            j = i - 1
+            while j >= 0 and not lines[j].strip():
+                j -= 1
+            if j < 0:
+                continue
+            prev = lines[j].strip()
+            if prev.startswith(("//", "*", "/*", "#")):
+                continue
+            # A trailing `//!<` (or any line comment) hides the code's own punctuation: strip it before
+            # asking whether the statement ended, or every documented attribute reads as a fragment.
+            code = re.split(r"//", prev, maxsplit=1)[0].rstrip()
+            if not code or code.endswith((";", "{", "}", ")", ",", ":")):
+                continue
+            found.append((path, j + 1, code[:60]))
     return found
 
 
@@ -474,7 +562,14 @@ def main() -> int:
     for path, line, brief in adjacent:
         print(f"{path}:{line}: doc block followed by another with no declaration between ({brief}) -- "
               "one of them documents nothing")
-    n_prose = len(orphans) + len(splits) + len(adjacent)
+    compounds = compound_attribute_form(args.only)
+    for path, line, decl in compounds:
+        print(f"{path}:{line}: `//!` run on a compound ({decl}) -- an object takes a /*! */ block")
+    wedged = wedged_blocks(args.only)
+    for path, line, frag in wedged:
+        print(f"{path}:{line}: declaration split by its own doc block (after `{frag}`) -- "
+              "the block belongs above the whole declaration")
+    n_prose = len(orphans) + len(splits) + len(adjacent) + len(compounds) + len(wedged)
 
     total = sum(len(v) for v in todo.values())
     if not total and not n_prose:
@@ -491,6 +586,10 @@ def main() -> int:
             parts.append(f"{len(splits)} block(s) stopping mid-sentence")
         if adjacent:
             parts.append(f"{len(adjacent)} stacked block pair(s)")
+        if compounds:
+            parts.append(f"{len(compounds)} compound(s) in the attribute form")
+        if wedged:
+            parts.append(f"{len(wedged)} declaration(s) split by their own doc block")
         print(
             f"\ncheck_doc_style: FAILED -- {', '.join(parts)}. Doxygen warns about none of these: it renders "
             "one \\brief and silently drops the rest, and a truncated or stacked block is still well formed. "

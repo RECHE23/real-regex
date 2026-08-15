@@ -206,7 +206,7 @@ namespace real::detail {
     count
   };
 
-  //! \brief One code-point range and the Script it belongs to (the table partitions the code space).
+  /*! \brief One code-point range and the Script it belongs to (the table partitions the code space). */
   struct script_range
   {
     char32_t lo; //!< First code point of the range.
@@ -1230,7 +1230,7 @@ namespace real::detail {
    */
   constexpr bool is_script_cp(script sc, char32_t cp) { return script_of(cp) == sc; }
 
-  //! \brief A loose-normalized (lowercase, no _/-/space) Script name and its value.
+  /*! \brief A loose-normalized (lowercase, no _/-/space) Script name and its value. */
   struct script_alias_entry
   {
     std::string_view name; //!< The loose-normalized name (long name or short UAX24 code).
