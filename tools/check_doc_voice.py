@@ -57,7 +57,9 @@ def require_xml() -> None:
     if stale:
         sys.exit(
             f"check_doc_voice: {XML_DIR} is OLDER than {len(stale)} header(s), "
-            f"e.g. {stale[0]}. Run `make doc-site-xml`, or pass --refresh."
+            f"e.g. {stale[0]}. This check reads the USER tree (Doxyfile.site -> "
+            "build/doc/xml-site). `doxygen Doxyfile` refreshes the other profile. "
+            "Run `make doc-site-xml`, `make doc-xml` (both trees), or pass --refresh."
         )
 
 

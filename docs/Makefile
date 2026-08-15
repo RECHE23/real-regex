@@ -27,7 +27,7 @@ include $(ROOT)/mk/help.mk
 # (COV_CXX/PROFDATA/LLVM_COV/COV_FLOOR etc., which stay root-only/tests-domain).
 COV_HTML := $(BUILD)/coverage/html
 
-.PHONY: doc doc-no-coverage doc-check doc-site-xml docs-site docs-site-gate help
+.PHONY: doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate help
 .DEFAULT_GOAL := help
 
 doc: ## Generate API reference (Doxygen) with embedded coverage (root runs coverage-html first)
@@ -77,6 +77,12 @@ doc-site-xml: ## User-facing Doxygen XML (INTERNAL_DOCS=NO) -> build/doc/xml-sit
 	rm -rf $(BUILD)/doc/xml-site
 	cd $(ROOT) && doxygen Doxyfile.site
 	@echo "docs-site XML: $(BUILD)/doc/xml-site"
+
+# Both profiles. `doc-site-xml` alone leaves build/doc/xml stale, and
+# check-doc-style will refuse to verdict rather than lie -- that is the
+# two-profile split working, not a broken check. This target is the one
+# command for a session that then wants style + voice + curated-members.
+doc-xml: doc-no-coverage doc-site-xml ## Both Doxygen XML trees (developer + user)
 
 docs-site: doc-no-coverage doc-site-xml ## Build the themed Sphinx/Breathe site (docs/site) -> build/site/html
 	@command -v $(SPHINXBUILD) >/dev/null 2>&1 || { \

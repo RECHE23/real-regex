@@ -125,8 +125,11 @@ def require_fresh_xml() -> None:
             f"{len(stale)} header(s), e.g. {stale[0]}.\n"
             "  Line numbers would not match the source, entries would be silently skipped, and "
             "the verdict would be a false clean.\n"
-            "  Run `doxygen Doxyfile` (note: `make doc-check` runs in Docker and does not "
-            "refresh this), or pass --refresh."
+            "  This check reads the DEVELOPER tree (Doxyfile -> build/doc/xml). "
+            "`make doc-site-xml` only refreshes build/doc/xml-site -- a different "
+            "profile, for Breathe / check-doc-voice. Refresh this one with "
+            "`doxygen Doxyfile` or `make doc-xml` (both trees), or pass --refresh.\n"
+            "  `make doc-check` runs in Docker and does not refresh this."
         )
 
 
