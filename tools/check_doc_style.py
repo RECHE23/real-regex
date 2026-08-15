@@ -53,6 +53,11 @@ import sys
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 
+# Every path below is repository-relative, so the process runs FROM the repository: invoked from
+# docs/ with a relative ROOT, the glob matched nothing and the verdict was a vacuous "clean" --
+# the false clean this file exists to prevent, arriving through the working directory.
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 XML_DIR = "build/doc/xml"
 ROOT = "include/real/"
 

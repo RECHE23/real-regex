@@ -27,9 +27,13 @@ import sys
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 
-XML_DIR = "build/doc/xml-site"
-RST_DIR = "docs/site/reference"
-UNPUBLISHED = "docs/site/reference/unpublished.yaml"
+# Paths are anchored to the REPOSITORY, not to the caller's working directory: this script runs
+# from the root through `make check-curated-members` and from docs/ through `docs-site-gate`, and
+# a relative path silently means two different places.
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+XML_DIR = os.path.join(_REPO, "build", "doc", "xml-site")
+RST_DIR = os.path.join(_REPO, "docs", "site", "reference")
+UNPUBLISHED = os.path.join(RST_DIR, "unpublished.yaml")
 
 CLASS_DIR = re.compile(
     r"^\.\.\s+doxygen(?:class|struct)::\s+(?P<name>\S+)\s*\n(?P<opts>(?:[ \t]+.*\n)*)",

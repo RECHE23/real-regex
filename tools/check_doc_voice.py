@@ -19,8 +19,12 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
-XML_DIR = "build/doc/xml-site"
-ROOT = "include/real/"
+# Paths are anchored to the REPOSITORY, not to the caller's working directory: this script runs
+# from the root through `make check-doc-voice` and from docs/ through `docs-site-gate`, and a
+# relative path silently means two different places.
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+XML_DIR = os.path.join(_REPO, "build", "doc", "xml-site")
+ROOT = os.path.join(_REPO, "include", "real") + os.sep
 
 # A hit is a published comment talking like a bench log or a plan. User-facing
 # words this does NOT ban: linear, DFA, fused, ReDoS, constexpr.
