@@ -1,6 +1,7 @@
 {#- Out-of-menu links, rendered on every inner page via footer_end (conf.py).
     pathto() keeps hrefs correct at every page depth. -#}
 <nav class="site-footer-links" aria-label="More">
+  <a href="{{ pathto('getting-started') }}">Getting started</a> ·
   <a href="{{ pathto('performance/index') }}">Performance</a> ·
   <a href="{{ pathto('coverage/index.html', 1) }}">Coverage</a> ·
   <a href="https://github.com/RECHE23/real-regex/blob/main/CHANGELOG.md">Changelog</a>

@@ -74,20 +74,11 @@ Object-level reference: {doc}`std::regex compatibility <../reference/compat-std>
 
 ## Comparison
 
-From the shared four-engine benchmark — full tables, method and machine in
-{doc}`Performance <../performance/index>`:
-
-<!-- Anchored on an explicit marker, not on wording, for the reason regex.md's own note gives: this
-     slice used to start after "**Reading — verdict brut, no dressing up.**" and broke the moment that
-     heading gained a sentence. The end is still prose, but it is a bullet LEAD that
-     check-site-anchors verifies on every push. -->
-```{include} ../../BENCHMARKS.md
-:start-after: "[std-regex-reading]"
-:end-before: "- **REAL > RE2**"
-```
-
-Where a backtracker is ReDoS-able on a crafted lookaround and RE2 refuses the
-pattern, REAL's bounded lookarounds stay linear.
+Four-engine numbers live in the
+[performance ledger](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md);
+the reading is {doc}`Performance <../performance/index>`. Where a backtracker
+is ReDoS-able on a crafted lookaround and RE2 refuses the pattern, REAL's
+bounded lookarounds stay linear.
 
 <!--
 std-regex-reference is nested here (not a direct entry of contents.md's root

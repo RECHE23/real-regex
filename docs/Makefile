@@ -184,6 +184,13 @@ docs-site-gate: ## Sphinx -W --keep-going + linkcheck + built-HTML link check fo
 	@rm -rf $(BUILD)/site/_gate $(BUILD)/site/_linkcheck
 	$(SPHINXBUILD) $(SPHINXOPTS) -W --keep-going -b html $(ROOT)/docs/site $(BUILD)/site/_gate
 	$(SPHINXBUILD) $(SPHINXOPTS) -b linkcheck $(ROOT)/docs/site $(BUILD)/site/_linkcheck
+	@echo "── no-benchmarks-include (the ledger stays on GitHub; the site does not slice it)"
+	@if grep -REn --include='*.md' --include='*.rst' \
+	    '(\{include\}|\.\.[[:space:]]+include::)[[:space:]]+[^[:space:]]*BENCHMARKS' \
+	    $(ROOT)/docs/site; then \
+	  echo "docs-site-gate: FAIL -- BENCHMARKS.md must not be included on the site"; \
+	  exit 1; \
+	fi
 	@echo "── no-inline-quickstart (landing.html: injected {{ quickstart_* }} placeholders only, zero hardcoded snippet code)"
 	@tmpl=$(ROOT)/docs/site/_templates/landing.html; \
 	 missing=""; \

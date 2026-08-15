@@ -44,5 +44,6 @@ section (`make python-help`, `make rust-help`, …).
 - The exhaustive, grouped target list: `make help` — the canon.
 - The test taxonomy and its gates:
   [TESTS.md](https://github.com/RECHE23/real-regex/blob/main/docs/TESTS.md).
-- Benchmark methodology: {doc}`Performance <../performance/index>`.
+- Performance reading: {doc}`Performance <../performance/index>`. Ledger:
+  [BENCHMARKS.md](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md).
 - Back to the {doc}`Developer hub <index>`.

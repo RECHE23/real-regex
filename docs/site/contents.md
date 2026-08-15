@@ -11,7 +11,7 @@ THE TOCTREE BELOW IS THE SITE'S SINGLE NAV SOURCE. pydata_sphinx_theme builds it
 header from the root document's direct toctree entries only (one entry = one flat
 header link), so exactly these four may be direct:
 
-  Features       -> features.md          (nests differences-from-re)
+  Features       -> features.md          (nests getting-started, differences-from-re)
   Drop-in        -> drop-in/index.md     (nests the five target pages)
   API reference  -> reference/index.rst  (Breathe entry; /api Doxygen = bonus)
   Developer      -> developer/index.md   (Doxygen /api, architecture, coverage,
@@ -20,7 +20,8 @@ header link), so exactly these four may be direct:
 The landing's nav is injected from this same toctree (conf.py) and
 tools/check_site_links.py asserts built-landing-nav == built-inner-header on every
 gate run. performance/index.md is deliberately `:orphan:` and footer-only --
-re-adding it as a direct entry would resurface a header item.
+re-adding it as a direct entry would resurface a header item. Getting started
+nests under Features so it is findable without a fifth header link.
 -->
 
 # real::regex documentation

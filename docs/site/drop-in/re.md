@@ -46,12 +46,8 @@ character-name lookup exists only on the Python surface (no C++ name table).
 
 ## Comparison
 
-From the shared binding benchmark — full tables and method in
-{doc}`Performance <../performance/index>`:
-
-<!-- Anchors slice BENCHMARKS.md by literal text: keep them on the row TAIL, not the ratio, so a
-     §B re-stamp does not break this include (it did once). -->
-```{include} ../../BENCHMARKS.md
-:start-after: "(ReDoS) |"
-:end-before: "### finditer memory"
-```
+Python `re` is a backtracker. REAL is linear on every accepted pattern. The
+shared binding bench — same harness, match counts checked before timing — lives
+in the
+[performance ledger](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md);
+the reading is {doc}`Performance <../performance/index>`.

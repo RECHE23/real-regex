@@ -52,14 +52,7 @@ Condensed — the full list with tables is the crate's own
 
 ## Comparison
 
-REAL's closest peer on the linear-time axis — the honest duel, both ISAs, full
-tables and method in {doc}`Performance <../performance/index>`:
-
-<!-- Anchored on an explicit marker, not on wording: "**Reading — verdict brut" appears twice in
-     BENCHMARKS.md (§A and §E) so it cannot be used, and the sentence this used to slice on was
-     deleted by a re-stamp, breaking the site build. The marker is an HTML comment there, invisible
-     in the rendered document and stable across rewrites. -->
-```{include} ../../BENCHMARKS.md
-:start-after: "[duel-reading]"
-:end-before: "Two things carry a caveat"
-```
+REAL's closest peer on the linear-time axis. The honest duel, both ISAs, lives
+in the
+[performance ledger](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md);
+the reading is {doc}`Performance <../performance/index>`.

@@ -16,8 +16,11 @@ Everything for reading, extending, and trusting the engine.
   fast paths.
 - **Coverage** — <a href="../api/coverage.html">the coverage report</a>: LLVM
   source-based instrumentation, how to read it, and the full per-line report.
-- **Benchmark methodology** — the conditions, machines and disclosure rules
-  behind every number: {doc}`Performance <../performance/index>`.
+- **Performance** — the capability picture and how to read a number:
+  {doc}`Performance <../performance/index>`. Tables and the measurement
+  doctrine stay on GitHub:
+  [BENCHMARKS.md](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md),
+  [MEASUREMENT.md](https://github.com/RECHE23/real-regex/blob/main/docs/MEASUREMENT.md).
 - **Testing** — the test taxonomy and its gates:
   [TESTS.md](https://github.com/RECHE23/real-regex/blob/main/docs/TESTS.md).
 - **Development workflow** — the build/test harness (SciForge) and the

@@ -65,17 +65,10 @@ comment of
 
 ## Comparison
 
-Single-pattern, from the shared four-engine benchmark — full tables in
-{doc}`Performance <../performance/index>`:
-
-<!-- Anchor on the phrase, not the figure: "Never below 5.4×." became "4.5×" at a §A re-stamp and
-     broke this include. -->
-```{include} ../../BENCHMARKS.md
-:start-after: "Never below"
-:end-before: "- **REAL vs PCRE2-JIT"
-```
-
-And RE2 cannot compile the lookaround row at all.
+Single-pattern numbers against RE2, PCRE2-JIT and `std::regex` live in the
+[performance ledger](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md);
+the reading is {doc}`Performance <../performance/index>`. RE2 cannot compile
+the lookaround row at all.
 
 Multi-pattern is covered too: `RE2::Set` compiles into `real::regex_set`, a
 shipped hybrid — per-pattern walks below a calibrated set size (competitive

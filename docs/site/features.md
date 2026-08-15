@@ -7,6 +7,9 @@ how-to-write syntax is out of scope here.
 
 # Features
 
+New here? {doc}`Getting started <getting-started>` is the first hour: install
+and a first match.
+
 Every construct REAL accepts, rejects, or extends beyond Python `re` — one row,
 one status. **Excluded by design is a closed door, not a missing feature**: each
 of those constructs makes matching super-linear and would reopen the ReDoS door
@@ -20,5 +23,6 @@ this engine exists to close — rationale on
 :hidden:
 :maxdepth: 1
 
+Getting started <getting-started>
 Differences from re <differences-from-re>
 ```
