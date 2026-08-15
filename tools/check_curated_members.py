@@ -3,9 +3,11 @@
 
 A class rendered with an explicit ``:members: a, b, c`` allowlist must name
 every public, non-\\internal member that Doxyfile.site extracts, or list the
-omission in ``docs/site/reference/unpublished.yaml`` with a reason. Bare
-``:members:`` (publish everything) is not checked -- there is nothing to omit
-in silence.
+omission in ``docs/site/reference/unpublished.yaml`` with a reason.
+
+Bare ``:members:`` (publish everything) is not a free pass: the class must
+carry ``publish_all: <reason>`` in that yaml. Without the reason, switching a
+page back to the nude form would walk out of this check without a sound.
 
 This is the other half of the surface split: ``check_doc_voice.py`` guards what
 a published comment may SAY; this guards which published symbols a page may
@@ -30,10 +32,11 @@ RST_DIR = "docs/site/reference"
 UNPUBLISHED = "docs/site/reference/unpublished.yaml"
 
 CLASS_DIR = re.compile(
-    r"^\.\.\s+doxygenclass::\s+(?P<name>\S+)\s*\n(?P<opts>(?:[ \t]+.*\n)*)",
+    r"^\.\.\s+doxygen(?:class|struct)::\s+(?P<name>\S+)\s*\n(?P<opts>(?:[ \t]+.*\n)*)",
     re.MULTILINE,
 )
 MEMBERS_OPT = re.compile(r":members:(?P<body>[^\n]*(?:\n[ \t]+[^\n]+)*)")
+PUBLISH_ALL = "publish_all"
 
 
 def require_xml() -> None:
@@ -137,10 +140,22 @@ def main() -> int:
 
     problems: list[str] = []
     for cls, allow in lists.items():
+        omit = unpublished.get(cls, {})
         if allow is None:
+            if PUBLISH_ALL not in omit:
+                problems.append(
+                    f"{cls}: bare :members: (publishes everything) with no "
+                    f"{PUBLISH_ALL} in unpublished.yaml -- that form leaves "
+                    "this check without a field"
+                )
+            continue
+        if PUBLISH_ALL in omit:
+            problems.append(
+                f"{cls}: unpublished.yaml says {PUBLISH_ALL} but :members: "
+                "is an allowlist -- pick one"
+            )
             continue
         have = extracted.get(cls, set())
-        omit = unpublished.get(cls, {})
         unknown_omit = set(omit) - have
         if unknown_omit:
             problems.append(
@@ -166,12 +181,17 @@ def main() -> int:
         for p in problems:
             print(f"  {p}")
         print(
-            "  Add the member to the page's :members:, or list it in "
-            f"{UNPUBLISHED} with a reason."
+            "  Allowlist: add the member to :members:, or list it in "
+            f"{UNPUBLISHED} with a reason. Nude :members:: add "
+            f"{PUBLISH_ALL}: <reason> there."
         )
         return 1
-    n = sum(1 for v in lists.values() if v is not None)
-    print(f"check_curated_members: clean -- {n} curated class(es), omissions explicit")
+    n_allow = sum(1 for v in lists.values() if v is not None)
+    n_all = sum(1 for v in lists.values() if v is None)
+    print(
+        f"check_curated_members: clean -- {n_allow} allowlist(s), "
+        f"{n_all} publish_all, omissions explicit"
+    )
     return 0
 
 

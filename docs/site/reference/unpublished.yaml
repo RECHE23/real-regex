@@ -4,7 +4,9 @@
 # allowlist failure this file exists to stop.
 #
 # Names are Doxygen <name> text (operator[], find_iter_longest, …).
-# Classes that render with bare `:members:` (everything public) are not checked.
+# Bare `:members:` (publish everything) is not unchecked: the class must carry
+# `publish_all: <reason>` here. Switching a page back to the nude form without
+# that line is the same silent exit this file exists to stop.
 
 real::basic_regex:
   find_iter_longest: experimental leftmost-longest; not the default surface
@@ -26,3 +28,30 @@ real::regex_set:
   fused_min_eligible: calibrated fused-scan threshold; not part of the which-matched contract
   uses_fused: instrumentation -- whether this instance took the fused path
   eligible_count: instrumentation -- fused subset size
+
+real::dfa:
+  publish_all: opt-in lexer automaton; the page is the whole public surface
+real::dfa_match:
+  publish_all: two public fields -- winning rule and length
+real::fixed_string:
+  publish_all: NTTP helper; view() and data are the whole type
+real::regex_error:
+  publish_all: exception surface; kind/what/position are the whole type
+
+real::compat::basic_regex:
+  publish_all: std::regex drop-in; the page is the full class face
+real::compat::match_results:
+  publish_all: std::regex drop-in; the page is the full class face
+real::compat::sub_match:
+  publish_all: std::regex drop-in; the page is the full class face
+real::compat::regex_error:
+  publish_all: std::regex drop-in; the page is the full class face
+real::compat::regex_iterator:
+  publish_all: std::regex drop-in; the page is the full class face
+real::compat::regex_token_iterator:
+  publish_all: std::regex drop-in; the page is the full class face
+
+real::compat::re2::RE2:
+  publish_all: RE2 drop-in; the page is the full class face
+real::compat::re2::Arg:
+  publish_all: RE2 drop-in; the page is the full class face
