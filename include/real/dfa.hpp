@@ -78,10 +78,10 @@ namespace real {
     std::size_t   length;     //!< Byte length of the (non-empty) match.
   };
 
-  //! \brief DFA construction internals: subset construction over a flattened NFA. Not a stable API.
+  /*! \brief DFA construction internals: subset construction over a flattened NFA. Not a stable API. */
   namespace detail {
 
-    //! \brief A flattened NFA instruction (global PCs, global class index).
+    /*! \brief A flattened NFA instruction (global PCs, global class index). */
     struct dfa_instr
     {
       opcode        op        {};   //!< The instruction's opcode.
@@ -91,7 +91,7 @@ namespace real {
       std::int64_t  secondary {-1}; //!< Global secondary target (split).
     };
 
-    //! \brief The union NFA over all the patterns, flattened into one address space.
+    /*! \brief The union NFA over all the patterns, flattened into one address space. */
     struct dfa_nfa
     {
       std::vector<dfa_instr>    code;           //!< Every rule's instructions, concatenated.
@@ -104,15 +104,15 @@ namespace real {
     /*!
      * \brief Cap on a pattern's expanded byte program before subset construction runs on it.
      *
-     * \ref max_dfa_states bounds the RESULT; nothing bounded the work to reach it, and subset construction
-     * is superlinear in the input. Measured on this machine, release build, construction time against
-     * expanded size: a case-folded ASCII class is 7-69 instructions and 0.04-0.06 ms, `\p{Han}+` 210 and
-     * 1.23 ms, `\d+` 261 and 1.88 ms -- and text-mode `\w+` is **3434 and 418 ms**, which under the fuzzer's
-     * sanitized build is a 12-second timeout. Thirteen times the size for two hundred times the time.
+     * \ref max_dfa_states bounds the RESULT; this bounds the WORK to reach it. Subset construction is
+     * superlinear in its input, so an expansion an order of magnitude larger costs two orders of magnitude
+     * more time -- a text-mode `\w+` expands into thousands of byte instructions and turns a
+     * sub-millisecond build into a fraction of a second, which under a sanitized fuzzing build is a
+     * timeout rather than a slow test.
      *
-     * 512 sits above every shape that builds in about a millisecond and below the one that does not. A
-     * pattern past it declines with a message, exactly as `\w` did before `klass_cp` became expandable
-     * here -- so this is the previous behaviour for the wide classes and a widening for everything else.
+     * The cap sits above every shape that builds in about a millisecond and below the ones that do not. A
+     * pattern past it declines with a message naming the cause, which is what the caller needs to keep
+     * that rule on the Pike VM.
      */
     inline constexpr std::size_t max_dfa_byte_program {512};
 
@@ -132,7 +132,7 @@ namespace real {
         const program_view& prog {programs[r]};
 
         // The AUDIT runs over the pattern's own program, so every message names what the user wrote.
-        // A `klass_cp` is no longer among the refusals: it is expanded below.
+        // A `klass_cp` is not among the refusals: it is expanded below.
         for (const instr& in : prog.code) {
           if (in.op == opcode::assert_position && in.arg8 != static_cast<std::uint8_t>(assert_kind::text_start)) {
             // text_start (`\A`/`^`) is handled as a conditional ε in the closure (true at the cursor,
@@ -155,10 +155,10 @@ namespace real {
         }
 
         // A code-point class matches a whole code point, which is not a byte transition -- so it is
-        // replaced by the deterministic UTF-8 trie that recognises the same set, exactly as the lazy DFA
-        // has always done. This is the same `build_byte_program` the byte automata run on, targets remapped
-        // and all; refusing `klass_cp` outright was a limit of this entry point, not of the DFA. Text-mode
-        // `\w`/`\d`/`\s` and any case-folded ASCII class now build here.
+        // replaced by the deterministic UTF-8 trie that recognises the same set, the same way the lazy DFA
+        // does it. This is `build_byte_program`, the expansion the byte automata already run on, targets
+        // remapped and all, which is what lets text-mode `\w`/`\d`/`\s` and case-folded ASCII classes
+        // build here at all.
         //
         // `keep_assertions`: the audit above already accepted only a head `\A`/`^`, and the closure below
         // resolves it. Stripping assertions here instead would silently drop that anchor.
@@ -195,8 +195,7 @@ namespace real {
       return nfa;
     }
 
-    //! \brief A set of NFA PCs as a bitset (one per DFA state during construction).
-    using dfa_set = std::vector<std::uint64_t>;
+    using dfa_set = std::vector<std::uint64_t>; //!< A set of NFA PCs as a bitset (one per DFA state during construction).
 
     /*!
      * \brief Set bit \p i in \p s. Indices past the set's size are ignored (it is sized to fit).
@@ -380,9 +379,11 @@ namespace real {
       return -1;
     }
 
-    //! \brief Computes byte-equivalence classes: two bytes are equivalent iff they
-    //!        satisfy the same consuming predicates (every klass test and every byte
-    //!        literal). Reduces the alphabet so the DFA is built over classes, not 256.
+    /*!
+     * \brief Computes byte-equivalence classes: two bytes are equivalent iff they satisfy the same
+     *        consuming predicates (every klass test and every byte literal). Reduces the alphabet so the
+     *        DFA is built over classes, not over 256 bytes.
+     */
     struct dfa_byte_classes
     {
       std::array<std::uint8_t, 256> of    {};   //!< byte -> class index.
@@ -449,7 +450,7 @@ namespace real {
       return bc;
     }
 
-    //! \brief The baked DFA tables produced by \ref dfa_build.
+    /*! \brief The baked DFA tables produced by \ref dfa_build. */
     struct dfa_tables
     {
       std::array<std::uint8_t, 256> byte_class  {};     //!< byte -> class index; the row stride's key.

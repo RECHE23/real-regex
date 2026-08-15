@@ -15,7 +15,8 @@
 #define REAL_PIKE_HPP
 
 // Internal — do not include directly.
-// Users: #include <real/real.hpp> (or the documented opt-ins <real/dfa.hpp>, <real/compat/std/regex.hpp>).
+// Users: #include <real/real.hpp>, or a documented opt-in: <real/dfa.hpp>,
+// <real/regex_set.hpp>, <real/compat/std/regex.hpp>, <real/compat/re2/re2.hpp>.
 
 #include "real/version.hpp"
 
@@ -261,9 +262,8 @@ namespace real::detail {
       // Reserve a modest block budget before the first allocate(). Without it these three vectors
       // grow by doubling DURING the search -- a general-VM search over `\w+@\w+` made 13 heap
       // allocations, and the size sequence (4, 8, 32, 16, 64, 128 ...) is a doubling ladder, not
-      // work. Reserving takes that to 5 and the search itself -11.7 %; `(\w+)` and other fast-route
-      // patterns are untouched at 41 ns either way, which is the control that makes the number
-      // readable. A FLOOR, not a bound: allocate() still grows past it, so a capture-heavy walk is
+      // work. Reserving collapses most of them, and fast-route patterns are untouched either way --
+      // the control that makes the gain readable as this pool's own. A FLOOR, not a bound: allocate() still grows past it, so a capture-heavy walk is
       // bounded by the same free-list recycling as before, not by this constant.
       //
       // The compile-time storage's pool is `static_vec` and has no reserve(): it is sized exactly at
@@ -400,9 +400,9 @@ namespace real::detail {
      *
      * `noinline`, and it buys codegen rather than cycles: this runs twice per search, so outlining
      * it is free, while `mark.assign` inlined here is a per-element `construct_at` loop whose mere
-     * presence costs gcc/x86 ~10 % on the class-scan routes -- which never build a thread list at
-     * all. Measured alone it is a REGRESSION (+5.8 % on `words`); it pays only together with the SBO
-     * mark table, whose codegen it is repairing. The two belong together or not at all.
+     * presence charges the class-scan routes on gcc/x86 -- routes that never build a thread list at all.
+     * Measured alone the outlining is a REGRESSION; it pays only together with the SBO mark table, whose
+     * codegen it is repairing. The two belong together or not at all.
      *
      * \param[in] code_size Number of instructions (sizes the mark table once).
      */
@@ -440,8 +440,11 @@ namespace real::detail {
     }
   };
 
-  //! \brief Unicode-property sparse 2-stage membership for code points > U+07FF (page = cp>>8 → 256-bit block).
-  //!        Thread-local heap cache only — \ref basic_pike_state size is unchanged (ASCII class-loop safe).
+  /*!
+   * \brief Unicode-property sparse 2-stage membership for code points > U+07FF (page = cp>>8 → 256-bit
+   *        block). Thread-local heap cache only — \ref basic_pike_state's size is unchanged, which is what
+   *        keeps the ASCII class loop clear of it.
+   */
   struct cp_hi_table
   {
     static constexpr std::uint16_t             empty {0xFFFFU}; //!< \ref page_of sentinel: no members in that page.
@@ -553,9 +556,9 @@ namespace real::detail {
     std::array<std::uint64_t, 30>  cp_page;         //!< 1 where the code point (U+0080..U+07FF) is a member (filled on a cp_page_table miss).
     // Appended LAST, and it must stay that way -- same rule, and same reason, as pattern_hints states for
     // its own trailing fields. Placed next to `table` where they belong by meaning, these three shift every
-    // field after them and cost `\b\w+\b` +28 % to +32 % through the crate, on a pattern that reads none of
-    // them. Only the C ABI path sees it: it crosses per match, where the C++ harnesses call the engine
-    // directly and measure the same change as neutral.
+    // field after them and charge a word-boundary walk heavily through the crate, on a pattern that reads
+    // none of them. Only the C ABI path sees it: that path crosses per match, where the C++ harnesses call
+    // the engine directly and measure the same change as neutral.
     //! \brief Program whose membership rows this state has already verified as filled. Lets a walk skip
     //!        the two acquire loads `class_table` would otherwise do once per `run()` — see there.
     const void*                    rows_verified_for {nullptr};
@@ -564,11 +567,10 @@ namespace real::detail {
     // Appended after those, for the same reason they were: anything inserted earlier shifts every
     // field behind it. The sparse hi table is resolved once per (state, class) instead of once per
     // CODE POINT: `cp_hi_cached`'s hot path is two thread_local reads plus a fingerprint compare, and
-    // callgrind put `cp_member_high` at 27.3 % of `\p{L}+`'s instructions, ~48 per code point for
-    // what is a two-load bit test once the table is in hand. Hoisting the same resolution into the
-    // span filler instead was measured and refused -- putting a TLS access in that function's body
-    // cost `\p{scx=Cyrl}` +53 % and `\p{N}+` +46 % on arm64 -- so it lives here, where the page
-    // bitmap's own cache already lives.
+    // callgrind put `cp_member_high` at a quarter of a `\p{L}+` walk's instructions, dozens per code point
+    // for what is a two-load bit test once the table is in hand. Hoisting the same resolution into the span
+    // filler instead was measured and refused -- a TLS access in that function's body charges the
+    // property-class rows heavily -- so it lives here, where the page bitmap's own cache already lives.
     std::int32_t                   hi_class          {-1};      //!< Class \ref hi_ptr / \ref hi_never were resolved for; -1 while unresolved.
     const cp_hi_table*             hi_ptr            {nullptr}; //!< The resolved sparse hi table for \ref hi_class, or null when it has none usable.
     bool                           hi_never          {false};   //!< Set when \ref hi_class has no high ranges at all, so every cp past the page bitmap misses.
@@ -663,8 +665,8 @@ namespace real::detail {
      * On success fills \p out_slots with byte offsets (npos for unset capture
      * slots; slots 0/1 are the whole match).
      *
-     * \tparam Cascade  Select the OPT-C memchr-cascade class-run variant (chosen once by the caller from
-     *                  stop_set_size, never per match). Off = the pre-OPT-C hot path, byte for byte.
+     * \tparam Cascade  Select the memchr-cascade class-run variant (chosen once by the caller from
+     *                  stop_set_size, never per match). Off = the plain hot path, byte for byte.
      * \tparam OutSlots Output slot container (resized to the program's slot count).
      * \param[in]  text               The subject text.
      * \param[in]  start              Index to begin matching/searching from.
@@ -678,7 +680,7 @@ namespace real::detail {
      *             experimental \ref match_semantics::longest (which forces the general loop, off every fast path).
      * \return `true` if a match was found.
      *
-     * gcc/x86 note: an x86 A/B found `[^,]+` +39%
+     * gcc/x86 note: an A/B on that ISA found a negated-class scan sharply
      * slower with the AC engine present but never dispatched to (a class-loop pattern returns from
      * \ref run_class_loop before ever reaching the fixed_alternation check) — callgrind/cachegrind
      * showed byte-identical instructions/cache misses, isolating it to front-end loop-alignment
@@ -708,14 +710,14 @@ namespace real::detail {
       sem_                = sem;
       // Fast paths only fire for patterns that always consume (literal /
       // class+), which can never produce the empty match the flag guards.
-      // P3c trailing-LA is NOT dispatched here — it lives outside pike_vm::run (real.hpp /
-      // find_iter) so this function stays pre-P3c-sized and keeps inlining into find_iter
-      // (x86: +16–20 % when cold code bloated run() past the inline threshold).
+      // The trailing-lookahead walk is NOT dispatched here — it lives outside pike_vm::run (real.hpp /
+      // find_iter) so this function keeps its size and keeps inlining into find_iter
+      // (on x86 it was a double-digit regression once cold code pushed run() past the inline threshold).
       if (sem_ == match_semantics::first && prog_.hints.greedy_class_loop >= 0
           && (std::is_constant_evaluated() || !class_fastpath_disabled())) {
-        // OPT-C: the memchr-cascade instantiation (Cascade) is selected ONCE by the caller (a whole
+        // the memchr-cascade instantiation (Cascade) is selected ONCE by the caller (a whole
         // find_iter/search) from stop_set_size, never per match — so when it is off this run is byte-for-
-        // byte the pre-OPT-C per-byte loop and the hot path pays nothing. The caller only sets Cascade
+        // byte the plain per-byte loop and the hot path pays nothing. The caller only sets Cascade
         // when stop_set_size >= 1, so the cascade tail always has real stop bytes.
         prof::tick_route(prof::route::class_loop);
         if (prog_.hints.wb_lead != 0 || prog_.hints.wb_trail != 0) {
@@ -723,8 +725,8 @@ namespace real::detail {
         }
         // One branch, and everything an anchor implies is behind it. `run()` has to stay small enough
         // to inline into find_iter (see basic_match_iterator::advance's own note), and an earlier
-        // shape of this -- two lambdas inline here -- cost §Unicode 6-17 % on clang/arm64 while
-        // gaining on gcc/x86-64, which is this translation unit's usual answer to being grown.
+        // shape of this -- two lambdas inline here -- charged the Unicode rows on one toolchain while
+        // gaining on the other, which is this translation unit's usual answer to being grown.
         if (prog_.hints.anchored_start || prog_.hints.greedy_class_loop_end != 0) {
           return run_class_loop_anchored<Cascade>(text, start, mode, out_slots);
         }
@@ -795,16 +797,11 @@ namespace real::detail {
             && (!confirms_by_reverse || !prog_.prefix_code.empty())) {
           // NOT WHEN A FIXED-SHAPE ROUTE EXISTS. That route scans for the shape's own first-byte class
           // and confirms a known width, and it is never slower than memmem-plus-reverse-confirm on the
-          // patterns that have both. Measured over 64 KB corpora, inner-literal against the same
-          // pattern with this route disabled:
+          // patterns that have both: measured against the same patterns with this route disabled, the
+          // inner literal is at best a tie and otherwise a small loss on every one of them.
           //
-          //     [0-9]{4}-[0-9]{2}-[0-9]{2}   dense   0.859 -> 0.801 ns/B   IL 1.07x slower
-          //     [a-z]{3}-[0-9]{4}            dense   0.805 -> 0.718        IL 1.12x slower
-          //     [0-9]{3}[.][0-9]{3}                  0.554 -> 0.554        tie
-          //     [0-9]{4}-[0-9]{2}-[0-9]{2}   rare    0.022 -> 0.022        tie
-          //
-          // and across a density sweep on the date pattern the gap is widest where the OLD gate was
-          // most confident: 1.25x against fixed-shape at 33 candidates per 1000 bytes, well under the
+          // Across a density sweep the gap is widest where the OLD gate was most confident -- around a
+          // few dozen candidates per thousand bytes, well under the
           // 60 that would have made il_density_milli_threshold abandon. The gate's threshold was
           // calibrated against the DFA as the fallback; against fixed_shape the crossover is not
           // merely elsewhere, it does not exist -- so the fix is a route condition, not a retune.
@@ -830,7 +827,7 @@ namespace real::detail {
             // Fall through to core. Density/linearity set il_abandoned inside run_inner_literal
             // (sticky for this haystack). Size-floor abandon is ephemeral so the next advance can
             // re-enter IL after il_warmed flips (warm floor) — sticky size abandon would lock a
-            // reused <cold-floor buffer on core forever (audit 3.1).
+            // reused <cold-floor buffer on core forever.
             prof::tick_event(prof::event::il_abandoned);
           }
         }
@@ -875,7 +872,7 @@ namespace real::detail {
       }
       if (sem_ == match_semantics::first && prog_.hints.codepoint_class_ascii >= 0
           && (std::is_constant_evaluated() || !class_fastpath_disabled())) {
-        // OPT-C-1b: the SWAR variant (Cascade) is chosen once per walk, like the class-loop cascade.
+        // The SWAR variant (Cascade) is chosen once per walk, like the class-loop cascade.
         // class_fastpath_disabled: same test seam as class_loop / cp_class_loop (matrix codepoint_class rows).
         prof::tick_route(prof::route::codepoint_class);
         return run_codepoint_class<Cascade>(text, start, mode, out_slots);
@@ -941,7 +938,7 @@ namespace real::detail {
         }
       }
       if (sem_ == match_semantics::longest) {
-        // The longest path uses the plain general loop (the memchr-cascade OPT-C variant is a first-match
+        // The longest path uses the plain general loop (the memchr-cascade variant is a first-match
         // acceleration; correctness, not throughput, is what the experimental mode needs).
         prof::tick_route(prof::route::general_full);
         return run_general<false>(text, start, mode, out_slots);
@@ -1185,8 +1182,8 @@ namespace real::detail {
           // (`il_rev_class`, the backward walk below); so does a fixed code-point shape, which steps back a
           // known count. Both stay. Measured over a 64 KiB corpus, for the shapes that have neither, static
           // vs the same pattern on the dynamic regex:
-          //   [0-9]{4}-[0-9]{2}-[0-9]{2}, dates present   core 30.9 us  vs  IL 37.9 us
-          //   \d{4}-\d{2}-\d{2}, no date present         core  151 us  vs  IL  1.4 us
+          //   a date shape with dates PRESENT      core slightly ahead of the inner literal
+          //   the same shape with NO date present   core two orders of magnitude behind it
           // So: keep the memmem-only sweep, hand back the moment a candidate needs confirming. Sticky,
           // so the cost on a hit haystack is one candidate, once. A sparse-hit haystack would still
           // rather stay on IL; that needs a candidate-cost model this has no measurement for yet.
@@ -1208,9 +1205,9 @@ namespace real::detail {
           // never below il_warm_floor's 4 KB: while the build is unpaid, a haystack under 4 KB abandons
           // whichever floor applies. Deciding
           // after the build meant paying for it -- and for a text-mode class that build is not small.
-          // Measured on the devbox, first search on a 13-byte subject: `(\w+)X(\w+)` spent 803 us
-          // constructing the UTF-8 machinery for `\w` and then abandoned this route on the very next
-          // line, against 4.3 us for the identical shape over an ASCII class. The warm flag is still
+          // On a first search over a short subject, a text-mode class spends orders of magnitude longer
+          // constructing its UTF-8 machinery than the identical shape over an ASCII class -- and then
+          // abandons this route on the very next line. The warm flag is still
           // set, since shared_dfa_for keys on the immutables ADDRESS and needs nothing built.
           // Both floors lift once the build is PAID, and the predicate is `built_for`, never `il_warmed`:
           // the branch below sets `il_warmed` on its way out, so keying the lift on it would let the
@@ -1308,9 +1305,9 @@ namespace real::detail {
             s = npos; // no member immediately before the literal: this candidate has no start
           }
         }
-        // Ordered after the class-loop reverse deliberately: putting this test first cost `\d+\.\d+` 5.5%
-        // and `[a-z]+@[a-z]+` 2.0% in x86-64 instructions -- shapes that reach neither branch but pay for
-        // the extra test ahead of theirs. This order leaves them within 0.5% of where they were.
+        // Ordered after the class-loop reverse deliberately: putting this test first charges the shapes
+        // that reach NEITHER branch, since they then pay the extra test ahead of their own. This order
+        // leaves them where they were.
         else if (boundary >= 1 && prog_.hints.il_cp_shape_eligible) {
           // FIXED CODE-POINT SHAPE: no loop anywhere, so the start is exactly `il_cp_prefix_cps` code
           // points before the literal — arithmetic on UTF-8 boundaries, not a reverse pass. The forward
@@ -1458,9 +1455,9 @@ namespace real::detail {
     /*!
      * \brief O1 density-gate sample size and threshold (inner-literal → core/DFA when candidate density is high).
      *
-     * Measured 2026-07 on M1 Pro, pattern \c (?:\\w+)_(?:\\w+), 300&nbsp;KB corpora, best-of clean timing
-     * vs \c il_off: dens = candidates/byte ≈ underscore/byte for this shape. Crossover IL≈DFA at dens ≈ 0.037;
-     * dens 0.05 → IL 1.3× worse; dens 0.077 → 2.3×; dens 0.17 (\c ident_dense) → ~8×. Threshold 60/1000
+     * Candidate density is what decides: below the crossover the inner literal skips most of the subject,
+     * above it every candidate is a failed confirm and the core scan wins by a margin that grows with the
+     * density. The threshold sits just past the crossover. Threshold 60/1000
      * (dens 0.06) sits conservatively above crossover so sparse IL wins (dens ≪ 0.01) stay on IL. Capture-free
      * only (\c slot_count ≤ 2): with groups, IL still beat forced DFA on dense (measured). Probe after K candidates
      * across the haystack (sticky on \ref pike_state::il_density_cands).
@@ -1469,7 +1466,7 @@ namespace real::detail {
      *       route the gate is arbitrating against.** It was measured on `(?:\w+)_(?:\w+)`, whose
      *       fallback is the DFA. `[0-9]{4}-[0-9]{2}-[0-9]{2}` falls back to \ref
      *       pattern_hints::fixed_shape instead, which is far cheaper -- and on a date-dense corpus
-     *       that route is 1.15x faster than the inner-literal one (0.955 against 1.102 ns/byte, 64 KB)
+     *       that route is modestly faster than the inner-literal one
      *       while the gate never fires, because `-` at ~32 candidates per 1000 bytes sits under the
      *       60 calibrated for the other shape. On a sparse corpus the two are equal, so the gate is
      *       not wrong in general -- its single threshold is.
@@ -1479,9 +1476,8 @@ namespace real::detail {
      *       the second variable was identified; the analogous variable here is the fallback route's
      *       cost, not the branch count.
      *
-     *       Worth chasing because it is on the engine's worst PUBLISHED row: §A's `date` reads 0.51x
-     *       against PCRE2-JIT on x86-64 and 0.59x on arm64, the largest gap in that table. 15 % does
-     *       not close it, but it is the part that is understood.
+     *       Worth chasing because it sits on the engine's worst published row against the backtracking
+     *       references. This does not close that gap, but it is the part of it that is understood.
      */
     static constexpr std::uint32_t il_density_probe_candidates {8};
     static constexpr std::size_t   il_density_milli_threshold  {60}; //!< Candidate density, in candidates per 1000 bytes, at or above which the IL route yields to the DFA.
@@ -1490,19 +1486,16 @@ namespace real::detail {
      * \brief AC routing: sample window, and the candidate-work product at or above which the
      *        automaton beats the memchr cascade.
      *
-     * The branch COUNT cannot decide this and \ref ac_branch_threshold never could: AC scans at a
-     * flat ~3.15 ns/byte whatever the subject, while the cascade it replaces runs 2.04 us to 131 us
-     * on the SAME pattern and the same subject length. Only the haystack decides. What the haystack
-     * has to supply is candidate DENSITY, and `benchmarks/ac_regime.cpp` measures where that
-     * crosses over — including the part the reconnaissance did not predict, that the crossover moves
-     * with branch count, because the cascade tries branches in order while AC does not:
+     * The branch COUNT cannot decide this and \ref ac_branch_threshold never could: the automaton scans at
+     * a flat rate whatever the subject, while the cascade it replaces spans two orders of magnitude on the
+     * SAME pattern and the same subject length. Only the haystack decides. What the haystack has to supply
+     * is candidate DENSITY, and `benchmarks/ac_regime.cpp` measures where that crosses over — including
+     * the part the reconnaissance did not predict, that the crossover MOVES with branch count, because the
+     * cascade tries branches in order while the automaton does not: more branches, and the cascade starts
+     * losing at a lower density.
      *
-     *     branches      12    14    16    18    20    24     product (density x branches)
-     *     arm64 d       89    76    65    58    39    33     1066 1062 1040 1041  789  802
-     *     x86-64 d      49    45    41    33    30    27      588  624  660  590  600  655
-     *
-     * So the rule is a PRODUCT, not a density: `(candidates per 1000 bytes) * branch_count`. The
-     * product is what is roughly invariant, and it is what this threshold is expressed in.
+     * So the rule is a PRODUCT, not a density: `(candidates per 1000 bytes) * branch_count`. That product
+     * is what stays roughly invariant across branch counts, and it is what this threshold is expressed in.
      *
      * **THIS QUANTITY CANNOT DECIDE ALONE, and the gate no longer asks it to.** Candidate density
      * counts positions where a branch HEAD occurs and cannot tell a false start from a completed
@@ -1510,9 +1503,9 @@ namespace real::detail {
      * reject, resume) and leaves the automaton indifferent, while a match rewards the cascade (it
      * stops there) and costs the automaton a per-match return. One number was arbitrating two forces
      * that oppose each other -- the same argument the branch COUNT lost, now applying to what replaced
-     * it. A counter-example in the wild: a nine-branch alternation over ordinary prose reads 3.56 ns/B
-     * on the automaton against 1.87 on the cascade, a 1.9x loss on the side of the threshold that is
-     * supposed to be a win.
+     * it. A counter-example in the wild: a nine-branch alternation over ordinary prose runs about twice
+     * as slow on the automaton as on the cascade -- on the side of the threshold that is supposed to be
+     * a win.
      *
      * The gate therefore samples a SECOND quantity beside this one and takes the automaton only when
      * BOTH agree -- see \ref ac_completion_pct , which carries the sweep that measures it, the
@@ -1526,9 +1519,9 @@ namespace real::detail {
      * replaced, while switching too LATE forfeits a win that exists today. Rounding below the
      * earliest crossover on either platform therefore cannot regress any subject, and the platforms'
      * 1.7x disagreement about the constant stops being a tuning argument. On arm the product is not
-     * one level but two -- ~1050 for 12..18 branches and ~795 for 20..24, each to within 1 % across
-     * four rounds -- a real discontinuity, reproducible and unexplained; it does not affect the
-     * choice, since the minimum is on the other platform either way.
+     * one level but two, with a step between the lower and upper branch counts -- a real discontinuity,
+     * reproducible across rounds and unexplained. It does not affect the choice, since the minimum is on
+     * the other platform either way.
      */
     static constexpr std::size_t   ac_density_sample_bytes       {256};
     static constexpr std::size_t   ac_density_min_span           {64};   //!< Shortest span an early verdict may rest on.
@@ -1543,15 +1536,12 @@ namespace real::detail {
      * occurs and cannot tell a false start from a match, yet those pull in OPPOSITE directions. A false
      * start punishes the cascade -- verify, reject, resume -- and leaves the automaton indifferent; a
      * match REWARDS the cascade, which stops there, and charges the automaton a per-match return. Holding
-     * candidate density fixed at 99.8 per 1000 bytes on twelve branches and varying only the completed
-     * fraction, the verdict flips:
+     * candidate density fixed and varying ONLY the completed fraction, the verdict flips from one end of
+     * that sweep to the other -- which is the proof that a single number could not have been arbitrating
+     * both.
      *
-     *     completed %        0     25     50     75    100
-     *     arm64 AC/casc    0.87   1.09   1.43   1.75   2.19
-     *     x86-64           0.56   0.76   1.00   1.34   1.90
-     *
-     * Interpolated, the balance sits at **15 % on arm64 and 50 % on x86-64**, and the constant takes the
-     * CONSERVATIVE platform: below the true crossover on either one, so it can decline where the automaton
+     * The two ISAs place the balance point differently, and the constant takes the CONSERVATIVE one: below
+     * the true crossover on either, so it can decline where the automaton
      * would still have won but never take it where the cascade wins. That is the same safety direction
      * \ref ac_density_work_threshold_low argues for and for the same reason -- below
      * \ref ac_branch_threshold the automaton was historically never taken, so switching early regresses
@@ -1561,7 +1551,7 @@ namespace real::detail {
 
     static constexpr std::size_t   ac_density_work_threshold_low {1400}; //!< The same product for \ref ac_branch_floor .. \ref ac_branch_threshold branches, where the safe direction is reversed.
 
-    // A RELATION, not a value. The sabotage sweep reports only that no test reacts to a 4x change in
+    // A RELATION, not a value. No test reacts to a 4x change in
     // a constant; for a measured threshold the answer to that is a test, but for a relation between
     // constants a test merely samples where an assertion covers every build. The window clamp is
     // nonsense if its floor exceeds its cap, and nothing said so until now.
@@ -1658,9 +1648,8 @@ namespace real::detail {
         // Deciding on ~8 candidates takes `8000 * branches / want` bytes at threshold density: ~350
         // for a 24-branch alternation, ~23 for a 4-branch one, because the low-branch region demands
         // a far higher density and so reaches certainty in a fraction of the bytes. A fixed 256 made
-        // every sparse SHORT alternation pay a full-window scan it could not need -- measured at
-        // 2-5 % on subjects that stay on the cascade, which is the common case and therefore the one
-        // to protect.
+        // every sparse SHORT alternation pay a full-window scan it could not need -- a charge on subjects
+        // that stay on the cascade, which is the common case and therefore the one to protect.
         const std::size_t needed   {8000U * branches / (want == 0 ? std::size_t {1} : want)};
         const std::size_t span_cap {needed < ac_density_min_span       ? ac_density_min_span
                                     : needed > ac_density_sample_bytes ? ac_density_sample_bytes
@@ -1673,7 +1662,7 @@ namespace real::detail {
         std::size_t       scanned            {limit > start ? limit - start : std::size_t {1}};
         // A TRUNCATED view, not the whole subject: next_candidate scans until it finds a candidate
         // or runs out of text, so bounding only what gets counted bounds nothing at all. On a
-        // candidate-free haystack the "256-byte sample" read all 4000 bytes and cost 2 us -- two
+        // candidate-free haystack the "256-byte sample" read the WHOLE subject at a real cost -- two
         // thirds of the win this gate exists to deliver, spent finding out there was nothing to find.
         const std::string_view window {text.substr(0, limit)};
         while (pos < limit) {
@@ -1778,7 +1767,7 @@ namespace real::detail {
         // Reverse DFA lives in the shared slot (not per-iterator). Build cost still needs a
         // high cold floor; warm scans use il_warm_floor (~4 KB). N = size * 28, clamped
         // [64 KB, 512 KB]: email ~3436 instr → ~94 KB cold; date ~1031 → 64 KB clamp.
-        // HONESTY: 94–128 KB *cold-dense* may pay ~1–2.4% vs core (accepted). Checked ONLY
+        // HONESTY: a cold-dense subject just above the floor may pay slightly against core. Checked ONLY
         // after the first memmem hit, so no-match — memmem-only — is never gated.
         const std::size_t sz {immut->il_prefix_prog.code.size()};
         immut->il_min_haystack =
@@ -1793,11 +1782,11 @@ namespace real::detail {
      * \brief Build (or rebuild) the one-pass capture extractor, on top of \ref ensure_immutables.
      *
      * Split out of \ref ensure_immutables because it is the expensive half and only some callers need it.
-     * Measured on a first `(\w+)@(\w+)` search: 884 us here against 331 for the byte program and 117 for
-     * the lazy DFA. Bundled, every route that wanted only the byte program paid all of it -- including a
-     * capture-free pattern, since `\w+@\w+` (2 slots, nothing to extract) measured the same 1487 us as its
-     * 6-slot twin. So the split is not a micro-optimisation: it stops a search from building a capture
-     * extractor it cannot consult.
+     * On a first search over a capture pattern this half dominates the cache -- more than the byte program
+     * and the lazy DFA together. Bundled, every route that wanted only the byte program paid all of it,
+     * including a capture-free pattern: a 2-slot twin with nothing to extract measured the same first
+     * search as its 6-slot original. So the split is not a micro-optimisation: it stops a search from
+     * building a capture extractor it cannot consult.
      *
      * Guarded by its own \ref regex_immutables::op_table_for, exactly as the membership rows are guarded by
      * \c rows_for and for the same reason -- an identity independent of \c built_for, because this is needed
@@ -2019,10 +2008,10 @@ namespace real::detail {
     //! \brief Branch count of a \ref pattern_hints::fixed_alternation at or above which a single
     //!        Aho-Corasick automaton walk beats \ref pattern_hints::small_set's 2..8-member
     //!        memchr-cascade scan (which has no fast path at all past 8 distinct first bytes).
-    //!        Measured 2026-07 on M1 Pro against the WIRED engine (real::regex, find_iter, min-of-5,
-    //!        aho_corasick_route_disabled() toggle) on two corpus shapes — mostly-non-matching prose
-    //!        and majority-matching text: at N=11 AC already wins on the match-heavy corpus (0.66x)
-    //!        but is ~8% SLOWER on prose (1.08x); at N=12 it wins on both (0.72x prose, 0.61x match)
+    //!        Measured against the wired engine (through the route's own disable toggle) on two corpus
+    //!        shapes — mostly-non-matching prose and majority-matching text. Just below this count the
+    //!        automaton already wins on the match-heavy corpus while still LOSING on prose; at this count
+    //!        it wins on both
     //!        with no measured regression. 12, not 11, so the gate matches its own contract — AC
     //!        BEATS the VM-branch path at the threshold, not roughly ties it (measured; the
     //!        the N=10 repro stays correctly below threshold either way, AC/VM=1.16x
@@ -2050,9 +2039,9 @@ namespace real::detail {
      * \note **Cached per REGEX, in \ref detail::regex_immutables, not per state.** It lived on the
      *       state until that was measured: a state is fresh per `search()`, so crossing
      *       \ref ac_branch_threshold rebuilt the automaton on every call and made repeated search ~200x
-     *       SLOWER rather than faster — 29.5 us and 584 heap allocations against 0.14 us for a 3-branch
-     *       alternation below the gate, on the same 4000-byte subject, with `find_iter` offering no
-     *       rescue. Moving it here took that to 12.6 us and **zero** allocations. Its identity atomic is
+     *       SLOWER rather than faster — orders of magnitude, with hundreds of heap allocations, against a
+     *       3-branch alternation below the gate on the same subject, and `find_iter` offered no rescue.
+     *       Moving it here removed the rebuild and the allocations entirely. Its identity atomic is
      *       its own, never folded into `built_for`: only this route consults it, and that cache's history
      *       records what bundling a route-specific product into the shared flag cost every other route.
      *
@@ -2064,15 +2053,15 @@ namespace real::detail {
      *       v2026.7.62 removing.
      *
      * \warning **Removing the rebuild exposed what the automaton actually costs, and the gate above
-     *          selects on the wrong property.** AC scans at ~3.2 ns/byte whatever the subject: it is
+     *          selects on the wrong property.** The automaton scans at a flat rate whatever the subject: it is
      *          worst-case insurance, not a fast path. Measured against the same pattern with the route
-     *          disabled, on four 4000-byte subjects — no match **12.71 us against 0.14 (90x SLOWER)**,
+     *          disabled, on four subjects of one size — with NO match it is two orders of magnitude slower,
      *          one late match 12.35 against 0.25 (49x slower), match-dense 0.05 against 0.05 (a tie),
      *          and a subject full of false starts **12.66 against 132.86 (10.5x FASTER)**. AC wins only
      *          where the memchr cascade degrades, and \ref ac_branch_threshold gates on branch COUNT,
      *          which does not predict that regime. Selecting on candidate density is the shape that
      *          would, and it is a routing-policy change with its own measurement campaign — not a
-     *          tuning, and deliberately not attempted in the train that found it.
+     *          tuning, and deliberately not attempted here.
      *
      *          **Reconnaissance for whoever builds it, so the shape is not re-derived.** No *static*
      *          property can select correctly: AC's cost is flat while the cascade's swings by three
@@ -2093,7 +2082,8 @@ namespace real::detail {
      *          fixed-shape, class-loop and alternation routes. So the first step is to give it an
      *          OPTIONAL abandon predicate, unwired by default, leaving the other three routes unchanged
      *          by construction; then wire the counter to alternation alone, with a budget scaled to the
-     *          subject (AC is ~3.2 ns/byte, a missed candidate in the bad regime ~130 ns, which sets the
+     *          subject (the automaton's flat per-byte rate against the cost of a missed candidate in the
+     *          bad regime, which sets the
      *          order of magnitude); then re-run the full matrix on both platforms, since it is the
      *          matrix that has to validate the result.
      *
@@ -2187,7 +2177,7 @@ namespace real::detail {
      *
      * Must stay outlined: `class_table` has to remain small enough to inline into
      * `basic_match_iterator::advance`, and this body inline is what pushes it over. Emitted out of line
-     * there instead, it costs 10.2 % of the instructions of a 64 KiB `[a-z]+` walk.
+     * there instead, it costs a tenth of the instructions of a class-loop walk.
      * \param[in,out] cache       The per-regex immutables.
      * \param[in]     class_index Index into the program's interned byte classes.
      */
@@ -2453,7 +2443,8 @@ namespace real::detail {
      *
      * A trailing `\Z`/`$` pins the end, so the leftmost match is the maximal class run that finishes
      * exactly there -- one backward walk from the limit, not a forward scan that finds runs and
-     * discards each one whose end is wrong. `[a-z]+$` over 100 KB was 3.100 ms on the general VM.
+     * discards each one whose end is wrong -- milliseconds on the general VM for a subject a scan crosses
+     * once.
      *
      * The limit is where `$` differs from `\Z` and from `fullmatch`, and getting it wrong is silent:
      * `$` (kind 2) also matches just before ONE final newline, which is why `^a+$` matches `"aaa\n"`
@@ -2524,9 +2515,9 @@ namespace real::detail {
      *
      * Outlined for the reason \ref class_table has an attribute of its own — what has to stay inlined is the
      * row-key compare and the return, and every byte of resolution beside it competes for the budget
-     * that lets the accessor enter `basic_match_iterator::advance`. Inlined back in, it measured
-     * `[0-9]+` +7.2 % and `[^,]+` +3.9 % on gcc/x86-64 while helping the same rows on clang/arm64: the
-     * hot path was already right, and the cold path's SIZE was what decided the outcome.
+     * that lets the accessor enter `basic_match_iterator::advance`. Inlined back in, it charged the
+     * class-scan rows on one toolchain while helping the same rows on the other: the hot path was already
+     * right, and the cold path's SIZE was what decided the outcome.
      * \param[in] class_index Index into the program's interned byte classes.
      * \return Pointer to the 256-entry membership row, also cached in the state.
      */
@@ -2649,15 +2640,14 @@ namespace real::detail {
 
     //! \brief Cap on how far a jump chain is followed to a loop head (empty-iteration exit routing);
     //!        a loop join reaches its split in one hop, so this is a generous bound, never a hot cost.
-    // A GENEROUS BOUND on an unreachable path, not a tuning knob: a loop join reaches its split
-    // in one hop, so eight is headroom against a shape the compiler does not emit. The sabotage
-    // sweep reads it unguarded because no pattern gets near it -- which is the intent, and a
-    // test that manufactured a nine-hop chain would be pinning the bound rather than any
-    // behaviour the engine has.
+    // A GENEROUS BOUND on an unreachable path, not a tuning knob: a loop join reaches its split in one
+    // hop, so eight is headroom against a shape the compiler does not emit. Nothing guards its value,
+    // because no pattern gets near it -- which is the intent, and a test manufacturing a nine-hop chain
+    // would pin the bound rather than any behaviour the engine has.
     static constexpr int max_loop_hops {8};
 
     //! \brief Accepted-byte count after which a `class+` run switches from the per-byte advance to a
-    //!        memchr-cascade to the next stop byte (OPT-C). Below it a run pays nothing extra, so a
+    //!        memchr-cascade to the next stop byte. Below it a run pays nothing extra, so a
     //!        stop-dense stream of short runs stays at baseline cost; the crossover is measured.
     static constexpr std::size_t cascade_run_threshold {32};
 
@@ -2856,14 +2846,12 @@ namespace real::detail {
 
     //! \brief Below this many total ranges, high-cp membership stays on bsearch (small scripts).
     //!        Re-measured after this value stood at 32 on the strength of a quasi-tie: at 32 the two
-    //!        classes that straddle it are NOT a tie, they pull opposite ways. `sc=Han` (22 ranges)
-    //!        wants the sparse table -- 10.713 -> 9.147 ns/B on x86-64 (-14.6 %) and 5.729 -> 5.594
-    //!        on arm64 -- while `scx=Cyrl` (18) wants bsearch and loses 2.7 % on the table. So the
-    //!        crossover lies between 18 and 22, and this constant is that gap rather than either
-    //!        measurement: raising it past 22 costs `sc=Han` the figure above, lowering it past 18
-    //!        costs `scx=Cyrl`. Dense classes (L=675, w=767, N=143) are far above and unreachable by
-    //!        any value here -- they are the control, flat to 0.2 % across the change, which is what
-    //!        makes the -14.6 % readable as this decision's own.
+    //!        classes that straddle it are NOT a tie, they pull opposite ways: the one just above wants
+    //!        the sparse table on both ISAs, the one just below wants bsearch. So the crossover lies
+    //!        between them, and this constant is that GAP rather than either measurement -- raising it
+    //!        past the upper class costs that class, lowering it past the lower one costs the other.
+    //!        Dense classes sit far above and are unreachable by any value here; they are the control,
+    //!        flat across the change, which is what makes the gain readable as this decision's own.
     static constexpr std::uint32_t cp_hi_range_threshold {20U};
 
     /*!
@@ -2991,9 +2979,8 @@ namespace real::detail {
      */
     // always_inline, guarded as profile.hpp guards its own tick helpers. This writer is four stores and a
     // branch, yet it was emitted OUT OF LINE and cost 31 instructions a match -- most of it the call frame.
-    // It runs once per match, not per byte, so inlining grows the caller without touching the per-byte loop:
-    // measured x86 instruction counts for find_iter over 64 KiB, `[a-z]+` -14.5 %, `\b\w+\b` -7.9 %, and
-    // wall clock -4.1 to -4.9 % on every row tried, none regressing.
+    // It runs once per match, not per byte, so inlining grows the caller without touching the per-byte
+    // loop -- instruction counts and wall clock both fall on every row tried, none regressing.
     template <typename OutSlots>
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((always_inline))
@@ -3012,7 +2999,7 @@ namespace real::detail {
     }
 
     /*!
-     * \brief OPT-C run tail: the next stop byte at or after \p from, or the text end. Kept in its own
+     * \brief The memchr-cascade run tail: the next stop byte at or after \p from, or the text end. Kept in its own
      *        function so the memchr-cascade never inlines into \ref run_class_loop's hot per-byte loop
      *        (that bloat measurably slowed stop-dense short runs). Reached only once a run has already
      *        passed \ref cascade_run_threshold accepted bytes, so the out-of-line call is free.
@@ -3034,12 +3021,12 @@ namespace real::detail {
      * Matches a maximal run of class bytes with one scan loop — exactly the
      * VM's greedy result, with no thread lists.
      *
-     * This function is the no-LA path only (pre-P3c shape). Trailing-lookaround
+     * This function is the no-lookaround path only. Trailing-lookaround
      * class+ is dispatched outside \ref run (see real.hpp / find_iter) into
      * \ref run_class_loop_trailing_la. always_inline: must stay in the find_iter
-     * body on x86 (out-of-line call cost ~16 % over 42k matches).
+     * body on x86, where an out-of-line call costs a double-digit share of a match-dense walk).
      *
-     * \tparam Cascade  Take the OPT-C memchr-cascade run tail (chosen once per walk from stop_set_size).
+     * \tparam Cascade  Take the memchr-cascade run tail (chosen once per walk from stop_set_size).
      * \tparam OutSlots Output slot container.
      * \param[in]  text      The subject text.
      * \param[in]  start     Index to begin at.
@@ -3059,7 +3046,7 @@ namespace real::detail {
       // Minimum run length in BYTES for the `X{k,}` desugaring (k identical copies
       // of the atom + a loop of it, see prefilter.hpp's extended class+ recognizer); 1 for the
       // original bare `X+` shape, where every one of the checks below is a dead branch (byte
-      // runs are never shorter than 1) -- byte-identical to the pre-P1 behavior.
+      // runs are never shorter than 1) -- byte-identical to a bare `+`.
       const std::size_t         min_len {prog_.hints.greedy_class_loop_min};
       const std::uint8_t* const tbl =
         class_table(static_cast<std::size_t>(prog_.hints.greedy_class_loop));
@@ -3068,7 +3055,7 @@ namespace real::detail {
                             };
       const auto scan_end = [&](std::size_t match_start) -> std::size_t {
                               std::size_t match_end {match_start + 1};
-                              // OPT-C: Cascade memchr-stop after a long run; see historical comment.
+                              // Cascade memchr-stop after a long run; see historical comment.
                               // Sound because run_class_loop never validates UTF-8 (test_utf8 perimeter).
                               if constexpr (Cascade) {
                                 if (!std::is_constant_evaluated()) {
@@ -3088,7 +3075,7 @@ namespace real::detail {
                               return match_end;
                             };
 
-      // Arc B-2: optional `\b`/`\B` — try successive maximal class runs until boundaries hold.
+      // the WRAP rule: optional `\b`/`\B` — try successive maximal class runs until boundaries hold.
       if (prog_.hints.wb_lead != 0 || prog_.hints.wb_trail != 0) {
         if (mode == run_mode::full || mode == run_mode::prefix) {
           if (start >= text.size() || !in_class(start)) {
@@ -3124,7 +3111,7 @@ namespace real::detail {
         return false;
       }
 
-      // B-1 window-edge guard, mode::full/prefix: anchored at `start` with no retry available --
+      // the DROP rule window-edge guard, mode::full/prefix: anchored at `start` with no retry available --
       // see pattern_hints::wb_lead_maximal_run's own doc comment for the full argument.
       if ((mode == run_mode::full || mode == run_mode::prefix) && prog_.hints.wb_lead_maximal_run &&
           start > 0 && start < text.size() && in_class(start) &&
@@ -3143,8 +3130,8 @@ namespace real::detail {
             out_slots.assign(prog_.slot_count, npos);
             return false;
           }
-          // B-1 window-edge guard: a candidate found by scanning forward past a non-class byte
-          // is provably preceded by one (the scan just confirmed it), so B-1's redundancy
+          // the DROP rule window-edge guard: a candidate found by scanning forward past a non-class byte
+          // is provably preceded by one (the scan just confirmed it), so the DROP rule’s redundancy
           // argument holds unconditionally there. The ONE exception is the very first candidate
           // when it coincides with `start` itself (no forward scan occurred) AND `start > 0` --
           // see pattern_hints::wb_lead_maximal_run's own doc comment for the full argument.
@@ -3163,7 +3150,7 @@ namespace real::detail {
           out_slots.assign(prog_.slot_count, npos);
           return false;
         }
-        // P1: a maximal run shorter than the required minimum can never satisfy `X{k,}` starting
+        // A maximal run shorter than the required minimum can never satisfy `X{k,}` starting
         // here -- in search mode, skip past the whole (too-short) run and try the next one,
         // exactly like the wb-boundary retry above; anchored modes have no retry, so fail outright.
         if ((match_end - match_start) < min_len) {
@@ -3187,9 +3174,9 @@ namespace real::detail {
      *
      * Two thread lists and an epsilon stack with their own containers. A `search()` builds a fresh state,
      * so constructing and destroying all of that landed on every search — for every pattern, including the
-     * overwhelming majority with no lookaround at all. Measured -5.4 % to -7.4 % on a dynamic single search
-     * once it became lazy, with a pattern that DOES use lookarounds unchanged (1895.7 -> 1897.1 us over a
-     * 64 KiB walk: the emplace happens once per state, not once per evaluation).
+     * overwhelming majority with no lookaround at all. Making it lazy pays on every single search, and a
+     * pattern that DOES use lookarounds is unchanged -- the emplace happens once per state, not once per
+     * evaluation.
      * \return The scratch, engaged.
      */
     lookaround_scratch& lookaround_state()
@@ -3205,7 +3192,7 @@ namespace real::detail {
      *
      * Cold, noinline: must not share a function body or inlining unit with
      * \ref run_class_loop (the daily [a-z]+ path). Invoked from real.hpp / find_iter
-     * **outside** \ref run so pure class-loop run() stays pre-P3c-sized. Dynamic-only.
+     * **outside** \ref run so a pure class-loop run() carries none of its code. Dynamic-only.
      *
      * \param[in]  text      Subject.
      * \param[in]  start     Byte offset to begin at.
@@ -3260,7 +3247,7 @@ namespace real::detail {
         // Resolve the lookaround ONCE for the whole walk. `lookaround_holds` re-derives, per call,
         // things that cannot change between calls with the same sub_id: the sub lookup, its code
         // length, and its body's opcode. Callgrind on `[a-z]+(?=[a-z])` over 64 KB of prose puts it at
-        // 26.6 % of the workload across 1 649 430 calls -- 35 instructions each, of which 22 are
+        // a quarter of the workload across a million-plus calls -- a few dozen instructions each, most of them
         // prologue and epilogue and ~10 are that invariant re-checking. Only the class test varies
         // with the position. Hoisting leaves the loop calling a small inlinable predicate instead of
         // an out-of-line function; it removes the work rather than moving it, which is what
@@ -3340,8 +3327,10 @@ namespace real::detail {
       }
     }
 
-    //! \brief One buffered `cp_class_loop` match: the whole-match span, which for this route is the
-    //!        whole answer (a capturing wrap mirrors it, and \ref fill_span_slots reconstructs that).
+    /*!
+     * \brief One buffered `cp_class_loop` match: the whole-match span, which for this route is the whole
+     *        answer (a capturing wrap mirrors it, and \ref fill_span_slots reconstructs that).
+     */
     struct cp_span
     {
       std::size_t start {}; //!< Match start, byte offset.
@@ -3353,7 +3342,7 @@ namespace real::detail {
      *
      * The byte-class twin of \ref fill_cp_class_spans, and it exists for the same measurement: this
      * route emits a match every few bytes on word text (`[a-z]+` over prose is 42 858 matches in
-     * 200 KB, ~9.9 ns each) and the scan is a table lookup per byte. What is left is the per-match
+     * a large subject) and the scan is a table lookup per byte. What is left is the per-match
      * return, and it is the same return.
      *
      * \tparam Cascade Whether the memchr stop-tail applies, chosen once per walk by the caller.
@@ -3364,7 +3353,7 @@ namespace real::detail {
      * \return How many spans were written.
      *
      * \note **A filler for the `.`/negated-class route was refused here once, then landed.** The first
-     *       attempt gained −58.8 % on clang/arm64 and almost nothing on gcc/x86-64, where it took back
+     *       attempt gained heavily on one toolchain and almost nothing on the other, where it took back
      *       most of what this filler had won (`words` 1.708 -> 3.155, `digits` 1.089 -> 1.933) — a
      *       translation-unit inline-budget effect, not a property of the scan (docs/design.dox §10.1).
      *       \ref fill_codepoint_class_spans is the version that did land, and it disclosed its own
@@ -3382,24 +3371,23 @@ namespace real::detail {
         class_table(static_cast<std::size_t>(prog_.hints.greedy_class_loop))};
       // A TEMPLATE parameter, so the guard below compiles away entirely for every pattern that does
       // not carry a dropped leading `\b` -- which is nearly all of them. Two weaker versions were
-      // measured and REFUSED first, both by benchmarks/bench_layout.py against this machine's own
-      // floors: written inline per iteration it cost `digits` +17.3 %, `words` +13.6 % and
-      // `\p{L}+` +13.4 % (it re-read the hint struct on every span emitted); hoisting it to a
-      // runtime local still cost +6 to +8 % on five class-scan rows, all judged REAL. Only
+      // measured and REFUSED first, both against calibrated layout floors: written inline per iteration
+      // it charged every class-scan row, because it re-read the hint struct on every span emitted;
+      // hoisting it to a runtime local still charged five of them. Only
       // `if constexpr` leaves those rows compiling to what they compiled to before.
-      // P1 `{k,}`: the minimum run length, in BYTES, read ONCE outside the loop. A bare `+` leaves
+      // The `{k,}` minimum run length, in BYTES, read ONCE outside the loop. A bare `+` leaves
       // it 1, where the compare can never fire (a run is non-empty), so the shapes that do not use
-      // it pay a register compare and no hint-struct access -- the distinction that cost 17 % when
+      // it pay a register compare and no hint-struct access -- the distinction that was costly when
       // the wb guard was first written the other way (see this file's WbEdge note).
       //
       // THE CODE-POINT TWIN EXISTS NOW, and how it got here is the part worth keeping. It was refused
       // twice -- a counter as a closure outside the loop, then the same templated away -- because each
-      // charged `\p{L}+`, a pattern whose min is 1 and which never runs the check, **+4.9 % and then
-      // +7.6 %**, 16 draws of 16 against a 0.7 % floor. Both readings were correct FOR THE INSTRUMENT
-      // that produced them: benchmarks/bench_engines.cpp links <regex>, PCRE2 and RE2 beside real.hpp
-      // and sits on the per-unit inlining budget. A consumer compiles only real.hpp. Re-judged in
-      // benchmarks/bench_minimal.cpp -- which is that unit -- the same change reads `\w{2,}` −38.1 %
-      // and `\p{L}{3,}` −36.2 % over 24 paired draws, with `\p{L}+` at −0.3 %, indistinguishable.
+      // charged `\p{L}+`, a pattern whose min is 1 and which never runs the check, twice over and above
+      // its floor. Both readings were correct FOR THE INSTRUMENT that produced them:
+      // benchmarks/bench_engines.cpp links <regex>, PCRE2 and RE2 beside real.hpp and sits on the
+      // per-unit inlining budget. A consumer compiles only real.hpp. Re-judged in
+      // benchmarks/bench_minimal.cpp -- which IS that unit -- the same change is a large gain on the
+      // `{k,}` rows it targets, with `\p{L}+` indistinguishable from zero.
       // The cost belonged to the harness, not to the library. docs/MEASUREMENT.md §5.5.
       //
       // The refusals are kept rather than deleted because the reasoning was sound and only the
@@ -3407,9 +3395,9 @@ namespace real::detail {
       // A KEPT `\b`/`\B` wrap, checked per span. `wb_boundaries_ok` is the member the general route
       // calls; it reads `text_`, which `run()` binds and a filler never does, so this mirrors it
       // against this filler's own `text` -- the same null-view trap the WbEdge guard hit.
-      // `\b[a-z]+\b` is where it pays: 4.485 ns/B against `[a-z]+`'s 1.169. A maximal run of a word
-      // SUBSET can legitimately start after `_` or a digit, so unlike `\b\w+\b`'s this assertion is
-      // NOT redundant and cannot be dropped at recognition time -- it has to be evaluated here.
+      // A maximal run of a word SUBSET can legitimately start after `_` or a digit, so unlike
+      // `\b\w+\b`'s this assertion is NOT redundant and cannot be dropped at recognition time -- it has
+      // to be evaluated here, which is what earns this filler its route.
       const bool         wb_ascii          {!prog_.unicode_word};
       const assert_kind  wb_lead_k         {prog_.hints.wb_lead == 2 ? assert_kind::not_word_boundary
                                                               : assert_kind::word_boundary};
@@ -3441,8 +3429,8 @@ namespace real::detail {
             ++end;
           }
         }
-        // B-1 window-edge guard, and it fires at exactly ONE position per walk. A candidate reached
-        // by scanning forward past a non-member byte is provably preceded by one, so B-1's
+        // the DROP rule window-edge guard, and it fires at exactly ONE position per walk. A candidate reached
+        // by scanning forward past a non-member byte is provably preceded by one, so the DROP rule’s
         // redundancy argument (a maximal run can only start where the preceding character is
         // non-word) holds for it unconditionally. The single exception is the first candidate when
         // it coincides with `start` and `start > 0`, because a caller-supplied `pos` does NOT assert
@@ -3452,9 +3440,8 @@ namespace real::detail {
         // run_class_loop applies.
         // The guard, and it is a REGISTER test that goes false after the first span. Written the
         // obvious way -- the whole condition inline, per iteration -- it read `prog_.hints` out of the
-        // hint struct on every span emitted and cost `digits` +17.3 %, `words` +13.6 % and `\p{L}+`
-        // +13.4 % on x86-64, all four judged REAL by benchmarks/bench_layout.py against their measured
-        // floors. Hoisted, those rows are back inside noise. The assertion evaluator is the FREE
+        // hint struct on every span emitted and charged every class-scan row above its own calibrated
+        // floor. Hoisted, those rows are back inside noise. The assertion evaluator is the FREE
         // function given this filler's own `text`, not the member wrapper: the wrapper reads `text_`,
         // which `run()` binds and a filler never does, so calling it here segfaults in word_before on
         // a null view (ASan caught it the first time). `ascii_word` mirrors the wrapper exactly for a
@@ -3469,7 +3456,7 @@ namespace real::detail {
             }
           }
         }
-        // P1: a maximal run shorter than the required minimum can never satisfy `X{k,}` starting
+        // A maximal run shorter than the required minimum can never satisfy `X{k,}` starting
         // here, so skip past the whole run and try the next one -- exactly what run_class_loop's
         // search mode does.
         if (end - i < min_len) {
@@ -3499,9 +3486,9 @@ namespace real::detail {
      * \brief Fills up to \p cap bare single byte-class matches from \p start without leaving the route.
      *
      * The unquantified sibling of \ref fill_class_spans, and the reason it exists is the same one, in
-     * its sharpest form: `[a-z]` has no `+` to amortise anything over, so every single accepted byte
-     * was a full route entry — 1.000 entries per match, 7.882 ns/B, slower per byte than `.`, which
-     * matches at every position. `[a-z]+` over the same corpus reads 1.110.
+     * its sharpest form: `[a-z]` has no `+` to amortise anything over, so every single accepted byte is a
+     * full route entry -- one per match -- which makes it slower per byte than `.`, a pattern that matches
+     * at EVERY position, and several times slower than its own `+` form.
      *
      * There is no run to coalesce and so no `Cascade` variant: one accepted byte is one match, spans
      * are exactly one byte wide, and consecutive matches are consecutive positions. The accept test is
@@ -3543,10 +3530,10 @@ namespace real::detail {
      * \brief Fills up to \p cap `cp_class_loop` matches from \p start without leaving the route.
      *
      * The route's per-match cost is not its scan. Holding the class and the bytes fixed and varying
-     * only how often a match must be emitted puts the inner scan at ~2.2 ns/B against 7.6 for the same
-     * bytes emitted one code point at a time: **71 % of those rows is the per-match return** through
-     * `run()`'s dispatch, `fill_span_slots` and the iterator's re-entry, paid once every three bytes
-     * for a single-code-point pattern. Filling a buffer amortises all of it over \p cap matches and
+     * only how often a match must be emitted puts the inner scan several times below the same bytes
+     * emitted one code point at a time: MOST of such a row is the per-match return through `run()`'s
+     * dispatch, `fill_span_slots` and the iterator's re-entry, paid once every few bytes for a
+     * single-code-point pattern. Filling a buffer amortises all of it over \p cap matches and
      * hoists `asc` once for the batch instead of once per match.
      *
      * Narrow by construction, and the guard is the caller's (\ref basic_match_iterator): search
@@ -3594,10 +3581,9 @@ namespace real::detail {
       const std::size_t max_len {prog_.hints.greedy_cp_class_max};
       // A TEMPLATE parameter, so the guard below compiles away entirely for every pattern that does
       // not carry a dropped leading `\b` -- which is nearly all of them. Two weaker versions were
-      // measured and REFUSED first, both by benchmarks/bench_layout.py against this machine's own
-      // floors: written inline per iteration it cost `digits` +17.3 %, `words` +13.6 % and
-      // `\p{L}+` +13.4 % (it re-read the hint struct on every span emitted); hoisting it to a
-      // runtime local still cost +6 to +8 % on five class-scan rows, all judged REAL. Only
+      // measured and REFUSED first, both against calibrated layout floors: written inline per iteration
+      // it charged every class-scan row, because it re-read the hint struct on every span emitted;
+      // hoisting it to a runtime local still charged five of them. Only
       // `if constexpr` leaves those rows compiling to what they compiled to before.
       bool              wb_edge {WbEdge && start > 0};
       std::size_t       n       {0};
@@ -3645,8 +3631,8 @@ namespace real::detail {
             end += w2;
           }
         }
-        // B-1 window-edge guard, and it fires at exactly ONE position per walk. A candidate reached
-        // by scanning forward past a non-member byte is provably preceded by one, so B-1's
+        // the DROP rule window-edge guard, and it fires at exactly ONE position per walk. A candidate reached
+        // by scanning forward past a non-member byte is provably preceded by one, so the DROP rule’s
         // redundancy argument (a maximal run can only start where the preceding character is
         // non-word) holds for it unconditionally. The single exception is the first candidate when
         // it coincides with `start` and `start > 0`, because a caller-supplied `pos` does NOT assert
@@ -3656,9 +3642,8 @@ namespace real::detail {
         // run_cp_class_loop applies.
         // The guard, and it is a REGISTER test that goes false after the first span. Written the
         // obvious way -- the whole condition inline, per iteration -- it read `prog_.hints` out of the
-        // hint struct on every span emitted and cost `digits` +17.3 %, `words` +13.6 % and `\p{L}+`
-        // +13.4 % on x86-64, all four judged REAL by benchmarks/bench_layout.py against their measured
-        // floors. Hoisted, those rows are back inside noise. The assertion evaluator is the FREE
+        // hint struct on every span emitted and charged every class-scan row above its own calibrated
+        // floor. Hoisted, those rows are back inside noise. The assertion evaluator is the FREE
         // function given this filler's own `text`, not the member wrapper: the wrapper reads `text_`,
         // which `run()` binds and a filler never does, so calling it here segfaults in word_before on
         // a null view (ASan caught it the first time). `ascii_word` mirrors the wrapper exactly for a
@@ -3768,11 +3753,10 @@ namespace real::detail {
        * \ref run_class_loop's own `in_class` has, which is why its scan costs a fraction of this one.
        *
        * Kept separate from \c width rather than folded into it: `extend_run` needs the length, and one
-       * lambda returning a width cannot narrow to a bool for the scan. Measured on a 64 KiB corpus,
-       * find_iter, each pattern ALONE in its translation unit (arm64/clang, best of 25, two repeats):
-       * `\d+` 179.0 -> 114.4 us, `\w+` 338.0 -> 319.8 us, and `[a-z]+` / `[0-9]+` / `[^,]+` / `dog`
-       * byte-identical. Isolating the scan on a corpus with no member at all, this route cost 6.1x the
-       * byte-class route for the same work (125.8 vs 20.6 us) before this.
+       * lambda returning a width cannot narrow to a bool for the scan. Measured with each pattern ALONE in
+       * its translation unit, the code-point rows gain substantially and the byte-class and literal rows are
+       * byte-identical. Isolating the scan on a corpus with NO member at all, this route cost several times
+       * the byte-class route for the same work before this.
        */
       const auto in_class = [&](std::size_t i) -> bool {
                               const auto lead {static_cast<std::uint8_t>(text[i])};
@@ -3820,7 +3804,7 @@ namespace real::detail {
                                 // A COUNTED repeat is mutually exclusive with the greedy loop -- `X{k}`
                                 // emits no self-loop -- so it sits in the `else` and the test above stays
                                 // exactly the one that was there. Tested FIRST instead, it cost `\w+` and
-                                // `\b\w+\b` 2.3 % of their instructions on gcc/x86-64, measured, on
+                                // a couple of percent of a word-boundary walk's instructions, on
                                 // patterns that can never reach it.
                                 else if (const std::size_t max_len {prog_.hints.greedy_cp_class_max};
                                          max_len != 0) {
@@ -3858,7 +3842,7 @@ namespace real::detail {
           ? text.size() - 1
           : text.size()};
 
-      // P1: counts code points in [s, e) -- only walked when min_len > 1 (the {k,} shape); the
+      // Counts code points in [s, e) -- only walked when min_len > 1 (the {k,} shape); the
       // range is already known to be a valid run of class-member code points (extend_run just
       // built it), so this simply re-walks UTF-8 lead bytes to count boundaries, never re-validates.
       const auto count_cps = [&](std::size_t s, std::size_t e) -> std::size_t {
@@ -3873,7 +3857,7 @@ namespace real::detail {
                                return n;
                              };
 
-      // Arc B-2: `\b`/`\B` on subset cp-class (e.g. `\b\d+\b`) — try successive runs.
+      // the WRAP rule: `\b`/`\B` on subset cp-class (e.g. `\b\d+\b`) — try successive runs.
       if (prog_.hints.wb_lead != 0 || prog_.hints.wb_trail != 0) {
         if (mode == run_mode::full || mode == run_mode::prefix) {
           // `extend_run` decodes at its argument, which requires a byte to be there; anchored modes
@@ -3913,7 +3897,7 @@ namespace real::detail {
         return fail();
       }
 
-      // B-1 window-edge guard, mode::full/prefix: anchored at `start` with no retry available --
+      // the DROP rule window-edge guard, mode::full/prefix: anchored at `start` with no retry available --
       // see pattern_hints::wb_lead_maximal_run's own doc comment for the full argument.
       if ((mode == run_mode::full || mode == run_mode::prefix) && prog_.hints.wb_lead_maximal_run &&
           start > 0 && start < text.size() && width(start) != 0 &&
@@ -3930,8 +3914,8 @@ namespace real::detail {
           if (match_start >= text.size()) {
             return fail();
           }
-          // B-1 window-edge guard: a candidate found by scanning forward past a non-class
-          // code point is provably preceded by one, so B-1's redundancy argument holds
+          // the DROP rule window-edge guard: a candidate found by scanning forward past a non-class
+          // code point is provably preceded by one, so the DROP rule’s redundancy argument holds
           // unconditionally there. The ONE exception is the very first candidate when it
           // coincides with `start` itself (no forward scan occurred) AND `start > 0` -- see
           // pattern_hints::wb_lead_maximal_run's own doc comment for the full argument.
@@ -3953,7 +3937,7 @@ namespace real::detail {
         if (match_end == npos || (mode == run_mode::full && match_end != text.size())) {
           return fail();
         }
-        // P1: a maximal run shorter than the required minimum can never satisfy `X{k,}` starting
+        // A maximal run shorter than the required minimum can never satisfy `X{k,}` starting
         // here -- in search mode, skip past the whole (too-short) run and try the next one;
         // anchored modes have no retry, so fail outright (mirrors run_class_loop's own min-check).
         if (min_len > 1 && count_cps(match_start, match_end) < min_len) {
@@ -4123,9 +4107,9 @@ namespace real::detail {
       }
       // Bare / suffixed (no leading literal).
       const bool min_nonzero {h.possessive_min_nonzero};
-      // B-1 window-edge guard: see pattern_hints::wb_lead_maximal_run's own doc comment. Applies
+      // the DROP rule window-edge guard: see pattern_hints::wb_lead_maximal_run's own doc comment. Applies
       // only when `start` itself is the candidate AND is actually in-class (a zero-length body at
-      // a non-class `start` has no "run" for B-1's argument to be about in the first place).
+      // a non-class `start` has no "run" for the DROP rule’s argument to be about in the first place).
       const auto b1_edge_blocks = [&](std::size_t pos) {
                                     return h.wb_lead_maximal_run && pos > 0 && pos < text.size() &&
                                            in_class(pos) &&
@@ -4285,8 +4269,8 @@ namespace real::detail {
                             };
 #if defined(__GNUC__) && !defined(__clang__)
       // gcc keeps the width round trip. Measured, and it is not the shape one would guess: the
-      // ASCII-direct predicate below costs g++ 13.3 +37% on a scan with no member (145.0 -> 202.8 us over
-      // 64 KiB) and +15% on `\d++` with members, while REDUCING its instruction count 3.89% -- fewer
+      // ASCII-direct predicate below is sharply SLOWER on a scan with no member, and slower again on one
+      // with members, while REDUCING its instruction count -- fewer
       // instructions, more time, which is the same trap O2r-1b's own note documents for this loop family.
       const auto in_class = [&](std::size_t i) { return i < text.size() && cp_width(i) != 0; };
 #else
@@ -4294,11 +4278,11 @@ namespace real::detail {
       // one table load, and this one went through `cp_width`: a three-field decode result, a `valid` test,
       // a re-branch on `cp < 0x80` and a length mapped back to the bit `asc[lead]` already held.
       // arm64/clang, find_iter over 64 KiB, each pattern ALONE in its TU (best of 25, three repeats):
-      // `\d++` 192.9 -> 123.3 us, `\w++` 504.0 -> 471.3 us; isolating the scan on a corpus with no member
-      // at all, 122.0 -> 61.2 us, which is exact parity with the greedy cp-class route.
+      // the possessive code-point rows substantially; isolating the scan on a corpus with no member at all
+      // halves it, which is exact parity with the greedy cp-class route.
       //
       // No bounds check, which is the sibling byte-class runner's contract too: every call site in
-      // run_possessive_loop_generic guards `< text.size()` before asking. Carrying one here cost 2% and
+      // run_possessive_loop_generic guards `< text.size()` before asking. Carrying one here costs, and
       // was unreachable -- zero executions over the whole suite.
       const auto in_class = [&](std::size_t i) -> bool {
                               const auto lead {static_cast<std::uint8_t>(text[i])};
@@ -4474,11 +4458,11 @@ namespace real::detail {
      *        survivor with the ordinary fixed-body walk, hand the sub-block tail to \ref fast_search.
      *
      * **Its own route, dispatched from \ref run — deliberately NOT a branch inside \ref
-     * run_fixed_shape.** Hosting this block there was measured on callgrind to cost **+4 to +7 % more
+     * run_fixed_shape.** Hosting this block there was measured on callgrind to cost measurably more
      * INSTRUCTIONS** on heterogeneous shapes that never enter it (`[0-9]{2}:[0-9]{2}`, which the
      * `rare_byte` veto declines): not cycles, not layout luck — the block changed that function's
      * optimization decisions and its scalar path paid. Two variants were tried inside it, inline and
-     * `noinline`; the `noinline` one halved the cost but also cut the win (icase −61.5 % → −56.0 % Ir),
+     * `noinline`; the `noinline` one halved the cost but also cut the win,
      * so neither was clean. Out here, `run_fixed_shape`'s body is byte-identical to before and only
      * patterns that actually take this route see new code — the same isolation \ref
      * run_class_loop_trailing_la buys for the class loop.
@@ -4667,7 +4651,6 @@ namespace real::detail {
       }
     }
 
-    template <typename OutSlots>
     /*!
      * \brief Verifies a fixed code-point shape forward from \p s, filling capture slots as it goes.
      *
@@ -4679,6 +4662,7 @@ namespace real::detail {
      * \param[out] out_slots Receives the slots (untouched unless the walk succeeds).
      * \return The match end, or \ref real::npos if the shape does not hold at \p s.
      */
+    template <typename OutSlots>
     [[nodiscard]] constexpr std::size_t match_cp_shape(std::string_view text,
                                                        std::size_t      s,
                                                        OutSlots&        out_slots) const
@@ -4722,7 +4706,6 @@ namespace real::detail {
       return npos;
     }
 
-    template <typename OutSlots>
     /*!
      * \brief Fills capture slots for a `class+ <literal> class+` match, by anchor rather than by offset.
      *
@@ -4736,6 +4719,7 @@ namespace real::detail {
      * \param[in]  e        Match end (the suffix run's end).
      * \param[out] out_slots Slots to fill.
      */
+    template <typename OutSlots>
     constexpr void fill_two_run_saves(std::size_t s,
                                       std::size_t h,
                                       std::size_t lit_end,
@@ -4766,11 +4750,11 @@ namespace real::detail {
      *
      * The `.`/negated-class shape was the only class scan without a batch filler, so it paid a full
      * route entry PER MATCH where the byte- and code-point-class routes pay one per sixteen. Measured
-     * on their own fast paths: `[a-z]+` 5.55 ns per match, `[^ ]+` 19.04, `[^,]+` 19.45 -- and
+     * on their own fast paths: the code-point rows cost several times the byte-class one per match -- and
      * `fields [^,]+` and `.` are the two weakest rows in docs/BENCHMARKS.md against PCRE2-JIT.
      *
      * A NEW function rather than a flag threaded through the existing one: an earlier attempt to widen
-     * a shared scan lambda with one extra branch cost `\p{L}+` +79 % and `\p{N}+` +92 % on the paths
+     * a shared scan lambda with one extra branch nearly doubled the property-class rows on the paths
      * that did not even use it. Nothing here is on any other route's codegen.
      *
      * Search semantics only, which is what the batched walk uses -- \ref basic_match_iterator excludes
@@ -4925,7 +4909,7 @@ namespace real::detail {
       // check -- that generic check accepted overlong (E0 80 80 / F0 80 80 80) and encoded-
       // surrogate (ED A0 80) sequences as one code point. A table lookup, not a full decode: reusing
       // decode_codepoint_strict (which accumulates the code point via
-      // shifts and checks it against min_cp/the surrogate block after the fact) costs +13%
+      // shifts and checks it against min_cp/the surrogate block after the fact) costs measurably
       // ns/B on this exact path -- rejected. This keeps the original branch/comparison shape,
       // swapping only one hardcoded bound for a per-lead table entry.
       const auto width = [&](std::size_t i) -> std::size_t {
@@ -4960,10 +4944,10 @@ namespace real::detail {
       // The recompute below is DELIBERATE, and removing it was measured and refused. The search loop
       // stops on a non-zero width and could hand it over -- callgrind agrees it is redundant, and
       // carrying it (`while (... && (first_width = width(i)) == 0)`) cut total instructions on `[^,]+`
-      // by 21 % (119.5M -> 94.5M, 343 -> 271 Ir per match, the lambda being a real call rather than
+      // by a fifth (the lambda being a real call rather than
       // inlined). It also made this path SLOWER, reproducibly on two independent builds: `\w+`
-      // +20.6 % / +19.4 %, `[à-ÿ]+` +12.5 % / +12.6 %, while the row it targeted (`[^,]+`) moved
-      // -0.6 % / -2.8 %. Fewer instructions is not faster; the extra variable live across the loop
+      // and the property rows with them, while the row it TARGETED barely moved.
+      // Fewer instructions is not faster; the extra variable live across the loop
       // costs more than the call it saves. Do not "simplify" this again without timing it.
       std::size_t match_start {start};
       if (mode == run_mode::search) {
@@ -4991,7 +4975,7 @@ namespace real::detail {
                                  };
         if constexpr (Cascade) {
           if (!std::is_constant_evaluated()) {
-            // OPT-C-1b SWAR: the next ASCII stop bounds the whole run (an ASCII byte can never lie inside
+            // SWAR: the next ASCII stop bounds the whole run (an ASCII byte can never lie inside
             // a multi-byte cluster), so memchr it ONCE. Then walk [match_end, p1): the high-bit scan
             // skips ASCII stretches eight bytes at a time, and only a non-ASCII cluster drops to code-
             // point validation. A pure-ASCII stretch to the stop is exact (ASCII text == bytes); a
@@ -5051,7 +5035,7 @@ namespace real::detail {
      *
      * `noinline`, deliberately NOT `cold` — same reasoning as \ref ac_ready (called on
      * every AC-eligible search, so it must stay fully optimized); only kept OUT of `run()`'s own
-     * body, which is what a round-2 x86 isolation A/B (relayed) traced the "fields [^,]+ +39%"
+     * body, which is what an isolation A/B on that ISA traced the negated-class regression
      * finding to (neither the pattern_hints field nor the pike_state size growth alone regressed
      * it — only the full dispatch/search code sharing `run()`'s translation unit did).
      */
@@ -5099,17 +5083,16 @@ namespace real::detail {
      * \param[out] out_slots Receives the matched span on success.
      * \return `true` if some branch matched.
      *
-     * \note **This route is 99 % per-match RETURN at density, and that is measured rather than
-     *       inferred.** Holding the pattern (`cat|dog|fish`) and 200 KB of bytes fixed and varying only
-     *       how often a match must be emitted gives a clean line across five densities (50 000 / 25 000
-     *       / 12 500 / 6 250 / 3 125 matches): the fit is **19.13 ns per match of return** against
-     *       **5 776 ns of scanning for the whole 200 KB** (0.0289 ns/byte). At the densest point the
-     *       scan is 0.6 % of the work. Even §A's `alt` row, on sparse prose, is ~71 % return -- which
-     *       is why it loses to PCRE2-JIT on both ISAs while the scan itself is nearly free.
+     * \note **At density this route is almost entirely per-match RETURN, and that is measured rather
+     *       than inferred.** Holding the pattern and the bytes fixed and varying ONLY how often a match
+     *       must be emitted fits a straight line across five densities: a constant per match of return,
+     *       plus a scan cost for the whole subject that is negligible beside it. Even a sparse-prose row
+     *       is mostly return -- which is why it loses to the backtracking references while its own scan
+     *       is nearly free.
      *
      *       So the opportunity here is a BATCH FILLER, exactly as for the class routes, and the
-     *       recoverable amount is the one the class routes actually recovered: `[^,]+` went 19.45 ns
-     *       per match to 4.58 when batched. Not attempted yet, and two things make it the heaviest
+     *       recoverable amount is the one the class routes actually recovered when batched -- most of the
+     *       per-match constant. Not attempted yet, and two things make it the heaviest
      *       item on that list rather than the obvious next one -- the search body below is a SIMD
      *       block scan with a carried mask plus a scalar tail plus a non-SIMD fallback, so a filler
      *       reproduces all three; and a new filler body is the change shape that charged unrelated
@@ -5223,10 +5206,10 @@ namespace real::detail {
     /*!
      * \brief Fills up to \p cap `fixed_alternation` matches from \p start without leaving the route.
      *
-     * The measurement that motivates it is recorded on \ref run_alternation -- holding `cat|dog|fish` and 200 KB
-     * of bytes fixed and varying only how often a match must be emitted fits **19.13 ns per match of
-     * return against 5 776 ns to scan the whole 200 KB** -- at density the scan is 0.6 % of the work.
-     * This route was 99 % per-match return, where the class routes had been 71 %.
+     * The measurement that motivates it is recorded on \ref run_alternation -- holding the pattern and the
+     * bytes fixed and varying only how often a match must be emitted fits a per-match constant of return
+     * against a whole-subject scan cost that is negligible beside it. This route was even more
+     * return-dominated than the class routes the same filler treatment already rescued.
      *
      * Scope is the SMALL-SET shape only (2..8 distinct branch first bytes, \ref
      * pattern_hints::small_set_size), which is what the mask scan below needs. An alternation outside
@@ -5477,7 +5460,7 @@ namespace real::detail {
      * MIRRORS `run()`'s CASCADE, and it has to: a batched walk bypasses `run()` entirely, so batching a
      * shape that some EARLIER route claims does not merely fail to help, it takes the pattern off a
      * faster route. Written first as "whatever the four shape recognizers did not claim", which cost
-     * `literal charlie` **+81.1 %** [+72.4, +87.2] at 24 of 24 paired draws against a 3.5 % floor: a
+     * an exact-literal row heavily, well above its own floor at every paired draw: a
      * plain literal has no class loop and no fixed alternation, so it fell through to here and left its
      * `memmem` behind. The conditions below are therefore stated positively, one per route that sits
      * above the lazy DFA in the cascade, and NOT as a residue.
@@ -5513,8 +5496,8 @@ namespace real::detail {
      * REOPENS A DOCUMENTED REFUSAL, and the reason is recorded in \ref run_literal_one_search — this filler
      * was written, measured and refused once. It was never wrong -- `exhaustive-compat` was byte-identical
      * over 3 218 434 cases and a both-ways differential agreed on every span -- and it read `literal`
-     * -29.4 % [-32.2, -24.6] at 24 of 24 draws. It was refused for what it charged elsewhere: five rows
-     * from +2.8 % to +10.7 %, all above their floors at 24 of 24, with 14 of 15 rows leaning positive.
+     * heavily at every paired draw. It was refused for what it charged elsewhere: five rows above their
+     * own floors at every draw, with nearly every row in the panel leaning positive.
      * The mechanism was pinned by machine code rather than argued -- no scan loop changed; `refill_batch`
      * grew 379 -> 389 instructions and `count_matches` 610 -> 606, and `count_matches` is what every row
      * measures -- and the note closes by saying a reopening needs a filler that does not enlarge
@@ -5523,7 +5506,7 @@ namespace real::detail {
      * What reopens it is not a cheaper flag but a CONTRARY MEASUREMENT: a fifth route was since added to
      * `refill_batch`, enlarging it, and the judgement showed no cross-row toll at all (12 of 19 medians
      * positive, p = 0.36). What charged the rows in that work was the shape of `advance`'s HOT path -- one
-     * extra comparison there cost 17 of 21 rows, p = 0.007, median +1.3 %, and moving it into the branch
+     * extra comparison there cost most of the panel's rows at a significant p, and moving it into the branch
      * reached once per walk removed it entirely. So "enlarging refill_batch charges every row" is not a
      * law, and the original refusal deserves one re-test under the current shape.
      *
@@ -5564,10 +5547,9 @@ namespace real::detail {
      * \brief Fills up to \p cap inner-literal matches from \p start without re-entering the route gate.
      *
      * The route bills **one engine entry per match** (1.001 on a prose corpus) where every batched route
-     * bills one per `batch_cap`, and the cost is that return rather than the scan: `\d+\.\d+` reads
-     * 34.3 ns/match at one match every 20 bytes, 41.2 at one every 60 and 44.1 at one every 200 -- flat
-     * across densities, which is what a per-match constant looks like. At the dense end that constant IS
-     * the whole 1.80 ns/B.
+     * bills one per `batch_cap`, and the cost is that return rather than the scan: the per-match figure is
+     * flat across densities, which is what a per-match CONSTANT looks like, and at the dense end that
+     * constant is essentially the whole row.
      *
      * IT CALLS \ref run_inner_literal RATHER THAN COPYING IT, which is the opposite of what
      * \ref fill_alternation_spans chose, and for a reason that differs in kind: that filler's twin is a
@@ -5658,11 +5640,10 @@ namespace real::detail {
      *
      * The fifth batched route, and the one the other four made conspicuous. A pattern whose branches are
      * not all literals -- `[a-z]+|[0-9]+`, the plain tokenizer idiom -- matches none of the four
-     * shape recognizers and lands here, where it was billing **0.9949 engine entries per match** against
-     * 0.2501 for every batched route. On 100 KB of prose that reads 10.00 ns/B against `[a-z]+`'s 1.20
-     * for the same match count, and the excess fits a per-match constant on two independent densities:
-     * 44 ns/match at one match every 5.2 bytes (`[a-z]+|zzzz`), 37.8 ns/match at one every 62
-     * (`[0-9]+|zzzz`). The DFA scan is not the cost; the return is.
+     * shape recognizers and lands here, where it was billing ONE engine entry per match against a quarter
+     * of one for every batched route -- and running an order of magnitude slower than a plain class loop
+     * for the same match count. The excess fits a per-match constant at two independent densities, which
+     * is the tell: the DFA scan is not the cost, the return is.
      *
      * ONLY THE ANCHORED-FROM-CANDIDATE SUB-SCAN, deliberately. \ref try_shared_lazy_dfa_search has a
      * second sub-scan (`forward_end` then `reverse_start`) for when the first bytes do not carry the
@@ -5817,12 +5798,12 @@ namespace real::detail {
      * `noinline` deliberately, and it is the *hot* path — not the usual cold-code reason. Keeping this
      * body inside \ref run_exact_literal grew that function, which shares an inlining unit with
      * \ref run and therefore with the class loops: `[^,]+` (\ref run_codepoint_class) measured a
-     * reproducible ~1.5 % regression from the growth alone, the same front-end codegen-luck hazard
+     * reproducible regression from the growth alone, the same front-end codegen-luck hazard
      * documented on \ref run and fixed the same way (\ref run_class_loop_trailing_la,
      * `try_shared_lazy_dfa_search`). Out of line, `[^,]+` returns to its exact pre-change ns/B while
      * this path keeps its win — the one measured cost is a 9-byte literal giving back ~3 points of a
-     * ~35 % gain (arm64: `localhost` −31.9 % out of line vs −35.2 % inline; `dog` identical at
-     * −31.6 %). Restoring a common route beats the last points of an uncommon one.
+     * gain nearly intact -- out of line it keeps almost all of what inlining bought, and one literal row
+     * is identical either way. Restoring a common route beats the last points of an uncommon one.
      *
      * \tparam OutSlots Output slot container.
      * \param[in]  text      The subject text.
@@ -5842,12 +5823,10 @@ namespace real::detail {
      *       (3 218 434 cases, 4 548 documented divergences, 0 serious) and a both-ways differential over
      *       the batch seam agreed on every span.
      *
-     *       On `benchmarks/bench_minimal.cpp` against this machine's calibrated floors, 24 paired
-     *       draws: `literal` **−29.4 %** [−32.2, −24.6] at 24/24 — and `single [a-z]` **+10.7 %**,
-     *       `\b\w+\b` **+4.0 %**, `\w+` **+3.7 %**, `\w{2,}` **+3.2 %**, `fields [^,]+` **+2.8 %**, all
-     *       five above their own floors at 24/24, with **14 of 15 rows leaning positive**. The trade is
-     *       what settles it: the gain lands on a row already ahead of PCRE2-JIT (1.29× / 1.94×) while the
-     *       costs land on rows near parity, four of which are the previous train's own wins.
+     *       The trade is what settles it, and it is lopsided in BOTH directions: one row gains heavily
+     *       while most of the others lose a little, each above its own floor. The gain lands on a row
+     *       already ahead of the backtracking references; the costs land on rows near parity with them,
+     *       several of which are recent wins.
      *
      *       **The mechanism was then pinned by comparing machine code rather than argued, and it is not
      *       the diffuse "per-unit inline budget" this note first blamed.** Of 398 function bodies in the
@@ -5877,8 +5856,8 @@ namespace real::detail {
      *       recompiling the entry point every row measures was.
      *
      *       The layout judgement then agreed, 25 rows against recalibrated floors, 24 paired draws:
-     *       `literal charlie` **−24.1 %** [−27.6, −15.1] at 24/24, the ONLY row judged REAL, and the five
-     *       rows the first attempt charged now read +0.3 %, +0.8 %, +0.7 %, +1.8 % and −0.6 % — every one
+     *       the exact-literal row heavily at every paired draw, the ONLY row judged REAL, and the five
+     *       rows the first attempt charged are now indistinguishable from zero — every one
      *       indistinguishable. No cross-row toll either: 13 of 21 medians positive, p = 0.38, against
      *       14 of 15 leaning positive the first time. A fifth batched route had also been added to
      *       `refill_batch` shortly before, enlarging it, and charged nothing measurable — which is what
@@ -5924,19 +5903,12 @@ namespace real::detail {
      * \note **A one-byte whole-pattern literal is NOT redirected to the batched single-class route,
      *       and that is measured rather than an oversight.** `e` and `[e]` are the same language, and
      *       `single_class` is batched where this route is not, so the redirect looks free -- the same
-     *       argument that made the bare-possessive redirect a 72 % win. It is not free here, because
-     *       which route wins depends on the SUBJECT, not the pattern:
-     *
-     *           byte  matches/100 KB   exact_literal   batched class
-     *           e       10 447          4.274 ns/B     0.953   class wins 4.5x
-     *           ,       16 949          4.919          1.467   class wins 3.4x
-     *           q        1 493          0.418          0.673   LITERAL wins 1.6x
-     *           z        1 492          0.414          0.669   LITERAL wins 1.6x
-     *           @        1 516          0.399          0.679   LITERAL wins 1.7x
-     *
-     *       `memchr` skips whole regions, which is worth more than batching when matches are rare,
-     *       and sparse one-byte literals are at least as common as dense ones. A blanket redirect
-     *       would trade a 4.5x dense win for a 1.6x sparse loss.
+     *       argument that made the bare-possessive redirect a clear win. It is not free here, because
+     *       which route wins depends on the SUBJECT, not the pattern: for a byte that occurs often the
+     *       batched class wins by a wide margin, and for a byte that occurs rarely the literal wins --
+     *       because `memchr` skips whole regions, which is worth more than batching when matches are
+     *       rare. Sparse one-byte literals are at least as common as dense ones, so a blanket redirect
+     *       would trade a large dense win for a real sparse loss.
      *
      *       So the shape of the answer is a DENSITY GATE -- what \ref ac_density_favours_automaton
      *       already is for Aho-Corasick -- not a recognition-time redirect. That is a design of its
@@ -6463,7 +6435,7 @@ namespace real::detail {
       // 0's start, so no refcounted block travels along and the pool is never touched. The start is a
       // full-width `std::size_t` LOCAL rather than a field of `eps_entry` for two reasons: that field is a
       // `std::uint32_t`, which would silently truncate an offset past 4 GiB, and widening it would grow the
-      // per-call epsilon stack -- the `mark` experiment measured +128 bytes of this state at +4 % to +5 % on
+      // per-call epsilon stack -- the `mark` experiment measured a comparable growth of this state against
       // the per-call rows. A single local is correct because `save 0` is the program's FIRST instruction
       // (the guard checks exactly that): every thread one call adds therefore shares one start, either the
       // one passed in or `pos` if the walk crossed the head.
@@ -6648,9 +6620,10 @@ namespace real::detail {
                                                   std::size_t   pos)
     {
       const lookaround_sub& sub {prog_.lookarounds[sub_id]};
-      // L1 peephole: a single-width body compiles to exactly [one consuming op; match] (code_length 2). Test it
-      // directly, skipping the sub-VM scaffolding (~37 ns/eval — a ~4x win on the common single-class assertion,
-      // P0-measured). Negation is over the RESULT (applied below), so an empty / boundary position flips right.
+      // Peephole: a single-width body compiles to exactly [one consuming op; match] (code_length 2). Test it
+      // directly, skipping the sub-VM scaffolding entirely -- several times cheaper on the common
+      // single-class assertion. Negation is over the RESULT (applied below), so an empty or boundary
+      // position flips right.
       if (sub.code_length == 2) {
         const instr& body   {prog_.code[static_cast<std::size_t>(sub.code_offset)]};
         const bool   direct {body.op == opcode::byte || body.op == opcode::klass

@@ -13,7 +13,8 @@
 #define REAL_PREFILTER_HPP
 
 // Internal — do not include directly.
-// Users: #include <real/real.hpp> (or the documented opt-ins <real/dfa.hpp>, <real/compat/std/regex.hpp>).
+// Users: #include <real/real.hpp>, or a documented opt-in: <real/dfa.hpp>,
+// <real/regex_set.hpp>, <real/compat/std/regex.hpp>, <real/compat/re2/re2.hpp>.
 
 #include "real/version.hpp"
 
@@ -27,7 +28,7 @@
 #include "real/core/charclass.hpp"
 #include "real/core/program.hpp"
 #include "real/engine/simd.hpp"           // load_pair_mask — the two-byte literal prefilter
-#include "real/unicode/unicode_props.hpp" // word_ranges — exact \w identity for Arc B-1
+#include "real/unicode/unicode_props.hpp" // word_ranges — exact \w identity for the DROP rule
 
 #include <array>
 
@@ -60,7 +61,7 @@ namespace real::detail {
   }
 
   /*!
-   * \brief True if \p kind is `\b` or `\B` (the only position asserts B1 wraps on fast paths).
+   * \brief True if \p kind is `\b` or `\B` (the only position asserts a fast path wraps).
    * \param[in] kind Assertion kind from `assert_position`.
    * \return Whether it is a word-boundary assertion.
    */
@@ -120,8 +121,10 @@ namespace real::detail {
     return true;
   }
 
-  //! \brief detect_fast_shapes's outer envelope: `save 0`, optional lead `\b`/`\B`. No-ops safely
-  //!        on a shape with no `\b`/`\B` support (e.g. a literal `byte` right after `save 0`).
+  /*!
+   * \brief detect_fast_shapes's outer envelope: `save 0`, optional lead `\b`/`\B`. No-ops safely on a
+   *        shape with no `\b`/`\B` support (e.g. a literal `byte` right after `save 0`).
+   */
   struct shape_lead
   {
     std::size_t  body_start     {}; //!< pc where the shape-specific body begins.
@@ -164,9 +167,11 @@ namespace real::detail {
     return {.body_start = p, .wb_lead = wb_lead, .anchored_start = anchored, .ok = true};
   }
 
-  //! \brief The \ref shape_lead counterpart: optional trail `\b`/`\B` at \p from, then exactly
-  //!        `save 1`, `match` at the very end of \p code. \p from (the body's own end) is the
-  //!        caller's to supply -- only its shape-specific body walk knows where that is.
+  /*!
+   * \brief The \ref shape_lead counterpart: optional trail `\b`/`\B` at \p from, then exactly
+   *        `save 1`, `match` at the very end of \p code. \p from (the body's own end) is the caller's
+   *        to supply -- only its shape-specific body walk knows where that is.
+   */
   struct shape_close
   {
     std::uint8_t wb_trail   {}; //!< 0/1/2, see \ref wb_hint_of.
@@ -309,7 +314,7 @@ namespace real::detail {
   }
 
   /*!
-   * \brief Arc B-1: `\b` next to a full-`\w` MAXIMAL run is redundant (`\B` never is).
+   * \brief The DROP rule: `\b` next to a full-`\w` MAXIMAL run is redundant (`\B` never is).
    *        Only sound when the match is a greedy `+` run: a maximal run of `\w` can only ever
    *        START where the character before it is non-word (or absent) -- that IS `\b` (or the
    *        text edge), so checking it again is redundant. A SINGLE code point (no `+`) has no
@@ -331,16 +336,16 @@ namespace real::detail {
   }
 
   /*!
-   * \brief B-1/B-2 policy for class / cp-class loops under optional `\b`/`\B` wraps.
+   * \brief DROP / WRAP policy for class / cp-class loops under optional `\b`/`\B` wraps.
    *
-   * - Full word + `\b` on a maximal (`+`) run: drop boundaries (B-1); see \ref
+   * - Full word + `\b` on a maximal (`+`) run: drop the boundaries (the DROP rule); see \ref
    *   wb_redundant_for_full_word.
-   * - Proper word subset + `\b`, or full word + `\b` on a single atom: keep the wrap (B-2).
+   * - Proper word subset + `\b`, or full word + `\b` on a single atom: keep the wrap (the WRAP rule).
    * - `\B` on a **maximal** run: **unarm** — the runner skips whole class runs on a failed lead
    *   check, but `\B` legitimately starts *mid-run* (`\B\w+` on "hello" → "ello"). That skip is
-   *   unsound; stay on the general VM (D1a will not invent a mid-run scanner here).
+   *   unsound; stay on the general VM (nothing here invents a mid-run scanner).
    * - `\B` on a **single** atom (`\B\w`, `\B\d`, …): keep the wrap — each candidate is one
-   *   code point, so a failed lead check advances one atom and mid-run hits are found (D1a).
+   *   code point, so a failed lead check advances one atom and mid-run hits are found.
    * - Non-word-subset class under any wb: unarm (superset maximal-run is unsound).
    * - Bare (no wb): arm with zero wb hints.
    *
@@ -349,7 +354,7 @@ namespace real::detail {
    * \param[in]  maximal_run Whether the class loop is a greedy `+` (a maximal run, so any valid
    *                         start already sits at a word/non-word transition) rather than a
    *                         single code point (which may start anywhere inside a word run, where
-   *                         B-1's redundancy argument does not hold).
+   *                         the DROP rule's redundancy argument does not hold).
    * \param[in]  lead        Peeled lead hint.
    * \param[in]  trail       Peeled trail hint.
    * \param[out] out_lead    Hints to store (0 when dropped).
@@ -372,7 +377,7 @@ namespace real::detail {
     if (has_wb && !full_word && !word_sub) {
       return false;
     }
-    // Keep the wrap for subset/`\B`/single-atom `\b`; B-1 drops only maximal full-word + `\b`.
+    // Keep the wrap for subset/`\B`/single-atom `\b`; the DROP rule applies only to maximal full-word + `\b`.
     if (has_wb && (word_sub || full_word) &&
         !(maximal_run && full_word && wb_redundant_for_full_word(lead, trail))) {
       out_lead  = lead;
@@ -449,7 +454,7 @@ namespace real::detail {
   /*!
    * \brief True if \p cc is a non-empty subset of Unicode `\w` (safe for maximal-run + `\b` wrap).
    *
-   * Supersets like `[\w😀]` must NOT take B-2: a maximal class run can start on a non-word member
+   * Supersets like `[\w😀]` must NOT take the WRAP rule: a maximal class run can start on a non-word member
    * and skip over a later word-bounded sub-run.
    *
    * \param[in] cc         The code-point class under test.
@@ -656,7 +661,7 @@ namespace real::detail {
 
     if (hints.prefix_size > 0) {
       // Leading asserts were crossed above. Allow only word-boundary asserts after the last
-      // prefix byte (B1: `\bLIT\b` / `LIT\b`); any other trailing/inter assert stays on the VM.
+      // prefix byte (a kept wrap: `\bLIT\b` / `LIT\b`); any other trailing/inter assert stays on the VM.
       bool         blocking_assert {};
       bool         seen_byte       {};
       std::uint8_t trail_wb        {};
@@ -910,7 +915,7 @@ namespace real::detail {
    *        an alternation of straight-line branches, and trailing-lookaround class+.
    * \param[in]     code           The instruction stream.
    * \param[in]     classes        Interned character classes referenced by \p code.
-   * \param[in]     cp_classes     Match-time code-point classes (for `\w`/`\d`/`\s` Arc B word-class tests).
+   * \param[in]     cp_classes     Match-time code-point classes (for `\w`/`\d`/`\s` word-class tests).
    * \param[in]     cp_ranges      Flat range buffer the \p cp_classes slices index into.
    * \param[in]     cp_mark_ascii  ASCII sub-class index of an emitted codepoint-class block (-1 = none).
    * \param[in]     cp_mark_offset Program offset where that block starts (-1 = none).
@@ -933,7 +938,7 @@ namespace real::detail {
                                     pattern_hints&                  hints)
   {
     // "class+" shape: save 0, [optional \b/\B,] [group-start save,] klass{k}, split(back, exit),
-    // [group-end save,] [optional \b/\B,] save 1, match. Arc B via peel + resolve_class_wb_hints.
+    // [group-end save,] [optional \b/\B,] save 1, match. word-boundary handling via peel + resolve_class_wb_hints.
     // R3: the outer envelope (open/close) is \ref parse_shape_lead / \ref parse_shape_close.
     // `klass{k}` (k >= 1 consecutive copies of the SAME class) generalizes the
     // original single-`klass` shape -- `X{k,}` desugars to k-1 mandatory copies then a k-th copy
@@ -970,7 +975,7 @@ namespace real::detail {
             }
             const shape_close close {ok ? parse_shape_close(code, q) : shape_close {}};
             // A `\b`/`\B` wrap and an end anchor together are REFUSED, never combined: the wrap takes its
-            // own branch in these routes (Arc B-2) and that branch never sees an end limit, while the
+            // own branch in these routes (the WRAP rule) and that branch never sees an end limit, while the
             // assertion has already been peeled out of the program -- so nothing downstream could
             // re-derive it. Both were measured as real divergences: `[a-z]+\b$` (trail) against the
             // seam, and `\b(?>\w)$` (LEAD) against Python's re, by the binding's differential fuzz.
@@ -980,13 +985,13 @@ namespace real::detail {
               std::uint8_t      out_lead  {0};
               std::uint8_t      out_trail {0};
               // This shape structurally requires the split/loop matched above -- always a maximal
-              // `+`-family run, never a single code point -- so B-1's redundancy argument always
+              // `+`-family run, never a single code point -- so the DROP rule's redundancy argument always
               // applies regardless of k.
               if (resolve_class_wb_hints(is_full_ascii_word_class(cc), is_ascii_word_subset_class(cc),
                                          /*maximal_run=*/ true, lead.wb_lead, close.wb_trail, out_lead,
                                          out_trail)) {
                 // A `\b`/`\B` wrap and an end anchor together are REFUSED, not combined: the wrap takes
-                // its own branch in the route (Arc B-2), that branch never sees the limit, and the
+                // its own branch in the route (the WRAP rule), that branch never sees the limit, and the
                 // assertion has already been peeled out of the program -- so nothing downstream could
                 // re-derive it. Measured as a real divergence on `[a-z]+\b$` before this guard.
                 if (close.end_anchor != 0 && (lead.wb_lead != 0 || close.wb_trail != 0)) {
@@ -999,7 +1004,7 @@ namespace real::detail {
                 hints.greedy_group_end      = ge;
                 hints.wb_lead               = out_lead;
                 hints.wb_trail              = out_trail;
-                // B-1 dropped a genuine leading \b (wb_lead was 1, out_lead came back 0): the
+                // the DROP rule removed a genuine leading \b (wb_lead was 1, out_lead came back 0): the
                 // runner's search-mode fast path needs the start>0 window-edge guard -- see
                 // pattern_hints::wb_lead_maximal_run's own doc comment for the full argument.
                 hints.wb_lead_maximal_run = (lead.wb_lead == 1 && out_lead == 0);
@@ -1041,7 +1046,7 @@ namespace real::detail {
     }
 
     // Code-point class (klass_cp + three klass continuations){k}, optional greedy `+` (a self-loop
-    // of the LAST block), optional `\b`/`\B` wraps (Arc B), optional one capturing group. Unicode
+    // of the LAST block), optional `\b`/`\B` wraps, optional one capturing group. Unicode
     // `\w+` / `\d+` / `\s+` / `\w{k,}` via peel + resolve. R3: the outer envelope (open/close) is
     // \ref parse_shape_lead / \ref parse_shape_close.
     // k >= 1 consecutive copies of the IDENTICAL 4-instruction klass_cp block --
@@ -1107,7 +1112,7 @@ namespace real::detail {
           // than shipped wrong; lifting it means teaching those loops to step by one code point.
           const bool counted_wb {cp_max != 0 && (lead.wb_lead != 0 || close.wb_trail != 0)};
           // A `\b`/`\B` wrap and an end anchor together are REFUSED, never combined: the wrap takes its
-          // own branch in these routes (Arc B-2) and that branch never sees an end limit, while the
+          // own branch in these routes (the WRAP rule) and that branch never sees an end limit, while the
           // assertion has already been peeled out of the program -- so nothing downstream could
           // re-derive it. Both were measured as real divergences: `[a-z]+\b$` (trail) against the
           // seam, and `\b(?>\w)$` (LEAD) against Python's re, by the binding's differential fuzz.
@@ -1117,7 +1122,7 @@ namespace real::detail {
             // Bare path: no Unicode table walk (keeps constexpr light for static_regex).
             if (!has_wb) {
               // A `\b`/`\B` wrap and an end anchor together are REFUSED, not combined: the wrap takes
-              // its own branch in the route (Arc B-2), that branch never sees the limit, and the
+              // its own branch in the route (the WRAP rule), that branch never sees the limit, and the
               // assertion has already been peeled out of the program -- so nothing downstream could
               // re-derive it. Measured as a real divergence on `[a-z]+\b$` before this guard.
               if (close.end_anchor != 0 && (lead.wb_lead != 0 || close.wb_trail != 0)) {
@@ -1138,7 +1143,7 @@ namespace real::detail {
               std::uint8_t    out_lead  {0};
               std::uint8_t    out_trail {0};
               // Unlike the ASCII class+ shape above, `plus` here is genuinely optional (this
-              // recognizer accepts both `\b\w+` and bare `\b\w`) -- B-1's redundancy argument
+              // recognizer accepts both `\b\w+` and bare `\b\w`) -- the DROP rule's redundancy argument
               // only holds for the former, so it must gate on the ACTUAL shape, not assume it.
               if (resolve_class_wb_hints(is_full_unicode_word_cp_class(cc, cp_ranges),
                                          is_unicode_word_subset_cp_class(cc, cp_ranges), plus,
@@ -1536,7 +1541,7 @@ namespace real::detail {
                 code[q].arg16 == 1 && code[q + 1].op == opcode::match && body_idx >= 0 &&
                 (has_mandatory || suffix_len >= 1) && table_bound_ok) {
               const bool   has_wb    {wb_lead != 0 || wb_trail != 0};
-              // R2: a literal byte has no "word class" to resolve B-1 eligibility against yet --
+              // A literal byte has no "word class" to resolve DROP eligibility against --
               // the wb-wrapped byte-possessive shape (`\ba++\b`) stays on the general VM, documented
               // rather than silently dropped; the bare/suffixed shape (`a++`, `a++x`) still arms
               // (arm starts true whenever there is no wb at all, regardless of kind).
@@ -1545,7 +1550,7 @@ namespace real::detail {
               std::uint8_t out_trail {0};
               if (has_wb && loop_kind != class_kind::byte) {
                 // Unbounded possessive: always a maximal run wherever it starts (no upper bound to cut
-                // it short at different lengths for different starts), so B-1's redundancy argument --
+                // it short at different lengths for different starts), so the DROP rule's redundancy argument --
                 // "a maximal run can only legitimately start where the byte before it is non-word" --
                 // holds unconditionally here, unlike a BOUNDED possessive count (see pattern_hints's own
                 // doc comment on why those stay out of this fast path's scope entirely).
@@ -1569,9 +1574,9 @@ namespace real::detail {
               // with nothing after the loop there is nothing to give back to. Verified by match count
               // rather than by argument -- `[a-z]+` and `[a-z]++` both report 4 on "abc,de f 42 ghij".
               //
-              // The gain is that the greedy selector is BATCHED, and the possessive one is not:
-              // `[a-z]++` measured 4.013 ns/B against `[a-z]+`'s 1.177, a quantifier doing strictly
-              // LESS work being 3.4x slower. Doing it HERE, in the recognizer, is what makes it
+              // The gain is that the greedy selector is BATCHED, and the possessive one is not: without
+              // the redirect, a quantifier doing strictly LESS work is several times slower than the
+              // greedy form it is equivalent to. Doing it HERE, in the recognizer, is what makes it
               // affordable: three attempts to reach the same result from the runtime side -- teaching
               // the fillers a class-index parameter, with and without the code-point half -- each cost
               // the Unicode class rows 5.7 to 9.1 % (`\p{L}+`, `\p{N}+`, `\w+`, all 16 draws of 16
@@ -1595,10 +1600,10 @@ namespace real::detail {
               else if (redirect) {
                 // The CODE-POINT twin, and it is here because the first version of this redirect left
                 // it out on a reason that does not survive reading: "its own route is not batched
-                // either". \ref pattern_hints::greedy_cp_class IS batched -- it is what `\w+` takes,
-                // at 1.365 ns/B with zero route entries per match. What was actually costly was
-                // teaching the cp FILLER a new parameter (that charged `\p{L}+` 6 to 9 %), and a hint
-                // decided here pays none of it. `\w++` was 4.700 ns/B against `\w+`'s 1.365.
+                // either". \ref pattern_hints::greedy_cp_class IS batched -- it is what `\w+` takes, with
+                // zero route entries per match. What was actually costly was teaching the cp FILLER a new
+                // parameter, which charges every code-point-class pattern; a hint decided here pays none
+                // of it.
                 hints.greedy_cp_class      = loop_ref.index;
                 hints.greedy_cp_class_plus = true; // a possessive loop is unbounded by construction
                 hints.greedy_cp_class_min  = 1;
@@ -1737,9 +1742,9 @@ namespace real::detail {
       default:                           break;
     }
     // UTF-8 bytes are NOT rare, and ranking them at 1 picked the single most common byte of an
-    // accented corpus as the memchr target: `café`'s rarest-ranked byte was the 0xC3 that leads
-    // EVERY Latin-1 letter, one per ~6 bytes of French prose. Measured against an ASCII literal of
-    // the same match density in the same corpus, that cost 6.3x (1.761 vs 0.279 ns/B).
+    // accented corpus as the memchr target: `café`'s rarest-ranked byte was the 0xC3 that leads EVERY
+    // Latin-1 letter, one per few bytes of French prose. Against an ASCII literal of the same match
+    // density in the same corpus that costs several times the scan.
     //
     // The ranking that matters is not corpus frequency but SELECTIVITY: a lead byte stands for 64 or
     // more distinct characters, so it can never discriminate like one ASCII byte. These values put
@@ -2157,14 +2162,14 @@ namespace real::detail {
     // not in detect_fast_shapes, because neither hint exists yet at that point (both are computed
     // below/above this line, after the shape walk).
     //
-    // This is a measured veto, and the reason it is SEMANTIC rather than an ISA gate. `[0-9]{2}:[0-9]{2}`
-    // carries `rare_byte = ':'`, so next_candidate memchrs it; on x86-64 that is glibc's AVX2 memchr
-    // (256-bit) against this filter's 128-bit block, and the pair path measured **+42 % SLOWER** there
-    // while +16 % faster on arm64 -- the same per-ISA trap the NEON-gated literal filter hit. But unlike
-    // that one, the discriminator here is not the ISA: it is whether a single byte suffices at all. An
-    // icase literal has no single-byte position (`(?i)cafe` is four 2-sets, rare_byte and single_first
-    // both -1), so nothing memchrs it and the pair filter wins on BOTH ISAs (-64 % x86, -67 % arm64).
-    // Vetoing on the hint keeps that win everywhere instead of surrendering x86 to a gate.
+    // This is a measured veto, and the reason it is SEMANTIC rather than an ISA gate. A pattern like
+    // `[0-9]{2}:[0-9]{2}` carries `rare_byte = ':'`, so next_candidate memchrs it -- and where the
+    // platform's memchr is wider than this filter's 128-bit block, the pair path loses to it, while on the
+    // other ISA it wins. That is the same per-ISA trap the NEON-gated literal filter hit. But unlike that
+    // one, the discriminator here is not the ISA: it is whether a single byte suffices at all. An icase
+    // literal has no single-byte position (`(?i)cafe` is four 2-sets, rare_byte and single_first both -1),
+    // so nothing memchrs it and the pair filter wins on BOTH ISAs. Vetoing on the hint keeps that win
+    // everywhere instead of surrendering one ISA to a gate.
     if (hints.rare_byte >= 0 || hints.single_first >= 0) {
       hints.fs_pair_width = 0;
     }
@@ -2358,15 +2363,12 @@ namespace real::detail {
    * `simd_fixed_shape_scan` documents: the intrinsics are ISA-exclusive and live in simd.hpp, this
    * loop is the same C++ everywhere and is what the test suite exercises on either leg.
    *
-   * **Why NEON only.** This filter must beat the platform's own substring search to be worth taking, and
-   * whether it does is genuinely per-ISA -- it is not a portable win. On arm64 it is (NEON is 128-bit,
-   * like this loop, and the platform search is less aggressive): dense `dog` -31.6 %, a no-match scan
-   * -60 %. On x86-64 glibc's `find`/`memchr` are **AVX2** -- 256-bit, twice this loop's width -- and a
-   * 128-bit SSE2 block filter loses to them on EVERY row measured (dense +13 %, `localhost` +17 %,
-   * no-match +19 to +24 %, devbox g++ 13.3, natively, 3 interleaved rounds). So x86 keeps the platform
-   * search, and gating restores it exactly to its pre-filter numbers on all six literal rows. An AVX2
-   * leg would be the honest way to bring this win to x86; a 128-bit one is not it, and shipping the
-   * SSE2 leg unrouted would only invite someone to route it.
+   * **Why one ISA only.** This filter must beat the platform's own substring search to be worth taking,
+   * and whether it does is genuinely per-ISA -- it is not a portable win. Where the platform search is no
+   * wider than this loop's 128-bit block, the filter wins on every literal row. Where the platform search
+   * is TWICE this width, it loses on every one of them, and gating restores those rows exactly to what
+   * they were before the filter existed. A wider leg would be the honest way to carry this win across; a
+   * 128-bit one is not it, and shipping an unrouted leg would only invite someone to route it.
    *
    * Linearity is unchanged from the scalar path it replaces: the block loop advances 16 per iteration
    * and each block verifies at most 16 candidates of \p literal bytes each, so the work stays
@@ -2541,22 +2543,18 @@ namespace real::detail {
   }
 
   /*!
-   * \brief Whether a consumer should ARM a filter on \ref find_members -- NEON only, and measured.
+   * \brief Whether a consumer should ARM a filter on \ref find_members -- one ISA only, and measured.
    *
    * Not "does the scan compile" but "does it beat what it replaces", which is per-ISA, exactly as
    * `simd_literal_scan`'s own ISA note already found for the two-byte literal filter (named as code, not
    * cross-referenced: it lives behind an `#if` and Doxygen builds with no vector ISA defined). A set that
    * skips N per-member searches by scanning their first-byte union once is competing against the
-   * platform's `memchr`, once per member. Measured on a 8 KB subject where nothing matches, eight
-   * members, three interleaved passes:
+   * platform's `memchr`, once per member -- and it wins on the ISA where that memchr is no wider than
+   * this loop, while losing by a comparable factor on the ISA where it is twice as wide.
    *
-   *     arm64   8 x memchr 3190 ns   this loop 1260 ns   2.6x FASTER
-   *     x86-64  8 x memchr  747 ns   this loop 3949 ns   5.3x SLOWER
-   *
-   * The asymmetry is structural, not a stray copy: glibc's memchr is AVX2, 256-bit, twice this loop's
-   * width, and a miss over an eight-byte union does roughly twice the vector compares of eight AVX2
-   * sweeps on registers half as wide. No amount of tuning a 128-bit loop closes 747 ns. An AVX2 leg with
-   * a wider `mask_t` is the honest way to bring this to x86-64, and it is a different arc.
+   * The asymmetry is structural, not a stray reading: a miss over an eight-byte union does roughly twice
+   * the vector compares of eight sweeps on registers half as wide again. No amount of tuning a 128-bit
+   * loop closes that. A leg with a wider `mask_t` is the honest way to carry this across.
    *
    * \ref find_members itself stays compiled under SSE2: the test suite exercises it on either leg, and a
    * future AVX2 leg plugs in there. What this constant gates is whether a consumer builds a mechanism on
@@ -2693,9 +2691,9 @@ namespace real::detail {
       // value (see the hint builder above), so for an icase pair like {c, C} the UPPERCASE byte (0x43) is
       // always member 0 -- checked first, with the full round window, before the far commoner lowercase
       // byte even gets a chance to narrow it. That makes this seed a genuine trade-off, not a free
-      // parameter: measured on M1 across four adversarial shapes (a stop-byte set at a ~93-byte period,
-      // and (?i)<literal> sparse/no-match/dense), the stop-set win saturates by ~96 B (no further gain to
-      // 512+) while the icase-sparse/no-match cost keeps climbing past it (roughly +2% at 128 B, +40% by
+      // parameter: measured across four adversarial shapes (a stop-byte set at a period just under this
+      // window, and (?i)<literal> sparse/no-match/dense), the stop-set win SATURATES near this size while
+      // the icase-sparse/no-match cost keeps climbing past it (a couple of percent at twice the window,
       // 1024 B) -- so 512-1024 would trade a bounded stop-set win for an
       // unbounded-looking icase cost. 128 captures the stop-set win in full at a ~2% icase cost.
       constexpr std::size_t seed   {128};

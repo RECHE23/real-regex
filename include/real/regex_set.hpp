@@ -5,11 +5,12 @@
  * Which-matched semantics (RE2::Set / rust `RegexSet`): which members match the
  * subject at least once. **Not** \ref real::dfa munch (one winner at the cursor).
  *
- * **Stage-2 N-hybrid (internal):** when enough patterns are DFA-eligible, a fused
- * unanchored multi-accept DFA (`dfa_mode::which_matched`) scans once for those
- * members; ineligible patterns (lookaround, Unicode \\w/\\d/\\s, …) and small sets
- * use per-pattern `regex::search` (Stage-1). The public bitset is always in
- * **construction order** — fused rule indices are remapped via an eligible→orig map.
+ * Two search shapes, chosen at construction. When enough patterns are DFA-eligible,
+ * a fused unanchored multi-accept DFA (`dfa_mode::which_matched`) scans once for all
+ * of them; ineligible patterns (lookaround, Unicode \\w/\\d/\\s, …) and sets below the
+ * threshold walk one pattern at a time through `regex::search`. The public bitset is
+ * always in **construction order** — fused rule indices are remapped through an
+ * eligible→original map.
  *
  * Include this header explicitly; \c real.hpp does not pull it in.
  */
@@ -49,9 +50,10 @@ namespace real {
     /*!
      * \brief Minimum DFA-eligible count to build a fused single-pass.
      *
-     * Calibrated on log-like patterns (1 MiB corpus, M1, best-of-5): fused which_matched
-     * beats Stage-1 N-walks for eligible.count ≥ ~56 (still N-walks-faster at 48).
-     * Heuristic — re-measure with \c benchmarks/s2a_measure.cpp when retuning.
+     * A calibrated threshold, not a law. One fused automaton costs a build and a full scan; N walks
+     * cost N prefiltered searches that each stop early. The fused form only wins once N is large
+     * enough to pay for that build, and this is where the two cross for log-like patterns.
+     * Re-measure with \c benchmarks/s2a_measure.cpp before moving it.
      */
     static constexpr std::size_t fused_min_eligible {56};
 
@@ -175,14 +177,11 @@ namespace real {
     {
       // Region or no fused path: pure N-walks (any-stop).
       if (!fused_ || pos != 0 || endpos != npos) {
-        // The walk order is untouched and THE FIRST SERVED MEMBER IS SEARCHED WITHOUT CONSULTING THE
-        // FILTER, which is the whole difference from `matches` below. On a subject where that member
-        // matches, the filter CANNOT have excluded it -- a match implies one of its own leading bytes is
-        // present -- so a scan run first computes an identically-false answer and the search happens
-        // anyway. Measured, that dead scan cost the early-exit path +7 ns on 55, which is what an
-        // any-match walk over a set is fastest at. Searching first buys the witness back and costs one
-        // extra member sweep when nothing matches: 1.9x there instead of 2.6x, against a witness inside
-        // the noise.
+        // THE FIRST SERVED MEMBER IS SEARCHED WITHOUT CONSULTING THE FILTER -- the whole difference
+        // from `matches` below. If that member matches, the filter cannot have excluded it: a match
+        // implies one of its own leading bytes is present in the region. So scanning first would be
+        // dead work on exactly the case an any-match walk is fastest at, the subject where the first
+        // member hits. The price is one extra member sweep when nothing matches at all.
         bool scanned {false};
         bool skip    {false};
         bool probed  {false};
@@ -329,11 +328,10 @@ namespace real {
         return;
       }
       arm_byte_filter();
-      // No set smaller than the threshold can ever reach it, because the eligible subset is at most
-      // the whole set -- so the partition below cannot change the outcome, and every DFA it builds
-      // would be discarded by the `else` branch at the end of this function. It was: a 40-pattern set
-      // spent 447 us building and throwing away one full munch DFA per member before concluding what
-      // its own size already said. Measured 11.2 us per pattern, all of it, for every set under 56.
+      // No set smaller than the threshold can ever reach it: the eligible subset is at most the whole
+      // set. Without this return the partition below would build one munch DFA per member and the
+      // `else` branch at the end would throw every one of them away -- a per-pattern construction cost
+      // paid by every small set to conclude what its own size already said.
       if (members_.size() < fused_min_eligible) {
         return; // eligible_orig_/ineligible_orig_ stay empty: every member uses N-walks
       }
@@ -368,20 +366,19 @@ namespace real {
      *
      * PRIVATE, unlike \ref fused_min_eligible. That one is a contract a caller can reason about -- how many
      * eligible members it takes before a set fuses. This is the width of a scan, and nothing outside should
-     * depend on it being eight. It was public in the first cut, which put its brief on the generated
-     * reference page and broke the site build: the rationale referenced `detail::` symbols the public
-     * inventory has no anchor for.
+     * depend on it being eight. Keep it private for a second reason: its rationale names `detail::`
+     * symbols, and a public brief that links to them has nothing to anchor on in the reference page.
      */
     static constexpr std::uint8_t filter_union_max {8};
 
     /*!
      * \brief Classifies members into a SPARSE partition one scan can serve, and arms the filter.
      *
-     * ZERO WORK PER CALL is the design constraint, not an optimisation: the first attempt classified inside
-     * the walk (a binary search per member) and charged the early-hit witness +45 % -- 55 ns to 85 -- on a
-     * set where the first member matches immediately. That regression had nothing to do with the scan
-     * primitive and would have survived a faster one. Everything here happens once, in the constructor, and
-     * the walks below test one bit.
+     * ZERO WORK PER CALL is the design constraint, not an optimisation. Classifying inside the walk -- a
+     * lookup per member per query -- charges every call, including the one an any-match walk is fastest
+     * at: the set whose first member matches immediately. No scan primitive, however fast, recovers a
+     * cost paid before it runs. Everything here happens once, in the constructor, and the walks below
+     * test one bit.
      *
      * THE CLASSIFICATION IS THE ENGINE'S OWN, not a re-derivation. `first_bytes_valid` plus either
      * `single_first` or a `small_set_size` of 2..8 is exactly "this pattern has at most eight possible
@@ -392,19 +389,18 @@ namespace real {
      * false and is wide with no special case.
      *
      * THE UNION IS CAPPED IN CONSTRUCTION ORDER. Taking narrowest-first looks better and is worse: it
-     * reorders which members the filter serves for no gain, and the cap is what stops several 5-byte members
-     * from combining into a 20-byte union -- dense again, one level later, which is the very gate this
-     * mechanism replaces. Measured on the three sizing corpora: eight rare-prefix literals union to 7 bytes
-     * and all eight are served; a mixed log set unions to 124 (one `\w`-leading member alone contributes
-     * 114) so only its literals are served; six wide members union to 179 and none are.
+     * reorders which members the filter serves for no gain. The cap is what stops several five-byte members
+     * from combining into a twenty-byte union -- dense again, one level later, which is the very gate this
+     * mechanism replaces. A member whose own leading set is wide never joins, so one `\w`-leading pattern
+     * in a set costs the others nothing: it keeps being walked, the ones already in the union stay.
      */
     void arm_byte_filter()
     {
       if constexpr (!detail::have_members_scan) {
         // The scan EXISTS on x86-64 -- `find_members` is compiled under SSE2 and the tests exercise it
-        // there. What does not exist is a reason to arm on it: eight member sweeps cost 747 ns against
-        // this loop's 3949, because glibc's memchr is AVX2 and twice its width. See
-        // `detail::have_members_scan` for both measurements. The walk stays exactly as it was.
+        // there. What does not exist is a reason to arm on it: the platform's own memchr is wider than
+        // this 128-bit block scan, so the member sweeps it would replace are already cheaper than the
+        // scan. See `detail::have_members_scan`. The walk stays as it is.
         return;
       }
       else {
