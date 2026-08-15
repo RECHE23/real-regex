@@ -2173,7 +2173,7 @@ namespace real {
         }
       }
       else {
-        // OPT-C Cascade is chosen once here (a single search), never in the per-byte scan.
+        // The memchr-cascade variant is chosen once here (a single search), never in the per-byte scan.
         matched = prog.hints.stop_set_size >= 1
                     ? vm.template run<true>(subject, pos, mode, out.engine_slots(), 0, sem)
                     : vm.template run<false>(subject, pos, mode, out.engine_slots(), 0, sem);

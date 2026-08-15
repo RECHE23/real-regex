@@ -263,8 +263,10 @@ namespace real::detail {
       // grow by doubling DURING the search -- a general-VM search over `\w+@\w+` made 13 heap
       // allocations, and the size sequence (4, 8, 32, 16, 64, 128 ...) is a doubling ladder, not
       // work. Reserving collapses most of them, and fast-route patterns are untouched either way --
-      // the control that makes the gain readable as this pool's own. A FLOOR, not a bound: allocate() still grows past it, so a capture-heavy walk is
-      // bounded by the same free-list recycling as before, not by this constant.
+      // the control that makes the gain readable as this pool's own.
+      //
+      // A FLOOR, not a bound: allocate() still grows past it, so a capture-heavy walk is bounded by the
+      // same free-list recycling as before, not by this constant.
       //
       // The compile-time storage's pool is `static_vec` and has no reserve(): it is sized exactly at
       // compile time and never allocates at all, which is why this is gated on the expression rather
@@ -610,8 +612,8 @@ namespace real::detail {
     const void       *                il_prefix_for       {nullptr}; //!< Fallback: prefix program il_prefix_rev was built for.
     const void       *                il_text             {nullptr}; //!< IL: the haystack \ref il_abandoned refers to (reset the flag when it changes).
     bool                              il_abandoned        {false};   //!< IL: a linearity/density guard tripped on this haystack — stay on the core.
-    std::uint32_t                     il_density_cands    {};        //!< O1: IL candidates seen on this haystack (density sample).
-    std::size_t                       il_density_origin   {npos};    //!< O1: byte offset of the first IL candidate this haystack.
+    std::uint32_t                     il_density_cands    {};        //!< IL candidates seen on this haystack (density sample).
+    std::size_t                       il_density_origin   {npos};    //!< Byte offset of the first IL candidate this haystack.
     const void       *                rare_disc_text      {nullptr}; //!< Rare-disc: haystack \ref rare_disc_abandoned refers to.
     bool                              rare_disc_abandoned {false};   //!< Rare-disc density guard: stay on prefix for this haystack.
     const void       *                ac_text             {nullptr}; //!< AC: the haystack \ref ac_dense was decided on.
@@ -680,22 +682,11 @@ namespace real::detail {
      *             experimental \ref match_semantics::longest (which forces the general loop, off every fast path).
      * \return `true` if a match was found.
      *
-     * gcc/x86 note: an A/B on that ISA found a negated-class scan sharply
-     * slower with the AC engine present but never dispatched to (a class-loop pattern returns from
-     * \ref run_class_loop before ever reaching the fixed_alternation check) — callgrind/cachegrind
-     * showed byte-identical instructions/cache misses, isolating it to front-end loop-alignment
-     * codegen-luck from the AC code's mere presence in this translation unit, not a logic or
-     * memory-access change. Two targeted `optimize("align-loops=N")` attempts were tried and
-     * reverted: one on \ref run_class_loop (provably inert once force-inlined — confirmed on this
-     * machine's own gcc via `-S`, the attribute does not travel with an `always_inline` callee's
-     * body into its caller) and one here on `run()` itself (did align the right loop — confirmed
-     * via the same `-S` method, `.p2align 6` where baseline only had one incidental occurrence —
-     * but `[^,]+`, `[a-z]+`, and `\w+` all share this same inlined class-loop body with different
-     * alignment optima, so uniformly forcing one traded the `[^,]+` regression for new ones on the
-     * other two). No uniform alignment satisfies all three; accepted as a documented, gcc+x86-only,
-     * arm64/clang-unaffected regression rather than trading one hot path's regression for another's
-     * — the Alternation route's own gain (this file's `aho_corasick_route_disabled()` — see
-     * `run_aho_corasick`) is unconditional and far larger.
+     * \note On gcc/x86 the mere PRESENCE of the Aho-Corasick code in this translation unit slows a
+     *       class scan that never dispatches to it -- instructions and cache misses byte-identical, so
+     *       it is front-end loop alignment and nothing the code does. Forcing `align-loops` does not
+     *       fix it: the class-scan routes share one inlined loop body with different alignment optima,
+     *       so any single value trades one route's regression for another's. Accepted as it stands.
      */
     template <bool Cascade = false, typename OutSlots>
     constexpr bool run(std::string_view text,
@@ -1235,7 +1226,7 @@ namespace real::detail {
             }
           }
         }
-        // O1 density gate: sticky candidate sample across the haystack (find_iter). Capture-free +
+        // Density gate: sticky candidate sample across the haystack (find_iter). Capture-free +
         // DFA-eligible only — see \ref il_density_milli_threshold. Checked before reverse/confirm so a
         // dense stream of successful hits still switches after K candidates.
         if constexpr (requires(State & s) {
@@ -1245,15 +1236,12 @@ namespace real::detail {
             state_.il_density_origin = h;
           }
           ++state_.il_density_cands;
-          // `density_gate` is false only for the batched filler, and the reason is the corpus rather
-          // than the surface. This counter is read BEFORE reverse/confirm (see the note above), so it
-          // cannot tell a candidate that fails from one that completes -- the same single-quantity defect
-          // the Aho-Corasick gate carried until v2026.8.13 measured it and v2026.8.14 gave it
-          // `ac_candidate_completes`. `run()` counts `@`s that mostly fail and is right to yield; the
-          // filler emits matches that mostly succeed and yields on its own success. Measured, both ISAs:
-          // muting it there is 4.7x to 27.1x across every density and size in the grid, with no losing
-          // cell. `run()`'s gate is untouched at 60 -- buying its 14x at 111 candidates per 1000 bytes
-          // would cost 0.27x at 330, and that recalibration needs a second quantity, not a second number.
+          // Counted BEFORE reverse/confirm, so a candidate that completes weighs the same as one that
+          // fails. `run()` sees candidates that mostly fail and is right to yield; the batched filler
+          // emits matches that mostly succeed, so the same count would make it yield on its own success --
+          // hence `density_gate` false there, and only there. Recalibrating `run()`'s own threshold needs
+          // a SECOND quantity, not a second number: the Aho-Corasick gate carries the same defect and
+          // `ac_candidate_completes` is what fixed it.
           if (density_gate && state_.il_density_cands == il_density_probe_candidates
               && prog_.slot_count <= 2) {
             const std::size_t origin {state_.il_density_origin};
@@ -1453,7 +1441,7 @@ namespace real::detail {
   private:
 
     /*!
-     * \brief O1 density-gate sample size and threshold (inner-literal → core/DFA when candidate density is high).
+     * \brief Density-gate sample size and threshold (inner-literal → core/DFA when candidate density is high).
      *
      * Candidate density is what decides: below the crossover the inner literal skips most of the subject,
      * above it every candidate is a failed confirm and the core scan wins by a margin that grows with the
@@ -3701,7 +3689,7 @@ namespace real::detail {
      * \param[out] out_slots Receives the matched span on success.
      * \return `true` if a non-empty run was found.
      */
-    // O2r-1b (gcc-only outline of the >= 0x80 path in run_cp_class_loop): split into
+    // The gcc-only outline of the >= 0x80 path in run_cp_class_loop: split into
     // real/engine/cpclass_gcc.hpp (full rationale + measured numbers there), excluded from the
     // coverage floor like simd.hpp — a branch clang never compiles shouldn't inflate this file's line
     // count. #else (in run_cp_class_loop below) is the original nested-closure shape, untouched.
@@ -4271,7 +4259,7 @@ namespace real::detail {
       // gcc keeps the width round trip. Measured, and it is not the shape one would guess: the
       // ASCII-direct predicate below is sharply SLOWER on a scan with no member, and slower again on one
       // with members, while REDUCING its instruction count -- fewer
-      // instructions, more time, which is the same trap O2r-1b's own note documents for this loop family.
+      // instructions, more time, which is the same trap cpclass_gcc.hpp's own note documents for this loop family.
       const auto in_class = [&](std::size_t i) { return i < text.size() && cp_width(i) != 0; };
 #else
       // Membership only, no width, for the leftmost scan -- the sibling byte-class runner's `in_class` is

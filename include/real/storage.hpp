@@ -1134,8 +1134,8 @@ namespace real {
         const void                     *                il_prefix_for       {nullptr}; //!< Fallback: prefix program il_prefix_rev was built for.
         const void                     *                il_text             {nullptr}; //!< IL: the haystack \ref il_abandoned refers to.
         bool                                            il_abandoned        {false};   //!< IL: a linearity/density guard tripped on this haystack.
-        std::uint32_t                                   il_density_cands    {};        //!< O1: IL candidates seen on this haystack.
-        std::size_t                                     il_density_origin   {npos};    //!< O1: first IL candidate byte offset this haystack.
+        std::uint32_t                                   il_density_cands    {};        //!< IL candidates seen on this haystack.
+        std::size_t                                     il_density_origin   {npos};    //!< First IL candidate byte offset this haystack.
         const void                     *                rare_disc_text      {nullptr}; //!< Rare-disc: haystack \ref rare_disc_abandoned refers to.
         bool                                            rare_disc_abandoned {false};   //!< Rare-disc density guard: stay on prefix for this haystack.
         const void                     *                ac_text             {nullptr}; //!< AC: the haystack \ref ac_dense was decided on.
@@ -1257,8 +1257,8 @@ namespace real {
     {
       const void*   il_text           {nullptr}; //!< IL: the haystack \ref il_abandoned refers to.
       bool          il_abandoned      {false};   //!< IL: a guard tripped on this haystack — stay on the core.
-      std::uint32_t il_density_cands  {};        //!< O1: IL candidates seen on this haystack.
-      std::size_t   il_density_origin {npos};    //!< O1: first IL candidate byte offset this haystack.
+      std::uint32_t il_density_cands  {};        //!< IL candidates seen on this haystack.
+      std::size_t   il_density_origin {npos};    //!< First IL candidate byte offset this haystack.
     };
 
     /*! \brief No IL fields: the route is not compiled for this pattern. */

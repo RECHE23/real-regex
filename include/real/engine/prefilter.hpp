@@ -2097,7 +2097,7 @@ namespace real::detail {
       }
     }
 
-    // OPT-C: for a whole-pattern `class+` run (run_class_loop — a byte-wise scan), record the STOP
+    // For a whole-pattern `class+` run (run_class_loop — a byte-wise scan), record the STOP
     // bytes (the complement of the accepted set) when there are at most six of them, so the run can
     // advance by a memchr-cascade to the next stop instead of testing every byte. The stops are derived
     // from the class table and do NOT enter the compiled program, so byte-identity is unaffected.
@@ -2121,7 +2121,7 @@ namespace real::detail {
         hints.stop_set_size = static_cast<std::uint8_t>(stop_count);
       }
     }
-    // OPT-C-1b: a whole-pattern code-point-class run (`.`/`[^x]` in text/ascii mode) accepts EVERY valid
+    // A whole-pattern code-point-class run (`.`/`[^x]` in text/ascii mode) accepts EVERY valid
     // code point >= 0x80 — run_codepoint_class validates the UTF-8 structure but not membership above
     // ASCII — so once its ASCII complement is small the run can be SWAR-accelerated soundly: memchr the
     // ASCII stops for an upper bound, high-bit-scan the ASCII stretches, and drop to code-point
@@ -2628,7 +2628,7 @@ namespace real::detail {
    * scalar byte loop. During constant evaluation the plain member-wise scan runs instead (the home-made
    * path — the same shape the bitmap loop takes).
    *
-   * FIX P0 #2 (O(n^2)): for **2+ members**, the window is grown **exponentially** (galloping
+   * THE QUADRATIC FIX: for **2+ members**, the window is grown **exponentially** (galloping
    * search) from a modest initial probe, doubling each round, rather than handed the full
    * remaining haystack up front. A caller that invokes this once per rejected candidate
    * (`next_candidate`'s icase small-set route) would otherwise pay one `memchr` per set member over
@@ -2650,7 +2650,7 @@ namespace real::detail {
    * safety benefit, measured as a real x86 regression on stop-set-shaped patterns (`[^\x01]+`-
    * style) once the general galloping fix landed. So `n == 1` takes the direct pre-fix path — one
    * unbounded `memchr` over `[pos, text.size())` — and every `n >= 2` call keeps the galloping
-   * loop exactly as the P0 #2 fix landed it, untouched.
+   * loop exactly as the galloping fix landed it, untouched.
    *
    * \param[in] text The subject text.
    * \param[in] pos  Index to start scanning from.

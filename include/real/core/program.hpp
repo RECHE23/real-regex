@@ -596,7 +596,7 @@ namespace real {
       //!        start/end after the body fast-path accepts a candidate.
       std::uint8_t wb_lead  {}; //!< Leading wrap: 0 none, 1 `\b`, 2 `\B` — asserted at the match start.
       std::uint8_t wb_trail {}; //!< Trailing wrap, same encoding as \ref wb_lead — asserted at the match end.
-      //! \brief True when a genuine leading `\b` was dropped by the B-1 optimization (a maximal
+      //! \brief True when a genuine leading `\b` was dropped by the DROP rule (a maximal
       //!        greedy/possessive run can only legitimately START where the preceding character
       //!        is non-word, so the runtime check is redundant -- \ref resolve_class_wb_hints).
       //!        That argument silently assumes "preceding character absent" means the TRUE start

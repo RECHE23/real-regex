@@ -378,7 +378,7 @@ namespace real::detail {
       prog.hints.inner_literal             = il.bytes;
       prog.hints.inner_literal_len         = il.len;
       prog.hints.inner_literal_prefix      = il.prefix_child_count;
-      // D1a: peel-lead skip for the reverse-prefix (see build_prefix_ast). Non-zero only when the
+      // Peel-lead skip for the reverse-prefix (see build_prefix_ast). Non-zero only when the
       // IL route is live. confirm_at still runs the full program (lead/trail `\b`/`\B` checked there).
       prog.hints.inner_literal_prefix_skip =
         (il.len > 0 && il.prefix_child_count >= 1 && il.prefix_skip > 0)
