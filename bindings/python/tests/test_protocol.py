@@ -40,8 +40,9 @@ class TestPatternRepr(unittest.TestCase):
         self.assertEqual(_re_shaped(repr(real.compile(pat))), repr(re.compile(pat)))
 
     def test_fallback_repr_is_compile_shaped(self):
-        p = real.compile(r"(\w+)\1", fallback=True)
-        self.assertEqual(repr(p), f"real.compile({r'(\w+)\1'!r})")
+        pat = r"(\w+)\1"
+        p = real.compile(pat, fallback=True)
+        self.assertEqual(repr(p), "real.compile(" + repr(pat) + ")")
 
 
 class TestCopyAndDunders(unittest.TestCase):
