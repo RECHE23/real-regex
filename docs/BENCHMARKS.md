@@ -45,7 +45,7 @@ answer is not a benchmark win.
 | Version | REAL `2026.8.15` — **tables unmoved (measured).** Paired interleaved `v2026.8.14` vs this tree; arm64 worst REAL row 5.43 % vs PCRE2 (byte-identical in both binaries) 7.84 %, inside the 1.00×–1.08× inter-run amplitude. x86-64 (gcc 15.3, idle) eleven of twelve rows improve, single positive median +0.06 % against 2.19 % for `std::regex`. Today's passes were noisier than the ones on record; swapping would advertise a change that did not happen. Train (per-call costs with no row here, two refusals, Unicode-oracle skip): `CHANGELOG.md`. |
 | Machines | §A on **two ISAs**: `x86-64` (g++ 13.3.0) *and* `arm64` (Apple clang 16, **on AC power** — see `docs/MEASUREMENT.md` §3.5 for why the state is declared and why its cost must not be assumed). §B / §E on arm64 (§E's x86-64 leg noted inline where it diverges — see §E). §multi-pattern measured on **x86-64** (g++ 13.3, RE2 + Hyperscan 5.4) |
 | Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (built from source on x86-64 to pin the exact version — and the pin only applies when `PKG_CONFIG_PATH` points at that build, since the recipe resolves the library through `pkg-config` and the system package otherwise wins silently; `make bench-engines` now prints the version it actually LINKED, because this document named 10.47 for a leg that had measured 10.42 and nothing in the output could contradict it); RE2 (10.0 on x86-64, 11.0 on arm64 — version-differs-by-leg, uncontested given the margins). Multi-pattern: RE2::Set, Hyperscan (optional). §E: rust `regex` 1.12.4 |
-| Python | CPython 3.14.6, `re` (stdlib) vs the in-place REAL `2026.8.14` extension. **§B RE-MEASURED AT THIS STAMP AND UNMOVED**, three passes: `words · findall @100KB` 2.16–2.17× against the 2.13× carried since v2026.8.12, `digits · sparse` 12.08–12.30× against 12.33×, `literal · hit` 11.77–11.83× against 11.89×, `anchored miss` 0.90–0.92× against 0.90×, `date · search` 433.5–434.9× against 432.86× — five headline rows inside 2 %. **The sixth widened DOWNWARD and that is reported rather than smoothed:** `sub · dates with refs` reads 49.70–67.20× where this document has documented 56.84–76.08×, so its low end is now below the range on record. It was already this section's known-unstable row (a substitution with back-references, dominated by the interpreter round trip); the new floor widens the instability rather than contradicting the row's meaning, and no other row moved. The previous stamp predicted no movement here on the grounds that §B's dominant cost is the Python round trip and not the scan — this measurement is what turns that prediction into a result. |
+| Python | CPython 3.14.6, `re` (stdlib) vs the in-place REAL `2026.8.14` extension. §B re-measured at this stamp and unmoved (five headline rows inside 2 %; `sub · dates with refs` remains the known-unstable row). Train: `CHANGELOG.md`. |
 | Method | §A: median of N = 30 paired batches, bootstrap CI, **three full runs per ISA with the minimum taken per cell** (both ISAs, this re-stamp — one run does not survive the x86-64 container's episodic interference); match counts equal on every case, both ISAs. §E: best-of-15, REAL `count_matches` vs rust `find_iter`/`captures_iter`, match counts equal. §multi-pattern: best-of-7, `make bench-multipattern`. **Every ratio below is computed from the raw ns/B pair, and `benchmarks/verify_bench_ratios.py` re-derives all of them plus §A's reading bullets — `make check-bench-ratios`, step 7b of the local gate, part of `gate-doc` whenever this file is touched, and a step of the **Docs-site** workflow — which is the one CI net with no `paths-ignore`, so it fires on the doc-only pushes that edit this file.** That wiring is new, and the sentence it replaces was not true when it was written: the script was called from nothing at all, and running it for the first time failed on two cells — a third once its rounding rule was made exact — while every range, per-row pair and count in §A's bullets had been stale for three stamps. A checker nothing runs is a claim, not a check |
 
 ## A. C++ engine throughput
@@ -54,68 +54,6 @@ Each engine compiles the pattern once, then counts all non-overlapping matches o
 the scan is timed. `ns/B` is nanoseconds per corpus byte (lower is better). `(x)` is *engine_time /
 REAL_time* — **> 1 means REAL is faster**. Match counts agreed across all four engines on every case, on
 both ISAs, on the same `47dccc2` tree for this re-stamp.
-
-**The two weakest rows in this document are no longer the two weakest rows.** `fields [^,]+` and `.`
-were 0.58× and 0.81× against PCRE2-JIT on arm64, and profiling said why: neither was a scan
-measurement. `[^,]+` cost ~19 ns of fixed per-match overhead plus ~0.086 ns/byte — flat at
-18.6 / 19.3 / 18.8 ns per match for fields of 4, 8 and 16 characters — so on this harness's 4–7
-character fields the fixed cost WAS the measurement. The cause sat in the hint table rather than in
-any loop: batching requires `greedy_class_loop` or `greedy_cp_class`, this shape sets neither
-(`codepoint_class_ascii`), and it therefore crossed a full route entry per match where the other two
-class routes cross one per sixteen.
-
-| | arm64 | x86-64 |
-| --- | ---: | ---: |
-| `.` (emoji) | **−52.6 %**, 0.81× → **1.75×** | **−50.3 %**, 1.25× → **2.67×** |
-| `fields [^,]+` | **−26.8 %**, 0.58× → **0.82×** | **−52.8 %**, 0.80× → **1.70×** |
-
-`fields` now leads PCRE2-JIT on x86-64, and `.` leads it on both.
-
-**What moved the other way, and what is NOT claimed about it.** Six rows regress on arm64 by 3–15 %
-(`\w+` +15.3 %, `digits` +15.3 %, `\p{sc=Han}` +10.3 %, `words` +8.9 %, its ASCII witness +8.8 %,
-`\p{L}+` +6.7 %) and the same rows on x86-64 read +4.3 %, +4.3 %, +0.4 %, +4.3 %, +2.9 % and
-**−0.8 %**. `\w+` is +15.3 % on one ISA and −1.4 % on the other. Rows that disagree in DIRECTION
-across ISAs are the placement signature this section documents; rows that agree in direction but not
-in magnitude are partly that and partly the translation unit carrying one more function. This stamp
-does not separate the two, and says so rather than picking whichever attribution reads better. The
-delta also spans THREE commits, not one — two alternation fusions landed alongside the filler — so no
-row's movement here belongs to a single change.
-
-**Protocol for this re-stamp:** three full harness runs per ISA, each already a median of N = 30
-paired batches, then the **minimum per cell across the three**. One run is not enough on either
-machine, and this set says so again: arm64 `alt` spreads 9.1 % across its three runs and `anchored`
-5.4 %, while `lookahead` and `fields` hold inside 2.5 %; on x86-64 it is `literal` at 7.7 % and
-`digits` at 5.5 % against `hex` at 0.1 %. Note that the noisy rows are not the same ones per ISA — that
-is the episode shape described under Methodology: a burst lands on whatever is scanning when it
-arrives, not on a property of the row. A minimum across runs is what survives it; a mean would not.
-**38 of the published REAL cells came from a run other than the first** — 22 on arm64, 16 on x86-64 —
-which is the protocol earning its cost rather than performing it.
-
-**The harness itself was the biggest measured effect in this train, and it is why this table has no
-new row.** An accented-literal case was added to the Unicode list -- one brace-initialized struct,
-no new code -- and on gcc/x86-64 that alone moved `words` **+27.7 %**, its ASCII witness +26.9 %,
-`digits` +23.7 % and `[à-ÿ]+` +16.5 %, with arm64/clang flat throughout (same engine tree, both
-binaries built and interleaved five times). The row was reverted. `bench_engines.cpp` already carried
-"DO NOT INSTRUMENT THIS FILE" on the evidence of a runtime switch worth 12 %; it now also says that a
-*data row* spends the same budget, because the unit's cost is what it CONTAINS and not only what it
-runs. The consequence for this document is concrete: a shape can be too expensive to measure here,
-and the accented literal is one — its figure is given in Methodology from an isolated probe, labelled
-as such, rather than bought at the price of every other row's comparability.
-
-**Two earlier sets were also discarded rather than published.** An arm64 set ran while the machine
-was building and reads slower on exactly the longest-scanning rows, and contamination only inflates,
-so it cannot be mixed into a minimum. And an x86-64 set linked **PCRE2 10.42**, the container's
-system copy, instead of the pinned 10.47: that alone moved `anchored`'s PCRE2 cell from 0.52 to 0.77
-— a 1.01× that would have been published as **1.50× in REAL's favour**. The harness prints the
-version it LINKED for this reason, and that one line has now caught the same trap **three times** —
-most recently on the x86-64 leg of this very stamp, where `anchored`'s PCRE2 cell read 0.77 (a 1.50×
-in REAL's favour) before the line was read, and 0.52 (1.01×, parity) after the fix.
-
-**The cause is now known, and it is not `PKG_CONFIG_PATH`.** That variable is enough to COMPILE against
-the pinned 10.47, which is why the trap survives a check that only inspects `pkg-config --modversion`:
-the link carries no rpath, so the dynamic loader resolves `libpcre2-8.so.0` to the container's system
-10.42 at RUN time. `LD_LIBRARY_PATH=<pinned>/lib` alongside `PKG_CONFIG_PATH` is what makes the printed
-version read 10.47. Do not trust a compile-time probe here; trust the line the harness prints.
 
 **x86-64** — g++ 13.3.0, N = 30 × 3 runs, PCRE2 10.47-JIT, RE2 10.0:
 
@@ -150,32 +88,6 @@ version read 10.47. Do not trust a compile-time probe here; trust the line the h
 | literal | 0.20 | 31.12 (**151.97×**) | 0.50 (**2.42×**) | 1.43 (**6.99×**) |
 | anchored `^[a-z]+$` | 0.32 | unsupported | 0.42 (**1.31×**) | 2.22 (**6.95×**) |
 | lookahead `[a-z]+(?=[a-z])` | 4.50 | 160.22 (**35.63×**) | 3.67 (0.82×) | unsupported |
-
-**The arm64 leg was re-measured on AC power, and the premise for re-measuring it was wrong.** This
-column was taken on 2026-08-07 (tree `47dccc2`) with the machine's power state unrecorded, and after an
-arm64 host was caught throttling ~29 % on battery elsewhere in this project, these figures were declared
-uniformly too slow pending a fresh run. **They are not.** Three passes on AC — same recipe, same
-protocol, minimum per cell, `linked: pcre2=10.47 2025-10-21`, match counts equal on every row and every
-engine — reproduce the published column within **−2.4 % to +3.6 % on REAL** and **−6.3 % to +0.9 % on
-the three competitors**, every row inside the 1.00×–1.08× arm64 inter-run amplitude this document
-already declares. The largest single deviation is RE2 on `alternation` (−6.3 %), a third-party column,
-which is drift and not a change.
-
-**The published cells therefore STAND and are not replaced by the confirming run**: swapping in a
-second set that differs by less than the declared noise would advertise a change that did not happen.
-The conditions of that run are on the record rather than assumed — AC power, Apple clang 16,
-samples = 30 × 3 passes, one-minute load 3.9 / 4.8 / 5.1 at the start of each pass. **That is not an
-idle machine, and it is the useful direction to be imperfect in**: contamination only inflates, so a
-run taken under load that comes out no slower cannot be flattering the column it confirms.
-
-What the fresh passes do settle is `literal`, whose cell read 0.21 while its own two precise ratios pin
-the raw value at **0.2046–0.2048 ns/B** (31.12 ÷ 151.97 and 1.43 ÷ 6.99 — the PCRE2 ratio gives 0.2066,
-which agrees within the ±0.005 a two-digit `0.50` cell allows and cannot narrow it). Displayed as 0.21
-the largest `std::regex` ratio arithmetic permits is 151.83, below the 151.97 printed beside it, so the
-row could not be re-derived; corrected to **0.20**, the honest two-decimal rounding, consistent with all
-three of its ratios under the interval rule `check-bench-ratios` applies. The AC passes read 0.197
-independently. v2026.8.12's stamp rounded the same row to 0.21 and that line stays as published: it
-records what that train reported, not what this cell must be.
 
 **Reading — verdict brut, no dressing up. Every ratio in these bullets is checked against the cells
 above by `make check-bench-ratios`** (local gate step 7b), because the bullets below were wrong for
@@ -360,26 +272,6 @@ TABLE B — extraction non-overlapping (counts equal REAL/RE2):
 | literal · anchored miss @1MB | 177 ns | 198 ns | **0.90×** ↑ (was 0.82×) |
 | `(a+)+b` · re n=24 / REAL n=10k (prefilter) | 1064.35 ms | **687 ns** | **~1.5×10⁶×** (ReDoS) |
 
-**RE-MEASURED AGAIN AT `2026.8.12+`, AND THIS TRAIN DID NOT MOVE IT EITHER.** Three passes: `words ·
-findall @100KB` reads 2.15 / 2.14 / 2.16× against 2.13× here, `digits · sparse` 12.22 / 12.28 / 12.37×
-against 12.33×, `literal · hit` 11.60 / 11.86 / 11.77× against 11.89×, `anchored miss` 0.90× on all
-three, `date · search` 437.18 / 432.03 / 432.72× against 432.86×. Five rows within 2 % on every pass,
-one of which was taken under a background load of 14 — which is itself the useful reading: this
-section's ratios are PAIRED and adjacent, so a shared load moves both engines and the ratio holds.
-**The sixth row is `sub · dates with refs`, and it is this section's known-unstable one:** 46.89×
-(loaded), then **79.06×** and **84.62×** on two quiet passes, against 65.71× here and the 56.84–76.08×
-spread this section already documents for it. That is ABOVE the documented spread, and it is NOT
-claimed as a movement: nothing in this train touches the `sub`-with-group-references path in a
-direction that would explain +29 %, and the row's own history is why the spread is documented at all.
-Its REAL column moved 38.9 → 16.2 → 15.0 µs across the three passes, which is the load and not the
-engine. **The v2026.8.11 stamp's own re-measurement, which withdrew a claim the v2026.8.11 release
-notes made, is unchanged below.** Those notes said §B was one train stale and that "this train's batching changes
-exactly the `findall`/`sub` regime §B measures, so its numbers understate the binding". They do not. Every
-row reads within 2 % of the figures below: `date · search` 434.97× → 432.86×, `digits · sparse` 12.55× →
-12.33×, `words · findall @100KB` 2.19× → 2.13×, `literal · hit` 11.89× unchanged. `sub · dates with refs`
-reads 65.71×, which falls inside the 56.84–76.08× spread this section already documents for it, so it is
-that row's known instability rather than a movement.
-
 The reason is worth keeping, because it bounds what §B can ever show: this table's regime is dominated by
 the **per-call** cost of crossing into Python, not by the scan. v2026.8.11's engine gain was −5.2 % on one
 C++ row of eighteen; at this boundary that is invisible. So an engine train that touches only scan cost
@@ -394,43 +286,10 @@ exactly 1.0 — five times gave medians of 0.9958, 1.0006, 0.9994, 0.9981 and 1.
 under 0.4 % at the median. The paired design also absorbs machine state that makes `bench_layout.py`
 unusable on a loaded host, which is why this table is measurable where §A's floors are not.
 
-**This table was thirty trains stale, and it understated REAL by roughly a factor of two on the
-`findall` family.** It carried a `2026.7.55` stamp while the engine ran at `2026.8.10`, which
-`make version-check` had been warning about, and four consecutive release-note sets said "§B is NOT
-re-measured for this train". The `words · findall` rows go 1.20–1.50× → **1.92–3.26×** and
-`digits · sparse` 4.66× → **12.55×**, which is the shape of the two trains in between: v2026.8.6 took
-20–25 % off the fixed per-call cost, and v2026.8.10 gave the `.`/negated-class family a batch filler —
-and `findall` over a large corpus is exactly the regime both of those serve.
-
-One row went the other way (`word starts ASCII` 28.57× → 25.80×) and is published as it reads. One row
-is still below parity, and it is the same one as before: `literal · anchored miss` at 0.90×, an
-anchored no-match at 1 MB where the whole measurement is ~180 ns of call overhead.
-
 **⚠ `sub · dates with refs` is not stable at this precision.** Three runs read 56.84× / 76.08× / 59.68×
 — a 33.8 % spread, and run 1's reported CI of [56.80–60.59] does not contain run 2's value. The median
 is published, and the disagreement is stated rather than hidden behind a bootstrap interval that this
 row's own re-runs contradict. Every other cell holds inside 2 %.
-
-**Geometric-mean speedup over `re`: 4.78× (CI [2.32, 12.62] clears 1.0 — PASS)**, up from 2.34× at the
-`2026.7.25` stamp. Two headline movements, both from the routes the recent trains rebuilt:
-
-- **The `\d{n}` date rows went from single-digit to three-figure**: search @100KB 7.84× → **402.82×**
-  (1.15 ms → **2.8 µs**), findall-groups 8.25× → **356.33×**, sub-with-refs 7.71× → **45.58×**. These
-  patterns have a required inner literal (`-`) and no leading one, so they are exactly the shape the
-  inner-literal route plus its warm-aware floor now serve; `re` scans, REAL memchrs.
-- **The fixed-literal rows followed the engine work**: `literal hit @1MB` 1.45× → **11.85×**
-  (695.9 µs → **59.0 µs**), with the new `literal miss @1MB` row at the same 11.85×. That is the
-  one-search exact-literal route and the two-byte NEON prefilter reaching the binding.
-
-**Only one case is still slower than `re`, down from two.** `split · commas @100KB` — the worst row at the
-last stamp, **0.24×** — is now a **1.65× win**; what remains is **`anchored miss @1MB` at 0.82×**, a
-178 ns-versus-218 ns contest where CPython's C engine has the lower fixed per-call cost and there is no scan
-to amortise it over. That one is an accepted trade, not a target.
-
-Two rows moved *down* in ratio and the reason is not REAL: `digits sparse` 9.60× → 4.66× and `words dense`
-1.48× → 1.25× — `re`'s own times improved between the stamps (digits sparse 1.50 ms → 1.14 ms), so the
-quotient narrowed while REAL's absolute stayed flat-to-better. Ratios against a moving baseline are
-disclosed as such rather than read as a regression.
 
 On the fuzzed corpus (`benchmarks/fuzz_bench.py`, 2886 comparable cases): aggregate wall time **REAL 241 ms
 vs `re` 45.6 s (189×)**, and `re` hit **85 catastrophic blow-ups where REAL stayed linear**. Honest detail
@@ -656,18 +515,11 @@ Patterns with a zero-width assertion no DFA can represent throw `real::dfa_error
 ## E. REAL vs the rust `regex` crate
 
 The rust `regex` crate (a lazy-DFA engine with literal prefilters) is REAL's closest peer on the
-linear-time-guarantee axis. This duel is honest about where REAL loses: the same patterns run through both
-engines over the same corpora (~1 MB), best of 15 batches, match counts cross-checked equal.
-**Stamp (re-stamp):** REAL **`1ed00bf`** (v2026.8.3+, both sides re-run this pass; the previous stamp was `3cd9c81`/v2026.7.55 — the perf train: one-search exact-literal route,
-two-byte NEON literal prefilter, per-slot DFA ownership; and, from the two trains before it, the
-warm-aware inner-literal haystack floor that most of the sparse-row movement below belongs to),
-`rust regex 1.12.4` (`find_iter` on `regex::bytes`), both `-O3`/LTO, both ISAs measured this pass. **Method:** REAL matching-only (`count_matches`) vs rust
-`find_iter` (spans) — engine scan cost, no capture-slot fill on either side; every ratio below is
-`rust_ns/REAL_ns` computed from a JSON dump (`run_duel.py --json`), not typed by hand —
-`benchmarks/verify_bench_ratios.py` re-checks it. Corpora = `benchmarks/duel/run_duel.py`. Reproduce:
-rebuild `benchmarks/duel/real_bench` against current headers (`-O3 -flto`), `cargo build --release` in
-`benchmarks/duel/rust_bench`, then `python3 benchmarks/duel/run_duel.py [--json out.json]` (or
-`make bench-duel` for the related find_iter/captures apples-to-apples table in §E.3).
+linear-time-guarantee axis. Same patterns, same corpora (~1 MB), best of 15, match counts equal.
+REAL `count_matches` vs rust `find_iter` (spans) — scan cost, no capture-slot fill on either side.
+Ratio is `rust_ns/REAL_ns` (> 1 means REAL is faster), from `run_duel.py --json`, re-checked by
+`benchmarks/verify_bench_ratios.py`. rust `regex` 1.12.4, both ISAs, `-O3 -flto`. Reproduce:
+`make bench-duel`.
 
 **arm64** — Apple clang 16, `-O3 -flto`:
 
@@ -708,56 +560,9 @@ rebuild `benchmarks/duel/real_bench` against current headers (`-O3 -flto`), `car
      marker must stay the LAST line of this comment -- the extractor resumes at the next newline. -->
 <!-- [duel-reading] -->
 
-**Reading — verdict brut. REAL leads 11 of 12 rows on BOTH ISAs, and the row this table used to
-publish as its worst deficit is now a 3.7–4.8× win.**
-
-- **`ident (\w+)_(\w+)` was the largest published deficit anywhere in this document and it no longer
-  exists.** It stood at 53.542 ns/B on arm64 and **113.178 on x86-64** against rust's 30.786 / 46.355
-  — rust 1.7× / 2.4× ahead. Re-measured with the same harness, same corpus, same flags: **6.424 and
-  12.508**, an 8.3× and 9.0× improvement, turning rust 2.4× ahead into REAL 3.7× ahead. Nothing in
-  this train touched it; it was carried by the capture and prefilter work of the trains between, and
-  nobody re-ran the row. Three other rows crossed the same way — `date sparse` (rust 1.7× → REAL
-  1.3×), `email sparse` (tie → REAL 2.0×), and `email` (1.1× → 2.9×) — and `word-boundary` doubled
-  its margin, 2.0× → 4.0×.
-- **The one row rust still wins is `date no-match`**, 0.023 against 0.012 ns/B on arm64. Both engines
-  cross a 1 MB corpus in under 25 microseconds without a match; the ratio is on work that has already
-  collapsed to nothing, and it is reported rather than dropped for exactly that reason.
-- **Read this against the previous stamp as a caution about stamps, not a victory lap.** A table
-  stamped at v2026.7.55 was still being read as current a dozen trains later, and it understated the
-  engine by up to 9×. §A had the same problem this month. A benchmark table that is not re-run is not
-  a measurement, it is a claim about the past.
-
-- **REAL now leads 8 of 12 rows on arm64 and 9 of 12 on x86-64.** The class/digit/field/word-boundary
-  block is unchanged in shape and still the widest margin (`class` 7.4× arm64 / 7.0× x86-64; `digits`
-  8.1× / 7.1×; `fields` 3.2× / 3.9×; `word-boundary` 2.0× / 3.7×).
-- **Three rows that used to flip sign between ISAs are now REAL's on both.** `literal` (was rust 1.4×
-  arm64 / REAL 1.1× x86 → now **REAL 1.8× / 1.7×**) and `alternation` (rust 1.1× / REAL 1.5× → **REAL
-  1.3× / 1.4×**) are the one-search exact-literal route, with the NEON prefilter on top for the arm64 leg;
-  `email` dense (tie / rust 1.1× → **REAL 1.1× / 1.2×**) is the same route reaching the confirm.
-  A single-machine number would no longer mis-state these — they agree across ISAs now.
-- **The sparse-match rows — rust's clearest wins at the last stamp — have largely closed.** `email sparse`
-  went from rust 4.8× arm64 / 6.3× x86-64 to **rust 1.0× arm64 (a tie) / REAL 1.1× x86-64**, an absolute
-  1.014 → 0.138 ns/B on the x86 leg; `date sparse` from 2.9× / 3.6× to **1.7× / 1.4×**. That is the
-  warm-aware inner-literal floor (the route now fires on a reused haystack instead of deferring to the
-  core), not the literal work of this train — credited where it belongs.
-- **rust's remaining wins are two, and one of them got worse.** `ident` (dense `_`-joined `\w`, no useful
-  prefilter for either engine) is still its biggest and **widened**: 1.6× → **1.7×** arm64, 2.1× →
-  **2.4×** x86-64, on an absolute that rose 100.5 → 113.2 ns/B on x86. That is the already-named
-  non-one-pass residual (the `_` conflict), and it is now the table's worst row — stated, not buried.
-  `date no-match` stays rust's on both (1.9× arm64, 1.1× x86-64), both near-ties on an 0.02 ns/B scan.
-- **`key=` remains REAL's ISA-stable win** (1.4× arm64, 1.7× x86-64) — the inner-literal prefilter route
-  (§E.5) still generalizes across ISAs better than the sparse rows do.
-
-Two things carry a caveat, not a verdict:
-
-- **The date-no-match / date-sparse split is the same distinction §E.5 already named** — a no-match scan
-  (both engines only reject; REAL's rare-required-byte path is close either way, rust 1.9× arm64 vs
-  **REAL 1.1× x86-64** — itself one of the four sign-flips above) is not the same measurement as a
-  sparse-but-real-match scan (rust's variable-offset literal prefilter has no REAL equivalent yet, 2.9–3.6×
-  behind on *both* ISAs) — collapsing them into one "date" story would hide that gap.
-- **Capture apples-to-apples** (REAL `find_iter` full Match vs rust `captures_iter`) is §E.1–E.3 — email
-  dense is ~parity with rust captures there; the tables above are span/count-only so they do not charge
-  either side for group fill.
+**Reading.** REAL leads 11 of 12 rows on both ISAs. rust keeps `date no-match` — both engines
+cross 1 MB in under 25 µs without a match; the ratio is on work that has already collapsed.
+Capture apples-to-apples is §E.3; the tables above are span/count-only.
 
 ### E.1 The lazy-DFA arc: what it bought, and the gap that remains
 
