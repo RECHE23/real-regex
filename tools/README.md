@@ -18,12 +18,11 @@ the methodology.
 
 ## What reads `docs/BENCHMARKS.md`
 
-The ledger is one file with two jobs (cells + train journal). The journal of trains already
-lives in [`CHANGELOG.md`](../CHANGELOG.md) — a verbatim copy of the Version row. There is no
-third file (`BENCHMARKS-history.md` would be a second copy of CHANGELOG and is not in the
-`make release` dirty allowlist). A split is finished when no script parses the journal and
-the Version cell is a stamp, not a train. It is **not** finished by dropping the path from
-`docs/voice-journals.yaml`: `ns/B` is the ledger's job, and the YAML names a right, not a todo.
+The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved). The journal of
+trains lives in [`CHANGELOG.md`](../CHANGELOG.md). There is no third file
+(`BENCHMARKS-history.md` would be a second copy of CHANGELOG and is not in the
+`make release` dirty allowlist). Scripts parse headings and cells, never the journal.
+The YAML line stays: `ns/B` is the ledger's job, and the YAML names a right, not a todo.
 
 | Attachment | Reads | What |
 |---|---|---|

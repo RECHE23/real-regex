@@ -44,10 +44,11 @@ with nothing to short-circuit. The measured table is §C of the ledger.
 
 ## The ledger
 
-Tables, machines, versions and per-train notes live in
+Tables, machines and the version stamp live in
 [BENCHMARKS.md](https://github.com/RECHE23/real-regex/blob/main/docs/BENCHMARKS.md)
-on GitHub — not on this site. A re-stamp must not silently rewrite a published
-page.
+on GitHub — not on this site. Per-train notes live in
+[CHANGELOG.md](https://github.com/RECHE23/real-regex/blob/main/CHANGELOG.md).
+A re-stamp must not silently rewrite a published page.
 
 What a timing claim is allowed to say:
 [MEASUREMENT.md](https://github.com/RECHE23/real-regex/blob/main/docs/MEASUREMENT.md).

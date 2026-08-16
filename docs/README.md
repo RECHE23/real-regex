@@ -7,7 +7,7 @@ lookarounds and an `re`-compatible Python binding.
 
 | | |
 |---|---|
-| **[Performance](BENCHMARKS.md)** | The measured baseline vs `std::regex` / PCRE2 / RE2, the ReDoS numbers, and the one-pass-arc duel against the rust `regex` crate. |
+| **[Performance](BENCHMARKS.md)** | The measured baseline vs `std::regex` / PCRE2 / RE2, the ReDoS numbers, and the one-pass-arc duel against the rust `regex` crate. Per-train notes: [CHANGELOG.md](../CHANGELOG.md). |
 | **[Compatibility](COMPATIBILITY.md)** | The supported `re` / `std::regex` subset and every intentional divergence. The `real::compat` drop-in tour is [std_regex_dropin.dox](std_regex_dropin.dox); the `re` divergences are [divergences.dox](divergences.dox). |
 | **[Tests & conformance](TESTS.md)** | The differential harnesses, the coverage floor, and the gate policy. |
 | **[MISRA](MISRA.md)** | The MISRA C++ posture and its documented deviations. |

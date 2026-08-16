@@ -428,10 +428,10 @@ check-curated-members:
 check-site-anchors:
 	@python3 tools/check_site_anchors.py
 
-# WHAT READS docs/BENCHMARKS.md. The ledger is one file with two jobs (cells + train journal).
-# The journal of trains already lives in CHANGELOG.md (verbatim copy of the Version row); there
-# is no third file. A split is finished when no script parses the journal and the Version cell
-# is a stamp, not a train -- not when voice-journals.yaml drops the path (ns/B is the ledger's job).
+# WHAT READS docs/BENCHMARKS.md. The Version cell is a stamp (REAL `X.Y.Z` + whether tables
+# moved). The journal of trains lives in CHANGELOG.md; there is no third file. Scripts parse
+# headings and cells, never the journal. voice-journals.yaml keeps the path: ns/B is the
+# ledger's job, not a todo.
 #   version-check        CONTENT  first `REAL \`X.Y.Z\`` (Version cell)
 #   check-bench-stamp    CONTENT  same cell, pickaxed: last commit that WROTE that string
 #   check-bench-ratios   CONTENT  `## A.`..`## Multi-pattern`, `## E.`..`### E.1`,

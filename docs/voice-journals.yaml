@@ -4,9 +4,8 @@
 #
 # These two may talk like a bench log. That is a right, not a todo: the ledger's
 # job is ns/B, and MEASUREMENT.md keeps the refutation archive on purpose.
-# A split of BENCHMARKS.md is finished when no script parses the train journal
-# (that journal lives in CHANGELOG.md) and the Version cell is a stamp, not a
-# train -- not when this file loses the BENCHMARKS.md line.
+# The Version cell is a stamp; the train journal lives in CHANGELOG.md.
+# This file keeps the BENCHMARKS.md line because ns/B is the ledger's job.
 # design.dox is deliberately absent.
 
 docs/BENCHMARKS.md: the competitive ledger -- ns/B belong here; the train journal is CHANGELOG.md
