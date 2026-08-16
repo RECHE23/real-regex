@@ -1,0 +1,4 @@
+# Byte-for-byte copy of include/real/ for `go get`. Reviews and git log -p
+# should not pay 2.3 MiB every time a header is restamped. make go-check-vendor
+# is the check that the copy still matches; it does not write the tree.
+bindings/go/vendor_include/** linguist-generated -diff

@@ -22,10 +22,32 @@ vendor: ## Regenerate vendor_include/ and the vendored C-ABI shim FROM the sourc
 	cp -R $(ROOT)/include/real vendor_include/
 	cp $(ROOT)/bindings/c/real_capi.h $(ROOT)/bindings/c/real_capi.cpp .
 
-check-vendor: vendor ## Fails if the committed vendored tree has drifted from include/ + bindings/c (CI gate)
-	@git diff --exit-code -- vendor_include real_capi.h real_capi.cpp || \
-	  (echo "check-vendor: FAILED -- vendor_include/real_capi.{h,cpp} are stale, run 'make go-vendor' and commit" && exit 1)
-	@echo "check-vendor: OK -- vendored tree matches include/ + bindings/c exactly"
+# Compare include/ + bindings/c against the committed vendor copy. Does NOT
+# write the tree: a check that regenerated first, then `git diff`, only proved
+# the copy was deterministic, and left the tree dirty on failure. The count is
+# the denominator — OK without it is the fourth silent green of the week.
+check-vendor: ## Fails if the vendored tree has drifted from include/ + bindings/c (does not write)
+	@set -euo pipefail; \
+	 tmp=$$(mktemp -d); \
+	 trap 'rm -rf "$$tmp"' EXIT; \
+	 mkdir -p "$$tmp/real"; \
+	 cp -R $(ROOT)/include/real/. "$$tmp/real/"; \
+	 cp $(ROOT)/bindings/c/real_capi.h $(ROOT)/bindings/c/real_capi.cpp "$$tmp/"; \
+	 exp=$$(find "$$tmp/real" -name '*.hpp' | wc -l | tr -d ' '); \
+	 got=$$(find vendor_include/real -name '*.hpp' | wc -l | tr -d ' '); \
+	 if [ "$$exp" != "$$got" ]; then \
+	   echo "check-vendor: FAILED -- $$exp headers + 2 shim files compared; vendor_include has $$got headers"; \
+	   echo "  run 'make go-vendor' and commit"; \
+	   exit 1; \
+	 fi; \
+	 if ! diff -rq "$$tmp/real" vendor_include/real >/dev/null \
+	    || ! diff -q "$$tmp/real_capi.h" real_capi.h >/dev/null \
+	    || ! diff -q "$$tmp/real_capi.cpp" real_capi.cpp >/dev/null; then \
+	   echo "check-vendor: FAILED -- $$exp headers + 2 shim files compared; vendored tree is stale"; \
+	   echo "  run 'make go-vendor' and commit"; \
+	   exit 1; \
+	 fi; \
+	 echo "check-vendor: OK -- $$exp headers + 2 shim files compared"
 
 clean: ## Remove build artifacts (NOT vendor_include -- that is committed, not generated-and-discarded)
 	go clean

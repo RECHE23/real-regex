@@ -684,11 +684,10 @@ full-local-gate-impl:
 	@if $(MYPY_PYTHON) -c "import mypy" >/dev/null 2>&1; then \
 	   $(MAKE) python-stubtest; \
 	 else echo "step 20: python-stubtest (.pyi = runtime) -- mypy absent (make gate-venv)" | tee -a $(GATE_SKIPS); fi
-	# Go leg: go-check-vendor regenerates the committed vendor tree from the live headers and fails
-	# on drift — the one binding NOT otherwise in this gate (its sources are vendored, not built from
-	# include/ here). Skipped with a warning when go is absent (the CI go job is the backstop), same
-	# shape as the GCC leg. Closes the gap where an include/ change that stales vendor_include/ was
-	# caught only in CI.
+	# Go leg: go-check-vendor diffs include/ against the committed vendor copy and fails
+	# on drift — it does not write the tree. The one binding NOT otherwise in this gate
+	# (its sources are vendored, not built from include/ here). Skipped with a warning when
+	# go is absent (the CI go job is the backstop), same shape as the GCC leg.
 	@echo "── [21/24] go-check-vendor + go-test (Go leg; skipped if go absent)"
 	@if command -v go >/dev/null 2>&1; then $(MAKE) go-check-vendor && $(MAKE) go-test; else echo "step 21: go-check-vendor + go-test -- go absent" | tee -a $(GATE_SKIPS); fi
 	@echo "── [22/24] lint"

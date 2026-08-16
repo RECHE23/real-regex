@@ -250,8 +250,8 @@ jobs:
 
   # Go binding (bindings/go, cgo over bindings/c/real_capi.h). v0.1 scope is explicitly
   # linux-x86-64 + macOS-arm64 only (Windows/MSVC and cross-compilation are out of v0 — see the
-  # module's own README). check-vendor runs once (linux leg) — it's a diff against tracked files,
-  # not a per-OS build concern; a drift would show identically on every OS.
+  # module's own README). check-vendor runs once (linux leg) — a non-mutating
+  # diff of include/ against the committed vendor copy; a drift is identical on every OS.
   go:
     needs: preflight
     strategy:
