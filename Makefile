@@ -303,11 +303,17 @@ version-check: ## [gates] Assert pyproject = __init__ = CMake-derived version
 	 if [ "$$crate" != "$$py" ]; then echo "version-check: DRIFT Cargo.toml=$$crate vs pyproject=$$py"; exit 1; fi; \
 	 cff=$$(sed -nE 's/^version: "([0-9][0-9.]*)"/\1/p' CITATION.cff); \
 	 if [ "$$cff" != "$$py" ]; then echo "version-check: DRIFT CITATION.cff=$$cff vs pyproject=$$py (it drifted for ~10 releases unchecked)"; exit 1; fi; \
+	 cffd=$$(sed -nE 's/^date-released: "([0-9]{4}-[0-9]{2}-[0-9]{2})"/\1/p' CITATION.cff); \
+	 if [ -z "$$cffd" ]; then echo "version-check: CITATION.cff has no date-released (YYYY-MM-DD)"; exit 1; fi; \
+	 if git rev-parse -q --verify "refs/tags/v$$py" >/dev/null; then \
+	   tagd=$$(git for-each-ref --format='%(creatordate:short)' "refs/tags/v$$py"); \
+	   if [ "$$cffd" != "$$tagd" ]; then echo "version-check: DRIFT CITATION.cff date-released=$$cffd vs tag v$$py $$tagd"; exit 1; fi; \
+	 fi; \
 	 rme=$$(sed -nE 's/.*GIT_TAG v([0-9][0-9.]*).*/\1/p' README.md | head -1); \
 	 if [ -n "$$rme" ] && [ "$$rme" != "$$py" ]; then echo "version-check: DRIFT README FetchContent GIT_TAG=$$rme vs pyproject=$$py"; exit 1; fi; \
 	 bench=$$(sed -nE 's/.*REAL `([0-9][0-9.]+)`.*/\1/p' docs/BENCHMARKS.md | head -1); \
 	 if [ -n "$$bench" ] && [ "$$bench" != "$$py" ]; then echo "version-check: WARN — docs/BENCHMARKS.md is stamped against REAL $$bench, current is $$py; benchmarks may be stale (re-run 'make bench-engines' / 'make bench', or proceed knowingly)"; fi; \
-	 echo "version-check: $$py (pyproject = __init__ = CMake-derived = version.hpp = Cargo.toml = CITATION.cff = README; bench-stamp = $$bench)"
+	 echo "version-check: $$py (pyproject = __init__ = CMake-derived = version.hpp = Cargo.toml = CITATION.cff $$cffd = README; bench-stamp = $$bench)"
 
 # Every pass/fail gate this machine owns, in one command — the canonical pre-push check
 # and, like the SciLang-era libraries, the macOS gate of record. REAL holds its own
@@ -961,6 +967,8 @@ release: ## [release] Cut the complete calendar release (bump all, tag engine + 
 	                s/^#define REAL_VERSION_PATCH .*/#define REAL_VERSION_PATCH $$vpat/" include/real/version.hpp && rm -f include/real/version.hpp.bak; \
 	 sed -i.bak -E "1,/^version = /s/^version = \".*\"/version = \"$$version\"/" bindings/rust/Cargo.toml && rm -f bindings/rust/Cargo.toml.bak; \
 	 sed -i.bak -E "s/^version: \".*\"/version: \"$$version\"/" CITATION.cff && rm -f CITATION.cff.bak; \
+	 reldate=$$(date -u +%Y-%m-%d); \
+	 sed -i.bak -E "s/^date-released: \".*\"/date-released: \"$$reldate\"/" CITATION.cff && rm -f CITATION.cff.bak; \
 	 sed -i.bak -E "s/GIT_TAG v[0-9][0-9.]*/GIT_TAG v$$version/" README.md && rm -f README.md.bak; \
 	 $(MAKE) go-vendor; \
 	 git add pyproject.toml bindings/python/real/__init__.py include/real/version.hpp \
