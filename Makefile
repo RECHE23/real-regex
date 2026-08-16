@@ -284,6 +284,8 @@ HEADERS := $(shell find include/real -name '*.hpp')
 # release` bumps __init__.py from it, CMakeLists.txt derives it. Asserts the three
 # agree and that CMake still DERIVES (no hardcoded literal that could drift) — the
 # invariant the CMake 2026.6.6-vs-.8 drift violated.
+# The BENCHMARKS.md read is the first `REAL \`X.Y.Z\`` only (the Version cell). A later
+# `REAL \` in §B is not the stamp. The rest of that file is not parsed here.
 version-check: ## [gates] Assert pyproject = __init__ = CMake-derived version
 	@py=$$(sed -nE 's/^version = "([0-9][0-9.]*)"/\1/p' pyproject.toml); \
 	 ini=$$(sed -nE 's/^__version__ = "([0-9][0-9.]*)"/\1/p' bindings/python/real/__init__.py); \
@@ -421,22 +423,41 @@ check-curated-members:
 # Every :start-after:/:end-before: the site slices with must resolve, exactly once, in the file it
 # includes. Dependency-free on purpose: docs-site-gate needs sphinx-build and is SKIPPED without it,
 # so a prose rewrite that deleted an anchor reached CI unchallenged (Docs-site, regex.md). This runs
-# in the cheap section and fails locally instead.
+# in the cheap section and fails locally instead. Does NOT read docs/BENCHMARKS.md -- the site is
+# forbidden from including that file, and no live page does.
 check-site-anchors:
 	@python3 tools/check_site_anchors.py
 
+# WHAT READS docs/BENCHMARKS.md. The ledger is one file with two jobs (cells + train journal).
+# The journal of trains already lives in CHANGELOG.md (verbatim copy of the Version row); there
+# is no third file. A split is finished when no script parses the journal and the Version cell
+# is a stamp, not a train -- not when voice-journals.yaml drops the path (ns/B is the ledger's job).
+#   version-check        CONTENT  first `REAL \`X.Y.Z\`` (Version cell)
+#   check-bench-stamp    CONTENT  same cell, pickaxed: last commit that WROTE that string
+#   check-bench-ratios   CONTENT  `## A.`..`## Multi-pattern`, `## E.`..`### E.1`,
+#                                 `## Unicode`..`## Methodology`  (two scripts)
+#   gate-doc             PATH     if this file is dirty, run the ratios
+#   gate-bump            PATH     this file may be dirty on a version-bump commit
+#   make release         PATH     dirty allowlist = notes + this file (CHANGELOG.md is not
+#                                 a release exception; it rides the bump commit)
+#   docs-site-gate       FORBID   no `{include}` of this file on the site
+# check_site_anchors.py is not on this list. tools/README.md carries the same table.
+#
 # Staleness of docs/BENCHMARKS.md against the engine, by SUBSTANCE (comments stripped) rather than by
 # touch -- eleven of the last fourteen commits under include/real/ were documentation-only, and warning
-# on those would train the reader to ignore it. Warns, never fails.
+# on those would train the reader to ignore it. The stamp is the Version cell, not the last touch of
+# the path: a host-name rewrite is not a re-measure. Warns, never fails.
 check-bench-stamp:
 	@python3 tools/check_bench_stamp.py
 
-# Arithmetic of docs/BENCHMARKS.md's §A/§E tables AND of §A's reading bullets. The script existed and
-# was wired to NOTHING -- not this Makefile, not ci.yml -- while §A claimed in print that it
-# "re-derives and checks all of them"; run for the first time it failed on two cells and, once its
-# rounding rule was made exact, on a third. Its twin verify_unicode_ratios.py was already called from
-# gate-doc, which is what makes the omission an omission rather than a decision. Fails, never warns:
-# unlike check-bench-stamp above, nothing here needs a benchmark re-run -- it is division.
+# Arithmetic of docs/BENCHMARKS.md's §A/§E tables AND of §A's reading bullets (and, via the twin
+# script, §Unicode). Bound to those headings, not to the Version cell and not to CHANGELOG.md.
+# The script existed and was wired to NOTHING -- not this Makefile, not ci.yml -- while §A claimed
+# in print that it "re-derives and checks all of them"; run for the first time it failed on two
+# cells and, once its rounding rule was made exact, on a third. Its twin verify_unicode_ratios.py
+# was already called from gate-doc, which is what makes the omission an omission rather than a
+# decision. Fails, never warns: unlike check-bench-stamp above, nothing here needs a benchmark
+# re-run -- it is division.
 check-bench-ratios:
 	@python3 benchmarks/verify_bench_ratios.py
 	@python3 benchmarks/verify_unicode_ratios.py
@@ -912,7 +933,8 @@ uninstall: ## [release] Uninstall the Python package (pip)
 # zeros, so 2026.6.1, never 2026.06.001), bumps every version-checked file
 # (pyproject + __init__ + version.hpp + Cargo.toml + CITATION.cff + README GIT_TAG;
 # CMakeLists.txt derives from pyproject and follows), re-vendors Go, folds the human
-# inputs (docs/release-notes/v<version>.md must exist; BENCHMARKS re-stamp optional),
+# inputs (docs/release-notes/v<version>.md must exist; BENCHMARKS re-stamp optional;
+# CHANGELOG.md is the train journal and is a gate-bump file, not a release dirty exception),
 # commits with the BODY=<file> body, tags the engine AND the co-located decoupled Go
 # module (bindings/go/v0.1.<n+1>, so pkg.go.dev never lags the engine), and pushes.
 # Pushing the engine tag drives release.yml (wheels/sdist -> PyPI, crate, GitHub

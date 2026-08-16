@@ -13,6 +13,30 @@ the methodology.
 | **C ABI golden** (`check-capi-abi`) | Regenerates and diffs the frozen C ABI surface pin (`gen_capi_abi_golden.py`) against `bindings/c/real_capi.h` — enum ordinals, documented flag bits, normalized prototypes. Golden lives at `tests/bindings/capi_abi_golden.txt`; enum/flag value pins live in `tests/bindings/test_capi_abi.cpp`. |
 | **Doc voice** (`check-doc-voice`) | Fails if a Doxygen comment published by `Doxyfile.site` (public, non-`\internal`) still talks like a bench log. Implementation notes stay in `//`. Needs `build/doc/xml-site` (`make doc-site-xml`). `check-doc-style` reads the other tree (`build/doc/xml`); `make doc-xml` refreshes both. The same make target also runs the source twin (`check_doc_voice_source.py`) over `docs/*.dox` and `docs/*.md`. `docs/BENCHMARKS.md` and `docs/MEASUREMENT.md` are named journals (counted, not a fail); everything else is fail-closed. |
 | **Curated members** (`check-curated-members`) | Fails if a `:members:` allowlist silently drops a published symbol, or if a page uses bare `:members:` without `publish_all` in `unpublished.yaml`. Omissions need a reason. |
+| **Bench stamp** (`check-bench-stamp`) | Warns if engine *code* moved since the Version cell's `REAL \`X.Y.Z\`` was last written. Pickaxe on that string, not last touch of the path. Warns, never fails. |
+| **Site anchors** (`check-site-anchors`) | Every site `:start-after:` / `:end-before:` resolves uniquely in its include target. Reads `docs/site/` only. Does not read `docs/BENCHMARKS.md`. |
+
+## What reads `docs/BENCHMARKS.md`
+
+The ledger is one file with two jobs (cells + train journal). The journal of trains already
+lives in [`CHANGELOG.md`](../CHANGELOG.md) — a verbatim copy of the Version row. There is no
+third file (`BENCHMARKS-history.md` would be a second copy of CHANGELOG and is not in the
+`make release` dirty allowlist). A split is finished when no script parses the journal and
+the Version cell is a stamp, not a train. It is **not** finished by dropping the path from
+`docs/voice-journals.yaml`: `ns/B` is the ledger's job, and the YAML names a right, not a todo.
+
+| Attachment | Reads | What |
+|---|---|---|
+| `version-check` | content | the first `REAL \`X.Y.Z\`` (Version cell). A later `REAL \` in §B is not the stamp. |
+| `check-bench-stamp` | content + git | the same cell, pickaxed: last commit that *wrote* that string. A host-name rewrite is not a re-measure. |
+| `check-bench-ratios` | content | `verify_bench_ratios.py`: `## A.` → `## Multi-pattern` and `## E.` → `### E.1` (tables **and** §A reading bullets). `verify_unicode_ratios.py`: `## Unicode` → `## Methodology`. |
+| `gate-doc` | path | if `docs/BENCHMARKS.md` is dirty, run the ratios. Does not parse the file. |
+| `gate-bump` | path | this file may be dirty on a version-bump commit (with `CHANGELOG.md`). |
+| `make release` | path | dirty allowlist = `docs/release-notes/` + `docs/BENCHMARKS.md`. `CHANGELOG.md` is not a release exception; it rides the bump commit. |
+| `docs-site-gate` | forbid | no `{include}` of this file on the site. |
+
+`check_site_anchors.py` is not a consumer. After P1 no site page includes the ledger, and
+the gate forbids it; a docstring that still named the file was a ghost.
 
 ## Running
 

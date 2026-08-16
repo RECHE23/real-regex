@@ -2,10 +2,16 @@
 """Every `:start-after:` / `:end-before:` anchor under docs/site/ must resolve, exactly once, in the
 file its directive includes.
 
-WHY THIS EXISTS. The site slices `docs/BENCHMARKS.md` and several sources by literal text, so a
-prose rewrite in one file silently breaks a page built from another. That happened: a re-stamp
-deleted the sentence `docs/site/drop-in/regex.md` anchored on, and the failure surfaced only in CI's
-`Docs-site` job because `full-local-gate`'s own docs-site step is SKIPPED whenever `sphinx-build` is
+WHAT IT READS. The site pages under docs/site/, and only the files those pages `{include}` /
+`{literalinclude}`. After P1 those targets are examples and snippet files. It does **not** read
+`docs/BENCHMARKS.md`: the site is forbidden from including that file (`docs-site-gate`'s
+no-benchmarks-include witness), and no live page does. A docstring that still named the ledger
+was a ghost consumer -- a coupling the include-ban had already deleted.
+
+WHY THIS EXISTS. The site slices sources by literal text, so a rewrite in one file silently
+breaks a page built from another. That happened: a re-stamp deleted the sentence
+`docs/site/drop-in/regex.md` anchored on, and the failure surfaced only in CI's `Docs-site`
+job because `full-local-gate`'s own docs-site step is SKIPPED whenever `sphinx-build` is
 absent -- which it is on a plain dev machine. This check needs nothing but the standard library, so
 it runs in the gate's cheap section and turns a CI-only red into a local one.
 

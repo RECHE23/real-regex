@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Warn when the engine has changed IN SUBSTANCE since docs/BENCHMARKS.md was last stamped.
 
+WHAT IT READS. The first REAL `X.Y.Z` in the file -- the Version cell -- and the last
+commit that *wrote that string* (`git log -S`), not the last commit that touched the path.
+A host-name rewrite, a typo fix, or any other edit that leaves the stamp alone is not a
+re-measure. `make version-check` reads the same cell and compares it to the project version;
+this check asks a different question of the same cell.
+
 WHY THIS EXISTS, AND WHY THE CHECK ALREADY IN `make version-check` COULD NOT DO IT
 ---------------------------------------------------------------------------------
 That one compares the VERSION STRING recorded in docs/BENCHMARKS.md against the project
@@ -18,6 +24,10 @@ A check that fired whenever any file under include/real/ changed would be useles
 measurably so: over the fourteen most recent commits touching that tree, eleven were
 documentation-only. Warning on all fourteen would train the reader to ignore it, which is the
 failure mode this is meant to prevent, not reproduce.
+
+The same applies to the ledger file itself. Binding the stamp to "last commit that touched
+docs/BENCHMARKS.md" treated a host-name rewrite as a re-measure and reset the warning. The
+pickaxe on the Version cell is the load-bearing form of that distinction.
 
 So a commit counts only if it changed CODE -- the file with comments and whitespace stripped.
 Measured against those same fourteen commits: it flags the two real engine changes, stays quiet
@@ -49,9 +59,11 @@ import argparse
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 BENCH = "docs/BENCHMARKS.md"
 ENGINE = "include/real/"
+STAMP_RE = re.compile(r"REAL `([0-9][0-9.]+)`")
 
 
 def git(*args: str) -> str:
@@ -76,6 +88,26 @@ def code_only(text: str) -> list[str]:
         if s:
             out.append(s)
     return out
+
+
+def stamp_commit() -> tuple[str, str, str]:
+    """The commit that last wrote the Version cell's REAL `X.Y.Z`.
+
+    Returns (sha, version, how) where how is "pickaxe" or "touch". The fallback
+    exists so a file that has never contained the current stamp string still
+    produces a window, and so the warning names that it is the weaker one.
+    """
+    text = Path(BENCH).read_text(encoding="utf-8")
+    m = STAMP_RE.search(text)
+    if not m:
+        return "", "", ""
+    ver = m.group(1)
+    needle = f"REAL `{ver}`"
+    sha = git("log", "-1", "--format=%H", "-S", needle, "--", BENCH)
+    if sha:
+        return sha, ver, "pickaxe"
+    sha = git("log", "-1", "--format=%H", "--", BENCH)
+    return sha, ver, "touch"
 
 
 def changed_code(commit: str) -> bool:
@@ -108,9 +140,9 @@ def main() -> int:
         )
         return 0
 
-    stamp = git("log", "-1", "--format=%H", "--", BENCH)
+    stamp, ver, how = stamp_commit()
     if not stamp:
-        print(f"check-bench-stamp: no commit touches {BENCH} — skipped")
+        print(f"check-bench-stamp: no stamp in {BENCH} — skipped")
         return 0
 
     commits = [c for c in git("log", "--format=%h", f"{stamp}..HEAD", "--", ENGINE).split("\n") if c]
@@ -123,19 +155,25 @@ def main() -> int:
             subject = git("log", "-1", "--format=%s", c)
             print(f"  {c}  {'CODE' if hit else 'docs':<5} {subject[:66]}")
 
+    label = f"{BENCH} REAL `{ver}`" if ver else BENCH
+    if how == "touch":
+        print(
+            f"check-bench-stamp: note — no pickaxe hit for REAL `{ver}`; "
+            f"falling back to last touch of {BENCH}"
+        )
     if not commits:
-        print(f"check-bench-stamp: clean — no engine commit since {BENCH} was last stamped")
+        print(f"check-bench-stamp: clean — no engine commit since {label} was stamped")
         return 0
     if not substantive:
         print(
-            f"check-bench-stamp: clean — {len(commits)} engine commit(s) since {BENCH} was stamped, "
+            f"check-bench-stamp: clean — {len(commits)} engine commit(s) since {label} was stamped, "
             "none of them changed code"
         )
         return 0
 
     print(
-        f"check-bench-stamp: WARN — {len(substantive)} of {len(commits)} engine commit(s) since {BENCH} "
-        "was last stamped changed CODE, so its figures may no longer describe this tree:"
+        f"check-bench-stamp: WARN — {len(substantive)} of {len(commits)} engine commit(s) since {label} "
+        "was stamped changed CODE, so its figures may no longer describe this tree:"
     )
     for c in substantive:
         print(f"    {c}  {git('log', '-1', '--format=%s', c)[:70]}")

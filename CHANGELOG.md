@@ -1,6 +1,6 @@
 # Changelog
 
-Per-train benchmark-impact log: what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s §A/§E/§B/§Unicode/§multi-pattern sections, carried verbatim from that file's Version row. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
+Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. Today it is carried verbatim from that file's Version row. This file **is** that journal — there is no third file — and after the ledger/journal split the Version cell shrinks to a stamp while the train stays here. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
 ## v2026.8.14
 

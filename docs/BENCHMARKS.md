@@ -42,7 +42,7 @@ answer is not a benchmark win.
 | | |
 | --- | --- |
 | Version | REAL `2026.8.15` — **Every number that mattered in this train is a per-CALL cost, and none of them is visible to these tables.** They measure throughput over 4 KiB and 200 KB corpora, where a fixed cost per call amortises to about 0.3 %; a regression worth 6.8 % on a 3-byte subject shipped, passed a full green gate, moved none of the 26 layout rows, and was caught by a hand-written probe. **THESE TABLES DO NOT MOVE, AND IT IS MEASURED THE HARD WAY:** the same harness was built from `v2026.8.14` and from this tree and run in paired interleaved passes, so host state cancels rather than being argued about, with engines whose code cannot have changed as the controls. On **arm64**, REAL's worst row moves 5.43 % while PCRE2 — byte-identical in both binaries — moves 7.84 %: the engine is below the noise floor of its own measurement, and that floor matches the 1.00×–1.08× inter-run amplitude declared below. On **x86-64** (gcc 15.3, idle host) eleven of twelve rows improve and the single positive median is +0.06 %, against 2.19 % for `std::regex`. So the cells below are NOT replaced: today's passes were taken on a noisier machine than the ones on record, and swapping good measurements for worse ones would advertise a change that did not happen. **WHAT MOVED, WITH NO ROW HERE TO SHOW IT:** `count_matches` stopped writing captures no caller can read (its walk runs matching-only, so `\b(\w+)@(\w+)\.(com|org)\b` over 4096 bytes goes 23.89 → 17.59 ns/B and lands on its non-capturing twin, with 1906 increfs and 2714 copy-on-writes becoming zero while the VM steps the SAME 2684 positions); it copies a 440-byte `program_view` once per call instead of twice (a FIXED +12 to +13 ns, flat across 3-, 8- and 24-byte subjects, 6 of 6 paired draws agreeing with non-overlapping ranges); and it stopped building an end sentinel it never reads — 217 → 97 ns per call on arm64, 210 → 110 under gcc 15.3, 338 → 218 under gcc 13.3, with `search` flat on every leg as the control. **NO SINGLE NUMBER IS PUBLISHED FOR THAT LAST ONE:** the gap it closes reads 37 ns under gcc 15.2, 97 under gcc 15.3, 123 under Apple clang and 131 under gcc 13.3 — the two gcc 15 readings differ by 2.6× between themselves, so host and microarchitecture move it as much as the compiler version does, and one number would be wrong somewhere by a factor of three. A fifth reading was DISCARDED rather than averaged in: on a loaded host the same probe read −22 %, and the control caught it by reporting 75–83 ns where it otherwise reads 41. **AND THE GENERAL VM STOPPED TOUCHING THE POOL ON CAPTURE-FREE PATTERNS** — 4833 refcount/copy-on-write operations per reported match become zero on the trim shape, which is the target v2026.8.14 named and did not fix. **TWO VEHICLES WERE REFUSED BY MEASUREMENT AND ARE PUBLISHED AS REFUSALS:** making the iterator's state lazy so `find_iter`'s sentinel becomes cheap was tried as `std::optional` and as a `construct_at` union, and both charged the WORKING iterator about 26 % — indistinguishably — on a walk that builds no sentinel at all, so laziness itself is closed rather than a choice of vehicle; and a short `count_matches` bench row, written to catch the next per-call regression, was withdrawn when its two candidates calibrated at 6.2 % and 6.6 % noise floors (the worst two of 28) against an effect worth 6.5 %. A guard whose floor is the size of the effect reports the truth about half the time; the shape is counted instead, at zero nanoseconds. **AND A CHECK THAT HAD NEVER RUN ANYWHERE REJECTED A CORRECT CHECKOUT:** the Unicode cross-oracles abort on 10 `\p{Math}` and 44 `\p{scx=...}` code points because the `regex` module ships property data at a later Unicode than the UCD sources committed here — not a table bug, two sides answering about different characters. A domain filter is not enough (10 → 1 and 44 → 6; the remainder are ASSIGNED code points whose value moved between versions), so the skew is detected by behaviour and the oracle skips saying why. |
-| Machines | §A on **two ISAs**: devbox (`x86-64`, g++ 13.3.0) *and* Apple M1 Pro (`arm64`, Apple clang 16, **on AC power** — see `docs/MEASUREMENT.md` §3.5 for why the state is declared and why its cost must not be assumed). §B / §E on M1 Pro (§E's x86-64 leg noted inline where it diverges — see §E). §multi-pattern measured on **x86-64 devbox** (g++ 13.3, RE2 + Hyperscan 5.4) |
+| Machines | §A on **two ISAs**: `x86-64` (g++ 13.3.0) *and* `arm64` (Apple clang 16, **on AC power** — see `docs/MEASUREMENT.md` §3.5 for why the state is declared and why its cost must not be assumed). §B / §E on arm64 (§E's x86-64 leg noted inline where it diverges — see §E). §multi-pattern measured on **x86-64** (g++ 13.3, RE2 + Hyperscan 5.4) |
 | Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (built from source on x86-64 to pin the exact version — and the pin only applies when `PKG_CONFIG_PATH` points at that build, since the recipe resolves the library through `pkg-config` and the system package otherwise wins silently; `make bench-engines` now prints the version it actually LINKED, because this document named 10.47 for a leg that had measured 10.42 and nothing in the output could contradict it); RE2 (10.0 on x86-64, 11.0 on arm64 — version-differs-by-leg, uncontested given the margins). Multi-pattern: RE2::Set, Hyperscan (optional). §E: rust `regex` 1.12.4 |
 | Python | CPython 3.14.6, `re` (stdlib) vs the in-place REAL `2026.8.14` extension. **§B RE-MEASURED AT THIS STAMP AND UNMOVED**, three passes: `words · findall @100KB` 2.16–2.17× against the 2.13× carried since v2026.8.12, `digits · sparse` 12.08–12.30× against 12.33×, `literal · hit` 11.77–11.83× against 11.89×, `anchored miss` 0.90–0.92× against 0.90×, `date · search` 433.5–434.9× against 432.86× — five headline rows inside 2 %. **The sixth widened DOWNWARD and that is reported rather than smoothed:** `sub · dates with refs` reads 49.70–67.20× where this document has documented 56.84–76.08×, so its low end is now below the range on record. It was already this section's known-unstable row (a substitution with back-references, dominated by the interpreter round trip); the new floor widens the instability rather than contradicting the row's meaning, and no other row moved. The previous stamp predicted no movement here on the grounds that §B's dominant cost is the Python round trip and not the scan — this measurement is what turns that prediction into a result. |
 | Method | §A: median of N = 30 paired batches, bootstrap CI, **three full runs per ISA with the minimum taken per cell** (both ISAs, this re-stamp — one run does not survive the x86-64 container's episodic interference); match counts equal on every case, both ISAs. §E: best-of-15, REAL `count_matches` vs rust `find_iter`/`captures_iter`, match counts equal. §multi-pattern: best-of-7, `make bench-multipattern`. **Every ratio below is computed from the raw ns/B pair, and `benchmarks/verify_bench_ratios.py` re-derives all of them plus §A's reading bullets — `make check-bench-ratios`, step 7b of the local gate, part of `gate-doc` whenever this file is touched, and a step of the **Docs-site** workflow — which is the one CI net with no `paths-ignore`, so it fires on the doc-only pushes that edit this file.** That wiring is new, and the sentence it replaces was not true when it was written: the script was called from nothing at all, and running it for the first time failed on two cells — a third once its rounding rule was made exact — while every range, per-row pair and count in §A's bullets had been stale for three stamps. A checker nothing runs is a claim, not a check |
@@ -116,7 +116,7 @@ the link carries no rpath, so the dynamic loader resolves `libpcre2-8.so.0` to t
 10.42 at RUN time. `LD_LIBRARY_PATH=<pinned>/lib` alongside `PKG_CONFIG_PATH` is what makes the printed
 version read 10.47. Do not trust a compile-time probe here; trust the line the harness prints.
 
-**x86-64** — devbox, g++ 13.3.0, N = 30 × 3 runs, PCRE2 10.47-JIT, RE2 10.0:
+**x86-64** — g++ 13.3.0, N = 30 × 3 runs, PCRE2 10.47-JIT, RE2 10.0:
 
 | case | REAL ns/B | std::regex | PCRE2-JIT | RE2 |
 | --- | ---: | ---: | ---: | ---: |
@@ -133,7 +133,7 @@ version read 10.47. Do not trust a compile-time probe here; trust the line the h
 | anchored `^[a-z]+$` | 0.51 | unsupported | 0.52 (**1.02×**) | 1.78 (**3.46×**) |
 | lookahead `[a-z]+(?=[a-z])` | 7.47 | 76.91 (**10.30×**) | 6.88 (0.92×) | unsupported |
 
-**arm64** — Apple M1 Pro, Apple clang 16, N = 30 × 3 runs, PCRE2 10.47-JIT, RE2 11.0:
+**arm64** — Apple clang 16, N = 30 × 3 runs, PCRE2 10.47-JIT, RE2 11.0:
 
 | case | REAL ns/B | std::regex | PCRE2-JIT | RE2 |
 | --- | ---: | ---: | ---: | ---: |
@@ -271,7 +271,7 @@ equal-set / equal-count asserts.
 | **A — filtre / IDS** | which-matched (which patterns hit ≥ once) | REAL N-walks (`regex_set`), RE2::Set, Hyperscan `SINGLEMATCH` | yes — 8 present + (N−8) absent |
 | **B — extraction** | all non-overlapping matches | REAL `count_matches` N-walks, RE2 `FindAndConsume` N-walks | inherent (present patterns only) |
 
-**x86-64 devbox** (g++ 13.3, RE2, Hyperscan 5.4, 1 MiB log-like corpus, best-of-7 MB/s, higher is better):
+**x86-64** (g++ 13.3, RE2, Hyperscan 5.4, 1 MiB log-like corpus, best-of-7 MB/s, higher is better):
 
 TABLE A — which-matched (sets equal when all engines compile):
 
@@ -541,10 +541,10 @@ The classic catastrophic pattern needs **two honest legs**. `(a+)+b` over `"a"×
 shows how fast the common ReDoS shape dies. The **guarantee** is the bare VM on
 `(a+)+` (no required literal to short-circuit): still **linear** in N.
 
-**Scope of this re-measure:** arm64 Apple M1 Pro, Apple clang, `-O3`, matching-only
+**Scope of this re-measure:** arm64, Apple clang, `-O3`, matching-only
 after compile, median of 31 (3 consistent rounds). §A/§Unicode are now re-stamped at
 `2026.7.55`; this section's own two-leg numbers were measured at `2026.7.51` and are
-unchanged by that train (neither leg touches the bare-VM or prefilter paths timed here). x86-64 devbox cross-check (same method): prefilter
+unchanged by that train (neither leg touches the bare-VM or prefilter paths timed here). x86-64 cross-check (same method): prefilter
 ~1.2 µs / bare VM ~10.6 ms at N=100K. Prefilter leg is also what `make bench-engines`
 emits under `redos`.
 
@@ -668,7 +668,7 @@ rebuild `benchmarks/duel/real_bench` against current headers (`-O3 -flto`), `car
 `benchmarks/duel/rust_bench`, then `python3 benchmarks/duel/run_duel.py [--json out.json]` (or
 `make bench-duel` for the related find_iter/captures apples-to-apples table in §E.3).
 
-**arm64** — Apple M1 Pro, Apple clang 16, `-O3 -flto`:
+**arm64** — Apple clang 16, `-O3 -flto`:
 
 | case | REAL ns/B | rust ns/B | winner |
 | --- | ---: | ---: | :--- |
@@ -685,7 +685,7 @@ rebuild `benchmarks/duel/real_bench` against current headers (`-O3 -flto`), `car
 | email sparse `(\w+)@(\w+)` | 0.061 | 0.121 | **REAL 2.0×** |
 | key= `key=(\w+)` | 1.072 | 1.440 | **REAL 1.3×** |
 
-**x86-64** — devbox, g++ 13.3.0, `-O3 -flto`:
+**x86-64** — g++ 13.3.0, `-O3 -flto`:
 
 | case | REAL ns/B | rust ns/B | winner |
 | --- | ---: | ---: | :--- |
@@ -897,7 +897,7 @@ operations:
   and `Arc` traffic together. The same fault is what the C ABI's own comment forbids ("pairwise specifically,
   NOT one memcpy") — it had survived on the Rust side.
 
-  **arm64 M1 Pro, criterion, 64 KiB corpus** — two trains' effect on this bench, against the `regex` crate in
+  **arm64, criterion, 64 KiB corpus** — two trains' effect on this bench, against the `regex` crate in
   the same process:
 
   | criterion row | v2026.7.56 (`9c400e1`) | now (`35cd546`) | vs `regex` now |
@@ -940,7 +940,7 @@ operations:
   inside the closure. `first_use` deliberately includes `compile` rather than subtracting it — two medians
   measured separately and subtracted is an estimate carrying both error bars, not a measurement.
 
-  **arm64 M1 Pro, criterion, at `9c400e1`.** Ratio is `regex` ÷ REAL, so **> 1 means REAL is ahead**:
+  **arm64, criterion, at `9c400e1`.** Ratio is `regex` ÷ REAL, so **> 1 means REAL is ahead**:
 
   | case | `compile` REAL | `regex` | ratio | `first_use` REAL | `regex` | ratio |
   | --- | ---: | ---: | :--- | ---: | ---: | :--- |
@@ -997,7 +997,7 @@ operations:
   Parity, not a lead: the intervals overlap, so the defensible claim is that the gap is gone. The scan rows
   were re-measured to confirm the cost did not simply move — `find/email` 46.52 µs (46.20 before),
   `captures/email` 51.98 (52.10), `find/no_match` 1.67 against the crate's 776 ns — all unchanged. Measured
-  on the same arm64 M1 Pro, one group at a time; NOT under the interleaved A/B protocol the table above
+  on the same arm64 host, one group at a time; NOT under the interleaved A/B protocol the table above
   uses, which is why these sit in their own table rather than as a new column in it.
 
   Read the two families together: REAL's cost is overwhelmingly *eager and small* and `regex`'s is *eager
@@ -1057,7 +1057,7 @@ turn out to be an ASCII-vs-Unicode *semantics* difference (a different, more fun
 data table).
 
 **Stamp.** REAL `2026.8.9+` (tree `47dccc2`), both ISAs re-measured for this stamp, on the same
-three-runs-per-ISA / minimum-per-cell protocol as §A. **arm64** table below: Apple M1 Pro, Apple
+three-runs-per-ISA / minimum-per-cell protocol as §A. **arm64** table below: Apple
 clang 16, `-O2`, N = 30 (`make bench-engines`). **x86-64**, same harness and N, g++ 13.3 with PCRE2
 10.47 (from source — the version the binary LINKED, printed by the harness) and RE2 10.0: `\w+` mixed
 **3.399** (pcre2 **1.02×**, re2 **1.47×**), `\p{L}+` CJK **3.375** (0.84× / re2 **5.70×**), `\p{N}+`
@@ -1291,12 +1291,12 @@ actual gate).
   misleading speed number.
 - **Not gated.** These *absolute-throughput* targets are excluded from `full-local-gate`
   on purpose: a noisy wall-time measurement must never turn a clean build red.
-- **Measure x86-64 on the devbox, not in Docker on the laptop.** Same six cores and the same
+- **Measure x86-64 on the native g++ 13.3 host, not in Docker on a second machine.** Same six cores and the same
   g++ 13.3 that builds the manylinux wheels, but the worst within-arm spread across every
   row is **1.045×** against the container's **1.98×** — the difference between an
-  instrument and a lottery. Use Docker only when the devbox is unavailable, and then only
+  instrument and a lottery. Use Docker only when the native host is unavailable, and then only
   with the workaround below. The two disagree on more than precision: on the `cp_class_hi_width`
-  attribute A/B the container reported `(?i)cafe` **improving 25 %** where the devbox
+  attribute A/B the container reported `(?i)cafe` **improving 25 %** where the native host
   measured it **regressing 217 %**, which is the sign error that matters most.
 - **In Docker as a fallback, take the minimum across RUNS, not across samples within one.**
   The harness already reports `min(samples)`, which is the right robust statistic and is
@@ -1314,7 +1314,7 @@ actual gate).
 - **On GCC, an A/B measured inside an exhausted inlining budget is a lottery draw.** Past
   `--param inline-unit-growth` (default 40 %) GCC declines in traversal order, so an unrelated change
   re-shuffles which inlinings survive: a pattern that never executes the changed code has moved by
-  **+220 %**, and one row read −25 % in a container against +217 % on the devbox. **Largely cured** —
+  **+220 %**, and one row read −25 % in a container against +217 % on the native host. **Largely cured** —
   keying the compile-time scratch on dimensions took refusals in a 32-pattern TU from 19 195 to 1457
   and flattened the timing — but not abolished: a TU of *heterogeneous* compile-time patterns still
   approaches the cap, and a residual bump survives at one sampled size. So the discipline stands
