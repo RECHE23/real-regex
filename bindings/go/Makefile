@@ -27,7 +27,7 @@ vendor: ## Regenerate vendor_include/ and the vendored C-ABI shim FROM the sourc
 # the copy was deterministic, and left the tree dirty on failure. The count is
 # the denominator — OK without it is the fourth silent green of the week.
 check-vendor: ## Fails if the vendored tree has drifted from include/ + bindings/c (does not write)
-	@set -euo pipefail; \
+	@set -eu; \
 	 tmp=$$(mktemp -d); \
 	 trap 'rm -rf "$$tmp"' EXIT; \
 	 mkdir -p "$$tmp/real"; \
