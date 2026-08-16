@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <new>
 #include <optional>
 #include <string>
@@ -538,6 +539,8 @@ PyObject* Match_get_endpos(PyObject* self, void*) { return PyLong_FromSsize_t(as
 
 // Defined after the replacement-template machinery (apply_template / parse_template).
 PyObject* Match_expand(PyObject* self, PyObject* template_arg);
+PyObject* identity_copy(PyObject* self, PyObject* unused);
+PyObject* type_class_getitem(PyObject* type, PyObject* item);
 
 PyMethodDef match_methods[] = {
     {"group", Match_group, METH_VARARGS,
@@ -597,6 +600,15 @@ PyMethodDef match_methods[] = {
      "Returns:\n"
      "    str or bytes: The expanded template. A group that did not participate\n"
      "        contributes nothing."},
+    {"__copy__", identity_copy, METH_NOARGS,
+     "__copy__($self, /)\n--\n\n"
+     "Return self. Matches are immutable, like re.Match."},
+    {"__deepcopy__", identity_copy, METH_O,
+     "__deepcopy__($self, memo, /)\n--\n\n"
+     "Return self. Matches are immutable, like re.Match."},
+    {"__class_getitem__", type_class_getitem, METH_O | METH_CLASS,
+     "__class_getitem__($cls, item, /)\n--\n\n"
+     "Return a GenericAlias, so Match[str] works like re.Match[str]."},
     {nullptr, nullptr, 0, nullptr},
 };
 
@@ -673,6 +685,19 @@ PyObject* Match_get_regs(PyObject* self, void* /*closure*/) {
 
 // re.Match repr: <real.Match object; span=(s, e), match=REPR> with the match repr truncated
 // to 50 characters, like re (which uses "%.50R").
+// re.Pattern / re.Match are immutable: copy and deepcopy return self.
+PyObject* identity_copy(PyObject* self, PyObject* /*unused*/)
+{
+  return Py_NewRef(self);
+}
+
+PyObject* type_class_getitem(PyObject* type, PyObject* item)
+{
+  return Py_GenericAlias(type, item);
+}
+
+PyObject* Pattern_reduce(PyObject* self, PyObject* unused);
+
 PyObject* Match_repr(PyObject* self) {
     MatchObject* match = as_match(self);
     if (ensure_char_spans(match) < 0) {
@@ -1187,6 +1212,26 @@ struct repl_segment {
 
 void set_error(const char* message) { PyErr_SetString(error_type, message); }
 
+// Raise real.error(msg, pattern, pos) so re.error fills lineno/colno. `msg` is
+// the engine's cause, not the "regex_error at N: " wrapper what() prints.
+void set_regex_error(const real::regex_error& ex, PyObject* pattern)
+{
+  const std::string prefix = "regex_error at " + std::to_string(ex.position()) + ": ";
+  const char*       what   {ex.what()};
+  const char*       msg    {(std::strncmp(what, prefix.c_str(), prefix.size()) == 0)
+                              ? what + prefix.size()
+                              : what};
+  const auto        pos    {static_cast<Py_ssize_t>(ex.position())};
+  PyObject*         exc    {(pattern != nullptr)
+                              ? PyObject_CallFunction(error_type, "sOn", msg, pattern, pos)
+                              : PyObject_CallFunction(error_type, "sn", msg, pos)};
+  if (exc == nullptr) {
+    return;
+  }
+  PyErr_SetObject(error_type, exc);
+  Py_DECREF(exc);
+}
+
 // Parses Python's replacement template syntax (\1, \group<name>, escapes).
 int parse_template(PatternObject* pat, std::string_view repl,
                    std::vector<repl_segment>& out) {
@@ -1655,6 +1700,18 @@ PyMethodDef pattern_methods[] = {
      "    str or bytes: Result after replacements.\n\n"
      "Complexity:\n"
      "    Matching is O(len(string)) -- guaranteed linear; never backtracks (ReDoS-safe)."},
+    {"__copy__", identity_copy, METH_NOARGS,
+     "__copy__($self, /)\n--\n\n"
+     "Return self. Patterns are immutable, like re.Pattern."},
+    {"__deepcopy__", identity_copy, METH_O,
+     "__deepcopy__($self, memo, /)\n--\n\n"
+     "Return self. Patterns are immutable, like re.Pattern."},
+    {"__reduce__", Pattern_reduce, METH_NOARGS,
+     "__reduce__($self, /)\n--\n\n"
+     "Pickle support: recompile from (pattern, flags)."},
+    {"__class_getitem__", type_class_getitem, METH_O | METH_CLASS,
+     "__class_getitem__($cls, item, /)\n--\n\n"
+     "Return a GenericAlias, so Pattern[str] works like re.Pattern[str]."},
     {"subn", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_subn)),
      METH_VARARGS | METH_KEYWORDS,
      "subn($self, repl, string, count=0)\n--\n\n"
@@ -1681,6 +1738,66 @@ PyGetSetDef pattern_getset[] = {
      nullptr},
     {nullptr, nullptr, nullptr, nullptr, nullptr},
 };
+
+std::string pattern_flags_suffix(unsigned long flags)
+{
+  flags &= ~PYFLAG_UNICODE;
+  std::string out;
+  static const struct
+  {
+    const char*   name;
+    unsigned long bit;
+  } names[] = {
+    {"IGNORECASE", PYFLAG_IGNORECASE},
+    {"MULTILINE",  PYFLAG_MULTILINE},
+    {"DOTALL",     PYFLAG_DOTALL},
+    {"VERBOSE",    PYFLAG_VERBOSE},
+    {"ASCII",      PYFLAG_ASCII},
+  };
+  for (const auto& n : names) {
+    if ((flags & n.bit) == 0) {
+      continue;
+    }
+    if (!out.empty()) {
+      out += "|";
+    }
+    out += "re.";
+    out += n.name;
+  }
+  return out;
+}
+
+// re.compile('pat'[, flags]) with the pattern repr truncated at 200 characters.
+PyObject* Pattern_repr(PyObject* self)
+{
+  PatternObject*  pat {as_pattern(self)};
+  const std::string fl {pattern_flags_suffix(pat->py_flags)};
+  if (fl.empty()) {
+    return PyUnicode_FromFormat("real.compile(%.200R)", pat->pattern_obj);
+  }
+  return PyUnicode_FromFormat("real.compile(%.200R, %s)", pat->pattern_obj, fl.c_str());
+}
+
+PyObject* Pattern_reduce(PyObject* self, PyObject* /*unused*/)
+{
+  PatternObject* pat     {as_pattern(self)};
+  PyObject*      mod     {PyImport_ImportModule("real")};
+  if (mod == nullptr) {
+    return nullptr;
+  }
+  PyObject* compile {PyObject_GetAttrString(mod, "compile")};
+  Py_DECREF(mod);
+  if (compile == nullptr) {
+    return nullptr;
+  }
+  PyObject* args {Py_BuildValue("(Ok)", pat->pattern_obj, pat->py_flags)};
+  if (args == nullptr) {
+    Py_DECREF(compile);
+    return nullptr;
+  }
+  PyObject* pair {Py_BuildValue("(NN)", compile, args)};
+  return pair;
+}
 
 // re.Pattern is a value type: two patterns compiled from the same text with the same flags
 // compare equal even when they are distinct objects. Equality keys on (pattern text, flags);
@@ -1715,6 +1832,7 @@ Py_hash_t Pattern_hash(PyObject* self) {
 
 PyType_Slot pattern_slots[] = {
     {Py_tp_dealloc, reinterpret_cast<void*>(Pattern_dealloc)},
+    {Py_tp_repr, reinterpret_cast<void*>(Pattern_repr)},
     {Py_tp_richcompare, reinterpret_cast<void*>(Pattern_richcompare)},
     {Py_tp_hash, reinterpret_cast<void*>(Pattern_hash)},
     {Py_tp_methods, static_cast<void*>(pattern_methods)},
@@ -2047,7 +2165,7 @@ PyObject* real_compile_set(PyObject*, PyObject* args, PyObject* kwargs) {
     try {
         set = new real::regex_set(std::span<const std::string_view> {views}, compile_flags);
     } catch (const real::regex_error& ex) {
-        set_error(ex.what());
+        set_regex_error(ex, nullptr);
         return nullptr;
     } catch (const std::bad_alloc&) {
         return PyErr_NoMemory();
@@ -2134,7 +2252,7 @@ PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
     try {
         rx = new real::regex(std::string_view(data, static_cast<std::size_t>(len)), compile_flags);
     } catch (const real::regex_error& ex) {
-        set_error(ex.what());
+        set_regex_error(ex, pattern);
         return nullptr;
     } catch (const std::bad_alloc&) {
         return PyErr_NoMemory();

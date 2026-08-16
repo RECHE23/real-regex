@@ -35,6 +35,27 @@ A = ASCII = 256
 fallback = False
 
 
+def _compile_repr(pattern, flags):
+    """``real.compile(...)`` form, matching CPython's ``re.compile`` (%.200R, named flags)."""
+    shown = flags & ~UNICODE
+    names = []
+    for bit, name in (
+        (IGNORECASE, "IGNORECASE"),
+        (MULTILINE, "MULTILINE"),
+        (DOTALL, "DOTALL"),
+        (VERBOSE, "VERBOSE"),
+        (ASCII, "ASCII"),
+    ):
+        if shown & bit:
+            names.append("re." + name)
+    body = repr(pattern)
+    if len(body) > 200:
+        body = body[:200]
+    if names:
+        return "real.compile(" + body + ", " + "|".join(names) + ")"
+    return "real.compile(" + body + ")"
+
+
 class _FallbackMatch:
     """A match produced by the ``re`` fallback (policy fallback), presenting real's Match API.
 
@@ -49,14 +70,27 @@ class _FallbackMatch:
         self._m = match
         self._pattern = pattern
 
-    def __getattr__(self, name):
-        return getattr(self._m, name)
-
     def __getitem__(self, key):
         return self._m[key]
 
     def __bool__(self):
         return True
+
+    def __getattr__(self, name):
+        # Protocol names must not be relayed: copy/pickle/inspect probe
+        # __reduce__, __getstate__, __iter__, … and a blanket getattr
+        # recurses or invents a result. Unknown dunders raise.
+        if len(name) >= 4 and name.startswith("__") and name.endswith("__"):
+            raise AttributeError(
+                f"{type(self).__name__!r} object has no attribute {name!r}"
+            )
+        return getattr(self._m, name)
+
+    def __copy__(self):
+        return self
+
+    def __deepcopy__(self, memo):
+        return self
 
     @property
     def re(self):  # noqa: A003 - mirrors re.Match.re
@@ -64,7 +98,11 @@ class _FallbackMatch:
         return self._pattern
 
     def __repr__(self):
-        return f"<real.Match (re fallback) span={self._m.span()} match={self._m.group()!r}>"
+        start, end = self._m.span()
+        shown = repr(self._m.group())
+        if len(shown) > 50:
+            shown = shown[:50]
+        return f"<real.Match object; span=({start}, {end}), match={shown}>"
 
 
 class _FallbackPattern:
@@ -79,6 +117,18 @@ class _FallbackPattern:
         self._p = re_pattern
         self.pattern = source
         self.flags = flags
+
+    def __repr__(self):
+        return _compile_repr(self.pattern, self.flags)
+
+    def __copy__(self):
+        return self
+
+    def __deepcopy__(self, memo):
+        return self
+
+    def __reduce__(self):
+        return (compile, (self.pattern, self.flags, True))
 
     def _wrap(self, match):
         return _FallbackMatch(match, self) if match is not None else None
