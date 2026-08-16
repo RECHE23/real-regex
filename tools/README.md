@@ -6,7 +6,7 @@ the methodology.
 
 | | |
 |---|---|
-| **Lint** (`lint`) | clang-tidy over the test sources (`.clang-tidy` at the repo root). |
+| **Lint** (`lint`) | clang-tidy over the test sources, then the 36 shipped headers through a synthetic TU. The header pass prints `N headers analysed, M warnings` and fails if M is not 0. The SBO union is a named `--checks` exclusion (the accepted MISRA deviation), not a NOLINT. |
 | **MISRA** (`misra`) | A MISRA C++:2023-oriented pass over `include/real/` through a synthetic translation unit, against the shared base profile SciForge owns (`$(SCIFORGE_LINT)/clang-tidy-misra`) plus REAL's one deviation (the SBO union in `storage.hpp`). See [docs/MISRA.md](../docs/MISRA.md). |
 | **Format** (`format` / `format-check`) | Uncrustify over `include/` + `tests/` (generated Unicode tables excluded), against the shared config SciForge owns (`$(SCIFORGE_LINT)/uncrustify.cfg`). `format` rewrites in place; `format-check` is the dry-run CI uses. |
 | **Layering** (`check-layers`) | Enforces the `include/real/` header dependency-tier contract (`check_layers.py`) — a header may only include from its own tier or a lower one. |

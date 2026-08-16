@@ -508,8 +508,15 @@ namespace real::compat {
           // A POSIX grammar on REAL routes an unanchored search to leftmost-LONGEST bounds
           // (re.posix_longest()); a whole-sequence match (fullmatch) has one candidate, so longest ==
           // first there.
-          const auto             result {anchored ? engine.fullmatch(sv)
-                                         : (re.posix_longest() ? engine.search_longest(sv) : engine.search(sv))};
+          const auto result {[&] {
+                               if (anchored) {
+                                 return engine.fullmatch(sv);
+                               }
+                               if (re.posix_longest()) {
+                                 return engine.search_longest(sv);
+                               }
+                               return engine.search(sv);
+                             }()};
           if (!result.matched()) {
             m.set_ready_no_match(); // std leaves ready()==true, size()==0 on a failed match
             return false;

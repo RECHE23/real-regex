@@ -174,11 +174,10 @@ namespace real::detail {
       std::array<std::uint8_t, 16> blk_b {};
       std::memcpy(blk_a.data(), text.data() + pos + off_a, 16); // MISRA-clean byte loads (no type-pun)
       std::memcpy(blk_b.data(), text.data() + pos + off_b, 16);
-      mask_t m {static_cast<mask_t>(
-                  load_range_mask(blk_a.data(), hints.fs_pair_a_lo0, hints.fs_pair_a_hi0,
-                                  hints.fs_pair_a_lo1, hints.fs_pair_a_hi1)
-                  & load_range_mask(blk_b.data(), hints.fs_pair_b_lo0, hints.fs_pair_b_hi0,
-                                    hints.fs_pair_b_lo1, hints.fs_pair_b_hi1))};
+      mask_t m {load_range_mask(blk_a.data(), hints.fs_pair_a_lo0, hints.fs_pair_a_hi0,
+                                hints.fs_pair_a_lo1, hints.fs_pair_a_hi1)
+                & load_range_mask(blk_b.data(), hints.fs_pair_b_lo0, hints.fs_pair_b_hi0,
+                                  hints.fs_pair_b_lo1, hints.fs_pair_b_hi1)};
 #if defined(REAL_TEST_INSTRUMENT)
       // Bill this round's 16 candidate starts, as find_bytes_cascade bills its rounds. NOT optional:
       // the deterministic work-counter gate is what caught the historical O(n^2) icase cascade, and it
@@ -1638,10 +1637,8 @@ namespace real::detail {
         // a far higher density and so reaches certainty in a fraction of the bytes. A fixed 256 made
         // every sparse SHORT alternation pay a full-window scan it could not need -- a charge on subjects
         // that stay on the cascade, which is the common case and therefore the one to protect.
-        const std::size_t needed   {8000U * branches / (want == 0 ? std::size_t {1} : want)};
-        const std::size_t span_cap {needed < ac_density_min_span       ? ac_density_min_span
-                                    : needed > ac_density_sample_bytes ? ac_density_sample_bytes
-                                                                       : needed};
+        const std::size_t needed             {8000U * branches / (want == 0 ? std::size_t {1} : want)};
+        const std::size_t span_cap           {std::clamp(needed, ac_density_min_span, ac_density_sample_bytes)};
         const std::size_t limit              {text.size() < start + span_cap ? text.size() : start + span_cap};
         std::size_t       cands              {0};
         std::size_t       completed          {0};
@@ -2523,13 +2520,11 @@ namespace real::detail {
         state_.row_ptr           = prog_.class_tables + (class_index * 256);
         return state_.row_ptr;
       }
-      else if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
+      if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
         verify_class_row(*prog_.immut, class_index);
         return state_.row_ptr;
       }
-      else {
-        return derive_class_table(class_index);
-      }
+      return derive_class_table(class_index);
     }
 
     /*!
@@ -2558,7 +2553,7 @@ namespace real::detail {
         state_.row_ptr           = prog_.cp_ascii_tables + (cp_index * 256);
         return state_.row_ptr;
       }
-      else if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
+      if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
         detail::regex_immutables& cache {*prog_.immut};
         if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
           ensure_membership_rows(cache);
@@ -2571,7 +2566,7 @@ namespace real::detail {
         state_.row_ptr           = cache.cp_ascii_rows.data() + (cp_index * 256);
         return state_.row_ptr;
       }
-      else { // constant evaluation -- see class_table
+      { // constant evaluation -- see class_table
         if (state_.table_class != key) {
           const char_class& klass {prog_.cp_classes[cp_index].ascii};
           for (std::size_t b {0}; b < 256; ++b) {
@@ -2664,7 +2659,7 @@ namespace real::detail {
         state_.page_ptr          = prog_.cp_page_tables + (cp_index * 30);
         return state_.page_ptr;
       }
-      else if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
+      if (!std::is_constant_evaluated() && prog_.immut != nullptr) {
         detail::regex_immutables& cache {*prog_.immut};
         if (cache.rows_for.load(std::memory_order_acquire) != static_cast<const void*>(prog_.code.data())) {
           ensure_membership_rows(cache);
@@ -2677,7 +2672,7 @@ namespace real::detail {
         state_.page_ptr          = cache.cp_page_rows.data() + (cp_index * 30);
         return state_.page_ptr;
       }
-      else { // constant evaluation -- see class_table
+      { // constant evaluation -- see class_table
         if (state_.cp_page_class != key) {
           state_.cp_page.fill(0);
           const detail::cp_class& cc {prog_.cp_classes[cp_index]};
@@ -3578,8 +3573,13 @@ namespace real::detail {
       std::size_t       i       {start};
       while (i < text.size()) {
         const auto  lead {static_cast<std::uint8_t>(text[i])};
-        std::size_t w    {asc[lead] != 0U ? std::size_t {1}
-                                       : (lead < 0x80U ? std::size_t {0} : width(i))};
+        std::size_t w    {0};
+        if (asc[lead] != 0U) {
+          w = 1;
+        }
+        else if (lead >= 0x80U) {
+          w = width(i);
+        }
         if (w == 0) {
           ++i;
           continue;
@@ -5754,8 +5754,7 @@ namespace real::detail {
       // Assert-fail below still assign(npos) for seam/!matched consumers.
       ensure_slot_size(out_slots, prog_.slot_count);
       std::size_t consumed {};
-      for (std::size_t pc = 0; pc < prog_.code.size(); ++pc) {
-        const instr& instruction {prog_.code[pc]};
+      for (const instr& instruction : prog_.code) {
         if (instruction.op == opcode::save) {
           out_slots[instruction.arg16] = cand + consumed;
         }

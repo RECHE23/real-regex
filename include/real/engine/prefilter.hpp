@@ -288,8 +288,8 @@ namespace real::detail {
       }
     }
     std::size_t word_hi {0};
-    for (std::size_t i = 0; i < word_ranges_size; ++i) {
-      if (word_ranges[i].lo >= 0x80U) {
+    for (const code_range& wr : word_ranges) {
+      if (wr.lo >= 0x80U) {
         ++word_hi;
       }
     }
@@ -300,12 +300,12 @@ namespace real::detail {
       return false;
     }
     std::size_t j {0};
-    for (std::size_t i = 0; i < word_ranges_size; ++i) {
-      if (word_ranges[i].lo < 0x80U) {
+    for (const code_range& wr : word_ranges) {
+      if (wr.lo < 0x80U) {
         continue;
       }
       const code_range& r {all_ranges[static_cast<std::size_t>(cc.range_begin) + j]};
-      if (r.lo != word_ranges[i].lo || r.hi != word_ranges[i].hi) {
+      if (r.lo != wr.lo || r.hi != wr.hi) {
         return false;
       }
       ++j;
@@ -667,12 +667,12 @@ namespace real::detail {
       std::uint8_t trail_wb        {};
       std::uint8_t lead_wb         {};
       // Lead \b/\B: first assert_position before any byte (after saves).
-      for (std::size_t i = 0; i < code.size(); ++i) {
-        if (code[i].op == opcode::byte) {
+      for (const instr& in : code) {
+        if (in.op == opcode::byte) {
           break;
         }
-        if (code[i].op == opcode::assert_position) {
-          const auto k {static_cast<assert_kind>(code[i].arg8)};
+        if (in.op == opcode::assert_position) {
+          const auto k {static_cast<assert_kind>(in.arg8)};
           if (is_word_boundary_kind(k)) {
             lead_wb = wb_hint_of(k);
           }
@@ -979,7 +979,9 @@ namespace real::detail {
             // assertion has already been peeled out of the program -- so nothing downstream could
             // re-derive it. Both were measured as real divergences: `[a-z]+\b$` (trail) against the
             // seam, and `\b(?>\w)$` (LEAD) against Python's re, by the binding's differential fuzz.
-            if (ok && close.ok && !(close.end_anchor != 0 && (lead.wb_lead != 0 || close.wb_trail != 0)) && cls >= 0 && static_cast<std::size_t>(cls) < classes.size()
+            if (ok && close.ok
+                && (close.end_anchor == 0 || (lead.wb_lead == 0 && close.wb_trail == 0))
+                && cls >= 0 && static_cast<std::size_t>(cls) < classes.size()
                 && k <= 65535) {
               const char_class& cc        {classes[static_cast<std::size_t>(cls)]};
               std::uint8_t      out_lead  {0};
@@ -1116,7 +1118,9 @@ namespace real::detail {
           // assertion has already been peeled out of the program -- so nothing downstream could
           // re-derive it. Both were measured as real divergences: `[a-z]+\b$` (trail) against the
           // seam, and `\b(?>\w)$` (LEAD) against Python's re, by the binding's differential fuzz.
-          if (ok && close.ok && !(close.end_anchor != 0 && (lead.wb_lead != 0 || close.wb_trail != 0)) && !counted_wb && cp_idx >= 0
+          if (ok && close.ok
+              && (close.end_anchor == 0 || (lead.wb_lead == 0 && close.wb_trail == 0))
+              && !counted_wb && cp_idx >= 0
               && static_cast<std::size_t>(cp_idx) < cp_classes.size() && k <= 65535) {
             const bool has_wb {lead.wb_lead != 0 || close.wb_trail != 0};
             // Bare path: no Unicode table walk (keeps constexpr light for static_regex).
@@ -1951,7 +1955,7 @@ namespace real::detail {
         }
       }
     }
-    if (!(best_freq < 100U && static_cast<std::uint32_t>(best_freq) * 4U < first_freq)) {
+    if (best_freq >= 100U || static_cast<std::uint32_t>(best_freq) * 4U >= first_freq) {
       return;
     }
     hints.rare_disc            = best_byte;

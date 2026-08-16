@@ -22,6 +22,8 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
+#include <ranges>
 #include <cstddef>
 #include <initializer_list>
 #include <optional>
@@ -207,17 +209,12 @@ namespace real {
         return false;
       }
       // Fused path: any fused bit or any ineligible hit.
-      for (bool b : fused_->which_matched(text)) {
-        if (b) {
-          return true;
-        }
+      if (std::ranges::any_of(fused_->which_matched(text), std::identity {})) {
+        return true;
       }
-      for (const std::size_t oi : ineligible_orig_) {
-        if (members_[oi].search(text)) {
-          return true;
-        }
-      }
-      return false;
+      return std::ranges::any_of(ineligible_orig_, [&](std::size_t oi) {
+                                   return members_[oi].search(text).matched();
+                                 });
     }
 
     /*!

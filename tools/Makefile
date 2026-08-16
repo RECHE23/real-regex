@@ -9,15 +9,11 @@
 # full-local-gate runs format-check/check-layers/check-capi-abi as steps 1/3/5 and
 # lint/misra further down) or directly here with `make -C tools <target>`.
 #
-# INCLUDES stays the RELATIVE `-Iinclude` from mk/common.mk -- LOAD-BEARING here.
-# .clang-tidy's HeaderFilterRegex ('.*/(include/real|tests)/.*') requires a path
-# component BEFORE `include/real`: the relative spelling produces header paths that
-# read `include/real/...` (no leading component -> no match -> header diagnostics
-# suppressed, the historical always-green lint). An absolute `-I$(ROOT)/include`
-# makes every header path match and floods the log (measured A/B on one TU: 0 vs
-# 24409 warnings). Safe here because every recipe below runs
-# under `cd $(ROOT) &&`, matching how the root Makefile's own former lint/misra ran
-# with CURDIR == ROOT. DO NOT re-anchor INCLUDES to absolute.
+# INCLUDES stays the RELATIVE `-Iinclude` from mk/common.mk -- LOAD-BEARING for
+# lint-tests: HeaderFilterRegex requires a path component before include/real, so
+# the relative spelling keeps test-TU header diagnostics off (they belong to
+# lint-headers, which passes --header-filter='include/real/' explicitly).
+# DO NOT re-anchor INCLUDES to absolute.
 ROOT := $(abspath $(CURDIR)/..)
 include $(ROOT)/mk/common.mk
 # HELP_PREFIX stays empty (the default in mk/help.mk): this section's target names are
@@ -38,11 +34,47 @@ include $(ROOT)/mk/help.mk
 # message's path spelling.
 FORMAT_FILES := $(shell cd $(ROOT) && find include tests -name '*.hpp' -o -name '*.cpp' | grep -vE 'include/real/unicode/unicode_(fold|props|property|script|binprop|scx)\.hpp')
 
-.PHONY: lint misra format format-check check-layers check-capi-abi check-features-probe help
+.PHONY: lint lint-tests lint-headers misra format format-check check-layers check-capi-abi check-features-probe help
 .DEFAULT_GOAL := help
 
-lint: ## clang-tidy over the test sources
+# SBO union in storage.hpp: accepted MISRA deviation, named here rather than NOLINT'd
+# at each access. LLVM-22-only style checks that are not in the 18-era 19-item
+# work list stay off this pass so local 22 and CI 18 agree on the denominator.
+HEADER_TIDY_OFF := -cppcoreguidelines-pro-type-union-access,-modernize-use-designated-initializers,-modernize-use-integer-sign-comparison,-modernize-use-scoped-lock,-modernize-use-ranges,-readability-redundant-typename,-cppcoreguidelines-use-enum-class,-cppcoreguidelines-prefer-member-initializer,-readability-use-std-min-max,-modernize-raw-string-literal,-modernize-use-emplace,-performance-inefficient-vector-operation,-readability-math-missing-parentheses,-bugprone-misplaced-widening-cast
+
+lint: lint-tests lint-headers ## clang-tidy: tests, then shipped headers (prints the header count)
+
+lint-tests:
 	@cd $(ROOT) && find tests -name '*.cpp' | xargs -P $(JOBS) -I{} clang-tidy {} -- $(CXXSTD) $(INCLUDES) -Ibindings/c -I$(SCIFORGE_INCLUDE)
+
+# Synthetic TU, same shape as misra. --header-filter overrides HeaderFilterRegex so
+# include/real/ is visible despite the relative -Iinclude spelling. Generated
+# Unicode tables stay in the TU (they count in the 36) but designated-initializer
+# noise from them is in HEADER_TIDY_OFF, not a NOLINT in the generators.
+lint-headers:
+	@mkdir -p $(BUILD)
+	@printf '%s\n' \
+	  '#include <real/real.hpp>' \
+	  '#include <real/dfa.hpp>' \
+	  '#include <real/regex_set.hpp>' \
+	  '#include <real/compat/std/regex.hpp>' \
+	  '#include <real/compat/re2/re2.hpp>' \
+	  'int main(){ try { const real::regex r("a"); return r.search("a") ? 0 : 1; } catch (...) { return 2; } }' \
+	  > $(BUILD)/lint_tu.cpp
+	@set -euo pipefail; \
+	  cd $(ROOT) && clang-tidy --config-file=.clang-tidy \
+	    --checks='$(HEADER_TIDY_OFF)' \
+	    --header-filter='include/real/' \
+	    $(BUILD)/lint_tu.cpp -- $(CXXSTD) $(INCLUDES) \
+	    > $(BUILD)/lint-headers.log 2>&1 \
+	    || { echo "lint-headers: clang-tidy failed"; tail -n 40 $(BUILD)/lint-headers.log; exit 1; }; \
+	  hdrs=$$(find include/real -name '*.hpp' | wc -l | tr -d ' '); \
+	  warns=$$(grep -cE 'include/real/.*: warning:' $(BUILD)/lint-headers.log || true); \
+	  echo "lint-headers: $$hdrs headers analysed, $$warns warnings"; \
+	  if [ "$$warns" != 0 ]; then \
+	    grep -E 'include/real/.*: warning:' $(BUILD)/lint-headers.log | head -20; \
+	    exit 1; \
+	  fi
 
 # Analyzes the library's own headers through a synthetic translation unit that
 # includes the umbrella header and exercises the engine (so templates get
