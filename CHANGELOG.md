@@ -129,7 +129,7 @@ against the rust crate, on its own protocol, and this train does not claim it. �
 ## v2026.7.63
 
 7.63 (**the storage lift — a pattern stops multiplying the engine into your translation unit, and the
-Unicode gain it had been blocking**): §Unicode re-stamped on the devbox under g++ 13.3.0, min of five
+Unicode gain it had been blocking**): §Unicode re-stamped on x86-64 under g++ 13.3.0, min of five
 interleaved runs, against untouched-row gauges. `\p{sc=Han}` **13.12 → 10.14 ns/B (−22.7 %)**,
 `\p{scx=Cyrl}` 11.23 → 8.92 (−20.6 %), `\p{N}+` 7.32 → 6.08 (−17.0 %), mixed-script `\w+` 6.34 → 5.43
 (−14.3 %); `\p{L}+` (−12.2 %) and `[à-ÿ]+` (−12.9 %) sit nearer this TU's floor and are recorded as
@@ -156,7 +156,7 @@ a 32-pattern unit 19 735 → **1457**, and the 11/12/14-pattern timings 33.5 / 3
 **Why the Unicode gain is in this train and not an earlier one:** dropping the cp-class inlining
 attributes had been measured, valid and reproduced across three compilers, and refused — it cost
 `(?i)cafe` on an ASCII no-match scan **+217 %**, a pattern with zero code-point classes that never enters
-the loop. That was the budget defect, not the change. Re-measured after the lift on the same devbox the
+the loop. That was the budget defect, not the change. Re-measured after the lift on the same x86-64 host the
 collateral is gone and inverted: `(?i)cafe` −9.0 %, `\b\w+\b` −7.4 %, `\w+` −3.2 %, all with the `dyn`
 gauge inside 1 %. **Nine approaches were refuted** on the way and are recorded so none is retried,
 including PGO — which reproduces the identical cliff and exhausts the cap faster, because a profile
@@ -164,7 +164,7 @@ changes which inlines GCC *wants*, not the cap it runs into.
 
 **Two measurement rules earned their place** and now sit in the methodology: read the rows a change
 *cannot* reach before believing any delta (this caught three would-be findings, one a 19 % "gain" that was
-the gauge moving with it), and measure x86-64 on the devbox rather than in Docker — worst within-arm
+the gauge moving with it), and measure x86-64 on the native host rather than in Docker — worst within-arm
 spread 1.045× against 1.98×, and on the deciding A/B the two disagreed about the **sign**.
 
 **Not a benchmark row, but the user-visible fix of the train:** the Python binding's char-offset API was
@@ -475,7 +475,7 @@ entry for them by its own convention (it carries that row verbatim).
 
 ## v2026.7.43
 
-7.43 (issue #3: the Aho-Corasick multi-literal alternation route, N≥12 branches — `real/engine/aho_corasick.hpp`) touches an EXISTING §A cell for the first time since 7.41's own disclosed exception: on x86-64/gcc specifically, `fields [^,]+` (a class-loop pattern, unrelated to alternation and never dispatched through the new route) regresses ~39% from a documented, isolated front-end loop-alignment codegen-luck effect — the AC engine's mere presence in `pike_vm::run()`'s translation unit, not a logic or memory-access change (Valgrind/callgrind confirmed byte-identical executed instructions and cache misses before/after; two targeted per-function alignment fixes were tried and reverted rather than trading the regression for a new one on a different class-loop pattern sharing the same inlined hot loop — see `run()`'s own doc comment in `pike.hpp` and the v2026.7.43 release notes for the full diagnostic trail). The `fields [^,]+` x86-64 figures below are therefore likely STALE as of this train and pending re-measurement — flagged here rather than silently carried over, same discipline as 7.41's own note below. arm64/clang is unaffected (confirmed both by the Valgrind/codegen analysis and this project's own interleaved A/B on this devbox). The suite's own alternation case (`alt the|fox|dog`, 3 literals) is itself unaffected: it stays structurally below the new N=12 routing threshold and continues through the pre-existing `run_alternation`/`small_set` path unchanged, byte-for-byte. The AC route's own gain (2.5-2.6× on a 15-literal alternation past the threshold, arm64, min-of-11 — not one of this suite's own numbered cases) is a disclosed, separate finding reported in the v2026.7.43 release notes, not part of this baseline.
+7.43 (issue #3: the Aho-Corasick multi-literal alternation route, N≥12 branches — `real/engine/aho_corasick.hpp`) touches an EXISTING §A cell for the first time since 7.41's own disclosed exception: on x86-64/gcc specifically, `fields [^,]+` (a class-loop pattern, unrelated to alternation and never dispatched through the new route) regresses ~39% from a documented, isolated front-end loop-alignment codegen-luck effect — the AC engine's mere presence in `pike_vm::run()`'s translation unit, not a logic or memory-access change (Valgrind/callgrind confirmed byte-identical executed instructions and cache misses before/after; two targeted per-function alignment fixes were tried and reverted rather than trading the regression for a new one on a different class-loop pattern sharing the same inlined hot loop — see `run()`'s own doc comment in `pike.hpp` and the v2026.7.43 release notes for the full diagnostic trail). The `fields [^,]+` x86-64 figures below are therefore likely STALE as of this train and pending re-measurement — flagged here rather than silently carried over, same discipline as 7.41's own note below. arm64/clang is unaffected (confirmed both by the Valgrind/codegen analysis and this project's own interleaved A/B on this host). The suite's own alternation case (`alt the|fox|dog`, 3 literals) is itself unaffected: it stays structurally below the new N=12 routing threshold and continues through the pre-existing `run_alternation`/`small_set` path unchanged, byte-for-byte. The AC route's own gain (2.5-2.6× on a 15-literal alternation past the threshold, arm64, min-of-11 — not one of this suite's own numbered cases) is a disclosed, separate finding reported in the v2026.7.43 release notes, not part of this baseline.
 
 ## v2026.7.42
 
