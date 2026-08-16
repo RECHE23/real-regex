@@ -23,7 +23,7 @@ BUILD = ROOT / "build" / "profile"
 CLEAN = BUILD / "profile_runner_clean"
 INST = BUILD / "profile_runner_inst"
 OUT_JSONL = BUILD / "run.jsonl"
-OUT_MD = BUILD / "grid.md"
+OUT_MD = BUILD / "grid.md"  # build-only; a committed copy is a dead snapshot
 
 N_REP = 8000  # corpus repetitions (smaller than duel 20k — profile sample, not §E stamp)
 
