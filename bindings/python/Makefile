@@ -3,15 +3,54 @@
 # setup.py lives at the repo root and uses root-relative sources, so `build` runs there; all paths are
 # $(ROOT)-anchored (in particular PYTHONPATH — a $(CURDIR) here would be bindings/python, breaking the import).
 ROOT             := $(abspath $(CURDIR)/../..)
-PYTHON           ?= python3
+include $(ROOT)/mk/common.mk
 MYPY_PYTHON      ?= $(PYTHON)
-BUILD            ?= $(ROOT)/build
 SCIFORGE_INCLUDE ?= $(abspath $(ROOT)/../sciforge/include)
 SCIFORGE_PYTHON  ?= $(abspath $(ROOT)/../sciforge/python)
 PYRUN            := PYTHONPATH=$(ROOT)/bindings/python:$(SCIFORGE_PYTHON) $(PYTHON)
 
-.PHONY: build test stubtest bench fuzz clean help
+.PHONY: build test stubtest syntax bench fuzz clean help
 .DEFAULT_GOAL := help
+
+# Compile every bindings/python/*.py at the floor declared by requires-python.
+# A SyntaxError valid on the writer's 3.14 and invalid on CI's 3.10 reached
+# GitHub before any test ran. N files compiled; N == 0 is a fail. No floor
+# interpreter is a named skip, not a green.
+syntax: ## Syntax-check bindings/python at the requires-python floor
+	@set -e; \
+	 cd $(ROOT); \
+	 min=$$(sed -nE 's/^requires-python = ">=([0-9]+)\.([0-9]+)"/\1.\2/p' pyproject.toml); \
+	 if [ -z "$$min" ]; then \
+	   echo "python-syntax: FAIL -- could not parse requires-python from pyproject.toml"; \
+	   exit 1; \
+	 fi; \
+	 maj=$${min%.*}; \
+	 mino=$${min#*.}; \
+	 py=""; \
+	 for c in python$$min python$$maj.$$mino $(PYTHON); do \
+	   command -v $$c >/dev/null 2>&1 || continue; \
+	   if $$c -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (int('$$maj'), int('$$mino')) else 1)"; then \
+	     py=$$c; \
+	     break; \
+	   fi; \
+	 done; \
+	 if [ -z "$$py" ]; then \
+	   mkdir -p $(dir $(GATE_SKIPS)); \
+	   echo "python-syntax: SKIPPED -- no interpreter at $$min (requires-python >= $$min)" \
+	     | tee -a $(GATE_SKIPS); \
+	   exit 0; \
+	 fi; \
+	 files=$$(find bindings/python -name '*.py' ! -path '*/__pycache__/*' ! -path '*.egg-info/*' 2>/dev/null || true); \
+	 if [ -z "$$files" ]; then \
+	   echo "python-syntax: FAIL -- 0 files under bindings/python/"; \
+	   exit 1; \
+	 fi; \
+	 n=0; \
+	 for f in $$files; do \
+	   $$py -m py_compile "$$f" || { echo "python-syntax: FAIL -- $$f"; exit 1; }; \
+	   n=$$((n + 1)); \
+	 done; \
+	 echo "python-syntax: $$n files compiled ($$py, floor $$min)"
 
 build: ## Build the abi3 Python extension in place
 	cd $(ROOT) && SCIFORGE_INCLUDE=$(SCIFORGE_INCLUDE) $(PYTHON) setup.py -q build_ext --inplace --force

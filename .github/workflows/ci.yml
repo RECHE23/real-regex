@@ -26,6 +26,9 @@ jobs:
           repository: RECHE23/sciforge
           ref: v2026.7.2
           path: sciforge
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
       - name: Install doxygen + build tools
         run: sudo apt-get update && sudo apt-get install -y doxygen graphviz cmake build-essential
       # Same Uncrustify 0.82 pin as lint-cpp (cached — cold build once, then ~instant).
@@ -68,6 +71,8 @@ jobs:
           # exists -- it is iterator entry, ~140 ns before any scan), so the shape is counted, not timed.
           echo "── check-percall-copies (count_walk passes the intent, not a mutated 440-byte view)"
           make -C real-regex check-percall-copies
+          echo "── python-syntax (bindings/python at the requires-python floor)"
+          make -C real-regex python-syntax
           echo "── check-pins"
           make -C real-regex check-pins SCIFORGE_TOOLS="$TOOLS"
           # Hardening #4: golden GENERATED from bindings/c/real_capi.h must match the header

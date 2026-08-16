@@ -628,6 +628,8 @@ full-local-gate-impl:
 	@$(MAKE) check-state-zeroing
 	@echo "── [4d/24] check-percall-copies (count_walk must pass the intent, not a mutated 440-byte view)"
 	@$(MAKE) check-percall-copies
+	@echo "── [4e/24] python-syntax (bindings/python at the requires-python floor)"
+	@$(MAKE) python-syntax
 	@echo "── [5/24] check-pins"
 	@$(MAKE) check-pins
 	@echo "── [6/24] check-capi-abi (C ABI golden vs real_capi.h)"
