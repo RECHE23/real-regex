@@ -923,8 +923,24 @@ install-smoke: ## [release] System install end to end: find_package + pkg-config
 	 echo "  (e) examples/ build + run against the installed package (proves the showcase examples never rot)"; \
 	 $(CMAKE) -S examples -B "$$work/ex" -DCMAKE_PREFIX_PATH="$$pfx" >/dev/null; \
 	 $(CMAKE) --build "$$work/ex" >/dev/null; \
-	 "$$work/ex/hello"; "$$work/ex/redos_demo"; "$$work/ex/quickstart"; echo "      examples: OK"; \
-	 echo "install-smoke: OK (find_package + pkg-config + direct-copy + negative guard + examples)"
+	 n=0; m=0; miss=""; \
+	 for src in examples/cpp/*.cpp; do \
+	   m=$$((m + 1)); \
+	   name=$$(basename "$$src" .cpp); \
+	   bin="$$work/ex/$$name"; \
+	   if [ ! -x "$$bin" ]; then \
+	     miss="$$miss $$src"; \
+	     continue; \
+	   fi; \
+	   "$$bin" || { echo "install-smoke: FAIL — $$src ran non-zero"; exit 1; }; \
+	   n=$$((n + 1)); \
+	 done; \
+	 echo "      examples: $$n of $$m"; \
+	 if [ "$$n" -ne "$$m" ]; then \
+	   echo "install-smoke: FAIL — built+ran $$n of $$m examples; missing$$miss"; \
+	   exit 1; \
+	 fi; \
+	 echo "install-smoke: OK (find_package + pkg-config + direct-copy + negative guard + examples $$n of $$m)"
 
 # Installs the package from the repository root (root pyproject.toml builds the
 # abi3 extension against include/). uninstall removes it by distribution name.

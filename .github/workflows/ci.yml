@@ -314,8 +314,9 @@ jobs:
   # SciForge is a sibling so REAL's top-level configure resolves the test harness (the install
   # itself is harness-free). This job is also the C++ home for `example-check`:
   # it already has both compilers, and install-smoke's own step (e) already
-  # proves examples/cpp/*.cpp against the INSTALLED package, so example-check's direct
-  # -Iinclude compile+run is the complementary, cheaper leg — same two files, two proofs.
+  # proves every examples/cpp/*.cpp against the INSTALLED package (N of M, fails
+  # if they differ), so example-check's direct -Iinclude compile+run is the
+  # complementary, cheaper leg — same sources, two proofs.
   install-smoke:
     needs: preflight
     runs-on: ubuntu-latest
