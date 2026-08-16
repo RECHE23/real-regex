@@ -2,7 +2,7 @@
 // cgo, over the C ABI at bindings/c/real_capi.h (v2026.7.39+, frozen-additive — vendored here,
 // see vendor_include/ and the Makefile's `vendor`/`check-vendor` targets).
 //
-// v0.1: a regexp-idiomatic subset (Compile/MustCompile/FindAllIndex/FindSubmatchIndex/
+// v0.1: a regexp-idiomatic subset (Compile/MustCompile/String/FindAllIndex/FindSubmatchIndex/
 // ReplaceAll/RegexSet) plus REAL extensions regexp has no equivalent for at all (FullMatch,
 // bounded lookarounds, possessive quantifiers). See README.md for the full method-to-C-ABI
 // mapping and documented flavor divergences from Go's regexp (RE2) — most importantly: \w,
@@ -77,8 +77,13 @@ func spansToIndices(spans []C.size_t) []int {
 // Regexp wraps a compiled real_regex handle. Safe for concurrent use by multiple goroutines
 // (the C ABI's own thread-safety contract: a const handle only reads). Close releases the
 // underlying C++ object; a runtime.SetFinalizer is a safety net, not a substitute for it.
+//
+// expr is the source text, kept here because the C ABI has no pattern getter. String()
+// reads this field; it is not recovered from the handle. A value copy of Regexp still
+// shares the C pointer — unlike regexp.Regexp, *r is not a safe clone.
 type Regexp struct {
-	re *C.real_regex
+	re   *C.real_regex
+	expr string
 }
 
 // Compile compiles pattern. Mirrors regexp.Compile's signature and error contract.
@@ -92,9 +97,15 @@ func Compile(pattern string) (*Regexp, error) {
 	if h == nil {
 		return nil, errors.New(C.GoString(&errbuf[0]))
 	}
-	r := &Regexp{re: h}
+	r := &Regexp{re: h, expr: pattern}
 	runtime.SetFinalizer(r, (*Regexp).Close)
 	return r, nil
+}
+
+// String returns the source text used to compile the expression, like
+// regexp.Regexp.String. The text lives on this value; Close does not clear it.
+func (r *Regexp) String() string {
+	return r.expr
 }
 
 // MustCompile is like Compile but panics on error, mirroring regexp.MustCompile.
@@ -110,8 +121,9 @@ func MustCompile(pattern string) *Regexp {
 //
 // Post-Close contract: the handle is nilled; subsequent method calls must not crash and return
 // zero-values (NumSubexp → 0; SubexpNames → empty slice; FindAll*/FindSubmatchIndex → nil;
-// FullMatch → false; ReplaceAll → error). Prefer not to use a closed Regexp — the guarantee is
-// crash-freedom and stable sentinels, not a second valid lifetime.
+// FullMatch → false; ReplaceAll → error). String is the exception: the source text lives on
+// this value, not on the handle, so Close leaves it. Prefer not to use a closed Regexp for
+// matching — the guarantee is crash-freedom and stable sentinels, not a second valid lifetime.
 func (r *Regexp) Close() error {
 	if r.re != nil {
 		C.real_free(r.re)

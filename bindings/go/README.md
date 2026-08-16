@@ -29,6 +29,7 @@ could not express before.
 | This package | `regexp` equivalent | Notes |
 |---|---|---|
 | `Compile` / `MustCompile` | same | byte-oriented pattern/subject, no separate rune handling needed |
+| `(*Regexp) String` | same | the source text, kept on the Go value (the C ABI has no getter); Close does not clear it |
 | `(*Regexp) Close` | *(none — GC only)* | releases the C++ object explicitly; a finalizer is a safety net, not a substitute |
 | `(*Regexp) NumSubexp` / `SubexpNames` | same | |
 | `(*Regexp) FindAllIndex` | same | byte offsets, `[start,end)`, group 0 only |

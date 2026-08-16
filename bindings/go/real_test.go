@@ -1,6 +1,7 @@
 package real
 
 import (
+	"fmt"
 	"reflect"
 	"regexp"
 	"testing"
@@ -47,6 +48,38 @@ func TestMustCompilePanicsOnError(t *testing.T) {
 	MustCompile(`(`)
 }
 
+// String is regexp.Regexp.String: the source text, not a default dump of the
+// C pointer. Patterns the stdlib also compiles are compared against it;
+// patterns it rejects still have to round-trip our own source.
+func TestStringMatchesStdlib(t *testing.T) {
+	shared := []string{`abc`, `\d+`, ``, `(?P<g>\w+)@(\w+)`, `[a-z]+`}
+	for _, p := range shared {
+		r := MustCompile(p)
+		std := regexp.MustCompile(p)
+		if got, want := r.String(), std.String(); got != want {
+			r.Close()
+			t.Fatalf("%q: String() %q, regexp.Regexp.String() %q", p, got, want)
+		}
+		if got, want := fmt.Sprintf("%s", r), fmt.Sprintf("%s", std); got != want {
+			r.Close()
+			t.Fatalf("%q: %%s %q, stdlib %%s %q", p, got, want)
+		}
+		r.Close()
+	}
+}
+
+func TestStringKeepsSourceStdlibRejects(t *testing.T) {
+	p := `foo(?=bar)`
+	if _, err := regexp.Compile(p); err == nil {
+		t.Fatal("expected Go's regexp to reject lookahead")
+	}
+	r := MustCompile(p)
+	defer r.Close()
+	if got := r.String(); got != p {
+		t.Fatalf("String() %q, want %q", got, p)
+	}
+}
+
 func TestCloseIsIdempotent(t *testing.T) {
 	r := MustCompile(`x`)
 	r.Close()
@@ -59,7 +92,11 @@ func TestClosedHandleIsSafe(t *testing.T) {
 	r := MustCompile(`(?P<g>\w+)@(\w+)`)
 	r.Close()
 
-	// Regexp surface (complete public set)
+	// Regexp surface (complete public set). String is not a handle query: the
+	// source text lives on the Go value and survives Close.
+	if got := r.String(); got != `(?P<g>\w+)@(\w+)` {
+		t.Fatalf("String after Close: got %q, want the source text", got)
+	}
 	if n := r.NumSubexp(); n != 0 {
 		t.Fatalf("NumSubexp after Close: got %d, want 0", n)
 	}

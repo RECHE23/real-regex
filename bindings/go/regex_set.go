@@ -13,7 +13,8 @@ import (
 // RegexSet is a multi-pattern which-matched set (real::regex_set — Stage-1 N-walks, or a
 // fused Stage-2 single-pass DFA once enough members are DFA-eligible; see regex_set.hpp).
 // Go's own regexp package has no equivalent — there is nothing to map this onto beyond REAL's
-// own C++/Python bindings, which have the identical shape.
+// own C++/Python bindings, which have the identical shape. A value copy of RegexSet still
+// shares the C pointer — unlike regexp.Regexp, *s is not a safe clone.
 type RegexSet struct {
 	set *C.real_regex_set
 }
