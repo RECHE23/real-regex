@@ -18,6 +18,20 @@ checker that reads only the tables reports OK on every one of them, which is how
 """
 import re
 import sys
+
+# The four headings this script slices on. A rename is a named FAIL, not a
+# ValueError: the next cut will touch these one at a time and the verdict
+# must say which one is gone.
+_HEADINGS = ("## A.", "## Multi-pattern", "## E.", "### E.1")
+
+
+def missing_headings(lines, headings):
+    found = {h: False for h in headings}
+    for line in lines:
+        for h in headings:
+            if not found[h] and line.startswith(h):
+                found[h] = True
+    return [h for h, ok in found.items() if not ok]
 from decimal import Decimal
 
 CELL_RE = re.compile(r"(unsupported|~tie|[\d.]+)\s*(?:\(\*{0,2}([\d.]+)×\*{0,2}\))?")
@@ -276,12 +290,13 @@ def section_e_tables(lines):
 
 def bench_section(lines):
     """Slice to '## A.' .. '## Multi-pattern' and '## E.' .. '### E.1' -- keeps §Unicode/§B untouched
-    and out of scope (verify_unicode_ratios.py already covers §Unicode)."""
+    and out of scope (verify_unicode_ratios.py already covers §Unicode). Caller has already
+    refused a missing heading: idx is a programming error, not a document error."""
     def idx(prefix):
         for i, line in enumerate(lines):
             if line.startswith(prefix):
                 return i
-        raise ValueError(f"section not found: {prefix!r}")
+        raise AssertionError(f"heading {prefix!r} missing after the named check")
 
     a_start = idx("## A.")
     a_end = idx("## Multi-pattern")
@@ -294,6 +309,12 @@ def main():
     path = sys.argv[1] if len(sys.argv) > 1 else "docs/BENCHMARKS.md"
     with open(path, encoding="utf-8") as f:
         lines = [line.rstrip("\n") for line in f.readlines()]
+
+    missing = missing_headings(lines, _HEADINGS)
+    if missing:
+        for h in missing:
+            print(f"FAIL: {path}: heading {h!r} is missing")
+        return 1
 
     a_lines, e_lines = bench_section(lines)
     table_errors, table_checks, table = section_a_tables(a_lines)

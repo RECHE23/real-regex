@@ -11,6 +11,20 @@ instead of a silent one. Dev-tooling; not part of the benchmark run itself, just
 import re
 import sys
 
+# The two headings this script slices on. A rename is a named FAIL, not a
+# StopIteration: the next cut will touch these one at a time and the verdict
+# must say which one is gone.
+_HEADINGS = ("## Unicode", "## Methodology")
+
+
+def missing_headings(lines, headings):
+    found = {h: False for h in headings}
+    for line in lines:
+        for h in headings:
+            if not found[h] and line.startswith(h):
+                found[h] = True
+    return [h for h, ok in found.items() if not ok]
+
 ROW_RE = re.compile(
     r"^\|\s*(?P<name>`[^`]+`(?:\s*\([^)]*\))?)\s*\|\s*(?P<real>[\d.]+)\s*\|\s*(?P<rest>.+?)\s*\|\s*"
     r"(?P<counts>[\d—/]+(?:\s*⚠)?)\s*\|\s*$"
@@ -102,7 +116,8 @@ def check_duel(lines):
 
 def unicode_section(lines):
     """Slice to the '## Unicode — comparative' section only -- §A and §E have same-shaped tables
-    (a plain REAL/std/PCRE2/RE2 header, a REAL/rust/winner header) that would otherwise false-match."""
+    (a plain REAL/std/PCRE2/RE2 header, a REAL/rust/winner header) that would otherwise false-match.
+    Caller has already refused a missing heading."""
     start = next(i for i, line in enumerate(lines) if line.startswith("## Unicode"))
     end = next(i for i, line in enumerate(lines) if line.startswith("## Methodology"))
     return lines[start:end]
@@ -111,8 +126,15 @@ def unicode_section(lines):
 def main():
     path = sys.argv[1] if len(sys.argv) > 1 else "docs/BENCHMARKS.md"
     with open(path, encoding="utf-8") as f:
-        lines = f.readlines()
-    lines = unicode_section([line.rstrip("\n") for line in lines])
+        lines = [line.rstrip("\n") for line in f.readlines()]
+
+    missing = missing_headings(lines, _HEADINGS)
+    if missing:
+        for h in missing:
+            print(f"FAIL: {path}: heading {h!r} is missing")
+        return 1
+
+    lines = unicode_section(lines)
 
     errors = check_bench_engines(lines) + check_duel(lines)
     if errors:
