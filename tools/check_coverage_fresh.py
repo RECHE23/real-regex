@@ -7,7 +7,7 @@ header-only engine invisible. The binary that then runs is the previous
 commit's. Invoked after every ``--build`` that produces ``real_tests_bin``
 (``make build``, ``coverage-build``, ``sanitize``). Compares the binary's
 mtime to include/real/, tests/, and bindings/c/. It does not rebuild; it
-refuses to speak.
+refuses to speak. A green prints how many sources were compared.
 
 Usage:
     python3 tools/check_coverage_fresh.py build/real_tests_bin
@@ -47,9 +47,18 @@ def main() -> int:
         print(f"check_coverage_fresh: {binary} not found — not a verdict.",
               file=sys.stderr)
         return 1
+    srcs = sources()
+    if not srcs:
+        print(
+            "check_coverage_fresh: FAIL -- no sources under include/real/, "
+            "tests/, or bindings/c/",
+            file=sys.stderr,
+        )
+        return 1
     bin_time = binary.stat().st_mtime
-    stale = [p for p in sources() if p.stat().st_mtime > bin_time]
+    stale = [p for p in srcs if p.stat().st_mtime > bin_time]
     if not stale:
+        print(f"check_coverage_fresh: {len(srcs)} source(s) compared, {binary} is fresh")
         return 0
     stale.sort()
     example = stale[0].relative_to(ROOT)

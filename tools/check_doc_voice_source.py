@@ -72,6 +72,8 @@ def hits_in(path: Path) -> list[tuple[int, str]]:
 def main() -> int:
     journals = load_journals()
     files = scan_files()
+    if not files:
+        _die("no docs/*.md or docs/*.dox -- nothing was scanned")
     rels = {p.relative_to(_REPO).as_posix(): p for p in files}
     for named in journals:
         if named not in rels:
@@ -106,7 +108,10 @@ def main() -> int:
             "with a reason."
         )
         return 1
-    print("check_doc_voice_source: clean -- no route vocabulary outside named journals")
+    print(
+        f"check_doc_voice_source: clean -- {len(files)} file(s) scanned, "
+        "no route vocabulary outside named journals"
+    )
     return 0
 
 

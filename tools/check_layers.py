@@ -33,13 +33,17 @@ INCLUDE = re.compile(r'#include\s+[<"]real/(?:([a-z0-9_]+)/)?(?:[a-z0-9_]+/)*([a
 
 def main() -> int:
     root = pathlib.Path(__file__).resolve().parent.parent / "include" / "real"
+    headers = sorted(root.rglob("*.hpp"))
+    if not headers:
+        print("check-layers: FAIL -- no headers under include/real/")
+        return 1
     layer_of = {}
-    for path in root.rglob("*.hpp"):
+    for path in headers:
         rel = path.relative_to(root)
         layer_of[path.stem] = rel.parts[0] if len(rel.parts) > 1 else "root"
 
     violations = []
-    for path in sorted(root.rglob("*.hpp")):
+    for path in headers:
         from_layer = layer_of.get(path.stem, "root")
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.lstrip().startswith("//"):
@@ -83,7 +87,8 @@ def main() -> int:
         print("  REAL_ALLOW_STD_HASH with the reason it is safe there:")
         print("\n".join(hash_uses))
         return 1
-    print("check-layers: the include layering holds (core < unicode < runtime < frontend < root), and no")
+    print(f"check-layers: {len(headers)} headers, layering holds "
+          "(core < unicode < runtime < frontend < root), and no")
     print("  unmarked std::hash / std::unordered_* in the engine headers.")
     return 0
 

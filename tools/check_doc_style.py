@@ -157,6 +157,22 @@ def refresh_xml() -> None:
         sys.exit(f"doxygen failed:\n{proc.stderr[-2000:]}")
 
 
+def xml_named_headers(xml_dir: str) -> set[str]:
+    """include/real/*.hpp paths the XML location tags actually name."""
+    got: set[str] = set()
+    for path in glob.glob(os.path.join(xml_dir, "*.xml")):
+        try:
+            root = ET.parse(path).getroot()
+        except ET.ParseError:
+            continue
+        for loc in root.iter("location"):
+            f = (loc.get("file") or "").replace("\\", "/")
+            idx = f.find("include/real/")
+            if idx >= 0 and f.endswith(".hpp"):
+                got.add(f[idx:])
+    return got
+
+
 def xml_members(only: str | None) -> list[tuple[str, int, str, str]]:
     """Every documented member Doxygen found under include/real/, as (file, line, kind, name)."""
     out: list[tuple[str, int, str, str]] = []
@@ -506,6 +522,34 @@ def main() -> int:
     require_fresh_xml()
 
     members = xml_members(args.only)
+    exp = {
+        p.replace("\\", "/")
+        for p in glob.glob(os.path.join(ROOT, "**", "*.hpp"), recursive=True)
+        if not args.only or args.only in p
+    }
+    got = xml_named_headers(XML_DIR)
+    if args.only:
+        got = {p for p in got if args.only in p}
+    if not exp:
+        print(
+            f"check_doc_style: FAIL -- no headers under {ROOT}"
+            + (f" matching --only {args.only}" if args.only else "")
+        )
+        return 1
+    if got != exp or not members:
+        missing = sorted(exp - got)
+        extra = sorted(got - exp)
+        print(
+            f"check_doc_style: FAIL -- {len(got)} of {len(exp)} header(s) in XML, "
+            f"{len(members)} member(s)"
+        )
+        if missing:
+            print("  missing from XML: " + ", ".join(missing))
+        if extra:
+            print("  extra in XML: " + ", ".join(extra))
+        if not members:
+            print("  XML yielded no members")
+        return 1
     src = Source()
 
     forms: dict[str, Counter] = defaultdict(Counter)
@@ -582,7 +626,8 @@ def main() -> int:
     total = sum(len(v) for v in todo.values())
     if not total and not n_prose:
         print(
-            f"check_doc_style: clean -- objects use /*! */, attributes use //!< where it fits "
+            f"check_doc_style: clean -- {len(members)} member(s) in {len(got)} of "
+            f"{len(exp)} header(s); objects use /*! */, attributes use //!< where it fits "
             f"({allowed_block} attribute(s) keep a leading block, as the convention allows)"
         )
         return 0

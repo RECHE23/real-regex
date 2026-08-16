@@ -84,6 +84,61 @@ def xml_text(el: ET.Element | None) -> str:
     return " ".join("".join(el.itertext()).split())
 
 
+def site_input_headers() -> list[str]:
+    """Headers Doxyfile.site INPUT names, expanded (a directory becomes its *.hpp)."""
+    doxy = os.path.join(_REPO, "Doxyfile.site")
+    if not os.path.isfile(doxy):
+        sys.exit(f"check_doc_voice: {doxy} not found")
+    tokens: list[str] = []
+    collecting = False
+    with open(doxy, encoding="utf-8") as fh:
+        for raw in fh:
+            if not collecting:
+                if raw.startswith("INPUT") and "=" in raw:
+                    collecting = True
+                    rest = raw.split("=", 1)[1]
+                else:
+                    continue
+            else:
+                rest = raw
+            stripped = rest.rstrip("\n").rstrip()
+            continued = stripped.endswith("\\")
+            body = stripped[:-1] if continued else stripped
+            tokens.extend(body.split())
+            if not continued:
+                break
+    found: list[str] = []
+    for tok in tokens:
+        abs_p = tok if os.path.isabs(tok) else os.path.join(_REPO, tok)
+        if os.path.isdir(abs_p):
+            for dirpath, _dns, names in os.walk(abs_p):
+                for name in names:
+                    if name.endswith(".hpp"):
+                        full = os.path.join(dirpath, name)
+                        found.append(os.path.relpath(full, _REPO).replace("\\", "/"))
+        elif os.path.isfile(abs_p):
+            found.append(os.path.relpath(abs_p, _REPO).replace("\\", "/"))
+        else:
+            found.append(tok.replace("\\", "/"))
+    return sorted(set(found))
+
+
+def xml_named_headers(xml_dir: str) -> set[str]:
+    """include/real/*.hpp paths the XML location tags actually name."""
+    got: set[str] = set()
+    for path in glob.glob(os.path.join(xml_dir, "*.xml")):
+        try:
+            root = ET.parse(path).getroot()
+        except ET.ParseError:
+            continue
+        for loc in root.iter("location"):
+            f = (loc.get("file") or "").replace("\\", "/")
+            idx = f.find("include/real/")
+            if idx >= 0 and f.endswith(".hpp"):
+                got.add(f[idx:])
+    return got
+
+
 def published_comments() -> list[tuple[str, str, str]]:
     """(qualified-name, kind, comment-text) for every published member/compound."""
     out: list[tuple[str, str, str]] = []
@@ -129,8 +184,29 @@ def main() -> int:
         refresh_xml()
     require_xml()
 
+    exp = set(site_input_headers())
+    got = xml_named_headers(XML_DIR)
+    comments = published_comments()
+    if not exp:
+        print("check_doc_voice: FAIL -- Doxyfile.site INPUT expanded to 0 headers")
+        return 1
+    if got != exp or not comments:
+        missing = sorted(exp - got)
+        extra = sorted(got - exp)
+        print(
+            f"check_doc_voice: FAIL -- {len(got)} of {len(exp)} header(s) in "
+            f"xml-site, {len(comments)} published comment(s)"
+        )
+        if missing:
+            print("  missing from XML: " + ", ".join(missing))
+        if extra:
+            print("  extra in XML: " + ", ".join(extra))
+        if not comments:
+            print("  XML yielded no published comments")
+        return 1
+
     hits: list[str] = []
-    for name, kind, text in published_comments():
+    for name, kind, text in comments:
         for pat, label in PATTERNS:
             if pat.search(text):
                 snippet = text if len(text) <= 160 else text[:157] + "..."
@@ -148,7 +224,10 @@ def main() -> int:
             "#ifndef DOXYGEN_SHOULD_SKIP_THIS)."
         )
         return 1
-    print("check_doc_voice: clean -- no route vocabulary in published Doxygen XML")
+    print(
+        f"check_doc_voice: clean -- {len(comments)} comment(s) in "
+        f"{len(got)} of {len(exp)} header(s), no route vocabulary"
+    )
     return 0
 
 
