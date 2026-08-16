@@ -30,8 +30,10 @@
 
 #include "real/version.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
+#include <ranges>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -175,8 +177,7 @@ namespace real {
         for (const char_class& cls : bp.classes) {
           nfa.classes.push_back(cls);
         }
-        for (std::size_t i = 0; i < bp.code.size(); ++i) {
-          const instr& in  {bp.code[i]};
+        for (const instr& in : bp.code) {
           dfa_instr    out {.op = in.op, .arg8 = in.arg8};
           if (in.op == opcode::klass) {
             out.klass = static_cast<std::uint32_t>(cbase + in.arg16);
@@ -419,17 +420,14 @@ namespace real {
         }
       }
       const auto sig_equal {[&](unsigned a, unsigned b) {
-                              for (std::size_t i = 0; i < class_preds.size(); ++i) {
-                                if (class_preds[i].test(static_cast<std::uint8_t>(a))
-                                    != class_preds[i].test(static_cast<std::uint8_t>(b))) {
-                                  return false;
-                                }
-                              }
-                              for (std::size_t i = 0; i < literal_preds.size(); ++i) {
-                                const unsigned lit {literal_preds[i]};
-                                if ((a == lit) != (b == lit)) { return false; }
-                              }
-                              return true;
+                              return std::ranges::all_of(class_preds,
+                                                         [&](const auto& pred) {
+                                                           return pred.test(static_cast<std::uint8_t>(a))
+                                                                  == pred.test(static_cast<std::uint8_t>(b));
+                                                         })
+                                     && std::ranges::all_of(literal_preds, [&](unsigned lit) {
+                                                              return (a == lit) == (b == lit);
+                                                            });
                             }};
       dfa_byte_classes bc;
       for (unsigned b = 0; b < 256U; ++b) {
@@ -550,6 +548,10 @@ namespace real {
       out.start = find_or_add(dfa_closure(nfa, entry_seeds, true));
 
       std::vector<std::uint32_t> trans_pre; // [s*nc + c]
+      // Indexed: find_or_add appends to `sets`. A range-for captures end() once
+      // and never expands the states it just discovered (UAF under realloc;
+      // silent one-state machine otherwise).
+      // NOLINTNEXTLINE(modernize-loop-convert)
       for (std::size_t s = 0; s < sets.size(); ++s) {
         for (std::size_t c = 0; c < nc; ++c) {
           trans_pre.push_back(find_or_add(complete(dfa_move(nfa, sets[s], bc.rep[c]))));

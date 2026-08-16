@@ -109,6 +109,7 @@ all: build
 build: ## [daily] Configure and build the test binary (CMake)
 	$(CMAKE) -S . -B $(BUILD) $(CMAKE_CXX) -DCMAKE_BUILD_TYPE=Release
 	$(CMAKE) --build $(BUILD) --parallel $(JOBS)
+	@cd $(CURDIR) && python3 tools/check_coverage_fresh.py $(BUILD)/real_tests_bin
 
 # --- tests/ (ctest[via `test`]/sanitize/coverage toolchain/tsan smokes) ---------
 #
@@ -679,7 +680,7 @@ full-local-gate-impl:
 	@$(MAKE) fowler-compat
 	@echo "── [16/24] exhaustive-compat"
 	@$(MAKE) exhaustive-compat
-	@echo "── [17/24] test (default CXX)"
+	@echo "── [17/24] test (default CXX; refuses a binary older than the headers)"
 	@$(MAKE) test
 	@echo "── [18/24] rust-test"
 	@$(MAKE) rust-test
@@ -706,7 +707,7 @@ full-local-gate-impl:
 	@echo "── [23/24] test (GCC leg) + sanitize (slowest last)"
 	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "step 23: test on the GCC leg -- $(GXX) absent" | tee -a $(GATE_SKIPS); fi
 	@$(MAKE) sanitize
-	@echo "── [24/24] coverage-check (line floor $(COV_FLOOR)% — closes the P0 gate hole)"
+	@echo "── [24/24] coverage-check (line floor $(COV_FLOOR)%; refuses a stale coverage binary)"
 	@$(MAKE) coverage-check
 	# A SKIP IS NOT A PASS, and inside a numbered list it reads exactly like one -- which is how a
 	# machine without sphinx-build ran this gate as "24 steps green" while step 10, the net for the

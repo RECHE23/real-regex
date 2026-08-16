@@ -142,6 +142,33 @@ TEST(dfa_no_match_is_nullopt)
   EXPECT_EQ(d.match("abcd")->length, std::size_t {3});
 }
 
+// Subset construction is a worklist: find_or_add appends each newly discovered
+// NFA-set, and the loop must re-read sets.size() so those states get their own
+// transition rows. A range-for over `sets` captures end() once — states found
+// while expanding the seed are never expanded. A length-N literal is the
+// smallest witness: it needs the dead state plus N live prefixes. Under -O2
+// the truncated machine collapses to one state and match() is silently false;
+// under ASan / coverage alloc it is a heap-use-after-free at find_or_add.
+TEST(dfa_worklist_expands_states_discovered_during_build)
+{
+  const std::string              lit  {"abcdefghij"};
+  const std::vector<real::regex> pats {real::regex(lit)};
+  const real::dfa                d    {std::span<const real::regex>(pats)};
+
+  const auto full                     {d.match(lit)};
+  EXPECT(full.has_value());
+  EXPECT_EQ(full->length, lit.size());
+  EXPECT_EQ(full->rule_index, 0U);
+
+  for (std::size_t n = 0; n < lit.size(); ++n) {
+    EXPECT(!d.match(std::string_view(lit).substr(0, n)).has_value());
+  }
+
+  // dead + one state per consumed prefix, after Moore. A captured-end
+  // worklist leaves only the seed row and state_count collapses to 1.
+  EXPECT(d.state_count() >= lit.size() + 1);
+}
+
 // The assertion contract: a leading ^ is a no-op (allowed); any other assertion throws.
 TEST(dfa_assertion_contract)
 {

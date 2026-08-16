@@ -24,6 +24,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -524,7 +525,9 @@ namespace real {
       constexpr void extend_capacity()
       {
         const std::size_t current {capacity_};
-        const std::size_t new_cap {(current > (std::size_t)-1 / 2) ? (std::size_t)-1 : current * 2};
+        const std::size_t new_cap {(current > std::numeric_limits<std::size_t>::max() / 2)
+                                     ? std::numeric_limits<std::size_t>::max()
+                                     : current * 2};
         reserve(new_cap);
       }
 

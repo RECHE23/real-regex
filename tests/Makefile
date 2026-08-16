@@ -70,12 +70,18 @@ test: ## Run the test suite (ctest; `build` — the CMake configure+compile — 
 sanitize: ## Build and run the tests under ASan + UBSan
 	cd $(ROOT) && $(CMAKE) -S . -B $(BUILD)/sanitize $(CMAKE_CXX) -DREAL_SANITIZE=ON
 	$(CMAKE) --build $(BUILD)/sanitize --parallel $(JOBS)
+	@cd $(ROOT) && python3 tools/check_coverage_fresh.py $(BUILD)/sanitize/real_tests_bin
 	$(CTEST) --test-dir $(BUILD)/sanitize --output-on-failure
 
 # Shared build/run/merge steps used by both the text summary and the HTML report.
+# check_coverage_fresh.py runs AFTER --build and BEFORE the binary: cmake can
+# report "Nothing to be done" after a header-only checkout, and the binary that
+# then runs is the previous commit's. The check refuses to speak in that case
+# (same shape as check_doc_style vs XML older than the headers).
 coverage-build:
 	cd $(ROOT) && $(CMAKE) -S . -B $(COV_DIR) -DREAL_COVERAGE=ON -DCMAKE_CXX_COMPILER=$(COV_CXX)
 	$(CMAKE) --build $(COV_DIR) --parallel $(JOBS)
+	@cd $(ROOT) && python3 tools/check_coverage_fresh.py $(COV_DIR)/real_tests_bin
 	LLVM_PROFILE_FILE=$(COV_DIR)/tests.profraw $(COV_DIR)/real_tests_bin
 	$(PROFDATA) merge -sparse $(COV_DIR)/tests.profraw -o $(COV_DIR)/tests.profdata
 

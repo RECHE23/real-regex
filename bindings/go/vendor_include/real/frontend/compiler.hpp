@@ -1208,11 +1208,15 @@ namespace real::detail {
         case anchor_kind::dollar:
           // Default (Python): `$` matches at end OR just before a final `\n`. With the ecma OR dollar_endonly
           // flag, `$` (no multiline) matches only at the very end — ECMAScript / Rust (`\z`) semantics.
-          result = multiline
-                   ? assert_kind::line_end
-                   : (has_flag(flags_, flags::ecma) || has_flag(flags_, flags::dollar_endonly)
-                        ? assert_kind::text_end
-                        : assert_kind::text_end_or_final_newline);
+          if (multiline) {
+            result = assert_kind::line_end;
+          }
+          else if (has_flag(flags_, flags::ecma) || has_flag(flags_, flags::dollar_endonly)) {
+            result = assert_kind::text_end;
+          }
+          else {
+            result = assert_kind::text_end_or_final_newline;
+          }
           break;
         case anchor_kind::text_start:
           result = assert_kind::text_start;
@@ -1618,7 +1622,13 @@ namespace real::detail {
             const class_def eff   {effective_class(node)};
             std::int32_t    width {eff.ascii.empty() ? 0 : 1};
             for (const code_range& r : eff.ranges) {
-              const std::int32_t w {r.hi < 0x800U ? 2 : (r.hi < 0x10000U ? 3 : 4)};
+              std::int32_t w {2};
+              if (r.hi >= 0x10000U) {
+                w = 4;
+              }
+              else if (r.hi >= 0x800U) {
+                w = 3;
+              }
               if (w > width) {
                 width = w;
               }

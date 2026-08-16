@@ -548,9 +548,13 @@ namespace real {
       out.start = find_or_add(dfa_closure(nfa, entry_seeds, true));
 
       std::vector<std::uint32_t> trans_pre; // [s*nc + c]
-      for (const auto& set : sets) {
+      // Indexed: find_or_add appends to `sets`. A range-for captures end() once
+      // and never expands the states it just discovered (UAF under realloc;
+      // silent one-state machine otherwise).
+      // NOLINTNEXTLINE(modernize-loop-convert)
+      for (std::size_t s = 0; s < sets.size(); ++s) {
         for (std::size_t c = 0; c < nc; ++c) {
-          trans_pre.push_back(find_or_add(complete(dfa_move(nfa, set, bc.rep[c]))));
+          trans_pre.push_back(find_or_add(complete(dfa_move(nfa, sets[s], bc.rep[c]))));
         }
       }
       const std::size_t n_pre {sets.size()};

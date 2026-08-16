@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <array>
+#include <ranges>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -1428,18 +1429,15 @@ namespace real::detail {
      */
     static constexpr bool compute_eligibility(std::span<const instr> code)
     {
-      for (const instr& in : code) {
-        if (in.op == opcode::assert_position || in.op == opcode::assert_lookaround
-            || in.op == opcode::klass_cp || in.op == opcode::byte_loop_possessive
-            || in.op == opcode::klass_loop_possessive || in.op == opcode::klass_cp_loop_possessive) {
-          // Position assertions / variable-width classes: no forward-DFA representation. Tier 1's
-          // possessive-loop family additionally has no consuming-edge representation at all here
-          // (consumes() below only recognizes byte/klass) — treating it as a dead end (silently
-          // non-consuming) would be an outright wrong DFA, not just an unrepresented shape.
-          return false;
-        }
-      }
-      return true;
+      // Position assertions / variable-width classes: no forward-DFA representation. Tier 1's
+      // possessive-loop family additionally has no consuming-edge representation at all here
+      // (consumes() below only recognizes byte/klass) — treating it as a dead end (silently
+      // non-consuming) would be an outright wrong DFA, not just an unrepresented shape.
+      return std::ranges::none_of(code, [](const instr& in) {
+                                    return in.op == opcode::assert_position || in.op == opcode::assert_lookaround
+                                           || in.op == opcode::klass_cp || in.op == opcode::byte_loop_possessive
+                                           || in.op == opcode::klass_loop_possessive || in.op == opcode::klass_cp_loop_possessive;
+                                  });
     }
 
     /*!
@@ -1882,17 +1880,14 @@ namespace real::detail {
      */
     static constexpr bool compute_eligibility(std::span<const instr> code)
     {
-      for (const instr& in : code) {
-        if (in.op == opcode::assert_position || in.op == opcode::assert_lookaround
-            || in.op == opcode::klass_cp || in.op == opcode::byte_loop_possessive
-            || in.op == opcode::klass_loop_possessive || in.op == opcode::klass_cp_loop_possessive) {
-          // Tier 1's possessive-loop family has no consuming-edge representation here either
-          // (consumes() above only recognizes byte/klass) -- same reasoning as the forward-DFA's
-          // own compute_eligibility.
-          return false;
-        }
-      }
-      return true;
+      // Tier 1's possessive-loop family has no consuming-edge representation here either
+      // (consumes() above only recognizes byte/klass) -- same reasoning as the forward-DFA's
+      // own compute_eligibility.
+      return std::ranges::none_of(code, [](const instr& in) {
+                                    return in.op == opcode::assert_position || in.op == opcode::assert_lookaround
+                                           || in.op == opcode::klass_cp || in.op == opcode::byte_loop_possessive
+                                           || in.op == opcode::klass_loop_possessive || in.op == opcode::klass_cp_loop_possessive;
+                                  });
     }
 
     /*!
