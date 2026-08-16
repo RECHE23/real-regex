@@ -26,9 +26,10 @@ jobs:
           repository: RECHE23/sciforge
           ref: v2026.7.2
           path: sciforge
-      # Floor interpreter for python-syntax only. update-environment: false so
-      # python3 stays the image default (PyYAML for check-features-probe).
-      # Putting 3.10 on PATH made check-features-probe die on `import yaml`.
+      # A tool installed for one step does not go on PATH for the others:
+      # update-environment: false, pass it explicitly (PYTHON= below).
+      # setup-python on PATH made 3.10 the job default and
+      # check-features-probe died on `import yaml`.
       - uses: actions/setup-python@v5
         id: pyfloor
         with:
