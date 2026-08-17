@@ -38,6 +38,14 @@ import (
 	"unsafe"
 )
 
+// noCopy may be added to structs which must not be copied after the first use.
+// Same shape as sync.noCopy: a go vet -copylocks hook, not a compiler error.
+// Must not be embedded — Lock/Unlock would become part of the public API.
+type noCopy struct{}
+
+func (*noCopy) Lock()   {}
+func (*noCopy) Unlock() {}
+
 // sizeMax is (size_t)-1, the C ABI's error sentinel for count/length-returning functions.
 var sizeMax = ^C.size_t(0)
 
@@ -80,8 +88,10 @@ func spansToIndices(spans []C.size_t) []int {
 //
 // expr is the source text, kept here because the C ABI has no pattern getter. String()
 // reads this field; it is not recovered from the handle. A value copy of Regexp still
-// shares the C pointer — unlike regexp.Regexp, *r is not a safe clone.
+// shares the C pointer — unlike regexp.Regexp, *r is not a safe clone. noCopy makes
+// that copy a go vet -copylocks diagnostic; the compiler will still accept it.
 type Regexp struct {
+	_    noCopy
 	re   *C.real_regex
 	expr string
 }
