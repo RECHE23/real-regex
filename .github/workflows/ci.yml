@@ -62,7 +62,15 @@ jobs:
           tar -xzf /tmp/uc.tgz -C /tmp
           cmake -S /tmp/uncrustify-uncrustify-0.82.0 -B /tmp/uc-build && cmake --build /tmp/uc-build -j
           mkdir -p "$HOME/.local/bin" && cp /tmp/uc-build/uncrustify "$HOME/.local/bin/"
-      - name: preflight (format → version → layers → pins → capi-abi → doc → doc-style)
+      # No apt package for actionlint; the pinned release binary lands on the same
+      # ~/.local/bin the preflight step below puts on PATH.
+      - name: Install actionlint 1.7.12
+        run: |
+          curl -fsSL -o /tmp/actionlint.tgz \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf /tmp/actionlint.tgz -C "$HOME/.local/bin" actionlint
+      - name: preflight (format → workflows → version → layers → pins → capi-abi → doc → doc-style)
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"
@@ -70,6 +78,11 @@ jobs:
           TOOLS="$GITHUB_WORKSPACE/sciforge/tools"
           echo "── format-check"
           make -C real-regex format-check SCIFORGE_LINT="$LINT"
+          # Same position as the local gate. Note this job's paths-ignore drops
+          # docs.yml / docs-site.yml: a push touching only those two is linted by
+          # the local gate, not here.
+          echo "── check-workflows (actionlint over .github/workflows)"
+          make -C real-regex check-workflows
           echo "── version-check"
           make -C real-regex version-check
           echo "── check-layers"

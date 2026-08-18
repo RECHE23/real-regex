@@ -71,7 +71,7 @@ include mk/help.mk
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers check-doc-style check-doc-voice check-curated-members check-bench-stamp check-bench-ratios gate-venv check-sse2-floor \
-        check-site-anchors
+        check-site-anchors check-workflows
 
 .DEFAULT_GOAL := help
 
@@ -413,6 +413,19 @@ check-sse2-floor: ## [gate] x86-64: headers must compile with SSE2 but NOT AVX2 
 check-doc-style:
 	@python3 tools/check_doc_style.py
 
+# Workflow syntax that a YAML parser accepts and Actions rejects at dispatch: a key
+# not allowed on a `uses` job, an unknown runner label, a malformed ${{ }}. Nothing
+# else here reads .github/workflows, and the failure lands after a push, not before.
+# Optional tool -- absent is a visible skip, never a false green. Local-only coverage
+# for docs.yml / docs-site.yml: ci.yml's paths-ignore drops them, so a push touching
+# only those two never runs this in CI.
+check-workflows: ## Lint .github/workflows with actionlint (skipped if actionlint is absent)
+	@if command -v actionlint >/dev/null 2>&1; then \
+	   actionlint $(ROOT)/.github/workflows/*.yml && echo "check-workflows: OK — $$(ls $(ROOT)/.github/workflows/*.yml | wc -l | tr -d ' ') workflow(s) linted"; \
+	 else \
+	   echo "check-workflows: SKIPPED -- actionlint absent (brew install actionlint)" | tee -a $(GATE_SKIPS); \
+	 fi
+
 # Route vocabulary in a Doxygen block that Doxyfile.site publishes (public,
 # non-\internal). Implementation notes belong in //, which this XML never sees.
 # The source twin (check_doc_voice_source.py) reads docs/*.dox + docs/*.md
@@ -607,45 +620,47 @@ full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate 
 full-local-gate-impl:
 	@echo "full-local-gate: start (fail-fast — cheap first, first red stops the train)"
 	@mkdir -p $(dir $(GATE_SKIPS)) && : > $(GATE_SKIPS)
-	@echo "── [1/24] format-check"
+	@echo "── [1/25] format-check"
 	@$(MAKE) format-check
-	@echo "── [2/24] version-check"
+	@echo "── [2/25] check-workflows (actionlint over .github/workflows)"
+	@$(MAKE) check-workflows
+	@echo "── [3/25] version-check"
 	@$(MAKE) version-check
 	# Complements version-check's bench-stamp line, which compares VERSION STRINGS and so only fires
 	# across a release bump. This one asks whether the engine changed in substance since the figures
 	# were stamped -- the case that actually happens between releases, and the one that let a closed
 	# deficit stay documented as open (d7d9485). Warns, never fails: benchmarks cannot be re-run per
 	# commit. Local only -- it reads git history, which a CI shallow clone does not have.
-	@echo "── [2b/24] check-bench-stamp (engine moved since the benchmarks were stamped?)"
+	@echo "── [3b/25] check-bench-stamp (engine moved since the benchmarks were stamped?)"
 	@$(MAKE) check-bench-stamp
-	@echo "── [3/24] check-layers"
+	@echo "── [4/25] check-layers"
 	@$(MAKE) check-layers
-	@echo "── [4/24] check-no-simd (no vector ISA macro — the hole CI's 32-bit leg caught)"
+	@echo "── [5/25] check-no-simd (no vector ISA macro — the hole CI's 32-bit leg caught)"
 	@$(MAKE) check-no-simd
-	@echo "── [4c/24] check-sse2-floor (x86-64 with SSE2 but no AVX2; skips off x86)"
+	@echo "── [5c/25] check-sse2-floor (x86-64 with SSE2 but no AVX2; skips off x86)"
 	@$(MAKE) check-sse2-floor
-	@echo "── [4b/24] check-state-zeroing (gcc bulk-zeroes the VM state if a member array returns)"
+	@echo "── [5b/25] check-state-zeroing (gcc bulk-zeroes the VM state if a member array returns)"
 	@$(MAKE) check-state-zeroing
-	@echo "── [4d/24] check-percall-copies (count_walk must pass the intent, not a mutated 440-byte view)"
+	@echo "── [5d/25] check-percall-copies (count_walk must pass the intent, not a mutated 440-byte view)"
 	@$(MAKE) check-percall-copies
-	@echo "── [4e/24] python-syntax (bindings/python at the requires-python floor)"
+	@echo "── [5e/25] python-syntax (bindings/python at the requires-python floor)"
 	@$(MAKE) python-syntax
-	@echo "── [5/24] check-pins"
+	@echo "── [6/25] check-pins"
 	@$(MAKE) check-pins
-	@echo "── [6/24] check-capi-abi (C ABI golden vs real_capi.h)"
+	@echo "── [7/25] check-capi-abi (C ABI golden vs real_capi.h)"
 	@$(MAKE) check-capi-abi
-	@echo "── [7/24] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
+	@echo "── [8/25] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
 	@$(MAKE) doc-no-coverage
 	# Comment-FORM gate, deliberately right after doc-no-coverage: that step runs the LOCAL
 	# doxygen, so build/doc/xml is fresh here. It has to be, and the script enforces it --
 	# reading a stale XML made an earlier run report a false clean (line numbers drift, every
 	# entry fails the shape check, nothing is flagged). doc-check below cannot serve instead:
 	# it runs the CI Doxygen inside Docker and never refreshes the local XML.
-	@echo "── [6b/24] check-doc-style (objects /*! */, attributes //!<)"
+	@echo "── [7b/25] check-doc-style (objects /*! */, attributes //!<)"
 	@$(MAKE) check-doc-style
-	@echo "── [6c/24] check-site-anchors (site slices resolve in their sources)"
+	@echo "── [7c/25] check-site-anchors (site slices resolve in their sources)"
 	@$(MAKE) check-site-anchors
-	@echo "── [6d/24] doc-site-xml + check-doc-voice + check-curated-members"
+	@echo "── [7d/25] doc-site-xml + check-doc-voice + check-curated-members"
 	@$(MAKE) doc-site-xml
 	@$(MAKE) check-doc-voice
 	@$(MAKE) check-curated-members
@@ -653,42 +668,42 @@ full-local-gate-impl:
 	# ratio in BENCHMARKS.md §A/§E/§Unicode from the ns/B pair beside it AND every range, per-row pair
 	# and count in §A's reading bullets from the cells above them. The prose half is the one that
 	# matters -- checking cells alone reported OK for three stamps while every bullet was stale.
-	@echo "── [7b/24] check-bench-ratios (§A/§E/§Unicode ratios, and §A's prose against its cells)"
+	@echo "── [8b/25] check-bench-ratios (§A/§E/§Unicode ratios, and §A's prose against its cells)"
 	@$(MAKE) check-bench-ratios
-	@echo "── [8/24] doc-check (CI-pinned Doxygen when Docker is available)"
+	@echo "── [9/25] doc-check (CI-pinned Doxygen when Docker is available)"
 	@$(MAKE) doc-check
-	@echo "── [9/24] gcc-check (the diagnostics clang lacks — see the target)"
+	@echo "── [10/25] gcc-check (the diagnostics clang lacks — see the target)"
 	@$(MAKE) gcc-check
 	# docs/site's own net (-W --keep-going + linkcheck). Same shape as the
 	# GXX/go legs below: skipped with a warning when sphinx-build is absent (a dev
 	# without the docs venv on PATH doesn't need to rougir tout le gate) -- the docs-site
 	# CI job (ci.yml) is the backstop, so this is never the ONLY net on the site.
-	@echo "── [10/24] docs-site-gate (sphinx -W --keep-going + linkcheck; skipped if sphinx-build absent)"
+	@echo "── [11/25] docs-site-gate (sphinx -W --keep-going + linkcheck; skipped if sphinx-build absent)"
 	@if command -v $(SPHINXBUILD) >/dev/null 2>&1; then $(MAKE) docs-site-gate; else echo "step 10: docs-site-gate -- $(SPHINXBUILD) absent (sphinx: make gate-venv)" | tee -a $(GATE_SKIPS); fi
-	@echo "── [11/24] misra (single synthetic TU)"
+	@echo "── [12/25] misra (single synthetic TU)"
 	@$(MAKE) misra
-	@echo "── [12/24] c-test"
+	@echo "── [13/25] c-test"
 	@$(MAKE) c-test
 	# examples/cpp/*.cpp direct compile+run -- unconditional, not
 	# skip-if-absent: unlike the OPTIONAL alternate-compiler/toolchain legs below (GXX, go,
 	# sphinx-build), a default C++ compiler is already a hard prerequisite of this entire gate
 	# (build/test/misra/c-test above assume one unconditionally), so example-check rides the
 	# same assumption instead of the "warn and skip" shape reserved for genuinely optional tools.
-	@echo "── [13/24] example-check (examples/cpp/*.cpp direct compile+run)"
+	@echo "── [14/25] example-check (examples/cpp/*.cpp direct compile+run)"
 	@$(MAKE) example-check
-	@echo "── [14/24] matrix-gate"
+	@echo "── [15/25] matrix-gate"
 	@$(MAKE) matrix-gate
-	@echo "── [15/24] fowler-compat"
+	@echo "── [16/25] fowler-compat"
 	@$(MAKE) fowler-compat
-	@echo "── [16/24] exhaustive-compat"
+	@echo "── [17/25] exhaustive-compat"
 	@$(MAKE) exhaustive-compat
-	@echo "── [17/24] test (default CXX; refuses a binary older than the headers)"
+	@echo "── [18/25] test (default CXX; refuses a binary older than the headers)"
 	@$(MAKE) test
-	@echo "── [18/24] rust-test"
+	@echo "── [19/25] rust-test"
 	@$(MAKE) rust-test
-	@echo "── [19/24] rust-publish-check"
+	@echo "── [20/25] rust-publish-check"
 	@$(MAKE) rust-publish-check
-	@echo "── [20/24] python-test + python-stubtest (.pyi ≡ runtime; skipped if mypy absent)"
+	@echo "── [21/25] python-test + python-stubtest (.pyi ≡ runtime; skipped if mypy absent)"
 	@$(MAKE) python-test
 	@if $(MYPY_PYTHON) -c "import mypy" >/dev/null 2>&1; then \
 	   $(MAKE) python-stubtest; \
@@ -697,19 +712,19 @@ full-local-gate-impl:
 	# on drift — it does not write the tree. The one binding NOT otherwise in this gate
 	# (its sources are vendored, not built from include/ here). Skipped with a warning when
 	# go is absent (the CI go job is the backstop), same shape as the GCC leg.
-	@echo "── [21/24] go-check-vendor + go-test (Go leg; skipped if go absent)"
+	@echo "── [22/25] go-check-vendor + go-test (Go leg; skipped if go absent)"
 	@if command -v go >/dev/null 2>&1; then $(MAKE) go-check-vendor && $(MAKE) go-test; else echo "step 21: go-check-vendor + go-test -- go absent" | tee -a $(GATE_SKIPS); fi
-	@echo "── [22/24] lint"
+	@echo "── [23/25] lint"
 	@set -euo pipefail; \
 	  mkdir -p $(BUILD); \
 	  $(MAKE) lint 2>&1 | tee $(BUILD)/lint.log; \
 	  if grep -qE 'warning:|error:' $(BUILD)/lint.log; then \
 	    echo "full-local-gate: FAIL at lint (see $(BUILD)/lint.log)"; exit 1; \
 	  fi
-	@echo "── [23/24] test (GCC leg) + sanitize (slowest last)"
+	@echo "── [24/25] test (GCC leg) + sanitize (slowest last)"
 	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "step 23: test on the GCC leg -- $(GXX) absent" | tee -a $(GATE_SKIPS); fi
 	@$(MAKE) sanitize
-	@echo "── [24/24] coverage-check (line floor $(COV_FLOOR)%; refuses a stale coverage binary)"
+	@echo "── [25/25] coverage-check (line floor $(COV_FLOOR)%; refuses a stale coverage binary)"
 	@$(MAKE) coverage-check
 	# A SKIP IS NOT A PASS, and inside a numbered list it reads exactly like one -- which is how a
 	# machine without sphinx-build ran this gate as "24 steps green" while step 10, the net for the
