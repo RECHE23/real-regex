@@ -15,6 +15,7 @@ the methodology.
 | **Curated members** (`check-curated-members`) | Fails if a `:members:` allowlist silently drops a published symbol, or if a page uses bare `:members:` without `publish_all` in `unpublished.yaml`. Omissions need a reason. |
 | **Bench stamp** (`check-bench-stamp`) | Warns if engine *code* moved since the Version cell's `REAL \`X.Y.Z\`` was last written. Pickaxe on that string, not last touch of the path. Warns, never fails. |
 | **Site anchors** (`check-site-anchors`) | Every site `:start-after:` / `:end-before:` resolves uniquely in its include target. Reads `docs/site/` only. Does not read `docs/BENCHMARKS.md`. |
+| **Displayed quickstart** (`check_quickstart_displayed.py`) | Compiles the C++ `[quickstart]` rectangle as its own TU. The landing and Getting started inject those lines; compiling the whole example file does not prove a paste works. Prints `N lines` and fails if N is 0. Wired from `example-check`. |
 
 ## What reads `docs/BENCHMARKS.md`
 

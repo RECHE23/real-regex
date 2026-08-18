@@ -7,6 +7,7 @@
 //
 // Both backends are exercised (real-backed AND the std fallback) so coverage is honest.
 #include <regex>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -979,6 +980,14 @@ TEST(compat_api_surface)
   EXPECT(two[2].compare(two[1]) < 0);
   const std::string converted = sm[1];          // operator string_type
   EXPECT_EQ(converted, "hello");
+  {
+    std::ostringstream out;
+    out << sm[1]; // ADL: std::cout << m[1] is the std::regex idiom
+    EXPECT_EQ(out.str(), "hello");
+    std::ostringstream empty;
+    empty << rc::smatch {}[0];
+    EXPECT(empty.str().empty());
+  }
 
   // match_results iteration + empty/ready on a fresh result.
   std::size_t group_count {0};

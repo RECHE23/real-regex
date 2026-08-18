@@ -5,8 +5,8 @@ Canon = bindings/go/README.md (the binding's README, always up-to-date).
 
 # Drop-in for Go `regexp`
 
-**Full drop-in, strict — v0.1 (cgo; macOS-arm64 & linux-x86-64 only).**
-Import `real` and use the API you already know; every accepted pattern is guaranteed linear.
+**v0.1 subset, strict (cgo; macOS-arm64 & linux-x86-64 only).**
+The methods below, not the whole `regexp.Regexp` surface. Every accepted pattern is guaranteed linear.
 An unsupported construct is rejected at compile time instead of silently backtracking.
 
 ## Adopt / swap

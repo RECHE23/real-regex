@@ -881,7 +881,8 @@ example-check: ## [nets] Compile + run every examples/cpp/*.cpp directly against
 	   "$(BUILD)/examples/$$name"; \
 	   n=$$((n + 1)); \
 	 done; \
-	 echo "example-check: OK ($$n example(s) compiled + run with $$cxx)"
+	 echo "example-check: OK ($$n example(s) compiled + run with $$cxx)"; \
+	 $(PYTHON) $(ROOT)/tools/check_quickstart_displayed.py --cxx "$$cxx"
 
 # Proves the *system* install end to end, the exact packager path: install REAL to a temp prefix
 # with -DBUILD_TESTING=OFF (noarch LIBDIR=lib, no SciForge — the library stands alone), then

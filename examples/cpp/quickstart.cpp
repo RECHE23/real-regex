@@ -25,7 +25,7 @@ int main()
   // The pattern lives in the type — parsed & compiled at compile time.
   #include <real/real.hpp>
   constexpr real::static_regex<R"((\w+)@(\w+))"> email;
-  static_assert(email.search("info@example.com")[2] == "example"sv);
+  static_assert(email.search("info@example.com")[2] == "example");
   // [/quickstart]
 
   const bool ok = email.search("info@example.com")[2] == "example"sv;
