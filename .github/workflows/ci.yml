@@ -11,12 +11,23 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job below caps itself with timeout-minutes. Without one the ceiling is
+# GitHub's 360-minute default, so a step that never returns -- an unreachable
+# package mirror is the usual way -- holds a runner for six hours instead of
+# going red. Ceilings are ~4x each job's observed maximum, wide enough for
+# runner variance and far short of a hang.
+#
+# `lint`, `build` and `python` cannot carry one: GitHub rejects timeout-minutes
+# on a job that calls a reusable workflow with `uses` (only name/uses/with/
+# secrets/needs/if/permissions are accepted there). Their ceiling belongs in
+# SciForge, beside the jobs it would bound.
 jobs:
   # Cheap preflight (seconds–1 min): format, version, layers, pins, Doxygen.
   # If any of these fail, the multi-OS matrix / fuzz / coverage never start.
   # Order matches full-local-gate: fast high-signal checks first (doc included).
   preflight:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
         with:
@@ -144,6 +155,7 @@ jobs:
   win32-narrowing:
     needs: preflight
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - name: Install 32-bit g++ multilib
@@ -157,6 +169,7 @@ jobs:
   fuzz:
     needs: preflight
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
       - name: Robustness fuzzing smoke run (libFuzzer + ASan/UBSan)
@@ -195,6 +208,7 @@ jobs:
   conformance:
     needs: preflight
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
         with:
@@ -228,6 +242,7 @@ jobs:
   bindings:
     needs: preflight
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
         with:
@@ -252,6 +267,7 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - name: crate build + differential tests (default)
@@ -270,6 +286,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v5
@@ -289,6 +306,7 @@ jobs:
   fuzz-rust:
     needs: preflight
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - name: Install clang (the shim's cc-build)
@@ -304,6 +322,7 @@ jobs:
   coverage:
     needs: preflight
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
         with:
@@ -331,6 +350,7 @@ jobs:
   install-smoke:
     needs: preflight
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
         with:

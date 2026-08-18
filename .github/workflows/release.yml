@@ -8,6 +8,9 @@ on:
     tags: ["v*"]
   workflow_dispatch: {}
 
+# Each job caps itself with timeout-minutes: without one the ceiling is GitHub's
+# 360-minute default, and a step that never returns holds a runner for six hours
+# instead of going red. Ceilings are ~4x the observed maximum.
 jobs:
   # Build the wheels (cibuildwheel abi3 across 4 OS) + sdist via SciForge's reusable
   # build-only spine (it also guards tag == pyproject version), uploading them as
@@ -22,6 +25,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # Only publish on an actual tag push, not manual dry-runs.
     if: startsWith(github.ref, 'refs/tags/v')
     environment: pypi
@@ -42,6 +46,7 @@ jobs:
   publish-crate:
     needs: publish
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: startsWith(github.ref, 'refs/tags/v')
     environment: crates-io
     steps:
@@ -73,6 +78,7 @@ jobs:
   github-release:
     needs: publish
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write   # create the Release for the tag
@@ -108,6 +114,7 @@ jobs:
     needs: [publish, github-release]
     if: ${{ needs.github-release.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Dispatch upstream-release to taps
         env:
@@ -127,6 +134,7 @@ jobs:
   publish-go:
     needs: publish
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/setup-go@v5

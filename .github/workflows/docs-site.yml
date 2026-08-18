@@ -32,9 +32,13 @@ concurrency:
   group: docs-site-${{ github.ref }}
   cancel-in-progress: true
 
+# Each job caps itself with timeout-minutes: without one the ceiling is GitHub's
+# 360-minute default, and a step that never returns holds a runner for six hours
+# instead of going red. Ceilings are ~4x the observed maximum.
 jobs:
   docs-site:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       # Sibling checkout layout, mirroring docs.yml: coverage-html (run by
       # docs-site-gate so the landing's /coverage link resolves to a

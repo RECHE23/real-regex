@@ -21,9 +21,13 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+# Each job caps itself with timeout-minutes: without one the ceiling is GitHub's
+# 360-minute default, and a step that never returns holds a runner for six hours
+# instead of going red. Ceilings are ~4x the observed maximum.
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
         with:
@@ -60,6 +64,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url || steps.deployment_retry.outputs.page_url }}
