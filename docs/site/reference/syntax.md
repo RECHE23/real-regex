@@ -76,7 +76,11 @@ limit.
 | `(?<=…)` `(?<!…)` | lookbehind, positive / negative |
 
 An unbounded or capturing lookaround is rejected with `real::regex_error`,
-never silently approximated.
+never silently approximated. Bounding one is usually a local edit — the
+validation shape `^(?=.*[A-Z])(?=.*\d).{8,}$` becomes
+`^(?=.{0,32}[A-Z])(?=.{0,32}\d).{8,}$`. The cap is 255 **bytes** matched by
+the sub-pattern, so a bound in characters can still be refused on non-ASCII
+text (a UTF-8 `.` is up to four bytes).
 
 ## Unicode properties
 

@@ -113,14 +113,18 @@ TEST(lookahead_negative_sub_partially_matches_then_fails)
 
 TEST(lookaround_rejects_unbounded_sub)
 {
-  // True unbounded (*, +, {n,}) → "unbounded … use a fixed repeat count".
+  // True unbounded (*, +, {n,}) → "unbounded lookaround …", and the message must carry the
+  // REWRITE, not only the constraint: `(?=.*[A-Z])` is the shape users arrive with, and a
+  // message that says "bound it" without saying `.* -> .{0,N}` leaves them stuck.
   const auto expect_unbounded = [](const char* pat) {
                                   bool threw = false;
                                   try {
                                     real::regex r(pat);
                                   } catch (const real::regex_error& e) {
                                     threw = true;
-                                    EXPECT(std::string_view(e.what()).find("unbounded lookaround") != std::string_view::npos);
+                                    const std::string_view what {e.what()};
+                                    EXPECT(what.find("unbounded lookaround") != std::string_view::npos);
+                                    EXPECT(what.find(".{0,") != std::string_view::npos);
                                   }
                                   EXPECT(threw);
                                 };
@@ -130,6 +134,12 @@ TEST(lookaround_rejects_unbounded_sub)
   expect_unbounded("(?<=a*)");    // behind, unbounded
   expect_unbounded("(?<!a+)");
   expect_unbounded("(?<=\\w+)b"); // true unbounded word run
+
+  // The advice has to be true, not merely encouraging: the rewrite the message prints is
+  // compiled here, on the password shape that sends people to that message in the first place.
+  real::regex advised {R"(^(?=.{0,32}[A-Z])(?=.{0,32}\d)[A-Za-z\d]{8,}$)"};
+  EXPECT(advised.search("Passw0rdSecret").matched());
+  EXPECT(!advised.search("faible").matched());
 }
 
 TEST(lookaround_rejects_nested)
