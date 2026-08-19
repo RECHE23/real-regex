@@ -1774,7 +1774,10 @@ std::string pattern_flags_suffix(unsigned long flags)
     if (!out.empty()) {
       out += "|";
     }
-    out += "re.";
+    // "real.", not "re.": the constructor half of this repr already says real.compile, and a repr
+    // naming two different modules evaluates in NEITHER namespace -- `import real` leaves `re`
+    // undefined, `import real as re` leaves `real` undefined.
+    out += "real.";
     out += n.name;
   }
   return out;

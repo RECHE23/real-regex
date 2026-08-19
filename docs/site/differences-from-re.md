@@ -212,6 +212,27 @@ lookaround already ships), the gap is VM-integration work not yet done, not a Re
 concession. Recursion/callouts/conditionals above stay permanently excluded regardless — that door
 really is closed.
 
+(div_module_surface)=
+## The module surface (Python binding)
+
+Everything above is about the pattern language. Four differences are in the *module* instead,
+and a `import real as re` drop-in meets them without writing a pattern at all:
+
+- **Flags are plain `int`, not a `RegexFlag` enum.** `real.I | real.M` is `10`, where `re.I | re.M`
+  reprs as `re.IGNORECASE|re.MULTILINE`; there is no `real.RegexFlag`, so an annotation spelled
+  `flags: re.RegexFlag` becomes `flags: int`. The values themselves are `re`'s, so any flag
+  expression that works there works here.
+- **`Pattern.flags` reports what you passed.** For a `str` pattern `re` adds `re.UNICODE` — `re.compile('a', re.I).flags` is `34`, REAL's is `2` — so compare against what you passed, not
+  against `re`'s echo. Bytes patterns agree on both.
+- **`re.L` / `re.LOCALE` and `re.DEBUG` raise instead of being ignored.** Locale-dependent matching
+  is excluded by design (this engine is Unicode in text mode and raw bytes otherwise, never
+  locale-dependent); `DEBUG` dumps CPython's own compiler state, which REAL does not have. An
+  unrecognised flag bit is refused too, rather than silently dropped.
+- **`re.Scanner` is absent.** It is undocumented in CPython and has no REAL equivalent.
+
+`re.error` and `re.PatternError` are both spellings of one class here, as they are in `re` since
+CPython 3.13, so `except` on either catches what the other raises.
+
 (div_possessive)=
 ## Possessive quantifiers and atomic groups (Tier 1 — a capability beyond re? no: parity, deliberately narrower for now)
 

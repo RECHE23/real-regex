@@ -12,11 +12,31 @@ import real
 
 
 def _re_shaped(text):
-    """real.compile(...) → re.compile(...) so a repr can be compared to CPython."""
-    return text.replace("real.compile", "re.compile")
+    """real.X → re.X so a repr can be compared to CPython.
+
+    Every prefix, not just ``real.compile``: normalising the constructor alone let a repr
+    whose flag half still said ``re.IGNORECASE`` compare equal to CPython's, which is how
+    ``real.compile('a', re.IGNORECASE)`` -- a string that evaluates in no namespace at all
+    -- passed this test.
+    """
+    return text.replace("real.", "re.")
 
 
 class TestPatternRepr(unittest.TestCase):
+    def test_repr_names_one_module_and_round_trips(self):
+        """A repr must rebuild its object; only the canonical module name may appear in it."""
+        # The last case is a fallback pattern WITH flags: the native repr and the fallback
+        # repr are built by two different functions, and only the native one had a test that
+        # reached the flag branch at all.
+        cases = [(r"(?P<w>\w+)", real.I | real.M, False), (r"a", 0, False),
+                 (b"ab+", real.X, False), (r"(\w+)\1", real.I | real.S, True)]
+        for pat, flags, fb in cases:
+            with self.subTest(pat=pat, flags=flags, fallback=fb):
+                text = repr(real.compile(pat, flags, fallback=fb))
+                rebuilt = eval(text, {"real": real})  # noqa: S307 - the point of the test
+                self.assertEqual(rebuilt.pattern, pat)
+                self.assertEqual(rebuilt.flags, flags)
+
     def test_repr_mirrors_re(self):
         cases = [
             (r"(?P<w>\w+)", 0),
@@ -39,10 +59,29 @@ class TestPatternRepr(unittest.TestCase):
         pat = "x" * 250
         self.assertEqual(_re_shaped(repr(real.compile(pat))), repr(re.compile(pat)))
 
-    def test_fallback_repr_is_compile_shaped(self):
+    def test_fallback_repr_declares_the_fallback(self):
+        """A delegated pattern says so: the repr rebuilds it, and names the forfeited guarantee."""
         pat = r"(\w+)\1"
         p = real.compile(pat, fallback=True)
-        self.assertEqual(repr(p), "real.compile(" + repr(pat) + ")")
+        self.assertEqual(repr(p), "real.compile(" + repr(pat) + ", fallback=True)")
+        self.assertEqual(p.engine, "re")
+        with self.assertRaises(real.error):
+            real.compile(pat)  # the same call without the argument the repr carries
+
+
+class TestErrorSpelling(unittest.TestCase):
+    def test_pattern_error_is_the_same_class_as_error(self):
+        """`except real.PatternError` catches what `real.error` raises, and the reverse."""
+        self.assertIs(real.PatternError, real.error)
+        with self.assertRaises(real.PatternError):
+            real.compile("(")
+        with self.assertRaises(real.error):
+            real.compile("(")
+
+    @unittest.skipUnless(hasattr(re, "PatternError"), "re.PatternError is Python 3.13+")
+    def test_matches_the_stdlib_relationship(self):
+        """re kept `error` as the alias of `PatternError`; either spelling names one class there too."""
+        self.assertIs(re.PatternError, re.error)
 
 
 class TestCopyAndDunders(unittest.TestCase):

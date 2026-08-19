@@ -661,6 +661,22 @@ class TestIntentionalDivergences(unittest.TestCase):
             _re.compile(r"(?<=a|bb)c")
         self.assertEqual(real.compile(r"(?<=a|bb)c").search("xbbc").group(), "c")
 
+    def test_module_surface_divergences(self):
+        # div_module_surface: the four differences a drop-in meets without writing a pattern.
+        import re as _re
+        self.assertIs(type(real.I), int)                 # plain int, no RegexFlag enum
+        self.assertFalse(hasattr(real, "RegexFlag"))
+        self.assertFalse(hasattr(real, "Scanner"))
+        self.assertEqual(real.I | real.M, _re.I | _re.M)  # the VALUES are re's
+        # flags echoes what was passed; re adds UNICODE for a str pattern, and neither for bytes.
+        self.assertEqual(real.compile("a", real.I).flags, real.I)
+        self.assertEqual(int(_re.compile("a", _re.I).flags), _re.I | _re.UNICODE)
+        self.assertEqual(real.compile(b"a", real.I).flags, int(_re.compile(b"a", _re.I).flags))
+        # re.L (4), re.DEBUG (128) and an unrecognised bit are refused, never ignored.
+        for bit in (4, 128, 1024):
+            with self.subTest(bit=bit), self.assertRaises(real.error):
+                real.compile("a", bit)
+
 
 class TestCppIntegration(unittest.TestCase):
     """Tests for the C++ embedding helpers."""
