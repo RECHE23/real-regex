@@ -16,6 +16,7 @@ namespace {
     CONSTEXPR_EXPECT(!real::regex("hello").match("say hello"));
     CONSTEXPR_EXPECT(real::regex("ab").search("xxabyy").start() == 2);
     CONSTEXPR_EXPECT(real::regex("ab").search("xxabyy").end() == 4);
+    CONSTEXPR_EXPECT(real::regex("ab").search("xxabyy").str() == std::string_view("ab"));
     CONSTEXPR_EXPECT(!real::regex("zzz").search("abc"));
     CONSTEXPR_EXPECT(real::regex("hello").fullmatch("hello").matched());
     CONSTEXPR_EXPECT(!real::regex("hello").fullmatch("hello!"));

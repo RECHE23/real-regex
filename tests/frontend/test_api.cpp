@@ -64,6 +64,19 @@ TEST(no_match_result_is_empty)
   EXPECT_EQ(match[0], ""sv);
 }
 
+TEST(str_is_the_std_smatch_spelling_of_operator_index)
+{
+  const real::regex rx("(\\w+)@(\\w+)");
+  const auto        match = rx.search("mail bob@host!");
+  EXPECT_EQ(match.str(), match[0]);      // no argument: the whole match, like std::smatch::str()
+  EXPECT_EQ(match.str(1), "bob"sv);
+  EXPECT_EQ(match.str(2), "host"sv);
+  EXPECT_EQ(match.str(3), ""sv);         // past the last group
+  // Unset group and non-match agree with operator[] rather than throwing.
+  EXPECT_EQ(real::regex("(a)?b").fullmatch("b").str(1), ""sv);
+  EXPECT_EQ(rx.search("nothing here").str(), ""sv);
+}
+
 TEST(unsupported_syntax_is_rejected)
 {
   EXPECT_THROWS(real::regex("(?>a|b)"), real::regex_error); // atomic groups: Tier 1 bodies only; a compound/alternating body is not

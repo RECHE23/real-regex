@@ -36,6 +36,7 @@ int main()
     std::cout << m[0] << "\n";              // 2026-07 -- the whole match
     std::cout << m["year"] << "\n";         // 2026 -- by name...
     std::cout << m[2] << "\n";              // 07   -- ...or by index
+    std::cout << m.str(2) << "\n";          // 07   -- std::smatch's spelling of the same thing
     std::cout << m.start("month") << "\n";  // 14   -- byte offsets, by name too
   }
   // [/match-result]

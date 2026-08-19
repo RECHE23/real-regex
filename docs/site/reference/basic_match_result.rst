@@ -8,13 +8,15 @@ What every ``match`` / ``fullmatch`` / ``search`` call returns: a testable
 result carrying the spans and texts of the whole match and its capture
 groups, addressable by index or by group name. ``real::match_result`` is the
 usual alias. A non-match is simply falsy -- test the result, then read it.
+``m.str(1)`` is accepted as a synonym of ``m[1]``, for callers whose fingers
+come from ``std::smatch``.
 
 Interface
 ---------
 
 .. doxygenclass:: real::basic_match_result
    :project: real
-   :members: basic_match_result, matched, size, start, end, group_index, operator[], operator bool, spans
+   :members: basic_match_result, matched, size, start, end, group_index, operator[], str, operator bool, spans
 
 Complexity
 ----------
