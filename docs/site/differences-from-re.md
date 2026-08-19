@@ -204,6 +204,16 @@ Each of these raises a clear `real::regex_error`, for a reason worth keeping:
   calls** — non-regular control flow, each super-linear in the worst case. Excluded for
   the same ReDoS reason (see the note at the top of this page).
 
+**If you must run one of these anyway**, the opt-in is only where a *backtracking* engine is within
+reach, and it forfeits the linear-time guarantee for that pattern alone: in C++ a `real::compat::regex`
+(`<real/compat/std/regex.hpp>`) built with `real::compat::policy::fallback` delegates it to
+`std::regex`, and in Python `real.compile(..., fallback=True)` delegates it to `re`. **Rust's
+`fallback` feature does not reach this far** — it delegates to the `regex` crate, which is linear too
+and refuses a backreference just as REAL does; there it closes the `\\p{...}` namespace and folding
+gaps instead. A native `real::regex` has no opt-in at all: it is the linear engine or nothing, which
+is what makes the chosen backend (`Pattern.engine`, `Regex::engine()`, the compat policy) worth
+reporting.
+
 Unlike the above, **a possessive quantifier or atomic group over a compound body**
 (`(?:ab)*+`, `(?>ab|a)`) is rejected "not supported **yet**", not "by design" — see
 {ref}`div_possessive`. The *linear-time* argument for the general case is expected to hold
