@@ -715,6 +715,40 @@ class TestBackreferencesRejected(unittest.TestCase):
                 self.assertIsNotNone(real.compile(pattern))
 
 
+class TestUnsupportedNamesTheEscapeHatch(unittest.TestCase):
+    """An unsupported pattern must say how to proceed, not only that it stopped: the message
+    carries the compatibility contract and ``fallback=True``. Syntax errors must not — a
+    malformed pattern is malformed for ``re`` too, so the hint would be a wrong turn."""
+
+    UNSUPPORTED = r"\b(\w+)\s+\1\b"  # a backreference: well-formed, beyond a linear engine
+
+    def test_unsupported_message_names_fallback_and_the_contract(self):
+        with self.assertRaises(real.error) as caught:
+            real.compile(self.UNSUPPORTED)
+        message = str(caught.exception)
+        self.assertIn("backreferences are not supported", message)  # the cause survives in front
+        self.assertIn("fallback=True", message)
+        self.assertIn("COMPATIBILITY.md", message)
+
+    def test_syntax_error_carries_no_fallback_hint(self):
+        with self.assertRaises(real.error) as caught:
+            real.compile(r"(unclosed")
+        self.assertNotIn("fallback", str(caught.exception))
+
+    def test_the_advertised_remedy_actually_works(self):
+        """The hint has to be true, not encouraging: the message says fallback=True, so
+        fallback=True must compile this very pattern and report the delegating engine."""
+        pattern = real.compile(self.UNSUPPORTED, fallback=True)
+        self.assertEqual(pattern.engine, "re")
+        self.assertEqual(pattern.findall("le le chat est parti parti"), ["le", "parti"])
+
+    def test_regex_set_does_not_advertise_a_policy_it_lacks(self):
+        """RegexSet has no fallback parameter, so its rejection must not name one."""
+        with self.assertRaises(real.error) as caught:
+            real.RegexSet([self.UNSUPPORTED])
+        self.assertNotIn("fallback", str(caught.exception))
+
+
 class TestErrorHierarchy(unittest.TestCase):
     """real.error must subclass re.error so ``except re.error:`` catches REAL's errors."""
 

@@ -1212,15 +1212,28 @@ struct repl_segment {
 
 void set_error(const char* message) { PyErr_SetString(error_type, message); }
 
+// The escape hatch, named where the user meets the wall. Only for `unsupported` (a malformed
+// pattern is malformed for `re` too, so fallback buys nothing there), and only where a fallback
+// exists: `compile` has one, `RegexSet` does not. Same three parts as the Rust binding's hint --
+// what it is, where the contract lives, how to proceed -- so the two read alike.
+constexpr const char* FALLBACK_HINT {
+  " (unsupported by REAL — see "
+  "https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md ; pass fallback=True to "
+  "delegate this pattern to the standard library re, forfeiting the linear-time guarantee for it)"};
+
 // Raise real.error(msg, pattern, pos) so re.error fills lineno/colno. `msg` is
 // the engine's cause, not the "regex_error at N: " wrapper what() prints.
-void set_regex_error(const real::regex_error& ex, PyObject* pattern)
+void set_regex_error(const real::regex_error& ex, PyObject* pattern, bool fallback_available = true)
 {
   const std::string prefix = "regex_error at " + std::to_string(ex.position()) + ": ";
   const char*       what   {ex.what()};
-  const char*       msg    {(std::strncmp(what, prefix.c_str(), prefix.size()) == 0)
+  const char*       cause  {(std::strncmp(what, prefix.c_str(), prefix.size()) == 0)
                               ? what + prefix.size()
                               : what};
+  const std::string owned  {(fallback_available && ex.kind() == real::error_kind::unsupported)
+                              ? std::string(cause) + FALLBACK_HINT
+                              : std::string(cause)};
+  const char*       msg    {owned.c_str()};
   const auto        pos    {static_cast<Py_ssize_t>(ex.position())};
   PyObject*         exc    {(pattern != nullptr)
                               ? PyObject_CallFunction(error_type, "sOn", msg, pattern, pos)
@@ -2165,7 +2178,7 @@ PyObject* real_compile_set(PyObject*, PyObject* args, PyObject* kwargs) {
     try {
         set = new real::regex_set(std::span<const std::string_view> {views}, compile_flags);
     } catch (const real::regex_error& ex) {
-        set_regex_error(ex, nullptr);
+        set_regex_error(ex, nullptr, /*fallback_available=*/false);  // RegexSet has no fallback policy
         return nullptr;
     } catch (const std::bad_alloc&) {
         return PyErr_NoMemory();
