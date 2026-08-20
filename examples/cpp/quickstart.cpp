@@ -1,18 +1,16 @@
-// The landing page's C++ quickstart tab, compiled and run here so the code the page
-// shows is exactly the code that's tested, never merely illustrative. A pair of region-boundary
-// comments further down bounds the block conf.py's `_inject_quickstart` (html-page-context
-// hook) reads and Pygments-highlights onto the page at build time (NOTE: keep this sentence
-// from ever spelling out that pair of comments literally — the hook's own region search is a
-// first-occurrence substring search, and a mention up here would shadow the real one below) — do
-// not edit the marked lines without also checking the landing's C++ tab still matches
-// byte-for-byte (rebuild with `make docs-site` and diff).
+// The landing page's C++ quickstart tab, compiled and run here so the code the page shows is
+// exactly the code that's tested, never merely illustrative. Editing the marked region changes
+// the landing: rebuild with `make docs-site` and diff the C++ tab.
 //
-// The two #include lines inside main() are REDUNDANT (both headers are already included above,
-// so their include guards make the second inclusion a no-op) — kept only so the marked region
-// reproduces the landing's displayed text exactly. `line` is predeclared just above the region,
-// exactly as the prose above the tab implies ("...or drop into std::regex's place").
+// Three constraints on that region, all load-bearing:
+//   - It is compiled AS ITS OWN TRANSLATION UNIT (tools/check_quickstart_displayed.py), so a
+//     paste of those lines alone must build. Nothing in it may lean on a header included further
+//     up this file — hence its own #include, which the guard above makes a no-op *here* only.
+//   - It sits at NAMESPACE scope in that unit: no statement may need an enclosing function,
+//     which is why the answer is asserted rather than printed.
+//   - conf.py's `_extract_region` finds it with `str.index`, i.e. the FIRST occurrence of each
+//     boundary comment, so no line above may spell either of them out.
 #include <real/real.hpp>
-#include <real/compat/std/regex.hpp>
 
 #include <iostream>
 #include <string_view>
