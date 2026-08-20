@@ -1097,10 +1097,16 @@ actual gate).
   misleading speed number.
 - **Not gated.** These *absolute-throughput* targets are excluded from `full-local-gate`
   on purpose: a noisy wall-time measurement must never turn a clean build red.
-- **Measure x86-64 on the native g++ 13.3 host, not in Docker on a second machine.** Same six cores and the same
-  g++ 13.3 that builds the manylinux wheels, but the worst within-arm spread across every
+- **Measure x86-64 on the native g++ 13.3 host, not in Docker on a second machine.** Same six cores
+  either way, but the worst within-arm spread across every
   row is **1.045×** against the container's **1.98×** — the difference between an
-  instrument and a lottery. Use Docker only when the native host is unavailable, and then only
+  instrument and a lottery. **This rule once carried a second justification that does not hold and
+  has been withdrawn:** g++ 13.3 was said to be "the same compiler that builds the manylinux
+  wheels", and it is not — the published wheel is built by the manylinux image's own toolchain
+  (`GCC 14.2.1` in the `2026.8.16` wheel, read from its `.comment` section, not inferred). g++ 13.3
+  is this baseline's *fixed* compiler, chosen so cells stay comparable across stamps; a row here
+  describes that baseline and never the artifact a `pip install` delivers. The rule stands on the
+  spread and the sign error below, which is all it ever needed. Use Docker only when the native host is unavailable, and then only
   with the workaround below. The two disagree on more than precision: on the `cp_class_hi_width`
   attribute A/B the container reported `(?i)cafe` **improving 25 %** where the native host
   measured it **regressing 217 %**, which is the sign error that matters most.
