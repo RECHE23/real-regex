@@ -9,7 +9,9 @@ result carrying the spans and texts of the whole match and its capture
 groups, addressable by index or by group name. ``real::match_result`` is the
 usual alias. A non-match is simply falsy -- test the result, then read it.
 ``m.str(1)`` is accepted as a synonym of ``m[1]``, for callers whose fingers
-come from ``std::smatch``.
+come from ``std::smatch``. Both return a view, not an owned string, so an
+owned copy is ``std::string s {m.str(1)};`` — with braces, since
+``std::string_view`` converts to ``std::string`` explicitly.
 
 Interface
 ---------
