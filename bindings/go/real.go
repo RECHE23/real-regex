@@ -3,7 +3,8 @@
 // see vendor_include/ and the Makefile's `vendor`/`check-vendor` targets).
 //
 // v0.1: a regexp-idiomatic subset (Compile/MustCompile/String/Match/MatchString/Find/FindString/
-// FindIndex/FindAll/FindAllString/Split/FindAllIndex/FindSubmatchIndex/ReplaceAll/RegexSet)
+// FindIndex/FindAll/FindAllString/Split/FindAllIndex/FindSubmatch/FindStringSubmatch/
+// FindSubmatchIndex/ReplaceAll/RegexSet)
 // plus REAL extensions regexp has no equivalent for at all (FullMatch,
 // bounded lookarounds, possessive quantifiers). See README.md for the full method-to-C-ABI
 // mapping and documented flavor divergences from Go's regexp (RE2) — most importantly: \w,
@@ -328,6 +329,51 @@ func (r *Regexp) Split(s string, n int) []string {
 	return parts
 }
 
+// submatchBytes slices b at idx (FindSubmatchIndex shape). A group whose start is -1
+// stays nil, like regexp.Regexp.FindSubmatch — not an empty slice.
+func submatchBytes(b []byte, idx []int) [][]byte {
+	if idx == nil {
+		return nil
+	}
+	out := make([][]byte, len(idx)/2)
+	for i := range out {
+		a, e := idx[2*i], idx[2*i+1]
+		if a >= 0 {
+			out[i] = b[a:e]
+		}
+	}
+	return out
+}
+
+// submatchStrings slices s at idx. A group whose start is -1 stays "", like
+// regexp.Regexp.FindStringSubmatch (empty string and unset are indistinguishable).
+func submatchStrings(s string, idx []int) []string {
+	if idx == nil {
+		return nil
+	}
+	out := make([]string, len(idx)/2)
+	for i := range out {
+		a, e := idx[2*i], idx[2*i+1]
+		if a >= 0 {
+			out[i] = s[a:e]
+		}
+	}
+	return out
+}
+
+// FindSubmatch returns the leftmost match and its groups as sub-slices of b, or nil —
+// like regexp.Regexp.FindSubmatch. An unset group is nil; an empty participating group
+// is a non-nil empty slice.
+func (r *Regexp) FindSubmatch(b []byte) [][]byte {
+	return submatchBytes(b, r.FindSubmatchIndex(b))
+}
+
+// FindStringSubmatch is FindSubmatch on a string, like regexp.Regexp.FindStringSubmatch.
+// No match is nil, not an empty slice — that is the FAIL a tutorial hits first.
+func (r *Regexp) FindStringSubmatch(s string) []string {
+	return submatchStrings(s, r.FindSubmatchIndex([]byte(s)))
+}
+
 // FindSubmatchIndex returns the leftmost match's full span plus every group's span
 // (2*(NumSubexp()+1) ints: start0,end0,start1,end1,...), or nil if there is no match — the
 // same shape as regexp.Regexp.FindSubmatchIndex. A group that did not participate is -1,-1.
@@ -365,6 +411,45 @@ func (r *Regexp) FindAllSubmatchIndex(text []byte) [][]int {
 			break
 		}
 		out = append(out, spansToIndices(spans))
+	}
+	return out
+}
+
+// findAllSubmatchIndexN is FindAllSubmatchIndex with regexp's n: 0 → nil, <0 → all, >0 → at most n.
+func (r *Regexp) findAllSubmatchIndexN(b []byte, n int) [][]int {
+	if n == 0 {
+		return nil
+	}
+	all := r.FindAllSubmatchIndex(b)
+	if all == nil || n < 0 || n >= len(all) {
+		return all
+	}
+	return all[:n]
+}
+
+// FindAllSubmatch returns successive matches and their groups, like regexp.Regexp.FindAllSubmatch.
+// n is the cap (0 → nil, <0 → all).
+func (r *Regexp) FindAllSubmatch(b []byte, n int) [][][]byte {
+	all := r.findAllSubmatchIndexN(b, n)
+	if all == nil {
+		return nil
+	}
+	out := make([][][]byte, len(all))
+	for i, idx := range all {
+		out[i] = submatchBytes(b, idx)
+	}
+	return out
+}
+
+// FindAllStringSubmatch is FindAllSubmatch on a string, like regexp.Regexp.FindAllStringSubmatch.
+func (r *Regexp) FindAllStringSubmatch(s string, n int) [][]string {
+	all := r.findAllSubmatchIndexN([]byte(s), n)
+	if all == nil {
+		return nil
+	}
+	out := make([][]string, len(all))
+	for i, idx := range all {
+		out[i] = submatchStrings(s, idx)
 	}
 	return out
 }

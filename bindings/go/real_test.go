@@ -112,6 +112,18 @@ func TestClosedHandleIsSafe(t *testing.T) {
 	if got := r.FindAllSubmatchIndex([]byte("a@b")); got != nil {
 		t.Fatalf("FindAllSubmatchIndex after Close: got %v, want nil", got)
 	}
+	if got := r.FindSubmatch([]byte("a@b")); got != nil {
+		t.Fatalf("FindSubmatch after Close: got %v, want nil", got)
+	}
+	if got := r.FindStringSubmatch("a@b"); got != nil {
+		t.Fatalf("FindStringSubmatch after Close: got %v, want nil", got)
+	}
+	if got := r.FindAllSubmatch([]byte("a@b"), -1); got != nil {
+		t.Fatalf("FindAllSubmatch after Close: got %v, want nil", got)
+	}
+	if got := r.FindAllStringSubmatch("a@b", -1); got != nil {
+		t.Fatalf("FindAllStringSubmatch after Close: got %v, want nil", got)
+	}
 	if r.Match([]byte("a@b")) {
 		t.Fatal("Match after Close: got true, want false")
 	}
@@ -211,6 +223,8 @@ func TestMatchFindSplitMatchStdlib(t *testing.T) {
 		{`zzz`, `abc`},
 		{``, `x`},
 		{`a*`, `bb`},
+		{`([a-z]+)@([a-z]+)`, `xx a@b yy`},
+		{`(a)|(b)`, `b`},
 	}
 	for _, c := range cases {
 		r := MustCompile(c.pat)
@@ -227,10 +241,26 @@ func TestMatchFindSplitMatchStdlib(t *testing.T) {
 			r.Close()
 			t.Fatalf("%q on %q: FindIndex got %v want %v", c.pat, c.s, got, want)
 		}
+		if got, want := r.FindStringSubmatch(c.s), std.FindStringSubmatch(c.s); !reflect.DeepEqual(got, want) {
+			r.Close()
+			t.Fatalf("%q on %q: FindStringSubmatch got %q want %q", c.pat, c.s, got, want)
+		}
+		if got, want := r.FindSubmatch([]byte(c.s)), std.FindSubmatch([]byte(c.s)); !reflect.DeepEqual(got, want) {
+			r.Close()
+			t.Fatalf("%q on %q: FindSubmatch got %q want %q", c.pat, c.s, got, want)
+		}
 		for _, n := range []int{-1, 0, 1, 2, 99} {
 			if got, want := r.FindAllString(c.s, n), std.FindAllString(c.s, n); !reflect.DeepEqual(got, want) {
 				r.Close()
 				t.Fatalf("%q on %q n=%d: FindAllString got %v want %v", c.pat, c.s, n, got, want)
+			}
+			if got, want := r.FindAllStringSubmatch(c.s, n), std.FindAllStringSubmatch(c.s, n); !reflect.DeepEqual(got, want) {
+				r.Close()
+				t.Fatalf("%q on %q n=%d: FindAllStringSubmatch got %q want %q", c.pat, c.s, n, got, want)
+			}
+			if got, want := r.FindAllSubmatch([]byte(c.s), n), std.FindAllSubmatch([]byte(c.s), n); !reflect.DeepEqual(got, want) {
+				r.Close()
+				t.Fatalf("%q on %q n=%d: FindAllSubmatch got %q want %q", c.pat, c.s, n, got, want)
 			}
 			if got, want := r.Split(c.s, n), std.Split(c.s, n); !reflect.DeepEqual(got, want) {
 				r.Close()
@@ -503,6 +533,66 @@ func TestFindAllSubmatchIndex(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestFindStringSubmatch(t *testing.T) {
+	// The FAIL: the groups tutorial writes FindStringSubmatch, not FindSubmatchIndex.
+	r := MustCompile(`(\w+)@(\w+)`)
+	defer r.Close()
+	got := r.FindStringSubmatch(`a@b`)
+	want := []string{`a@b`, `a`, `b`}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestFindStringSubmatch_NoMatchIsNil(t *testing.T) {
+	r := MustCompile(`xyz`)
+	defer r.Close()
+	if got := r.FindStringSubmatch(`abc`); got != nil {
+		t.Fatalf("no match must be nil, not %q", got)
+	}
+	if got := r.FindSubmatch([]byte(`abc`)); got != nil {
+		t.Fatalf("no match must be nil, not %q", got)
+	}
+}
+
+func TestFindSubmatch_UnsetGroupIsNil(t *testing.T) {
+	r := MustCompile(`(a)|(b)`)
+	defer r.Close()
+	got := r.FindSubmatch([]byte(`b`))
+	want := [][]byte{[]byte(`b`), nil, []byte(`b`)}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q, want %q (unset group is nil, not empty)", got, want)
+	}
+	if got[1] != nil {
+		t.Fatalf("group 1 must be nil, got %q", got[1])
+	}
+	sgot := r.FindStringSubmatch(`b`)
+	swant := []string{`b`, ``, `b`}
+	if !reflect.DeepEqual(sgot, swant) {
+		t.Fatalf("string form got %q, want %q", sgot, swant)
+	}
+}
+
+func TestFindAllStringSubmatch(t *testing.T) {
+	r := MustCompile(`(\w+)@(\w+)`)
+	defer r.Close()
+	got := r.FindAllStringSubmatch(`a@b and cd@ef`, -1)
+	want := [][]string{
+		{`a@b`, `a`, `b`},
+		{`cd@ef`, `cd`, `ef`},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if got := r.FindAllStringSubmatch(`a@b and cd@ef`, 0); got != nil {
+		t.Fatalf("n=0 must be nil, got %q", got)
+	}
+	one := r.FindAllStringSubmatch(`a@b and cd@ef`, 1)
+	if !reflect.DeepEqual(one, want[:1]) {
+		t.Fatalf("n=1 got %q, want %q", one, want[:1])
 	}
 }
 
