@@ -393,10 +393,10 @@ func TestReplaceAllBadTemplateErrors(t *testing.T) {
 }
 
 func TestRegexpDollarTemplate(t *testing.T) {
-	// The FAIL: regexp's $1 / $& / ${name} used to pass through the C ABI as
-	// literals (err == nil). \1 stays a template; a lone $ is not regexp's.
-	yes := []string{`$1`, `$2`, `$&`, `${name}`, `x$1`, `$0`}
-	no := []string{``, `$`, `$$`, `$$1`, `price $`, `#`, `\1`, `\2@\1`, `$x`}
+	// Pinned against regexp.Expand (Go 1.26): $name / ${name} / $1 are variables;
+	// $& is not (ECMAScript, not extract()'s letter/digit/_). $$ is an escaped dollar.
+	yes := []string{`$1`, `$2`, `$0`, `${name}`, `$year/$month`, `$x`, `x$1`, `$_`}
+	no := []string{``, `$`, `$$`, `$$1`, `price $`, `#`, `\1`, `\2@\1`, `$&`, `$ x`, `end$`}
 	for _, s := range yes {
 		if !regexpDollarTemplate([]byte(s)) {
 			t.Fatalf("%q: want regexp dollar template", s)
@@ -404,22 +404,33 @@ func TestRegexpDollarTemplate(t *testing.T) {
 	}
 	for _, s := range no {
 		if regexpDollarTemplate([]byte(s)) {
-			t.Fatalf("%q: not a regexp $1 / $& / ${name} template", s)
+			t.Fatalf("%q: not a regexp $name / ${name} template", s)
 		}
 	}
 }
 
 func TestReplaceAllRegexpDollarTemplateErrors(t *testing.T) {
-	r := MustCompile(`(\w+)@(\w+)`)
+	r := MustCompile(`(?P<year>\d{4})-(?P<month>\d{2})`)
 	defer r.Close()
-	for _, repl := range []string{`$2`, `$&`, `${name}`} {
-		got, err := r.ReplaceAll([]byte(`a@b`), []byte(repl))
+	// The FAIL: $year/$month is the spelling Go documents and Expand substitutes.
+	for _, repl := range []string{`$2`, `${month}`, `$year/$month`, `$x`} {
+		got, err := r.ReplaceAll([]byte(`2026-08`), []byte(repl))
 		if err == nil {
 			t.Fatalf("ReplaceAll(%q): expected error, got %q", repl, got)
 		}
 	}
+	// $& is not a regexp name — Expand leaves it literal; so do we.
+	amp, err := r.ReplaceAll([]byte(`2026-08`), []byte(`$&`))
+	if err != nil {
+		t.Fatalf("$& is not a regexp template: unexpected error: %v", err)
+	}
+	if string(amp) != `$&` {
+		t.Fatalf("$&: got %q, want literal $&", amp)
+	}
 	// Backslash templates still substitute — same witness as TestReplaceAllGroupSwap.
-	got, err := r.ReplaceAll([]byte(`a@b`), []byte(`\2@\1`))
+	r2 := MustCompile(`(\w+)@(\w+)`)
+	defer r2.Close()
+	got, err := r2.ReplaceAll([]byte(`a@b`), []byte(`\2@\1`))
 	if err != nil {
 		t.Fatalf("backslash template: unexpected error: %v", err)
 	}

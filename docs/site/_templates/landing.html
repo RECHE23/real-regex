@@ -386,7 +386,7 @@ version chip renders a Jinja variable derived from pyproject.toml.
         <article class="card">
           <span class="tag">constexpr</span>
           <h3>Compile-time, zero-dependency</h3>
-          <p>Build a <code>real::static_regex</code> in a <code>constexpr</code> context; a few dozen headers, nothing to link. <code>real::regex</code> compiles at run time.</p>
+          <p>Hold a <code>real::static_regex</code> as a <code>constexpr</code> object; the pattern lives in the type, a few dozen headers, nothing to link. <code>real::regex</code> allocates — it is not a <code>constexpr</code> variable.</p>
         </article>
       </div>
     </div>

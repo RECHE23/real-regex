@@ -35,7 +35,9 @@ extern const char* real_go_engine_version(void);
 import "C"
 
 import (
+	"bytes"
 	"errors"
+	"regexp"
 	"runtime"
 	"unsafe"
 )
@@ -467,34 +469,33 @@ func (r *Regexp) FullMatch(text []byte) bool {
 	return rc == 1
 }
 
+// dollarProbe is a dummy match so regexp.Expand itself classifies templates.
+// A handwritten $1/$&/${name} list was wrong in both directions: it missed
+// $name (Go's documented spelling) and rejected $& (which Expand leaves literal).
+var (
+	dollarProbe      = regexp.MustCompile(`a`)
+	dollarProbeSrc   = []byte("a")
+	dollarProbeMatch = []int{0, 1}
+)
+
 // regexpDollarTemplate reports whether repl uses regexp's Expand spelling
-// ($1, $&, ${name}) rather than REAL/Python \1 / \g<name>. Those are left
+// ($name / ${name} / $1) rather than REAL/Python \1 / \g<name>. Those are left
 // literal by the C ABI, so a regexp migrator would see a successful replace
-// that did not substitute. We refuse instead of translating.
+// that did not substitute. We refuse instead of translating. $$ is an escaped
+// dollar, not a variable — neutralized before asking Expand.
 func regexpDollarTemplate(repl []byte) bool {
-	for i := 0; i < len(repl); i++ {
-		if repl[i] != '$' || i+1 >= len(repl) {
-			continue
-		}
-		n := repl[i+1]
-		if n == '$' {
-			i++ // $$ is a literal dollar in regexp; skip the pair
-			continue
-		}
-		if n == '&' || n == '{' || n >= '0' && n <= '9' {
-			return true
-		}
-	}
-	return false
+	neutral := bytes.ReplaceAll(repl, []byte("$$"), []byte{0, 0})
+	out := dollarProbe.Expand(nil, neutral, dollarProbeSrc, dollarProbeMatch)
+	return !bytes.Equal(out, neutral)
 }
 
 // ReplaceAll applies repl (a REAL/re-style template: \1, \g<name>, ...) to every
 // non-overlapping match, mirroring regexp.Regexp.ReplaceAll's shape — though Go's stdlib uses
-// $1-style templates where REAL uses \1-style. A `$1` / `$&` / `${name}` template is an
+// $name-style templates where REAL uses \1-style. A `$1` / `$name` / `${name}` template is an
 // error, not a silent no-op (see README.md). Two-call convention: size, then fill.
 func (r *Regexp) ReplaceAll(text, repl []byte) ([]byte, error) {
 	if regexpDollarTemplate(repl) {
-		return nil, errors.New("ReplaceAll: $1 / $& / ${name} are regexp templates; this package uses \\1 / \\g<name>")
+		return nil, errors.New("ReplaceAll: $1 / $name / ${name} are regexp templates; this package uses \\1 / \\g<name>")
 	}
 	ctext, freeText := cBytes(text)
 	defer freeText()
