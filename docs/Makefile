@@ -147,12 +147,12 @@ docs-site: doc-no-coverage doc-site-xml ## Build the themed Sphinx/Breathe site 
 #   no-inline-quickstart: the quickstart panels are not {literalinclude}
 #   directives in a source document -- they are `{{ quickstart_* }}`
 #   placeholders injected by conf.py's html-page-context hook. The check scans
-#   the TEMPLATE SOURCE for (a) any of the 4 placeholders missing (the injection points
-#   themselves were deleted) and (b) known verbatim strings from the actual snippet
-#   bodies (static_regex/MustCompile(/etc.) -- their presence in the template SOURCE
-#   would mean someone pasted real code in over the hook instead of using it. Rendered
-#   OUTPUT necessarily contains those same strings (that's the whole point of the
-#   injection), so this greps docs/site/_templates/landing.html, never build/site/html.
+#   the TEMPLATE SOURCE: every <pre> body must be exactly one of the four
+#   placeholders (a pasted snippet is a <pre>; prose in a <p> is not). A
+#   token list (static_regex / MustCompile / ...) collided with the constexpr
+#   card, which must name static_regex. Rendered OUTPUT contains the snippet
+#   strings (that's the injection), so this reads
+#   docs/site/_templates/landing.html, never build/site/html.
 #
 #   built-HTML link check (tools/check_site_links.py): linkcheck (above) walks SOURCE
 #   documents only -- landing.html is a Jinja2 template, invisible to it, so a broken
@@ -196,22 +196,8 @@ docs-site-gate: ## Sphinx -W --keep-going + linkcheck + built-HTML link check fo
 	  echo "docs-site-gate: FAIL -- BENCHMARKS.md must not be included on the site"; \
 	  exit 1; \
 	fi
-	@echo "── no-inline-quickstart (landing.html: injected {{ quickstart_* }} placeholders only, zero hardcoded snippet code)"
-	@tmpl=$(ROOT)/docs/site/_templates/landing.html; \
-	 missing=""; \
-	 for ph in quickstart_cpp quickstart_py quickstart_rs quickstart_go; do \
-	   grep -qE '\{\{[[:space:]]*'"$$ph"'[[:space:]]*\}\}' "$$tmpl" || missing="$$missing $$ph"; \
-	 done; \
-	 if [ -n "$$missing" ]; then \
-	   echo "docs-site-gate: FAIL -- $$tmpl is missing injection point(s):$$missing (must stay {{ quickstart_* }}, never hardcoded)"; \
-	   exit 1; \
-	 fi; \
-	 hit=$$(grep -nE 'static_regex|regex_search\(line|import real as re|re\.search\(r|real_regex::Regex|real\.MustCompile\(|FindSubmatchIndex\(' "$$tmpl" || true); \
-	 if [ -n "$$hit" ]; then \
-	   echo "docs-site-gate: FAIL -- hardcoded quickstart code found in $$tmpl (must be injected via {{ quickstart_* }}, not pasted):"; \
-	   printf '%s\n' "$$hit" | sed 's/^/  /'; \
-	   exit 1; \
-	 fi
+	@echo "── no-inline-quickstart (every <pre> in landing.html is a {{ quickstart_* }} placeholder)"
+	@python3 $(ROOT)/tools/check_no_inline_quickstart.py
 	@echo "── built-HTML link check (build/site/html/*.html, site-wide -- linkcheck can't see the bespoke landing template or any #anchor)"
 	@$(MAKE) docs-site
 	@echo "── published-tree hygiene (one coverage copy, no .doctrees, no source browser, no machine paths)"
