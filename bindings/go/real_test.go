@@ -362,6 +362,42 @@ func TestReplaceAllBadTemplateErrors(t *testing.T) {
 	}
 }
 
+func TestRegexpDollarTemplate(t *testing.T) {
+	// The FAIL: regexp's $1 / $& / ${name} used to pass through the C ABI as
+	// literals (err == nil). \1 stays a template; a lone $ is not regexp's.
+	yes := []string{`$1`, `$2`, `$&`, `${name}`, `x$1`, `$0`}
+	no := []string{``, `$`, `$$`, `$$1`, `price $`, `#`, `\1`, `\2@\1`, `$x`}
+	for _, s := range yes {
+		if !regexpDollarTemplate([]byte(s)) {
+			t.Fatalf("%q: want regexp dollar template", s)
+		}
+	}
+	for _, s := range no {
+		if regexpDollarTemplate([]byte(s)) {
+			t.Fatalf("%q: not a regexp $1 / $& / ${name} template", s)
+		}
+	}
+}
+
+func TestReplaceAllRegexpDollarTemplateErrors(t *testing.T) {
+	r := MustCompile(`(\w+)@(\w+)`)
+	defer r.Close()
+	for _, repl := range []string{`$2`, `$&`, `${name}`} {
+		got, err := r.ReplaceAll([]byte(`a@b`), []byte(repl))
+		if err == nil {
+			t.Fatalf("ReplaceAll(%q): expected error, got %q", repl, got)
+		}
+	}
+	// Backslash templates still substitute — same witness as TestReplaceAllGroupSwap.
+	got, err := r.ReplaceAll([]byte(`a@b`), []byte(`\2@\1`))
+	if err != nil {
+		t.Fatalf("backslash template: unexpected error: %v", err)
+	}
+	if want := `b@a`; string(got) != want {
+		t.Fatalf("backslash template: got %q, want %q", got, want)
+	}
+}
+
 // --- byte-oriented offsets, empty inputs, flavor divergence ---------------------------------
 
 func TestFindAllIndexOnEmptyText(t *testing.T) {

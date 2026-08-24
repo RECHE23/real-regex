@@ -33,8 +33,8 @@ Beyond `regexp` — flagged extensions, never silent divergences:
 - Bounded lookahead / lookbehind (`(?=…)`, `(?<=…)`, etc.) and possessive
   quantifiers (`a++`); `regexp.Compile` rejects these patterns outright.
 - **ReplaceAll template sigil differs** — this package uses REAL/Python-style
-  `\1` / `\g<name>`; `regexp` uses `$1` / `${name}` — not translated, document
-  your own convention if you need both.
+  `\1` / `\g<name>`. A `$1` / `$&` / `${name}` template is an error, not a
+  silent literal; it is not translated to `\1`.
 
 Object-level reference:
 [pkg.go.dev](https://pkg.go.dev/github.com/RECHE23/real-regex/bindings/go).

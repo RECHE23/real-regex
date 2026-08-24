@@ -39,7 +39,7 @@ could not express before.
 | `(*Regexp) FindSubmatchIndex` / `FindAllSubmatchIndex` | same | every group's span; unset group is `-1,-1` |
 | `(*Regexp) Split` | same | slices on matches; `n` as in `regexp` |
 | `(*Regexp) FullMatch` | **no equivalent** | the whole ABI's `real_match(REAL_MODE_FULLMATCH)` — `regexp.MatchString` is really a *search* |
-| `(*Regexp) ReplaceAll` | `ReplaceAll` | **template sigil differs**: this package uses REAL/Python-style `\1`/`\g<name>`; `regexp` uses `$1`/`${name}` — not translated, document your own convention if you need both |
+| `(*Regexp) ReplaceAll` | `ReplaceAll` | **template sigil differs**: this package uses REAL/Python-style `\1`/`\g<name>`; regexp `$1`/`$&`/`${name}` is an error, not a silent literal — not translated |
 | `RegexSet` (`CompileSet`, `IsMatch`, `Matches`, `Size`) | **no equivalent** | multi-pattern which-matched set — wraps `real::regex_set` (Stage-1 N-walks, or a fused single-pass DFA once enough members are DFA-eligible) directly, mirrors the Python binding's own native `RegexSet` |
 | bounded lookaround, possessive quantifiers | **`regexp.Compile` rejects these patterns outright** | REAL-only; confirmed empirically in `Test_BeyondRE2_*` |
 

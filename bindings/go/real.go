@@ -382,11 +382,35 @@ func (r *Regexp) FullMatch(text []byte) bool {
 	return rc == 1
 }
 
+// regexpDollarTemplate reports whether repl uses regexp's Expand spelling
+// ($1, $&, ${name}) rather than REAL/Python \1 / \g<name>. Those are left
+// literal by the C ABI, so a regexp migrator would see a successful replace
+// that did not substitute. We refuse instead of translating.
+func regexpDollarTemplate(repl []byte) bool {
+	for i := 0; i < len(repl); i++ {
+		if repl[i] != '$' || i+1 >= len(repl) {
+			continue
+		}
+		n := repl[i+1]
+		if n == '$' {
+			i++ // $$ is a literal dollar in regexp; skip the pair
+			continue
+		}
+		if n == '&' || n == '{' || n >= '0' && n <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
 // ReplaceAll applies repl (a REAL/re-style template: \1, \g<name>, ...) to every
 // non-overlapping match, mirroring regexp.Regexp.ReplaceAll's shape — though Go's stdlib uses
-// $1-style templates where REAL uses \1-style; a documented flavor divergence, not silently
-// translated here (see README.md). Two-call convention: size, then fill.
+// $1-style templates where REAL uses \1-style. A `$1` / `$&` / `${name}` template is an
+// error, not a silent no-op (see README.md). Two-call convention: size, then fill.
 func (r *Regexp) ReplaceAll(text, repl []byte) ([]byte, error) {
+	if regexpDollarTemplate(repl) {
+		return nil, errors.New("ReplaceAll: $1 / $& / ${name} are regexp templates; this package uses \\1 / \\g<name>")
+	}
 	ctext, freeText := cBytes(text)
 	defer freeText()
 	crepl, freeRepl := cBytes(repl)
