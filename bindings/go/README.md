@@ -32,11 +32,14 @@ could not express before.
 | `(*Regexp) String` | same | the source text, kept on the Go value (the C ABI has no getter); Close does not clear it |
 | `(*Regexp) Close` | *(none — GC only)* | releases the C++ object explicitly; a finalizer is a safety net, not a substitute |
 | `(*Regexp) NumSubexp` / `SubexpNames` | same | |
-| `(*Regexp) FindAllIndex` | same | byte offsets, `[start,end)`, group 0 only |
+| `(*Regexp) Match` / `MatchString` | same | a *search*, not a full-string match — see FullMatch |
+| `(*Regexp) Find` / `FindString` / `FindIndex` / `FindStringIndex` | same | leftmost match; `Find` is nil on no match |
+| `(*Regexp) FindAll` / `FindAllString` / `FindAllStringIndex` | same | `n` as in `regexp` (0 → nil, <0 → all) |
+| `(*Regexp) FindAllIndex` | `FindAllIndex(text, -1)` | byte offsets, `[start,end)`, group 0 only |
 | `(*Regexp) FindSubmatchIndex` / `FindAllSubmatchIndex` | same | every group's span; unset group is `-1,-1` |
+| `(*Regexp) Split` | same | slices on matches; `n` as in `regexp` |
 | `(*Regexp) FullMatch` | **no equivalent** | the whole ABI's `real_match(REAL_MODE_FULLMATCH)` — `regexp.MatchString` is really a *search* |
 | `(*Regexp) ReplaceAll` | `ReplaceAll` | **template sigil differs**: this package uses REAL/Python-style `\1`/`\g<name>`; `regexp` uses `$1`/`${name}` — not translated, document your own convention if you need both |
-| `Split` | `(*Regexp) Split` | not implemented in v0.1 — client-side over `FindAllIndex`, same strategy `regexp` itself uses; trivial follow-on |
 | `RegexSet` (`CompileSet`, `IsMatch`, `Matches`, `Size`) | **no equivalent** | multi-pattern which-matched set — wraps `real::regex_set` (Stage-1 N-walks, or a fused single-pass DFA once enough members are DFA-eligible) directly, mirrors the Python binding's own native `RegexSet` |
 | bounded lookaround, possessive quantifiers | **`regexp.Compile` rejects these patterns outright** | REAL-only; confirmed empirically in `Test_BeyondRE2_*` |
 

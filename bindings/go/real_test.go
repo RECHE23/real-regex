@@ -112,6 +112,30 @@ func TestClosedHandleIsSafe(t *testing.T) {
 	if got := r.FindAllSubmatchIndex([]byte("a@b")); got != nil {
 		t.Fatalf("FindAllSubmatchIndex after Close: got %v, want nil", got)
 	}
+	if r.Match([]byte("a@b")) {
+		t.Fatal("Match after Close: got true, want false")
+	}
+	if r.MatchString("a@b") {
+		t.Fatal("MatchString after Close: got true, want false")
+	}
+	if got := r.Find([]byte("a@b")); got != nil {
+		t.Fatalf("Find after Close: got %q, want nil", got)
+	}
+	if got := r.FindString("a@b"); got != "" {
+		t.Fatalf("FindString after Close: got %q, want empty", got)
+	}
+	if got := r.FindIndex([]byte("a@b")); got != nil {
+		t.Fatalf("FindIndex after Close: got %v, want nil", got)
+	}
+	if got := r.FindAll([]byte("a@b"), -1); got != nil {
+		t.Fatalf("FindAll after Close: got %v, want nil", got)
+	}
+	if got := r.FindAllString("a@b", -1); got != nil {
+		t.Fatalf("FindAllString after Close: got %v, want nil", got)
+	}
+	if got := r.Split("a@b", -1); !reflect.DeepEqual(got, []string{"a@b"}) {
+		t.Fatalf("Split after Close: got %v, want the no-match whole string", got)
+	}
 	if r.FullMatch([]byte("a@b")) {
 		t.Fatal("FullMatch after Close: got true, want false")
 	}
@@ -177,6 +201,43 @@ func diffFindAllIndex(t *testing.T, pattern, text string) {
 		if !reflect.DeepEqual(got[i], want[i]) {
 			t.Fatalf("%q on %q: match %d got %v, want %v", pattern, text, i, got[i], want[i])
 		}
+	}
+}
+
+func TestMatchFindSplitMatchStdlib(t *testing.T) {
+	cases := []struct{ pat, s string }{
+		{`abc`, `xabcyabcz`},
+		{`\d+`, `a1 b22 c`},
+		{`zzz`, `abc`},
+		{``, `x`},
+		{`a*`, `bb`},
+	}
+	for _, c := range cases {
+		r := MustCompile(c.pat)
+		std := regexp.MustCompile(c.pat)
+		if got, want := r.MatchString(c.s), std.MatchString(c.s); got != want {
+			r.Close()
+			t.Fatalf("%q on %q: MatchString got %v want %v", c.pat, c.s, got, want)
+		}
+		if got, want := r.FindString(c.s), std.FindString(c.s); got != want {
+			r.Close()
+			t.Fatalf("%q on %q: FindString %q want %q", c.pat, c.s, got, want)
+		}
+		if got, want := r.FindIndex([]byte(c.s)), std.FindIndex([]byte(c.s)); !reflect.DeepEqual(got, want) {
+			r.Close()
+			t.Fatalf("%q on %q: FindIndex got %v want %v", c.pat, c.s, got, want)
+		}
+		for _, n := range []int{-1, 0, 1, 2, 99} {
+			if got, want := r.FindAllString(c.s, n), std.FindAllString(c.s, n); !reflect.DeepEqual(got, want) {
+				r.Close()
+				t.Fatalf("%q on %q n=%d: FindAllString got %v want %v", c.pat, c.s, n, got, want)
+			}
+			if got, want := r.Split(c.s, n), std.Split(c.s, n); !reflect.DeepEqual(got, want) {
+				r.Close()
+				t.Fatalf("%q on %q n=%d: Split got %v want %v", c.pat, c.s, n, got, want)
+			}
+		}
+		r.Close()
 	}
 }
 

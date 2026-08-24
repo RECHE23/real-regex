@@ -26,19 +26,17 @@ import real "github.com/RECHE23/real-regex/bindings/go"
 
 // [/quickstart-import]
 
-// ExampleMustCompile is the landing page's Go quickstart: compile a pattern (drop-in for
-// regexp.MustCompile), search bytes, and get the capture-group byte offsets back.
+// ExampleMustCompile is the landing page's Go quickstart: compile a pattern and
+// MatchString, the first method a regexp tutorial writes.
 func ExampleMustCompile() {
 	// Flush-left (not tab-indented like the rest of this function): the marked region below is
 	// reproduced byte-for-byte by the landing page's Go tab (see the package doc comment above)
 	// — Go does not care about statement indentation, so this stays copy-pasteable as-is.
 	// [quickstart-body]
-re := real.MustCompile(`(\w+)@(\w+)`)              // drop-in for regexp
-subj := []byte("info@example.com")
-idx := re.FindSubmatchIndex(subj)
-fmt.Print(string(subj[idx[4]:idx[5]]))  // "example" — group 2
+	re := real.MustCompile(`\d+`)
+	fmt.Print(re.MatchString("x42"))
 	// [/quickstart-body]
 
 	// Output:
-	// example
+	// true
 }

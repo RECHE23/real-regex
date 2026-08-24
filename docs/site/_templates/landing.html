@@ -334,7 +334,7 @@ version chip renders a Jinja variable derived from pyproject.toml.
       <div class="hero__col">
         <span class="eyebrow">C++20 &nbsp;·&nbsp; header-only &nbsp;·&nbsp; constexpr</span>
         <h1>Regular expressions that can't blow up.</h1>
-        <p class="hero__lead">A <b>linear-time</b>, <b>ReDoS-safe</b> regex engine for C++20 — and a drop-in for <b>std::regex</b>, <b>RE2</b>, Python <span class="mono">re</span>, Rust <span class="mono">regex</span>, and Go <span class="mono">regexp</span>, every divergence <a href="drop-in/index.html">documented per surface</a>. Match untrusted input without ever falling off a backtracking cliff.</p>
+        <p class="hero__lead">A <b>linear-time</b>, <b>ReDoS-safe</b> regex engine for C++20 — drop-in for <b>std::regex</b>, <b>RE2</b>, Python <span class="mono">re</span>, and the Rust <span class="mono">regex</span> crate, plus a <span class="mono">regexp</span>-shaped Go binding. Every divergence <a href="drop-in/index.html">documented per surface</a>. Match untrusted input without ever falling off a backtracking cliff.</p>
 
         <div class="hero__cmd">
           <div class="cmd"><span class="prompt">$</span> brew install RECHE23/sci/real-regex
@@ -381,7 +381,7 @@ version chip renders a Jinja variable derived from pyproject.toml.
         <article class="card">
           <span class="tag">drop-in</span>
           <h3>Drop in anywhere</h3>
-          <p>Drop-ins for <code>std::regex</code>, RE2, Python <code>re</code>, the Rust <code>regex</code> crate, Go <code>regexp</code> and a frozen C ABI — one linear engine underneath, each surface's divergences documented.</p>
+          <p>Drop-ins for <code>std::regex</code>, RE2, Python <code>re</code>, the Rust <code>regex</code> crate, a <code>regexp</code>-shaped Go API, and a frozen C ABI — one linear engine underneath, each surface's divergences documented.</p>
         </article>
         <article class="card">
           <span class="tag">constexpr</span>
@@ -428,7 +428,7 @@ version chip renders a Jinja variable derived from pyproject.toml.
       <div class="section__head">
         <span class="eyebrow">quickstart</span>
         <h2>Familiar on the surface. Safe underneath.</h2>
-        <p>If you know <span class="mono">std::regex</span>, <span class="mono">re</span>, the <span class="mono">regex</span> crate or <span class="mono">regexp</span>, you already know this API.</p>
+        <p>If you know <span class="mono">std::regex</span>, <span class="mono">re</span> or the <span class="mono">regex</span> crate, you already know this API. The Go binding is <span class="mono">regexp</span>-shaped (<span class="mono">MatchString</span>, <span class="mono">Find</span>, <span class="mono">Split</span>).</p>
       </div>
 
       <div role="tablist" aria-label="Language" class="tabs" id="qtabs">

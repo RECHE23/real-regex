@@ -21,7 +21,8 @@ from end to end, with an `re`-compatible Python binding.
 - **Minimal memory.** Static (sizes fixed at compile time, zero allocation),
   dynamic (storage sized exactly once at pattern compilation), or hybrid
   (compile-time pattern, runtime text, zero heap allocation).
-- **Zero dependencies.** One include. Compile cost is not free: one run on
+- **Zero dependencies.** One include (`<real/real.hpp>`, or `<real/regex.hpp>` —
+  the same header). Compile cost is not free: one run on
   arm64 with Apple clang 16.0.0 (`-O2`), a TU that includes `<real/real.hpp>`
   and constructs one `real::regex` took 4.3 s and produced 213 KiB of
   `__text`; the same TU with `<regex>` took 1.1 s and 47 KiB. Order of

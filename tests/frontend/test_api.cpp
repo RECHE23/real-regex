@@ -2,7 +2,7 @@
 #include <string_view>
 
 #include <sciforge/test/framework.hpp>
-#include "real/real.hpp"
+#include "real/regex.hpp" // the common guess; alias of real.hpp
 
 using namespace std::string_view_literals;
 

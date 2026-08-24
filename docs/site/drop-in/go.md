@@ -14,14 +14,14 @@ An unsupported construct is rejected at compile time instead of silently backtra
 ```go
 import real "github.com/RECHE23/real-regex/bindings/go"
 
-re := real.MustCompile(`(\w+)@(\w+)`)              // drop-in for regexp
-idx := re.FindSubmatchIndex([]byte("info@example.com"))
-string([]byte("info@example.com")[idx[4]:idx[5]]) // "example" — group 2
+re := real.MustCompile(`\d+`)
+re.MatchString("x42")   // true — a search, like regexp.MatchString
 ```
 
 ## API offered
 
-`Compile` / `MustCompile`, `(*Regexp) Close`, `NumSubexp` / `SubexpNames`,
+`Compile` / `MustCompile`, `(*Regexp) Close`, `String`, `Match` / `MatchString`,
+`Find` / `FindString` / `FindIndex`, `FindAll` / `FindAllString` / `Split`,
 `FindAllIndex`, `FindSubmatchIndex` / `FindAllSubmatchIndex`, and `ReplaceAll`.
 
 Beyond `regexp` — flagged extensions, never silent divergences:
@@ -49,8 +49,8 @@ Python `re`, not a divergence — both are intentional designs.
 
 v0.1-specific: cgo required; supported platforms are macOS-arm64 and
 linux-x86-64 only; no flags parameter exposed in the Go API (always compiles
-with default flags); `Split` is not yet implemented (client-side over
-`FindAllIndex` is straightforward in a follow-on).
+with default flags). Not in this subset: `FindAllStringSubmatch`, `Expand`,
+package-level `MatchString`.
 
 Full reference — the binding's own
 [README](https://github.com/RECHE23/real-regex/blob/main/bindings/go/README.md).

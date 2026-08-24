@@ -2,8 +2,9 @@
 // cgo, over the C ABI at bindings/c/real_capi.h (v2026.7.39+, frozen-additive — vendored here,
 // see vendor_include/ and the Makefile's `vendor`/`check-vendor` targets).
 //
-// v0.1: a regexp-idiomatic subset (Compile/MustCompile/String/FindAllIndex/FindSubmatchIndex/
-// ReplaceAll/RegexSet) plus REAL extensions regexp has no equivalent for at all (FullMatch,
+// v0.1: a regexp-idiomatic subset (Compile/MustCompile/String/Match/MatchString/Find/FindString/
+// FindIndex/FindAll/FindAllString/Split/FindAllIndex/FindSubmatchIndex/ReplaceAll/RegexSet)
+// plus REAL extensions regexp has no equivalent for at all (FullMatch,
 // bounded lookarounds, possessive quantifiers). See README.md for the full method-to-C-ABI
 // mapping and documented flavor divergences from Go's regexp (RE2) — most importantly: \w,
 // \d, and \s are Unicode-aware by default here (Python re parity), where regexp's are
@@ -130,10 +131,11 @@ func MustCompile(pattern string) *Regexp {
 // Close releases the compiled pattern. Idempotent.
 //
 // Post-Close contract: the handle is nilled; subsequent method calls must not crash and return
-// zero-values (NumSubexp → 0; SubexpNames → empty slice; FindAll*/FindSubmatchIndex → nil;
-// FullMatch → false; ReplaceAll → error). String is the exception: the source text lives on
-// this value, not on the handle, so Close leaves it. Prefer not to use a closed Regexp for
-// matching — the guarantee is crash-freedom and stable sentinels, not a second valid lifetime.
+// zero-values (NumSubexp → 0; SubexpNames → empty slice; Find*/FindAll*/FindSubmatchIndex → nil
+// or ""; Match/MatchString/FullMatch → false; ReplaceAll → error). Split on a closed handle is
+// the no-match path (the whole string). String is the exception: the source text lives on this
+// value, not on the handle, so Close leaves it. Prefer not to use a closed Regexp for matching
+// — the guarantee is crash-freedom and stable sentinels, not a second valid lifetime.
 func (r *Regexp) Close() error {
 	if r.re != nil {
 		C.real_free(r.re)
@@ -206,6 +208,124 @@ func (r *Regexp) FindAllIndex(text []byte) [][]int {
 		out[i] = []int{m[0], m[1]}
 	}
 	return out
+}
+
+// Match reports whether b contains any match of the expression, like regexp.Regexp.Match.
+func (r *Regexp) Match(b []byte) bool {
+	return r.FindIndex(b) != nil
+}
+
+// MatchString reports whether s contains any match of the expression, like
+// regexp.Regexp.MatchString. It is a search, not a full-string match — see FullMatch.
+func (r *Regexp) MatchString(s string) bool {
+	return r.Match([]byte(s))
+}
+
+// FindIndex returns the [start,end) of the leftmost match in b, or nil, like
+// regexp.Regexp.FindIndex.
+func (r *Regexp) FindIndex(b []byte) []int {
+	m := r.FindSubmatchIndex(b)
+	if m == nil {
+		return nil
+	}
+	return []int{m[0], m[1]}
+}
+
+// FindStringIndex is FindIndex on a string.
+func (r *Regexp) FindStringIndex(s string) []int {
+	return r.FindIndex([]byte(s))
+}
+
+// Find returns the leftmost match in b, or nil if there is none — like regexp.Regexp.Find.
+// An empty match is a non-nil empty slice.
+func (r *Regexp) Find(b []byte) []byte {
+	loc := r.FindIndex(b)
+	if loc == nil {
+		return nil
+	}
+	return b[loc[0]:loc[1]]
+}
+
+// FindString returns the leftmost match in s, or "" if there is none — like
+// regexp.Regexp.FindString. An empty match and no match are indistinguishable.
+func (r *Regexp) FindString(s string) string {
+	m := r.Find([]byte(s))
+	if m == nil {
+		return ""
+	}
+	return string(m)
+}
+
+// findAllIndexN is FindAllIndex with regexp's n: 0 → nil, <0 → all, >0 → at most n.
+func (r *Regexp) findAllIndexN(b []byte, n int) [][]int {
+	if n == 0 {
+		return nil
+	}
+	all := r.FindAllIndex(b)
+	if all == nil || n < 0 || n >= len(all) {
+		return all
+	}
+	return all[:n]
+}
+
+// FindAll returns successive matches in b, like regexp.Regexp.FindAll. n is the cap
+// (0 → nil, <0 → all).
+func (r *Regexp) FindAll(b []byte, n int) [][]byte {
+	idx := r.findAllIndexN(b, n)
+	if idx == nil {
+		return nil
+	}
+	out := make([][]byte, len(idx))
+	for i, loc := range idx {
+		out[i] = b[loc[0]:loc[1]]
+	}
+	return out
+}
+
+// FindAllString is FindAll on a string, like regexp.Regexp.FindAllString.
+func (r *Regexp) FindAllString(s string, n int) []string {
+	idx := r.findAllIndexN([]byte(s), n)
+	if idx == nil {
+		return nil
+	}
+	out := make([]string, len(idx))
+	for i, loc := range idx {
+		out[i] = s[loc[0]:loc[1]]
+	}
+	return out
+}
+
+// FindAllStringIndex is FindAllIndex with regexp's n, on a string.
+func (r *Regexp) FindAllStringIndex(s string, n int) [][]int {
+	return r.findAllIndexN([]byte(s), n)
+}
+
+// Split slices s at matches of the expression, like regexp.Regexp.Split.
+// n == 0 returns nil; n < 0 returns all substrings; n > 0 returns at most n.
+func (r *Regexp) Split(s string, n int) []string {
+	if n == 0 {
+		return nil
+	}
+	if len(r.expr) > 0 && len(s) == 0 {
+		return []string{""}
+	}
+	matches := r.FindAllStringIndex(s, n)
+	parts := make([]string, 0, len(matches))
+	beg, end := 0, 0
+	for _, match := range matches {
+		if n > 0 && len(parts) >= n-1 {
+			break
+		}
+		end = match[0]
+		if match[1] != 0 {
+			parts = append(parts, s[beg:end])
+		}
+		beg = match[1]
+	}
+	if end != len(s) {
+		parts = append(parts, s[beg:])
+	}
+	return parts
 }
 
 // FindSubmatchIndex returns the leftmost match's full span plus every group's span
