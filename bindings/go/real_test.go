@@ -427,6 +427,17 @@ func TestReplaceAllRegexpDollarTemplateErrors(t *testing.T) {
 	if string(amp) != `$&` {
 		t.Fatalf("$&: got %q, want literal $&", amp)
 	}
+	// $$ is regexp's escape for a literal dollar (Expand collapses it to one).
+	// We leave both dollars: collapsing would be translating a $ spelling.
+	for _, repl := range []string{`$$`, `$$1`} {
+		got, err := r.ReplaceAll([]byte(`2026-08`), []byte(repl))
+		if err != nil {
+			t.Fatalf("ReplaceAll(%q): unexpected error: %v", repl, err)
+		}
+		if string(got) != repl {
+			t.Fatalf("ReplaceAll(%q): got %q, want the dollars left verbatim", repl, got)
+		}
+	}
 	// Backslash templates still substitute — same witness as TestReplaceAllGroupSwap.
 	r2 := MustCompile(`(\w+)@(\w+)`)
 	defer r2.Close()

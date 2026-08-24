@@ -35,7 +35,8 @@ Beyond `regexp` — flagged extensions, never silent divergences:
   quantifiers (`a++`); `regexp.Compile` rejects these patterns outright.
 - **ReplaceAll template sigil differs** — this package uses REAL/Python-style
   `\1` / `\g<name>`. A `$1` / `$name` / `${name}` template is an error, not a
-  silent literal; it is not translated to `\1`.
+  silent literal; it is not translated to `\1`. `$$` is regexp's escape for a
+  literal dollar; this package leaves both dollars.
 
 Object-level reference:
 [pkg.go.dev](https://pkg.go.dev/github.com/RECHE23/real-regex/bindings/go).
