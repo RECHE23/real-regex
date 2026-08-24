@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Landing template: every <pre> is a {{ quickstart_* }} injection point.
 
-A pasted snippet lives in a <pre>. Prose in a <p> — including the word
-static_regex on the constexpr card — must not trip this. The previous check
-grepped a token list that collided with that card.
+Assumption, not a fact: a pasted snippet lives in a <pre>. A paste into a
+<div class="codepanel"> with no <pre> would not trip this. Prose in a <p> —
+including the word static_regex on the constexpr card — must not. The previous
+check grepped a token list that collided with that card.
 
 Fails closed: no <pre>, a <pre> whose body is not exactly one placeholder, a
 missing language, or a duplicate.
