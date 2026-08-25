@@ -69,14 +69,14 @@ impl Error {
     // Build an Error from the engine's message and its structured code (REAL_ERR_*). The classification comes
     // from the code the C ABI reports — never from matching on the message text, so a reworded engine message
     // cannot silently change whether a pattern is treated as unsupported.
-    fn from_engine(raw: &str, code: i32) -> Error {
+    fn from_engine(raw: &str, code: i32, rescue: Rescue) -> Error {
         let body = raw.strip_prefix("regex_error").unwrap_or(raw).trim_start();
         let (pos, msg) = match body.strip_prefix("at ").and_then(|r| r.split_once(':')) {
             Some((n, rest)) => (n.trim().parse::<usize>().ok(), rest.trim().to_string()),
             None => (None, body.trim_start_matches(':').trim().to_string()),
         };
         if code == REAL_ERR_UNSUPPORTED {
-            unsupported_construct(&msg)
+            unsupported_construct(&msg, rescue)
         } else {
             Error::Syntax { msg, pos }
         }
@@ -178,14 +178,63 @@ impl SlotStore {
     }
 }
 
+/// Whether the `fallback` feature could actually rescue the pattern that was just refused.
+///
+/// Two halves must hold before the hint is worth printing, the same pair the Python binding
+/// settled on: the call site has a fallback at all, and the delegate can run the pattern. The
+/// second half is where Rust differs from Python — `re` backtracks and takes anything, the regex
+/// crate is linear and refuses a backreference exactly as REAL does (pinned in tests/fallback.rs).
+// Without the feature the regex crate is not linked, so `rescue_for` can only ever answer
+// `Unknown` and the two decided variants are unconstructible — a fact of that build, not dead code.
+#[cfg_attr(not(feature = "fallback"), allow(dead_code))]
+enum Rescue {
+    /// The delegate accepts it — say so, and name the switch.
+    Delegable,
+    /// The delegate refuses it too. Offering the feature here sends the reader down a dead end.
+    Refused,
+    /// No oracle: the feature is off, so the regex crate is not linked and cannot be asked.
+    Unknown,
+    /// This call site has no fallback whatever the construct — `RegexSet` never delegates.
+    NoFallbackHere,
+}
+
+/// Ask the delegate itself rather than classifying the construct by hand. A hand-written list of
+/// "constructs the regex crate refuses" would be a second model to keep true; the crate is the
+/// authority on its own grammar.
+#[cfg(feature = "fallback")]
+fn rescue_for(pattern: &[u8]) -> Rescue {
+    match std::str::from_utf8(pattern) {
+        Ok(p) if regex::Regex::new(p).is_ok() => Rescue::Delegable,
+        Ok(_) => Rescue::Refused,
+        Err(_) => Rescue::Unknown,
+    }
+}
+
+#[cfg(not(feature = "fallback"))]
+fn rescue_for(_pattern: &[u8]) -> Rescue {
+    Rescue::Unknown
+}
+
 // The standard unsupported-construct error, hint included (shared by the engine path and the pre-scan below).
-fn unsupported_construct(construct: &str) -> Error {
+fn unsupported_construct(construct: &str, rescue: Rescue) -> Error {
+    let remedy = match rescue {
+        Rescue::Delegable => "the `fallback` feature plus `RegexBuilder::fallback(true)` delegates this \
+                              pattern to the regex crate (forfeiting the linear-time guarantee for it)"
+            .to_string(),
+        Rescue::Refused => "the `fallback` feature does not help here: the regex crate is linear too and \
+                            refuses this pattern as well"
+            .to_string(),
+        Rescue::Unknown => "the `fallback` feature delegates some such patterns to the regex crate, but not \
+                            a non-regular one (a backreference, a conditional) — the regex crate, linear \
+                            itself, refuses those too"
+            .to_string(),
+        Rescue::NoFallbackHere => "a RegexSet never delegates: compile the pattern on its own with the \
+                                   `fallback` feature if you need it"
+            .to_string(),
+    };
     Error::Unsupported {
         construct: construct.to_string(),
-        hint: format!(
-            "unsupported by REAL — see {DIVERGENCES_URL} ; enable the `fallback` feature to delegate this \
-             pattern to the regex crate (forfeiting the linear-time guarantee for it)"
-        ),
+        hint: format!("unsupported by REAL — see {DIVERGENCES_URL} ; {remedy}"),
     }
 }
 
@@ -237,7 +286,7 @@ fn nested_class_syntax(pattern: &[u8]) -> Option<&'static str> {
 // Compile a pattern (as raw bytes) and precompute its group names. Shared by the str and bytes APIs.
 fn compile_handle(pattern: &[u8], flags: u32) -> Result<(*mut RealRegex, usize, Arc<GroupInfo>), Error> {
     if let Some(construct) = nested_class_syntax(pattern) {
-        return Err(unsupported_construct(construct)); // rust-only class syntax REAL would parse differently
+        return Err(unsupported_construct(construct, rescue_for(pattern))); // rust-only class syntax REAL would parse differently
     }
     let mut err = [0u8; 256];
     let mut code: i32 = 0;
@@ -247,7 +296,7 @@ fn compile_handle(pattern: &[u8], flags: u32) -> Result<(*mut RealRegex, usize, 
     };
     if handle.is_null() {
         let end = err.iter().position(|&b| b == 0).unwrap_or(err.len());
-        return Err(Error::from_engine(&String::from_utf8_lossy(&err[..end]), code));
+        return Err(Error::from_engine(&String::from_utf8_lossy(&err[..end]), code, rescue_for(pattern)));
     }
     let ngroups = unsafe { real_group_count(handle) };
     let mut names = Vec::with_capacity(ngroups);
@@ -585,7 +634,7 @@ impl RegexSet {
             let raw = unsafe { std::ffi::CStr::from_ptr(err.as_ptr()) }
                 .to_string_lossy()
                 .into_owned();
-            return Err(Error::from_engine(&raw, code));
+            return Err(Error::from_engine(&raw, code, Rescue::NoFallbackHere));
         }
         Ok(RegexSet {
             handle,

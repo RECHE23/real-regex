@@ -92,9 +92,11 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   prefixes, loose matching, negation `\P{…}` — `scx=` has no bare-name form, same as PCRE2), and the 63
   standard binary properties (`\p{Alphabetic}`, `\p{White_Space}`, `\p{Emoji}`, no namespace of their own,
   same as PCRE2) run on REAL's linear engine — `engine()` reports `Real`. Other UAX44 properties
-  (`Bidi_Class`, `Word_Break`, `Age`, …) raise `Error::Unsupported`; enable the `fallback` feature and
+  (`Word_Break`, `Age`, …) raise `Error::Unsupported`; enable the `fallback` feature and
   `RegexBuilder::new(pat).fallback(true)` to delegate *those* to the `regex` crate (per pattern, forfeiting
-  the linear-time guarantee — `engine()` reports `Fallback`).
+  the linear-time guarantee — `engine()` reports `Fallback`). Not every UAX44 property is in the `regex`
+  crate's tables either — `\p{Bidi_Class=L}` is refused on both sides — so the error tells you which case
+  you are in rather than selling a feature that cannot help.
 - **Class set notation — declined (rust-only syntax).** Nested character classes (`[a[b]]` = union) and the
   set operators `&&` / `--` / `~~` are `regex`-crate syntax; Python `re` — REAL's model — reads `[` as a
   literal inside a class, so the two would parse the same pattern differently. The crate declines these up
