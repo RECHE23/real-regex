@@ -56,7 +56,10 @@ pub enum Error {
     /// A syntax error in the pattern, with the engine's message and (when known) the byte position.
     Syntax { msg: String, pos: Option<usize> },
     /// A construct REAL does not support linearly (`\p{…}`, a backreference, an unbounded lookaround, …).
-    /// `hint` points at the divergences page and the `fallback` feature — the error sells its own solution.
+    /// `hint` points at the divergences page and, when there is one, the way out — the `fallback`
+    /// feature. It names the absence just as plainly: a [`RegexSet`] never delegates, and the regex
+    /// crate is linear too, so it refuses a backreference exactly as REAL does. The hint sells a
+    /// remedy only where one exists.
     Unsupported { construct: String, hint: String },
 }
 
