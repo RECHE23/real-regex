@@ -38,13 +38,23 @@ class TestUnicodeOraclePresence(unittest.TestCase):
         elif state == "absent":
             self.skipTest(f"not CI, and {reason}")
 
-    def test_the_skew_state_is_reported_not_hidden(self):
-        """A skew is a legitimate decline — but it must be nameable, and name a code point."""
+    def test_every_decline_names_what_it_compared(self):
+        """A decline is legitimate — but never vague. Each state must say which two things differed.
+
+        The two skews are different facts and are asserted differently: `skew` is settled by
+        behaviour and must name the disagreeing code point, `ucd-skew` has a version string on
+        both sides and must show them. A probe that answered `ready` here while a generator
+        declined would be the original silence, moved.
+        """
         state, reason = probe.verdict()
-        if state != "skew":
-            self.skipTest(f"the oracle is '{state}', not skewed")
-        self.assertIn("U+", reason)          # the disagreeing code point, not a vague version claim
-        self.assertRegex(reason, r"UCD \d")  # and which Unicode it was compared against
+        if state == "skew":
+            self.assertIn("U+", reason)          # the disagreeing code point, not a vague claim
+            self.assertRegex(reason, r"UCD \d")  # and which Unicode it was compared against
+        elif state == "ucd-skew":
+            self.assertRegex(reason, r"\d+\.\d+")     # the interpreter's version …
+            self.assertIn(probe.tables_ucd_version(), reason)  # … and the tables' own stamp
+        else:
+            self.skipTest(f"the oracle is '{state}', not declined for a skew")
 
 
 if __name__ == "__main__":
