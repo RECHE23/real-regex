@@ -732,21 +732,26 @@ full-local-gate-impl:
 	# reads a ledger and can never disagree with the branch that wrote it. The Unicode cross-oracle
 	# is the one PROBE here: it skips inside the test run, not in a branch this file owns.
 	@set -eu; \
-	 if ! $(PYTHON) -c "import regex" >/dev/null 2>&1; then \
-	   echo "step 20: Unicode property cross-oracle is parse-only -- python 'regex' module absent" >> $(GATE_SKIPS); \
-	 fi; \
+	 $(PYTHON) $(ROOT)/tools/check_unicode_oracle.py --print-skip >> $(GATE_SKIPS) \
+	   || echo "step 20: Unicode property cross-oracle did not run -- its own probe failed" >> $(GATE_SKIPS); \
 	 n=$$(awk 'END{print NR+0}' $(GATE_SKIPS) 2>/dev/null || echo 0); \
 	 if [ "$$n" -gt 0 ]; then \
 	   echo; \
 	   echo "full-local-gate: $$n STEP(S) DID NOT RUN -- unverified locally, not green:"; \
 	   sed 's/^/  · /' $(GATE_SKIPS); \
-	   echo "  Close the python ones with 'make gate-venv'; the rest need docker / go / $(GXX)."; \
+	   echo "  sphinx / mypy: 'make gate-venv'. The rest need docker / go / $(GXX) — CI runs those legs."; \
 	   echo "  Before a release, run GATE_STRICT=1 make full-local-gate -- it refuses to pass with any of these open."; \
 	   if [ -n "$${GATE_STRICT:-}" ]; then \
 	     echo "full-local-gate: REFUSED — GATE_STRICT is set and $$n step(s) were skipped."; \
 	     exit 1; \
 	   fi; \
-	   echo "full-local-gate: the steps that RAN are green; $$n skipped above (CI covers those)"; \
+	   if grep -q '^step 20:' $(GATE_SKIPS) 2>/dev/null; then \
+	     echo "full-local-gate: the steps that RAN are green; $$n skipped above. CI closes every one of them"; \
+	     echo "  EXCEPT step 20 — no runner has a 'regex' whose Unicode matches these tables, so the"; \
+	     echo "  cross-oracle is unrun there too. 'CI covers those' was one sentence and it was half wrong."; \
+	   else \
+	     echo "full-local-gate: the steps that RAN are green; $$n skipped above (CI covers those legs)"; \
+	   fi; \
 	 else \
 	   echo "full-local-gate: ALL gates green, NONE skipped (cheap→doc→tests→lint→sanitize→coverage; first red would have stopped the train)"; \
 	 fi
