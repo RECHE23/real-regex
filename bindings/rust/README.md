@@ -25,9 +25,10 @@ engine and this crate share one calendar version.
 The crate mirrors the [`regex`](https://docs.rs/regex) crate: `Regex` with `find` / `find_iter` / `captures`
 / `captures_iter` / `capture_locations` + `captures_read` / `captures_read_iter` (reusable group slots) /
 `is_match` / `replace` / `replace_all` / `replacen` (with `$`-templates, `NoExpand`, and closures) /
-`split` / `splitn`; `Match` (spans) and indexable `Captures` (`caps[0]`, `caps["name"]`);
-`RegexBuilder` (case-insensitive, multi-line, `unicode(false)`, …); and a `bytes` module over `&[u8]`. Every
-method is verified against the `regex` crate by a differential test suite.
+`split` / `splitn`; `Display` / `FromStr` (`format!("{re}")`, `"\\d+".parse()`); `Match` (spans) and
+indexable `Captures` (`caps[0]`, `caps["name"]`); `RegexBuilder` (case-insensitive, multi-line,
+`unicode(false)`, …); and a `bytes` module over `&[u8]`. Every method is verified against the `regex`
+crate by a differential test suite.
 
 ## Divergences from the `regex` crate
 
@@ -102,6 +103,8 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   literal inside a class, so the two would parse the same pattern differently. The crate declines these up
   front with `Error::Unsupported` (never a silent mis-match); escaped forms (`[\[]`) and ordinary ranges stay
   accepted. `fallback` delegates them to `regex`. Planned alongside `\p{}` as drop-in-completeness features.
+- **`Captures::expand` is not offered.** The regex crate writes a match into a `String` via a
+  `$name` template. Use `replace` / `replace_all` (same `$` spelling) instead.
 - **Possessive quantifiers — a deliberate superset (per Python 3.11+/PCRE2), read silently
   differently.** REAL reads a `+` right after a quantifier
   (`x?+`, `x*+`, `x++`, `x{n,m}+`) as **possessive** — match maximally, never give back — the Python `re`

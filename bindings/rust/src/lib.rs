@@ -10,6 +10,8 @@
 //! let caps = re.captures("2026-07").unwrap();
 //! assert_eq!(&caps["y"], "2026");
 //! assert_eq!(caps.get(2).unwrap().as_str(), "07");
+//! let re: Regex = r"\d+".parse().unwrap();
+//! assert_eq!(format!("{re}"), r"\d+");
 //! ```
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -714,6 +716,21 @@ impl Drop for Regex {
 impl std::fmt::Debug for Regex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Regex({:?})", self.pattern)
+    }
+}
+
+impl std::fmt::Display for Regex {
+    /// The original pattern — the same affordance as the regex crate.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for Regex {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Regex, Error> {
+        Regex::new(s)
     }
 }
 
@@ -1620,6 +1637,24 @@ pub mod bytes {
         /// remainder). `limit == 0` yields nothing.
         pub fn splitn<'r, 't>(&'r self, text: &'t [u8], limit: usize) -> SplitN<'r, 't> {
             SplitN { inner: self.split(text), limit, n: 0 }
+        }
+    }
+
+    impl std::fmt::Display for Regex {
+        /// The original pattern — the same affordance as the regex crate.
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match std::str::from_utf8(&self.pattern) {
+                Ok(s) => f.write_str(s),
+                Err(_) => f.write_str(&String::from_utf8_lossy(&self.pattern)),
+            }
+        }
+    }
+
+    impl std::str::FromStr for Regex {
+        type Err = Error;
+
+        fn from_str(s: &str) -> Result<Regex, Error> {
+            Regex::new(s)
         }
     }
 

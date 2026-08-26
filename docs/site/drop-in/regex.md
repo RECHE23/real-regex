@@ -23,9 +23,10 @@ let caps = re.captures("info@example.com").unwrap();
 ## API offered
 
 `Regex` (`is_match` / `find` / `find_iter` / `captures` / `captures_iter` /
-`replace` / `replace_all` / `split`), `Captures`, `RegexBuilder`, `RegexSet`
-(which-matched), and the `bytes` module — the `regex` crate surface, same
-signatures. The opt-in **`fallback` cargo feature** adds
+`replace` / `replace_all` / `split`, `Display` / `FromStr`), `Captures`,
+`RegexBuilder`, `RegexSet` (which-matched), and the `bytes` module — the
+`regex` crate surface, same signatures. Not offered: `Captures::expand`
+(use `replace` / `replace_all`). The opt-in **`fallback` cargo feature** adds
 `RegexBuilder::fallback(true)`: a rejected pattern delegates to the `regex`
 crate for that pattern, trading its linear-time guarantee — `engine()` always
 says which backend ran (`Real` / `Fallback`).
