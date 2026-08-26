@@ -393,13 +393,16 @@ jobs:
     with:
       python-versions: '["3.10","3.14"]'
       sciforge-ref: v2026.7.2
-      # `regex` is the Unicode property cross-oracle's other side. With deps empty, every generator
-      # declined it on every runner and printed a line nobody read — while the local gate claimed CI
+      # `deps` clones {repo, path} sibling checkouts; a pip package goes in `pre-install`. Passing
+      # "regex" here produced `git clone <url> ""` and killed every python leg.
+      deps: '[]'
+      # `regex` is the Unicode property cross-oracle's other side. Without it, every generator
+      # declined on every runner and printed a line nobody read — while the local gate claimed CI
       # covered that skip. test_unicode_oracle_present.py turns its absence here into a red.
       # Installing it does NOT make the oracle run: its property data is a different Unicode than the
       # committed UCD (tools/check_unicode_oracle.py names the code point), so the comparison still
       # declines — visibly, on its own line, instead of silently.
-      deps: '["regex"]'
+      pre-install: 'regex'
       # The binding moved under bindings/python/; override the reusable workflow's python/tests default.
       test-cmd: 'python -m unittest discover -s bindings/python/tests'
       runner-mode: hosted
