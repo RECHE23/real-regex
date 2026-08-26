@@ -98,6 +98,9 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   the linear-time guarantee — `engine()` reports `Fallback`). Not every UAX44 property is in the `regex`
   crate's tables either — `\p{Bidi_Class=L}` is refused on both sides — so the error tells you which case
   you are in rather than selling a feature that cannot help.
+- **`\u{…}` is not `\x{…}`.** The regex crate treats them as synonyms. REAL's `\u` takes four hex
+  digits (`\u00e9`); braces belong on `\x` (`\x{e9}`). The miss is a positioned syntax error
+  (`expected 4 hex digits`), not `Unsupported` — `fallback` does not rescue it.
 - **Class set notation — declined (rust-only syntax).** Nested character classes (`[a[b]]` = union) and the
   set operators `&&` / `--` / `~~` are `regex`-crate syntax; Python `re` — REAL's model — reads `[` as a
   literal inside a class, so the two would parse the same pattern differently. The crate declines these up

@@ -43,6 +43,9 @@ Condensed — the full list with tables is the crate's own
   namespaces raise `Error::Unsupported` (or delegate under `fallback`).
 - **CPython word/space/case semantics** — `\w` `\s` and `IGNORECASE` folding
   follow Python `re`, not UTS#18; class-set syntax (`[a[b]]`, `&&`) declines.
+- **`\u{e9}` is a syntax error here** — REAL wants `\u00e9` or `\x{e9}`. The
+  regex crate accepts `\u{…}` as `\x{…}`. Not an `Unsupported`; `fallback`
+  does not help.
 - **Possessive quantifiers, a positive divergence — but silent** — REAL reads
   `x?+` / `x*+` / `x++` as possessive (the Python 3.11+ grammar); the `regex`
   crate reads them as nested repetition. Both compile — check the README entry
