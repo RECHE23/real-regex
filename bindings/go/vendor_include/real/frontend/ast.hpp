@@ -1390,6 +1390,8 @@ namespace real::detail {
      * Used to tell an unknown flag letter (`z`, `u`, `L`) from a terminator (`:`, `)`, `-`)
      * after a flag run — CPython `_parse_flags` uses `str.isalpha()` for the same split.
      * The parser peeks bytes, so this is ASCII-only; a non-ASCII lead byte is not a flag.
+     * \param[in] ch A character.
+     * \return `true` if \p ch is an ASCII letter.
      */
     static constexpr bool is_ascii_letter(char ch)
     {
