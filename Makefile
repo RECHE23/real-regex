@@ -335,10 +335,14 @@ fowler-compat:
 	@$(MAKE) -C fuzz fowler-compat
 
 # Pin-drift lint: fail if this repo's workflows pin more than one SciForge version (the shared
-# tools/check-pins.sh, owned by SciForge). Skipped with a warning when the sibling tool is absent.
+# tools/check-pins.sh, owned by SciForge). Absent tool is a skip on the ledger, like the other
+# optional legs — not a local green that pretends CI covered it.
 check-pins: ## [gates] Pin-drift lint: fail if workflows pin more than one SciForge version
 	@if test -x $(SCIFORGE_TOOLS)/check-pins.sh; then $(SCIFORGE_TOOLS)/check-pins.sh .; \
-	 else echo "check-pins: WARN — $(SCIFORGE_TOOLS)/check-pins.sh absent, skipped (CI covers it)"; fi
+	 else \
+	   mkdir -p $(dir $(GATE_SKIPS)); \
+	   echo "check-pins: SKIPPED -- $(SCIFORGE_TOOLS)/check-pins.sh absent" | tee -a $(GATE_SKIPS); \
+	 fi
 
 
 # Lives in tools/Makefile -- see the "--- tools/ ---" comment above.

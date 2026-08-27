@@ -40,7 +40,8 @@ Condensed — the full list with tables is the crate's own
   linear time; the `regex` crate and RE2 reject lookarounds entirely.
 - **`\p{…}` natively** — General_Category, Script, Script_Extensions and the
   standard binary properties run on REAL (`engine()` = `Real`); other UAX44
-  namespaces raise `Error::Unsupported` (or delegate under `fallback`).
+  namespaces raise `Error::Unsupported`. `fallback` delegates only what the
+  `regex` crate actually has — `\p{Bidi_Class=L}` is refused on both sides.
 - **CPython word/space/case semantics** — `\w` `\s` and `IGNORECASE` folding
   follow Python `re`, not UTS#18; class-set syntax (`[a[b]]`, `&&`) declines.
 - **`\u{…}` is accepted** as `\x{…}` (the regex crate spelling). `\U{…}` is
