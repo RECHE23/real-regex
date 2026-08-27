@@ -273,7 +273,8 @@ properties** (see \\ref div_property), which standard `re` rejects
 outright. **Named characters** \\N{NAME} are also supported — the Python binding resolves the
 name via `unicodedata` and the engine takes the resulting code point — so no table lives
 in C++. REAL additionally accepts the scalar form \\N{U+XXXX} directly (a PCRE2-style
-**extension**; `re` does not).
+**extension**; `re` does not), and the braced hex form \\u{...} (the ECMAScript / `regex`-crate
+spelling, a synonym of \\x{...}; `re` does not).
 
 \section div_named_scalar \\N{U+XXXX} scalar escape (a capability beyond re)
 
@@ -282,6 +283,16 @@ on **both** surfaces — the C++ engine and the Python binding — so the two ar
 \\N{...} only as a character *name* and rejects the U+ form (`undefined character name`). The *name*
 form \\N{NAME} is exact `re`-parity (the binding resolves it via `unicodedata`); only the scalar form
 is the extension. Pinned real-accepts / re-rejects in `TestIntentionalDivergences`.
+
+\section div_u_braced \\u{...} braced hex escape (a capability beyond re)
+
+REAL accepts the **braced** form \\u{...} (1–6 hex, the ECMAScript / `regex`-crate spelling) as a
+code point, on **both** surfaces — the C++ engine and every binding — so a pattern written for
+the `regex` crate's \\u{e9} compiles here. It is the same code-point path as \\x{...} and
+\\N{U+XXXX}. `re` rejects it (`incomplete escape \\u`): four hex digits (\\u00e9) or eight
+(\\U0001F600), never braces. Accepting the braces is a **superset**: it cannot break
+re-compatible code (which could never use \\u{...}). \\U{...} is *not* this form — REAL's \\U
+stays Python's 8 fixed digits. Pinned real-accepts / re-rejects in `TestIntentionalDivergences`.
 
 \section div_property Unicode property classes \\p{...} (a capability beyond re)
 

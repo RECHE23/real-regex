@@ -1817,19 +1817,27 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Decodes a `\uHHHH` (4 hex) or `\UHHHHHHHH` (8 hex) code-point escape (str only).
+     * \brief Decodes a `\uHHHH` (4 hex) or `\UHHHHHHHH` (8 hex) code-point escape (str only),
+     *        or the braced form `\u{HHHHHH}` (1–6 hex) — the ECMAScript / regex-crate spelling,
+     *        a synonym of `\x{…}` via \ref parse_braced_hex_scalar. `\U{…}` is not this form
+     *        (`\U` stays 8 fixed digits).
      *
-     * Rejected with clear messages: byte mode (no code-point meaning), a surrogate
+     * Rejected with clear messages: byte mode (no code-point meaning; the constructor `bytes_`
+     * member, matching `\u`/`\U` — not the scoped-flag read `\x{…}` uses), a surrogate
      * (U+D800–U+DFFF), beyond U+10FFFF, or incomplete hex. The backslash and `u`/`U` are
-     * already consumed; this reads the hex digits.
+     * already consumed; this reads the hex digits, or `{` then the shared braced reader.
      *
-     * \param[in] capital True for `\U` (8 digits), false for `\u` (4 digits).
+     * \param[in] capital True for `\U` (8 digits), false for `\u` (4 digits or `\u{…}`).
      * \return The code point in `[0, 0x10FFFF]` (never a surrogate).
      */
     constexpr std::int32_t parse_unicode_codepoint(bool capital)
     {
       if (bytes_) {
         fail("\\u and \\U escapes are not allowed in bytes patterns");
+      }
+      if (!capital && !eof() && peek() == '{') {
+        ++pos_; // consume '{'
+        return parse_braced_hex_scalar();
       }
       const int    width {capital ? 8 : 4};
       std::int32_t value {};
@@ -1865,8 +1873,9 @@ namespace real::detail {
 
     /*!
      * \brief Decodes a braced hex scalar `HHHHHH}` (1–6 hex digits, then the closing `}`) — the code-
-     *        point reader shared by `\N{U+XXXX}` (after its own `U+` prefix) and `\x{XXXX}` (after its
-     *        own bytes-mode check, see \ref parse_braced_hex_escape). The opening `{` is already
+     *        point reader shared by `\N{U+XXXX}` (after its own `U+` prefix), `\x{XXXX}` (after its
+     *        own bytes-mode check, see \ref parse_braced_hex_escape), and `\u{XXXX}` (after
+     *        \ref parse_unicode_codepoint's bytes-mode check and opening `{`). The opening `{` is already
      *        consumed by the caller; this reads the hex digits, the closing `}`, and rejects a
      *        surrogate (U+D800–U+DFFF) or a value beyond U+10FFFF — the same code-point range `\u`/`\U`
      *        enforce (Python semantics).

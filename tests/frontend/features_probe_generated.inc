@@ -109,6 +109,13 @@ TEST(features_probe_01_02_unicode_n_u_xxxx_scalar_form)
   EXPECT_EQ(re.pattern(), std::string_view(R"RRX(\N{U+1F600})RRX"));
 }
 
+TEST(features_probe_01_03_unicode_u_braced_hex_escape)
+{
+  // Unicode / `\u{…}` braced hex escape — status: extension (must compile)
+  const real::regex re(R"RRX(\u{1F600})RRX");
+  EXPECT_EQ(re.pattern(), std::string_view(R"RRX(\u{1F600})RRX"));
+}
+
 // --- category 2: Anchors & lookaround extensions ---
 
 TEST(features_probe_02_00_anchors_lookaround_extensions_z_end_of_text_anchor)
@@ -178,4 +185,4 @@ TEST(features_probe_05_01_excluded_by_design_conditional_groups_id_recursion_cal
   EXPECT_THROWS(real::regex(R"RRX((?(1)a|b))RRX"), real::regex_error);
 }
 
-// 21 compile-assertions, 2 throw-assertions, 1 skipped (planned / pattern: null).
+// 22 compile-assertions, 2 throw-assertions, 1 skipped (planned / pattern: null).

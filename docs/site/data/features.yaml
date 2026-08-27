@@ -125,6 +125,12 @@ categories:
         link: "differences-from-re#div_named_scalar"
         since: "2026.7"
         pattern: "\\N{U+1F600}"
+      - construct: "`\\u{…}` braced hex escape"
+        status: extension
+        note: "ECMAScript / regex-crate spelling; synonym of `\\x{…}`; `re` rejects the braces"
+        link: "differences-from-re#div_u_braced"
+        since: "2026.8"
+        pattern: "\\u{1F600}"
 
   - name: "Anchors & lookaround extensions"
     features:

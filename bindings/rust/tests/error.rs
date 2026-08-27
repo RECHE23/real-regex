@@ -29,6 +29,16 @@ fn unicode_general_category_and_script_compile_natively() {
 }
 
 #[test]
+fn braced_u_escape_is_accepted() {
+    // \u{…} is the regex-crate / ES braced hex form; REAL takes it as \x{…}.
+    assert!(Regex::new(r"\u{e9}").unwrap().is_match("é"));
+    assert!(Regex::new(r"\u{1F600}").unwrap().is_match("😀"));
+    assert!(Regex::new(r"[\u{e9}]").unwrap().is_match("é"));
+    // \U{…} is not this form — REAL's \U is Python's 8 fixed hex digits.
+    assert!(matches!(Regex::new(r"\U{e9}").unwrap_err(), Error::Syntax { .. }));
+}
+
+#[test]
 fn scx_is_a_superset_of_script() {
     // U+0300 COMBINING GRAVE ACCENT: Script=Inherited, but Script_Extensions includes Greek (and others)
     // -- \p{scx=Grek} matches it, bare \p{Grek} (== \p{sc=Grek}, the partition) does not.

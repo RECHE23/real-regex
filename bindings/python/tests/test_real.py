@@ -453,6 +453,19 @@ class TestIntentionalDivergences(unittest.TestCase):
         with self.assertRaises(re.error):
             re.compile(r"\N{U+0041}")                                       # re rejects it (name only)
 
+    def test_braced_u_escape_is_a_superset(self):
+        r"""\u{...} (the ECMAScript / regex-crate braced form) is a REAL extension: the engine
+        accepts it as a synonym of \x{...} / \u00e9, while re wants four hex digits and rejects
+        the braces (`incomplete escape \u`). Python and Go therefore accept a spelling re refuses
+        — the same family as \N{U+XXXX} / \p{...}. \U{...} is not this form."""
+        self.assertIsNotNone(real.compile(r"\u{e9}").fullmatch("é"))
+        self.assertIsNotNone(real.compile(r"\u{1F600}").fullmatch("😀"))
+        self.assertIsNotNone(real.compile(r"[\u{e9}]").fullmatch("é"))
+        with self.assertRaises(re.error):
+            re.compile(r"\u{e9}")
+        with self.assertRaises(real.error):
+            real.compile(r"\U{1F600}")
+
     def test_nullable_loop_final_iteration_capture(self):
         r"""A */+ loop over a nullable body: re runs one final EMPTY iteration and captures it, while
         REAL keeps the last CONSUMING iteration (the RE2 / Rust / Go convention). The overall match span

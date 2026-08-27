@@ -32,8 +32,9 @@ Beyond `re` — flagged extensions, never silent divergences:
 - `real.compile(pat, fallback=True)` (or module-wide `real.fallback = True`) —
   delegate a rejected pattern to stdlib `re` for that pattern, trading its
   linear-time guarantee; `Pattern.engine` says which backend ran.
-- `\p{…}` property classes and the `\N{U+XXXX}` scalar escape — supersets that
-  stdlib `re` rejects ({doc}`why <../differences-from-re>`).
+- `\p{…}` property classes, the `\N{U+XXXX}` scalar escape, and `\u{…}` (a
+  synonym of `\x{…}`) — supersets that stdlib `re` rejects
+  ({doc}`why <../differences-from-re>`).
 
 Object-level reference: {doc}`Python API <../reference/python>`.
 

@@ -490,10 +490,43 @@ TEST(braced_hex_codepoint_escape_ecma_pins)
   // this feature existed (pin so a future change to the ecma gate cannot silently start accepting it).
   EXPECT_THROWS(real::regex("\\x{41}", flags::ecma), real::regex_error);
   EXPECT_THROWS(real::regex("[\\x{41}]", flags::ecma), real::regex_error);
+  // ES spells the braced form \u{...}; it compiles under ecma (and everywhere else).
+  EXPECT(real::regex("\\u{41}", flags::ecma).fullmatch("A").matched());
+  EXPECT(real::regex("[\\u{41}]", flags::ecma).fullmatch("A").matched());
   // \xHH under ecma is unchanged: still the two-hex ECMAScript escape.
   EXPECT(real::regex("\\x41", flags::ecma).fullmatch("A").matched());
   const std::string ff(1, '\xFF');
   EXPECT(real::regex("\\xFF", flags::ecma | flags::bytes).fullmatch(ff).matched());
+}
+
+TEST(braced_unicode_codepoint_escape)
+{
+  // \u{...} is the ECMAScript / regex-crate braced code-point escape — the same path as
+  // \x{...} / \N{U+XXXX} (parse_braced_hex_scalar), dispatched from parse_unicode_codepoint
+  // so a literal, a class member, and \U's eight-digit form all inherit the decision.
+  EXPECT(real::regex("\\u{e9}").fullmatch("é"sv).matched());                  // synonym of \u00e9
+  EXPECT(real::regex("\\u{00e9}").fullmatch("é"sv).matched());                // leading zeros, still 1–6 hex
+  EXPECT(real::regex("\\u{1F600}").fullmatch("\xF0\x9F\x98\x80").matched());  // astral
+  EXPECT(real::regex("[\\u{e9}]").fullmatch("é"sv).matched());                // in-class, no extra work
+  EXPECT(!real::regex("[\\u{e9}]").fullmatch("à"sv).matched());
+  EXPECT_EQ(real::regex("\\u{e9}+").search("ééé"sv)[0], "ééé"sv);             // quantifies the whole code point
+
+  // Fixed-width \u / \U are STRICTLY UNCHANGED: no '{' after \u keeps four / eight digits.
+  EXPECT(real::regex("\\u00e9").fullmatch("é"sv).matched());
+  EXPECT(real::regex("\\U0001F600").fullmatch("\xF0\x9F\x98\x80").matched());
+
+  // bytes mode: \u{...} is \u, so the constructor bytes_ guard (not the scoped-flag read \x{ uses).
+  EXPECT_THROWS(real::regex(std::string("\\u{41}"), real::flags::bytes), real::regex_error);
+  EXPECT_THROWS(real::regex(std::string("[\\u{41}]"), real::flags::bytes), real::regex_error);
+
+  // Shared helper's rejections, reached through the \u{ dispatch.
+  EXPECT_THROWS(real::regex("\\u{}"), real::regex_error);     // no hex digits
+  EXPECT_THROWS(real::regex("\\u{41"), real::regex_error);    // unterminated
+  EXPECT_THROWS(real::regex("\\u{D800}"), real::regex_error); // surrogate
+  EXPECT_THROWS(real::regex("\\u{110000}"), real::regex_error);
+
+  // \U{...} is not this form: \U stays eight hex digits, '{' is not one.
+  EXPECT_THROWS(real::regex("\\U{1F600}"), real::regex_error);
 }
 
 TEST(quoted_literal_span)

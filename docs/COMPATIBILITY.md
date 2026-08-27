@@ -51,6 +51,7 @@ raise a clear error rather than sitting on a roadmap.
 | `\p{…}` property classes | **supported** | General_Category + Script + Script_Extensions + the standard binary properties; native, linear `klass_cp`; a REAL superset -- `re` rejects `\p` outright; `sc=`/`scx=` accept both the long name (`Latin`) and the short UAX24/ISO 15924 code (`Latn`); other UAX44 properties (`Bidi_Class`, `Word_Break`, `Age`, …) stay `unsupported` ([more](@ref div_property)) | 2026.7 |
 | `\N{NAME}` named characters | **supported** | binding resolves the name via `unicodedata` (no C++ table) ([more](@ref div_named_scalar)) | 2026.7 |
 | `\N{U+XXXX}` scalar form | **extension** | PCRE2-style; uniform C++/Python surfaces -- `re` knows only names ([more](@ref div_named_scalar)) | 2026.7 |
+| `\u{…}` braced hex escape | **extension** | ECMAScript / regex-crate spelling; synonym of `\x{…}`; `re` rejects the braces ([more](@ref div_u_braced)) | 2026.8 |
 | `\z` end-of-text anchor | **supported** | exact alias of `\Z` (Python 3.14's meaning) | 2026.7 |
 | Variable-width lookbehind `(?<=a|bb)` | **extension** | bounded, so still linear; `re`/PCRE reject it as non-fixed-width ([more](@ref div_lookbehind)) | — |
 | Word-edge anchors `\< \>` | **extension** | word-start / word-end; `re` has no such escape ([more](@ref div_icase)) | — |

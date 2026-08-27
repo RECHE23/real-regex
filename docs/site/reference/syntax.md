@@ -22,7 +22,7 @@ rationale in {doc}`Differences from re <../differences-from-re>`.
 | `.` | any codepoint except `\n` |
 | `\n \t \r \f \v \a \0` | control escapes |
 | `\xHH` `\x{…}` | a code point by hex — two digits, or any scalar in braces (`\x{1F600}`) |
-| `\uXXXX` `\UXXXXXXXX` | a code point by 4- or 8-digit hex — not `\u{…}`; braces belong on `\x{…}` |
+| `\uXXXX` `\UXXXXXXXX` `\u{…}` | a code point by 4- or 8-digit hex, or any scalar in braces (`\u{1F600}` — a synonym of `\x{…}`) |
 | `\N{U+XXXX}` | a code point by scalar notation |
 
 `\N{NAME}` (a character by its Unicode *name*) is a Python-surface addition:
