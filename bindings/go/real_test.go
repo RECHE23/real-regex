@@ -48,6 +48,81 @@ func TestMustCompilePanicsOnError(t *testing.T) {
 	MustCompile(`(`)
 }
 
+// QuoteMeta is regexp.QuoteMeta; the load-bearing pin is not that equality
+// (a tautology) but that REAL's grammar accepts the escaped form as a literal.
+// A new REAL metacharacter outside \.+*?()|[]{}^$ would fail Compile or
+// FullMatch-self here. (?x)+QuoteMeta is out of contract: this binding
+// compiles with no flags, QuoteMeta is the whole pattern, and regexp has no (?x).
+func TestQuoteMetaCompilesAndFullMatchesEveryASCIIByte(t *testing.T) {
+	for c := 0; c < 128; c++ {
+		s := string([]byte{byte(c)})
+		q := QuoteMeta(s)
+		re, err := Compile(q)
+		if err != nil {
+			t.Fatalf("U+%02X QuoteMeta=%q: compile: %v", c, q, err)
+		}
+		if !re.FullMatch([]byte(s)) {
+			re.Close()
+			t.Fatalf("U+%02X QuoteMeta=%q: FullMatch self failed", c, q)
+		}
+		// `.` FullMatch `.` succeeds quoted or not; a leftover wildcard would
+		// also FullMatch "x". Skip when the byte under test is itself 'x'.
+		if c != 'x' && re.FullMatch([]byte("x")) {
+			re.Close()
+			t.Fatalf("U+%02X QuoteMeta=%q: FullMatch \"x\" (not a literal)", c, q)
+		}
+		re.Close()
+	}
+}
+
+func TestPackageMatchString(t *testing.T) {
+	ok, err := MatchString(`\d+`, "x42y")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("MatchString(`\\d+`, \"x42y\"): want true (a search, not FullMatch)")
+	}
+	ok, err = MatchString(`\d+`, "abc")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Fatal("MatchString(`\\d+`, \"abc\"): want false")
+	}
+	if _, err := MatchString(`(`, "a"); err == nil {
+		t.Fatal("expected an error for an unbalanced paren")
+	}
+}
+
+func TestPackageMatchMatchesStdlib(t *testing.T) {
+	cases := []struct{ pat, s string }{
+		{`abc`, `xabcy`},
+		{`\d+`, `a1 b22`},
+		{`zzz`, `abc`},
+	}
+	for _, c := range cases {
+		got, err := MatchString(c.pat, c.s)
+		if err != nil {
+			t.Fatalf("%q: %v", c.pat, err)
+		}
+		want, err := regexp.MatchString(c.pat, c.s)
+		if err != nil {
+			t.Fatalf("regexp %q: %v", c.pat, err)
+		}
+		if got != want {
+			t.Fatalf("%q on %q: MatchString got %v want %v", c.pat, c.s, got, want)
+		}
+		gotB, err := Match(c.pat, []byte(c.s))
+		if err != nil {
+			t.Fatalf("%q bytes: %v", c.pat, err)
+		}
+		if gotB != got {
+			t.Fatalf("%q on %q: Match vs MatchString %v vs %v", c.pat, c.s, gotB, got)
+		}
+	}
+}
+
 // String is regexp.Regexp.String: the source text, not a default dump of the
 // C pointer. Patterns the stdlib also compiles are compared against it;
 // patterns it rejects still have to round-trip our own source.

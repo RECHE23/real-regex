@@ -20,7 +20,8 @@ re.MatchString("x42")   // true — a search, like regexp.MatchString
 
 ## API offered
 
-`Compile` / `MustCompile`, `(*Regexp) Close`, `String`, `Match` / `MatchString`,
+`Compile` / `MustCompile`, `QuoteMeta`, package `Match` / `MatchString`,
+`(*Regexp) Close`, `String`, `Match` / `MatchString`,
 `Find` / `FindString` / `FindIndex`, `FindAll` / `FindAllString` / `Split`,
 `FindSubmatch` / `FindStringSubmatch` / `FindAllSubmatch` / `FindAllStringSubmatch`,
 `FindAllIndex`, `FindSubmatchIndex` / `FindAllSubmatchIndex`, and `ReplaceAll`.
@@ -51,7 +52,7 @@ Python `re`, not a divergence — both are intentional designs.
 
 v0.1-specific: cgo required; supported platforms are macOS-arm64 and
 linux-x86-64 only; no flags parameter exposed in the Go API (always compiles
-with default flags). Not in this subset: `Expand`, package-level `MatchString`.
+with default flags). Not in this subset: `Expand`. `FindAllIndex` takes no `n`.
 
 Full reference — the binding's own
 [README](https://github.com/RECHE23/real-regex/blob/main/bindings/go/README.md).

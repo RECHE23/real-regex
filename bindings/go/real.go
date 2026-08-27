@@ -2,9 +2,9 @@
 // cgo, over the C ABI at bindings/c/real_capi.h (v2026.7.39+, frozen-additive — vendored here,
 // see vendor_include/ and the Makefile's `vendor`/`check-vendor` targets).
 //
-// v0.1: a regexp-idiomatic subset (Compile/MustCompile/String/Match/MatchString/Find/FindString/
-// FindIndex/FindAll/FindAllString/Split/FindAllIndex/FindSubmatch/FindStringSubmatch/
-// FindSubmatchIndex/ReplaceAll/RegexSet)
+// v0.1: a regexp-idiomatic subset (Compile/MustCompile/QuoteMeta/Match/MatchString (package
+// and methods)/String/Find/FindString/FindIndex/FindAll/FindAllString/Split/FindAllIndex/
+// FindSubmatch/FindStringSubmatch/FindSubmatchIndex/ReplaceAll/RegexSet)
 // plus REAL extensions regexp has no equivalent for at all (FullMatch,
 // bounded lookarounds, possessive quantifiers). See README.md for the full method-to-C-ABI
 // mapping and documented flavor divergences from Go's regexp (RE2) — most importantly: \w,
@@ -129,6 +129,31 @@ func MustCompile(pattern string) *Regexp {
 		panic(err)
 	}
 	return r
+}
+
+// QuoteMeta escapes regexp metacharacters in s so the result matches it
+// literally, like regexp.QuoteMeta. Delegates to regexp.QuoteMeta — not
+// real::compat::re2::QuoteMeta, which escapes a larger set and would
+// return a different string (`user-id` vs `user\-id`) for the same input.
+func QuoteMeta(s string) string {
+	return regexp.QuoteMeta(s)
+}
+
+// Match reports whether b contains any match of pattern, like regexp.Match.
+// The compiled handle is released before return.
+func Match(pattern string, b []byte) (bool, error) {
+	re, err := Compile(pattern)
+	if err != nil {
+		return false, err
+	}
+	defer re.Close()
+	return re.Match(b), nil
+}
+
+// MatchString reports whether s contains any match of pattern, like
+// regexp.MatchString. It is a search, not a full-string match — see FullMatch.
+func MatchString(pattern, s string) (bool, error) {
+	return Match(pattern, []byte(s))
 }
 
 // Close releases the compiled pattern. Idempotent.
