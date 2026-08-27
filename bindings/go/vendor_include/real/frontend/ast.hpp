@@ -1385,6 +1385,47 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Returns `true` if \p ch is an ASCII letter (`A`–`Z`, `a`–`z`).
+     *
+     * Used to tell an unknown flag letter (`z`, `u`, `L`) from a terminator (`:`, `)`, `-`)
+     * after a flag run — CPython `_parse_flags` uses `str.isalpha()` for the same split.
+     * The parser peeks bytes, so this is ASCII-only; a non-ASCII lead byte is not a flag.
+     */
+    static constexpr bool is_ascii_letter(char ch)
+    {
+      return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
+    }
+
+    /*!
+     * \brief Consumes a run of inline flag letters (`imsxaU`).
+     * \return The OR of the consumed flags (`flags::none` if the run was empty).
+     */
+    constexpr flags consume_flag_letters()
+    {
+      flags found {flags::none};
+      while (!eof() && is_flag_letter(peek())) {
+        found = found | flag_for_letter(peek());
+        ++pos_;
+      }
+      return found;
+    }
+
+    /*!
+     * \brief Fails with "unknown flag" if the next byte is an ASCII letter that is not a flag.
+     *
+     * CPython `_parse_flags` makes this diagnosis, and it takes precedence over the caller's
+     * terminator check (misplaced global / missing flag after `-`). Call only after a flags
+     * group has started (a consumed flag letter, or `-`): the leading-global prefix must
+     * backtrack on `(?P` / `(?#` rather than treat `P` as an unknown flag.
+     */
+    constexpr void fail_if_unknown_flag()
+    {
+      if (!eof() && is_ascii_letter(peek())) {
+        fail("unknown flag");
+      }
+    }
+
+    /*!
      * \brief \p value with \p bit cleared. The intermediate cast matches the enum's
      *        `std::uint16_t` underlying type — a `std::uint8_t` here (the pre-widening
      *        vestige) would silently drop `flags::ungreedy` (512) from every scope.
@@ -1423,23 +1464,17 @@ namespace real::detail {
         pos_ = saved_pos;
         return false;
       }
-      flags found      {flags::none};
-      bool  any_letter {};
-      while (!eof() && is_flag_letter(peek())) {
-        found      = found | flag_for_letter(peek());
-        any_letter = true;
-        ++pos_;
+      const flags found      {consume_flag_letters()};
+      const bool  any_letter {found != flags::none};
+      if (any_letter) {
+        fail_if_unknown_flag();
       }
       flags removed     {flags::none};
       bool  any_removed {};
       if (accept('-')) {
-        bool saw_negative {false};
-        while (!eof() && is_flag_letter(peek())) {
-          removed      = removed | flag_for_letter(peek());
-          saw_negative = true;
-          ++pos_;
-        }
-        if (!saw_negative) {
+        removed = consume_flag_letters();
+        fail_if_unknown_flag();
+        if (removed == flags::none) {
           // '-' right after (? is only ever a flags construct (global or scoped) — see
           // parse_group's dispatch, which fails the same way for the scoped form. No other
           // (?...) construct starts with a dash, so this is a hard failure, not a backtrack.
@@ -1539,21 +1574,15 @@ namespace real::detail {
         }
         else if (!eof() && (is_flag_letter(peek()) || peek() == '-')) {
           // (?flags:...) / (?-flags:...) / (?flags-flags:...) — a scoped-flags group. Parse the
-          // added flags, an optional '-' and the removed flags.
-          flags added   {flags::none};
-          flags removed {flags::none};
-          while (!eof() && is_flag_letter(peek())) {
-            added = added | flag_for_letter(peek());
-            ++pos_;
-          }
+          // added flags, an optional '-' and the removed flags. An unknown letter is "unknown
+          // flag" (fail_if_unknown_flag), not the terminator diagnostics below.
+          const flags added {consume_flag_letters()};
+          fail_if_unknown_flag();
+          flags removed     {flags::none};
           if (accept('-')) {
-            bool saw_negative {false};
-            while (!eof() && is_flag_letter(peek())) {
-              removed      = removed | flag_for_letter(peek());
-              saw_negative = true;
-              ++pos_;
-            }
-            if (!saw_negative) {
+            removed = consume_flag_letters();
+            fail_if_unknown_flag();
+            if (removed == flags::none) {
               fail("missing flag after '-'");
             }
           }

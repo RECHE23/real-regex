@@ -265,3 +265,69 @@ TEST(static_regex_compile_flags_reflects_a_global_removal)
   EXPECT(!minus_i.search("A").matched());
   EXPECT(minus_i.search("a").matched());
 }
+
+TEST(unknown_flag_letter_is_diagnosed_as_unknown_flag)
+{
+  // Once a flags group has started (a valid letter or '-'), an unknown letter is
+  // "unknown flag" at that letter — not "global flags not at the start" and not
+  // "missing flag after '-'". Oracle: CPython _parse_flags; unknown flag takes
+  // precedence over placement (a(?iz)b has both faults). The list is the unknown-flag
+  // cases only: REAL's set is not re's (it adds U, it has no u/L).
+  const char* const unknown_flag_cases[] = {
+    "(?iz)a", "(?iz:a)", "(?i-z)a", "(?i-z:a)", "(?imz)a", "(?i-mz)a", "a(?iz)b",
+  };
+  for (const char* pattern : unknown_flag_cases) {
+    bool threw {false};
+    try {
+      real::regex re {pattern};
+    }
+    catch (const real::regex_error& e) {
+      threw = true;
+      EXPECT(std::string_view(e.what()).find("unknown flag") != std::string_view::npos);
+    }
+    EXPECT(threw);
+  }
+
+  // github.com/RECHE23/real-regex/issues/6: (?iz)a used to steal the placement message.
+  try {
+    real::regex re {"(?iz)a"};
+    EXPECT(false);
+  }
+  catch (const real::regex_error& e) {
+    EXPECT(e.position() == 3);
+    EXPECT(std::string_view(e.what()).find("unknown flag") != std::string_view::npos);
+  }
+
+  // z first after '?' never enters the flags parser: still unknown extension (re agrees).
+  try {
+    real::regex re {"(?zi)a"};
+    EXPECT(false);
+  }
+  catch (const real::regex_error& e) {
+    EXPECT(std::string_view(e.what()).find("unknown extension") != std::string_view::npos);
+    EXPECT(std::string_view(e.what()).find("unknown flag") == std::string_view::npos);
+  }
+
+  // Genuine misplaced global / missing-flag stay those messages.
+  try {
+    real::regex re {"a(?i)b"};
+    EXPECT(false);
+  }
+  catch (const real::regex_error& e) {
+    EXPECT(std::string_view(e.what()).find("global flags not at the start of the expression") !=
+           std::string_view::npos);
+  }
+  try {
+    real::regex re {"(?i-)a"};
+    EXPECT(false);
+  }
+  catch (const real::regex_error& e) {
+    EXPECT(std::string_view(e.what()).find("missing flag after '-'") != std::string_view::npos);
+  }
+
+  // The flag set itself is unchanged: U still compiles; a well-formed scoped group still does.
+  EXPECT(real::regex("(?U)a").fullmatch("a").matched());
+  EXPECT(real::regex("(?i:a)").fullmatch("A").matched());
+  // Leading-global prefix must still backtrack on (?P rather than call P an unknown flag.
+  EXPECT(real::regex("(?P<n>a)").fullmatch("a").matched());
+}

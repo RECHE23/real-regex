@@ -427,6 +427,30 @@ class TestWordEdgeAnchors(unittest.TestCase):
         self.assertEqual(real.search(r"\>", "abc").span(), (3, 3))
 
 
+class TestUnknownInlineFlagMessage(unittest.TestCase):
+    r"""An unknown letter in a flags group is 'unknown flag', matching re.
+
+    REAL's inline flag set is not re's in either direction (it adds U, it has no u/L).
+    This list is the unknown-flag cases only — not the whole flag surface — so the
+    comparison cannot encode those wanted divergences as failures.
+    """
+
+    CASES = [
+        r"(?iz)a", r"(?iz:a)", r"(?i-z)a", r"(?i-z:a)",
+        r"(?imz)a", r"(?i-mz)a", r"a(?iz)b",
+    ]
+
+    def test_unknown_flag_family_matches_re(self):
+        for pattern in self.CASES:
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(re.error) as re_caught:
+                    re.compile(pattern)
+                with self.assertRaises(real.error) as real_caught:
+                    real.compile(pattern)
+                self.assertIn("unknown flag", re_caught.exception.msg)
+                self.assertIn("unknown flag", real_caught.exception.msg)
+
+
 class TestIntentionalDivergences(unittest.TestCase):
     r"""Every intentional divergence from Python re, pinned as a real-only assertion.
 
