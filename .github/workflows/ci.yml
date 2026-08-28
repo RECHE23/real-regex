@@ -398,13 +398,16 @@ jobs:
       deps: '[]'
       # `regex` is the Unicode property cross-oracle's other side. Without it, every generator
       # declined on every runner and printed a line nobody read — while the local gate claimed CI
-      # covered that skip. test_unicode_oracle_present.py turns its absence here into a red.
-      # Installing it does NOT make the oracle run: its property data is a different Unicode than the
-      # committed UCD (tools/check_unicode_oracle.py names the code point), so the comparison still
-      # declines — visibly, on its own line, instead of silently.
+      # covered that skip. test_unicode_oracle_present.py turns its absence into a red only when
+      # REAL_ORACLE_REQUIRED is set — not on ambient CI=true (SciForge's ecosystem job, a
+      # packager, a fork). Installing it does NOT make the oracle run: its property data is a
+      # different Unicode than the committed UCD (tools/check_unicode_oracle.py names the code
+      # point), so the comparison still declines — visibly, on its own line, instead of silently.
       pre-install: 'regex'
       # The binding moved under bindings/python/; override the reusable workflow's python/tests default.
-      test-cmd: 'python -m unittest discover -s bindings/python/tests'
+      # REAL_ORACLE_REQUIRED travels with pre-install: drop one, the guard still names the other.
+      # python-cpp.yml runs test-cmd under bash on every OS, including Windows.
+      test-cmd: 'REAL_ORACLE_REQUIRED=1 python -m unittest discover -s bindings/python/tests'
       runner-mode: hosted
       enable-macos: true
       enable-windows: true

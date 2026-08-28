@@ -1,15 +1,18 @@
 """Guard: the Unicode property cross-oracle's ABSENCE can no longer be silent.
 
 The four regen guards each decline the cross-oracle when the `regex` module is missing, print a
-reason to stderr, and pass. That is right for a developer machine and wrong for CI, where nothing
-read those lines: the module was in no runner's dependency list, so the oracle had never run there
--- while the local gate printed "CI covers those" about it.
+reason to stderr, and pass. That is right for a developer machine and for any runner that did not
+declare the oracle -- SciForge's ecosystem job, a downstream packager, a fork with its own CI.
+GitHub sets CI=true on every Actions runner, so treating CI as "our python job provisioned regex"
+turns a legitimate absence into a red. The declaration is REAL_ORACLE_REQUIRED, set next to
+pre-install in ci.yml's test-cmd.
 
-Four states; only `absent` under CI is a defect:
+Four states; only `absent` under REAL_ORACLE_REQUIRED is a defect:
 
   ucd-skew -- the interpreter's unicodedata is not the UCD these tables were built from (3.10
               against UCD 16). The generators decline before they look for `regex`.
-  absent   -- nobody installed the module. Under CI that is a broken dependency list, so this FAILS.
+  absent   -- nobody installed the module. When we declared the oracle required, that is a
+              broken dependency list, so this FAILS.
   skew     -- installed, but a different Unicode than the interpreter (today: U+088F). Declining
               is correct; the exhaustive comparison still has not run.
   ready    -- the comparison can run.
@@ -34,16 +37,17 @@ class TestUnicodeOraclePresence(unittest.TestCase):
         sys.stderr.write(f"check-unicode-oracle: {state} -- {reason}\n")
         sys.stderr.flush()
 
-    def test_ci_installs_the_oracle_module(self):
+    def test_declared_oracle_is_installed(self):
         state, reason = probe.verdict()
-        if os.environ.get("CI"):
+        if os.environ.get("REAL_ORACLE_REQUIRED"):
             self.assertNotEqual(
                 state, "absent",
-                "the `regex` module is missing from a CI runner, so every cross-oracle declined "
-                f"there and nothing said so: {reason}. Add it to ci.yml's python job `pre-install`.",
+                "the `regex` module is missing where REAL_ORACLE_REQUIRED=1, so every "
+                f"cross-oracle declined and nothing said so: {reason}. Keep it in ci.yml's "
+                "python job `pre-install` (next to this flag in `test-cmd`).",
             )
         elif state == "absent":
-            self.skipTest(f"not CI, and {reason}")
+            self.skipTest(f"REAL_ORACLE_REQUIRED unset, and {reason}")
 
     def test_every_decline_names_what_it_compared(self):
         """A decline is legitimate — but never vague. Each state must say which two things differed.
