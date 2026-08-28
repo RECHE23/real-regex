@@ -193,13 +193,6 @@ jobs:
       # by placing the reported input under build/fuzz/corpus-compat/).
       - name: Compat differential fuzzing smoke run (real::compat vs std::regex)
         run: make fuzz-compat FUZZ_TIME=60 CXX=clang++
-      # Filed divergences live in fuzz/known-crashes/, OUT of the timed corpus above: a crash unit
-      # in fuzz/corpus is executed by ReadAndExecuteSeedCorpora before the mutation loop, so the
-      # smoke died in ~40 ms exploring nothing — and a failed `run:` aborts the rest of this job,
-      # which took the five steps below down with it. This asserts each filed unit still
-      # reproduces, and goes red when one is FIXED (the cue to convert it to a regression test).
-      - name: Filed compat divergences still reproduce (red once fixed)
-        run: make fuzz-compat-known CXX=clang++
       # The C ABI shim (bindings/c) — the raw-pointer surface every non-C++ binding sits on — fuzzed under
       # ASan/UBSan. It had no direct fuzzing until the FFI-safety audit; this is the net for that surface.
       - name: C ABI shim fuzzing smoke run (real_compile / find_iter / iter_next)
@@ -219,6 +212,14 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libre2-dev pkg-config
       - name: RE2 drop-in differential (real::compat::re2 vs true libre2)
         run: make fuzz-re2 CXX=clang++
+      # LAST on purpose. Filed units live in fuzz/known-crashes/, out of both timed corpora:
+      # a crash in fuzz/corpus is executed by ReadAndExecuteSeedCorpora before the mutation
+      # loop, so the smoke died in ~40 ms exploring nothing — and a failed `run:` aborts the
+      # rest of this job, which took the five steps above down with it. This asserts each
+      # filed unit still reproduces, and goes red when one is FIXED (the cue to convert it
+      # to a regression test). It sits after TSan and RE2 so that red does not skip them.
+      - name: Filed compat divergences still reproduce (red once fixed)
+        run: make fuzz-compat-known CXX=clang++
 
   # Public conformance + exhaustive nets, promoted from the local gate now that the corpus/enumerator
   # substrate is pinnable. The rust-regex + Fowler corpora differential against Python re, and the
