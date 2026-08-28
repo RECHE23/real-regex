@@ -210,8 +210,12 @@ and a `import real as re` drop-in meets them without writing a pattern at all:
   reprs as `re.IGNORECASE|re.MULTILINE`; there is no `real.RegexFlag`, so an annotation spelled
   `flags: re.RegexFlag` becomes `flags: int`. The values themselves are `re`'s, so any flag
   expression that works there works here.
-- **`Pattern.flags` reports what you passed.** For a `str` pattern `re` adds `re.UNICODE` — `re.compile('a', re.I).flags` is `34`, REAL's is `2` — so compare against what you passed, not
-  against `re`'s echo. Bytes patterns agree on both.
+- **`Pattern.flags` reports only the flags passed to `compile()`, not inline flags in the pattern
+  text, and does not add `re.UNICODE` on `str` patterns.** `re.compile('a', re.I).flags` is `34`
+  (I|UNICODE) while REAL's is `2`; `re.compile('(?i)a').flags` is also `34` because `re` folds
+  inline flags into the field, while REAL's stays `0`. The inline flags **do** apply — `(?i)a`
+  matches `"A"` — so `p.flags` under-reports; do not compare it to `re`'s echo or branch on it
+  after inline syntax. Bytes patterns agree on both when no inline flags are used.
 - **`re.L` / `re.LOCALE` and `re.DEBUG` raise instead of being ignored.** Locale-dependent matching
   is excluded by design (this engine is Unicode in text mode and raw bytes otherwise, never
   locale-dependent); `DEBUG` dumps CPython's own compiler state, which REAL does not have. An

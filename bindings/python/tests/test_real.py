@@ -705,10 +705,15 @@ class TestIntentionalDivergences(unittest.TestCase):
         self.assertFalse(hasattr(real, "RegexFlag"))
         self.assertFalse(hasattr(real, "Scanner"))
         self.assertEqual(real.I | real.M, _re.I | _re.M)  # the VALUES are re's
-        # flags echoes what was passed; re adds UNICODE for a str pattern, and neither for bytes.
+        # flags echoes only the compile() argument; re adds UNICODE for a str pattern, and neither
+        # for bytes. Inline flags in the pattern text apply at match time but are NOT folded into
+        # Pattern.flags — re.compile('(?i)a').flags is 34, REAL's is 0.
         self.assertEqual(real.compile("a", real.I).flags, real.I)
         self.assertEqual(int(_re.compile("a", _re.I).flags), _re.I | _re.UNICODE)
         self.assertEqual(real.compile(b"a", real.I).flags, int(_re.compile(b"a", _re.I).flags))
+        self.assertEqual(real.compile("(?i)a").flags, 0)
+        self.assertEqual(int(_re.compile("(?i)a").flags), _re.I | _re.UNICODE)
+        self.assertTrue(real.compile("(?i)a").fullmatch("A"))
         # re.L (4), re.DEBUG (128) and an unrecognised bit are refused, never ignored.
         for bit in (4, 128, 1024):
             with self.subTest(bit=bit), self.assertRaises(real.error):
