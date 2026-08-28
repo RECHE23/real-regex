@@ -66,7 +66,7 @@ include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
 	full-local-gate-impl gcc-check route-probe alloc-probe ac-regime sabotage-sweep \
-        lint misra check-state-zeroing check-percall-copies route-surface-parity bench-compilers fuzz fuzz-compat fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
+        lint misra check-state-zeroing check-percall-copies route-surface-parity bench-compilers fuzz fuzz-compat fuzz-compat-known fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
@@ -210,6 +210,9 @@ fuzz:
 
 fuzz-compat:
 	@$(MAKE) -C fuzz fuzz-compat
+
+fuzz-compat-known:
+	@$(MAKE) -C fuzz fuzz-compat-known
 
 fuzz-re2:
 	@$(MAKE) -C fuzz fuzz-re2
