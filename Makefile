@@ -490,13 +490,18 @@ check-bench-ratios:
 # skipping. mk/common.mk points SPHINXBUILD and MYPY_PYTHON here when it exists. Built from
 # docs/requirements.txt (the SAME pins ci.yml's Docs-site job installs -- a local sphinx newer than
 # CI's would gate against warnings CI does not raise, and vice versa), plus mypy for stubtest.
-# `regex` is installed here too, but it CANNOT close step 20's cross-oracle from here: the Unicode
+# `regex` is the same pin as ci.yml's python job `pre-install`: last release whose
+# property data is Unicode 16.0.0 (committed UCD sources and CPython 3.14 unicodedata). 2025.11.3+
+# ships Unicode 17 and the generators decline as `skew`. Raise both pins when the tables move to
+# 17. Installing it HERE still cannot close step 20's cross-oracle from here: the Unicode
 # generators run inside the python test suite, which must import the built extension and therefore runs
 # under $(PYTHON). Closing that one means either `regex` in $(PYTHON) -- refused by PEP 668 on a
 # brew/system interpreter unless --break-system-packages, which the pip note itself warns can break the
 # OS python -- or running the suite under this venv (`make python-test PYTHON=$(GATE_VENV)/bin/python`,
 # valid because the venv shares $(PYTHON)'s ABI, so the in-place .so imports). Left as the developer's
-# call rather than done silently: the end-of-gate summary names it either way.
+# call rather than done silently: the end-of-gate summary names it either way. GATE_STRICT=1 with
+# default $(PYTHON) still counts the skip; `GATE_STRICT=1 make full-local-gate PYTHON=$(GATE_VENV)/bin/python`
+# is the form that stops counting it.
 gate-venv: ## [gates] Create $(GATE_VENV) with the gate's optional python tools (sphinx pins + mypy)
 	$(PYTHON) -m venv $(GATE_VENV)
 	$(GATE_VENV)/bin/pip install --quiet --upgrade pip
@@ -504,7 +509,7 @@ gate-venv: ## [gates] Create $(GATE_VENV) with the gate's optional python tools 
 	# run the python suite (`PYTHON=$(GATE_VENV)/bin/python`), and that path builds the extension through
 	# setup.py. A venv created by `python -m venv` on 3.12+ ships neither, so the offer failed on
 	# `ModuleNotFoundError: No module named 'setuptools'` before reaching the cross-oracle it exists to close.
-	$(GATE_VENV)/bin/pip install --quiet -r $(ROOT)/docs/requirements.txt mypy regex setuptools wheel
+	$(GATE_VENV)/bin/pip install --quiet -r $(ROOT)/docs/requirements.txt mypy 'regex==2025.9.1' setuptools wheel
 	@echo "gate-venv: ready — full-local-gate finds sphinx-build and mypy here (steps 10 and 20 stop skipping)"
 	@$(PYTHON) -c "import regex" >/dev/null 2>&1 \
 	  || echo "gate-venv: step 20's Unicode cross-oracle stays parse-only — it needs 'regex' in $(PYTHON) itself (the interpreter that imports the extension), or run 'make python-test PYTHON=$(GATE_VENV)/bin/python'"
@@ -749,13 +754,7 @@ full-local-gate-impl:
 	     echo "full-local-gate: REFUSED — GATE_STRICT is set and $$n step(s) were skipped."; \
 	     exit 1; \
 	   fi; \
-	   if grep -q '^step 20:' $(GATE_SKIPS) 2>/dev/null; then \
-	     echo "full-local-gate: the steps that RAN are green; $$n skipped above. CI closes every one of them"; \
-	     echo "  EXCEPT step 20 — no runner has a 'regex' whose Unicode matches these tables, so the"; \
-	     echo "  cross-oracle is unrun there too. 'CI covers those' was one sentence and it was half wrong."; \
-	   else \
-	     echo "full-local-gate: the steps that RAN are green; $$n skipped above (CI covers those legs)"; \
-	   fi; \
+	   echo "full-local-gate: the steps that RAN are green; $$n skipped above (CI covers those legs)"; \
 	 else \
 	   echo "full-local-gate: ALL gates green, NONE skipped (cheap→doc→tests→lint→sanitize→coverage; first red would have stopped the train)"; \
 	 fi

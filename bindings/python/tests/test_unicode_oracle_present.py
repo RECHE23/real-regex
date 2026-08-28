@@ -13,14 +13,17 @@ Four states; only `absent` under REAL_ORACLE_REQUIRED is a defect:
               against UCD 16). The generators decline before they look for `regex`.
   absent   -- nobody installed the module. When we declared the oracle required, that is a
               broken dependency list, so this FAILS.
-  skew     -- installed, but a different Unicode than the interpreter (today: U+088F). Declining
-              is correct; the exhaustive comparison still has not run.
-  ready    -- the comparison can run.
+  skew     -- installed, but a different Unicode than the interpreter (unpinned `regex` after
+              2025.9.1 assigns U+088F; our tables and CPython 3.14 are UCD 16.0.0). Declining
+              is correct; the comparison does not run against a skewed oracle.
+  ready    -- the comparison can run. CI's python 3.14 job pins `regex==2025.9.1` so this is
+              the 3.14 path; 3.10 stays `ucd-skew`.
 
 A check publishes its denominator. `test_oracle_verdict_is_published` prints the state on every
 run, because "OK (skipped=8)" does not say whether 3.10 took `ucd-skew` or never reached this file.
 """
 import os
+import re
 import sys
 import unittest
 
@@ -66,6 +69,23 @@ class TestUnicodeOraclePresence(unittest.TestCase):
             self.assertIn(probe.tables_ucd_version(), reason)  # … and the tables' own stamp
         else:
             self.skipTest(f"the oracle is '{state}', not declined for a skew")
+
+    def test_ci_and_gate_venv_pin_the_same_oracle(self):
+        """Two copies of the pin. If they drift, CI runs a comparison GATE_STRICT does not, or the reverse."""
+        root = repo_root()
+        with open(os.path.join(root, ".github", "workflows", "ci.yml"), encoding="utf-8") as fh:
+            ci = fh.read()
+        with open(os.path.join(root, "Makefile"), encoding="utf-8") as fh:
+            makefile = fh.read()
+        ci_m = re.search(r"pre-install:\s*'regex==([^']+)'", ci)
+        mk_m = re.search(r"mypy 'regex==([^']+)' setuptools", makefile)
+        self.assertIsNotNone(ci_m, "ci.yml python job has no regex== pin in pre-install")
+        self.assertIsNotNone(mk_m, "Makefile gate-venv has no regex== pin on the pip line")
+        self.assertEqual(
+            ci_m.group(1), mk_m.group(1),
+            "ci.yml pre-install and make gate-venv must pin the same regex; "
+            "raise both when the tables move to the next UCD",
+        )
 
 
 if __name__ == "__main__":

@@ -400,10 +400,16 @@ jobs:
       # declined on every runner and printed a line nobody read — while the local gate claimed CI
       # covered that skip. test_unicode_oracle_present.py turns its absence into a red only when
       # REAL_ORACLE_REQUIRED is set — not on ambient CI=true (SciForge's ecosystem job, a
-      # packager, a fork). Installing it does NOT make the oracle run: its property data is a
-      # different Unicode than the committed UCD (tools/check_unicode_oracle.py names the code
-      # point), so the comparison still declines — visibly, on its own line, instead of silently.
-      pre-install: 'regex'
+      # packager, a fork).
+      #
+      # Pin 2025.9.1: last release whose property data is Unicode 16.0.0, matching the committed
+      # UCD sources and CPython 3.14's unicodedata. 2025.11.3+ ships Unicode 17 (~4803 extra
+      # assigned code points; U+088F is Arabic there, Cn here) and the generators decline as
+      # `skew`. Bumping the tables to 17 would `ucd-skew` on 3.14, whose unicodedata we do not
+      # control. Raise this pin (and the same one in `make gate-venv`) when the tables move to
+      # 17, or the probe returns to `skew` and GATE_SKIPS grows a line again. 3.10 stays
+      # `ucd-skew` (unicodedata 13.0.0) either way — correctly, and visibly.
+      pre-install: 'regex==2025.9.1'
       # The binding moved under bindings/python/; override the reusable workflow's python/tests default.
       # REAL_ORACLE_REQUIRED travels with pre-install: drop one, the guard still names the other.
       # python-cpp.yml runs test-cmd under bash on every OS, including Windows.
