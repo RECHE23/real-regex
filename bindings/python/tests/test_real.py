@@ -156,6 +156,24 @@ class TestSub(unittest.TestCase):
         with self.assertRaises(real.error):
             real.sub(r"a", r"\g<zz>", "a")
 
+    def test_negative_count_and_maxsplit_do_nothing(self):
+        """re reads a NEGATIVE count/maxsplit as "none", not "unlimited" — and -1 is exactly what a
+        caller arriving from Go's `n` or Rust writes to mean "all". REAL replaced/split everything,
+        silently, which is the one shape of this divergence that corrupts data instead of raising."""
+        self.assertEqual(real.sub(r"\d", "X", "123", count=-1), "123")
+        self.assertEqual(real.subn(r"\d", "X", "123", count=-1), ("123", 0))
+        self.assertEqual(real.split(r"\d", "a1b2c", maxsplit=-1), ["a1b2c"])
+        self.assertEqual(real.split(r"(\d)", "a1b", maxsplit=-1), ["a1b"])
+        self.assertEqual(real.sub(rb"\d", b"X", b"123", count=-1), b"123")
+        self.assertEqual(real.sub(r"\d", lambda m: "X", "123", count=-1), "123")
+        # 0 still means unlimited, and a positive count still bounds it.
+        self.assertEqual(real.sub(r"\d", "X", "123", count=0), "XXX")
+        self.assertEqual(real.sub(r"\d", "X", "123", count=2), "XX3")
+        self.assertEqual(real.split(r"\d", "a1b2c", maxsplit=1), ["a", "b2c"])
+        # The template is still parsed: an invalid one raises even though nothing is replaced.
+        with self.assertRaises(real.error):
+            real.sub(r"(a)", r"\9", "a", count=-1)
+
     def test_callable_and_count(self):
         """Callable replacements and count limits work."""
         self.assertEqual(real.sub(r"\d+", lambda m: str(int(m.group()) * 2), "3 4"),

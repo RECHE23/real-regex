@@ -1129,6 +1129,17 @@ PyObject* Pattern_split(PyObject* self, PyObject* args, PyObject* kwargs) {
         Py_DECREF(item);
         return true;
     };
+    // Same rule as sub's negative count, and the same trap: CPython reads a negative maxsplit as
+    // "no splits at all" and returns [string], while the loop below spells "unlimited" as
+    // `maxsplit != 0`. Emitted through the shared helpers so the piece is built exactly as every
+    // other segment is.
+    if (maxsplit < 0) {
+        if (!append(slice_subject(pat, sv, 0, static_cast<Py_ssize_t>(sv.len)))) {
+            Py_DECREF(out);
+            return nullptr;
+        }
+        return out;
+    }
     const std::size_t ngroups = pat->rx->group_count();
     Py_ssize_t        last    = 0;
     // Emits the segment before one match followed by its captured-group pieces, then
@@ -1467,7 +1478,14 @@ PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_c
 
     std::string result;
     Py_ssize_t done = 0;
-    if (!callable) {
+    // CPython treats a NEGATIVE count as "no replacements", not "unlimited": re.sub(count=-1)
+    // returns the subject untouched. The loops below spell "unlimited" as `count != 0`, which a
+    // negative value satisfies forever -- so they replaced everything, silently, and -1 is the
+    // spelling a caller arriving from Go's `n` or Rust reaches for to mean "all". The template is
+    // still parsed above, so an invalid one still raises here exactly as it does in re.
+    if (count < 0) {
+        result.assign(sv.data, static_cast<std::size_t>(sv.len));
+    } else if (!callable) {
         // Non-callable: the scan is pure C++ (run_template_sub). On a large subject release
         // the GIL so threads scan in parallel -- the only Python object is the final string,
         // built below under the GIL (no O(matches) build under the GIL, unlike findall/split).
