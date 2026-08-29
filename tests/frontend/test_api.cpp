@@ -104,24 +104,24 @@ TEST(error_kind_classifies_excluded_constructs_as_unsupported)
   // Well formed, and beyond a linear engine: every one of these is named on the divergences page as
   // excluded BY DESIGN, so a binding must be able to tell them from a malformed pattern.
   constexpr row rows[] {
-    {"(a)\\1", real::error_kind::unsupported},                // backreference, by number
-    {"(?P<n>a)(?P=n)", real::error_kind::unsupported},        // backreference, by name
-    {"(a)(?(1)b|c)", real::error_kind::unsupported},          // conditional group
-    {"a(?C1)b", real::error_kind::unsupported},               // callout, numbered
-    {"a(?C)b", real::error_kind::unsupported},                // callout, bare
-    {"a(?R)b", real::error_kind::unsupported},                // recursion, whole pattern
-    {"(a)(?1)", real::error_kind::unsupported},               // recursion, absolute
-    {"(a)(?-1)", real::error_kind::unsupported},              // recursion, relative
-    {"(?P<n>a)(?&n)", real::error_kind::unsupported},         // subroutine call, PCRE spelling
-    {"(?P<n>a)(?P>n)", real::error_kind::unsupported},        // subroutine call, Python spelling
-    {"(?=(?=a))", real::error_kind::unsupported},             // nested lookaround
-    {"(?<=a*)b", real::error_kind::unsupported},              // unbounded lookaround
+    {.pattern = "(a)\\1", .kind = real::error_kind::unsupported},                // backreference, by number
+    {.pattern = "(?P<n>a)(?P=n)", .kind = real::error_kind::unsupported},        // backreference, by name
+    {.pattern = "(a)(?(1)b|c)", .kind = real::error_kind::unsupported},          // conditional group
+    {.pattern = "a(?C1)b", .kind = real::error_kind::unsupported},               // callout, numbered
+    {.pattern = "a(?C)b", .kind = real::error_kind::unsupported},                // callout, bare
+    {.pattern = "a(?R)b", .kind = real::error_kind::unsupported},                // recursion, whole pattern
+    {.pattern = "(a)(?1)", .kind = real::error_kind::unsupported},               // recursion, absolute
+    {.pattern = "(a)(?-1)", .kind = real::error_kind::unsupported},              // recursion, relative
+    {.pattern = "(?P<n>a)(?&n)", .kind = real::error_kind::unsupported},         // subroutine call, PCRE spelling
+    {.pattern = "(?P<n>a)(?P>n)", .kind = real::error_kind::unsupported},        // subroutine call, Python spelling
+    {.pattern = "(?=(?=a))", .kind = real::error_kind::unsupported},             // nested lookaround
+    {.pattern = "(?<=a*)b", .kind = real::error_kind::unsupported},              // unbounded lookaround
     // Malformed: `syntax`, and a binding must NOT offer a delegating remedy for these.
-    {"(unclosed", real::error_kind::syntax},
-    {"a)", real::error_kind::syntax},
-    {"(?Z)", real::error_kind::syntax},                       // an extension that is simply unknown
-    {"(?", real::error_kind::syntax},
-    {"a{3,1}", real::error_kind::syntax},
+    {.pattern = "(unclosed", .kind = real::error_kind::syntax},
+    {.pattern = "a)", .kind = real::error_kind::syntax},
+    {.pattern = "(?Z)", .kind = real::error_kind::syntax},                       // an extension that is simply unknown
+    {.pattern = "(?", .kind = real::error_kind::syntax},
+    {.pattern = "a{3,1}", .kind = real::error_kind::syntax},
   };
 
   std::size_t checked {0};
