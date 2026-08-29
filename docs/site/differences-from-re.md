@@ -225,19 +225,8 @@ really is closed.
 (div_module_surface)=
 ## The module surface (Python binding)
 
-Everything above is about the pattern language. Five differences are in the *module* instead,
+Everything above is about the pattern language. Four differences are in the *module* instead,
 and a `import real as re` drop-in meets them without writing a pattern at all:
-
-- **A subject must be `str` or `bytes`; other buffer objects are refused.** `re` reads anything
-  that exports a flat contiguous buffer — `bytearray`, `memoryview`, `array.array`, `mmap` — as a
-  bytes subject. REAL takes `bytes`, and says which object it refused and what to do:
-  `cannot use a bytes pattern on a 'bytearray' -- this binding takes bytes subjects, not other
-  buffer objects; pass bytes(obj)`. That conversion copies, which is the very thing the buffer
-  protocol exists to avoid, so this is a real gap and not a stylistic one; it is open because
-  CPython's `Py_buffer` API entered the stable ABI only in 3.11, while the published wheel is
-  `abi3` at 3.10. Every *other* cell of the subject-type matrix — which of `str`/`bytes` a pattern
-  accepts, and the exact wording of each refusal, down to the type name in
-  `expected string or bytes-like object, got 'collections.OrderedDict'` — is `re`'s.
 
 - **Flags are plain `int`, not a `RegexFlag` enum.** `real.I | real.M` is `10`, where `re.I | re.M`
   reprs as `re.IGNORECASE|re.MULTILINE`; there is no `real.RegexFlag`, so an annotation spelled

@@ -174,11 +174,17 @@ struct subject_view {
 using match_iter_t =
     decltype(std::declval<const real::regex&>().find_iter(std::string_view {}).begin());
 
+// PyObject_New gives raw storage and runs no constructor, so every field here is a plain C type
+// set by hand at construction — including the buffer export, which is carried as the Py_buffer
+// itself rather than as a subject_ref for exactly that reason. The scoped RAII form serves the
+// call sites; this one is released by dealloc, the same discipline as `cur` and the refs.
 struct MatchIteratorObject {
     PyObject_HEAD
     PyObject* pattern;   // owning PatternObject: keeps the regex program + pattern text alive
-    PyObject* subject;   // str or bytes: keeps the scanned bytes alive
+    PyObject* subject;   // str, bytes or a bytes-like object: keeps the scanned bytes alive
     subject_view sv;     // by value: a non-owning view into `subject`'s bytes
+    Py_buffer buf;       // the subject's buffer export, held for the whole scan (see buf_owned)
+    bool buf_owned;      // an export is outstanding: `sv` borrows it and dealloc must release it
     Py_ssize_t pos;      // the iterator's pos/endpos (char for str, byte for bytes), copied
     Py_ssize_t endpos;   // onto each yielded Match's .pos/.endpos
     match_iter_t* cur;   // heap cursor; its text_/prog_ borrow `subject` and the regex
@@ -188,7 +194,10 @@ struct MatchIteratorObject {
 void MatchIterator_dealloc(PyObject* self) {
     PyTypeObject* tp = Py_TYPE(self);
     auto* it = reinterpret_cast<MatchIteratorObject*>(self);
-    delete it->cur;  // delete the cursor BEFORE releasing the refs it borrows from
+    delete it->cur;  // delete the cursor BEFORE releasing the bytes and refs it borrows from
+    if (it->buf_owned) {
+        PyBuffer_Release(&it->buf);
+    }
     cursor_decref(it->chars);
     Py_XDECREF(it->subject);
     Py_XDECREF(it->pattern);
@@ -196,38 +205,50 @@ void MatchIterator_dealloc(PyObject* self) {
     Py_DECREF(reinterpret_cast<PyObject*>(tp));
 }
 
-// Whether `obj` answers the buffer protocol with a flat, C-contiguous block — exactly what re asks
-// of a subject (PyObject_GetBuffer with PyBUF_SIMPLE), and therefore what decides which of its two
-// refusals a rejected subject earns. The Py_buffer API entered the stable ABI only in 3.11, past
-// this module's 3.10 floor, so the question goes through memoryview instead: constructing one
-// succeeds iff the object exports a buffer at all, and c_contiguous supplies the flatness half.
-// Refusal paths only — never reached by a scan, so the three calls cost nothing that matters.
-bool exports_flat_buffer(PyObject* obj) {
-    PyObject* view = PyMemoryView_FromObject(obj);
-    if (view == nullptr) {
-        PyErr_Clear();  // "not bytes-like" is the ANSWER here, not an error to propagate
-        return false;
-    }
-    PyObject* flat = PyObject_GetAttrString(view, "c_contiguous");
-    Py_DECREF(view);
-    if (flat == nullptr) {
-        PyErr_Clear();
-        return false;
-    }
-    const int yes = PyObject_IsTrue(flat);
-    Py_DECREF(flat);
-    if (yes < 0) {
-        PyErr_Clear();
-        return false;
-    }
-    return yes == 1;
-}
+// Holds a subject's bytes for as long as the caller needs them. `str` and `bytes` need nothing
+// beyond the caller's reference — their storage is immutable and already materialised — so those
+// take the no-export path and this is a plain view. Any OTHER bytes-like object (bytearray,
+// memoryview, array, mmap) is borrowed through the buffer protocol: the export pins the exporter's
+// memory, and a resizable exporter such as bytearray refuses to resize while one is outstanding,
+// so neither the pointer nor the length can move under the view. The export must be released, and
+// only with the GIL held — which is why this is RAII and not a bare Py_buffer: a mid-function
+// error return is the common case at these call sites, and each one would otherwise have to
+// remember.
+struct subject_ref {
+    subject_view sv {nullptr, 0, true};
+    Py_buffer    buf {};
+    bool         owned = false;  // `buf` holds an export that is still ours to release
 
-// The type name re prints in its subject TypeErrors, rebuilt from attributes: re reads tp_name,
-// which the stable ABI hides, and PyType_GetName is 3.11 against a 3.10 floor. tp_name is the bare
-// __name__ for a class written in Python — a heap type that is still MUTABLE — and for anything
-// under builtins; every other type (a static type, or a C heap type built from a spec, such as
-// decimal.Decimal or re.Pattern) carries the module-qualified name. __name__ rather than
+    subject_ref()                              = default;
+    subject_ref(const subject_ref&)            = delete;
+    subject_ref& operator=(const subject_ref&) = delete;
+
+    ~subject_ref() { reset(); }
+
+    void reset() {
+        if (owned) {
+            owned = false;
+            PyBuffer_Release(&buf);
+        }
+    }
+
+    // Hands the export, if any, to a caller that will release it itself — finditer's iterator,
+    // which must keep the bytes pinned across __next__ calls and frees them in its dealloc. A
+    // PyBUF_SIMPLE export is a flat block (shape/strides/suboffsets all null), so copying the
+    // struct moves the whole thing and the source simply stops owning it.
+    void transfer(Py_buffer* dst, bool* dst_owned) {
+        *dst = buf;
+        *dst_owned = owned;
+        owned = false;
+    }
+};
+
+// The type name re prints in its subject TypeErrors, rebuilt from attributes. re reads tp_name,
+// which the stable ABI hides and for which PyType_GetName is NOT a substitute: that returns
+// __name__, so a type whose tp_name is module-qualified (re.Pattern, decimal.Decimal, _io.StringIO
+// — anything static, or heap-allocated from a dotted spec name) would lose its module. tp_name is
+// the bare __name__ only for a class written in Python — a heap type that is still MUTABLE — and
+// for anything under builtins; everything else is module-qualified. __name__ rather than
 // __qualname__ on both arms: a spec name is split at its LAST dot, so the tail is never itself
 // dotted, and a class nested inside a function has a __qualname__ tp_name knows nothing about
 // ("Outer.<locals>.Local"). Returns a new reference, or nullptr with an error set for a caller
@@ -268,35 +289,21 @@ void set_not_string_like(PyObject* obj) {
     Py_DECREF(name);
 }
 
-// The one refusal that is REAL's own rather than re's: re reads any flat buffer as a bytes subject,
-// this binding takes `bytes` only. So the message names the gap and the conversion instead of
-// borrowing a sentence that would describe a different rule.
-void set_buffer_subject_unsupported(PyObject* obj) {
-    PyObject* name = subject_type_name(obj);
-    if (name == nullptr) {
-        PyErr_Clear();
-        PyErr_SetString(PyExc_TypeError,
-                        "cannot use a bytes pattern on a buffer object -- this binding takes "
-                        "bytes subjects; pass bytes(obj)");
-        return;
-    }
-    PyErr_Format(PyExc_TypeError,
-                 "cannot use a bytes pattern on a '%U' -- this binding takes bytes subjects, not "
-                 "other buffer objects; pass bytes(obj)",
-                 name);
-    Py_DECREF(name);
-}
-
 // `is_bytes` rather than a PatternObject*: shared by Pattern (pat->is_bytes) and RegexSet
 // (rs->is_bytes) — both just need to know which of str/bytes the subject must be.
 //
-// The dispatch is re's, in re's order: str first, then bytes, then whatever exports a flat buffer
-// is "bytes-like", and only what does none of the three gets the "expected string or bytes-like
-// object" form. Ordering by the subject rather than by the pattern is what makes the last two
-// arms reachable at all — the previous shape asked `is_bytes` first and so answered every
-// non-matching subject with the mismatch sentence, telling a caller who passed None that they had
-// used a string pattern on a bytes-like object.
-int get_subject(int is_bytes, PyObject* obj, subject_view* out) {
+// The dispatch is re's, in re's order: str first, then bytes, then whatever exports a flat
+// contiguous buffer is "bytes-like", and only what does none of the three gets the "expected
+// string or bytes-like object" form. Ordering by the subject rather than by the pattern is what
+// makes the last arms reachable at all — asking `is_bytes` first answers every non-matching
+// subject with the mismatch sentence, which tells a caller who passed None that they used a
+// string pattern on a bytes-like object.
+//
+// PyBUF_SIMPLE is re's own request, and it carries the contiguity requirement: a strided or
+// released memoryview fails it and lands in the last arm, exactly as in re. `bytes` is checked
+// before the buffer arm rather than folded into it because an export would cost a slot call and
+// a release for storage that cannot move anyway.
+int acquire_subject(int is_bytes, PyObject* obj, subject_ref* out) {
     if (PyUnicode_Check(obj)) {
         if (is_bytes != 0) {
             PyErr_SetString(PyExc_TypeError,
@@ -308,7 +315,7 @@ int get_subject(int is_bytes, PyObject* obj, subject_view* out) {
         if (data == nullptr) {
             return -1;
         }
-        *out = {data, len, PyUnicode_GetLength(obj) == len};
+        out->sv = {data, len, PyUnicode_GetLength(obj) == len};
         return 0;
     }
     if (PyBytes_Check(obj)) {
@@ -322,20 +329,23 @@ int get_subject(int is_bytes, PyObject* obj, subject_view* out) {
         if (PyBytes_AsStringAndSize(obj, &data, &len) < 0) {
             return -1;
         }
-        *out = {data, len, true};
+        out->sv = {data, len, true};
         return 0;
     }
-    if (!exports_flat_buffer(obj)) {
+    if (PyObject_GetBuffer(obj, &out->buf, PyBUF_SIMPLE) < 0) {
+        PyErr_Clear();  // the exporter's own complaint; re reports the type it could not read
         set_not_string_like(obj);
         return -1;
     }
+    out->owned = true;  // set before any further failure: from here the export must be released
     if (is_bytes == 0) {
+        out->reset();
         PyErr_SetString(PyExc_TypeError,
                         "cannot use a string pattern on a bytes-like object");
         return -1;
     }
-    set_buffer_subject_unsupported(obj);
-    return -1;
+    out->sv = {static_cast<const char*>(out->buf.buf), out->buf.len, true};
+    return 0;
 }
 
 // Builds Python-visible spans from byte spans: identity when chars are
@@ -388,9 +398,16 @@ void compute_char_spans(const subject_view& sv, const std::vector<Py_ssize_t>& b
     }
 }
 
-// Decodes subject bytes [s, e) as the right Python type (str or bytes).
+// Decodes subject bytes [s, e) as the right Python type (str or bytes), against the CURRENT
+// length. A Match holds a reference to its subject but no buffer export, so a mutable subject can
+// have been shortened between the scan and the read; re answers the clamped slice there rather
+// than raising (a span of (0,10) over a bytearray since cut to 2 bytes gives its 2 bytes, one
+// starting past the end gives b""), and without the clamp the same span would read past the
+// buffer. str and bytes subjects cannot shrink, so for them this is arithmetic that never fires.
 PyObject* slice_subject(PatternObject* pat, const subject_view& sv, Py_ssize_t start,
                         Py_ssize_t end) {
+    start = std::clamp(start, Py_ssize_t {0}, sv.len);
+    end = std::clamp(end, start, sv.len);
     if (pat->is_bytes != 0) {
         return PyBytes_FromStringAndSize(sv.data + start, end - start);
     }
@@ -489,11 +506,11 @@ PyObject* group_value(MatchObject* match, Py_ssize_t group, PyObject* default_va
         return Py_NewRef(default_value);
     }
     const Py_ssize_t end = (*match->byte_spans)[(2 * group) + 1];
-    subject_view sv;
-    if (get_subject(pat->is_bytes, match->subject, &sv) < 0) {
+    subject_ref subject;  // re-acquired per read: a Match pins its subject's OBJECT, not its bytes
+    if (acquire_subject(pat->is_bytes, match->subject, &subject) < 0) {
         return nullptr;
     }
-    return slice_subject(pat, sv, start, end);
+    return slice_subject(pat, subject.sv, start, end);
 }
 
 PyObject* Match_group(PyObject* self, PyObject* args) {
@@ -588,13 +605,18 @@ int ensure_char_spans(MatchObject* match) {
     if (match->char_spans != nullptr) {
         return 0;
     }
-    subject_view sv;
-    if (get_subject(as_pattern(match->pattern)->is_bytes, match->subject, &sv) < 0) {
+    // A bytes-like subject has char == byte, so the char spans ARE the byte spans and the subject
+    // is not needed at all. Not merely cheaper: it is what keeps .span()/.start()/.regs answering
+    // after a memoryview subject has been released, as they do in re — those offsets were captured
+    // at match time and reading them back should not require the bytes again.
+    subject_ref subject;
+    if (as_pattern(match->pattern)->is_bytes == 0
+        && acquire_subject(0, match->subject, &subject) < 0) {
         return -1;
     }
     try {
         match->char_spans = new std::vector<Py_ssize_t>();
-        compute_char_spans(sv, *match->byte_spans, *match->char_spans, match->cursor);
+        compute_char_spans(subject.sv, *match->byte_spans, *match->char_spans, match->cursor);
     } catch (...) {
         delete match->char_spans;     // nullptr (new threw) or the partly-built vector
         match->char_spans = nullptr;  // leave it recomputable and dealloc-safe
@@ -898,10 +920,11 @@ PyObject* run_region(PyObject* self, PyObject* args, PyObject* kwargs, real::det
                                      &string, &pos, &endpos)) {
         return nullptr;
     }
-    subject_view sv;
-    if (get_subject(pat->is_bytes, string, &sv) < 0) {
+    subject_ref subject;
+    if (acquire_subject(pat->is_bytes, string, &subject) < 0) {
         return nullptr;
     }
+    const subject_view& sv = subject.sv;
     // Clamp char offsets to [0, char_len] (re clamps silently — out of range never errors),
     // then convert to byte offsets.
     const Py_ssize_t char_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
@@ -915,8 +938,13 @@ PyObject* run_region(PyObject* self, PyObject* args, PyObject* kwargs, real::det
     // GIL released. A reused (thread-local) state is NOT safe: pike_vm caches the class
     // lookup table inside the state keyed by the per-PROGRAM class index, so reuse across
     // patterns would serve a stale table. Subject bytes stay valid while released: immutable
-    // str/bytes, ref held, UTF-8 already materialised. Released only above the size threshold
-    // (below it the toggle would dominate a sub-microsecond scan).
+    // str/bytes with the ref held and the UTF-8 already materialised, or a buffer export, which
+    // pins the exporter's memory and forbids it to resize for as long as it is outstanding.
+    // Pinned is not frozen — another thread may still overwrite the bytes IN PLACE through its
+    // own handle on the object, which is the caller's race to avoid and not one re can have,
+    // since re does not release the GIL here. The length and the address cannot move either way,
+    // so the scan stays in bounds. Released only above the size threshold (below it the toggle
+    // would dominate a sub-microsecond scan).
     const real::detail::program_view prog = pat->rx->raw_program();
     real::detail::pike_state         state;
     // The dynamic policy's own slot container, so `real::match_result` -- which names that policy's
@@ -968,7 +996,8 @@ PyObject* Pattern_search(PyObject* self, PyObject* args, PyObject* kwargs) {
 // match; an unmatched optional group stores real::npos). This is pure C++ and
 // reentrant: the iterator owns its VM scratch and only reads an immutable program
 // view, so threads collect concurrently on a shared Pattern. The subject bytes stay
-// valid while released (immutable str/bytes, ref held, UTF-8 already materialised).
+// valid while released: immutable str/bytes with the ref held, or a buffer export whose
+// address and length the exporter may not move while it is outstanding (see run_region).
 // `max_matches == 0` means no limit (findall); split passes its maxsplit. Returns
 // false only on a C++ allocation failure — the GIL is already re-acquired by then.
 bool collect_match_spans(PatternObject* pat, const subject_view& sv, std::size_t ngroups,
@@ -1003,10 +1032,11 @@ PyObject* Pattern_findall(PyObject* self, PyObject* args, PyObject* kwargs) {
                                      &string, &pos, &endpos)) {
         return nullptr;
     }
-    subject_view sv;
-    if (get_subject(pat->is_bytes, string, &sv) < 0) {
+    subject_ref subject;
+    if (acquire_subject(pat->is_bytes, string, &subject) < 0) {
         return nullptr;
     }
+    const subject_view& sv = subject.sv;
     const Py_ssize_t char_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
     pos = std::clamp(pos, Py_ssize_t {0}, char_len);
     endpos = std::clamp(endpos, Py_ssize_t {0}, char_len);
@@ -1108,10 +1138,11 @@ PyObject* Pattern_count_matches(PyObject* self, PyObject* args, PyObject* kwargs
                                      &string, &pos, &endpos)) {
         return nullptr;
     }
-    subject_view sv;
-    if (get_subject(pat->is_bytes, string, &sv) < 0) {
+    subject_ref subject;
+    if (acquire_subject(pat->is_bytes, string, &subject) < 0) {
         return nullptr;
     }
+    const subject_view& sv = subject.sv;
     const Py_ssize_t char_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
     pos = std::clamp(pos, Py_ssize_t {0}, char_len);
     endpos = std::clamp(endpos, Py_ssize_t {0}, char_len);
@@ -1178,7 +1209,11 @@ PyType_Spec match_iterator_spec = {
 // Lazy: holds the C++ match cursor and yields one Match per __next__, so peak
 // memory is O(1) in the number of matches (findall stays eager — a list is correct
 // there). The cursor borrows the regex program and the subject bytes; both are
-// pinned by the pattern/subject refs and the stored subject_view.
+// pinned by the pattern/subject refs and the stored subject_view — and, for a
+// bytes-like subject, by a buffer export the ITERATOR owns for its whole life,
+// since the cursor keeps reading between __next__ calls. That export is why
+// mutating a bytearray mid-iteration raises BufferError here as it does in re:
+// an exporter with an outstanding view refuses to be resized.
 PyObject* Pattern_finditer(PyObject* self, PyObject* args, PyObject* kwargs) {
     PatternObject* pat = as_pattern(self);
     PyObject* string = nullptr;
@@ -1189,10 +1224,11 @@ PyObject* Pattern_finditer(PyObject* self, PyObject* args, PyObject* kwargs) {
                                      &string, &pos, &endpos)) {
         return nullptr;
     }
-    subject_view sv;
-    if (get_subject(pat->is_bytes, string, &sv) < 0) {
+    subject_ref subject;
+    if (acquire_subject(pat->is_bytes, string, &subject) < 0) {
         return nullptr;
     }
+    const subject_view& sv = subject.sv;
     const Py_ssize_t char_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
     pos = std::clamp(pos, Py_ssize_t {0}, char_len);
     endpos = std::clamp(endpos, Py_ssize_t {0}, char_len);
@@ -1203,6 +1239,8 @@ PyObject* Pattern_finditer(PyObject* self, PyObject* args, PyObject* kwargs) {
     it->pattern = Py_NewRef(self);
     it->subject = Py_NewRef(string);
     it->sv = sv;
+    it->buf_owned = false;         // set before transfer(): dealloc may run on any path below
+    subject.transfer(&it->buf, &it->buf_owned);  // the export outlives this call, with the iterator
     it->pos = pos;        // char/byte offsets, copied onto each yielded Match's .pos/.endpos
     it->endpos = endpos;
     it->cur = nullptr;
@@ -1228,10 +1266,11 @@ PyObject* Pattern_split(PyObject* self, PyObject* args, PyObject* kwargs) {
                                      &string, &maxsplit)) {
         return nullptr;
     }
-    subject_view sv;
-    if (get_subject(pat->is_bytes, string, &sv) < 0) {
+    subject_ref subject;
+    if (acquire_subject(pat->is_bytes, string, &subject) < 0) {
         return nullptr;
     }
+    const subject_view& sv = subject.sv;
     PyObject* out = PyList_New(0);
     if (out == nullptr) {
         return nullptr;
@@ -1540,8 +1579,9 @@ void apply_template(const std::vector<repl_segment>& segs, const char* subject_d
 
 // Pure C++ (no Python C-API): applies a parsed non-callable sub template across the
 // whole subject -- find_iter + append + apply_template, exactly sub_impl's non-callable
-// loop. Safe to run with the GIL released (callable subs never reach here; the subject
-// bytes are pinned by the caller's str/bytes ref). `done` receives the replacement count.
+// loop. Safe to run with the GIL released (callable subs never reach here; the subject bytes are
+// pinned by the caller's subject_ref -- its str/bytes reference or its buffer export, which the
+// exporter may not move while it is outstanding). `done` receives the replacement count.
 void run_template_sub(const real::regex& rx, const subject_view& sv,
                       const std::vector<repl_segment>& segments, Py_ssize_t count,
                       std::string& result, Py_ssize_t& done) {
@@ -1576,10 +1616,11 @@ PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_c
                                      &repl, &string, &count)) {
         return nullptr;
     }
-    subject_view sv;
-    if (get_subject(pat->is_bytes, string, &sv) < 0) {
+    subject_ref subject;
+    if (acquire_subject(pat->is_bytes, string, &subject) < 0) {
         return nullptr;
     }
+    const subject_view& sv = subject.sv;
 
     const bool callable = PyCallable_Check(repl) != 0;
     std::vector<repl_segment> segments;
@@ -1678,19 +1719,33 @@ PyObject* Match_expand(PyObject* self, PyObject* template_arg) {
     if (parse_template(pat, repl_text, segments) < 0) {
         return nullptr;
     }
-    subject_view sv;
-    if (get_subject(pat->is_bytes, match->subject, &sv) < 0) {  // re-derive the UTF-8 view, like group_value
+    // Only a template that actually references a group needs the subject's bytes, and asking for
+    // them when it does not is observable: a purely literal template still expands in re after the
+    // subject's memoryview has been released, so it must here too. Re-acquired per call, like
+    // group_value: a Match pins its subject's OBJECT, not its bytes.
+    const bool needs_subject = std::any_of(segments.begin(), segments.end(),
+                                           [](const repl_segment& seg) { return seg.group >= 0; });
+    subject_ref subject;
+    if (needs_subject && acquire_subject(pat->is_bytes, match->subject, &subject) < 0) {
         return nullptr;
     }
+    const subject_view& sv = subject.sv;
 
     std::string result;
     apply_template(segments, sv.data,
                    [&](std::size_t g) -> std::optional<std::pair<std::size_t, std::size_t>> {
                        const Py_ssize_t start = (*match->byte_spans)[2 * g];
-                       return start < 0
-                                  ? std::nullopt
-                                  : std::optional {std::pair {static_cast<std::size_t>(start),
-                                                              static_cast<std::size_t>((*match->byte_spans)[(2 * g) + 1])}};
+                       if (start < 0) {
+                           return std::nullopt;
+                       }
+                       // Clamped to the CURRENT length for the same reason slice_subject is: a
+                       // mutable subject may have shrunk since the scan, and these offsets index
+                       // straight into its bytes.
+                       const Py_ssize_t from = std::clamp(start, Py_ssize_t {0}, sv.len);
+                       const Py_ssize_t to =
+                           std::clamp((*match->byte_spans)[(2 * g) + 1], from, sv.len);
+                       return std::optional {
+                           std::pair {static_cast<std::size_t>(from), static_cast<std::size_t>(to)}};
                    },
                    result);
 
@@ -2036,7 +2091,7 @@ Py_ssize_t RegexSet_len(PyObject* self) {
 // converts to a byte region against `rs`'s own is_bytes (RegexSet has no per-pattern PatternObject
 // to key off; is_bytes is a set-wide property, fixed at construction).
 int regex_set_parse_region(RegexSetObject* rs, PyObject* args, PyObject* kwargs,
-                           subject_view* sv, std::size_t* pos_byte, std::size_t* end_byte) {
+                           subject_ref* subject, std::size_t* pos_byte, std::size_t* end_byte) {
     PyObject* string = nullptr;
     Py_ssize_t pos = 0;
     Py_ssize_t endpos = PY_SSIZE_T_MAX;
@@ -2051,15 +2106,18 @@ int regex_set_parse_region(RegexSetObject* rs, PyObject* args, PyObject* kwargs,
     // sentinel) -- resolving an unspecified endpos to the concrete text length here would silently
     // force every call onto the slower N-walks path, whether or not the caller asked for a region.
     const bool endpos_given = (endpos != PY_SSIZE_T_MAX);
-    if (get_subject(rs->is_bytes, string, sv) < 0) {
+    // The subject_ref is the CALLER's, so any buffer export outlives this function and the scan
+    // it feeds -- the region offsets computed below index into exactly those bytes.
+    if (acquire_subject(rs->is_bytes, string, subject) < 0) {
         return -1;
     }
-    const Py_ssize_t char_len = sv->char_is_byte ? sv->len : PyUnicode_GetLength(string);
+    const subject_view& sv = subject->sv;
+    const Py_ssize_t char_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
     pos = std::clamp(pos, Py_ssize_t {0}, char_len);
-    *pos_byte = char_to_byte(*sv, pos);
+    *pos_byte = char_to_byte(sv, pos);
     if (endpos_given) {
         endpos = std::clamp(endpos, Py_ssize_t {0}, char_len);
-        *end_byte = char_to_byte(*sv, endpos);
+        *end_byte = char_to_byte(sv, endpos);
     } else {
         *end_byte = real::npos;
     }
@@ -2068,12 +2126,13 @@ int regex_set_parse_region(RegexSetObject* rs, PyObject* args, PyObject* kwargs,
 
 PyObject* RegexSet_is_match(PyObject* self, PyObject* args, PyObject* kwargs) {
     RegexSetObject* rs = as_regex_set(self);
-    subject_view sv;
+    subject_ref subject;
     std::size_t pos_byte = 0;
     std::size_t end_byte = 0;
-    if (regex_set_parse_region(rs, args, kwargs, &sv, &pos_byte, &end_byte) < 0) {
+    if (regex_set_parse_region(rs, args, kwargs, &subject, &pos_byte, &end_byte) < 0) {
         return nullptr;
     }
+    const subject_view& sv = subject.sv;
     try {
         const bool hit = rs->set->is_match(sv.view(), pos_byte, end_byte);
         if (hit) {
@@ -2087,12 +2146,13 @@ PyObject* RegexSet_is_match(PyObject* self, PyObject* args, PyObject* kwargs) {
 
 PyObject* RegexSet_matches(PyObject* self, PyObject* args, PyObject* kwargs) {
     RegexSetObject* rs = as_regex_set(self);
-    subject_view sv;
+    subject_ref subject;
     std::size_t pos_byte = 0;
     std::size_t end_byte = 0;
-    if (regex_set_parse_region(rs, args, kwargs, &sv, &pos_byte, &end_byte) < 0) {
+    if (regex_set_parse_region(rs, args, kwargs, &subject, &pos_byte, &end_byte) < 0) {
         return nullptr;
     }
+    const subject_view& sv = subject.sv;
     std::vector<bool> hit;
     try {
         hit = rs->set->matches(sv.view(), pos_byte, end_byte);
@@ -2116,12 +2176,13 @@ PyObject* RegexSet_matches(PyObject* self, PyObject* args, PyObject* kwargs) {
 
 PyObject* RegexSet_which(PyObject* self, PyObject* args, PyObject* kwargs) {
     RegexSetObject* rs = as_regex_set(self);
-    subject_view sv;
+    subject_ref subject;
     std::size_t pos_byte = 0;
     std::size_t end_byte = 0;
-    if (regex_set_parse_region(rs, args, kwargs, &sv, &pos_byte, &end_byte) < 0) {
+    if (regex_set_parse_region(rs, args, kwargs, &subject, &pos_byte, &end_byte) < 0) {
         return nullptr;
     }
+    const subject_view& sv = subject.sv;
     std::vector<std::size_t> ids;
     try {
         ids = rs->set->which(sv.view(), pos_byte, end_byte);

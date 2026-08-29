@@ -997,23 +997,18 @@ class TestSubjectTypeParity(unittest.TestCase):
     r"""Which objects may be a subject, and what a refusal says.
 
     re decides by interrogating the SUBJECT, in order: str, then bytes, then "does it export a
-    flat contiguous buffer" (bytes-like), then nothing. REAL takes only str and bytes -- a
-    bytes-like object that is not bytes is refused, with a message of its own naming the gap and
-    the conversion. Every other cell of the matrix, wording included, is re's, and is compared
-    against re here rather than transcribed: the oracle owns the sentences.
+    flat contiguous buffer" (bytes-like, PyBUF_SIMPLE), then nothing. REAL asks the same three
+    questions in the same order, so the whole matrix -- outcomes and refusal wording alike -- is
+    compared against re rather than transcribed: the oracle owns the sentences.
 
-    The subject list is chosen to cover the type-name shapes as well, because REAL rebuilds the
-    name re prints from tp_name (the stable ABI hides tp_name, and PyType_GetName is 3.11 against
-    a 3.10 floor): a class written in Python, a static type, a C heap type built from a spec, and
-    a builtin all print differently.
+    The subject list also covers the type-name shapes, since a refusal names the offending type:
+    a class written in Python, a class nested in a function, a static type, a C heap type built
+    from a spec, and a builtin all print differently.
     """
-
-    # re reads these as bytes subjects; REAL refuses them. Every other subject below is parity.
-    BUFFER_NOT_BYTES = frozenset({"bytearray", "memoryview", "memoryview-2d", "array"})
 
     @staticmethod
     def _subjects():
-        class Local:  # written in Python: tp_name is the bare qualname
+        class Local:  # written in Python, and nested: tp_name is neither __qualname__ nor dotted
             pass
 
         return [
@@ -1043,56 +1038,105 @@ class TestSubjectTypeParity(unittest.TestCase):
             return ("TypeError", str(exc))
 
     def test_subject_type_matrix_parity(self):
-        """Outcome AND message match re on every cell but the buffer-not-bytes ones."""
+        """Outcome AND message match re on every cell of the matrix."""
         checked = 0
         for kind in ("str", "bytes"):
             source = r"a" if kind == "str" else rb"a"
             ours, theirs = real.compile(source), re.compile(source)
             for name, subject in self._subjects():
-                if kind == "bytes" and name in self.BUFFER_NOT_BYTES:
-                    continue  # the one divergence, asserted on its own below
                 with self.subTest(pattern=kind, subject=name):
                     self.assertEqual(self._run(ours, subject),
                                      self._run(theirs, subject))
                 checked += 1
-        self.assertEqual(checked, 2 * len(self._subjects()) - len(self.BUFFER_NOT_BYTES))
+        self.assertEqual(checked, 2 * len(self._subjects()))
 
-    def test_buffer_subject_refusal_names_the_type_and_the_fix(self):
-        """The one divergence: re reads any flat buffer, REAL takes bytes. The refusal must
-        name the offending type and the conversion, or it is not actionable."""
-        pattern = real.compile(rb"a")
-        subjects = dict(self._subjects())
-        self.assertEqual(set(subjects) & self.BUFFER_NOT_BYTES, self.BUFFER_NOT_BYTES)
-        for name in sorted(self.BUFFER_NOT_BYTES):
-            subject = subjects[name]
-            with self.subTest(subject=name):
-                self.assertEqual(re.compile(rb"a").findall(subject), [b"a"] if name != "array" else [])
-                with self.assertRaises(TypeError) as caught:
-                    pattern.findall(subject)
-                message = str(caught.exception)
-                self.assertIn(type(subject).__name__, message)
-                self.assertIn("bytes(obj)", message)
+    def test_every_entry_point_reads_a_buffer_like_re(self):
+        """Every call site that derives a subject accepts a bytes-like one and agrees with re.
+        The matrix test above only exercises findall; a site left behind would pass it."""
+        def facts(module, call):
+            return call(module.compile(rb"\w+"), bytearray(b"ab cd"))
 
-    def test_every_entry_point_refuses_a_buffer_the_same_way(self):
-        """Ten call sites derive a subject; a new one that skipped the check would still pass
-        the matrix test above, which only exercises findall."""
-        subject = bytearray(b"abc")
-        pattern = real.compile(rb"a")
         calls = [
-            ("search", lambda: pattern.search(subject)),
-            ("match", lambda: pattern.match(subject)),
-            ("fullmatch", lambda: pattern.fullmatch(subject)),
-            ("findall", lambda: pattern.findall(subject)),
-            ("finditer", lambda: list(pattern.finditer(subject))),
-            ("count_matches", lambda: pattern.count_matches(subject)),
-            ("split", lambda: pattern.split(subject)),
-            ("sub", lambda: pattern.sub(b"x", subject)),
-            ("subn", lambda: pattern.subn(b"x", subject)),
-            ("set.is_match", lambda: real.RegexSet([rb"a"]).is_match(subject)),
-            ("set.matches", lambda: real.RegexSet([rb"a"]).matches(subject)),
-            ("set.which", lambda: real.RegexSet([rb"a"]).which(subject)),
+            ("search", lambda p, s: p.search(s).span()),
+            ("match", lambda p, s: p.match(s).group()),
+            ("fullmatch", lambda p, s: p.fullmatch(s)),
+            ("findall", lambda p, s: p.findall(s)),
+            ("finditer", lambda p, s: [m.group() for m in p.finditer(s)]),
+            ("split", lambda p, s: p.split(s)),
+            ("sub", lambda p, s: p.sub(b"x", s)),
+            ("subn", lambda p, s: p.subn(b"x", s)),
+            ("expand", lambda p, s: p.search(s).expand(rb"[\g<0>]")),
+            ("groups", lambda p, s: p.search(s).groups()),
         ]
         for name, call in calls:
-            with self.subTest(call=name), self.assertRaises(TypeError) as caught:
-                call()
-            self.assertIn("bytearray", str(caught.exception))
+            with self.subTest(call=name):
+                self.assertEqual(facts(real, call), facts(re, call))
+        # count_matches and RegexSet have no re counterpart; assert they accept the buffer at all.
+        self.assertEqual(real.compile(rb"\w+").count_matches(bytearray(b"ab cd")), 2)
+        self.assertEqual(real.RegexSet([rb"ab", rb"zz"]).which(bytearray(b"ab cd")), [0])
+
+    def test_iteration_holds_the_buffer_against_a_resize(self):
+        """An outstanding export forbids the exporter to resize -- which is how re reports a
+        subject mutated mid-scan, and the only reason that report exists here too."""
+        for module in (real, re):
+            with self.subTest(module=module.__name__):
+                subject = bytearray(b"hello world hello")
+                iterator = module.compile(rb"\w+").finditer(subject)
+                next(iterator)
+                with self.assertRaises(BufferError):
+                    subject.extend(b"!")
+                del iterator
+                subject.extend(b"!")  # released with the iterator: the resize goes through now
+
+    def test_a_match_outliving_a_shrink_clamps_like_re(self):
+        """A Match pins its subject's OBJECT, not its bytes, so a mutable subject can shrink
+        under it. re answers the clamped slice rather than raising; the spans, being plain
+        integers captured at match time, do not move."""
+        for module in (real, re):
+            with self.subTest(module=module.__name__):
+                subject = bytearray(b"hello world")
+                m = module.compile(rb"w\w+").search(subject)
+                self.assertEqual((m.span(), m.group()), ((6, 11), b"world"))
+                del subject[8:]  # span (6, 11) now straddles the end
+                self.assertEqual((m.span(), m.group(), m.expand(rb"[\g<0>]")),
+                                 ((6, 11), b"wo", b"[wo]"))
+                del subject[3:]  # and now starts past it
+                self.assertEqual((m.span(), m.group(), m.expand(rb"[\g<0>]")),
+                                 ((6, 11), b"", b"[]"))
+
+    def test_a_released_memoryview_still_answers_the_integer_accessors(self):
+        """.span()/.start()/.regs read offsets captured at match time and must not need the
+        bytes again; the accessors that DO need them report re's TypeError."""
+        for module in (real, re):
+            with self.subTest(module=module.__name__):
+                view = memoryview(bytearray(b"hello world"))
+                m = module.compile(rb"w\w+").search(view)
+                view.release()
+                self.assertEqual((m.span(), m.start(), m.end(), m.regs),
+                                 ((6, 11), 6, 11, ((6, 11),)))
+                # expand only needs the bytes when the template references a group: a literal
+                # template still succeeds, in re and here alike.
+                self.assertEqual(m.expand(rb"x"), b"x")
+                for accessor in (lambda: m.group(), lambda: repr(m),
+                                 lambda: m.expand(rb"[\g<0>]")):
+                    with self.assertRaises(TypeError):
+                        accessor()
+
+    def test_the_export_is_released_on_every_path(self):
+        """A leaked export leaves the bytearray permanently unresizable -- the failure a missed
+        PyBuffer_Release produces, and one no result comparison would show."""
+        pattern = real.compile(rb"\w+")
+        subject = bytearray(b"ab cd")
+        for _ in range(3):
+            pattern.findall(subject)
+            pattern.search(subject).group()
+            pattern.sub(b"x", subject)
+            pattern.split(subject)
+            list(pattern.finditer(subject))
+            for _partial in pattern.finditer(subject):
+                break  # abandoned mid-scan: dealloc is the only thing that can release it
+            real.RegexSet([rb"ab"]).which(subject)
+            with self.assertRaises(TypeError):
+                real.compile(r"\w+").findall(subject)  # refused AFTER the export was taken
+        subject.extend(b" ef")  # every export above is gone, or this raises BufferError
+        self.assertEqual(pattern.findall(subject), [b"ab", b"cd", b"ef"])
