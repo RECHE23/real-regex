@@ -1629,7 +1629,7 @@ namespace real::detail {
         else if (!eof()
                  && (is_flag_letter(peek())
                      || (peek() == '-'
-                         && !(pos_ + 1 < pattern_.size() && is_ascii_digit(pattern_[pos_ + 1]))))) {
+                         && (pos_ + 1 >= pattern_.size() || !is_ascii_digit(pattern_[pos_ + 1]))))) {
           // (?flags:...) / (?-flags:...) / (?flags-flags:...) — a scoped-flags group. Parse the
           // added flags, an optional '-' and the removed flags. An unknown letter is "unknown
           // flag" (fail_if_unknown_flag), not the terminator diagnostics below.
