@@ -6,6 +6,11 @@ Unicode (\\w \\W \\d \\D \\s \\S \\b \\B), so the re oracle is the full Unicode
 default (no re.ASCII); bytes patterns are compared byte-for-byte.
 """
 
+import array
+import collections
+import decimal
+import io
+import pathlib
 import re
 import sys
 import time
@@ -986,3 +991,108 @@ class TestCharOffsetScaling(unittest.TestCase):
         got = third_match()
         self.assertEqual((got.start(), got.end(), got.group()),
                          (expected.start(), expected.end(), expected.group()))
+
+
+class TestSubjectTypeParity(unittest.TestCase):
+    r"""Which objects may be a subject, and what a refusal says.
+
+    re decides by interrogating the SUBJECT, in order: str, then bytes, then "does it export a
+    flat contiguous buffer" (bytes-like), then nothing. REAL takes only str and bytes -- a
+    bytes-like object that is not bytes is refused, with a message of its own naming the gap and
+    the conversion. Every other cell of the matrix, wording included, is re's, and is compared
+    against re here rather than transcribed: the oracle owns the sentences.
+
+    The subject list is chosen to cover the type-name shapes as well, because REAL rebuilds the
+    name re prints from tp_name (the stable ABI hides tp_name, and PyType_GetName is 3.11 against
+    a 3.10 floor): a class written in Python, a static type, a C heap type built from a spec, and
+    a builtin all print differently.
+    """
+
+    # re reads these as bytes subjects; REAL refuses them. Every other subject below is parity.
+    BUFFER_NOT_BYTES = frozenset({"bytearray", "memoryview", "memoryview-2d", "array"})
+
+    @staticmethod
+    def _subjects():
+        class Local:  # written in Python: tp_name is the bare qualname
+            pass
+
+        return [
+            ("str", "abc"),
+            ("bytes", b"abc"),
+            ("bytearray", bytearray(b"abc")),
+            ("memoryview", memoryview(b"abc")),
+            ("memoryview-2d", memoryview(b"abcdefgh").cast("B", (2, 4))),
+            ("memoryview-strided", memoryview(bytearray(b"abcdef"))[::2]),  # not contiguous
+            ("array", array.array("i", [1, 2])),
+            ("int", 1),
+            ("None", None),
+            ("list", [1, 2]),
+            ("Local", Local()),
+            ("OrderedDict", collections.OrderedDict()),  # static type: collections.OrderedDict
+            ("Decimal", decimal.Decimal(1)),             # C heap type from a spec: decimal.Decimal
+            ("StringIO", io.StringIO()),                 # _io.StringIO
+            ("Path", pathlib.Path(".")),                 # Python heap type: PosixPath
+            ("Pattern", re.compile("a")),                # re.Pattern
+        ]
+
+    @staticmethod
+    def _run(pattern, subject):
+        try:
+            return ("ok", repr(pattern.findall(subject)))
+        except TypeError as exc:
+            return ("TypeError", str(exc))
+
+    def test_subject_type_matrix_parity(self):
+        """Outcome AND message match re on every cell but the buffer-not-bytes ones."""
+        checked = 0
+        for kind in ("str", "bytes"):
+            source = r"a" if kind == "str" else rb"a"
+            ours, theirs = real.compile(source), re.compile(source)
+            for name, subject in self._subjects():
+                if kind == "bytes" and name in self.BUFFER_NOT_BYTES:
+                    continue  # the one divergence, asserted on its own below
+                with self.subTest(pattern=kind, subject=name):
+                    self.assertEqual(self._run(ours, subject),
+                                     self._run(theirs, subject))
+                checked += 1
+        self.assertEqual(checked, 2 * len(self._subjects()) - len(self.BUFFER_NOT_BYTES))
+
+    def test_buffer_subject_refusal_names_the_type_and_the_fix(self):
+        """The one divergence: re reads any flat buffer, REAL takes bytes. The refusal must
+        name the offending type and the conversion, or it is not actionable."""
+        pattern = real.compile(rb"a")
+        subjects = dict(self._subjects())
+        self.assertEqual(set(subjects) & self.BUFFER_NOT_BYTES, self.BUFFER_NOT_BYTES)
+        for name in sorted(self.BUFFER_NOT_BYTES):
+            subject = subjects[name]
+            with self.subTest(subject=name):
+                self.assertEqual(re.compile(rb"a").findall(subject), [b"a"] if name != "array" else [])
+                with self.assertRaises(TypeError) as caught:
+                    pattern.findall(subject)
+                message = str(caught.exception)
+                self.assertIn(type(subject).__name__, message)
+                self.assertIn("bytes(obj)", message)
+
+    def test_every_entry_point_refuses_a_buffer_the_same_way(self):
+        """Ten call sites derive a subject; a new one that skipped the check would still pass
+        the matrix test above, which only exercises findall."""
+        subject = bytearray(b"abc")
+        pattern = real.compile(rb"a")
+        calls = [
+            ("search", lambda: pattern.search(subject)),
+            ("match", lambda: pattern.match(subject)),
+            ("fullmatch", lambda: pattern.fullmatch(subject)),
+            ("findall", lambda: pattern.findall(subject)),
+            ("finditer", lambda: list(pattern.finditer(subject))),
+            ("count_matches", lambda: pattern.count_matches(subject)),
+            ("split", lambda: pattern.split(subject)),
+            ("sub", lambda: pattern.sub(b"x", subject)),
+            ("subn", lambda: pattern.subn(b"x", subject)),
+            ("set.is_match", lambda: real.RegexSet([rb"a"]).is_match(subject)),
+            ("set.matches", lambda: real.RegexSet([rb"a"]).matches(subject)),
+            ("set.which", lambda: real.RegexSet([rb"a"]).which(subject)),
+        ]
+        for name, call in calls:
+            with self.subTest(call=name), self.assertRaises(TypeError) as caught:
+                call()
+            self.assertIn("bytearray", str(caught.exception))

@@ -192,13 +192,125 @@ void MatchIterator_dealloc(PyObject* self) {
     Py_DECREF(reinterpret_cast<PyObject*>(tp));
 }
 
+// Whether `obj` answers the buffer protocol with a flat, C-contiguous block — exactly what re asks
+// of a subject (PyObject_GetBuffer with PyBUF_SIMPLE), and therefore what decides which of its two
+// refusals a rejected subject earns. The Py_buffer API entered the stable ABI only in 3.11, past
+// this module's 3.10 floor, so the question goes through memoryview instead: constructing one
+// succeeds iff the object exports a buffer at all, and c_contiguous supplies the flatness half.
+// Refusal paths only — never reached by a scan, so the three calls cost nothing that matters.
+bool exports_flat_buffer(PyObject* obj) {
+    PyObject* view = PyMemoryView_FromObject(obj);
+    if (view == nullptr) {
+        PyErr_Clear();  // "not bytes-like" is the ANSWER here, not an error to propagate
+        return false;
+    }
+    PyObject* flat = PyObject_GetAttrString(view, "c_contiguous");
+    Py_DECREF(view);
+    if (flat == nullptr) {
+        PyErr_Clear();
+        return false;
+    }
+    const int yes = PyObject_IsTrue(flat);
+    Py_DECREF(flat);
+    if (yes < 0) {
+        PyErr_Clear();
+        return false;
+    }
+    return yes == 1;
+}
+
+// The type name re prints in its subject TypeErrors, rebuilt from attributes: re reads tp_name,
+// which the stable ABI hides, and PyType_GetName is 3.11 against a 3.10 floor. tp_name is the bare
+// __name__ for a class written in Python — a heap type that is still MUTABLE — and for anything
+// under builtins; every other type (a static type, or a C heap type built from a spec, such as
+// decimal.Decimal or re.Pattern) carries the module-qualified name. __name__ rather than
+// __qualname__ on both arms: a spec name is split at its LAST dot, so the tail is never itself
+// dotted, and a class nested inside a function has a __qualname__ tp_name knows nothing about
+// ("Outer.<locals>.Local"). Returns a new reference, or nullptr with an error set for a caller
+// that must fall back to a nameless message.
+PyObject* subject_type_name(PyObject* obj) {
+    PyObject* type = reinterpret_cast<PyObject*>(Py_TYPE(obj));
+    PyObject* name = PyObject_GetAttrString(type, "__name__");
+    if (name == nullptr) {
+        return nullptr;
+    }
+    const unsigned long flags = PyType_GetFlags(Py_TYPE(obj));
+    if ((flags & Py_TPFLAGS_HEAPTYPE) != 0 && (flags & Py_TPFLAGS_IMMUTABLETYPE) == 0) {
+        return name;  // written in Python: tp_name is the bare name
+    }
+    PyObject* module = PyObject_GetAttrString(type, "__module__");
+    if (module == nullptr) {
+        PyErr_Clear();  // no __module__ to qualify with; the bare name is the best answer
+        return name;
+    }
+    PyObject* out = name;
+    if (PyUnicode_Check(module) && PyUnicode_CompareWithASCIIString(module, "builtins") != 0) {
+        out = PyUnicode_FromFormat("%U.%U", module, name);
+        Py_DECREF(name);
+    }
+    Py_DECREF(module);
+    return out;
+}
+
+// re's wording for a subject that is neither a string nor bytes-like at all.
+void set_not_string_like(PyObject* obj) {
+    PyObject* name = subject_type_name(obj);
+    if (name == nullptr) {
+        PyErr_Clear();  // an error message must never mask the error it reports
+        PyErr_SetString(PyExc_TypeError, "expected string or bytes-like object");
+        return;
+    }
+    PyErr_Format(PyExc_TypeError, "expected string or bytes-like object, got '%U'", name);
+    Py_DECREF(name);
+}
+
+// The one refusal that is REAL's own rather than re's: re reads any flat buffer as a bytes subject,
+// this binding takes `bytes` only. So the message names the gap and the conversion instead of
+// borrowing a sentence that would describe a different rule.
+void set_buffer_subject_unsupported(PyObject* obj) {
+    PyObject* name = subject_type_name(obj);
+    if (name == nullptr) {
+        PyErr_Clear();
+        PyErr_SetString(PyExc_TypeError,
+                        "cannot use a bytes pattern on a buffer object -- this binding takes "
+                        "bytes subjects; pass bytes(obj)");
+        return;
+    }
+    PyErr_Format(PyExc_TypeError,
+                 "cannot use a bytes pattern on a '%U' -- this binding takes bytes subjects, not "
+                 "other buffer objects; pass bytes(obj)",
+                 name);
+    Py_DECREF(name);
+}
+
 // `is_bytes` rather than a PatternObject*: shared by Pattern (pat->is_bytes) and RegexSet
 // (rs->is_bytes) — both just need to know which of str/bytes the subject must be.
+//
+// The dispatch is re's, in re's order: str first, then bytes, then whatever exports a flat buffer
+// is "bytes-like", and only what does none of the three gets the "expected string or bytes-like
+// object" form. Ordering by the subject rather than by the pattern is what makes the last two
+// arms reachable at all — the previous shape asked `is_bytes` first and so answered every
+// non-matching subject with the mismatch sentence, telling a caller who passed None that they had
+// used a string pattern on a bytes-like object.
 int get_subject(int is_bytes, PyObject* obj, subject_view* out) {
-    if (is_bytes != 0) {
-        if (!PyBytes_Check(obj)) {
+    if (PyUnicode_Check(obj)) {
+        if (is_bytes != 0) {
             PyErr_SetString(PyExc_TypeError,
                             "cannot use a bytes pattern on a string-like object");
+            return -1;
+        }
+        Py_ssize_t len = 0;
+        const char* data = PyUnicode_AsUTF8AndSize(obj, &len);
+        if (data == nullptr) {
+            return -1;
+        }
+        *out = {data, len, PyUnicode_GetLength(obj) == len};
+        return 0;
+    }
+    if (PyBytes_Check(obj)) {
+        if (is_bytes == 0) {
+            PyErr_SetString(PyExc_TypeError,
+                            "cannot use a string pattern on a bytes-like object");
             return -1;
         }
         char* data = nullptr;
@@ -209,18 +321,17 @@ int get_subject(int is_bytes, PyObject* obj, subject_view* out) {
         *out = {data, len, true};
         return 0;
     }
-    if (!PyUnicode_Check(obj)) {
+    if (!exports_flat_buffer(obj)) {
+        set_not_string_like(obj);
+        return -1;
+    }
+    if (is_bytes == 0) {
         PyErr_SetString(PyExc_TypeError,
                         "cannot use a string pattern on a bytes-like object");
         return -1;
     }
-    Py_ssize_t len = 0;
-    const char* data = PyUnicode_AsUTF8AndSize(obj, &len);
-    if (data == nullptr) {
-        return -1;
-    }
-    *out = {data, len, PyUnicode_GetLength(obj) == len};
-    return 0;
+    set_buffer_subject_unsupported(obj);
+    return -1;
 }
 
 // Builds Python-visible spans from byte spans: identity when chars are
