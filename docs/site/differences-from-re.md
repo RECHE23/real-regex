@@ -200,19 +200,33 @@ Each of these raises a clear `real::regex_error`, for a reason worth keeping:
 - **Backreferences** (`(a)\1`, `(?P=name)`) — a backreference makes the language
   non-regular; supporting it would forfeit the linear-time, ReDoS-safe guarantee that is
   REAL's reason to exist.
-- **Conditional groups** `(?(id)yes|no)`, **recursion**, and **callouts / subroutine
-  calls** — non-regular control flow, each super-linear in the worst case. Excluded for
-  the same ReDoS reason (see the note at the top of this page).
+- **Conditional groups** `(?(id)yes|no)`, **pattern recursion** (`(?R)`, `(?1)`, `(?-1)`),
+  **subroutine calls** (`(?&name)`, `(?P>name)`) and **callouts** (`(?C)`, `(?C1)`) — non-regular
+  control flow, each super-linear in the worst case. Excluded for the same ReDoS reason (see the
+  note at the top of this page).
+
+Each of these is reported as `error_kind::unsupported` — the C ABI's `REAL_ERR_UNSUPPORTED` — and
+names itself: `callouts are not supported`, not a generic "unknown extension", which is what a
+mistyped extension still gets. So a binding can tell a deliberate exclusion from a malformed
+pattern without reading the message, and a reader is told which wall they hit.
 
 **If you must run one of these anyway**, the opt-in is only where a *backtracking* engine is within
-reach, and it forfeits the linear-time guarantee for that pattern alone: in C++ a `real::compat::regex`
-(`<real/compat/std/regex.hpp>`) built with `real::compat::policy::fallback` delegates it to
-`std::regex`, and in Python `real.compile(..., fallback=True)` delegates it to `re`. **Rust's
-`fallback` feature does not reach this far** — it delegates to the `regex` crate, which is linear too
-and refuses a backreference just as REAL does; there it closes the `\\p{...}` namespace and folding
-gaps instead. A native `real::regex` has no opt-in at all: it is the linear engine or nothing, which
-is what makes the chosen backend (`Pattern.engine`, `Regex::engine()`, the compat policy) worth
-reporting.
+reach and actually implements the construct, and it forfeits the linear-time guarantee for that
+pattern alone. That is a narrower set than "everything above", and it differs per surface:
+
+| construct | Python `fallback=True` (→ `re`) | C++ `policy::fallback` (→ `std::regex`) | Rust `fallback` (→ `regex`) |
+|---|---|---|---|
+| backreference | yes | yes | no |
+| conditional group | yes | no | no |
+| recursion, subroutine, callout | no | no | no |
+
+The Python binding does not guess: it asks `re` whether it would compile *this* pattern with *these*
+flags, and says `fallback=True does not help here: re refuses this pattern too` when it would not —
+so the advice is never a door that is not there. **Rust's `fallback` reaches none of this row** — it
+delegates to the `regex` crate, which is linear too and refuses a backreference just as REAL does;
+there it closes the `\\p{...}` namespace and folding gaps instead. A native `real::regex` has no
+opt-in at all: it is the linear engine or nothing, which is what makes the chosen backend
+(`Pattern.engine`, `Regex::engine()`, the compat policy) worth reporting.
 
 Unlike the above, **a possessive quantifier or atomic group over a compound body**
 (`(?:ab)*+`, `(?>ab|a)`) is rejected "not supported **yet**", not "by design" — see

@@ -1,4 +1,5 @@
 // Public API on the simplest patterns: literals, concatenation, escapes.
+#include <string>
 #include <string_view>
 
 #include <sciforge/test/framework.hpp>
@@ -83,6 +84,82 @@ TEST(unsupported_syntax_is_rejected)
   EXPECT_THROWS(real::regex("(?P=g)"), real::regex_error);  // backrefs: v2
   EXPECT_THROWS(real::regex("\\q"), real::regex_error);
   EXPECT_THROWS(real::regex("a\\"), real::regex_error);
+}
+
+// error_kind is a stable, machine-readable classification: the C ABI exports it as REAL_ERR_*, the
+// Rust binding builds Error::Unsupported from it rather than from the message text, and the Python
+// binding decides whether to offer fallback=True on it. Nothing pinned WHICH construct produces
+// WHICH value, which is how conditionals, callouts, recursion and subroutine calls came to be
+// reported as `syntax` -- a typo, to a reader -- while program.hpp's own documentation named that
+// family `unsupported`. One row per construct, both directions, and the count is asserted so a row
+// deleted rather than fixed cannot pass unnoticed.
+TEST(error_kind_classifies_excluded_constructs_as_unsupported)
+{
+  struct row
+  {
+    const char*      pattern;
+    real::error_kind kind;
+  };
+
+  // Well formed, and beyond a linear engine: every one of these is named on the divergences page as
+  // excluded BY DESIGN, so a binding must be able to tell them from a malformed pattern.
+  constexpr row rows[] {
+    {"(a)\\1", real::error_kind::unsupported},                // backreference, by number
+    {"(?P<n>a)(?P=n)", real::error_kind::unsupported},        // backreference, by name
+    {"(a)(?(1)b|c)", real::error_kind::unsupported},          // conditional group
+    {"a(?C1)b", real::error_kind::unsupported},               // callout, numbered
+    {"a(?C)b", real::error_kind::unsupported},                // callout, bare
+    {"a(?R)b", real::error_kind::unsupported},                // recursion, whole pattern
+    {"(a)(?1)", real::error_kind::unsupported},               // recursion, absolute
+    {"(a)(?-1)", real::error_kind::unsupported},              // recursion, relative
+    {"(?P<n>a)(?&n)", real::error_kind::unsupported},         // subroutine call, PCRE spelling
+    {"(?P<n>a)(?P>n)", real::error_kind::unsupported},        // subroutine call, Python spelling
+    {"(?=(?=a))", real::error_kind::unsupported},             // nested lookaround
+    {"(?<=a*)b", real::error_kind::unsupported},              // unbounded lookaround
+    // Malformed: `syntax`, and a binding must NOT offer a delegating remedy for these.
+    {"(unclosed", real::error_kind::syntax},
+    {"a)", real::error_kind::syntax},
+    {"(?Z)", real::error_kind::syntax},                       // an extension that is simply unknown
+    {"(?", real::error_kind::syntax},
+    {"a{3,1}", real::error_kind::syntax},
+  };
+
+  std::size_t checked {0};
+  for (const row& r : rows) {
+    try {
+      const real::regex rx(r.pattern);
+      EXPECT(false);  // every row above must be rejected
+    }
+    catch (const real::regex_error& ex) {
+      EXPECT_EQ(static_cast<int>(ex.kind()), static_cast<int>(r.kind));
+      ++checked;
+    }
+  }
+  EXPECT_EQ(checked, sizeof(rows) / sizeof(rows[0]));
+  EXPECT_EQ(checked, 17U);  // the denominator, so a deleted row fails rather than shrinking silently
+}
+
+TEST(excluded_constructs_are_named_not_called_unknown)
+{
+  // "unknown extension" reads as a typo and tells the reader nothing. The constructs excluded by
+  // design must name themselves; what is genuinely unrecognised must still say so.
+  const auto cause = [](const char* pattern) {
+                       try {
+                         const real::regex rx(pattern);
+                       }
+                       catch (const real::regex_error& ex) {
+                         return std::string(ex.what());
+                       }
+                       return std::string {};
+                     };
+
+  EXPECT(cause("a(?C1)b").find("callouts are not supported") != std::string::npos);
+  EXPECT(cause("a(?R)b").find("pattern recursion is not supported") != std::string::npos);
+  EXPECT(cause("(a)(?1)").find("pattern recursion is not supported") != std::string::npos);
+  EXPECT(cause("(?P<n>a)(?&n)").find("subroutine calls are not supported") != std::string::npos);
+  EXPECT(cause("(?P<n>a)(?P>n)").find("subroutine calls are not supported") != std::string::npos);
+  EXPECT(cause("(a)(?(1)b|c)").find("conditional groups are not supported") != std::string::npos);
+  EXPECT(cause("(?Z)").find("unknown extension") != std::string::npos);
 }
 
 TEST(regex_error_reports_position)

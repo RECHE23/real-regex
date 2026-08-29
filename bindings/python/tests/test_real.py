@@ -855,6 +855,107 @@ class TestUnsupportedNamesTheEscapeHatch(unittest.TestCase):
             real.RegexSet([self.UNSUPPORTED])
         self.assertNotIn("fallback", str(caught.exception))
 
+    # Every construct the divergences page lists as excluded by design, plus the two lookaround
+    # refusals. The fallback delegates to re verbatim, so re -- not this list -- decides which of
+    # them the remedy is true for; the test asks re the same question the binding does.
+    EXCLUDED_BY_DESIGN = [
+        r"(a)\1",             # backreference, by number
+        r"(?P<n>a)(?P=n)",    # backreference, by name
+        r"(a)(?(1)b|c)",      # conditional group
+        r"a(?C1)b",           # callout
+        r"a(?R)b",            # recursion, whole pattern
+        r"(a)(?1)",           # recursion, absolute
+        r"(a)(?-1)",          # recursion, relative
+        r"(?P<n>a)(?&n)",     # subroutine call, PCRE spelling
+        r"(?P<n>a)(?P>n)",    # subroutine call, Python spelling
+        r"(?=(?=a))",         # nested lookaround
+        r"(?<=a*)b",          # unbounded lookaround
+    ]
+
+    def test_every_excluded_construct_is_named_and_classified(self):
+        """Each must be REFUSED, and refused with its own name -- "unknown extension" reads as a
+        typo and taught the reader nothing about why the wall is there."""
+        named = {
+            r"(a)(?(1)b|c)": "conditional groups are not supported",
+            r"a(?C1)b": "callouts are not supported",
+            r"a(?R)b": "pattern recursion is not supported",
+            r"(a)(?1)": "pattern recursion is not supported",
+            r"(a)(?-1)": "pattern recursion is not supported",
+            r"(?P<n>a)(?&n)": "subroutine calls are not supported",
+            r"(?P<n>a)(?P>n)": "subroutine calls are not supported",
+        }
+        for pattern in self.EXCLUDED_BY_DESIGN:
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(real.error) as caught:
+                    real.compile(pattern)
+                message = str(caught.exception)
+                self.assertNotIn("unknown extension", message)
+                self.assertIn("COMPATIBILITY.md", message)  # classified `unsupported`, not `syntax`
+                if pattern in named:
+                    self.assertIn(named[pattern], message)
+        self.assertEqual(len(self.EXCLUDED_BY_DESIGN), 11)  # denominator
+
+    def test_the_remedy_is_offered_exactly_where_re_can_take_the_pattern(self):
+        """The advice is only worth giving where both halves hold. re is the oracle because the
+        fallback IS re: whatever it compiles, fallback=True will run, and whatever it refuses
+        would send the reader through a door that is not there."""
+        import re as stdlib
+        delegable = 0
+        for pattern in self.EXCLUDED_BY_DESIGN:
+            try:
+                stdlib.compile(pattern)
+                re_takes_it = True
+            except stdlib.error:
+                re_takes_it = False
+            with self.subTest(pattern=pattern, re_takes_it=re_takes_it):
+                with self.assertRaises(real.error) as caught:
+                    real.compile(pattern)
+                message = str(caught.exception)
+                if re_takes_it:
+                    delegable += 1
+                    self.assertIn("pass fallback=True", message)
+                    # and the promise must hold, not merely be printed
+                    self.assertEqual(real.compile(pattern, fallback=True).engine, "re")
+                else:
+                    self.assertNotIn("pass fallback=True", message)
+                    self.assertIn("does not help here", message)
+                    # re's own class, not real.error: fallback delegates, so the delegate's
+                    # refusal is what surfaces. Both are re.error, which is what a caller
+                    # writing `except re.error` around a fallback compile relies on.
+                    with self.assertRaises(stdlib.error):
+                        real.compile(pattern, fallback=True)
+        # Both arms must be exercised, or the test proves only one of them.
+        self.assertGreater(delegable, 0)
+        self.assertLess(delegable, len(self.EXCLUDED_BY_DESIGN))
+
+    def test_the_oracle_is_asked_with_the_flags_the_fallback_would_use(self):
+        """Same pattern, opposite advice, decided by the flag alone. real.U is a no-op here
+        (Unicode is already the str default) so REAL refuses the backreference either way, but
+        re rejects the UNICODE flag outright on a bytes pattern -- so the delegation that works
+        without it raises with it. An oracle asked without the flags would promise both."""
+        pattern = rb"(a)\1"
+
+        with self.assertRaises(real.error) as caught:
+            real.compile(pattern)
+        self.assertIn("pass fallback=True", str(caught.exception))
+        self.assertEqual(real.compile(pattern, fallback=True).engine, "re")
+
+        with self.assertRaises(real.error) as caught:
+            real.compile(pattern, real.U)
+        self.assertIn("does not help here", str(caught.exception))
+        with self.assertRaises(ValueError):  # re's own refusal of U on bytes, not a re.error
+            real.compile(pattern, real.U, fallback=True)
+
+    def test_a_syntax_error_is_offered_no_remedy_at_all(self):
+        """Malformed is malformed for re too: neither arm of the advice applies."""
+        for pattern in (r"(unclosed", r"a)", r"(?Z)", r"a{3,1}"):
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(real.error) as caught:
+                    real.compile(pattern)
+                message = str(caught.exception)
+                self.assertNotIn("fallback", message)
+                self.assertNotIn("does not help here", message)
+
 
 class TestErrorHierarchy(unittest.TestCase):
     """real.error must subclass re.error so ``except re.error:`` catches REAL's errors."""

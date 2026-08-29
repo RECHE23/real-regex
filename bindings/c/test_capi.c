@@ -38,6 +38,30 @@ int main(void) {
   assert(unsup == NULL);
   assert(code == REAL_ERR_UNSUPPORTED);
 
+  /* Every construct the divergences page excludes BY DESIGN must reach a C caller as
+     REAL_ERR_UNSUPPORTED, and an extension that is merely unknown as REAL_ERR_SYNTAX. This is the
+     only thing a C consumer can branch on: it has no exception type and no message contract. */
+  {
+    static const char* const excluded[] = {"(a)(?(1)b|c)", "a(?C1)b", "a(?R)b", "(a)(?1)",
+                                           "(a)(?-1)",     "(?P<n>a)(?&n)", "(?P<n>a)(?P>n)",
+                                           "(?=(?=a))",    "(?<=a*)b"};
+    static const char* const malformed[] = {"(?Z)", "(unclosed", "a)", "a{3,1}"};
+    size_t i;
+    for (i = 0; i < sizeof excluded / sizeof excluded[0]; ++i) {
+      real_regex* r = real_compile(excluded[i], strlen(excluded[i]), 0, err, sizeof err, &code);
+      assert(r == NULL);
+      assert(code == REAL_ERR_UNSUPPORTED);
+      assert(strstr(err, "unknown extension") == NULL); /* named, not reported as a typo */
+    }
+    assert(i == 9); /* denominator: a row deleted rather than fixed must fail here */
+    for (i = 0; i < sizeof malformed / sizeof malformed[0]; ++i) {
+      real_regex* r = real_compile(malformed[i], strlen(malformed[i]), 0, err, sizeof err, &code);
+      assert(r == NULL);
+      assert(code == REAL_ERR_SYNTAX);
+    }
+    assert(i == 4);
+  }
+
   /* group names + find-at */
   const char* npat = "(?P<user>\\w+)@(?P<host>\\w+)";
   real_regex* named = real_compile(npat, strlen(npat), 0, err, sizeof err, &code);

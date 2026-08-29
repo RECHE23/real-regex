@@ -60,7 +60,10 @@ raise a clear error rather than sitting on a roadmap.
 | Global flags `i m s x a` (and `(?imsxa)` prefix) | **supported** | `re` semantics; `re.U` is a no-op, `re.L` excluded | — |
 | Scoped inline flags `(?imsxa:…)` / `(?-…:…)` / `(?…-…:…)` | **supported** | per-scope `i m s x a` (Python 3.11 semantics), exact `re`-parity in str and bytes | 2026.7 |
 | Backreferences `(a)\1`, `(?P=n)` | **excluded by design** | non-regular -> super-linear -> ReDoS ([why](@ref div_rejected)) | — |
-| Conditional groups `(?(id)…)`, recursion, callouts | **excluded by design** | non-regular control flow -> ReDoS ([why](@ref div_rejected)) | — |
+| Conditional groups `(?(id)…)` | **excluded by design** | non-regular control flow -> ReDoS ([why](@ref div_rejected)) | — |
+| Pattern recursion `(?R)`, `(?1)`, `(?-1)` | **excluded by design** | non-regular control flow -> ReDoS ([why](@ref div_rejected)) | — |
+| Subroutine calls `(?&name)`, `(?P>name)` | **excluded by design** | non-regular control flow -> ReDoS ([why](@ref div_rejected)) | — |
+| Callouts `(?C)`, `(?C1)` | **excluded by design** | no host to call out to in a linear scan ([why](@ref div_rejected)) | — |
 
 <!-- END GENERATED -->
 

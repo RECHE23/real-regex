@@ -1377,27 +1377,70 @@ struct repl_segment {
 
 void set_error(const char* message) { PyErr_SetString(error_type, message); }
 
-// The escape hatch, named where the user meets the wall. Only for `unsupported` (a malformed
-// pattern is malformed for `re` too, so fallback buys nothing there), and only where a fallback
-// exists: `compile` has one, `RegexSet` does not. Same three parts as the Rust binding's hint --
-// what it is, where the contract lives, how to proceed -- so the two read alike.
-constexpr const char* FALLBACK_HINT {
+// The escape hatch, named where the user meets the wall -- and where the wall has no door, the
+// absence named just as plainly rather than left to be discovered by trying. Same three parts as
+// the Rust binding's hint -- what it is, where the contract lives, how to proceed -- so the two
+// read alike. A call site with no fallback AT ALL (RegexSet) still says nothing: naming a policy
+// that surface does not have is the one thing worse than saying too little.
+constexpr const char* UNSUPPORTED_PREFIX {
   " (unsupported by REAL — see "
-  "https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md ; pass fallback=True to "
-  "delegate this pattern to the standard library re, forfeiting the linear-time guarantee for it)"};
+  "https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md ; "};
+constexpr const char* REMEDY_DELEGABLE {
+  "pass fallback=True to delegate this pattern to the standard library re, forfeiting the "
+  "linear-time guarantee for it)"};
+constexpr const char* REMEDY_REFUSED {
+  "fallback=True does not help here: re refuses this pattern too)"};
+
+// Whether `re` would compile this pattern -- the ONLY thing that makes the fallback advice true,
+// since fallback delegates to re verbatim. Asked of re itself rather than kept as a list of
+// constructs here, the way the Rust binding asks `regex::Regex::new`: a hand-written list drifts
+// against the interpreter it ships beside, and `re` has grown constructs (atomic groups and
+// possessive quantifiers in 3.11) between versions this wheel supports. Error path only.
+//
+// A pattern REAL rejects as `unsupported` is well formed by construction, so a `re` refusal here
+// means re lacks the construct, not that the pattern is malformed.
+bool stdlib_re_accepts(PyObject* pattern, unsigned long py_flags)
+{
+  if (pattern == nullptr) {
+    return false;
+  }
+  PyObject* module = PyImport_ImportModule("re");
+  if (module == nullptr) {
+    PyErr_Clear();
+    return false;  // no oracle, no promise
+  }
+  // The SAME flags the fallback would pass: re.compile(pattern, flags) is literally what
+  // real.compile(..., fallback=True) runs, and a flag can decide the answer (re.A, re.X).
+  PyObject* compiled = PyObject_CallMethod(module, "compile", "Ok", pattern, py_flags);
+  Py_DECREF(module);
+  if (compiled == nullptr) {
+    PyErr_Clear();  // re's own refusal is the ANSWER here, not an error to propagate
+    return false;
+  }
+  Py_DECREF(compiled);
+  return true;
+}
 
 // Raise real.error(msg, pattern, pos) so re.error fills lineno/colno. `msg` is
 // the engine's cause, not the "regex_error at N: " wrapper what() prints.
-void set_regex_error(const real::regex_error& ex, PyObject* pattern, bool fallback_available = true)
+//
+// `fallback_available` is whether this CALL SITE has a fallback at all (compile does, RegexSet does
+// not); whether the fallback would actually take THIS pattern is a second question, and both must
+// hold before the remedy is offered. Advertising a delegation that then fails with re's own error
+// is worse than saying nothing: it sends the reader through a door that is not there.
+void set_regex_error(const real::regex_error& ex, PyObject* pattern,
+                     bool fallback_available = true, unsigned long py_flags = 0)
 {
   const std::string prefix = "regex_error at " + std::to_string(ex.position()) + ": ";
   const char*       what   {ex.what()};
   const char*       cause  {(std::strncmp(what, prefix.c_str(), prefix.size()) == 0)
                               ? what + prefix.size()
                               : what};
-  const std::string owned  {(fallback_available && ex.kind() == real::error_kind::unsupported)
-                              ? std::string(cause) + FALLBACK_HINT
-                              : std::string(cause)};
+  std::string       owned  {cause};
+  if (fallback_available && ex.kind() == real::error_kind::unsupported) {
+    owned += std::string(UNSUPPORTED_PREFIX)
+             + (stdlib_re_accepts(pattern, py_flags) ? REMEDY_DELEGABLE : REMEDY_REFUSED);
+  }
   const char*       msg    {owned.c_str()};
   const auto        pos    {static_cast<Py_ssize_t>(ex.position())};
   PyObject*         exc    {(pattern != nullptr)
@@ -2462,7 +2505,7 @@ PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
     try {
         rx = new real::regex(std::string_view(data, static_cast<std::size_t>(len)), compile_flags);
     } catch (const real::regex_error& ex) {
-        set_regex_error(ex, pattern);
+        set_regex_error(ex, pattern, /*fallback_available=*/true, py_flags);
         return nullptr;
     } catch (const std::bad_alloc&) {
         return PyErr_NoMemory();

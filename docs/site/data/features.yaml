@@ -181,8 +181,23 @@ categories:
         note: "non-regular -> super-linear -> ReDoS"
         link: "differences-from-re#div_rejected"
         pattern: "(a)\\1"
-      - construct: "Conditional groups `(?(id)…)`, recursion, callouts"
+      - construct: "Conditional groups `(?(id)…)`"
         status: excluded-by-design
         note: "non-regular control flow -> ReDoS"
         link: "differences-from-re#div_rejected"
         pattern: "(?(1)a|b)"
+      - construct: "Pattern recursion `(?R)`, `(?1)`, `(?-1)`"
+        status: excluded-by-design
+        note: "non-regular control flow -> ReDoS"
+        link: "differences-from-re#div_rejected"
+        pattern: "a(?R)b"
+      - construct: "Subroutine calls `(?&name)`, `(?P>name)`"
+        status: excluded-by-design
+        note: "non-regular control flow -> ReDoS"
+        link: "differences-from-re#div_rejected"
+        pattern: "(?P<n>a)(?&n)"
+      - construct: "Callouts `(?C)`, `(?C1)`"
+        status: excluded-by-design
+        note: "no host to call out to in a linear scan"
+        link: "differences-from-re#div_rejected"
+        pattern: "a(?C1)b"

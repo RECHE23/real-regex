@@ -179,10 +179,28 @@ TEST(features_probe_05_00_excluded_by_design_backreferences_a_1_p_n)
   EXPECT_THROWS(real::regex(R"RRX((a)\1)RRX"), real::regex_error);
 }
 
-TEST(features_probe_05_01_excluded_by_design_conditional_groups_id_recursion_callouts)
+TEST(features_probe_05_01_excluded_by_design_conditional_groups_id)
 {
-  // Excluded by design / Conditional groups `(?(id)…)`, recursion, callouts — status: excluded-by-design (must throw real::regex_error)
+  // Excluded by design / Conditional groups `(?(id)…)` — status: excluded-by-design (must throw real::regex_error)
   EXPECT_THROWS(real::regex(R"RRX((?(1)a|b))RRX"), real::regex_error);
 }
 
-// 22 compile-assertions, 2 throw-assertions, 1 skipped (planned / pattern: null).
+TEST(features_probe_05_02_excluded_by_design_pattern_recursion_r_1_1)
+{
+  // Excluded by design / Pattern recursion `(?R)`, `(?1)`, `(?-1)` — status: excluded-by-design (must throw real::regex_error)
+  EXPECT_THROWS(real::regex(R"RRX(a(?R)b)RRX"), real::regex_error);
+}
+
+TEST(features_probe_05_03_excluded_by_design_subroutine_calls_name_p_name)
+{
+  // Excluded by design / Subroutine calls `(?&name)`, `(?P>name)` — status: excluded-by-design (must throw real::regex_error)
+  EXPECT_THROWS(real::regex(R"RRX((?P<n>a)(?&n))RRX"), real::regex_error);
+}
+
+TEST(features_probe_05_04_excluded_by_design_callouts_c_c1)
+{
+  // Excluded by design / Callouts `(?C)`, `(?C1)` — status: excluded-by-design (must throw real::regex_error)
+  EXPECT_THROWS(real::regex(R"RRX(a(?C1)b)RRX"), real::regex_error);
+}
+
+// 22 compile-assertions, 5 throw-assertions, 1 skipped (planned / pattern: null).
