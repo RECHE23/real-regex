@@ -729,3 +729,48 @@ func TestNumSubexp(t *testing.T) {
 		t.Fatalf("got %d, want 0", got)
 	}
 }
+
+// The empty-match rule is regexp's, not the engine's: regexp ignores an empty match abutting the
+// preceding one, the engine (Python re's model) reports it. Every FindAll* and Split derive from
+// one enumeration, so the whole family is compared against regexp rather than against transcribed
+// expectations — the stdlib owns the answers. Without the filter `x*` over "axbxc" split to
+// ["a" "" "b" "" "c"] where regexp gives ["a" "b" "c"].
+func TestEmptyMatchEnumerationMatchesStdlib(t *testing.T) {
+	cases := []struct{ pat, s string }{
+		{`x*`, "axbxc"},   // empty matches abutting each "x"
+		{`b*`, "abc"},     // and at the very end
+		{`,`, "a,b,,c,"},  // non-empty separators: empty FIELDS must survive
+		{`\s*`, "a b  c"}, // runs of varying length
+		{`a*`, "aaa"},     // one match spanning everything
+		{``, "abc"},       // the empty pattern: every position, none abutting
+		{`x*`, ""},        // empty subject
+		{`\b`, "ab cd"},   // zero-width assertions are never abutting
+		{`(a)|(b)`, "ab"}, // groups: the submatch shape travels too
+		{`a?`, "bab"},
+		{`(ab|)`, "abab"}, // nullable alternation, the shape the engine fix declined
+	}
+	for _, c := range cases {
+		std, ours := regexp.MustCompile(c.pat), MustCompile(c.pat)
+		if got, want := ours.FindAllStringIndex(c.s, -1), std.FindAllStringIndex(c.s, -1); !reflect.DeepEqual(got, want) {
+			t.Errorf("FindAllStringIndex(%q, %q) = %v, regexp gives %v", c.pat, c.s, got, want)
+		}
+		if got, want := ours.FindAllString(c.s, -1), std.FindAllString(c.s, -1); !reflect.DeepEqual(got, want) {
+			t.Errorf("FindAllString(%q, %q) = %q, regexp gives %q", c.pat, c.s, got, want)
+		}
+		if got, want := ours.FindAllStringSubmatchIndex(c.s, -1), std.FindAllStringSubmatchIndex(c.s, -1); !reflect.DeepEqual(got, want) {
+			t.Errorf("FindAllStringSubmatchIndex(%q, %q) = %v, regexp gives %v", c.pat, c.s, got, want)
+		}
+		if got, want := ours.Split(c.s, -1), std.Split(c.s, -1); !reflect.DeepEqual(got, want) {
+			t.Errorf("Split(%q, %q) = %q, regexp gives %q", c.pat, c.s, got, want)
+		}
+		// n as a cap must clip the FILTERED sequence, not the raw one.
+		for _, n := range []int{1, 2, 3} {
+			if got, want := ours.FindAllStringIndex(c.s, n), std.FindAllStringIndex(c.s, n); !reflect.DeepEqual(got, want) {
+				t.Errorf("FindAllStringIndex(%q, %q, n=%d) = %v, regexp gives %v", c.pat, c.s, n, got, want)
+			}
+		}
+	}
+	if len(cases) != 11 {
+		t.Fatalf("denominator changed: %d cases", len(cases)) // a deleted row must fail, not shrink
+	}
+}

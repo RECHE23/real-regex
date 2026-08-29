@@ -418,6 +418,15 @@ func (r *Regexp) FindSubmatchIndex(text []byte) []int {
 
 // FindAllSubmatchIndex returns every non-overlapping match's full span plus every group's
 // span, in order — the same shape as regexp.Regexp.FindAllSubmatchIndex(text, -1).
+//
+// This is the ONE enumeration in the package: FindAllIndex, findAllIndexN, every FindAll* and
+// Split derive from it, so the empty-match rule below is applied once and inherited everywhere.
+//
+// regexp ignores an empty match that abuts the preceding one ("empty matches abutting a preceding
+// match are ignored", allMatches in regexp.go); the engine, whose model is Python re, reports it.
+// Without the filter `x*` over "axbxc" enumerated [0,0] [1,2] [2,2] [3,4] [4,4] [5,5] where regexp
+// gives [0,0] [1,2] [3,4] [5,5] — and Split, a verbatim port of regexp's, then produced
+// ["a" "" "b" "" "c"] against regexp's ["a" "b" "c"]. The divergence was never in Split.
 func (r *Regexp) FindAllSubmatchIndex(text []byte) [][]int {
 	ctext, freeText := cBytes(text)
 	defer freeText()
@@ -432,12 +441,21 @@ func (r *Regexp) FindAllSubmatchIndex(text []byte) [][]int {
 		return nil // closed / zero slots — never &spans[0] on empty
 	}
 	var out [][]int
+	prevEnd := -1 // no preceding match yet: the first span is never abutting
 	for {
 		rc := C.real_iter_next(it, sp)
 		if rc != 1 {
 			break
 		}
-		out = append(out, spansToIndices(spans))
+		m := spansToIndices(spans)
+		if !(m[0] == m[1] && m[0] == prevEnd) { // empty AND abutting the preceding match: drop
+			out = append(out, m)
+		}
+		// Outside the branch to mirror regexp's shape, but the placement is not load-bearing and a
+		// sabotage moving it inside does not change any answer: a DROPPED match is empty and starts
+		// at prevEnd, so m[1] == m[0] == prevEnd and the assignment is a no-op for exactly the
+		// matches that skip it.
+		prevEnd = m[1]
 	}
 	return out
 }
