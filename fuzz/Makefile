@@ -91,7 +91,12 @@ fuzz-compat: ## Differential fuzz: real::compat vs std::regex (Clang; FUZZ_TIME=
 # after the compat smoke (C ABI shim, both ThreadSanitizer smokes, the RE2 differential) never ran
 # either. Six nets dark for one filed finding. So the unit lives here, out of both timed corpora,
 # and this target asserts it STILL reproduces: it goes red when the divergence is FIXED, which is
-# exactly when the file must move to a regression test and leave this directory.
+# exactly when the file must move to a regression test and leave this directory. That has happened
+# once (the nullable-alternation inner-literal divergence: pinned in tests/frontend/
+# test_inner_literal.cpp, the input kept as a corpus seed), which is why an EMPTY directory now
+# passes with its count printed rather than failing. Zero filed is the goal state of the practice,
+# not an unarmed check -- the decision this target makes is still live the moment a unit is filed,
+# and the count is published either way so "nothing outstanding" can never be read as "not run".
 fuzz-compat-known: ## Assert every filed compat divergence still reproduces (red once it is fixed)
 	mkdir -p $(FUZZ_DIR)
 	cd $(ROOT) && clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
@@ -106,7 +111,8 @@ fuzz-compat-known: ## Assert every filed compat divergence still reproduces (red
 	     exit 1; \
 	   fi; \
 	 done; \
-	 test "$$n" -gt 0 || { echo "fuzz-compat-known: FAIL -- fuzz/known-crashes/ is empty"; exit 1; }; \
+	 test "$$n" -gt 0 \
+	   || { echo "fuzz-compat-known: OK — 0 filed unit(s): nothing outstanding"; exit 0; }; \
 	 echo "fuzz-compat-known: OK — $$n filed unit(s) still reproduce (filed, not fixed)"
 
 # Differential: real::compat::re2 (drop-in) vs true libre2 (oracle). Curated harness + can-fail

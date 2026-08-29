@@ -3,6 +3,7 @@
 //! that bypasses the literal must NOT extract.
 #include <sciforge/test/framework.hpp>
 
+#include <real/real.hpp> // the behavioural half of the nullable-alt regression needs real::regex
 #include <real/frontend/inner_literal.hpp>
 #include <real/frontend/compiler.hpp>
 
@@ -49,6 +50,56 @@ TEST(inner_literal_d1_pure_lit_alt_only)
   // Optional still declines the whole walk (conservative v1 restored for min==0).
   EXPECT(!extract(R"((a)?@b)").found());
   EXPECT(!extract(R"(x*@?y)").found());
+}
+
+// Regression: an alternation with an EMPTY branch is nullable, and a nullable segment cannot stand
+// in a reverse-prefix -- it confirms at width 0 wherever the literal is found, so the scan accepts a
+// candidate the pattern only reaches later and never considers the leftmost match. Filed as a
+// differential-fuzz divergence (fuzz_compat's match-flag iterator net) and reproduced at the engine:
+// once the immutables were built, `(ab|)bb` over "abbbbbbbbbbbb" answered [1,3] where the general VM
+// answers [0,4]. A SILENT wrong answer, so both halves are pinned: the extraction must decline, and
+// the search must be right whichever route runs.
+TEST(inner_literal_nullable_alt_branch_declines)
+{
+  EXPECT(!extract(R"((ab|)bb)").found());       // the filed shape: empty second branch
+  EXPECT(!extract(R"((|ab)bb)").found());       // empty FIRST branch
+  EXPECT(!extract(R"((ab|(?:))bb)").found());   // empty branch behind a group
+  EXPECT(!extract(R"((a|b|)cd)").found());      // three branches, one empty
+  // The control: a pure-literal alternation with no empty branch still arms, so the fix declines
+  // the nullable case only and does not disarm the route it was written for.
+  EXPECT(extract(R"((info|error|warn)req=)").found());
+  EXPECT(extract(R"((ab|cd)ef)").found());
+  // And the boundary the fix must NOT cross: a prefix that is always empty is fine. `((?:))bb`
+  // confirms at width 0 too, but no branch of it consumes, so no earlier match can exist to be
+  // skipped -- the unsoundness needs an alternation that can match BOTH empty and something.
+  EXPECT(extract(R"(((?:))bb)").found());
+}
+
+TEST(inner_literal_nullable_alt_search_is_leftmost)
+{
+  // The behaviour the decline protects, on BOTH routes. fullmatch() builds the immutables, which is
+  // what armed the bad route; the answer must not depend on having called it.
+  const std::string_view text {"abbbbbbbbbbbb"};
+  {
+    real::regex re(R"((ab|)bb)");
+    const auto  cold {re.search(text)};
+    EXPECT(cold);
+    EXPECT_EQ(cold.start(), 0U);
+    EXPECT_EQ(cold.end(), 4U);
+    EXPECT(!re.fullmatch(text));                 // builds the immutables
+    const auto warm {re.search(text)};
+    EXPECT(warm);
+    EXPECT_EQ(warm.start(), 0U);
+    EXPECT_EQ(warm.end(), 4U);
+  }
+  {
+    real::regex re(R"((ab|)bb)");                // immutables built before any search
+    EXPECT(!re.fullmatch(text));
+    const auto m {re.search(text)};
+    EXPECT(m);
+    EXPECT_EQ(m.start(), 0U);
+    EXPECT_EQ(m.end(), 4U);
+  }
 }
 
 TEST(inner_literal_declined_soundness)
