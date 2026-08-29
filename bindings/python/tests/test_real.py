@@ -156,6 +156,37 @@ class TestSub(unittest.TestCase):
         with self.assertRaises(real.error):
             real.sub(r"a", r"\g<zz>", "a")
 
+    def test_named_chars_are_not_rewritten_inside_comments(self):
+        """`re` never parses a comment's text, so a bogus \\N{...} there must not raise here.
+
+        The rewrite is textual, so it needs just enough context to know where NOT to look:
+        (?#...), # to end-of-line under VERBOSE, and neither of those inside a character class.
+        """
+        for pat, flags in [(r"(?# \N{NOT_A_REAL_NAME})abc", 0),
+                           ("a  # \\N{NOT_A_REAL_NAME}\nb", real.X),
+                           ("(?x)a # \\N{NOT_A_REAL_NAME}\nb", 0)]:
+            with self.subTest(pat=pat):
+                self.assertIsNotNone(real.compile(pat, flags))
+                self.assertIsNotNone(re.compile(pat, flags))  # the oracle agrees
+        # And a REAL name still resolves everywhere it did before.
+        for pat, flags in [(r"\N{BULLET}", 0), (r"[\N{BULLET}]", 0), (r"(?#c)\N{BULLET}", 0),
+                           (r"[#\N{BULLET}]", real.X), (r"[]\N{BULLET}]", 0)]:
+            with self.subTest(pat=pat):
+                self.assertIsNotNone(real.compile(pat, flags))
+        # Residue, asserted so it stays deliberate: a SCOPED (?x:...) turns VERBOSE on and is not
+        # tracked — following it means a flag-scope stack, which the C++ parser already owns.
+        with self.assertRaises(real.error):
+            real.compile("(?x:a # \\N{NOT_A_REAL_NAME}\n)")
+
+    def test_regexset_resolves_named_characters(self):
+        """RegexSet skipped the \\N{NAME} rewrite compile() does, so a named member was refused
+        by the very message that says the binding resolves it."""
+        s = real.RegexSet([r"\N{LATIN SMALL LETTER A}", r"(?# \N{NOT_A_REAL_NAME})b", r"\d+"])
+        self.assertEqual(s.matches("a"), [True, False, False])
+        self.assertEqual(s.matches("b"), [False, True, False])
+        with self.assertRaises(real.error):
+            real.RegexSet([r"\N{NOT_A_REAL_NAME}"])
+
     def test_negative_count_and_maxsplit_do_nothing(self):
         """re reads a NEGATIVE count/maxsplit as "none", not "unlimited" — and -1 is exactly what a
         caller arriving from Go's `n` or Rust writes to mean "all". REAL replaced/split everything,
