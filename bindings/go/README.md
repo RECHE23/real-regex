@@ -42,6 +42,7 @@ could not express before.
 | `(*Regexp) FindAllSubmatch` / `FindAllStringSubmatch` | same | `n` as in `regexp` (0 → nil, <0 → all) |
 | `(*Regexp) FindSubmatchIndex` | same | every group's span; unset group is `-1,-1` |
 | `(*Regexp) FindAllSubmatchIndex` | `FindAllSubmatchIndex(text, -1)` | like FindAllIndex: no `n`; unset group is `-1,-1` |
+| `(*Regexp) FindAllStringSubmatchIndex` | same | every match's group spans as byte offsets into `s`; `n` as in `regexp` |
 | `(*Regexp) Split` | same | slices on matches; `n` as in `regexp` |
 | `(*Regexp) FullMatch` | **no equivalent** | the whole ABI's `real_match(REAL_MODE_FULLMATCH)` — `regexp.MatchString` is really a *search* |
 | `(*Regexp) ReplaceAll` | `ReplaceAll` | **template sigil differs**: this package uses REAL/Python-style `\1`/`\g<name>`; regexp `$1`/`$name`/`${name}` is an error, not a silent literal; `$$` is left as two dollars (regexp collapses it to one) — not translated |

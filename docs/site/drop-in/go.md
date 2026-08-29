@@ -24,7 +24,8 @@ re.MatchString("x42")   // true — a search, like regexp.MatchString
 `(*Regexp) Close`, `String`, `Match` / `MatchString`,
 `Find` / `FindString` / `FindIndex`, `FindAll` / `FindAllString` / `Split`,
 `FindSubmatch` / `FindStringSubmatch` / `FindAllSubmatch` / `FindAllStringSubmatch`,
-`FindAllIndex`, `FindSubmatchIndex` / `FindAllSubmatchIndex`, and `ReplaceAll`.
+`FindAllIndex`, `FindSubmatchIndex` / `FindAllSubmatchIndex` / `FindAllStringSubmatchIndex`,
+and `ReplaceAll`.
 
 Beyond `regexp` — flagged extensions, never silent divergences:
 

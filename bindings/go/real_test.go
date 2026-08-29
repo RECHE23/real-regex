@@ -333,6 +333,10 @@ func TestMatchFindSplitMatchStdlib(t *testing.T) {
 				r.Close()
 				t.Fatalf("%q on %q n=%d: FindAllStringSubmatch got %q want %q", c.pat, c.s, n, got, want)
 			}
+			if got, want := r.FindAllStringSubmatchIndex(c.s, n), std.FindAllStringSubmatchIndex(c.s, n); !reflect.DeepEqual(got, want) {
+				r.Close()
+				t.Fatalf("%q on %q n=%d: FindAllStringSubmatchIndex got %v want %v", c.pat, c.s, n, got, want)
+			}
 			if got, want := r.FindAllSubmatch([]byte(c.s), n), std.FindAllSubmatch([]byte(c.s), n); !reflect.DeepEqual(got, want) {
 				r.Close()
 				t.Fatalf("%q on %q n=%d: FindAllSubmatch got %q want %q", c.pat, c.s, n, got, want)

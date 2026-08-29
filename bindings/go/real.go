@@ -468,6 +468,16 @@ func (r *Regexp) FindAllSubmatch(b []byte, n int) [][][]byte {
 	return out
 }
 
+// FindAllStringSubmatchIndex returns every match's group spans as byte offsets into s, like
+// regexp.Regexp.FindAllStringSubmatchIndex. n is the cap (0 → nil, <0 → all); an unset group is
+// the pair -1,-1. It was the one method missing from the FindAll* matrix — the index form on a
+// string — so code that had it would not compile here. Additive: the two signatures that still
+// differ from regexp (FindAllIndex and FindAllSubmatchIndex take no n) are a separate, breaking
+// change and are not touched.
+func (r *Regexp) FindAllStringSubmatchIndex(s string, n int) [][]int {
+	return r.findAllSubmatchIndexN([]byte(s), n)
+}
+
 // FindAllStringSubmatch is FindAllSubmatch on a string, like regexp.Regexp.FindAllStringSubmatch.
 func (r *Regexp) FindAllStringSubmatch(s string, n int) [][]string {
 	all := r.findAllSubmatchIndexN([]byte(s), n)
