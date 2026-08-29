@@ -11,7 +11,7 @@ name = "real-regex"
 version = "2026.8.19"
 description = "REAL — linear-time (ReDoS-safe) regex engine with an re-compatible API"
 readme = "bindings/python/README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "René Chenard" }]
@@ -42,9 +42,10 @@ packages = ["real"]
 [tool.setuptools.package-data]
 real = ["*.so", "*.pyd", "py.typed", "*.pyi"]
 
-# Build one abi3 wheel per platform (cp310 → works on CPython 3.10+).
+# Build one abi3 wheel per platform (cp311 → works on CPython 3.11+). The floor is 3.11 because
+# the buffer protocol entered the stable ABI there; see setup.py's abi3_wheel.
 [tool.cibuildwheel]
-build = "cp310-*"
+build = "cp311-*"
 build-frontend = "build"
 test-command = "python -m unittest discover -s {project}/bindings/python/tests"
 

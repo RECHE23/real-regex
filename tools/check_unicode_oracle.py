@@ -13,7 +13,7 @@ So this asks every question `_cross_check_regex` asks, in its order, and names w
   ucd-skew -- the INTERPRETER's unicodedata is not the UCD these tables were built from, so the
               assigned-code-point filter the oracle needs cannot be trusted. This is the first
               decline and the one a probe that only looked for `regex` could not see: on a
-              CPython whose Unicode predates the tables (3.10 against UCD 16), the module can be
+              CPython whose Unicode predates the tables (3.11 against UCD 16), the module can be
               installed and agree with its interpreter while the oracle still does not run.
   absent   -- the module is not installed; CI installs it, so this must not be seen there
   skew     -- installed, but a different Unicode than the interpreter: the comparison would say

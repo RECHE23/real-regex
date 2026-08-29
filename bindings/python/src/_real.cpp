@@ -12,7 +12,11 @@
 // (free when the subject is pure ASCII: byte == character).
 
 #define PY_SSIZE_T_CLEAN
-#define Py_LIMITED_API 0x030A0000
+// The floor that actually governs this translation unit: it redefines setup.py's -D right before
+// Python.h, so the two must agree — `make check-abi3-floor` asserts it, against requires-python,
+// the cibuildwheel selector and the wheel tag as well. 3.11 is where the buffer protocol
+// (Py_buffer, PyObject_GetBuffer, PyBuffer_Release) entered the stable ABI.
+#define Py_LIMITED_API 0x030B0000
 #include <Python.h>
 
 #include <real/real.hpp>

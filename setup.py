@@ -54,16 +54,20 @@ class build_py_with_headers(build_py):
 
 
 class abi3_wheel(bdist_wheel):
-    """Forces the stable-ABI tag so one cp310-abi3 wheel serves CPython 3.10+.
+    """Forces the stable-ABI tag so one cp311-abi3 wheel serves CPython 3.11+.
 
-    The extension is built against Py_LIMITED_API 3.10; without this the wheel
+    The extension is built against Py_LIMITED_API 3.11; without this the wheel
     would be tagged for the building interpreter only (e.g. cp314), defeating
-    the point and breaking the cibuildwheel `build = "cp310-*"` strategy.
+    the point and breaking the cibuildwheel `build = "cp311-*"` strategy.
+
+    3.11 rather than 3.10 because the buffer protocol -- Py_buffer,
+    PyObject_GetBuffer, PyBuffer_Release -- entered the stable ABI there, and a
+    bytes-like subject cannot be read without it.
     """
 
     def finalize_options(self):
         super().finalize_options()
-        self.py_limited_api = "cp310"
+        self.py_limited_api = "cp311"
 
 
 # Compiler flags differ between MSVC and GCC/Clang.
@@ -80,7 +84,7 @@ setup(
             sources=["bindings/python/src/_real.cpp"],
             include_dirs=["include", _sciforge_include()],
             extra_compile_args=compile_args,
-            define_macros=[("Py_LIMITED_API", "0x030A0000")],
+            define_macros=[("Py_LIMITED_API", "0x030B0000")],
             py_limited_api=True,
         )
     ],

@@ -13,7 +13,7 @@ PYRUN            := PYTHONPATH=$(ROOT)/bindings/python:$(SCIFORGE_PYTHON) $(PYTH
 .DEFAULT_GOAL := help
 
 # Compile every bindings/python/*.py at the floor declared by requires-python.
-# A SyntaxError valid on the writer's 3.14 and invalid on CI's 3.10 reached
+# A SyntaxError valid on the writer's 3.14 and invalid on CI's floor reached
 # GitHub before any test ran. N files compiled; N == 0 is a fail. No floor
 # interpreter is a named skip, not a green.
 syntax: ## Syntax-check bindings/python at the requires-python floor

@@ -39,12 +39,12 @@ jobs:
           path: sciforge
       # A tool installed for one step does not go on PATH for the others:
       # update-environment: false, pass it explicitly (PYTHON= below).
-      # setup-python on PATH made 3.10 the job default and
+      # setup-python on PATH made 3.11 the job default and
       # check-features-probe died on `import yaml`.
       - uses: actions/setup-python@v5
         id: pyfloor
         with:
-          python-version: '3.10'
+          python-version: '3.11'
           update-environment: false
       - name: Install doxygen + build tools
         run: sudo apt-get update && sudo apt-get install -y doxygen graphviz cmake build-essential
@@ -394,12 +394,12 @@ jobs:
 
   # Python binding (abi3) build + unittest via SciForge's reusable spine. REAL's
   # binding is a leaf (no dependency siblings); its exact prior coverage is
-  # {linux, macOS, Windows} x {3.10, 3.14}, replicated by the platform toggles.
+  # {linux, macOS, Windows} x {3.11, 3.14}, replicated by the platform toggles.
   python:
     needs: preflight
     uses: RECHE23/sciforge/.github/workflows/python-cpp.yml@v2026.7.2
     with:
-      python-versions: '["3.10","3.14"]'
+      python-versions: '["3.11","3.14"]'
       sciforge-ref: v2026.7.2
       # `deps` clones {repo, path} sibling checkouts; a pip package goes in `pre-install`. Passing
       # "regex" here produced `git clone <url> ""` and killed every python leg.
@@ -415,8 +415,8 @@ jobs:
       # assigned code points; U+088F is Arabic there, Cn here) and the generators decline as
       # `skew`. Bumping the tables to 17 would `ucd-skew` on 3.14, whose unicodedata we do not
       # control. Raise this pin (and the same one in `make gate-venv`) when the tables move to
-      # 17, or the probe returns to `skew` and GATE_SKIPS grows a line again. 3.10 stays
-      # `ucd-skew` (unicodedata 13.0.0) either way — correctly, and visibly.
+      # 17, or the probe returns to `skew` and GATE_SKIPS grows a line again. 3.11 stays
+      # `ucd-skew` (unicodedata 14.0.0) either way — correctly, and visibly.
       pre-install: 'regex==2025.9.1'
       # The binding moved under bindings/python/; override the reusable workflow's python/tests default.
       # REAL_ORACLE_REQUIRED travels with pre-install: drop one, the guard still names the other.

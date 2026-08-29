@@ -9,7 +9,7 @@ pre-install in ci.yml's test-cmd.
 
 Four states; only `absent` under REAL_ORACLE_REQUIRED is a defect:
 
-  ucd-skew -- the interpreter's unicodedata is not the UCD these tables were built from (3.10
+  ucd-skew -- the interpreter's unicodedata is not the UCD these tables were built from (3.11
               against UCD 16). The generators decline before they look for `regex`.
   absent   -- nobody installed the module. When we declared the oracle required, that is a
               broken dependency list, so this FAILS.
@@ -17,10 +17,10 @@ Four states; only `absent` under REAL_ORACLE_REQUIRED is a defect:
               2025.9.1 assigns U+088F; our tables and CPython 3.14 are UCD 16.0.0). Declining
               is correct; the comparison does not run against a skewed oracle.
   ready    -- the comparison can run. CI's python 3.14 job pins `regex==2025.9.1` so this is
-              the 3.14 path; 3.10 stays `ucd-skew`.
+              the 3.14 path; 3.11 stays `ucd-skew`.
 
 A check publishes its denominator. `test_oracle_verdict_is_published` prints the state on every
-run, because "OK (skipped=8)" does not say whether 3.10 took `ucd-skew` or never reached this file.
+run, because "OK (skipped=8)" does not say whether 3.11 took `ucd-skew` or never reached this file.
 """
 import os
 import re

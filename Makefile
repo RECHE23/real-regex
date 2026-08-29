@@ -71,7 +71,7 @@ include mk/help.mk
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers check-doc-style check-doc-voice check-curated-members check-bench-stamp check-bench-ratios gate-venv check-sse2-floor \
-        check-site-anchors check-workflows
+        check-site-anchors check-workflows check-abi3-floor
 
 .DEFAULT_GOAL := help
 
@@ -318,6 +318,31 @@ version-check: ## [gates] Assert pyproject = __init__ = CMake-derived version
 	 bench=$$(sed -nE 's/.*REAL `([0-9][0-9.]+)`.*/\1/p' docs/BENCHMARKS.md | head -1); \
 	 if [ -n "$$bench" ] && [ "$$bench" != "$$py" ]; then echo "version-check: WARN — docs/BENCHMARKS.md is stamped against REAL $$bench, current is $$py; benchmarks may be stale (re-run 'make bench-engines' / 'make bench', or proceed knowingly)"; fi; \
 	 echo "version-check: $$py (pyproject = __init__ = CMake-derived = version.hpp = Cargo.toml = CITATION.cff $$cffd = README; bench-stamp = $$bench)"
+
+# The abi3 floor is declared FIVE times, and no two are read by the same tool: requires-python
+# gates the install, cibuildwheel's `build` picks the interpreter that compiles, py_limited_api
+# tags the wheel, and Py_LIMITED_API decides which C API the compiler accepts — twice, since
+# _real.cpp redefines setup.py's -D right before Python.h and therefore WINS for the translation
+# unit. Raise it in four of the five and the wheel is tagged for one version and compiled against
+# another; the source/-D pair disagreeing is the one case the compiler catches by itself
+# (-Wmacro-redefined), and only because both are spelled in full. Every field is required: a
+# rename that empties one must fail, not compare empty to empty.
+check-abi3-floor: ## [gates] Assert requires-python = cibuildwheel build = wheel tag = both Py_LIMITED_API
+	@min=$$(sed -nE 's/^requires-python = ">=3\.([0-9]+)"$$/\1/p' pyproject.toml); \
+	 cbw=$$(sed -nE 's/^build = "cp3([0-9]+)-\*"$$/\1/p' pyproject.toml); \
+	 tag=$$(sed -nE 's/.*py_limited_api = "cp3([0-9]+)".*/\1/p' setup.py); \
+	 api=$$(sed -nE 's/.*"Py_LIMITED_API", "(0x[0-9A-Fa-f]{8})".*/\1/p' setup.py); \
+	 src=$$(sed -nE 's/^#define Py_LIMITED_API (0x[0-9A-Fa-f]{8})$$/\1/p' bindings/python/src/_real.cpp); \
+	 for f in min cbw tag api src; do \
+	   eval "v=\$$$$f"; \
+	   if [ -z "$$v" ]; then echo "check-abi3-floor: FAIL — could not read '$$f' (pyproject.toml / setup.py / _real.cpp renamed or reformatted?)"; exit 1; fi; \
+	 done; \
+	 if [ "$$cbw" != "$$min" ]; then echo "check-abi3-floor: DRIFT requires-python=3.$$min vs cibuildwheel build=cp3$$cbw"; exit 1; fi; \
+	 if [ "$$tag" != "$$min" ]; then echo "check-abi3-floor: DRIFT requires-python=3.$$min vs wheel tag cp3$$tag"; exit 1; fi; \
+	 exp=$$(printf '0x03%02X0000' "$$min"); \
+	 if [ "$$api" != "$$exp" ]; then echo "check-abi3-floor: DRIFT requires-python=3.$$min wants Py_LIMITED_API $$exp, setup.py has $$api"; exit 1; fi; \
+	 if [ "$$src" != "$$exp" ]; then echo "check-abi3-floor: DRIFT requires-python=3.$$min wants Py_LIMITED_API $$exp, _real.cpp has $$src (and it is the one that compiles)"; exit 1; fi; \
+	 echo "check-abi3-floor: 3.$$min (requires-python = cibuildwheel cp3$$cbw = wheel tag cp3$$tag = Py_LIMITED_API $$api = _real.cpp $$src)"
 
 # Every pass/fail gate this machine owns, in one command — the canonical pre-push check
 # and, like the SciLang-era libraries, the macOS gate of record. REAL holds its own
@@ -657,6 +682,8 @@ full-local-gate-impl:
 	@$(MAKE) check-percall-copies
 	@echo "── [5e/25] python-syntax (bindings/python at the requires-python floor)"
 	@$(MAKE) python-syntax
+	@echo "── [5f/25] check-abi3-floor (the four floor declarations agree)"
+	@$(MAKE) check-abi3-floor
 	@echo "── [6/25] check-pins"
 	@$(MAKE) check-pins
 	@echo "── [7/25] check-capi-abi (C ABI golden vs real_capi.h)"
