@@ -1105,8 +1105,18 @@ class TestSubjectTypeParity(unittest.TestCase):
                                  ((6, 11), b"", b"[]"))
 
     def test_a_released_memoryview_still_answers_the_integer_accessors(self):
-        """.span()/.start()/.regs read offsets captured at match time and must not need the
-        bytes again; the accessors that DO need them report re's TypeError."""
+        """.span()/.start()/.end()/.regs read offsets captured at match time and must not need
+        the bytes again. That much IS compared against re: it holds on every supported CPython.
+
+        What the bytes-NEEDING accessors do once the view is gone is deliberately not compared,
+        because CPython's own answer moves inside the supported range. On 3.11
+        `re._parser.expand_template` opens with `empty = match.string[:0]`, so it touches the
+        subject before it has looked at the template and even a literal one raises ValueError;
+        by 3.14 that function is gone and Match.expand is C, and the literal template expands.
+        REAL follows 3.14 -- a template referencing no group never asks for the bytes -- and
+        reports the rest as the TypeError its subject acquisition raises. Asserting re's side
+        here would be pinning one CPython's implementation detail, not a contract.
+        """
         for module in (real, re):
             with self.subTest(module=module.__name__):
                 view = memoryview(bytearray(b"hello world"))
@@ -1114,13 +1124,14 @@ class TestSubjectTypeParity(unittest.TestCase):
                 view.release()
                 self.assertEqual((m.span(), m.start(), m.end(), m.regs),
                                  ((6, 11), 6, 11, ((6, 11),)))
-                # expand only needs the bytes when the template references a group: a literal
-                # template still succeeds, in re and here alike.
-                self.assertEqual(m.expand(rb"x"), b"x")
-                for accessor in (lambda: m.group(), lambda: repr(m),
-                                 lambda: m.expand(rb"[\g<0>]")):
-                    with self.assertRaises(TypeError):
-                        accessor()
+
+        view = memoryview(bytearray(b"hello world"))
+        m = real.compile(rb"w\w+").search(view)
+        view.release()
+        self.assertEqual(m.expand(rb"x"), b"x")  # literal template: never needs the bytes
+        for accessor in (lambda: m.group(), lambda: repr(m), lambda: m.expand(rb"[\g<0>]")):
+            with self.assertRaises(TypeError):
+                accessor()
 
     def test_the_export_is_released_on_every_path(self):
         """A leaked export leaves the bytearray permanently unresizable -- the failure a missed
