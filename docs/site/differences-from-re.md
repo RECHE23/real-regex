@@ -239,7 +239,7 @@ really is closed.
 (div_module_surface)=
 ## The module surface (Python binding)
 
-Everything above is about the pattern language. Four differences are in the *module* instead,
+Everything above is about the pattern language. Five differences are in the *module* instead,
 and a `import real as re` drop-in meets them without writing a pattern at all:
 
 - **Flags are plain `int`, not a `RegexFlag` enum.** `real.I | real.M` is `10`, where `re.I | re.M`
@@ -257,6 +257,13 @@ and a `import real as re` drop-in meets them without writing a pattern at all:
   locale-dependent); `DEBUG` dumps CPython's own compiler state, which REAL does not have. An
   unrecognised flag bit is refused too, rather than silently dropped.
 - **`re.Scanner` is absent.** It is undocumented in CPython and has no REAL equivalent.
+- **A `sub` callable must return a string; returning `None` raises instead of erasing.**
+  `re.sub(r'a', lambda m: None, 'xax')` returns `'xx'` in CPython — the `None` is read as an empty
+  replacement — while REAL raises `TypeError: expected str replacement`. `re`'s own documentation
+  says the function *must* return a replacement string, so that acceptance is unspecified behaviour
+  falling out of the implementation rather than a contract; writing it down here would promise
+  something CPython has never promised and could withdraw. **`return ''` is the portable erase**, and
+  it behaves identically in both. A non-string that is not `None` (an `int`, say) raises in both.
 
 `re.error` and `re.PatternError` are both spellings of one class here, as they are in `re` since
 CPython 3.13, so `except` on either catches what the other raises.

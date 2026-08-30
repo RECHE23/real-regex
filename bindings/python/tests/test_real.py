@@ -163,6 +163,25 @@ class TestSub(unittest.TestCase):
         with self.assertRaises(IndexError):
             real.sub(r"a", r"\g<zz>", "a")
 
+    def test_a_sub_callable_must_return_a_string(self):
+        """Documented divergence, and the doc is checked here so it cannot rot.
+
+        CPython reads a callable's None as an empty replacement, which its own documentation does
+        not promise -- re says the function must return a replacement string. REAL raises rather
+        than erase silently. `return ''` is the portable form and agrees in both; an int raises in
+        both. The re side is asserted too, so the day CPython changes its mind this test says so
+        instead of the divergences page quietly becoming wrong.
+        """
+        import re as stdlib
+        self.assertEqual(stdlib.sub(r"a", lambda m: None, "xax"), "xx")   # unspecified, but current
+        with self.assertRaises(TypeError):
+            real.sub(r"a", lambda m: None, "xax")
+        for module in (real, stdlib):
+            with self.subTest(module=module.__name__):
+                self.assertEqual(module.sub(r"a", lambda m: "", "xax"), "xx")  # the portable erase
+                with self.assertRaises(TypeError):
+                    module.sub(r"a", lambda m: 1, "xax")
+
     def test_named_chars_are_not_rewritten_inside_comments(self):
         """`re` never parses a comment's text, so a bogus \\N{...} there must not raise here.
 
