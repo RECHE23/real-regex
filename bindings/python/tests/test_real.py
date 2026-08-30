@@ -855,8 +855,10 @@ class TestUnsupportedNamesTheEscapeHatch(unittest.TestCase):
             real.RegexSet([self.UNSUPPORTED])
         self.assertNotIn("fallback", str(caught.exception))
 
-    # Every construct the divergences page lists as excluded by design, plus the two lookaround
-    # refusals. The fallback delegates to re verbatim, so re -- not this list -- decides which of
+    # Every construct the divergences page lists as excluded by design, the two lookaround
+    # refusals, and the four "not supported YET" possessive/atomic forms -- all `unsupported`,
+    # because the classification asks whether the pattern is well formed and beyond this engine,
+    # not whether the gap is permanent. The fallback delegates to re verbatim, so re -- not this list -- decides which of
     # them the remedy is true for; the test asks re the same question the binding does.
     EXCLUDED_BY_DESIGN = [
         r"(a)\1",             # backreference, by number
@@ -870,6 +872,17 @@ class TestUnsupportedNamesTheEscapeHatch(unittest.TestCase):
         r"(?P<n>a)(?P>n)",    # subroutine call, Python spelling
         r"(?=(?=a))",         # nested lookaround
         r"(?<=a*)b",          # unbounded lookaround
+        # Rejected "not supported YET" rather than by design. Same classification, for the same
+        # reason -- well formed, beyond this engine -- and here the remedy is not just offered but
+        # true: re compiles all four, so the loop below asserts fallback=True actually runs them.
+        r"(?:ab)*+",          # possessive over a compound body
+        r"(?:ab)++",
+        r"(?>ab|a)",          # atomic group over an alternating body
+        # Bounded on purpose: an unbounded possessive in a lookaround is stopped earlier, by
+        # the unbounded-lookaround check, and never reaches this refusal. The pair also
+        # exercises BOTH arms of the oracle -- re takes the lookahead, refuses the lookbehind.
+        r"(?=a{1,3}+)b",
+        r"(?<=a{1,2}+)b",
     ]
 
     def test_every_excluded_construct_is_named_and_classified(self):
@@ -893,7 +906,7 @@ class TestUnsupportedNamesTheEscapeHatch(unittest.TestCase):
                 self.assertIn("COMPATIBILITY.md", message)  # classified `unsupported`, not `syntax`
                 if pattern in named:
                     self.assertIn(named[pattern], message)
-        self.assertEqual(len(self.EXCLUDED_BY_DESIGN), 11)  # denominator
+        self.assertEqual(len(self.EXCLUDED_BY_DESIGN), 16)  # denominator
 
     def test_the_remedy_is_offered_exactly_where_re_can_take_the_pattern(self):
         """The advice is only worth giving where both halves hold. re is the oracle because the

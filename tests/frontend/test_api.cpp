@@ -116,6 +116,17 @@ TEST(error_kind_classifies_excluded_constructs_as_unsupported)
     {.pattern = "(?P<n>a)(?P>n)", .kind = real::error_kind::unsupported},        // subroutine call, Python spelling
     {.pattern = "(?=(?=a))", .kind = real::error_kind::unsupported},             // nested lookaround
     {.pattern = "(?<=a*)b", .kind = real::error_kind::unsupported},              // unbounded lookaround
+    // Rejected "not supported YET" rather than by design -- but still well formed and still beyond
+    // this engine, so the classification is the same one, and it is what lets a binding offer the
+    // remedy that demonstrably works: re compiles all four and the Python fallback runs them.
+    {.pattern = "(?:ab)*+", .kind = real::error_kind::unsupported},   // possessive, compound body
+    {.pattern = "(?:ab)++", .kind = real::error_kind::unsupported},
+    {.pattern = "(?>ab|a)", .kind = real::error_kind::unsupported},   // atomic group, alternating body
+    // A possessive inside a lookaround must be BOUNDED to reach that refusal at all: an
+    // unbounded one is stopped earlier, by the unbounded-lookaround check. `(?=a*+)b` was the
+    // wrong witness -- it never reached the site it was meant to pin, and a sabotage proved it.
+    {.pattern = "(?=a{1,3}+)b", .kind = real::error_kind::unsupported},
+    {.pattern = "(?<=a{1,2}+)b", .kind = real::error_kind::unsupported},
     // Malformed: `syntax`, and a binding must NOT offer a delegating remedy for these.
     {.pattern = "(unclosed", .kind = real::error_kind::syntax},
     {.pattern = "a)", .kind = real::error_kind::syntax},
@@ -136,7 +147,7 @@ TEST(error_kind_classifies_excluded_constructs_as_unsupported)
     }
   }
   EXPECT_EQ(checked, sizeof(rows) / sizeof(rows[0]));
-  EXPECT_EQ(checked, 17U);  // the denominator, so a deleted row fails rather than shrinking silently
+  EXPECT_EQ(checked, 22U);  // the denominator, so a deleted row fails rather than shrinking silently
 }
 
 TEST(excluded_constructs_are_named_not_called_unknown)

@@ -44,7 +44,11 @@ int main(void) {
   {
     static const char* const excluded[] = {"(a)(?(1)b|c)", "a(?C1)b", "a(?R)b", "(a)(?1)",
                                            "(a)(?-1)",     "(?P<n>a)(?&n)", "(?P<n>a)(?P>n)",
-                                           "(?=(?=a))",    "(?<=a*)b"};
+                                           "(?=(?=a))",    "(?<=a*)b",
+                                           /* rejected "not supported YET", same classification:
+                                              well formed, beyond this engine. A C caller has no
+                                              other channel, so it must not read "malformed". */
+                                           "(?:ab)*+",     "(?:ab)++", "(?>ab|a)", "(?=a{1,3}+)b"};
     static const char* const malformed[] = {"(?Z)", "(unclosed", "a)", "a{3,1}"};
     size_t i;
     for (i = 0; i < sizeof excluded / sizeof excluded[0]; ++i) {
@@ -53,7 +57,7 @@ int main(void) {
       assert(code == REAL_ERR_UNSUPPORTED);
       assert(strstr(err, "unknown extension") == NULL); /* named, not reported as a typo */
     }
-    assert(i == 9); /* denominator: a row deleted rather than fixed must fail here */
+    assert(i == 13); /* denominator: a row deleted rather than fixed must fail here */
     for (i = 0; i < sizeof malformed / sizeof malformed[0]; ++i) {
       real_regex* r = real_compile(malformed[i], strlen(malformed[i]), 0, err, sizeof err, &code);
       assert(r == NULL);
