@@ -1538,7 +1538,17 @@ int parse_template(PatternObject* pat, std::string_view repl,
             } else {
                 const std::size_t named_group_index = pat->rx->group_index(name);
                 if (named_group_index == real::npos) {
-                    set_error("unknown group name");
+                    // IndexError, NOT real.error. re raises IndexError for an unknown group NAME in
+                    // a template (re/_parser.py's parse_template does it explicitly) while keeping
+                    // re.error for an out-of-range NUMBER -- two exception types for the same class
+                    // of mistake in the same call. Inconsistent, and deliberate there; a drop-in has
+                    // to copy it rather than tidy it, because `except IndexError` is what code
+                    // written against re actually has around expand/sub. real.error DERIVES from
+                    // re.error, so raising it here left no single except able to catch both
+                    // libraries: `except re.error` missed re, `except IndexError` missed us.
+                    // The name is quoted in the message because re quotes it.
+                    PyErr_Format(PyExc_IndexError, "unknown group name '%.*s'",
+                                 static_cast<int>(name.size()), name.data());
                     return -1;
                 }
                 group = static_cast<Py_ssize_t>(named_group_index);

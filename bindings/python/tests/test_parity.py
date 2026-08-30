@@ -551,6 +551,42 @@ class TestParity(unittest.TestCase):
         with self.assertRaises(real.error):
             sm.expand(r"\99")                       # out-of-range group, like sub
 
+    def test_template_error_is_caught_by_the_same_except_as_re(self):
+        r"""What a template error RAISES, judged by the handler that catches it.
+
+        re is inconsistent here and deliberately so: an unknown group NAME raises IndexError
+        (re/_parser.py raises it by hand), an out-of-range NUMBER and a malformed \g<> raise
+        re.error -- two exception hierarchies for the same class of mistake in the same call.
+        real.error derives from re.error, so raising it for the name case left NO single except
+        able to catch both libraries: `except re.error` missed re, `except IndexError` missed us.
+
+        The assertion is on CATCHABILITY rather than on the class name, because that is what user
+        code depends on, and it is compared against re rather than transcribed.
+        """
+        templates = [r"\g<nope>", r"\g<99>", r"\g<>", r"\g<x>"]
+        for template in templates:
+            for handler in (IndexError, re.error):
+                with self.subTest(template=template, handler=handler.__name__):
+                    def outcome(module):
+                        m = module.compile(r"(?P<x>a)").search("a")
+                        try:
+                            return ("ok", m.expand(template))
+                        except handler:
+                            return ("caught", None)
+                        except Exception:  # noqa: BLE001 - only WHETHER it escapes matters here
+                            # Not which class escaped: the loop tries BOTH handlers, so a class
+                            # that escapes one is caught by the other, and agreement on both
+                            # handlers is the whole contract. Comparing the class here would pin
+                            # a hierarchy depth (real.error derives from re.error, re.error does
+                            # not derive from itself) that no caller can observe.
+                            return ("escaped",)
+                    self.assertEqual(outcome(real), outcome(re))
+        # sub shares the template parser, so it must agree too.
+        for module in (real, re):
+            with self.subTest(call="sub", module=module.__name__), self.assertRaises(IndexError):
+                module.sub(r"(?P<x>a)", r"\g<nope>", "a")
+        self.assertEqual(len(templates), 4)  # denominator
+
     def test_lazy_char_spans_non_ascii_parity(self):
         """char_spans is computed lazily (only on .start/.end/.span). Verify the char
         offsets stay correct (parity with re) on a non-ASCII subject — where byte offset

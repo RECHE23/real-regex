@@ -148,12 +148,19 @@ class TestSub(unittest.TestCase):
         self.assertEqual(real.sub(r"a", r"\!", "a"), r"\!")  # punct keeps backslash
 
     def test_template_errors(self):
-        """Invalid back-references raise real.error."""
+        """Invalid back-references raise what re raises for them -- which is not one class.
+
+        An out-of-range NUMBER and a bad escape are re.error (real.error derives from it). An
+        unknown group NAME is IndexError, raised by hand in re/_parser.py: a different hierarchy
+        for the same class of mistake in the same call. Copied rather than tidied, because
+        `except IndexError` is what code written against re has around sub/expand; the catchability
+        parity is asserted against re itself in test_parity.
+        """
         with self.assertRaises(real.error):
             real.sub(r"(a)", r"\2", "a")
         with self.assertRaises(real.error):
             real.sub(r"a", r"\q", "a")
-        with self.assertRaises(real.error):
+        with self.assertRaises(IndexError):
             real.sub(r"a", r"\g<zz>", "a")
 
     def test_named_chars_are_not_rewritten_inside_comments(self):
