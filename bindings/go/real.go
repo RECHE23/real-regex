@@ -2,7 +2,7 @@
 // cgo, over the C ABI at bindings/c/real_capi.h (v2026.7.39+, frozen-additive — vendored here,
 // see vendor_include/ and the Makefile's `vendor`/`check-vendor` targets).
 //
-// v0.1: a regexp-idiomatic subset (Compile/MustCompile/QuoteMeta/Match/MatchString (package
+// v0.2: a regexp-idiomatic subset (Compile/MustCompile/QuoteMeta/Match/MatchString (package)
 // and methods)/String/Find/FindString/FindIndex/FindAll/FindAllString/Split/FindAllIndex/
 // FindSubmatch/FindStringSubmatch/FindSubmatchIndex/ReplaceAll/RegexSet)
 // plus REAL extensions regexp has no equivalent for at all (FullMatch,

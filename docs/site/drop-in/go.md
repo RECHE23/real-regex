@@ -5,7 +5,7 @@ Canon = bindings/go/README.md (the binding's README, always up-to-date).
 
 # Drop-in for Go `regexp`
 
-**v0.1 subset, strict (cgo; macOS-arm64 & linux-x86-64 only).**
+**v0.2 subset, strict (cgo; macOS-arm64 & linux-x86-64 only).**
 The methods below, not the whole `regexp.Regexp` surface. Every accepted pattern is guaranteed linear.
 An unsupported construct is rejected at compile time instead of silently backtracking.
 
@@ -51,7 +51,7 @@ of it under this package; under `regexp`, `\w+` matches only `"caf"` (because
 RE2's `\w` does not include the accented é). This follows REAL's alignment with
 Python `re`, not a divergence — both are intentional designs.
 
-v0.1-specific: cgo required; supported platforms are macOS-arm64 and
+v0.2-specific: cgo required; supported platforms are macOS-arm64 and
 linux-x86-64 only; no flags parameter exposed in the Go API (always compiles
 with default flags). Not in this subset: `Expand`.
 

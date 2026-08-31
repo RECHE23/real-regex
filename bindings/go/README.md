@@ -3,7 +3,7 @@
 Go bindings to [REAL](https://github.com/RECHE23/real-regex), a linear-time (ReDoS-safe) regex
 engine with bounded lookarounds, over its C ABI (`bindings/c/real_capi.h`) via cgo.
 
-**v0.1 — cgo required, macOS-arm64 and linux-x86-64 only.** Cross-compilation and Windows/MSVC
+**v0.2 — cgo required, macOS-arm64 and linux-x86-64 only.** Cross-compilation and Windows/MSVC
 are explicitly out of scope for this version.
 
 ## The one thing to know before migrating from `regexp`
@@ -24,7 +24,7 @@ time: bounded lookahead/lookbehind (`(?=...)`, `(?<=...)`, ...) and possessive q
 `regexp` user migrates without rewriting existing patterns, then gains access to constructs they
 could not express before.
 
-## API surface (v0.1)
+## API surface (v0.2)
 
 | This package | `regexp` equivalent | Notes |
 |---|---|---|
@@ -53,7 +53,7 @@ could not express before.
 
 REAL's native flag bitmask (`bindings/c/real_capi.h`'s own documented numbering table) has no
 `regexp`-equivalent constants — `regexp` has no flags parameter at all (inline `(?i)`-style
-modifiers instead). Not yet exposed in this package's Go API (v0.1 always compiles with no
+modifiers instead). Not yet exposed in this package's Go API (v0.2 always compiles with no
 flags); a future version would need its own named Go constants, not borrowed from either engine's
 convention.
 
