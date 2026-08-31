@@ -178,13 +178,13 @@ func TestClosedHandleIsSafe(t *testing.T) {
 	if names := r.SubexpNames(); len(names) != 0 {
 		t.Fatalf("SubexpNames after Close: got len %d, want 0", len(names))
 	}
-	if got := r.FindAllIndex([]byte("a@b")); got != nil {
+	if got := r.FindAllIndex([]byte("a@b"), -1); got != nil {
 		t.Fatalf("FindAllIndex after Close: got %v, want nil", got)
 	}
 	if got := r.FindSubmatchIndex([]byte("a@b")); got != nil {
 		t.Fatalf("FindSubmatchIndex after Close: got %v, want nil", got)
 	}
-	if got := r.FindAllSubmatchIndex([]byte("a@b")); got != nil {
+	if got := r.FindAllSubmatchIndex([]byte("a@b"), -1); got != nil {
 		t.Fatalf("FindAllSubmatchIndex after Close: got %v, want nil", got)
 	}
 	if got := r.FindSubmatch([]byte("a@b")); got != nil {
@@ -269,13 +269,44 @@ func TestLongGroupName(t *testing.T) {
 	}
 }
 
+// v0.2.0 gave FindAllIndex and FindAllSubmatchIndex the n every other FindAll* already took. The
+// cap counts FILTERED matches (the empty-match rule is applied inside the enumeration, before the
+// count) and the scan STOPS at n rather than being sliced afterwards, so a pattern with more
+// matches than n must still return exactly the first n regexp returns.
+func TestFindAllIndexCapMatchesStdlib(t *testing.T) {
+	cases := []struct{ pat, s string }{
+		{`[a-z]+`, "ab cd ef gh"},
+		{`x*`, "axbxc"}, // empty matches: the cap counts what survives the filter
+		{`\d`, "1234567"},
+		{`(a)(b)`, "abab ab"}, // groups: the submatch shape travels with the cap
+		{``, "abc"},           // every position, none abutting
+		{`zzz`, "abc"},        // no match at all
+	}
+	for _, c := range cases {
+		r := MustCompile(c.pat)
+		std := regexp.MustCompile(c.pat)
+		for _, n := range []int{-1, 0, 1, 2, 3, 99} {
+			if got, want := r.FindAllIndex([]byte(c.s), n), std.FindAllIndex([]byte(c.s), n); !reflect.DeepEqual(got, want) {
+				t.Errorf("FindAllIndex(%q, %q, n=%d) = %v, regexp gives %v", c.pat, c.s, n, got, want)
+			}
+			if got, want := r.FindAllSubmatchIndex([]byte(c.s), n), std.FindAllSubmatchIndex([]byte(c.s), n); !reflect.DeepEqual(got, want) {
+				t.Errorf("FindAllSubmatchIndex(%q, %q, n=%d) = %v, regexp gives %v", c.pat, c.s, n, got, want)
+			}
+		}
+		r.Close()
+	}
+	if len(cases) != 6 {
+		t.Fatalf("denominator changed: %d cases", len(cases))
+	}
+}
+
 // --- differential vs Go's stdlib regexp (shared RE2-subset syntax) -------------------------
 
 func diffFindAllIndex(t *testing.T, pattern, text string) {
 	t.Helper()
 	r := MustCompile(pattern)
 	defer r.Close()
-	got := r.FindAllIndex([]byte(text))
+	got := r.FindAllIndex([]byte(text), -1)
 
 	std := regexp.MustCompile(pattern)
 	want := std.FindAllIndex([]byte(text), -1)
@@ -378,7 +409,7 @@ func TestBeyondRE2_BoundedLookahead(t *testing.T) {
 	}
 	r := MustCompile(`foo(?=bar)`)
 	defer r.Close()
-	got := r.FindAllIndex([]byte(`foobar foobaz foobar`))
+	got := r.FindAllIndex([]byte(`foobar foobaz foobar`), -1)
 	want := [][]int{{0, 3}, {14, 17}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
@@ -534,7 +565,7 @@ func TestReplaceAllRegexpDollarTemplateErrors(t *testing.T) {
 func TestFindAllIndexOnEmptyText(t *testing.T) {
 	r := MustCompile(`x`)
 	defer r.Close()
-	if got := r.FindAllIndex([]byte(``)); got != nil {
+	if got := r.FindAllIndex([]byte(``), -1); got != nil {
 		t.Fatalf("expected no matches on empty text, got %v", got)
 	}
 }
@@ -542,7 +573,7 @@ func TestFindAllIndexOnEmptyText(t *testing.T) {
 func TestFindAllIndexNoMatch(t *testing.T) {
 	r := MustCompile(`xyz`)
 	defer r.Close()
-	if got := r.FindAllIndex([]byte(`abc`)); got != nil {
+	if got := r.FindAllIndex([]byte(`abc`), -1); got != nil {
 		t.Fatalf("expected no matches, got %v", got)
 	}
 }
@@ -560,7 +591,7 @@ func TestFlavorDivergence_WordShorthandIsUnicodeByDefault(t *testing.T) {
 	// this — the single most likely surprise for a regexp migrator.
 	r := MustCompile(`\w+`)
 	defer r.Close()
-	got := r.FindAllIndex([]byte("café world"))
+	got := r.FindAllIndex([]byte("café world"), -1)
 	want := [][]int{{0, 5}, {6, 11}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
@@ -582,7 +613,7 @@ func TestConcurrentSharedPattern(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		go func() {
 			for j := 0; j < 100; j++ {
-				r.FindAllIndex([]byte(`abc def ghi`))
+				r.FindAllIndex([]byte(`abc def ghi`), -1)
 			}
 			done <- true
 		}()
@@ -627,7 +658,7 @@ func TestFindSubmatchIndex_UnsetGroup(t *testing.T) {
 func TestFindAllSubmatchIndex(t *testing.T) {
 	r := MustCompile(`(\w+)@(\w+)`)
 	defer r.Close()
-	got := r.FindAllSubmatchIndex([]byte(`a@b and cd@ef`))
+	got := r.FindAllSubmatchIndex([]byte(`a@b and cd@ef`), -1)
 	want := [][]int{
 		{0, 3, 0, 1, 2, 3},
 		{8, 13, 8, 10, 11, 13},

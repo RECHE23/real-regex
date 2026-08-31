@@ -37,11 +37,11 @@ could not express before.
 | `(*Regexp) Match` / `MatchString` | same | a *search*, not a full-string match — see FullMatch |
 | `(*Regexp) Find` / `FindString` / `FindIndex` / `FindStringIndex` | same | leftmost match; `Find` is nil on no match |
 | `(*Regexp) FindAll` / `FindAllString` / `FindAllStringIndex` | same | `n` as in `regexp` (0 → nil, <0 → all) |
-| `(*Regexp) FindAllIndex` | `FindAllIndex(text, -1)` | byte offsets, `[start,end)`, group 0 only |
+| `(*Regexp) FindAllIndex` | same | byte offsets, `[start,end)`, group 0 only; `n` as in `regexp` (0 → nil, <0 → all) |
 | `(*Regexp) FindSubmatch` / `FindStringSubmatch` | same | groups as bytes/strings; unset group is nil / `""` |
 | `(*Regexp) FindAllSubmatch` / `FindAllStringSubmatch` | same | `n` as in `regexp` (0 → nil, <0 → all) |
 | `(*Regexp) FindSubmatchIndex` | same | every group's span; unset group is `-1,-1` |
-| `(*Regexp) FindAllSubmatchIndex` | `FindAllSubmatchIndex(text, -1)` | like FindAllIndex: no `n`; unset group is `-1,-1` |
+| `(*Regexp) FindAllSubmatchIndex` | same | every match's group spans; unset group is `-1,-1`; `n` as in `regexp` |
 | `(*Regexp) FindAllStringSubmatchIndex` | same | every match's group spans as byte offsets into `s`; `n` as in `regexp` |
 | `(*Regexp) Split` | same | slices on matches; `n` as in `regexp` |
 | `(*Regexp) FullMatch` | **no equivalent** | the whole ABI's `real_match(REAL_MODE_FULLMATCH)` — `regexp.MatchString` is really a *search* |

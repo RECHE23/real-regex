@@ -53,8 +53,7 @@ Python `re`, not a divergence — both are intentional designs.
 
 v0.1-specific: cgo required; supported platforms are macOS-arm64 and
 linux-x86-64 only; no flags parameter exposed in the Go API (always compiles
-with default flags). Not in this subset: `Expand`. `FindAllIndex` and
-`FindAllSubmatchIndex` take no `n`.
+with default flags). Not in this subset: `Expand`.
 
 Full reference — the binding's own
 [README](https://github.com/RECHE23/real-regex/blob/main/bindings/go/README.md).

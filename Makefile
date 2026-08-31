@@ -1025,7 +1025,11 @@ uninstall: ## [release] Uninstall the Python package (pip)
 # inputs (docs/release-notes/v<version>.md must exist; BENCHMARKS re-stamp optional;
 # CHANGELOG.md is the train journal and is a gate-bump file, not a release dirty exception),
 # commits with the BODY=<file> body, tags the engine AND the co-located decoupled Go
-# module (bindings/go/v0.1.<n+1>, so pkg.go.dev never lags the engine), and pushes.
+# module (bindings/go/v0.<minor>.<patch+1>, so pkg.go.dev never lags the engine), and pushes.
+# The MINOR is read from the newest Go tag, never assumed: it used to be hardcoded to 0.1, so the
+# first release after an incompatible Go change would have shipped it as v0.1.<n+1> -- a PATCH tag
+# on a broken API, which `go get -u` delivers silently. A minor bump is a human decision: tag
+# bindings/go/v0.<m>.0 by hand once, and every later release follows from there.
 # Pushing the engine tag drives release.yml (wheels/sdist -> PyPI, crate, GitHub
 # release, tap bumps, pkg.go.dev nudge). BODY lives OUTSIDE the tree (the clean-tree
 # check tolerates only the human inputs). DRY_RUN=1 stops after bump+vendor+stage —
@@ -1070,9 +1074,15 @@ release: ## [release] Cut the complete calendar release (bump all, tag engine + 
 	 body=$$(mktemp); printf 'release: v%s\n\n' "$$version" > "$$body"; cat "$(BODY)" >> "$$body"; \
 	 git commit -F "$$body"; rm -f "$$body"; \
 	 git tag "v$$version"; \
-	 gp=$$(git tag -l 'bindings/go/v0.1.*' | sed 's|.*/v0\.1\.||' | sort -n | tail -1); gp=$$((gp + 1)); \
-	 git tag "bindings/go/v0.1.$$gp"; \
-	 git push origin HEAD "v$$version" "bindings/go/v0.1.$$gp"
+	 gv=$$(git tag -l 'bindings/go/v0.*' | sed 's|.*/v||' | sort -t. -k2,2n -k3,3n | tail -1); \
+	 gmin=$$(echo "$$gv" | sed -nE 's/^0\.([0-9]+)\.[0-9]+$$/\1/p'); \
+	 gpat=$$(echo "$$gv" | sed -nE 's/^0\.[0-9]+\.([0-9]+)$$/\1/p'); \
+	 if [ -z "$$gmin" ] || [ -z "$$gpat" ]; then \
+	   echo "release: cannot read the Go module version from the tags (last: '$$gv')"; exit 1; \
+	 fi; \
+	 gpat=$$((gpat + 1)); \
+	 git tag "bindings/go/v0.$$gmin.$$gpat"; \
+	 git push origin HEAD "v$$version" "bindings/go/v0.$$gmin.$$gpat"
 
 clean: ## [daily] Remove build artifacts
 	rm -rf $(BUILD) bindings/python/build bindings/python/real/*.so bindings/python/*.egg-info *.egg-info dist

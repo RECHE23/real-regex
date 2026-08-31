@@ -221,13 +221,13 @@ func (r *Regexp) SubexpNames() []string {
 	return names
 }
 
-// FindAllIndex returns the [start,end) byte-offset pairs of every non-overlapping match in
-// text, in order — same shape as regexp.Regexp.FindAllIndex(text, -1) (whole match only,
-// group 0; see FindAllSubmatchIndex for every group). Byte offsets throughout — Go's own
-// regexp package is byte-oriented too, so there is no char/byte translation layer here at
+// FindAllIndex returns the [start,end) byte-offset pairs of every non-overlapping match in b, in
+// order, like regexp.Regexp.FindAllIndex (whole match only, group 0; see FindAllSubmatchIndex for
+// every group). n is the cap: 0 → nil, <0 → all, >0 → at most n. Byte offsets throughout — Go's
+// own regexp package is byte-oriented too, so there is no char/byte translation layer here at
 // all, unlike the Python binding.
-func (r *Regexp) FindAllIndex(text []byte) [][]int {
-	all := r.FindAllSubmatchIndex(text)
+func (r *Regexp) FindAllIndex(b []byte, n int) [][]int {
+	all := r.FindAllSubmatchIndex(b, n)
 	if all == nil {
 		return nil
 	}
@@ -284,22 +284,10 @@ func (r *Regexp) FindString(s string) string {
 	return string(m)
 }
 
-// findAllIndexN is FindAllIndex with regexp's n: 0 → nil, <0 → all, >0 → at most n.
-func (r *Regexp) findAllIndexN(b []byte, n int) [][]int {
-	if n == 0 {
-		return nil
-	}
-	all := r.FindAllIndex(b)
-	if all == nil || n < 0 || n >= len(all) {
-		return all
-	}
-	return all[:n]
-}
-
 // FindAll returns successive matches in b, like regexp.Regexp.FindAll. n is the cap
 // (0 → nil, <0 → all).
 func (r *Regexp) FindAll(b []byte, n int) [][]byte {
-	idx := r.findAllIndexN(b, n)
+	idx := r.FindAllIndex(b, n)
 	if idx == nil {
 		return nil
 	}
@@ -312,7 +300,7 @@ func (r *Regexp) FindAll(b []byte, n int) [][]byte {
 
 // FindAllString is FindAll on a string, like regexp.Regexp.FindAllString.
 func (r *Regexp) FindAllString(s string, n int) []string {
-	idx := r.findAllIndexN([]byte(s), n)
+	idx := r.FindAllIndex([]byte(s), n)
 	if idx == nil {
 		return nil
 	}
@@ -325,7 +313,7 @@ func (r *Regexp) FindAllString(s string, n int) []string {
 
 // FindAllStringIndex is FindAllIndex with regexp's n, on a string.
 func (r *Regexp) FindAllStringIndex(s string, n int) [][]int {
-	return r.findAllIndexN([]byte(s), n)
+	return r.FindAllIndex([]byte(s), n)
 }
 
 // Split slices s at matches of the expression, like regexp.Regexp.Split.
@@ -416,21 +404,26 @@ func (r *Regexp) FindSubmatchIndex(text []byte) []int {
 	return spansToIndices(spans)
 }
 
-// FindAllSubmatchIndex returns every non-overlapping match's full span plus every group's
-// span, in order — the same shape as regexp.Regexp.FindAllSubmatchIndex(text, -1).
+// FindAllSubmatchIndex returns every non-overlapping match's full span plus every group's span,
+// in order, like regexp.Regexp.FindAllSubmatchIndex. n is the cap: 0 → nil, <0 → all, >0 → at
+// most n.
 //
-// This is the ONE enumeration in the package: FindAllIndex, findAllIndexN, every FindAll* and
-// Split derive from it, so the empty-match rule below is applied once and inherited everywhere.
+// This is the ONE enumeration in the package: FindAllIndex, every FindAll* and Split derive from
+// it, so the empty-match rule below is applied once and inherited everywhere — and so does the
+// cap, which therefore counts FILTERED matches, as regexp's does.
 //
 // regexp ignores an empty match that abuts the preceding one ("empty matches abutting a preceding
 // match are ignored", allMatches in regexp.go); the engine, whose model is Python re, reports it.
 // Without the filter `x*` over "axbxc" enumerated [0,0] [1,2] [2,2] [3,4] [4,4] [5,5] where regexp
 // gives [0,0] [1,2] [3,4] [5,5] — and Split, a verbatim port of regexp's, then produced
 // ["a" "" "b" "" "c"] against regexp's ["a" "b" "c"]. The divergence was never in Split.
-func (r *Regexp) FindAllSubmatchIndex(text []byte) [][]int {
-	ctext, freeText := cBytes(text)
+func (r *Regexp) FindAllSubmatchIndex(b []byte, n int) [][]int {
+	if n == 0 {
+		return nil
+	}
+	ctext, freeText := cBytes(b)
 	defer freeText()
-	it := C.real_find_iter(r.re, (*C.char)(ctext), C.size_t(len(text)))
+	it := C.real_find_iter(r.re, (*C.char)(ctext), C.size_t(len(b)))
 	if it == nil {
 		return nil
 	}
@@ -450,6 +443,9 @@ func (r *Regexp) FindAllSubmatchIndex(text []byte) [][]int {
 		m := spansToIndices(spans)
 		if !(m[0] == m[1] && m[0] == prevEnd) { // empty AND abutting the preceding match: drop
 			out = append(out, m)
+			if n > 0 && len(out) == n {
+				break // stop the scan, like regexp's allMatches: the cap is not a post-slice
+			}
 		}
 		// Outside the branch to mirror regexp's shape, but the placement is not load-bearing and a
 		// sabotage moving it inside does not change any answer: a DROPPED match is empty and starts
@@ -460,22 +456,10 @@ func (r *Regexp) FindAllSubmatchIndex(text []byte) [][]int {
 	return out
 }
 
-// findAllSubmatchIndexN is FindAllSubmatchIndex with regexp's n: 0 → nil, <0 → all, >0 → at most n.
-func (r *Regexp) findAllSubmatchIndexN(b []byte, n int) [][]int {
-	if n == 0 {
-		return nil
-	}
-	all := r.FindAllSubmatchIndex(b)
-	if all == nil || n < 0 || n >= len(all) {
-		return all
-	}
-	return all[:n]
-}
-
 // FindAllSubmatch returns successive matches and their groups, like regexp.Regexp.FindAllSubmatch.
 // n is the cap (0 → nil, <0 → all).
 func (r *Regexp) FindAllSubmatch(b []byte, n int) [][][]byte {
-	all := r.findAllSubmatchIndexN(b, n)
+	all := r.FindAllSubmatchIndex(b, n)
 	if all == nil {
 		return nil
 	}
@@ -488,17 +472,14 @@ func (r *Regexp) FindAllSubmatch(b []byte, n int) [][][]byte {
 
 // FindAllStringSubmatchIndex returns every match's group spans as byte offsets into s, like
 // regexp.Regexp.FindAllStringSubmatchIndex. n is the cap (0 → nil, <0 → all); an unset group is
-// the pair -1,-1. It was the one method missing from the FindAll* matrix — the index form on a
-// string — so code that had it would not compile here. Additive: the two signatures that still
-// differ from regexp (FindAllIndex and FindAllSubmatchIndex take no n) are a separate, breaking
-// change and are not touched.
+// the pair -1,-1.
 func (r *Regexp) FindAllStringSubmatchIndex(s string, n int) [][]int {
-	return r.findAllSubmatchIndexN([]byte(s), n)
+	return r.FindAllSubmatchIndex([]byte(s), n)
 }
 
 // FindAllStringSubmatch is FindAllSubmatch on a string, like regexp.Regexp.FindAllStringSubmatch.
 func (r *Regexp) FindAllStringSubmatch(s string, n int) [][]string {
-	all := r.findAllSubmatchIndexN([]byte(s), n)
+	all := r.FindAllSubmatchIndex([]byte(s), n)
 	if all == nil {
 		return nil
 	}
