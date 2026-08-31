@@ -1,13 +1,33 @@
 <!--
 Mirror of docs/COMPATIBILITY.md (the canon, which still feeds /api and is cited
 by name across source/tests/bindings -- renaming it was measured and rejected).
-Edit the original, then re-mirror -- never edit prose here alone, with ONE
-deliberate delta to preserve on every re-mirror: the canon's scorecard section
-renders here as a pointer to the Features matrix instead (the site's canonical,
-CI-probed status render -- a copied table would drift). Cross-refs to the
-divergences page are internal {doc}/{ref}; the one /api-only link
-(real::compat::basic_regex's uses_real_traversal) stays fragment-free because
-Doxygen member anchors are content-hashed and differ across Doxygen versions.
+Edit the original, then re-mirror -- never edit prose here alone.
+
+Mirroring rules, exhaustive. `make check-doc-mirror` applies exactly these and
+compares everything else section by section, so a transformation missing from
+this list is a red, not a silent pass. Sections are matched by their `##`
+heading; every heading must appear on both sides, in order.
+
+- Body prose is a byte-for-byte copy.
+- `[text](@ref page)` -> `{doc}`text <path>`` and `[text](@ref div_x)` ->
+  `{ref}`text <div_x>``: the LINK TEXT is preserved, the target is re-pointed at
+  the site's own path. Applies to every cross-reference, not only the ones into
+  the divergences page.
+- The one cross-reference into a page the site does not publish -- Doxygen member
+  `real::compat::basic_regex::uses_real_traversal` -- becomes a raw <a href> into
+  /api, and stays FRAGMENT-FREE: Doxygen member anchors are content-hashed and
+  differ between Doxygen versions.
+- The canon's H1 anchor is TRANSLATED, not dropped: Doxygen's `{#compat}` suffix becomes a MyST
+  `(compat)=` target on the line before the heading -- the same move the divergences mirror makes
+  for each `\section div_X`.
+- ONE section is substituted rather than copied: the canon's `## Feature
+  scorecard` renders here as `## Feature status`, a pointer to the Features
+  matrix (the site's canonical, CI-probed status render). Its body is
+  deliberately NOT mirrored -- a copied table would drift -- so the guard checks
+  that both headings exist and compares nothing inside.
+
+That last rule is why this file is not simply generated. The heading rename is
+part of it: `scorecard` names a table this page does not carry.
 -->
 
 (compat)=
@@ -95,7 +115,7 @@ taken by every API:
 | --- | --- | --- |
 | `count_matches` (C++ / Rust / Python `Pattern.count_matches`) | **yes** | once-per-walk dispatch; matching-only (no Match vector) |
 | `find_all` / `search` / `match` / `replace` (Python `sub`) | **yes** | same dispatch; `find_all` still pays vector cost at high match counts |
-| `find_iter` (and Python `finditer`) | **no** — general VM | return type is pure-monomorphic (`TrailingLA=false`) so pure `[a-z]+` codegen stays pristine |
+| `find_iter` (and Python `finditer`) | **no** — general VM | return type keeps the trailing-lookaround fast path off so pure `[a-z]+` codegen stays pristine |
 
 Correctness is identical across the table; only throughput differs. Prefer `count_matches` (or
 `search`/`match`/`replace`) when the shape is eligible and raw scan speed matters. Multi-engine benches

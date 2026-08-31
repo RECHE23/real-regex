@@ -486,7 +486,7 @@ check-site-anchors:
 # disagreed about how many module-surface differences exist. Standard library only, milliseconds:
 # it belongs in the cheap section, and --self-test injects the drift it exists to catch so a green
 # here is never an untested green.
-check-doc-mirror: ## [gates] Assert the site divergences page still mirrors docs/divergences.dox
+check-doc-mirror: ## [gates] Assert every site page still agrees with the canon it declares
 	@python3 tools/check_doc_mirror.py --self-test
 
 # WHAT READS docs/BENCHMARKS.md. The Version cell is a stamp (REAL `X.Y.Z` + whether tables
@@ -708,7 +708,7 @@ full-local-gate-impl:
 	@$(MAKE) check-doc-style
 	@echo "── [7c/25] check-site-anchors (site slices resolve in their sources)"
 	@$(MAKE) check-site-anchors
-	@echo "── [7c2/25] check-doc-mirror (the site divergences page still mirrors its canon)"
+	@echo "── [7c2/25] check-doc-mirror (2 mirrored pages vs their canons; 3 distilled ones path-checked)"
 	@$(MAKE) check-doc-mirror
 	@echo "── [7d/25] doc-site-xml + check-doc-voice + check-curated-members"
 	@$(MAKE) doc-site-xml

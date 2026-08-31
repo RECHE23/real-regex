@@ -1,6 +1,13 @@
 <!--
 The Drop-in target page for Go's regexp, on the shared per-target template.
-Canon = bindings/go/README.md (the binding's README, always up-to-date).
+Canon = bindings/go/README.md (the binding's README, always up-to-date) --
+DISTILLED here, not copied: this page shares no prose with it (measured: 0 of the
+canon's 9 blocks appear verbatim, though the page is 92% of its length). Edit the
+canon first when a FACT changes, then restate it here in this page's own words;
+`make check-doc-mirror` verifies the canon still exists and deliberately compares
+no prose, because a distillation is allowed to say less, and differently. The
+header said only "Canon =" until the v0.2.0 arity break, and the ambiguity cost a
+manual comparison nobody could have automated.
 -->
 
 # Drop-in for Go `regexp`
