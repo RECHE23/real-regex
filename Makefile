@@ -71,7 +71,7 @@ include mk/help.mk
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers check-doc-style check-doc-voice check-curated-members check-bench-stamp check-bench-ratios gate-venv check-sse2-floor \
-        check-site-anchors check-workflows check-abi3-floor
+        check-site-anchors check-workflows check-abi3-floor check-doc-mirror
 
 .DEFAULT_GOAL := help
 
@@ -480,6 +480,15 @@ check-curated-members:
 check-site-anchors:
 	@python3 tools/check_site_anchors.py
 
+# docs/site/differences-from-re.md says in its own header that it mirrors docs/divergences.dox and
+# must never be edited alone. That rule had no instrument and was broken four times before anyone
+# noticed -- one of them shipping, so v2026.8.20 published a site page and an /api page that
+# disagreed about how many module-surface differences exist. Standard library only, milliseconds:
+# it belongs in the cheap section, and --self-test injects the drift it exists to catch so a green
+# here is never an untested green.
+check-doc-mirror: ## [gates] Assert the site divergences page still mirrors docs/divergences.dox
+	@python3 tools/check_doc_mirror.py --self-test
+
 # WHAT READS docs/BENCHMARKS.md. The Version cell is a stamp (REAL `X.Y.Z` + whether tables
 # moved). The journal of trains lives in CHANGELOG.md; there is no third file. Scripts parse
 # headings and cells, never the journal. voice-journals.yaml keeps the path: ns/B is the
@@ -699,6 +708,8 @@ full-local-gate-impl:
 	@$(MAKE) check-doc-style
 	@echo "── [7c/25] check-site-anchors (site slices resolve in their sources)"
 	@$(MAKE) check-site-anchors
+	@echo "── [7c2/25] check-doc-mirror (the site divergences page still mirrors its canon)"
+	@$(MAKE) check-doc-mirror
 	@echo "── [7d/25] doc-site-xml + check-doc-voice + check-curated-members"
 	@$(MAKE) doc-site-xml
 	@$(MAKE) check-doc-voice
