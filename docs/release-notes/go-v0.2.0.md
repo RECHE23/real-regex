@@ -1,7 +1,5 @@
 # Go module v0.2.0 — `FindAllIndex` and `FindAllSubmatchIndex` take `n`
 
-**BROUILLON — le tag `bindings/go/v0.2.0` est posé à la main, pas par `make release`.**
-
 This is a **breaking change to the Go binding only**. Nothing in the engine, the Python binding, the
 Rust crate or the C ABI moves with it. It is cut as its own module tag so that the break carries its
 own version number and its own note, rather than arriving inside an engine release about something
