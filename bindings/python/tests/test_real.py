@@ -584,6 +584,30 @@ class TestIntentionalDivergences(unittest.TestCase):
     for each is in the "Differences from Python re" documentation page (docs/divergences.dox).
     """
 
+    def test_inline_flag_set_and_grammar(self):
+        r"""div_inline_flags: a different letter set, and a wider flags grammar.
+
+        Both directions are pinned, and re's side with them: the day CPython adds `U` or drops
+        its combination checks, this test says so rather than the page quietly becoming wrong.
+        """
+        import re as stdlib
+
+        # The SET. `U` is REAL-only (RE2's ungreedy); `u` is re-only and reports unknown flag here.
+        self.assertEqual(real.compile(r"(?U)a+").search("aaa").group(), "a")  # ungreedy: one, not three
+        self.assertEqual(real.compile(r"a+").search("aaa").group(), "aaa")    # the control
+        with self.assertRaises(stdlib.error):
+            stdlib.compile(r"(?U)a+")
+        with self.assertRaises(real.error):
+            real.compile(r"(?iu)a")
+        stdlib.compile(r"(?iu)a")  # valid there, a no-op
+
+        # The GRAMMAR. re validates combinations; REAL parses them, removal applied last.
+        self.assertIsNone(real.compile(r"(?i-i:a)").search("A"))              # i on then off -> off
+        self.assertEqual(real.compile(r"(?i-a)a").search("A").group(), "A")   # i still on
+        for pattern in (r"(?i-i:a)", r"(?i-a)a"):
+            with self.subTest(pattern=pattern), self.assertRaises(stdlib.error):
+                stdlib.compile(pattern)
+
     def test_character_class_non_ascii_members(self):
         # A str-mode class carries specific non-ASCII code points.
         # The broad differential-vs-re lives in test_parity; here we pin the behaviour.

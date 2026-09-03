@@ -324,6 +324,27 @@ in C++. REAL additionally accepts the scalar form \N{U+XXXX} directly (a PCRE2-s
 **extension**; `re` does not), and the braced hex form \u{...} (the ECMAScript / `regex`-crate
 spelling, a synonym of \x{...}; `re` does not).
 
+(div_inline_flags)=
+## Inline flags: a different set, and a wider grammar
+
+REAL's inline flag letters are not `re`'s, in both directions, and the flags *group* accepts a few
+spellings `re` refuses.
+
+**The set.** REAL adds `U` (ungreedy — RE2's spelling, which inverts the default greediness of
+every quantifier in scope) and has no `u` or `L`. So `(?U)a+` is REAL-only, and `(?iu)a` — valid in
+`re`, where `u` is a no-op — reports `unknown flag` here. `re.LOCALE` is excluded by design: this
+engine is Unicode in text mode and raw bytes otherwise, never locale-dependent.
+
+**The grammar.** `re` validates flag *combinations* and rejects several; REAL parses them and
+applies a rule. `(?i-i:a)` turns `i` on and then off — `re` calls that "flag turned on and off",
+REAL applies the removal after the addition, so the group runs case-sensitive. `(?i-a)` turns off
+`a`, which `re` refuses outright ("cannot turn off flags 'a', 'L', 'u'") and REAL accepts as a
+return to the Unicode default.
+
+Both are supersets: a pattern written for `re` never reaches them, so a drop-in cannot break on
+this. A pattern written *here* and moved to `re` can. The rule is stated rather than hidden because
+it is stable — removal is applied last, always — not because it is recommended.
+
 (div_named_scalar)=
 ## \N{U+XXXX} scalar escape (a capability beyond re)
 
