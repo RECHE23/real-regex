@@ -1664,9 +1664,9 @@ namespace real::detail {
           // (?flags:...) / (?-flags:...) / (?flags-flags:...) — a scoped-flags group. Parse the
           // added flags, an optional '-' and the removed flags. An unknown letter is "unknown
           // flag" (fail_if_unknown_flag) before the terminator is asked (require_scoped_flags_colon).
-          const flags added {consume_flag_letters()};
+          const flags added   {consume_flag_letters()};
           fail_if_unknown_flag();
-          flags removed     {flags::none};
+          flags removed       {flags::none};
           bool  after_removal {};
           if (accept('-')) {
             removed = consume_flag_letters();

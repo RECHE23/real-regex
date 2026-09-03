@@ -340,25 +340,25 @@ TEST(flags_terminator_is_named_not_placement)
   // non-terminator is a false sentence — (?i*) at the start of the pattern IS at the start.
   // Four outcomes, pinned so swapping fail_if_unknown_flag past the terminator check
   // (or collapsing the four into placement) goes red.
-  const char* const placement = "global flags not at the start of the expression";
-  const char* const missing_term = "missing -, : or )";
-  const char* const missing_flag = "missing flag";
+  const char* const placement     = "global flags not at the start of the expression";
+  const char* const missing_term  = "missing -, : or )";
+  const char* const missing_flag  = "missing flag";
   const char* const missing_colon = "missing :";
 
   const auto expect_msg_at = [](const char* pattern, const char* needle, std::size_t pos,
                                 const char* not_a, const char* not_b) {
-    try {
-      real::regex re {pattern};
-      EXPECT(false);
-    }
-    catch (const real::regex_error& e) {
-      EXPECT(e.position() == pos);
-      const std::string_view what {e.what()};
-      EXPECT(what.find(needle) != std::string_view::npos);
-      EXPECT(what.find(not_a) == std::string_view::npos);
-      EXPECT(what.find(not_b) == std::string_view::npos);
-    }
-  };
+                               try {
+                                 real::regex re {pattern};
+                                 EXPECT(false);
+                               }
+                               catch (const real::regex_error& e) {
+                                 EXPECT(e.position() == pos);
+                                 const std::string_view what {e.what()};
+                                 EXPECT(what.find(needle) != std::string_view::npos);
+                                 EXPECT(what.find(not_a) == std::string_view::npos);
+                                 EXPECT(what.find(not_b) == std::string_view::npos);
+                               }
+                             };
 
   // Well-formed unscoped, not at the start: placement. Cursor stays on the ')'.
   expect_msg_at("a(?i)b", placement, 4, missing_term, missing_flag);
