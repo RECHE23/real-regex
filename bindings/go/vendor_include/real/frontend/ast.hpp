@@ -1461,16 +1461,47 @@ namespace real::detail {
     /*!
      * \brief Fails with "unknown flag" if the next byte is an ASCII letter that is not a flag.
      *
-     * CPython `_parse_flags` makes this diagnosis, and it takes precedence over the caller's
-     * terminator check (misplaced global / missing flag after `-`). Call only after a flags
-     * group has started (a consumed flag letter, or `-`): the leading-global prefix must
-     * backtrack on `(?P` / `(?#` rather than treat `P` as an unknown flag.
+     * CPython `_parse_flags` makes this diagnosis, and it takes precedence over the terminator
+     * check (\ref require_scoped_flags_colon). Call only after a flags group has started (a
+     * consumed flag letter, or `-`): the leading-global prefix must backtrack on `(?P` / `(?#`
+     * rather than treat `P` as an unknown flag.
      */
     constexpr void fail_if_unknown_flag()
     {
       if (!eof() && is_ascii_letter(peek())) {
         fail("unknown flag");
       }
+    }
+
+    /*!
+     * \brief After a flags run, requires `:` (scoped body) or fails naming the terminator fault.
+     *
+     * re's `_parse_flags` asks this after reading the letters, not before asking whether the
+     * group is global. Four outcomes, not two:
+     *
+     * - `:` — scoped body, consumed, return
+     * - `)` — a well-formed unscoped group (`a(?i)b`); the genuine placement case
+     * - after a `-flags` run, anything else (including EOF) — `missing :`
+     * - otherwise — `missing -, : or )` (`(?i*)`, `(?i7)`, `(?i`)
+     *
+     * Unknown letters are already diagnosed by \ref fail_if_unknown_flag. A leading well-formed
+     * `(?flags)` is consumed by \ref parse_global_flags_prefix, so the `)` path here is never
+     * "at the start": that prefix would have taken it.
+     *
+     * \param[in] after_removal Whether the run just consumed a `-flags` suffix.
+     */
+    constexpr void require_scoped_flags_colon(bool after_removal)
+    {
+      if (accept(':')) {
+        return;
+      }
+      if (!eof() && peek() == ')') {
+        fail("global flags not at the start of the expression");
+      }
+      if (after_removal) {
+        fail("missing :");
+      }
+      fail("missing -, : or )");
     }
 
     /*!
@@ -1526,7 +1557,7 @@ namespace real::detail {
           // '-' right after (? is only ever a flags construct (global or scoped) — see
           // parse_group's dispatch, which fails the same way for the scoped form. No other
           // (?...) construct starts with a dash, so this is a hard failure, not a backtrack.
-          fail("missing flag after '-'");
+          fail("missing flag");
         }
         any_removed = true;
       }
@@ -1625,29 +1656,27 @@ namespace real::detail {
         }
         // `-` opens a flag-removal group `(?-i:…)` — unless a digit follows, which makes it PCRE's
         // relative recursion `(?-1)`. Without the exclusion that spelling is intercepted here and
-        // reported as "missing flag after '-'", naming neither the construct nor the reason.
+        // reported as "missing flag", naming neither the construct nor the reason.
         else if (!eof()
                  && (is_flag_letter(peek())
                      || (peek() == '-'
                          && (pos_ + 1 >= pattern_.size() || !is_ascii_digit(pattern_[pos_ + 1]))))) {
           // (?flags:...) / (?-flags:...) / (?flags-flags:...) — a scoped-flags group. Parse the
           // added flags, an optional '-' and the removed flags. An unknown letter is "unknown
-          // flag" (fail_if_unknown_flag), not the terminator diagnostics below.
+          // flag" (fail_if_unknown_flag) before the terminator is asked (require_scoped_flags_colon).
           const flags added {consume_flag_letters()};
           fail_if_unknown_flag();
           flags removed     {flags::none};
+          bool  after_removal {};
           if (accept('-')) {
             removed = consume_flag_letters();
             fail_if_unknown_flag();
             if (removed == flags::none) {
-              fail("missing flag after '-'");
+              fail("missing flag");
             }
+            after_removal = true;
           }
-          if (!accept(':')) {
-            // An unscoped (?flags) is only legal at the very start of the pattern (consumed by
-            // parse_global_flags_prefix); anything else here is a misplaced global-flags group.
-            fail("global flags not at the start of the expression");
-          }
+          require_scoped_flags_colon(after_removal);
           // Every inline flag (i m s x a U) is honoured per scope: verbose changes tokenization, icase/
           // ascii govern folding and the \w\d\s tables, dotall the dot, multiline the ^/$ anchors,
           // ungreedy the default quantifier greediness — all read from the scope stack. The added set

@@ -526,6 +526,57 @@ class TestUnknownInlineFlagMessage(unittest.TestCase):
                 self.assertIn("unknown flag", real_caught.exception.msg)
 
 
+class TestFlagsTerminatorMessage(unittest.TestCase):
+    r"""After a flags run, a non-terminator is not a misplaced global.
+
+    github.com/RECHE23/real-regex/issues/6 follow-up: (?i*) at the start of the
+    pattern is at the start. re's _parse_flags asks the terminator question after
+    reading the letters. Placement stays for a well-formed unscoped group (a(?i)b).
+    """
+
+    def _msg_pos(self, pattern):
+        with self.assertRaises(real.error) as caught:
+            real.compile(pattern)
+        return caught.exception.msg, caught.exception.pos
+
+    def test_non_terminator_after_added_flags(self):
+        for pattern, pos in (("(?i*)", 3), ("(?i7)", 3), ("(?i@)", 3), ("(?i", 3),
+                             ("a(?i*)b", 4)):
+            with self.subTest(pattern=pattern):
+                msg, got = self._msg_pos(pattern)
+                self.assertEqual(got, pos)
+                self.assertIn("missing -, : or )", msg)
+                self.assertNotIn("global flags not at the start", msg)
+
+    def test_missing_flag_after_dash(self):
+        for pattern, pos in (("(?i-*)a", 4), ("(?i-)", 4), ("(?i-7)a", 4)):
+            with self.subTest(pattern=pattern):
+                msg, got = self._msg_pos(pattern)
+                self.assertEqual(got, pos)
+                self.assertIn("missing flag", msg)
+                self.assertNotIn("missing -, : or )", msg)
+                self.assertNotIn("global flags not at the start", msg)
+
+    def test_missing_colon_after_removal_letter(self):
+        for pattern, pos in (("(?i-s*)", 5), ("(?i-s", 5)):
+            with self.subTest(pattern=pattern):
+                msg, got = self._msg_pos(pattern)
+                self.assertEqual(got, pos)
+                self.assertIn("missing :", msg)
+                self.assertNotIn("missing -, : or )", msg)
+                self.assertNotIn("global flags not at the start", msg)
+
+    def test_well_formed_unscoped_stays_placement(self):
+        msg, pos = self._msg_pos("a(?i)b")
+        self.assertEqual(pos, 4)
+        self.assertIn("global flags not at the start of the expression", msg)
+        self.assertNotIn("missing -, : or )", msg)
+
+    def test_leading_well_formed_still_compiles(self):
+        self.assertIsNotNone(real.compile("(?i)a").fullmatch("A"))
+        self.assertIsNotNone(real.compile("(?i-s)A.B").fullmatch("axb"))
+
+
 class TestIntentionalDivergences(unittest.TestCase):
     r"""Every intentional divergence from Python re, pinned as a real-only assertion.
 

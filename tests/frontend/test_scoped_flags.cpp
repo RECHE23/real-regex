@@ -135,7 +135,7 @@ TEST(global_flags_prefix_dash_with_no_flag_is_an_error)
 {
   // Mirrors a_dash_with_no_flag_is_still_an_error, but for the unscoped global-prefix parse
   // (parse_global_flags_prefix), which has its own accept('-')/loop — same failure message.
-  const char* const msg = "missing flag after '-'";
+  const char* const msg = "missing flag";
   {
     bool threw = false;
     try {
@@ -270,7 +270,7 @@ TEST(unknown_flag_letter_is_diagnosed_as_unknown_flag)
 {
   // Once a flags group has started (a valid letter or '-'), an unknown letter is
   // "unknown flag" at that letter — not "global flags not at the start" and not
-  // "missing flag after '-'". Oracle: CPython _parse_flags; unknown flag takes
+  // "missing flag". Oracle: CPython _parse_flags; unknown flag takes
   // precedence over placement (a(?iz)b has both faults). The list is the unknown-flag
   // cases only: REAL's set is not re's (it adds U, it has no u/L).
   const char* const unknown_flag_cases[] = {
@@ -322,7 +322,8 @@ TEST(unknown_flag_letter_is_diagnosed_as_unknown_flag)
     EXPECT(false);
   }
   catch (const real::regex_error& e) {
-    EXPECT(std::string_view(e.what()).find("missing flag after '-'") != std::string_view::npos);
+    EXPECT(std::string_view(e.what()).find("missing flag") != std::string_view::npos);
+    EXPECT(std::string_view(e.what()).find("missing -, : or )") == std::string_view::npos);
   }
 
   // The flag set itself is unchanged: U still compiles; a well-formed scoped group still does.
@@ -330,4 +331,55 @@ TEST(unknown_flag_letter_is_diagnosed_as_unknown_flag)
   EXPECT(real::regex("(?i:a)").fullmatch("A").matched());
   // Leading-global prefix must still backtrack on (?P rather than call P an unknown flag.
   EXPECT(real::regex("(?P<n>a)").fullmatch("a").matched());
+}
+
+TEST(flags_terminator_is_named_not_placement)
+{
+  // github.com/RECHE23/real-regex/issues/6 follow-up: after a flags run, re's _parse_flags
+  // asks whether the next byte is a terminator. Recycling the placement message for a
+  // non-terminator is a false sentence — (?i*) at the start of the pattern IS at the start.
+  // Four outcomes, pinned so swapping fail_if_unknown_flag past the terminator check
+  // (or collapsing the four into placement) goes red.
+  const char* const placement = "global flags not at the start of the expression";
+  const char* const missing_term = "missing -, : or )";
+  const char* const missing_flag = "missing flag";
+  const char* const missing_colon = "missing :";
+
+  const auto expect_msg_at = [](const char* pattern, const char* needle, std::size_t pos,
+                                const char* not_a, const char* not_b) {
+    try {
+      real::regex re {pattern};
+      EXPECT(false);
+    }
+    catch (const real::regex_error& e) {
+      EXPECT(e.position() == pos);
+      const std::string_view what {e.what()};
+      EXPECT(what.find(needle) != std::string_view::npos);
+      EXPECT(what.find(not_a) == std::string_view::npos);
+      EXPECT(what.find(not_b) == std::string_view::npos);
+    }
+  };
+
+  // Well-formed unscoped, not at the start: placement. Cursor stays on the ')'.
+  expect_msg_at("a(?i)b", placement, 4, missing_term, missing_flag);
+
+  // Non-terminator after added flags — including at the start of the pattern.
+  expect_msg_at("(?i*)", missing_term, 3, placement, missing_flag);
+  expect_msg_at("(?i7)", missing_term, 3, placement, missing_flag);
+  expect_msg_at("(?i@)", missing_term, 3, placement, missing_flag);
+  expect_msg_at("(?i", missing_term, 3, placement, missing_flag);
+  expect_msg_at("a(?i*)b", missing_term, 4, placement, missing_flag);
+
+  // Dash with no flag letter: missing flag, not missing -, : or ).
+  expect_msg_at("(?i-*)a", missing_flag, 4, missing_term, placement);
+  expect_msg_at("(?i-)", missing_flag, 4, missing_term, placement);
+
+  // After a removal letter, a non-colon (RE2 still accepts ')' as global — that's placement).
+  expect_msg_at("(?i-s*)", missing_colon, 5, placement, missing_term);
+  expect_msg_at("(?i-s", missing_colon, 5, placement, missing_term);
+  expect_msg_at("x(?i-s)y", placement, 6, missing_colon, missing_term);
+
+  // Leading well-formed (?i) / RE2 (?i-s) still compile: the prefix took them.
+  EXPECT(real::regex("(?i)a").fullmatch("A").matched());
+  EXPECT(real::regex("(?i-s)A.B").fullmatch("axb"));
 }
