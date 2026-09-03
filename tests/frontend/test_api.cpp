@@ -173,6 +173,36 @@ TEST(excluded_constructs_are_named_not_called_unknown)
   EXPECT(cause("(?Z)").find("unknown extension") != std::string::npos);
 }
 
+// The wording and the POSITION are re's, and both were wrong: "unknown extension at position 2"
+// said where without saying what, and pointed at the character that ended the construct rather
+// than at the `?` that opened it. This is the third report in the same family from the same
+// reader, so the whole surface is pinned here rather than the two cases sent.
+TEST(unknown_extension_names_the_construct)
+{
+  const auto cause = [](const char* pattern) {
+                       try {
+                         const real::regex rx(pattern);
+                       }
+                       catch (const real::regex_error& ex) {
+                         return std::string(ex.what());
+                       }
+                       return std::string {};
+                     };
+
+  // `regex_error at N: ` prefixes what(), so N is the reported position.
+  EXPECT(cause("(?z)a") == "regex_error at 1: unknown extension ?z");
+  EXPECT(cause("(?)a") == "regex_error at 1: unknown extension ?)");
+  EXPECT(cause("(?P)a") == "regex_error at 1: unknown extension ?P)");   // consumed P, then `)`
+  EXPECT(cause("(?P:a)") == "regex_error at 1: unknown extension ?P:");
+  EXPECT(cause("(?\\)a") == "regex_error at 1: unknown extension ?\\)"); // an escape is two chars
+  EXPECT(cause("(?\\:a)") == "regex_error at 1: unknown extension ?\\:");
+  // Nested: the `?` reported is the inner one, not the pattern's first.
+  EXPECT(cause("a(b(?q)c)") == "regex_error at 4: unknown extension ?q");
+  // End of pattern has no character to name, and re says so at the read offset, not at the `?`.
+  EXPECT(cause("(?") == "regex_error at 2: unexpected end of pattern");
+  EXPECT(cause("(?P") == "regex_error at 3: unexpected end of pattern");
+}
+
 TEST(regex_error_reports_position)
 {
   try {

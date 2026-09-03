@@ -455,6 +455,42 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Fails an unrecognised `(?…` extension the way `re` does: naming it.
+     *
+     * `unknown extension at position 2` said WHERE without saying WHAT, which is the complaint
+     * this family has drawn twice. `re` reports `unknown extension ?z at position 1` — it quotes
+     * the construct and points at the `?`, not at the character that ended it. The quoted text is
+     * everything consumed since the `?` plus the character that failed, so `(?P)` names `?P)`
+     * where `(?z)` names `?z`. Nothing here is new knowledge: the parser already had both, and
+     * threw them away.
+     *
+     * At end of pattern there is no character to quote and `re` says so instead, at the read
+     * offset rather than at the `?`.
+     *
+     * \param[in] question_pos Offset of the `?` in `(?` — `open_pos + 1` at every call site.
+     * \throws real::regex_error always.
+     */
+    template <typename = void>
+    [[noreturn]] constexpr void fail_unknown_extension(std::size_t question_pos) const
+    {
+      if (eof()) {
+        fail("unexpected end of pattern");
+      }
+      // A backslash quotes the character it escapes with it: `(?\)` names `?\)`, not `?\`. An
+      // escape is two characters to the reader as it is to the parser, and stopping at the
+      // backslash would name a construct nobody wrote.
+      std::size_t last {pos_};
+      if (pattern_[last] == '\\' && last + 1 < pattern_.size()) {
+        ++last;
+      }
+      std::string message {"unknown extension ?"};
+      for (std::size_t i = question_pos + 1; i <= last; ++i) {
+        message += pattern_[i];
+      }
+      throw regex_error(message, question_pos);
+    }
+
+    /*!
      * \brief Returns `true` if the read offset is at or past the end of the pattern.
      * \return Whether the pattern is exhausted.
      */
@@ -1408,11 +1444,13 @@ namespace real::detail {
      * case — so they are named and tagged `unsupported`, which is what \ref error_kind already
      * promised for this family. What is genuinely unrecognised keeps "unknown extension".
      *
-     * Read at the character after `(?`, without consuming: the position the error reports stays the
-     * one every other diagnostic in this function reports.
+     * Read at the character after `(?`, without consuming, so the deliberate exclusions report at
+     * the offset every other diagnostic in this function reports; what is merely unrecognised goes
+     * to \ref fail_unknown_extension, which reports at the `?` because that is where `re` points.
+     * \param[in] question_pos Offset of the `?` in `(?`, forwarded to \ref fail_unknown_extension.
      * \throws real::regex_error always.
      */
-    [[noreturn]] constexpr void fail_extension() const
+    [[noreturn]] constexpr void fail_extension(std::size_t question_pos) const
     {
       if (!eof()) {
         const char lead {peek()};
@@ -1431,7 +1469,7 @@ namespace real::detail {
           fail_unsupported("subroutine calls are not supported");
         }
       }
-      fail("unknown extension");
+      fail_unknown_extension(question_pos);
     }
 
     /*!
@@ -1635,7 +1673,7 @@ namespace real::detail {
             fail_unsupported("subroutine calls are not supported");
           }
           else {
-            fail("unknown extension");
+            fail_unknown_extension(open_pos + 1);
           }
         }
         else if (accept('<')) {
@@ -1685,7 +1723,7 @@ namespace real::detail {
           scoped_flags = true; // group stays non-capturing (-1)
         }
         else {
-          fail_extension();
+          fail_extension(open_pos + 1);
         }
       }
       else {
