@@ -584,6 +584,37 @@ class TestIntentionalDivergences(unittest.TestCase):
     for each is in the "Differences from Python re" documentation page (docs/divergences.dox).
     """
 
+    def test_patterns_that_compile_on_one_side_only(self):
+        r"""div_compiles: three validity divergences, and their DIRECTION.
+
+        The direction is what the assertion has to carry: a pattern REAL accepts and re refuses is
+        a portability trap; one re accepts and REAL refuses breaks a drop-in. Both sides are
+        asserted so a change on either is a red rather than a page quietly becoming wrong.
+        """
+        import re as stdlib
+
+        # EXTENSION: `{n}` with nothing to repeat is literal here, an error in re.
+        self.assertEqual(real.search(r"{2}a", "{2}a").span(), (0, 4))
+        with self.assertRaises(stdlib.error):
+            stdlib.compile(r"{2}a")
+        # ...but an ILL-FORMED `{…}` is literal in BOTH, which is the rule the comment claimed
+        # covered everything. These three are the cases it was right about.
+        for pattern in (r"a{", r"a{2,3x", r"a{,}"):
+            with self.subTest(pattern=pattern):
+                self.assertIsNotNone(real.compile(pattern))
+                self.assertIsNotNone(stdlib.compile(pattern))
+
+        # EXTENSION: the .NET named-group spelling.
+        self.assertEqual(real.search(r"(?<n>a)", "a").group("n"), "a")
+        with self.assertRaises(stdlib.error):
+            stdlib.compile(r"(?<n>a)")
+
+        # LIMITATION: a counted repeat above the 1000 cap. re has no ceiling.
+        self.assertIsNotNone(real.compile(r"a{1000}"))          # the boundary, still accepted
+        with self.assertRaises(real.error):
+            real.compile(r"a{1001}")
+        self.assertIsNotNone(stdlib.compile(r"a{1001}"))        # and re takes it
+
     def test_inline_flag_set_and_grammar(self):
         r"""div_inline_flags: a different letter set, and a wider flags grammar.
 

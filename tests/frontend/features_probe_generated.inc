@@ -132,7 +132,21 @@ TEST(features_probe_02_01_anchors_lookaround_extensions_variable_width_lookbehin
   EXPECT_EQ(re.pattern(), std::string_view(R"RRX((?<=a|bb)x)RRX"));
 }
 
-TEST(features_probe_02_02_anchors_lookaround_extensions_word_edge_anchors)
+TEST(features_probe_02_02_anchors_lookaround_extensions_n_with_nothing_to_repeat_is_literal)
+{
+  // Anchors & lookaround extensions / `{n}` with nothing to repeat is literal — status: extension (must compile)
+  const real::regex re(R"RRX({2}a)RRX");
+  EXPECT_EQ(re.pattern(), std::string_view(R"RRX({2}a)RRX"));
+}
+
+TEST(features_probe_02_03_anchors_lookaround_extensions_named_group_net_spelling_name)
+{
+  // Anchors & lookaround extensions / Named group, .NET spelling `(?<name>…)` — status: extension (must compile)
+  const real::regex re(R"RRX((?<n>a))RRX");
+  EXPECT_EQ(re.pattern(), std::string_view(R"RRX((?<n>a))RRX"));
+}
+
+TEST(features_probe_02_04_anchors_lookaround_extensions_word_edge_anchors)
 {
   // Anchors & lookaround extensions / Word-edge anchors `\< \>` — status: extension (must compile)
   const real::regex re(R"RRX(\<word\>)RRX");
@@ -203,4 +217,4 @@ TEST(features_probe_05_04_excluded_by_design_callouts_c_c1)
   EXPECT_THROWS(real::regex(R"RRX(a(?C1)b)RRX"), real::regex_error);
 }
 
-// 22 compile-assertions, 5 throw-assertions, 1 skipped (planned / pattern: null).
+// 24 compile-assertions, 5 throw-assertions, 1 skipped (planned / pattern: null).

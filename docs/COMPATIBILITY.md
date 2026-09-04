@@ -54,6 +54,8 @@ raise a clear error rather than sitting on a roadmap.
 | `\u{…}` braced hex escape | **extension** | ECMAScript / regex-crate spelling; synonym of `\x{…}`; `re` rejects the braces ([more](@ref div_u_braced)) | 2026.8 |
 | `\z` end-of-text anchor | **supported** | exact alias of `\Z` (Python 3.14's meaning) | 2026.7 |
 | Variable-width lookbehind `(?<=a|bb)` | **extension** | bounded, so still linear; `re`/PCRE reject it as non-fixed-width ([more](@ref div_lookbehind)) | — |
+| `{n}` with nothing to repeat is literal | **extension** | `{2}a` matches the text; `re` raises `nothing to repeat`. An ill-formed `{…}` is literal in both ([more](@ref div_compiles)) | — |
+| Named group, .NET spelling `(?<name>…)` | **extension** | synonym of `(?P<name>…)`; `re` reports `unknown extension ?<n` ([more](@ref div_compiles)) | — |
 | Word-edge anchors `\< \>` | **extension** | word-start / word-end; `re` has no such escape ([more](@ref div_icase)) | — |
 | Octal escapes in a class `[\1]` `[\12]` | **supported** | every `\digit` is octal in a class body (no backreferences there) | 2026.7 |
 | POSIX `[[:alpha:]]` classes | **supported** | exact `re`-parity: read as a literal class (matches `re`'s FutureWarning-era behaviour), not true POSIX semantics | — |

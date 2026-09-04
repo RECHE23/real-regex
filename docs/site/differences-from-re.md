@@ -324,6 +324,34 @@ in C++. REAL additionally accepts the scalar form \N{U+XXXX} directly (a PCRE2-s
 **extension**; `re` does not), and the braced hex form \u{...} (the ECMAScript / `regex`-crate
 spelling, a synonym of \x{...}; `re` does not).
 
+(div_compiles)=
+## Patterns that compile on one side only
+
+Everything else on this page is about what a pattern *means*. Three cases are about whether it
+compiles at all — the kind a drop-in reader has to know first, because the failure is not a wrong
+answer but a refusal.
+
+**They do not run in the same direction, and the direction decides the risk.** A pattern REAL
+accepts and `re` refuses is safe for a drop-in — code written for `re` never reaches it — but it is
+a portability trap the other way. A pattern `re` accepts and REAL refuses is the one that breaks the
+promise: existing code stops compiling.
+
+**`{n}` with nothing to repeat is literal here, an error in `re`** (an extension). `{2}a` matches
+the four characters `{2}a`; `re` raises `nothing to repeat`. An *ill-formed* `{…}` — `a{`, `a{2,3x`,
+`a{,}` — is literal text in both, which is ECMAScript Annex B and what `re` does too; the divergence
+is only the well-formed-but-unanchored case, where `re` checks for a preceding atom and REAL does
+not.
+
+**`(?<name>…)` is accepted here, rejected by `re`** (an extension). The .NET spelling is a synonym
+of `(?P<name>…)`; `re` reports `unknown extension ?<n`. Both spellings name the same group, so a
+pattern using the .NET form does not port back.
+
+**A counted repeat above 1000 is refused here, accepted by `re`** (a limitation). `a{1001}` raises
+`repetition count too large`; `re` has no ceiling. This one is a design bound, not an oversight: a
+bounded `{n}` is expanded into the program, so the cap is what keeps compile time and program size
+proportionate to the pattern rather than to its counts. It is `real::detail::max_repeat_count` in
+`config.hpp`, and raising it costs compilation, not matching.
+
 (div_inline_flags)=
 ## Inline flags: a different set, and a wider grammar
 

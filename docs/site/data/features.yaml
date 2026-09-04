@@ -144,6 +144,16 @@ categories:
         note: "bounded, so still linear; `re`/PCRE reject it as non-fixed-width"
         link: "differences-from-re#div_lookbehind"
         pattern: "(?<=a|bb)x"
+      - construct: "`{n}` with nothing to repeat is literal"
+        status: extension
+        note: "`{2}a` matches the text; `re` raises `nothing to repeat`. An ill-formed `{…}` is literal in both"
+        link: "differences-from-re#div_compiles"
+        pattern: "{2}a"
+      - construct: "Named group, .NET spelling `(?<name>…)`"
+        status: extension
+        note: "synonym of `(?P<name>…)`; `re` reports `unknown extension ?<n`"
+        link: "differences-from-re#div_compiles"
+        pattern: "(?<n>a)"
       - construct: "Word-edge anchors `\\< \\>`"
         status: extension
         note: "word-start / word-end; `re` has no such escape"
