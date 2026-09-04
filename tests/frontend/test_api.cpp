@@ -235,6 +235,34 @@ TEST(incomplete_escape_quotes_what_it_read)
   EXPECT(cause("a\\U0010FFFF").empty());
 }
 
+// `bad character in group name` named the rule and neither the name nor which of four distinct
+// faults occurred. re splits them, quotes the name it read, and reports at the name's first byte.
+// Second of the three message families from the outside audit.
+TEST(group_name_diagnostics_quote_the_name)
+{
+  const auto cause = [](const char* pattern) {
+                       try {
+                         const real::regex rx(pattern);
+                       }
+                       catch (const real::regex_error& ex) {
+                         return std::string(ex.what());
+                       }
+                       return std::string {};
+                     };
+
+  EXPECT(cause("(?P<>a)") == "regex_error at 4: missing group name");
+  EXPECT(cause("(?P<1x>a)") == "regex_error at 4: bad character in group name '1x'");
+  EXPECT(cause("(?P<a b>c)") == "regex_error at 4: bad character in group name 'a b'");
+  EXPECT(cause("(?P<x") == "regex_error at 4: missing >, unterminated name");
+  EXPECT(cause("(?P<x>a)(?P<x>b)")
+         == "regex_error at 12: redefinition of group name 'x' as group 2; was group 1");
+  // The name is quoted whole, so a multi-byte code point survives it.
+  EXPECT(cause("(?P<²>a)") == "regex_error at 4: bad character in group name '²'");
+  // And a valid name still compiles, ASCII or not.
+  EXPECT(cause("(?P<x>a)").empty());
+  EXPECT(cause("(?P<é>a)").empty());
+}
+
 TEST(regex_error_reports_position)
 {
   try {

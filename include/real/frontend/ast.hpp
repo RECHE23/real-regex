@@ -1852,6 +1852,70 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Fails a group name the way `re` does: quoting the name it read, at the name's start.
+     *
+     * `bad character in group name` names the rule; `re` names the reading —
+     * `bad character in group name 'a b' at position 4`. It reads to the closing `>` and quotes
+     * everything between, so the reader sees the whole name rather than being told one of its
+     * characters was wrong. `re` also splits three cases this did not: an EMPTY name is
+     * `missing group name`, an unterminated one is `missing >, unterminated name`, and only a
+     * name with a bad character carries the quote.
+     *
+     * Scans forward from \p begin to find the `>`; the read offset is left alone, since the
+     * caller is about to throw.
+     * \param[in] begin Offset of the name's first byte, which is where `re` reports.
+     * \throws real::regex_error always.
+     */
+    template <typename = void>
+    [[noreturn]] constexpr void fail_group_name(std::size_t begin) const
+    {
+      std::size_t close {begin};
+      while (close < pattern_.size() && pattern_[close] != '>') {
+        ++close;
+      }
+      if (close >= pattern_.size()) {
+        throw regex_error("missing >, unterminated name", begin);
+      }
+      if (close == begin) {
+        throw regex_error("missing group name", begin);
+      }
+      std::string message {"bad character in group name '"};
+      for (std::size_t i = begin; i < close; ++i) {
+        message += pattern_[i];
+      }
+      message += '\'';
+      throw regex_error(message, begin);
+    }
+
+    /*!
+     * \brief Fails a duplicate group name the way `re` does, naming it and both group numbers.
+     *
+     * `redefinition of group name` said neither which name nor which groups;
+     * `re` reports `redefinition of group name 'x' as group 2; was group 1`.
+     * \param[in] begin    Offset of the offending name's first byte.
+     * \param[in] end      One past its last byte.
+     * \param[in] group    The capture number being defined now.
+     * \param[in] previous The capture number that already carries this name.
+     * \throws real::regex_error always.
+     */
+    template <typename = void>
+    [[noreturn]] constexpr void fail_duplicate_group_name(std::size_t  begin,
+                                                          std::size_t  end,
+                                                          std::int32_t group,
+                                                          std::int32_t previous) const
+    {
+      std::string message {"redefinition of group name '"};
+      for (std::size_t i = begin; i < end; ++i) {
+        message += pattern_[i];
+      }
+      message += "' as group ";
+      message += std::to_string(group);
+      message += "; was group ";
+      message += std::to_string(previous);
+      throw regex_error(message, begin);
+    }
+
+    /*!
      * \brief Parses a group name up to `>` and records it.
      *
      * Text mode: a Python identifier (`XID_Start ∪ {_}`, then `XID_Continue`), so `(?P<é>a)` is
@@ -1873,7 +1937,7 @@ namespace real::detail {
       // global-read count flat -- the same precedent as `\p{...}`, `\C` and the class walk.
       if (has_flag(current_flags(), flags::bytes)) {
         if (eof() || !is_name_start(peek())) {
-          fail("bad character in group name");
+          fail_group_name(begin);
         }
         while (!eof() && (is_ascii_alnum(peek()) || peek() == '_')) {
           ++pos_;
@@ -1884,28 +1948,32 @@ namespace real::detail {
         while (!eof() && peek() != '>') {
           const decoded_codepoint decoded {decode_codepoint_strict(pattern_, pos_)};
           if (!decoded.valid) {
-            fail("bad character in group name");
+            fail_group_name(begin);
           }
           const char32_t cp {static_cast<char32_t>(decoded.cp)};
           const bool     ok {first ? is_name_start_cp(cp) : is_binprop_cp(binprop::XID_Continue, cp)};
           if (!ok) {
-            fail("bad character in group name");
+            fail_group_name(begin);
           }
           pos_ += decoded.length;
           first = false;
         }
         if (first) {
-          fail("bad character in group name");
+          fail_group_name(begin);
         }
       }
       const std::size_t end {pos_};
-      expect('>', "bad character in group name");
+      if (eof() || peek() != '>') {
+        fail_group_name(begin);
+      }
+      ++pos_; // consume '>'
+
       for (const named_group& existing : out.names) {
         const std::string_view name    {pattern_.substr(begin, end - begin)};
         const auto             e_begin {static_cast<std::size_t>(existing.begin)};
         const auto             e_end   {static_cast<std::size_t>(existing.end)};
         if (pattern_.substr(e_begin, e_end - e_begin) == name) {
-          fail("redefinition of group name");
+          fail_duplicate_group_name(begin, end, group, existing.group);
         }
       }
       out.names.push_back({.group = group,
