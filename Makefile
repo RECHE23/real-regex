@@ -649,6 +649,12 @@ gate-test: ## [gates] Calibrated gate for a tests/-only change (test + sanitize 
 	@$(MAKE) coverage-check
 	@echo "gate-test: PASS (test + sanitize + coverage-check)"
 
+# It also snapshots `git status --porcelain` and compares it at the end: a gate whose tree moved
+# under it has not judged anything. Early steps read one tree and late steps another, so its red can
+# be a half-finished edit and its green can have skipped the very change it was run for -- both
+# happened in one session, and the second time a compile error in a test file made the gate red for
+# a reason the committed tree did not have. The lock stops a second GATE; nothing stops an editor.
+#
 # The lock records its holder's pid, because the trap below covers EXIT/INT/TERM and not SIGKILL:
 # a gate killed by a harness timeout -- which happened three times in one session -- left the
 # directory behind and every later gate refused until someone read the message and ran rmdir by
@@ -678,8 +684,18 @@ full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate 
 	   fi; \
 	 fi; \
 	 echo $$$$ > "$$lock/pid"; \
+	 git status --porcelain > "$$lock/tree" 2>/dev/null || true; \
 	 trap 'rm -rf "$$lock" 2>/dev/null || true' EXIT INT TERM; \
-	 $(MAKE) full-local-gate-impl
+	 $(MAKE) full-local-gate-impl; rc=$$?; \
+	 if ! git status --porcelain 2>/dev/null | diff -q - "$$lock/tree" >/dev/null 2>&1; then \
+	   echo ""; \
+	   echo "full-local-gate: THE TREE CHANGED WHILE THIS GATE RAN -- the verdict above is void."; \
+	   echo "  Early steps read one tree and late steps another, so a red may be someone else's"; \
+	   echo "  half-finished edit and a green may have skipped what you wanted checked. The lock"; \
+	   echo "  stops a second GATE; nothing stops an editor. Re-run on a still tree."; \
+	   exit 1; \
+	 fi; \
+	 exit $$rc
 
 full-local-gate-impl:
 	@echo "full-local-gate: start (fail-fast — cheap first, first red stops the train)"
