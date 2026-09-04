@@ -178,31 +178,54 @@ TEST(region_start_is_a_seed_position_even_when_it_is_a_continuation_byte)
   }
 }
 
-TEST(interior_continuation_bytes_are_still_not_seed_positions)
+TEST(interior_continuation_byte_is_not_a_seed_position)
 {
-  // The other half of the same rule, asserted so the exemption above cannot quietly widen into
-  // "seed everywhere": INSIDE the text a continuation byte is still not a start position, which is
-  // what keeps zero-width iteration codepoint-aligned rather than byte-aligned.
+  // The other half of the region-start exemption, so it cannot quietly widen into "seed anywhere".
   //
-  // "a" + 0x80 has three byte offsets (0, 1, 2) and must yield exactly two empty matches, at 0 and
-  // at 2 -- byte 1 carries no codepoint of its own. A byte-aligned engine reports three here.
-  const regex                    star {"x*"}; // named: an iterator range over a temporary regex dangles
-  const std::string              text {cat({"a", bytes({0x80})})};
-  std::vector<std::size_t>       starts;
-  for (const auto& m : star.find_iter(text)) {
+  // The rule seed_viable enforces is about the byte AT the position, not about whether the position
+  // is interior to a sequence: after "a", offset 1 is a genuine codepoint boundary, yet the lone
+  // 0x80 sitting there still makes it a non-start. A lookbehind is what reaches that decision --
+  // `(?<=a)` is satisfied at offset 1 and nowhere else in this subject, so the whole search hinges
+  // on whether offset 1 may be seeded.
+  //
+  // Iteration cannot answer this question: find_iter's own no-progress rule already forbids an empty
+  // match up to the next character boundary, so an empty-match walk stays aligned whatever
+  // seed_viable decides, and a walk-based assertion here passes with the seed check disabled.
+  const std::string after_a {cat({"a", bytes({0x80})})};
+  EXPECT(!searches("(?<=a)", after_a));
+  EXPECT(!searches("(?<=a)x*", after_a));
+  EXPECT(!searches("(?<=a)", cat({"a", bytes({0x80}), "b"})));
+
+  // A lead byte in the same slot IS a start position: what is refused is the continuation bit
+  // pattern, not "the byte after an ASCII character".
+  EXPECT(searches("(?<=a)", cat({"a", bytes({0xFF})})));
+  EXPECT(searches("(?<=a)", "ab"));
+}
+
+TEST(empty_match_iteration_stays_codepoint_aligned_over_malformed_bytes)
+{
+  // find_iter's no-progress rule, not seed_viable: after an empty match it forbids another until
+  // the next character boundary, which is what keeps a zero-width walk codepoint-aligned rather
+  // than byte-aligned. Asserted separately because the two mechanisms are independent -- disabling
+  // either one leaves the other still producing an aligned walk here.
+  // Both the regex and the subject are named: an iterator range outlives neither a temporary
+  // pattern nor a temporary text, and the deleted overloads say so.
+  const regex              star {"x*"};
+  const std::string        after_a {cat({"a", bytes({0x80})})};
+  std::vector<std::size_t> starts;
+  for (const auto& m : star.find_iter(after_a)) {
     starts.push_back(m.start(0));
   }
-  EXPECT(starts.size() == 2U);
+  EXPECT(starts.size() == 2U); // 0 and 2; a byte-aligned engine reports three
   EXPECT(starts[0] == 0U);
   EXPECT(starts[1] == 2U);
 
-  // And a two-byte malformed run collapses to its two ENDS, never its middle.
   const std::string        pair {bytes({0x80, 0x80})};
   std::vector<std::size_t> pair_starts;
   for (const auto& m : star.find_iter(pair)) {
     pair_starts.push_back(m.start(0));
   }
-  EXPECT(pair_starts.size() == 2U);
+  EXPECT(pair_starts.size() == 2U); // the run collapses to its two ENDS, never its middle
   EXPECT(pair_starts[0] == 0U);
   EXPECT(pair_starts[1] == 2U);
 }
