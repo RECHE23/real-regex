@@ -649,17 +649,28 @@ gate-test: ## [gates] Calibrated gate for a tests/-only change (test + sanitize 
 	@$(MAKE) coverage-check
 	@echo "gate-test: PASS (test + sanitize + coverage-check)"
 
-# It also snapshots `git status --porcelain` and compares it at the end: a gate whose tree moved
-# under it has not judged anything. Early steps read one tree and late steps another, so its red can
-# be a half-finished edit and its green can have skipped the very change it was run for -- both
-# happened in one session, and the second time a compile error in a test file made the gate red for
-# a reason the committed tree did not have. The lock stops a second GATE; nothing stops an editor.
+# A lock serialises gates: two in one tree share build/ and contend for the machine, and step 12
+# (matrix-gate) is a TIMING bench whose red cells mean "slower than the pinned figure" -- under
+# contention it reads red for a reason the code has nothing to do with, and a false red there is
+# indistinguishable from a true one.
 #
 # The lock records its holder's pid, because the trap below covers EXIT/INT/TERM and not SIGKILL:
 # a gate killed by a harness timeout -- which happened three times in one session -- left the
 # directory behind and every later gate refused until someone read the message and ran rmdir by
 # hand. A lock whose holder is gone is now reclaimed automatically, and one whose holder is ALIVE
 # is still respected: `kill -0` distinguishes them, so this cannot break a running gate.
+#
+# The lock also snapshots HEAD *and* `git status --porcelain`, and compares both at the end: a gate
+# whose tree moved under it has not judged anything. Early steps read one tree and late steps
+# another, so its red can be a half-finished edit and its green can have skipped the very change it
+# was run for -- both happened in one session, and the second time a compile error in a test file
+# made the gate red for a reason the committed tree did not have. The lock stops a second GATE;
+# nothing stops an editor.
+#
+# HEAD belongs in that snapshot and porcelain alone is not enough, because the likeliest thing to
+# happen during a 30-minute gate is a COMMIT: staging turns a dirty tree clean, so porcelain reads
+# identical at both ends while every step after the commit compiled different sources. That is the
+# exact failure this check exists to catch, and it was blind to it.
 full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate of record; GATE_STRICT=1 refuses to pass with any step skipped)
 	@mkdir -p $(BUILD); lock="$(BUILD)/.gate.lock"; \
 	 if ! mkdir "$$lock" 2>/dev/null; then \
@@ -684,10 +695,10 @@ full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate 
 	   fi; \
 	 fi; \
 	 echo $$$$ > "$$lock/pid"; \
-	 git status --porcelain > "$$lock/tree" 2>/dev/null || true; \
+	 { git rev-parse HEAD; git status --porcelain; } > "$$lock/tree" 2>/dev/null || true; \
 	 trap 'rm -rf "$$lock" 2>/dev/null || true' EXIT INT TERM; \
 	 $(MAKE) full-local-gate-impl; rc=$$?; \
-	 if ! git status --porcelain 2>/dev/null | diff -q - "$$lock/tree" >/dev/null 2>&1; then \
+	 if ! { git rev-parse HEAD; git status --porcelain; } 2>/dev/null | diff -q - "$$lock/tree" >/dev/null 2>&1; then \
 	   echo ""; \
 	   echo "full-local-gate: THE TREE CHANGED WHILE THIS GATE RAN -- the verdict above is void."; \
 	   echo "  Early steps read one tree and late steps another, so a red may be someone else's"; \
