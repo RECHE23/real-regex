@@ -1377,6 +1377,33 @@ struct repl_segment {
 
 void set_error(const char* message) { PyErr_SetString(error_type, message); }
 
+// A template error the way `re` raises it: the message quotes what was read, and the exception
+// carries the TEMPLATE as its `pattern` with the offset inside it -- so `e.pos`, `e.lineno` and
+// `e.colno` mean something, which `PyErr_SetString` alone can never provide. re does exactly this:
+// `re.sub(r"(a)", r"\x", "a")` raises with msg='bad escape \x', pattern='\x', pos=0.
+//
+// The pattern-side errors already had this channel (set_regex_error builds real.error(msg, pattern,
+// pos) from the engine's own offset); the template parser had eight sites and none of them could
+// report a position at all, because `set_error` takes only a message. That is the whole gap: not a
+// missing wording, a missing channel.
+void set_template_error(const std::string& message, std::string_view repl, std::size_t pos)
+{
+  PyObject* tmpl = PyUnicode_DecodeUTF8(repl.data(), static_cast<Py_ssize_t>(repl.size()), "replace");
+  if (tmpl == nullptr) {
+    PyErr_Clear();  // an error message must never mask the error it reports
+    PyErr_SetString(error_type, message.c_str());
+    return;
+  }
+  PyObject* exc = PyObject_CallFunction(error_type, "sOn", message.c_str(), tmpl,
+                                        static_cast<Py_ssize_t>(pos));
+  Py_DECREF(tmpl);
+  if (exc == nullptr) {
+    return;
+  }
+  PyErr_SetObject(error_type, exc);
+  Py_DECREF(exc);
+}
+
 // The escape hatch, named where the user meets the wall -- and where the wall has no door, the
 // absence named just as plainly rather than left to be discovered by trying. Same three parts as
 // the Rust binding's hint -- what it is, where the contract lives, how to proceed -- so the two
@@ -1472,7 +1499,7 @@ int parse_template(PatternObject* pat, std::string_view repl,
         }
         ++i;
         if (i >= repl.size()) {
-            set_error("bad escape (end of pattern)");
+            set_template_error("bad escape (end of pattern)", repl, i - 1);
             return -1;
         }
         const char next_ch = repl[i];
@@ -1494,7 +1521,13 @@ int parse_template(PatternObject* pat, std::string_view repl,
             const real::detail::digit_escape_result decoded {real::detail::decode_digit_escape(repl, i)};
             i += decoded.length;
             if (decoded.kind == real::detail::digit_escape_kind::octal_overflow) {
-                set_error("octal escape value outside of range 0-0o377");
+                // `i` is already past the digits, so the sequence began at i - length and its
+                // backslash one byte before that -- which is where re reports.
+                const std::size_t seq {i - decoded.length};
+                set_template_error("octal escape value \\"
+                                       + std::string(repl.substr(seq, decoded.length))
+                                       + " outside of range 0-0o377",
+                                   repl, seq - 1);
                 return -1;
             }
             if (decoded.kind == real::detail::digit_escape_kind::octal) {
@@ -1503,7 +1536,8 @@ int parse_template(PatternObject* pat, std::string_view repl,
             }
             const Py_ssize_t group {static_cast<Py_ssize_t>(decoded.value)};  // decimal group reference
             if (static_cast<std::size_t>(group) > pat->rx->group_count()) {
-                set_error("invalid group reference");
+                set_template_error("invalid group reference " + std::to_string(group),
+                                   repl, i - decoded.length);
                 return -1;
             }
             flush_group(group);
@@ -1512,7 +1546,7 @@ int parse_template(PatternObject* pat, std::string_view repl,
         if (next_ch == 'g') {
             ++i;
             if (i >= repl.size() || repl[i] != '<') {
-                set_error("missing < in \\g");
+                set_template_error("missing <", repl, i);
                 return -1;
             }
             const std::size_t name_begin = ++i;
@@ -1520,7 +1554,7 @@ int parse_template(PatternObject* pat, std::string_view repl,
                 ++i;
             }
             if (i == repl.size() || i == name_begin) {
-                set_error("missing group name in \\g<>");
+                set_template_error("missing group name", repl, i);
                 return -1;
             }
             const std::string_view name = repl.substr(name_begin, i - name_begin);
@@ -1530,7 +1564,16 @@ int parse_template(PatternObject* pat, std::string_view repl,
                 group = 0;
                 for (const char digit : name) {
                     if (digit < '0' || digit > '9') {
-                        set_error("bad character in group name");
+                        // `i` sits on the character that failed; re quotes to the closing `>`, so scan for it
+                        // rather than stopping at the cursor -- and never past the template's end.
+                        std::size_t close {name_begin};
+                        while (close < repl.size() && repl[close] != '>') {
+                            ++close;
+                        }
+                        set_template_error("bad character in group name '"
+                                               + std::string(repl.substr(name_begin, close - name_begin))
+                                               + "'",
+                                           repl, name_begin);
                         return -1;
                     }
                     group = (group * 10) + (digit - '0');
@@ -1554,7 +1597,8 @@ int parse_template(PatternObject* pat, std::string_view repl,
                 group = static_cast<Py_ssize_t>(named_group_index);
             }
             if (static_cast<std::size_t>(group) > pat->rx->group_count()) {
-                set_error("invalid group reference");
+                set_template_error("invalid group reference " + std::to_string(group),
+                                   repl, name_begin);
                 return -1;
             }
             flush_group(group);
@@ -1574,7 +1618,8 @@ int parse_template(PatternObject* pat, std::string_view repl,
                 // Like Python: unknown letter escapes are errors, escaped
                 // punctuation keeps the backslash.
                 if ((next_ch >= 'A' && next_ch <= 'Z') || (next_ch >= 'a' && next_ch <= 'z')) {
-                    set_error("bad escape in replacement");
+                    // `i` was advanced past next_ch before the switch, so the backslash is two bytes back.
+                    set_template_error(std::string("bad escape \\") + next_ch, repl, i - 2);
                     return -1;
                 }
                 literal.push_back('\\');

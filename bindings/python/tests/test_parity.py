@@ -551,6 +551,33 @@ class TestParity(unittest.TestCase):
         with self.assertRaises(real.error):
             sm.expand(r"\99")                       # out-of-range group, like sub
 
+    def test_template_error_message_and_fields_match_re(self):
+        r"""A template error's WORDING, POSITION and exception FIELDS, all against re.
+
+        `set_error` took only a message, so every template diagnostic named its rule and could not
+        report a position at all -- e.pos, e.lineno and e.colno were unavailable, not merely wrong.
+        re carries the TEMPLATE as `pattern` with the offset inside it, so the fields are asserted
+        too: a message that matches while `pos` is missing would pass a text comparison and still
+        leave a caller unable to point at the fault.
+        """
+        templates = [r"\x", r"\q", r"\401", r"\9", r"\g", r"\g<", r"\g<1x>", r"\g<99>"]
+        for template in templates:
+            with self.subTest(template=template):
+                def fault(module):
+                    try:
+                        module.sub(r"(a)", template, "a")
+                        return ("ok",)
+                    except IndexError as exc:          # the one case re raises outside re.error
+                        return ("IndexError", str(exc))
+                    except re.error as exc:
+                        return ("error", exc.msg, exc.pattern, exc.pos, exc.lineno, exc.colno)
+                self.assertEqual(fault(real), fault(re))
+        # Valid templates still expand identically.
+        for template in (r"\\", r"\g<1>", r"\1"):
+            with self.subTest(template=template):
+                self.assertEqual(real.sub(r"(a)", template, "a"), re.sub(r"(a)", template, "a"))
+        self.assertEqual(len(templates), 8)  # denominator
+
     def test_template_error_is_caught_by_the_same_except_as_re(self):
         r"""What a template error RAISES, judged by the handler that catches it.
 
