@@ -150,6 +150,63 @@ TEST(malformed_word_boundary_treats_it_as_non_word)
   }
 }
 
+TEST(region_start_is_a_seed_position_even_when_it_is_a_continuation_byte)
+{
+  // Zero-width matches are codepoint-aligned: the seed check refuses a position whose byte is a
+  // UTF-8 continuation byte, because a match cannot begin INSIDE a multi-byte sequence. That is a
+  // claim about the byte BEFORE the position, and at the region's start there is no such byte --
+  // whatever sits there is the region's first byte, not the tail of a sequence the region holds.
+  //
+  // Refusing it anyway cost the subject its position 0 entirely, so `^` -- the start of the
+  // subject by definition -- matched NOTHING on any text beginning with 0x80..0xBF. `$` never
+  // showed the fault, because the seed check short-circuits at pos == size() and so never asked
+  // about the end. Reachable from every byte-oriented caller (C ABI, Go, Rust); not from Python,
+  // whose str offsets are codepoint indices and whose bytes mode does not decode at all.
+  for (const auto& mc : malformed_catalog()) {
+    const auto anchored = regex("^").search(mc.seq);
+    EXPECT(anchored.matched());
+    EXPECT(anchored.start(0) == 0U);
+    EXPECT(anchored.end(0) == 0U);
+
+    const auto empty = regex("").search(mc.seq);
+    EXPECT(empty.matched());
+    EXPECT(empty.start(0) == 0U); // leftmost, so the first position must be the one reported
+
+    const auto at_end = regex("$").search(mc.seq); // the control: this half always worked
+    EXPECT(at_end.matched());
+    EXPECT(at_end.start(0) == mc.seq.size());
+  }
+}
+
+TEST(interior_continuation_bytes_are_still_not_seed_positions)
+{
+  // The other half of the same rule, asserted so the exemption above cannot quietly widen into
+  // "seed everywhere": INSIDE the text a continuation byte is still not a start position, which is
+  // what keeps zero-width iteration codepoint-aligned rather than byte-aligned.
+  //
+  // "a" + 0x80 has three byte offsets (0, 1, 2) and must yield exactly two empty matches, at 0 and
+  // at 2 -- byte 1 carries no codepoint of its own. A byte-aligned engine reports three here.
+  const regex                    star {"x*"}; // named: an iterator range over a temporary regex dangles
+  const std::string              text {cat({"a", bytes({0x80})})};
+  std::vector<std::size_t>       starts;
+  for (const auto& m : star.find_iter(text)) {
+    starts.push_back(m.start(0));
+  }
+  EXPECT(starts.size() == 2U);
+  EXPECT(starts[0] == 0U);
+  EXPECT(starts[1] == 2U);
+
+  // And a two-byte malformed run collapses to its two ENDS, never its middle.
+  const std::string        pair {bytes({0x80, 0x80})};
+  std::vector<std::size_t> pair_starts;
+  for (const auto& m : star.find_iter(pair)) {
+    pair_starts.push_back(m.start(0));
+  }
+  EXPECT(pair_starts.size() == 2U);
+  EXPECT(pair_starts[0] == 0U);
+  EXPECT(pair_starts[1] == 2U);
+}
+
 TEST(malformed_never_matches_property_classes)
 {
   // \p{...} across every syntax form this arc landed: bare General_Category, sc=/scx= Script(_
