@@ -54,6 +54,10 @@ include $(ROOT)/mk/help.mk
 # own implicit variable -- a command-line override (`make fuzz-re2 CXX=g++-14`, or the
 # CI form `CXX=clang++`) already propagates through MAKEFLAGS to this sub-make with
 # zero forwarding code required, the same way FUZZ_TIME below does.
+# Artifacts (crash-*, slow-unit-*, timeout-*) go under $(FUZZ_DIR), which is inside the ignored
+# build tree. libFuzzer writes them to the CWD by default -- the repo root -- where `git add -A`
+# picks them up: that happened, and a crash unit plus a slow unit landed in a commit before being
+# noticed. fuzz-compat-known already passed the flag; the two timed targets did not.
 CXXSTD   := -std=c++20
 INCLUDES := -Iinclude
 
@@ -99,6 +103,7 @@ fuzz: ## libFuzzer robustness fuzzing (Clang; FUZZ_TIME=secs)
 	@	 cd $(ROOT) && clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
 	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_target.cpp -o $(FUZZ_DIR)/fuzz_target || { $(call FUZZ_EXPLAIN,fuzz); }; \
 	 $(FUZZ_DIR)/fuzz_target -max_total_time=$(FUZZ_TIME) -timeout=10 \
+	    -artifact_prefix=$(FUZZ_DIR)/ \
 	    $(FUZZ_DIR)/corpus fuzz/corpus
 
 # Differential fuzzer: real::compat vs std::regex (search/replace/iterate/token/match-flags). This
@@ -108,6 +113,7 @@ fuzz-compat: ## Differential fuzz: real::compat vs std::regex (Clang; FUZZ_TIME=
 	@	 cd $(ROOT) && clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
 	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_compat.cpp -o $(FUZZ_DIR)/fuzz_compat || { $(call FUZZ_EXPLAIN,fuzz-compat); }; \
 	 $(FUZZ_DIR)/fuzz_compat -max_total_time=$(FUZZ_TIME) -timeout=10 \
+	    -artifact_prefix=$(FUZZ_DIR)/ \
 	    $(FUZZ_DIR)/corpus-compat fuzz/corpus
 
 # A filed divergence, kept reproducible without blinding anything. A crash unit left in fuzz/corpus
