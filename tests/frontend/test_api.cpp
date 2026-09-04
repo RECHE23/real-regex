@@ -203,6 +203,38 @@ TEST(unknown_extension_names_the_construct)
   EXPECT(cause("(?P") == "regex_error at 3: unexpected end of pattern");
 }
 
+// A truncated escape used to state the RULE (`invalid \x escape: expected two hex digits`) where
+// re states the READING: `incomplete escape \x1 at position 1`, quoting the characters consumed and
+// pointing at the backslash rather than at the cursor. Same defect as `unknown extension`, one
+// surface lower, and the third message family an outside audit reported.
+TEST(incomplete_escape_quotes_what_it_read)
+{
+  const auto cause = [](const char* pattern) {
+                       try {
+                         const real::regex rx(pattern);
+                       }
+                       catch (const real::regex_error& ex) {
+                         return std::string(ex.what());
+                       }
+                       return std::string {};
+                     };
+
+  EXPECT(cause("a\\x") == "regex_error at 1: incomplete escape \\x");
+  EXPECT(cause("a\\x1") == "regex_error at 1: incomplete escape \\x1");
+  EXPECT(cause("a\\u123") == "regex_error at 1: incomplete escape \\u123");
+  EXPECT(cause("a\\U1234567") == "regex_error at 1: incomplete escape \\U1234567");
+  // Inside a class the class-escape parser has its own backslash, and reports at ITS offset.
+  EXPECT(cause("[a\\x]") == "regex_error at 2: incomplete escape \\x");
+  EXPECT(cause("[a\\u12]") == "regex_error at 2: incomplete escape \\u12");
+  // A COMPLETE escape whose value is out of range is a different fault and keeps its own message:
+  // re calls it `bad escape`, which says less. Naming the cause is the same trade as
+  // `callouts are not supported` against re's `unknown extension`.
+  EXPECT(cause("a\\U00110000").find("code point out of range") != std::string::npos);
+  // And a complete, in-range one still compiles.
+  EXPECT(cause("a\\xAB").empty());
+  EXPECT(cause("a\\U0010FFFF").empty());
+}
+
 TEST(regex_error_reports_position)
 {
   try {

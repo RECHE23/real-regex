@@ -1919,11 +1919,13 @@ namespace real::detail {
      * Handles `\n` `\t` `\r` `\f` `\v` `\a` `\0`, `\xHH` and
      * escaped ASCII punctuation.
      *
+     * \param[in] backslash Offset of the `\` that opened the escape, forwarded so a truncated
+     *                       `\xH` reports at the sequence's start the way `re` does.
      * \return The byte value, or -1 when the escape is not a single byte
      *         (the caller then handles `\d` `\w` `\s`, etc.).
      * \throws real::regex_error on a malformed `\x` escape.
      */
-    constexpr std::int32_t parse_byte_escape()
+    constexpr std::int32_t parse_byte_escape(std::size_t backslash)
     {
       const char ch {peek()};
       if (ch >= '0' && ch <= '9') {
@@ -1955,8 +1957,8 @@ namespace real::detail {
         case 'x':
           {
             ++pos_;
-            const std::int32_t high_nibble {hex_digit()};
-            const std::int32_t low_nibble  {hex_digit()};
+            const std::int32_t high_nibble {hex_digit(backslash)};
+            const std::int32_t low_nibble  {hex_digit(backslash)};
             return (high_nibble * 16) + low_nibble; // arithmetic, not signed bitwise (MISRA)
           }
         default:
@@ -1993,14 +1995,42 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Fails a truncated escape the way `re` does: quoting what was read, at the backslash.
+     *
+     * `invalid \x escape: expected two hex digits` states the RULE; `re` states the READING —
+     * `incomplete escape \x1 at position 1` — so a reader sees which characters were consumed and
+     * where the sequence began rather than being told what a correct one looks like. CPython builds
+     * it as `"incomplete escape %s" % escape` and rewinds by `len(escape)`, which lands on the
+     * backslash; both halves are copied here.
+     *
+     * Every caller already knows its own backslash offset, so nothing new is computed: the quoted
+     * text is `pattern_[backslash_pos .. pos_)`, which is exactly what the scan consumed before
+     * running out of digits.
+     *
+     * \param[in] backslash_pos Offset of the `\` that opened the escape.
+     * \throws real::regex_error always.
+     */
+    template <typename = void>
+    [[noreturn]] constexpr void fail_incomplete_escape(std::size_t backslash_pos) const
+    {
+      std::string message {"incomplete escape "};
+      for (std::size_t i = backslash_pos; i < pos_ && i < pattern_.size(); ++i) {
+        message += pattern_[i];
+      }
+      throw regex_error(message, backslash_pos);
+    }
+
+    /*!
      * \brief Consumes one hexadecimal digit.
+     * \param[in] backslash_pos Offset of the `\` that opened the escape, so a missing digit is
+     *                           reported as a truncated escape at the sequence's start.
      * \return Its value in `[0, 15]`.
      * \throws real::regex_error if the next character is not a hex digit.
      */
-    constexpr std::int32_t hex_digit()
+    constexpr std::int32_t hex_digit(std::size_t backslash_pos)
     {
       if (eof()) {
-        fail("invalid \\x escape: expected two hex digits");
+        fail_incomplete_escape(backslash_pos);
       }
       const char ch {peek()};
       ++pos_;
@@ -2014,7 +2044,7 @@ namespace real::detail {
         return ch - 'A' + 10;
       }
       --pos_;
-      fail("invalid \\x escape: expected two hex digits");
+      fail_incomplete_escape(backslash_pos);
     }
 
     /*!
@@ -2029,9 +2059,11 @@ namespace real::detail {
      * already consumed; this reads the hex digits, or `{` then the shared braced reader.
      *
      * \param[in] capital True for `\U` (8 digits), false for `\u` (4 digits or `\u{…}`).
+     * \param[in] backslash Offset of the `\` that opened the escape, for a truncated-escape report.
      * \return The code point in `[0, 0x10FFFF]` (never a surrogate).
      */
-    constexpr std::int32_t parse_unicode_codepoint(bool capital)
+    constexpr std::int32_t parse_unicode_codepoint(bool        capital,
+                                                   std::size_t backslash)
     {
       if (bytes_) {
         fail("\\u and \\U escapes are not allowed in bytes patterns");
@@ -2057,8 +2089,7 @@ namespace real::detail {
           }
         }
         if (digit < 0) {
-          fail(capital ? "invalid \\U escape: expected 8 hex digits"
-                       : "invalid \\u escape: expected 4 hex digits");
+          fail_incomplete_escape(backslash);
         }
         value = (value * 16) + digit;
         ++pos_;
@@ -2274,6 +2305,9 @@ namespace real::detail {
      */
     constexpr std::int32_t parse_escape(ast& out)
     {
+      // Kept because a truncated escape reports at the BACKSLASH, the way `re` does -- every
+      // diagnostic below that quotes what it read needs the sequence's start, not the cursor.
+      const std::size_t backslash {pos_};
       ++pos_; // consume the backslash
       if (eof()) {
         fail("dangling backslash");
@@ -2341,10 +2375,10 @@ namespace real::detail {
           return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::word_end});
         case 'u':
           ++pos_;
-          return emit_literal_codepoint(out, parse_unicode_codepoint(false));
+          return emit_literal_codepoint(out, parse_unicode_codepoint(false, backslash));
         case 'U':
           ++pos_;
-          return emit_literal_codepoint(out, parse_unicode_codepoint(true));
+          return emit_literal_codepoint(out, parse_unicode_codepoint(true, backslash));
         case 'N':
           ++pos_;
           return emit_literal_codepoint(out, parse_named_codepoint());
@@ -2377,7 +2411,7 @@ namespace real::detail {
               ++pos_; // consume 'x'
               return emit_literal_codepoint(out, parse_braced_hex_escape());
             }
-            const std::int32_t byte_value {parse_byte_escape()};
+            const std::int32_t byte_value {parse_byte_escape(backslash)};
             if (byte_value < 0) {
               fail_unsupported("unsupported escape sequence");
             }
@@ -2426,6 +2460,9 @@ namespace real::detail {
         ++pos_;
         return static_cast<std::uint8_t>(ch);
       }
+      // Same reason as parse_escape: a truncated escape reports at the backslash, not at the
+      // cursor, so its offset has to outlive the consumption.
+      const std::size_t backslash {pos_};
       ++pos_; // consume the backslash
       if (eof()) {
         fail("dangling backslash");
@@ -2462,7 +2499,7 @@ namespace real::detail {
             ++pos_;
             // A non-ASCII code point is now a valid class member (code-point mode); `parse_unicode_codepoint`
             // already rejects `\u`/`\U` in bytes mode, so a class in bytes mode still has ASCII-only members.
-            return parse_unicode_codepoint(capital);
+            return parse_unicode_codepoint(capital, backslash);
           }
         case 'N':
           ++pos_;
@@ -2502,7 +2539,7 @@ namespace real::detail {
               ++pos_; // consume 'x'
               return parse_braced_hex_escape();
             }
-            const std::int32_t byte_value {parse_byte_escape()};
+            const std::int32_t byte_value {parse_byte_escape(backslash)};
             if (byte_value < 0) {
               fail_unsupported("unsupported escape sequence");
             }
