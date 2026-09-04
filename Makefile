@@ -649,18 +649,36 @@ gate-test: ## [gates] Calibrated gate for a tests/-only change (test + sanitize 
 	@$(MAKE) coverage-check
 	@echo "gate-test: PASS (test + sanitize + coverage-check)"
 
+# The lock records its holder's pid, because the trap below covers EXIT/INT/TERM and not SIGKILL:
+# a gate killed by a harness timeout -- which happened three times in one session -- left the
+# directory behind and every later gate refused until someone read the message and ran rmdir by
+# hand. A lock whose holder is gone is now reclaimed automatically, and one whose holder is ALIVE
+# is still respected: `kill -0` distinguishes them, so this cannot break a running gate.
 full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate of record; GATE_STRICT=1 refuses to pass with any step skipped)
 	@mkdir -p $(BUILD); lock="$(BUILD)/.gate.lock"; \
 	 if ! mkdir "$$lock" 2>/dev/null; then \
-	   echo "full-local-gate: REFUSING -- another gate already holds $$lock."; \
-	   echo "  Two gates in one tree share build/ and contend for the machine, and step 12 is"; \
-	   echo "  matrix-gate: a TIMING bench whose red cells mean 'slower than the pinned figure'."; \
-	   echo "  Under contention it reads red for a reason the code has nothing to do with, and a"; \
-	   echo "  false red there is indistinguishable from a true one. Wait for the other run, or"; \
-	   echo "  'rmdir $$lock' if it is stale."; \
-	   exit 1; \
+	   holder="$$(cat "$$lock/pid" 2>/dev/null || true)"; \
+	   if [ -n "$$holder" ] && ! kill -0 "$$holder" 2>/dev/null; then \
+	     echo "full-local-gate: reclaiming $$lock -- its holder (pid $$holder) is gone."; \
+	     rm -rf "$$lock"; mkdir "$$lock" || exit 1; \
+	   else \
+	     if [ -n "$$holder" ]; then \
+	       echo "full-local-gate: REFUSING -- another gate already holds $$lock (pid $$holder, alive)."; \
+	     else \
+	       echo "full-local-gate: REFUSING -- another gate already holds $$lock (no pid recorded:"; \
+	       echo "  either a gate that started before this check existed, or one caught between"; \
+	       echo "  mkdir and writing its pid). Not reclaimed: reclaiming needs PROOF the holder is"; \
+	       echo "  gone, and an absent pid is not proof. Wait, or rmdir it once you know."; \
+	     fi; \
+	     echo "  Two gates in one tree share build/ and contend for the machine, and step 12 is"; \
+	     echo "  matrix-gate: a TIMING bench whose red cells mean 'slower than the pinned figure'."; \
+	     echo "  Under contention it reads red for a reason the code has nothing to do with, and a"; \
+	     echo "  false red there is indistinguishable from a true one. Wait for that run."; \
+	     exit 1; \
+	   fi; \
 	 fi; \
-	 trap 'rmdir "$$lock" 2>/dev/null || true' EXIT INT TERM; \
+	 echo $$$$ > "$$lock/pid"; \
+	 trap 'rm -rf "$$lock" 2>/dev/null || true' EXIT INT TERM; \
 	 $(MAKE) full-local-gate-impl
 
 full-local-gate-impl:
