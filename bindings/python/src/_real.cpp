@@ -932,6 +932,17 @@ PyObject* run_region(PyObject* self, PyObject* args, PyObject* kwargs, real::det
     endpos = std::clamp(endpos, Py_ssize_t {0}, char_len);
     const std::size_t pos_byte = char_to_byte(sv, pos);
     const std::size_t end_byte = char_to_byte(sv, endpos);
+    // pos and endpos are clamped INDEPENDENTLY above, so `pos > endpos` survives clamping and an
+    // inverted region reaches here. It cannot hold a match -- not even an empty one -- and `re`
+    // agrees: search("abc", 1, 0) on `x*` is None, while pos == endpos still yields the zero-width
+    // match. Returning early is not an optimisation: `pos_byte` would otherwise be handed to the VM
+    // past the end of the truncated region, and a substr deep inside throws std::out_of_range,
+    // which surfaced through this binding as `real.error: string_view::substr` -- a standard-library
+    // exception escaping a search on input re accepts. It also fixed fullmatch reporting (0, 0)
+    // there, since an empty region full-matched a nullable pattern.
+    if (pos > endpos) {
+        Py_RETURN_NONE;
+    }
     const std::string_view region = sv.view().substr(0, end_byte);  // endpos truncation (a view)
 
     // Per-call VM scratch (no shared Pattern state) → reentrant; the scan may run with the

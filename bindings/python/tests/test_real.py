@@ -632,6 +632,42 @@ class TestIntentionalDivergences(unittest.TestCase):
             "unless it is deliberate and documented, in which case lower the ceiling with the "
             "reason".format(divergences, self._FLAG_BRANCH_DIVERGENCE_CEILING))
 
+    def test_inverted_region_never_matches(self):
+        r"""pos past endpos: no match, and no leaked standard-library exception.
+
+        Found by sweeping 11550 region calls against re. The engine handed `pos` to the VM past the
+        end of the endpos-truncated subject, and a substr deep inside threw std::out_of_range --
+        surfacing as `real.error: string_view::substr`, a standard-library message escaping a
+        search on input re accepts. fullmatch additionally reported (0, 0), an empty region
+        full-matching a nullable pattern. Guarded in both the C++ run() and the binding's
+        run_region, which reach the VM by different paths.
+
+        ONE DEGENERATE CASE IS DOCUMENTED RATHER THAN COPIED. On the EMPTY pattern with an inverted
+        region, re's `match` returns (pos, pos) while its own `search` and `fullmatch` return None,
+        and `x*` returns None from all three -- an inconsistency inside re, not a rule. Aligning
+        would mean reproducing an implementation accident its documentation does not promise, the
+        same call as the `sub`-callable-returning-None case. re's side is asserted too, so the day
+        CPython makes it consistent this test says so.
+        """
+        import re as stdlib
+
+        for pattern in (r"x*", r"a", r"\w+", r"^a", r"$"):
+            for pos, end in ((1, 0), (2, 0), (3, 1)):
+                with self.subTest(pattern=pattern, pos=pos, endpos=end):
+                    for name in ("search", "match", "fullmatch"):
+                        self.assertIsNone(getattr(real.compile(pattern), name)("abc", pos, end))
+                        self.assertIsNone(getattr(stdlib.compile(pattern), name)("abc", pos, end))
+        # pos == endpos is NOT inverted: a zero-width match belongs there, in both.
+        for pos in (0, 1, 3):
+            with self.subTest(pos=pos, endpos=pos):
+                self.assertEqual(real.compile(r"x*").search("abc", pos, pos).span(), (pos, pos))
+                self.assertEqual(stdlib.compile(r"x*").search("abc", pos, pos).span(), (pos, pos))
+        # The documented exception, with re's own inconsistency pinned beside it.
+        self.assertIsNone(real.compile("").match("abc", 1, 0))
+        self.assertEqual(stdlib.compile("").match("abc", 1, 0).span(), (1, 1))
+        self.assertIsNone(stdlib.compile("").search("abc", 1, 0))
+        self.assertIsNone(stdlib.compile("").fullmatch("abc", 1, 0))
+
     def test_patterns_that_compile_on_one_side_only(self):
         r"""div_compiles: three validity divergences, and their DIRECTION.
 

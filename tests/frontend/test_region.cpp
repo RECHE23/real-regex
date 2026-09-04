@@ -144,3 +144,36 @@ TEST(region_find_iter_anchors_in_region)
   EXPECT_EQ(got[0], "bar"sv);
   EXPECT_EQ(got[1], "baz"sv);
 }
+
+// An INVERTED region (pos past endpos) used to hand `pos` to the VM past the end of the truncated
+// subject, and a substr deep inside threw std::out_of_range -- which escaped the engine as
+// `string_view::substr`, a standard-library exception surfacing from a search. Python `re` returns
+// no match for the same call, and pos == endpos still yields the zero-width match, so the fix is a
+// guard and not a rejection.
+TEST(inverted_region_yields_no_match_and_throws_nothing)
+{
+  const real::regex      nullable("x*");
+  const real::regex      literal("a");
+  const std::string_view text                          {"abc"};
+
+  const std::pair<std::size_t, std::size_t> inverted[] {{1, 0}, {2, 0}, {3, 1}};
+  for (const auto& [pos, end] : inverted) {
+    try {
+      EXPECT(!nullable.search(text, pos, end));
+      EXPECT(!literal.search(text, pos, end));
+      EXPECT(!nullable.match(text, pos, end));
+      EXPECT(!nullable.fullmatch(text, pos, end));
+    }
+    catch (const std::exception&) {
+      EXPECT(false);  // nothing may escape: that was the defect
+    }
+  }
+
+  // pos == endpos is NOT inverted -- the zero-width match belongs there.
+  for (const std::size_t at : {std::size_t {0}, std::size_t {1}, std::size_t {3}}) {
+    const auto m = nullable.search(text, at, at);
+    EXPECT(m);
+    EXPECT_EQ(m.start(), at);
+    EXPECT_EQ(m.end(), at);
+  }
+}

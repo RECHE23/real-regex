@@ -2143,6 +2143,15 @@ namespace real {
                                             match_semantics         sem = match_semantics::first) const
     {
       const std::size_t              end {endpos < text.size() ? endpos : text.size()};
+      // An INVERTED region (pos past endpos) cannot contain a match, not even an empty one, and
+      // `re` agrees: `re.compile("x*").search("abc", 1, 0)` is None while pos == endpos still
+      // yields the zero-width match at that offset. Returning early is not an optimisation --
+      // without it `pos` is handed to the VM past the end of the truncated subject and a `substr`
+      // deep inside throws std::out_of_range, which escaped the engine as `string_view::substr`:
+      // a standard-library exception surfacing from a search, on input `re` accepts.
+      if (pos > end) {
+        return result_type {};
+      }
       // FRESH PER SEARCH, and reusing it across searches was measured and refused rather than
       // overlooked. Constructing plus destroying this state is a per-call constant: a fifth to a quarter
       // of a SHORT search, and negligible once captures dominate. No single member accounts for it --
