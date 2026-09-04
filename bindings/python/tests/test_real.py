@@ -584,6 +584,54 @@ class TestIntentionalDivergences(unittest.TestCase):
     for each is in the "Differences from Python re" documentation page (docs/divergences.dox).
     """
 
+    # The inline-flag branch was swept exhaustively against re -- every character after a valid
+    # flag, global and scoped, with and without `-` -- and 53 of 486 patterns still differ. Each
+    # is deliberate (REAL's own flag set, its wider grammar, and the constructs it NAMES where re
+    # says "unknown extension"), so the count is a CEILING, not an expectation: it may fall when a
+    # divergence is closed and must never rise, which is what a new accidental one would do.
+    #
+    # A ceiling rather than equality for a second reason: re itself can move. A CPython release
+    # that accepts `U` or drops a combination check lowers this number, and a test asserting
+    # equality would go red on an improvement.
+    #
+    # WHAT IT CANNOT SEE, measured: it counts divergences, it does not classify them. Rewording a
+    # message that was ALREADY divergent -- `callouts are not supported` into anything else --
+    # leaves the count untouched, and the first sabotage written for this test did exactly that and
+    # stayed green. The wording of each named construct is pinned separately, in the C++ suite and
+    # in test_unsupported_names_the_escape_hatch; this guards the SIZE of the divergent set, which
+    # is the thing an accidental change grows.
+    _FLAG_BRANCH_DIVERGENCE_CEILING = 53
+
+    def test_flag_branch_divergences_do_not_grow(self):
+        r"""Sweep the whole flags branch against re and cap the count of differences."""
+        import re as stdlib
+        import string
+
+        chars = sorted(set(string.ascii_letters + string.digits + "*+?.^$|()[]{}\\-:# \t"))
+        templates = ["(?i{c})a", "(?i{c}:a)", "(?i-{c})a", "(?i-{c}:a)", "(?{c})a", "(?{c}:a)"]
+        divergences = 0
+        swept = 0
+        for template in templates:
+            for ch in chars:
+                pattern = template.format(c=ch)
+                swept += 1
+
+                def outcome(module):
+                    try:
+                        module.compile(pattern)
+                        return "ok"
+                    except Exception as exc:  # noqa: BLE001 - the message IS the comparison
+                        return str(exc).split(" (unsupported")[0]
+
+                if outcome(real) != outcome(stdlib):
+                    divergences += 1
+        self.assertEqual(swept, 486)  # denominator: the sweep itself must not shrink
+        self.assertLessEqual(
+            divergences, self._FLAG_BRANCH_DIVERGENCE_CEILING,
+            "flag-branch divergences from re rose to {} (ceiling {}); a new one is accidental "
+            "unless it is deliberate and documented, in which case lower the ceiling with the "
+            "reason".format(divergences, self._FLAG_BRANCH_DIVERGENCE_CEILING))
+
     def test_patterns_that_compile_on_one_side_only(self):
         r"""div_compiles: three validity divergences, and their DIRECTION.
 
