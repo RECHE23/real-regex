@@ -65,7 +65,7 @@ include $(ROOT)/mk/common.mk
 include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-	full-local-gate-impl gcc-check route-probe alloc-probe ac-regime sabotage-sweep \
+	full-local-gate-impl gcc-check route-probe alloc-probe ac-regime sabotage-sweep sabotage-help \
         lint misra check-state-zeroing check-percall-copies route-surface-parity bench-compilers fuzz fuzz-compat fuzz-compat-known fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
@@ -853,6 +853,14 @@ ac-regime: ## [bench] Aho-Corasick routing: the four subject regimes, AC on vs o
 
 sabotage-sweep: ## [bench] Perturb each decision constant; report the ones no test reacts to (dev tool, ~40 min)
 	@python3 tools/sabotage_sweep.py
+
+# The companion to sabotage-sweep, for the case it cannot cover: one exact textual change, verified
+# and put back. sabotage-sweep perturbs the DECISION CONSTANTS; this breaks an arbitrary line, which
+# is what a new guard needs to be seen going red. It is a script rather than a make target because
+# its arguments are the sabotage itself -- see tools/sabotage.py, whose header records the three
+# defects a hand-written version reacquires every time.
+sabotage-help: ## [bench] How to break one exact line and verify a guard reacts (tools/sabotage.py)
+	@python3 tools/sabotage.py --help | sed -n '1,42p'
 
 # -Wshadow is listed explicitly because it is in NEITHER -Wall nor -Wextra, and MSVC promotes the same
 # diagnostic (C4456) to an error under /WX -- so a shadowed local compiled clean through every local
