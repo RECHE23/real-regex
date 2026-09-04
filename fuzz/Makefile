@@ -69,20 +69,45 @@ FUZZ_DIR  := $(BUILD)/fuzz
 .PHONY: fuzz fuzz-compat fuzz-compat-known fuzz-re2 exhaustive-compat fowler-compat help
 .DEFAULT_GOAL := help
 
+# On macOS with both toolchains installed, a libFuzzer link can fail in two ways and NEITHER error
+# names its cause: Homebrew LLVM ships libclang_rt.fuzzer_osx.a but emits relocations Apple's `ld`
+# rejects (`ld: invalid r_symbolnum=1`), while Apple clang has the linker and not the archive
+# (`library ... libclang_rt.fuzzer_osx.a not found`). A contributor loses an afternoon to either
+# before suspecting the toolchain.
+#
+# FUZZ_EXPLAIN runs when the real link has already failed, and reports why. It does NOT pre-probe:
+# the first draft compiled a trivial fuzz target first, and that LINKS on this very machine while
+# fuzz_compat.cpp does not -- a guard testing a weaker property than the one that breaks, which is
+# the same false-witness mistake as a test whose pattern never reaches the site it pins. Testing the
+# thing itself is exact by construction.
+#
+# It re-raises the failure (`exit 1`): a link that cannot happen is not a skip, and the CI `fuzz`
+# job runs these targets on every push -- if they are broken there, that is a real red.
+define FUZZ_EXPLAIN
+	  echo ""; \
+	  echo "$(1): the libFuzzer link above FAILED. This is a toolchain problem, not a code one."; \
+	  echo "  $$(clang++ --version | head -1)"; \
+	  echo "  On macOS both toolchains can be unusable at once: Homebrew LLVM has the fuzzer"; \
+	  echo "  archive but Apple's ld rejects its relocations; Apple clang has the linker and not"; \
+	  echo "  the archive. A clang++ whose OWN linker is on PATH links it; so does CI's."; \
+	  echo "  The CI 'fuzz' job runs this target on every push and is the net of record."; \
+	  exit 1
+endef
+
 fuzz: ## libFuzzer robustness fuzzing (Clang; FUZZ_TIME=secs)
-	mkdir -p $(FUZZ_DIR)/corpus
-	cd $(ROOT) && clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
-	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_target.cpp -o $(FUZZ_DIR)/fuzz_target
-	cd $(ROOT) && $(FUZZ_DIR)/fuzz_target -max_total_time=$(FUZZ_TIME) -timeout=10 \
+	@mkdir -p $(FUZZ_DIR)/corpus $(FUZZ_DIR)
+	@	 cd $(ROOT) && clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
+	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_target.cpp -o $(FUZZ_DIR)/fuzz_target || { $(call FUZZ_EXPLAIN,fuzz); }; \
+	 $(FUZZ_DIR)/fuzz_target -max_total_time=$(FUZZ_TIME) -timeout=10 \
 	    $(FUZZ_DIR)/corpus fuzz/corpus
 
 # Differential fuzzer: real::compat vs std::regex (search/replace/iterate/token/match-flags). This
 # is the net that has caught every silent divergence in the compat layer, so it runs in CI too.
 fuzz-compat: ## Differential fuzz: real::compat vs std::regex (Clang; FUZZ_TIME=secs)
-	mkdir -p $(FUZZ_DIR)/corpus-compat
-	cd $(ROOT) && clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
-	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_compat.cpp -o $(FUZZ_DIR)/fuzz_compat
-	cd $(ROOT) && $(FUZZ_DIR)/fuzz_compat -max_total_time=$(FUZZ_TIME) -timeout=10 \
+	@mkdir -p $(FUZZ_DIR)/corpus-compat $(FUZZ_DIR)
+	@	 cd $(ROOT) && clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
+	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_compat.cpp -o $(FUZZ_DIR)/fuzz_compat || { $(call FUZZ_EXPLAIN,fuzz-compat); }; \
+	 $(FUZZ_DIR)/fuzz_compat -max_total_time=$(FUZZ_TIME) -timeout=10 \
 	    $(FUZZ_DIR)/corpus-compat fuzz/corpus
 
 # A filed divergence, kept reproducible without blinding anything. A crash unit left in fuzz/corpus
@@ -98,9 +123,10 @@ fuzz-compat: ## Differential fuzz: real::compat vs std::regex (Clang; FUZZ_TIME=
 # not an unarmed check -- the decision this target makes is still live the moment a unit is filed,
 # and the count is published either way so "nothing outstanding" can never be read as "not run".
 fuzz-compat-known: ## Assert every filed compat divergence still reproduces (red once it is fixed)
-	mkdir -p $(FUZZ_DIR)
-	cd $(ROOT) && clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
-	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_compat.cpp -o $(FUZZ_DIR)/fuzz_compat
+	@mkdir -p $(FUZZ_DIR)
+	@cd $(ROOT) && clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
+	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_compat.cpp -o $(FUZZ_DIR)/fuzz_compat \
+	  || { $(call FUZZ_EXPLAIN,fuzz-compat-known); }
 	@cd $(ROOT) && n=0; for unit in fuzz/known-crashes/*; do \
 	   test -f "$$unit" || continue; \
 	   n=$$((n + 1)); \
