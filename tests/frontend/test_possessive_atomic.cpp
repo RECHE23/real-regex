@@ -468,3 +468,41 @@ TEST(possessive_over_a_non_ascii_literal_is_tier1)
   EXPECT_THROWS(real::regex("(?:éé)++"), real::regex_error);
   EXPECT_THROWS(real::regex("(?:ab)++"), real::regex_error);
 }
+
+// THE TIER-1 BOUNDARY, both sides, because the compiler's own note says crossing it is a latent
+// CORRUPTION and not a missed optimization: the lookaround sub-VM asserts only byte/klass/klass_cp
+// ever reach it, and a possessive class-loop opcode there would read the wrong class table. So the
+// frontier is worth a test of its own rather than being implied by the cases above.
+//
+// Verified against the architecture, not assumed: basic_thread_list (pike.hpp) carries pcs, slots,
+// mark and generation -- no per-thread position -- so a compound body cannot offer its "give up,
+// exit" transition from wherever inside itself it died. That is the wall, and it is real.
+TEST(tier1_boundary_holds_on_both_sides)
+{
+  // Accepted: a bare atom, or one wrapped in exactly one capturing group.
+  for (const char* pattern : {"a++", "a*+", "a?+", "a{2,3}+", "(a)++", "(a)*+", "[ab]++",
+                              "\\w++", "(?>a)", "(?>a*)", "(?>[ab])"}) {
+    try {
+      const real::regex rx(pattern);
+      EXPECT(true);
+    }
+    catch (const real::regex_error&) {
+      EXPECT(false);  // a Tier-1 shape must not be refused
+    }
+  }
+
+  // Refused: a compound body under a possessive or atomic construct.
+  EXPECT_THROWS(real::regex("(?:ab)*+"), real::regex_error);
+  EXPECT_THROWS(real::regex("(?:ab)++"), real::regex_error);
+  EXPECT_THROWS(real::regex("(?>ab|a)"), real::regex_error);
+  EXPECT_THROWS(real::regex("(?:a|b)*+"), real::regex_error);
+  EXPECT_THROWS(real::regex("(?>(?:ab)+)"), real::regex_error);
+
+  // NOT the boundary, and each looked like it at first glance:
+  // `(a)(b)*+` quantifies (b) alone, which is Tier 1 -- the (a) before it is not part of the body.
+  EXPECT_EQ(real::regex("(a)(b)*+").search("abbb")[0], "abbb"sv);
+  // `(?>ab)` has a compound body but NO repetition, so there is nothing to give back and the
+  // atomicity is vacuous -- it must behave exactly like the bare body.
+  EXPECT_EQ(real::regex("(?>ab)").search("xaby").start(), real::regex("ab").search("xaby").start());
+  EXPECT_EQ(real::regex("(?>ab)c").search("xabcy").start(), real::regex("abc").search("xabcy").start());
+}
