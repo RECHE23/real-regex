@@ -1,6 +1,7 @@
 """Behavioral tests for the real module (API shape, types, errors)."""
 
 import re
+import sys
 import unittest
 
 import real
@@ -590,9 +591,13 @@ class TestIntentionalDivergences(unittest.TestCase):
     # says "unknown extension"), so the count is a CEILING, not an expectation: it may fall when a
     # divergence is closed and must never rise, which is what a new accidental one would do.
     #
-    # A ceiling rather than equality for a second reason: re itself can move. A CPython release
-    # that accepts `U` or drops a combination check lowers this number, and a test asserting
-    # equality would go red on an improvement.
+    # A ceiling rather than equality for a second reason: re itself moves -- and not only over
+    # time. The supported interpreters disagree with each OTHER right now, so the ceiling is per
+    # minor version. 3.11 still has `re.TEMPLATE`, so `(?t)a` compiles there and is an unknown
+    # extension from 3.12 on; that one deleted flag accounts for all six of 3.11's extra
+    # divergences. Calibrating on one interpreter and shipping is what made this test red on the
+    # 3.11 CI leg while green locally on 3.14 -- a single ceiling would have to be the maximum,
+    # which would leave 3.14 six divergences of slack.
     #
     # WHAT IT CANNOT SEE, measured: it counts divergences, it does not classify them. Rewording a
     # message that was ALREADY divergent -- `callouts are not supported` into anything else --
@@ -600,7 +605,10 @@ class TestIntentionalDivergences(unittest.TestCase):
     # stayed green. The wording of each named construct is pinned separately, in the C++ suite and
     # in test_unsupported_names_the_escape_hatch; this guards the SIZE of the divergent set, which
     # is the thing an accidental change grows.
-    _FLAG_BRANCH_DIVERGENCE_CEILING = 53
+    #: Per (major, minor) of the running interpreter. An unlisted version falls back to the
+    #: highest known ceiling: a NEW CPython must not turn this red before anyone has looked at it,
+    #: but it must not silently relax either -- so the fallback is the max and the miss is printed.
+    _FLAG_BRANCH_DIVERGENCE_CEILING = {(3, 11): 57, (3, 12): 51, (3, 13): 51, (3, 14): 51}
 
     def test_flag_branch_divergences_do_not_grow(self):
         r"""Sweep the whole flags branch against re and cap the count of differences."""
@@ -626,11 +634,18 @@ class TestIntentionalDivergences(unittest.TestCase):
                 if outcome(real) != outcome(stdlib):
                     divergences += 1
         self.assertEqual(swept, 486)  # denominator: the sweep itself must not shrink
+        version = sys.version_info[:2]
+        ceiling = self._FLAG_BRANCH_DIVERGENCE_CEILING.get(version)
+        if ceiling is None:
+            ceiling = max(self._FLAG_BRANCH_DIVERGENCE_CEILING.values())
+            print("test_flag_branch_divergences_do_not_grow: no ceiling for CPython "
+                  "{}.{}; using the highest known ({}). Measure and add a row."
+                  .format(version[0], version[1], ceiling))
         self.assertLessEqual(
-            divergences, self._FLAG_BRANCH_DIVERGENCE_CEILING,
-            "flag-branch divergences from re rose to {} (ceiling {}); a new one is accidental "
-            "unless it is deliberate and documented, in which case lower the ceiling with the "
-            "reason".format(divergences, self._FLAG_BRANCH_DIVERGENCE_CEILING))
+            divergences, ceiling,
+            "flag-branch divergences from re rose to {} (ceiling {} for CPython {}.{}); a new one "
+            "is accidental unless it is deliberate and documented, in which case lower the ceiling "
+            "with the reason".format(divergences, ceiling, version[0], version[1]))
 
     def test_inverted_region_never_matches(self):
         r"""pos past endpos: no match, and no leaked standard-library exception.
