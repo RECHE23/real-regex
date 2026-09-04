@@ -545,6 +545,41 @@ def _hits_cpython_leading_scoped_ascii_bug(pattern, text):
 class TestDifferentialFuzz(unittest.TestCase):
     """Differential fuzz test comparing real against Python re."""
 
+    def test_every_generator_list_entry_is_actually_drawn(self):
+        """A member that is listed but never generated is a false green.
+
+        The lists below are the whole vocabulary of this differential: if an entry cannot be
+        reached, the shapes it stands for are untested while the file reads as if they were. That
+        is not hypothetical -- the bytes mode used to take "the ASCII classes" as `_CLASSES[:12]`,
+        an index that appending to the list silently moved out of reach, so fifteen
+        position-sensitive members were listed and drawn ZERO times in bytes mode.
+
+        str mode must draw every entry of every list. bytes mode must draw every ASCII entry and
+        NONE of the str-only ones -- asserted in both directions, because "not drawn" is the
+        correct answer there and a test that only checked for presence would pass on a generator
+        that had stopped producing them at all.
+        """
+        import collections
+
+        str_only = set(_CLASSES_STR_ONLY) | set(_CONSUMING_QUASI_W)
+        for ascii_only in (False, True):
+            gen = PatternGen(random.Random(11), ascii_only=ascii_only)
+            drawn = collections.Counter(gen.pattern() for _ in range(20000))
+            corpus = " ".join(drawn)
+            for name, items in (("_CLASSES_ASCII", _CLASSES_ASCII),
+                                ("_QUANTS", [q for q in _QUANTS if q]),
+                                ("_ANCHORS", _ANCHORS),
+                                ("_CLASSES_STR_ONLY", _CLASSES_STR_ONLY)):
+                for item in items:
+                    if not item:
+                        continue
+                    expected = not (ascii_only and item in str_only)
+                    with self.subTest(mode="bytes" if ascii_only else "str", list=name, item=item):
+                        self.assertEqual(item in corpus, expected,
+                                         "{!r} from {} was {} in {} mode".format(
+                                             item, name, "absent" if expected else "drawn",
+                                             "bytes" if ascii_only else "str"))
+
     def test_random_patterns_match_re(self):
         """Random patterns produce the same results as re across all APIs."""
         rng = random.Random(SEED)
