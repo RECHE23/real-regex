@@ -99,13 +99,36 @@ class deadline:
 # code-point mode these are single atoms, so a following quantifier spans the whole code point.
 # re is the code-point oracle for the differential.
 _LITERALS = "abcABC012 _-.é€😀"
-_CLASSES = [r"\d", r"\D", r"\w", r"\W", r"\s", r"\S", ".",
-            "[abc]", "[a-c]", "[^abc]", "[a-z0-9]", r"[\dx]",
-            # UTF-8 classes: specific code points / ranges / negation, code-point mode.
-            "[é]", "[éàü]", "[à-ÿ]", "[a-zé]", "[^é]", "[^à-ÿ]", "[Ā-ſ]",
-            # Quasi-shorthand supersets (\w ∪ non-word CP): the class of bug that made a
-            # range_count>=200 B-1 guard unsound — must stay general under \b (oracle parity).
-            r"[\w😀]", r"[\w·]", r"[\w€]", r"[\d😀]", r"[\w-]", r"[\w_]"]
+# ASCII-only class members: usable in BOTH str and bytes mode. Kept as its own list rather than
+# "the first N entries of _CLASSES" -- that was an index the bytes slice hard-coded (`[:12]`), so
+# inserting a member in the middle silently moved UTF-8 classes into bytes mode or dropped ASCII
+# ones out of it. A named list cannot be invalidated by an insertion.
+_CLASSES_ASCII = [r"\d", r"\D", r"\w", r"\W", r"\s", r"\S", ".",
+                  "[abc]", "[a-c]", "[^abc]", "[a-z0-9]", r"[\dx]",
+                  # Position-sensitive members. A `-` is a literal at the start, at the end, and
+                  # between two ranges; a `]` is a literal in first position only. Each is a place
+                  # where a class parser can be one character off without any other shape
+                  # noticing -- measured clean, unguarded until now.
+                  "[-a]", "[a-]", "[a-c-e]", "[-]", "[]a]", "[^]a]", "[^-a]",
+                  # Exact range boundaries: a single-member range, the whole ASCII block, and two
+                  # that cross the letter/digit divide. An off-by-one at either end matches one
+                  # character too many or too few.
+                  "[a-a]", "[\x00-\x7f]", "[0-A]", "[Z-a]",
+                  # Byte and octal escapes as members: div_hex makes \xHH a CODE POINT inside a
+                  # class and a raw BYTE outside it, so a class is exactly where that split shows
+                  # -- and it differs between str and bytes mode, which is why these belong here
+                  # rather than in the str-only list.
+                  r"[\x41]", r"[\101]", r"[\x41-\x5a]", r"[\n\t]"]
+
+# str-only additions: raw UTF-8 literals and the quasi-shorthand supersets. In code-point mode
+# these are single atoms, so a following quantifier spans the whole code point; re is the oracle.
+_CLASSES_STR_ONLY = ["[é]", "[éàü]", "[à-ÿ]", "[a-zé]", "[^é]", "[^à-ÿ]", "[Ā-ſ]",
+                     # Quasi-shorthand supersets (\w ∪ non-word CP): the class of bug that made a
+                     # range_count>=200 B-1 guard unsound -- must stay general under \b.
+                     r"[\w😀]", r"[\w·]", r"[\w€]", r"[\d😀]", r"[\w-]", r"[\w_]"]
+
+_CLASSES = _CLASSES_ASCII + _CLASSES_STR_ONLY
+
 _QUANTS = ["", "*", "+", "?", "??", "*?", "+?", "{2}", "{1,3}", "{2,}", "{0,2}"]
 # Quantifiers that cannot repeat (so cannot create a nullable loop). Anything
 # else establishes a "looping context" whose body must always consume.
@@ -146,9 +169,9 @@ class PatternGen:
         """
         self.rng = rng
         self.ascii_only = ascii_only
-        # _CLASSES entries after the first 12 are the UTF-8 classes ([é], [à-ÿ], ...): drop them for bytes.
+        # Bytes mode takes the ASCII list by NAME, not by index -- see _CLASSES_ASCII.
         self._literals = "abcABC012 _-." if ascii_only else _LITERALS
-        self._classes = _CLASSES[:12] if ascii_only else _CLASSES
+        self._classes = _CLASSES_ASCII if ascii_only else _CLASSES
         # Looping bodies: bytes path must stay ASCII-safe (_CONSUMING already has UTF-8
         # literals via re.escape of é€😀 — those fail to compile under .encode() and are
         # skips; quasi-shorthand classes are str-only extras for the B-1 guard net).
