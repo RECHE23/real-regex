@@ -1830,7 +1830,7 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Returns `true` if \p ch may start a group name.
+     * \brief Returns `true` if \p ch may start a group name in bytes mode.
      * \param[in] ch A character.
      * \return `true` if \p ch may start a group name.
      */
@@ -1840,7 +1840,26 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Parses `name := [A-Za-z_][A-Za-z0-9_]* '>'` and records it.
+     * \brief Returns `true` if \p cp may start a text-mode group name (`str.isidentifier()`).
+     *
+     * Measured against UCD 16.0.0: `isidentifier()` is `XID_Start ∪ {U+005F}`, then `XID_Continue`.
+     * \param[in] cp A code point.
+     * \return `true` if \p cp may start a name.
+     */
+    static constexpr bool is_name_start_cp(char32_t cp)
+    {
+      return cp == U'_' || is_binprop_cp(binprop::XID_Start, cp);
+    }
+
+    /*!
+     * \brief Parses a group name up to `>` and records it.
+     *
+     * Text mode: a Python identifier (`XID_Start ∪ {_}`, then `XID_Continue`), so `(?P<é>a)` is
+     * accepted. Bytes mode: `[A-Za-z_][A-Za-z0-9_]*`, matching `re` on a bytes pattern. A
+     * malformed UTF-8 sequence is "bad character in group name" at the bad byte — not a decode
+     * error, which would be a different divergence. The name is stored as a byte span into the
+     * pattern, so `group("é")` / `groupindex` resolve by the same octets.
+     *
      * \param[in,out] out   The AST; the name is appended to \ref ast::names.
      * \param[in]     group The capture number this name refers to.
      * \throws real::regex_error on a bad character or a duplicate name.
@@ -1849,11 +1868,35 @@ namespace real::detail {
                                     std::int32_t group)
     {
       const std::size_t begin {pos_};
-      if (eof() || !is_name_start(peek())) {
-        fail("bad character in group name");
+      // Read bytes-mode from the scope stack, not the global `bytes_` member (the flag-scope
+      // ratchet): bytes is never scoped, so this equals `bytes_` while keeping the parser's
+      // global-read count flat -- the same precedent as `\p{...}`, `\C` and the class walk.
+      if (has_flag(current_flags(), flags::bytes)) {
+        if (eof() || !is_name_start(peek())) {
+          fail("bad character in group name");
+        }
+        while (!eof() && (is_ascii_alnum(peek()) || peek() == '_')) {
+          ++pos_;
+        }
       }
-      while (!eof() && (is_ascii_alnum(peek()) || peek() == '_')) {
-        ++pos_;
+      else {
+        bool first {true};
+        while (!eof() && peek() != '>') {
+          const decoded_codepoint decoded {decode_codepoint_strict(pattern_, pos_)};
+          if (!decoded.valid) {
+            fail("bad character in group name");
+          }
+          const char32_t cp {static_cast<char32_t>(decoded.cp)};
+          const bool     ok {first ? is_name_start_cp(cp) : is_binprop_cp(binprop::XID_Continue, cp)};
+          if (!ok) {
+            fail("bad character in group name");
+          }
+          pos_ += decoded.length;
+          first = false;
+        }
+        if (first) {
+          fail("bad character in group name");
+        }
       }
       const std::size_t end {pos_};
       expect('>', "bad character in group name");

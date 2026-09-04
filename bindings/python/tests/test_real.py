@@ -919,6 +919,48 @@ class TestCppIntegration(unittest.TestCase):
         self.assertEqual(cfg["cxx_standard"], "c++20")
 
 
+class TestUnicodeGroupNames(unittest.TestCase):
+    """Text-mode group names follow str.isidentifier(); lookup uses the same octets.
+
+    Compilation alone is not the witness: a name accepted but missing from group() /
+    groupindex would be a silent drop-in break the other way.
+    """
+
+    def test_group_and_groupindex_resolve_unicode_names(self):
+        import re as stdlib
+        for pattern, text, name in (
+            ("(?P<é>a)", "a", "é"),
+            ("(?P<café>x)", "x", "café"),
+            ("(?P<日本>y)", "y", "日本"),
+            ("(?<é>z)", "z", "é"),
+            ("(?P<a·b>q)", "q", "a·b"),
+        ):
+            with self.subTest(pattern=pattern):
+                p = real.compile(pattern)
+                m = p.fullmatch(text)
+                self.assertEqual(m.group(name), text)
+                self.assertEqual(dict(p.groupindex), {name: 1})
+                self.assertEqual(p.sub(rf"[\g<{name}>]", text), f"[{text}]")
+                if pattern.startswith("(?P<"):
+                    r = stdlib.compile(pattern)
+                    self.assertEqual(r.fullmatch(text).group(name), text)
+                    self.assertEqual(dict(p.groupindex), dict(r.groupindex))
+
+    def test_bytes_mode_still_rejects_non_ascii_names(self):
+        import re as stdlib
+        pat = "(?P<é>a)".encode()
+        with self.assertRaises(real.error) as caught:
+            real.compile(pat)
+        self.assertIn("bad character in group name", caught.exception.msg)
+        with self.assertRaises(stdlib.error):
+            stdlib.compile(pat)
+
+    def test_duplicate_unicode_name_is_redefinition(self):
+        with self.assertRaises(real.error) as caught:
+            real.compile("(?P<é>a)(?P<é>b)")
+        self.assertIn("redefinition of group name", caught.exception.msg)
+
+
 class TestPatternIntrospection(unittest.TestCase):
     """Pattern.groupindex and Pattern.flags expose the compiled pattern's metadata."""
 

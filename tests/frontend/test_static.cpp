@@ -163,6 +163,8 @@ TEST(static_regex_matching_allocates_nothing)
 
 TEST(static_regex_named_groups_and_flags)
 {
+  constexpr real::static_regex<"(?P<é>a)"> unicode_name;
+  EXPECT_EQ(unicode_name.fullmatch("a")["é"], "a"sv);
   constexpr real::static_regex<"(?P<h>\\d{2}):(?P<m>\\d{2})">     clock;
   const auto                                                      match = clock.search("at 09:45!");
   EXPECT_EQ(match["h"], "09"sv);

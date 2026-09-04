@@ -143,6 +143,61 @@ TEST(named_groups_python_and_dotnet_styles)
   EXPECT_EQ(match["day"], ""sv);
 }
 
+TEST(named_groups_unicode_identifiers)
+{
+  // Text mode follows str.isidentifier() (XID_Start ∪ {_}, then XID_Continue). Compilation
+  // alone is not the witness: the name is a byte span, so group() / group_index must
+  // resolve the same octets.
+  const real::regex acute("(?P<é>a)");
+  const auto        acute_m = acute.fullmatch("a");
+  EXPECT_EQ(acute_m.group_index("é"), 1U);
+  EXPECT_EQ(acute_m["é"], "a"sv);
+
+  const real::regex cafe("(?P<café>x)");
+  EXPECT_EQ(cafe.fullmatch("x")["café"], "x"sv);
+
+  const real::regex jp("(?P<日本>y)");
+  EXPECT_EQ(jp.fullmatch("y")["日本"], "y"sv);
+
+  const real::regex dotnet("(?<é>z)");
+  EXPECT_EQ(dotnet.fullmatch("z")["é"], "z"sv);
+
+  // U+00B7 MIDDLE DOT is XID_Continue (Other_ID_Continue folded into the UCD table).
+  EXPECT_EQ(real::regex("(?P<a·b>q)").fullmatch("q")["a·b"], "q"sv);
+
+  EXPECT_THROWS(real::regex("(?P<²>a)"), real::regex_error);         // not XID_Start
+  EXPECT_THROWS(real::regex("(?P<é x>a)"), real::regex_error);       // space is not XID_Continue
+
+  // A name that is not valid UTF-8 at all. Text mode decodes per code point, so this is the path
+  // where a decode failure could surface as something other than a name diagnostic -- it must stay
+  // `bad character in group name`, at the offending byte, or a divergence in the MESSAGE would
+  // replace the divergence in the GRAMMAR this change just closed.
+  try {
+    const real::regex bad("(?P<\xff>a)");
+    EXPECT(false);
+  }
+  catch (const real::regex_error& ex) {
+    EXPECT(std::string(ex.what()).find("bad character in group name") != std::string::npos);
+    EXPECT_EQ(ex.position(), 4U);
+  }
+  // BYTES mode keeps the ASCII rule, which is also what re does there.
+  EXPECT_THROWS(real::regex("(?P<\xc3\xa9>a)", real::flags::bytes), real::regex_error);
+  EXPECT_THROWS(real::regex("(?P<é>a)(?P<é>b)"), real::regex_error); // duplicate, same octets
+
+  // Malformed UTF-8 in a name is "bad character", not a decode error.
+  try {
+    real::regex bad {std::string {"(?P<\xff>a)"}};
+    EXPECT(false);
+  }
+  catch (const real::regex_error& e) {
+    EXPECT(std::string_view(e.what()).find("bad character in group name") != std::string_view::npos);
+    EXPECT(std::string_view(e.what()).find("invalid UTF-8") == std::string_view::npos);
+  }
+
+  // Bytes mode stays ASCII, matching re on a bytes pattern.
+  EXPECT_THROWS(real::regex("(?P<\xc3\xa9>a)", real::flags::bytes), real::regex_error);
+}
+
 TEST(quantified_groups)
 {
   EXPECT(real::regex("(ab){2,3}").fullmatch("ababab"));
