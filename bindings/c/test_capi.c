@@ -155,6 +155,60 @@ int main(void) {
   assert(bad_sub == (size_t) -1);
   assert(strlen(err) > 0);
 
+  /* real_expand: real_sub's inner half, one match at a time, so a caller whose flavor enumerates
+     matches differently keeps ONE template grammar instead of writing a second one. Same two-call
+     convention; the spans are whatever real_match just filled. */
+  size_t espans[6];
+  assert(real_group_count(sre) == 3);
+  assert(real_match(sre, stext, strlen(stext), 0, strlen(stext), REAL_MODE_SEARCH, espans) == 1);
+  size_t exp_need = real_expand(sre, stext, strlen(stext), espans, 6, repl, strlen(repl),
+                                NULL, 0, err, sizeof err);
+  assert(exp_need == strlen("b@a"));
+  char expbuf[32];
+  size_t exp_need2 = real_expand(sre, stext, strlen(stext), espans, 6, repl, strlen(repl),
+                                 expbuf, sizeof expbuf, err, sizeof err);
+  assert(exp_need2 == exp_need);
+  assert(memcmp(expbuf, "b@a", exp_need) == 0);
+
+  /* Expanding the SECOND match must give that match's groups, not the first's -- the whole point of
+     supplying spans rather than letting the callee find them. */
+  assert(real_match(sre, stext, strlen(stext), 5, strlen(stext), REAL_MODE_SEARCH, espans) == 1);
+  size_t exp2 = real_expand(sre, stext, strlen(stext), espans, 6, repl, strlen(repl),
+                            expbuf, sizeof expbuf, err, sizeof err);
+  assert(memcmp(expbuf, "ef@cd", exp2) == 0);
+
+  /* A spans buffer too short for the group the template names is the caller's error, distinct from
+     a group the PATTERN lacks: both must fail, neither may read past the buffer. */
+  err[0] = '\0';
+  assert(real_expand(sre, stext, strlen(stext), espans, 2, repl, strlen(repl),
+                     NULL, 0, err, sizeof err) == (size_t) -1);
+  assert(strlen(err) > 0);
+  err[0] = '\0';
+  assert(real_expand(sre, stext, strlen(stext), espans, 6, "\\9", 2,
+                     NULL, 0, err, sizeof err) == (size_t) -1);
+  assert(strlen(err) > 0);
+
+  /* An inverted or out-of-subject span is refused rather than turned into a length underflow. */
+  err[0] = '\0';
+  size_t bad_spans[6] = {4, 1, 4, 1, 4, 1};
+  assert(real_expand(sre, stext, strlen(stext), bad_spans, 6, repl, strlen(repl),
+                     NULL, 0, err, sizeof err) == (size_t) -1);
+  assert(strlen(err) > 0);
+  err[0] = '\0';
+  assert(real_expand(NULL, stext, strlen(stext), espans, 6, repl, strlen(repl),
+                     NULL, 0, err, sizeof err) == (size_t) -1);
+
+  /* An unmatched OPTIONAL group contributes nothing here too, exactly as it does in real_sub. */
+  real_regex* ore = real_compile("(a)(b)?", 7, 0, err, sizeof err, &code);
+  assert(ore != NULL);
+  size_t ospans[6];
+  assert(real_match(ore, "a", 1, 0, 1, REAL_MODE_SEARCH, ospans) == 1);
+  size_t opt_need = real_expand(ore, "a", 1, ospans, 6, "[\\1\\2]", 6,
+                                expbuf, sizeof expbuf, err, sizeof err);
+  assert(opt_need == 3);
+  assert(memcmp(expbuf, "[a]", 3) == 0);
+  real_free(ore);
+
   /* (NULL, 0) empty-subject convention: valid everywhere a (text, len) or (repl, repl_len) pair
      appears -- the natural Go nil-slice representation. Only NULL with a NONZERO length errors. */
   const char* epat = "";

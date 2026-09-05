@@ -149,6 +149,29 @@ size_t real_sub(const real_regex* re, const char* text, size_t len,
                 char* out, size_t outlen, size_t* n_subs,
                 char* errbuf, size_t errbuf_len);
 
+/* Expands the same replacement template against ONE match, supplied as its spans — real_sub's inner half,
+ * without the match sequence. `spans`/`nspans` are the buffer real_match/real_iter_next fills: `nspans` is
+ * 2 * real_group_count(re) values, [start0,end0,start1,end1,...], with SIZE_MAX for a group that did not
+ * participate. `text`/`len` is the subject those offsets index; passing a different subject reads the wrong
+ * bytes, so it must be the one the spans came from.
+ *
+ * This exists because real_sub owns the match SEQUENCE as well as the expansion, and its sequence is Python
+ * re's. A caller whose flavor enumerates matches differently — Go's regexp never returns two matches from
+ * one start, and ignores an empty match abutting the previous — cannot use real_sub at all without
+ * inheriting re's sequence, and reimplementing the template grammar binding-side would put a second
+ * expander (octal escapes, named groups, the unmatched-group rule) on a drift course with this one. So the
+ * grammar stays here, in one place, and the caller supplies the matches.
+ *
+ * Same two-call convention and the same template syntax as real_sub, including its unmatched-OPTIONAL-group
+ * rule (contributes nothing, not an error). Returns (size_t)-1 on error — bad template syntax, a group
+ * reference the pattern does not have or that `nspans` does not cover, a span pair outside [0, len] or
+ * inverted, or a NULL re/text/repl/spans — with `errbuf` filled. */
+size_t real_expand(const real_regex* re, const char* text, size_t len,
+                   const size_t* spans, size_t nspans,
+                   const char* repl, size_t repl_len,
+                   char* out, size_t outlen,
+                   char* errbuf, size_t errbuf_len);
+
 /* --- multi-pattern set (which-matched) --------------------------------------- */
 
 typedef struct real_regex_set real_regex_set;

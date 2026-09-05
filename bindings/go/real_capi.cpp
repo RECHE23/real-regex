@@ -433,6 +433,55 @@ size_t real_sub(const real_regex* re, const char* text, size_t len,
   }
 }
 
+size_t real_expand(const real_regex* re, const char* text, size_t len,
+                   const size_t* spans, size_t nspans,
+                   const char* repl, size_t repl_len,
+                   char* out, size_t outlen,
+                   char* errbuf, size_t errbuf_len)
+{
+  if (re == nullptr || (text == nullptr && len != 0) || (repl == nullptr && repl_len != 0) ||
+      (spans == nullptr && nspans != 0)) {
+    write_err(errbuf, errbuf_len, "null re/text/repl/spans");
+    return static_cast<size_t>(-1);
+  }
+  std::vector<sub_segment> segments;
+  std::string              parse_err;
+  if (!parse_sub_template(re, std::string_view(repl, repl_len), segments, parse_err)) {
+    write_err(errbuf, errbuf_len, parse_err.c_str());
+    return static_cast<size_t>(-1);
+  }
+  std::string result;
+  for (const auto& seg : segments) {
+    if (seg.group < 0) {
+      result.append(seg.literal);
+      continue;
+    }
+    const std::size_t group {static_cast<std::size_t>(seg.group)};
+    // parse_sub_template already refused a group the PATTERN does not have; this checks the
+    // caller's buffer, which is a separate claim -- spans arrive from outside and a short one
+    // would otherwise be read past its end.
+    if (2 * group + 1 >= nspans) {
+      write_err(errbuf, errbuf_len, "group reference beyond the spans supplied");
+      return static_cast<size_t>(-1);
+    }
+    const std::size_t start {spans[2 * group]};
+    if (start == static_cast<std::size_t>(-1)) {
+      continue; // unmatched optional group contributes nothing -- re's own rule, as in real_sub
+    }
+    const std::size_t stop {spans[2 * group + 1]};
+    if (start > len || stop > len || stop < start) {
+      write_err(errbuf, errbuf_len, "span outside the subject, or inverted");
+      return static_cast<size_t>(-1);
+    }
+    result.append(text + start, stop - start);
+  }
+  if (out != nullptr && outlen > 0) {
+    const std::size_t n {std::min(result.size(), outlen)};
+    std::memcpy(out, result.data(), n);
+  }
+  return result.size();
+}
+
 real_regex_set* real_set_compile(const char* const* patterns, const size_t* lens, size_t n,
                                  uint32_t flags, char* errbuf, size_t errbuf_len, int* code)
 {
