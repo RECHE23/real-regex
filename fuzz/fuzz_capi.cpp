@@ -2,7 +2,9 @@
 // No oracle: the contract is that no sequence of calls on arbitrary bytes crashes, triggers UB (ASan/UBSan)
 // or leaks (LSan), and that no C++ exception ever crosses into C. Drives real_compile / real_group_name /
 // real_find_iter[_at/_between] / real_iter_next / real_count_matches / real_match (all 3 modes) / real_sub
-// / every real_set_* / real_free — the full C-API surface, the same boundary that caught an OOB read.
+// / real_expand / every real_set_* / real_free — the full C-API surface, the same boundary that caught an
+// OOB read. real_expand gets three shapes of its own because it is the one entry point that reads offsets
+// the CALLER supplies rather than ones it derived itself.
 //
 // Build & run: make fuzz-capi   (requires clang with -fsanitize=fuzzer)
 //
@@ -82,6 +84,60 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         (void) real_sub(re, text, text_len, repl, repl_len, 0, buf.data(), buf.size(), &n_subs, sub_err,
                         sizeof sub_err);
     }
+
+    // real_expand takes the spans from the CALLER, which no other entry point does: every other
+    // function derives its offsets itself, so this is the one place where arbitrary indices reach a
+    // buffer read. Three shapes on purpose — the spans real_match just filled (the honest use), a
+    // buffer deliberately too short for the groups a template can name, and spans corrupted into
+    // inverted/out-of-range pairs. All three must answer, never read past an end.
+    char exp_err[256];
+    if (real_match(re, text, text_len, 0, text_len, REAL_MODE_SEARCH, spans.data()) == 1) {
+        const std::size_t exp_need =
+          real_expand(re, text, text_len, spans.data(), spans.size(), repl, repl_len, nullptr, 0,
+                      exp_err, sizeof exp_err);
+        if (exp_need != static_cast<std::size_t>(-1)) {
+            std::vector<char> exp_buf(exp_need);
+            (void) real_expand(re, text, text_len, spans.data(), spans.size(), repl, repl_len,
+                               exp_buf.data(), exp_buf.size(), exp_err, sizeof exp_err);
+            // An UNDERSIZED out buffer is a documented shape of the two-call convention (the caller
+            // gets the length it should have allocated), so the truncating write is fuzzed too.
+            if (exp_need > 1) {
+                std::vector<char> tight(exp_need / 2);
+                (void) real_expand(re, text, text_len, spans.data(), spans.size(), repl, repl_len,
+                                   tight.data(), tight.size(), exp_err, sizeof exp_err);
+            }
+        }
+        for (std::size_t slots = 0; slots <= spans.size(); slots += 2) {
+            (void) real_expand(re, text, text_len, spans.data(), slots, repl, repl_len, nullptr, 0,
+                               exp_err, sizeof exp_err);
+        }
+        // A template that NAMES a group, alongside the fuzzed one. The fuzzed bytes almost never
+        // form a valid group reference, so every call above can parse to a pure literal and never
+        // touch a span at all — which is exactly what happened: removing real_expand's span bounds
+        // check left this target green. A fixed reference is what makes the reads below happen.
+        static constexpr char group_tmpl[] = "[\\g<0>]<\\1>";
+        (void) real_expand(re, text, text_len, spans.data(), spans.size(), group_tmpl,
+                           sizeof group_tmpl - 1, nullptr, 0, exp_err, sizeof exp_err);
+        for (std::size_t slots = 0; slots <= spans.size(); slots += 2) {
+            (void) real_expand(re, text, text_len, spans.data(), slots, group_tmpl,
+                               sizeof group_tmpl - 1, nullptr, 0, exp_err, sizeof exp_err);
+        }
+
+        std::vector<std::size_t> wrecked {spans};
+        for (std::size_t i = 0; i < wrecked.size(); ++i) {
+            // Inverted, past the end, and the unmatched sentinel — the three ways a caller's span
+            // pair can be wrong without being obviously garbage.
+            wrecked[i] = (i % 3 == 0)   ? text_len + 1
+                         : (i % 3 == 1) ? static_cast<std::size_t>(-1)
+                                        : (text_len > 0 ? text_len - 1 : 0);
+        }
+        (void) real_expand(re, text, text_len, wrecked.data(), wrecked.size(), repl, repl_len,
+                           nullptr, 0, exp_err, sizeof exp_err);
+        (void) real_expand(re, text, text_len, wrecked.data(), wrecked.size(), group_tmpl,
+                           sizeof group_tmpl - 1, nullptr, 0, exp_err, sizeof exp_err);
+    }
+    (void) real_expand(re, nullptr, 0, spans.data(), spans.size(), nullptr, 0, nullptr, 0, exp_err,
+                       sizeof exp_err);
 
     // (NULL, 0) empty-subject convention: dedicated, unconditional coverage (not left to chance —
     // the fuzzed text_len/repl_len are rarely exactly 0) on every function that accepts a

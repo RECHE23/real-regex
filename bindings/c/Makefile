@@ -26,7 +26,12 @@ fuzz: ## libFuzzer over the C ABI shim under ASan/UBSan (FUZZ_TIME=secs)
 	@mkdir -p $(FUZZ_DIR)/corpus-capi
 	clang++ $(CXXSTD) -O1 -g $(INCLUDES) -I$(ROOT)/bindings/c \
 	    -fsanitize=fuzzer,address,undefined $(ROOT)/fuzz/fuzz_capi.cpp -o $(FUZZ_DIR)/fuzz_capi
-	$(FUZZ_DIR)/fuzz_capi -max_total_time=$(FUZZ_TIME) -timeout=10 $(FUZZ_DIR)/corpus-capi
+	# -artifact_prefix or libFuzzer drops crash-*/slow-unit-* into the CURRENT directory, which for
+	# this recipe is a SOURCE directory — one `git add -A` away from being committed, which has
+	# happened. fuzz/Makefile's three targets already carry it; this recipe is a fourth entry point
+	# that did not.
+	$(FUZZ_DIR)/fuzz_capi -max_total_time=$(FUZZ_TIME) -timeout=10 \
+	    -artifact_prefix=$(FUZZ_DIR)/ $(FUZZ_DIR)/corpus-capi
 
 clean: ## Remove this binding's build artifacts
 	rm -f $(BUILD)/real_capi.o $(BUILD)/test_capi.o $(BUILD)/capi_test $(FUZZ_DIR)/fuzz_capi
