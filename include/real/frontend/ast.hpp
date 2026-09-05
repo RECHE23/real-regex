@@ -2089,6 +2089,60 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Fails a bad character-class range the way `re` does: quoting the range it read.
+     *
+     * `bad character range at position 1` said WHERE without saying WHAT, on the one diagnostic
+     * where the reader most needs the WHAT: a range is two endpoints and an order, and the message
+     * named none of them. `re` reports `bad character range z-a at position 1`. The parser already
+     * holds both ends — the caller rewinds the read offset to the range's start before failing, so
+     * the start is `begin` and the end is wherever the scan had reached.
+     *
+     * Quotes the SOURCE text, so `[\d-z]` names `\d-z` and `[\x7f-\x20]` names `\x7f-\x20`.
+     * `re` prints `\x-\x` for that second one, its own tokenizer showing through; quoting what the
+     * author wrote is more use to the author, and the divergence is only in how much of an
+     * already-rejected range is echoed back.
+     *
+     * \param[in] begin Offset of the range's first byte, which is where `re` reports.
+     * \param[in] end   One past the range's last byte, as far as the caller had read.
+     * \throws real::regex_error always.
+     */
+    template <typename = void>
+    [[noreturn]] constexpr void fail_bad_range(std::size_t begin,
+                                               std::size_t end) const
+    {
+      std::string message {"bad character range "};
+      for (std::size_t i = begin; i < end && i < pattern_.size(); ++i) {
+        message += pattern_[i];
+      }
+      throw regex_error(message, begin);
+    }
+
+    /*!
+     * \brief Fails an escape REAL does not implement, naming it and reporting at the backslash.
+     *
+     * `unsupported escape sequence` named the category and not the escape, so `\q`, `\y` and
+     * every other unrecognised letter produced one indistinguishable message — and it pointed at
+     * the escaped character rather than at the `\`, which is where `re` reports (`bad escape \q
+     * at position 0`) and where \ref fail_incomplete_escape already reports. Two escapes on the
+     * same line were impossible to tell apart from the diagnostic alone.
+     *
+     * The `unsupported` kind is kept: what a binding branches on does not change here, only what a
+     * reader is told.
+     *
+     * \param[in] backslash Offset of the `\` that opened the escape.
+     * \throws real::regex_error always.
+     */
+    template <typename = void>
+    [[noreturn]] constexpr void fail_unsupported_escape(std::size_t backslash) const
+    {
+      std::string message {"unsupported escape sequence \\"};
+      if (backslash + 1 < pattern_.size()) {
+        message += pattern_[backslash + 1];
+      }
+      throw regex_error(message, backslash, error_kind::unsupported);
+    }
+
+    /*!
      * \brief Consumes one hexadecimal digit.
      * \param[in] backslash_pos Offset of the `\` that opened the escape, so a missing digit is
      *                           reported as a truncated escape at the sequence's start.
@@ -2481,7 +2535,7 @@ namespace real::detail {
             }
             const std::int32_t byte_value {parse_byte_escape(backslash)};
             if (byte_value < 0) {
-              fail_unsupported("unsupported escape sequence");
+              fail_unsupported_escape(backslash);
             }
             // A `\xHH` / octal escape with value < 0x80 is an ASCII character (byte == code point): a
             // cased one folds under icase like a raw ASCII literal (`\x4B` == `K`). A value >= 0x80
@@ -2609,7 +2663,7 @@ namespace real::detail {
             }
             const std::int32_t byte_value {parse_byte_escape(backslash)};
             if (byte_value < 0) {
-              fail_unsupported("unsupported escape sequence");
+              fail_unsupported_escape(backslash);
             }
             return byte_value;
           }
@@ -2684,8 +2738,15 @@ namespace real::detail {
           // and matched "-" -- while the mirror case `[a-\d]` already failed below. Python raises on
           // both; this half of the rule was simply missing. A trailing '-]' stays a literal, as there.
           if (!eof() && peek() == '-' && pos_ + 1 < pattern_.size() && pattern_[pos_ + 1] != ']') {
+            // The end endpoint has not been parsed here, so its extent is taken the way a reader
+            // takes it: one character, or two when it is an escape. Inventing more would be a guess
+            // about text the parser has not looked at.
+            std::size_t end {pos_ + 2};
+            if (pattern_[pos_ + 1] == '\\' && pos_ + 2 < pattern_.size()) {
+              ++end;
+            }
             pos_ = item_pos;
-            fail("bad character range");
+            fail_bad_range(item_pos, end);
           }
           continue; // set item (e.g. \d): its bitmap and any Unicode ranges are already merged
         }
@@ -2695,8 +2756,9 @@ namespace real::detail {
           ++pos_; // consume '-'
           const std::int32_t range_end {parse_class_item(klass, ranges, property_derived)};
           if (range_end < 0 || range_end < range_start) {
+            const std::size_t end {pos_}; // captured BEFORE the rewind, or the quote would be empty
             pos_ = item_pos;
-            fail("bad character range");
+            fail_bad_range(item_pos, end);
           }
           add_range(range_start, range_end);
         }

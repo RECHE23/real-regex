@@ -235,6 +235,79 @@ TEST(incomplete_escape_quotes_what_it_read)
   EXPECT(cause("a\\U0010FFFF").empty());
 }
 
+// `bad character range at position 1` said WHERE on the one diagnostic where the WHAT matters most:
+// a range is two endpoints and an order, and the message named none of them. re reports
+// `bad character range z-a`. The parser held both ends the whole time -- the caller rewinds the read
+// offset to the range's start before failing, so the start was already the reported position and the
+// end was one capture away. Same family as `unknown extension` and `incomplete escape`.
+TEST(bad_character_range_quotes_the_range)
+{
+  const auto cause = [](const char* pattern) {
+                       try {
+                         const real::regex rx(pattern);
+                       }
+                       catch (const real::regex_error& ex) {
+                         return std::string(ex.what());
+                       }
+                       return std::string {};
+                     };
+
+  EXPECT(cause("[z-a]") == "regex_error at 1: bad character range z-a");
+  EXPECT(cause("[a-Z]") == "regex_error at 1: bad character range a-Z");
+  EXPECT(cause("[9-0]") == "regex_error at 1: bad character range 9-0");
+  // A shorthand class cannot be an ENDPOINT, on either side, and both halves quote what they read.
+  EXPECT(cause("[\\d-z]") == "regex_error at 1: bad character range \\d-z");
+  EXPECT(cause("[z-\\d]") == "regex_error at 1: bad character range z-\\d");
+  // Punctuation endpoints: a literal `-` as the start, and a `]` that is a member because it is
+  // first. Neither needs escaping to be quoted back.
+  EXPECT(cause("[--,]") == "regex_error at 1: bad character range --,");
+  EXPECT(cause("[]-!]") == "regex_error at 1: bad character range ]-!");
+  // The range's own offset, not the pattern's first class.
+  EXPECT(cause("xy[b-a]") == "regex_error at 3: bad character range b-a");
+  EXPECT(cause("[abc][z-a]") == "regex_error at 6: bad character range z-a");
+  // A DIVERGENCE from re, stated: re prints `\x-\x` here, truncating each endpoint at the escape's
+  // letter because that is where its tokenizer stopped. Quoting the source is more use to whoever
+  // wrote it, and the difference only concerns how much of an already-rejected range is echoed.
+  EXPECT(cause("[\\x7f-\\x20]") == "regex_error at 1: bad character range \\x7f-\\x20");
+  // Well-ordered ranges still compile, including the ones whose endpoints are escapes.
+  EXPECT(cause("[a-z]").empty());
+  EXPECT(cause("[0-9]").empty());
+  EXPECT(cause("[\\x20-\\x7f]").empty());
+  // And a trailing `-` before `]` is a literal member, not an unterminated range.
+  EXPECT(cause("[a-]").empty());
+}
+
+// `unsupported escape sequence` named the category and not the escape, so `\q` and `\y` on one line
+// gave one indistinguishable message -- and it pointed at the escaped character rather than at the
+// `\`, where re reports and where `incomplete escape` already reported. The kind stays
+// `unsupported`, so what a binding branches on does not move; only what a reader is told.
+TEST(unsupported_escape_names_the_escape)
+{
+  const auto cause = [](const char* pattern) {
+                       try {
+                         const real::regex rx(pattern);
+                       }
+                       catch (const real::regex_error& ex) {
+                         return std::string(ex.what());
+                       }
+                       return std::string {};
+                     };
+
+  EXPECT(cause("\\q") == "regex_error at 0: unsupported escape sequence \\q");
+  EXPECT(cause("ab\\q") == "regex_error at 2: unsupported escape sequence \\q");
+  // Two unrecognised escapes in one pattern: the FIRST is reported, and it is now possible to tell
+  // which one that was.
+  EXPECT(cause("a\\q\\y") == "regex_error at 1: unsupported escape sequence \\q");
+  EXPECT(cause("a\\y\\q") == "regex_error at 1: unsupported escape sequence \\y");
+  // Inside a class the class-escape parser has its own backslash and reports at ITS offset.
+  EXPECT(cause("[a\\q]") == "regex_error at 2: unsupported escape sequence \\q");
+  // Escapes REAL does implement still compile, so the message is about recognition and not about
+  // every backslash.
+  EXPECT(cause("\\d\\w\\s\\b").empty());
+  EXPECT(cause("\\x41").empty());
+  EXPECT(cause("a\\-b").empty()); // escaped punctuation keeps its literal meaning
+}
+
 // `bad character in group name` named the rule and neither the name nor which of four distinct
 // faults occurred. re splits them, quotes the name it read, and reports at the name's first byte.
 // Second of the three message families from the outside audit.
@@ -270,8 +343,13 @@ TEST(regex_error_reports_position)
     EXPECT(false);
   }
   catch (const real::regex_error& ex) {
-    EXPECT_EQ(ex.position(), 3U);
-    EXPECT(std::string_view(ex.what()).find("escape") != std::string_view::npos);
+    // The BACKSLASH, not the escaped character. `re` reports `bad escape \q at position 2` here,
+    // and fail_incomplete_escape already pointed at the `\` for a truncated escape -- pointing at
+    // the `q` for an unrecognised one made the same family answer two different questions.
+    EXPECT_EQ(ex.position(), 2U);
+    // And the escape is NAMED: `\q` and `\y` on one line used to give one indistinguishable
+    // message, so the quote is what makes the position usable rather than decorative.
+    EXPECT(std::string_view(ex.what()).find("\\q") != std::string_view::npos);
   }
 }
 
