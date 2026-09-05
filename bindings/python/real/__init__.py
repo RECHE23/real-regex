@@ -333,7 +333,7 @@ def _rewrite_named_chars(pattern, flags=0):
         if not in_class and pattern.startswith("(?#", i):
             close = pattern.find(")", i + 3)
             if close < 0:
-                raise error("missing ), unterminated comment")
+                raise error("missing ), unterminated comment", pattern, i)
             out.append(pattern[i:close + 1])
             i = close + 1
             continue
@@ -365,8 +365,14 @@ def _rewrite_named_chars(pattern, flags=0):
         i = run
         if odd and i + 1 < n and pattern[i] == "N" and pattern[i + 1] == "{":
             close = pattern.find("}", i + 2)
+            # An ABSENT name and an unterminated one are two faults, and `re` separates them: it
+            # looks for a name character first, so `\N{` and `\N{}` are both "missing character
+            # name" while `\N{ABC` is "missing }". Reporting the second for the first said the
+            # brace was the problem when the name was.
+            if close == i + 2 or i + 2 >= n:
+                raise error("missing character name", pattern, i + 2)
             if close < 0:
-                raise error("missing }, unterminated name")
+                raise error("missing }, unterminated name", pattern, i + 2)
             name = pattern[i + 2:close]
             if name.startswith("U+"):
                 out.append(pattern[i:close + 1])  # already scalar — the engine handles it
@@ -374,7 +380,10 @@ def _rewrite_named_chars(pattern, flags=0):
                 try:
                     codepoint = ord(unicodedata.lookup(name))
                 except (KeyError, TypeError) as exc:
-                    raise error("undefined character name {!r}".format(name)) from exc
+                    # The BACKSLASH, which is where `re` reports and where the C++ side reports its
+                    # own escape faults. `i` is the `N`, so the backslash that escaped it is `i - 1`.
+                    raise error("undefined character name {!r}".format(name),
+                                pattern, i - 1) from exc
                 out.append("N{{U+{:04X}}}".format(codepoint))
             i = close + 1
     return "".join(out)

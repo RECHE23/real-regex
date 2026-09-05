@@ -318,6 +318,56 @@ class TestParity(unittest.TestCase):
         with self.assertRaises(re.error):
             re.compile(rb"\N{LATIN SMALL LETTER A}")
 
+    def test_named_char_errors_carry_msg_pos_and_pattern(self):
+        r"""The three faults the \N rewrite raises ITSELF report where they are, like re's.
+
+        These three are raised in Python, before the C++ parser ever sees the pattern, and they used
+        to carry a message and nothing else -- `e.pos`, `e.lineno` and `e.colno` were all None. The
+        channel existed the whole time: `real.error(msg, pattern, pos)` is what the pattern-side
+        errors already used.
+
+        The sharpest form of the defect: `(?#x` reports position 0 on its own, because the rewrite's
+        fast path returns untouched and the C++ parser answers -- and reported NOTHING once the same
+        pattern also contained `\N{`, because then the Python pre-parser intercepted it first. One
+        error, two answers, decided by an unrelated construct elsewhere in the pattern.
+
+        Compared field by field against `re` rather than by message text alone: a position that is
+        present but wrong reads exactly like a correct one in a string comparison.
+        """
+        cases = [
+            r"\N{X}",          # the backslash, as re reports escape faults
+            r"a\N{NOSUCH}",
+            r"[a\N{X}]",       # inside a class, where the rewrite is textual and works for free
+            r"\N{X",           # unterminated: the name's FIRST character, not the pattern's end
+            r"\N{ABC",
+            r"xx\N{AB",
+            r"\N{",            # an ABSENT name is not an unterminated one -- re splits them
+            r"\N{}",
+            r"(?#x\N{A}",      # the comment fault, via the path that used to lose its position
+            r"a(?#c\N{B}",
+            r"(?#a)\N{X}",     # a CLOSED comment, so the offset survives the skip
+        ]
+        for pattern in cases:
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(re.error) as theirs:
+                    re.compile(pattern)
+                with self.assertRaises(real.error) as ours:
+                    real.compile(pattern)
+                self.assertEqual(ours.exception.msg, theirs.exception.msg)
+                self.assertEqual(ours.exception.pos, theirs.exception.pos)
+                self.assertEqual(ours.exception.pattern, theirs.exception.pattern)
+                # lineno/colno are derived from pos and the pattern, so they only mean anything once
+                # both are set -- which is exactly what was missing.
+                self.assertIsNotNone(ours.exception.lineno)
+                self.assertIsNotNone(ours.exception.colno)
+        self.assertEqual(len(cases), 11)  # a deleted row must fail, not shrink
+
+        # The one member of this family that is NOT re parity, and is documented as an extension
+        # (div_named_scalar): re rejects the scalar spelling as an unknown NAME, this accepts it.
+        with self.assertRaises(re.error):
+            re.compile(r"\N{U+0041}")
+        self.assertTrue(real.compile(r"\N{U+0041}").fullmatch("A"))
+
     def test_class_octal_escape_parity(self):
         r"""Inside a class every \digit is octal — there are no back-references in a class (re's
         rule): \1-\7 (one digit), \12 (two), \101 (three). str + bytes; \8/\9 and >0o377 error."""
