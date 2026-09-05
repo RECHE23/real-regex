@@ -308,6 +308,51 @@ TEST(unsupported_escape_names_the_escape)
   EXPECT(cause("a\\-b").empty()); // escaped punctuation keeps its literal meaning
 }
 
+// Three diagnostics pointed where the SCAN stopped instead of where the fault begins. `re` points
+// at the construct: the `(` of a misplaced flag group, the second quantifier of a double repeat,
+// the first count of an inverted range. On a long pattern the position is how the fault is found at
+// all, so three characters of drift is the wrong place — same family as the escapes f931823 moved
+// to the backslash.
+TEST(error_cursor_points_at_the_construct_not_past_it)
+{
+  const auto at = [](const char* pattern) {
+                    try {
+                      const real::regex rx(pattern);
+                    }
+                    catch (const real::regex_error& ex) {
+                      return static_cast<long>(ex.position());
+                    }
+                    return -1L;
+                  };
+
+  // A misplaced flag group: the `(`, not the byte after the flag letters. The drift grew with the
+  // flag run, so `(?imsx)` was further off than `(?i)`.
+  EXPECT(at("a(?i)b") == 1);
+  EXPECT(at("ab(?i)c") == 2);
+  EXPECT(at("a(?im)b") == 1);
+  EXPECT(at("a(?imsx)b") == 1);
+
+  // A double quantifier: the SECOND one. `*` and `?` consume nothing and already reported here;
+  // `{n}` consumes, and reported past its own `}`.
+  EXPECT(at("a{2}{3}") == 4);
+  EXPECT(at("ab{1}{2}") == 5);
+  EXPECT(at("a**") == 2);      // unchanged: this half was always right
+  EXPECT(at("a{2}{3}{4}") == 4);
+
+  // An inverted repeat: the first character INSIDE the braces, where the counts are, not the brace
+  // that introduces them.
+  EXPECT(at("a{2,1}") == 2);
+  EXPECT(at("ab{5,2}") == 3);
+  EXPECT(at("a{2,1}b") == 2);
+  EXPECT(at("a{10,2}") == 2);  // a multi-digit min still reports its FIRST digit
+
+  // Patterns that must still compile, so the rewinds cannot be reached by a well-formed quantifier
+  // or a leading flag group.
+  EXPECT(at("(?i)a") == -1);
+  EXPECT(at("a{2,3}") == -1);
+  EXPECT(at("a{2}") == -1);
+}
+
 // `bad character in group name` named the rule and neither the name nor which of four distinct
 // faults occurred. re splits them, quotes the name it read, and reports at the name's first byte.
 // Second of the three message families from the outside audit.

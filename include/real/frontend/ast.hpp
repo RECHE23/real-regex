@@ -1286,11 +1286,15 @@ namespace real::detail {
       // rejects it too ("bad repetition operator", RE2 has no possessives; measured 2026-07-17).
       const bool possessive {!is_ecma() && !lazy && accept('+')};
       if (!eof()) {
-        const char   ch          {peek()};
-        std::int32_t ignored_min {};
-        std::int32_t ignored_max {-1};
+        const std::size_t second_pos  {pos_}; // captured before try_parse_braces CONSUMES the braces
+        const char        ch          {peek()};
+        std::int32_t      ignored_min {};
+        std::int32_t      ignored_max {-1};
         if (ch == '*' || ch == '+' || ch == '?' ||
             (ch == '{' && try_parse_braces(ignored_min, ignored_max))) {
+          // The second quantifier, which is the one that cannot be there. `*` and `?` consume
+          // nothing so they already reported here; `{n}` does, and reported past its own `}`.
+          pos_ = second_pos;
           fail("multiple repeat");
         }
       }
@@ -1349,7 +1353,9 @@ namespace real::detail {
       min = repeat_min < 0 ? 0 : repeat_min;
       max = (has_comma && repeat_max < 0) ? -1 : repeat_max;
       if (max != -1 && max < min) {
-        pos_ = saved_pos;
+        // The first character INSIDE the braces, where `re` reports: the counts are the fault, not
+        // the brace that introduces them. `saved_pos` is the `{`.
+        pos_ = saved_pos + 1;
         fail("min repeat greater than max repeat");
       }
       return true;
@@ -1532,13 +1538,21 @@ namespace real::detail {
      * "at the start": that prefix would have taken it.
      *
      * \param[in] after_removal Whether the run just consumed a `-flags` suffix.
+     * \param[in] open_pos      Offset of the `(` that opened the group, where `re` reports the
+     *                          placement fault -- the whole construct is misplaced, not the byte
+     *                          the scan stopped on.
      */
-    constexpr void require_scoped_flags_colon(bool after_removal)
+    constexpr void require_scoped_flags_colon(bool        after_removal,
+                                              std::size_t open_pos)
     {
       if (accept(':')) {
         return;
       }
       if (!eof() && peek() == ')') {
+        // `a(?i)b` is wrong because the GROUP is not at the start; pointing after the flag letters
+        // named the last thing read instead of the thing that is misplaced, and on a long pattern
+        // the position is how the fault is found at all.
+        pos_ = open_pos;
         fail("global flags not at the start of the expression");
       }
       if (after_removal) {
@@ -1719,7 +1733,7 @@ namespace real::detail {
             }
             after_removal = true;
           }
-          require_scoped_flags_colon(after_removal);
+          require_scoped_flags_colon(after_removal, open_pos);
           // Every inline flag (i m s x a U) is honoured per scope: verbose changes tokenization, icase/
           // ascii govern folding and the \w\d\s tables, dotall the dot, multiline the ^/$ anchors,
           // ungreedy the default quantifier greediness — all read from the scope stack. The added set

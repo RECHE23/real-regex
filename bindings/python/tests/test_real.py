@@ -613,10 +613,23 @@ class TestFlagsTerminatorMessage(unittest.TestCase):
                 self.assertNotIn("global flags not at the start", msg)
 
     def test_well_formed_unscoped_stays_placement(self):
+        # The `(`, which is re's answer and the only one the message supports: it is the GROUP that
+        # is misplaced, so pointing after the flag letters named the last byte read instead of the
+        # thing that is wrong -- and the drift grew with the flag run.
         msg, pos = self._msg_pos("a(?i)b")
-        self.assertEqual(pos, 4)
+        self.assertEqual(pos, 1)
+        self.assertEqual(pos, self._re_pos("a(?i)b"))  # the oracle, asked rather than transcribed
         self.assertIn("global flags not at the start of the expression", msg)
         self.assertNotIn("missing -, : or )", msg)
+
+    @staticmethod
+    def _re_pos(pattern):
+        """re's own position for the same pattern -- the oracle, asked rather than transcribed."""
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            return exc.pos
+        return None
 
     def test_leading_well_formed_still_compiles(self):
         self.assertIsNotNone(real.compile("(?i)a").fullmatch("A"))

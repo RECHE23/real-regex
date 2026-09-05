@@ -360,8 +360,10 @@ TEST(flags_terminator_is_named_not_placement)
                                }
                              };
 
-  // Well-formed unscoped, not at the start: placement. Cursor stays on the ')'.
-  expect_msg_at("a(?i)b", placement, 4, missing_term, missing_flag);
+  // Well-formed unscoped, not at the start: placement, reported at the `(`. It is the GROUP that is
+  // misplaced, so re points at where the group begins and not at the byte the scan stopped on —
+  // three characters later here, and arbitrarily further on a longer flag run.
+  expect_msg_at("a(?i)b", placement, 1, missing_term, missing_flag);
 
   // Non-terminator after added flags — including at the start of the pattern.
   expect_msg_at("(?i*)", missing_term, 3, placement, missing_flag);
@@ -377,7 +379,10 @@ TEST(flags_terminator_is_named_not_placement)
   // After a removal letter, a non-colon (RE2 still accepts ')' as global — that's placement).
   expect_msg_at("(?i-s*)", missing_colon, 5, placement, missing_term);
   expect_msg_at("(?i-s", missing_colon, 5, placement, missing_term);
-  expect_msg_at("x(?i-s)y", placement, 6, missing_colon, missing_term);
+  // Same rule, and the message here is deliberately NOT re's: re calls `(?i-s)` a `missing :` while
+  // this accepts the RE2 global form, so only the placement half is shared. The position follows
+  // this message rather than re's — a misplaced group is reported where the group starts.
+  expect_msg_at("x(?i-s)y", placement, 1, missing_colon, missing_term);
 
   // Leading well-formed (?i) / RE2 (?i-s) still compile: the prefix took them.
   EXPECT(real::regex("(?i)a").fullmatch("A").matched());

@@ -329,7 +329,7 @@ namespace real {
           // list has to re-compile them all to find out which one it was. The index is free here
           // and nowhere else.
           throw regex_error(ex.cause() + " (in pattern " + std::to_string(i) + " of " +
-                              std::to_string(patterns.size()) + ")",
+                            std::to_string(patterns.size()) + ")",
                             ex.position(), ex.kind());
         }
       }
