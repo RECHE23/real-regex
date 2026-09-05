@@ -31,7 +31,11 @@ TEST(posix_libc_oracle_unavailable_on_this_platform)
 
 #else
 
-  #include <clocale>
+// <locale.h> and not <clocale>: the per-thread locale API used below (locale_t, newlocale,
+// uselocale, freelocale) is a POSIX addition to this header, and <clocale> is only guaranteed to
+// provide the C subset. Following the tidy suggestion here would not compile.
+// NOLINTNEXTLINE(modernize-deprecated-headers)
+  #include <locale.h>
   #include <regex.h>
 
   #include "real/compat/std/regex.hpp"
@@ -111,9 +115,9 @@ namespace {
   const std::vector<std::string>& bre_patterns()
   {
     static const std::vector<std::string> list {
-      "a", "ab", "a*", "ab*", "a\\{2\\}", "a\\{2,3\\}", "\\(a\\)", "\\(ab\\)*",
-      "\\(a\\)\\(b\\)", "[abc]", "[^abc]", "[a-c]*", "[[:digit:]]*", "[[:alpha:]]*",
-      ".", ".*", "a.c", "^a", "a$", "^a$", "a|b", "x*", "\\(a*\\)\\(b*\\)",
+      "a", "ab", "a*", "ab*", R"(a\{2\})", R"(a\{2,3\})", R"(\(a\))", R"(\(ab\)*)",
+      R"(\(a\)\(b\))", "[abc]", "[^abc]", "[a-c]*", "[[:digit:]]*", "[[:alpha:]]*",
+      ".", ".*", "a.c", "^a", "a$", "^a$", "a|b", "x*", R"(\(a*\)\(b*\))",
     };
     return list;
   }
@@ -128,17 +132,24 @@ namespace {
     return list;
   }
 
-  //! One scoped switch to the C locale: `[[:alpha:]]` must not mean different things on two
-  //! machines because their environments differ.
-  struct c_locale_guard
+  /*!
+   * \brief A C locale for THIS thread only, for the sweep's duration.
+   *
+   * `[[:alpha:]]` must not mean different things on two machines because their environments differ,
+   * so the locale is pinned rather than inherited. `setlocale` would pin it for the whole PROCESS,
+   * which is a side effect on every other test in the same binary and is not thread-safe;
+   * `uselocale` installs a locale on the calling thread and leaves the rest alone.
+   */
+  class c_locale_guard
   {
-    std::string previous;
+  public:
 
     c_locale_guard()
+      : fresh_ {newlocale(LC_ALL_MASK, "C", static_cast<locale_t>(nullptr))}
     {
-      const char* current {std::setlocale(LC_ALL, nullptr)};
-      previous = current != nullptr ? current : "";
-      std::setlocale(LC_ALL, "C");
+      if (fresh_ != static_cast<locale_t>(nullptr)) {
+        previous_ = uselocale(fresh_);
+      }
     }
 
     c_locale_guard(const c_locale_guard&)            = delete;
@@ -148,10 +159,25 @@ namespace {
 
     ~c_locale_guard()
     {
-      if (!previous.empty()) {
-        std::setlocale(LC_ALL, previous.c_str());
+      if (previous_ != static_cast<locale_t>(nullptr)) {
+        (void) uselocale(previous_);
+      }
+      if (fresh_ != static_cast<locale_t>(nullptr)) {
+        freelocale(fresh_);
       }
     }
+
+    //! Whether the pin actually took: a guard that silently did nothing would leave the sweep
+    //! reading whatever the environment happens to say.
+    [[nodiscard]] bool installed() const
+    {
+      return fresh_ != static_cast<locale_t>(nullptr);
+    }
+
+  private:
+
+    locale_t fresh_    {};
+    locale_t previous_ {};
   };
 
   //! Compares one grammar end to end and returns {compared, declined, divergences}.
@@ -180,8 +206,10 @@ namespace {
           got = real_spans(pattern.c_str(), subject.c_str(), option);
         }
         catch (const std::exception& err) {
-          result.failures.push_back("pattern '" + pattern + "' subject '" + subject +
-                                    "': libc accepts it, this engine refuses -- " + err.what());
+          std::string note {"pattern '"};
+          note.append(pattern).append("' subject '").append(subject);
+          note.append("': libc accepts it, this engine refuses -- ").append(err.what());
+          result.failures.push_back(std::move(note));
           continue;
         }
         // Group 0 is the contract POSIX states; a libc that reports fewer slots than this engine
@@ -190,16 +218,21 @@ namespace {
         const std::size_t common {want.size() < got.size() ? want.size() : got.size()};
         for (std::size_t group = 0; group < common; ++group) {
           if (want[group] != got[group]) {
-            result.failures.push_back(
-              "pattern '" + pattern + "' subject '" + subject + "' group " +
-              std::to_string(group) + ": this engine (" + std::to_string(got[group].first) + "," +
-              std::to_string(got[group].second) + "), libc (" + std::to_string(want[group].first) +
-              "," + std::to_string(want[group].second) + ")");
+            std::string note {"pattern '"};
+            note.append(pattern).append("' subject '").append(subject).append("' group ");
+            note.append(std::to_string(group)).append(": this engine (");
+            note.append(std::to_string(got[group].first)).append(",");
+            note.append(std::to_string(got[group].second)).append("), libc (");
+            note.append(std::to_string(want[group].first)).append(",");
+            note.append(std::to_string(want[group].second)).append(")");
+            result.failures.push_back(std::move(note));
           }
         }
         if (want.empty() != got.empty()) {
-          result.failures.push_back("pattern '" + pattern + "' subject '" + subject +
-                                    "': one side matched and the other did not");
+          std::string note {"pattern '"};
+          note.append(pattern).append("' subject '").append(subject);
+          note.append("': one side matched and the other did not");
+          result.failures.push_back(std::move(note));
         }
       }
     }
@@ -223,7 +256,8 @@ namespace {
 TEST(posix_ere_bounds_equal_libc_regcomp)
 {
   const c_locale_guard locale;
-  const tally          result {sweep(ere_patterns(), REG_EXTENDED, rc::regex_constants::extended)};
+  EXPECT(locale.installed());  // a guard that silently did nothing is not a pinned locale
+  const tally result {sweep(ere_patterns(), REG_EXTENDED, rc::regex_constants::extended)};
   report("posix ERE vs libc", result);
   EXPECT(result.compared > 0); // a sweep that compared nothing is not a green
   EXPECT(result.failures.empty());
@@ -232,7 +266,8 @@ TEST(posix_ere_bounds_equal_libc_regcomp)
 TEST(posix_bre_bounds_equal_libc_regcomp)
 {
   const c_locale_guard locale;
-  const tally          result {sweep(bre_patterns(), 0, rc::regex_constants::basic)};
+  EXPECT(locale.installed());
+  const tally result {sweep(bre_patterns(), 0, rc::regex_constants::basic)};
   report("posix BRE vs libc", result);
   EXPECT(result.compared > 0);
   EXPECT(result.failures.empty());
@@ -244,6 +279,7 @@ TEST(posix_leftmost_longest_is_what_libc_says)
   // sweep: POSIX takes the LONGEST leftmost match, so `a|ab` over "abc" is 0..2. A leftmost-first
   // engine answers 0..1 and would pass every other case in this file.
   const c_locale_guard locale;
+  EXPECT(locale.installed());
   const struct
   {
     const char* pattern;
@@ -251,11 +287,11 @@ TEST(posix_leftmost_longest_is_what_libc_says)
     long        begin;
     long        end;
   } cases[] {
-    {"a|ab", "abc", 0, 2},
-    {"ab|a", "abc", 0, 2},
-    {"(a|ab)(c|bcd)", "abcd", 0, 4},
-    {"a*", "aaa", 0, 3},
-    {"(a|ab)c", "abc", 0, 3},
+    {.pattern = "a|ab", .subject = "abc", .begin = 0, .end = 2},
+    {.pattern = "ab|a", .subject = "abc", .begin = 0, .end = 2},
+    {.pattern = "(a|ab)(c|bcd)", .subject = "abcd", .begin = 0, .end = 4},
+    {.pattern = "a*", .subject = "aaa", .begin = 0, .end = 3},
+    {.pattern = "(a|ab)c", .subject = "abc", .begin = 0, .end = 3},
   };
   for (const auto& one : cases) {
     const spans want {libc_spans(one.pattern, one.subject, REG_EXTENDED)};
