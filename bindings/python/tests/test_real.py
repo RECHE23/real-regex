@@ -273,6 +273,51 @@ class TestModuleFunctions(unittest.TestCase):
         with self.assertRaises(real.error):
             real.RegexSet([r"ok", r"(?>a|b)"])  # atomic groups: Tier 1 bodies only; a compound/alternating body is not
 
+    def test_regex_set_compile_failure_carries_usable_attributes(self):
+        """A set's compile failure must say the same things a member's own failure says.
+
+        Nothing read `e.pattern` or `e.pos` on a RegexSet failure before, which is why they could be
+        wrong for as long as they were: the existing test asserted only that SOMETHING was raised.
+        A caller writing `except real.error as e: ... e.pos` got None, and `e.pattern` was an int —
+        the position, landed in the pattern slot, because `error(msg, pattern=None, pos=None)` takes
+        the pattern second and the call passed two positionals.
+
+        The oracle is the member compiled alone: a set is a container, so failing inside one must
+        not degrade what the failure reports.
+        """
+        for member in ["(?i*)", "[z-a]", "a{2,1}"]:
+            with self.subTest(member=member):
+                with self.assertRaises(real.error) as alone:
+                    real.compile(member)
+                with self.assertRaises(real.error) as inside:
+                    real.RegexSet(["a+", member, "b+"])
+                # Everything the member's own failure says, PLUS which member it was: the set is
+                # the only place that knows the index, and a position inside an unnamed member is
+                # an offset into a string the caller has to guess at.
+                self.assertTrue(inside.exception.msg.startswith(alone.exception.msg),
+                                "%r does not begin with %r"
+                                % (inside.exception.msg, alone.exception.msg))
+                self.assertIn(" of 3)", inside.exception.msg)
+                # The offending MEMBER, not the set, and not an integer.
+                self.assertIsInstance(inside.exception.pattern, str)
+                self.assertEqual(inside.exception.pattern, member)
+                self.assertEqual(inside.exception.pos, alone.exception.pos)
+                # Derived from pattern and pos, so they are the tell that both are really set.
+                self.assertIsNotNone(inside.exception.lineno)
+                self.assertIsNotNone(inside.exception.colno)
+
+        # The member's INDEX, which the set knows and the message never carried: with three members
+        # and no index, a caller holding a generated list has to re-compile them all to find out
+        # which one it was.
+        with self.assertRaises(real.error) as first:
+            real.RegexSet(["(?i*)", "b+", "c+"])
+        with self.assertRaises(real.error) as last:
+            real.RegexSet(["a+", "b+", "(?i*)"])
+        self.assertEqual(first.exception.pattern, "(?i*)")
+        self.assertEqual(last.exception.pattern, "(?i*)")
+        self.assertIn("2 of 3", last.exception.msg)   # zero-based index, as Python counts
+        self.assertIn("0 of 3", first.exception.msg)
+
     def test_regex_set_native_matches_n_loop_reference(self):
         """R4: RegexSet now wraps real::regex_set directly (Stage-1/Stage-2 fused inside the C++
         engine) instead of looping N individual Pattern.search calls in Python. Differential

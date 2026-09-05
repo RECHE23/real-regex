@@ -1481,9 +1481,12 @@ void set_regex_error(const real::regex_error& ex, PyObject* pattern,
   }
   const char*       msg    {owned.c_str()};
   const auto        pos    {static_cast<Py_ssize_t>(ex.position())};
-  PyObject*         exc    {(pattern != nullptr)
-                              ? PyObject_CallFunction(error_type, "sOn", msg, pattern, pos)
-                              : PyObject_CallFunction(error_type, "sn", msg, pos)};
+  // `error(msg, pattern=None, pos=None)` takes the pattern SECOND, so two positionals landed the
+  // position in the pattern slot and left `pos` unset: a caller reading `e.pos` on a pattern-less
+  // failure got None, and `e.pattern` was an integer. Py_None is passed explicitly rather than
+  // omitted, so both slots are always filled by position and neither can shift again.
+  PyObject*         exc    {PyObject_CallFunction(error_type, "sOn", msg,
+                                                  pattern != nullptr ? pattern : Py_None, pos)};
   if (exc == nullptr) {
     return;
   }
@@ -2484,7 +2487,32 @@ PyObject* real_compile_set(PyObject*, PyObject* args, PyObject* kwargs) {
     try {
         set = new real::regex_set(std::span<const std::string_view> {views}, compile_flags);
     } catch (const real::regex_error& ex) {
-        set_regex_error(ex, nullptr, /*fallback_available=*/false);  // RegexSet has no fallback policy
+        // WHICH member, as a Python object, so `e.pattern` names the offending pattern instead of
+        // being empty. The set's exception carries the index in its message and not the member's
+        // text, so the text is recovered by re-compiling members one at a time -- bounded, and paid
+        // only on the error path. A failure that reproduces on no single member (a fused-stage
+        // fault rather than a parse one) leaves the pattern unset rather than blaming a member.
+        PyObject* culprit = nullptr;
+        for (const std::string& member : owned) {
+            try {
+                const real::regex probe {member, compile_flags};
+                (void) probe;
+            } catch (const real::regex_error&) {
+                culprit = (is_bytes == 1)
+                            ? PyBytes_FromStringAndSize(member.data(),
+                                                        static_cast<Py_ssize_t>(member.size()))
+                            : PyUnicode_DecodeUTF8(member.data(),
+                                                   static_cast<Py_ssize_t>(member.size()), "replace");
+                if (culprit == nullptr) {
+                    PyErr_Clear();  // an error message must never mask the error it reports
+                }
+                break;
+            } catch (const std::exception&) {
+                break;
+            }
+        }
+        set_regex_error(ex, culprit, /*fallback_available=*/false);  // RegexSet has no fallback policy
+        Py_XDECREF(culprit);
         return nullptr;
     } catch (const std::bad_alloc&) {
         return PyErr_NoMemory();
