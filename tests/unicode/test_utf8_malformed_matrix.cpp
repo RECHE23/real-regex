@@ -170,7 +170,7 @@ TEST(region_start_is_a_seed_position_even_when_it_is_a_continuation_byte)
 
     const auto empty = regex("").search(mc.seq);
     EXPECT(empty.matched());
-    EXPECT(empty.start(0) == 0U); // leftmost, so the first position must be the one reported
+    EXPECT(empty.start(0) == 0U);                  // leftmost, so the first position must be the one reported
 
     const auto at_end = regex("$").search(mc.seq); // the control: this half always worked
     EXPECT(at_end.matched());
@@ -210,7 +210,7 @@ TEST(empty_match_iteration_stays_codepoint_aligned_over_malformed_bytes)
   // either one leaves the other still producing an aligned walk here.
   // Both the regex and the subject are named: an iterator range outlives neither a temporary
   // pattern nor a temporary text, and the deleted overloads say so.
-  const regex              star {"x*"};
+  const regex              star    {"x*"};
   const std::string        after_a {cat({"a", bytes({0x80})})};
   std::vector<std::size_t> starts;
   for (const auto& m : star.find_iter(after_a)) {
