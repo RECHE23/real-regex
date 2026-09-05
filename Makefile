@@ -1078,17 +1078,18 @@ uninstall: ## [release] Uninstall the Python package (pip)
 # inputs (docs/release-notes/v<version>.md must exist; BENCHMARKS re-stamp optional;
 # CHANGELOG.md is the train journal and is a gate-bump file, not a release dirty exception),
 # commits with the BODY=<file> body, tags the engine AND the co-located decoupled Go
-# module (bindings/go/v0.<minor>.<patch+1>, so pkg.go.dev never lags the engine), and pushes.
-# The MINOR is read from the newest Go tag, never assumed: it used to be hardcoded to 0.1, so the
-# first release after an incompatible Go change would have shipped it as v0.1.<n+1> -- a PATCH tag
-# on a broken API, which `go get -u` delivers silently. A minor bump is a human decision: tag
-# bindings/go/v0.<m>.0 by hand once, and every later release follows from there.
+# module (bindings/go/v0.<minor>.<patch+1> by default, so pkg.go.dev never lags the engine),
+# and pushes. The MINOR is read from the newest Go tag, never assumed: it used to be hardcoded
+# to 0.1, so the first release after an incompatible Go change would have shipped it as
+# v0.1.<n+1> -- a PATCH tag on a broken API, which `go get -u` delivers silently. A minor bump
+# is a human decision: GO_MINOR=1 tags bindings/go/v0.<m+1>.0 on the SAME commit as the engine
+# tag. (Tagging v0.<m>.0 by hand first would still leave this target to patch-bump and
+# push v0.<m>.1.) DRY_RUN=1 prints both tags and stops before commit/tag/push.
 # Pushing the engine tag drives release.yml (wheels/sdist -> PyPI, crate, GitHub
 # release, tap bumps, pkg.go.dev nudge). BODY lives OUTSIDE the tree (the clean-tree
-# check tolerates only the human inputs). DRY_RUN=1 stops after bump+vendor+stage —
-# nothing committed, tagged or pushed; revert with `git reset --hard` (the throwaway
-# notes file stays untracked — remove it too).
-release: ## [release] Cut the complete calendar release (bump all, tag engine + Go, push) — BODY=<file outside the tree>; DRY_RUN=1 to rehearse
+# check tolerates only the human inputs). Revert a dry-run with `git reset --hard` after
+# copying the notes file off-tree (the throwaway notes file stays untracked -- remove it too).
+release: ## [release] Cut the complete calendar release (bump all, tag engine + Go, push) — BODY=<file outside the tree>; DRY_RUN=1 to rehearse; GO_MINOR=1 for a Go minor
 	@test "$$(git symbolic-ref --short HEAD)" = main || { echo "release from main only"; exit 1; }
 	@test -n "$(BODY)" || { echo "release: pass BODY=<file> (the commit body, a file OUTSIDE the tree)"; exit 1; }
 	@test -f "$(BODY)" || { echo "release: BODY file '$(BODY)' not found"; exit 1; }
@@ -1098,7 +1099,20 @@ release: ## [release] Cut the complete calendar release (bump all, tag engine + 
 	@year=$$(date -u +%Y); month=$$(date -u +%m | sed 's/^0//'); \
 	 patch=$$(git tag -l "v$$year.$$month.*" | wc -l | tr -d ' '); \
 	 version="$$year.$$month.$$patch"; \
-	 echo "Releasing v$$version"; \
+	 gv=$$(git tag -l 'bindings/go/v0.*' | sed 's|.*/v||' | sort -t. -k2,2n -k3,3n | tail -1); \
+	 gmin=$$(echo "$$gv" | sed -nE 's/^0\.([0-9]+)\.[0-9]+$$/\1/p'); \
+	 gpat=$$(echo "$$gv" | sed -nE 's/^0\.[0-9]+\.([0-9]+)$$/\1/p'); \
+	 if [ -z "$$gmin" ] || [ -z "$$gpat" ]; then \
+	   echo "release: cannot read the Go module version from the tags (last: '$$gv')"; exit 1; \
+	 fi; \
+	 if [ "$(GO_MINOR)" = "1" ]; then \
+	   gmin=$$((gmin + 1)); \
+	   gpat=0; \
+	 else \
+	   gpat=$$((gpat + 1)); \
+	 fi; \
+	 gotag="bindings/go/v0.$$gmin.$$gpat"; \
+	 echo "release: would tag v$$version and $$gotag"; \
 	 test -f "docs/release-notes/v$$version.md" || { echo "release: docs/release-notes/v$$version.md missing -- write the notes first"; exit 1; }; \
 	 sed -i.bak -E "s/^version = \".*\"/version = \"$$version\"/" pyproject.toml && rm -f pyproject.toml.bak; \
 	 sed -i.bak -E "s/^__version__ = \".*\"/__version__ = \"$$version\"/" bindings/python/real/__init__.py && rm -f bindings/python/real/__init__.py.bak; \
@@ -1117,6 +1131,7 @@ release: ## [release] Cut the complete calendar release (bump all, tag engine + 
 	         bindings/go/vendor_include docs/BENCHMARKS.md docs/release-notes/; \
 	 if [ "$(DRY_RUN)" = "1" ]; then \
 	   echo "release: DRY RUN -- tree bumped+staged for v$$version; STOPPED before commit/tag/push."; \
+	   echo "release: would tag v$$version and $$gotag"; \
 	   echo "release: verify with 'make version-check go-check-vendor'."; \
 	   echo "release: TO REVERT, back up the two human inputs FIRST -- this dry run STAGED them, so they are"; \
 	   echo "  no longer untracked and 'git reset --hard' DELETES the notes file and reverts the BENCHMARKS.md"; \
@@ -1127,15 +1142,8 @@ release: ## [release] Cut the complete calendar release (bump all, tag engine + 
 	 body=$$(mktemp); printf 'release: v%s\n\n' "$$version" > "$$body"; cat "$(BODY)" >> "$$body"; \
 	 git commit -F "$$body"; rm -f "$$body"; \
 	 git tag "v$$version"; \
-	 gv=$$(git tag -l 'bindings/go/v0.*' | sed 's|.*/v||' | sort -t. -k2,2n -k3,3n | tail -1); \
-	 gmin=$$(echo "$$gv" | sed -nE 's/^0\.([0-9]+)\.[0-9]+$$/\1/p'); \
-	 gpat=$$(echo "$$gv" | sed -nE 's/^0\.[0-9]+\.([0-9]+)$$/\1/p'); \
-	 if [ -z "$$gmin" ] || [ -z "$$gpat" ]; then \
-	   echo "release: cannot read the Go module version from the tags (last: '$$gv')"; exit 1; \
-	 fi; \
-	 gpat=$$((gpat + 1)); \
-	 git tag "bindings/go/v0.$$gmin.$$gpat"; \
-	 git push origin HEAD "v$$version" "bindings/go/v0.$$gmin.$$gpat"
+	 git tag "$$gotag"; \
+	 git push origin HEAD "v$$version" "$$gotag"
 
 clean: ## [daily] Remove build artifacts
 	rm -rf $(BUILD) bindings/python/build bindings/python/real/*.so bindings/python/*.egg-info *.egg-info dist
