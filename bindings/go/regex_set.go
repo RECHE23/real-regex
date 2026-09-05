@@ -46,7 +46,10 @@ func CompileSet(patterns []string) (*RegexSet, error) {
 	}
 	var errbuf [256]C.char
 	var code C.int
-	h := C.real_set_compile(patternsPtr, lensPtr, C.size_t(len(patterns)), 0,
+	// dollarEndOnly for the same reason Compile carries it: `$` is regexp's end-of-text here, not
+	// re's end-or-before-a-trailing-newline. A set whose members answered a different `$` from a
+	// singly-compiled pattern would be the worse bug of the two.
+	h := C.real_set_compile(patternsPtr, lensPtr, C.size_t(len(patterns)), dollarEndOnly,
 		&errbuf[0], C.size_t(len(errbuf)), &code)
 	if h == nil {
 		return nil, errors.New(C.GoString(&errbuf[0]))

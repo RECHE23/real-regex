@@ -4,7 +4,7 @@
 //
 // v0.2: a regexp-idiomatic subset (Compile/MustCompile/QuoteMeta/Match/MatchString (package)
 // and methods)/String/Find/FindString/FindIndex/FindAll/FindAllString/Split/FindAllIndex/
-// FindSubmatch/FindStringSubmatch/FindSubmatchIndex/ReplaceAll/RegexSet)
+// FindSubmatch/FindStringSubmatch/FindSubmatchIndex/FindStringSubmatchIndex/ReplaceAll/RegexSet)
 // plus REAL extensions regexp has no equivalent for at all (FullMatch,
 // bounded lookarounds, possessive quantifiers). See README.md for the full method-to-C-ABI
 // mapping and documented flavor divergences from Go's regexp (RE2) — most importantly: \w,
@@ -39,6 +39,7 @@ import (
 	"errors"
 	"regexp"
 	"runtime"
+	"unicode/utf8"
 	"unsafe"
 )
 
@@ -52,6 +53,14 @@ func (*noCopy) Unlock() {}
 
 // sizeMax is (size_t)-1, the C ABI's error sentinel for count/length-returning functions.
 var sizeMax = ^C.size_t(0)
+
+// dollarEndOnly is real::flags::dollar_endonly (the C ABI's native numbering, NOT re's). Every
+// pattern this package compiles carries it, because regexp's `$` without `m` is RE2's `\z` -- the
+// very end of the text -- while the engine's default is re's: the end, OR just before a trailing
+// newline. Left off, `foo$` matched "foo\n" here and did not under regexp, silently, on one of the
+// most ordinary patterns there is. The Rust crate sets the same flag at both of its compile sites
+// for the same reason; this is the flavor the C ABI has a flag for, not a behavior to document.
+const dollarEndOnly = 128
 
 // EngineVersion is the vendored REAL C++ engine's version (e.g. "2026.7.40") — the engine
 // version actually compiled into this build. Intentionally decoupled from this module's own
@@ -86,6 +95,21 @@ func spansToIndices(spans []C.size_t) []int {
 	return out
 }
 
+// indicesToSpans is spansToIndices' inverse: Go's regexp convention (-1 for a group that did not
+// participate) back to the C ABI's SIZE_MAX sentinel, for the calls that HAND a match to the ABI
+// rather than receive one.
+func indicesToSpans(idx []int) []C.size_t {
+	out := make([]C.size_t, len(idx))
+	for i, v := range idx {
+		if v < 0 {
+			out[i] = sizeMax
+		} else {
+			out[i] = C.size_t(v)
+		}
+	}
+	return out
+}
+
 // Regexp wraps a compiled real_regex handle. Safe for concurrent use by multiple goroutines
 // (the C ABI's own thread-safety contract: a const handle only reads). Close releases the
 // underlying C++ object; a runtime.SetFinalizer is a safety net, not a substitute for it.
@@ -106,7 +130,7 @@ func Compile(pattern string) (*Regexp, error) {
 	defer freePat()
 	var errbuf [256]C.char
 	var code C.int
-	h := C.real_compile((*C.char)(cpat), C.size_t(len(pattern)), 0,
+	h := C.real_compile((*C.char)(cpat), C.size_t(len(pattern)), dollarEndOnly,
 		&errbuf[0], C.size_t(len(errbuf)), &code)
 	if h == nil {
 		return nil, errors.New(C.GoString(&errbuf[0]))
@@ -389,6 +413,17 @@ func (r *Regexp) FindStringSubmatch(s string) []string {
 	return submatchStrings(s, r.FindSubmatchIndex([]byte(s)))
 }
 
+// FindStringSubmatchIndex is FindSubmatchIndex on a string, like
+// regexp.Regexp.FindStringSubmatchIndex. The offsets are byte indices into s, so they index the
+// string directly; an unset group is the pair -1,-1 and no match is nil.
+//
+// The Find family is a 16-cell product of {leftmost, All} × {[]byte, String} × {plain, Submatch} ×
+// {value, Index}. This was the one cell missing, with both of its neighbours present — including
+// FindAllStringSubmatchIndex, the harder one.
+func (r *Regexp) FindStringSubmatchIndex(s string) []int {
+	return r.FindSubmatchIndex([]byte(s))
+}
+
 // FindSubmatchIndex returns the leftmost match's full span plus every group's span
 // (2*(NumSubexp()+1) ints: start0,end0,start1,end1,...), or nil if there is no match — the
 // same shape as regexp.Regexp.FindSubmatchIndex. A group that did not participate is -1,-1.
@@ -412,46 +447,66 @@ func (r *Regexp) FindSubmatchIndex(text []byte) []int {
 // it, so the empty-match rule below is applied once and inherited everywhere — and so does the
 // cap, which therefore counts FILTERED matches, as regexp's does.
 //
-// regexp ignores an empty match that abuts the preceding one ("empty matches abutting a preceding
-// match are ignored", allMatches in regexp.go); the engine, whose model is Python re, reports it.
-// Without the filter `x*` over "axbxc" enumerated [0,0] [1,2] [2,2] [3,4] [4,4] [5,5] where regexp
-// gives [0,0] [1,2] [3,4] [5,5] — and Split, a verbatim port of regexp's, then produced
-// ["a" "" "b" "" "c"] against regexp's ["a" "b" "c"]. The divergence was never in Split.
+// The loop below is a verbatim port of regexp's own allMatches, driving the engine one search at a
+// time from an explicit cursor, because regexp's rule is a CURSOR and not a filter. The engine's
+// iterator walks Python re's sequence, and the two disagree in two separate ways:
+//
+//	regexp ignores an empty match that abuts the preceding one ("empty matches abutting a preceding
+//	match are ignored"). Without that, `x*` over "axbxc" enumerates [0,0] [1,2] [2,2] [3,4] [4,4]
+//	[5,5] where regexp gives [0,0] [1,2] [3,4] [5,5] — and Split, itself a verbatim port, then
+//	produced ["a" "" "b" "" "c"] against regexp's ["a" "b" "c"].
+//
+//	regexp never returns two matches from the same start. After an empty match it advances one RUNE
+//	and searches again; re retries the same position for a longer match first, so `a*?` over "a"
+//	gives [0,0] [0,1] [1,1] there and [0,0] [1,1] here. Dropping abutting empties cannot express
+//	that: [0,1] is not empty, so no filter over the emitted sequence removes it, and the second and
+//	third matches OVERLAP.
+//
+// Hence the cursor: pos advances to the match end, or by one rune past an empty match, and every
+// search starts from it. The cap counts DELIVERED matches and stops the scan, as regexp's does.
 func (r *Regexp) FindAllSubmatchIndex(b []byte, n int) [][]int {
 	if n == 0 {
 		return nil
 	}
 	ctext, freeText := cBytes(b)
 	defer freeText()
-	it := C.real_find_iter(r.re, (*C.char)(ctext), C.size_t(len(b)))
-	if it == nil {
-		return nil
-	}
-	defer C.real_iter_free(it)
 	spans := r.groupSlots()
 	sp := spanPtr(spans)
 	if sp == nil {
 		return nil // closed / zero slots — never &spans[0] on empty
 	}
 	var out [][]int
+	end := len(b)
 	prevEnd := -1 // no preceding match yet: the first span is never abutting
-	for {
-		rc := C.real_iter_next(it, sp)
+	for pos := 0; pos <= end; {
+		rc := C.real_match(r.re, (*C.char)(ctext), C.size_t(end),
+			C.size_t(pos), C.size_t(end), C.REAL_MODE_SEARCH, sp)
 		if rc != 1 {
 			break
 		}
 		m := spansToIndices(spans)
-		if !(m[0] == m[1] && m[0] == prevEnd) { // empty AND abutting the preceding match: drop
+		accept := true
+		if m[0] == m[1] {
+			if m[0] == prevEnd {
+				accept = false
+			}
+			// One rune from POS, not from the match start — regexp advances the cursor it searched
+			// from. A zero width means pos is already at the end, and end+1 leaves the loop.
+			if _, width := utf8.DecodeRune(b[pos:end]); width > 0 {
+				pos += width
+			} else {
+				pos = end + 1
+			}
+		} else {
+			pos = m[1]
+		}
+		prevEnd = m[1]
+		if accept {
 			out = append(out, m)
 			if n > 0 && len(out) == n {
 				break // stop the scan, like regexp's allMatches: the cap is not a post-slice
 			}
 		}
-		// Outside the branch to mirror regexp's shape, but the placement is not load-bearing and a
-		// sabotage moving it inside does not change any answer: a DROPPED match is empty and starts
-		// at prevEnd, so m[1] == m[0] == prevEnd and the assignment is a no-op for exactly the
-		// matches that skip it.
-		prevEnd = m[1]
 	}
 	return out
 }
@@ -531,24 +586,68 @@ func (r *Regexp) ReplaceAll(text, repl []byte) ([]byte, error) {
 	if regexpDollarTemplate(repl) {
 		return nil, errors.New("ReplaceAll: $1 / $name / ${name} are regexp templates; this package uses \\1 / \\g<name>")
 	}
-	ctext, freeText := cBytes(text)
-	defer freeText()
 	crepl, freeRepl := cBytes(repl)
 	defer freeRepl()
+	ctext, freeText := cBytes(text)
+	defer freeText()
 	var errbuf [256]C.char
-	var nsubs C.size_t
-	need := C.real_sub(r.re, (*C.char)(ctext), C.size_t(len(text)),
-		(*C.char)(crepl), C.size_t(len(repl)), 0,
-		nil, 0, &nsubs, &errbuf[0], C.size_t(len(errbuf)))
-	if need == sizeMax {
-		return nil, errors.New(C.GoString(&errbuf[0]))
+
+	// The matches come from THIS package's enumeration, not from real_sub's. real_sub owns the
+	// sequence as well as the expansion, and its sequence is Python re's -- so delegating the whole
+	// job made ReplaceAll the one method that counted matches differently from every other one on
+	// the same object: `x*` over "axbxc" enumerated four matches through FindAllIndex and replaced
+	// six. real_expand is real_sub's inner half, one match at a time, which keeps the template
+	// grammar in a single place while the sequence stays here.
+	matches := r.FindAllSubmatchIndex(text, -1)
+
+	// With no matches nothing would ever be expanded, and a malformed template would come back a
+	// silent success where real_sub reported it. One expansion against an all-unmatched spans buffer
+	// parses the template and surfaces exactly those errors; its output is discarded. The call is
+	// unconditional so a CLOSED handle still errors, as the post-Close contract requires: a closed
+	// handle has zero slots, and the ABI's own null-re check is what reports it -- one source of
+	// truth for that message rather than a second one spelled out here.
+	if len(matches) == 0 {
+		spans := r.groupSlots()
+		for i := range spans {
+			spans[i] = sizeMax
+		}
+		if C.real_expand(r.re, (*C.char)(ctext), C.size_t(len(text)), spanPtr(spans),
+			C.size_t(len(spans)), (*C.char)(crepl), C.size_t(len(repl)), nil, 0,
+			&errbuf[0], C.size_t(len(errbuf))) == sizeMax {
+			return nil, errors.New(C.GoString(&errbuf[0]))
+		}
+		return append([]byte(nil), text...), nil
 	}
-	out := make([]byte, int(need))
-	if need > 0 {
-		C.real_sub(r.re, (*C.char)(ctext), C.size_t(len(text)),
-			(*C.char)(crepl), C.size_t(len(repl)), 0,
-			(*C.char)(unsafe.Pointer(&out[0])), C.size_t(len(out)), &nsubs,
+
+	out := make([]byte, 0, len(text))
+	piece := make([]byte, 64) // reused across matches; grown only when one expansion overflows it
+	last := 0
+	for _, m := range matches {
+		out = append(out, text[last:m[0]]...)
+		spans := indicesToSpans(m)
+		sp := spanPtr(spans)
+		if sp == nil {
+			return nil, errors.New("ReplaceAll: no capture slots")
+		}
+		need := C.real_expand(r.re, (*C.char)(ctext), C.size_t(len(text)), sp, C.size_t(len(spans)),
+			(*C.char)(crepl), C.size_t(len(repl)),
+			(*C.char)(unsafe.Pointer(&piece[0])), C.size_t(len(piece)),
 			&errbuf[0], C.size_t(len(errbuf)))
+		if need == sizeMax {
+			return nil, errors.New(C.GoString(&errbuf[0]))
+		}
+		if int(need) > len(piece) {
+			// Sized on the first call, filled on a second: the two-call convention, entered only
+			// when the reusable buffer was too small rather than on every match.
+			piece = make([]byte, int(need))
+			C.real_expand(r.re, (*C.char)(ctext), C.size_t(len(text)), sp, C.size_t(len(spans)),
+				(*C.char)(crepl), C.size_t(len(repl)),
+				(*C.char)(unsafe.Pointer(&piece[0])), C.size_t(len(piece)),
+				&errbuf[0], C.size_t(len(errbuf)))
+		}
+		out = append(out, piece[:need]...)
+		last = m[1]
 	}
+	out = append(out, text[last:]...)
 	return out, nil
 }

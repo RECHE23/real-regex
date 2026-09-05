@@ -12,7 +12,19 @@ are explicitly out of scope for this version.
 default.** `\w+` on `"café"` matches all of it (`café`, 5 bytes: c, a, f, é=2 bytes) under this
 package; under `regexp`, `\w+` matches only `"caf"` (`é` is not `\w` under RE2's default ASCII
 scope, so it is simply skipped, not part of any match). This is REAL following Python `re`'s own
-default, not a bug on either side — see `TestFlavorDivergence_WordShorthandIsUnicodeByDefault`.
+default, not a bug on either side — see `TestFlavorDivergence_WordShorthandIsUnicodeByDefault` and
+`TestDocumentedUnicodeClassDivergence`.
+
+The second and last flavor difference, reached only through the `[]byte` methods: on **malformed
+UTF-8**, `regexp` substitutes U+FFFD for an invalid byte and matches it as one rune, while a
+malformed byte is never a codepoint here and no consuming class accepts it — `.` matches nothing on
+a lone `0xFF`. Zero-width matches do NOT differ: `^`, `$` and empty matches answer identically on
+such input. Pinned in both directions by `TestMalformedUTF8ConsumingDivergence`.
+
+Everything else on the whole `Regexp` surface is asked of `regexp` directly — 57 916 comparisons
+across every `Find*`, `Match*`, `Split` and `ReplaceAll` form, crossed with `n` caps, `[]byte` and
+`string` halves, and empty-matchable patterns (`TestFindFamilyMatchesRegexp`,
+`TestByteAndStringHalvesAgree`, `TestReplaceAllMatchesRegexp`).
 
 ## Why this exists (beyond another `regexp`)
 
@@ -42,6 +54,7 @@ could not express before.
 | `(*Regexp) FindAllSubmatch` / `FindAllStringSubmatch` | same | `n` as in `regexp` (0 → nil, <0 → all) |
 | `(*Regexp) FindSubmatchIndex` | same | every group's span; unset group is `-1,-1` |
 | `(*Regexp) FindAllSubmatchIndex` | same | every match's group spans; unset group is `-1,-1`; `n` as in `regexp` |
+| `(*Regexp) FindStringSubmatchIndex` | same | the leftmost match's group spans as byte offsets into `s`; unset group is `-1,-1` |
 | `(*Regexp) FindAllStringSubmatchIndex` | same | every match's group spans as byte offsets into `s`; `n` as in `regexp` |
 | `(*Regexp) Split` | same | slices on matches; `n` as in `regexp` |
 | `(*Regexp) FullMatch` | **no equivalent** | the whole ABI's `real_match(REAL_MODE_FULLMATCH)` — `regexp.MatchString` is really a *search* |
@@ -53,9 +66,14 @@ could not express before.
 
 REAL's native flag bitmask (`bindings/c/real_capi.h`'s own documented numbering table) has no
 `regexp`-equivalent constants — `regexp` has no flags parameter at all (inline `(?i)`-style
-modifiers instead). Not yet exposed in this package's Go API (v0.2 always compiles with no
-flags); a future version would need its own named Go constants, not borrowed from either engine's
-convention.
+modifiers instead). Not exposed in this package's Go API; a future version would need its own named
+Go constants, not borrowed from either engine's convention.
+
+One flag is set unconditionally, and it is not a choice this package leaves open: `dollar_endonly`,
+so that `$` means what it means in `regexp`. Without it the engine's `re` default applies and `$`
+also matches just before a trailing newline, so `foo$` matched `"foo\n"` here and did not under
+`regexp` — a silent difference on one of the most ordinary patterns there is. The Rust crate sets the
+same flag for the same reason.
 
 ## Vendoring
 
