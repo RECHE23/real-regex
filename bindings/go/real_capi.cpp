@@ -52,11 +52,27 @@ namespace {
   }
 }
 
+//! Whether a (pointer, length) pair violates the ABI's one stated rule: NULL is a valid EMPTY
+//! buffer, and only NULL with a claimed length is an error. The header says this once for the whole
+//! header, so it is written once here too — five doors dereferenced instead, and a segfault is the
+//! one failure mode this boundary promises never to have.
+static bool null_with_length(const char* data, size_t len)
+{
+  return data == nullptr && len != 0;
+}
+
 real_regex* real_compile(const char* pattern, size_t len, uint32_t flags,
                          char* errbuf, size_t errbuf_len, int* code)
 {
   if (code != nullptr) {
     *code = REAL_ERR_NONE;
+  }
+  if (null_with_length(pattern, len)) {
+    if (code != nullptr) {
+      *code = REAL_ERR_SYNTAX;
+    }
+    write_err(errbuf, errbuf_len, "null pattern with a nonzero length");
+    return nullptr;
   }
   try {
     return new real_regex {real::regex(std::string_view(pattern, len), static_cast<real::flags>(flags))};
@@ -132,7 +148,7 @@ void real_free(real_regex* re)
 
 real_iter* real_find_iter(const real_regex* re, const char* text, size_t len)
 {
-  if (re == nullptr) {
+  if (re == nullptr || null_with_length(text, len)) {
     return nullptr; // invalid handle (documented in real_capi.h)
   }
   try {
@@ -146,7 +162,7 @@ real_iter* real_find_iter(const real_regex* re, const char* text, size_t len)
 
 real_iter* real_find_iter_at(const real_regex* re, const char* text, size_t len, size_t start)
 {
-  if (re == nullptr) {
+  if (re == nullptr || null_with_length(text, len)) {
     return nullptr;
   }
   try {
@@ -160,7 +176,7 @@ real_iter* real_find_iter_at(const real_regex* re, const char* text, size_t len,
 
 real_iter* real_find_iter_between(const real_regex* re, const char* text, size_t len, size_t start, size_t end)
 {
-  if (re == nullptr) {
+  if (re == nullptr || null_with_length(text, len)) {
     return nullptr;
   }
   try {
@@ -499,6 +515,17 @@ real_regex_set* real_set_compile(const char* const* patterns, const size_t* lens
     std::vector<std::string_view> views;
     views.reserve(n);
     for (size_t i = 0; i < n; ++i) {
+      // The array being non-null says nothing about its MEMBERS. `strlen` on a null one is the
+      // crash; so is a view over it. The same rule as everywhere else, applied per element, and it
+      // names which element rather than reporting "null patterns" for a list that is not null.
+      if (patterns[i] == nullptr && (lens == nullptr || lens[i] != 0)) {
+        if (code != nullptr) {
+          *code = REAL_ERR_SYNTAX;
+        }
+        write_err(errbuf, errbuf_len,
+                  ("null pattern at index " + std::to_string(i)).c_str());
+        return nullptr;
+      }
       const size_t len = (lens != nullptr) ? lens[i] : std::strlen(patterns[i]);
       views.emplace_back(patterns[i], len);
     }

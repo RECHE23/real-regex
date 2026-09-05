@@ -177,7 +177,9 @@ size_t real_expand(const real_regex* re, const char* text, size_t len,
 typedef struct real_regex_set real_regex_set;
 
 /* Compile N patterns into a set. `patterns[i]` has length `lens[i]`. `flags` applies to every
- * pattern. Fails (NULL) if any pattern is invalid — no silent skip. Bitset order = patterns order. */
+ * pattern. Fails (NULL) if any pattern is invalid — no silent skip. Bitset order = patterns order.
+ * The (NULL, nonzero) rule stated above applies PER MEMBER, not only to the array: a non-null
+ * `patterns` says nothing about `patterns[i]`, and the error names the index. */
 real_regex_set* real_set_compile(const char* const* patterns, const size_t* lens, size_t n,
                                  uint32_t flags, char* errbuf, size_t errbuf_len, int* code);
 

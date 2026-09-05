@@ -222,6 +222,33 @@ int main(void) {
   assert(real_count_matches(ere, NULL, 0) == 1);
   assert(real_match(sre, NULL, 5, 0, 5, REAL_MODE_SEARCH, ms) == -1); /* NULL + nonzero len: still an error */
 
+  /* The header states the (NULL, nonzero) rule ONCE for the whole ABI, so every door owes the same
+     sentinel. Eight already returned it; five dereferenced instead, and a segfault is the one
+     failure mode this boundary promises never to have ("never a crash or a propagated throw").
+     Asserted door by door, because "the ABI guards NULL" was true of a majority and false of a
+     third -- which is how a contract with two doors survives. */
+  assert(real_find_iter(sre, NULL, 4) == NULL);
+  assert(real_find_iter_at(sre, NULL, 4, 0) == NULL);
+  assert(real_find_iter_between(sre, NULL, 4, 0, 4) == NULL);
+  assert(real_compile(NULL, 5, 0, err, sizeof err, &code) == NULL);
+  assert(strlen(err) > 0); /* and it says why, rather than failing silently */
+  {
+    const char*  null_member[1] = {NULL};
+    const size_t null_member_len[1] = {5};
+    assert(real_set_compile(null_member, null_member_len, 1, 0, err, sizeof err, &code) == NULL);
+  }
+
+  /* The other half of the same rule, which must NOT become an error: (NULL, 0) is a valid empty
+     pattern and a valid empty subject everywhere, and Go's nil slice depends on it. */
+  {
+    real_regex* nre = real_compile(NULL, 0, 0, err, sizeof err, &code);
+    assert(nre != NULL);
+    assert(real_find_iter(nre, NULL, 0) != NULL);
+    real_iter* nit = real_find_iter(nre, NULL, 0);
+    real_iter_free(nit);
+    real_free(nre);
+  }
+
   size_t sub_need = real_sub(ere, NULL, 0, NULL, 0, 0, NULL, 0, &n_subs, err, sizeof err);
   assert(sub_need == 0 && n_subs == 1); /* the one empty match gets "substituted" with nothing */
 
