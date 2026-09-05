@@ -22,6 +22,7 @@ later widening makes that untrue; the run always prints how many cases it droppe
 """
 import os
 import re
+import sys
 import unittest
 
 import real
@@ -149,6 +150,26 @@ def _invoke(module, kind, pattern, subject, extra, flags):
     raise AssertionError("unknown surface " + kind)
 
 
+#: Cases where the RUNNING interpreter's `re` is known to differ from the rule this engine follows.
+#: Not divergences to fix: versions of `re` that CPython has since corrected. The entries are gated on
+#: the interpreter, so nothing is excused on a version that does not need it, and
+#: `test_every_oracle_quirk_actually_fires` fails if one stops applying -- an excuse that no longer
+#: excuses anything is a hole, not a courtesy.
+#:
+#: `\B` matched nothing in an empty subject before 3.12 and matches there from 3.12 on. This engine
+#: has always matched, which is also what ECMAScript says, so the rule did not move here.
+_QUIRK_EMPTY_B = "re before 3.12: \\B does not match in an empty subject"
+
+
+def _oracle_quirk(pattern, subject):
+    """The reason this interpreter's `re` is expected to disagree here, or None."""
+    if sys.version_info < (3, 12) and not subject:
+        needle = rb"\B" if isinstance(pattern, bytes) else r"\B"
+        if needle in pattern:
+            return _QUIRK_EMPTY_B
+    return None
+
+
 def _answer(module, kind, pattern, subject, extra, flags):
     try:
         return _invoke(module, kind, pattern, subject, extra, flags), None
@@ -160,7 +181,7 @@ class TestTransformationSurfacesMatchRe(unittest.TestCase):
     """One oracle for every transformation surface, values and refusals alike."""
 
     def test_transformation_surfaces_match_re(self):
-        total = ran = agreed_refusals = 0
+        total = ran = agreed_refusals = excused = 0
         divergences = []
         for index, case in enumerate(_cases()):
             total += 1
@@ -176,6 +197,10 @@ class TestTransformationSurfacesMatchRe(unittest.TestCase):
                     continue
                 detail = "re raises %s, real raises %s" % (want_exc, got_exc)
             elif _normalise(got) != _normalise(want):
+                quirk = _oracle_quirk(pattern, subject)
+                if quirk is not None:
+                    excused += 1
+                    continue
                 detail = "re %r, real %r" % (want, got)
             else:
                 continue
@@ -184,14 +209,44 @@ class TestTransformationSurfacesMatchRe(unittest.TestCase):
 
         self.assertGreater(ran, 0, "the stride sampled nothing")
         print("\ntransform sweep: %d/%d cases compared (stride %d, %d dropped), "
-              "%d refused identically"
-              % (ran, total, _STRIDE, total - ran, agreed_refusals))
+              "%d refused identically, %d excused by a known `re` quirk"
+              % (ran, total, _STRIDE, total - ran, agreed_refusals, excused))
         if divergences:
             shown = "\n  ".join(divergences[:_MAX_REPORTED])
             more = ("\n  ... %d more" % (len(divergences) - _MAX_REPORTED)
                     if len(divergences) > _MAX_REPORTED else "")
             self.fail("%d transformation divergence(s) against re:\n  %s%s"
                       % (len(divergences), shown, more))
+
+    def test_every_oracle_quirk_actually_fires(self):
+        """An excuse that no longer excuses anything is a hole, not a courtesy.
+
+        `_oracle_quirk` waves through a disagreement the running `re` is known to have with the rule
+        this engine follows. That is only safe while the disagreement is REAL: if CPython changed
+        again, or if the engine moved, the sweep would keep excusing a case that has become a
+        genuine divergence. So the quirk's own case is probed directly here, and the assertion is
+        different on each side of the version boundary rather than skipped on one of them.
+        """
+        empty_b = [m.span() for m in re.finditer(r"\B", "")]
+        ours = [m.span() for m in real.finditer(r"\B", "")]
+        self.assertEqual(ours, [(0, 0)],
+                         "this engine no longer matches \\B in an empty subject; the quirk excuses "
+                         "a divergence that has changed sides")
+        if sys.version_info < (3, 12):
+            self.assertEqual(empty_b, [],
+                             "re now matches \\B in an empty subject on this interpreter, so the "
+                             "quirk excuses nothing and must go")
+            self.assertIsNotNone(_oracle_quirk(r"\B", ""))
+            self.assertIsNotNone(_oracle_quirk(r"\b\B", ""))
+        else:
+            self.assertEqual(empty_b, [(0, 0)],
+                             "re stopped matching \\B in an empty subject on this interpreter; the "
+                             "quirk's version boundary is wrong")
+            self.assertIsNone(_oracle_quirk(r"\B", ""),
+                              "the quirk applies on an interpreter that does not need it")
+        # Never excused regardless of version: a non-empty subject, or a pattern without \B.
+        self.assertIsNone(_oracle_quirk(r"\B", "a"))
+        self.assertIsNone(_oracle_quirk(r"\b", ""))
 
     def test_stride_touches_every_axis(self):
         """A stride that shares a factor with an inner dimension's period samples one residue class
