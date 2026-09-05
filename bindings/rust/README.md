@@ -81,7 +81,12 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   (a fix would rework the star-loop termination that underlies every quantifier) are pinned in the C++
   divergences page (`div_empty_first_branch_loop`); the differential fuzzer skips the class by form
   (`has_empty_alternation_branch`), since the crate is not a reliable oracle for it — Python `re` is. A
-  single `find` / `captures` agrees.
+  single `find` / `captures` agrees. That is a statement about the ENGINE: through this crate's
+  `find_iter` the sequences match, because the iterator switches to driving the search by position at
+  the first empty match precisely to reproduce the crate's advancement rather than re's. A fixed set
+  of these forms is therefore swept against the crate directly (`surface_differential.rs`), where it
+  is the only thing that exercises that switch; the fuzzer stays conservative because it generates
+  arbitrary patterns and a skip there costs only coverage.
 - **`shortest_match` — residual.** REAL is leftmost-**first** (like `regex`), but this returns the leftmost
   match's *greedy* end, whereas `regex` returns the earliest position at which a match completes (`a+` on
   `"aaa"`: REAL `3`, `regex` `1`). A true earliest-completion mode (a `first-accept` stop in the forward

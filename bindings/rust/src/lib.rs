@@ -447,7 +447,7 @@ impl Regex {
         };
         // A null cursor means the engine failed to construct the iterator (never dereference it).
         assert!(!iter.is_null(), "real-regex: engine iteration failed");
-        SpanCursor::Real(RawSpans { iter, handle: self.handle, text: text.as_bytes(), ngroups: self.ngroups, buf: vec![0usize; 2 * self.ngroups], last_end: None, drive_pos: None, utf8: true, _re: PhantomData })
+        SpanCursor::Real(RawSpans { iter, handle: self.handle, text: text.as_bytes(), ngroups: self.ngroups, buf: vec![0usize; 2 * self.ngroups], origin: start.unwrap_or(0), last_end: None, drive_pos: None, utf8: true, _re: PhantomData })
     }
 
     fn caps_from<'t>(&self, text: &'t str, cur: &SpanCursor<'_, '_>) -> Captures<'t> {
@@ -741,6 +741,8 @@ struct RawSpans<'r, 't> {
     text: &'t [u8],                // the haystack (drive-mode search pointer + codepoint stepping)
     ngroups: usize,
     buf: Vec<usize>,               // reused span buffer (2*ngroups), refilled per match — never reallocated
+    origin: usize,                 // the offset this cursor was created at — where drive mode resumes
+                                   // before anything has been yielded (see advance)
     last_end: Option<usize>,       // end of the last YIELDED match — for the empty-adjacent rule
     drive_pos: Option<usize>,      // None = fast mode; Some(p) = driving the search from position p
     utf8: bool,                    // step by one codepoint (str) vs one byte (bytes) past an empty match
@@ -774,8 +776,13 @@ impl RawSpans<'_, '_> {
                     let (s0, e0) = (self.buf[0], self.buf[1]); // group 0 always participates
                     if s0 == e0 {
                         // First empty match: re and rust's advancement diverge here. Switch to driving the
-                        // search by position, resuming from rust's current start (the last yielded end).
-                        self.drive_pos = Some(self.last_end.unwrap_or(0));
+                        // search by position, resuming from rust's current start — the last yielded end, or,
+                        // if nothing has been yielded yet, the offset this cursor STARTED at. Resuming from 0
+                        // instead sent every `_at` search back to the top of the haystack whenever the match
+                        // at `start` was empty: `find_at("x*", "ab", 2)` answered (0,0) where the leftmost
+                        // match from 2 is the empty one at 2. Only the empty case was wrong, because only the
+                        // empty case takes this branch.
+                        self.drive_pos = Some(self.last_end.unwrap_or(self.origin));
                         return self.drive_advance();
                     }
                     self.last_end = Some(e0);
@@ -1487,7 +1494,7 @@ pub mod bytes {
             };
             // A null cursor means the engine failed to construct the iterator (never dereference it).
             assert!(!iter.is_null(), "real-regex: engine iteration failed");
-            RawSpans { iter, handle: self.handle, text, ngroups: self.ngroups, buf: vec![0usize; 2 * self.ngroups], last_end: None, drive_pos: None, utf8: false, _re: PhantomData }
+            RawSpans { iter, handle: self.handle, text, ngroups: self.ngroups, buf: vec![0usize; 2 * self.ngroups], origin: start.unwrap_or(0), last_end: None, drive_pos: None, utf8: false, _re: PhantomData }
         }
 
         fn caps_from<'t>(&self, text: &'t [u8], raw: &RawSpans<'_, '_>) -> Captures<'t> {
