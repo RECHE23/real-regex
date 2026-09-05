@@ -22,6 +22,61 @@ TEST(find_all_basic)
   EXPECT_EQ(rx.find_all("none").size(), 0U);
 }
 
+TEST(match_iterator_equality_identifies_the_WALK_not_just_the_offset)
+{
+  // `operator==` compared `done_` and `pos_` and nothing else, so two iterators over DIFFERENT
+  // walks compared equal whenever they happened to sit at the same offset -- while dereferencing to
+  // different text. Nothing tested equality at all, which is how a public contract stays wrong.
+  //
+  // The sentinel half constrains the fix and is asserted first: `end()` is a default-constructed
+  // iterator, so "both exhausted" must stay equal REGARDLESS of walk, or every range-for over this
+  // type loops forever. The identity check therefore belongs only on the live branch.
+  const std::string x_text {"aXbXc"};
+  const std::string y_text {"aYbYc"};
+  const real::regex rx     {"X"};
+  const real::regex ry     {"Y"};
+
+  const auto x_range = rx.find_iter(x_text);
+  const auto y_range = ry.find_iter(y_text);
+  auto       a       = x_range.begin();
+  auto       b       = y_range.begin();
+  EXPECT(a->start(0) == b->start(0));   // the coincidence the old comparison mistook for identity
+  EXPECT(a->str(0) != b->str(0));       // and they read different text, so they are not the same
+  EXPECT(!(a == b));
+  EXPECT(a != b);
+
+  // One axis at a time: same pattern over a different text, and a different pattern over the same
+  // text. Either alone must be enough to tell two walks apart.
+  const std::string other_x {"aXbXd"};
+  const auto        other_range = rx.find_iter(other_x);
+  EXPECT(a != other_range.begin());
+
+  const real::regex any {"[XY]"};
+  const auto        any_range = any.find_iter(x_text);
+  EXPECT(a != any_range.begin());
+
+  // Same walk, same position: still equal. A comparison that told everything apart would be as
+  // useless as one that told nothing apart.
+  auto a_again = x_range.begin();
+  EXPECT(a == a_again);
+  ++a_again;
+  EXPECT(a != a_again);                 // and advancing separates them
+
+  // The sentinel contract, both directions, on both walks.
+  auto walked = x_range.begin();
+  while (walked != x_range.end()) {
+    ++walked;
+  }
+  EXPECT(walked == x_range.end());
+  EXPECT(walked == y_range.end());      // end() is default-constructed: one sentinel for every walk
+
+  auto y_walked = y_range.begin();
+  while (y_walked != y_range.end()) {
+    ++y_walked;
+  }
+  EXPECT(walked == y_walked);           // two EXHAUSTED iterators are both the sentinel value
+}
+
 TEST(find_iter_is_lazy_and_range_for_compatible)
 {
   const real::regex rx("[ab]");

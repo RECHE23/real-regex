@@ -776,13 +776,31 @@ namespace real {
     }
 
     /*!
-     * \brief Returns `true` if both denote the same position/end.
+     * \brief Returns `true` if both denote the same position in the SAME walk, or both are the end.
+     *
+     * The offset alone does not identify an iterator. Comparing `done_` and `pos_` and nothing else
+     * made two iterators over different walks equal whenever they happened to sit at the same
+     * offset — `find_iter` of `X` over `"aXbXc"` equalled `find_iter` of `Y` over `"aYbYc"` at
+     * position 1, while dereferencing to different text. Unlike a container iterator, this one owns
+     * the sequence it walks (\ref text_) and the program it runs (\ref prog_), so the identity is
+     * already here and costs one comparison to use.
+     *
+     * Both EXHAUSTED iterators stay equal whatever they walked, and that is not an oversight: \ref
+     * basic_match_range::end returns a default-constructed iterator, so a walk's own end sentinel
+     * carries neither text nor program. Requiring identity there would make every range-for over
+     * this type loop forever. The check therefore sits on the live branch only — which is also why
+     * it is free: a live iterator compared against the sentinel differs in `done_` and stops there,
+     * and so does an exhausted one, so the loop condition never reaches the added comparisons.
+     *
      * \param[in] other Another iterator.
-     * \return `true` if both denote the same position/end.
+     * \return `true` if both are exhausted, or both are live at the same offset of the same walk.
      */
     [[nodiscard]] constexpr bool operator==(const basic_match_iterator& other) const
     {
-      return done_ == other.done_ && (done_ || pos_ == other.pos_);
+      return done_ == other.done_ &&
+             (done_ || (pos_ == other.pos_ && text_.data() == other.text_.data() &&
+                        text_.size() == other.text_.size() &&
+                        prog_.code.data() == other.prog_.code.data()));
     }
 
   private:
