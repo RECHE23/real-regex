@@ -318,6 +318,43 @@ class TestModuleFunctions(unittest.TestCase):
         self.assertIn("2 of 3", last.exception.msg)   # zero-based index, as Python counts
         self.assertIn("0 of 3", first.exception.msg)
 
+    def test_regex_set_fused_tier_credits_nullable_members_on_empty_subject(self):
+        """A nullable member was invisible on "" once the set crossed the fusion threshold.
+
+        The oracle is this type's own contract, N x search, and it disagreed: 56 copies of `x*`
+        answered 0/56 on "" where searching each answered 56/56. Below the threshold the set
+        N-walks and was always right, so the fault appeared only at scale -- which is exactly the
+        size at which nobody re-reads a generated pattern list.
+
+        Both directions are pinned. A set with no nullable member is still all-false on "", so this
+        is not "the fused tier says yes to everything"; and "bbb" was already right and stays right,
+        so the fix is not a second crediting on the byte-consuming path.
+        """
+        for size in (55, 56, 57):          # 56 is fused_min_eligible
+            for pattern in ("x*", "a?", "", "a{0}"):
+                with self.subTest(size=size, pattern=pattern):
+                    members = [pattern] * size
+                    rs = real.RegexSet(members)
+                    for subject in ("", "bbb"):
+                        oracle = [real.search(p, subject) is not None for p in members]
+                        self.assertEqual(rs.matches(subject), oracle)
+                        self.assertEqual(rs.is_match(subject), any(oracle))
+
+        # No nullable member: "" matches nothing, at the same size.
+        literals = ["ab%d" % i for i in range(56)]
+        rs = real.RegexSet(literals)
+        self.assertEqual(rs.matches(""), [False] * 56)
+        self.assertFalse(rs.is_match(""))
+
+        # Interleaved, which the single-pattern witness does not reach: the fused mask has to carry
+        # the nullable bits and only those.
+        mixed = ["x*", "ab", "a?", "zz"] * 20
+        rs = real.RegexSet(mixed)
+        for subject in ("", "bbb", "ab", "zz"):
+            with self.subTest(subject=subject):
+                self.assertEqual(rs.matches(subject),
+                                 [real.search(p, subject) is not None for p in mixed])
+
     def test_regex_set_native_matches_n_loop_reference(self):
         """R4: RegexSet now wraps real::regex_set directly (Stage-1/Stage-2 fused inside the C++
         engine) instead of looping N individual Pattern.search calls in Python. Differential
