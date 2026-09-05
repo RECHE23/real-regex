@@ -2,6 +2,39 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.9.1
+
+9.1 (**a correction train, and the tables are NOT re-measured — on purpose**): **THESE TABLES DO NOT
+MOVE, AND THE STAMP IS DELIBERATELY LEFT AT `2026.8.15`.** This document declares its own regime as
+**two ISAs** — x86-64 and arm64, both legs, N = 30 × three runs with the minimum per cell — and only
+arm64 was available for this train. Refreshing one leg would publish a table whose two halves
+describe different trees, which is a worse claim than a stale stamp that says so; `check-bench-stamp`
+allows proceeding knowingly and this is that, with 33 of 46 engine commits since the stamp having
+touched code. **NO CELL BELOW WAS RE-RUN, AND NONE IS EDITED.** **WHAT THE ENGINE ACTUALLY CHANGED,
+AND WHY NO ROW HERE WOULD SEE IT:** `seed_viable` gained one comparison (`pos != start`) on the
+seeding path, placed FIRST in a short-circuit chain so the common case does no added work; `dfa::
+which_matched` folds the start state's accept mask ONCE before its walk, and that walk is the fused
+`RegexSet` tier which has no row here at all; `basic_match_iterator::operator==` gained three
+comparisons behind `done_ ||`, which a range-for's loop condition never reaches (a live iterator and
+the sentinel differ in `done_` and stop there); and every remaining change is a diagnostic on an
+error path or a binding-side guard. **THE ONLY INSTRUMENT CITED IS THE ONE THAT RAN:** the veto
+matrix (26 route-vs-core rows, 5 % tolerance) read `MATRIX CLEAN` on every full gate over this train.
+That is a VETO within one build, not a paired measurement of this train against the last, and it is
+named as such rather than dressed as one. **AND IT PRODUCED TWO FALSE REDS THAT ARE PUBLISHED AS
+FALSE:** `hexid dense` (1.967 vs 1.871) and `hexid nomatch` (0.029 vs 0.024) each read red once, on
+DIFFERENT cells, while the code under measurement was byte-identical to a tree that had just read
+clean — both under host load this session created (a 30-second `gh` poller during step 15, then two
+`clang-tidy` passes in flight at load 183). Three consecutive re-runs on a settled host read clean.
+A red on this bench is re-run before it is believed, and the file's own note already records that a
+loaded pass reads 1.095 at a true delta of zero. **NOT MEASURED AND NAMED AS SUCH:** two internal
+sites still construct an 8888-byte iterator to read a bool — `_real.cpp:1183` compares against a
+default-constructed sentinel per `__next__` (per STEP), and `real_iter` stores `{it, end}` where
+`end` is read at one line (per CALL). Both are internal, breaking nothing, and `exhausted()` already
+answers without constructing. Neither is taken here: the 2.4× this file records for the same idiom
+comes from the compat iterator, which built nothing else per step, and `__next__` also allocates a
+Python `Match` — the relative share is unknown until instructions are counted on a settled host, and
+"less work" has already been refused here at +26 %.
+
 ## v2026.8.15
 
 8.15 (**per-call costs no table here can see**): **Every number that mattered in this train is a per-CALL cost, and none of them is visible to these tables.** They measure throughput over 4 KiB and 200 KB corpora, where a fixed cost per call amortises to about 0.3 %; a regression worth 6.8 % on a 3-byte subject shipped, passed a full green gate, moved none of the 26 layout rows, and was caught by a hand-written probe. **THESE TABLES DO NOT MOVE, AND IT IS MEASURED THE HARD WAY:** the same harness was built from `v2026.8.14` and from this tree and run in paired interleaved passes, so host state cancels rather than being argued about, with engines whose code cannot have changed as the controls. On **arm64**, REAL's worst row moves 5.43 % while PCRE2 — byte-identical in both binaries — moves 7.84 %: the engine is below the noise floor of its own measurement, and that floor matches the 1.00×–1.08× inter-run amplitude declared below. On **x86-64** (gcc 15.3, idle host) eleven of twelve rows improve and the single positive median is +0.06 %, against 2.19 % for `std::regex`. So the cells below are NOT replaced: today's passes were taken on a noisier machine than the ones on record, and swapping good measurements for worse ones would advertise a change that did not happen. **WHAT MOVED, WITH NO ROW HERE TO SHOW IT:** `count_matches` stopped writing captures no caller can read (its walk runs matching-only, so `\b(\w+)@(\w+)\.(com|org)\b` over 4096 bytes goes 23.89 → 17.59 ns/B and lands on its non-capturing twin, with 1906 increfs and 2714 copy-on-writes becoming zero while the VM steps the SAME 2684 positions); it copies a 440-byte `program_view` once per call instead of twice (a FIXED +12 to +13 ns, flat across 3-, 8- and 24-byte subjects, 6 of 6 paired draws agreeing with non-overlapping ranges); and it stopped building an end sentinel it never reads — 217 → 97 ns per call on arm64, 210 → 110 under gcc 15.3, 338 → 218 under gcc 13.3, with `search` flat on every leg as the control. **NO SINGLE NUMBER IS PUBLISHED FOR THAT LAST ONE:** the gap it closes reads 37 ns under gcc 15.2, 97 under gcc 15.3, 123 under Apple clang and 131 under gcc 13.3 — the two gcc 15 readings differ by 2.6× between themselves, so host and microarchitecture move it as much as the compiler version does, and one number would be wrong somewhere by a factor of three. A fifth reading was DISCARDED rather than averaged in: on a loaded host the same probe read −22 %, and the control caught it by reporting 75–83 ns where it otherwise reads 41. **AND THE GENERAL VM STOPPED TOUCHING THE POOL ON CAPTURE-FREE PATTERNS** — 4833 refcount/copy-on-write operations per reported match become zero on the trim shape, which is the target v2026.8.14 named and did not fix. **TWO VEHICLES WERE REFUSED BY MEASUREMENT AND ARE PUBLISHED AS REFUSALS:** making the iterator's state lazy so `find_iter`'s sentinel becomes cheap was tried as `std::optional` and as a `construct_at` union, and both charged the WORKING iterator about 26 % — indistinguishably — on a walk that builds no sentinel at all, so laziness itself is closed rather than a choice of vehicle; and a short `count_matches` bench row, written to catch the next per-call regression, was withdrawn when its two candidates calibrated at 6.2 % and 6.6 % noise floors (the worst two of 28) against an effect worth 6.5 %. A guard whose floor is the size of the effect reports the truth about half the time; the shape is counted instead, at zero nanoseconds. **AND A CHECK THAT HAD NEVER RUN ANYWHERE REJECTED A CORRECT CHECKOUT:** the Unicode cross-oracles abort on 10 `\p{Math}` and 44 `\p{scx=...}` code points because the `regex` module ships property data at a later Unicode than the UCD sources committed here — not a table bug, two sides answering about different characters. A domain filter is not enough (10 → 1 and 44 → 6; the remainder are ASSIGNED code points whose value moved between versions), so the skew is detected by behaviour and the oracle skips saying why.
