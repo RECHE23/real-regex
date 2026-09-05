@@ -36,6 +36,15 @@ TEST(posix_libc_oracle_unavailable_on_this_platform)
 // provide the C subset. Following the tidy suggestion here would not compile.
 // NOLINTNEXTLINE(modernize-deprecated-headers)
   #include <locale.h>
+  #if defined(__APPLE__)
+// Apple's <locale.h> does not declare the POSIX per-thread locale family under -std=c++20 (no
+// _DARWIN_C_SOURCE), so `locale_t` does not name a type and the guard below will not compile;
+// <xlocale.h> declares it there unconditionally. Found by the gcc-14 leg, which failed on a
+// file the clang leg had just compiled -- one compiler agreeing is not portability, and on this
+// host `g++` is Apple clang, so reaching for it proves nothing either.
+// NOLINTNEXTLINE(modernize-deprecated-headers)
+    #include <xlocale.h>
+  #endif
   #include <regex.h>
 
   #include "real/compat/std/regex.hpp"
