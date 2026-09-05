@@ -114,10 +114,16 @@ namespace {
       "[[:alnum:]]+", "[[:punct:]]", "[[:upper:]]", "[[:lower:]]+",
       ".", ".*", "a.c", "^a", "a$", "^a$", "^", "$",
       "a{2}", "a{2,}", "a{2,3}", "(a)(b)", "(a)|(b)", "((a)b)", "(a*)(b*)",
-      "x*", "(|a)", "()", "[0-9]{2,4}", "a|b|c", "(a|b)(c|d)",
+      "x*", "()", "[0-9]{2,4}", "a|b|c", "(a|b)(c|d)",
     };
     return list;
   }
+
+  // An EMPTY alternation branch is not portable POSIX ERE and is therefore not oracle-comparable:
+  // the grammar requires each branch to be non-empty, macOS's libc rejects `(|a)` accordingly, and
+  // glibc accepts it as an extension. A sweep containing it reads clean on one platform and reports
+  // twenty-six divergences on the other, which is a statement about libc rather than about the
+  // translators. Pinned by empty_ere_branch_is_not_portable below instead of dropped in silence.
 
   // POSIX BRE: `\(` groups, `\{m,n\}` intervals, and no alternation at all -- `|` is an ordinary
   // character here, which is itself worth asserting.
@@ -280,6 +286,37 @@ TEST(posix_bre_bounds_equal_libc_regcomp)
   report("posix BRE vs libc", result);
   EXPECT(result.compared > 0);
   EXPECT(result.failures.empty());
+}
+
+TEST(empty_ere_branch_is_not_portable_so_libc_is_not_its_oracle)
+{
+  // Why `(|a)` is out of the ERE list. POSIX ERE requires a non-empty branch on each side of `|`,
+  // so an empty one is outside the grammar and implementations disagree: macOS's libc refuses to
+  // compile it, glibc accepts it as an extension. This engine's POSIX route declines it under the
+  // strict policy — it is one of the grammars that force std — which is the same answer macOS gives
+  // and a defensible one, but it means a comparison against libc measures WHICH libc is present.
+  //
+  // Asserted rather than dropped: the day this engine accepts an empty branch, or the day the
+  // pattern stops being declined, this fails and the exclusion above has to be revisited.
+  const c_locale_guard locale;
+  EXPECT(locale.installed());
+  bool declined_by_engine {false};
+  try {
+    const rc::regex probe {"(|a)", rc::regex_constants::extended};
+    (void) probe.mark_count();
+  }
+  catch (const std::exception&) {
+    declined_by_engine = true;
+  }
+  EXPECT(declined_by_engine);
+
+  // And the construct is genuinely reachable in the other direction: the SAME shape with a
+  // non-empty branch compiles and agrees with libc, so the exclusion is about emptiness and not
+  // about alternation inside a group.
+  const spans want {libc_spans("(b|a)", "a", REG_EXTENDED)};
+  const spans got  {real_spans("(b|a)", "a", rc::regex_constants::extended)};
+  EXPECT(!want.empty());
+  EXPECT(want == got);
 }
 
 TEST(posix_leftmost_longest_is_what_libc_says)
