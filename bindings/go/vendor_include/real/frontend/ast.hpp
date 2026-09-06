@@ -1351,9 +1351,14 @@ namespace real::detail {
         has_comma  = true;
         repeat_max = parse_repeat_count();
       }
-      if (!accept('}') || (repeat_min < 0 && repeat_max < 0)) {
+      // "Both bounds absent" is literal text only WITHOUT a comma. `{,n}` is Python's shorthand for
+      // `{0,n}` and this parser already implemented it; `{,}` is the same rule with the upper bound
+      // left off, so it means `{0,}`. Rejecting on the bounds alone sent `a{,}` and `a{}` out the
+      // same exit while `re` reads them differently -- `a{,}` matched the four literal characters
+      // instead of "aaa".
+      if (!accept('}') || (repeat_min < 0 && repeat_max < 0 && !has_comma)) {
         pos_ = saved_pos;
-        return false; // "{", "{}", "{,}", "{x"…: literal text
+        return false; // "{", "{}", "{x"…: literal text
       }
       min = repeat_min < 0 ? 0 : repeat_min;
       max = (has_comma && repeat_max < 0) ? -1 : repeat_max;

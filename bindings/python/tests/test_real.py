@@ -787,16 +787,27 @@ class TestIntentionalDivergences(unittest.TestCase):
         """
         import re as stdlib
 
-        # EXTENSION: `{n}` with nothing to repeat is literal here, an error in re.
-        self.assertEqual(real.search(r"{2}a", "{2}a").span(), (0, 4))
-        with self.assertRaises(stdlib.error):
-            stdlib.compile(r"{2}a")
+        # EXTENSION: a brace quantifier with nothing to repeat is literal here, an error in re —
+        # and it is the WHOLE family, not just `{n}`: `{,}a` and `{2,}a` behave like `{2}a`.
+        for pattern in (r"{2}a", r"{,}a", r"{,3}a", r"{2,}a"):
+            with self.subTest(pattern=pattern):
+                self.assertEqual(real.search(pattern, pattern).span(), (0, len(pattern)))
+                with self.assertRaises(stdlib.error):
+                    stdlib.compile(pattern)
         # ...but an ILL-FORMED `{…}` is literal in BOTH, which is the rule the comment claimed
-        # covered everything. These three are the cases it was right about.
-        for pattern in (r"a{", r"a{2,3x", r"a{,}"):
+        # covered everything. These are the cases it was right about — and `a{,}` is NOT one of
+        # them: `{,n}` is re's shorthand for `{0,n}`, so `{,}` is `{0,}`, and reading it as literal
+        # made `a{,}` match four characters where re matches "aaa". The comma is what distinguishes
+        # it from `a{}`, which stays literal in both.
+        for pattern in (r"a{", r"a{}", r"a{2,3x"):
             with self.subTest(pattern=pattern):
                 self.assertIsNotNone(real.compile(pattern))
                 self.assertIsNotNone(stdlib.compile(pattern))
+        for subject in ("aaa", "", "a"):
+            with self.subTest(subject=subject):
+                self.assertEqual(real.fullmatch(r"a{,}", subject) is not None,
+                                 stdlib.fullmatch(r"a{,}", subject) is not None)
+        self.assertIsNone(real.fullmatch(r"a{,}", "a{,}"))  # no longer literal text
 
         # EXTENSION: the .NET named-group spelling.
         self.assertEqual(real.search(r"(?<n>a)", "a").group("n"), "a")

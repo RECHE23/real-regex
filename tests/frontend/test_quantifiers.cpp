@@ -65,10 +65,37 @@ TEST(invalid_braces_are_literal_like_python)
 {
   EXPECT(real::regex("a{").fullmatch("a{"));
   EXPECT(real::regex("a{}").fullmatch("a{}"));
-  EXPECT(real::regex("a{,}").fullmatch("a{,}"));
   EXPECT(real::regex("a{2,3x").fullmatch("a{2,3x"));
   EXPECT(real::regex("{2}").fullmatch("{2}"));
   EXPECT(real::regex("a{2}").fullmatch("aa")); // sanity: valid braces repeat
+}
+
+TEST(comma_only_braces_are_the_unbounded_shorthand_not_literal_text)
+{
+  // `{,n}` is Python's shorthand for `{0,n}` and was already implemented -- `a{,3}`, `a{,1}` and
+  // `a{,0}` all agree with re. `{,}` is the same rule with the upper bound left off, i.e. `{0,}`,
+  // and it was the one form that fell through to literal text: the brace parser rejected "both
+  // bounds absent" without asking whether a COMMA was present, so `a{,}` and `a{}` took the same
+  // exit while re reads them differently.
+  //
+  // Not a divergence being closed -- a hole in a shorthand this engine already had.
+  EXPECT(real::regex("a{,}").fullmatch("aaa"));
+  EXPECT(real::regex("a{,}").fullmatch(""));       // {0,} matches empty
+  EXPECT(real::regex("a{,}").fullmatch("a"));
+  EXPECT(!real::regex("a{,}").fullmatch("a{,}"));  // no longer literal text
+  EXPECT(real::regex("a{,}b").fullmatch("b"));     // and it composes
+
+  // `{,}` is `{0,}` is `*`, on the same subject.
+  EXPECT(real::regex("a{0,}").fullmatch("aaa"));
+  EXPECT(real::regex("a*").fullmatch("aaa"));
+
+  // WITHOUT a comma, "both bounds absent" is still literal, in both engines. That is the half the
+  // condition was right about, and the fix must not take it with the other.
+  EXPECT(real::regex("a{}").fullmatch("a{}"));
+  EXPECT(real::regex("a{").fullmatch("a{"));
+
+  // A second comma is still ill-formed: the `}` is not where the parser looks after it.
+  EXPECT(real::regex("a{,,}").fullmatch("a{,,}"));
 }
 
 TEST(quantifier_errors)

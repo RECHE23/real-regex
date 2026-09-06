@@ -339,10 +339,17 @@ a portability trap the other way. A pattern `re` accepts and REAL refuses is the
 promise: existing code stops compiling.
 
 **`{n}` with nothing to repeat is literal here, an error in `re`** (an extension). `{2}a` matches
-the four characters `{2}a`; `re` raises `nothing to repeat`. An *ill-formed* `{…}` — `a{`, `a{2,3x`,
-`a{,}` — is literal text in both, which is ECMAScript Annex B and what `re` does too; the divergence
-is only the well-formed-but-unanchored case, where `re` checks for a preceding atom and REAL does
-not.
+the four characters `{2}a`; `re` raises `nothing to repeat`. The same holds for every brace
+quantifier in that position — `{,}a`, `{,3}a`, `{2,}a` are all literal text here and all errors
+there. An *ill-formed* `{…}` — `a{`, `a{}`, `a{2,3x` — is literal text in both, which is ECMAScript
+Annex B and what `re` does too; the divergence is only the well-formed-but-unanchored case, where
+`re` checks for a preceding atom and REAL does not.
+
+`a{,}` is **not** in that ill-formed list, and this page used to say it was. `{,n}` is Python's
+shorthand for `{0,n}` and REAL implements it, so `{,}` is `{0,}` — unbounded — exactly as `a{,3}` is
+`{0,3}`. Reading it as literal text made `a{,}` match the four characters `a{,}` where `re` matches
+`aaa`. Without a comma, `a{}` stays literal in both: it is the comma that makes the bounds optional
+rather than absent.
 
 **`(?<name>…)` is accepted here, rejected by `re`** (an extension). The .NET spelling is a synonym
 of `(?P<name>…)`; `re` reports `unknown extension ?<n`. Both spellings name the same group, so a
