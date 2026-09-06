@@ -15,28 +15,60 @@ scope, so it is simply skipped, not part of any match). This is REAL following P
 default, not a bug on either side — see `TestFlavorDivergence_WordShorthandIsUnicodeByDefault` and
 `TestDocumentedUnicodeClassDivergence`.
 
-The second and last flavor difference, reached only through the `[]byte` methods: on **malformed
-UTF-8**, `regexp` substitutes U+FFFD for an invalid byte and matches it as one rune, while a
-malformed byte is never a codepoint here and no consuming class accepts it — `.` matches nothing on
-a lone `0xFF`. Zero-width matches do NOT differ: `^`, `$` and empty matches answer identically on
-such input. Pinned in both directions by `TestMalformedUTF8ConsumingDivergence`.
+A second, reached only through the `[]byte` methods: on **malformed UTF-8**, `regexp` substitutes
+U+FFFD for an invalid byte and matches it as one rune, while a malformed byte is never a codepoint
+here and no consuming class accepts it — `.` matches nothing on a lone `0xFF`. Zero-width matches do
+NOT differ: `^`, `$` and empty matches answer identically on such input. Pinned in both directions by
+`TestMalformedUTF8ConsumingDivergence`.
 
-Everything else on the whole `Regexp` surface is asked of `regexp` directly — 57 916 comparisons
-across every `Find*`, `Match*`, `Split` and `ReplaceAll` form, crossed with `n` caps, `[]byte` and
-`string` halves, and empty-matchable patterns (`TestFindFamilyMatchesRegexp`,
-`TestByteAndStringHalvesAgree`, `TestReplaceAllMatchesRegexp`).
+**And three where the two flavors read the same text differently.** These are *silent*: both engines
+compile the pattern and the match differs, which is the shape you cannot see coming. Pinned in both
+directions by `TestFlavorDivergence_ThreeSilentSyntaxReadings`.
+
+| pattern | `regexp` reads | this package reads |
+| --- | --- | --- |
+| `a{,2}`, `a{,}` | literal text (RE2 has no such form) | `{0,2}` / `{0,}` — Python's shorthand |
+| `[[:alpha:]]`, `[[:digit:]]` | a POSIX class | the class `[[:alph]` — members `[ : a l p h` — followed by a literal `]`, which is `re`'s reading, so it matches `a]` and not `a` |
+| `\<w\>` | an escaped literal `<w>` | word-start / word-end anchors, a REAL extension |
+
+All five have one root, and it is worth stating plainly: **the API here is `regexp`'s, the engine is
+Python `re`'s.** Where the two flavors disagree about text they both accept, this package follows
+`re`. That is the design, not an oversight — it is why these differences exist at all, and why the
+list is a list rather than a bug report.
+
+The rest of the `Regexp` surface is asked of `regexp` directly — 57 916 comparisons across every
+`Find*`, `Match*`, `Split` and `ReplaceAll` form, crossed with `n` caps, `[]byte` and `string`
+halves, and empty-matchable patterns (`TestFindFamilyMatchesRegexp`,
+`TestByteAndStringHalvesAgree`, `TestReplaceAllMatchesRegexp`). Read what that sweep is: it varies
+the **methods** over a fixed pattern corpus. It is strong evidence about the API and no evidence at
+all about syntax a corpus does not contain — which is exactly how the three above went unlisted.
 
 ## Why this exists (beyond another `regexp`)
 
-REAL is a strict *syntax superset* of RE2/`regexp` on the shared core: every pattern `regexp`
-accepts, this package accepts identically (differential-tested against the stdlib, see
-`Test_Differential_*`). On top of that, REAL supports constructs RE2 rejects outright at compile
-time: bounded lookahead/lookbehind (`(?=...)`, `(?<=...)`, ...) and possessive quantifiers
-(`a++`), both in linear time (no backtracking, no ReDoS exposure — REAL's whole design point). A
-third and smaller one: a `\` before a non-ASCII character is that character (`\é` matches `é`,
-`[\à-\é]` is a range), Python `re`'s rule — `regexp` answers `invalid escape sequence` there, as it
-does for `\q`. A `regexp` user migrates without rewriting existing patterns, then gains access to
-constructs they could not express before.
+REAL **compiles** every pattern `regexp` compiles (differential-tested against the stdlib, see
+`Test_Differential_*`), and matches identically **except for the five flavor differences listed
+above**. That qualifier is load-bearing, and this sentence used to omit it.
+
+On top of that, REAL accepts constructs `regexp` rejects outright at compile time. These are a
+different thing from the five above, which are about text both engines accept — here `regexp.Compile`
+returns an error and this package does not. **This list is open and deliberately carries no count**;
+among them:
+
+- bounded lookahead / lookbehind (`(?=...)`, `(?<=...)`, etc.) and possessive quantifiers (`a++`),
+  both in linear time — no backtracking and no ReDoS exposure, which is REAL's whole design point;
+- a `\` before a non-ASCII character is that character (`\é` matches `é`, `[\à-\é]` is a range),
+  Python `re`'s rule — `regexp` answers `invalid escape sequence`, as it does for `\q`;
+- `\Z` (end-of-text anchor here, `invalid escape sequence` there);
+- `(?#...)` comments (`invalid or unsupported Perl syntax`);
+- `{2}a` — a brace with nothing to repeat is literal text here, `missing argument to repetition
+  operator` there.
+
+The count is left open on purpose: a closed one invites the same correction the flavor list needed,
+and nothing here depends on the total. The **five** flavor differences above are a closed list,
+because each is a case where both engines compile and only one can be right about the match.
+
+A `regexp` user migrates without rewriting existing patterns, then gains access to constructs they
+could not express before.
 
 ## API surface (v0.2)
 

@@ -427,3 +427,63 @@ func TestMalformedUTF8ConsumingDivergence(t *testing.T) {
 		t.Fatalf("denominator changed: %d patterns, %d subjects", len(consuming), len(subjects))
 	}
 }
+
+// Three flavor divergences the README used to omit, each SILENT: both engines compile the pattern
+// and the match differs, which is the shape a caller cannot see coming. They are pinned in both
+// directions -- what this package answers AND what `regexp` answers -- so a future change that
+// quietly aligns either side fails here rather than in a user's program.
+//
+// All three have the same root: the API is `regexp`'s, the ENGINE is Python `re`'s, and where the
+// two flavors read the same text differently this package follows `re`. That is a choice, not an
+// oversight, and it is the reason the divergences exist at all.
+//
+// None of these was reachable by the 57 916-comparison differential: that sweep varies the METHODS
+// over a fixed pattern corpus, so it cannot find a construct nobody put in the corpus. A corpus is
+// not an enumeration of the syntax.
+func TestFlavorDivergence_ThreeSilentSyntaxReadings(t *testing.T) {
+	cases := []struct {
+		pattern string
+		subject string
+		ours    []int // what this package answers (nil = no match)
+		theirs  []int // what regexp answers
+		why     string
+	}{
+		// `{,n}` is Python's shorthand for `{0,n}`; RE2 has no such form and reads the text literally.
+		{`a{,2}`, "aa", []int{0, 2}, nil, "{,n} is {0,n} here, literal text under regexp"},
+		{`a{,2}`, "a{,2}", []int{0, 1}, []int{0, 5}, "regexp matches the literal it read"},
+		{`a{,}`, "aaa", []int{0, 3}, nil, "{,} is {0,} here"},
+		{`a{,}`, "a{,}", []int{0, 1}, []int{0, 4}, "regexp matches the literal it read"},
+		// POSIX classes: RE2 implements them; `re` reads `[[:alpha:]]` as an ordinary class of the
+		// characters `[:alph` plus a literal `]`, and this package is `re`-compatible.
+		{`[[:alpha:]]`, "a", nil, []int{0, 1}, "a real POSIX class under regexp, a literal class here"},
+		{`[[:digit:]]+`, "123", nil, []int{0, 3}, "same, quantified"},
+		{`[[:alpha:]]`, "a]", []int{0, 2}, []int{0, 1}, "the literal reading is what `re` gives"},
+		// Word-edge anchors are a REAL extension; regexp reads `\<` as an escaped literal `<`.
+		{`\<w\>`, "w word", []int{0, 1}, nil, "word-start/word-end here"},
+		{`\<w\>`, "<w>", []int{1, 2}, []int{0, 3}, "regexp matched the literal `<w>`"},
+	}
+	for _, c := range cases {
+		ours, err := Compile(c.pattern)
+		if err != nil {
+			t.Fatalf("%q: this package must COMPILE it for the divergence to be silent: %v", c.pattern, err)
+		}
+		theirs, err := regexp.Compile(c.pattern)
+		if err != nil {
+			t.Fatalf("%q: regexp must COMPILE it too, else the divergence is not silent: %v", c.pattern, err)
+		}
+		if got := ours.FindStringIndex(c.subject); !sameSpan(got, c.ours) {
+			t.Errorf("%q on %q: this package gave %v, want %v (%s)", c.pattern, c.subject, got, c.ours, c.why)
+		}
+		if got := theirs.FindStringIndex(c.subject); !sameSpan(got, c.theirs) {
+			t.Errorf("%q on %q: regexp gave %v, want %v -- the divergence's other half moved",
+				c.pattern, c.subject, got, c.theirs)
+		}
+	}
+}
+
+func sameSpan(a, b []int) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	return a == nil || (len(a) == len(b) && a[0] == b[0] && a[1] == b[1])
+}

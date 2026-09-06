@@ -34,7 +34,9 @@ re.MatchString("x42")   // true — a search, like regexp.MatchString
 `FindAllIndex`, `FindSubmatchIndex` / `FindAllSubmatchIndex` / `FindAllStringSubmatchIndex`,
 and `ReplaceAll`.
 
-Beyond `regexp` — flagged extensions, never silent divergences:
+Beyond `regexp` — additions and refusals, each visible at compile time (the *silent*
+differences, where both engines compile and the match differs, are listed under
+Differences & limitations below):
 
 - `(*Regexp) FullMatch` — whole-string match; `regexp.MatchString` is really a
   *search*.
@@ -58,8 +60,22 @@ Object-level reference:
 The one thing to know — **`\w`, `\d`, and `\s` are Unicode-aware by default
 here.** `regexp` (RE2) uses ASCII-only by default. `\w+` on `"café"` matches all
 of it under this package; under `regexp`, `\w+` matches only `"caf"` (because
-RE2's `\w` does not include the accented é). This follows REAL's alignment with
-Python `re`, not a divergence — both are intentional designs.
+RE2's `\w` does not include the accented é).
+
+That is the first of **five flavor differences**, and they share one root: the
+API here is `regexp`'s, the engine is Python `re`'s, so where the two flavors
+read the same text differently this package follows `re`. Three of the five are
+**silent** — both engines compile the pattern and the match differs:
+
+| pattern | `regexp` reads | here |
+| --- | --- | --- |
+| `a{,2}`, `a{,}` | literal text | `{0,2}` / `{0,}`, Python's shorthand |
+| `[[:alpha:]]`, `[[:digit:]]` | a POSIX class | a literal class, as `re` reads it |
+| `\<w\>` | an escaped literal `<w>` | word-start / word-end anchors |
+
+The fourth is `\w`/`\d`/`\s` above; the fifth is malformed UTF-8 through the
+`[]byte` methods, where `regexp` substitutes U+FFFD and this package matches
+nothing. All five are pinned in both directions by the binding's tests.
 
 v0.2-specific: cgo required; supported platforms are macOS-arm64 and
 linux-x86-64 only; no flags parameter exposed in the Go API (always compiles
