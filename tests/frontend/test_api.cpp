@@ -308,6 +308,76 @@ TEST(unsupported_escape_names_the_escape)
   EXPECT(cause("a\\-b").empty()); // escaped punctuation keeps its literal meaning
 }
 
+// A `\` before a non-ASCII character is that character, and the escape consumes ONE UNIT OF THE
+// MODE: the whole code point in text mode, a single byte under `flags::bytes`. The rule is not an
+// interpretation -- all three references answer it the same way. `re` accepts `\é` as `é` and
+// `b'\\\xc3'` as the one byte 0xC3; ECMAScript's Annex B IdentityEscape makes `/\é/` an `é`; and
+// `std::regex`, whose unit is a `char`, matches the single byte too. REAL refused every one of them:
+// an escaped byte >= 0x80 fell through to `parse_byte_escape`, which returns -1 for it, and both
+// callers turned that into `unsupported escape sequence`. Valid patterns did not compile.
+//
+// The mode's unit is the whole point, and it is why `parse_byte_escape` cannot serve the text case:
+// it yields a BYTE, and its caller emits a byte node for any value >= 0x80 (the documented `\xHH`
+// provenance split). A `\é` routed there would compile and then fail to match `é`.
+//
+// `\q` stays an error. The rule covers characters that are not ASCII letters, not every backslash.
+TEST(escaped_non_ascii_is_that_character)
+{
+  const auto cause = [](const char* pattern, real::flags f = real::flags::none) {
+                       try {
+                         const real::regex rx(pattern, f);
+                       }
+                       catch (const real::regex_error& ex) {
+                         return std::string(ex.what());
+                       }
+                       return std::string {};
+                     };
+
+  // Text mode: the escape takes the whole code point, at each of the three encoding lengths.
+  EXPECT(real::regex("\\é").fullmatch("é"));
+  EXPECT(!real::regex("\\é").fullmatch("e")); // the character itself, not a dropped backslash
+  EXPECT(real::regex("\\€").fullmatch("€"));
+  EXPECT(real::regex("\\😀").fullmatch("😀"));
+  EXPECT(real::regex("a\\éb").fullmatch("aéb"));
+
+  // A quantifier repeats the code point, not its last byte -- the escaped form emits the same atom
+  // as the raw one, so it inherits that promotion rather than re-deciding it.
+  EXPECT_EQ(real::regex("\\é+").search("ééé").end(), 6U);
+
+  // Inside a class the member is a code point, so it is also usable as a range endpoint.
+  EXPECT(real::regex("[\\é]").fullmatch("é"));
+  EXPECT(real::regex("[\\é\\€]").fullmatch("€"));
+  EXPECT(real::regex("[\\à-\\é]").fullmatch("â"));
+
+  // Code-point provenance, so `icase` folds it like a raw literal (a `\xHH` byte never folds).
+  EXPECT(real::regex("\\é", real::flags::icase).fullmatch("É"));
+  EXPECT(real::regex("[\\é]", real::flags::icase).fullmatch("É"));
+
+  // Bytes mode: one byte, which is what `re` on a `bytes` pattern and `std::regex` both answer.
+  // `\<C3>` is the single byte, so it does NOT match the two-byte sequence...
+  EXPECT(real::regex("\\\xC3", real::flags::bytes).fullmatch("\xC3"));
+  EXPECT(!real::regex("\\\xC3", real::flags::bytes).fullmatch("\xC3\xA9"));
+  // ...and `\<C3><A9>` matches it only because the escape takes 0xC3 and 0xA9 follows as a literal.
+  EXPECT(real::regex("\\\xC3\xA9", real::flags::bytes).fullmatch("\xC3\xA9"));
+  // A class of escaped bytes is a class of BYTES, not the code point they spell.
+  EXPECT(real::regex("[\\\xC3\\\xA9]", real::flags::bytes).fullmatch("\xC3"));
+  EXPECT(real::regex("[\\\xC3\\\xA9]", real::flags::bytes).fullmatch("\xA9"));
+  EXPECT(!real::regex("[\\\xC3\\\xA9]", real::flags::bytes).fullmatch("\xC3\xA9"));
+  // Both bytes are escaped above for a reason: a BARE byte >= 0x80 in a bytes class is refused by a
+  // separate, named rule at the head of the class parser, which the compat layer's fallback relies
+  // on. `re` accepts either spelling for the same class; this engine accepts only the escaped one,
+  // and that boundary is pinned here so it stays a known divergence rather than a side effect.
+  EXPECT(cause("[\\\xC3\xA9]", real::flags::bytes) ==
+         "regex_error at 3: non-ASCII character class member not supported");
+
+  // The refusals that stay refusals: an unknown ASCII-letter escape, and a `\` on a byte that
+  // begins no code point (text mode decodes, so it can still reject what does not decode).
+  EXPECT(cause("\\q") == "regex_error at 0: unsupported escape sequence \\q");
+  EXPECT(cause("[a\\q]") == "regex_error at 2: unsupported escape sequence \\q");
+  EXPECT(cause("\\\xFF") == "regex_error at 1: invalid UTF-8 byte in pattern");
+  EXPECT(cause("[\\\xFF]") == "regex_error at 2: invalid UTF-8 byte in character class");
+}
+
 // Four diagnostics pointed where the SCAN stopped instead of where the fault begins. `re` points
 // at the construct: the `(` of a misplaced flag group, the second quantifier of a double repeat,
 // the first count of an inverted range, the `{` of a braced repeat on an anchor. On a long pattern

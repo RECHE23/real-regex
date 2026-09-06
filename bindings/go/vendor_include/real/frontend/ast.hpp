@@ -2552,6 +2552,32 @@ namespace real::detail {
           return add_node(out, {.kind = node_kind::any, .raw_byte = true});
         default:
           {
+            // A `\` before a non-ASCII character is that character, and the escape consumes one unit
+            // of the MODE: the whole code point in text mode, a single byte under bytes. This is the
+            // same atom the UNESCAPED literal emits in parse_atom, so the two forms agree by
+            // construction (a quantifier repeats the code point, and icase folds it, in both).
+            //
+            // It has to run BEFORE parse_byte_escape, which cannot serve the text case: that path
+            // yields a BYTE, and its caller below emits a byte node for any value >= 0x80 (the
+            // documented `\xHH` provenance split), so a `\é` routed there would compile and then
+            // not match `é`. parse_byte_escape returns -1 for such a byte, which is why every one
+            // of these reached fail_unsupported_escape and valid patterns did not compile.
+            if (static_cast<std::uint8_t>(peek()) >= 0x80U) {
+              // Bytes-mode read comes from the scope stack, as the `\C` case above does: bytes is
+              // never scoped, so it equals the global member while keeping the parser's
+              // global-read count flat (the flag-scope ratchet).
+              if (has_flag(current_flags(), flags::bytes)) {
+                const std::int32_t raw {static_cast<std::uint8_t>(peek())};
+                ++pos_;
+                return emit_literal_codepoint(out, raw);
+              }
+              const detail::decoded_codepoint decoded {detail::decode_codepoint_strict(pattern_, pos_)};
+              if (!decoded.valid) {
+                fail("invalid UTF-8 byte in pattern");
+              }
+              pos_ += decoded.length;
+              return emit_literal_codepoint(out, static_cast<std::int32_t>(decoded.cp));
+            }
             // `\x{...}` is RE2/Perl's braced code-point escape (ECMAScript spells this `\u{...}`
             // instead — Annex B has no braced `\x`, so under ecma `\x` keeps its two-hex meaning).
             // Gated `!is_ecma()`, mirroring `\u`/`\U` above (l.1770/1772). Anything else — ecma, `\x`
@@ -2683,6 +2709,26 @@ namespace real::detail {
           fail("invalid escape (\\8 and \\9 are not octal and there are no back-references in a class)");
         default:
           {
+            // Same rule and same unit as parse_escape's default, and it yields exactly what the
+            // UNESCAPED member yields at the head of this function: a code point in text mode, one
+            // byte under bytes. So `[\<C3><A9>]` in bytes mode is the class {0xC3, 0xA9} -- what
+            // `re` on a bytes pattern and `std::regex` (whose unit is a `char`) both answer -- and
+            // not the character those two bytes spell. A code-point member is also usable as a range
+            // endpoint, which is how `[\à-\é]` becomes one range rather than two members.
+            if (static_cast<std::uint8_t>(peek()) >= 0x80U) {
+              // Scope-stack read, same reason as parse_escape's default (the flag-scope ratchet).
+              if (has_flag(current_flags(), flags::bytes)) {
+                const std::int32_t raw {static_cast<std::uint8_t>(peek())};
+                ++pos_;
+                return raw;
+              }
+              const detail::decoded_codepoint decoded {detail::decode_codepoint_strict(pattern_, pos_)};
+              if (!decoded.valid) {
+                fail("invalid UTF-8 byte in character class");
+              }
+              pos_ += decoded.length;
+              return static_cast<std::int32_t>(decoded.cp);
+            }
             // Mirrors the outside-class `\x{...}` gate in parse_escape: RE2/Perl braced code point,
             // `!is_ecma()`, else the existing `\xHH` byte path below (parse_byte_escape) is unchanged.
             if (peek() == 'x' && !is_ecma() && pos_ + 1 < pattern_.size() && pattern_[pos_ + 1] == '{') {

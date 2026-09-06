@@ -162,7 +162,14 @@ TEST(features_probe_03_00_escapes_classes_octal_escapes_in_a_class_1_12)
   EXPECT_EQ(re.pattern(), std::string_view(R"RRX([\12])RRX"));
 }
 
-TEST(features_probe_03_01_escapes_classes_posix_alpha_classes)
+TEST(features_probe_03_01_escapes_classes_before_a_non_ascii_character)
+{
+  // Escapes & classes / `\` before a non-ASCII character `\é` — status: supported (must compile)
+  const real::regex re(R"RRX(\é)RRX");
+  EXPECT_EQ(re.pattern(), std::string_view(R"RRX(\é)RRX"));
+}
+
+TEST(features_probe_03_02_escapes_classes_posix_alpha_classes)
 {
   // Escapes & classes / POSIX `[[:alpha:]]` classes — status: supported (must compile)
   const real::regex re(R"RRX([[:alpha:]]+)RRX");
@@ -217,4 +224,4 @@ TEST(features_probe_05_04_excluded_by_design_callouts_c_c1)
   EXPECT_THROWS(real::regex(R"RRX(a(?C1)b)RRX"), real::regex_error);
 }
 
-// 24 compile-assertions, 5 throw-assertions, 1 skipped (planned / pattern: null).
+// 25 compile-assertions, 5 throw-assertions, 1 skipped (planned / pattern: null).

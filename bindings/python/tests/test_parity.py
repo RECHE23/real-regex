@@ -269,6 +269,45 @@ class TestParity(unittest.TestCase):
                 self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
                                  self.match_facts(re.compile(pattern).search(subject)))
 
+    def test_escaped_non_ascii_is_that_character_parity(self):
+        r"""`\` + a non-ASCII character is that character, consuming one unit of the MODE: the code
+        point on a str, one byte on bytes. re's rule is `\` + unknown ASCII letter -> error, `\` +
+        anything else -> literal, so every one of these is a VALID pattern there. REAL refused them
+        all, and on this surface the refusal did not even arrive as an error: the diagnostic quoted
+        one raw byte of the character, so decoding the message raised UnicodeDecodeError."""
+        str_cases = [
+            (r"\é", "é"), (r"\€", "€"), (r"\😀", "😀"), (r"\ñ", "ñ"), (r"\à", "à"),
+            (r"a\éb", "aéb"), (r"[\é]", "é"), (r"[\é\€]", "€"), (r"[\à-\é]", "â"),
+            (r"\é+", "ééé"), (r"\é|x", "é"), (r"(\é)", "é"),
+        ]
+        for pattern, subject in str_cases:
+            with self.subTest(pattern=pattern, kind="str"):
+                self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
+                                 self.match_facts(re.compile(pattern, _text_oracle(pattern, 0)).search(subject)))
+        # Code-point provenance, so icase folds it the way a raw literal does (\xHH never folds).
+        for pattern, subject in [(r"\é", "É"), (r"[\é]", "É")]:
+            with self.subTest(pattern=pattern, kind="icase"):
+                self.assertEqual(self.match_facts(real.compile(pattern, real.I).search(subject)),
+                                 self.match_facts(re.compile(pattern, re.IGNORECASE).search(subject)))
+        # bytes: the escape takes ONE byte, so `\<c3>` is that byte and `[\<c3>\<a9>]` is the class
+        # of the two bytes -- not the character they spell. Both bytes are escaped because a BARE
+        # byte >= 0x80 in a bytes class is refused by a separate named rule (an open divergence).
+        bytes_cases = [
+            (b"\\\xc3", b"\xc3"), (b"\\\xc3\xa9", b"\xc3\xa9"), (b"a\\\xc3\xa9b", b"a\xc3\xa9b"),
+            (b"[\\\xc3\\\xa9]", b"\xc3"), (b"[\\\xc3\\\xa9]", b"\xa9"),
+        ]
+        for pattern, subject in bytes_cases:
+            with self.subTest(pattern=pattern, kind="bytes"):
+                self.assertEqual(self.match_facts(real.compile(pattern).search(subject)),
+                                 self.match_facts(re.compile(pattern).search(subject)))
+        # The rule is about characters that are not ASCII letters. An unknown ASCII-letter escape is
+        # still an error on both sides, and REAL's says so in a message that decodes.
+        with self.assertRaises(re.error):
+            re.compile(r"\q")
+        with self.assertRaises(real.error) as caught:
+            real.compile(r"\qé")
+        self.assertIn("\\q", str(caught.exception))
+
     def test_z_anchor_parity(self):
         r"""\z is an exact alias of \Z (end of text, no MULTILINE interaction) — Python 3.14
         added it that way. Parity with re where re supports it (3.14+); always == \Z in REAL."""

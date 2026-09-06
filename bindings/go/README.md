@@ -33,8 +33,10 @@ accepts, this package accepts identically (differential-tested against the stdli
 `Test_Differential_*`). On top of that, REAL supports constructs RE2 rejects outright at compile
 time: bounded lookahead/lookbehind (`(?=...)`, `(?<=...)`, ...) and possessive quantifiers
 (`a++`), both in linear time (no backtracking, no ReDoS exposure — REAL's whole design point). A
-`regexp` user migrates without rewriting existing patterns, then gains access to constructs they
-could not express before.
+third and smaller one: a `\` before a non-ASCII character is that character (`\é` matches `é`,
+`[\à-\é]` is a range), Python `re`'s rule — `regexp` answers `invalid escape sequence` there, as it
+does for `\q`. A `regexp` user migrates without rewriting existing patterns, then gains access to
+constructs they could not express before.
 
 ## API surface (v0.2)
 

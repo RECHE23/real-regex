@@ -58,6 +58,7 @@ raise a clear error rather than sitting on a roadmap.
 | Named group, .NET spelling `(?<name>…)` | **extension** | synonym of `(?P<name>…)`; `re` reports `unknown extension ?<n` ([more](@ref div_compiles)) | — |
 | Word-edge anchors `\< \>` | **extension** | word-start / word-end; `re` has no such escape ([more](@ref div_icase)) | — |
 | Octal escapes in a class `[\1]` `[\12]` | **supported** | every `\digit` is octal in a class body (no backreferences there) | 2026.7 |
+| `\` before a non-ASCII character `\é` | **supported** | that character itself, in or out of a class -- `re`'s rule is that only an unknown ASCII *letter* is an error. One unit of the mode: the code point on text, one byte under `bytes`. RE2 (Go `regexp`, the Rust crate) rejects it | — |
 | POSIX `[[:alpha:]]` classes | **supported** | exact `re`-parity: read as a literal class (matches `re`'s FutureWarning-era behaviour), not true POSIX semantics | — |
 | Global flags `i m s x a` (and `(?imsxa)` prefix) | **supported** | `re` semantics; `re.U` is a no-op, `re.L` excluded | — |
 | Scoped inline flags `(?imsxa:…)` / `(?-…:…)` / `(?…-…:…)` | **supported** | per-scope `i m s x a` (Python 3.11 semantics), exact `re`-parity in str and bytes | 2026.7 |
@@ -128,7 +129,7 @@ do not use `len(findall(...))` as a throughput proxy.
 | Construct | Why | Treatment |
 |---|---|---|
 | Backreferences `\1`, `(?P=n)` | `real` does not implement them | `real` rejects → std fallback (std supports them) |
-| **Raw** non-ASCII bytes inside a class `[é]` | `real`'s bytes path rejects raw high bytes in `[...]` (a `\xHH` escape does *not* — `[\x80-\xff]` stays on `real` as a byte class, matching `std::regex<char>`) | clean rejection → std fallback |
+| **Raw** non-ASCII bytes inside a class `[é]` | `real`'s bytes path rejects raw high bytes in `[...]`. An ESCAPED high byte does *not* — neither `\xHH` (`[\x80-\xff]`) nor a backslash before the byte itself (`[\é]`, which is the class of those two bytes): both stay on `real` as a byte class, which is what `std::regex<char>` answers for them | clean rejection → std fallback |
 | Unbounded / oversized lookaround | exceeds `real`'s bounded-lookaround cap | `real` rejects → std fallback |
 | `collate` or `nosubs` | locale-sensitive ranges / group-hiding — outside `real`'s model | screened to std up front (the five POSIX grammars themselves translate — see above) |
 | A BRE backreference `\1`-`\9` | `real` does not implement backreferences | translator declines → std fallback (std backtracks them) |

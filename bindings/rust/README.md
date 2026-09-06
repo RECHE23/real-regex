@@ -107,6 +107,12 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   accepts `\u{…}` as the ECMAScript braced form (the same code-point path as `\x{e9}` / `\u00e9`).
   `\U{…}` is *not* that form — REAL's `\U` is Python's eight hex digits (`\U0001F600`); `\U{e9}`
   stays a syntax error. `re` rejects `\u{…}`; accepting it is a documented superset.
+- **`\` before a non-ASCII character is that character — a documented superset.** The crate refuses
+  `\é` and `[\é]` with `unrecognized escape sequence`, the same error it gives `\q`. REAL follows
+  Python `re`'s rule instead — a `\` before an unknown ASCII *letter* is an error, a `\` before
+  anything else is that character literally — which is also ECMAScript's Annex B identity escape and
+  what `std::regex` answers. So `\é` compiles here and matches `é`, and `[\à-\é]` is a code-point
+  range. Nothing the crate accepts changes meaning; only patterns it rejects are gained.
 - **Class set notation — declined (rust-only syntax).** Nested character classes (`[a[b]]` = union) and the
   set operators `&&` / `--` / `~~` are `regex`-crate syntax; Python `re` — REAL's model — reads `[` as a
   literal inside a class, so the two would parse the same pattern differently. The crate declines these up

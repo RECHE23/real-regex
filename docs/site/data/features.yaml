@@ -167,6 +167,10 @@ categories:
         note: "every `\\digit` is octal in a class body (no backreferences there)"
         since: "2026.7"
         pattern: "[\\12]"
+      - construct: "`\\` before a non-ASCII character `\\é`"
+        status: supported
+        note: "that character itself, in or out of a class -- `re`'s rule is that only an unknown ASCII *letter* is an error. One unit of the mode: the code point on text, one byte under `bytes`. RE2 (Go `regexp`, the Rust crate) rejects it"
+        pattern: "\\é"
       - construct: "POSIX `[[:alpha:]]` classes"
         status: supported
         note: "exact `re`-parity: read as a literal class (matches `re`'s FutureWarning-era behaviour), not true POSIX semantics"
