@@ -2,6 +2,44 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.9.2
+
+9.2 (**the unit of the mode — and not one change on a measured path**): **THESE TABLES DO NOT MOVE,
+AND THE STAMP IS DELIBERATELY LEFT AT `2026.8.15`**, for the same reason as the previous train and
+with no new argument: this document declares its regime as **two ISAs**, only arm64 was available,
+and refreshing one leg publishes a table whose halves describe different trees. **NO CELL BELOW WAS
+RE-RUN, AND NONE IS EDITED.** **WHY NO ROW HERE COULD SEE THIS TRAIN, STRUCTURALLY RATHER THAN BY
+ARGUMENT:** every engine edit is on the **parse** path or an **error** path, and each new branch is
+guarded by a condition that was reachable only where compilation previously **failed** — a byte
+`>= 0x80` after a `\` (`parse_escape`, `parse_class_item`), the same byte bare inside a bytes-mode
+class, and the quoting loop of `fail_unknown_extension`, which runs on the way to a throw. For any
+pattern that compiled before this train the branches taken are identical and the emitted program is
+the same one, **WITH EXACTLY ONE EXCEPTION, NAMED RATHER THAN GLOSSED: `{,}`** — it compiled before,
+as literal text, and now compiles as the `{0,}` shorthand `re` reads it as, so `a{,}` emits `a*`
+instead of four literal characters. That is the only emitted program in this train that changes for
+an input which previously compiled; the rest of the family (`a{,3}`, `a{,1}`, `a{,0}`) already agreed
+with `re` and did not move, and no row below contains a braced repeat with an absent lower bound, so
+the exception is real but outside every cell here. Otherwise there is no match-path change for these
+tables to measure — this is a claim about reachability, not a paired measurement, and it is named as
+such. The one edit that removes work
+removes it from the parser: the bytes-mode class refusal is gone, so a class carrying a raw high byte
+now compiles instead of throwing, and the `std::regex` compat layer stops delegating it (measured:
+`uses_real()` on every spelling, where the bare one previously fell back and forfeited the
+linear-time guarantee). **THE ONLY INSTRUMENT CITED IS THE ONE THAT RAN:** the veto matrix (26
+route-vs-core rows, 5 % tolerance) read `MATRIX CLEAN`, **0 red cells, on two consecutive runs on a
+settled host** (nothing polling, load average 2.96) — that is a veto within one build, not a paired
+measurement of this train against the last, and it is not dressed as one. **NOT CLAIMED:** no full
+local gate was run over this train, so `GATE_STRICT` is asserted nowhere; and the two internal
+sentinel sites the previous entry named — `_real.cpp:1183` per STEP and `real_iter` per CALL — are
+untouched and still unmeasured. **A MEASUREMENT MADE AND THEN CORRECTED, PUBLISHED AS THE
+CORRECTION:** a 360-pattern differential sweep over bytes-mode classes (high-byte members, ranges,
+negations, ASCII mixes) reported 54 patterns REAL accepts and `std::regex` refuses — all of the shape
+`[A-<byte >= 0x80>]`. That reading is an artefact of the standard library it was compiled against:
+under **libstdc++** the range is inverted by the signed `char` and rejected, under **libc++ every one
+of the 360 patterns compiles on both sides**, 5400 comparisons, 0 disagreements. "std refuses" would
+have been false on one implementation and true on the other, so nothing about it is entered in the
+compat catalogue in this train.
+
 ## v2026.9.1
 
 9.1 (**a correction train, and the tables are NOT re-measured — on purpose**): **THESE TABLES DO NOT
