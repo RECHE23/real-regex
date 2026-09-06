@@ -365,6 +365,20 @@ class TestParity(unittest.TestCase):
                 self.assertEqual(ours.exception.colno, theirs.exception.colno)
         self.assertEqual(len(template_cases), 5)
 
+        # A BYTES template is where the str-ness GATE is load-bearing: its offsets are already
+        # byte offsets, so converting would make them wrong. `b"\xc3\xa9\\2"` reports 3 on both
+        # sides and 2 would be the bug — without this case, removing the gate entirely goes
+        # unnoticed, which is how it was found.
+        byte_templates = [rb"\2", rb"\g<", b"\xc3\xa9\\2", b"\xf0\x9f\x98\x80\\2"]
+        for template in byte_templates:
+            with self.subTest(template=template):
+                with self.assertRaises(re.error) as theirs:
+                    re.sub(b"(a)", template, b"a")
+                with self.assertRaises(real.error) as ours:
+                    real.sub(b"(a)", template, b"a")
+                self.assertEqual(ours.exception.pos, theirs.exception.pos)
+        self.assertEqual(len(byte_templates), 4)
+
         # BYTES: unchanged, and asserted rather than assumed — the conversion must not fire there.
         for pattern in [rb"\xc3\xa9(", b"ab(", b"\xf0\x9f\x98\x80("]:
             with self.subTest(pattern=pattern):
