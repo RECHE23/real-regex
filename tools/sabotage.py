@@ -212,8 +212,14 @@ def main(argv: list[str]) -> int:
     try:
         if needs_rebuild(rel) and not rebuild():
             return 2
+        # errors="replace", not the default strict: a check's output is a BYTE stream, and a test
+        # suite that prints a failing pattern prints whatever bytes that pattern holds. A byte-mode
+        # witness (`\<C3>`) is not valid UTF-8, so strict decoding raised inside communicate() --
+        # AFTER the check had run and BEFORE its exit status was read, which discards the verdict
+        # and reports a harness traceback in its place. The one thing this script exists to deliver
+        # is that verdict; it must not be lost to the contents of the output.
         child = subprocess.Popen(check, cwd=ROOT, stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT, text=True)
+                                 stderr=subprocess.STDOUT, text=True, errors="replace")
         out, _ = child.communicate()
         bit = child.returncode != 0
         print(f"  [{args.label}] " + ("RED — the guard reacted." if bit else
