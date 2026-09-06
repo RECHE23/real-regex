@@ -2711,10 +2711,13 @@ namespace real::detail {
           {
             // Same rule and same unit as parse_escape's default, and it yields exactly what the
             // UNESCAPED member yields at the head of this function: a code point in text mode, one
-            // byte under bytes. So `[\<C3><A9>]` in bytes mode is the class {0xC3, 0xA9} -- what
-            // `re` on a bytes pattern and `std::regex` (whose unit is a `char`) both answer -- and
-            // not the character those two bytes spell. A code-point member is also usable as a range
-            // endpoint, which is how `[\à-\é]` becomes one range rather than two members.
+            // byte under bytes. So under bytes each escaped high byte is ONE member: a class of two
+            // of them is {0xC3, 0xA9}, not the character those bytes spell -- the same class `re` on
+            // a bytes pattern and `std::regex` (whose unit is a `char`) produce. Those two reach it
+            // from a SINGLE backslash, because both accept a bare high byte as a member; this parser
+            // rejects that at the head of this function, so here each byte needs its own backslash.
+            // A code-point member is also usable as a range endpoint, which is how `[\à-\é]` becomes
+            // one range rather than two members.
             if (static_cast<std::uint8_t>(peek()) >= 0x80U) {
               // Scope-stack read, same reason as parse_escape's default (the flag-scope ratchet).
               if (has_flag(current_flags(), flags::bytes)) {

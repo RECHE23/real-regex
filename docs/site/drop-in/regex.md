@@ -46,6 +46,9 @@ Condensed — the full list with tables is the crate's own
   follow Python `re`, not UTS#18; class-set syntax (`[a[b]]`, `&&`) declines.
 - **`\u{…}` is accepted** as `\x{…}` (the regex crate spelling). `\U{…}` is
   still eight-digit `\U`, not braces.
+- **`\` before a non-ASCII character is that character** (`\é` matches `é`,
+  `[\à-\é]` is a code-point range) — Python `re`'s rule. The crate answers
+  `unrecognized escape sequence`, the same error it gives `\q`.
 - **Possessive quantifiers, a positive divergence — but silent** — REAL reads
   `x?+` / `x*+` / `x++` as possessive (the Python 3.11+ grammar); the `regex`
   crate reads them as nested repetition. Both compile — check the README entry

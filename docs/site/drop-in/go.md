@@ -42,6 +42,9 @@ Beyond `regexp` — flagged extensions, never silent divergences:
   which-matched set; `regexp` has no equivalent.
 - Bounded lookahead / lookbehind (`(?=…)`, `(?<=…)`, etc.) and possessive
   quantifiers (`a++`); `regexp.Compile` rejects these patterns outright.
+- A `\` before a non-ASCII character is that character (`\é` matches `é`,
+  `[\à-\é]` is a range) — Python `re`'s rule; `regexp` answers `invalid escape
+  sequence` there, as it does for `\q`.
 - **ReplaceAll template sigil differs** — this package uses REAL/Python-style
   `\1` / `\g<name>`. A `$1` / `$name` / `${name}` template is an error, not a
   silent literal; it is not translated to `\1`. `$$` is regexp's escape for a
