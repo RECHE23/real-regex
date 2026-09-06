@@ -1221,15 +1221,19 @@ namespace real::detail {
     /*!
      * \brief Wraps \p atom in a repeat node if a quantifier follows.
      *
-     * Grammar: `quantifier := ('*' | '+' | '?' | '{n}' | '{n,}' | '{,m}' |
+     * Grammar: `quantifier := ('*' | '+' | '?' | '{n}' | '{n,}' | '{,m}' | '{,}' |
      * '{n,m}') '?'?`. An ILL-FORMED `{...}` is not a quantifier at all and stays
-     * literal text, exactly like Python (`a{`, `a{2,3x`, `a{,}` all match
-     * literally). A WELL-FORMED one with no atom before it does not: `{2}a` is
-     * literal here and `nothing to repeat` in Python, because `re` checks for a
-     * preceding atom and this function is only reached when there is one. That
-     * is a deliberate extension, recorded in the divergences catalogue as
-     * div_compiles -- "exactly like Python" held for the three examples above
-     * and not for the case they omitted. A bare anchor cannot be repeated.
+     * literal text, exactly like Python (`a{`, `a{}`, `a{2,3x` all match
+     * literally). `a{,}` is NOT one of those and this comment used to say it was,
+     * contradicting its own grammar line one sentence earlier: `{,m}` is Python's
+     * shorthand for `{0,m}`, so `{,}` is `{0,}`. The COMMA is what separates the
+     * two -- with it the bounds are optional, without it they are absent.
+     * A WELL-FORMED quantifier with no atom before it does not stay literal in
+     * Python: `{2}a` is literal here and `nothing to repeat` there, because `re`
+     * checks for a preceding atom and this function is only reached when there is
+     * one. That is a deliberate extension, recorded in the divergences catalogue
+     * as div_compiles, and it covers the whole brace family -- `{,}a`, `{,3}a` and
+     * `{2,}a` alike, not only `{n}a`. A bare anchor cannot be repeated.
      *
      * \param[in,out] out  The AST being built.
      * \param[in]     atom Index of the atom the quantifier would apply to.
