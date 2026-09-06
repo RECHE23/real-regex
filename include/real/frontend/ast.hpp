@@ -1244,9 +1244,14 @@ namespace real::detail {
       // Like Python: a bare anchor cannot be repeated ((?:^)* is fine).
       if (out.nodes[static_cast<std::size_t>(atom)].kind == node_kind::anchor &&
           (peek() == '*' || peek() == '+' || peek() == '?' || peek() == '{')) {
-        std::int32_t ignored_min {};
-        std::int32_t ignored_max {-1};
+        const std::size_t quantifier_pos {pos_}; // captured before try_parse_braces CONSUMES
+        std::int32_t      ignored_min    {};
+        std::int32_t      ignored_max    {-1};
         if (peek() != '{' || try_parse_braces(ignored_min, ignored_max)) {
+          // The quantifier, which is the thing that cannot be there. `*`, `+` and `?` consume
+          // nothing and already reported here; a braced one consumed its whole body first, so the
+          // drift grew with what the braces held -- `\A{1}` was three past, `\A{2,3}` five.
+          pos_ = quantifier_pos;
           fail("nothing to repeat");
         }
       }

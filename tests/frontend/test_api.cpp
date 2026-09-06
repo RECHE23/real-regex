@@ -308,11 +308,15 @@ TEST(unsupported_escape_names_the_escape)
   EXPECT(cause("a\\-b").empty()); // escaped punctuation keeps its literal meaning
 }
 
-// Three diagnostics pointed where the SCAN stopped instead of where the fault begins. `re` points
+// Four diagnostics pointed where the SCAN stopped instead of where the fault begins. `re` points
 // at the construct: the `(` of a misplaced flag group, the second quantifier of a double repeat,
-// the first count of an inverted range. On a long pattern the position is how the fault is found at
-// all, so three characters of drift is the wrong place — same family as the escapes f931823 moved
-// to the backslash.
+// the first count of an inverted range, the `{` of a braced repeat on an anchor. On a long pattern
+// the position is how the fault is found at all, so three characters of drift is the wrong place —
+// same family as the escapes f931823 moved to the backslash.
+//
+// Three of the four share one cause: the check spells "is there a quantifier here" as
+// `try_parse_braces`, which CONSUMES. `*`, `+` and `?` consume nothing and were always right, which
+// is why each of these families looked half-broken rather than broken.
 TEST(error_cursor_points_at_the_construct_not_past_it)
 {
   const auto at = [](const char* pattern) {
@@ -346,11 +350,34 @@ TEST(error_cursor_points_at_the_construct_not_past_it)
   EXPECT(at("a{2,1}b") == 2);
   EXPECT(at("a{10,2}") == 2);  // a multi-digit min still reports its FIRST digit
 
+  // A BRACED repeat on a zero-width assertion: the `{`, not the byte after the `}`. The drift grew
+  // with what the braces held — `\A{1}` was three past, `\A{2,3}` five — because the whole brace
+  // body was consumed before the refusal was decided.
+  EXPECT(at("\\A{1}") == 2);
+  EXPECT(at("^{1}") == 1);
+  EXPECT(at("${1}") == 1);
+  EXPECT(at("\\b{1}") == 2);
+  EXPECT(at("\\B{1}") == 2);
+  EXPECT(at("\\Z{2}") == 2);
+  EXPECT(at("\\A{2,3}") == 2);   // a longer brace body must not move it
+  EXPECT(at("\\A{2,}") == 2);
+  EXPECT(at("x\\A{1}") == 3);    // and the assertion's own offset, not the pattern's first
+  EXPECT(at("\\A{1}b") == 2);
+
+  // The same refusal reached WITHOUT braces was always right, and is asserted so a fix that moved
+  // the brace path cannot quietly move this one too.
+  EXPECT(at("^*") == 1);
+  EXPECT(at("\\A+") == 2);
+  EXPECT(at("^?") == 1);
+
   // Patterns that must still compile, so the rewinds cannot be reached by a well-formed quantifier
-  // or a leading flag group.
+  // or a leading flag group. A lookaround is a GROUP, not an anchor, so a quantifier on one is
+  // accepted here as `re` accepts it — the refusal is about bare assertions.
   EXPECT(at("(?i)a") == -1);
   EXPECT(at("a{2,3}") == -1);
   EXPECT(at("a{2}") == -1);
+  EXPECT(at("(?=a){1}") == -1);
+  EXPECT(at("(?:^)*") == -1);
 }
 
 // `bad character in group name` named the rule and neither the name nor which of four distinct
