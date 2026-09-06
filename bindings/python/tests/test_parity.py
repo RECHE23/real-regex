@@ -318,6 +318,73 @@ class TestParity(unittest.TestCase):
         with self.assertRaises(re.error):
             re.compile(rb"\N{LATIN SMALL LETTER A}")
 
+    def test_error_offsets_are_character_indices_for_str(self):
+        r"""`e.pos` counts CHARACTERS on a str pattern, as re's does — not UTF-8 bytes.
+
+        The engine reports a byte offset, which is the right contract for it: C++, the C ABI, Go and
+        Rust are all byte APIs. `re.error` counts characters on a `str`, and the binding was handing
+        the byte offset straight through — so every position drifted by the UTF-8 width of whatever
+        preceded the fault, and `colno`, derived from `pos`, drifted with it. `lineno` did not,
+        because newlines are one byte, which is exactly why the drift was easy to miss.
+
+        Same defect in the template parser, not a second one: `é\2` reported 3 where re reports 2.
+
+        The bytes half is the control and must NOT move: there, a byte offset IS the character
+        offset, and re agrees.
+        """
+        compile_cases = [
+            "é(",            # 2-byte lead
+            "€(",            # 3-byte
+            "😀(",           # 4-byte (astral)
+            "é[z-a]",        # a fault further in, after a non-ASCII character
+            "café{2,1}",
+            "é\n(",          # colno restarts after the newline; lineno was already right
+            "😀\n\n(",
+            "(?P<é>a)(?P<é>b)",  # a non-ASCII NAME, and a fault after it
+        ]
+        for pattern in compile_cases:
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(re.error) as theirs:
+                    re.compile(pattern)
+                with self.assertRaises(real.error) as ours:
+                    real.compile(pattern)
+                self.assertEqual(ours.exception.pos, theirs.exception.pos)
+                self.assertEqual(ours.exception.lineno, theirs.exception.lineno)
+                self.assertEqual(ours.exception.colno, theirs.exception.colno)
+        self.assertEqual(len(compile_cases), 8)
+
+        # Templates: the same conversion, and it was missing at both sites.
+        template_cases = [r"é\2", r"é\g<", r"é\g<9>", r"😀\2", r"\2"]
+        for template in template_cases:
+            with self.subTest(template=template):
+                with self.assertRaises(re.error) as theirs:
+                    re.sub("(a)", template, "a")
+                with self.assertRaises(real.error) as ours:
+                    real.sub("(a)", template, "a")
+                self.assertEqual(ours.exception.pos, theirs.exception.pos)
+                self.assertEqual(ours.exception.colno, theirs.exception.colno)
+        self.assertEqual(len(template_cases), 5)
+
+        # BYTES: unchanged, and asserted rather than assumed — the conversion must not fire there.
+        for pattern in [rb"\xc3\xa9(", b"ab(", b"\xf0\x9f\x98\x80("]:
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(re.error) as theirs:
+                    re.compile(pattern)
+                with self.assertRaises(real.error) as ours:
+                    real.compile(pattern)
+                self.assertEqual(ours.exception.pos, theirs.exception.pos)
+
+        # The \N rewrite raises in Python on the ORIGINAL pattern and its indices were already
+        # characters; converting them twice would break what caf6086 fixed.
+        for pattern in [r"café\N{NOT A NAME}", r"é\N{", r"😀(?#x\N{A}"]:
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(re.error) as theirs:
+                    re.compile(pattern)
+                with self.assertRaises(real.error) as ours:
+                    real.compile(pattern)
+                self.assertEqual(ours.exception.msg, theirs.exception.msg)
+                self.assertEqual(ours.exception.pos, theirs.exception.pos)
+
     def test_named_char_errors_carry_msg_pos_and_pattern(self):
         r"""The three faults the \N rewrite raises ITSELF report where they are, like re's.
 

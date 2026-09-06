@@ -905,6 +905,29 @@ std::size_t char_to_byte(const subject_view& sv, Py_ssize_t char_idx) {
     return byte;
 }
 
+// byte offset -> char offset, the inverse of char_to_byte and the one an ERROR needs.
+//
+// The engine reports a byte offset, and that is the right contract for it: C++, the C ABI, Go and
+// Rust are byte APIs, and `regex_error::position()` means the same thing in all four. `re.error`
+// counts CHARACTERS on a str, so handing the byte offset straight through drifted every position by
+// the UTF-8 width of whatever preceded the fault -- `é(` reported 2 where re reports 1, `😀(` 4.
+// `lineno` did not drift, because a newline is one byte either way, which is exactly what made this
+// easy to miss: only `colno`, derived from `pos`, moved with it.
+//
+// Counts lead bytes, i.e. every byte that is not a UTF-8 continuation. Only the str path calls it:
+// on bytes a byte offset IS the character offset, and re agrees -- converting there would BREAK a
+// position that is already right.
+Py_ssize_t byte_to_char(std::string_view utf8, std::size_t byte_pos) {
+    Py_ssize_t chars = 0;
+    const std::size_t stop = byte_pos < utf8.size() ? byte_pos : utf8.size();
+    for (std::size_t i = 0; i < stop; ++i) {
+        if ((static_cast<unsigned char>(utf8[i]) & 0xC0U) != 0x80U) {
+            ++chars;
+        }
+    }
+    return chars;
+}
+
 // Backs Pattern.match/search/fullmatch with the re signature (string, pos=0,
 // endpos=sys.maxsize). pos/endpos are PER-CALL (no stored state); they are CHARACTER
 // offsets for a str subject, BYTE offsets for bytes. The attempt runs over text[0:endpos]
@@ -1397,16 +1420,19 @@ void set_error(const char* message) { PyErr_SetString(error_type, message); }
 // pos) from the engine's own offset); the template parser had eight sites and none of them could
 // report a position at all, because `set_error` takes only a message. That is the whole gap: not a
 // missing wording, a missing channel.
-void set_template_error(const std::string& message, std::string_view repl, std::size_t pos)
+void set_template_error(const std::string& message, std::string_view repl, std::size_t pos,
+                        int is_bytes)
 {
+  // A str template's offsets are characters to `re`; a bytes template's are already bytes.
+  const Py_ssize_t reported = (is_bytes != 0) ? static_cast<Py_ssize_t>(pos)
+                                              : byte_to_char(repl, pos);
   PyObject* tmpl = PyUnicode_DecodeUTF8(repl.data(), static_cast<Py_ssize_t>(repl.size()), "replace");
   if (tmpl == nullptr) {
     PyErr_Clear();  // an error message must never mask the error it reports
     PyErr_SetString(error_type, message.c_str());
     return;
   }
-  PyObject* exc = PyObject_CallFunction(error_type, "sOn", message.c_str(), tmpl,
-                                        static_cast<Py_ssize_t>(pos));
+  PyObject* exc = PyObject_CallFunction(error_type, "sOn", message.c_str(), tmpl, reported);
   Py_DECREF(tmpl);
   if (exc == nullptr) {
     return;
@@ -1480,7 +1506,20 @@ void set_regex_error(const real::regex_error& ex, PyObject* pattern,
              + (stdlib_re_accepts(pattern, py_flags) ? REMEDY_DELEGABLE : REMEDY_REFUSED);
   }
   const char*       msg    {owned.c_str()};
-  const auto        pos    {static_cast<Py_ssize_t>(ex.position())};
+  // Same conversion as the template path, and gated the same way: only a str pattern's offsets are
+  // characters to `re`. A bytes pattern already agrees, and a null one has nothing to count.
+  Py_ssize_t        pos    {static_cast<Py_ssize_t>(ex.position())};
+  if (pattern != nullptr && PyUnicode_Check(pattern) != 0) {
+    Py_ssize_t  utf8_len {};
+    const char* utf8     {PyUnicode_AsUTF8AndSize(pattern, &utf8_len)};
+    if (utf8 != nullptr) {
+      pos = byte_to_char(std::string_view(utf8, static_cast<std::size_t>(utf8_len)),
+                         ex.position());
+    }
+    else {
+      PyErr_Clear(); // an error message must never mask the error it reports
+    }
+  }
   // `error(msg, pattern=None, pos=None)` takes the pattern SECOND, so two positionals landed the
   // position in the pattern slot and left `pos` unset: a caller reading `e.pos` on a pattern-less
   // failure got None, and `e.pattern` was an integer. Py_None is passed explicitly rather than
@@ -1513,7 +1552,7 @@ int parse_template(PatternObject* pat, std::string_view repl,
         }
         ++i;
         if (i >= repl.size()) {
-            set_template_error("bad escape (end of pattern)", repl, i - 1);
+            set_template_error("bad escape (end of pattern)", repl, i - 1, pat->is_bytes);
             return -1;
         }
         const char next_ch = repl[i];
@@ -1541,7 +1580,7 @@ int parse_template(PatternObject* pat, std::string_view repl,
                 set_template_error("octal escape value \\"
                                        + std::string(repl.substr(seq, decoded.length))
                                        + " outside of range 0-0o377",
-                                   repl, seq - 1);
+                                   repl, seq - 1, pat->is_bytes);
                 return -1;
             }
             if (decoded.kind == real::detail::digit_escape_kind::octal) {
@@ -1551,7 +1590,7 @@ int parse_template(PatternObject* pat, std::string_view repl,
             const Py_ssize_t group {static_cast<Py_ssize_t>(decoded.value)};  // decimal group reference
             if (static_cast<std::size_t>(group) > pat->rx->group_count()) {
                 set_template_error("invalid group reference " + std::to_string(group),
-                                   repl, i - decoded.length);
+                                   repl, i - decoded.length, pat->is_bytes);
                 return -1;
             }
             flush_group(group);
@@ -1560,7 +1599,7 @@ int parse_template(PatternObject* pat, std::string_view repl,
         if (next_ch == 'g') {
             ++i;
             if (i >= repl.size() || repl[i] != '<') {
-                set_template_error("missing <", repl, i);
+                set_template_error("missing <", repl, i, pat->is_bytes);
                 return -1;
             }
             const std::size_t name_begin = ++i;
@@ -1568,7 +1607,7 @@ int parse_template(PatternObject* pat, std::string_view repl,
                 ++i;
             }
             if (i == repl.size() || i == name_begin) {
-                set_template_error("missing group name", repl, i);
+                set_template_error("missing group name", repl, i, pat->is_bytes);
                 return -1;
             }
             const std::string_view name = repl.substr(name_begin, i - name_begin);
@@ -1587,7 +1626,7 @@ int parse_template(PatternObject* pat, std::string_view repl,
                         set_template_error("bad character in group name '"
                                                + std::string(repl.substr(name_begin, close - name_begin))
                                                + "'",
-                                           repl, name_begin);
+                                           repl, name_begin, pat->is_bytes);
                         return -1;
                     }
                     group = (group * 10) + (digit - '0');
@@ -1612,7 +1651,7 @@ int parse_template(PatternObject* pat, std::string_view repl,
             }
             if (static_cast<std::size_t>(group) > pat->rx->group_count()) {
                 set_template_error("invalid group reference " + std::to_string(group),
-                                   repl, name_begin);
+                                   repl, name_begin, pat->is_bytes);
                 return -1;
             }
             flush_group(group);
@@ -1633,7 +1672,7 @@ int parse_template(PatternObject* pat, std::string_view repl,
                 // punctuation keeps the backslash.
                 if ((next_ch >= 'A' && next_ch <= 'Z') || (next_ch >= 'a' && next_ch <= 'z')) {
                     // `i` was advanced past next_ch before the switch, so the backslash is two bytes back.
-                    set_template_error(std::string("bad escape \\") + next_ch, repl, i - 2);
+                    set_template_error(std::string("bad escape \\") + next_ch, repl, i - 2, pat->is_bytes);
                     return -1;
                 }
                 literal.push_back('\\');
