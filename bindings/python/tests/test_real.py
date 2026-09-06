@@ -1457,12 +1457,15 @@ class TestUnicodeAndConstructs(unittest.TestCase):
                 with self.assertRaises(real.error):
                     real.compile(pattern)
 
-    def test_non_ascii_class_member_accepted_in_str_mode(self):
-        # A non-ASCII class member is accepted in str mode; bytes mode still rejects raw high bytes.
+    def test_non_ascii_class_member_reads_as_the_mode_s_unit(self):
+        # str mode: the member is a code point, so `[é]` is the character é.
         self.assertIsNotNone(real.compile(r"[\u00e9]").search("é"))
         self.assertIsNotNone(real.compile(r"[é]").search("a café"))
-        with self.assertRaises(real.error):
-            real.compile(b"[\xc3\xa9]")  # bytes-mode: raw non-ASCII class member -> rejected
+        # bytes mode: the member is a BYTE, so the same class is the two bytes é is written with
+        # and each matches on its own -- `re`'s reading, which this used to reject outright.
+        self.assertEqual(real.compile(b"[\xc3\xa9]").findall(b"\xc3\xa9x"),
+                         re.compile(b"[\xc3\xa9]").findall(b"\xc3\xa9x"))
+        self.assertIsNone(real.compile(b"[\xc3\xa9]").fullmatch(b"\xc3\xa9"))
 
     def test_icase_unicode_escape_folds(self):
         # \u00e9 (é) is a code-point literal, so under icase it folds like the raw é -- it matches É

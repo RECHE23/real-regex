@@ -11,9 +11,10 @@
  * bitmap; they compile to the canonical UTF-8-ranges automaton, so a class matches
  * exactly those code points (and never an overlong / surrogate encoding). `.` and
  * an ASCII-only negated class (`[^x]`) still match any non-ASCII code point. In
- * bytes mode a non-ASCII class member is rejected (raw byte semantics). Every
- * construct consumes whole code points, so match boundaries never split a
- * sequence.
+ * bytes mode the unit is a byte, so a non-ASCII class member is the bytes it is
+ * written with — raw-byte semantics, the same class `re` on a bytes pattern and
+ * `std::regex<char>` build. Every construct in code-point mode consumes whole
+ * code points, so match boundaries never split a sequence.
  */
 #ifndef REAL_AST_HPP
 #define REAL_AST_HPP
@@ -2647,12 +2648,19 @@ namespace real::detail {
                                             bool&                     property_derived)
     {
       const char ch {peek()};
-      if (static_cast<std::uint8_t>(ch) >= 0x80) {
-        // bytes mode keeps rejecting non-ASCII in a class (the compat layer relies on that rejection
-        // to fall back to std). Code-point mode decodes the whole code point as a class member.
-        if (bytes_) {
-          fail("non-ASCII character class member not supported");
-        }
+      // The mode's unit, once more: code-point mode decodes the WHOLE code point as one member, so
+      // only that mode needs a path of its own here. Under bytes the unit is a byte, and a bare high
+      // byte is an ordinary member — it falls through to the plain-member return below, the same one
+      // every other raw byte takes, and the class already carries bytes >= 0x80 in its bitmap
+      // because `\xHH` and the escaped form put them there.
+      //
+      // It used to be refused, so that the std-compat layer would fall back. But a byte class is not
+      // something a linear engine cannot represent: it is the same language `[\x80-\xff]` already
+      // compiles to, and `re` on a bytes pattern and `std::regex<char>` both read `[<C3>]` as exactly
+      // that class. The refusal therefore surfaced as "requires a non-linear engine" under
+      // policy::strict and cost the linear-time guarantee under fallback, for an answer this engine
+      // was already giving in another spelling.
+      if (!has_flag(current_flags(), flags::bytes) && static_cast<std::uint8_t>(ch) >= 0x80) {
         const detail::decoded_codepoint decoded {detail::decode_codepoint_strict(pattern_, pos_)};
         if (!decoded.valid) {
           fail("invalid UTF-8 byte in character class");
@@ -2741,9 +2749,9 @@ namespace real::detail {
             // UNESCAPED member yields at the head of this function: a code point in text mode, one
             // byte under bytes. So under bytes each escaped high byte is ONE member: a class of two
             // of them is {0xC3, 0xA9}, not the character those bytes spell -- the same class `re` on
-            // a bytes pattern and `std::regex` (whose unit is a `char`) produce. Those two reach it
-            // from a SINGLE backslash, because both accept a bare high byte as a member; this parser
-            // rejects that at the head of this function, so here each byte needs its own backslash.
+            // a bytes pattern and `std::regex` (whose unit is a `char`) produce — from a single
+            // backslash there, since a bare high byte is a member for them as it now is here too, so
+            // every spelling of that class agrees across the three.
             // A code-point member is also usable as a range endpoint, which is how `[\à-\é]` becomes
             // one range rather than two members.
             if (static_cast<std::uint8_t>(peek()) >= 0x80U) {

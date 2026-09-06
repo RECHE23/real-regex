@@ -38,11 +38,11 @@ UTF-8-ranges automaton, so a class never matches an overlong or surrogate byte s
 `[é]` matches only `C3 A9`, and `[^é]` matches every valid code point *except* é. `.` and an
 ASCII-only negated class such as `[^x]` still match *any* non-ASCII code point (the
 pre-existing sound superset, which also accepts a malformed byte sequence as "a character").
-A malformed UTF-8 member in the pattern is a `real::regex_error`. In **bytes mode** a
-non-ASCII class member is rejected — `re` accepts it, so this is REAL being STRICTER and not REAL
-following raw-byte semantics: `re.compile(b"[\xc3\xa9]")` is a two-byte class matching either byte,
-which is raw-byte semantics exactly, and REAL refuses to compile it. The reason is downstream: the
-`std::regex` compat layer relies on that refusal to fall back to `std`.
+A malformed UTF-8 member in the pattern is a `real::regex_error`. In **bytes mode** there is no
+code point there to be malformed — the unit is a byte — so a non-ASCII class member is simply the
+bytes it is written with: `re.compile(b"[\xc3\xa9]")` is a two-byte class matching either byte, and
+REAL compiles it to exactly that, as does `std::regex<char>`. Raw-byte semantics on both sides, and
+in every spelling of it: the bytes bare, `\xHH`, or a backslash before each byte.
 
 (div_icase)=
 ## Unicode text-mode semantics: case folding, shorthands and boundaries

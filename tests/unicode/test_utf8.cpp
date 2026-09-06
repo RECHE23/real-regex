@@ -277,8 +277,17 @@ TEST(utf8_class_security_and_malformed)
   // Malformed member in the pattern -> compile error.
   EXPECT_THROWS(real::regex(cat({"[", bytes({0x80}), "]"})), real::regex_error);       // lone continuation
   EXPECT_THROWS(real::regex(cat({"[", bytes({0xC0, 0x80}), "]"})), real::regex_error); // overlong
-  // bytes mode: a non-ASCII class member is still rejected (the compat layer relies on it).
-  EXPECT_THROWS(real::regex("[é]", flags::bytes), real::regex_error);
+  // The refusals above are about a code point that does not EXIST, and they belong to text mode,
+  // where a class member is a code point. Bytes mode has no such notion: its unit is a byte, so
+  // `[é]` there is the class of the two bytes é is written with — the reading `re` on a bytes
+  // pattern and `std::regex<char>` both give — and each byte matches on its own.
+  EXPECT(fullmatches("[é]", bytes({0xC3}), flags::bytes));
+  EXPECT(fullmatches("[é]", bytes({0xA9}), flags::bytes));
+  EXPECT(!fullmatches("[é]", e, flags::bytes));                                        // two bytes, one member each
+  // And the two patterns refused just above compile under bytes: there is no code point there to be
+  // malformed, only bytes, so the class is simply those bytes.
+  EXPECT(fullmatches(cat({"[", bytes({0xC0, 0x80}), "]"}), bytes({0xC0}), flags::bytes));
+  EXPECT(fullmatches(cat({"[", bytes({0x80}), "]"}), bytes({0x80}), flags::bytes));
 }
 
 // Perimeter pin for a stop-byte scan optimization (OPT-C, C-0): a TEXT-mode class/dot RUN validates

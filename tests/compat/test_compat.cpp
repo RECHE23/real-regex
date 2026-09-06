@@ -205,7 +205,13 @@ TEST(compat_byte_class_matches_std)
                     }
                     return s;
                   }};
-  for (const char* pat : {R"([\x80-\xff]+)", R"([\xe9])", R"([^\x00-\x7f])", R"([\xc3\xa9]+)"}) {
+  for (const char* pat : {R"([\x80-\xff]+)", R"([\xe9])", R"([^\x00-\x7f])", R"([\xc3\xa9]+)",
+                          // The same classes written with the bytes RAW rather than escaped. These
+                          // used to be refused, so the layer fell back to std and gave up the
+                          // linear-time guarantee for a byte class it could already run. They stay
+                          // on real now, and staying is only safe if they agree with std, which is
+                          // what this loop asserts for every spelling alike.
+                          "[\xc3\xa9]+", "[\xe9]", "[^\xc3]", "[\xc0-\xff]+", "[a\xc3z]"}) {
     EXPECT(rc::regex(pat).uses_real());
     EXPECT(agree(pat, raw({0xC3, 0xA9})));
     EXPECT(agree(pat, raw({0xFF, 0x80, 0x41})));

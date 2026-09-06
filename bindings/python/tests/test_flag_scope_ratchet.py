@@ -27,7 +27,7 @@ _HEADERS = ["frontend/ast.hpp", "frontend/compiler.hpp"]
 _FLAGS = ["icase_", "ascii_", "bytes_", "ecma_", "verbose_"]
 
 # The current ceiling per flag member (code occurrences, comments stripped). Monotonic: only lower it.
-_CEILING = {"icase_": 0, "ascii_": 0, "bytes_": 13, "ecma_": 9, "verbose_": 0}
+_CEILING = {"icase_": 0, "ascii_": 0, "bytes_": 12, "ecma_": 9, "verbose_": 0}
 
 
 def _strip_comments(src):

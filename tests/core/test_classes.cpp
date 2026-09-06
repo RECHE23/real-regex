@@ -300,7 +300,11 @@ TEST(class_errors)
   EXPECT_THROWS(real::regex("[abc"), real::regex_error);
   EXPECT_THROWS(real::regex("[z-a]"), real::regex_error);
   EXPECT_THROWS(real::regex("[a-\\d]"), real::regex_error);                 // \d is not a range endpoint
-  EXPECT_THROWS(real::regex("[é]", real::flags::bytes), real::regex_error); // non-ASCII class member: bytes mode only
+  // A non-ASCII member is NOT an error in either mode. Bytes mode reads `[é]` as the class of its
+  // two bytes (what `re` and `std::regex<char>` read), text mode as the code point; only a byte
+  // sequence that is not a code point at all is refused, and only where a code point is the unit.
+  EXPECT(real::regex("[é]", real::flags::bytes).fullmatch("\xC3").matched());
+  EXPECT_THROWS(real::regex("[\xFF]"), real::regex_error); // text mode: opens no code point
   EXPECT_THROWS(real::regex("\\x4"), real::regex_error);
   EXPECT_THROWS(real::regex("\\xg0"), real::regex_error);
   EXPECT_THROWS(real::regex("\\p"), real::regex_error);

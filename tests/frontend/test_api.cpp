@@ -203,6 +203,59 @@ TEST(unknown_extension_names_the_construct)
   EXPECT(cause("(?P") == "regex_error at 3: unexpected end of pattern");
 }
 
+// A bare byte >= 0x80 inside a bytes-mode class was refused — `[<C3>]` gave `non-ASCII character
+// class member not supported` — while the very same class written `[\x80-\xff]` or `[\<C3>]`
+// compiled and ran. `re` on a bytes pattern and `std::regex<char>` both read the bare form as the
+// plain byte class, so this was the last spelling of a byte class this engine would not take.
+//
+// The refusal existed to make the std-compat layer fall back. That was the wrong trade: a byte class
+// is not a construct a linear engine cannot represent — it is the language `\xHH` already compiles
+// to — so the refusal surfaced as "requires a non-linear engine" under `policy::strict` and gave up
+// the linear-time guarantee under `policy::fallback`, for an answer the engine was already giving.
+TEST(a_bare_high_byte_is_an_ordinary_class_member_under_bytes)
+{
+  const auto in = [](const char* pattern, const char* subject) {
+                    return real::regex(pattern, real::flags::bytes).fullmatch(subject).matched();
+                  };
+
+  // One member, and only that byte — not the character its bytes would spell in text.
+  EXPECT(in("[\xC3]", "\xC3"));
+  EXPECT(!in("[\xC3]", "\xA9"));
+  EXPECT(!in("[\xC3]", "\xC3\xA9"));
+  // Two members. `re` gives the same class for this and for the fully escaped spelling, and so does
+  // this engine — the two forms no longer disagree.
+  EXPECT(in("[\xC3\xA9]", "\xC3"));
+  EXPECT(in("[\xC3\xA9]", "\xA9"));
+  EXPECT(in("[\\\xC3\\\xA9]", "\xC3"));
+  EXPECT(in("[\\\xC3\\\xA9]", "\xA9"));
+  // A bare high byte is a range endpoint like any other byte, and mixes with ASCII members.
+  EXPECT(in("[\xC0-\xFF]", "\xC3"));
+  EXPECT(!in("[\xC0-\xFF]", "\xBF"));
+  EXPECT(in("[a\xC3z]", "\xC3"));
+  EXPECT(in("[a\xC3z]", "a"));
+  // Negation covers it too, which is where a member silently dropped would have shown as a match.
+  EXPECT(!in("[^\xC3]", "\xC3"));
+  EXPECT(in("[^\xC3]", "a"));
+  // The escaped spellings that always worked are untouched.
+  EXPECT(in("[\\x80-\\xff]", "\xC3"));
+  EXPECT(!in("[\\x80-\\xff]", "\x7F"));
+
+  // Text mode does not move: there the unit is a code point, so `[é]` is the character é and a byte
+  // that opens no code point is still refused.
+  EXPECT(real::regex("[é]").fullmatch("é"));
+  EXPECT(!real::regex("[é]").fullmatch("\xC3"));
+  const auto cause = [](const char* pattern) {
+                       try {
+                         const real::regex rx(pattern);
+                       }
+                       catch (const real::regex_error& ex) {
+                         return std::string(ex.what());
+                       }
+                       return std::string {};
+                     };
+  EXPECT(cause("[\xFF]") == "regex_error at 1: invalid UTF-8 byte in character class");
+}
+
 // The construct above was named in BYTES rather than in units: `(?é` quoted 0xC3 alone, so what()
 // was not valid UTF-8 and a caller that decodes the message could not report the error AT ALL --
 // the Python binding raised a decoding failure about the diagnostic instead of the diagnostic. A
@@ -431,12 +484,11 @@ TEST(escaped_non_ascii_is_that_character)
   EXPECT(real::regex("[\\\xC3\\\xA9]", real::flags::bytes).fullmatch("\xC3"));
   EXPECT(real::regex("[\\\xC3\\\xA9]", real::flags::bytes).fullmatch("\xA9"));
   EXPECT(!real::regex("[\\\xC3\\\xA9]", real::flags::bytes).fullmatch("\xC3\xA9"));
-  // Both bytes are escaped above for a reason: a BARE byte >= 0x80 in a bytes class is refused by a
-  // separate, named rule at the head of the class parser, which the compat layer's fallback relies
-  // on. `re` accepts either spelling for the same class; this engine accepts only the escaped one,
-  // and that boundary is pinned here so it stays a known divergence rather than a side effect.
-  EXPECT(cause("[\\\xC3\xA9]", real::flags::bytes) ==
-         "regex_error at 3: non-ASCII character class member not supported");
+  // The two spellings agree, which is the point: `re` accepts either for the same class, and so does
+  // this engine now that a BARE high byte is an ordinary member too. This assertion was the inverse
+  // — it pinned the bare form as a refusal — for exactly as long as that refusal existed.
+  EXPECT(cause("[\\\xC3\xA9]", real::flags::bytes).empty());
+  EXPECT(real::regex("[\\\xC3\xA9]", real::flags::bytes).fullmatch("\xA9"));
 
   // The refusals that stay refusals: an unknown ASCII-letter escape, and a `\` on a byte that
   // begins no code point (text mode decodes, so it can still reject what does not decode).

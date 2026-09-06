@@ -129,7 +129,6 @@ do not use `len(findall(...))` as a throughput proxy.
 | Construct | Why | Treatment |
 |---|---|---|
 | Backreferences `\1`, `(?P=n)` | `real` does not implement them | `real` rejects → std fallback (std supports them) |
-| **Raw** non-ASCII bytes inside a class `[é]` | `real`'s bytes path rejects raw high bytes in `[...]`. An ESCAPED high byte does *not*: `\xHH` (`[\x80-\xff]`) stays on `real` as a byte class, and so does a backslash before *each* raw high byte — the same class `std::regex<char>` builds. Mind the spelling: `[\é]` escapes only the FIRST of é's two UTF-8 bytes, so the second is raw and the class is rejected after all (`std::regex` accepts that form, reading the second byte as a plain member) | clean rejection → std fallback |
 | Unbounded / oversized lookaround | exceeds `real`'s bounded-lookaround cap | `real` rejects → std fallback |
 | `collate` or `nosubs` | locale-sensitive ranges / group-hiding — outside `real`'s model | screened to std up front (the five POSIX grammars themselves translate — see above) |
 | A BRE backreference `\1`-`\9` | `real` does not implement backreferences | translator declines → std fallback (std backtracks them) |
