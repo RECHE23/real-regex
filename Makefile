@@ -71,7 +71,7 @@ include mk/help.mk
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers check-doc-style check-doc-voice check-curated-members check-bench-stamp check-bench-ratios gate-venv check-sse2-floor \
-        check-site-anchors check-workflows check-abi3-floor check-doc-mirror
+        check-site-anchors check-workflows check-abi3-floor check-doc-mirror check-sabotage
 
 .DEFAULT_GOAL := help
 
@@ -489,6 +489,12 @@ check-site-anchors:
 check-doc-mirror: ## [gates] Assert every site page still agrees with the canon it declares
 	@python3 tools/check_doc_mirror.py --self-test
 
+# SIGTERM used to skip the revert `finally` and leave the sabotaged file in the tree. Cheap, no
+# rebuild: it kills a sleep, not a test. A handler nobody has seen fire is the defect it exists
+# to catch. SIGKILL is uncatchable and is not claimed.
+check-sabotage: ## [gates] SIGTERM a sabotage in flight; the canary file must come back
+	@python3 tools/sabotage.py --self-test
+
 # WHAT READS docs/BENCHMARKS.md. The Version cell is a stamp (REAL `X.Y.Z` + whether tables
 # moved). The journal of trains lives in CHANGELOG.md; there is no third file. Scripts parse
 # headings and cells, never the journal. voice-journals.yaml keeps the path: ns/B is the
@@ -755,6 +761,8 @@ full-local-gate-impl:
 	@$(MAKE) check-site-anchors
 	@echo "── [7c2/25] check-doc-mirror (2 mirrored pages vs their canons; 3 distilled ones path-checked)"
 	@$(MAKE) check-doc-mirror
+	@echo "── [7c3/25] check-sabotage (SIGTERM a run in flight; the canary must come back)"
+	@$(MAKE) check-sabotage
 	@echo "── [7d/25] doc-site-xml + check-doc-voice + check-curated-members"
 	@$(MAKE) doc-site-xml
 	@$(MAKE) check-doc-voice
@@ -884,8 +892,9 @@ sabotage-sweep: ## [bench] Perturb each decision constant; report the ones no te
 # The companion to sabotage-sweep, for the case it cannot cover: one exact textual change, verified
 # and put back. sabotage-sweep perturbs the DECISION CONSTANTS; this breaks an arbitrary line, which
 # is what a new guard needs to be seen going red. It is a script rather than a make target because
-# its arguments are the sabotage itself -- see tools/sabotage.py, whose header records the three
-# defects a hand-written version reacquires every time.
+# its arguments are the sabotage itself -- see tools/sabotage.py, whose header records the four
+# defects a hand-written version reacquires every time. `make check-sabotage` is the SIGTERM
+# self-test (defect 4); SIGKILL is uncatchable and is not claimed.
 sabotage-help: ## [bench] How to break one exact line and verify a guard reacts (tools/sabotage.py)
 	@python3 tools/sabotage.py --help | sed -n '1,42p'
 
