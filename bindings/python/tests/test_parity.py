@@ -438,6 +438,44 @@ class TestParity(unittest.TestCase):
                 self.assertEqual(ours.exception.msg, theirs.exception.msg)
                 self.assertEqual(ours.exception.pos, theirs.exception.pos)
 
+    def test_unknown_extension_quotes_a_readable_unit(self):
+        r"""`(?é` reported a decoding failure instead of the diagnostic.
+
+        The engine quoted the offending construct one BYTE at a time, so a non-ASCII character
+        contributed only its lead byte and the message was not valid UTF-8. On this surface the
+        result was not a bad message but no message: converting `what()` raised UnicodeDecodeError
+        about the diagnostic, and the actual fault -- an unknown extension at position 1 -- never
+        reached the caller. `real.error` was never raised at all, so `except real.error` did not
+        even catch it.
+
+        The quoted unit is the mode's: the whole code point on a str, one byte on bytes, spelled
+        `\xHH` above 0x7F exactly as `re` spells it. Compared field by field against `re`, since a
+        message that merely LOOKS right in a string comparison can still carry the wrong position.
+        """
+        str_cases = ["(?é", "(?é)", "(?€", "(?😀", "(?ñ)", r"(?\é", "a(b(?é)c)"]
+        for pattern in str_cases:
+            with self.subTest(pattern=pattern, kind="str"):
+                with self.assertRaises(re.error) as theirs:
+                    re.compile(pattern)
+                with self.assertRaises(real.error) as ours:
+                    real.compile(pattern)
+                self.assertEqual(ours.exception.msg, theirs.exception.msg)
+                self.assertEqual(ours.exception.pos, theirs.exception.pos)
+        # bytes: one byte, `\xHH` above 0x7F -- and 0x7F itself stays raw on both sides.
+        for pattern in [b"(?\xc3\xa9", b"(?\xc3\xa9)", b"(?\xff", b"(?\x7f"]:
+            with self.subTest(pattern=pattern, kind="bytes"):
+                with self.assertRaises(re.error) as theirs:
+                    re.compile(pattern)
+                with self.assertRaises(real.error) as ours:
+                    real.compile(pattern)
+                self.assertEqual(ours.exception.msg, theirs.exception.msg)
+                self.assertEqual(ours.exception.pos, theirs.exception.pos)
+        # The ASCII forms and the end-of-pattern case are the boundary: they never had the defect.
+        for pattern in ["(?z", "(?)", "(?", "(?P"]:
+            with self.subTest(pattern=pattern, kind="ascii"):
+                with self.assertRaises(real.error):
+                    real.compile(pattern)
+
     def test_named_char_errors_carry_msg_pos_and_pattern(self):
         r"""The three faults the \N rewrite raises ITSELF report where they are, like re's.
 

@@ -483,9 +483,37 @@ namespace real::detail {
       if (pattern_[last] == '\\' && last + 1 < pattern_.size()) {
         ++last;
       }
-      std::string message {"unknown extension ?"};
+      // The quoted unit is the MODE's unit, and whatever the pattern holds the message itself must
+      // stay valid UTF-8. A lone lead byte in what() is not text: a binding that decodes the message
+      // cannot report the error at all — it raises a decoding failure instead, so the diagnostic is
+      // replaced by an unrelated one about the diagnostic. In text mode a byte >= 0x80 opens a code
+      // point and the whole sequence is quoted, exactly as `re` quotes it. A byte that opens no code
+      // point cannot be quoted as text and is written `\xHH`, which is also how every high byte is
+      // written in bytes mode — there the unit is one byte, and `re` spells it the same way (a byte
+      // below 0x80 stays raw in both, including the C0 controls).
+      const bool bytes_mode  {has_flag(current_flags(), flags::bytes)};
+      bool       escape_high {bytes_mode};
+      if (!bytes_mode && static_cast<std::uint8_t>(pattern_[last]) >= 0x80U) {
+        const detail::decoded_codepoint decoded {detail::decode_codepoint_strict(pattern_, last)};
+        if (decoded.valid) {
+          last += decoded.length - 1;
+        }
+        else {
+          escape_high = true;
+        }
+      }
+      constexpr std::string_view hex     {"0123456789abcdef"};
+      std::string                message {"unknown extension ?"};
       for (std::size_t i = question_pos + 1; i <= last; ++i) {
-        message += pattern_[i];
+        const std::uint8_t byte {static_cast<std::uint8_t>(pattern_[i])};
+        if (escape_high && byte >= 0x80U) {
+          message += "\\x";
+          message += hex[byte >> 4U];
+          message += hex[byte & 0x0FU];
+        }
+        else {
+          message += pattern_[i];
+        }
       }
       throw regex_error(message, question_pos);
     }

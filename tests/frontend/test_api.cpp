@@ -203,6 +203,74 @@ TEST(unknown_extension_names_the_construct)
   EXPECT(cause("(?P") == "regex_error at 3: unexpected end of pattern");
 }
 
+// The construct above was named in BYTES rather than in units: `(?é` quoted 0xC3 alone, so what()
+// was not valid UTF-8 and a caller that decodes the message could not report the error AT ALL --
+// the Python binding raised a decoding failure about the diagnostic instead of the diagnostic. A
+// message that cannot be read is worse than a vague one, because the vague one still names the
+// position.
+//
+// The quoted unit is the MODE's unit, the same rule the escape family follows: the whole code point
+// in text mode, one byte under `flags::bytes`. A byte that is not text in its own mode is written
+// `\xHH`, which is what `re` writes on a bytes pattern, and the position does not move — it stays
+// the `?`.
+TEST(unknown_extension_quotes_a_unit_the_message_can_hold)
+{
+  const auto cause = [](const char* pattern, real::flags f = real::flags::none) {
+                       try {
+                         const real::regex rx(pattern, f);
+                       }
+                       catch (const real::regex_error& ex) {
+                         return std::string(ex.what());
+                       }
+                       return std::string {};
+                     };
+
+  // Every one of these is `re`'s own wording and `re`'s own position, verified against it.
+  EXPECT(cause("(?é") == "regex_error at 1: unknown extension ?é");
+  EXPECT(cause("(?é)") == "regex_error at 1: unknown extension ?é");
+  EXPECT(cause("(?€") == "regex_error at 1: unknown extension ?€");      // 3 bytes
+  EXPECT(cause("(?😀") == "regex_error at 1: unknown extension ?😀");      // 4 bytes
+  // The backslash rule composes: an escape is two characters, and the second is a whole code point.
+  EXPECT(cause("(?\\é") == "regex_error at 1: unknown extension ?\\é");
+  // Bytes mode quotes ONE byte and spells it `\xHH` above 0x7F, exactly as `re` does there.
+  EXPECT(cause("(?\xC3\xA9", real::flags::bytes) == "regex_error at 1: unknown extension ?\\xc3");
+  EXPECT(cause("(?\xFF", real::flags::bytes) == "regex_error at 1: unknown extension ?\\xff");
+  // Below 0x80 a byte is text in either mode and goes in raw — DEL included, as `re` has it.
+  EXPECT(cause("(?\x7F", real::flags::bytes) == "regex_error at 1: unknown extension ?\x7F");
+  // Text mode over a byte that opens no code point: there is no character to quote, so it takes the
+  // same `\xHH` spelling. A Python `str` cannot reach this — it is always valid UTF-8 — but a C++
+  // caller passing raw bytes to a text-mode regex can, and the message still has to be readable.
+  EXPECT(cause("(?\xFF") == "regex_error at 1: unknown extension ?\\xff");
+
+  // The property itself, stated once over the whole family: what() is valid UTF-8 whatever the
+  // pattern held. This is what the byte-at-a-time copy broke, and asserting the exact strings above
+  // would not catch a future unit that is merely a DIFFERENT malformed sequence.
+  const auto is_utf8 = [](const std::string& text) {
+                         for (std::size_t i = 0; i < text.size();) {
+                           const real::detail::decoded_codepoint cp {
+                             real::detail::decode_codepoint_strict(text, i)};
+                           if (!cp.valid) {
+                             return false;
+                           }
+                           i += cp.length;
+                         }
+                         return true;
+                       };
+  EXPECT(is_utf8(cause("(?é")));
+  EXPECT(is_utf8(cause("(?😀")));
+  EXPECT(is_utf8(cause("(?\\é")));
+  EXPECT(is_utf8(cause("(?\xFF")));
+  EXPECT(is_utf8(cause("(?\xC3\xA9", real::flags::bytes)));
+  EXPECT(is_utf8(cause("(?\xFF", real::flags::bytes)));
+  // The witness that the checker is not vacuous: a lone lead byte is exactly what it must reject.
+  EXPECT(!is_utf8(std::string {"unknown extension ?\xC3"}));
+
+  // ASCII extensions and the end-of-pattern case do not move.
+  EXPECT(cause("(?z)a") == "regex_error at 1: unknown extension ?z");
+  EXPECT(cause("(?)a") == "regex_error at 1: unknown extension ?)");
+  EXPECT(cause("(?") == "regex_error at 2: unexpected end of pattern");
+}
+
 // A truncated escape used to state the RULE (`invalid \x escape: expected two hex digits`) where
 // re states the READING: `incomplete escape \x1 at position 1`, quoting the characters consumed and
 // pointing at the backslash rather than at the cursor. Same defect as `unknown extension`, one
