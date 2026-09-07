@@ -1354,6 +1354,57 @@ namespace real {
       return search(std::string_view(text));
     }
 
+    // Region forms for string literals. Without these a bare literal is AMBIGUOUS with `pos`: a
+    // `const char*` converts to `std::string_view` and to `std::string` by two user-defined
+    // conversions of equal rank, and the second candidate is the `const std::string&&` overload
+    // deleted just below to stop a temporary from dangling -- so the diagnostic accused a literal,
+    // which has static storage duration and cannot dangle, of being a temporary. The no-pos forms
+    // above never had the problem because they carry this same overload; `split` carries one with
+    // its own second argument. These forward and do nothing else, so the region semantics are
+    // whatever the `string_view` overload says they are.
+
+    /*!
+     * \brief Region-aware `match` overload for string literals.
+     * \param[in] text   NUL-terminated text.
+     * \param[in] pos    Byte offset the match is anchored at.
+     * \param[in] endpos Byte offset the region ends at; defaults to the end of \p text.
+     * \return The result.
+     */
+    [[nodiscard]] constexpr result_type match(const char* text,
+                                              std::size_t pos,
+                                              std::size_t endpos = npos) const&
+    {
+      return match(std::string_view(text), pos, endpos);
+    }
+
+    /*!
+     * \brief Region-aware `fullmatch` overload for string literals.
+     * \param[in] text   NUL-terminated text.
+     * \param[in] pos    Byte offset the region starts at.
+     * \param[in] endpos Byte offset the region ends at; defaults to the end of \p text.
+     * \return The result.
+     */
+    [[nodiscard]] constexpr result_type fullmatch(const char* text,
+                                                  std::size_t pos,
+                                                  std::size_t endpos = npos) const&
+    {
+      return fullmatch(std::string_view(text), pos, endpos);
+    }
+
+    /*!
+     * \brief Region-aware `search` overload for string literals.
+     * \param[in] text   NUL-terminated text.
+     * \param[in] pos    Byte offset the search starts at.
+     * \param[in] endpos Byte offset the region ends at; defaults to the end of \p text.
+     * \return The result.
+     */
+    [[nodiscard]] constexpr result_type search(const char* text,
+                                               std::size_t pos,
+                                               std::size_t endpos = npos) const&
+    {
+      return search(std::string_view(text), pos, endpos);
+    }
+
     // Single attempts on a TEMPORARY regex. These stay callable, unlike find_iter and find_all: the
     // one-expression form is safe (the temporary outlives the full-expression) and it is what most
     // callers write -- this project's own suite alone has ~870 of them. The result may still be
@@ -1476,6 +1527,51 @@ namespace real {
     }
 
     /*!
+     * \brief Region-aware `match` on a temporary regex, string-literal overload.
+     * \param[in] text   NUL-terminated text.
+     * \param[in] pos    Byte offset the match is anchored at.
+     * \param[in] endpos Byte offset the region ends at; defaults to the end of \p text.
+     * \return The result.
+     */
+    [[nodiscard]]
+    constexpr owning_result_type match(const char* text,
+                                       std::size_t pos,
+                                       std::size_t endpos = npos) const&&
+    {
+      return std::move(*this).match(std::string_view(text), pos, endpos);
+    }
+
+    /*!
+     * \brief Region-aware `fullmatch` on a temporary regex, string-literal overload.
+     * \param[in] text   NUL-terminated text.
+     * \param[in] pos    Byte offset the region starts at.
+     * \param[in] endpos Byte offset the region ends at; defaults to the end of \p text.
+     * \return The result.
+     */
+    [[nodiscard]]
+    constexpr owning_result_type fullmatch(const char* text,
+                                           std::size_t pos,
+                                           std::size_t endpos = npos) const&&
+    {
+      return std::move(*this).fullmatch(std::string_view(text), pos, endpos);
+    }
+
+    /*!
+     * \brief Region-aware `search` on a temporary regex, string-literal overload.
+     * \param[in] text   NUL-terminated text.
+     * \param[in] pos    Byte offset the search starts at.
+     * \param[in] endpos Byte offset the region ends at; defaults to the end of \p text.
+     * \return The result.
+     */
+    [[nodiscard]]
+    constexpr owning_result_type search(const char* text,
+                                        std::size_t pos,
+                                        std::size_t endpos = npos) const&&
+    {
+      return std::move(*this).search(std::string_view(text), pos, endpos);
+    }
+
+    /*!
      * \brief Lazy range over all non-overlapping matches (Python `re.finditer`).
      *
      * Only callable on an lvalue regex: a C++20 range-for would dangle if the
@@ -1502,6 +1598,20 @@ namespace real {
     [[nodiscard]] constexpr basic_match_range<Storage> find_iter(const char* text) const&
     {
       return find_iter(std::string_view(text));
+    }
+
+    /*!
+     * \brief Region-aware `find_iter` overload for string literals.
+     * \param[in] text   NUL-terminated text (must outlive the range).
+     * \param[in] pos    Byte offset iteration starts at.
+     * \param[in] endpos Byte offset the region ends at; defaults to the end of \p text.
+     * \return The range.
+     */
+    [[nodiscard]] constexpr basic_match_range<Storage> find_iter(const char* text,
+                                                                 std::size_t pos,
+                                                                 std::size_t endpos = npos) const&
+    {
+      return find_iter(std::string_view(text), pos, endpos);
     }
 
     /*!
@@ -1557,6 +1667,14 @@ namespace real {
      * \brief Deleted: `find_iter` on a temporary regex would dangle.
      */
     [[nodiscard]] basic_match_range<Storage> find_iter(const char* text) const&& = delete;
+    /*!
+     * \brief Deleted: region `find_iter` on a temporary regex would dangle. Spelled for `const
+     *        char*` as well as `std::string_view` so a literal resolves HERE instead of becoming
+     *        ambiguous with the deleted `const std::string&&` overload -- the caller is told the
+     *        regex is the temporary, which is the truth, rather than being told its literal is.
+     */
+    [[nodiscard]] basic_match_range<Storage> find_iter(const char* text, std::size_t,
+                                                       std::size_t = npos) const&& = delete;
     /*!
      * \brief Deleted: region `find_iter` on a temporary regex would dangle.
      */

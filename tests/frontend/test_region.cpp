@@ -2,6 +2,7 @@
 // zero-width anchors still see the absolute position) and endpos (a truncated view).
 // Byte offsets; subjects are ASCII so byte == char. These pin the C++ engine overloads
 // that back the Python binding's pos/endpos (whose parity vs re is tested separately).
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -9,6 +10,40 @@
 #include "real/real.hpp"
 
 using namespace std::string_view_literals;
+
+namespace {
+
+  //! Whether a region form accepts a bare string literal (no `sv`). False while the call is ambiguous.
+  template <typename R>
+  concept region_takes_literal = requires(const R& re) {
+    re.search("xax", std::size_t {1});
+    re.match("xax", std::size_t {1});
+    re.fullmatch("xax", std::size_t {1});
+    re.find_iter("xax", std::size_t {1});
+    re.search("xax", std::size_t {1}, std::size_t {3});
+    re.find_iter("xax", std::size_t {1}, std::size_t {3});
+  };
+
+  //! Whether a region form accepts a TEMPORARY std::string. Must stay false: the result outlives it.
+  template <typename R>
+  concept region_takes_temporary_string = requires(const R& re) {
+    re.search(std::string("xax"), std::size_t {1});
+  };
+
+  //! Same question for the other three, so the guard is asserted door by door and not by sample.
+  template <typename R>
+  concept match_takes_temporary_string = requires(const R& re) {
+    re.match(std::string("xax"), std::size_t {1});
+  };
+  template <typename R>
+  concept fullmatch_takes_temporary_string = requires(const R& re) {
+    re.fullmatch(std::string("xax"), std::size_t {1});
+  };
+  template <typename R>
+  concept find_iter_takes_temporary_string = requires(const R& re) {
+    re.find_iter(std::string("xax"), std::size_t {1});
+  };
+} // namespace
 
 TEST(region_pos_starts_matching_there)
 {
@@ -176,4 +211,84 @@ TEST(inverted_region_yields_no_match_and_throws_nothing)
     EXPECT_EQ(m.start(), at);
     EXPECT_EQ(m.end(), at);
   }
+}
+
+// The overload set had a hole exactly where this file's own spelling hid it. Every subject above is
+// written `"…"sv`, so a bare string literal never reached a REGION form — and with `pos`, a
+// `const char*` converts to `std::string_view` AND to `std::string`, two user-defined conversions of
+// equal rank. The second candidate is the `const std::string&&` overload deleted to stop a temporary
+// from dangling, so `re.search("xax", 1)` was AMBIGUOUS, and the compiler named the deleted overload
+// — which reads as "your text would dangle" about a literal that has static storage duration and
+// cannot.
+//
+// The no-pos forms were never affected: they already carry a `const char*` overload. `split` carries
+// one WITH its second argument, and that is the model the region forms now follow — forward to the
+// `string_view` overload, nothing else.
+TEST(a_string_literal_reaches_the_region_forms_without_sv)
+{
+  static_assert(region_takes_literal<real::regex>,
+                "a bare literal must reach every region form; ambiguity here is the defect");
+
+  const real::regex rx("\\w+");
+
+  // Two arguments: the shape that did not compile.
+  EXPECT_EQ(rx.search("foo bar baz", 4)[0], "bar"sv);
+  EXPECT_EQ(rx.match("foo bar", 4)[0], "bar"sv);
+  EXPECT(!rx.match("foo bar", 3));            // pos 3 is a space
+  EXPECT(rx.fullmatch("foobar", 0));
+  EXPECT(!rx.fullmatch("foo bar", 0));
+
+  // Three arguments: pos and endpos.
+  EXPECT_EQ(rx.search("foo bar baz", 4, 7)[0], "bar"sv);
+  EXPECT_EQ(rx.match("foo bar baz", 4, 7)[0], "bar"sv);
+  EXPECT(rx.fullmatch("foo bar", 4, 7));
+
+  // The literal must agree with the `sv` spelling it replaces, or the forwarding is wrong.
+  EXPECT_EQ(rx.search("foo bar baz", 4)[0], rx.search("foo bar baz"sv, 4)[0]);
+  EXPECT_EQ(rx.search("foo bar baz", 4, 7)[0], rx.search("foo bar baz"sv, 4, 7)[0]);
+
+  // find_iter is used in a range-for, which is where the missing overload was reached from.
+  std::vector<std::string_view> seen;
+  for (const auto& m : rx.find_iter("foo bar baz", 4)) {
+    seen.push_back(m[0]);
+  }
+  EXPECT_EQ(seen.size(), 2U);
+  EXPECT_EQ(seen[0], "bar"sv);
+  EXPECT_EQ(seen[1], "baz"sv);
+  seen.clear();
+  for (const auto& m : rx.find_iter("foo bar baz", 4, 7)) {
+    seen.push_back(m[0]);
+  }
+  EXPECT_EQ(seen.size(), 1U);
+  EXPECT_EQ(seen[0], "bar"sv);
+
+  // On a TEMPORARY regex the single attempts stay callable and detach their result, as they do
+  // without `pos`; only find_iter is deleted there, because a range-for would outlive the regex.
+  EXPECT_EQ(real::regex("\\w+").search("foo bar", 4)[0], "bar"sv);
+  EXPECT_EQ(real::regex("\\w+").match("foo bar", 4)[0], "bar"sv);
+  EXPECT(real::regex("\\w+").fullmatch("foo bar", 4, 7));
+  EXPECT_EQ(real::regex("(\\w)(\\w+)").search("foo bar", 4).str(2), "ar"sv); // the detached name/pattern path
+}
+
+// What the deletion was always aimed at, and what must survive the fix: a TEMPORARY std::string,
+// whose buffer dies at the end of the full expression while the result still points into it. A
+// literal is static and safe; a temporary is not. Asserted as non-callability rather than in prose,
+// so an overload that re-opens the hole fails here instead of in a caller's undefined behaviour —
+// and asserted door by door, because a contract written once has already been found true at some
+// doors and false at others in this codebase.
+TEST(a_temporary_string_still_cannot_reach_the_region_forms)
+{
+  static_assert(!region_takes_temporary_string<real::regex>,
+                "search(std::string&&, pos) must stay deleted: the result borrows the text");
+  static_assert(!match_takes_temporary_string<real::regex>, "match(std::string&&, pos) must stay deleted");
+  static_assert(!fullmatch_takes_temporary_string<real::regex>, "fullmatch(std::string&&, pos) must stay deleted");
+  static_assert(!find_iter_takes_temporary_string<real::regex>, "find_iter(std::string&&, pos) must stay deleted");
+
+  // A NAMED string is not a temporary and stays callable — the guard is about lifetime, not type.
+  // An lvalue cannot bind to `const std::string&&` at all, so only the string_view overload is
+  // viable here and the call was never ambiguous either.
+  const std::string  named {"foo bar baz"};
+  const real::regex  rx("\\w+");
+  EXPECT_EQ(rx.search(named, 4)[0], "bar"sv);
+  EXPECT_EQ(rx.search(named, 4, 7)[0], "bar"sv);
 }
