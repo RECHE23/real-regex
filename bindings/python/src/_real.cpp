@@ -1411,6 +1411,42 @@ struct repl_segment {
 
 void set_error(const char* message) { PyErr_SetString(error_type, message); }
 
+//! The inline-flag bits this binding implements. `re.L` and `re.DEBUG` have their own door, and it
+//! precedes every use of this one, so neither can reach the unknown-bit report below.
+constexpr unsigned long PYFLAG_KNOWN = PYFLAG_IGNORECASE | PYFLAG_MULTILINE | PYFLAG_DOTALL |
+                                       PYFLAG_UNICODE | PYFLAG_ASCII | PYFLAG_VERBOSE;
+
+//! Lowercase `0x…`, so a reader can compare it against `re`'s own constants bit for bit.
+std::string as_hex(unsigned long value)
+{
+    constexpr char digits[] = "0123456789abcdef";
+    std::string    out;
+    do {
+        out.insert(out.begin(), digits[value & 0xFUL]);
+        value >>= 4U;
+    } while (value != 0UL);
+    return "0x" + out;
+}
+
+// Refusing a bit this binding does not implement is deliberate and documented. Saying WHICH bit was
+// not: the message named neither the value nor the position of the offending bit, so a caller was
+// told a flag was unknown and left to work out which of theirs it was.
+//
+// `real.compile("a", True)` is the plausible slip -- a boolean read as "switch it on" -- and `re`
+// compiles it, because bit 1 stopped being a flag when `re.TEMPLATE` was removed in 3.14. The word
+// TEMPLATE is deliberately NOT printed: it does not exist on any version this binding supports, so
+// naming it would trade an unhelpful sentence for a false one.
+//
+// One helper for both doors. The known-mask was written out twice, identically, at the two sites
+// that consume it -- which is how two sentences about one rule start to drift apart.
+void set_unknown_flag_error(unsigned long py_flags, const char* site)
+{
+    const unsigned long unknown = py_flags & ~PYFLAG_KNOWN;
+    const bool          several = (unknown & (unknown - 1UL)) != 0UL;
+    set_error(("unknown flag" + std::string(several ? "s " : " ") + as_hex(unknown)
+               + " passed to " + site).c_str());
+}
+
 // A template error the way `re` raises it: the message quotes what was read, and the exception
 // carries the TEMPLATE as its `pattern` with the offset inside it -- so `e.pos`, `e.lineno` and
 // `e.colno` mean something, which `PyErr_SetString` alone can never provide. re does exactly this:
@@ -2490,10 +2526,8 @@ PyObject* real_compile_set(PyObject*, PyObject* args, PyObject* kwargs) {
         set_error("re.L and re.DEBUG are not supported by real");
         return nullptr;
     }
-    constexpr unsigned long known = PYFLAG_IGNORECASE | PYFLAG_MULTILINE | PYFLAG_DOTALL |
-                                    PYFLAG_UNICODE | PYFLAG_ASCII | PYFLAG_VERBOSE;
-    if ((py_flags & ~known) != 0) {
-        set_error("unknown flag passed to real.compile_set");
+    if ((py_flags & ~PYFLAG_KNOWN) != 0) {
+        set_unknown_flag_error(py_flags, "real.compile_set");
         return nullptr;
     }
     real::flags compile_flags = real::flags::none;
@@ -2607,10 +2641,8 @@ PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
         set_error("re.L and re.DEBUG are not supported by real");
         return nullptr;
     }
-    constexpr unsigned long known = PYFLAG_IGNORECASE | PYFLAG_MULTILINE | PYFLAG_DOTALL |
-                                    PYFLAG_UNICODE | PYFLAG_ASCII | PYFLAG_VERBOSE;
-    if ((py_flags & ~known) != 0) {
-        set_error("unknown flag passed to real.compile");
+    if ((py_flags & ~PYFLAG_KNOWN) != 0) {
+        set_unknown_flag_error(py_flags, "real.compile");
         return nullptr;
     }
     real::flags compile_flags = real::flags::none;

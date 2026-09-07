@@ -696,6 +696,7 @@ class TestFlagsTerminatorMessage(unittest.TestCase):
                 self.assertIn("missing flag", msg)
                 self.assertNotIn("missing -, : or )", msg)
                 self.assertNotIn("global flags not at the start", msg)
+                self.assertNotIn("global flags not at the start", msg)
 
     def test_missing_colon_after_removal_letter(self):
         for pattern, pos in (("(?i-s*)", 5), ("(?i-s", 5)):
@@ -704,7 +705,7 @@ class TestFlagsTerminatorMessage(unittest.TestCase):
                 self.assertEqual(got, pos)
                 self.assertIn("missing :", msg)
                 self.assertNotIn("missing -, : or )", msg)
-                self.assertNotIn("global flags not at the start", msg)
+
 
     def test_well_formed_unscoped_stays_placement(self):
         # The `(`, which is re's answer and the only one the message supports: it is the GROUP that
@@ -728,6 +729,62 @@ class TestFlagsTerminatorMessage(unittest.TestCase):
     def test_leading_well_formed_still_compiles(self):
         self.assertIsNotNone(real.compile("(?i)a").fullmatch("A"))
         self.assertIsNotNone(real.compile("(?i-s)A.B").fullmatch("axb"))
+
+
+class TestUnknownFlagBitIsNamed(unittest.TestCase):
+    r"""Refusing a flag bit REAL does not implement is deliberate; not saying which was not.
+
+    `real.compile("a", True)` is the plausible slip -- a boolean read as "switch it on" -- and re
+    compiles it, because bit 1 stopped being a flag when re.TEMPLATE was removed in 3.14. The
+    message named neither the value nor the bit, so a caller was told a flag was unknown and left
+    to work out which of theirs it was.
+
+    re's behaviour is ASKED here rather than transcribed: what it does with these bits has already
+    changed once (TEMPLATE's removal), so a hardcoded expectation would be a claim about a version
+    rather than about the oracle. The word TEMPLATE is deliberately absent from REAL's message: it
+    exists on no version this binding supports, so naming it would trade an unhelpful sentence for
+    a false one.
+    """
+
+    #: Bits re accepts (ignores) and REAL refuses. 3 is I|1, so a real flag carrying the stray bit.
+    UNKNOWN_BIT_CASES = [(True, "0x1"), (1, "0x1"), (3, "0x1"), (1024, "0x400")]
+
+    def test_the_offending_bit_is_named_on_both_surfaces(self):
+        for flags, wanted in self.UNKNOWN_BIT_CASES:
+            with self.subTest(flags=flags):
+                # The oracle, asked: re takes these without complaint, which is why the slip is
+                # plausible in the first place.
+                self.assertIsNotNone(re.compile("a", flags))
+                for label, call in (("compile", lambda: real.compile("a", flags)),
+                                    ("RegexSet", lambda: real.RegexSet(["a"], flags))):
+                    with self.subTest(surface=label), self.assertRaises(real.error) as caught:
+                        call()
+                    self.assertIn(wanted, caught.exception.msg)
+                    self.assertIn("unknown flag", caught.exception.msg)
+                    self.assertNotIn("TEMPLATE", caught.exception.msg)
+
+    def test_several_unknown_bits_are_named_together_and_pluralised(self):
+        with self.assertRaises(real.error) as caught:
+            real.compile("a", 0x1 | 0x200)
+        self.assertIn("0x201", caught.exception.msg)
+        self.assertIn("unknown flags", caught.exception.msg)
+
+    def test_the_locale_debug_door_still_comes_first(self):
+        # 4 is re.L, 128 is re.DEBUG, 999 carries both plus unknown bits. Their own message wins,
+        # so widening the unknown-bit report did not swallow the more specific one.
+        for flags in (4, 128, 999):
+            with self.subTest(flags=flags), self.assertRaises(real.error) as caught:
+                real.compile("a", flags)
+            self.assertIn("re.L and re.DEBUG", caught.exception.msg)
+            self.assertNotIn("unknown flag", caught.exception.msg)
+
+    def test_a_known_flag_still_compiles(self):
+        # The boundary: 2 is re.I and must not be caught by any of the above.
+        self.assertTrue(real.compile("a", 2).fullmatch("A"))
+        # `matches` answers per member, `which` answers with indices -- the icase flag reached the
+        # set's members, which is the point: the door let 2 through rather than merely not raising.
+        self.assertEqual(real.RegexSet(["a"], 2).matches("A"), [True])
+        self.assertEqual(real.RegexSet(["a"], 2).which("A"), [0])
 
 
 class TestIntentionalDivergences(unittest.TestCase):
