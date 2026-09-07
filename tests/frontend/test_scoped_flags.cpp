@@ -388,3 +388,60 @@ TEST(flags_terminator_is_named_not_placement)
   EXPECT(real::regex("(?i)a").fullmatch("A").matched());
   EXPECT(real::regex("(?i-s)A.B").fullmatch("axb"));
 }
+
+// The split CPython makes after a flags group has started is `str.isalpha()`, and this parser was
+// asking `is_ascii_letter` on a single byte instead. The comment on that helper admitted the
+// shortcut; what it did not say is that the shortcut produced a FALSE sentence rather than a vaguer
+// one. `(?ié` reported `missing -, : or )` where `re` reports `unknown flag`, so a reader was told
+// the terminator was missing when the terminator was never the fault, and the reported position
+// pointed at a character the message did not describe.
+//
+// The boundary is NOT "non-ASCII", which is the reading that makes this look like a Unicode gap:
+// `é` is alphabetic and `😀` is not, so `(?i😀)` is a terminator fault on both sides and must stay
+// one. Under `flags::bytes` the unit is the byte read as latin-1 — `chr(b).isalpha()` — so `0xC3`
+// is `Ã` and a letter while `0x80` is a control and is not.
+TEST(an_unknown_flag_is_a_letter_in_the_modes_unit_not_an_ascii_letter)
+{
+  const auto cause = [](const char* pattern, real::flags f = real::flags::none) {
+                       try {
+                         const real::regex rx(pattern, f);
+                       }
+                       catch (const real::regex_error& ex) {
+                         return std::string(ex.what());
+                       }
+                       return std::string {};
+                     };
+
+  // A non-ASCII LETTER after a started flags group: `unknown flag`, at that character, as re says.
+  EXPECT(cause("(?ié") == "regex_error at 3: unknown flag");
+  EXPECT(cause("(?ié)") == "regex_error at 3: unknown flag");
+  EXPECT(cause("(?ié:a)") == "regex_error at 3: unknown flag");
+  // After a '-' run too: this used to say `missing flag`, which is the message for `(?i-)`.
+  EXPECT(cause("(?i-é)") == "regex_error at 4: unknown flag");
+  EXPECT(cause("(?i-é:a)") == "regex_error at 4: unknown flag");
+  // Other scripts, so the predicate is the property and not a Latin-1 special case.
+  EXPECT(cause("(?iα)") == "regex_error at 3: unknown flag");
+  EXPECT(cause("(?iБ)") == "regex_error at 3: unknown flag");
+  EXPECT(cause("(?iあ)") == "regex_error at 3: unknown flag");
+
+  // NOT letters, so still the terminator fault — the half that shows the boundary is `isalpha`
+  // and not `is ASCII`. `re` gives `missing -, : or )` for every one of these.
+  EXPECT(cause("(?i😀)") == "regex_error at 3: missing -, : or )");
+  EXPECT(cause("(?i€)") == "regex_error at 3: missing -, : or )");
+  EXPECT(cause("(?i*)") == "regex_error at 3: missing -, : or )");
+  EXPECT(cause("(?i7)") == "regex_error at 3: missing -, : or )");
+
+  // A flags group that never started: `?é` is an unknown EXTENSION, not an unknown flag, because
+  // fail_if_unknown_flag runs only after a consumed flag letter or a '-'.
+  EXPECT(cause("(?é") == "regex_error at 1: unknown extension ?é");
+  EXPECT(cause("(?-") == "regex_error at 3: missing flag");
+  EXPECT(cause("(?i-)") == "regex_error at 4: missing flag");
+  EXPECT(cause("(?P<n>a)").empty()); // the leading-global prefix still backtracks on `(?P`
+
+  // Bytes mode: the unit is one byte, read as latin-1. 0xC3 is `Ã` (a letter), 0x80 is a control.
+  EXPECT(cause("(?i\xC3\xA9", real::flags::bytes) == "regex_error at 3: unknown flag");
+  EXPECT(cause("(?i\x80", real::flags::bytes) == "regex_error at 3: missing -, : or )");
+  // Text mode over a byte that opens no code point is not a letter either, and the fault it does
+  // get is the terminator one rather than a claim about a character that is not there.
+  EXPECT(cause("(?i\xFF") == "regex_error at 3: missing -, : or )");
+}

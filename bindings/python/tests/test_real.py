@@ -608,6 +608,63 @@ class TestUnknownInlineFlagMessage(unittest.TestCase):
                 self.assertIn("unknown flag", re_caught.exception.msg)
                 self.assertIn("unknown flag", real_caught.exception.msg)
 
+    #: A letter that is not ASCII is still a letter, and re's split is str.isalpha(). Each of these
+    #: reported `missing -, : or )` here — the terminator's message for a fault the terminator did
+    #: not cause — while re reported `unknown flag` at the same position.
+    NON_ASCII_LETTER_CASES = [r"(?ié", r"(?ié)", r"(?ié:a)", r"(?i-é)", r"(?i-é:a)",
+                              r"(?imé)a", r"(?iα)", r"(?iБ)", r"(?iあ)"]
+
+    #: NOT letters, so the terminator fault is the right answer and must not move. This is the half
+    #: that shows the boundary is `isalpha` and not `is ASCII`: `😀` and `€` are non-ASCII and are
+    #: not alphabetic, so re calls them terminator faults too.
+    NON_LETTER_CASES = [r"(?i😀)", r"(?i€)", r"(?i*)", r"(?i7)", r"(?i-)"]
+
+    def test_non_ascii_letter_is_an_unknown_flag_field_by_field(self):
+        for pattern in self.NON_ASCII_LETTER_CASES:
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(re.error) as theirs:
+                    re.compile(pattern)
+                with self.assertRaises(real.error) as ours:
+                    real.compile(pattern)
+                self.assertEqual(ours.exception.msg, theirs.exception.msg)
+                self.assertEqual(ours.exception.pos, theirs.exception.pos)
+                self.assertEqual(ours.exception.msg, "unknown flag")
+
+    def test_a_non_letter_after_a_flag_run_stays_a_terminator_fault(self):
+        for pattern in self.NON_LETTER_CASES:
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(re.error) as theirs:
+                    re.compile(pattern)
+                with self.assertRaises(real.error) as ours:
+                    real.compile(pattern)
+                self.assertEqual(ours.exception.msg, theirs.exception.msg)
+                self.assertEqual(ours.exception.pos, theirs.exception.pos)
+                self.assertNotIn("unknown flag", ours.exception.msg)
+
+    def test_the_bytes_unit_is_one_byte_read_as_latin_1(self):
+        # chr(0xC3) is 'Ã' and alphabetic; chr(0x80) is a control and is not. re asks exactly that.
+        for pattern in [b"(?i\xc3\xa9", b"(?i\x80"]:
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(re.error) as theirs:
+                    re.compile(pattern)
+                with self.assertRaises(real.error) as ours:
+                    real.compile(pattern)
+                self.assertEqual(ours.exception.msg, theirs.exception.msg)
+                self.assertEqual(ours.exception.pos, theirs.exception.pos)
+        self.assertEqual(chr(0xC3).isalpha(), True)   # the oracle's own answer, stated
+        self.assertEqual(chr(0x80).isalpha(), False)
+
+    def test_a_flags_group_that_never_started_is_an_unknown_extension(self):
+        # fail_if_unknown_flag runs only after a consumed flag letter or a '-', so `?é` is still an
+        # unknown EXTENSION. `(?P<n>a)` must keep backtracking rather than reading `P` as a flag.
+        for pattern in [r"(?é", r"(?zi)a"]:
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(real.error) as ours:
+                    real.compile(pattern)
+                self.assertIn("unknown extension", ours.exception.msg)
+                self.assertNotIn("unknown flag", ours.exception.msg)
+        self.assertIsNotNone(real.compile(r"(?P<n>a)").fullmatch("a"))
+
 
 class TestFlagsTerminatorMessage(unittest.TestCase):
     r"""After a flags run, a non-terminator is not a misplaced global.
