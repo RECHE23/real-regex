@@ -26,7 +26,15 @@ concurrency:
 # instead of going red. Ceilings are ~4x the observed maximum.
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # PINNED, not `ubuntu-latest`: this job installs Doxygen from apt, and the version apt gives is
+    # the runner image's. `make doc-check` reproduces "the CI Doxygen" by running apt inside
+    # ubuntu:24.04 and says so in its output, so the two only agree while `ubuntu-latest` IS 24.04 --
+    # an accident of the label, never a declaration. Measured on run 34167997850: the runner
+    # installed doxygen 1.9.8+ds-2ubuntu0.1, which is the same package. The day the label moves, the
+    # tool a developer runs and the tool that PUBLISHES would stop describing the same Doxygen, and
+    # a docs-only commit skips ci.yml entirely (paths-ignore), so this workflow is the only gate the
+    # .dox gets. The version assertion below is the witness; this line is the pin.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -39,6 +47,17 @@ jobs:
           path: sciforge
       - name: Install Doxygen, Graphviz, Clang and LLVM coverage tools
         run: sudo apt-get update && sudo apt-get install -y doxygen graphviz clang llvm
+      - name: Assert the pinned Doxygen (the version make doc-check claims to reproduce)
+        run: |
+          set -eu
+          got=$(doxygen --version | cut -d' ' -f1)
+          echo "doxygen --version: $got"
+          if [ "$got" != "1.9.8" ]; then
+            echo "::error::Doxygen $got, expected 1.9.8 — the runner image moved, so this job and" \
+                 "\`make doc-check\` (apt inside ubuntu:24.04) no longer describe the same tool." \
+                 "Re-pin both, or accept the new version deliberately in both places."
+            exit 1
+          fi
       - uses: actions/setup-python@v6
         with:
           python-version: '3.14'

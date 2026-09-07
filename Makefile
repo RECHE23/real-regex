@@ -71,7 +71,7 @@ include mk/help.mk
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers check-doc-style check-doc-voice check-curated-members check-bench-stamp check-bench-ratios gate-venv check-sse2-floor \
-        check-site-anchors check-workflows check-abi3-floor check-doc-mirror check-sabotage check-tolerated-count check-stdlib-attribution
+        check-site-anchors check-workflows check-abi3-floor check-doc-mirror check-sabotage check-tolerated-count check-stdlib-attribution check-doxygen-pin
 
 .DEFAULT_GOAL := help
 
@@ -516,6 +516,17 @@ check-stdlib-attribution: ## [gates] A one-implementation std::regex behaviour m
 	@python3 tools/check_stdlib_attribution.py --self-test
 	@python3 tools/check_stdlib_attribution.py
 
+# `make doc-check` reproduces "the CI Doxygen" via apt inside ubuntu:24.04 and prints the version.
+# The publishing workflows ran a bare `apt-get install -y doxygen` on `ubuntu-latest`, so the two
+# agreed only while the label MEANT 24.04 -- an accident, and the one that publishes is the one a
+# docs-only commit runs (ci.yml is skipped by paths-ignore). Both are pinned now, and this asserts
+# the two separate claims: the job runs on ubuntu-24.04 (the install is bounded) and its shipped
+# version step accepts 1.9.8 while refusing anything else. The assertion is EXTRACTED from the YAML
+# CI executes, not copied, so editing the workflow reaches this check; refusing two wrong versions
+# is its own self-test, and there is no quiet mode to lose it in.
+check-doxygen-pin: ## [gates] The publishing workflows pin Doxygen 1.9.8, and the pin has a witness
+	@python3 tools/check_doxygen_pin.py
+
 # Three phases, because the harness has three claims and a claim nobody has seen fail is not a
 # claim. (1) The artifact map: the right rebuild command per file, and a NAMED silence for a file
 # with no registered artifact -- a decorative rebuild reads as coverage. (2) The artifact after a
@@ -800,6 +811,8 @@ full-local-gate-impl:
 	@$(MAKE) check-tolerated-count
 	@echo "── [7c2c/25] check-stdlib-attribution (a libstdc++-only behaviour is named, not called std)"
 	@$(MAKE) check-stdlib-attribution
+	@echo "── [7c2d/25] check-doxygen-pin (the publishing workflows pin 1.9.8, with a witness)"
+	@$(MAKE) check-doxygen-pin
 	@echo "── [7c3/25] check-sabotage (SIGTERM a run in flight; the canary must come back)"
 	@$(MAKE) check-sabotage
 	@echo "── [7d/25] doc-site-xml + check-doc-voice + check-curated-members"
