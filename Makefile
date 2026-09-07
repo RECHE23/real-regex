@@ -514,10 +514,18 @@ check-stdlib-attribution: ## [gates] A one-implementation std::regex behaviour m
 	@python3 tools/check_stdlib_attribution.py --self-test
 	@python3 tools/check_stdlib_attribution.py
 
-# SIGTERM used to skip the revert `finally` and leave the sabotaged file in the tree. Cheap, no
-# rebuild: it kills a sleep, not a test. A handler nobody has seen fire is the defect it exists
-# to catch. SIGKILL is uncatchable and is not claimed.
-check-sabotage: ## [gates] SIGTERM a sabotage in flight; the canary file must come back
+# Three phases, because the harness has three claims and a claim nobody has seen fail is not a
+# claim. (1) The artifact map: the right rebuild command per file, and a NAMED silence for a file
+# with no registered artifact -- a decorative rebuild reads as coverage. (2) The artifact after a
+# revert: a real run against the exhaustive-compat runner with a check that compiles nothing, so
+# only this script rebuilding it can leave the binary right; it must carry the sabotaged constant
+# during the run and the reverted one after. (3) SIGTERM, which used to skip the revert `finally`
+# and leave the sabotaged file in the tree. SIGKILL is uncatchable and is not claimed.
+#
+# NO LONGER free: phase 2 compiles that runner twice, ~15 s. It used to say "cheap, no rebuild: it
+# kills a sleep, not a test", which stopped being true the moment the rebuild itself became the
+# thing under test.
+check-sabotage: ## [gates] The harness's three claims: artifact map, rebuild after revert, SIGTERM
 	@python3 tools/sabotage.py --self-test
 
 # WHAT READS docs/BENCHMARKS.md. The Version cell is a stamp (REAL `X.Y.Z` + whether tables

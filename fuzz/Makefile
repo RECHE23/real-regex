@@ -70,7 +70,7 @@ INCLUDES := -Iinclude
 FUZZ_TIME ?= 30
 FUZZ_DIR  := $(BUILD)/fuzz
 
-.PHONY: fuzz fuzz-compat fuzz-compat-known fuzz-re2 exhaustive-compat fowler-compat help
+.PHONY: fuzz fuzz-compat fuzz-compat-known fuzz-re2 exhaustive-compat exhaustive-compat-build fowler-compat help
 .DEFAULT_GOAL := help
 
 # On macOS with both toolchains installed, a libFuzzer link can fail in two ways and NEITHER error
@@ -179,10 +179,16 @@ EC_N ?= 6
 # has to declare itself rather than being sniffed out. Detecting a wide space (say, by its total)
 # would mean the pin could stop applying without anyone noticing, which is the hole the pin closes.
 EC_PIN := $(if $(and $(filter 4,$(EC_K)),$(filter 6,$(EC_N))),pin,nopin)
-exhaustive-compat: ## Exhaustive compat routing check: real::compat vs local std::regex
+# The COMPILE, alone: no enumeration and no run. Split out because `tools/sabotage.py` has to be able
+# to rebuild this exact artifact after a revert -- a sabotage of the runner left `build/exhaustive_compat`
+# carrying the sabotaged constant while the tree read CLEAN, and a hand measurement afterwards read
+# that binary. One compile line, reused, rather than the flags written twice and drifting.
+exhaustive-compat-build: ## Compile the exhaustive-compat runner only (no enumeration, no run)
 	@mkdir -p $(BUILD)
-	@$(PYRUN) -c "from sciforge.corpus.exhaustive import enumerate_patterns as P, enumerate_inputs as I; open('$(BUILD)/ec_pats.txt','w').write(chr(10).join(P($(EC_K), tier=2))); open('$(BUILD)/ec_inps.txt','w').write(chr(10).join(I($(EC_N))))"
 	@cd $(ROOT) && $(CXX) $(CXXSTD) -O2 $(INCLUDES) fuzz/exhaustive_compat.cpp -o $(BUILD)/exhaustive_compat
+
+exhaustive-compat: exhaustive-compat-build ## Exhaustive compat routing check: real::compat vs local std::regex
+	@$(PYRUN) -c "from sciforge.corpus.exhaustive import enumerate_patterns as P, enumerate_inputs as I; open('$(BUILD)/ec_pats.txt','w').write(chr(10).join(P($(EC_K), tier=2))); open('$(BUILD)/ec_inps.txt','w').write(chr(10).join(I($(EC_N))))"
 	@$(BUILD)/exhaustive_compat $(BUILD)/ec_pats.txt $(BUILD)/ec_inps.txt $(EC_PIN)
 
 # The Fowler / AT&T POSIX conformance of the compat layer: the three vendored testregex corpora through
