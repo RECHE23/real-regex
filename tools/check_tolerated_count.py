@@ -27,6 +27,8 @@ silence is the thing this file is about.
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import pathlib
 import re
 import sys
@@ -145,8 +147,60 @@ def self_test() -> int:
                       f"({drifted}) in {target.relative_to(ROOT)} did NOT trip the comparison. The "
                       f"guard is blind there; fix it before trusting a green.")
                 return 1
+    # The eight injections above run with quiet=True: they prove the guard REFUSES, and nothing
+    # about what it SAYS. That gap is not hypothetical -- it let a stale `{wanted}` survive in the
+    # failure footer, so a real disagreement printed its findings and then died on NameError. Both
+    # sabotages of the day read RED, because a traceback exits 1 exactly as a clean refusal does.
+    #
+    # So the printing branch is executed too, twice: once per number. Not sixteen times -- two
+    # captures reach the same branch, and eight verbose runs would bury the signal in their own
+    # output. What is asserted is the SENTENCE a reader acts on, and one negative: the drifted value
+    # must not be presented as the measurement.
+    for which in ("tolerated", "space"):
+        drifted = grouped(expected[which] + 1)
+        target = PAGES[0]
+        text = target.read_text(encoding="utf-8")
+        texts = {p: (text.replace(grouped(expected[which]), drifted, 1) if p == target else
+                     p.read_text(encoding="utf-8")) for p in PAGES}
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = run(page_texts=texts, quiet=False)
+        except Exception as exc:  # noqa: BLE001 - any exception here IS the defect
+            print(f"check_tolerated_count: SELF-TEST FAILED — the failure path raised "
+                  f"{type(exc).__name__}: {exc}. A guard that refuses and then crashes reports "
+                  f"nothing a reader can act on, and an exit-status check cannot tell the two "
+                  f"apart.")
+            return 1
+        printed, stderr = out.getvalue(), err.getvalue()
+        want_tol, want_space = grouped(expected["tolerated"]), grouped(expected["space"])
+        problems: list[str] = []
+        if code != 1:
+            problems.append(f"exit {code}, expected 1")
+        if stderr.strip():
+            problems.append(f"wrote to stderr: {stderr.strip()[:80]!r}")
+        for token in ("tolerated_with_residue", "cases_at_default_tier", want_tol, want_space):
+            if token not in printed:
+                problems.append(f"the footer never names {token!r}")
+        if drifted not in printed:
+            problems.append(f"the body never quotes the drifted {which} count {drifted!r}")
+        # The negative: whatever drifted is NOT the measurement, and must not be shown as one.
+        if f"(= {drifted})" in printed:
+            problems.append(f"presents the drifted {drifted!r} as a measured constant")
+        if problems:
+            print(f"check_tolerated_count: SELF-TEST FAILED — the verbose failure path is wrong for "
+                  f"a drifted {which} count:")
+            for problem in problems:
+                print(f"    {problem}")
+            print("    What it printed:")
+            for line in printed.strip().split("\n"):
+                print(f"      {line}")
+            return 1
+
     print(f"check_tolerated_count: self-test OK — a drift in EITHER count trips the comparison on "
-          f"each of the {len(PAGES)} pages ({2 * len(PAGES)} injections).")
+          f"each of the {len(PAGES)} pages ({2 * len(PAGES)} injections), and the failure path "
+          f"itself prints both constant names, both measured values and the drifted one, on stdout "
+          f"alone.")
     return 0
 
 
