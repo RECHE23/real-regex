@@ -11,6 +11,7 @@
 // These tests fail (or trip ASan) without `detach_from_regex`. The subject is a named lvalue
 // throughout: the SEPARATE rule that the subject must outlive the result is unchanged here.
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include <sciforge/test/framework.hpp>
@@ -137,4 +138,59 @@ TEST(a_temporary_static_regex_needs_no_owner)
   EXPECT(m.matched());
   EXPECT_EQ(std::string {m["w"]}, std::string {"xxxx"});
   static_assert(std::is_empty_v<real::detail::borrowed_names>);
+}
+
+// `search_longest` was the one single attempt left out. `search`, `match` and `fullmatch` each grew
+// a `const&&` twin that detaches; `search_longest` stayed `const` with no ref-qualifier at all, so
+// the SAME expression that is safe for `search` returned a borrowing result from a temporary regex.
+// ASan named it: heap-use-after-free through `dynamic_program::~dynamic_program`, reached from the
+// named lookup, at the exact shape the file's opening comment describes. Without a sanitizer it is
+// `string_view::substr` throwing `out_of_range`, or a silent wrong answer.
+//
+// The whole-match span was never the problem and is not the test: it points into the SUBJECT, which
+// is a named lvalue here. What died with the temporary is the pattern text and the named-group
+// table, so every case below asks for a group BY NAME — the only question whose answer needs them.
+TEST(search_longest_detaches_from_a_temporary_regex_like_its_siblings)
+{
+  const std::string text {subject()};
+
+  // The plain form, which is the one ASan tripped on.
+  const auto plain {real::regex {"(?<word>[a-z]+)-"}.search_longest(text)};
+  EXPECT(plain.matched());
+  EXPECT_EQ(plain.group_index("word"), 1U);
+  EXPECT_EQ(std::string {plain["word"]}, std::string {"xxxx"}); // leftmost `[a-z]+-` in the subject
+  EXPECT_EQ(plain.group_index("absent"), real::npos);
+
+  // The region form, and the `const char*` forwarders: a literal must reach the detaching twin, not
+  // fall back to the borrowing one, which is what a forwarder without its own `const&&` would do.
+  const auto region {real::regex {"(?<w>[a-z]+)"}.search_longest(text, 5, 8)};
+  EXPECT(region.matched());
+  EXPECT_EQ(std::string {region["w"]}, std::string {"abc"});
+
+  const auto literal {real::regex {"(?<w>[a-z]+)-"}.search_longest("abc-def")};
+  EXPECT(literal.matched());
+  EXPECT_EQ(std::string {literal["w"]}, std::string {"abc"});
+
+  const auto literal_region {real::regex {"(?<w>[a-z]+)"}.search_longest("xx-abc-zz", 3, 6)};
+  EXPECT(literal_region.matched());
+  EXPECT_EQ(std::string {literal_region["w"]}, std::string {"abc"});
+
+  // An unnamed pattern has nothing to copy, and must not dangle at a pattern that is gone.
+  const auto unnamed {real::regex {"[a-z]+"}.search_longest(text)};
+  EXPECT(unnamed.matched());
+  EXPECT_EQ(unnamed.group_index("word"), real::npos);
+
+  // Which type each value category yields, asserted rather than described: an rvalue regex owns its
+  // name context, an lvalue keeps borrowing — that borrow is free and correct while the regex lives.
+  const real::regex live {"(?<word>[a-z]+)-"};
+  static_assert(std::is_same_v<decltype(real::regex {"a"}.search_longest(text)),
+                               real::owning_match_result>);
+  static_assert(std::is_same_v<decltype(real::regex {"a"}.search_longest(text, 0)),
+                               real::owning_match_result>);
+  static_assert(std::is_same_v<decltype(real::regex {"a"}.search_longest("a")),
+                               real::owning_match_result>);
+  static_assert(std::is_same_v<decltype(live.search_longest(text)), real::match_result>);
+  static_assert(std::is_same_v<decltype(live.search_longest(text, 0)), real::match_result>);
+  static_assert(std::is_same_v<decltype(live.search_longest("a")), real::match_result>);
+  EXPECT_EQ(live.search_longest(text).group_index("word"), 1U);
 }

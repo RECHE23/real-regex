@@ -2402,9 +2402,26 @@ namespace real {
      * \param[in] text Subject.
      * \return The leftmost-longest match; falsy when there is none.
      */
-    [[nodiscard]] result_type search_longest(std::string_view text) const
+    [[nodiscard]] result_type search_longest(std::string_view text) const&
     {
       return run(text, 0, npos, detail::run_mode::search, match_semantics::longest);
+    }
+
+    /*!
+     * \brief `search_longest` on a temporary regex; the result owns its name context.
+     *
+     * The last single attempt without this twin. `search`, `match` and `fullmatch` each detach on an
+     * rvalue regex; this one stayed `const` with no ref-qualifier, so the SAME expression that is
+     * safe for `search` handed back a borrowing result from a regex that was already gone — a
+     * heap-use-after-free on any lookup BY NAME, since the span points into the subject but the
+     * pattern text and the named-group table went with the temporary.
+     *
+     * \param[in] text The subject text (must outlive the result — a separate rule, unchanged).
+     * \return The leftmost-longest match, owning its name context.
+     */
+    [[nodiscard]] owning_result_type search_longest(std::string_view text) const&&
+    {
+      return detach(run(text, 0, npos, detail::run_mode::search, match_semantics::longest));
     }
 
     /*!
@@ -2418,9 +2435,23 @@ namespace real {
      */
     [[nodiscard]] result_type search_longest(std::string_view text,
                                              std::size_t      pos,
-                                             std::size_t      endpos = npos) const
+                                             std::size_t      endpos = npos) const&
     {
       return run(text, pos, endpos, detail::run_mode::search, match_semantics::longest);
+    }
+
+    /*!
+     * \brief Region-aware `search_longest` on a temporary regex; the result owns its name context.
+     * \param[in] text   Subject.
+     * \param[in] pos    Byte offset the search starts at.
+     * \param[in] endpos Byte offset the region ends at; defaults to the end of \p text.
+     * \return The leftmost-longest match in the region, owning its name context.
+     */
+    [[nodiscard]] owning_result_type search_longest(std::string_view text,
+                                                    std::size_t      pos,
+                                                    std::size_t      endpos = npos) const&&
+    {
+      return detach(run(text, pos, endpos, detail::run_mode::search, match_semantics::longest));
     }
 
     /*!
@@ -2428,9 +2459,24 @@ namespace real {
      * \param[in] text NUL-terminated text.
      * \return The leftmost-longest match.
      */
-    [[nodiscard]] result_type search_longest(const char* text) const
+    [[nodiscard]] result_type search_longest(const char* text) const&
     {
       return search_longest(std::string_view(text));
+    }
+
+    /*!
+     * \brief `search_longest` on a temporary regex, string-literal overload.
+     *
+     * A forwarder needs its OWN `const&&`: without it a literal on a temporary regex resolves to the
+     * borrowing `const&` overload above and detaches nothing, which is the same door the region
+     * forwarders had to be added at.
+     *
+     * \param[in] text NUL-terminated text.
+     * \return The leftmost-longest match, owning its name context.
+     */
+    [[nodiscard]] owning_result_type search_longest(const char* text) const&&
+    {
+      return std::move(*this).search_longest(std::string_view(text));
     }
 
     /*!
@@ -2442,9 +2488,23 @@ namespace real {
      */
     [[nodiscard]] result_type search_longest(const char* text,
                                              std::size_t pos,
-                                             std::size_t endpos = npos) const
+                                             std::size_t endpos = npos) const&
     {
       return search_longest(std::string_view(text), pos, endpos);
+    }
+
+    /*!
+     * \brief Region-aware `search_longest` on a temporary regex, string-literal overload.
+     * \param[in] text   NUL-terminated text.
+     * \param[in] pos    Byte offset the search starts at.
+     * \param[in] endpos Byte offset the region ends at; defaults to the end of \p text.
+     * \return The leftmost-longest match in the region, owning its name context.
+     */
+    [[nodiscard]] owning_result_type search_longest(const char* text,
+                                                    std::size_t pos,
+                                                    std::size_t endpos = npos) const&&
+    {
+      return std::move(*this).search_longest(std::string_view(text), pos, endpos);
     }
 
     // Same predicate as every borrowing form above: the searched text must outlive the result, so a

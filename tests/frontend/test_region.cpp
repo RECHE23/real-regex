@@ -427,8 +427,15 @@ TEST(the_longest_forms_take_a_literal_and_refuse_a_temporary)
   }
   EXPECT_EQ(counted, 2U);
 
-  // `search_longest` stays callable on a temporary regex, exactly as `search` does — the deletion
-  // being added here is about the SUBJECT, not the regex. (Whether its result should detach the
-  // name tables is a separate question and deliberately not touched.)
+  // `search_longest` stays callable on a temporary regex, exactly as `search` does — the deletions
+  // added here are about the SUBJECT, not the regex. It now also DETACHES there, like its siblings:
+  // the borrowing result it used to hand back was a heap-use-after-free on any lookup by name, and
+  // that is pinned in test_temporary_regex_lifetime.cpp where the rest of the family is. The named
+  // path is exercised here too, so this file cannot pass while the region+literal rvalue forwarder
+  // quietly resolves to the borrowing overload.
   EXPECT_EQ(real::regex("\\w+").search_longest("foo bar", 4)[0], "bar"sv);
+  const auto detached {real::regex("(?<w>\\w+)").search_longest("foo bar", 4)};
+  EXPECT(detached.matched());
+  EXPECT_EQ(std::string {detached["w"]}, std::string {"bar"});
+  EXPECT_EQ(detached.group_index("w"), 1U);
 }
