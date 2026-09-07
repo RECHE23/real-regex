@@ -244,7 +244,7 @@ so `position()` is the full sequence length and `length()` is `0`) — never out
 selector like `{2}`/`{5}` or a field `< -1` relies on this; a field `< -1` is undefined in `std`, and
 compat is *safe* there, yielding an unmatched token.
 
-## Platform-variant std::regex (MSVC vs libstdc++/libc++)
+## Platform-variant std::regex (the three implementations disagree, and not on one axis)
 
 `std::regex` is not identical across implementations, and a few of its behaviours are
 platform-variant. Where `real::compat` **wraps** `std` (a fallback pattern, a wide `CharT`, a
@@ -264,6 +264,17 @@ chooses the spec-reasonable behaviour, which may differ from a given `std` on th
   the local `std` on both sides — it **throws iff `std` throws**, and where `std` accepts, it runs on
   `std` and matches it. So the *construction* of such a pattern succeeds on Linux and throws a
   `real::compat::regex_error` on MSVC, exactly as the platform's `std::regex` does.
+
+- **A class range whose upper endpoint is `>= 0x80`.** `[A-\x80]`, `[A-\xff]`, `[\x7f-\x80]` and
+  friends are **refused by libstdc++** (`Invalid range in bracket expression`) and **accepted by
+  libc++** — the only split in this section that runs between those two rather than between MSVC and
+  them. The cause is the signedness of `char`: libstdc++ compares the endpoints as *signed*, so
+  `0x80` is −128 and the range reads as inverted, while libc++ and `real` read them as byte values.
+  `real::compat` is real-backed here and stays so on both platforms (`uses_real()` is true under
+  either compiler), so it **accepts** the pattern where the local `std` would have refused it. Write
+  the implementation by name here: an unattributed sentence about this shape is false on libc++, and
+  a catalogue claim that is wrong on one implementation of a two-implementation split is worse than
+  no claim at all.
 
 ## Iteration (regex_iterator)
 

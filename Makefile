@@ -71,7 +71,7 @@ include mk/help.mk
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers check-doc-style check-doc-voice check-curated-members check-bench-stamp check-bench-ratios gate-venv check-sse2-floor \
-        check-site-anchors check-workflows check-abi3-floor check-doc-mirror check-sabotage check-tolerated-count
+        check-site-anchors check-workflows check-abi3-floor check-doc-mirror check-sabotage check-tolerated-count check-stdlib-attribution
 
 .DEFAULT_GOAL := help
 
@@ -501,6 +501,19 @@ check-tolerated-count: ## [gates] The docs' tolerated-divergence count == the on
 	@python3 tools/check_tolerated_count.py --self-test
 	@python3 tools/check_tolerated_count.py
 
+# `std::regex` is three implementations, and "std refuses X" is false wherever another accepts X --
+# in the most expensive way, because it reads as a fact about the standard. This repo produced that
+# sentence once: a differential sweep reported 54 patterns "std::regex" refuses, which was an
+# artefact of the library it was compiled against (libstdc++ compares `char` range endpoints as
+# SIGNED, so `[A-\x80]` reads inverted; libc++ accepts it). The count was kept OUT of the live
+# catalogue for that reason and then never rewritten under the right name. Standard library only,
+# milliseconds, and it belongs beside the other doc gates for the same reason as its neighbour: the
+# pages can drift in a commit that compiles nothing. --self-test un-names libstdc++ on each page in
+# turn, because a guard blind on one page of two is not a guard.
+check-stdlib-attribution: ## [gates] A one-implementation std::regex behaviour must name it
+	@python3 tools/check_stdlib_attribution.py --self-test
+	@python3 tools/check_stdlib_attribution.py
+
 # SIGTERM used to skip the revert `finally` and leave the sabotaged file in the tree. Cheap, no
 # rebuild: it kills a sleep, not a test. A handler nobody has seen fire is the defect it exists
 # to catch. SIGKILL is uncatchable and is not claimed.
@@ -775,6 +788,8 @@ full-local-gate-impl:
 	@$(MAKE) check-doc-mirror
 	@echo "── [7c2b/25] check-tolerated-count (4 live pages vs the count exhaustive-compat pins)"
 	@$(MAKE) check-tolerated-count
+	@echo "── [7c2c/25] check-stdlib-attribution (a libstdc++-only behaviour is named, not called std)"
+	@$(MAKE) check-stdlib-attribution
 	@echo "── [7c3/25] check-sabotage (SIGTERM a run in flight; the canary must come back)"
 	@$(MAKE) check-sabotage
 	@echo "── [7d/25] doc-site-xml + check-doc-voice + check-curated-members"
