@@ -71,7 +71,7 @@ include mk/help.mk
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers check-doc-style check-doc-voice check-curated-members check-bench-stamp check-bench-ratios gate-venv check-sse2-floor \
-        check-site-anchors check-workflows check-abi3-floor check-doc-mirror check-sabotage
+        check-site-anchors check-workflows check-abi3-floor check-doc-mirror check-sabotage check-tolerated-count
 
 .DEFAULT_GOAL := help
 
@@ -489,6 +489,18 @@ check-site-anchors:
 check-doc-mirror: ## [gates] Assert every site page still agrees with the canon it declares
 	@python3 tools/check_doc_mirror.py --self-test
 
+# The tolerated-divergence count (`4 548`) is quoted in FOUR live pages and was measured by
+# exhaustive-compat, which printed it and never compared it. check-doc-mirror ties each mirror to
+# its canon and neither pair to the measurement, so a 4 549th case of the documented class would
+# leave every gate green and four published pages wrong -- a count asserted once and never re-asked,
+# the same shape as a closed list written without a sweep. Standard library only, milliseconds, so it
+# belongs beside the other doc gates rather than waiting for the conformance job: the pages can drift
+# in a commit that never runs exhaustive-compat. --self-test injects a drifted count into EACH page
+# in turn, because a guard blind on one of four is not a guard.
+check-tolerated-count: ## [gates] The docs' tolerated-divergence count == the one exhaustive-compat pins
+	@python3 tools/check_tolerated_count.py --self-test
+	@python3 tools/check_tolerated_count.py
+
 # SIGTERM used to skip the revert `finally` and leave the sabotaged file in the tree. Cheap, no
 # rebuild: it kills a sleep, not a test. A handler nobody has seen fire is the defect it exists
 # to catch. SIGKILL is uncatchable and is not claimed.
@@ -761,6 +773,8 @@ full-local-gate-impl:
 	@$(MAKE) check-site-anchors
 	@echo "── [7c2/25] check-doc-mirror (2 mirrored pages vs their canons; 3 distilled ones path-checked)"
 	@$(MAKE) check-doc-mirror
+	@echo "── [7c2b/25] check-tolerated-count (4 live pages vs the count exhaustive-compat pins)"
+	@$(MAKE) check-tolerated-count
 	@echo "── [7c3/25] check-sabotage (SIGTERM a run in flight; the canary must come back)"
 	@$(MAKE) check-sabotage
 	@echo "── [7d/25] doc-site-xml + check-doc-voice + check-curated-members"

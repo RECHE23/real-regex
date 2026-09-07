@@ -175,11 +175,15 @@ fuzz-re2: ## Differential: real::compat::re2 vs true libre2 (needs pkg-config re
 # variable interface (plan Section VI): the nightly overrides them on the command line.
 EC_K ?= 4
 EC_N ?= 6
+# The runner PINS its tolerated count, and that count belongs to the DEFAULT tier -- so a widened run
+# has to declare itself rather than being sniffed out. Detecting a wide space (say, by its total)
+# would mean the pin could stop applying without anyone noticing, which is the hole the pin closes.
+EC_PIN := $(if $(and $(filter 4,$(EC_K)),$(filter 6,$(EC_N))),pin,nopin)
 exhaustive-compat: ## Exhaustive compat routing check: real::compat vs local std::regex
 	@mkdir -p $(BUILD)
 	@$(PYRUN) -c "from sciforge.corpus.exhaustive import enumerate_patterns as P, enumerate_inputs as I; open('$(BUILD)/ec_pats.txt','w').write(chr(10).join(P($(EC_K), tier=2))); open('$(BUILD)/ec_inps.txt','w').write(chr(10).join(I($(EC_N))))"
 	@cd $(ROOT) && $(CXX) $(CXXSTD) -O2 $(INCLUDES) fuzz/exhaustive_compat.cpp -o $(BUILD)/exhaustive_compat
-	@$(BUILD)/exhaustive_compat $(BUILD)/ec_pats.txt $(BUILD)/ec_inps.txt
+	@$(BUILD)/exhaustive_compat $(BUILD)/ec_pats.txt $(BUILD)/ec_inps.txt $(EC_PIN)
 
 # The Fowler / AT&T POSIX conformance of the compat layer: the three vendored testregex corpora through
 # real::compat vs the local std, three-way-arbitrated against the corpus's POSIX expectation and bucketed.

@@ -83,10 +83,16 @@ namespace {
 
 int main(int argc, char** argv)
 {
-  if (argc != 3) {
-    static_cast<void>(std::fprintf(stderr, "usage: %s <patterns> <inputs>\n", argv[0]));
+  if (argc < 3 || argc > 4) {
+    static_cast<void>(std::fprintf(stderr, "usage: %s <patterns> <inputs> [pin|nopin]\n", argv[0]));
     return 2;
   }
+  // The tolerated-count pin below applies to the DEFAULT tier only, because the count is a property
+  // of the enumerated space and EC_K / EC_N are `?=` (the nightly widens them on the command line).
+  // A widened run therefore has to DECLARE itself rather than being detected: a run that quietly
+  // stopped checking would be the same silent hole this pin exists to close. Absent argument means
+  // the default tier, so a bare invocation still checks.
+  const bool pin_tolerated {argc < 4 || std::string(argv[3]) != "nopin"};
   const std::vector<std::string> patterns {read_lines(argv[1])};
   const std::vector<std::string> inputs {read_lines(argv[2])};
 
@@ -166,5 +172,47 @@ int main(int argc, char** argv)
   static_cast<void>(std::printf("exhaustive-compat: %lld cases, agree=%lld, divergences=%lld "
                                 "(documented nullable-loop capture=%lld, serious=%lld)\n",
                                 total, agree, divergences, tolerated, serious));
-  return serious == 0 ? 0 : 1; // only the documented nullable-loop capture signature is tolerated
+  if (serious != 0) {
+    return 1; // only the documented nullable-loop capture signature is tolerated
+  }
+
+  // The tolerated count is PINNED, not merely printed. Four live documents quote it -- both compat
+  // canons and both of their site mirrors -- and nothing tied any of them to this measurement:
+  // `check_doc_mirror` ties each mirror to its canon and neither pair to this number, so a 4 549th
+  // case of the documented class would leave every gate green and four published pages wrong. A
+  // count that is printed is not a check; this is the check.
+  //
+  // It cannot be ONE number. The residue belongs to the LOCAL std, and COMPATIBILITY.md records
+  // that MS STL keeps the last NON-empty iteration -- agreeing with REAL's lineage -- so there the
+  // class does not exist and the count is zero. A bare `!= 4548` would be a false red on that
+  // platform. Which of the two values applies is decided by asking the local std ONE question
+  // instead of testing a macro: `(a*)*` over "aa" either reports the empty final iteration as a
+  // zero-width group 1 (libstdc++ and libc++ both do, verified) or reports the last non-empty one.
+  if (pin_tolerated) {
+    static constexpr long long tolerated_with_residue {4548}; //!< default tier (EC_K=4, EC_N=6)
+    const std::string          probe_subject {"aa"};
+    const std::regex           probe {"(a*)*", std::regex::ECMAScript};
+    std::smatch                probe_match;
+    const bool                 std_keeps_empty_iteration {
+      std::regex_search(probe_subject, probe_match, probe) && probe_match.size() > 1
+      && probe_match[1].matched && probe_match.length(1) == 0};
+    const long long expected {std_keeps_empty_iteration ? tolerated_with_residue : 0};
+    if (tolerated != expected) {
+      static_cast<void>(std::fprintf(stderr,
+                   "exhaustive-compat: FAIL -- tolerated=%lld, expected %lld for this std "
+                   "(empty final iteration: %s). This number is quoted in docs/COMPATIBILITY.md, "
+                   "docs/divergences.dox and both site mirrors; move it there in the same commit, "
+                   "or find out why the class changed size.\n",
+                   tolerated, expected, std_keeps_empty_iteration ? "kept" : "not kept"));
+      return 1;
+    }
+    static_cast<void>(std::printf("exhaustive-compat: tolerated pinned at %lld (this std %s the "
+                                  "empty final iteration)\n",
+                                  expected, std_keeps_empty_iteration ? "keeps" : "drops"));
+  }
+  else {
+    static_cast<void>(std::printf("exhaustive-compat: tolerated NOT pinned -- widened tier declared "
+                                  "(the pinned count belongs to EC_K=4 / EC_N=6)\n"));
+  }
+  return 0;
 }
