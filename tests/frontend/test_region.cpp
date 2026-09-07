@@ -43,6 +43,63 @@ namespace {
   concept find_iter_takes_temporary_string = requires(const R& re) {
     re.find_iter(std::string("xax"), std::size_t {1});
   };
+
+  // The leftmost-longest twins. Same predicate as their leftmost-first siblings -- the subject must
+  // outlive the result -- asked arity by arity, because `find_iter_longest` carries DEFAULTS on
+  // `pos`/`endpos` while its deleted rvalue-regex overload took exactly three parameters, so arities
+  // 1 and 2 slipped past it onto the `const&` overload, and `const X&` binds to an rvalue.
+
+  //! Literals must reach both longest forms at every arity. False while a delete has no forwarder.
+  template <typename R>
+  concept longest_takes_literal = requires(const R& re) {
+    re.search_longest("xax");
+    re.search_longest("xax", std::size_t {1});
+    re.search_longest("xax", std::size_t {1}, std::size_t {3});
+    re.find_iter_longest("xax");
+    re.find_iter_longest("xax", std::size_t {1});
+    re.find_iter_longest("xax", std::size_t {1}, std::size_t {3});
+  };
+
+  //! A TEMPORARY subject on either longest form. Must all be false: the result borrows the text.
+  template <typename R>
+  concept search_longest_takes_temporary = requires(const R& re) {
+    re.search_longest(std::string("xax"));
+  };
+  template <typename R>
+  concept search_longest_region_takes_temporary = requires(const R& re) {
+    re.search_longest(std::string("xax"), std::size_t {1});
+  };
+  template <typename R>
+  concept find_iter_longest_takes_temporary = requires(const R& re) {
+    re.find_iter_longest(std::string("xax"));
+  };
+  template <typename R>
+  concept find_iter_longest_region_takes_temporary = requires(const R& re) {
+    re.find_iter_longest(std::string("xax"), std::size_t {1});
+  };
+
+  //! `find_iter_longest` on a TEMPORARY REGEX, at each arity: a range-for would outlive the regex.
+  template <typename R>
+  concept find_iter_longest_on_temporary_regex_1 = requires(R && re) {
+    std::move(re).find_iter_longest("xax");
+  };
+  template <typename R>
+  concept find_iter_longest_on_temporary_regex_2 = requires(R && re) {
+    std::move(re).find_iter_longest("xax", std::size_t {1});
+  };
+  template <typename R>
+  concept find_iter_longest_on_temporary_regex_3 = requires(R && re) {
+    std::move(re).find_iter_longest("xax", std::size_t {1}, std::size_t {3});
+  };
+  //! The same three through a `string_view`, which is how a non-literal subject arrives.
+  template <typename R>
+  concept find_iter_longest_sv_on_temporary_regex_1 = requires(R && re) {
+    std::move(re).find_iter_longest(std::string_view {"xax"});
+  };
+  template <typename R>
+  concept find_iter_longest_sv_on_temporary_regex_2 = requires(R && re) {
+    std::move(re).find_iter_longest(std::string_view {"xax"}, std::size_t {1});
+  };
 } // namespace
 
 TEST(region_pos_starts_matching_there)
@@ -291,4 +348,87 @@ TEST(a_temporary_string_still_cannot_reach_the_region_forms)
   const real::regex  rx("\\w+");
   EXPECT_EQ(rx.search(named, 4)[0], "bar"sv);
   EXPECT_EQ(rx.search(named, 4, 7)[0], "bar"sv);
+}
+
+// The leftmost-longest twins carried the OPPOSITE defect of the one 17d555c fixed next door: not a
+// guard too wide, a guard absent. `search_longest` returns a borrowing result and `find_iter_longest`
+// returns a range over the subject, yet neither had the `const std::string&&` deletion its
+// leftmost-first sibling has — so a temporary subject compiled and the result pointed into a buffer
+// that died at the end of the full expression. Undefined behaviour, accepted silently.
+//
+// `find_iter_longest` had a second, narrower hole in the same place: its deleted rvalue-regex
+// overload took exactly three parameters, while the callable one carries defaults. So arities 1 and
+// 2 never reached the deletion and bound to the `const&` overload instead, because `const X&` binds
+// to an rvalue quite happily. `regex("a").find_iter_longest("xax")` compiled and the range outlived
+// its regex.
+//
+// The forwarders and the deletions arrive TOGETHER, which is the lesson from the sibling wagon: a
+// `const std::string&&` deletion with no `const char*` forwarder makes a bare literal AMBIGUOUS,
+// since `const char*` reaches `std::string_view` and `std::string` by two user-defined conversions
+// of equal rank. Before this change a literal compiled only because it had no competitor — the
+// absence of a rival, not a guarantee.
+TEST(the_longest_forms_take_a_literal_and_refuse_a_temporary)
+{
+  static_assert(longest_takes_literal<real::regex>,
+                "a literal must reach both longest forms at every arity, forwarders included");
+  static_assert(!search_longest_takes_temporary<real::regex>,
+                "search_longest(std::string&&) must be deleted: the result borrows the text");
+  static_assert(!search_longest_region_takes_temporary<real::regex>,
+                "search_longest(std::string&&, pos) must be deleted too");
+  static_assert(!find_iter_longest_takes_temporary<real::regex>,
+                "find_iter_longest(std::string&&) must be deleted: the range borrows the text");
+  static_assert(!find_iter_longest_region_takes_temporary<real::regex>,
+                "find_iter_longest(std::string&&, pos) must be deleted too");
+
+  // A temporary REGEX cannot hand out a range, at any arity and by either subject spelling.
+  static_assert(!find_iter_longest_on_temporary_regex_1<real::regex>, "arity 1 slipped past the delete");
+  static_assert(!find_iter_longest_on_temporary_regex_2<real::regex>, "arity 2 slipped past the delete");
+  static_assert(!find_iter_longest_on_temporary_regex_3<real::regex>, "arity 3 must stay refused");
+  static_assert(!find_iter_longest_sv_on_temporary_regex_1<real::regex>, "string_view, arity 1");
+  static_assert(!find_iter_longest_sv_on_temporary_regex_2<real::regex>, "string_view, arity 2");
+
+  const real::regex rx("\\w+");
+
+  // Literals answer, and answer the SAME as the `sv` spelling they replace — a forwarder that drops
+  // or reorders an argument compiles and is still wrong, so this is checked at runtime as well.
+  EXPECT_EQ(rx.search_longest("foo bar baz")[0], rx.search_longest("foo bar baz"sv)[0]);
+  EXPECT_EQ(rx.search_longest("foo bar baz", 4)[0], rx.search_longest("foo bar baz"sv, 4)[0]);
+  EXPECT_EQ(rx.search_longest("foo bar baz", 4, 7)[0], rx.search_longest("foo bar baz"sv, 4, 7)[0]);
+  EXPECT_EQ(rx.search_longest("foo bar baz", 4)[0], "bar"sv);
+  EXPECT_EQ(rx.search_longest("foo bar baz", 4, 7)[0], "bar"sv);
+
+  std::vector<std::string_view> lit;
+  std::vector<std::string_view> view;
+  for (const auto& m : rx.find_iter_longest("foo bar baz", 4)) {
+    lit.push_back(m[0]);
+  }
+  for (const auto& m : rx.find_iter_longest("foo bar baz"sv, 4)) {
+    view.push_back(m[0]);
+  }
+  EXPECT_EQ(lit.size(), 2U);
+  EXPECT_EQ(lit, view);
+  EXPECT_EQ(lit[0], "bar"sv);
+  lit.clear();
+  for (const auto& m : rx.find_iter_longest("foo bar baz", 4, 7)) {
+    lit.push_back(m[0]);
+  }
+  EXPECT_EQ(lit.size(), 1U);
+  EXPECT_EQ(lit[0], "bar"sv);
+
+  // A NAMED string is an lvalue, cannot bind to `const std::string&&`, and must stay callable: the
+  // guard is about lifetime, not about the type.
+  const std::string named {"foo bar baz"};
+  EXPECT_EQ(rx.search_longest(named, 4)[0], "bar"sv);
+  EXPECT_EQ(rx.search_longest(named, 4, 7)[0], "bar"sv);
+  std::size_t counted {0};
+  for (const auto& m : rx.find_iter_longest(named, 4)) {
+    static_cast<void>(m);
+    ++counted;
+  }
+  EXPECT_EQ(counted, 2U);
+
+  // `search_longest` stays callable on a temporary regex, exactly as `search` does — the deletion
+  // being added here is about the SUBJECT, not the regex. (Whether its result should detach the
+  // name tables is a separate question and deliberately not touched.)
+  EXPECT_EQ(real::regex("\\w+").search_longest("foo bar", 4)[0], "bar"sv);
 }

@@ -1654,10 +1654,42 @@ namespace real {
     }
 
     /*!
-     * \brief Deleted: `find_iter_longest` on a temporary regex would dangle.
+     * \brief Region-aware `find_iter_longest` overload for string literals.
+     * \param[in] text   NUL-terminated text (must outlive the range).
+     * \param[in] pos    Byte offset iteration starts at.
+     * \param[in] endpos Byte offset the region ends at; defaults to the end of \p text.
+     * \return The range.
      */
-    [[nodiscard]] basic_match_range<Storage> find_iter_longest(std::string_view, std::size_t,
-                                                               std::size_t) const&& = delete;
+    [[nodiscard]] constexpr basic_match_range<Storage> find_iter_longest(const char* text,
+                                                                         std::size_t pos    = 0,
+                                                                         std::size_t endpos = npos) const&
+    {
+      return find_iter_longest(std::string_view(text), pos, endpos);
+    }
+
+    /*!
+     * \brief Deleted: the range borrows the subject, so a temporary `std::string` would dangle.
+     *        Arrives together with the `const char*` forwarder above and not before it: a deletion
+     *        alone would make a bare literal AMBIGUOUS, since `const char*` reaches
+     *        `std::string_view` and `std::string` by two user-defined conversions of equal rank.
+     */
+    [[nodiscard]] basic_match_range<Storage> find_iter_longest(const std::string &&, std::size_t = 0,
+                                                               std::size_t = npos) const& = delete;
+
+    /*!
+     * \brief Deleted: `find_iter_longest` on a temporary regex would dangle — at EVERY arity.
+     *        The defaults are the point: the callable overload carries them, so a two-argument call
+     *        used to miss a three-parameter deletion and bind to the `const&` overload instead,
+     *        which a `const X&` accepts from an rvalue without complaint.
+     */
+    [[nodiscard]] basic_match_range<Storage> find_iter_longest(std::string_view, std::size_t = 0,
+                                                               std::size_t = npos) const&& = delete;
+    /*!
+     * \brief Deleted: same, spelled for `const char*` so a literal resolves HERE rather than
+     *        becoming ambiguous — the reader is told the REGEX is the temporary, which is true.
+     */
+    [[nodiscard]] basic_match_range<Storage> find_iter_longest(const char*, std::size_t = 0,
+                                                               std::size_t = npos) const&& = delete;
 
     /*!
      * \brief Deleted: `find_iter` on a temporary regex would dangle.
@@ -2390,6 +2422,38 @@ namespace real {
     {
       return run(text, pos, endpos, detail::run_mode::search, match_semantics::longest);
     }
+
+    /*!
+     * \brief `search_longest` overload for string literals.
+     * \param[in] text NUL-terminated text.
+     * \return The leftmost-longest match.
+     */
+    [[nodiscard]] result_type search_longest(const char* text) const
+    {
+      return search_longest(std::string_view(text));
+    }
+
+    /*!
+     * \brief Region-aware `search_longest` overload for string literals.
+     * \param[in] text   NUL-terminated text.
+     * \param[in] pos    Byte offset the search starts at.
+     * \param[in] endpos Byte offset the region ends at; defaults to the end of \p text.
+     * \return The leftmost-longest match in the region.
+     */
+    [[nodiscard]] result_type search_longest(const char* text,
+                                             std::size_t pos,
+                                             std::size_t endpos = npos) const
+    {
+      return search_longest(std::string_view(text), pos, endpos);
+    }
+
+    // Same predicate as every borrowing form above: the searched text must outlive the result, so a
+    // temporary std::string is refused while a literal (static storage) and a named string (an
+    // lvalue, which cannot bind to `const std::string&&` at all) stay callable. The `const char*`
+    // forwarders above must exist for these deletions to be readable rather than ambiguous.
+    [[nodiscard]] result_type search_longest(const std::string&&) const = delete; //!< Deleted: temporary text would dangle.
+    [[nodiscard]] result_type search_longest(const std::string &&, std::size_t,
+                                             std::size_t = npos) const = delete;  //!< Deleted: temporary text would dangle.
   };
 
   /*!
