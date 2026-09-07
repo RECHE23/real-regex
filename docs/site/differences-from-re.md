@@ -417,6 +417,22 @@ binary properties** (\p{Alphabetic}, \p{White_Space}, \p{Emoji}, …) are built 
 UAX44 namespaces (\p{Bidi_Class=L}, `Word_Break`, `Age`, …) raise `unsupported` (the Rust binding can
 delegate those via its `fallback` feature). Pinned in the property and parity suites.
 
+(div_nesting)=
+## Nesting depth: a fixed cap here, the interpreter's stack there
+
+REAL caps parser nesting at **200** groups (`max_nesting_depth`, `real/core/config.hpp`), on every
+surface. 200 compiles; 201 raises — Python `real.error` with `msg='pattern nesting too deep'` and
+`pos=200` — so it arrives through the same handler as every other pattern fault and carries a
+position you can point at. `re` has no cap: it recurses until the interpreter's stack runs out and
+raises **`RecursionError`**, which is not a `re.error` and carries no position, so `except re.error`
+does not catch it.
+
+No depth is quoted for `re`, because it does not have one: the boundary follows
+`sys.getrecursionlimit()`. Measured at the default 1000, `re` compiled 400 nested groups and failed
+at 500; raised to 3000 it compiled 900. REAL's 200 did not move in either run. So the practical
+difference is a catchable, stack-independent failure here against an uncatchable, stack-dependent
+one there — and `re`-targeted code that wraps generated patterns may be catching nothing today.
+
 (div_lookbehind)=
 ## Variable-width lookbehind (a capability beyond re)
 
