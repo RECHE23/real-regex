@@ -172,6 +172,22 @@ int main(int argc, char** argv)
   static_cast<void>(std::printf("exhaustive-compat: %lld cases, agree=%lld, divergences=%lld "
                                 "(documented nullable-loop capture=%lld, serious=%lld)\n",
                                 total, agree, divergences, tolerated, serious));
+  // A run that did not happen is not a pass. An empty corpus makes every judgement below vacuous:
+  // `serious == 0` because there was nothing to disagree about, and the count pin refuses it only
+  // where the pinned value happens to be non-zero -- so on the MS STL branch, where the residue does
+  // not exist and the expected count IS zero, the same emptiness would sail through green. The pin
+  // was never a check on emptiness; it caught it by arithmetic accident on two implementations out
+  // of three. This is the check, and it is deliberately independent of the tier and of what the
+  // local std answers: a corpus of zero cases is a broken enumerator, not a result.
+  if (total == 0) {
+    static_cast<void>(std::fprintf(stderr,
+                 "exhaustive-compat: FAIL -- the enumerator produced no cases (%zu pattern(s), %zu "
+                 "input(s)). Nothing was compared, so nothing below means anything. This is not a "
+                 "disagreement about the tolerated class; it is a run that did not take place.\n",
+                 patterns.size(), inputs.size()));
+    return 1;
+  }
+
   if (serious != 0) {
     return 1; // only the documented nullable-loop capture signature is tolerated
   }
