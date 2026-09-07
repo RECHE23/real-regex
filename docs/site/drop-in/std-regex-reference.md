@@ -183,7 +183,7 @@ backtracking engine, which is the one thing `real::compat` exists to avoid. `reg
 on `real` **is** the product; screening this signature away would forfeit the linear-time guarantee for
 the whole `(x|)+…` family of patterns, not just the divergent capture. Linearity is kept **deliberately**;
 the price is a group-capture span that matches the linear-engine family instead of the backtracker. The
-exhaustive compat check measures this precisely (4 548 cases out of 3.2 M in the tier-1 space) and
+exhaustive compat check measures this precisely (4 548 cases out of 3 218 434 in the tier-1 space) and
 **fails on any divergence outside this exact signature** — a whole-match agreement with only an
 empty-final-iteration group difference — so no *other* silent divergence can hide behind it. This is a
 genuine engine-semantics divergence, not a gap in `real::compat`'s scope — consistent with the layer's

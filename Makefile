@@ -489,8 +489,10 @@ check-site-anchors:
 check-doc-mirror: ## [gates] Assert every site page still agrees with the canon it declares
 	@python3 tools/check_doc_mirror.py --self-test
 
-# The tolerated-divergence count (`4 548`) is quoted in FOUR live pages and was measured by
-# exhaustive-compat, which printed it and never compared it. check-doc-mirror ties each mirror to
+# The guarded sentence carries TWO numbers -- "4 548 cases out of 3 218 434 in the tier-1 space" --
+# quoted in FOUR live pages, both measured by exhaustive-compat, which printed them and compared
+# neither. The space half read "3.2 M" until it was pinned: an approximation in the one sentence
+# that says how much was compared, which would have swallowed tens of thousands of lost cases. check-doc-mirror ties each mirror to
 # its canon and neither pair to the measurement, so a 4 549th case of the documented class would
 # leave every gate green and four published pages wrong -- a count asserted once and never re-asked,
 # the same shape as a closed list written without a sweep. Standard library only, milliseconds, so it

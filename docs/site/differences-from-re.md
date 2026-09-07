@@ -148,7 +148,7 @@ whose linear-time guarantee it shares.
 
 **It also touches the compat contract.** The same group-capture difference shows up under
 `real::compat` against the local `std::regex` (ECMAScript is a backtracker too). The exhaustive compat
-check measures it — 4 548 cases out of 3.2 M in the tier-1 space — and tolerates *only* this exact
+check measures it — 4 548 cases out of 3 218 434 in the tier-1 space — and tolerates *only* this exact
 signature (whole match identical, the differing group is `std`'s zero-width empty-final iteration),
 failing on any other divergence. It is documented, not routed to `std`, on purpose: routing nested
 nullable quantifiers to a backtracker would forfeit the linearity `real::compat` exists to keep. See
