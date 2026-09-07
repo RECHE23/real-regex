@@ -206,6 +206,36 @@ int main(int argc, char** argv)
   // zero-width group 1 (libstdc++ and libc++ both do, verified) or reports the last non-empty one.
   if (pin_tolerated) {
     static constexpr long long tolerated_with_residue {4548}; //!< default tier (EC_K=4, EC_N=6)
+    static constexpr long long cases_at_default_tier {3218434}; //!< the SPACE, same tier
+
+    // The SIZE of the space, FIRST, which was printed and compared to nothing — the 4 548 fault in the
+    // other direction. An enumerator that quietly loses AGREEING cases leaves `tolerated` untouched
+    // and `serious` at zero, so the class pin above has nothing to refuse: the run reports agreement
+    // over a space smaller than the one the pages describe, and every gate stays green. `total == 0`
+    // catches only the total loss.
+    //
+    // It runs BEFORE the class pin, and that order IS the attribution: if the space is not the
+    // space, nothing measured over it means anything -- the same argument that puts `total == 0`
+    // ahead of everything. Measured with the class pin first, an undeclared 4-case run reported
+    // `tolerated=0, expected 4548 ... find out why the class changed size`, blaming the
+    // documented class for a fault that belonged to the enumerator.
+    //
+    // ONE number here, not two, because unlike the tolerated count this is a property of the
+    // enumerated SPACE and not of the local std -- every implementation walks the same cases. It is
+    // pinned only under `pin`, and the widened tier keeps DECLARING itself rather than being sniffed
+    // out by its total: detecting a wide space from this very number is what would let the pin stop
+    // applying with nobody noticing, which is the lesson the class pin already carries.
+    if (total != cases_at_default_tier) {
+      static_cast<void>(std::fprintf(stderr,
+                   "exhaustive-compat: FAIL -- the enumerator produced %lld cases, and the default "
+                   "tier is %lld (EC_K=4, EC_N=6). Nothing is wrong with the documented class; the "
+                   "SPACE is not the space. Either the enumerator changed and this constant moves "
+                   "with it, or a widened run forgot to declare itself (pass `nopin`).\n",
+                   total, cases_at_default_tier));
+      return 1;
+    }
+    static_cast<void>(std::printf("exhaustive-compat: space pinned at %lld cases (default tier)\n",
+                                  cases_at_default_tier));
     const std::string          probe_subject {"aa"};
     const std::regex           probe {"(a*)*", std::regex::ECMAScript};
     std::smatch                probe_match;
