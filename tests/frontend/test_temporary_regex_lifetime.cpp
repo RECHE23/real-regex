@@ -182,6 +182,13 @@ TEST(search_longest_detaches_from_a_temporary_regex_like_its_siblings)
 
   // Which type each value category yields, asserted rather than described: an rvalue regex owns its
   // name context, an lvalue keeps borrowing — that borrow is free and correct while the regex lives.
+  //
+  // FOUR parameter lists, so eight assertions. The first version of this block had six, covering
+  // `string_view`, `string_view`+pos and the bare literal but not literal+pos — a list written and
+  // not swept to its end, which is the third time that shape has shown up in this area. The missing
+  // list had behavioural cover (the region+literal case above does look a group up by name, so a
+  // forwarder that fell back to the borrowing overload would throw there), and behaviour is not the
+  // same claim: it holds only for a caller who dereferences a NAME, while the type is the property.
   const real::regex live {"(?<word>[a-z]+)-"};
   static_assert(std::is_same_v<decltype(real::regex {"a"}.search_longest(text)),
                                real::owning_match_result>);
@@ -189,8 +196,11 @@ TEST(search_longest_detaches_from_a_temporary_regex_like_its_siblings)
                                real::owning_match_result>);
   static_assert(std::is_same_v<decltype(real::regex {"a"}.search_longest("a")),
                                real::owning_match_result>);
+  static_assert(std::is_same_v<decltype(real::regex {"a"}.search_longest("a", 0)),
+                               real::owning_match_result>);
   static_assert(std::is_same_v<decltype(live.search_longest(text)), real::match_result>);
   static_assert(std::is_same_v<decltype(live.search_longest(text, 0)), real::match_result>);
   static_assert(std::is_same_v<decltype(live.search_longest("a")), real::match_result>);
+  static_assert(std::is_same_v<decltype(live.search_longest("a", 0)), real::match_result>);
   EXPECT_EQ(live.search_longest(text).group_index("word"), 1U);
 }
