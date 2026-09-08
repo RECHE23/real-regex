@@ -2,6 +2,35 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.9.3
+
+9.3 (**two use-after-frees, and every C++ edit is a declaration**): **THESE TABLES DO NOT MOVE, AND
+THE STAMP IS DELIBERATELY LEFT AT `2026.8.15`** — the third train in a row, same reason and no new
+argument: this document declares a **two-ISA** regime and only arm64 was available, so refreshing one
+leg would publish a table whose halves describe different trees. **NO CELL WAS RE-RUN, AND NONE IS
+EDITED.** **WHY NO ROW HERE SEES THIS TRAIN, AND IT IS NOT THE SAME ARGUMENT AS 9.2's:** that train
+could say every edit was unreachable from a compiling pattern; this one cannot, because it adds a
+real runtime cost. Every C++ change is a DECLARATION — a ref-qualifier, an overload, a `= delete` —
+resolved at compile time, EXCEPT one: the new `const&&` twins call `detach`, which COPIES the name
+context where the old code borrowed it, so a `search_longest` on an rvalue regex now pays for a copy
+it did not pay for before. That is a genuine cost and it is named rather than waved past. **IT SITS
+WHERE NO CELL LOOKS, AND THAT IS GREPPED RATHER THAN ASSERTED:** no benchmark in `benchmarks/`
+invokes a method on a temporary regex (every call site holds an lvalue), and neither `search_longest`
+nor `find_iter_longest` appears anywhere in `benchmarks/` at all — the leftmost-longest family has no
+row here, so its costs have no cell to move. The rest of the train is diagnostics on error paths, the
+Python flag mask, documentation and gates. **THE ONLY INSTRUMENT CITED IS THE ONE THAT RAN, WITH ITS
+CONDITIONS:** the veto matrix (26 route-vs-core rows, 5 % tolerance) read `MATRIX CLEAN`, 0 red
+cells, on **two runs** — at load averages 11.5 and 5.7, with Docker resident from an earlier
+`doc-check` and NOT a settled host. Worth running because this train adds overloads to `real.hpp`,
+which every translation unit includes, and layout perturbation is exactly what that matrix vetoes.
+Worth qualifying because this file's own record is that host load produces false REDS on the
+smallest-absolute-time cells; whether load can produce a false GREEN is not something this project
+has measured, so the clean is reported with its load rather than dressed as a settled-host result.
+That is a veto within one build, not a paired measurement of this train against the last. **NOT
+CLAIMED:** no full local gate over this train, so `GATE_STRICT` is asserted nowhere; and the two
+internal sentinel sites named in 9.1 — `_real.cpp:1183` per STEP and `real_iter` per CALL — are still
+untouched and still unmeasured.
+
 ## v2026.9.2
 
 9.2 (**the unit of the mode — and not one change on a measured path**): **THESE TABLES DO NOT MOVE,
