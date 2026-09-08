@@ -712,9 +712,15 @@ namespace real::detail {
       // A throw, not an assertion: the message has to exist in a release build, and it has to exist
       // during constant evaluation too -- a `static_regex` whose class arrived unordered must stop
       // being a constant expression. Same vehicle as the class-count ceiling below, for that reason.
-      if (!cp_ranges_are_normalised(cd.ranges)) {
-        throw regex_error("code-point class ranges are not normalised", 0);
-      }
+      //
+      // Asked on the NEW-class path only, below, and that is not a weakening: the dedup compares
+      // content, so a class that matches an existing one is bit-identical to a class already checked
+      // when it was first recorded, and an unordered list can only match another unordered list --
+      // which could never have been recorded. Every distinct class is therefore still checked exactly
+      // once, before it exists. Asking on every call instead cost a full range scan per emission on a
+      // path that interns the same class per repetition: `(?i:\w{256})\w{256}` compiles ~512 classes
+      // over `\w`'s range table, and the redundant pass added 36% to it (517 -> 705 us), which the
+      // compile-scaling probes measure as a ratio against a 16x bound and read as a regression.
       std::size_t index {prog.cp_classes.size()};
       for (std::size_t i = 0; i < prog.cp_classes.size(); ++i) {
         const cp_class& existing {prog.cp_classes[i]};
@@ -739,6 +745,9 @@ namespace real::detail {
         }
       }
       if (index == prog.cp_classes.size()) {
+        if (!cp_ranges_are_normalised(cd.ranges)) {
+          throw regex_error("code-point class ranges are not normalised", 0);
+        }
         if (index > 0xFFFF) {
           throw regex_error("too many code-point classes", 0);
         }

@@ -112,6 +112,23 @@ TEST(interning_an_unordered_class_is_refused_and_says_which_invariant_broke)
                   prog, cp_only({{0x100U, 0x300U}, {0x200U, 0x250U}})), real::regex_error);
   EXPECT_THROWS(real::detail::compiler::intern_cp_class(
                   prog, cp_only({{0x200U, 0x100U}})), real::regex_error);
+
+  // The gate is asked on the NEW-class path, so an unordered class must not slip in behind an ordered
+  // one that looks like it. Same ASCII bitmap and same range COUNT is exactly what the dedup screens
+  // on before comparing ranges, so this is the pair that would smuggle one through if the dedup's
+  // "already checked" argument were wrong.
+  real::detail::dynamic_program shared;
+  EXPECT_EQ(real::detail::compiler::intern_cp_class(
+              shared, cp_only({{0xE9U, 0xE9U}, {0x1F968U, 0x1F968U}})), 0U);
+  EXPECT_THROWS(real::detail::compiler::intern_cp_class(
+                  shared, cp_only({{0x1F968U, 0x1F968U}, {0xE9U, 0xE9U}})), real::regex_error);
+  EXPECT_EQ(shared.cp_classes.size(), 1U); // the good one only
+
+  // And the reverse direction of the same argument: interning the identical GOOD content again takes
+  // the dedup path, where the check is deliberately not repeated, and must still succeed.
+  EXPECT_EQ(real::detail::compiler::intern_cp_class(
+              shared, cp_only({{0xE9U, 0xE9U}, {0x1F968U, 0x1F968U}})), 0U);
+  EXPECT_EQ(shared.cp_classes.size(), 1U);
 }
 
 // And the gate refuses nothing a producer legitimately builds: the same SET, normalised the way every
