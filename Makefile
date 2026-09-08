@@ -1183,7 +1183,7 @@ release: ## [release] Cut the complete calendar release (bump all, tag engine + 
 	                s/^#define REAL_VERSION_PATCH .*/#define REAL_VERSION_PATCH $$vpat/" include/real/version.hpp && rm -f include/real/version.hpp.bak; \
 	 sed -i.bak -E "1,/^version = /s/^version = \".*\"/version = \"$$version\"/" bindings/rust/Cargo.toml && rm -f bindings/rust/Cargo.toml.bak; \
 	 sed -i.bak -E "s/^version: \".*\"/version: \"$$version\"/" CITATION.cff && rm -f CITATION.cff.bak; \
-	 reldate=$$(date -u +%Y-%m-%d); \
+	 reldate=$$(date +%Y-%m-%d); \
 	 sed -i.bak -E "s/^date-released: \".*\"/date-released: \"$$reldate\"/" CITATION.cff && rm -f CITATION.cff.bak; \
 	 sed -i.bak -E "s/GIT_TAG v[0-9][0-9.]*/GIT_TAG v$$version/" README.md && rm -f README.md.bak; \
 	 $(MAKE) go-vendor; \
