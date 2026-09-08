@@ -153,3 +153,55 @@ TEST(a_single_codepoint_alternation_is_the_class_it_is)
   // Bytes mode has no code points: there the branches are raw bytes and only those fuse.
   EXPECT_EQ(real::regex("(?:a|b)+", real::flags::bytes).count_matches("abab"), 1U);
 }
+
+// The fused set must be NORMALISED, not merely collected: the matchers that consume a code-point class
+// require its ranges ascending and non-overlapping, in two independent places that split at U+07FF.
+// Below the boundary the U+0080..U+07FF bitmap is filled by a loop that STOPS at the first range past
+// it; above, membership is a binary search. A list left in branch order therefore loses members on
+// BOTH sides at once, which is why the two assertions below are about the SAME pattern failing twice.
+//
+// Asserted on answers, and it has to be: `shape_of` compares opcode counts, and the fused form emits
+// exactly the hand-written class's opcodes whatever the order -- the difference lives entirely in the
+// interned ranges, where shape cannot see it. Every order-independence claim above this test happens
+// to sit below U+0800, where neither consumer can react, so none of them reached this property.
+//
+// The merge half of the normalisation is deliberately unwitnessed here: a list of duplicates is
+// already sorted, so no such pattern can go red, and a green would pin nothing.
+TEST(the_fused_class_is_normalised_however_the_branches_were_ordered)
+{
+  // Descending, and spanning the boundary: neither branch answers when the order survives.
+  EXPECT(real::regex {"🥨|é"}.search("🥨").matched());
+  EXPECT(real::regex {"🥨|é"}.search("é").matched());
+  EXPECT_EQ(real::regex {"🥨|é"}.count_matches("un 🥨 et un é"), 2U);
+
+  // Nothing astral is required -- two ordinary multi-byte characters in descending order are enough,
+  // and the smaller one need not be Latin.
+  EXPECT(real::regex {"€|é"}.search("€").matched());
+  EXPECT(real::regex {"€|é"}.search("é").matched());
+  EXPECT(real::regex {"あ|€"}.search("あ").matched());
+  EXPECT(real::regex {"あ|€"}.search("€").matched());
+
+  // Three branches, worst order, and the same set written ascending must answer identically.
+  EXPECT_EQ(real::regex {"🥨|€|é"}.count_matches("🥨€é"), 3U);
+  EXPECT_EQ(real::regex {"🥨|€|é"}.count_matches("🥨€é"),
+            real::regex {"é|€|🥨"}.count_matches("🥨€é"));
+
+  // The spellings that were already right are untouched: a hand-written class, an ascending
+  // alternation, an ASCII second branch (which lands in the bitmap, not the ranges), a pair that
+  // stays under U+0800, bytes mode (where the fusion declines), and the folded path.
+  EXPECT(real::regex {"[🥨é]"}.search("é").matched());
+  EXPECT(real::regex {"é|🥨"}.search("🥨").matched());
+  EXPECT(real::regex {"🥨|e"}.search("🥨").matched());
+  EXPECT(real::regex {"🥨|e"}.search("e").matched());
+  EXPECT(real::regex {"é|à"}.search("é").matched());
+  EXPECT(real::regex {"é|à"}.search("à").matched());
+  EXPECT(real::regex("🥨|é", real::flags::bytes).search("🥨").matched());
+  EXPECT(real::regex("🥨|é", real::flags::bytes).search("é").matched());
+  EXPECT(real::regex {"(?i)🥨|é"}.search("🥨").matched());
+  EXPECT(real::regex {"(?i)🥨|é"}.search("é").matched());
+
+  // And the fusion still produces the hand-written class's program, which is the promise the
+  // normalisation exists to keep rather than to weaken.
+  EXPECT(shape_of("🥨|é") == shape_of("[🥨é]"));
+  EXPECT(shape_of("(?:🥨|€|é)+") == shape_of("[🥨€é]+"));
+}

@@ -1280,7 +1280,24 @@ namespace real::detail {
         ++n;
         scan = b.next;
       }
-      return n >= 2; // one branch is not an alternation to fuse
+      if (n < 2) {
+        return false; // one branch is not an alternation to fuse
+      }
+      // SORTED AND MERGED, like every other class this compiler hands to the matchers. Branch order is
+      // the author's spelling and carries nothing here, but a `cp_class`'s ranges are REQUIRED
+      // ascending and non-overlapping, in two independent places that split at U+07FF:
+      // `cp_page_table` / `fill_cp_page_row` fill the U+0080..U+07FF bitmap with a loop that STOPS at
+      // the first range past `cp_page_max` ("ranges are sorted: nothing more falls in the page"), and
+      // everything above is answered by `cp_class_matches`, a binary search. So a descending list
+      // loses members on BOTH sides of that boundary at once -- the bitmap never reaches the low one,
+      // the search cannot find the high one -- and `\U0001F968|é` matches neither of its own branches.
+      //
+      // \ref finish_class normalises through this same call, which is what makes `(?:é|à|è)` and
+      // `[éàè]` one program instead of two spellings. Instruction SHAPE cannot check that here: both
+      // forms emit the same opcodes in the same counts and differ only in the interned range order, so
+      // the property has to be asserted on answers.
+      out.ranges = coalesce_ranges(std::move(out.ranges));
+      return true;
     }
 
     /*!
