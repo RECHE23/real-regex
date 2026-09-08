@@ -466,6 +466,29 @@ size_t real_expand(const real_regex* re, const char* text, size_t len,
     write_err(errbuf, errbuf_len, parse_err.c_str());
     return static_cast<size_t>(-1);
   }
+  // Every COMPLETE pair in the caller's buffer, before a byte is expanded. The header promises that
+  // "a span pair outside [0, len] or inverted" is an error, with no reservation, and until now the
+  // check followed the parsed TEMPLATE: a pair the template did not name was never looked at. That
+  // is the wrong perimeter for this door, and the header says why in its own rationale -- the caller
+  // SUPPLIES the matches, because its flavour enumerates them differently from real_sub's. So a
+  // binding off by one in a group its template happens not to reference is exactly the class the
+  // sentence announces, and exactly the class that got through.
+  //
+  // Same rule as the referenced path below, so there is one definition of a valid pair: SIZE_MAX at
+  // the start is an unmatched optional group and contributes nothing (re's rule), anything else must
+  // lie inside [0, len] and not be inverted. A purely literal template with a corrupt buffer is
+  // refused too -- the promise is about the SPANS, not about what the template reads.
+  for (std::size_t i = 0; i + 1 < nspans; i += 2) {
+    const std::size_t start {spans[i]};
+    if (start == static_cast<std::size_t>(-1)) {
+      continue;
+    }
+    const std::size_t stop {spans[i + 1]};
+    if (start > len || stop > len || stop < start) {
+      write_err(errbuf, errbuf_len, "span outside the subject, or inverted");
+      return static_cast<size_t>(-1);
+    }
+  }
   std::string result;
   for (const auto& seg : segments) {
     if (seg.group < 0) {

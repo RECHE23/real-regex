@@ -194,6 +194,47 @@ int main(void) {
   assert(real_expand(sre, stext, strlen(stext), bad_spans, 6, repl, strlen(repl),
                      NULL, 0, err, sizeof err) == (size_t) -1);
   assert(strlen(err) > 0);
+  /* ...and a pair the TEMPLATE never names is refused just the same. The case above hides the hole:
+     `repl` is "\\2@\\1", so it reads groups 1 and 2 and every slot of `bad_spans` happens to be
+     read. Group 0's pair was corrupt in exactly the same way and, until the check moved ahead of the
+     expansion, went unexamined -- the header's sentence has no "if the template names them" clause,
+     and cannot have one: the caller SUPPLIES this buffer, so a binding off by one in a group its
+     template skips is precisely the class the door exists to catch.
+
+     The MESSAGE is asserted, not just the refusal: `group reference beyond the spans supplied` also
+     exits (size_t)-1, and a witness that accepts either cannot tell a span check from a length
+     check. */
+  static const char* const span_msg = "span outside the subject, or inverted";
+  assert(real_match(sre, stext, strlen(stext), 0, strlen(stext), REAL_MODE_SEARCH, espans) == 1);
+  size_t unref_spans[6] = {50, 100, espans[2], espans[3], espans[4], espans[5]};
+  err[0] = '\0';
+  assert(real_expand(sre, stext, strlen(stext), unref_spans, 6, "\\1", 2,
+                     NULL, 0, err, sizeof err) == (size_t) -1);
+  assert(strcmp(err, span_msg) == 0);
+
+  /* Inverted, in a slot `\g<0>` does not reach either -- the other half of the same predicate. */
+  size_t unref_inv[6] = {espans[0], espans[1], espans[2], espans[3], 3, 1};
+  err[0] = '\0';
+  assert(real_expand(sre, stext, strlen(stext), unref_inv, 6, "\\g<0>", 5,
+                     NULL, 0, err, sizeof err) == (size_t) -1);
+  assert(strcmp(err, span_msg) == 0);
+
+  /* A purely LITERAL template refuses too. There is no group to check here at all, so a validation
+     driven by the parsed template can only pass -- which is what makes this the case that pins where
+     the check runs rather than merely that it exists. */
+  err[0] = '\0';
+  assert(real_expand(sre, stext, strlen(stext), unref_spans, 6, "xyz", 3,
+                     NULL, 0, err, sizeof err) == (size_t) -1);
+  assert(strcmp(err, span_msg) == 0);
+
+  /* The negatives, so the loop is a check and not a refusal: honest spans still expand, and an
+     UNMATCHED optional group -- SIZE_MAX in both slots, which is out of [0, len] read naively -- is
+     skipped by the same rule the referenced path uses, even when no template reads it. */
+  err[0] = '\0';
+  size_t good_need = real_expand(sre, stext, strlen(stext), espans, 6, "\\1", 2,
+                                 expbuf, sizeof expbuf, err, sizeof err);
+  assert(good_need == 1 && expbuf[0] == 'a' && err[0] == '\0');
+
   err[0] = '\0';
   assert(real_expand(NULL, stext, strlen(stext), espans, 6, repl, strlen(repl),
                      NULL, 0, err, sizeof err) == (size_t) -1);
@@ -207,6 +248,13 @@ int main(void) {
                                 expbuf, sizeof expbuf, err, sizeof err);
   assert(opt_need == 3);
   assert(memcmp(expbuf, "[a]", 3) == 0);
+  /* And with a template that names NOTHING: the eager pass sees the unmatched pair without any
+     template to excuse it, so this is where a loop that forgot the SIZE_MAX rule would refuse
+     legitimate output from real_match itself. */
+  err[0] = '\0';
+  size_t opt_lit = real_expand(ore, "a", 1, ospans, 6, "z", 1,
+                               expbuf, sizeof expbuf, err, sizeof err);
+  assert(opt_lit == 1 && expbuf[0] == 'z' && err[0] == '\0');
   real_free(ore);
 
   /* (NULL, 0) empty-subject convention: valid everywhere a (text, len) or (repl, repl_len) pair
