@@ -121,7 +121,7 @@ TEST(interning_a_normalised_class_succeeds_and_still_dedups)
   real::detail::dynamic_program prog;
   const std::vector<code_range> raw {{0x1F968U, 0x1F968U}, {0xE9U, 0xE9U}};
 
-  const std::uint16_t first {
+  const std::uint16_t first         {
     real::detail::compiler::intern_cp_class(prog, cp_only(real::detail::coalesce_ranges(raw)))};
   EXPECT_EQ(first, 0U);
   EXPECT_EQ(prog.cp_classes.size(), 1U);

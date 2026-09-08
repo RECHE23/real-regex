@@ -697,6 +697,7 @@ namespace real::detail {
     // interns a list of its own making, since no pattern can produce an unordered one once every
     // producer normalises. Widening the access IS the hook: no macro, no build-mode branch, nothing
     // here that a release build compiles differently from the one the tests run.
+
   public:
 
     static constexpr std::uint16_t intern_cp_class(dynamic_program& prog,
