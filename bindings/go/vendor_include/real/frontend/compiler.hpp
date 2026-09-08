@@ -54,6 +54,45 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Whether \p ranges satisfies what every consumer of a \ref cp_class already requires of
+   *        it: each range non-empty, and the sequence strictly ascending with no touching or
+   *        overlapping neighbours.
+   *
+   * The requirement is not a preference. Two independent match-time paths split at U+07FF and BOTH
+   * read the order as meaning: `cp_page_table` and `fill_cp_page_row` build the U+0080..U+07FF bitmap
+   * with a loop that STOPS at the first range past `cp_page_max` ("ranges are sorted: nothing more
+   * falls in the page"), and `cp_class_matches` binary-searches everything above it. A list that
+   * arrives out of order therefore loses members on both sides of that boundary at once, silently and
+   * with no wrong instruction anywhere to find — the program's SHAPE is identical either way, so the
+   * only visible symptom is an answer.
+   *
+   * Every producer normalises through \ref coalesce_ranges, which yields exactly this. That was true
+   * of all of them by construction rather than by contract, and one producer that collected ranges in
+   * source order instead satisfied it only for inputs that happened to be sorted already. Hence a
+   * predicate, asked at the single point every class passes through.
+   *
+   * ORDER AND DISJOINTNESS, not minimality. `coalesce_ranges` additionally merges neighbours that
+   * merely touch (`prev.hi + 1 == next.lo`), so its output always satisfies this predicate, but a
+   * touching pair is refused by neither consumer -- both read the sequence, and a redundant split
+   * costs a comparison, never an answer. Demanding minimality here would reject a correct class.
+   *
+   * \param[in] ranges The class's non-ASCII ranges, in the order they would be interned.
+   * \return Whether they are ordered as the matchers require.
+   */
+  [[nodiscard]] constexpr bool cp_ranges_are_normalised(const std::vector<code_range>& ranges)
+  {
+    for (std::size_t i = 0; i < ranges.size(); ++i) {
+      if (ranges[i].lo > ranges[i].hi) {
+        return false; // an inverted or empty range names no code point
+      }
+      if (i > 0 && ranges[i - 1].hi >= ranges[i].lo) {
+        return false; // out of order, touching, or overlapping
+      }
+    }
+    return true;
+  }
+
+  /*!
    * \brief Expands a character class to its Unicode simple case-fold closure (text-mode `icase`).
    *
    * The fold acts on the WHOLE class, cross-boundary in both directions, before
@@ -653,9 +692,28 @@ namespace real::detail {
      * \param[in]     cd   The effective code-point class (ASCII bitmap + non-ASCII ranges).
      * \return Its index in `prog.cp_classes`.
      */
+    // Reachable on purpose. `compiler` lives in `real::detail` and promises nothing outward, and the
+    // gate below is only a gate if omitting it can be SEEN to go wrong -- which takes a test that
+    // interns a list of its own making, since no pattern can produce an unordered one once every
+    // producer normalises. Widening the access IS the hook: no macro, no build-mode branch, nothing
+    // here that a release build compiles differently from the one the tests run.
+  public:
+
     static constexpr std::uint16_t intern_cp_class(dynamic_program& prog,
                                                    const class_def& cd)
     {
+      // THE SINGLE GATE. Every code-point class in every program is interned here, which is the one
+      // place where the ordering the matchers require can be demanded once instead of trusted from
+      // each producer in turn. \ref cp_ranges_are_normalised says what the requirement is and why a
+      // violation is silent; what matters here is that this is the choke point, so a producer that
+      // forgets \ref coalesce_ranges fails loudly instead of answering wrongly at match time.
+      //
+      // A throw, not an assertion: the message has to exist in a release build, and it has to exist
+      // during constant evaluation too -- a `static_regex` whose class arrived unordered must stop
+      // being a constant expression. Same vehicle as the class-count ceiling below, for that reason.
+      if (!cp_ranges_are_normalised(cd.ranges)) {
+        throw regex_error("code-point class ranges are not normalised", 0);
+      }
       std::size_t index {prog.cp_classes.size()};
       for (std::size_t i = 0; i < prog.cp_classes.size(); ++i) {
         const cp_class& existing {prog.cp_classes[i]};
@@ -699,6 +757,8 @@ namespace real::detail {
       }
       return static_cast<std::uint16_t>(index);
     }
+
+  private:
 
     /*!
      * \brief Emits a match-time code-point predicate for a Unicode shorthand (`\w \d \s` and their
