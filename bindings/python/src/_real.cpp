@@ -68,6 +68,16 @@ constexpr Py_ssize_t gil_release_min_bytes         = 512;   //!< single-shot sca
 constexpr Py_ssize_t gil_release_collect_min_bytes = 4096;  //!< findall/split collect-spans phase
 
 // Python re flag values.
+//
+// Bit 1 has no name here on purpose. `re` ignores it on every interpreter this binding supports:
+// it was re.TEMPLATE before 3.12 (itself a no-op for compilation), and since 3.12 it is nothing at
+// all -- `re.compile("a", 1)` compiles, does not fold case, and echoes 33 in `Pattern.flags`.
+// Refusing it made `real.compile("a", True)` an error, and a boolean read as "switch it on" is the
+// plausible slip rather than a contrived one. So it is ACCEPTED and translates to nothing, exactly
+// as re.U does a few lines below. No `real.TEMPLATE` is exported and no message names it: the
+// constant does not exist on any supported version, so putting the word in front of a user would
+// describe something they cannot have.
+constexpr unsigned long PYFLAG_IGNORED_BIT_1 = 1;
 constexpr unsigned long PYFLAG_IGNORECASE = 2;
 constexpr unsigned long PYFLAG_LOCALE = 4;
 constexpr unsigned long PYFLAG_MULTILINE = 8;
@@ -1413,8 +1423,9 @@ void set_error(const char* message) { PyErr_SetString(error_type, message); }
 
 //! The inline-flag bits this binding implements. `re.L` and `re.DEBUG` have their own door, and it
 //! precedes every use of this one, so neither can reach the unknown-bit report below.
-constexpr unsigned long PYFLAG_KNOWN = PYFLAG_IGNORECASE | PYFLAG_MULTILINE | PYFLAG_DOTALL |
-                                       PYFLAG_UNICODE | PYFLAG_ASCII | PYFLAG_VERBOSE;
+constexpr unsigned long PYFLAG_KNOWN = PYFLAG_IGNORED_BIT_1 | PYFLAG_IGNORECASE | PYFLAG_MULTILINE |
+                                       PYFLAG_DOTALL | PYFLAG_UNICODE | PYFLAG_ASCII |
+                                       PYFLAG_VERBOSE;
 
 //! Lowercase `0x…`, so a reader can compare it against `re`'s own constants bit for bit.
 std::string as_hex(unsigned long value)
@@ -2664,7 +2675,11 @@ PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
     if ((py_flags & PYFLAG_ASCII) != 0) {
         compile_flags = compile_flags | real::flags::ascii;  // re.A: keep \d \w \s and icase ASCII
     }
-    // PYFLAG_UNICODE (re.U) stays a no-op: Unicode is already the str-mode default.
+    // PYFLAG_UNICODE (re.U) stays a no-op: Unicode is already the str-mode default. PYFLAG_IGNORED_BIT_1
+    // is a no-op too, and for a different reason: it is not a flag on any supported interpreter, so
+    // there is nothing for it to mean. `Pattern.flags` still echoes it, because that attribute
+    // reports the ARGUMENT and re echoes it as well (33 for flags=1, since re adds UNICODE and this
+    // binding deliberately does not).
 
     real::regex* rx = nullptr;
     try {

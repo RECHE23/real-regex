@@ -235,7 +235,13 @@ and a `import real as re` drop-in meets them without writing a pattern at all:
 - **`re.L` / `re.LOCALE` and `re.DEBUG` raise instead of being ignored.** Locale-dependent matching
   is excluded by design (this engine is Unicode in text mode and raw bytes otherwise, never
   locale-dependent); `DEBUG` dumps CPython's own compiler state, which REAL does not have. An
-  unrecognised flag bit is refused too, rather than silently dropped.
+  unrecognised flag bit is refused too, rather than silently dropped -- and NAMED, so the message
+  says which bit (`unknown flag 0x400 passed to real.compile`). One exception, and it is the only
+  one: bit `0x1` is ACCEPTED and means nothing. `re` ignores it on every interpreter this binding
+  supports -- it was `re.TEMPLATE` before 3.12, a no-op for compilation, and is not a flag at all
+  since -- so refusing it turned `real.compile("a", True)`, a boolean read as "switch it on", into
+  an error for a pattern `re` compiles. `Pattern.flags` still echoes the bit, as `re` does. No
+  `real.TEMPLATE` constant is exported: it exists on no supported version.
 - **`re.Scanner` is absent.** It is undocumented in CPython and has no REAL equivalent.
 - **A `sub` callable must return a string; returning `None` raises instead of erasing.**
   `re.sub(r'a', lambda m: None, 'xax')` returns `'xx'` in CPython — the `None` is read as an empty

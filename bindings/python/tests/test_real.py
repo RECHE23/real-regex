@@ -746,8 +746,11 @@ class TestUnknownFlagBitIsNamed(unittest.TestCase):
     a false one.
     """
 
-    #: Bits re accepts (ignores) and REAL refuses. 3 is I|1, so a real flag carrying the stray bit.
-    UNKNOWN_BIT_CASES = [(True, "0x1"), (1, "0x1"), (3, "0x1"), (1024, "0x400")]
+    #: Bits re accepts (ignores) and REAL refuses. Bit 1 is NO LONGER here: re ignores it on every
+    #: interpreter this binding supports, so refusing it was the drop-in hole, and TestLegacyBitOneIsAccepted
+    #: below owns that case. 1024 stays, and the list is these bits only -- "ignore every unknown bit"
+    #: is a different decision and is not taken.
+    UNKNOWN_BIT_CASES = [(1024, "0x400")]
 
     def test_the_offending_bit_is_named_on_both_surfaces(self):
         for flags, wanted in self.UNKNOWN_BIT_CASES:
@@ -764,9 +767,11 @@ class TestUnknownFlagBitIsNamed(unittest.TestCase):
                     self.assertNotIn("TEMPLATE", caught.exception.msg)
 
     def test_several_unknown_bits_are_named_together_and_pluralised(self):
+        # TWO still-unknown bits. It used to be 0x1|0x200, which stopped being a plural case the
+        # moment bit 1 became known -- a pluralisation test whose second bit had joined the mask.
         with self.assertRaises(real.error) as caught:
-            real.compile("a", 0x1 | 0x200)
-        self.assertIn("0x201", caught.exception.msg)
+            real.compile("a", 0x200 | 0x400)
+        self.assertIn("0x600", caught.exception.msg)
         self.assertIn("unknown flags", caught.exception.msg)
 
     def test_the_locale_debug_door_still_comes_first(self):
@@ -785,6 +790,73 @@ class TestUnknownFlagBitIsNamed(unittest.TestCase):
         # set's members, which is the point: the door let 2 through rather than merely not raising.
         self.assertEqual(real.RegexSet(["a"], 2).matches("A"), [True])
         self.assertEqual(real.RegexSet(["a"], 2).which("A"), [0])
+
+
+class TestLegacyBitOneIsAccepted(unittest.TestCase):
+    r"""Bit 1 is ignored, not refused: `real.compile("a", True)` is the drop-in hole it closed.
+
+    A boolean read as "switch it on" is the plausible slip, and `re` compiles it on every
+    interpreter this binding supports -- it was re.TEMPLATE before 3.12 (a no-op for compilation)
+    and is nothing at all since. Refusing it made a pattern that works under `re` an error here.
+
+    re's behaviour is ASKED, never transcribed: what it does with this bit has already changed once,
+    so a hardcoded expectation would be a claim about a version rather than about the oracle. The
+    only thing hardcoded is what REAL must do, which is the subject of the test.
+    """
+
+    def test_bit_one_compiles_and_changes_nothing(self):
+        for flags in (True, 1):
+            with self.subTest(flags=flags):
+                theirs = re.compile("a", flags)
+                ours = real.compile("a", flags)
+                # The oracle: re takes it, and it is NOT ignore-case -- which is the whole reason
+                # accepting it is safe rather than a silent behaviour change.
+                self.assertIsNone(theirs.fullmatch("A"))
+                self.assertIsNone(ours.fullmatch("A"))
+                self.assertIsNotNone(ours.fullmatch("a"))
+                # Same answers as flags=0, since the bit means nothing.
+                self.assertEqual(ours.fullmatch("a").span(), real.compile("a", 0).fullmatch("a").span())
+
+    def test_bit_one_riding_on_a_real_flag_keeps_that_flag(self):
+        # 3 is re.I | 1: the stray bit must not disturb the flag it travels with.
+        self.assertIsNotNone(re.compile("a", 3).fullmatch("A"))
+        self.assertIsNotNone(real.compile("a", 3).fullmatch("A"))
+        self.assertIsNotNone(real.RegexSet(["a"], 3).matches("A")[0] or None)
+
+    def test_the_attribute_echoes_the_argument_and_still_adds_no_unicode(self):
+        # `Pattern.flags` reports what was PASSED, so the bit is visible there -- re echoes it too
+        # (33 = UNICODE|1). This binding deliberately does not add UNICODE, which is a separate,
+        # documented divergence and is unchanged by accepting the bit.
+        self.assertEqual(real.compile("a", 1).flags, 1)
+        self.assertEqual(int(re.compile("a", 1).flags), 1 | re.UNICODE)
+        self.assertEqual(real.compile("a", 3).flags, 3)
+
+    def test_both_doors_accept_it(self):
+        # compile_set shares the mask; a one-door fix would be the contract-at-some-doors shape.
+        for flags in (True, 1, 3):
+            with self.subTest(flags=flags):
+                self.assertEqual(real.RegexSet(["a"], flags).matches("a"), [True])
+
+    def test_the_neighbouring_refusals_are_untouched(self):
+        # 0x400 is still unknown and still named: this wagon accepted ONE bit, not the principle.
+        with self.assertRaises(real.error) as caught:
+            real.compile("a", 1024)
+        self.assertIn("0x400", caught.exception.msg)
+        # And the L/DEBUG door stays first, so a stray bit riding with them does not steal the
+        # more specific message.
+        for flags in (4 | 1, 128 | 1):
+            with self.subTest(flags=flags), self.assertRaises(real.error) as caught:
+                real.compile("a", flags)
+            self.assertIn("re.L and re.DEBUG", caught.exception.msg)
+            self.assertNotIn("unknown flag", caught.exception.msg)
+
+    def test_no_TEMPLATE_is_exported_or_named(self):
+        # The constant does not exist on any supported version, so putting the word in front of a
+        # user would describe something they cannot have.
+        self.assertFalse(hasattr(real, "TEMPLATE"))
+        with self.assertRaises(real.error) as caught:
+            real.compile("a", 1024)
+        self.assertNotIn("TEMPLATE", caught.exception.msg)
 
 
 class TestIntentionalDivergences(unittest.TestCase):
