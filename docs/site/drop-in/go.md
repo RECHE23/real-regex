@@ -12,7 +12,7 @@ manual comparison nobody could have automated.
 
 # Drop-in for Go `regexp`
 
-**v0.2 subset, strict (cgo; macOS-arm64 & linux-x86-64 only).**
+**v0.3 subset, strict (cgo; macOS-arm64 & linux-x86-64 only).**
 The methods below, not the whole `regexp.Regexp` surface. Every accepted pattern is guaranteed linear.
 An unsupported construct is rejected at compile time instead of silently backtracking.
 
@@ -77,7 +77,7 @@ The fourth is `\w`/`\d`/`\s` above; the fifth is malformed UTF-8 through the
 `[]byte` methods, where `regexp` substitutes U+FFFD and this package matches
 nothing. All five are pinned in both directions by the binding's tests.
 
-v0.2-specific: cgo required; supported platforms are macOS-arm64 and
+v0.3-specific: cgo required; supported platforms are macOS-arm64 and
 linux-x86-64 only; no flags parameter exposed in the Go API (always compiles
 with default flags). Not in this subset: `Expand`.
 

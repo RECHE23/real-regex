@@ -71,7 +71,7 @@ include mk/help.mk
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers check-doc-style check-doc-voice check-curated-members check-bench-stamp check-bench-ratios gate-venv check-sse2-floor \
-        check-site-anchors check-workflows check-abi3-floor check-doc-mirror check-sabotage check-tolerated-count check-stdlib-attribution check-doxygen-pin
+        check-site-anchors check-workflows check-abi3-floor check-doc-mirror check-sabotage check-tolerated-count check-stdlib-attribution check-doxygen-pin check-go-version-labels
 
 .DEFAULT_GOAL := help
 
@@ -516,6 +516,18 @@ check-stdlib-attribution: ## [gates] A one-implementation std::regex behaviour m
 	@python3 tools/check_stdlib_attribution.py --self-test
 	@python3 tools/check_stdlib_attribution.py
 
+# Three pages a Go visitor reads carried `v0.2` while the published module was `v0.3.3` -- two minors
+# behind. Nothing they SAID was wrong; they were wrong about what they WERE, which no content check
+# sees: check-doc-mirror ties mirrors to canons and compares no prose on the distilled ones. The
+# label had no coupling to the thing it names, because the module's version lives in git tags. This
+# reads the same tags `release` derives the next version from, so tagging v0.4.0 turns the pages red
+# at the moment they can still be fixed. --self-test drifts each page AND asserts a past minor inside
+# an HTML comment does not trip it: a guard that cannot tell a stale label from a changelog entry
+# would teach someone to falsify the record.
+check-go-version-labels: ## [gates] The Go binding's living pages carry the module's current minor
+	@python3 tools/check_go_version_labels.py --self-test
+	@python3 tools/check_go_version_labels.py
+
 # `make doc-check` reproduces "the CI Doxygen" via apt inside ubuntu:24.04 and prints the version.
 # The publishing workflows ran a bare `apt-get install -y doxygen` on `ubuntu-latest`, so the two
 # agreed only while the label MEANT 24.04 -- an accident, and the one that publishes is the one a
@@ -813,6 +825,8 @@ full-local-gate-impl:
 	@$(MAKE) check-stdlib-attribution
 	@echo "── [7c2d/25] check-doxygen-pin (the publishing workflows pin 1.9.8, with a witness)"
 	@$(MAKE) check-doxygen-pin
+	@echo "── [7c2e/25] check-go-version-labels (the Go pages carry the module's live minor)"
+	@$(MAKE) check-go-version-labels
 	@echo "── [7c3/25] check-sabotage (SIGTERM a run in flight; the canary must come back)"
 	@$(MAKE) check-sabotage
 	@echo "── [7d/25] doc-site-xml + check-doc-voice + check-curated-members"
