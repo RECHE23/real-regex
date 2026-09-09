@@ -85,6 +85,13 @@ TEST(seam_run_class_loop)
   expect_seam_agrees("[a-z]+", "a b c d e f g h i j k l m n o p q r s t u v w x y z");       // sparse
   expect_seam_agrees("[a-z]+", "hello world", 6);                                            // region pos>0
   expect_seam_agrees_corpus("[a-z]+");
+  // `$` + a class that holds `\n`: the end-anchored runner used to strip the final newline
+  // unconditionally. These are answers, not shapes -- `\s$` / `[ \t\n]+$` over a trailing
+  // newline disagreed with the general VM.
+  expect_seam_agrees("[ \t\n]+$", "ab\n");
+  expect_seam_agrees("[ \t\n]+$", " \n");
+  expect_seam_agrees("[ \t\n]+$", "\n");
+  expect_seam_agrees("[ \t]+$", " \n");                 // class that does NOT hold `\n`: still ends before it
   // B-2 wrap: \b...\b keeps wb hints ON the class-loop itself (not dropped like B-1).
   expect_seam_agrees(R"(\b[a-z]+\b)", "the QUICK-brown_fox jumps, cafe\xC3\xA9 next-door");
   expect_seam_agrees(R"(\b[a-z]+\b)", "xhello worldx"); // no boundary anywhere
@@ -152,6 +159,15 @@ TEST(seam_run_cp_class_loop)
   expect_seam_agrees(R"(\B\w)", std::string("\xC3\xA9") + "a"); // multi-byte then ASCII word junction
   expect_seam_agrees(R"(\B\d)", "a12b 9 99");
   expect_seam_agrees_corpus(R"(\B\w)");
+  // `$` + a code-point class that holds `\n`. The runner treated `$`'s before-newline
+  // position as the only limit, so `\s$` over "ab\n" and `\s+$` over " \n" answered nothing.
+  expect_seam_agrees(R"(\s$)", "ab\n");
+  expect_seam_agrees(R"(\s$)", "\n");
+  expect_seam_agrees(R"(\s$)", " \n");
+  expect_seam_agrees(R"(\s+$)", " \n");
+  expect_seam_agrees(R"(\s+$)", "\n\n");
+  expect_seam_agrees(R"(\W$)", "ab\n");
+  expect_seam_agrees(R"(\s\Z)", "ab\n"); // `\Z` was already the true end; pin it stays
 }
 
 TEST(seam_run_inner_literal_wb)

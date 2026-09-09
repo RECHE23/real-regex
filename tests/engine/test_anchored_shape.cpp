@@ -120,6 +120,54 @@ TEST(dollar_accepts_one_final_newline_but_backslash_z_does_not)
   EXPECT(!real::regex {"[a-z]+"}.fullmatch(std::string_view {"abc\n"}).matched());
 }
 
+// `$` matches at the true end AND just before one final newline. A class that HOLDS `\n` consumes
+// it and ends at the true end; a class that does not still ends before it. The two class routes
+// used to pick only the before-newline position, so `\s$` over "ab\n" answered nothing while the
+// general VM answered (2, 3). Not the counted `{k}` hole: `\s$` has k == 1, so `counted_end`
+// does not refuse the route.
+TEST(dollar_class_that_holds_newline_consumes_it)
+{
+  const auto span = [](const real::regex& rx, std::string_view t) {
+                      const auto m {rx.search(t)};
+                      EXPECT(m.matched());
+                      return std::pair<std::size_t, std::size_t> {m.start(0), m.end(0)};
+                    };
+
+  const real::regex s     {"\\s$"};
+  const real::regex splus {"\\s+$"};
+  const real::regex w     {"\\W$"};
+  const real::regex nl    {"[ \t\n]+$"};
+  const real::regex tab   {"[ \t]+$"};
+
+  EXPECT((span(s, "ab\n") == std::pair<std::size_t, std::size_t> {2, 3}));
+  EXPECT((span(s, "\n") == std::pair<std::size_t, std::size_t> {0, 1}));
+  EXPECT((span(s, " \n") == std::pair<std::size_t, std::size_t> {0, 1})); // leftmost: the space, `$` before `\n`
+  EXPECT((span(s, "ab\n\n") == std::pair<std::size_t, std::size_t> {2, 3}));
+
+  EXPECT((span(splus, "ab\n") == std::pair<std::size_t, std::size_t> {2, 3}));
+  EXPECT((span(splus, " \n") == std::pair<std::size_t, std::size_t> {0, 2})); // greedy: space AND newline
+  EXPECT((span(splus, "\n\n") == std::pair<std::size_t, std::size_t> {0, 2}));
+  EXPECT((span(splus, "\n") == std::pair<std::size_t, std::size_t> {0, 1}));
+
+  EXPECT((span(w, "ab\n") == std::pair<std::size_t, std::size_t> {2, 3}));
+  EXPECT((span(nl, " \n") == std::pair<std::size_t, std::size_t> {0, 2}));
+  EXPECT((span(nl, "ab\n") == std::pair<std::size_t, std::size_t> {2, 3}));
+  EXPECT((span(tab, " \n") == std::pair<std::size_t, std::size_t> {0, 1})); // `[ \t]` cannot hold `\n`
+
+  // `\Z` is the strict end: `\s\Z` over "ab\n" still consumes the newline.
+  EXPECT((span(real::regex {"\\s\\Z"}, "ab\n") == std::pair<std::size_t, std::size_t> {2, 3}));
+  // Multiline `$` is a different assertion and is not peeled; it already agreed.
+  EXPECT((span(real::regex {"\\s$", real::flags::multiline}, "ab\n")
+          == std::pair<std::size_t, std::size_t> {2, 3}));
+
+  // The routes stay ARMED -- this is a runner fix, not another counted_end refusal.
+  EXPECT(s.raw_program().hints.greedy_cp_class >= 0);
+  EXPECT_EQ(static_cast<int>(s.raw_program().hints.greedy_cp_class_end), 2);
+  EXPECT(splus.raw_program().hints.greedy_cp_class >= 0);
+  EXPECT(nl.raw_program().hints.greedy_class_loop >= 0);
+  EXPECT_EQ(static_cast<int>(nl.raw_program().hints.greedy_class_loop_end), 2);
+}
+
 TEST(end_anchored_shape_yields_one_match_per_walk)
 {
   const real::regex                                rx {"[a-z]+$"};
@@ -137,9 +185,13 @@ TEST(end_anchored_shape_agrees_with_the_general_route)
   // The counted forms are here because the list above could not see the hole: every entry was
   // unbounded (`+`, `{2,}`), and the route's retry skip is only wrong for a run bounded from ABOVE.
   for (const char* pat : {"[a-z]+$", "^[a-z]+$", "[a-z]+\\Z", "^[a-z]+\\Z", "[0-9]+$", "[a-z]{2,}$",
-                          "\\w{2}$", "\\w{2}\\Z", "\\w{3}\\Z"}) {
+                          "\\w{2}$", "\\w{2}\\Z", "\\w{3}\\Z",
+                          // Classes that HOLD `\n`. The list above could not see this hole: every
+                          // entry refused the newline, so always-stripping it for `$` agreed with
+                          // the general VM. `\s$` over "ab\n" is the published miss.
+                          "\\s$", "\\s+$", "\\s{1,}$", "\\W$", "\\W+$", "[ \t\n]+$", "[\\n]+$"}) {
     for (const char* subj : {"", "a", "abc", "abc def", "abc\n", "abc\n\n", "  abc", "123abc",
-                             "abc123", "abc\ndef"}) {
+                             "abc123", "abc\ndef", "\n", " \n", "ab\n", "  \n", "\n\n"}) {
       real::detail::class_fastpath_disabled() = false;
       const auto fast    {walk(real::regex {pat}, subj)};
       real::detail::class_fastpath_disabled() = true;
