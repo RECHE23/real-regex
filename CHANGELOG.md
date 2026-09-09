@@ -2,6 +2,38 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.9.5
+
+9.5 (**`\w{2}$` answered None**): **THESE TABLES DO NOT MOVE, AND THE STAMP IS DELIBERATELY LEFT AT
+`2026.8.15`** — the fifth train in a row, same reason and no new argument: this document declares a
+**two-ISA** regime and only arm64 was available, so refreshing one leg would publish a table whose
+halves describe different trees. **NO CELL WAS RE-RUN, AND NONE IS EDITED.** **9.2's "unreachable
+from a pattern that compiled" ARGUMENT IS NOT AVAILABLE AND IS NOT REUSED:** this train CHANGES
+ANSWERS — a code-point class under a counted repeat, anchored at the end, was found only when the
+match's start offset was a multiple of the repeat's width, so `\w{2}$` over "xab" reported no match
+and `\w{3}\Z` succeeded iff `(len - 3) % 3 == 0`. **AND THE USUAL ARGUMENT IS THE WRONG SHAPE HERE
+FOR A SECOND REASON:** the fix takes a shape OFF a fast route, which is precisely what a performance
+veto watches, so each half was MEASURED. **THE ONE CELL THAT LOOKS LIKE THE AFFECTED SHAPE IS NOT ON
+THAT ROUTE:** the date-time cell `^[0-9]{4}-[0-9]{2}-[0-9]{2}_…$` is fixed-shape and reports
+`greedy_cp_class == -1` BEFORE AND AFTER the refusal — `[0-9]` gains no non-ASCII partner under any
+flag, so it is a byte class and never reached the code-point route. **THE SHAPE ACTUALLY DISARMED IS
+`\d{2}$` / `\w{2}$`,** measured `0` before and `-1` after, and no cell has it: the nearest,
+`(\d{4})-(\d{2})-(\d{2})`, carries no end anchor, and `\d{2}` unanchored stays armed. **SO
+`matrix-gate` HAS NOTHING TO REACT TO,** and the cost of the refusal falls on a shape that was
+answering wrongly. **HOW IT SURFACED, AND THE LIMIT OF WHAT THAT PROVES:** the Python differential
+fuzzer at `REAL_FUZZ_ITERS=200000` — the budget its own docstring advertises, where CI runs 4 000 —
+was red on `main` on this defect and aborted at the first disagreement, roughly a quarter of the way
+in by wall clock; with the refusal in place the same seed (20260612) and budget complete clean in
+about two minutes, so the three quarters never reached now have been. That is a statement about THOSE
+200 000 DRAWS UNDER THAT SEED and nothing more — a different seed samples the space differently
+rather than more deeply, and no claim is made that this budget is sufficient or that it would have
+caught any other defect. **NOT CLAIMED:** nothing was run against the previous tree, the veto matrix
+was not exercised for this train, `GATE_STRICT` is asserted nowhere, `conformance` could not have
+seen this defect either (the exhaustive sweep enumerates over the alphabet `ab`, where the shape is
+unreachable), and the two internal sentinel sites named in 9.1 — `_real.cpp:1183` per STEP and
+`real_iter` per CALL — are still untouched and still unmeasured. The train's other commit, the Go
+binding's living pages carrying the module's minor, moves no answers.
+
 ## v2026.9.4
 
 9.4 (**an alternation that matched neither of its own branches**): **THESE TABLES DO NOT MOVE, AND THE
