@@ -2,6 +2,39 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.9.4
+
+9.4 (**an alternation that matched neither of its own branches**): **THESE TABLES DO NOT MOVE, AND THE
+STAMP IS DELIBERATELY LEFT AT `2026.8.15`** — the fourth train in a row, same reason and no new
+argument: this document declares a **two-ISA** regime and only arm64 was available, so refreshing one
+leg would publish a table whose halves describe different trees. **NO CELL WAS RE-RUN, AND NONE IS
+EDITED.** **9.2's ARGUMENT IS NOT AVAILABLE HERE AND IS NOT REUSED:** that train could say every edit
+was unreachable from a pattern that compiled; this one CHANGES ANSWERS — `🥨|é`, `€|é` and `あ|€`
+matched neither of their own branches and now match both. So the claim is narrower and each half was
+GREPPED OR MEASURED RATHER THAN ASSERTED. **NO CELL HAS THE SHAPE WHOSE ANSWER CHANGED:** no benchmark
+pattern is a single-code-point alternation with a non-ASCII branch — the only non-ASCII `|` characters
+anywhere in `benchmarks/` are markdown table separators — and the two fusing patterns that do exist,
+`(a|b|c)` and `(a|a)*…c`, are ASCII, emitting **zero** `klass_cp` instructions because an ASCII fused
+set lives in the bitmap and never in the ranges, so neither the new sort nor the new gate is on their
+path. **THE GATE'S COST IS REACHED BY CELL PATTERNS, WHICH IS SAID RATHER THAN HIDDEN:**
+`((?:ERROR|WARN|FATAL):\s+.*)` interns a code-point class through `\s` and `.`, so "unreachable" is
+not the argument — what makes the cost invisible is WHERE COMPILATION SITS, verified per harness and
+not assumed: `bench_minimal.cpp:309`, `matrix4d.cpp:219`–`224` and `shift_or_census.cpp:216` all build
+their patterns before the measured loop, which receives an already-compiled regex. **THE TWO CELLS THAT
+DO TIME A COMPILATION ARE NAMED:** the ReDoS rows at `bench_engines.cpp:688` and `:696` construct
+inside the timed lambda, and their patterns `(a+)+b` and `^(a+)+$` measure **zero** `klass_cp`, so they
+never reach the gate. **THE ONE COST THIS TRAIN ADDS IS QUANTIFIED, ON THE PATH THAT HAS NO CELL:**
+asking the normalisation predicate per EMISSION rather than per distinct class cost +36 % on
+`(?i:\w{256})\w{256}` (517 -> 705 us) and moved `test_compile_scaling`'s worst local ratio from 6.88
+to 8.49 against its 16x bound; the check was moved to the new-class path and the ratio returned to 7.09,
+inside the noise. **HONESTLY BOUNDED:** the +36 % is measured on arm64 at `-O2`; that it is what crossed
+the bound on a shared `linux-clang` runner is NOT measured here, since the same cost restored under a
+local sanitizer build passes — what is on record is that the probe was never red before this train, red
+2/2 with the per-emission pass, and green with the placement. **NOT CLAIMED:** no instrument was run
+against the previous tree, the veto matrix was not exercised for this train, `GATE_STRICT` is asserted
+nowhere, and the two internal sentinel sites named in 9.1 — `_real.cpp:1183` per STEP and `real_iter`
+per CALL — are still untouched and still unmeasured.
+
 ## v2026.9.3
 
 9.3 (**two use-after-frees, and every C++ edit is a declaration**): **THESE TABLES DO NOT MOVE, AND
