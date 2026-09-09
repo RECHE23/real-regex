@@ -134,7 +134,10 @@ TEST(end_anchored_shape_yields_one_match_per_walk)
 
 TEST(end_anchored_shape_agrees_with_the_general_route)
 {
-  for (const char* pat : {"[a-z]+$", "^[a-z]+$", "[a-z]+\\Z", "^[a-z]+\\Z", "[0-9]+$", "[a-z]{2,}$"}) {
+  // The counted forms are here because the list above could not see the hole: every entry was
+  // unbounded (`+`, `{2,}`), and the route's retry skip is only wrong for a run bounded from ABOVE.
+  for (const char* pat : {"[a-z]+$", "^[a-z]+$", "[a-z]+\\Z", "^[a-z]+\\Z", "[0-9]+$", "[a-z]{2,}$",
+                          "\\w{2}$", "\\w{2}\\Z", "\\w{3}\\Z"}) {
     for (const char* subj : {"", "a", "abc", "abc def", "abc\n", "abc\n\n", "  abc", "123abc",
                              "abc123", "abc\ndef"}) {
       real::detail::class_fastpath_disabled() = false;
@@ -255,4 +258,57 @@ TEST(fixed_shape_anchored_routed_equals_core)
   }
   real::detail::fixed_shape_route_disabled() = false;
   EXPECT(saw_armed);
+}
+
+// A counted code-point class under an end anchor is REFUSED by the route, and these are ANSWERS
+// rather than a shape: the wrong program answered `None` where a match exists, which no shape
+// comparison names. The route's two retry loops skip past a maximal run because a run that stops
+// short of the limit can never be the match -- true for `+` and `{k,}`, false for `{k}`, whose run
+// is bounded from above. The visible signature was that only start offsets at a multiple of the
+// width were ever tried.
+TEST(a_counted_codepoint_class_under_an_end_anchor_answers_at_every_offset)
+{
+  for (const char* pat : {"\\w{2}$", "\\w{2}\\Z"}) {
+    const real::regex rx {pat};
+    EXPECT_EQ(rx.search(std::string_view {"ab"}).start(0), 0U);
+    EXPECT_EQ(rx.search(std::string_view {"xab"}).start(0), 1U);   // the odd offset the skip lost
+    EXPECT_EQ(rx.search(std::string_view {"xxab"}).start(0), 2U);
+    EXPECT_EQ(rx.search(std::string_view {"abc"}).start(0), 1U);
+    EXPECT_EQ(rx.search(std::string_view {"xxabc"}).start(0), 3U);
+  }
+
+  // Width 3 makes the arithmetic explicit: before the refusal this succeeded only when the match's
+  // start was a multiple of 3, so the answer depended on the SUBJECT's length modulo the width.
+  const real::regex three {"\\w{3}\\Z"};
+  for (const char* subj : {"abc", "xabc", "xxabc", "xxxabc", "xxxxabc", "xxxxxabc"}) {
+    const std::string_view s {subj};
+    EXPECT(three.search(s).matched());
+    EXPECT_EQ(three.search(s).start(0), s.size() - 3U);
+  }
+
+  // Under icase the fold gives `[a-z]` non-ASCII partners, which is what makes it a CODE-POINT class
+  // and puts it on this route at all; without icase it is a byte class and was never affected.
+  const real::regex folded {"[a-z]{2}\\Z", real::flags::icase};
+  EXPECT_EQ(folded.search(std::string_view {"xab"}).start(0), 1U);
+  const real::regex plain  {"[a-z]{2}\\Z"};
+  EXPECT_EQ(plain.search(std::string_view {"xab"}).start(0), 1U);
+}
+
+// The refusal is narrow: an UNBOUNDED run keeps the route, because its own end is the limit and the
+// skip is sound. These stay armed, and an end-anchored counted run does not.
+TEST(only_the_counted_end_anchored_shape_leaves_the_route)
+{
+  EXPECT(real::regex {"\\w{2}\\Z"}.raw_program().hints.greedy_cp_class < 0);
+  EXPECT(real::regex {"\\w{2}$"}.raw_program().hints.greedy_cp_class < 0);
+  EXPECT(real::regex {"\\w{3}\\Z"}.raw_program().hints.greedy_cp_class < 0);
+
+  EXPECT(real::regex {"\\w{2}"}.raw_program().hints.greedy_cp_class >= 0);
+  EXPECT(real::regex {"\\w{2,}\\Z"}.raw_program().hints.greedy_cp_class >= 0);
+  EXPECT(real::regex {"\\w+\\Z"}.raw_program().hints.greedy_cp_class >= 0);
+
+  // ...and the answers those keep are the ones they already had.
+  EXPECT_EQ(real::regex {"\\w{2}"}.search(std::string_view {"xab"}).start(0), 0U);
+  EXPECT_EQ(real::regex {"\\w{2}\\b"}.search(std::string_view {"xab"}).start(0), 1U);
+  EXPECT_EQ(real::regex {"\\w{2,}\\Z"}.search(std::string_view {"xab"}).start(0), 0U);
+  EXPECT_EQ(real::regex {"\\w+\\Z"}.search(std::string_view {"xab"}).start(0), 0U);
 }
