@@ -7,7 +7,9 @@
 // word-boundary allowlist exists because libstdc++/libc++ disagree with the spec on `\b` inside a
 // lookahead and on a bare `\B`. libc's regex is a different implementation of the same standard,
 // present on every POSIX platform, and it is the reference POSIX behaviour rather than a rendering
-// of it: leftmost-LONGEST, which is the property the translators exist to preserve.
+// of it: leftmost-LONGEST on group 0, which is the property the translators exist to preserve.
+// Captures are the winning thread's, not POSIX subexpression selection — documented on the
+// compat pages, pinned below, and therefore not in the equality sweep.
 //
 // The construct set is deliberately the unambiguous POSIX core. Left out because libc
 // implementations legitimately differ or because they are outside what the translators claim:
@@ -106,6 +108,12 @@ namespace {
   // POSIX ERE. Alternation carries the weight: leftmost-longest is what separates POSIX from every
   // Perl-family engine, and `a|ab` over "abc" is the one-line proof (POSIX says 0..2, a
   // leftmost-FIRST engine says 0..1).
+  //
+  // An unequal-width alternation FOLLOWED by a group that can absorb the difference is not here.
+  // `(a|ab)c` is: the literal forces one branch. `(a)(b)` and `(a|b)(c|d)` are: widths match.
+  // `(x|xy)(y*)` is the missing product — same overall span, different groups — and lives in
+  // ere_submatch_selection_patterns. Putting one here turns every subject that reaches the class
+  // into a red for a documented reason, and hides any other divergence in the same run.
   const std::vector<std::string>& ere_patterns()
   {
     static const std::vector<std::string> list {
@@ -115,6 +123,20 @@ namespace {
       ".", ".*", "a.c", "^a", "a$", "^a$", "^", "$",
       "a{2}", "a{2,}", "a{2,3}", "(a)(b)", "(a)|(b)", "((a)b)", "(a*)(b*)",
       "x*", "()", "[0-9]{2,4}", "a|b|c", "(a|b)(c|d)",
+    };
+    return list;
+  }
+
+  // The form the equality table structurally cannot hold: an unequal-width alternation and a
+  // following group that can take the leftover. Group 0 agrees (leftmost-longest holds).
+  // Groups 1+ follow the winning thread, not POSIX (maximise group 1, then group 2, …).
+  // The third row is golang/go#9684's own pattern.
+  const std::vector<std::string>& ere_submatch_selection_patterns()
+  {
+    static const std::vector<std::string> list {
+      "(x|xy)(y*)",
+      "(a|ab)(b*)",
+      "^([^:=]*)(:|:=)(.*)$",
     };
     return list;
   }
@@ -205,7 +227,8 @@ namespace {
 
   tally sweep(const std::vector<std::string>&         patterns,
               int                                     cflags,
-              rc::regex_constants::syntax_option_type option)
+              rc::regex_constants::syntax_option_type option,
+              bool                                    groups_beyond_zero = true)
   {
     tally result;
     for (const auto& pattern : patterns) {
@@ -229,9 +252,11 @@ namespace {
         }
         // Group 0 is the contract POSIX states; a libc that reports fewer slots than this engine
         // does is compared only over the slots it reported, so an extra capture cannot read as a
-        // divergence in the whole-match bounds.
+        // divergence in the whole-match bounds. groups_beyond_zero is false for the documented
+        // submatch-selection class: those patterns agree on group 0 and differ after it.
         const std::size_t common {want.size() < got.size() ? want.size() : got.size()};
-        for (std::size_t group = 0; group < common; ++group) {
+        const std::size_t last   {groups_beyond_zero ? common : (common > 0 ? 1 : 0)};
+        for (std::size_t group = 0; group < last; ++group) {
           if (want[group] != got[group]) {
             std::string note {"pattern '"};
             note.append(pattern).append("' subject '").append(subject).append("' group ");
@@ -350,6 +375,62 @@ TEST(posix_leftmost_longest_is_what_libc_says)
     EXPECT(got.front().second == one.end);
   }
   EXPECT(sizeof(cases) / sizeof(cases[0]) == 5); // a deleted row must fail, not shrink
+}
+
+TEST(posix_submatch_selection_group0_equals_libc)
+{
+  // The reaching forms, compared on group 0 only, across the same subjects as the equality
+  // sweep. Leftmost-longest still has to hold here; putting these in ere_patterns() would
+  // fail on groups 1+ for a documented reason.
+  const c_locale_guard locale;
+  EXPECT(locale.installed());
+  const tally result {sweep(ere_submatch_selection_patterns(), REG_EXTENDED,
+                            rc::regex_constants::extended, false)};
+  report("posix ERE submatch-selection group 0 vs libc", result);
+  EXPECT(result.compared > 0);
+  EXPECT(result.failures.empty());
+  EXPECT(ere_submatch_selection_patterns().size() == 3); // a deleted row must fail, not shrink
+}
+
+TEST(posix_submatch_is_the_winning_thread)
+{
+  // The class the equality table cannot reach: same group 0, different groups after it.
+  // Documented real spans are pinned (the winning thread). libc is the oracle for
+  // "group 0 agrees" and "some later group differs" — exact libc group-N is not pinned,
+  // so a libc that disagreed with another libc on submatch would not make this a statement
+  // about which libc is present (the same trap as `(|a)`).
+  const c_locale_guard locale;
+  EXPECT(locale.installed());
+  const struct
+  {
+    const char* pattern;
+    const char* subject;
+    spans       real;
+  } cases[] {
+    {.pattern = "(x|xy)(y*)", .subject = "xy",
+     .real    = {{0, 2}, {0, 1}, {1, 2}}},
+    {.pattern = "(a|ab)(b*)", .subject = "abb",
+     .real    = {{0, 3}, {0, 1}, {1, 3}}},
+    {.pattern = "^([^:=]*)(:|:=)(.*)$", .subject = "x:=y",
+     .real    = {{0, 4}, {0, 1}, {1, 2}, {2, 4}}},
+  };
+  for (const auto& one : cases) {
+    const spans want {libc_spans(one.pattern, one.subject, REG_EXTENDED)};
+    const spans got  {real_spans(one.pattern, one.subject, rc::regex_constants::extended)};
+    EXPECT(!want.empty());
+    EXPECT(!got.empty());
+    EXPECT(want.front() == got.front()); // leftmost-longest holds
+    EXPECT(got == one.real);             // the documented winning thread
+    bool              later_differs {false};
+    const std::size_t common        {want.size() < got.size() ? want.size() : got.size()};
+    for (std::size_t group = 1; group < common; ++group) {
+      if (want[group] != got[group]) {
+        later_differs = true;
+      }
+    }
+    EXPECT(later_differs); // the class is actually reached, not another (a|ab)c
+  }
+  EXPECT(sizeof(cases) / sizeof(cases[0]) == 3);
 }
 
 #endif // _WIN32

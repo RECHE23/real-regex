@@ -76,8 +76,13 @@ ECMAScript-`$` (end-only), ECMAScript-`.` (excludes `\n` and `\r`) semantics lin
 `std::basic_regex<char>`. Routing:
 
 0. **Any single POSIX grammar** — `extended` (ERE), `basic` (BRE), `awk`, `grep`, `egrep` — → translated to
-   REAL and run on the **linear engine with leftmost-longest bounds** (the POSIX semantics), when the pattern
-   translates; otherwise `std::regex`. `regex.posix_longest()` reports this. **All** operations are linear for a
+   REAL and run on the **linear engine with leftmost-longest bounds** (group 0 — the POSIX overall-match
+   rule), when the pattern translates; otherwise `std::regex`. `regex.posix_longest()` reports this.
+   Captures are the winning thread's at that longest bound, not POSIX subexpression selection (maximise
+   group 1, then group 2, …). `(x|xy)(y*)` on `"xy"` is the one-line proof: libc reports groups `xy`,
+   `xy`, empty; this layer reports `xy`, `x`, `y`. The same class golang/go#9684 documents for Go's
+   `regexp`; implementing POSIX submatch on a linear engine is why that project documents the gap
+   rather than closing it, and the same reason applies here. **All** operations are linear for a
    translated **non-nullable** pattern — `search`/`match` via `search_longest`, `regex_replace`/iterators via
    `find_iter_longest`; a nullable one (`x*`, `a*`) keeps `search` on REAL but delegates its replace/iterate to
    `std` (POSIX-correct bounds, the empty-match traversal differs — the same exclusion as the ECMAScript path).
@@ -101,8 +106,8 @@ Literals, concatenation, alternation, `.` (ECMAScript), character classes & rang
 non-capturing, named), **lookahead and lookbehind** (bounded — `real`'s ReDoS-safe lookaround),
 ASCII `icase`, `multiline`. Non-ASCII **literals** match byte-for-byte like `std::regex<char>`.
 The **POSIX `extended` (ERE) grammar** also runs here — translated to REAL and matched with leftmost-longest
-(POSIX) bounds via `search_longest`, so `(a+)+b` and friends cannot be ReDoS'd even under an ERE grammar (`std`
-would backtrack). POSIX classes `[[:alpha:]]`…`[[:xdigit:]]` become their C-locale ASCII ranges.
+(POSIX) bounds on group 0 via `search_longest`, so `(a+)+b` and friends cannot be ReDoS'd even under an ERE grammar (`std`
+would backtrack). Captures follow the winning thread, not POSIX submatch (see routing). POSIX classes `[[:alpha:]]`…`[[:xdigit:]]` become their C-locale ASCII ranges.
 
 ### Native API — trailing-LA throughput surfaces (not a correctness split)
 
@@ -340,7 +345,8 @@ plus the option screen — `real` is never even tried, so these are std by const
   `wsregex_token_iterator`/`wcregex_token_iterator`; `regex_search`/`regex_match`/`regex_replace` are
   templated on `CharT` and dispatch the wide path to `std`.
 - **POSIX grammars** (`basic`/`extended`/`awk`/`grep`/`egrep`): translated to REAL and run on the linear
-  engine with leftmost-longest bounds when the pattern translates (see the routing above); an untranslatable
+  engine with leftmost-longest bounds (group 0; captures are not POSIX submatch — see routing) when the
+  pattern translates; an untranslatable
   construct (a backreference, an ECMAScript-ism, a std-library-divergent corner) declines to `std`. **`collate`**
   is screened to `std` up front (locale-sensitive ranges are outside `real`'s model).
 - **`nosubs`**: `std` answers it by exposing only group 0, while `real` always reports every group — a
