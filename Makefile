@@ -71,7 +71,7 @@ include mk/help.mk
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers check-doc-style check-doc-voice check-curated-members check-bench-stamp check-bench-ratios gate-venv check-sse2-floor \
-        check-site-anchors check-workflows check-abi3-floor check-doc-mirror check-sabotage check-tolerated-count check-stdlib-attribution check-doxygen-pin check-go-version-labels
+        check-site-anchors check-workflows check-abi3-floor check-doc-mirror check-sabotage check-tolerated-count check-stdlib-attribution check-doxygen-pin check-apt-bound check-go-version-labels
 
 .DEFAULT_GOAL := help
 
@@ -539,6 +539,17 @@ check-go-version-labels: ## [gates] The Go binding's living pages carry the modu
 check-doxygen-pin: ## [gates] The publishing workflows pin Doxygen 1.9.8, and the pin has a witness
 	@python3 tools/check_doxygen_pin.py
 
+# A bare `apt-get update` on the GitHub Ubuntu image also hits microsoft/docker
+# indexes. A Hash Sum mismatch on any of those blocked docs publication twice
+# (2026-09-09). tools/ci-apt-ubuntu.sh drops those sources first; this check
+# refuses a workflow that goes around it, and refuses a script that no longer
+# performs the bound. --self-test drives each arm on its own (a bare update
+# trips two script arms at once, so that shape is not used) and the print
+# path, so a green is not a hand-run that nobody will repeat.
+check-apt-bound: ## [gates] Workflows refresh only Ubuntu apt indexes
+	@python3 tools/check_apt_bound.py --self-test
+	@python3 tools/check_apt_bound.py
+
 # Three phases, because the harness has three claims and a claim nobody has seen fail is not a
 # claim. (1) The artifact map: the right rebuild command per file, and a NAMED silence for a file
 # with no registered artifact -- a decorative rebuild reads as coverage. (2) The artifact after a
@@ -825,6 +836,8 @@ full-local-gate-impl:
 	@$(MAKE) check-stdlib-attribution
 	@echo "── [7c2d/25] check-doxygen-pin (the publishing workflows pin 1.9.8, with a witness)"
 	@$(MAKE) check-doxygen-pin
+	@echo "── [7c2d2/25] check-apt-bound (workflows refresh only Ubuntu apt indexes)"
+	@$(MAKE) check-apt-bound
 	@echo "── [7c2e/25] check-go-version-labels (the Go pages carry the module's live minor)"
 	@$(MAKE) check-go-version-labels
 	@echo "── [7c3/25] check-sabotage (SIGTERM a run in flight; the canary must come back)"

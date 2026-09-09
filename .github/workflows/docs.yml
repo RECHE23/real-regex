@@ -46,7 +46,7 @@ jobs:
           ref: v2026.7.2
           path: sciforge
       - name: Install Doxygen, Graphviz, Clang and LLVM coverage tools
-        run: sudo apt-get update && sudo apt-get install -y doxygen graphviz clang llvm
+        run: sh real-regex/tools/ci-apt-ubuntu.sh doxygen graphviz clang llvm
       - name: Assert the pinned Doxygen (the version make doc-check claims to reproduce)
         run: |
           set -eu

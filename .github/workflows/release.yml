@@ -52,7 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install the shim's build deps (clang for the cc-build)
-        run: sudo apt-get update && sudo apt-get install -y clang
+        run: sh tools/ci-apt-ubuntu.sh clang
       - name: Skip if this version is already on crates.io (idempotent re-run)
         id: exists
         run: |

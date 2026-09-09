@@ -47,7 +47,7 @@ jobs:
           python-version: '3.11'
           update-environment: false
       - name: Install doxygen + build tools
-        run: sudo apt-get update && sudo apt-get install -y doxygen graphviz cmake build-essential
+        run: sh real-regex/tools/ci-apt-ubuntu.sh doxygen graphviz cmake build-essential
       # Same Uncrustify 0.82 pin as lint-cpp (cached — cold build once, then ~instant).
       - name: Cache Uncrustify 0.82.0
         id: uncrustify
@@ -83,6 +83,8 @@ jobs:
           # the local gate, not here.
           echo "── check-workflows (actionlint over .github/workflows)"
           make -C real-regex check-workflows
+          echo "── check-apt-bound (workflows refresh only Ubuntu apt indexes)"
+          make -C real-regex check-apt-bound
           echo "── version-check"
           make -C real-regex version-check
           echo "── check-layers"
@@ -172,7 +174,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install 32-bit g++ multilib
-        run: sudo apt-get update && sudo apt-get install -y g++-multilib
+        run: sh tools/ci-apt-ubuntu.sh g++-multilib
       - name: Syntax-only the engine headers with a 32-bit size_t
         run: |
           set -euo pipefail
@@ -209,7 +211,7 @@ jobs:
       # CI installs libre2 so the oracle always runs. Catches GlobalReplace empty-abut and kin.
       # Reproduce: make fuzz-re2  (needs pkg-config re2). Can-fail: REAL_RE2_DIFF_CANFAIL=1.
       - name: Install libre2 (oracle for real::compat::re2 differential)
-        run: sudo apt-get update && sudo apt-get install -y libre2-dev pkg-config
+        run: sh tools/ci-apt-ubuntu.sh libre2-dev pkg-config
       - name: RE2 drop-in differential (real::compat::re2 vs true libre2)
         run: make fuzz-re2 CXX=clang++
       # LAST on purpose. Filed units live in fuzz/known-crashes/, out of both timed corpora:
@@ -243,7 +245,7 @@ jobs:
         with:
           python-version: '3.14'
       - name: Install clang + cmake
-        run: sudo apt-get update && sudo apt-get install -y clang cmake
+        run: sh real-regex/tools/ci-apt-ubuntu.sh clang cmake
       - name: Install build deps (setuptools — not bundled on Python 3.12+)
         run: python -m pip install --upgrade pip setuptools
       - name: Pin-drift lint (SciForge pins consistent)
@@ -269,7 +271,7 @@ jobs:
         with:
           path: real-regex
       - name: Install clang + cmake
-        run: sudo apt-get update && sudo apt-get install -y clang cmake
+        run: sh real-regex/tools/ci-apt-ubuntu.sh clang cmake
       - name: C ABI shim smoke
         run: make -C real-regex c-test
       - name: Rust crate — differential vs the regex crate
@@ -315,7 +317,7 @@ jobs:
           go-version: '1.21'
       - name: Install g++ (Ubuntu — cgo needs a C++ compiler; macOS runners ship Xcode's clang++)
         if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install -y g++
+        run: sh tools/ci-apt-ubuntu.sh g++
       - name: Vendored C-ABI drift check
         if: matrix.os == 'ubuntu-latest'
         run: make go-check-vendor
@@ -331,7 +333,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install clang (the shim's cc-build)
-        run: sudo apt-get update && sudo apt-get install -y clang
+        run: sh tools/ci-apt-ubuntu.sh clang
       - name: Install nightly + cargo-fuzz
         run: |
           rustup toolchain install nightly --profile minimal
@@ -354,7 +356,7 @@ jobs:
           ref: v2026.7.2
           path: sciforge
       - name: Install clang + llvm
-        run: sudo apt-get update && sudo apt-get install -y clang llvm
+        run: sh real-regex/tools/ci-apt-ubuntu.sh clang llvm
       - name: Coverage gate (line >= floor)
         run: make -C real-regex coverage-check
 
@@ -382,7 +384,7 @@ jobs:
           ref: v2026.7.2
           path: sciforge
       - name: Install pkg-config + cmake + clang
-        run: sudo apt-get update && sudo apt-get install -y pkg-config cmake clang
+        run: sh real-regex/tools/ci-apt-ubuntu.sh pkg-config cmake clang
       - name: Install smoke (g++)
         run: make -C real-regex install-smoke
       - name: Install smoke (clang++)
