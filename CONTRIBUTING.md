@@ -56,6 +56,12 @@ Run it before every push. Individual steps (`make test`, `make lint`, `make cove
   file, and add the corresponding hint-field assertion to its `seam_matrix_coverage_manifest` test (which
   catches the table's own patterns silently losing coverage — it cannot, by itself, catch a brand-new hint
   field with no manifest line at all; this bullet is that other half).
+- **A new edge that can make a route contradict the general VM also needs the cartesian product.**
+  `tests/engine/test_route_vs_general.cpp` is the gate the per-runner seams are not: one shared
+  subject corpus (newline-ending included) times one pattern list that arms every route, compared
+  hint-blanked and per disable-knob. `\s$` over `"ab\n"` is a named witness in that file; dropping
+  either is a red. Add the pattern (and the subject, if it is a new edge) there, not only to the
+  curated seam-matrix pair.
 
 ## Releases
 
