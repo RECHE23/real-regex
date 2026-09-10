@@ -2440,6 +2440,19 @@ namespace real::detail {
      * Stripping the newline unconditionally made `\s$` over `"ab\n"` answer nothing while the
      * general VM (and Python's `re`) answered `(2, 3)` -- the same silent shape as the counted
      * `{k}` hole, a different line. The strip applies only when the class cannot hold `\n`.
+     *
+     * Completeness of that unique choice. `$` admits two ends (true end, and just before one final
+     * `\n`). This route picks exactly one as `limit` and walks back from it, so a post-check of the
+     * answer against the peeled assertion is a tautology -- the choice IS the answer. The
+     * enumeration is complete because this route only ever arms an UNBOUNDED greedy run (`+`, `{k,}`)
+     * -- measured: `{2}` and `{1,2}` leave `greedy_class_loop` at -1 with or without the anchor.
+     * An unbounded run over a class that holds `\n` always reaches the true end, so the
+     * before-newline position is never this route's answer. The same class under a BOUNDED count
+     * does answer before the newline -- `[ \t\n]{1,2}$` over `" \n\n"` is `(0, 2)` -- which is why
+     * the class alone is not the reason. If shape recognition ever arms a bounded run here, this
+     * argument falls before `counted_end`, which lives on the code-point path, not this one.
+     * Completeness is a proof obligation on this comment, not a runtime check; the cartesian
+     * route-vs-general product is what catches a wrong unique choice after the fact.
      * \tparam OutSlots Output slot container.
      * \param[in]  text      The subject.
      * \param[in]  start     Region start; the match may not begin before it.
