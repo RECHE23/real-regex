@@ -8,8 +8,10 @@
 // lookahead and on a bare `\B`. libc's regex is a different implementation of the same standard,
 // present on every POSIX platform, and it is the reference POSIX behaviour rather than a rendering
 // of it: leftmost-LONGEST on group 0, which is the property the translators exist to preserve.
-// Captures are the winning thread's, not POSIX subexpression selection — documented on the
-// compat pages, pinned below, and therefore not in the equality sweep.
+// Capture selection is not portable across libc implementations: macOS's libc maximises group 1
+// then group 2 (POSIX submatch); glibc reports the winning thread, like this engine and like Go.
+// Those forms are therefore not in the equality sweep — a full-group comparison would be a
+// statement about which libc is present, the same trap as `(|a)`.
 //
 // The construct set is deliberately the unambiguous POSIX core. Left out because libc
 // implementations legitimately differ or because they are outside what the translators claim:
@@ -111,9 +113,10 @@ namespace {
   //
   // An unequal-width alternation FOLLOWED by a group that can absorb the difference is not here.
   // `(a|ab)c` is: the literal forces one branch. `(a)(b)` and `(a|b)(c|d)` are: widths match.
-  // `(x|xy)(y*)` is the missing product — same overall span, different groups — and lives in
-  // ere_submatch_selection_patterns. Putting one here turns every subject that reaches the class
-  // into a red for a documented reason, and hides any other divergence in the same run.
+  // `(x|xy)(y*)` is the missing product — same overall span, different groups on macOS's libc —
+  // and lives in ere_submatch_selection_patterns. Putting one here would compare groups 1+
+  // against libc, which maximises them on macOS and agrees with this engine on glibc: a red
+  // on one platform and a green on the other, a statement about which libc is present.
   const std::vector<std::string>& ere_patterns()
   {
     static const std::vector<std::string> list {
@@ -127,10 +130,11 @@ namespace {
     return list;
   }
 
-  // The form the equality table structurally cannot hold: an unequal-width alternation and a
-  // following group that can take the leftover. Group 0 agrees (leftmost-longest holds).
-  // Groups 1+ follow the winning thread, not POSIX (maximise group 1, then group 2, …).
-  // The third row is golang/go#9684's own pattern.
+  // The form whose groups 1+ cannot join the equality sweep: an unequal-width alternation and a
+  // following group that can take the leftover. Group 0 agrees everywhere (leftmost-longest
+  // holds). Groups 1+ are macOS-maximised and glibc-identical to this engine, so they are
+  // pinned as this engine's documented spans, not compared to libc. The third row is
+  // golang/go#9684's own pattern.
   const std::vector<std::string>& ere_submatch_selection_patterns()
   {
     static const std::vector<std::string> list {
@@ -252,8 +256,8 @@ namespace {
         }
         // Group 0 is the contract POSIX states; a libc that reports fewer slots than this engine
         // does is compared only over the slots it reported, so an extra capture cannot read as a
-        // divergence in the whole-match bounds. groups_beyond_zero is false for the documented
-        // submatch-selection class: those patterns agree on group 0 and differ after it.
+        // divergence in the whole-match bounds. groups_beyond_zero is false for the submatch-
+        // selection class: group 0 is portable; groups 1+ are not (macOS maximises, glibc agrees).
         const std::size_t common {want.size() < got.size() ? want.size() : got.size()};
         const std::size_t last   {groups_beyond_zero ? common : (common > 0 ? 1 : 0)};
         for (std::size_t group = 0; group < last; ++group) {
@@ -380,8 +384,9 @@ TEST(posix_leftmost_longest_is_what_libc_says)
 TEST(posix_submatch_selection_group0_equals_libc)
 {
   // The reaching forms, compared on group 0 only, across the same subjects as the equality
-  // sweep. Leftmost-longest still has to hold here; putting these in ere_patterns() would
-  // fail on groups 1+ for a documented reason.
+  // sweep. Leftmost-longest still has to hold here. Groups 1+ stay out of this comparison:
+  // macOS's libc maximises them and glibc agrees with this engine, so a full-group sweep
+  // would be a statement about which libc is present (the same trap as `(|a)`).
   const c_locale_guard locale;
   EXPECT(locale.installed());
   const tally result {sweep(ere_submatch_selection_patterns(), REG_EXTENDED,
@@ -394,11 +399,16 @@ TEST(posix_submatch_selection_group0_equals_libc)
 
 TEST(posix_submatch_is_the_winning_thread)
 {
-  // The class the equality table cannot reach: same group 0, different groups after it.
-  // Documented real spans are pinned (the winning thread). libc is the oracle for
-  // "group 0 agrees" and "some later group differs" — exact libc group-N is not pinned,
-  // so a libc that disagreed with another libc on submatch would not make this a statement
-  // about which libc is present (the same trap as `(|a)`).
+  // Documented real spans are pinned (the winning thread). libc is the oracle for group 0
+  // only. Groups 1+ are NOT compared to libc: macOS's libc maximises them (POSIX submatch);
+  // glibc reports the same spans as this engine. An assertion that "some later group differs
+  // from the libc in this process" is a statement about which libc is present — the trap a
+  // previous revision of this test walked into.
+  //
+  // Reachability is a comparison of two documented constants: `.posix` is what macOS's libc
+  // renders (the maximising answer), `.real` is this engine. They must differ, or a
+  // non-reaching row — `(a|ab)c`, whose maximising answer equals this engine — can sit
+  // here in silence. No libc is consulted for that.
   const c_locale_guard locale;
   EXPECT(locale.installed());
   const struct
@@ -406,29 +416,26 @@ TEST(posix_submatch_is_the_winning_thread)
     const char* pattern;
     const char* subject;
     spans       real;
+    spans       posix;
   } cases[] {
     {.pattern = "(x|xy)(y*)", .subject = "xy",
-     .real    = {{0, 2}, {0, 1}, {1, 2}}},
+     .real    = {{0, 2}, {0, 1}, {1, 2}},
+     .posix   = {{0, 2}, {0, 2}, {2, 2}}},
     {.pattern = "(a|ab)(b*)", .subject = "abb",
-     .real    = {{0, 3}, {0, 1}, {1, 3}}},
+     .real    = {{0, 3}, {0, 1}, {1, 3}},
+     .posix   = {{0, 3}, {0, 2}, {2, 3}}},
     {.pattern = "^([^:=]*)(:|:=)(.*)$", .subject = "x:=y",
-     .real    = {{0, 4}, {0, 1}, {1, 2}, {2, 4}}},
+     .real    = {{0, 4}, {0, 1}, {1, 2}, {2, 4}},
+     .posix   = {{0, 4}, {0, 1}, {1, 3}, {3, 4}}},
   };
   for (const auto& one : cases) {
     const spans want {libc_spans(one.pattern, one.subject, REG_EXTENDED)};
     const spans got  {real_spans(one.pattern, one.subject, rc::regex_constants::extended)};
     EXPECT(!want.empty());
     EXPECT(!got.empty());
-    EXPECT(want.front() == got.front()); // leftmost-longest holds
-    EXPECT(got == one.real);             // the documented winning thread
-    bool              later_differs {false};
-    const std::size_t common        {want.size() < got.size() ? want.size() : got.size()};
-    for (std::size_t group = 1; group < common; ++group) {
-      if (want[group] != got[group]) {
-        later_differs = true;
-      }
-    }
-    EXPECT(later_differs); // the class is actually reached, not another (a|ab)c
+    EXPECT(want.front() == got.front()); // leftmost-longest holds, on every libc
+    EXPECT(got == one.real);             // the documented winning thread; needs no libc
+    EXPECT(one.posix != one.real);       // the class is reached; needs no libc
   }
   EXPECT(sizeof(cases) / sizeof(cases[0]) == 3);
 }

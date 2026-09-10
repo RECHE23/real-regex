@@ -80,9 +80,10 @@ ECMAScript-`$` (end-only), ECMAScript-`.` (excludes `\n` and `\r`) semantics lin
    REAL and run on the **linear engine with leftmost-longest bounds** (group 0 — the POSIX overall-match
    rule), when the pattern translates; otherwise `std::regex`. `regex.posix_longest()` reports this.
    Captures are the winning thread's at that longest bound, not POSIX subexpression selection (maximise
-   group 1, then group 2, …). `(x|xy)(y*)` on `"xy"` is the one-line proof: libc reports groups `xy`,
-   `xy`, empty; this layer reports `xy`, `x`, `y`. The same class golang/go#9684 documents for Go's
-   `regexp`; implementing POSIX submatch on a linear engine is why that project documents the gap
+   group 1, then group 2, …). `(x|xy)(y*)` on `"xy"` is the one-line proof: **macOS's libc** reports
+   groups `xy`, `xy`, empty; this layer reports `xy`, `x`, `y` — and **glibc** reports the same as this
+   layer. Go's `regexp` sits with glibc (golang/go#9684); it is macOS's libc that maximises the
+   subexpressions. Implementing POSIX submatch on a linear engine is why Go documents the gap
    rather than closing it, and the same reason applies here. **All** operations are linear for a
    translated **non-nullable** pattern — `search`/`match` via `search_longest`, `regex_replace`/iterators via
    `find_iter_longest`; a nullable one (`x*`, `a*`) keeps `search` on REAL but delegates its replace/iterate to
