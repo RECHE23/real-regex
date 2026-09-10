@@ -31,25 +31,27 @@ resolves to exactly one status:
   a raw-byte or non-UTF-8 haystack); filtered at import and counted.
 - **bug** — an unexplained disagreement with `re`.
 
-**Result — 762 / 762 in-contract cases pass (100%), 0 bugs.**
+**Result — 727 / 785 in-contract cases pass, 58 documented divergences, 0 bugs.**
+
+In-contract means scored against `re`: a pass, a documented divergence, or a bug. Filtered (API we do not offer) and `out_of_contract` (origin semantics the oracle does not share) are counted apart. The 58 divergences are not silent — `run_conformance.py` maps each to a `divergences.dox` section (`div_property` for `\p{…}`, `div_inline_flags` for `(?U)`, `div_empty_iteration_capture` for the nullable-loop residue). A published count this runner does not reproduce is a red.
 
 | Corpus | In-contract pass | intentional_divergence | out_of_contract | filtered |
 | --- | --- | --- | --- | --- |
-| rust/flags | 9 / 9 | — | — | 2 |
+| rust/flags | 7 / 9 | 2 | — | 2 |
 | rust/multiline | 137 / 137 | — | — | 3 |
-| rust/unicode | 84 / 84 | — | — | — |
+| rust/unicode | 34 / 84 | 50 | — | — |
 | rust/word-boundary | 56 / 56 | — | — | 47 |
 | rust/word-boundary-special | 80 / 80 | — | — | 12 |
 | rust/iter | 19 / 19 | — | — | 3 |
 | rust/misc | 13 / 13 | — | — | 3 |
-| rust/regression | 55 / 55 | — | — | 31 |
+| rust/regression | 53 / 55 | 2 | — | 31 |
 | rust/no-unicode | 12 / 12 | — | — | 11 |
 | rust/crlf | 14 / 14 | — | — | 1 |
 | rust/empty | 19 / 19 | — | — | — |
 | rust/utf8 | 1 / 1 | — | — | 27 |
 | rust/anchored · substring · bytes | — | — | — | 42 (all API-out) |
 | fowler/basic | 180 / 180 | — | 30 | — |
-| fowler/nullsubexpr | 49 / 49 | 4 | 5 | — |
+| fowler/nullsubexpr | 49 / 53 | 4 | 5 | — |
 | fowler/repetition | 53 / 53 | — | 38 | — |
 
 The `out_of_contract` count on the Fowler corpora is expected: those are AT&T **POSIX** (leftmost-longest)
@@ -59,6 +61,7 @@ the nullable-loop final-iteration capture (the `div_empty_iteration_capture` div
 
 **Found and fixed by this net:** the nullable-loop leftmost-first bug — a greedy `*` over an empty-first
 alternation branch (`(?:|a)*`) matched greedily where leftmost-first requires preferring the empty
-branch. The rust `empty.toml` corpus surfaced it; it is fixed, and this suite is the regression guard.
+branch. The rust `empty.toml` corpus surfaced it; it is in `_RUST` and this suite is the regression
+guard. A row in the table above for a file `_RUST` does not load is a red (the runner checks).
 
 Run it: `python3 tests/corpora/run_conformance.py` (needs `../sciforge/python` on the path).
