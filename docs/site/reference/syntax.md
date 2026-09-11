@@ -66,7 +66,7 @@ Alternation is written `a|b` — leftmost branch preferred.
 ## Lookarounds
 
 **Bounded lookarounds match in linear time — REAL's differentiator.** Each
-sub-pattern must be length-bounded and capture-free. Variable-width
+sub-pattern must be length-bounded. Variable-width
 lookbehind such as `(?<=a|bb)` is accepted — beyond `re`/PCRE's fixed-width
 limit.
 
@@ -75,8 +75,10 @@ limit.
 | `(?=…)` `(?!…)` | lookahead, positive / negative |
 | `(?<=…)` `(?<!…)` | lookbehind, positive / negative |
 
-An unbounded or capturing lookaround is rejected with `real::regex_error`,
-never silently approximated. Bounding one is usually a local edit — the
+An unbounded lookaround is rejected with `real::regex_error`, never silently
+approximated. A capturing group inside a lookaround is accepted and numbered,
+but its capture stays empty — `None` where `re` fills it
+({ref}`div_lookaround_captures`). Bounding one is usually a local edit — the
 validation shape `^(?=.*[A-Z])(?=.*\d).{8,}$` becomes
 `^(?=.{0,32}[A-Z])(?=.{0,32}\d).{8,}$`. The cap is 255 **bytes** matched by
 the sub-pattern, so a bound in characters can still be refused on non-ASCII

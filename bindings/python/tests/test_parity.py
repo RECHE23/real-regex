@@ -1018,8 +1018,9 @@ class TestParity(unittest.TestCase):
                         self.match_facts(r.search(text)))
 
     # Bounded lookahead (?=...) / (?!...). Two REAL-specific divergences keep these cases
-    # narrow: (1) REAL's lookahead sub is capture-free (re captures inside a lookaround), so
-    # every capturing group stays OUTSIDE the lookahead; (2) re accepts an unbounded sub
+    # narrow: (1) a group inside REAL's lookaround stays empty — numbered, never filled, where
+    # re fills it (div_lookaround_captures, pinned both ways in TestIntentionalDivergences) —
+    # so every capturing group stays OUTSIDE the lookahead; (2) re accepts an unbounded sub
     # (e.g. (?=a*)) whereas REAL rejects it to stay linear — those belong in test_real.py,
     # not here. On the bounded, capture-free-inside cases below the two engines must agree
     # exactly, in search/match/fullmatch as in findall/finditer.

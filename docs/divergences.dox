@@ -410,6 +410,28 @@ at 500; raised to 3000 it compiled 900. REAL's 200 did not move in either run. S
 difference is a catchable, stack-independent failure here against an uncatchable, stack-dependent
 one there — and `re`-targeted code that wraps generated patterns may be catching nothing today.
 
+\section div_lookaround_captures Captures inside a lookaround stay empty (re fills them)
+
+A capturing group inside a lookaround is accepted and numbered, but its capture does not
+participate in the match: the group reads `None` where `re` fills it. Everything else agrees
+— the span, the group count, and every group outside the lookaround. Measured:
+
+`(?=(a))a` on `"a"` — `re` gives `('a',)`, REAL gives `(None,)`. `(?<=(a))b` on `"ab"` —
+`('a',)` there, `(None,)` here. `(?=(a))(a)` on `"a"` — `('a', 'a')` there, `(None, 'a')`
+here: a group after the lookaround keeps its number and its value.
+
+A **negative** lookaround is not a divergence: when `(?!...)` succeeds, the groups inside it
+are unset in `re` too, so both engines read `None`. And only bounded lookarounds compile at
+all, so the divergence is confined to bounded assertions.
+
+The cause is a deliberate implementation decision, written at the site of it (`capture_free`
+in the compiler): a lookaround runs as a sub-program whose captures do not participate in the
+overall match, so no capture slot crosses the assertion boundary. Wiring the slots through is
+a design change — the sub-match would have to export slots the outer match then owns — not a
+bug fix, and it is not on a roadmap. Pinned in both directions in
+`TestIntentionalDivergences`: REAL's `None` and `re`'s fill, so if either side ever moves the
+pin goes red and this page moves with it.
+
 \section div_lookbehind Variable-width lookbehind (a capability beyond re)
 
 REAL accepts any **bounded** lookbehind, including variable-width alternations such as

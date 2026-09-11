@@ -928,6 +928,31 @@ class TestIntentionalDivergences(unittest.TestCase):
             "is accidental unless it is deliberate and documented, in which case lower the ceiling "
             "with the reason".format(divergences, ceiling, version[0], version[1]))
 
+    def test_lookaround_captures_stay_empty(self):
+        r"""A group inside a lookaround is numbered but never filled; re fills it.
+
+        docs/divergences.dox div_lookaround_captures. Pinned in BOTH directions -- REAL's
+        None and re's fill -- so wiring capture slots through the sub-program one day, or re
+        moving, turns this red and the page must move with it. A negative lookaround is NOT a
+        divergence: when (?!...) succeeds, its groups are unset in re too.
+        """
+        import re as stdlib
+        for pattern, text, filled, expected in [
+            (r"(?=(a))a", "a", ("a",), (None,)),
+            (r"(?=(\d{2}))\w+", "42abc", ("42",), (None,)),
+            (r"(?<=(a))b", "ab", ("a",), (None,)),
+            (r"(?=(a))(a)", "a", ("a", "a"), (None, "a")),  # a group AFTER keeps number + value
+        ]:
+            with self.subTest(pattern=pattern, text=text):
+                rm, sm = real.search(pattern, text), stdlib.search(pattern, text)
+                self.assertIsNotNone(rm)
+                self.assertEqual(rm.span(), sm.span())  # the match itself agrees
+                self.assertEqual(rm.groups(), expected)
+                self.assertEqual(sm.groups(), filled)  # re still fills: the divergence lives
+        # Agreement, not divergence: a succeeding negative lookaround fills nothing anywhere.
+        for module in (real, stdlib):
+            self.assertEqual(module.search(r"(?!(a))b", "b").groups(), (None,))
+
     def test_inverted_region_never_matches(self):
         r"""pos past endpos: no match, and no leaked standard-library exception.
 

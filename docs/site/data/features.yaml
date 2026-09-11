@@ -74,7 +74,8 @@ categories:
         pattern: "(?P<x>a)(?:b)"
       - construct: "Lookahead & lookbehind (bounded)"
         status: supported
-        note: "REAL's ReDoS-safe bounded lookaround"
+        note: "REAL's ReDoS-safe bounded lookaround; a group inside stays empty — `re` fills it"
+        link: "differences-from-re#div_lookaround_captures"
         pattern: "(?<=a)b(?=c)"
       - construct: "Possessive quantifiers `a*+ a++ a?+ a{n,m}+`"
         status: supported
