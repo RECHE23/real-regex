@@ -23,7 +23,7 @@ real::regex replaces the regex engine you already use — same API, a
 
 - {doc}`Python re <re>` — `import real as re`, strict by default.
 - {doc}`Rust regex crate <regex>` — `use real_regex::Regex`, same surface.
-- {doc}`Go regexp <go>` — `real.MustCompile`, v0.1 subset.
+- {doc}`Go regexp <go>` — `real.MustCompile`, v0.3 subset.
 
 ```{toctree}
 :hidden:
