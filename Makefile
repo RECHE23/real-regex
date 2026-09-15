@@ -65,7 +65,7 @@ include $(ROOT)/mk/common.mk
 include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-	full-local-gate-impl gcc-check route-probe alloc-probe ac-regime sabotage-sweep sabotage-help \
+	full-local-gate-impl gcc-check route-probe alloc-probe alloc-cold-probe ac-regime sabotage-sweep sabotage-help \
         lint misra check-state-zeroing check-percall-copies route-surface-parity bench-compilers fuzz fuzz-compat fuzz-compat-known fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
@@ -945,6 +945,13 @@ alloc-probe: ## [bench] Heap allocations per dispatch route — every non-genera
 	@mkdir -p $(BUILD)
 	@c++ $(CXXSTD) -O2 -DREAL_PROFILE $(INCLUDES) -I benchmarks benchmarks/alloc_probe.cpp -o $(BUILD)/alloc_probe
 	@$(BUILD)/alloc_probe $(if $(N),$(N),3000) $(if $(SEED),$(SEED),)
+
+alloc-cold-probe: ## [bench] Cold first-search allocations, attributed by construction site (dev tool)
+	@mkdir -p $(BUILD)
+	@c++ $(CXXSTD) -O2 $(INCLUDES) -I benchmarks benchmarks/alloc_cold_probe.cpp -o $(BUILD)/alloc_cold_probe
+	@$(BUILD)/alloc_cold_probe '\w+\d+'
+	@$(BUILD)/alloc_cold_probe '\w+@\w+'
+	@$(BUILD)/alloc_cold_probe '(\w+)\d+'
 
 bench-compilers: ## [bench] Same source, every compiler found, per-row ratio (the leg the gate lacked)
 	@$(PYTHON) benchmarks/bench_compilers.py

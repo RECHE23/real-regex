@@ -268,8 +268,11 @@ namespace real::detail {
     /*!
      * \brief Outgoing edges: a byte range paired with its target, `-1` meaning accept. Pairwise disjoint.
      *
-     * \note **One heap block per node, and once the surrounding allocation work is done it is what
-     *       dominates a first search.** Flattening it into a pool is not a local edit: two sources share
+     * \note **One heap block per node, and it dominates a cold first search, measured end to end
+     *       (2026.09.15, benchmarks/alloc_cold_probe.cpp): the tries are 98.5 % of
+     *       build_byte_program's 3 171 allocations -- `\w`'s alone is 2 757 -- and the build is
+     *       95.6 % of a cold first search's 3 317 for `\w+\d+`.** Flattening it into a pool is not
+     *       a local edit: two sources share
      *       the count, this vector and the `bounds`/`tails` pair `builder::build` allocates at every
      *       level -- and build is RECURSIVE, so those cannot share one scratch buffer. The shape that
      *       works is a stack-disciplined arena, each level taking a slice and releasing it on return,
@@ -1623,15 +1626,21 @@ namespace real::detail {
     //
     // 2026.09.15, same instrument, this tree: `\w+@\w+` no longer reaches the DFA at all -- the
     // inner-literal route carries it whole (DFA knob on/off: 5 649 vs 5 647). A pattern that DOES
-    // route here today -- `\w+\d+`, no required literal -- pays 3 281 allocations on the cold
+    // route here today -- `\w+\d+`, no required literal -- pays 3 317 allocations on the cold
     // first search and ZERO on every warm one, while interning only TWO states. Hoisting the
     // miss-path scratch (`next`/`seen` into members, a generation stamp for the zeroing) was
     // written, measured, and REVERTED on these numbers: it removed 36 of 3 315 cold allocations,
     // ~1 %, far below what this repository's layout instruments can resolve (±3 % floor, code
-    // layout, not noise -- BENCHMARKS.md). The bulk of the cold cost is the route's one-time
-    // SCAFFOLDING, not the DFA's per-miss path; it has not been attributed (the onepass op_table,
-    // built before the scan, is a suspect, unproven). That attribution is the next train's
-    // opening measurement, not a conclusion.
+    // layout, not noise -- BENCHMARKS.md).
+    //
+    // ATTRIBUTED the same day (benchmarks/alloc_cold_probe.cpp, per-construction-site counting, the
+    // parts summed against the total): build_byte_program is 3 171 of the 3 317 (95.6 %), and the
+    // UTF-8 tries are 3 125 of that (98.5 % -- `\w` alone 2 757, `\d` 368); the shared alphabet 40,
+    // the two DFA constructors 50, the remainder 56. The onepass op_table is NOT among them -- it
+    // builds only for patterns with capture groups (pike.hpp's slot_count guard), and this pattern
+    // has none. So the cold cost is the trie expansion, paid once per regex object; the miss path
+    // is paid per transition. No bench row and no scaling test exercises the cold path -- the
+    // consumer verdict lives in the probe's header.
     //
     // STILL TRUE, measured on the 16 146 landscape and worth keeping against the day the
     // scaffolding is fixed and the miss path matters again: reserving the OUTER vector saved 3
