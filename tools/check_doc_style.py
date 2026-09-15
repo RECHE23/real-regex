@@ -37,6 +37,11 @@ one counted locals as members, one had inverted brace tracking, one anchored on 
 path and silently dropped every warning Doxygen reports under a synthesized ``<name>``
 pseudo-location. Doxygen already knows what each entity is; ask it.
 
+A red on FRESHNESS is not a verdict on content. When ``build/doc/xml`` is older than a
+header this check refuses before reading a byte of it -- a stale tree would turn skipped
+entries into a false clean. So a freshness failure means the comments were not judged at
+all: refresh (``make doc-xml``) and re-run before concluding anything about the prose.
+
 Usage:
     python3 tools/check_doc_style.py                 # check, exit 1 on any violation
     python3 tools/check_doc_style.py --fix           # rewrite in place

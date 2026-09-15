@@ -65,8 +65,10 @@ Run it before every push. Individual steps (`make test`, `make lint`, `make cove
 
 ## Releases
 
-Calendar-versioned (`YEAR.MONTH.patch`). The GitHub releases page is the changelog — there is no separate
-`CHANGELOG` file. Releases push the branch first, let CI go green, then tag (option-B): the tag's annotation
+Calendar-versioned (`YEAR.MONTH.patch`). The GitHub releases page is the changelog — what shipped,
+release by release; `docs/release-notes/` holds each note in-tree. `CHANGELOG.md` at the root is a
+different record: the benchmark-stamp journal (which train moved the tables and which did not), not a
+feature list. Releases push the branch first, let CI go green, then tag (option-B): the tag's annotation
 becomes the release notes, and the tagged commit is what CI already validated.
 
 The version is single-sourced from `pyproject.toml` and `make version-check` asserts every surface agrees:

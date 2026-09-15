@@ -6,6 +6,11 @@ EXTRACT_PRIVATE=NO). Implementation notes belong in ``//`` comments, which that
 XML never sees. The developer tree (``build/doc/xml``, INTERNAL_DOCS=YES) is
 not this check's input -- that is how ``\\internal`` stays load-bearing.
 
+A red on FRESHNESS is not a verdict on content. When ``build/doc/xml-site`` is
+older than a header this check refuses before reading a single comment, so a
+freshness failure means the prose was not judged at all: refresh
+(``make doc-site-xml``, or ``--refresh``) and re-run before concluding anything.
+
 Usage:
     python3 tools/check_doc_voice.py              # check, exit 1 on any hit
     python3 tools/check_doc_voice.py --refresh    # regenerate xml-site first
