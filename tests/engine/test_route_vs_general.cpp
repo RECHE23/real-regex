@@ -88,6 +88,26 @@ namespace {
     {"\\d+"                                                                                                                                            },
     {"\\s*$"                                                                                                                                           },
     {"(?m)\\s$"                                                                                                                                        },
+    // The word-boundary family: both wraps alone and combined, the B-1 drop (a maximal `\w`
+    // run's edges ARE boundaries, so the hint resolves away -- wb_lead_maximal_run) and the B-2
+    // keep (a digit can follow a letter, so `\b\d+`'s lead is load-bearing), `\B` leads,
+    // counted-min x wraps, byte x cp, and the inner-literal route with wraps. This whole family
+    // was missing here while the seam matrix carried 24 curated wb pairs -- the same
+    // configuration (curated yes, product no) that let `\s$` and `\w{2}$` through. The armed
+    // shapes below are pinned in route_vs_general_wb_family_is_armed.
+    {R"(\b\d+)"                                                                                                                                        },
+    {R"(\b\w+)"                                                                                                                                        },
+    {R"(\w+\b)"                                                                                                                                        },
+    {R"(\b\w+\b)"                                                                                                                                      },
+    {R"(\b[a-z]+\b)"                                                                                                                                   },
+    {R"(\B\w)"                                                                                                                                         },
+    {R"(\B\d)"                                                                                                                                         },
+    {R"(\b\w{4,}\b)"                                                                                                                                   },
+    {R"((?a)\b[a-z]{4,}\b)"                                                                                                                            },
+    {R"((?a)\b[a-z]{4,})"                                                                                                                              },
+    {R"(\b\w+@\w+\b)"                                                                                                                                  },
+    {R"(\b\w+@\w+)"                                                                                                                                    },
+    {R"(\w+@\w+\b)"                                                                                                                                    },
     {"a*+;"                                                                                                                                            },
     {"[a-z]*+;"                                                                                                                                        },
     {"\\w*+;"                                                                                                                                          },
@@ -216,6 +236,9 @@ TEST(route_vs_general_witnesses_are_in_the_product)
   bool saw_s_dollar  {false};
   bool saw_w2_dollar {false};
   bool saw_nl_class  {false};
+  bool saw_wb_wrap   {false};
+  bool saw_wb_not    {false};
+  bool saw_wb_il     {false};
   for (const spec& s : k_patterns) {
     if (s.pat == "\\s$") {
       saw_s_dollar = true;
@@ -226,14 +249,73 @@ TEST(route_vs_general_witnesses_are_in_the_product)
     if (s.pat == "[ \t\n]+$") {
       saw_nl_class = true;
     }
+    if (s.pat == R"(\b\w+\b)") {
+      saw_wb_wrap = true;
+    }
+    if (s.pat == R"(\B\w)") {
+      saw_wb_not = true;
+    }
+    if (s.pat == R"(\b\w+@\w+\b)") {
+      saw_wb_il = true;
+    }
   }
   EXPECT(saw_s_dollar);
   EXPECT(saw_w2_dollar);
   EXPECT(saw_nl_class);
+  EXPECT(saw_wb_wrap);
+  EXPECT(saw_wb_not);
+  EXPECT(saw_wb_il);
 
   const std::size_t n_knobs {sizeof(k_knobs) / sizeof(k_knobs[0])};
   EXPECT_EQ(n_knobs, static_cast<std::size_t>(11));
-  EXPECT(std::size(k_patterns) >= 40);
+  EXPECT(std::size(k_patterns) >= 50);
+}
+
+TEST(route_vs_general_wb_family_is_armed)
+{
+  // A cartesian row whose pattern arms NOTHING compares the general VM to itself -- a dead row
+  // that cannot go red. These shapes are measured (compile-time hints probe), so a recognition
+  // drift that silently disarms a wrap route is a red here, not a quieter product.
+  const auto hints_of {[](std::string_view pat) {
+                         const auto prog {dynamic_storage::compile(pat, real::flags::none)};
+                         return prog.program.hints;
+                       }};
+  {
+    // B-2: the lead `\b` is load-bearing -- a digit can follow a letter ("a1").
+    const auto h {hints_of(R"(\b\d+)")};
+    EXPECT(h.greedy_cp_class >= 0);
+    EXPECT_EQ(static_cast<int>(h.wb_lead), 1);
+  }
+  {
+    // B-1: the lead `\b` on a maximal `\w` run resolves away -- the run's start IS a boundary.
+    const auto h {hints_of(R"(\b\w+)")};
+    EXPECT(h.greedy_cp_class >= 0);
+    EXPECT_EQ(static_cast<int>(h.wb_lead), 0);
+    EXPECT(h.wb_lead_maximal_run);
+  }
+  {
+    // Byte class, both wraps KEPT on the loop.
+    const auto h {hints_of(R"(\b[a-z]+\b)")};
+    EXPECT(h.greedy_class_loop >= 0);
+    EXPECT_EQ(static_cast<int>(h.wb_lead), 1);
+    EXPECT_EQ(static_cast<int>(h.wb_trail), 1);
+  }
+  {
+    const auto h {hints_of(R"(\B\w)")};
+    EXPECT(h.greedy_cp_class >= 0);
+    EXPECT_EQ(static_cast<int>(h.wb_lead), 2);
+  }
+  {
+    const auto h {hints_of(R"((?a)\b[a-z]{4,}\b)")};
+    EXPECT(h.greedy_class_loop >= 0);
+    EXPECT_EQ(static_cast<int>(h.wb_lead), 1);
+    EXPECT_EQ(static_cast<int>(h.wb_trail), 1);
+  }
+  {
+    // The inner-literal route keeps the wraps for its confirm step.
+    const auto h {hints_of(R"(\b\w+@\w+\b)")};
+    EXPECT_EQ(static_cast<int>(h.inner_literal_len), 1);
+  }
 }
 
 TEST(route_vs_general_hint_blank_cartesian)
@@ -277,6 +359,7 @@ TEST(route_vs_general_hint_blank_cartesian)
     "aaa;bbb;",
     "\"quoted\"",
     "xhellox",
+    "xfoo@barx",
     long_hit,
     long_miss,
   };
@@ -310,7 +393,7 @@ TEST(route_vs_general_hint_blank_cartesian)
       }
     }
   }
-  EXPECT(n >= 1400);
+  EXPECT(n >= 2000);
   reset_knobs();
 }
 
@@ -355,6 +438,7 @@ TEST(route_vs_general_knob_cartesian)
     "aaa;bbb;",
     "\"quoted\"",
     "xhellox",
+    "xfoo@barx",
     long_hit,
     long_miss,
   };
@@ -377,6 +461,6 @@ TEST(route_vs_general_knob_cartesian)
       }
     }
   }
-  EXPECT(n >= 15000);
+  EXPECT(n >= 22000);
   reset_knobs();
 }
