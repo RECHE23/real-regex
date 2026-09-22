@@ -249,6 +249,19 @@ def self_test():
               "once the oracle has a response.")
         return 1
 
+    # The flag-mapping witness, keyed on the STORED authority — the only thing that can see a
+    # silently dropped flag: with `icase` compiled to 0, real and re run case-sensitively, agree
+    # with EACH OTHER, and pass, while the corpus says otherwise. rust/no-unicode.toml's first
+    # case-insensitive case is 'a' on "A" and its stored answer is [0,1].
+    icase_cases, _ = load_cases_rust_toml(HERE / "rust" / "no-unicode.toml")
+    witness = next(c for c in icase_cases if c.pattern == "a" and c.input == "A")
+    got = re_like_engine(real)(witness.pattern, witness.input, "finditer", witness.flags)
+    if got != [{"span": [0, 1], "groups": []}]:
+        print("run_conformance: SELF-TEST FAILED — the corpus stores [0,1] for 'a' on \"A\" under "
+              "icase+ascii; real answered {!r}. A flag that compiles to 0 makes both engines wrong "
+              "identically, and only the stored authority sees it.".format(got))
+        return 1
+
     page = TESTS_MD.read_text(encoding="utf-8")
     faithful = report_from_page(page)
     base = scorecard_problems(faithful, page_text=page)
