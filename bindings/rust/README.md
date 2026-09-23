@@ -27,7 +27,8 @@ The crate mirrors the [`regex`](https://docs.rs/regex) crate: `Regex` with `find
 `is_match` / `replace` / `replace_all` / `replacen` (with `$`-templates, `NoExpand`, and closures) /
 `split` / `splitn`; `Display` / `FromStr` (`format!("{re}")`, `"\\d+".parse()`); `Match` (spans) and
 indexable `Captures` (`caps[0]`, `caps["name"]`); `RegexBuilder` (case-insensitive, multi-line,
-`unicode(false)`, …); and a `bytes` module over `&[u8]`. Every method is verified against the `regex`
+`unicode(false)`, …); `escape` (the crate's escaped set, so the same output); and a `bytes` module
+over `&[u8]`. Every method is verified against the `regex`
 crate by a differential test suite.
 
 ## Divergences from the `regex` crate

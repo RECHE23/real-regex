@@ -943,6 +943,20 @@ impl SpanCursor<'_, '_> {
     }
 }
 
+/// Escapes every regex metacharacter in `text`, so the result matches `text` literally — drop-in for
+/// [`regex::escape`], with the same escaped set (`\ . + * ? ( ) | [ ] { } ^ $ # & - ~`) and so the
+/// same output.
+pub fn escape(text: &str) -> String {
+    let mut quoted = String::with_capacity(text.len());
+    for c in text.chars() {
+        if matches!(c, '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$' | '#' | '&' | '-' | '~') {
+            quoted.push('\\');
+        }
+        quoted.push(c);
+    }
+    quoted
+}
+
 /// Reusable capture-slot buffer — drop-in for [`regex::CaptureLocations`].
 ///
 /// Obtain via [`Regex::capture_locations`], refill with [`Regex::captures_read`] (or
