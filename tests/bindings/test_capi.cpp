@@ -132,18 +132,18 @@ TEST(capi_compile_ex_hands_the_position_over)
 
 TEST(capi_set_compile_ex_hands_the_position_over)
 {
-  constexpr std::size_t no_pos = static_cast<std::size_t>(-1);
-  const char* const     pats[3] = {"a", "bc(d", "e"};
-  const std::size_t     lens[3] = {1, 4, 1};
-  const real::regex_error member = engine_error(pats[1]);
-  char        err[256] = {0};
-  int         code     = 99;
-  std::size_t pos      = 12345;
+  constexpr std::size_t   no_pos   = static_cast<std::size_t>(-1);
+  const char* const       pats[3]  = {"a", "bc(d", "e"};
+  const std::size_t       lens[3]  = {1, 4, 1};
+  const real::regex_error member   = engine_error(pats[1]);
+  char                    err[256] = {0};
+  int                     code     = 99;
+  std::size_t             pos      = 12345;
   EXPECT(real_set_compile_ex(pats, lens, 3, 0, err, sizeof err, &code, &pos) == nullptr);
-  EXPECT(pos == member.position());     // an offset inside the failing member
+  EXPECT(pos == member.position());                                          // an offset inside the failing member
   EXPECT(code == REAL_ERR_SYNTAX);
-  EXPECT(std::string(err).find("(in pattern 1 of 3)") != std::string::npos);  // which member: in the cause
-  EXPECT(std::string(err).rfind("regex_error at", 0) != 0);                   // and no position prefix
+  EXPECT(std::string(err).find("(in pattern 1 of 3)") != std::string::npos); // which member: in the cause
+  EXPECT(std::string(err).rfind("regex_error at", 0) != 0);                  // and no position prefix
 
   char plain[256] = {0};
   EXPECT(real_set_compile(pats, lens, 3, 0, plain, sizeof plain, &code) == nullptr);
@@ -208,8 +208,11 @@ namespace {
 
   // real_sub through its two-call convention: size, then fill, and both calls must agree. A refusal
   // returns "<error: message>" so a case reads as one comparison.
-  std::string sub(const real_regex* re, std::string_view text, std::string_view repl, std::size_t count,
-                  std::size_t* n_subs = nullptr)
+  std::string sub(const real_regex* re,
+                  std::string_view  text,
+                  std::string_view  repl,
+                  std::size_t       count,
+                  std::size_t     * n_subs = nullptr)
   {
     char              err[128] = {0};
     const std::size_t need     = real_sub(re, text.data(), text.size(), repl.data(), repl.size(), count,
@@ -223,8 +226,11 @@ namespace {
     return out;
   }
 
-  std::string expand(const real_regex* re, std::string_view text, const std::size_t* spans, std::size_t nspans,
-                     std::string_view repl)
+  std::string expand(const real_regex * re,
+                     std::string_view   text,
+                     const std::size_t* spans,
+                     std::size_t        nspans,
+                     std::string_view   repl)
   {
     char              err[128] = {0};
     const std::size_t need     = real_expand(re, text.data(), text.size(), spans, nspans, repl.data(), repl.size(),
@@ -248,9 +254,9 @@ TEST(capi_find_iter_between_bounds_both_sides)
   std::size_t spans[2];
   EXPECT(real_iter_next(it, spans) == 1 && spans[0] == 3 && spans[1] == 5);
   EXPECT(real_iter_next(it, spans) == 1 && spans[0] == 6 && spans[1] == 9);
-  EXPECT(real_iter_next(it, spans) == 0);  // "cc" and "aa" lie past the end
+  EXPECT(real_iter_next(it, spans) == 0);                        // "cc" and "aa" lie past the end
   real_iter_free(it);
-  real_iter* empty = real_find_iter_between(re, text, 15, 9, 3);  // start > end: exhausted, not an error
+  real_iter* empty = real_find_iter_between(re, text, 15, 9, 3); // start > end: exhausted, not an error
   EXPECT(empty != nullptr && real_iter_next(empty, spans) == 0);
   real_iter_free(empty);
   EXPECT(real_find_iter_between(re, nullptr, 4, 0, 4) == nullptr);
@@ -288,11 +294,11 @@ TEST(capi_sub_template_grammar)
   real_regex* re   = compile("(?P<user>\\w+)@(\\w+)", 0, code);
   std::size_t n    = 99;
   EXPECT(sub(re, "a@b and cd@ef", "\\2@\\1", 0, &n) == "b@a and ef@cd" && n == 2);
-  EXPECT(sub(re, "a@b and cd@ef", "\\2@\\1", 1, &n) == "b@a and cd@ef" && n == 1);  // count limits
+  EXPECT(sub(re, "a@b and cd@ef", "\\2@\\1", 1, &n) == "b@a and cd@ef" && n == 1); // count limits
   EXPECT(sub(re, "a@b", "<\\g<user>|\\g<2>|\\g<0>>", 0) == "<a|b|a@b>");
   EXPECT(sub(re, "a@b", "\\n\\t\\r\\f\\v\\a\\b\\\\", 0) == "\n\t\r\f\v\a\b\\");
-  EXPECT(sub(re, "a@b", "\\.\\-", 0) == "\\.\\-");                  // escaped punctuation keeps its backslash
-  EXPECT(sub(re, "a@b", "\\101\\0", 0) == std::string("A\0", 2));  // octal: one raw byte each
+  EXPECT(sub(re, "a@b", "\\.\\-", 0) == "\\.\\-");                                 // escaped punctuation keeps its backslash
+  EXPECT(sub(re, "a@b", "\\101\\0", 0) == std::string("A\0", 2));                  // octal: one raw byte each
   EXPECT(sub(re, "no match", "x", 0, &n) == "no match" && n == 0);
 
   EXPECT(sub(re, "a@b", "x\\", 0) == "<error: bad escape (end of pattern)>");
@@ -341,8 +347,8 @@ TEST(capi_expand_checks_every_span)
   EXPECT(expand(re, text, spans, 2, "\\1") == "<error: group reference beyond the spans supplied>");
   EXPECT(expand(re, text, spans, 6, "\\9") == "<error: invalid group reference>");
 
-  const std::string span_msg = "<error: span outside the subject, or inverted>";
-  const std::size_t outside[6] = {50, 100, spans[2], spans[3], spans[4], spans[5]};
+  const std::string span_msg   = "<error: span outside the subject, or inverted>";
+  const std::size_t outside[6] =  {50, 100, spans[2], spans[3], spans[4], spans[5]};
   EXPECT(expand(re, text, outside, 6, "xyz") == span_msg);  // a pair the template never names
   const std::size_t inverted[6] = {spans[0], spans[1], 4, 1, spans[4], spans[5]};
   EXPECT(expand(re, text, inverted, 6, "lit") == span_msg);
