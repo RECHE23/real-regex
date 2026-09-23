@@ -40,7 +40,7 @@ namespace {
   {
     real::detail::dynamic_program prog;
     class_def                     cd;
-    cd.ranges = {{0xE9U, 0xE9U}, {0x1F968U, 0x1F968U}};
+    cd.ranges = {{.lo = 0xE9U, .hi = 0xE9U}, {.lo = 0x1F968U, .hi = 0x1F968U}};
     return real::detail::compiler::intern_cp_class(prog, cd) == 0U && prog.cp_classes.size() == 1U;
   }
 
@@ -65,26 +65,26 @@ TEST(the_normalisation_predicate_separates_every_way_a_range_list_can_be_wrong)
 
   // Accepted: nothing to order, one range, an ascending disjoint pair, the whole non-ASCII space.
   EXPECT(cp_ranges_are_normalised({}));
-  EXPECT(cp_ranges_are_normalised({{0xE9U, 0xE9U}}));
-  EXPECT(cp_ranges_are_normalised({{0xE9U, 0xE9U}, {0x1F968U, 0x1F968U}}));
-  EXPECT(cp_ranges_are_normalised({{0x80U, 0x10FFFFU}}));
+  EXPECT(cp_ranges_are_normalised({{.lo = 0xE9U, .hi = 0xE9U}}));
+  EXPECT(cp_ranges_are_normalised({{.lo = 0xE9U, .hi = 0xE9U}, {.lo = 0x1F968U, .hi = 0x1F968U}}));
+  EXPECT(cp_ranges_are_normalised({{.lo = 0x80U, .hi = 0x10FFFFU}}));
 
   // Accepted, and deliberately so: two ranges that merely TOUCH are redundant, not wrong. Neither
   // consumer reacts to a split that `coalesce_ranges` would have merged — it costs one comparison and
   // no answer — so the predicate demands order and disjointness, never minimality.
-  EXPECT(cp_ranges_are_normalised({{0x100U, 0x1FFU}, {0x200U, 0x300U}}));
+  EXPECT(cp_ranges_are_normalised({{.lo = 0x100U, .hi = 0x1FFU}, {.lo = 0x200U, .hi = 0x300U}}));
 
   // Refused: descending. The shape that actually reached the matchers.
-  EXPECT(!cp_ranges_are_normalised({{0x1F968U, 0x1F968U}, {0xE9U, 0xE9U}}));
-  EXPECT(!cp_ranges_are_normalised({{0xE9U, 0xE9U}, {0x1F968U, 0x1F968U}, {0x20ACU, 0x20ACU}}));
+  EXPECT(!cp_ranges_are_normalised({{.lo = 0x1F968U, .hi = 0x1F968U}, {.lo = 0xE9U, .hi = 0xE9U}}));
+  EXPECT(!cp_ranges_are_normalised({{.lo = 0xE9U, .hi = 0xE9U}, {.lo = 0x1F968U, .hi = 0x1F968U}, {.lo = 0x20ACU, .hi = 0x20ACU}}));
 
   // Refused: overlapping, which breaks the binary search's premise as surely as disorder does.
-  EXPECT(!cp_ranges_are_normalised({{0x100U, 0x200U}, {0x180U, 0x300U}}));
-  EXPECT(!cp_ranges_are_normalised({{0x100U, 0x300U}, {0x200U, 0x250U}}));
+  EXPECT(!cp_ranges_are_normalised({{.lo = 0x100U, .hi = 0x200U}, {.lo = 0x180U, .hi = 0x300U}}));
+  EXPECT(!cp_ranges_are_normalised({{.lo = 0x100U, .hi = 0x300U}, {.lo = 0x200U, .hi = 0x250U}}));
 
   // Refused: a range naming no code point at all, which no amount of ordering makes meaningful.
-  EXPECT(!cp_ranges_are_normalised({{0x200U, 0x100U}}));
-  EXPECT(!cp_ranges_are_normalised({{0xE9U, 0xE9U}, {0x300U, 0x200U}}));
+  EXPECT(!cp_ranges_are_normalised({{.lo = 0x200U, .hi = 0x100U}}));
+  EXPECT(!cp_ranges_are_normalised({{.lo = 0xE9U, .hi = 0xE9U}, {.lo = 0x300U, .hi = 0x200U}}));
 }
 
 // The gate itself: the interner must ASK, and must say which invariant broke. Asserted on the message
@@ -95,7 +95,7 @@ TEST(interning_an_unordered_class_is_refused_and_says_which_invariant_broke)
   real::detail::dynamic_program prog;
   bool                          threw {false};
   try {
-    real::detail::compiler::intern_cp_class(prog, cp_only({{0x1F968U, 0x1F968U}, {0xE9U, 0xE9U}}));
+    real::detail::compiler::intern_cp_class(prog, cp_only({{.lo = 0x1F968U, .hi = 0x1F968U}, {.lo = 0xE9U, .hi = 0xE9U}}));
     EXPECT(false); // reached only when the gate is not asked
   }
   catch (const real::regex_error& ex) {
@@ -109,9 +109,9 @@ TEST(interning_an_unordered_class_is_refused_and_says_which_invariant_broke)
   // An overlap and an inverted range go the same way, so the gate is the predicate's whole answer and
   // not a check on one of its arms.
   EXPECT_THROWS(real::detail::compiler::intern_cp_class(
-                  prog, cp_only({{0x100U, 0x300U}, {0x200U, 0x250U}})), real::regex_error);
+                  prog, cp_only({{.lo = 0x100U, .hi = 0x300U}, {.lo = 0x200U, .hi = 0x250U}})), real::regex_error);
   EXPECT_THROWS(real::detail::compiler::intern_cp_class(
-                  prog, cp_only({{0x200U, 0x100U}})), real::regex_error);
+                  prog, cp_only({{.lo = 0x200U, .hi = 0x100U}})), real::regex_error);
 
   // The gate is asked on the NEW-class path, so an unordered class must not slip in behind an ordered
   // one that looks like it. Same ASCII bitmap and same range COUNT is exactly what the dedup screens
@@ -119,15 +119,15 @@ TEST(interning_an_unordered_class_is_refused_and_says_which_invariant_broke)
   // "already checked" argument were wrong.
   real::detail::dynamic_program shared;
   EXPECT_EQ(real::detail::compiler::intern_cp_class(
-              shared, cp_only({{0xE9U, 0xE9U}, {0x1F968U, 0x1F968U}})), 0U);
+              shared, cp_only({{.lo = 0xE9U, .hi = 0xE9U}, {.lo = 0x1F968U, .hi = 0x1F968U}})), 0U);
   EXPECT_THROWS(real::detail::compiler::intern_cp_class(
-                  shared, cp_only({{0x1F968U, 0x1F968U}, {0xE9U, 0xE9U}})), real::regex_error);
+                  shared, cp_only({{.lo = 0x1F968U, .hi = 0x1F968U}, {.lo = 0xE9U, .hi = 0xE9U}})), real::regex_error);
   EXPECT_EQ(shared.cp_classes.size(), 1U); // the good one only
 
   // And the reverse direction of the same argument: interning the identical GOOD content again takes
   // the dedup path, where the check is deliberately not repeated, and must still succeed.
   EXPECT_EQ(real::detail::compiler::intern_cp_class(
-              shared, cp_only({{0xE9U, 0xE9U}, {0x1F968U, 0x1F968U}})), 0U);
+              shared, cp_only({{.lo = 0xE9U, .hi = 0xE9U}, {.lo = 0x1F968U, .hi = 0x1F968U}})), 0U);
   EXPECT_EQ(shared.cp_classes.size(), 1U);
 }
 
@@ -136,7 +136,7 @@ TEST(interning_an_unordered_class_is_refused_and_says_which_invariant_broke)
 TEST(interning_a_normalised_class_succeeds_and_still_dedups)
 {
   real::detail::dynamic_program prog;
-  const std::vector<code_range> raw {{0x1F968U, 0x1F968U}, {0xE9U, 0xE9U}};
+  const std::vector<code_range> raw {{.lo = 0x1F968U, .hi = 0x1F968U}, {.lo = 0xE9U, .hi = 0xE9U}};
 
   const std::uint16_t first         {
     real::detail::compiler::intern_cp_class(prog, cp_only(real::detail::coalesce_ranges(raw)))};

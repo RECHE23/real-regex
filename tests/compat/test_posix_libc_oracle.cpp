@@ -18,6 +18,7 @@
 // back-references (this engine is linear and has none), equivalence `[=a=]` and collating `[.a.]`
 // classes, REG_NEWLINE, and any locale-dependent class beyond ASCII -- the locale is forced to "C"
 // for the duration so a machine's environment cannot decide what `[[:alpha:]]` means.
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
@@ -259,7 +260,7 @@ namespace {
         // divergence in the whole-match bounds. groups_beyond_zero is false for the submatch-
         // selection class: group 0 is portable; groups 1+ are not (macOS maximises, glibc agrees).
         const std::size_t common {want.size() < got.size() ? want.size() : got.size()};
-        const std::size_t last   {groups_beyond_zero ? common : (common > 0 ? 1 : 0)};
+        const std::size_t last   {groups_beyond_zero ? common : std::min<std::size_t>(common, 1)};
         for (std::size_t group = 0; group < last; ++group) {
           if (want[group] != got[group]) {
             std::string note {"pattern '"};

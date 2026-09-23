@@ -198,7 +198,7 @@ TEST(dfa_fidelity_agrees_with_the_engine)
   }
 
   // Fixed seed: the patterns are part of the test, so a failure names the same pattern every run.
-  // NOLINTNEXTLINE(cert-msc32-c,cert-msc51-cpp)
+  // NOLINTNEXTLINE(cert-msc51-cpp,cert-msc32-c,bugprone-random-generator-seed)
   std::mt19937 rng       {0xFA17FU};
   std::size_t  faithful  {0};
   std::size_t  divergent {0};
