@@ -20,9 +20,12 @@ its generated tables index the IR's code_range):
 
 compat/ (std/, re2/, …) holds the drop-in compatibility consumers and ranks with root.
 """
+import contextlib
+import io
 import pathlib
 import re
 import sys
+import tempfile
 
 RANK = {"core": 1, "unicode": 2, "engine": 3, "automata": 3, "frontend": 4, "root": 5, "compat": 5}
 # The first path segment after "real/" is captured for tiering; any deeper segments (e.g. compat's own
@@ -31,8 +34,8 @@ RANK = {"core": 1, "unicode": 2, "engine": 3, "automata": 3, "frontend": 4, "roo
 INCLUDE = re.compile(r'#include\s+[<"]real/(?:([a-z0-9_]+)/)?(?:[a-z0-9_]+/)*([a-z0-9_]+)\.hpp[>"]')
 
 
-def main() -> int:
-    root = pathlib.Path(__file__).resolve().parent.parent / "include" / "real"
+def check(root: pathlib.Path) -> int:
+    """Judges the header tree under ``root`` (an ``include/real`` directory); prints the verdict."""
     headers = sorted(root.rglob("*.hpp"))
     if not headers:
         print("check-layers: FAIL -- no headers under include/real/")
@@ -91,6 +94,78 @@ def main() -> int:
           "(core < unicode < runtime < frontend < root), and no")
     print("  unmarked std::hash / std::unordered_* in the engine headers.")
     return 0
+
+
+# Arm markers: the substring each verdict prints, so a case asserts WHICH arm answered, not only that
+# something did. A case that trips an arm must print that arm's marker and no other arm's.
+_ARMS = {
+    "empty": "no headers under include/real/",
+    "upward": "forbidden upward include",
+    "hash": "std::hash / std::unordered_* in an engine header",
+    "ok": "layering holds",
+}
+
+
+def self_test() -> int:
+    """Drives each arm of ``check`` alone against a synthetic tree.
+
+    Every case is one small tree and the arm it must reach: the verdict has to carry that arm's
+    marker and none of the others', so an arm that stopped firing, or one that fires on the wrong
+    case, fails here rather than leaving the exit status unchanged.
+    """
+    cases = [
+        # (name, {relative path: content}, expected rc, arm)
+        ("empty tree", {}, 1, "empty"),
+        ("core includes engine", {"core/program.hpp": '#include "real/engine/pike.hpp"\n',
+                                  "engine/pike.hpp": ""}, 1, "upward"),
+        ("engine includes compat (compat ranks with root)",
+         {"engine/pike.hpp": '#include "real/compat/std/regex.hpp"\n', "compat/std/regex.hpp": ""}, 1, "upward"),
+        ("a root header includes the engine", {"real.hpp": '#include "real/engine/pike.hpp"\n',
+                                               "engine/pike.hpp": ""}, 0, "ok"),
+        ("a commented upward include is not an edge",
+         {"core/program.hpp": '// #include "real/engine/pike.hpp"\n', "engine/pike.hpp": ""}, 0, "ok"),
+        ("version is the leaf every tier may include",
+         {"core/program.hpp": '#include "real/version.hpp"\n', "version.hpp": ""}, 0, "ok"),
+        ("std::unordered_map in an engine header",
+         {"engine/pike.hpp": "std::unordered_map<int, int> m;\n"}, 1, "hash"),
+        ("std::hash in a compat shim is exempt", {"compat/std/regex.hpp": "std::hash<int> h;\n"}, 0, "ok"),
+        ("a line marked REAL_ALLOW_STD_HASH is exempt",
+         {"engine/pike.hpp": "std::hash<int> h; // REAL_ALLOW_STD_HASH: never crosses a library boundary\n"},
+         0, "ok"),
+        ("prose naming the rule is not a use", {"automata/lazy_dfa.hpp": "// avoid std::hash here\n"}, 0, "ok"),
+    ]
+    failures = 0
+    for name, files, want_rc, arm in cases:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp) / "include" / "real"
+            root.mkdir(parents=True)
+            for rel, content in files.items():
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = check(root)
+        text = out.getvalue()
+        wrong = [other for other, marker in _ARMS.items() if other != arm and marker in text]
+        if rc != want_rc or _ARMS[arm] not in text or wrong:
+            print(f"SELF-TEST FAILED: {name}: rc={rc} (want {want_rc}), arm {arm!r} "
+                  f"{'present' if _ARMS[arm] in text else 'ABSENT'}, other arms {wrong}")
+            print("    " + text.replace("\n", "\n    "))
+            failures += 1
+    if failures:
+        print(f"check-layers: self-test FAILED ({failures} of {len(cases)} case(s))")
+        return 1
+    print(f"check-layers: self-test OK — {len(cases)} cases, each arm (empty tree, upward include, "
+          "engine std::hash) reached alone, and each exemption (root, commented include, version, compat, "
+          "marker, prose) left alone")
+    return 0
+
+
+def main() -> int:
+    if sys.argv[1:] == ["--self-test"]:
+        return self_test()
+    return check(pathlib.Path(__file__).resolve().parent.parent / "include" / "real")
 
 
 if __name__ == "__main__":

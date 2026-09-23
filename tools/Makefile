@@ -101,7 +101,8 @@ format: ## Uncrustify, in place
 format-check: ## Uncrustify, dry-run, exits non-zero on diff
 	cd $(ROOT) && uncrustify -c $(SCIFORGE_LINT)/uncrustify.cfg --check $(FORMAT_FILES)
 
-check-layers: ## Enforce the include/real/ header layering contract (no tier climbing)
+check-layers: ## Enforce the include/real/ header layering contract (no tier climbing); its self-test first
+	@cd $(ROOT) && python3 tools/check_layers.py --self-test
 	@cd $(ROOT) && python3 tools/check_layers.py
 
 # C ABI frozen-surface pin: golden GENERATED from bindings/c/real_capi.h
