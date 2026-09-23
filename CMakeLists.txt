@@ -99,21 +99,30 @@ enable_testing()
 #  * Default (local development): a sibling checkout, used live. The maintainer's
 #    layout uses ../sciforge; override with -DSCIFORGE_INCLUDE_DIR=/path.
 #  * CI / reproducible builds: -DREAL_FETCH_SCIFORGE=ON fetches SciForge with
-#    FetchContent from a configurable repository + tag. Prepared but inert by
-#    default; once SciForge publishes a CalVer tag, pin SCIFORGE_TAG to it.
+#    FetchContent from a configurable repository + tag. SCIFORGE_TAG is the same pin
+#    as every workflow's and moves with them (sciforge tools/check-pins.sh reads it).
 option(REAL_FETCH_SCIFORGE "Fetch SciForge (test harness) with FetchContent" OFF)
 set(SCIFORGE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../sciforge/include"
     CACHE PATH "Path to SciForge's include directory (maintainer's default; override for your layout)")
 set(SCIFORGE_REPO "${CMAKE_CURRENT_SOURCE_DIR}/../sciforge"
     CACHE STRING "SciForge git repository (path or URL) when fetching")
-set(SCIFORGE_TAG "v2026.6.5" CACHE STRING "SciForge git tag when fetching")
+set(SCIFORGE_TAG "v2026.9.0" CACHE STRING "SciForge git tag when fetching")
 
 if(REAL_FETCH_SCIFORGE)
     include(FetchContent)
-    FetchContent_Declare(sciforge GIT_REPOSITORY "${SCIFORGE_REPO}" GIT_TAG "${SCIFORGE_TAG}")
-    FetchContent_GetProperties(sciforge)
-    if(NOT sciforge_POPULATED)
-        FetchContent_Populate(sciforge) # source only (header-only): no transitive CMake
+    # Source only (header-only): SciForge's own CMake must not join this build. From 3.18 a
+    # SOURCE_SUBDIR that does not exist gives MakeAvailable exactly that; FetchContent_Populate, the
+    # older spelling, is deprecated from 3.30 (CMP0169) and stays only for the 3.16/3.17 floor.
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.18)
+        FetchContent_Declare(sciforge GIT_REPOSITORY "${SCIFORGE_REPO}" GIT_TAG "${SCIFORGE_TAG}"
+                             SOURCE_SUBDIR no-cmake-here)
+        FetchContent_MakeAvailable(sciforge)
+    else()
+        FetchContent_Declare(sciforge GIT_REPOSITORY "${SCIFORGE_REPO}" GIT_TAG "${SCIFORGE_TAG}")
+        FetchContent_GetProperties(sciforge)
+        if(NOT sciforge_POPULATED)
+            FetchContent_Populate(sciforge)
+        endif()
     endif()
     set(SCIFORGE_INCLUDE_DIR "${sciforge_SOURCE_DIR}/include")
 endif()
