@@ -202,3 +202,187 @@ TEST(capi_null_handle_contracts)
 
   real_free(nullptr); // intentional no-op
 }
+
+namespace {
+  constexpr std::size_t capi_error = static_cast<std::size_t>(-1);
+
+  // real_sub through its two-call convention: size, then fill, and both calls must agree. A refusal
+  // returns "<error: message>" so a case reads as one comparison.
+  std::string sub(const real_regex* re, std::string_view text, std::string_view repl, std::size_t count,
+                  std::size_t* n_subs = nullptr)
+  {
+    char              err[128] = {0};
+    const std::size_t need     = real_sub(re, text.data(), text.size(), repl.data(), repl.size(), count,
+                                          nullptr, 0, n_subs, err, sizeof err);
+    if (need == capi_error) {
+      return std::string("<error: ") + err + ">";
+    }
+    std::string out(need, '?');
+    EXPECT(real_sub(re, text.data(), text.size(), repl.data(), repl.size(), count,
+                    out.data(), out.size(), n_subs, err, sizeof err) == need);
+    return out;
+  }
+
+  std::string expand(const real_regex* re, std::string_view text, const std::size_t* spans, std::size_t nspans,
+                     std::string_view repl)
+  {
+    char              err[128] = {0};
+    const std::size_t need     = real_expand(re, text.data(), text.size(), spans, nspans, repl.data(), repl.size(),
+                                             nullptr, 0, err, sizeof err);
+    if (need == capi_error) {
+      return std::string("<error: ") + err + ">";
+    }
+    std::string out(need, '?');
+    EXPECT(real_expand(re, text.data(), text.size(), spans, nspans, repl.data(), repl.size(),
+                       out.data(), out.size(), err, sizeof err) == need);
+    return out;
+  }
+}
+
+TEST(capi_find_iter_between_bounds_both_sides)
+{
+  int         code = 0;
+  real_regex* re   = compile("\\w+", 0, code);
+  const char* text = "aa bb aaa cc aa";
+  real_iter*  it   = real_find_iter_between(re, text, 15, 3, 9);  // the region "bb aaa"
+  std::size_t spans[2];
+  EXPECT(real_iter_next(it, spans) == 1 && spans[0] == 3 && spans[1] == 5);
+  EXPECT(real_iter_next(it, spans) == 1 && spans[0] == 6 && spans[1] == 9);
+  EXPECT(real_iter_next(it, spans) == 0);  // "cc" and "aa" lie past the end
+  real_iter_free(it);
+  real_iter* empty = real_find_iter_between(re, text, 15, 9, 3);  // start > end: exhausted, not an error
+  EXPECT(empty != nullptr && real_iter_next(empty, spans) == 0);
+  real_iter_free(empty);
+  EXPECT(real_find_iter_between(re, nullptr, 4, 0, 4) == nullptr);
+  real_free(re);
+}
+
+TEST(capi_count_and_match)
+{
+  int         code = 0;
+  real_regex* re   = compile("a(b)c", 0, code);
+  EXPECT(real_count_matches(re, "abc abc x", 9) == 2);
+  EXPECT(real_count_matches(re, nullptr, 0) == 0);           // (NULL, 0) is an empty subject
+  EXPECT(real_count_matches(re, nullptr, 3) == capi_error);  // a claimed length with nothing behind it
+  EXPECT(real_count_matches(nullptr, "abc", 3) == capi_error);
+
+  std::size_t spans[4] = {0, 0, 0, 0};
+  EXPECT(real_match(re, "xxabcyy", 7, 0, 7, REAL_MODE_SEARCH, spans) == 1);
+  EXPECT(spans[0] == 2 && spans[1] == 5 && spans[2] == 3 && spans[3] == 4);
+  EXPECT(real_match(re, "abcxyz", 6, 0, 6, REAL_MODE_MATCH, spans) == 1 && spans[1] == 3);
+  EXPECT(real_match(re, "xabc", 4, 0, 4, REAL_MODE_MATCH, spans) == 0);        // not anchored at 0
+  EXPECT(real_match(re, "abc", 3, 0, 3, REAL_MODE_FULLMATCH, spans) == 1);
+  EXPECT(real_match(re, "abcx", 4, 0, 4, REAL_MODE_FULLMATCH, spans) == 0);    // a trailing byte
+  EXPECT(real_match(re, "xabcx", 5, 1, 4, REAL_MODE_FULLMATCH, spans) == 1);   // the region [1, 4)
+  EXPECT(spans[0] == 1 && spans[1] == 4);
+  EXPECT(real_match(re, "xxabc", 5, 0, 5, 99, spans) == 1 && spans[0] == 2);   // an unknown mode searches
+  EXPECT(real_match(re, "abc", 3, 0, 3, REAL_MODE_SEARCH, nullptr) == 1);      // spans are optional
+  EXPECT(real_match(nullptr, "abc", 3, 0, 3, REAL_MODE_SEARCH, spans) == -1);
+  EXPECT(real_match(re, nullptr, 3, 0, 3, REAL_MODE_SEARCH, spans) == -1);
+  real_free(re);
+}
+
+TEST(capi_sub_template_grammar)
+{
+  int         code = 0;
+  real_regex* re   = compile("(?P<user>\\w+)@(\\w+)", 0, code);
+  std::size_t n    = 99;
+  EXPECT(sub(re, "a@b and cd@ef", "\\2@\\1", 0, &n) == "b@a and ef@cd" && n == 2);
+  EXPECT(sub(re, "a@b and cd@ef", "\\2@\\1", 1, &n) == "b@a and cd@ef" && n == 1);  // count limits
+  EXPECT(sub(re, "a@b", "<\\g<user>|\\g<2>|\\g<0>>", 0) == "<a|b|a@b>");
+  EXPECT(sub(re, "a@b", "\\n\\t\\r\\f\\v\\a\\b\\\\", 0) == "\n\t\r\f\v\a\b\\");
+  EXPECT(sub(re, "a@b", "\\.\\-", 0) == "\\.\\-");                  // escaped punctuation keeps its backslash
+  EXPECT(sub(re, "a@b", "\\101\\0", 0) == std::string("A\0", 2));  // octal: one raw byte each
+  EXPECT(sub(re, "no match", "x", 0, &n) == "no match" && n == 0);
+
+  EXPECT(sub(re, "a@b", "x\\", 0) == "<error: bad escape (end of pattern)>");
+  EXPECT(sub(re, "a@b", "\\477", 0) == "<error: octal escape value outside of range 0-0o377>");
+  EXPECT(sub(re, "a@b", "\\9", 0) == "<error: invalid group reference>");
+  EXPECT(sub(re, "a@b", "\\g<9>", 0) == "<error: invalid group reference>");
+  EXPECT(sub(re, "a@b", "\\gx", 0) == "<error: missing < in \\g>");
+  EXPECT(sub(re, "a@b", "\\g", 0) == "<error: missing < in \\g>");
+  EXPECT(sub(re, "a@b", "\\g<>", 0) == "<error: missing group name in \\g<>>");
+  EXPECT(sub(re, "a@b", "\\g<user", 0) == "<error: missing group name in \\g<>>");
+  EXPECT(sub(re, "a@b", "\\g<1x>", 0) == "<error: bad character in group name>");
+  EXPECT(sub(re, "a@b", "\\g<nobody>", 0) == "<error: unknown group name>");
+  EXPECT(sub(re, "a@b", "\\q", 0) == "<error: bad escape in replacement>");
+  EXPECT(sub(re, "a@b", "\\Q", 0) == "<error: bad escape in replacement>");
+
+  // An unmatched optional group contributes nothing.
+  real_regex* opt = compile("(a)(b)?", 0, code);
+  EXPECT(sub(opt, "a", "[\\1\\2]", 0) == "[a]");
+  real_free(opt);
+
+  // A buffer shorter than the result receives a prefix and the full length is still returned.
+  char small[3] = {'?', '?', '?'};
+  EXPECT(real_sub(re, "a@b", 3, "\\2@\\1", 5, 0, small, sizeof small, nullptr, nullptr, 0) == 3);
+  EXPECT(std::string(small, 3) == "b@a");
+  char tiny[2] = {'?', '?'};
+  EXPECT(real_sub(re, "ab@cd", 5, "\\2@\\1", 5, 0, tiny, sizeof tiny, nullptr, nullptr, 0) == 5);
+  EXPECT(std::string(tiny, 2) == "cd");
+
+  char err[64] = {0};
+  EXPECT(real_sub(nullptr, "a", 1, "x", 1, 0, nullptr, 0, nullptr, err, sizeof err) == capi_error);
+  EXPECT(std::string(err) == "null re/text/repl");
+  EXPECT(real_sub(re, nullptr, 1, "x", 1, 0, nullptr, 0, nullptr, err, sizeof err) == capi_error);
+  EXPECT(real_sub(re, "a", 1, nullptr, 1, 0, nullptr, 0, nullptr, err, sizeof err) == capi_error);
+  EXPECT(real_sub(re, nullptr, 0, nullptr, 0, 0, nullptr, 0, nullptr, err, sizeof err) == 0);  // (NULL, 0) twice
+  real_free(re);
+}
+
+TEST(capi_expand_checks_every_span)
+{
+  int         code = 0;
+  real_regex* re   = compile("(\\w+)@(\\w+)", 0, code);
+  const char* text = "a@b and cd@ef";
+  std::size_t spans[6];
+  EXPECT(real_match(re, text, 13, 5, 13, REAL_MODE_SEARCH, spans) == 1);
+  EXPECT(expand(re, text, spans, 6, "\\2@\\1") == "ef@cd");                 // the match supplied, not the first
+  EXPECT(expand(re, text, spans, 2, "\\1") == "<error: group reference beyond the spans supplied>");
+  EXPECT(expand(re, text, spans, 6, "\\9") == "<error: invalid group reference>");
+
+  const std::string span_msg = "<error: span outside the subject, or inverted>";
+  const std::size_t outside[6] = {50, 100, spans[2], spans[3], spans[4], spans[5]};
+  EXPECT(expand(re, text, outside, 6, "xyz") == span_msg);  // a pair the template never names
+  const std::size_t inverted[6] = {spans[0], spans[1], 4, 1, spans[4], spans[5]};
+  EXPECT(expand(re, text, inverted, 6, "lit") == span_msg);
+
+  // An unmatched optional group is SIZE_MAX in both slots: skipped, referenced or not.
+  real_regex* opt = compile("(a)(b)?", 0, code);
+  std::size_t ospans[6];
+  EXPECT(real_match(opt, "a", 1, 0, 1, REAL_MODE_SEARCH, ospans) == 1);
+  EXPECT(expand(opt, "a", ospans, 6, "[\\1\\2]") == "[a]");
+  EXPECT(expand(opt, "a", ospans, 6, "z") == "z");
+  real_free(opt);
+
+  char err[64] = {0};
+  EXPECT(real_expand(nullptr, text, 13, spans, 6, "x", 1, nullptr, 0, err, sizeof err) == capi_error);
+  EXPECT(std::string(err) == "null re/text/repl/spans");
+  EXPECT(real_expand(re, text, 13, nullptr, 6, "x", 1, nullptr, 0, err, sizeof err) == capi_error);
+  EXPECT(real_expand(re, text, 13, spans, 6, "\\q", 2, nullptr, 0, err, sizeof err) == capi_error);
+  EXPECT(std::string(err) == "bad escape in replacement");
+  real_free(re);
+}
+
+TEST(capi_set_queries)
+{
+  const char* const pats[3] = {"a+", "\\d", "z"};
+  int               code    = 99;
+  real_regex_set*   set     = real_set_compile(pats, nullptr, 3, 0, nullptr, 0, &code);  // NULL lens: strlen each
+  EXPECT(set != nullptr && code == REAL_ERR_NONE);
+  EXPECT(real_set_size(set) == 3);
+  EXPECT(real_set_is_match(set, "xx7", 3) == 1);
+  EXPECT(real_set_is_match(set, "xyw", 3) == 0);
+  std::uint8_t hits[3] = {9, 9, 9};
+  EXPECT(real_set_matches(set, "aa 5", 4, hits) == 0);
+  EXPECT(hits[0] == 1 && hits[1] == 1 && hits[2] == 0);
+
+  EXPECT(real_set_size(nullptr) == 0);
+  EXPECT(real_set_is_match(nullptr, "a", 1) == -1);
+  EXPECT(real_set_is_match(set, nullptr, 1) == -1);
+  EXPECT(real_set_matches(nullptr, "a", 1, hits) == -1);
+  EXPECT(real_set_matches(set, nullptr, 1, hits) == -1);
+  EXPECT(real_set_matches(set, "a", 1, nullptr) == -1);
+  real_set_free(set);
+  real_set_free(nullptr);  // intentional no-op
+}

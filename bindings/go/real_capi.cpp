@@ -520,10 +520,10 @@ size_t real_expand(const real_regex* re, const char* text, size_t len,
   // binding off by one in a group its template happens not to reference is exactly the class the
   // sentence announces, and exactly the class that got through.
   //
-  // Same rule as the referenced path below, so there is one definition of a valid pair: SIZE_MAX at
-  // the start is an unmatched optional group and contributes nothing (re's rule), anything else must
-  // lie inside [0, len] and not be inverted. A purely literal template with a corrupt buffer is
-  // refused too -- the promise is about the SPANS, not about what the template reads.
+  // This is the one definition of a valid pair: SIZE_MAX at the start is an unmatched optional group
+  // and contributes nothing (re's rule), anything else must lie inside [0, len] and not be inverted.
+  // A purely literal template with a corrupt buffer is refused too -- the promise is about the SPANS,
+  // not about what the template reads. The expansion below reads only pairs this loop has passed.
   for (std::size_t i = 0; i + 1 < nspans; i += 2) {
     const std::size_t start {spans[i]};
     if (start == static_cast<std::size_t>(-1)) {
@@ -553,12 +553,7 @@ size_t real_expand(const real_regex* re, const char* text, size_t len,
     if (start == static_cast<std::size_t>(-1)) {
       continue; // unmatched optional group contributes nothing -- re's own rule, as in real_sub
     }
-    const std::size_t stop {spans[2 * group + 1]};
-    if (start > len || stop > len || stop < start) {
-      write_err(errbuf, errbuf_len, "span outside the subject, or inverted");
-      return static_cast<size_t>(-1);
-    }
-    result.append(text + start, stop - start);
+    result.append(text + start, spans[2 * group + 1] - start);
   }
   if (out != nullptr && outlen > 0) {
     const std::size_t n {std::min(result.size(), outlen)};
