@@ -58,8 +58,10 @@ build: ## Build the abi3 Python extension in place
 test: build ## Run the Python test suites (unittest — includes the re-vs-REAL differential fuzzer)
 	cd $(ROOT) && $(PYRUN) -m unittest discover -s bindings/python/tests
 
-stubtest: build ## Verify real/__init__.pyi against the runtime surface (mypy.stubtest; MYPY_PYTHON carries mypy)
+stubtest: build ## Verify real/__init__.pyi against the runtime surface (mypy.stubtest + the re typing contract; MYPY_PYTHON carries mypy)
 	cd $(ROOT) && PYTHONPATH=$(ROOT)/bindings/python:$(SCIFORGE_PYTHON) $(MYPY_PYTHON) -m mypy.stubtest real --allowlist bindings/python/tests/stubtest_allowlist.txt
+	# stubtest cannot see a base class that is too general; the contract is what a re caller writes.
+	cd $(ROOT) && MYPYPATH=$(ROOT)/bindings/python $(MYPY_PYTHON) -m mypy --strict bindings/python/tests/typing_contract.py
 
 bench: build ## Comparative benchmarks vs Python re (bench.py, then the fuzzed-corpus variant)
 	$(PYRUN) $(ROOT)/benchmarks/bench.py

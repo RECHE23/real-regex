@@ -117,7 +117,7 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   set operators `&&` / `--` / `~~` are `regex`-crate syntax; Python `re` — REAL's model — reads `[` as a
   literal inside a class, so the two would parse the same pattern differently. The crate declines these up
   front with `Error::Unsupported` (never a silent mis-match); escaped forms (`[\[]`) and ordinary ranges stay
-  accepted. `fallback` delegates them to `regex`. Planned alongside `\p{}` as drop-in-completeness features.
+  accepted. `fallback` delegates them to `regex`. Planned as a drop-in-completeness feature.
 - **`Captures::expand` is not offered.** The regex crate writes a match into a `String` via a
   `$name` template. Use `replace` / `replace_all` (same `$` spelling) instead.
 - **Possessive quantifiers — a deliberate superset (per Python 3.11+/PCRE2), read silently

@@ -57,7 +57,8 @@ const DOLLAR_ENDONLY: u32 = 128;
 pub enum Error {
     /// A syntax error in the pattern, with the engine's message and (when known) the byte position.
     Syntax { msg: String, pos: Option<usize> },
-    /// A construct REAL does not support linearly (`\p{…}`, a backreference, an unbounded lookaround, …).
+    /// A construct REAL does not support linearly (a backreference, an unbounded lookaround, an unknown `\p{…}`
+    /// property, the regex crate's class set notation, …).
     /// `hint` points at the divergences page and, when there is one, the way out — the `fallback`
     /// feature. It names the absence just as plainly: a [`RegexSet`] never delegates, and the regex
     /// crate is linear too, so it refuses a backreference exactly as REAL does. The hint sells a

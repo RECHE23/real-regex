@@ -46,7 +46,7 @@ all about syntax a corpus does not contain — which is exactly how the three ab
 ## Why this exists (beyond another `regexp`)
 
 REAL **compiles** every pattern `regexp` compiles (differential-tested against the stdlib, see
-`Test_Differential_*`), and matches identically **except for the five flavor differences listed
+`TestDifferential_*`), and matches identically **except for the five flavor differences listed
 above**. That qualifier is load-bearing, and this sentence used to omit it.
 
 On top of that, REAL accepts constructs `regexp` rejects outright at compile time. These are a
@@ -94,7 +94,7 @@ could not express before.
 | `(*Regexp) FullMatch` | **no equivalent** | the whole ABI's `real_match(REAL_MODE_FULLMATCH)` — `regexp.MatchString` is really a *search* |
 | `(*Regexp) ReplaceAll` | `ReplaceAll` | **template sigil differs**: this package uses REAL/Python-style `\1`/`\g<name>`; regexp `$1`/`$name`/`${name}` is an error, not a silent literal; `$$` is left as two dollars (regexp collapses it to one) — not translated |
 | `RegexSet` (`CompileSet`, `IsMatch`, `Matches`, `Size`) | **no equivalent** | multi-pattern which-matched set — wraps `real::regex_set` (Stage-1 N-walks, or a fused single-pass DFA once enough members are DFA-eligible) directly, mirrors the Python binding's own native `RegexSet` |
-| bounded lookaround, possessive quantifiers | **`regexp.Compile` rejects these patterns outright** | REAL-only; confirmed empirically in `Test_BeyondRE2_*` |
+| bounded lookaround, possessive quantifiers | **`regexp.Compile` rejects these patterns outright** | REAL-only; confirmed empirically in `TestBeyondRE2_*` |
 
 ## Flags
 
