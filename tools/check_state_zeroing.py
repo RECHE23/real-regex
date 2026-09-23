@@ -47,6 +47,13 @@ void make_state() { state s; sink(&s); }
 BULK = re.compile(r"rep\s+stos|memset|bzero")
 
 
+def is_real_gcc(version_text):
+    """Whether a driver's --version text is GCC's; an Apple `g++` reports clang and is not."""
+    if "Free Software Foundation" in version_text or re.search(r"^g\+\+ \(GCC\)|\(GCC\) ", version_text):
+        return "clang" not in version_text.lower()
+    return False
+
+
 def real_gcc_drivers():
     """Every driver on PATH whose --version says GCC (an Apple `g++` is clang and is skipped)."""
     found = []
@@ -59,9 +66,8 @@ def real_gcc_drivers():
                                  check=False, timeout=30).stdout
         except (OSError, subprocess.SubprocessError):
             continue
-        if "Free Software Foundation" in out or re.search(r"^g\+\+ \(GCC\)|\(GCC\) ", out):
-            if "clang" not in out.lower():
-                found.append((name, path, out.splitlines()[0] if out else name))
+        if is_real_gcc(out):
+            found.append((name, path, out.splitlines()[0] if out else name))
     return found
 
 
@@ -94,7 +100,75 @@ def body_of(asm_text, symbol_hint):
     return "\n".join(body)
 
 
+def judge_asm(asm_text):
+    """('extraction', [...]) when no usable make_state body was found, ('bulk', hits), or ('ok', [])."""
+    body = body_of(asm_text, "make_state")
+    if body is None or len(body.splitlines()) < 5:
+        # A body this short means the EXTRACTION failed, not that the function is small: the probe
+        # constructs a 7736-byte state. Treated as a failure of the check rather than a pass, because
+        # the first version of this file reported OK on a defective tree for exactly this reason.
+        return ("extraction", ["(extraction failed: no usable make_state body)"])
+    hits = [line.strip() for line in body.splitlines() if BULK.search(line)]
+    return ("bulk", hits[:3]) if hits else ("ok", [])
+
+
+def self_test():
+    """Drives the assembly analysis and the GCC recognition, each arm alone, on synthetic input.
+
+    Both historical blindings are replayed: gcc's local `LFB` label right after the function label,
+    which once ended the body at zero lines, and Mach-O's `_memset`, which `\bmemset` could not see.
+    """
+    def fn(label, *body):
+        return "\n".join([f"{label}:", *body]) + "\n"
+    scalar = ["\tstr\txzr, [x0]", "\tstr\txzr, [x0, 8]", "\tstr\txzr, [x0, 2480]", "\tbl\tsink", "\tret"]
+    cases = [
+        ("ELF: a call to memset", fn("_Z10make_statev", *scalar[:3], "\tcall\tmemset@PLT", *scalar[3:]), "bulk"),
+        ("Mach-O: `bl _memset` (no word boundary before memset)",
+         fn("__Z10make_statev", *scalar[:3], "\tbl\t_memset", *scalar[3:]), "bulk"),
+        ("x86-64: rep stosq", fn("_Z10make_statev", *scalar[:3], "\trep stosq", *scalar[3:]), "bulk"),
+        ("gcc's local LFB label does not end the body",
+         fn("_Z10make_statev", "LFB1234:", *scalar[:2], "\tbl\t_memset", *scalar[2:]), "bulk"),
+        ("scalar stores only", fn("_Z10make_statev", *scalar), "ok"),
+        ("a memset in the NEXT function is not make_state's",
+         fn("_Z10make_statev", *scalar) + fn("_Z5otherv", "\tbl\t_memset", "\tret"), "ok"),
+        ("a memset past .cfi_endproc is not make_state's",
+         fn("_Z10make_statev", *scalar, "\t.cfi_endproc", "\tbl\t_memset"), "ok"),
+        ("no make_state label", fn("_Z5otherv", *scalar), "extraction"),
+        ("a body too short to be the state's construction", fn("_Z10make_statev", "\tret"), "extraction"),
+    ]
+    failures = 0
+    for name, asm, want in cases:
+        try:
+            got, _ = judge_asm(asm)
+        except Exception as exc:
+            print(f"SELF-TEST FAILED: {name}: judge_asm raised {type(exc).__name__}: {exc}")
+            failures += 1
+            continue
+        if got != want:
+            print(f"SELF-TEST FAILED: {name}: got {got!r}, want {want!r}")
+            failures += 1
+    gcc_cases = [
+        ("GCC's banner", "g++-14 (Homebrew GCC 14.2.0) 14.2.0\nCopyright (C) 2024 Free Software Foundation, Inc.", True),
+        ("a Linux GCC banner", "g++ (GCC) 13.2.1 20230801", True),
+        ("Apple's g++, which is clang", "Apple clang version 16.0.0 (clang-1600.0.26.6)\nTarget: arm64", False),
+        ("a clang banner that mentions the FSF", "clang version 18 (Free Software Foundation notice)", False),
+    ]
+    for name, text, want in gcc_cases:
+        if is_real_gcc(text) != want:
+            print(f"SELF-TEST FAILED: {name}: is_real_gcc -> {not want}, want {want}")
+            failures += 1
+    total = len(cases) + len(gcc_cases)
+    if failures:
+        print(f"check_state_zeroing: self-test FAILED ({failures} of {total} case(s))")
+        return 1
+    print(f"check_state_zeroing: self-test OK — {total} cases: bulk zeroing found in three spellings and past a "
+          "local label, not attributed across a function end, extraction failure refused; GCC told from clang")
+    return 0
+
+
 def main():
+    if sys.argv[1:] == ["--self-test"]:
+        return self_test()
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sciforge = os.environ.get("SCIFORGE_INCLUDE", os.path.join(root, "..", "sciforge", "include"))
     drivers = real_gcc_drivers()
@@ -116,17 +190,9 @@ def main():
             if run.returncode != 0:
                 print(f"check_state_zeroing: {name} failed to compile the probe -- skipping it")
                 continue
-            body = body_of(run.stdout, "make_state")
-            if body is None or len(body.splitlines()) < 5:
-                # A body this short means the EXTRACTION failed, not that the function is small: the
-                # probe constructs a 7736-byte state. Treated as a failure of the check rather than a
-                # pass, because the first version of this file reported OK on a defective tree for
-                # exactly this reason.
-                failures.append((name, version, ["(extraction failed: no usable make_state body)"]))
-                continue
-            hits = [line.strip() for line in body.splitlines() if BULK.search(line)]
-            if hits:
-                failures.append((name, version, hits[:3]))
+            status, hits = judge_asm(run.stdout)
+            if status != "ok":
+                failures.append((name, version, hits))
             else:
                 print(f"check_state_zeroing: OK -- {version}: no bulk zeroing in state construction")
 

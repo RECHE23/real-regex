@@ -385,6 +385,7 @@ check-layers:
 # script reported OK on that defective tree (a local `LFB` label ended the extracted body before it
 # began, then a `\bmemset` pattern could not match Mach-O's `_memset`). Skips loudly without a real GCC.
 check-state-zeroing:
+	@$(PYTHON) tools/check_state_zeroing.py --self-test >/dev/null
 	@$(PYTHON) tools/check_state_zeroing.py
 
 # A per-CALL cost is fixed, so no benchmark here can hold it: it vanishes into every throughput row, and
