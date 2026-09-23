@@ -864,6 +864,56 @@ namespace real {
     which_matched  = 1, //!< Mid-stream restart; full accept-mask per state for which-matched.
   };
 
+  class dfa;
+
+  /*!
+   * \brief What successive munches over ONE subject have learnt, so that tokenizing the whole subject
+   *        costs O(states × length) instead of O(length²) (Reps, "Maximal-munch tokenization in linear
+   *        time", 1998).
+   *
+   * A munch from an offset walks the DFA until it dies or the subject ends, then answers the last
+   * accepting position. Every (state, position) the walk visited AFTER that position leads to no
+   * accept -- that is why the walk went on without answering -- so a later munch reaching the same
+   * pair can stop there with the answer it already holds. The next munch starts at or after the
+   * previous answer's end, so without this a rule like `a*b` beside `a` rescans the rest of `aaa…`
+   * from every position.
+   *
+   * Bound to one \ref dfa and one subject: pass it to \ref dfa::match(std::string_view, std::size_t,
+   * dfa_munch_memo&) const with the same pair every time. Memory is one bit per remembered state per
+   * position of the subject, allocated for a state the first time it is remembered.
+   */
+  class dfa_munch_memo
+  {
+  public:
+
+    /*!
+     * \brief An empty memo for one subject.
+     * \param[in] subject_size The subject's length in bytes.
+     */
+    explicit dfa_munch_memo(std::size_t subject_size)
+      : size_(subject_size)
+    {}
+
+    /*!
+     * \brief DFA transitions taken by every munch so far -- the work the bound is stated in.
+     * \return The count, summed over every call that used this memo.
+     */
+    [[nodiscard]] std::size_t transitions() const noexcept
+    {
+      return transitions_;
+    }
+
+  private:
+
+    friend class dfa;
+
+    std::size_t                                        size_;                  //!< The subject's length.
+    std::vector<std::vector<bool>>                     dead_after_;            //!< [state][position]: no accept follows.
+    std::vector<std::pair<std::uint32_t, std::size_t>> trail_;                 //!< Pairs visited since the last accept.
+    std::size_t                                        transitions_ {0};       //!< See transitions().
+    const void        *                                owner_       {nullptr}; //!< The dfa's tables this memo describes.
+  };
+
   /*!
    * \brief A multi-rule DFA: maximal-munch (\c dfa_mode::munch) or which-matched
    *        unanchored scan (\c dfa_mode::which_matched).
@@ -925,6 +975,67 @@ namespace real {
         if (rule != detail::dfa_no_rule) {
           best = dfa_match {.rule_index = rule, .length = i};
         }
+      }
+      return best;
+    }
+
+    /*!
+     * \brief \ref match(std::string_view) const at \p offset of \p subject, remembering in \p memo what the
+     *        walk proved so that successive calls over the same subject cost linear time in total.
+     *
+     * Answers exactly what `match(subject.substr(offset))` answers.
+     *
+     * \param[in]     subject The whole subject; every call with \p memo must pass the same one.
+     * \param[in]     offset  Where this munch starts (at most `subject.size()`).
+     * \param[in,out] memo    The subject's memo (see \ref dfa_munch_memo).
+     * \return The winning rule index and byte length, or `std::nullopt` if nothing non-empty matches.
+     * \throws std::invalid_argument If \p memo was made for a subject of another length, was used with
+     *         another DFA, or \p offset lies beyond \p subject.
+     */
+    [[nodiscard]] std::optional<dfa_match> match(std::string_view subject,
+                                                 std::size_t      offset,
+                                                 dfa_munch_memo&  memo) const
+    {
+      if (memo.size_ != subject.size() || offset > subject.size()) {
+        throw std::invalid_argument("real::dfa::match: the memo belongs to another subject, or the offset is past it");
+      }
+      if (memo.owner_ == nullptr) {
+        memo.owner_ = tables_.trans.data();
+        memo.dead_after_.resize(tables_.num_states);
+      }
+      else if (memo.owner_ != tables_.trans.data()) {
+        throw std::invalid_argument("real::dfa::match: the memo belongs to another DFA");
+      }
+      std::uint32_t            state {tables_.start};
+      std::optional<dfa_match> best;
+      memo.trail_.clear();
+      std::size_t i {offset};
+      while (i < subject.size()) {
+        const auto byte {static_cast<std::uint8_t>(subject[i])};
+        state = tables_.trans[(static_cast<std::size_t>(state) * tables_.num_classes) + tables_.byte_class[byte]];
+        if (state == 0U) { // dead state
+          break;
+        }
+        ++i;
+        const std::uint32_t rule {tables_.accept[state]};
+        if (rule != detail::dfa_no_rule) {
+          best = dfa_match {.rule_index = rule, .length = i - offset};
+          memo.trail_.clear();
+          continue;
+        }
+        const std::vector<bool>& known {memo.dead_after_[state]};
+        if (!known.empty() && known[i]) {
+          break; // an earlier walk proved no accept follows this pair
+        }
+        memo.trail_.emplace_back(state, i);
+      }
+      memo.transitions_ += i - offset;
+      for (const auto& [dead_state, position] : memo.trail_) {
+        std::vector<bool>& known {memo.dead_after_[dead_state]};
+        if (known.empty()) {
+          known.resize(memo.size_ + 1, false);
+        }
+        known[position] = true;
       }
       return best;
     }
