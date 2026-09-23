@@ -197,6 +197,7 @@ docs-site-gate: ## Sphinx -W --keep-going + linkcheck + built-HTML link check fo
 	  exit 1; \
 	fi
 	@echo "── no-inline-quickstart (every <pre> in landing.html is a {{ quickstart_* }} placeholder)"
+	@python3 $(ROOT)/tools/check_no_inline_quickstart.py --self-test >/dev/null
 	@python3 $(ROOT)/tools/check_no_inline_quickstart.py
 	@python3 $(ROOT)/tools/check_doc_mirror.py --self-test
 	@echo "── built-HTML link check (build/site/html/*.html, site-wide -- linkcheck can't see the bespoke landing template or any #anchor)"
