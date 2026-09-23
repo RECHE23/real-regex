@@ -229,6 +229,7 @@ docs-site-gate: ## Sphinx -W --keep-going + linkcheck + built-HTML link check fo
 	fi
 	@test ! -e $(BUILD)/site/html/coverage/coverage/Users || { echo "docs-site-gate: FAIL -- coverage tree still has coverage/Users"; exit 1; }
 	@test ! -e $(BUILD)/site/html/coverage/coverage/home || { echo "docs-site-gate: FAIL -- coverage tree still has coverage/home"; exit 1; }
+	@python3 $(ROOT)/tools/check_site_links.py --self-test >/dev/null
 	@python3 $(ROOT)/tools/check_site_links.py $(BUILD)/site/html
 	@echo "docs-site-gate: PASS (sphinx -W --keep-going + linkcheck + no-inline-quickstart + built-HTML link check + published-tree hygiene)"
 

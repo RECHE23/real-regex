@@ -25,6 +25,7 @@ internal target, file and fragment alike -- only the trees are excluded as a
 
 Usage:
     python3 tools/check_site_links.py [SITE_ROOT] [PAGE]
+    python3 tools/check_site_links.py --self-test
 
     SITE_ROOT defaults to build/site/html (docs-site's release output -- the exact
     tree `make docs-site` produces and docs.yml deploys).
@@ -46,7 +47,10 @@ already covered by Sphinx's own linkcheck builder.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import sys
+import tempfile
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -295,10 +299,10 @@ def _check_nav_equality(site_root: Path) -> list[str]:
 
 
 def _is_internal(url: str) -> bool:
-    if not url or url.startswith("#"):
-        return False
-    if url.startswith(("mailto:", "tel:", "javascript:")):
-        return False
+    """No scheme and no host: mailto:, tel:, javascript: and http(s): all carry a scheme.
+
+    Never called with an empty URL: the collector keeps only non-empty href/src values.
+    """
     parts = urlsplit(url)
     return not parts.scheme and not parts.netloc
 
@@ -349,11 +353,9 @@ def _check_page(
             continue
         seen.add(url)
 
-        if url.startswith("#"):
-            continue  # same-page anchor: Sphinx/MyST's own build already
-            # guarantees these resolve (heading permalinks, in-page toc) --
-            # not a cross-file target, not this script's concern.
-
+        # A same-page "#anchor" has no scheme, so it classifies as internal -- and like a query-only
+        # URL its path is empty, so it is skipped below: Sphinx/MyST's own build already guarantees
+        # these resolve (heading permalinks, in-page toc); not a cross-file target.
         if not _is_internal(url):
             external.append(url)
             continue
@@ -361,7 +363,7 @@ def _check_page(
         split = urlsplit(url)
         target = split.path
         if not target:
-            continue  # a same-page "?x=y"-only URL, nothing to resolve
+            continue  # a same-page "#anchor" or "?x=y"-only URL, nothing to resolve
 
         internal_count += 1
         resolved = _resolve_internal(target, page_dir=page_path.parent, site_root=site_root)
@@ -488,5 +490,121 @@ def main(argv: list[str]) -> int:
     return 0
 
 
+_ARMS = {
+    "noroot": "does not exist (run `make docs-site` first",
+    "nofile": "target file missing",
+    "noanchor": "not found in",
+    "escapes": "(escapes",
+    "navdiff": "landing nav != inner header nav",
+    "nolandingnav": "no nav found on the landing",
+    "noinnernav": "no nav found on the inner page",
+    "nolanding": "landing index.html not found",
+    "noinner": "features.html missing",
+    "nocopy": "without <button class=\"copy\">",
+    "shellpre": "found shell command in <pre>",
+    "nocmd": "no <div class=\"cmd\"> found on the landing",
+    "pass": "check_site_links: PASS",
+}
+
+# The shapes the real build has, because the nav extractor exists for them: a link on the landing
+# OUTSIDE its nav (which must not join the nav), and the inner nav rendered TWICE (pydata's header and
+# mobile drawer -- only the first container counts).
+_LANDING = ('<div class="nav__links"><a href="features.html">Features</a><a href="guide.html">Guide</a></div>\n'
+            '<div class="hero__cmd"><div class="cmd"><code>pip install real-regex</code>'
+            '<button class="copy">Copy</button></div></div>\n'
+            '<p><a href="guide.html#sec">Read the guide</a></p>\n')
+_INNER_NAV = ('<ul class="bd-navbar-elements"><li><a href="#">Features</a></li>'
+              '<li><a href="guide.html">Guide</a></li></ul>\n')
+_INNER = _INNER_NAV + '<h2 id="top">Features</h2>\n' + _INNER_NAV
+_GUIDE = '<h2 id="sec">Guide</h2>\n<a href="features.html#top">up</a>\n'
+
+
+def self_test() -> int:
+    """Drives each arm alone on a synthetic built site; the verdict must carry that arm's marker only.
+
+    The base site passes; each case edits one file. Site-wide mode also runs the nav-equality and the
+    landing-command nets, so each of their arms is driven the same way.
+    """
+    def site(**edits):
+        files = {"index.html": _LANDING, "features.html": _INNER, "guide.html": _GUIDE}
+        files.update(edits)
+        return {k: v for k, v in files.items() if v is not None}
+
+    cases = [
+        ("the base site", site(), None, 0, "pass"),
+        ("a link to a missing page", site(**{"guide.html": _GUIDE + '<a href="gone.html">x</a>'}), None, 1, "nofile"),
+        ("a link to a missing anchor", site(**{"guide.html": _GUIDE + '<a href="features.html#nope">x</a>'}), None,
+         1, "noanchor"),
+        ("a link escaping the site root", site(**{"guide.html": _GUIDE + '<a href="../../outside.html">x</a>'}),
+         None, 1, "escapes"),
+        ("a link into api/ whose file is missing",
+         site(**{"guide.html": _GUIDE + '<a href="api/missing.html">x</a>'}), None, 1, "nofile"),
+        # Only the https and mailto links are external; a same-page #fragment is neither checked nor listed.
+        ("root-relative, external, same-page, mailto and query-only links",
+         site(**{"guide.html": _GUIDE + '<a href="/features.html#top">a</a><a href="https://example.org/x">b</a>'
+                                        '<a href="#sec">c</a><a href="mailto:a@b.c">d</a><a href="?q=1">e</a>'}),
+         None, 0, "pass", "2 distinct external link(s)"),
+        ("the same broken link twice is one missing target",
+         site(**{"guide.html": _GUIDE + '<a href="gone.html">x</a><a href="gone.html">y</a>'}), None, 1, "nofile",
+         "-- 1 missing:"),
+        ("a broken page under api/ is not scanned", site(**{"api/x.html": '<a href="nowhere.html">x</a>'}), None,
+         0, "pass"),
+        ("the site root is absent", None, None, 1, "noroot"),
+        ("an explicit page that is absent", site(), "gone.html", 1, "noroot"),
+        ("an explicit page skips the site-wide nets", site(**{"index.html": "<p>empty</p>"}), "guide.html", 0,
+         "pass"),
+        ("the two navs differ", site(**{"features.html": _INNER.replace(">Guide<", ">Tutorial<")}), None, 1,
+         "navdiff"),
+        ("the landing has no nav", site(**{"index.html": _LANDING.split("\n", 1)[1]}), None, 1, "nolandingnav"),
+        ("the inner page has no nav", site(**{"features.html": '<h2 id="top">Features</h2>\n'}), None, 1,
+         "noinnernav"),
+        ("the landing page is absent", site(**{"index.html": None}), None, 1, "nolanding"),
+        ("the inner witness page is absent", site(**{"features.html": None, "guide.html": '<h2 id="sec">G</h2>\n',
+                                                     "index.html": _LANDING.replace("features.html", "guide.html")}),
+         None, 1, "noinner"),
+        ("a command box without its copy button",
+         site(**{"index.html": _LANDING.replace('<button class="copy">Copy</button>', "")}), None, 1, "nocopy"),
+        ("a shell command in a <pre>", site(**{"index.html": _LANDING + "<pre>$ pip install real-regex</pre>\n"}),
+         None, 1, "shellpre"),
+        # Token matching: the hero__cmd wrapper alone is not a command box.
+        ("only the hero__cmd wrapper, no command box",
+         site(**{"index.html": _LANDING.replace('<div class="cmd">', '<div class="wrap">')}), None, 1, "nocmd"),
+    ]
+    failures = 0
+    for name, files, page, want_rc, arm, *also in cases:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "html"
+            if files is not None:
+                for rel, content in files.items():
+                    path = root / rel
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(content, encoding="utf-8")
+            argv = ["check_site_links.py", str(root)] + ([page] if page else [])
+            out = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(out):
+                    rc = main(argv)
+            except Exception as exc:
+                print(f"SELF-TEST FAILED: {name}: main raised {type(exc).__name__}: {exc}")
+                failures += 1
+                continue
+        text = out.getvalue()
+        wrong = [a for a, m in _ARMS.items() if a != arm and m in text]
+        missing_also = [a for a in also if a not in text]
+        if rc != want_rc or _ARMS[arm] not in text or wrong or missing_also:
+            print(f"SELF-TEST FAILED: {name}: rc={rc} (want {want_rc}), arm {arm!r} "
+                  f"{'present' if _ARMS[arm] in text else 'ABSENT'}, other arms {wrong}, "
+                  f"absent {missing_also}\n    {text.strip()[:600]}")
+            failures += 1
+    if failures:
+        print(f"check_site_links: self-test FAILED ({failures} of {len(cases)} case(s))")
+        return 1
+    print(f"check_site_links: self-test OK — {len(cases)} cases: each link, nav-equality and landing-command arm "
+          "reached alone; resolvable, external, same-page and api/-internal links pass")
+    return 0
+
+
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--self-test"]:
+        raise SystemExit(self_test())
     raise SystemExit(main(sys.argv))
