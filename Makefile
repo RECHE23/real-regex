@@ -588,6 +588,7 @@ check-sabotage: ## [gates] The harness's three claims: artifact map, rebuild aft
 # on those would train the reader to ignore it. The stamp is the Version cell, not the last touch of
 # the path: a host-name rewrite is not a re-measure. Warns, never fails.
 check-bench-stamp:
+	@python3 tools/check_bench_stamp.py --self-test >/dev/null
 	@python3 tools/check_bench_stamp.py
 
 # Arithmetic of docs/BENCHMARKS.md's §A/§E tables AND of §A's reading bullets (and, via the twin

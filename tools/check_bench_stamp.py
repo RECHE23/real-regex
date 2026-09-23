@@ -50,15 +50,20 @@ full-local-gate and not in the CI preflight -- putting it there would require fe
 history on every run to serve a warning.
 
 Usage:
-    python3 tools/check_bench_stamp.py          # warn (always exits 0)
-    python3 tools/check_bench_stamp.py --list   # also list every commit considered
+    python3 tools/check_bench_stamp.py              # warn (always exits 0)
+    python3 tools/check_bench_stamp.py --list       # also list every commit considered
+    python3 tools/check_bench_stamp.py --self-test  # drive each verdict on throwaway repositories
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 BENCH = "docs/BENCHMARKS.md"
@@ -125,11 +130,8 @@ def changed_code(commit: str) -> bool:
     return False
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--list", action="store_true", help="list every commit considered, with its verdict")
-    args = ap.parse_args()
-
+def judge(list_commits: bool = False) -> int:
+    """Judges the repository in the current directory; prints the verdict (always returns 0)."""
     if git("rev-parse", "--is-inside-work-tree") != "true":
         print("check-bench-stamp: not a git work tree — skipped")
         return 0
@@ -151,7 +153,7 @@ def main() -> int:
         hit = changed_code(c)
         if hit:
             substantive.append(c)
-        if args.list:
+        if list_commits:
             subject = git("log", "-1", "--format=%s", c)
             print(f"  {c}  {'CODE' if hit else 'docs':<5} {subject[:66]}")
 
@@ -182,6 +184,136 @@ def main() -> int:
         "cannot be re-run per commit."
     )
     return 0
+
+
+_ARMS = {
+    "nogit": "not a git work tree",
+    "shallow": "shallow clone",
+    "nostamp": "no stamp in",
+    "none": "no engine commit since",
+    "docs": "none of them changed code",
+    "warn": "changed CODE",
+}
+
+
+def self_test() -> int:
+    """Drives each verdict on throwaway repositories; the verdict must carry its arm's marker only.
+
+    The case the file exists for is driven explicitly: a later edit to docs/BENCHMARKS.md that leaves
+    the stamp alone must NOT restart the window, so a code change made before it is still reported.
+    """
+    ident = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+             "GIT_COMMITTER_EMAIL": "t@t", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+    header = "include/real/x.hpp"
+
+    def run(repo: Path, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, env={**os.environ, **ident})
+
+    def write(repo: Path, rel: str, text: str, message: str | None = None) -> None:
+        path = repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        if message is not None:
+            run(repo, "add", rel)
+            run(repo, "commit", "-q", "-m", message)
+
+    def stamped(repo: Path) -> None:
+        run(repo, "init", "-q")
+        write(repo, header, "int f() { return 1; }\n", "engine")
+        write(repo, BENCH, "| Version | REAL `1.0.0` |\n", "stamp")
+
+    def only_stamp(repo):
+        stamped(repo)
+
+    def comment_only(repo):
+        stamped(repo)
+        # A Doxygen block's ` * ` lines are only skipped by the comment-line test; `//` lines are also
+        # emptied by the trailing-comment strip, so a case with only `//` could not tell them apart.
+        write(repo, header, "/*!\n * \\brief Explained.\n */\n// explained\nint f() { return 1; } // trailing note\n",
+              "docs: explain f")
+
+    def code_change(repo):
+        stamped(repo)
+        write(repo, header, "int f() { return 2; }\n", "perf: f returns 2")
+
+    def rewrite_after_code(repo):
+        stamped(repo)
+        write(repo, header, "int f() { return 2; }\n", "perf: f returns 2")
+        write(repo, BENCH, "| Version | REAL `1.0.0` | host renamed |\n", "docs: host name")
+
+    def no_stamp(repo):
+        run(repo, "init", "-q")
+        write(repo, BENCH, "no version cell here\n", "bench")
+
+    def uncommitted_stamp(repo):
+        stamped(repo)
+        write(repo, header, "int f() { return 2; }\n", "perf: f returns 2")
+        write(repo, BENCH, "| Version | REAL `9.9.9` |\n")  # never committed: the pickaxe finds nothing
+
+    cases = [
+        ("no engine commit since the stamp", only_stamp, "none", None),
+        ("an engine commit that changed only comments", comment_only, "docs", None),
+        ("an engine commit that changed code", code_change, "warn", "perf: f returns 2"),
+        ("a later ledger edit that keeps the stamp does not restart the window", rewrite_after_code, "warn",
+         "perf: f returns 2"),
+        ("no stamp in the ledger", no_stamp, "nostamp", None),
+        ("a stamp absent from history falls back to the last touch", uncommitted_stamp, "warn", "falling back"),
+    ]
+    failures = 0
+    previous = os.getcwd()
+    try:
+        for name, build, arm, must_also in cases:
+            with tempfile.TemporaryDirectory() as tmp:
+                repo = Path(tmp) / "repo"
+                repo.mkdir()
+                build(repo)
+                failures += _judge_case(name, repo, arm, must_also)
+        with tempfile.TemporaryDirectory() as tmp:
+            failures += _judge_case("outside any git work tree", Path(tmp), "nogit", None)
+            origin = Path(tmp) / "origin"
+            origin.mkdir()
+            code_change(origin)
+            subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{origin}", str(Path(tmp) / "shallow")],
+                           check=True, capture_output=True, env={**os.environ, **ident})
+            failures += _judge_case("a shallow clone", Path(tmp) / "shallow", "shallow", None)
+    finally:
+        os.chdir(previous)
+    total = len(cases) + 2
+    if failures:
+        print(f"check-bench-stamp: self-test FAILED ({failures} of {total} case(s))")
+        return 1
+    print(f"check-bench-stamp: self-test OK — {total} cases: each verdict reached alone, a ledger rewrite that "
+          "keeps the stamp does not restart the window, and the touch fallback names itself")
+    return 0
+
+
+def _judge_case(name: str, repo: Path, arm: str, must_also: str | None) -> int:
+    os.chdir(repo)
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            judge()
+    except Exception as exc:
+        print(f"SELF-TEST FAILED: {name}: judge raised {type(exc).__name__}: {exc}")
+        return 1
+    text = out.getvalue()
+    wrong = [a for a, m in _ARMS.items() if a != arm and m in text]
+    if _ARMS[arm] not in text or wrong or (must_also and must_also not in text):
+        print(f"SELF-TEST FAILED: {name}: arm {arm!r} {'present' if _ARMS[arm] in text else 'ABSENT'}, "
+              f"other arms {wrong}, {must_also!r} {'present' if not must_also or must_also in text else 'ABSENT'}"
+              f"\n    {text.strip()}")
+        return 1
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--list", action="store_true", help="list every commit considered, with its verdict")
+    ap.add_argument("--self-test", action="store_true", help="drive each verdict on throwaway repositories")
+    args = ap.parse_args()
+    if args.self_test:
+        return self_test()
+    return judge(args.list)
 
 
 if __name__ == "__main__":
