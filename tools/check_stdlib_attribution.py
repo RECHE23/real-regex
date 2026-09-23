@@ -86,6 +86,19 @@ CLAIMS: tuple[dict[str, object], ...] = (
                             r"\b(?:maximis\w+|maximiz\w+|reports?|renders?|selects?)\b", re.I),
         "fix":   "Name macOS's libc and glibc; they disagree.",
     },
+    {
+        "name":  "compat speed against std::regex",
+        # The substitution's speed claim. The same swap measured ~4x faster than libc++'s std::regex
+        # and ~0.75x -- slower -- than libstdc++'s (make bench-percall, 2026-09-23), so a ratio against
+        # "std" is false for one of the two whichever ratio it quotes.
+        "shape": re.compile(r"depends on the `std::regex` it replaces"),
+        "names": ("libc++", "libstdc++"),
+        "why":   "the swap is faster than libc++'s std::regex and slower than libstdc++'s on the measured "
+                 "case, so a ratio against `std` is false for one of them",
+        # A speed comparison whose other side is the family: `faster than std::regex_replace`.
+        "over":  re.compile(r"\b(?:faster|slower)\b[^.\n]{0,15}?\bthan\s+`?std::regex", re.I),
+        "fix":   "Say which std::regex: libc++'s and libstdc++'s differ by an order of magnitude here.",
+    },
 )
 
 
@@ -139,7 +152,8 @@ def run(*, page_texts: dict[pathlib.Path, str] | None = None, quiet: bool = Fals
                 print(f"    {line}")
             print("    Measured: libstdc++ refuses `[A-\\x80]` (`Invalid range in bracket expression`, "
                   "signed `char` endpoints) and libc++ accepts it; macOS's libc maximises POSIX "
-                  "submatches and glibc does not. Name the implementation, or say nothing.")
+                  "submatches and glibc does not; the compat substitution is faster than libc++'s "
+                  "std::regex and slower than libstdc++'s. Name the implementation, or say nothing.")
         return 1
 
     if not quiet:
@@ -183,7 +197,8 @@ def self_test() -> int:
     # Arm 2, per claim: the family as the subject of the behaviour, injected into the very block
     # that carries the claim so the block-local check is what refuses it.
     overs = (("high-endpoint class range", "std::regex refuses that range."),
-             ("POSIX submatch selection", "libc reports the maximised groups."))
+             ("POSIX submatch selection", "libc reports the maximised groups."),
+             ("compat speed against std::regex", "It is measured 6–17× faster than `std::regex_replace`."))
     # The entry set is pinned here rather than derived, so deleting a CLAIMS entry is a diagnosis
     # instead of a StopIteration: a guard that refuses by crashing reports nothing a reader can act
     # on, and an exit status cannot tell the two apart.

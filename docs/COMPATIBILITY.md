@@ -211,8 +211,10 @@ to catch this shape too. So `regex_replace`'s `$N` and `sregex_token_iterator`'s
 The replacement format is ECMAScript: `$$` → `$`, `$&` → the whole match, `` $` `` → the text since
 the previous match, `$'` → the text to the end, `$N` / `$NN` → group N (matching
 `std::regex_replace`, which the differential harness pins). `format_first_only` and `format_no_copy`
-are honoured. A non-nullable real-backed pattern runs the substitution on `real`'s linear traversal —
-measured **6–17× faster** than `std::regex_replace`; a nullable one falls back to `std`.
+are honoured. A non-nullable real-backed pattern runs the substitution on `real`'s linear traversal;
+a nullable one falls back to `std`. Whether the swap is faster depends on the `std::regex` it replaces:
+on the one measured case it is **~4× faster than libc++'s and ~0.75× — slower — than libstdc++'s**
+(see Performance below).
 
 The real expander honours only `format_first_only`, `format_no_copy` (and the `match_any` hint);
 **any other flag routes the whole substitution to `std::regex_replace`** (so compat == std) — a
@@ -396,6 +398,21 @@ differential fuzzer (517 k iterations, zero remaining both-accept divergence):
 
 ## Performance (measured, real backend vs std::regex)
 
-`regex_search`, compat/std time ratio (`<1` = compat faster): email-validate **0.22**, date
-**0.13**, alternation **0.49**, long class scan **0.005**. ReDoS `(a+)+b` over `"a"*30` (no match):
-**~1000× faster** (std backtracks catastrophically; compat stays linear).
+Measured 2026-09-23 with `make bench-percall` (`benchmarks/bench_percall.cpp`): both engines compile
+the pattern once outside the timing, each call is batched until the timed region spans 50 µs, and each
+column is the median of 15 draws; arm64, `-O2`, short subjects. Nanoseconds per call; a ratio above 1
+is REAL's favour. **The `std::regex` side depends on the standard library**, so both are given:
+
+| case | libc++ (Apple clang 16): std / REAL | ratio | libstdc++ (GCC 14.3): std / REAL | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| match hit (anchored) | 428 / 50 | 8.6× | 195 / 49 | 4.0× |
+| match reject (anchored) | 98 / 33 | 2.9× | 107 / 32 | 3.4× |
+| search in (unanchored) | 994 / 84 | 11.8× | 231 / 56 | 4.1× |
+| search + captures | 916 / 81 | 11.3× | 219 / 63 | 3.5× |
+| replace (trim) | 3359 / 798 | 4.2× | 703 / 938 | **0.75× — REAL slower** |
+
+One ISA and one host, in the per-call regime a validation loop pays; throughput and the two-ISA tables
+are in `docs/BENCHMARKS.md`. ReDoS is a different axis: on `(a+)+b` over `"a"×N` with no match,
+libstdc++'s `std::regex` backtracks (4.1 s at N = 26) and libc++'s doubles its time per character, then
+refuses the input from N = 13 on a complexity counter (`docs/BENCHMARKS.md` §C, REAL 2026.7.51) — while
+the compat layer answers in linear time on both.

@@ -63,9 +63,12 @@ both**. Throughput, machines and the per-engine duels:
 On the classic catastrophic pattern `(a+)+b`, REAL's required-literal prefilter
 answers in **~2 µs over 100 000 characters** (no `b` → reject without running the
 VM). Strip the trailing literal: the bare engine on `(a+)+` still finishes in
-**~5 ms on 100K and stays linear** (~50 ms at 1M) — while `std::regex` takes
-**4.1 s on 26 characters** and Python `re` **~1.4 s on 24, climbing exponentially**.
-Linear time is the measured property, not an adjective. Method and both legs:
+**~5 ms on 100K and stays linear** (~49 ms at 1M) — while libstdc++'s `std::regex` takes
+**4.1 s on 26 characters** (libc++'s refuses the input from 13) and Python `re` **~1.4 s on
+24, climbing exponentially**. Linear time is the measured property, not an adjective.
+Measured on REAL 2026.7.51 (2026-07-17), arm64, Apple clang `-O3`, median of 31, after
+compile — two routes, the prefilter and the bare Pike VM; an x86-64 cross-check reads
+~1.2 µs and ~10.6 ms. Method and both legs:
 [Performance](https://reche23.github.io/real-regex/performance/) (§C); prefilter
 leg also in `make bench-engines` (`redos`).
 
