@@ -2,6 +2,24 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.9.6
+
+9.6 (**`$` has two ends, and a DFA is not always the match**): **THESE TABLES DO NOT MOVE, AND THE
+STAMP IS DELIBERATELY LEFT AT `2026.8.15`** — the sixth train in a row, same reason: this document
+declares a **two-ISA** regime and only arm64 was available. **NO CELL WAS RE-RUN, AND NONE IS
+EDITED.** **THE TRAIN CHANGES ANSWERS**, so the "unreachable from a pattern that compiled" argument is
+not available: a class that can hold `\n` under `$` now finds its match at the true end (`\s$` over
+`"ab\n"` answered `None`, twenty-two releases). **THE ROUTE CODE THIS TOUCHES, AND WHICH CELLS COULD
+SEE IT:** the byte class runner's end-anchor branch gains one table test (`\n` in the class?) before
+stripping the final newline, and the code-point runner's single equality against the limit becomes
+`at_end_anchor` (true end, or before-newline for `$`). The published cells with a class under `$` are
+`^[a-z]+$` (§A, both ISAs) and `^(\w+)$` (the extraction row); **whether either runs the changed
+branch was not checked, and neither was measured.** `[a-z]` and `\w` cannot hold `\n`, so their
+ANSWERS are unchanged by construction; their cost is the unmeasured part. **`real::dfa_faithful` is a
+new function and changes no path a cell runs**: `real::dfa`'s construction and match are untouched,
+and `max_loop_hops` moved from a class member to namespace scope with the same value. **NOT CLAIMED:**
+no veto matrix run, no `GATE_STRICT`, no x86-64 measurement of anything in this train.
+
 ## v2026.9.5
 
 9.5 (**`\w{2}$` answered None**): **THESE TABLES DO NOT MOVE, AND THE STAMP IS DELIBERATELY LEFT AT
