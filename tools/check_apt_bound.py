@@ -45,16 +45,17 @@ def workflow_paths() -> list[pathlib.Path]:
 def run(*,
         workflow_texts: dict[pathlib.Path, str] | None = None,
         script_text: str | None = None,
-        quiet: bool = False) -> int:
+        quiet: bool = False,
+        script_path: pathlib.Path = SCRIPT) -> int:
     """Both claims, against the live tree or injected texts."""
     problems: list[str] = []
     calls = 0
 
-    if script_text is None and not SCRIPT.is_file():
-        problems.append(f"{SCRIPT.relative_to(REPO)} is gone — the bound has nowhere to live")
+    if script_text is None and not script_path.is_file():
+        problems.append(f"{script_path.name} is gone — the bound has nowhere to live")
         text = ""
     else:
-        text = SCRIPT.read_text() if script_text is None else script_text
+        text = script_path.read_text() if script_text is None else script_text
         if "apt-get update" not in text:
             problems.append(f"{SCRIPT.name}: no `apt-get update` — it no longer refreshes indexes")
         if "ubuntu.*" not in text and "ubuntu*" not in text:
@@ -71,7 +72,7 @@ def run(*,
                                 f"tools/ci-apt-ubuntu.sh")
             calls += len(re.findall(r"ci-apt-ubuntu\.sh", line))
 
-    if calls == 0 and (script_text is not None or SCRIPT.is_file()):
+    if calls == 0 and (script_text is not None or script_path.is_file()):
         problems.append("no workflow calls ci-apt-ubuntu.sh — the script is dead, the bound is theatre")
 
     if problems:
@@ -201,6 +202,31 @@ def self_test() -> int:
         for line in printed.strip().split("\n"):
             print(f"      {line}")
         return 1
+
+    # The arms the cases above cannot reach: the script file gone, a script no workflow calls, and the
+    # clean verdict's own line. Each is driven loud and must print its own sentence.
+    def loud(**kwargs) -> tuple[int | str, str]:
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                return run(quiet=False, **kwargs), out.getvalue()
+        except Exception as exc:  # noqa: BLE001 — a removed guard surfaces as a crash: this case's failure
+            return f"raised {type(exc).__name__}", out.getvalue()
+
+    uncalled = {p: t.replace("ci-apt-ubuntu.sh", "ci-apt.sh").replace("apt-get update", "apt-get upgrade")
+                for p, t in live_wf.items()}
+    for label, kwargs, want_code, sentence in (
+        ("the script file is gone", dict(workflow_texts=live_wf, script_path=REPO / "tools" / "absent.sh"), 1,
+         "is gone"),
+        ("no workflow calls the script", dict(workflow_texts=uncalled, script_text=live_script), 1,
+         "the script is dead"),
+        ("the live tree", {}, 0, "check-apt-bound: OK"),
+    ):
+        code, printed = loud(**kwargs)
+        if code != want_code or sentence not in printed:
+            print(f"check-apt-bound: SELF-TEST FAILED — {label}: exit {code} (want {want_code}), "
+                  f"{sentence!r} {'printed' if sentence in printed else 'NOT printed'}")
+            return 1
 
     print("check-apt-bound: self-test OK — an unbounded workflow line trips; a "
           "script that no longer updates, that drops the ubuntu* keep-list, or "

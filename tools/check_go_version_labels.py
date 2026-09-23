@@ -105,11 +105,11 @@ def module_minor() -> int | None:
     return max(minors) if minors else None
 
 
-def sweep() -> set[pathlib.Path]:
-    """Every file under ROOTS whose raw text carries a `v0.<n>` label. Undecodable files are not
+def sweep(roots: tuple[pathlib.Path, ...] = ROOTS) -> set[pathlib.Path]:
+    """Every file under ``roots`` whose raw text carries a `v0.<n>` label. Undecodable files are not
     prose a visitor reads; they are skipped."""
     found: set[pathlib.Path] = set()
-    for root in ROOTS:
+    for root in roots:
         if root.is_file():
             candidates = [root]
         elif root.is_dir():
@@ -128,10 +128,10 @@ def sweep() -> set[pathlib.Path]:
 def run(*, page_texts: dict[pathlib.Path, str] | None = None,
         exemption_texts: dict[pathlib.Path, str] | None = None,
         found: set[pathlib.Path] | None = None,
-        minor: int | None = None, quiet: bool = False) -> int:
+        minor: int | None = None, quiet: bool = False, minor_of=module_minor) -> int:
     """Every living page carries the current minor and no other outside history; every labelled
     file under ROOTS is classified; every exemption still earns its place."""
-    current = minor if minor is not None else module_minor()
+    current = minor if minor is not None else minor_of()
     if current is None:
         print("check_go_version_labels: FAIL — no `bindings/go/v0.<minor>.<patch>` tag is readable, "
               "so the label has nothing to be checked against. That is the source of truth "
@@ -220,11 +220,10 @@ def self_test() -> int:
     verbose passes at the end assert what the message NAMES, because an exit status cannot
     distinguish a clean refusal from a traceback.
 
-    The two gone-file guards are verified by CRASH, not by a case above: blinding one lets
-    `text = None` flow into `LABEL.search` / `HTML_COMMENT.sub`, and a `TypeError: ... NoneType`
-    traceback in run() is that missing guard, not a harness bug. (Measured: the perimeter and
-    stale-exemption arms blind cleanly — one named case each — while the two None-guards blind
-    only into a crash, the same shape the conformance scorecard has and documents.)
+    A case that raises is that case's failure: blinding a gone-file guard lets `text = None` flow
+    into `LABEL.search`, and the resulting TypeError is reported as the case it broke, so the two
+    None-guards redden by refusal like every other arm. The sweep over the roots, an unreadable module
+    tag and the clean verdict's own line are driven at the end.
     """
     current = module_minor()
     if current is None:
@@ -293,8 +292,11 @@ def self_test() -> int:
     cases.append(("an exemption whose file is gone", pages(), {}, classified, 1))
 
     for label, page_texts, exemption_texts, found, expected in cases:
-        got = run(page_texts=page_texts, exemption_texts=exemption_texts, found=found,
-                  minor=current, quiet=True)
+        try:
+            got = run(page_texts=page_texts, exemption_texts=exemption_texts, found=found,
+                      minor=current, quiet=True)
+        except Exception as exc:  # noqa: BLE001 - a removed guard surfaces as a crash: this case's failure
+            got = f"raised {type(exc).__name__}: {exc}"
         if got != expected:
             verb = "did NOT trip" if expected == 1 else "TRIPPED"
             print(f"check_go_version_labels: SELF-TEST FAILED — {label} {verb} the check "
@@ -342,6 +344,41 @@ def self_test() -> int:
                 print(f"    {problem}")
             for line in printed.strip().split("\n"):
                 print(f"      {line}")
+            return 1
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        (base / "dir" / "sub").mkdir(parents=True)
+        labelled_file = base / "README.md"
+        labelled_file.write_text("the v0.3 binding\n", encoding="utf-8")
+        inside = base / "dir" / "sub" / "page.md"
+        inside.write_text("since v0.2\n", encoding="utf-8")
+        (base / "dir" / "plain.md").write_text("no version here\n", encoding="utf-8")
+        (base / "dir" / "blob.bin").write_bytes(b"\xff\xfe v0.1 \x80")
+        try:
+            got_sweep = sweep((labelled_file, base / "dir", base / "absent"))
+        except Exception as exc:  # noqa: BLE001
+            got_sweep = f"raised {type(exc).__name__}: {exc}"
+    if got_sweep != {labelled_file, inside}:
+        print(f"check_go_version_labels: SELF-TEST FAILED — sweep over a file root, a directory root "
+              f"(a labelled page, an unlabelled one, an undecodable blob) and an absent root found "
+              f"{got_sweep!r}.")
+        return 1
+    for case_label, kwargs, want_code, sentence in [
+        ("no readable module tag", dict(minor_of=lambda: None), 1, "no `bindings/go/v0.<minor>.<patch>` tag"),
+        ("the clean verdict", dict(page_texts=pages(), exemption_texts=exemptions(), found=classified,
+                                   minor=current), 0, "check_go_version_labels: OK"),
+    ]:
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                code = run(**kwargs)
+        except Exception as exc:  # noqa: BLE001
+            code = f"raised {type(exc).__name__}"
+        if code != want_code or sentence not in out.getvalue():
+            print(f"check_go_version_labels: SELF-TEST FAILED — {case_label}: exit {code} (want {want_code}), "
+                  f"{sentence!r} {'printed' if sentence in out.getvalue() else 'NOT printed'}.")
             return 1
 
     print(f"check_go_version_labels: self-test OK — {len(cases)} synthetic case(s) over "

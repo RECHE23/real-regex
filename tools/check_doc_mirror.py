@@ -36,6 +36,8 @@ has never been seen to fail is a guard nobody has checked.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import re
 import sys
 from pathlib import Path
@@ -93,8 +95,7 @@ def mirror_sections(text: str) -> dict[str, str]:
                 out[current] = "\n".join(body).strip()
             current, body = found.group(1), []
             continue
-        if current is None:
-            continue
+        # Lines before the first target collect into `body` and are dropped when that target resets it.
         if not body and line.startswith("## "):
             continue  # the heading the canon carries on its \section line
         body.append(line)
@@ -204,9 +205,9 @@ DISTILLED = (
 )
 
 
-def check_distilled(*, quiet: bool = False) -> int:
+def check_distilled(*, quiet: bool = False, pairs: tuple = DISTILLED) -> int:
     """A distillation's canon must still exist. That is all a machine can say about it."""
-    missing = [(page, canon) for page, canon in DISTILLED if not canon.exists()]
+    missing = [(page, canon) for page, canon in pairs if not canon.exists()]
     if missing:
         if not quiet:
             for page, canon in missing:
@@ -214,7 +215,7 @@ def check_distilled(*, quiet: bool = False) -> int:
                       f"gone: {canon.relative_to(ROOT)}")
         return 1
     if not quiet:
-        print(f"check_doc_mirror: {len(DISTILLED)} distilled page(s) — canon path present; prose "
+        print(f"check_doc_mirror: {len(pairs)} distilled page(s) — canon path present; prose "
               f"deliberately NOT compared (they condense, they do not copy)")
     return 0
 
@@ -257,7 +258,32 @@ def self_test(canon_text: str, mirror_text: str) -> int:
         print("check_doc_mirror: SELF-TEST FAILED — a bullet added to the mirror alone did NOT "
               "trip the comparison. The guard is blind; fix it before trusting a green.")
         return 1
-    print("check_doc_mirror: self-test OK — a mirror-only bullet trips the comparison.")
+    # The printing branches: quiet must print NOTHING on a drift, loud must name what drifted, and the
+    # clean verdict prints its own line. A green-only run proves none of the three.
+    def captured(fn, *args, **kwargs) -> tuple[int | str, str]:
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                return fn(*args, **kwargs), out.getvalue()
+        except Exception as exc:  # noqa: BLE001 - a removed guard surfaces as a crash: this case's failure
+            return f"raised {type(exc).__name__}", out.getvalue()
+
+    for label, call, want_code, must, must_not in (
+        ("a quiet drift", lambda: run(canon_text, injected, quiet=True), 1, None, "FAIL"),
+        ("a loud drift", lambda: run(canon_text, injected), 1, "DIFFERS", None),
+        ("a loud clean run", lambda: run(canon_text, mirror_text), 0, "clean —", None),
+        ("a distilled page whose canon is gone",
+         lambda: check_distilled(pairs=((ROOT / "docs" / "site" / "x.md", ROOT / "gone" / "README.md"),)), 1,
+         "names a canon that is gone", None),
+        ("distilled pages whose canons exist", lambda: check_distilled(), 0, "canon path present", None),
+    ):
+        code, printed = captured(call)
+        if code != want_code or (must and must not in printed) or (must_not and must_not in printed):
+            print(f"check_doc_mirror: SELF-TEST FAILED — {label}: exit {code} (want {want_code}), printed "
+                  f"{printed.strip()[:200]!r}")
+            return 1
+    print("check_doc_mirror: self-test OK — a mirror-only bullet trips the comparison, quiet stays silent, "
+          "loud names the drift, and a distilled page's missing canon is refused.")
     return 0
 
 
@@ -299,6 +325,19 @@ def self_test_headings(canon_text: str, mirror_text: str) -> int:
         print("check_doc_mirror: SELF-TEST FAILED — a paragraph added to std-regex-reference.md "
               "alone did NOT trip the comparison. The guard is blind on the second pair.")
         return 1
+    for label, quiet, want_code, must, must_not in (
+        ("a quiet drift", True, 1, None, "FAIL"), ("a loud drift", False, 1, "DIFFERS", None)):
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                code = run_headings(canon_text, injected, quiet=quiet)
+        except Exception as exc:  # noqa: BLE001 - a removed guard surfaces as a crash: this case's failure
+            code = f"raised {type(exc).__name__}"
+        printed = out.getvalue()
+        if code != want_code or (must and must not in printed) or (must_not and must_not in printed):
+            print(f"check_doc_mirror: SELF-TEST FAILED — second pair, {label}: exit {code}, printed "
+                  f"{printed.strip()[:200]!r}")
+            return 1
     print("check_doc_mirror: self-test OK — a mirror-only paragraph trips the second pair too.")
     return 0
 

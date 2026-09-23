@@ -18,6 +18,10 @@ each run on the four channels a verdict needs, because each of them has lied onc
     (This tool writes the blinded condition itself, so no guard in this tree reaches that verdict; it
     stays as the net for a condition shape the pattern below does not foresee.)
 
+A blinding is only evidence against a GREEN baseline: if the unblinded self-test already fails, every
+blinding "reddens" and the sweep reports a guard fully proven while it proved nothing -- which this tool
+once did. So the unblinded self-test runs first, and a red baseline stops the sweep.
+
 The blinded copy is written BESIDE the guard, so its sibling imports and repository-relative paths
 resolve exactly as the original's do, and it is removed afterwards.
 
@@ -36,6 +40,8 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
+import io
 import pathlib
 import re
 import subprocess
@@ -85,7 +91,18 @@ def blind(guard: pathlib.Path, until: str | tuple[str, ...] = TEST_SECTION) -> l
     return results
 
 
+def baseline(guard: pathlib.Path) -> subprocess.CompletedProcess:
+    """The unblinded self-test, run the way every blinding is."""
+    return subprocess.run([sys.executable, str(guard), "--self-test"], capture_output=True, text=True,
+                          cwd=guard.parent.parent)
+
+
 def report(guard: pathlib.Path, until: str | tuple[str, ...] = TEST_SECTION) -> int:
+    base = baseline(guard)
+    if base.returncode != 0:
+        print(f"blind_guard: {guard.name}'s own --self-test is RED before any blinding (exit {base.returncode}) -- "
+              "every blinding would read as a refusal, so nothing is judged. Make it green first.")
+        return 1
     results = blind(guard, until)
     if not results:
         print(f"blind_guard: no condition found in {guard} above {until!r}")
@@ -128,12 +145,21 @@ if __name__ == "__main__":
         guard.parent.mkdir()
         guard.write_text(guard_text, encoding="utf-8")
         got = {text: verdict for verdict, _line, _changed, text in blind(guard, "def self_test")}
+        broken = pathlib.Path(tmp) / "tools" / "red.py"
+        broken.write_text(guard_text.replace("return 0 if ok else 1", "return 1"), encoding="utf-8")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            refused = report(broken)
     want = {"if x < 0:": "RED", "if x > 100:": "GREEN", "if d is None:": "CRASH"}
     if got != want:
         print(f"blind_guard: self-test FAILED -- got {got}, want {want}")
         return 1
-    print("blind_guard: self-test OK — a driven arm reddens, an undriven one stays green, and a removed "
-          "None guard is told apart as a crash")
+    if refused != 1 or "RED before any blinding" not in out.getvalue():
+        print(f"blind_guard: self-test FAILED -- a guard whose self-test is already red was not refused: "
+              f"{out.getvalue().strip()!r}")
+        return 1
+    print("blind_guard: self-test OK — a driven arm reddens, an undriven one stays green, a removed None "
+          "guard is told apart as a crash, and a guard whose self-test is already red is refused")
     return 0
 
 

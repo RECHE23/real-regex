@@ -242,6 +242,23 @@ def self_test() -> int:
             print(f"      {line}")
         return 1
 
+    # The paragraph split must keep the LAST paragraph, which no blank line closes: a claim at the end
+    # of a page would otherwise be read as absent.
+    if blocks("a\nb\n\nlast claim") != ["a\nb", "last claim"]:
+        print(f"check_stdlib_attribution: SELF-TEST FAILED — blocks() lost a paragraph: "
+              f"{blocks('a\nb\n\nlast claim')!r}")
+        return 1
+    # And the clean verdict's own line, which every case above runs with quiet=True.
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            code = run()
+    except Exception as exc:  # noqa: BLE001 - a removed guard surfaces as a crash: this case's failure
+        code = f"raised {type(exc).__name__}"
+    if code != 0 or "check_stdlib_attribution: OK" not in out.getvalue():
+        print(f"check_stdlib_attribution: SELF-TEST FAILED — the live pages did not produce the OK line ({code}).")
+        return 1
+
     print(f"check_stdlib_attribution: self-test OK — {len(cases)} case(s): each of the "
           f"{len(CLAIMS)} claim(s) goes unnamed on each of the {len(PAGES)} pages and trips, each "
           f"claim's family-as-subject sentence trips, the live pages stay green, and the failure "

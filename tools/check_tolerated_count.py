@@ -64,9 +64,9 @@ def grouped(value: int) -> str:
     return f"{value:,}".replace(",", " ")
 
 
-def measured() -> dict[str, int] | None:
+def measured(source_text: str | None = None) -> dict[str, int] | None:
     """Both pinned constants from the exhaustive check, or None when either cannot be read."""
-    text = SOURCE.read_text(encoding="utf-8")
+    text = source_text if source_text is not None else SOURCE.read_text(encoding="utf-8")
     out: dict[str, int] = {}
     for name, pattern in SOURCE_RES:
         match = pattern.search(text)
@@ -76,9 +76,10 @@ def measured() -> dict[str, int] | None:
     return out
 
 
-def run(*, page_texts: dict[pathlib.Path, str] | None = None, quiet: bool = False) -> int:
+def run(*, page_texts: dict[pathlib.Path, str] | None = None, quiet: bool = False,
+        source_text: str | None = None) -> int:
     """Compare every page's quoted count against the C++ constant."""
-    expected = measured()
+    expected = measured(source_text)
     if expected is None:
         print(f"check_tolerated_count: FAIL — `tolerated_with_residue` or `cases_at_default_tier` "
               f"is missing from {SOURCE.relative_to(ROOT)}. A source of truth moved or was renamed; "
@@ -197,10 +198,39 @@ def self_test() -> int:
                 print(f"      {line}")
             return 1
 
+    # The arms the drift injections cannot reach: a source that lost a constant (each of the two
+    # alone), a page that lost the sentence, and the clean verdict's own line.
+    source = SOURCE.read_text(encoding="utf-8")
+    pages = {p: p.read_text(encoding="utf-8") for p in PAGES}
+
+    def drive(**kwargs) -> tuple[int | str, str]:
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                return run(**kwargs), out.getvalue()
+        except Exception as exc:  # noqa: BLE001 - a removed guard surfaces as a crash: this case's failure
+            return f"raised {type(exc).__name__}", out.getvalue()
+
+    for name, pattern in SOURCE_RES:
+        code, printed = drive(page_texts=pages, source_text=pattern.sub("renamed {0}", source))
+        if code != 1 or "is missing from" not in printed:
+            print(f"check_tolerated_count: SELF-TEST FAILED — a source without its {name} constant was not "
+                  f"refused by name (exit {code}).")
+            return 1
+    gone = dict(pages)
+    gone[PAGES[0]] = PAGE_RE.sub("a number of cases", gone[PAGES[0]])
+    if drive(page_texts=gone, quiet=True)[0] != 1:
+        print("check_tolerated_count: SELF-TEST FAILED — a page that lost the sentence was not refused.")
+        return 1
+    code, printed = drive(page_texts=pages)
+    if code != 0 or "check_tolerated_count: OK" not in printed:
+        print(f"check_tolerated_count: SELF-TEST FAILED — the live pages did not produce the OK line (exit {code}).")
+        return 1
+
     print(f"check_tolerated_count: self-test OK — a drift in EITHER count trips the comparison on "
           f"each of the {len(PAGES)} pages ({2 * len(PAGES)} injections), and the failure path "
           f"itself prints both constant names, both measured values and the drifted one, on stdout "
-          f"alone.")
+          f"alone; a lost constant (each), a lost sentence and the OK line are driven too.")
     return 0
 
 
