@@ -2,6 +2,18 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.9.7
+
+9.7 (**a tokenization is linear, not only a munch**): **THESE TABLES DO NOT MOVE, AND THE STAMP IS
+DELIBERATELY LEFT AT `2026.8.15`** — the seventh train in a row, same reason: this document declares a
+**two-ISA** regime and only arm64 was available. **NO CELL WAS RE-RUN, AND NONE IS EDITED.** **NO
+ROUTE CODE A CELL RUNS IS TOUCHED:** `dfa_munch_memo` is a new overload beside `dfa::match`, which is
+unchanged; the C ABI's change is on the compile-failure path only (`real_compile_ex` and the shared
+reporting helper), and `real_expand` loses a span check after the pass that already made it
+unreachable, a per-call difference no cell measures. The Rust `SetMatches` and `escape` and the Go
+`SubexpIndex` / `ReplaceAllString` add surface without entering a match loop. **NOT CLAIMED:** no veto
+matrix run, no `GATE_STRICT`, no x86-64 measurement of anything in this train.
+
 ## v2026.9.6
 
 9.6 (**`$` has two ends, and a DFA is not always the match**): **THESE TABLES DO NOT MOVE, AND THE
