@@ -886,12 +886,18 @@ namespace real {
   {
   public:
 
-    //! \brief A memo for a subject of \p subject_size bytes, empty.
+    /*!
+     * \brief An empty memo for one subject.
+     * \param[in] subject_size The subject's length in bytes.
+     */
     explicit dfa_munch_memo(std::size_t subject_size)
       : size_(subject_size)
     {}
 
-    //! \brief DFA transitions taken by every munch so far -- the work the bound is stated in.
+    /*!
+     * \brief DFA transitions taken by every munch so far -- the work the bound is stated in.
+     * \return The count, summed over every call that used this memo.
+     */
     [[nodiscard]] std::size_t transitions() const noexcept
     {
       return transitions_;
@@ -904,7 +910,7 @@ namespace real {
     std::size_t                                        size_;                  //!< The subject's length.
     std::vector<std::vector<bool>>                     dead_after_;            //!< [state][position]: no accept follows.
     std::vector<std::pair<std::uint32_t, std::size_t>> trail_;                 //!< Pairs visited since the last accept.
-    std::size_t                                        transitions_ {0};
+    std::size_t                                        transitions_ {0};       //!< See transitions().
     const void        *                                owner_       {nullptr}; //!< The dfa's tables this memo describes.
   };
 

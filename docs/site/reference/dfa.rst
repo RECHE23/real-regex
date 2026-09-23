@@ -25,6 +25,10 @@ Interface
 .. doxygenenum:: real::dfa_mode
    :project: real
 
+.. doxygenclass:: real::dfa_munch_memo
+   :project: real
+   :members:
+
 .. doxygenclass:: real::dfa_error
    :project: real
 
@@ -65,7 +69,14 @@ Complexity
 ----------
 
 Matching is **guaranteed linear** -- one table transition per input byte,
-never backtracking (ReDoS-safe). The price is capture-freedom: the result
+never backtracking (ReDoS-safe). That bounds one munch by the bytes it reads,
+not a whole tokenization: a munch walks until the automaton dies, so ``a*b``
+beside ``a`` over ``"aaa…"`` rereads the rest of the subject from every
+position, n(n+1)/2 transitions in all. ``match(subject, offset, memo)`` with a
+``dfa_munch_memo`` for the subject answers the same and remembers every state a
+walk proved leads to no accept, so tokenizing costs O(states × length) -- 3n
+transitions on that input (Reps, *Maximal-munch tokenization in linear time*,
+1998). The price is capture-freedom: the result
 names the winning rule and its length, nothing inside it. Use
 :doc:`basic_regex` when you need groups, or :doc:`regex_set` when you need
 which-matched without the DFA restrictions. Numbers live in
