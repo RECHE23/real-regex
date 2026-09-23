@@ -269,6 +269,12 @@ def self_test() -> int:
                 build(repo)
                 failures += _judge_case(name, repo, arm, must_also)
         with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            code_change(repo)
+            failures += _judge_case("--list names each commit with its verdict", repo, "warn",
+                                    "CODE  perf: f returns 2", list_commits=True)
+        with tempfile.TemporaryDirectory() as tmp:
             failures += _judge_case("outside any git work tree", Path(tmp), "nogit", None)
             origin = Path(tmp) / "origin"
             origin.mkdir()
@@ -278,7 +284,7 @@ def self_test() -> int:
             failures += _judge_case("a shallow clone", Path(tmp) / "shallow", "shallow", None)
     finally:
         os.chdir(previous)
-    total = len(cases) + 2
+    total = len(cases) + 3
     if failures:
         print(f"check-bench-stamp: self-test FAILED ({failures} of {total} case(s))")
         return 1
@@ -287,12 +293,12 @@ def self_test() -> int:
     return 0
 
 
-def _judge_case(name: str, repo: Path, arm: str, must_also: str | None) -> int:
+def _judge_case(name: str, repo: Path, arm: str, must_also: str | None, list_commits: bool = False) -> int:
     os.chdir(repo)
     out = io.StringIO()
     try:
         with contextlib.redirect_stdout(out):
-            judge()
+            judge(list_commits)
     except Exception as exc:
         print(f"SELF-TEST FAILED: {name}: judge raised {type(exc).__name__}: {exc}")
         return 1

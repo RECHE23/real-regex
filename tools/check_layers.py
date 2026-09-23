@@ -144,8 +144,13 @@ def self_test() -> int:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(content, encoding="utf-8")
             out = io.StringIO()
-            with contextlib.redirect_stdout(out):
-                rc = check(root)
+            try:
+                with contextlib.redirect_stdout(out):
+                    rc = check(root)
+            except Exception as exc:  # a removed guard surfaces as a crash; report it as this case's failure
+                print(f"SELF-TEST FAILED: {name}: check raised {type(exc).__name__}: {exc}")
+                failures += 1
+                continue
         text = out.getvalue()
         wrong = [other for other, marker in _ARMS.items() if other != arm and marker in text]
         if rc != want_rc or _ARMS[arm] not in text or wrong:

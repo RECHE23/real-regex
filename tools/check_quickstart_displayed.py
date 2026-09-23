@@ -29,11 +29,10 @@ END = "// [/quickstart]"
 
 def extract(text: str) -> str | None:
     """The text between the markers, or None when either marker is absent."""
-    # A missing start marker leaves nothing after it, so the newline refusal below names it too.
+    # The region starts on the line after the start marker. A missing start marker, or one on the last
+    # line, leaves nothing after that newline -- so the end-marker refusal below names those too.
     _, _, after_start = text.partition(START)
-    _, newline, rest = after_start.partition("\n")
-    if not newline:  # no start marker, or one that ends the file: no region follows it
-        return None
+    _, _, rest = after_start.partition("\n")
     body, end, _ = rest.partition(END)
     if not end:
         return None

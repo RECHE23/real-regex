@@ -91,6 +91,7 @@ _ARMS = {
     "duplicate": "the extractor takes the FIRST",
     "notarget": "does not exist",
     "clean": "resolve uniquely",
+    "absent": "absent, nothing to check",
 }
 
 
@@ -117,14 +118,16 @@ def self_test() -> int:
          0, "clean"),
         ("a directive in a non-page file is not read", {"notes.txt": myst.format(path="gone.cpp", a="x", b="y")},
          0, "clean"),
+        ("an absent site directory is announced", None, 0, "absent"),
     ]
     failures = 0
     for name, files, want_rc, arm in cases:
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td) / "site"
-            root.mkdir()
-            for rel, content in files.items():
-                (root / rel).write_text(content, encoding="utf-8")
+            if files is not None:
+                root.mkdir()
+                for rel, content in files.items():
+                    (root / rel).write_text(content, encoding="utf-8")
             out = io.StringIO()
             try:
                 with contextlib.redirect_stdout(out):

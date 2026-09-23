@@ -54,16 +54,22 @@ def is_real_gcc(version_text):
     return False
 
 
-def real_gcc_drivers():
-    """Every driver on PATH whose --version says GCC (an Apple `g++` is clang and is skipped)."""
+def _version_text(path):
+    return subprocess.run([path, "--version"], capture_output=True, text=True, check=False, timeout=30).stdout
+
+
+def real_gcc_drivers(which=shutil.which, version_of=_version_text):
+    """Every driver on PATH whose --version says GCC (an Apple `g++` is clang and is skipped).
+
+    ``which`` and ``version_of`` are the environment; the defaults are the real one.
+    """
     found = []
     for name in ("g++", "g++-15", "g++-14", "g++-13", "gcc-15", "gcc-14"):
-        path = shutil.which(name)
+        path = which(name)
         if path is None:
             continue
         try:
-            out = subprocess.run([path, "--version"], capture_output=True, text=True,
-                                 check=False, timeout=30).stdout
+            out = version_of(path)
         except (OSError, subprocess.SubprocessError):
             continue
         if is_real_gcc(out):
@@ -157,7 +163,26 @@ def self_test():
         if is_real_gcc(text) != want:
             print(f"SELF-TEST FAILED: {name}: is_real_gcc -> {not want}, want {want}")
             failures += 1
-    total = len(cases) + len(gcc_cases)
+    # The driver scan: an absent name is skipped, Apple's clang `g++` is skipped, a driver that cannot
+    # report is skipped, and a real GCC is found under its own name.
+    banners = {"/bin/g++": "Apple clang version 16.0.0",
+               "/bin/g++-14": "g++-14 (Homebrew GCC 14.2.0) 14.2.0\nCopyright (C) 2024 Free Software Foundation, Inc.",
+               "/bin/gcc-15": None}
+
+    def fake_version(path):
+        if banners[path] is None:
+            raise OSError("cannot run")
+        return banners[path]
+
+    try:
+        drivers = real_gcc_drivers(which=lambda n: f"/bin/{n}" if f"/bin/{n}" in banners else None,
+                                   version_of=fake_version)
+    except Exception as exc:  # a removed guard surfaces as a crash; report it as this case's failure
+        drivers = [("raised", type(exc).__name__, str(exc))]
+    if [name for name, _path, _version in drivers] != ["g++-14"]:
+        print(f"SELF-TEST FAILED: real_gcc_drivers: found {drivers}, want only g++-14")
+        failures += 1
+    total = len(cases) + len(gcc_cases) + 1
     if failures:
         print(f"check_state_zeroing: self-test FAILED ({failures} of {total} case(s))")
         return 1

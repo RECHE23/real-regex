@@ -78,13 +78,15 @@ def self_test() -> int:
         ("the template is missing", None, None),
         ("no <pre> at all", "<p>Welcome</p>\n", "nopre"),
         ("a pasted snippet in a <pre>", full + "<pre>auto m = re.search(text);</pre>\n", "pasted"),
+        ("a long pasted snippet is previewed, cut at 80 characters",
+         full + "<pre>" + "x" * 120 + "</pre>\n", "pasted", "x" * 80 + "..."),
         ("a language's placeholder is missing", "".join(pre(n) for n in NAMES[:-1]), "missing"),
         ("a placeholder appears twice", full + pre(NAMES[0]), "duplicate"),
         # The collision the previous token grep had: prose naming the API outside any <pre> is not a paste.
         ("prose naming static_regex outside any <pre>", "<p>Try static_regex for constexpr.</p>\n" + full, "ok"),
     ]
     failures = 0
-    for name, content, arm in cases:
+    for name, content, arm, *also in cases:
         with tempfile.TemporaryDirectory() as td:
             tmpl = Path(td) / "landing.html"
             if content is not None:
@@ -102,7 +104,9 @@ def self_test() -> int:
             wrong = [a for a, m in _ARMS.items() if m in text]
         else:
             wrong = [a for a, m in _ARMS.items() if a != want and m in text]
-            ok = bool(errors) and _ARMS[want] in text and not wrong
+            ok = bool(errors) and _ARMS[want] in text and not wrong and all(a in text for a in also)
+            # The cut must happen: the full 120-character body must not be printed.
+            ok = ok and not (also and "x" * 81 in text)
         if not ok:
             print(f"SELF-TEST FAILED: {name}: want {want!r}, errors={errors}, other arms {wrong}")
             failures += 1

@@ -47,18 +47,20 @@ MEMBERS_OPT = re.compile(r":members:(?P<body>[^\n]*(?:\n[ \t]+[^\n]+)*)")
 PUBLISH_ALL = "publish_all"
 
 
-def require_xml() -> None:
-    if not os.path.isdir(XML_DIR) or not os.path.isfile(os.path.join(XML_DIR, "index.xml")):
-        sys.exit(f"{XML_DIR} not found -- run `make doc-site-xml`, or pass --refresh.")
+def require_xml(xml_dir: str = XML_DIR) -> None:
+    if not os.path.isdir(xml_dir) or not os.path.isfile(os.path.join(xml_dir, "index.xml")):
+        sys.exit(f"{xml_dir} not found -- run `make doc-site-xml`, or pass --refresh.")
 
 
-def refresh_xml() -> None:
+def refresh_xml(xml_dir: str = XML_DIR, run=None) -> None:
+    """Regenerates xml-site; ``run`` is the doxygen launcher (subprocess.run by default)."""
     import shutil
     import subprocess
 
+    run = run or subprocess.run
     print("check_curated_members: refreshing build/doc/xml-site ...")
-    shutil.rmtree(XML_DIR, ignore_errors=True)
-    proc = subprocess.run(["doxygen", "Doxyfile.site"], capture_output=True, text=True)
+    shutil.rmtree(xml_dir, ignore_errors=True)
+    proc = run(["doxygen", "Doxyfile.site"], capture_output=True, text=True)
     if proc.returncode != 0:
         sys.exit(f"doxygen Doxyfile.site failed:\n{(proc.stderr or proc.stdout)[-2000:]}")
 
@@ -177,26 +179,18 @@ def compare(lists: dict[str, set[str] | None], unpublished: dict[str, dict[str, 
     return problems
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--refresh", action="store_true")
-    ap.add_argument("--self-test", action="store_true")
-    args = ap.parse_args()
-    if args.self_test:
-        return self_test()
-    if args.refresh:
-        refresh_xml()
-    require_xml()
-
-    lists = allowlists()
-    problems = compare(lists, load_unpublished(), published_members())
+def judge(rst_dir: str = RST_DIR, unpublished_path: str = UNPUBLISHED, xml_dir: str = XML_DIR) -> int:
+    """Prints the verdict over the pages in ``rst_dir``; a missing XML or yaml exits through sys.exit."""
+    require_xml(xml_dir)
+    lists = allowlists(rst_dir)
+    problems = compare(lists, load_unpublished(unpublished_path), published_members(xml_dir))
     if problems:
         print(f"check_curated_members: FAILED -- {len(problems)} allowlist gap(s):")
         for p in problems:
             print(f"  {p}")
         print(
             "  Allowlist: add the member to :members:, or list it in "
-            f"{UNPUBLISHED} with a reason. Nude :members:: add "
+            f"{unpublished_path} with a reason. Nude :members:: add "
             f"{PUBLISH_ALL}: <reason> there."
         )
         return 1
@@ -218,8 +212,33 @@ _GAPS = {
 }
 
 
+def _self_test_refresh() -> list[str]:
+    """refresh_xml with doxygen substituted: a failure exits naming doxygen, a success clears the directory."""
+    import types
+
+    fails: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        target = os.path.join(tmp, "xml")
+        for rc, want_exit in ((1, True), (0, False)):
+            os.makedirs(target, exist_ok=True)
+            open(os.path.join(target, "stale.xml"), "w").close()
+            fake = lambda *a, **k: types.SimpleNamespace(returncode=rc, stderr="boom", stdout="")  # noqa: E731
+            out = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(out):
+                    refresh_xml(target, fake)
+                exited = None
+            except SystemExit as stop:
+                exited = str(stop.code)
+            if want_exit and (exited is None or "failed" not in exited):
+                fails.append(f"refresh_xml: a doxygen failure must exit naming it, got {exited!r}")
+            if not want_exit and (exited is not None or os.path.exists(os.path.join(target, "stale.xml"))):
+                fails.append(f"refresh_xml: a success must clear the old XML and not exit, got {exited!r}")
+    return fails
+
+
 def self_test() -> int:
-    """Drives each gap of ``compare`` alone, then each reader on synthetic files.
+    """Drives each gap of ``compare`` alone, then each reader on synthetic files, then ``judge``.
 
     A reader's refusal leaves through sys.exit and is captured with its message; any other exception
     is that case's failure.
@@ -321,13 +340,64 @@ def self_test() -> int:
                   f"file must all be skipped; got {got}")
             failures += 1
 
-    total = len(gaps) + 7
+        page = os.path.join(tmp, "pages")
+        os.mkdir(page)
+        with open(os.path.join(page, "a.rst"), "w", encoding="utf-8") as fh:
+            fh.write(".. doxygenclass:: real::A\n   :members: shown\n")
+        with open(yaml, "w", encoding="utf-8") as fh:
+            fh.write("# none\n")
+        for name, xml_arg, want_rc, marker in [
+            ("judge: a clean tree", xml_dir, 0, "clean -- 1 allowlist(s)"),
+            ("judge: an XML directory without index.xml", page, 1, "not found -- run `make doc-site-xml`"),
+        ]:
+            out, err = io.StringIO(), io.StringIO()
+            try:
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    rc = judge(page, yaml, xml_arg)
+            except SystemExit as stop:
+                rc = 1
+                err.write(str(stop.code))
+            except Exception as exc:
+                rc, err = -1, io.StringIO(f"raised {type(exc).__name__}: {exc}")
+            text = out.getvalue() + err.getvalue()
+            if rc != want_rc or marker not in text:
+                print(f"SELF-TEST FAILED: {name}: rc={rc} (want {want_rc}), {marker!r} absent\n    {text.strip()}")
+                failures += 1
+        with open(os.path.join(page, "a.rst"), "w", encoding="utf-8") as fh:
+            fh.write(".. doxygenclass:: real::A\n   :members: shown, typo\n")
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                rc = judge(page, yaml, xml_dir)
+        except (Exception, SystemExit) as exc:
+            rc = -1
+            out.write(f"raised {type(exc).__name__}: {exc}")
+        if rc != 1 or "FAILED -- 1 allowlist gap(s)" not in out.getvalue():
+            print(f"SELF-TEST FAILED: judge: a gap must fail and be counted, got rc={rc}\n    {out.getvalue().strip()}")
+            failures += 1
+
+    for line in _self_test_refresh():
+        print(f"SELF-TEST FAILED: {line}")
+        failures += 1
+    total = len(gaps) + 11
     if failures:
         print(f"check_curated_members: self-test FAILED ({failures} of {total} case(s))")
         return 1
     print(f"check_curated_members: self-test OK — {total} cases: each gap reached alone, and each reader's "
           "refusals and skips (continuation lines, malformed yaml, private/friend/namespace members)")
     return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--refresh", action="store_true")
+    ap.add_argument("--self-test", action="store_true")
+    args = ap.parse_args()
+    if args.self_test:
+        return self_test()
+    if args.refresh:
+        refresh_xml()
+    return judge()
 
 
 if __name__ == "__main__":

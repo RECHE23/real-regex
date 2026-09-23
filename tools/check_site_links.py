@@ -509,7 +509,8 @@ _ARMS = {
 # The shapes the real build has, because the nav extractor exists for them: a link on the landing
 # OUTSIDE its nav (which must not join the nav), and the inner nav rendered TWICE (pydata's header and
 # mobile drawer -- only the first container counts).
-_LANDING = ('<div class="nav__links"><a href="features.html">Features</a><a href="guide.html">Guide</a></div>\n'
+_LANDING = ('<div class="nav__links"><div class="nav__group"><a href="features.html">Features</a></div>'
+            '<a href="guide.html">Guide</a></div>\n'
             '<div class="hero__cmd"><div class="cmd"><code>pip install real-regex</code>'
             '<button class="copy">Copy</button></div></div>\n'
             '<p><a href="guide.html#sec">Read the guide</a></p>\n')

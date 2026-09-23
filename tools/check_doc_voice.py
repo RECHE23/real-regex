@@ -86,13 +86,15 @@ def require_xml(repo: str = _REPO) -> None:
         )
 
 
-def refresh_xml() -> None:
+def refresh_xml(xml_dir: str = XML_DIR, run=None) -> None:
+    """Regenerates xml-site; ``run`` is the doxygen launcher (subprocess.run by default)."""
     import shutil
     import subprocess
 
+    run = run or subprocess.run
     print("check_doc_voice: refreshing build/doc/xml-site (doxygen Doxyfile.site) ...")
-    shutil.rmtree(XML_DIR, ignore_errors=True)
-    proc = subprocess.run(["doxygen", "Doxyfile.site"], capture_output=True, text=True)
+    shutil.rmtree(xml_dir, ignore_errors=True)
+    proc = run(["doxygen", "Doxyfile.site"], capture_output=True, text=True)
     if proc.returncode != 0:
         sys.exit(f"doxygen Doxyfile.site failed:\n{(proc.stderr or proc.stdout)[-2000:]}")
 
@@ -267,6 +269,31 @@ def _member(file: str, text: str, prot: str = "public", name: str = "f") -> str:
             f'<location file="{file}"/></memberdef>')
 
 
+def _self_test_refresh() -> list[str]:
+    """refresh_xml with doxygen substituted: a failure exits naming doxygen, a success clears the directory."""
+    import types
+
+    fails: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        target = os.path.join(tmp, "xml")
+        for rc, want_exit in ((1, True), (0, False)):
+            os.makedirs(target, exist_ok=True)
+            open(os.path.join(target, "stale.xml"), "w").close()
+            fake = lambda *a, **k: types.SimpleNamespace(returncode=rc, stderr="boom", stdout="")  # noqa: E731
+            out = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(out):
+                    refresh_xml(target, fake)
+                exited = None
+            except SystemExit as stop:
+                exited = str(stop.code)
+            if want_exit and (exited is None or "failed" not in exited):
+                fails.append(f"refresh_xml: a doxygen failure must exit naming it, got {exited!r}")
+            if not want_exit and (exited is not None or os.path.exists(os.path.join(target, "stale.xml"))):
+                fails.append(f"refresh_xml: a success must clear the old XML and not exit, got {exited!r}")
+    return fails
+
+
 def self_test() -> int:
     """Drives each arm of ``judge`` alone on a synthetic repository (headers, Doxyfile.site, xml-site).
 
@@ -361,6 +388,9 @@ def self_test() -> int:
             print(f"SELF-TEST FAILED: {name}: rc={rc} (want {want_rc}), arm {arm!r} "
                   f"{'present' if _ARMS[arm] in text else 'ABSENT'}, other arms {wrong}\n    {text.strip()[:400]}")
             failures += 1
+    for line in _self_test_refresh():
+        print(f"SELF-TEST FAILED: {line}")
+        failures += 1
     if failures:
         print(f"check_doc_voice: self-test FAILED ({failures} of {len(cases)} case(s))")
         return 1

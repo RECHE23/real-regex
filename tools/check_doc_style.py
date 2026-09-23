@@ -148,7 +148,7 @@ def require_fresh_xml() -> None:
         )
 
 
-def refresh_xml() -> None:
+def refresh_xml(xml_dir: str = XML_DIR, run=None) -> None:
     """Regenerate the XML from scratch so it matches the working tree.
 
     The directory is REMOVED first, because Doxygen's XML output is incremental: it leaves a
@@ -160,9 +160,10 @@ def refresh_xml() -> None:
     import shutil
     import subprocess
 
+    run = run or subprocess.run
     print("check_doc_style: refreshing build/doc/xml (clean doxygen Doxyfile) ...")
-    shutil.rmtree(XML_DIR, ignore_errors=True)
-    proc = subprocess.run(["doxygen", "Doxyfile"], capture_output=True, text=True)
+    shutil.rmtree(xml_dir, ignore_errors=True)
+    proc = run(["doxygen", "Doxyfile"], capture_output=True, text=True)
     if proc.returncode != 0:
         sys.exit(f"doxygen failed:\n{proc.stderr[-2000:]}")
 
@@ -942,12 +943,35 @@ def _self_test_judge() -> list[str]:
     return fails
 
 
+def _self_test_refresh() -> list[str]:
+    """refresh_xml with doxygen substituted: a failure exits naming doxygen, a success clears the directory."""
+    import types
+
+    fails: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        target = os.path.join(tmp, "xml")
+        for rc, want_exit in ((1, True), (0, False)):
+            os.makedirs(target, exist_ok=True)
+            open(os.path.join(target, "stale.xml"), "w").close()
+            fake = lambda *a, **k: types.SimpleNamespace(returncode=rc, stderr="boom", stdout="")  # noqa: E731
+            out = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(out):
+                    refresh_xml(target, fake)
+                exited = None
+            except SystemExit as stop:
+                exited = str(stop.code)
+            if want_exit and (exited is None or "failed" not in exited):
+                fails.append(f"refresh_xml: a doxygen failure must exit naming it, got {exited!r}")
+            if not want_exit and (exited is not None or os.path.exists(os.path.join(target, "stale.xml"))):
+                fails.append(f"refresh_xml: a success must clear the old XML and not exit, got {exited!r}")
+    return fails
+
+
 def self_test() -> int:
     """Drives the line-level helpers, each prose scanner, and ``judge`` (check, --stats, --fix) alone.
-
-    Not driven: refresh_xml's failure path, which needs doxygen and is an action, not a verdict.
     """
-    fails = _self_test_pure() + _self_test_scanners() + _self_test_judge()
+    fails = _self_test_pure() + _self_test_scanners() + _self_test_judge() + _self_test_refresh()
     for line in fails:
         print(f"SELF-TEST FAILED: {line}")
     if fails:
