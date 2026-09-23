@@ -805,8 +805,8 @@ namespace real {
       std::vector<std::uint32_t> live0;
       const bool                 best0 {dfa_priority_closure(nfa, entry, true, seen, live0)};
       states.push_back({.live = live0, .best = best0, .all = dfa_closure(nfa, {entry}, true)});
-      parent.emplace_back(0, 0U);
-      index.emplace(product_key {states[0].live, states[0].best, states[0].all}, 0);
+      parent.emplace_back(std::size_t {0}, std::uint8_t {0});
+      index.emplace(product_key {states[0].live, states[0].best, states[0].all}, std::size_t {0});
 
       // NOLINTNEXTLINE(modernize-loop-convert) -- indexed: the loop appends the states it discovers.
       for (std::size_t s = 0; s < states.size(); ++s) {
