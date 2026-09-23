@@ -129,15 +129,14 @@ A drop-in mirrors semantics, not just signatures. The known differences:
   the spans legitimately differ (`a?+` on `"aaaa"`: REAL `(0,1)(1,2)(2,3)(3,4)`, the crate `(0,4)`;
   `a++a` on `"aaaa"`: REAL finds nothing, the crate `(0,4)`). `tests/possessive.rs` pins both readings;
   the differential fuzzer masks the class by form (`has_possessive_quantifier`).
-- **`RegexSet` — offered (which-matched).** Multi-pattern set matching: `RegexSet::new` /
-  `is_match` / `matches` (bitset, construction order). Stage-1 is N independent walks with
-  per-pattern early-exit — not a fused single-pass (that is a follow-up). Not the same as
-  C++ `real::dfa` (maximal-munch lexer). **Its shape is not the crate's:** `matches` returns a
-  `Vec<bool>` indexed by pattern, where `regex::RegexSet::matches` returns a `SetMatches` whose
-  iteration yields the matching *indices* — `matched_ids` is that list here. Code written for the
-  crate that iterates `matches(…)` does not compile against this one (a `bool` where a `usize` is
-  used), so the difference is loud, not silent. `empty`, `is_match_at`, `matches_at` and `Clone`
-  are absent.
+- **`RegexSet` — offered (which-matched), the crate's shape.** `RegexSet::new` / `empty` / `Default` /
+  `is_match` / `matches` / `len` / `is_empty` / `patterns`; `matches` returns a `SetMatches` that
+  iterates the matching patterns' indices (ascending, both ends) with `matched(i)`, `matched_any`,
+  `matched_all` and `len` (the number of patterns, not of hits), as `regex::SetMatches` does —
+  `tests/regex_set.rs` compares every one against the crate. `matched_ids` is the collected list.
+  `is_match_at`, `matches_at` and `Clone` are absent. Stage-1 is N independent walks with per-pattern
+  early-exit — not a fused single-pass (that is a follow-up). Not the same as C++ `real::dfa`
+  (maximal-munch lexer).
 - **Bounded lookarounds — a *positive* divergence.** REAL supports bounded lookahead `(?=…)` / `(?!…)` and
   lookbehind `(?<=…)` / `(?<!…)` in linear time. The `regex` crate and RE2 support neither. This is a
   documented superset, not a gap.

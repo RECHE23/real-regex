@@ -672,9 +672,14 @@ impl RegexSet {
         r == 1
     }
 
-    /// Which patterns match at least once: bitset of length [`len`](RegexSet::len),
-    /// construction order. Index `i` is true iff pattern `i` matched.
-    pub fn matches(&self, text: &str) -> Vec<bool> {
+    /// Which patterns match at least once — [`regex::RegexSet::matches`]: iterating the result
+    /// yields the matching patterns' indices in ascending (construction) order.
+    pub fn matches(&self, text: &str) -> SetMatches {
+        SetMatches { hits: self.hit_table(text) }
+    }
+
+    /// One flag per pattern, construction order.
+    fn hit_table(&self, text: &str) -> Vec<bool> {
         let n = self.len();
         let mut out = vec![0u8; n];
         let r = unsafe {
@@ -689,15 +694,126 @@ impl RegexSet {
         out.into_iter().map(|b| b != 0).collect()
     }
 
-    /// Indices of matching patterns (ascending, construction order).
+    /// Indices of matching patterns (ascending, construction order): `matches(text)` collected.
     pub fn matched_ids(&self, text: &str) -> Vec<usize> {
-        self.matches(text)
-            .into_iter()
-            .enumerate()
-            .filter_map(|(i, hit)| hit.then_some(i))
-            .collect()
+        self.matches(text).into_iter().collect()
+    }
+
+    /// A set with no patterns, which matches nothing — [`regex::RegexSet::empty`].
+    pub fn empty() -> RegexSet {
+        RegexSet::new(std::iter::empty::<&str>()).expect("real-regex: an empty set always compiles")
     }
 }
+
+impl Default for RegexSet {
+    fn default() -> RegexSet {
+        RegexSet::empty()
+    }
+}
+
+/// Which patterns of a [`RegexSet`] matched — [`regex::SetMatches`]. Iteration yields the indices of
+/// the patterns that matched, ascending; [`len`](SetMatches::len) is the number of patterns in the
+/// set, not the number that matched.
+#[derive(Clone, Debug)]
+pub struct SetMatches {
+    hits: Vec<bool>,
+}
+
+impl SetMatches {
+    /// Whether any pattern matched.
+    pub fn matched_any(&self) -> bool {
+        self.hits.iter().any(|&h| h)
+    }
+
+    /// Whether every pattern matched (true for an empty set, as in the regex crate).
+    pub fn matched_all(&self) -> bool {
+        self.hits.iter().all(|&h| h)
+    }
+
+    /// Whether pattern `index` matched.
+    ///
+    /// # Panics
+    ///
+    /// When `index >= len()`, as the regex crate's does.
+    pub fn matched(&self, index: usize) -> bool {
+        self.hits[index]
+    }
+
+    /// The number of patterns in the set that produced these matches.
+    #[allow(clippy::len_without_is_empty)] // the regex crate's shape: len counts patterns, not hits
+    pub fn len(&self) -> usize {
+        self.hits.len()
+    }
+
+    /// The indices of the patterns that matched, ascending.
+    pub fn iter(&self) -> SetMatchesIter<'_> {
+        SetMatchesIter { inner: self.hits.iter().enumerate() }
+    }
+}
+
+impl IntoIterator for SetMatches {
+    type Item = usize;
+    type IntoIter = SetMatchesIntoIter;
+    fn into_iter(self) -> SetMatchesIntoIter {
+        SetMatchesIntoIter { inner: self.hits.into_iter().enumerate() }
+    }
+}
+
+impl<'a> IntoIterator for &'a SetMatches {
+    type Item = usize;
+    type IntoIter = SetMatchesIter<'a>;
+    fn into_iter(self) -> SetMatchesIter<'a> {
+        self.iter()
+    }
+}
+
+/// Borrowing iterator over the indices in a [`SetMatches`] — [`regex::SetMatchesIter`].
+#[derive(Clone, Debug)]
+pub struct SetMatchesIter<'a> {
+    inner: std::iter::Enumerate<std::slice::Iter<'a, bool>>,
+}
+
+impl Iterator for SetMatchesIter<'_> {
+    type Item = usize;
+    fn next(&mut self) -> Option<usize> {
+        self.inner.by_ref().find_map(|(i, &hit)| hit.then_some(i))
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, self.inner.size_hint().1)
+    }
+}
+
+impl DoubleEndedIterator for SetMatchesIter<'_> {
+    fn next_back(&mut self) -> Option<usize> {
+        self.inner.by_ref().rev().find_map(|(i, &hit)| hit.then_some(i))
+    }
+}
+
+impl std::iter::FusedIterator for SetMatchesIter<'_> {}
+
+/// Owning iterator over the indices in a [`SetMatches`] — [`regex::SetMatchesIntoIter`].
+#[derive(Debug)]
+pub struct SetMatchesIntoIter {
+    inner: std::iter::Enumerate<std::vec::IntoIter<bool>>,
+}
+
+impl Iterator for SetMatchesIntoIter {
+    type Item = usize;
+    fn next(&mut self) -> Option<usize> {
+        self.inner.by_ref().find_map(|(i, hit)| hit.then_some(i))
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, self.inner.size_hint().1)
+    }
+}
+
+impl DoubleEndedIterator for SetMatchesIntoIter {
+    fn next_back(&mut self) -> Option<usize> {
+        self.inner.by_ref().rev().find_map(|(i, hit)| hit.then_some(i))
+    }
+}
+
+impl std::iter::FusedIterator for SetMatchesIntoIter {}
 
 impl std::fmt::Debug for RegexSet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
