@@ -474,6 +474,7 @@ check-doc-voice:
 # A public non-\internal member of a curated class must be in that page's
 # :members: list or in docs/site/reference/unpublished.yaml -- never silent.
 check-curated-members:
+	@python3 tools/check_curated_members.py --self-test >/dev/null
 	@python3 tools/check_curated_members.py
 
 # Every :start-after:/:end-before: the site slices with must resolve, exactly once, in the file it

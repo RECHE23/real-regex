@@ -186,6 +186,7 @@ docs-site-gate: ## Sphinx -W --keep-going + linkcheck + built-HTML link check fo
 	@python3 $(ROOT)/tools/check_doc_voice_source.py --self-test >/dev/null
 	@python3 $(ROOT)/tools/check_doc_voice_source.py
 	@echo "── check-curated-members (allowlist omissions are explicit)"
+	@python3 $(ROOT)/tools/check_curated_members.py --self-test >/dev/null
 	@python3 $(ROOT)/tools/check_curated_members.py
 	@rm -rf $(BUILD)/site/_gate $(BUILD)/site/_linkcheck
 	$(SPHINXBUILD) $(SPHINXOPTS) -W --keep-going -b html $(ROOT)/docs/site $(BUILD)/site/_gate

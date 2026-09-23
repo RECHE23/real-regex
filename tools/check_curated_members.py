@@ -16,14 +16,18 @@ quietly leave out.
 Usage:
     python3 tools/check_curated_members.py
     python3 tools/check_curated_members.py --refresh
+    python3 tools/check_curated_members.py --self-test
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import glob
+import io
 import os
 import re
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 
@@ -59,10 +63,10 @@ def refresh_xml() -> None:
         sys.exit(f"doxygen Doxyfile.site failed:\n{(proc.stderr or proc.stdout)[-2000:]}")
 
 
-def allowlists() -> dict[str, set[str] | None]:
+def allowlists(rst_dir: str = RST_DIR) -> dict[str, set[str] | None]:
     """class name -> set of member names, or None if `:members:` publishes all."""
     found: dict[str, set[str] | None] = {}
-    for path in glob.glob(os.path.join(RST_DIR, "*.rst")):
+    for path in glob.glob(os.path.join(rst_dir, "*.rst")):
         text = open(path, encoding="utf-8").read()
         for m in CLASS_DIR.finditer(text):
             name = m.group("name")
@@ -79,35 +83,35 @@ def allowlists() -> dict[str, set[str] | None]:
     return found
 
 
-def load_unpublished() -> dict[str, dict[str, str]]:
+def load_unpublished(path: str = UNPUBLISHED) -> dict[str, dict[str, str]]:
     """Minimal YAML subset: `Class:` then indented `name: reason`. No PyYAML."""
-    if not os.path.isfile(UNPUBLISHED):
-        sys.exit(f"{UNPUBLISHED} not found.")
+    if not os.path.isfile(path):
+        sys.exit(f"{path} not found.")
     out: dict[str, dict[str, str]] = {}
     current: str | None = None
-    for lineno, raw in enumerate(open(UNPUBLISHED, encoding="utf-8"), 1):
+    for lineno, raw in enumerate(open(path, encoding="utf-8"), 1):
         line = raw.split("#", 1)[0].rstrip()
         if not line.strip():
             continue
         if not line.startswith((" ", "\t")):
             if not line.endswith(":"):
-                sys.exit(f"{UNPUBLISHED}:{lineno}: expected 'Class:'")
+                sys.exit(f"{path}:{lineno}: expected 'Class:'")
             current = line[:-1].strip()
             out[current] = {}
             continue
         if current is None:
-            sys.exit(f"{UNPUBLISHED}:{lineno}: member line with no class")
+            sys.exit(f"{path}:{lineno}: member line with no class")
         name, sep, reason = line.strip().partition(":")
         if not sep or not name or not reason.strip():
-            sys.exit(f"{UNPUBLISHED}:{lineno}: expected 'name: reason'")
+            sys.exit(f"{path}:{lineno}: expected 'name: reason'")
         out[current][name] = reason.strip()
     return out
 
 
-def published_members() -> dict[str, set[str]]:
+def published_members(xml_dir: str = XML_DIR) -> dict[str, set[str]]:
     """compoundname -> set of public member names extracted by Doxyfile.site."""
     out: dict[str, set[str]] = defaultdict(set)
-    for path in glob.glob(os.path.join(XML_DIR, "*.xml")):
+    for path in glob.glob(os.path.join(xml_dir, "*.xml")):
         if os.path.basename(path) == "index.xml":
             continue
         try:
@@ -130,18 +134,9 @@ def published_members() -> dict[str, set[str]]:
     return out
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--refresh", action="store_true")
-    args = ap.parse_args()
-    if args.refresh:
-        refresh_xml()
-    require_xml()
-
-    lists = allowlists()
-    unpublished = load_unpublished()
-    extracted = published_members()
-
+def compare(lists: dict[str, set[str] | None], unpublished: dict[str, dict[str, str]],
+            extracted: dict[str, set[str]]) -> list[str]:
+    """Every gap between the pages' allowlists, the omissions file and what Doxygen extracts."""
     problems: list[str] = []
     for cls, allow in lists.items():
         omit = unpublished.get(cls, {})
@@ -179,7 +174,22 @@ def main() -> int:
                 f"{cls}: :members: names {sorted(extra_allow)} but Doxyfile.site "
                 "does not extract them"
             )
+    return problems
 
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--refresh", action="store_true")
+    ap.add_argument("--self-test", action="store_true")
+    args = ap.parse_args()
+    if args.self_test:
+        return self_test()
+    if args.refresh:
+        refresh_xml()
+    require_xml()
+
+    lists = allowlists()
+    problems = compare(lists, load_unpublished(), published_members())
     if problems:
         print(f"check_curated_members: FAILED -- {len(problems)} allowlist gap(s):")
         for p in problems:
@@ -196,6 +206,127 @@ def main() -> int:
         f"check_curated_members: clean -- {n_allow} allowlist(s), "
         f"{n_all} publish_all, omissions explicit"
     )
+    return 0
+
+
+_GAPS = {
+    "bare": "bare :members: (publishes everything)",
+    "both": "pick one",
+    "stale_omit": "unpublished.yaml names",
+    "missing": "published but neither in :members: nor unpublished.yaml",
+    "typo": ":members: names",
+}
+
+
+def self_test() -> int:
+    """Drives each gap of ``compare`` alone, then each reader on synthetic files.
+
+    A reader's refusal leaves through sys.exit and is captured with its message; any other exception
+    is that case's failure.
+    """
+    failures = 0
+    ext = {"C": {"a", "b"}}
+    gaps = [
+        ("bare :members: with no publish_all", {"C": None}, {}, "bare"),
+        ("bare :members: with publish_all", {"C": None}, {"C": {PUBLISH_ALL: "whole surface"}}, None),
+        ("an allowlist AND publish_all", {"C": {"a", "b"}}, {"C": {PUBLISH_ALL: "x"}}, "both"),
+        ("an omission Doxygen no longer extracts", {"C": {"a", "b"}}, {"C": {"gone": "renamed"}}, "stale_omit"),
+        ("a published member neither listed nor omitted", {"C": {"a"}}, {}, "missing"),
+        ("an allowlist entry Doxygen does not extract", {"C": {"a", "b", "tpyo"}}, {}, "typo"),
+        ("an omission covers what the allowlist leaves out", {"C": {"a"}}, {"C": {"b": "experimental"}}, None),
+    ]
+    for name, lists, unpublished, gap in gaps:
+        try:
+            problems = compare(lists, unpublished, ext)
+        except Exception as exc:
+            print(f"SELF-TEST FAILED: {name}: compare raised {type(exc).__name__}: {exc}")
+            failures += 1
+            continue
+        text = "\n".join(problems)
+        wrong = [g for g, m in _GAPS.items() if g != gap and m in text]
+        if (gap is None and problems) or (gap is not None and (_GAPS[gap] not in text or wrong)):
+            print(f"SELF-TEST FAILED: {name}: want {gap!r}, got {problems}")
+            failures += 1
+
+    def refused(fn, *args) -> str | None:
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                fn(*args)
+        except SystemExit as stop:
+            return str(stop.code)
+        except Exception as exc:  # a removed guard surfaces as a crash: not the refusal asked for
+            return f"raised {type(exc).__name__}: {exc}"
+        return None
+
+    def read(fn, *args):
+        try:
+            return fn(*args)
+        except (Exception, SystemExit) as exc:
+            return f"raised {type(exc).__name__}: {exc}"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        rst = os.path.join(tmp, "page.rst")
+        with open(rst, "w", encoding="utf-8") as fh:
+            fh.write(".. doxygenclass:: real::A\n   :project: real\n   :members: one,\n      two\n\n"
+                     ".. doxygenstruct:: real::B\n   :members:\n\n"
+                     ".. doxygenclass:: real::C\n   :project: real\n")
+        lists = read(allowlists, tmp)
+        if lists != {"real::A": {"one", "two"}, "real::B": None}:
+            print(f"SELF-TEST FAILED: allowlists: continuation / bare / absent :members: read as {lists}")
+            failures += 1
+
+        yaml = os.path.join(tmp, "u.yaml")
+        for name, text, want in [
+            ("a class line without its colon", "real::A\n", "expected 'Class:'"),
+            ("a member line before any class", "  x: reason\n", "member line with no class"),
+            ("a member without a reason", "real::A:\n  x:\n", "expected 'name: reason'"),
+        ]:
+            with open(yaml, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            got = refused(load_unpublished, yaml)
+            if got is None or want not in got:
+                print(f"SELF-TEST FAILED: unpublished.yaml, {name}: refusal {got!r}, want {want!r}")
+                failures += 1
+        with open(yaml, "w", encoding="utf-8") as fh:
+            fh.write("# omissions\n\nreal::A:\n  x: experimental  # why\n")
+        if read(load_unpublished, yaml) != {"real::A": {"x": "experimental"}}:
+            print("SELF-TEST FAILED: unpublished.yaml: comments and blank lines not skipped")
+            failures += 1
+        got = refused(load_unpublished, os.path.join(tmp, "absent.yaml"))
+        if got is None or "not found" not in got or got.startswith("raised"):
+            print(f"SELF-TEST FAILED: unpublished.yaml: a missing file must be refused by name, got {got!r}")
+            failures += 1
+
+        xml_dir = os.path.join(tmp, "xml")
+        os.mkdir(xml_dir)
+        with open(os.path.join(xml_dir, "classreal_1_1A.xml"), "w", encoding="utf-8") as fh:
+            fh.write('<doxygen><compounddef kind="class"><compoundname>real::A</compoundname>'
+                     '<sectiondef><memberdef kind="function" prot="public"><name>shown</name></memberdef>'
+                     '<memberdef kind="function" prot="private"><name>hidden</name></memberdef>'
+                     '<memberdef kind="friend" prot="public"><name>pal</name></memberdef></sectiondef>'
+                     '</compounddef><compounddef kind="namespace"><compoundname>real</compoundname>'
+                     '<sectiondef><memberdef kind="function" prot="public"><name>free</name></memberdef>'
+                     '</sectiondef></compounddef></doxygen>')
+        with open(os.path.join(xml_dir, "index.xml"), "w", encoding="utf-8") as fh:
+            fh.write('<doxygen><compounddef kind="class"><compoundname>real::Z</compoundname>'
+                     '<sectiondef><memberdef kind="function" prot="public"><name>idx</name></memberdef>'
+                     '</sectiondef></compounddef></doxygen>')
+        with open(os.path.join(xml_dir, "broken.xml"), "w", encoding="utf-8") as fh:
+            fh.write("<doxygen><unclosed>")
+        got = read(published_members, xml_dir)
+        got = dict(got) if not isinstance(got, str) else got
+        if got != {"real::A": {"shown"}}:
+            print(f"SELF-TEST FAILED: published_members: private, friend, namespace, index.xml and an unparsable "
+                  f"file must all be skipped; got {got}")
+            failures += 1
+
+    total = len(gaps) + 7
+    if failures:
+        print(f"check_curated_members: self-test FAILED ({failures} of {total} case(s))")
+        return 1
+    print(f"check_curated_members: self-test OK — {total} cases: each gap reached alone, and each reader's "
+          "refusals and skips (continuation lines, malformed yaml, private/friend/namespace members)")
     return 0
 
 
