@@ -479,6 +479,7 @@ check-curated-members:
 # in the cheap section and fails locally instead. Does NOT read docs/BENCHMARKS.md -- the site is
 # forbidden from including that file, and no live page does.
 check-site-anchors:
+	@python3 tools/check_site_anchors.py --self-test >/dev/null
 	@python3 tools/check_site_anchors.py
 
 # docs/site/differences-from-re.md says in its own header that it mirrors docs/divergences.dox and

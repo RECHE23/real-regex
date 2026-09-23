@@ -19,10 +19,14 @@ It also rejects an anchor that appears MORE than once. Sphinx's extractor is fir
 duplicated anchor silently slices the wrong region instead of failing.
 
   python tools/check_site_anchors.py [docs/site]
+  python tools/check_site_anchors.py --self-test
 """
+import contextlib
+import io
 import pathlib
 import re
 import sys
+import tempfile
 
 # `{include} <path>` / `{literalinclude} <path>` followed by its options, in MyST or reST spelling.
 _DIRECTIVE = re.compile(
@@ -43,8 +47,7 @@ def _unquote(value: str) -> str:
     return value
 
 
-def main() -> int:
-    root = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "docs/site")
+def check(root: pathlib.Path) -> int:
     if not root.is_dir():
         print(f"check-site-anchors: {root} absent, nothing to check")
         return 0
@@ -81,6 +84,73 @@ def main() -> int:
         return 1
     print(f"check-site-anchors: clean -- {checked} anchor(s) resolve uniquely")
     return 0
+
+
+_ARMS = {
+    "notfound": "not found in",
+    "duplicate": "the extractor takes the FIRST",
+    "notarget": "does not exist",
+    "clean": "resolve uniquely",
+}
+
+
+def self_test() -> int:
+    """Drives each arm of ``check`` alone on a synthetic site; a case that raises is its failure.
+
+    Both directive spellings are driven, because requiring reST's colons once made the check blind to
+    every MyST page.
+    """
+    myst = "```{{literalinclude}} {path}\n:start-after: {a}\n:end-before: {b}\n```\n"
+    rest = ".. literalinclude:: {path}\n   :start-after: {a}\n   :end-before: {b}\n"
+    src = "// before\n// [begin]\nint x;\n// [end]\n"
+    cases = [
+        ("MyST: an anchor that is not in the target", {"p.md": myst.format(path="s.cpp", a="// [begin]", b="// [gone]"),
+                                                       "s.cpp": src}, 1, "notfound"),
+        ("reST: an anchor that is not in the target", {"p.rst": rest.format(path="s.cpp", a="// [gone]", b="// [end]"),
+                                                       "s.cpp": src}, 1, "notfound"),
+        ("an anchor present twice", {"p.md": myst.format(path="s.cpp", a="// [begin]", b="// [end]"),
+                                     "s.cpp": src + src}, 1, "duplicate"),
+        ("an include target that does not exist", {"p.md": myst.format(path="gone.cpp", a="x", b="y")}, 1, "notarget"),
+        ("quoted anchors that resolve", {"p.md": myst.format(path="s.cpp", a="'// [begin]'", b='"// [end]"'),
+                                         "s.cpp": src}, 0, "clean"),
+        ("an include with no anchors is not judged", {"p.md": "```{include} gone.md\n:parser: myst\n```\n"},
+         0, "clean"),
+        ("a directive in a non-page file is not read", {"notes.txt": myst.format(path="gone.cpp", a="x", b="y")},
+         0, "clean"),
+    ]
+    failures = 0
+    for name, files, want_rc, arm in cases:
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td) / "site"
+            root.mkdir()
+            for rel, content in files.items():
+                (root / rel).write_text(content, encoding="utf-8")
+            out = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(out):
+                    rc = check(root)
+            except Exception as exc:
+                print(f"SELF-TEST FAILED: {name}: check raised {type(exc).__name__}: {exc}")
+                failures += 1
+                continue
+        text = out.getvalue()
+        wrong = [a for a, m in _ARMS.items() if a != arm and m in text]
+        if rc != want_rc or _ARMS[arm] not in text or wrong:
+            print(f"SELF-TEST FAILED: {name}: rc={rc} (want {want_rc}), arm {arm!r} "
+                  f"{'present' if _ARMS[arm] in text else 'ABSENT'}, other arms {wrong}\n    {text.strip()}")
+            failures += 1
+    if failures:
+        print(f"check-site-anchors: self-test FAILED ({failures} of {len(cases)} case(s))")
+        return 1
+    print(f"check-site-anchors: self-test OK — {len(cases)} cases: a missing anchor (MyST and reST), a duplicate "
+          "and a missing target each refused alone; quoted anchors, anchorless includes and non-pages pass")
+    return 0
+
+
+def main() -> int:
+    if sys.argv[1:] == ["--self-test"]:
+        return self_test()
+    return check(pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "docs/site"))
 
 
 if __name__ == "__main__":
