@@ -20,7 +20,7 @@ __all__ = [
     "get_config", "PatternError",
 ]
 
-__version__ = "2026.9.5"
+__version__ = "2026.9.6"
 
 NOFLAG = 0
 I = IGNORECASE = 2
