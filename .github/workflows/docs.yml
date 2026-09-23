@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: RECHE23/sciforge
-          ref: v2026.9.0
+          ref: v2026.9.1
           path: sciforge
       - name: Install Doxygen, Graphviz, Clang and LLVM coverage tools
         run: sh real-regex/tools/ci-apt-ubuntu.sh doxygen graphviz clang llvm
