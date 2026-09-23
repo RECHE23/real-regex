@@ -131,7 +131,12 @@ A drop-in mirrors semantics, not just signatures. The known differences:
 - **`RegexSet` — offered (which-matched).** Multi-pattern set matching: `RegexSet::new` /
   `is_match` / `matches` (bitset, construction order). Stage-1 is N independent walks with
   per-pattern early-exit — not a fused single-pass (that is a follow-up). Not the same as
-  C++ `real::dfa` (maximal-munch lexer).
+  C++ `real::dfa` (maximal-munch lexer). **Its shape is not the crate's:** `matches` returns a
+  `Vec<bool>` indexed by pattern, where `regex::RegexSet::matches` returns a `SetMatches` whose
+  iteration yields the matching *indices* — `matched_ids` is that list here. Code written for the
+  crate that iterates `matches(…)` does not compile against this one (a `bool` where a `usize` is
+  used), so the difference is loud, not silent. `empty`, `is_match_at`, `matches_at` and `Clone`
+  are absent.
 - **Bounded lookarounds — a *positive* divergence.** REAL supports bounded lookahead `(?=…)` / `(?!…)` and
   lookbehind `(?<=…)` / `(?<!…)` in linear time. The `regex` crate and RE2 support neither. This is a
   documented superset, not a gap.
