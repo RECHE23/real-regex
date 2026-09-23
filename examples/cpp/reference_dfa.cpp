@@ -11,11 +11,16 @@ int main()
 {
   // [reference]
   // A tiny lexer: three rules, longest match wins, a tie goes to the lowest index.
-  // DFA rules must be byte-representable -- ASCII classes here (a Unicode \d
-  // raises real::dfa_error at construction).
+  // A rule the DFA cannot represent (a `$`, a lookaround, text-mode \w) raises
+  // real::dfa_error at construction.
   const std::array<real::regex, 3> rules {
       real::regex {R"([0-9]+)"}, real::regex {R"([A-Za-z0-9]+)"}, real::regex {R"( +)"}};
   const real::dfa lex {rules};
+  // The DFA takes each rule's LONGEST match. Whether that is also what each
+  // rule's match() returns is decided, not assumed -- `a|ab` would say no:
+  if (real::dfa_faithful(rules).outcome != real::dfa_fidelity_outcome::faithful) {
+    return 1;
+  }
 
   std::string_view rest {"if x1 42"};
   while (const auto tok = lex.match(rest)) {

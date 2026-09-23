@@ -28,6 +28,39 @@ Interface
 .. doxygenclass:: real::dfa_error
    :project: real
 
+.. doxygenfunction:: real::dfa_faithful(const regex&, std::size_t)
+   :project: real
+
+.. doxygenfunction:: real::dfa_faithful(std::span<const regex>, std::size_t)
+   :project: real
+
+.. doxygenstruct:: real::dfa_fidelity
+   :project: real
+   :members:
+
+.. doxygenenum:: real::dfa_fidelity_outcome
+   :project: real
+
+.. doxygenvariable:: real::dfa_default_state_budget
+   :project: real
+
+Fidelity
+--------
+
+A DFA takes the **longest** match; ``regex::match()`` takes the match its
+priority order prefers. For many patterns the two coincide, for others they
+do not, and the difference is not visible in the syntax: ``a|ab`` on ``"ab"``
+matches one byte where the DFA takes two, and so does the greedy,
+longer-branch-first ``(?:ab|a)(?:bc)?`` on ``"abc"`` -- while the lazy
+``x*?y`` agrees on every input. A caller that needs the DFA to reproduce each
+rule's ``match()`` (a lexer falling back to per-rule matching, say) asks
+``dfa_faithful``. It decides the question exactly for each pattern and
+returns one of three answers: ``faithful``, ``divergent`` with an input that
+separates the two, or ``undecided`` when its state budget runs out -- which
+must be read as *not* faithful. Over a set, all-faithful is sufficient for
+the DFA's munch to equal the per-rule one, not necessary: a divergent rule
+that a higher-priority rule always outlasts is still refused.
+
 Complexity
 ----------
 
@@ -44,9 +77,11 @@ Raises
 Construction audits every pattern for DFA-ability and raises ``dfa_error``
 rather than silently mis-recognizing. A pattern is rejected when it holds a
 zero-width assertion other than a leading ``\A``/``^`` (``$``, ``\b``,
-multiline anchors), a lookaround, a **Unicode code-point class** (``\w`` /
-``\d`` / ``\s`` in text mode -- use byte classes like ``[0-9]`` instead), or
-a possessive quantifier / atomic group.
+multiline anchors), a lookaround, a possessive quantifier / atomic group, a
+code-point class whose UTF-8 expansion is too large (text-mode ``\w``, or a
+class repeated many times -- narrower ones such as ``\d``, ``\p{Greek}`` or
+``[àé]`` build), or when the automaton outgrows its state cap.
+``dfa_faithful`` raises the same error for the same patterns.
 
 Example
 -------
