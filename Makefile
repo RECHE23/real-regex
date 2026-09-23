@@ -1095,6 +1095,7 @@ example-check: ## [nets] Compile + run every examples/cpp/*.cpp directly against
 	   n=$$((n + 1)); \
 	 done; \
 	 echo "example-check: OK ($$n example(s) compiled + run with $$cxx)"; \
+	 $(PYTHON) $(ROOT)/tools/check_quickstart_displayed.py --cxx "$$cxx" --self-test >/dev/null; \
 	 $(PYTHON) $(ROOT)/tools/check_quickstart_displayed.py --cxx "$$cxx"
 
 # Proves the *system* install end to end, the exact packager path: install REAL to a temp prefix
