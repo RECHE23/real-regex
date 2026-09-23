@@ -915,6 +915,7 @@ full-local-gate-impl:
 	# site, never executed. Each optional leg appends its own line as it skips, so this block only
 	# reads a ledger and can never disagree with the branch that wrote it. The Unicode cross-oracle
 	# is the one PROBE here: it skips inside the test run, not in a branch this file owns.
+	@$(PYTHON) $(ROOT)/tools/check_unicode_oracle.py --self-test >/dev/null
 	@set -eu; \
 	 $(PYTHON) $(ROOT)/tools/check_unicode_oracle.py --print-skip >> $(GATE_SKIPS) \
 	   || echo "step 20: Unicode property cross-oracle did not run -- its own probe failed" >> $(GATE_SKIPS); \
