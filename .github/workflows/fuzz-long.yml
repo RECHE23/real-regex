@@ -1,0 +1,120 @@
+name: Fuzz (long)
+
+# The per-push `fuzz` and `fuzz-rust` jobs in ci.yml are smokes: 45-60 s per target, from a
+# corpus that starts over on every run. That catches a regression that crashes on the first
+# few thousand inputs and nothing deeper. This workflow gives the same four targets the time a
+# mutation-based fuzzer needs to reach rare paths, and keeps each corpus between runs so every
+# week starts where the last one stopped.
+#
+# A finding turns the job red and uploads the reproducer (crash-*, leak-*, timeout-*, oom-*,
+# slow-unit-*) as an artifact; replay it locally with `make <target>` after placing it in the
+# corpus directory named below. The corpus is saved even on a red run: the input that crashed
+# is written to the artifact prefix, not to the corpus, so the saved corpus stays replayable.
+on:
+  schedule:
+    - cron: '17 5 * * 0'   # weekly, Sunday 05:17 UTC
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: 'Fuzzing time per target, in seconds (60-18000)'
+        required: false
+        default: '3600'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-long
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    name: fuzz-long (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    # The fuzzing time is bounded by the input check below (5 h at most); the build takes a few
+    # minutes, the corpus save one. 330 minutes leaves room for both at the maximum and stays
+    # under GitHub's 360-minute job limit.
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: robustness
+            run: make fuzz CXX=clang++
+            corpus: build/fuzz/corpus
+            findings: build/fuzz
+          - target: compat
+            run: make fuzz-compat CXX=clang++
+            corpus: build/fuzz/corpus-compat
+            findings: build/fuzz
+          - target: capi
+            run: make c-fuzz CXX=clang++
+            corpus: build/fuzz/corpus-capi
+            findings: build/fuzz
+          - target: rust
+            run: make rust-fuzz
+            corpus: bindings/rust/fuzz/corpus
+            findings: bindings/rust/fuzz/artifacts
+    steps:
+      - uses: actions/checkout@v6
+      # The dispatch input reaches the shell through the environment, never spliced into the
+      # script, and is refused unless it is a whole number of seconds inside the job's budget.
+      - name: Fuzzing time
+        env:
+          SECONDS_INPUT: ${{ inputs.seconds || '3600' }}
+        run: |
+          case "$SECONDS_INPUT" in
+            ''|*[!0-9]*) echo "::error::seconds must be a whole number, got '$SECONDS_INPUT'"; exit 1 ;;
+          esac
+          if [ "$SECONDS_INPUT" -lt 60 ] || [ "$SECONDS_INPUT" -gt 18000 ]; then
+            echo "::error::seconds must be within 60-18000, got $SECONDS_INPUT"; exit 1
+          fi
+          echo "FUZZ_TIME=$SECONDS_INPUT" >> "$GITHUB_ENV"
+      - name: Restore the corpus
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ matrix.corpus }}
+          key: fuzz-long-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-long-${{ matrix.target }}-
+      - name: Install clang (the shim's cc-build)
+        if: matrix.target == 'rust'
+        run: sh tools/ci-apt-ubuntu.sh clang
+      - name: Install nightly + cargo-fuzz
+        if: matrix.target == 'rust'
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cargo install cargo-fuzz --locked
+      # FUZZ_TIME comes from the environment set above; every target reads it with `?=`.
+      - name: Fuzz
+        run: ${{ matrix.run }}
+      - name: Corpus size
+        if: always()
+        env:
+          CORPUS: ${{ matrix.corpus }}
+        run: |
+          n=$(find "$CORPUS" -type f 2>/dev/null | wc -l | tr -d ' ')
+          echo "corpus $CORPUS: $n unit(s)" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Save the corpus
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ matrix.corpus }}
+          key: fuzz-long-${{ matrix.target }}-${{ github.run_id }}
+      - name: Upload the findings
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-long-${{ matrix.target }}-findings
+          path: |
+            ${{ matrix.findings }}/crash-*
+            ${{ matrix.findings }}/leak-*
+            ${{ matrix.findings }}/timeout-*
+            ${{ matrix.findings }}/oom-*
+            ${{ matrix.findings }}/slow-unit-*
+            ${{ matrix.findings }}/**/crash-*
+            ${{ matrix.findings }}/**/leak-*
+            ${{ matrix.findings }}/**/timeout-*
+            ${{ matrix.findings }}/**/oom-*
+            ${{ matrix.findings }}/**/slow-unit-*
+          if-no-files-found: warn
+          retention-days: 90

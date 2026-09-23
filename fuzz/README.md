@@ -13,7 +13,10 @@ the methodology — that lives in [docs/TESTS.md](../docs/TESTS.md).
 | **Fowler/AT&T conformance** (`fowler-compat`) | The three vendored `testregex` corpora (`tests/corpora/fowler`) through `real::compat` vs the local `std`, three-way-arbitrated against the corpus's own POSIX expectation. |
 
 `fuzz`/`fuzz-compat`/`fuzz-re2` are the ongoing, time-bounded fuzzers (`FUZZ_TIME=secs`, default
-30s locally, CI runs 60s); `exhaustive-compat`/`fowler-compat` are fast, deterministic nets — the
+30s locally, 60s per push in CI). Every push runs a smoke from a fresh corpus; the long runs are
+[`fuzz-long.yml`](../.github/workflows/fuzz-long.yml) — weekly, and on demand with a chosen time —
+which fuzz `fuzz`, `fuzz-compat`, `c-fuzz` and `rust-fuzz` for an hour each by default, keep each
+corpus between runs, and upload any reproducer as an artifact. `exhaustive-compat`/`fowler-compat` are fast, deterministic nets — the
 ones that turned up every silent divergence the campaign found, so both run in `full-local-gate`
 and CI. `tsan`/`tsan-core` (ThreadSanitizer smokes) are thematically robustness nets too, but stay
 at the repo root — their sources live in `tests/`.

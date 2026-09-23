@@ -181,6 +181,7 @@ jobs:
           printf '#include "real/real.hpp"\n#include "real/dfa.hpp"\nint main() {}\n' > win32_tu.cpp
           g++ -std=c++20 -m32 -Werror -Iinclude -fsyntax-only win32_tu.cpp
 
+  # Smokes, 60 s per target from a fresh corpus; the long runs are fuzz-long.yml.
   fuzz:
     needs: preflight
     runs-on: ubuntu-latest
@@ -325,7 +326,7 @@ jobs:
         run: make go-test
 
   # The third differential fuzzer: real-regex vs the regex crate (cargo-fuzz, nightly). A short smoke here;
-  # the long run is on the devbox. re/std/rust are now all covered by a differential fuzzer.
+  # the long run, with a corpus kept between runs, is fuzz-long.yml (weekly, and on demand).
   fuzz-rust:
     needs: preflight
     runs-on: ubuntu-latest
