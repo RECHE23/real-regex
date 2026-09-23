@@ -40,3 +40,10 @@ fn both_patterns_can_match_same_text() {
     let set = RegexSet::new(["ab", "a"]).unwrap();
     assert_eq!(set.matches("ab"), vec![true, true]);
 }
+
+#[test]
+fn debug_shows_the_patterns_like_the_regex_crate() {
+    let ours = real_regex::RegexSet::new([r"a+", r"\d"]).unwrap();
+    let theirs = regex::RegexSet::new([r"a+", r"\d"]).unwrap();
+    assert_eq!(format!("{ours:?}"), format!("{theirs:?}"));
+}

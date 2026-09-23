@@ -5,8 +5,12 @@
 
 #include <real_capi.h>
 
+#include <real/real.hpp>
+
 #include <cstdint>
 #include <cstring>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -72,6 +76,93 @@ TEST(capi_error_codes_and_null_iter)
   // a null iterator is reported, never dereferenced
   std::vector<std::size_t> spans(2);
   EXPECT(real_iter_next(nullptr, spans.data()) == -1);
+}
+
+namespace {
+  // The engine's own verdict on a pattern, read through the C++ API: the oracle the _ex entry points
+  // must hand over unchanged.
+  real::regex_error engine_error(std::string_view pat)
+  {
+    try {
+      real::regex rx {pat};
+    }
+    catch (const real::regex_error& e) {
+      return e;
+    }
+    return real::regex_error {"compiled", static_cast<std::size_t>(-1)};
+  }
+}
+
+TEST(capi_compile_ex_hands_the_position_over)
+{
+  constexpr std::size_t no_pos = static_cast<std::size_t>(-1);
+  // A late error, so a position of 0 cannot pass by accident; a syntax and an unsupported case.
+  for (const char* pat : {"abc(def", "ab{3,1}", "xy(\\w)\\1", "a)"}) {
+    const real::regex_error want = engine_error(pat);
+    EXPECT(want.position() != no_pos);
+    char        err[256] = {0};
+    int         code     = 99;
+    std::size_t pos      = 12345;
+    EXPECT(real_compile_ex(pat, std::strlen(pat), 0, err, sizeof err, &code, &pos) == nullptr);
+    EXPECT(pos == want.position());
+    EXPECT(std::string(err) == want.cause());   // the bare cause, no `regex_error at N: ` prefix
+    EXPECT(code == (want.kind() == real::error_kind::unsupported ? REAL_ERR_UNSUPPORTED : REAL_ERR_SYNTAX));
+
+    // The plain entry point keeps the formatted message, which carries the same position in its text.
+    char plain[256] = {0};
+    EXPECT(real_compile(pat, std::strlen(pat), 0, plain, sizeof plain, &code) == nullptr);
+    EXPECT(std::string(plain) == want.what());
+  }
+  EXPECT(engine_error("xy(\\w)\\1").kind() == real::error_kind::unsupported);
+  EXPECT(engine_error("abc(def").position() > 0);
+
+  // Success, and a failure with no pattern offset, both write the sentinel.
+  char        err[256] = {0};
+  int         code     = 99;
+  std::size_t pos      = 12345;
+  real_regex* ok       = real_compile_ex("a+", 2, 0, err, sizeof err, &code, &pos);
+  EXPECT(ok != nullptr && code == REAL_ERR_NONE && pos == no_pos);
+  real_free(ok);
+  pos = 12345;
+  EXPECT(real_compile_ex(nullptr, 3, 0, err, sizeof err, &code, &pos) == nullptr);
+  EXPECT(pos == no_pos && code == REAL_ERR_SYNTAX && std::strlen(err) > 0);
+  // A NULL err_pos is tolerated, like a NULL code.
+  EXPECT(real_compile_ex("(", 1, 0, nullptr, 0, nullptr, nullptr) == nullptr);
+}
+
+TEST(capi_set_compile_ex_hands_the_position_over)
+{
+  constexpr std::size_t no_pos = static_cast<std::size_t>(-1);
+  const char* const     pats[3] = {"a", "bc(d", "e"};
+  const std::size_t     lens[3] = {1, 4, 1};
+  const real::regex_error member = engine_error(pats[1]);
+  char        err[256] = {0};
+  int         code     = 99;
+  std::size_t pos      = 12345;
+  EXPECT(real_set_compile_ex(pats, lens, 3, 0, err, sizeof err, &code, &pos) == nullptr);
+  EXPECT(pos == member.position());     // an offset inside the failing member
+  EXPECT(code == REAL_ERR_SYNTAX);
+  EXPECT(std::string(err).find("(in pattern 1 of 3)") != std::string::npos);  // which member: in the cause
+  EXPECT(std::string(err).rfind("regex_error at", 0) != 0);                   // and no position prefix
+
+  char plain[256] = {0};
+  EXPECT(real_set_compile(pats, lens, 3, 0, plain, sizeof plain, &code) == nullptr);
+  EXPECT(std::string(plain).rfind("regex_error at " + std::to_string(member.position()) + ": ", 0) == 0);
+
+  // A null array and a null member have no pattern offset.
+  pos = 12345;
+  EXPECT(real_set_compile_ex(nullptr, nullptr, 2, 0, err, sizeof err, &code, &pos) == nullptr);
+  EXPECT(pos == no_pos && code == REAL_ERR_SYNTAX);
+  const char* const     null_member[1] = {nullptr};
+  const std::size_t     null_len[1]    = {5};
+  pos = 12345;
+  EXPECT(real_set_compile_ex(null_member, null_len, 1, 0, err, sizeof err, &code, &pos) == nullptr);
+  EXPECT(pos == no_pos && std::string(err) == "null pattern at index 0");
+
+  pos = 12345;
+  real_regex_set* ok = real_set_compile_ex(pats, lens, 1, 0, err, sizeof err, &code, &pos);
+  EXPECT(ok != nullptr && code == REAL_ERR_NONE && pos == no_pos);
+  real_set_free(ok);
 }
 
 TEST(capi_defensive_paths)

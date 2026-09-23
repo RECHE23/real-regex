@@ -28,8 +28,8 @@ enum RealIter {}
 enum RealRegexSet {}
 
 extern "C" {
-    fn real_compile(pattern: *const c_char, len: usize, flags: u32,
-                    errbuf: *mut c_char, errbuf_len: usize, code: *mut i32) -> *mut RealRegex;
+    fn real_compile_ex(pattern: *const c_char, len: usize, flags: u32,
+                       errbuf: *mut c_char, errbuf_len: usize, code: *mut i32, err_pos: *mut usize) -> *mut RealRegex;
     fn real_group_count(re: *const RealRegex) -> usize;
     fn real_group_name(re: *const RealRegex, group: usize, buf: *mut c_char, buflen: usize) -> usize;
     fn real_free(re: *mut RealRegex);
@@ -38,8 +38,9 @@ extern "C" {
     fn real_iter_next(iter: *mut RealIter, spans: *mut usize) -> i32;
     fn real_iter_free(iter: *mut RealIter);
     fn real_count_matches(re: *const RealRegex, text: *const c_char, len: usize) -> usize;
-    fn real_set_compile(patterns: *const *const c_char, lens: *const usize, n: usize, flags: u32,
-                        errbuf: *mut c_char, errbuf_len: usize, code: *mut i32) -> *mut RealRegexSet;
+    fn real_set_compile_ex(patterns: *const *const c_char, lens: *const usize, n: usize, flags: u32,
+                           errbuf: *mut c_char, errbuf_len: usize, code: *mut i32,
+                           err_pos: *mut usize) -> *mut RealRegexSet;
     fn real_set_size(set: *const RealRegexSet) -> usize;
     fn real_set_free(set: *mut RealRegexSet);
     fn real_set_is_match(set: *const RealRegexSet, text: *const c_char, len: usize) -> i32;
@@ -48,6 +49,7 @@ extern "C" {
 
 const DIVERGENCES_URL: &str = "https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md";
 const REAL_ERR_UNSUPPORTED: i32 = 2; // must match REAL_ERR_UNSUPPORTED in real_capi.h
+const NO_POSITION: usize = usize::MAX; // the _ex entry points' (size_t)-1: a failure with no pattern offset
 // real::flags::dollar_endonly — `$` (no multiline) matches only at the very end, never before a final `\n`.
 // The crate compiles every pattern with it, so `$` carries rust's `\z` semantics instead of Python re's.
 const DOLLAR_ENDONLY: u32 = 128;
@@ -72,19 +74,14 @@ impl Error {
         matches!(self, Error::Unsupported { .. })
     }
 
-    // Build an Error from the engine's message and its structured code (REAL_ERR_*). The classification comes
-    // from the code the C ABI reports — never from matching on the message text, so a reworded engine message
-    // cannot silently change whether a pattern is treated as unsupported.
-    fn from_engine(raw: &str, code: i32, rescue: Rescue) -> Error {
-        let body = raw.strip_prefix("regex_error").unwrap_or(raw).trim_start();
-        let (pos, msg) = match body.strip_prefix("at ").and_then(|r| r.split_once(':')) {
-            Some((n, rest)) => (n.trim().parse::<usize>().ok(), rest.trim().to_string()),
-            None => (None, body.trim_start_matches(':').trim().to_string()),
-        };
+    // Build an Error from what the C ABI's _ex entry points report: the bare cause, the structured code
+    // (REAL_ERR_*) and the byte position ((size_t)-1 when the failure has none). Nothing is read out of the
+    // message text, so a reworded engine message changes neither the classification nor the position.
+    fn from_engine(msg: String, code: i32, pos: usize, rescue: Rescue) -> Error {
         if code == REAL_ERR_UNSUPPORTED {
             unsupported_construct(&msg, rescue)
         } else {
-            Error::Syntax { msg, pos }
+            Error::Syntax { msg, pos: (pos != NO_POSITION).then_some(pos) }
         }
     }
 }
@@ -296,13 +293,15 @@ fn compile_handle(pattern: &[u8], flags: u32) -> Result<(*mut RealRegex, usize, 
     }
     let mut err = [0u8; 256];
     let mut code: i32 = 0;
+    let mut pos: usize = NO_POSITION;
     let handle = unsafe {
-        real_compile(pattern.as_ptr() as *const c_char, pattern.len(), flags | DOLLAR_ENDONLY,
-                     err.as_mut_ptr() as *mut c_char, err.len(), &mut code)
+        real_compile_ex(pattern.as_ptr() as *const c_char, pattern.len(), flags | DOLLAR_ENDONLY,
+                        err.as_mut_ptr() as *mut c_char, err.len(), &mut code, &mut pos)
     };
     if handle.is_null() {
         let end = err.iter().position(|&b| b == 0).unwrap_or(err.len());
-        return Err(Error::from_engine(&String::from_utf8_lossy(&err[..end]), code, rescue_for(pattern)));
+        let msg = String::from_utf8_lossy(&err[..end]).into_owned();
+        return Err(Error::from_engine(msg, code, pos, rescue_for(pattern)));
     }
     let ngroups = unsafe { real_group_count(handle) };
     let mut names = Vec::with_capacity(ngroups);
@@ -623,10 +622,11 @@ impl RegexSet {
             ptrs.push(p.as_ptr() as *const c_char);
             lens.push(p.len());
         }
-        let mut err = [0i8; 512];
+        let mut err = [0 as c_char; 512];
         let mut code: i32 = 0;
+        let mut pos: usize = NO_POSITION;
         let handle = unsafe {
-            real_set_compile(
+            real_set_compile_ex(
                 ptrs.as_ptr(),
                 lens.as_ptr(),
                 owned.len(),
@@ -634,13 +634,14 @@ impl RegexSet {
                 err.as_mut_ptr(),
                 err.len(),
                 &mut code,
+                &mut pos,
             )
         };
         if handle.is_null() {
-            let raw = unsafe { std::ffi::CStr::from_ptr(err.as_ptr()) }
+            let msg = unsafe { std::ffi::CStr::from_ptr(err.as_ptr()) }
                 .to_string_lossy()
                 .into_owned();
-            return Err(Error::from_engine(&raw, code, Rescue::NoFallbackHere));
+            return Err(Error::from_engine(msg, code, pos, Rescue::NoFallbackHere));
         }
         Ok(RegexSet {
             handle,
@@ -695,6 +696,12 @@ impl RegexSet {
             .enumerate()
             .filter_map(|(i, hit)| hit.then_some(i))
             .collect()
+    }
+}
+
+impl std::fmt::Debug for RegexSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RegexSet({:?})", self.patterns)
     }
 }
 

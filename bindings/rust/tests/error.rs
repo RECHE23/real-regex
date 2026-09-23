@@ -47,3 +47,28 @@ fn scx_is_a_superset_of_script() {
     assert!(!Regex::new(r"\p{sc=Grek}").unwrap().is_match(combining_grave));
     assert!(Regex::new(r"\p{scx=Grek}").unwrap().is_match(combining_grave));
 }
+
+#[test]
+fn syntax_error_carries_the_engine_position_and_the_bare_cause() {
+    // The position comes from the C ABI as a number, not out of the message: the message is the cause
+    // alone, and the offset is the byte the engine reported.
+    for (pat, pos) in [("abc(def", 3usize), ("é(", 2)] {
+        match Regex::new(pat).unwrap_err() {
+            Error::Syntax { msg, pos: got } => {
+                assert_eq!(got, Some(pos), "{pat:?}: position");
+                assert!(!msg.starts_with("regex_error"), "{pat:?}: message still carries the prefix: {msg:?}");
+                assert!(!msg.is_empty(), "{pat:?}: no cause");
+            }
+            other => panic!("{pat:?}: expected a syntax error, got {other:?}"),
+        }
+    }
+    // A set's position is inside the failing member, and the cause names which member.
+    match real_regex::RegexSet::new(["a", "bc(d"]).unwrap_err() {
+        Error::Syntax { msg, pos } => {
+            assert_eq!(pos, Some(2));
+            assert!(msg.contains("(in pattern 1 of 2)"), "{msg:?}");
+            assert!(!msg.starts_with("regex_error"), "{msg:?}");
+        }
+        other => panic!("expected a syntax error, got {other:?}"),
+    }
+}

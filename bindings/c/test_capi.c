@@ -32,6 +32,17 @@ int main(void) {
   assert(strlen(err) > 0);            /* a message was reported */
   assert(code == REAL_ERR_SYNTAX);    /* an unbalanced paren is a syntax error */
 
+  /* real_compile_ex hands the position over as a number and writes the bare cause. */
+  {
+    size_t pos = 0;
+    assert(real_compile_ex("abc(def", 7, 0, err, sizeof err, &code, &pos) == NULL);
+    assert(pos == 3 && code == REAL_ERR_SYNTAX);
+    assert(strncmp(err, "regex_error", 11) != 0);
+    real_regex* ok = real_compile_ex("a", 1, 0, err, sizeof err, &code, &pos);
+    assert(ok != NULL && pos == (size_t)-1);
+    real_free(ok);
+  }
+
   /* the structured code classifies unsupported constructs (well-formed but beyond the linear engine — a named
      backreference here; \p{...} property classes are now supported, so they are no longer an example) */
   real_regex* unsup = real_compile("(?P=g)", 6, 0, err, sizeof err, &code);

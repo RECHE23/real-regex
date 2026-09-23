@@ -71,6 +71,14 @@ enum {
 real_regex* real_compile(const char* pattern, size_t len, uint32_t flags,
                          char* errbuf, size_t errbuf_len, int* code);
 
+/* real_compile with the error position handed over as a number rather than inside the message. On a
+ * failure `errbuf` receives the bare cause (no `regex_error at N: ` prefix) and `err_pos` (if non-NULL)
+ * the byte offset in the pattern the engine reported; a failure that has no pattern offset — a NULL
+ * pattern with a nonzero length, an internal error — writes (size_t)-1. On success `err_pos` is
+ * (size_t)-1 too. Everything else is real_compile's contract. */
+real_regex* real_compile_ex(const char* pattern, size_t len, uint32_t flags,
+                            char* errbuf, size_t errbuf_len, int* code, size_t* err_pos);
+
 /* Number of capture-span slots per match: (capturing groups + 1) for group 0. The `spans` buffer passed to
  * real_iter_next must hold 2 * this many size_t. A NULL `re` returns 0 (invalid handle — zero slots). */
 size_t real_group_count(const real_regex* re);
@@ -182,6 +190,13 @@ typedef struct real_regex_set real_regex_set;
  * `patterns` says nothing about `patterns[i]`, and the error names the index. */
 real_regex_set* real_set_compile(const char* const* patterns, const size_t* lens, size_t n,
                                  uint32_t flags, char* errbuf, size_t errbuf_len, int* code);
+
+/* real_set_compile with the error position handed over as a number, as real_compile_ex does. The offset
+ * is inside the failing member, which the cause names (`(in pattern i of n)`); a NULL member or array
+ * writes (size_t)-1. */
+real_regex_set* real_set_compile_ex(const char* const* patterns, const size_t* lens, size_t n,
+                                    uint32_t flags, char* errbuf, size_t errbuf_len, int* code,
+                                    size_t* err_pos);
 
 size_t real_set_size(const real_regex_set* set);
 

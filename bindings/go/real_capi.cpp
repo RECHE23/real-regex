@@ -9,6 +9,7 @@
 #include <exception>
 #include <new>
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -36,8 +37,6 @@ struct real_regex_set
   real::regex_set set;
 };
 
-extern "C" {
-
 namespace {
   // Copy `what` into `errbuf` (NUL-terminated, truncating). memcpy + explicit NUL rather than strncpy: MSVC
   // deprecates strncpy (C4996) and memcpy is not on that list, so this needs no _CRT_SECURE_NO_WARNINGS — the
@@ -50,7 +49,71 @@ namespace {
       errbuf[n] = '\0';
     }
   }
+
+  constexpr size_t no_position = static_cast<size_t>(-1);
+
+  // Where one compile call reports a failure. The plain entry points keep the engine's formatted
+  // message, which carries the position in its text; the _ex ones hand the position over in `err_pos`
+  // and write the bare cause, so no caller has to parse the one out of the other.
+  struct compile_report
+  {
+    char*   errbuf;
+    size_t  errbuf_len;
+    int*    code;
+    size_t* err_pos;
+    bool    structured;
+
+    void begin() const
+    {
+      if (code != nullptr) {
+        *code = REAL_ERR_NONE;
+      }
+      if (err_pos != nullptr) {
+        *err_pos = no_position;
+      }
+    }
+
+    void fail(int kind, const char* what, size_t position = no_position) const
+    {
+      if (code != nullptr) {
+        *code = kind;
+      }
+      if (err_pos != nullptr) {
+        *err_pos = position;
+      }
+      write_err(errbuf, errbuf_len, what);
+    }
+
+    void fail(const real::regex_error& e) const
+    {
+      // The engine tags whether the pattern is malformed or merely unsupported — pass that through as a
+      // code, so the binding never classifies on the message text.
+      fail((e.kind() == real::error_kind::unsupported) ? REAL_ERR_UNSUPPORTED : REAL_ERR_SYNTAX,
+           structured ? e.cause().c_str() : e.what(), e.position());
+    }
+  };
+
+  // Runs `build` with every exception turned into a report: no C++ exception crosses the boundary.
+  template <class Build>
+  auto guarded_compile(const compile_report& report, Build build) -> decltype(build())
+  {
+    try {
+      return build();
+    }
+    catch (const real::regex_error& e) {
+      report.fail(e);
+    }
+    catch (const std::exception& e) {
+      report.fail(REAL_ERR_SYNTAX, e.what());
+    }
+    catch (...) {
+      report.fail(REAL_ERR_SYNTAX, "unknown error");
+    }
+    return nullptr;
+  }
 }
+
+extern "C" {
 
 //! Whether a (pointer, length) pair violates the ABI's one stated rule: NULL is a valid EMPTY
 //! buffer, and only NULL with a claimed length is an error. The header says this once for the whole
@@ -61,45 +124,28 @@ static bool null_with_length(const char* data, size_t len)
   return data == nullptr && len != 0;
 }
 
+static real_regex* compile_one(const char* pattern, size_t len, uint32_t flags, const compile_report& report)
+{
+  report.begin();
+  if (null_with_length(pattern, len)) {
+    report.fail(REAL_ERR_SYNTAX, "null pattern with a nonzero length");
+    return nullptr;
+  }
+  return guarded_compile(report, [&] {
+    return new real_regex {real::regex(std::string_view(pattern, len), static_cast<real::flags>(flags))};
+  });
+}
+
 real_regex* real_compile(const char* pattern, size_t len, uint32_t flags,
                          char* errbuf, size_t errbuf_len, int* code)
 {
-  if (code != nullptr) {
-    *code = REAL_ERR_NONE;
-  }
-  if (null_with_length(pattern, len)) {
-    if (code != nullptr) {
-      *code = REAL_ERR_SYNTAX;
-    }
-    write_err(errbuf, errbuf_len, "null pattern with a nonzero length");
-    return nullptr;
-  }
-  try {
-    return new real_regex {real::regex(std::string_view(pattern, len), static_cast<real::flags>(flags))};
-  }
-  catch (const real::regex_error& e) {
-    // The engine tags whether the pattern is malformed or merely unsupported — pass that through as a code,
-    // so the binding never classifies on the message text.
-    if (code != nullptr) {
-      *code = (e.kind() == real::error_kind::unsupported) ? REAL_ERR_UNSUPPORTED : REAL_ERR_SYNTAX;
-    }
-    write_err(errbuf, errbuf_len, e.what());
-    return nullptr;
-  }
-  catch (const std::exception& e) {
-    if (code != nullptr) {
-      *code = REAL_ERR_SYNTAX;
-    }
-    write_err(errbuf, errbuf_len, e.what());
-    return nullptr;
-  }
-  catch (...) {
-    if (code != nullptr) {
-      *code = REAL_ERR_SYNTAX;
-    }
-    write_err(errbuf, errbuf_len, "unknown error");
-    return nullptr;
-  }
+  return compile_one(pattern, len, flags, {errbuf, errbuf_len, code, nullptr, false});
+}
+
+real_regex* real_compile_ex(const char* pattern, size_t len, uint32_t flags,
+                            char* errbuf, size_t errbuf_len, int* code, size_t* err_pos)
+{
+  return compile_one(pattern, len, flags, {errbuf, errbuf_len, code, err_pos, true});
 }
 
 size_t real_group_count(const real_regex* re)
@@ -521,20 +567,15 @@ size_t real_expand(const real_regex* re, const char* text, size_t len,
   return result.size();
 }
 
-real_regex_set* real_set_compile(const char* const* patterns, const size_t* lens, size_t n,
-                                 uint32_t flags, char* errbuf, size_t errbuf_len, int* code)
+static real_regex_set* compile_set(const char* const* patterns, const size_t* lens, size_t n, uint32_t flags,
+                                   const compile_report& report)
 {
-  if (code != nullptr) {
-    *code = REAL_ERR_NONE;
-  }
+  report.begin();
   if (patterns == nullptr && n > 0) {
-    if (code != nullptr) {
-      *code = REAL_ERR_SYNTAX;
-    }
-    write_err(errbuf, errbuf_len, "null patterns");
+    report.fail(REAL_ERR_SYNTAX, "null patterns");
     return nullptr;
   }
-  try {
+  return guarded_compile(report, [&]() -> real_regex_set* {
     std::vector<std::string_view> views;
     views.reserve(n);
     for (size_t i = 0; i < n; ++i) {
@@ -542,11 +583,7 @@ real_regex_set* real_set_compile(const char* const* patterns, const size_t* lens
       // crash; so is a view over it. The same rule as everywhere else, applied per element, and it
       // names which element rather than reporting "null patterns" for a list that is not null.
       if (patterns[i] == nullptr && (lens == nullptr || lens[i] != 0)) {
-        if (code != nullptr) {
-          *code = REAL_ERR_SYNTAX;
-        }
-        write_err(errbuf, errbuf_len,
-                  ("null pattern at index " + std::to_string(i)).c_str());
+        report.fail(REAL_ERR_SYNTAX, ("null pattern at index " + std::to_string(i)).c_str());
         return nullptr;
       }
       const size_t len = (lens != nullptr) ? lens[i] : std::strlen(patterns[i]);
@@ -554,28 +591,20 @@ real_regex_set* real_set_compile(const char* const* patterns, const size_t* lens
     }
     return new real_regex_set {
       real::regex_set(std::span<const std::string_view> {views}, static_cast<real::flags>(flags))};
-  }
-  catch (const real::regex_error& e) {
-    if (code != nullptr) {
-      *code = (e.kind() == real::error_kind::unsupported) ? REAL_ERR_UNSUPPORTED : REAL_ERR_SYNTAX;
-    }
-    write_err(errbuf, errbuf_len, e.what());
-    return nullptr;
-  }
-  catch (const std::exception& e) {
-    if (code != nullptr) {
-      *code = REAL_ERR_SYNTAX;
-    }
-    write_err(errbuf, errbuf_len, e.what());
-    return nullptr;
-  }
-  catch (...) {
-    if (code != nullptr) {
-      *code = REAL_ERR_SYNTAX;
-    }
-    write_err(errbuf, errbuf_len, "unknown error");
-    return nullptr;
-  }
+  });
+}
+
+real_regex_set* real_set_compile(const char* const* patterns, const size_t* lens, size_t n,
+                                 uint32_t flags, char* errbuf, size_t errbuf_len, int* code)
+{
+  return compile_set(patterns, lens, n, flags, {errbuf, errbuf_len, code, nullptr, false});
+}
+
+real_regex_set* real_set_compile_ex(const char* const* patterns, const size_t* lens, size_t n,
+                                    uint32_t flags, char* errbuf, size_t errbuf_len, int* code,
+                                    size_t* err_pos)
+{
+  return compile_set(patterns, lens, n, flags, {errbuf, errbuf_len, code, err_pos, true});
 }
 
 size_t real_set_size(const real_regex_set* set)
