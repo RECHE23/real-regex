@@ -47,14 +47,19 @@ Usage:
     python3 tools/check_doc_style.py --fix           # rewrite in place
     python3 tools/check_doc_style.py --stats         # form distribution, no verdict
     python3 tools/check_doc_style.py --only pike.hpp # restrict to matching paths
+    python3 tools/check_doc_style.py --self-test     # drive each arm on synthetic repositories
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import glob
+import io
 import os
 import re
 import sys
+import tempfile
+import time
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 
@@ -244,9 +249,7 @@ def doc_block_above(lines: list[str], decl: int) -> tuple[int, int] | None:
             continue
         return None
     else:
-        return None
-    if j < 0:
-        return None
+        return None  # j ran below 0 (or past eight hops) without meeting a //! line
     last = j
     first = j
     while first - 1 >= 0 and lines[first - 1].strip().startswith("//!"):
@@ -514,31 +517,23 @@ def split_blocks(only: str | None) -> list[tuple[str, int, str]]:
     return found
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--fix", action="store_true", help="rewrite violations in place")
-    ap.add_argument("--stats", action="store_true", help="print the form distribution and exit 0")
-    ap.add_argument("--only", metavar="SUBSTR", help="restrict to files whose path contains SUBSTR")
-    ap.add_argument("--refresh", action="store_true", help="run `doxygen Doxyfile` first")
-    args = ap.parse_args()
-
-    if args.refresh:
-        refresh_xml()
+def judge(fix: bool = False, stats: bool = False, only: str | None = None) -> int:
+    """Checks (or, with ``fix``, rewrites) the repository in the current directory."""
     require_fresh_xml()
 
-    members = xml_members(args.only)
+    members = xml_members(only)
     exp = {
         p.replace("\\", "/")
         for p in glob.glob(os.path.join(ROOT, "**", "*.hpp"), recursive=True)
-        if not args.only or args.only in p
+        if not only or only in p
     }
     got = xml_named_headers(XML_DIR)
-    if args.only:
-        got = {p for p in got if args.only in p}
+    if only:
+        got = {p for p in got if only in p}
     if not exp:
         print(
             f"check_doc_style: FAIL -- no headers under {ROOT}"
-            + (f" matching --only {args.only}" if args.only else "")
+            + (f" matching --only {only}" if only else "")
         )
         return 1
     if got != exp or not members:
@@ -586,10 +581,7 @@ def main() -> int:
         forms[kind][form] += 1
         if form != "slash_bang":
             continue
-        span = doc_block_above(lines, decl)
-        if span is None:
-            continue
-        first, last = span
+        first, last = doc_block_above(lines, decl)  # never None: classify() asked the same question
         if kind in ATTRIBUTE_KINDS:
             cand = trailing_candidate(lines, decl, first, last)
             if cand is None:
@@ -599,7 +591,7 @@ def main() -> int:
         elif kind in OBJECT_KINDS:
             todo[path].append((decl, kind, name, first, last, None))
 
-    if args.stats:
+    if stats:
         cols = ["block", "slash_bang", "trailing", "other"]
         print(f"{'kind':<10}" + "".join(f"{c:>13}" for c in cols))
         for kind in sorted(forms, key=lambda k: -sum(forms[k].values())):
@@ -609,20 +601,20 @@ def main() -> int:
 
     # Orphaned blocks are never auto-fixed: choosing which of two \brief survives is a judgment
     # about which declaration the text belongs to, and guessing would silently delete real prose.
-    orphans = orphan_blocks(args.only)
+    orphans = orphan_blocks(only)
     for path, line, count in orphans:
         print(f"{path}:{line}: doc block carries {count} \\brief -- an orphaned or double-documented block")
-    splits = split_blocks(args.only)
+    splits = split_blocks(only)
     for path, line, tail in splits:
         print(f"{path}:{line}: doc block stops mid-sentence (...{tail}) -- a split comment?")
-    adjacent = adjacent_blocks(args.only)
+    adjacent = adjacent_blocks(only)
     for path, line, brief in adjacent:
         print(f"{path}:{line}: doc block followed by another with no declaration between ({brief}) -- "
               "one of them documents nothing")
-    compounds = compound_attribute_form(args.only)
+    compounds = compound_attribute_form(only)
     for path, line, decl in compounds:
         print(f"{path}:{line}: `//!` run on a compound ({decl}) -- an object takes a /*! */ block")
-    wedged = wedged_blocks(args.only)
+    wedged = wedged_blocks(only)
     for path, line, frag in wedged:
         print(f"{path}:{line}: declaration split by its own doc block (after `{frag}`) -- "
               "the block belongs above the whole declaration")
@@ -659,7 +651,7 @@ def main() -> int:
     generated = {p: items for p, items in todo.items() if GENERATED.search(p)}
     n_generated = sum(len(v) for v in generated.values())
 
-    if not args.fix:
+    if not fix:
         by_kind = Counter(k for items in todo.values() for _, k, _, _, _, _ in items)
         for path in sorted(todo):
             tag = "  [GENERATED: fix in tools/gen_*.py]" if GENERATED.search(path) else ""
@@ -717,6 +709,268 @@ def main() -> int:
         )
         return 1
     return 0
+
+
+def _self_test_pure() -> list[str]:
+    """The line-level helpers, on literal lines."""
+    fails: list[str] = []
+
+    def expect(name, got, want):
+        if got != want:
+            fails.append(f"{name}: got {got!r}, want {want!r}")
+
+    expect("classify: a trailing //!< on the declaration", classify(["int x; //!< doc"], 0), "trailing")
+    expect("classify: a //! run above", classify(["//! doc", "int x;"], 1), "slash_bang")
+    expect("classify: a //! run above a template header", classify(["//! doc", "template <typename T>", "T f();"], 2),
+           "slash_bang")
+    expect("classify: a /*! */ block above", classify(["/*!", " * doc", " */", "void f();"], 3), "block")
+    expect("classify: a /*! */ block above a template header",
+           classify(["/*!", " * doc", " */", "template <typename T>", "T f();"], 4), "block")
+    expect("classify: nothing above", classify(["int y;", "int x;"], 1), "other")
+    expect("doc_block_above: the run's span", doc_block_above(["//! a", "//! b", "int x;"], 2), (0, 1))
+    expect("doc_block_above: code between", doc_block_above(["//! a", "int y;", "int x;"], 2), None)
+    expect("doc_block_above: more than eight intervening lines",
+           doc_block_above(["//! a"] + ["#if X"] * 9 + ["int x;"], 10), None)
+    expect("trailing_candidate: one line", trailing_candidate(["//! \\brief The count.", "int n;"], 1, 0, 0),
+           "int n; //!< The count.")
+    expect("trailing_candidate: multi-line rationale", trailing_candidate(["//! a", "//! b", "int n;"], 2, 0, 1), None)
+    expect("trailing_candidate: the declaration already has a comment",
+           trailing_candidate(["//! a", "int n /* legacy */;"], 1, 0, 0), None)
+    expect("trailing_candidate: the declaration does not end here",
+           trailing_candidate(["//! a", "int n = {"], 1, 0, 0), None)
+    expect("trailing_candidate: an empty doc line", trailing_candidate(["//!", "int n;"], 1, 0, 0), None)
+    expect("to_block: every line kept, at the same indent",
+           to_block(["  //! \\brief F.", "  //! More."], 0, 1), ["  /*!", "   * \\brief F.", "   * More.", "   */"])
+    return fails
+
+
+def _self_test_scanners() -> list[str]:
+    """Each prose-defect scanner on a synthetic include/real/ tree: its defect found, its clean form not."""
+    fails: list[str] = []
+    cases = [
+        (orphan_blocks, "/*!\n * \\brief A.\n * \\brief B.\n */\nvoid f();\n", True, "two \\brief"),
+        (orphan_blocks, "/*!\n * \\brief A.\n */\nvoid f();\n", False, "one \\brief"),
+        # A //! line is not the start of a block: its \brief and the block's are in different comments.
+        (orphan_blocks, "//! \\brief A.\n/*!\n * \\brief B.\n */\nvoid f();\n", False, "a //! run above a block"),
+        (split_blocks, "/*!\n * \\brief Stops mid\n */\nvoid f();\n", True, "a block ending on a word"),
+        (split_blocks, "/*!\n * \\brief Ends.\n */\nvoid f();\n", False, "a finished sentence"),
+        (split_blocks, "/* a plain comment\n * that stops mid\n */\nvoid f();\n", False,
+         "a plain /* */ comment is not a doc block"),
+        (adjacent_blocks, "//! Stranded.\n/*!\n * \\brief F.\n */\nvoid f();\n", True, "a //! run then a block"),
+        (adjacent_blocks, "/*!\n * \\brief A.\n */\n\n/*!\n * \\brief F.\n */\nvoid f();\n", True,
+         "two blocks stacked"),
+        (adjacent_blocks, "/*!\n * \\brief F.\n */\nvoid f();\n", False, "a block then its declaration"),
+        # A code line that merely ENDS in `*/` is not a block, so the block below it is not "stacked".
+        (adjacent_blocks, "int a; /* note */\n/*!\n * \\brief F.\n */\nvoid f();\n", False,
+         "a block after code ending in a comment"),
+        (compound_attribute_form, "//! A struct.\nstruct S {\n};\n", True, "a //! run on a struct"),
+        (compound_attribute_form, "//! Forward.\nstruct S;\n", False, "a forward declaration"),
+        (compound_attribute_form, "/*!\n * \\brief S.\n */\nstruct S {\n};\n", False, "a block on a struct"),
+        # A compound on the first line has nothing above it; the LAST line of the file is not "above".
+        (compound_attribute_form, "struct S {\n};\n//! trailing note", False, "a compound on the first line"),
+        (wedged_blocks, "template <typename T>\n/*!\n * \\brief F.\n */\nT f();\n", True,
+         "a block after a template header"),
+        (wedged_blocks, "int g(); //!< g\n/*!\n * \\brief F.\n */\nvoid f();\n", False,
+         "a block after a finished statement"),
+        (wedged_blocks, "template <typename T>\nT f();\n", False, "a template header and its declaration, no block"),
+        (wedged_blocks, "#endif\n/*!\n * \\brief F.\n */\nvoid f();\n", False,
+         "a block after a preprocessor line"),
+        (wedged_blocks, "/*!\n * \\brief F.\n */\nvoid f();\nint x", False, "a block on the first line"),
+    ]
+    previous = os.getcwd()
+    try:
+        for scanner, text, flagged, name in cases:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.chdir(tmp)
+                os.makedirs(ROOT)
+                with open(os.path.join(ROOT, "a.hpp"), "w", encoding="utf-8") as fh:
+                    fh.write(text)
+                try:
+                    found = scanner(None)
+                except Exception as exc:
+                    fails.append(f"{scanner.__name__}, {name}: raised {type(exc).__name__}: {exc}")
+                    continue
+                finally:
+                    os.chdir(previous)
+                if bool(found) != flagged:
+                    fails.append(f"{scanner.__name__}, {name}: {'missed' if flagged else 'flagged'} ({found})")
+    finally:
+        os.chdir(previous)
+    return fails
+
+
+def _self_test_judge() -> list[str]:
+    """``judge`` on synthetic repositories: freshness, perimeter, each violation, --fix and --stats."""
+    fails: list[str] = []
+    obj = "//! \\brief Does it.\nvoid f();\n"          # an object in the attribute form
+    attr = "struct S {\n  //! The count.\n  int n;\n};\n"  # an attribute that fits on one line
+    long_attr = "struct S {\n  //! First line of the rationale.\n  //! Second line.\n  int n;\n};\n"
+    # One of each prose defect, for the --only case: a double \brief, a sentence cut mid-word, a stacked
+    # pair, the attribute form on a compound, and a block wedged after a template header.
+    prose_defects = ("/*!\n * \\brief A.\n * \\brief B.\n */\nvoid g();\n"
+                     "/*!\n * \\brief Stops mid\n */\nvoid h();\n"
+                     "//! Stranded.\n/*!\n * \\brief K.\n */\nvoid k();\n"
+                     "//! A struct.\nstruct T {\n};\n"
+                     "template <typename U>\n/*!\n * \\brief W.\n */\nU w();\n")
+
+    def member(line, kind, name, path="include/real/a.hpp"):
+        return (f'<memberdef kind="{kind}"><name>{name}</name>'
+                f'<location file="{path}" line="{line}"/></memberdef>')
+
+    def repo(tmp, header=None, members=(), xml=True, has_xml=True, stale=False, extra_headers=(), path="a.hpp",
+             outside=None):
+        os.makedirs(os.path.join(tmp, ROOT, os.path.dirname(path)), exist_ok=True)
+        if header is not None:
+            with open(os.path.join(tmp, ROOT, path), "w", encoding="utf-8") as fh:
+                fh.write(header)
+        for extra in extra_headers:
+            with open(os.path.join(tmp, ROOT, extra), "w", encoding="utf-8") as fh:
+                fh.write("int z;\n")
+        if outside is not None:  # a header OUTSIDE include/real/, which the check must never judge
+            os.makedirs(os.path.join(tmp, "other"))
+            with open(os.path.join(tmp, "other", "x.hpp"), "w", encoding="utf-8") as fh:
+                fh.write(outside)
+        if not xml:
+            return
+        os.makedirs(os.path.join(tmp, XML_DIR))
+        if not has_xml:
+            return
+        with open(os.path.join(tmp, XML_DIR, "a.xml"), "w", encoding="utf-8") as fh:
+            fh.write("<doxygen><compounddef>" + "".join(members) + "</compounddef></doxygen>")
+        with open(os.path.join(tmp, XML_DIR, "index.xml"), "w", encoding="utf-8") as fh:
+            fh.write("<doxygenindex/>")
+        if stale:
+            past = time.time() - 100
+            os.utime(os.path.join(tmp, XML_DIR, "index.xml"), (past, past))
+
+    cases = [
+        # (name, repo kwargs, judge kwargs, want rc, marker, file check)
+        ("no XML directory", dict(header="int z;\n", xml=False), {}, 1, "not found -- run `doxygen Doxyfile`", None),
+        ("an XML directory with no XML", dict(header="int z;\n", has_xml=False), {}, 1, "holds no XML", None),
+        ("a header newer than the XML", dict(header=obj, members=[member(2, "function", "f")], stale=True), {}, 1,
+         "is OLDER than", None),
+        ("no headers under include/real/", dict(members=[member(2, "function", "f")]), {}, 1, "no headers under",
+         None),
+        ("a header the XML never names", dict(header=obj, members=[member(2, "function", "f")],
+                                              extra_headers=("b.hpp",)), {}, 1, "missing from XML", None),
+        ("the XML names a header that does not exist",
+         dict(header=long_attr, members=[member(4, "variable", "n"), member(1, "variable", "q", "include/real/c.hpp")]),
+         {}, 1, "extra in XML", None),
+        ("no members in the XML", dict(header="int z;\n", members=[]), {}, 1, "XML yielded no members", None),
+        ("a reported declaration that is a comment line", dict(header=obj, members=[member(1, "function", "f")]),
+         {}, 1, "but that line is a COMMENT", None),
+        ("an object in the //! form", dict(header=obj, members=[member(2, "function", "f")]), {}, 1,
+         "should use /*! */ block", None),
+        ("an attribute whose //! fits one line", dict(header=attr, members=[member(3, "variable", "n")]), {}, 1,
+         "should use trailing //!<", None),
+        ("an attribute with multi-line rationale keeps its block",
+         dict(header=long_attr, members=[member(4, "variable", "n")]), {}, 0, "clean --", None),
+        # Not judged: a member with no location, and a member located outside include/real/ even though its
+        # file exists and is off the convention.
+        ("members with no location or outside include/real/ are not judged",
+         dict(header=long_attr, outside=obj,
+              members=[member(4, "variable", "n"), '<memberdef kind="function"><name>g</name></memberdef>',
+                       member(2, "function", "f", "other/x.hpp"), member(999, "variable", "past_eof")]),
+         {}, 0, "clean --", None),
+        # A trailing //!< on the declaration is its form, whatever sits above it.
+        ("a declaration with a trailing //!< is not re-judged by the run above it",
+         dict(header="//! Also here.\nvoid f(); //!< Does it.\n", members=[member(2, "function", "f")]), {}, 0,
+         "clean --", None),
+        ("--only restricts the verdict, prose scanners included, to matching headers",
+         dict(header=obj + prose_defects, extra_headers=("b.hpp",),
+              members=[member(2, "function", "f"), member(1, "variable", "z", "include/real/b.hpp")]),
+         dict(only="b.hpp"), 0, "clean --", None),
+        ("a prose defect alone", dict(header="/*!\n * \\brief A.\n * \\brief B.\n */\nvoid f();\n",
+                                      members=[member(5, "function", "f")]), {}, 1, "block(s) with more than one",
+         None),
+        ("each prose defect is named in the summary",
+         dict(header=prose_defects + "/*!\n * \\brief F.\n */\nvoid f();\n", members=[member(26, "function", "f")]),
+         {}, 1, ("block(s) stopping mid-sentence", "stacked block pair(s)", "compound(s) in the attribute form",
+                 "declaration(s) split by their own doc block"), None),
+        ("form violations and a prose defect are both reported",
+         dict(header=obj + "/*!\n * \\brief A.\n * \\brief B.\n */\nvoid g();\n", members=[member(2, "function", "f")]),
+         {}, 1, ("should use /*! */ block", "plus 1 doc block(s) with a prose defect"), None),
+        ("a violation in a generated header is tagged",
+         dict(header=obj, members=[member(2, "function", "f", "include/real/unicode/unicode_props.hpp")],
+              path="unicode/unicode_props.hpp"), {}, 1,
+         ("[GENERATED: fix in tools/gen_*.py]", "of them are in GENERATED headers"), None),
+        ("--stats prints the distribution and passes", dict(header=obj, members=[member(2, "function", "f")]),
+         dict(stats=True), 0, "attributes keeping a leading block", None),
+        ("--fix rewrites an object into a block and an attribute into a trailing comment",
+         dict(header=obj + attr, members=[member(2, "function", "f"), member(5, "variable", "n")]), dict(fix=True),
+         0, "rewrote 2 member(s)",
+         ("a.hpp", "/*!\n * \\brief Does it.\n */\nvoid f();\nstruct S {\n  int n; //!< The count.\n};\n")),
+        ("--fix leaves a generated header alone",
+         dict(header=obj, members=[member(2, "function", "f", "include/real/unicode/unicode_props.hpp")],
+              path="unicode/unicode_props.hpp"), dict(fix=True), 0,
+         ("skipping 1 violation(s)", "nothing left to rewrite"), ("unicode/unicode_props.hpp", obj)),
+        ("--fix rewrites the form but refuses to call a prose defect fixed",
+         dict(header=obj + "/*!\n * \\brief A.\n * \\brief B.\n */\nvoid g();\n", members=[member(2, "function", "f")]),
+         dict(fix=True), 1, ("rewrote 1 member(s)", "NOT fixed: 1 doc block(s)"), None),
+    ]
+    previous = os.getcwd()
+    try:
+        for name, spec, kwargs, want_rc, marker, file_check in cases:
+            with tempfile.TemporaryDirectory() as tmp:
+                repo(tmp, **spec)
+                os.chdir(tmp)
+                out, err = io.StringIO(), io.StringIO()
+                try:
+                    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                        rc = judge(**kwargs)
+                except SystemExit as stop:
+                    rc = 1
+                    err.write(str(stop.code))
+                except Exception as exc:
+                    fails.append(f"judge, {name}: raised {type(exc).__name__}: {exc}")
+                    os.chdir(previous)
+                    continue
+                text = out.getvalue() + err.getvalue()
+                content = None
+                if file_check is not None:
+                    with open(os.path.join(ROOT, file_check[0]), encoding="utf-8") as fh:
+                        content = fh.read()
+                os.chdir(previous)
+            markers = (marker,) if isinstance(marker, str) else marker
+            absent = [m for m in markers if m not in text]
+            if rc != want_rc or absent or (file_check is not None and content != file_check[1]):
+                fails.append(f"judge, {name}: rc={rc} (want {want_rc}), absent markers {absent}"
+                             + (f", file {content!r}" if file_check is not None and content != file_check[1] else "")
+                             + f"\n    {text.strip()[:400]}")
+    finally:
+        os.chdir(previous)
+    return fails
+
+
+def self_test() -> int:
+    """Drives the line-level helpers, each prose scanner, and ``judge`` (check, --stats, --fix) alone.
+
+    Not driven: refresh_xml's failure path, which needs doxygen and is an action, not a verdict.
+    """
+    fails = _self_test_pure() + _self_test_scanners() + _self_test_judge()
+    for line in fails:
+        print(f"SELF-TEST FAILED: {line}")
+    if fails:
+        print(f"check_doc_style: self-test FAILED ({len(fails)} case(s))")
+        return 1
+    print("check_doc_style: self-test OK — the form helpers, each prose scanner on its defect and its clean form, "
+          "and judge's freshness, perimeter, comment-line, violation, generated, --stats and --fix arms")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--fix", action="store_true", help="rewrite violations in place")
+    ap.add_argument("--stats", action="store_true", help="print the form distribution and exit 0")
+    ap.add_argument("--only", metavar="SUBSTR", help="restrict to files whose path contains SUBSTR")
+    ap.add_argument("--refresh", action="store_true", help="run `doxygen Doxyfile` first")
+    ap.add_argument("--self-test", action="store_true", help="drive each arm on synthetic repositories")
+    args = ap.parse_args()
+    if args.self_test:
+        return self_test()
+    if args.refresh:
+        refresh_xml()
+    return judge(args.fix, args.stats, args.only)
 
 
 if __name__ == "__main__":

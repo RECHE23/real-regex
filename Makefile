@@ -446,6 +446,7 @@ check-sse2-floor: ## [gate] x86-64: headers must compile with SSE2 but NOT AVX2 
 # Reads Doxygen's own XML for member kinds (never a regex over the source) and refuses to run
 # against an XML older than the headers -- a stale one silently reports a false clean.
 check-doc-style:
+	@python3 tools/check_doc_style.py --self-test >/dev/null
 	@python3 tools/check_doc_style.py
 
 # Workflow syntax that a YAML parser accepts and Actions rejects at dispatch: a key
