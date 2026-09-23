@@ -467,6 +467,7 @@ check-workflows: ## Lint .github/workflows with actionlint (skipped if actionlin
 # directly -- design.dox is invisible to the XML check. Journals named in
 # docs/voice-journals.yaml are counted, not a fail.
 check-doc-voice:
+	@python3 tools/check_doc_voice.py --self-test >/dev/null
 	@python3 tools/check_doc_voice.py
 	@python3 tools/check_doc_voice_source.py --self-test >/dev/null
 	@python3 tools/check_doc_voice_source.py
