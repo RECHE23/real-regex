@@ -29,6 +29,8 @@ one to read two hint fields, which is the same smell on a path this gate deliber
 because a guard that quietly grows past what it measured is how a check starts lying.
 """
 
+import contextlib
+import io
 import pathlib
 import re
 import sys
@@ -67,13 +69,12 @@ CLAIMS = (
 
 
 def body_of(text, name):
-    """The brace-balanced body of `name`, or None. Starts at the first `{` after the signature."""
-    start = text.find(f"std::size_t {name}(")
-    if start < 0:
+    """The brace-balanced body of `name`, or None when it is absent, only declared, or never closes."""
+    # The signature must open a body: a bare declaration (`...);`) or an absent function has none.
+    signature = re.search(rf"std::size_t {re.escape(name)}\([^)]*\)[^{{;]*\{{", text)
+    if signature is None:
         return None
-    open_brace = text.find("{", text.find(")", start))
-    if open_brace < 0:
-        return None
+    open_brace = signature.end() - 1
     depth = 0
     for i in range(open_brace, len(text)):
         if text[i] == "{":
@@ -85,8 +86,8 @@ def body_of(text, name):
     return None
 
 
-def main():
-    text = HEADER.read_text(encoding="utf-8")
+def judge(text):
+    """Judges `count_walk` in the header text; prints the verdict and returns 0 or 1."""
     body = body_of(text, "count_walk")
     if body is None:
         print("check_percall_copies: FAIL -- count_walk not found in include/real/real.hpp.")
@@ -116,6 +117,68 @@ def main():
 
     print("check_percall_copies: OK -- count_walk passes the intent, not a mutated view")
     return 0
+
+
+_ARMS = {
+    "notfound": "count_walk not found",
+    "no local view": "[no local view]",
+    "builds from program_.view()": "[builds from program_.view()]",
+    "asks for the matching-only walk": "[asks for the matching-only walk]",
+    "ok": "passes the intent",
+}
+
+
+def self_test():
+    """Drives each claim, each way `count_walk` can be missing, and the comment stripping, alone."""
+    def walk(body):
+        return "struct x {\n  std::size_t count_walk(std::string_view text) const\n  {\n" + body + "  }\n};\n"
+    good = "    return run(detail::basic_match_range(program_.view(), text, match_semantics::first, true));\n"
+    cases = [
+        ("the shape as it should be", walk(good), 0, "ok"),
+        ("a local program_view hoisted back in",
+         walk("    detail::program_view view {program_.view()};\n" + good), 1, "no local view"),
+        ("the range built from something else",
+         walk(good.replace("program_.view()", "view_copy")), 1, "builds from program_.view()"),
+        ("the matching-only argument dropped",
+         walk(good.replace("match_semantics::first, true", "match_semantics::first, false")), 1,
+         "asks for the matching-only walk"),
+        ("a comment naming a local view is not one",
+         walk("    // detail::program_view view = program_.view(); would be the second copy\n" + good), 0, "ok"),
+        ("a comment naming program_.view() does not satisfy the claim",
+         walk("    /* built from program_.view() */\n" + good.replace("program_.view()", "view_copy")), 1,
+         "builds from program_.view()"),
+        ("count_walk absent", "struct x { std::size_t count_all(); };\n", 1, "notfound"),
+        ("count_walk declared with no body", "std::size_t count_walk(std::string_view text) const;\n", 1, "notfound"),
+        ("count_walk's braces never balance", "std::size_t count_walk(int) {\n  if (x) {\n", 1, "notfound"),
+    ]
+    failures = 0
+    for name, text, want_rc, arm in cases:
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                rc = judge(text)
+        except Exception as exc:
+            print(f"SELF-TEST FAILED: {name}: judge raised {type(exc).__name__}: {exc}")
+            failures += 1
+            continue
+        printed = out.getvalue()
+        wrong = [a for a, m in _ARMS.items() if a != arm and m in printed]
+        if rc != want_rc or _ARMS[arm] not in printed or wrong:
+            print(f"SELF-TEST FAILED: {name}: rc={rc} (want {want_rc}), arm {arm!r} "
+                  f"{'present' if _ARMS[arm] in printed else 'ABSENT'}, other arms {wrong}")
+            failures += 1
+    if failures:
+        print(f"check_percall_copies: self-test FAILED ({failures} of {len(cases)} case(s))")
+        return 1
+    print(f"check_percall_copies: self-test OK — {len(cases)} cases: each of the three claims broken alone, "
+          "count_walk missing three ways, and comments neither tripping nor satisfying a claim")
+    return 0
+
+
+def main():
+    if sys.argv[1:] == ["--self-test"]:
+        return self_test()
+    return judge(HEADER.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

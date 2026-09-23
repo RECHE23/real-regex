@@ -392,6 +392,7 @@ check-state-zeroing:
 # the measurement that refused it -- floors of 6.2 % and 6.6 % against an effect worth 6.5 %). So the
 # shape is counted instead of timed. See tools/check_percall_copies.py.
 check-percall-copies:
+	@$(PYTHON) tools/check_percall_copies.py --self-test >/dev/null
 	@$(PYTHON) tools/check_percall_copies.py
 
 # The headers compile where NEITHER SIMD macro is defined. This exists because a real defect shipped
