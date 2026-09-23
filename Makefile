@@ -109,6 +109,7 @@ all: build
 build: ## [daily] Configure and build the test binary (CMake)
 	$(CMAKE) -S . -B $(BUILD) $(CMAKE_CXX) -DCMAKE_BUILD_TYPE=Release
 	$(CMAKE) --build $(BUILD) --parallel $(JOBS)
+	@cd $(CURDIR) && python3 tools/check_coverage_fresh.py --self-test >/dev/null
 	@cd $(CURDIR) && python3 tools/check_coverage_fresh.py $(BUILD)/real_tests_bin
 
 # --- tests/ (ctest[via `test`]/sanitize/coverage toolchain/tsan smokes) ---------
