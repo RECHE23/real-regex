@@ -65,13 +65,13 @@ include $(ROOT)/mk/common.mk
 include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
-	full-local-gate-impl gcc-check route-probe alloc-probe alloc-cold-probe ac-regime sabotage-sweep sabotage-help \
+	full-local-gate-impl gcc-check route-probe alloc-probe alloc-cold-probe ac-regime sabotage-sweep sabotage-help check-blind-guard blind-guards \
         lint misra check-state-zeroing check-percall-copies route-surface-parity bench-compilers fuzz fuzz-compat fuzz-compat-known fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
         version-check install install-smoke uninstall release help check-layers check-doc-style check-doc-voice check-curated-members check-bench-stamp check-bench-ratios gate-venv check-sse2-floor \
-        check-site-anchors check-workflows check-abi3-floor check-doc-mirror check-sabotage check-tolerated-count check-stdlib-attribution check-doxygen-pin check-apt-bound check-go-version-labels
+        check-site-anchors check-workflows check-abi3-floor check-doc-mirror check-sabotage check-blind-guard check-tolerated-count check-stdlib-attribution check-doxygen-pin check-apt-bound check-go-version-labels
 
 .DEFAULT_GOAL := help
 
@@ -572,6 +572,18 @@ check-apt-bound: ## [gates] Workflows refresh only Ubuntu apt indexes
 check-sabotage: ## [gates] The harness's three claims: artifact map, rebuild after revert, SIGTERM
 	@python3 tools/sabotage.py --self-test
 
+# A guard's --self-test passing says nothing about how many of its arms it drives. blind_guard.py
+# blinds each condition in turn and re-runs the self-test: a condition that stays green is a case
+# missing or a dead test. check-blind-guard proves the tool's own verdicts (cheap); blind-guards runs it
+# over every guard that has a self-test (minutes -- a dev step, run after changing a guard).
+check-blind-guard: ## [gates] blind_guard.py tells a driven arm, an undriven one and a crash apart
+	@python3 tools/blind_guard.py --self-test
+
+blind-guards: ## [dev] Blind every condition of each self-tested tools/check_*.py; list what its self-test misses
+	@status=0; for g in $$(grep -l -- '--self-test' tools/check_*.py); do \
+	   out=$$(python3 tools/blind_guard.py "$$g") || status=1; printf '%s\n' "$$out" | tail -1; \
+	 done; exit $$status
+
 # WHAT READS docs/BENCHMARKS.md. The Version cell is a stamp (REAL `X.Y.Z` + whether tables
 # moved). The journal of trains lives in CHANGELOG.md; there is no third file. Scripts parse
 # headings and cells, never the journal. voice-journals.yaml keeps the path: ns/B is the
@@ -851,6 +863,8 @@ full-local-gate-impl:
 	@$(MAKE) check-go-version-labels
 	@echo "── [7c3/25] check-sabotage (SIGTERM a run in flight; the canary must come back)"
 	@$(MAKE) check-sabotage
+	@echo "── [7c4/25] check-blind-guard (the blinding harness tells driven, undriven and crashing arms apart)"
+	@$(MAKE) check-blind-guard
 	@echo "── [7d/25] doc-site-xml + check-doc-voice + check-curated-members"
 	@$(MAKE) doc-site-xml
 	@$(MAKE) check-doc-voice
