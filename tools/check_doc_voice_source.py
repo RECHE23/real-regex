@@ -15,12 +15,16 @@ Same vocabulary as check_doc_voice.PATTERNS -- one list.
 
 Usage:
     python3 tools/check_doc_voice_source.py
+    python3 tools/check_doc_voice_source.py --self-test
 """
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 
@@ -38,24 +42,24 @@ def _die(msg: str) -> None:
     sys.exit(1)
 
 
-def load_journals() -> dict[str, str]:
+def load_journals(journals_path: str = _JOURNALS) -> dict[str, str]:
     """Minimal YAML: `docs/NAME.md: reason` per line."""
-    if not os.path.isfile(_JOURNALS):
-        _die(f"{_JOURNALS} not found")
+    if not os.path.isfile(journals_path):
+        _die(f"{journals_path} not found")
     out: dict[str, str] = {}
-    for lineno, raw in enumerate(open(_JOURNALS, encoding="utf-8"), 1):
+    for lineno, raw in enumerate(open(journals_path, encoding="utf-8"), 1):
         line = raw.split("#", 1)[0].rstrip()
         if not line.strip():
             continue
         path, sep, reason = line.partition(":")
         if not sep or not path.strip() or not reason.strip():
-            _die(f"{_JOURNALS}:{lineno}: expected 'docs/FILE: reason'")
+            _die(f"{journals_path}:{lineno}: expected 'docs/FILE: reason'")
         out[path.strip()] = reason.strip()
     return out
 
 
-def scan_files() -> list[Path]:
-    docs = Path(_DOCS)
+def scan_files(docs_dir: str = _DOCS) -> list[Path]:
+    docs = Path(docs_dir)
     return sorted(p for p in list(docs.glob("*.md")) + list(docs.glob("*.dox")) if p.is_file())
 
 
@@ -69,12 +73,14 @@ def hits_in(path: Path) -> list[tuple[int, str]]:
     return found
 
 
-def main() -> int:
-    journals = load_journals()
-    files = scan_files()
+def judge(repo: str = _REPO) -> int:
+    """Judges repo/docs against repo/docs/voice-journals.yaml; a refusal exits through _die."""
+    docs_dir = os.path.join(repo, "docs")
+    journals = load_journals(os.path.join(docs_dir, "voice-journals.yaml"))
+    files = scan_files(docs_dir)
     if not files:
         _die("no docs/*.md or docs/*.dox -- nothing was scanned")
-    rels = {p.relative_to(_REPO).as_posix(): p for p in files}
+    rels = {p.relative_to(repo).as_posix(): p for p in files}
     for named in journals:
         if named not in rels:
             _die(f"{named} is in voice-journals.yaml but not in docs/*.md or docs/*.dox")
@@ -113,6 +119,80 @@ def main() -> int:
         "no route vocabulary outside named journals"
     )
     return 0
+
+
+_ARMS = {
+    "nojournals": "voice-journals.yaml not found",
+    "badline": "expected 'docs/FILE: reason'",
+    "empty": "nothing was scanned",
+    "ghost": "is in voice-journals.yaml but not in",
+    "hit": "hit(s) in files that are not journals",
+    "clean": "no route vocabulary outside named journals",
+}
+
+
+def self_test() -> int:
+    """Drives each arm of ``judge`` alone on a synthetic docs/ tree.
+
+    A refusal leaves through _die (SystemExit), which is captured with the printed text; any other
+    exception is that case's failure. A journal's hits must be COUNTED, never a pass by silence.
+    """
+    bench_voice = "The walk costs +12.5 % here.\n"  # a measured percentage: bench-log voice
+    journal = "docs/LOG.md: the measurement journal\n"
+    cases = [
+        ("no journals file", {"docs/a.md": "plain\n"}, None, 1, "nojournals"),
+        ("a journals line without a reason", {"docs/a.md": "plain\n"}, "docs/LOG.md:\n", 1, "badline"),
+        ("no docs/*.md or *.dox at all", {"docs/sub/a.md": "plain\n"}, "", 1, "empty"),
+        ("a journal named but absent", {"docs/a.md": "plain\n"}, journal, 1, "ghost"),
+        ("bench voice outside a journal", {"docs/a.md": bench_voice, "docs/LOG.md": "x\n"}, journal, 1, "hit"),
+        ("bench voice in a .dox outside a journal", {"docs/d.dox": bench_voice, "docs/LOG.md": "x\n"}, journal, 1,
+         "hit"),
+        # The journals file's comment and blank lines are skipped, not read as malformed entries.
+        ("bench voice inside a named journal is counted, not failed",
+         {"docs/a.md": "plain\n", "docs/LOG.md": bench_voice}, "# journals\n\n" + journal, 0, "clean"),
+        ("bench voice below docs/ is out of scope (non-recursive)",
+         {"docs/a.md": "plain\n", "docs/sub/x.md": bench_voice, "docs/LOG.md": "x\n"}, journal, 0, "clean"),
+    ]
+    failures = 0
+    for name, files, journals_text, want_rc, arm in cases:
+        with tempfile.TemporaryDirectory() as tmp:
+            for rel, content in files.items():
+                path = Path(tmp) / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+            if journals_text is not None:
+                (Path(tmp) / "docs").mkdir(exist_ok=True)
+                (Path(tmp) / "docs" / "voice-journals.yaml").write_text(journals_text, encoding="utf-8")
+            out, err = io.StringIO(), io.StringIO()
+            try:
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    rc = judge(tmp)
+            except SystemExit as stop:
+                rc = stop.code if isinstance(stop.code, int) else 1
+            except Exception as exc:
+                print(f"SELF-TEST FAILED: {name}: judge raised {type(exc).__name__}: {exc}")
+                failures += 1
+                continue
+        text = out.getvalue() + err.getvalue()
+        wrong = [a for a, m in _ARMS.items() if a != arm and m in text]
+        counted = arm != "clean" or "journal" not in name or "(1 hits:" in text
+        if rc != want_rc or _ARMS[arm] not in text or wrong or not counted:
+            print(f"SELF-TEST FAILED: {name}: rc={rc} (want {want_rc}), arm {arm!r} "
+                  f"{'present' if _ARMS[arm] in text else 'ABSENT'}, other arms {wrong}, counted={counted}"
+                  f"\n    {text.strip()}")
+            failures += 1
+    if failures:
+        print(f"check_doc_voice_source: self-test FAILED ({failures} of {len(cases)} case(s))")
+        return 1
+    print(f"check_doc_voice_source: self-test OK — {len(cases)} cases: a missing or malformed journals file, an "
+          "empty scan, a ghost journal and bench voice in .md and .dox each refused alone; a journal's hits counted")
+    return 0
+
+
+def main() -> int:
+    if sys.argv[1:] == ["--self-test"]:
+        return self_test()
+    return judge()
 
 
 if __name__ == "__main__":

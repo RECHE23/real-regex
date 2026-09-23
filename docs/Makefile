@@ -183,6 +183,7 @@ docs-site-gate: ## Sphinx -W --keep-going + linkcheck + built-HTML link check fo
 	@echo "── check-doc-voice (no route vocabulary in published Doxygen XML)"
 	@python3 $(ROOT)/tools/check_doc_voice.py
 	@echo "── check-doc-voice-source (docs/*.dox + docs/*.md; journals counted, not a free pass)"
+	@python3 $(ROOT)/tools/check_doc_voice_source.py --self-test >/dev/null
 	@python3 $(ROOT)/tools/check_doc_voice_source.py
 	@echo "── check-curated-members (allowlist omissions are explicit)"
 	@python3 $(ROOT)/tools/check_curated_members.py

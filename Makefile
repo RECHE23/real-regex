@@ -468,6 +468,7 @@ check-workflows: ## Lint .github/workflows with actionlint (skipped if actionlin
 # docs/voice-journals.yaml are counted, not a fail.
 check-doc-voice:
 	@python3 tools/check_doc_voice.py
+	@python3 tools/check_doc_voice_source.py --self-test >/dev/null
 	@python3 tools/check_doc_voice_source.py
 
 # A public non-\internal member of a curated class must be in that page's
