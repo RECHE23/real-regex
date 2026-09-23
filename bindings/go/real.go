@@ -245,6 +245,21 @@ func (r *Regexp) SubexpNames() []string {
 	return names
 }
 
+// SubexpIndex returns the index of the first group with the given name, or -1 when no group has
+// it — regexp.Regexp.SubexpIndex. An empty name is never a group's name (index 0 and unnamed
+// groups are "" in SubexpNames), so it answers -1 too.
+func (r *Regexp) SubexpIndex(name string) int {
+	if name == "" {
+		return -1
+	}
+	for i, n := range r.SubexpNames() {
+		if n == name {
+			return i
+		}
+	}
+	return -1
+}
+
 // FindAllIndex returns the [start,end) byte-offset pairs of every non-overlapping match in b, in
 // order, like regexp.Regexp.FindAllIndex (whole match only, group 0; see FindAllSubmatchIndex for
 // every group). n is the cap: 0 → nil, <0 → all, >0 → at most n. Byte offsets throughout — Go's
@@ -650,4 +665,14 @@ func (r *Regexp) ReplaceAll(text, repl []byte) ([]byte, error) {
 	}
 	out = append(out, text[last:]...)
 	return out, nil
+}
+
+// ReplaceAllString is ReplaceAll over strings, with the same template syntax and the same errors —
+// regexp.Regexp.ReplaceAllString's shape, plus the error ReplaceAll returns for a $-style template.
+func (r *Regexp) ReplaceAllString(src, repl string) (string, error) {
+	out, err := r.ReplaceAll([]byte(src), []byte(repl))
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }

@@ -273,6 +273,12 @@ func TestReplaceAllMatchesRegexp(t *testing.T) {
 				continue // reported by TestFindFamilyMatchesRegexp
 			}
 			groups := std.NumSubexp()
+			for _, name := range append(std.SubexpNames(), "", "no_such_group") {
+				compared++
+				if got, want := ours.SubexpIndex(name), std.SubexpIndex(name); got != want {
+					fails = append(fails, failure{"SubexpIndex", pat, name, 0, fmt.Sprint(got), fmt.Sprint(want)})
+				}
+			}
 
 			type tmpl struct{ ours, theirs string }
 			templates := []tmpl{{"-", "-"}, {"", ""}, {"<>", "<>"}, {`[\g<0>]`, "[${0}]"}}
@@ -300,6 +306,15 @@ func TestReplaceAllMatchesRegexp(t *testing.T) {
 					if !bytes.Equal(got, want) {
 						fails = append(fails, failure{"ReplaceAll[" + tp.ours + "]", pat, subj, 0,
 							string(got), string(want)})
+					}
+					gotS, err := ours.ReplaceAllString(subj, tp.ours)
+					compared++
+					if err != nil {
+						fails = append(fails, failure{"ReplaceAllString/error", pat, subj, 0, err.Error(), tp.theirs})
+						continue
+					}
+					if wantS := std.ReplaceAllString(subj, tp.theirs); gotS != wantS {
+						fails = append(fails, failure{"ReplaceAllString[" + tp.ours + "]", pat, subj, 0, gotS, wantS})
 					}
 				}
 			}
