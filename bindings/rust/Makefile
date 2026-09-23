@@ -4,7 +4,7 @@
 ROOT      := $(abspath $(CURDIR)/../..)
 FUZZ_TIME ?= 60
 
-.PHONY: build test bench fuzz publish-check vendor clean help
+.PHONY: build test clippy bench fuzz publish-check vendor clean help
 .DEFAULT_GOAL := help
 
 build: ## Build the crate (debug)
@@ -19,6 +19,11 @@ test: ## Run the crate tests in both feature configurations (default and `fallba
 	# tested, in-tree, every `rust-test` run.
 	@echo "── quickstart example (in-tree)"
 	cargo run --quiet --example quickstart
+
+clippy: ## Lint the crate, its tests, examples and benches with clippy, every warning an error (both feature sets)
+	rm -rf vendor
+	cargo clippy --quiet --all-targets --all-features -- -D warnings
+	cargo clippy --quiet --all-targets -- -D warnings
 
 bench: ## Run the native criterion benchmark (real-regex vs the regex crate); dev-only, long
 	cargo bench --bench engines

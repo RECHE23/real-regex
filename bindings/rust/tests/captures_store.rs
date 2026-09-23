@@ -35,8 +35,8 @@ fn every_group_readable_across_the_inline_spill_boundary() {
         let via_iter: Vec<Option<(usize, usize)>> =
             caps.iter().map(|o| o.map(|m| (m.start(), m.end()))).collect();
         assert_eq!(via_iter.len(), n + 1, "iter() length for n={n}");
-        for g in 0..=n {
-            assert_eq!(via_iter[g], caps.get(g).map(|m| (m.start(), m.end())), "iter()[{g}] for n={n}");
+        for (g, span) in via_iter.iter().enumerate() {
+            assert_eq!(*span, caps.get(g).map(|m| (m.start(), m.end())), "iter()[{g}] for n={n}");
         }
     }
 }

@@ -112,15 +112,15 @@ fn capture_names_and_named_lookup_agree() {
 #[test]
 fn long_group_names_full_and_distinct() {
     // 140 'a's shared prefix, then distinct tails — past the old 127-byte clamp.
-    let prefix: String = std::iter::repeat('a').take(140).collect();
+    let prefix: String = "a".repeat(140);
     let name1 = format!("{prefix}_one");
     let name2 = format!("{prefix}_two");
     let pat = format!("(?P<{name1}>x)(?P<{name2}>y)");
     let re = Regex::new(&pat).expect("compile long names");
     let names: Vec<_> = re.capture_names().collect();
     assert_eq!(names.len(), 3); // group 0 + two named
-    assert_eq!(names[1].as_deref(), Some(name1.as_str()));
-    assert_eq!(names[2].as_deref(), Some(name2.as_str()));
+    assert_eq!(names[1], Some(name1.as_str()));
+    assert_eq!(names[2], Some(name2.as_str()));
     assert_ne!(names[1], names[2], "alias collapse: truncated names collided");
 
     let c = re.captures("xy").expect("match");

@@ -11,10 +11,11 @@
 use std::error::Error;
 
 // The marked region below is reproduced byte-for-byte on the landing page's Rust tab (not
-// editable here — see the header comment above), including its unused `&caps["host"];` display
+// editable here — see the header comment above), including its unused `&caps[2];` display
 // statement; that line is what the landing shows, and it is intentionally harmless (no side
-// effect), just noisy under `unused_must_use`. Silenced at the function, not inside the region.
-#[allow(unused_must_use)]
+// effect), just noisy under `unused_must_use` and clippy's `no_effect`. Silenced at the function,
+// not inside the region.
+#[allow(unused_must_use, clippy::no_effect)]
 fn main() -> Result<(), Box<dyn Error>> {
     // [quickstart]
     use real_regex::Regex;   // drop-in for the regex crate

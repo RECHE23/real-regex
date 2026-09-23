@@ -277,6 +277,10 @@ jobs:
         run: make -C real-regex c-test
       - name: Rust crate — differential vs the regex crate
         run: make -C real-regex rust-test
+      - name: Rust crate — clippy, every warning an error
+        run: |
+          rustup component add clippy
+          make -C real-regex rust-clippy
       - name: Rust crate — packaging dry-run (builds the vendored crate standalone)
         run: make -C real-regex rust-publish-check
 

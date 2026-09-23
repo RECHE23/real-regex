@@ -57,28 +57,28 @@ struct Report {
     compared: usize,
     skipped: usize,
     fails: Vec<String>,
+    pattern: String,
+    subject: String,
 }
 
 impl Report {
     fn new() -> Self {
-        Report { compared: 0, skipped: 0, fails: Vec::new() }
+        Report { compared: 0, skipped: 0, fails: Vec::new(), pattern: String::new(), subject: String::new() }
+    }
+
+    /// The pattern and subject every following `eq` reports against.
+    fn at(&mut self, pattern: &str, subject: &str) {
+        pattern.clone_into(&mut self.pattern);
+        subject.clone_into(&mut self.subject);
     }
 
     /// `rhs` names what the second value IS. Hard-coding "regex" made the report lie the moment a
     /// comparison was against something else -- the bytes/str duality read as a crate divergence
     /// when both sides were this crate.
-    fn eq<T: PartialEq + std::fmt::Debug>(
-        &mut self,
-        surface: &str,
-        pattern: &str,
-        subject: &str,
-        extra: &str,
-        ours: T,
-        theirs: T,
-        rhs: &str,
-    ) {
+    fn eq<T: PartialEq + std::fmt::Debug>(&mut self, surface: &str, extra: &str, ours: T, theirs: T, rhs: &str) {
         self.compared += 1;
         if ours != theirs {
+            let (pattern, subject) = (&self.pattern, &self.subject);
             self.fails.push(format!(
                 "{surface}(pattern={pattern:?}, subject={subject:?}{extra}): \
                  this crate {ours:?}, {rhs} {theirs:?}"
@@ -102,7 +102,7 @@ impl Report {
                 None => by_surface.push((head, 1)),
             }
         }
-        by_surface.sort_by(|a, b| b.1.cmp(&a.1));
+        by_surface.sort_by_key(|entry| std::cmp::Reverse(entry.1));
         let tally: Vec<String> =
             by_surface.iter().map(|(s, n)| format!("{s}×{n}")).collect();
         let shown: Vec<&String> = self.fails.iter().take(10).collect();
@@ -137,11 +137,10 @@ fn find_family_matches_the_regex_crate() {
     let mut r = Report::new();
     for (pat, ours, theirs) in oracle_pairs() {
         for &subj in SUBJECTS {
-            r.eq("is_match", pat, subj, "", ours.is_match(subj), theirs.is_match(subj), "regex");
+            r.at(pat, subj);
+            r.eq("is_match", "", ours.is_match(subj), theirs.is_match(subj), "regex");
             r.eq(
                 "find",
-                pat,
-                subj,
                 "",
                 ours.find(subj).map(|m| (m.start(), m.end())),
                 theirs.find(subj).map(|m| (m.start(), m.end())),
@@ -149,8 +148,6 @@ fn find_family_matches_the_regex_crate() {
             );
             r.eq(
                 "find_iter",
-                pat,
-                subj,
                 "",
                 ours.find_iter(subj).map(|m| (m.start(), m.end())).collect::<Vec<_>>(),
                 theirs.find_iter(subj).map(|m| (m.start(), m.end())).collect::<Vec<_>>(),
@@ -158,8 +155,6 @@ fn find_family_matches_the_regex_crate() {
             );
             r.eq(
                 "captures",
-                pat,
-                subj,
                 "",
                 ours.captures(subj).map(|c| group_spans(c.len(), |i| c.get(i).map(|m| (m.start(), m.end())))),
                 theirs.captures(subj).map(|c| group_spans(c.len(), |i| c.get(i).map(|m| (m.start(), m.end())))),
@@ -167,8 +162,6 @@ fn find_family_matches_the_regex_crate() {
             );
             r.eq(
                 "captures_iter",
-                pat,
-                subj,
                 "",
                 ours.captures_iter(subj)
                     .map(|c| group_spans(c.len(), |i| c.get(i).map(|m| (m.start(), m.end()))))
@@ -187,11 +180,9 @@ fn find_family_matches_the_regex_crate() {
                     continue;
                 }
                 let extra = format!(", start={start}");
-                r.eq("is_match_at", pat, subj, &extra, ours.is_match_at(subj, start), theirs.is_match_at(subj, start), "regex");
+                r.eq("is_match_at", &extra, ours.is_match_at(subj, start), theirs.is_match_at(subj, start), "regex");
                 r.eq(
                     "find_at",
-                    pat,
-                    subj,
                     &extra,
                     ours.find_at(subj, start).map(|m| (m.start(), m.end())),
                     theirs.find_at(subj, start).map(|m| (m.start(), m.end())),
@@ -199,8 +190,6 @@ fn find_family_matches_the_regex_crate() {
                 );
                 r.eq(
                     "captures_at",
-                    pat,
-                    subj,
                     &extra,
                     ours.captures_at(subj, start).map(|c| group_spans(c.len(), |i| c.get(i).map(|m| (m.start(), m.end())))),
                     theirs.captures_at(subj, start).map(|c| group_spans(c.len(), |i| c.get(i).map(|m| (m.start(), m.end())))),
@@ -221,10 +210,9 @@ fn split_and_replace_match_the_regex_crate() {
     let mut r = Report::new();
     for (pat, ours, theirs) in oracle_pairs() {
         for &subj in SUBJECTS {
+            r.at(pat, subj);
             r.eq(
                 "split",
-                pat,
-                subj,
                 "",
                 ours.split(subj).collect::<Vec<_>>(),
                 theirs.split(subj).collect::<Vec<_>>(),
@@ -233,8 +221,6 @@ fn split_and_replace_match_the_regex_crate() {
             for &limit in LIMITS {
                 r.eq(
                     "splitn",
-                    pat,
-                    subj,
                     &format!(", limit={limit}"),
                     ours.splitn(subj, limit).collect::<Vec<_>>(),
                     theirs.splitn(subj, limit).collect::<Vec<_>>(),
@@ -243,16 +229,14 @@ fn split_and_replace_match_the_regex_crate() {
             }
             for &tmpl in TEMPLATES {
                 let extra = format!(", template={tmpl:?}");
-                r.eq("replace", pat, subj, &extra,
+                r.eq("replace", &extra,
                      ours.replace(subj, tmpl).to_string(), theirs.replace(subj, tmpl).to_string(), "regex");
-                r.eq("replace_all", pat, subj, &extra,
+                r.eq("replace_all", &extra,
                      ours.replace_all(subj, tmpl).to_string(), theirs.replace_all(subj, tmpl).to_string(),
                      "regex");
                 for &limit in LIMITS {
                     r.eq(
                         "replacen",
-                        pat,
-                        subj,
                         &format!("{extra}, limit={limit}"),
                         ours.replacen(subj, limit, tmpl).to_string(),
                         theirs.replacen(subj, limit, tmpl).to_string(),
@@ -274,13 +258,14 @@ fn capture_locations_agree_with_captures() {
     let mut r = Report::new();
     for (pat, ours, theirs) in oracle_pairs() {
         for &subj in SUBJECTS {
+            r.at(pat, subj);
             let mut locs = ours.capture_locations();
             let read = ours.captures_read(&mut locs, subj).map(|m| (m.start(), m.end()));
             let via_captures = ours.captures(subj).map(|c| {
                 let m = c.get(0).unwrap();
                 (m.start(), m.end())
             });
-            r.eq("captures_read vs captures", pat, subj, "", read, via_captures, "captures()");
+            r.eq("captures_read vs captures", "", read, via_captures, "captures()");
 
             if read.is_some() {
                 let from_locs: Vec<Option<(usize, usize)>> =
@@ -289,14 +274,12 @@ fn capture_locations_agree_with_captures() {
                     .captures(subj)
                     .map(|c| group_spans(c.len(), |i| c.get(i).map(|m| (m.start(), m.end()))))
                     .unwrap_or_default();
-                r.eq("locations vs captures groups", pat, subj, "", from_locs, from_caps, "captures()");
+                r.eq("locations vs captures groups", "", from_locs, from_caps, "captures()");
             }
 
             let mut their_locs = theirs.capture_locations();
             r.eq(
                 "captures_read span",
-                pat,
-                subj,
                 "",
                 read,
                 theirs.captures_read(&mut their_locs, subj).map(|m| (m.start(), m.end())),
@@ -331,12 +314,11 @@ fn bytes_half_matches_the_regex_crate_in_byte_mode() {
             }
         };
         for &subj in SUBJECTS {
+            r.at(pat, subj);
             let b = subj.as_bytes();
-            r.eq("is_match", pat, subj, " (bytes)", ours.is_match(b), theirs.is_match(b), "regex::bytes");
+            r.eq("is_match", " (bytes)", ours.is_match(b), theirs.is_match(b), "regex::bytes");
             r.eq(
                 "find",
-                pat,
-                subj,
                 " (bytes)",
                 ours.find(b).map(|m| (m.start(), m.end())),
                 theirs.find(b).map(|m| (m.start(), m.end())),
@@ -344,8 +326,6 @@ fn bytes_half_matches_the_regex_crate_in_byte_mode() {
             );
             r.eq(
                 "find_iter",
-                pat,
-                subj,
                 " (bytes)",
                 ours.find_iter(b).map(|m| (m.start(), m.end())).collect::<Vec<_>>(),
                 theirs.find_iter(b).map(|m| (m.start(), m.end())).collect::<Vec<_>>(),
@@ -353,8 +333,6 @@ fn bytes_half_matches_the_regex_crate_in_byte_mode() {
             );
             r.eq(
                 "split",
-                pat,
-                subj,
                 " (bytes)",
                 ours.split(b).map(|s| s.to_vec()).collect::<Vec<_>>(),
                 theirs.split(b).map(|s| s.to_vec()).collect::<Vec<_>>(),
@@ -365,10 +343,9 @@ fn bytes_half_matches_the_regex_crate_in_byte_mode() {
         // only in the str-shaped subject list.
         for raw in [&b""[..], &[0xff][..], &[0x80, 0x80][..], b"a\xffb", &[0xe2, 0x82][..]] {
             let label = String::from_utf8_lossy(raw).into_owned();
+            r.at(pat, &label);
             r.eq(
                 "find/raw",
-                pat,
-                &label,
                 " (bytes)",
                 ours.find(raw).map(|m| (m.start(), m.end())),
                 theirs.find(raw).map(|m| (m.start(), m.end())),
@@ -376,8 +353,6 @@ fn bytes_half_matches_the_regex_crate_in_byte_mode() {
             );
             r.eq(
                 "find_iter/raw",
-                pat,
-                &label,
                 " (bytes)",
                 ours.find_iter(raw).map(|m| (m.start(), m.end())).collect::<Vec<_>>(),
                 theirs.find_iter(raw).map(|m| (m.start(), m.end())).collect::<Vec<_>>(),

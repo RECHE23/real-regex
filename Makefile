@@ -904,8 +904,9 @@ full-local-gate-impl:
 	@$(MAKE) exhaustive-compat
 	@echo "── [18/25] test (default CXX; refuses a binary older than the headers)"
 	@$(MAKE) test
-	@echo "── [19/25] rust-test"
+	@echo "── [19/25] rust-test + rust-clippy (every clippy warning an error)"
 	@$(MAKE) rust-test
+	@$(MAKE) rust-clippy
 	@echo "── [20/25] rust-publish-check"
 	@$(MAKE) rust-publish-check
 	@echo "── [21/25] python-test + python-stubtest (.pyi ≡ runtime; skipped if mypy absent)"

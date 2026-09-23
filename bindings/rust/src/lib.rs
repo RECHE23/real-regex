@@ -766,29 +766,27 @@ impl RawSpans<'_, '_> {
         if self.drive_pos.is_some() {
             return self.drive_advance();
         }
-        loop {
-            let got = unsafe { real_iter_next(self.iter, self.buf.as_mut_ptr()) };
-            match got {
-                0 => return None,
-                // -1 is an internal engine error (or a null cursor). A linear search never "fails to match" —
-                // the rust contract is compile -> Result, then matching is infallible — so we surface it.
-                -1 => panic!("real-regex: engine iteration failed"),
-                _ => {
-                    let (s0, e0) = (self.buf[0], self.buf[1]); // group 0 always participates
-                    if s0 == e0 {
-                        // First empty match: re and rust's advancement diverge here. Switch to driving the
-                        // search by position, resuming from rust's current start — the last yielded end, or,
-                        // if nothing has been yielded yet, the offset this cursor STARTED at. Resuming from 0
-                        // instead sent every `_at` search back to the top of the haystack whenever the match
-                        // at `start` was empty: `find_at("x*", "ab", 2)` answered (0,0) where the leftmost
-                        // match from 2 is the empty one at 2. Only the empty case was wrong, because only the
-                        // empty case takes this branch.
-                        self.drive_pos = Some(self.last_end.unwrap_or(self.origin));
-                        return self.drive_advance();
-                    }
-                    self.last_end = Some(e0);
-                    return Some((s0, e0));
+        let got = unsafe { real_iter_next(self.iter, self.buf.as_mut_ptr()) };
+        match got {
+            0 => None,
+            // -1 is an internal engine error (or a null cursor). A linear search never "fails to match" —
+            // the rust contract is compile -> Result, then matching is infallible — so we surface it.
+            -1 => panic!("real-regex: engine iteration failed"),
+            _ => {
+                let (s0, e0) = (self.buf[0], self.buf[1]); // group 0 always participates
+                if s0 == e0 {
+                    // First empty match: re and rust's advancement diverge here. Switch to driving the
+                    // search by position, resuming from rust's current start — the last yielded end, or,
+                    // if nothing has been yielded yet, the offset this cursor STARTED at. Resuming from 0
+                    // instead sent every `_at` search back to the top of the haystack whenever the match
+                    // at `start` was empty: `find_at("x*", "ab", 2)` answered (0,0) where the leftmost
+                    // match from 2 is the empty one at 2. Only the empty case was wrong, because only the
+                    // empty case takes this branch.
+                    self.drive_pos = Some(self.last_end.unwrap_or(self.origin));
+                    return self.drive_advance();
                 }
+                self.last_end = Some(e0);
+                Some((s0, e0))
             }
         }
     }
@@ -1760,6 +1758,8 @@ pub mod bytes {
 
     impl CaptureLocationMatches<'_, '_> {
         /// Number of capture slots (including group 0).
+        // Group 0 is always counted, so the count is never zero: an `is_empty` would be a constant.
+        #[allow(clippy::len_without_is_empty)]
         pub fn len(&self) -> usize {
             self.ngroups
         }
