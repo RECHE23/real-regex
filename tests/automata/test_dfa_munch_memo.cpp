@@ -26,19 +26,23 @@ namespace {
   real::dfa build(const std::vector<std::string>& sources)
   {
     std::vector<real::regex> pats;
+    pats.reserve(sources.size());
     for (const std::string& src : sources) {
       pats.emplace_back(src);
     }
     return real::dfa(pats);
   }
 
-  const std::vector<std::vector<std::string>> k_rule_sets {
-    {"a*b", "a"},
-    {"[ab]*c", "[ab]", "b+"},
-    {"(ab)*abc", "ab", "a"},
-    {"a+", "a*ba", "b"},
-    {"x[a-c]*y", "[a-c]+", "x"},
-  };
+  std::vector<std::vector<std::string>> rule_sets()
+  {
+    return {
+      {"a*b", "a"},
+      {"[ab]*c", "[ab]", "b+"},
+      {"(ab)*abc", "ab", "a"},
+      {"a+", "a*ba", "b"},
+      {"x[a-c]*y", "[a-c]+", "x"},
+    };
+  }
 } // namespace
 
 TEST(memoized_munch_answers_what_the_plain_munch_answers)
@@ -47,7 +51,7 @@ TEST(memoized_munch_answers_what_the_plain_munch_answers)
   // NOLINTNEXTLINE(cert-msc51-cpp,cert-msc32-c,bugprone-random-generator-seed)
   std::mt19937 rng      {0x4E75U};
   std::size_t  compared {0};
-  for (const auto& rules : k_rule_sets) {
+  for (const auto& rules : rule_sets()) {
     const real::dfa machine {build(rules)};
     for (int round = 0; round < 60; ++round) {
       std::string subject(static_cast<std::size_t>(rng() % 40), 'a');
@@ -93,9 +97,9 @@ TEST(memoized_lexing_is_linear_where_the_plain_one_is_quadratic)
     EXPECT(tokens == n);
     work.push_back(memo.transitions());
   }
-  EXPECT(work[0] <= 3 * 1000);  // against 500 500 for the plain munch
-  EXPECT(work[1] <= 3 * 2000);
-  EXPECT(work[2] <= 3 * 4000);
+  EXPECT(work[0] <= std::size_t {3000});  // against 500 500 for the plain munch
+  EXPECT(work[1] <= std::size_t {6000});
+  EXPECT(work[2] <= std::size_t {12000});
   EXPECT(work[2] >= 4000);      // the first walk alone reads every byte: the count is not vacuous
 }
 

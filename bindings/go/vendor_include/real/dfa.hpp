@@ -37,6 +37,8 @@
 #include "real/version.hpp"
 
 #include <algorithm>
+#include <unordered_map>
+#include <bit>
 #include <array>
 #include <cstddef>
 #include <ranges>
@@ -300,15 +302,15 @@ namespace real {
                             std::uint8_t   rep)
     {
       std::vector<std::uint32_t> seeds;
-      for (std::size_t pc = 0; pc < nfa.code.size(); ++pc) {
-        if (!dfa_test_bit(set, pc)) {
-          continue;
-        }
-        const dfa_instr& in      {nfa.code[pc]};
-        const bool       consume {(in.op == opcode::byte && in.arg8 == rep)
-                                  || (in.op == opcode::klass && nfa.classes[in.klass].test(rep))};
-        if (consume) {
-          seeds.push_back(static_cast<std::uint32_t>(pc + 1));
+      for (std::size_t w = 0; w < set.size(); ++w) {
+        for (std::uint64_t bits {set[w]}; bits != 0U; bits &= bits - 1U) { // set PCs only: the set is sparse
+          const std::size_t pc      {(w << 6U) + static_cast<std::size_t>(std::countr_zero(bits))};
+          const dfa_instr&  in      {nfa.code[pc]};
+          const bool        consume {(in.op == opcode::byte && in.arg8 == rep)
+                                     || (in.op == opcode::klass && nfa.classes[in.klass].test(rep))};
+          if (consume) {
+            seeds.push_back(static_cast<std::uint32_t>(pc + 1));
+          }
         }
       }
       return dfa_closure(nfa, seeds, false); // post-consumption: text_start is false here
@@ -499,6 +501,51 @@ namespace real {
      * \throws real::dfa_error when construction exceeds \p state_cap, or when \ref dfa_flatten refuses a
      *         pattern.
      */
+    /*!
+     * \brief Every class's move from one state in one pass over the state's PCs: \ref dfa_move for each
+     *        class of \p bc, without rescanning the set once per class.
+     * \param[in] nfa           The union NFA.
+     * \param[in] set           The source state's PC set.
+     * \param[in] bc            The byte classes (a byte PC consumes exactly its own byte's class).
+     * \param[in] klass_members For each NFA class, the byte-class indices it contains.
+     * \param[in,out] closures  Closures already computed during this construction, by seed list:
+     *            classes and states that consume through the same PCs share one closure.
+     * \return The successor PC set per class, indexed by class.
+     */
+    inline std::vector<dfa_set> dfa_move_all(const dfa_nfa&                                 nfa,
+                                             const dfa_set&                                 set,
+                                             const dfa_byte_classes&                        bc,
+                                             const std::vector<std::vector<std::uint8_t>>&  klass_members,
+                                             std::map<std::vector<std::uint32_t>, dfa_set>& closures)
+    {
+      std::vector<std::vector<std::uint32_t>> seeds(bc.count);
+      for (std::size_t w = 0; w < set.size(); ++w) {
+        for (std::uint64_t bits {set[w]}; bits != 0U; bits &= bits - 1U) {
+          const std::size_t pc {(w << 6U) + static_cast<std::size_t>(std::countr_zero(bits))};
+          const dfa_instr&  in {nfa.code[pc]};
+          if (in.op == opcode::byte) {
+            seeds[bc.of[in.arg8]].push_back(static_cast<std::uint32_t>(pc + 1));
+          }
+          else if (in.op == opcode::klass) {
+            for (const std::uint8_t c : klass_members[in.klass]) {
+              seeds[c].push_back(static_cast<std::uint32_t>(pc + 1));
+            }
+          }
+        }
+      }
+      std::vector<dfa_set> out;
+      out.reserve(bc.count);
+      for (auto& per_class : seeds) {
+        auto found {closures.find(per_class)};
+        if (found == closures.end()) {
+          dfa_set closed {dfa_closure(nfa, per_class, false)}; // post-consumption: text_start is false here
+          found = closures.emplace(std::move(per_class), std::move(closed)).first;
+        }
+        out.push_back(found->second);
+      }
+      return out;
+    }
+
     inline dfa_tables dfa_build(std::span<const program_view> programs,
                                 std::size_t                   state_cap  = max_dfa_states,
                                 bool                          unanchored = false)
@@ -533,38 +580,61 @@ namespace real {
                              return s;
                            }};
 
-      const auto find_or_add {[&](dfa_set s) -> std::uint32_t {
-                                for (std::size_t i = 0; i < sets.size(); ++i) {
-                                  if (sets[i] == s) {
-                                    return static_cast<std::uint32_t>(i);
-                                  }
-                                }
-                                // False positive: live locals; analyzer mis-models the vector.
-                                // NOLINTNEXTLINE(clang-analyzer-core.NonNullParamChecker)
-                                auto mask {dfa_accept_mask_of(nfa, s)};
-                                sets.push_back(std::move(s));
-                                mask_pre.push_back(std::move(mask));
-                                if (sets.size() > state_cap) {
-                                  throw dfa_error("DFA state count exceeded max_dfa_states; "
-                                                  "pattern is too complex for a DFA");
-                                }
-                                return static_cast<std::uint32_t>(sets.size() - 1);
-                              }};
+      // Known sets by content, so a lookup costs a hash rather than a comparison with every state.
+      const auto set_hash {[](const dfa_set& v) {
+                             std::size_t h {v.size()};
+                             for (const std::uint64_t w : v) {
+                               h ^= std::hash<std::uint64_t> {}(w) + 0x9e3779b97f4a7c15ULL + (h << 6U) + (h >> 2U);
+                             }
+                             return h;
+                           }};
+      std::unordered_multimap<std::size_t, std::uint32_t> index;
+      const auto                                          find_or_add {[&](dfa_set s) -> std::uint32_t {
+                                                                         const std::size_t h {set_hash(s)};
+                                                                         for (auto [it, end] {index.equal_range(h)}; it != end; ++it) {
+                                                                           if (sets[it->second] == s) {
+                                                                             return it->second;
+                                                                           }
+                                                                         }
+                                                                         index.emplace(h, static_cast<std::uint32_t>(sets.size()));
+                                                                         // False positive: live locals; analyzer mis-models the vector.
+                                                                         // NOLINTNEXTLINE(clang-analyzer-core.NonNullParamChecker)
+                                                                         auto mask {dfa_accept_mask_of(nfa, s)};
+                                                                         sets.push_back(std::move(s));
+                                                                         mask_pre.push_back(std::move(mask));
+                                                                         if (sets.size() > state_cap) {
+                                                                           throw dfa_error("DFA state count exceeded max_dfa_states; "
+                                                                                           "pattern is too complex for a DFA");
+                                                                         }
+                                                                         return static_cast<std::uint32_t>(sets.size() - 1);
+                                                                       }};
 
       const std::size_t words {(nfa.code.size() + 63U) / 64U};
       sets.emplace_back(words, 0); // state 0 = dead (empty set)
+      index.emplace(set_hash(sets.back()), 0U);
       mask_pre.push_back(std::vector<std::uint64_t>(mw, 0));
       // Offset 0: text_start holds. Unanchored still starts here (anchors see pos 0).
       out.start = find_or_add(dfa_closure(nfa, entry_seeds, true));
 
       std::vector<std::uint32_t> trans_pre; // [s*nc + c]
+      // Which byte classes each NFA class holds, and the closures computed so far (by seed list).
+      std::vector<std::vector<std::uint8_t>> klass_members(nfa.classes.size());
+      for (std::size_t k = 0; k < nfa.classes.size(); ++k) {
+        for (std::size_t c = 0; c < nc; ++c) {
+          if (nfa.classes[k].test(bc.rep[c])) {
+            klass_members[k].push_back(static_cast<std::uint8_t>(c));
+          }
+        }
+      }
+      std::map<std::vector<std::uint32_t>, dfa_set> closures;
       // Indexed: find_or_add appends to `sets`. A range-for captures end() once
       // and never expands the states it just discovered (UAF under realloc;
       // silent one-state machine otherwise).
       // NOLINTNEXTLINE(modernize-loop-convert)
       for (std::size_t s = 0; s < sets.size(); ++s) {
+        std::vector<dfa_set> moves {dfa_move_all(nfa, sets[s], bc, klass_members, closures)};
         for (std::size_t c = 0; c < nc; ++c) {
-          trans_pre.push_back(find_or_add(complete(dfa_move(nfa, sets[s], bc.rep[c]))));
+          trans_pre.push_back(find_or_add(complete(std::move(moves[c]))));
         }
       }
       const std::size_t n_pre {sets.size()};
