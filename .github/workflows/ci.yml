@@ -35,7 +35,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: RECHE23/sciforge
-          ref: v2026.9.1
+          ref: v2026.9.2
           path: sciforge
       # A tool installed for one step does not go on PATH for the others:
       # update-environment: false, pass it explicitly (PYTHON= below).
@@ -138,10 +138,10 @@ jobs:
   # lives in its Makefile's --checks, so nothing is passed here.
   lint:
     needs: preflight
-    uses: RECHE23/sciforge/.github/workflows/lint-cpp.yml@v2026.9.1
+    uses: RECHE23/sciforge/.github/workflows/lint-cpp.yml@v2026.9.2
     with:
       deps: '[]'
-      sciforge-ref: v2026.9.1
+      sciforge-ref: v2026.9.2
       runner-mode: hosted
 
   # POSIX + CMake build via SciForge's reusable build spine, fully collapsed: the
@@ -153,10 +153,10 @@ jobs:
   # private repos opt out, matching their pre-cat-B matrices).
   build:
     needs: preflight
-    uses: RECHE23/sciforge/.github/workflows/build-cpp.yml@v2026.9.1
+    uses: RECHE23/sciforge/.github/workflows/build-cpp.yml@v2026.9.2
     with:
       deps: '[]'
-      sciforge-ref: v2026.9.1
+      sciforge-ref: v2026.9.2
       runner-mode: hosted
       enable-macos: true
       enable-windows-msvc: true
@@ -240,7 +240,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: RECHE23/sciforge
-          ref: v2026.9.1
+          ref: v2026.9.2
           path: sciforge
       - uses: actions/setup-python@v6
         with:
@@ -358,7 +358,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: RECHE23/sciforge
-          ref: v2026.9.1
+          ref: v2026.9.2
           path: sciforge
       - name: Install clang + llvm
         run: sh real-regex/tools/ci-apt-ubuntu.sh clang llvm
@@ -386,7 +386,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: RECHE23/sciforge
-          ref: v2026.9.1
+          ref: v2026.9.2
           path: sciforge
       - name: Install pkg-config + cmake + clang
         run: sh real-regex/tools/ci-apt-ubuntu.sh pkg-config cmake clang
@@ -404,10 +404,10 @@ jobs:
   # {linux, macOS, Windows} x {3.11, 3.14}, replicated by the platform toggles.
   python:
     needs: preflight
-    uses: RECHE23/sciforge/.github/workflows/python-cpp.yml@v2026.9.1
+    uses: RECHE23/sciforge/.github/workflows/python-cpp.yml@v2026.9.2
     with:
       python-versions: '["3.11","3.14"]'
-      sciforge-ref: v2026.9.1
+      sciforge-ref: v2026.9.2
       # `deps` clones {repo, path} sibling checkouts; a pip package goes in `pre-install`. Passing
       # "regex" here produced `git clone <url> ""` and killed every python leg.
       deps: '[]'
