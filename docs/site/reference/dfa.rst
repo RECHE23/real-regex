@@ -77,7 +77,9 @@ position, n(n+1)/2 transitions in all. ``match(subject, offset, memo)`` with a
 walk proved leads to no accept, so tokenizing costs O(states × length) -- 5n
 transitions on that input, the replays that mark the dead pairs included, and one
 bit per remembered state per byte of memory (Reps, *Maximal-munch tokenization in linear time*,
-1998). The price is capture-freedom: the result
+1998). A memo holds and consults nothing until a walk runs more than
+``dfa_munch_memo::short_stretch`` (32) bytes past its last accept, so a tokenization whose walks
+die near their tokens pays neither the memory nor the lookups. The price is capture-freedom: the result
 names the winning rule and its length, nothing inside it. Use
 :doc:`basic_regex` when you need groups, or :doc:`regex_set` when you need
 which-matched without the DFA restrictions. Numbers live in
