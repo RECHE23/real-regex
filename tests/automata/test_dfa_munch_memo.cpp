@@ -130,3 +130,19 @@ TEST(a_memo_is_bound_to_its_subject_and_its_dfa)
   EXPECT(first.match("aaa", 3, memo) == std::nullopt);            // at the end: nothing to match
   EXPECT(refused([&] { return second.match("aaa", 0, memo); }));  // another DFA
 }
+
+TEST(the_stretch_is_marked_from_the_state_the_walk_really_stood_on)
+{
+  // `c` accepts after one byte and `ca*b` carries the walk on through the a's to a dead end at the d:
+  // a long dead stretch, marked from the state the walk stood on after `c`. Marked from the start
+  // state instead, the stretch would claim that `a*d`'s states lead nowhere -- and the next munch,
+  // which starts right there, would lose the a…ad token that `a*d` matches.
+  const real::dfa         machine {build({"c", "ca*b", "a*d"})};
+  const std::string       subject {"c" + std::string(50, 'a') + "d"};
+  real::dfa_munch_memo    memo    {subject.size()};
+  const auto              first   {machine.match(subject, 0, memo)};
+  EXPECT(first.has_value() && first->rule_index == 0U && first->length == 1U);
+  EXPECT(memo.armed());
+  const auto              second {machine.match(subject, 1, memo)};
+  EXPECT(second.has_value() && second->rule_index == 2U && second->length == 51U);
+}
