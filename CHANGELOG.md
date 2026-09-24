@@ -8,7 +8,8 @@ Per-train benchmark-impact log: the journal of what each release train measurabl
 DELIBERATELY LEFT AT `2026.8.15`** — the seventh train in a row, same reason: this document declares a
 **two-ISA** regime and only arm64 was available. **NO CELL WAS RE-RUN, AND NONE IS EDITED.** **NO
 ROUTE CODE A CELL RUNS IS TOUCHED:** `dfa_munch_memo` is a new overload beside `dfa::match`, which is
-unchanged; the C ABI's change is on the compile-failure path only (`real_compile_ex` and the shared
+unchanged; `real::dfa` CONSTRUCTION is about ten times faster (the tables it builds are the same, and
+no published cell times a build); the C ABI's change is on the compile-failure path only (`real_compile_ex` and the shared
 reporting helper), and `real_expand` loses a span check after the pass that already made it
 unreachable, a per-call difference no cell measures. The Rust `SetMatches` and `escape` and the Go
 `SubexpIndex` / `ReplaceAllString` add surface without entering a match loop. **NOT CLAIMED:** no veto
