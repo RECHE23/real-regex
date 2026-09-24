@@ -43,9 +43,13 @@ it is a cost you must budget for if you accept untrusted patterns.
 The legal, non-bypass worst cases, and where each constant comes from (`include/real/core/config.hpp`
 unless noted):
 
-- **Bounded lookaround**: `O(n · k · L)`, where `k` is the number of lookarounds in the pattern and `L` is
-  each one's own length, capped at `max_lookaround_length` (255 bytes) — still linear in `n`, but with a
-  per-position constant that grows with `k` and `L`.
+- **Bounded lookaround**: each lookaround runs a sub-match at every position it is tested, so the constant
+  grows with `k`, the number of lookarounds in the pattern, and with `L`, each one's length, capped at
+  `max_lookaround_length` (255 bytes). A lookahead costs about `O(n · k · L)`. A **lookbehind costs about
+  `O(n · k · L²)`**: its body is re-tried from every start within `L` bytes behind the position. Measured
+  2026-09-24 (arm64, Apple clang 16, `-O2`, one run each): `(?<=a{1,L}b)a` over `a…` costs 24, 75 and
+  271 µs per byte for `L` = 50, 100, 200 — 10 KB takes 2.7 s at `L` = 200. Still linear in `n`, but a
+  pattern supplier can buy a large per-byte constant with one long lookbehind.
 - **Lazy-DFA thrash falling back to the general Pike VM**: the DFA state cache holds up to `state_budget`
   (4096, `include/real/automata/lazy_dfa.hpp`) states before a flush; `thrash_flushes` (2) flushes within
   one scan trip a fallback to the slower general engine for the rest of that scan — still linear, at a
