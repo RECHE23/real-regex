@@ -103,6 +103,27 @@ int main(int argc, char** argv)
   std::smatch          std_groups;
   real::compat::smatch real_groups;
 
+  // A per-call ratio is only a ratio of the same answer, so the full answers are compared once, untimed:
+  // the verdicts, the match's position and length, and the replaced text.
+  {
+    std::smatch          std_m;
+    real::compat::smatch real_m;
+    const bool std_found {std::regex_search(embedded, std_m, std_bare)};
+    const bool real_found {real::compat::regex_search(embedded, real_m, real_bare)};
+    const bool same {std::regex_match(stamp, std_anchored) == real::compat::regex_match(stamp, real_anchored)
+                     && std::regex_match(embedded, std_anchored)
+                          == real::compat::regex_match(embedded, real_anchored)
+                     && std_found == real_found
+                     && (!std_found
+                         || (static_cast<std::size_t>(std_m.position(0)) == static_cast<std::size_t>(real_m.position(0))
+                             && static_cast<std::size_t>(std_m.length(0)) == static_cast<std::size_t>(real_m.length(0))))
+                     && std::regex_replace(padded, std_trim, "") == real::compat::regex_replace(padded, real_trim, "")};
+    if (!same) {
+      std::fprintf(stderr, "bench_percall: REAL and std::regex answer differently; no ratio is reported\n");
+      return 1;
+    }
+  }
+
   std::printf("  %-26s %12s %12s %9s\n", "case", "std::regex", "REAL", "ratio");
   std::printf("  %-26s %12s %12s %9s\n", "--------------------------", "-----------", "-----------", "--------");
 

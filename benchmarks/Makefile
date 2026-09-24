@@ -174,15 +174,15 @@ bench-engines: ## C++ throughput vs std::regex/PCRE2/RE2 (if present)
 # compiler elides and another does not is exactly what this regime exposes.
 bench-percall: ## [bench] REAL's std::regex swap-in vs std::regex, per call (short subjects)
 	@mkdir -p $(BUILD)
-	@cd $(ROOT) && for cc in c++ g++ g++-15 g++-14 clang++; do \
+	@cd $(ROOT) && rc=0; for cc in c++ g++ g++-15 g++-14 clang++; do \
 	   command -v $$cc >/dev/null 2>&1 || continue; \
 	   ver=$$($$cc --version 2>/dev/null | head -1); \
 	   case "$$seen" in *"$$ver"*) continue;; esac; seen="$$seen$$ver"; \
 	   echo "== $$cc: $$ver"; \
 	   $$cc -std=c++20 -O2 -DNDEBUG $(INCLUDES) -I$(SCIFORGE_INCLUDE) benchmarks/bench_percall.cpp \
 	     -o $(BUILD)/bench_percall_$$cc 2>/dev/null || { echo "   (build failed, skipped)"; continue; }; \
-	   $(BUILD)/bench_percall_$$cc $(or $(SAMPLES),15); echo; \
-	 done
+	   $(BUILD)/bench_percall_$$cc $(or $(SAMPLES),15) || rc=1; echo; \
+	 done; exit $$rc
 
 # Multi-pattern which-matched (TABLE A) + extraction count (TABLE B). Informational only —
 # not a CI gate. RE2 and Hyperscan optional via pkg-config (libhs / hyperscan names vary).
