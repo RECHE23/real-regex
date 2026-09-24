@@ -630,27 +630,18 @@ namespace real {
       const std::size_t n_pre {sets.size()};
 
       // Moore: initial partition by FULL accept mask (not min-rule alone).
-      std::vector<std::int64_t>               block(n_pre, 0);
-      std::vector<std::vector<std::uint64_t>> mask_keys;
+      // Blocks are numbered in first-seen order, looked up through an ordered index: a comparison with
+      // every block seen so far made each round quadratic in the state count.
+      std::vector<std::int64_t>                             block(n_pre, 0);
+      std::map<std::vector<std::uint64_t>, std::int64_t>    mask_ids;
       for (std::size_t s = 0; s < n_pre; ++s) {
-        std::int64_t id {-1};
-        for (std::size_t i = 0; i < mask_keys.size(); ++i) {
-          if (mask_keys[i] == mask_pre[s]) {
-            id = static_cast<std::int64_t>(i);
-            break;
-          }
-        }
-        if (id < 0) {
-          id = static_cast<std::int64_t>(mask_keys.size());
-          mask_keys.push_back(mask_pre[s]);
-        }
-        block[s] = id;
+        block[s] = mask_ids.try_emplace(mask_pre[s], static_cast<std::int64_t>(mask_ids.size())).first->second;
       }
-      std::size_t num_blocks {mask_keys.size()};
+      std::size_t num_blocks {mask_ids.size()};
       for (bool changed = true; changed;) {
         changed = false;
-        std::vector<std::vector<std::int64_t>> sigs;
-        std::vector<std::int64_t>              new_block(n_pre, 0);
+        std::map<std::vector<std::int64_t>, std::int64_t> sig_ids;
+        std::vector<std::int64_t>                         new_block(n_pre, 0);
         for (std::size_t s = 0; s < n_pre; ++s) {
           std::vector<std::int64_t> sig;
           sig.reserve(nc + 1);
@@ -658,22 +649,11 @@ namespace real {
           for (std::size_t c = 0; c < nc; ++c) {
             sig.push_back(block[trans_pre[(s * nc) + c]]);
           }
-          std::int64_t id {-1};
-          for (std::size_t i = 0; i < sigs.size(); ++i) {
-            if (sigs[i] == sig) {
-              id = static_cast<std::int64_t>(i);
-              break;
-            }
-          }
-          if (id < 0) {
-            id = static_cast<std::int64_t>(sigs.size());
-            sigs.push_back(std::move(sig));
-          }
-          new_block[s] = id;
+          new_block[s] = sig_ids.try_emplace(std::move(sig), static_cast<std::int64_t>(sig_ids.size())).first->second;
         }
-        if (sigs.size() != num_blocks) {
+        if (sig_ids.size() != num_blocks) {
           changed    = true;
-          num_blocks = sigs.size();
+          num_blocks = sig_ids.size();
           block      = std::move(new_block);
         }
       }
