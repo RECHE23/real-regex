@@ -486,21 +486,6 @@ namespace real {
     inline constexpr std::uint32_t dfa_no_rule {std::numeric_limits<std::uint32_t>::max()}; //!< \ref dfa_tables::accept's "this state does not accept" marker.
 
     /*!
-     * \brief Subset construction over byte-classes, then Moore minimization.
-     *
-     * Initial partition keys on the **full accept mask** (which-matched), not only the
-     * min-rule munch tag — two states with the same earliest rule but different accept
-     * sets must not merge. \p unanchored unions mid-stream pattern starts into every
-     * post-move set (self-restart) so a single scan can discover matches at any offset.
-     *
-     * \param[in] programs   The flattened NFA programs.
-     * \param[in] state_cap  Maximum DFA states before \ref dfa_error.
-     * \param[in] unanchored Mid-stream restart for which-matched (Stage-2); munch uses false.
-     * \return The baked tables.
-     * \throws real::dfa_error when construction exceeds \p state_cap, or when \ref dfa_flatten refuses a
-     *         pattern.
-     */
-    /*!
      * \brief Every class's move from one state in one pass over the state's PCs: \ref dfa_move for each
      *        class of \p bc, without rescanning the set once per class.
      * \param[in] nfa           The union NFA.
@@ -545,6 +530,21 @@ namespace real {
       return out;
     }
 
+    /*!
+     * \brief Subset construction over byte-classes, then Moore minimization.
+     *
+     * Initial partition keys on the **full accept mask** (which-matched), not only the
+     * min-rule munch tag — two states with the same earliest rule but different accept
+     * sets must not merge. \p unanchored unions mid-stream pattern starts into every
+     * post-move set (self-restart) so a single scan can discover matches at any offset.
+     *
+     * \param[in] programs   The flattened NFA programs.
+     * \param[in] state_cap  Maximum DFA states before \ref dfa_error.
+     * \param[in] unanchored Mid-stream restart for which-matched (Stage-2); munch uses false.
+     * \return The baked tables.
+     * \throws real::dfa_error when construction exceeds \p state_cap, or when \ref dfa_flatten refuses a
+     *         pattern.
+     */
     inline dfa_tables dfa_build(std::span<const program_view> programs,
                                 std::size_t                   state_cap  = max_dfa_states,
                                 bool                          unanchored = false)
