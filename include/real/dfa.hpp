@@ -906,6 +906,20 @@ namespace real {
 
   class dfa;
 
+  namespace detail {
+    //! \brief Throws the std::invalid_argument a misused dfa_munch_memo raises, out of line so the
+    //!        throw does not weigh on the per-token match that checks for it.
+    //! \param[in] what The message.
+    [[noreturn]]
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((cold, noinline))
+#endif
+    inline void dfa_memo_misuse(const char* what)
+    {
+      throw std::invalid_argument(what);
+    }
+  } // namespace detail
+
   /*!
    * \brief What successive munches over ONE subject have learnt, so that tokenizing the whole subject
    *        costs O(states × length) instead of O(length²) (Reps, "Maximal-munch tokenization in linear
@@ -928,6 +942,14 @@ namespace real {
   public:
 
     /*!
+     * \brief The longest stretch after a walk's last accept that is left unmarked. A later walk reaching
+     *        one of its pairs dies within that many steps on its own, so the bound stays linear
+     *        (O(length x (states + short_stretch))). The first longer stretch also arms the memo: until
+     *        then no walk consults it, so an ordinary tokenization pays nothing for it.
+     */
+    static constexpr std::size_t short_stretch {32};
+
+    /*!
      * \brief An empty memo for one subject.
      * \param[in] subject_size The subject's length in bytes.
      */
@@ -944,12 +966,23 @@ namespace real {
       return transitions_;
     }
 
+    /*!
+     * \brief Whether a walk over this subject has run more than \ref short_stretch steps past its last
+     *        accept, so later walks consult the memo; until then it holds nothing and costs nothing.
+     * \return True once armed.
+     */
+    [[nodiscard]] bool armed() const noexcept
+    {
+      return !marked_.empty();
+    }
+
   private:
 
     friend class dfa;
 
     std::size_t                                        size_;                  //!< The subject's length.
     std::vector<std::vector<bool>>                     dead_after_;            //!< [state][position]: no accept follows.
+    std::vector<std::uint8_t>                          marked_;                //!< [state]: dead_after_[state] holds a mark.
     std::size_t                                        transitions_ {0};       //!< See transitions().
     const void        *                                owner_       {nullptr}; //!< The dfa's tables this memo describes.
   };
@@ -1032,60 +1065,53 @@ namespace real {
      * \throws std::invalid_argument If \p memo was made for a subject of another length, was used with
      *         another DFA, or \p offset lies beyond \p subject.
      */
-    [[nodiscard]] std::optional<dfa_match> match(std::string_view subject,
-                                                 std::size_t      offset,
-                                                 dfa_munch_memo&  memo) const
+    [[nodiscard]]
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((always_inline))
+#endif
+    std::optional<dfa_match> match(std::string_view subject,
+                                   std::size_t      offset,
+                                   dfa_munch_memo&  memo) const
     {
-      if (memo.size_ != subject.size() || offset > subject.size()) {
-        throw std::invalid_argument("real::dfa::match: the memo belongs to another subject, or the offset is past it");
+      if (memo.size_ != subject.size() || offset > subject.size()) [[unlikely]] {
+        detail::dfa_memo_misuse("real::dfa::match: the memo belongs to another subject, or the offset is past it");
       }
-      if (memo.owner_ == nullptr) {
+      if (memo.owner_ != tables_.trans.data()) [[unlikely]] {
+        if (memo.owner_ != nullptr) {
+          detail::dfa_memo_misuse("real::dfa::match: the memo belongs to another DFA");
+        }
         memo.owner_ = tables_.trans.data();
-        memo.dead_after_.resize(tables_.num_states);
       }
-      else if (memo.owner_ != tables_.trans.data()) {
-        throw std::invalid_argument("real::dfa::match: the memo belongs to another DFA");
+      if (!memo.marked_.empty()) [[unlikely]] {
+        return match_armed(subject, offset, memo);
       }
-      const auto step {[&](std::uint32_t from, std::size_t at) {
-                         return tables_.trans[(static_cast<std::size_t>(from) * tables_.num_classes)
-                                              + tables_.byte_class[static_cast<std::uint8_t>(subject[at])]];
-                       }};
-      std::uint32_t            state {tables_.start};
-      std::optional<dfa_match> best;
-      // Where the walk last stood on an accepting state (or began): every pair after it leads to no accept.
-      std::uint32_t resume_state {state};
-      std::size_t   resume_at    {offset};
-      std::size_t   i            {offset};
+      // Unarmed: the plain walk, plus one comparison at the end. Only a walk that ran more than
+      // short_stretch steps past its last accept arms the memo, so an ordinary tokenization pays nothing.
+      std::uint32_t state     {tables_.start};
+      std::uint32_t best_rule {detail::dfa_no_rule};
+      std::size_t   best_end  {offset};
+      std::size_t   i         {offset};
       while (i < subject.size()) {
-        state = step(state, i);
+        state = tables_.trans[(static_cast<std::size_t>(state) * tables_.num_classes)
+                              + tables_.byte_class[static_cast<std::uint8_t>(subject[i])]];
         if (state == 0U) { // dead state
           break;
         }
         ++i;
         const std::uint32_t rule {tables_.accept[state]};
         if (rule != detail::dfa_no_rule) {
-          best         = dfa_match {.rule_index = rule, .length = i - offset};
-          resume_state = state;
-          resume_at    = i;
-          continue;
-        }
-        const std::vector<bool>& known {memo.dead_after_[state]};
-        if (!known.empty() && known[i]) {
-          break; // an earlier walk proved no accept follows this pair
+          best_rule = rule;
+          best_end  = i;
         }
       }
-      // Replay the deterministic walk from the last accept to where it stopped, marking each pair it
-      // passes: a second read of that stretch instead of holding it, so the memo's memory is its bits alone.
-      for (std::size_t at = resume_at; at < i; ++at) {
-        resume_state = step(resume_state, at);
-        std::vector<bool>& known {memo.dead_after_[resume_state]};
-        if (known.empty()) {
-          known.resize(memo.size_ + 1, false);
-        }
-        known[at + 1] = true;
+      if (i - best_end > dfa_munch_memo::short_stretch) [[unlikely]] {
+        mark_dead_stretch(subject, state_at(subject, offset, best_end), best_end, i, memo);
       }
-      memo.transitions_ += (i - offset) + (i - resume_at);
-      return best;
+      memo.transitions_ += i - offset;
+      if (best_rule == detail::dfa_no_rule) {
+        return std::nullopt;
+      }
+      return dfa_match {.rule_index = best_rule, .length = best_end - offset};
     }
 
     /*!
@@ -1253,6 +1279,111 @@ namespace real {
     }
 
   private:
+
+    /*!
+     * \brief The state a walk from the start state at \p from reaches at \p to (a replay, only on the
+     *        rare path that arms a memo).
+     * \param[in] subject The text.
+     * \param[in] from    Where the walk begins.
+     * \param[in] to      Where it has read up to.
+     * \return The state after reading `subject[from, to)`.
+     */
+    [[nodiscard]] std::uint32_t state_at(std::string_view subject,
+                                         std::size_t      from,
+                                         std::size_t      to) const noexcept
+    {
+      std::uint32_t state {tables_.start};
+      for (std::size_t at = from; at < to; ++at) {
+        state = tables_.trans[(static_cast<std::size_t>(state) * tables_.num_classes)
+                              + tables_.byte_class[static_cast<std::uint8_t>(subject[at])]];
+      }
+      return state;
+    }
+
+    /*!
+     * \brief \ref match once \p memo is armed: the same walk, stopping at a pair an earlier walk proved
+     *        dead, and marking a long dead stretch of its own. Out of line: only a subject that armed its
+     *        memo -- one with a long dead stretch -- reaches it.
+     * \param[in]     subject The memo's subject.
+     * \param[in]     offset  Where this munch starts.
+     * \param[in,out] memo    The subject's memo, armed.
+     * \return The winning rule index and byte length, or `std::nullopt`.
+     */
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    std::optional<dfa_match> match_armed(std::string_view subject,
+                                         std::size_t      offset,
+                                         dfa_munch_memo&  memo) const
+    {
+      std::uint32_t state        {tables_.start};
+      std::uint32_t best_rule    {detail::dfa_no_rule};
+      std::size_t   best_end     {offset};
+      std::uint32_t resume_state {state}; // the state at best_end: where the dead stretch begins
+      std::size_t   i            {offset};
+      while (i < subject.size()) {
+        state = tables_.trans[(static_cast<std::size_t>(state) * tables_.num_classes)
+                              + tables_.byte_class[static_cast<std::uint8_t>(subject[i])]];
+        if (state == 0U) { // dead state
+          break;
+        }
+        ++i;
+        const std::uint32_t rule {tables_.accept[state]};
+        if (rule != detail::dfa_no_rule) {
+          best_rule    = rule;
+          best_end     = i;
+          resume_state = state;
+          continue;
+        }
+        if (memo.marked_[state] != 0U && memo.dead_after_[state][i]) {
+          break; // an earlier walk proved no accept follows this pair
+        }
+      }
+      if (i - best_end > dfa_munch_memo::short_stretch) {
+        mark_dead_stretch(subject, resume_state, best_end, i, memo);
+      }
+      memo.transitions_ += i - offset;
+      if (best_rule == detail::dfa_no_rule) {
+        return std::nullopt;
+      }
+      return dfa_match {.rule_index = best_rule, .length = best_end - offset};
+    }
+
+    /*!
+     * \brief Replays the walk from \p state at \p from to \p to, marking every pair it passes as dead in
+     *        \p memo (arming it on first use). Out of line: only a long dead stretch reaches it, and
+     *        keeping it out of \ref match keeps the per-token walk as small as the plain one.
+     * \param[in]     subject The memo's subject.
+     * \param[in]     state   The state the walk stood on at \p from (its last accept, or the start).
+     * \param[in]     from    Where the dead stretch begins.
+     * \param[in]     to      Where the walk stopped.
+     * \param[in,out] memo    The subject's memo.
+     */
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    void mark_dead_stretch(std::string_view subject,
+                           std::uint32_t    state,
+                           std::size_t      from,
+                           std::size_t      to,
+                           dfa_munch_memo&  memo) const
+    {
+      if (memo.marked_.empty()) {
+        memo.dead_after_.resize(tables_.num_states);
+        memo.marked_.assign(tables_.num_states, 0U);
+      }
+      for (std::size_t at = from; at < to; ++at) {
+        state = tables_.trans[(static_cast<std::size_t>(state) * tables_.num_classes)
+                              + tables_.byte_class[static_cast<std::uint8_t>(subject[at])]];
+        std::vector<bool>& known {memo.dead_after_[state]};
+        if (memo.marked_[state] == 0U) {
+          known.resize(memo.size_ + 1, false);
+          memo.marked_[state] = 1U;
+        }
+        known[at + 1] = true;
+      }
+      memo.transitions_ += to - from;
+    }
 
     /*!
      * \brief Materializes program views from \p patterns (helper for the regex ctor).

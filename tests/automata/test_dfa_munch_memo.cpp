@@ -51,12 +51,16 @@ TEST(memoized_munch_answers_what_the_plain_munch_answers)
   // NOLINTNEXTLINE(cert-msc51-cpp,cert-msc32-c,bugprone-random-generator-seed)
   std::mt19937 rng      {0x4E75U};
   std::size_t  compared {0};
+  std::size_t  armed    {0};
   for (const auto& rules : rule_sets()) {
     const real::dfa machine {build(rules)};
-    for (int round = 0; round < 60; ++round) {
-      std::string subject(static_cast<std::size_t>(rng() % 40), 'a');
+    for (int round = 0; round < 90; ++round) {
+      // Short subjects over the whole alphabet, then long ones that are mostly `a`: those make the long
+      // dead stretches that arm the memo, so both the unarmed and the armed walk are compared.
+      const bool  long_subject {round >= 60};
+      std::string subject(long_subject ? 100 + (rng() % 300) : rng() % 40, 'a');
       for (char& c : subject) {
-        c = "abcxy"[rng() % 5];
+        c = long_subject ? (rng() % 50 != 0 ? 'a' : "bcxy"[rng() % 4]) : "abcxy"[rng() % 5];
       }
       // A lexing sequence: advance by the answer, or by one byte where nothing matched.
       real::dfa_munch_memo lexing {subject.size()};
@@ -66,6 +70,7 @@ TEST(memoized_munch_answers_what_the_plain_munch_answers)
         ++compared;
         at += memoized ? memoized->length : 1;
       }
+      armed += static_cast<std::size_t>(lexing.armed());
       // Offsets in random order: what the memo records holds for any later munch, not only the next.
       real::dfa_munch_memo shuffled {subject.size()};
       for (int k = 0; k < 20; ++k) {
@@ -76,6 +81,7 @@ TEST(memoized_munch_answers_what_the_plain_munch_answers)
     }
   }
   EXPECT(compared > 5000);
+  EXPECT(armed > 20); // the armed walk is compared too, not only the plain one
 }
 
 TEST(memoized_lexing_is_linear_where_the_plain_one_is_quadratic)
@@ -96,6 +102,7 @@ TEST(memoized_lexing_is_linear_where_the_plain_one_is_quadratic)
       at += m ? m->length : 1;
     }
     EXPECT(tokens == n);
+    EXPECT(memo.armed()); // the first walk's dead stretch runs the whole subject
     work.push_back(memo.transitions());
   }
   EXPECT(work[0] <= std::size_t {5000}); // against 500 500 for the plain munch
