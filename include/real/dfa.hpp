@@ -907,9 +907,11 @@ namespace real {
   class dfa;
 
   namespace detail {
-    //! \brief Throws the std::invalid_argument a misused dfa_munch_memo raises, out of line so the
-    //!        throw does not weigh on the per-token match that checks for it.
-    //! \param[in] what The message.
+    /*!
+     * \brief Throws the std::invalid_argument a misused dfa_munch_memo raises, out of line so the throw
+     *        does not weigh on the per-token match that checks for it.
+     * \param[in] what The message.
+     */
     [[noreturn]]
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((cold, noinline))
