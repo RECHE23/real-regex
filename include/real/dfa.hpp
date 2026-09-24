@@ -37,7 +37,6 @@
 #include "real/version.hpp"
 
 #include <algorithm>
-#include <unordered_map>
 #include <bit>
 #include <array>
 #include <cstddef>
@@ -580,38 +579,29 @@ namespace real {
                              return s;
                            }};
 
-      // Known sets by content, so a lookup costs a hash rather than a comparison with every state.
-      const auto set_hash {[](const dfa_set& v) {
-                             std::size_t h {v.size()};
-                             for (const std::uint64_t w : v) {
-                               h ^= std::hash<std::uint64_t> {}(w) + 0x9e3779b97f4a7c15ULL + (h << 6U) + (h >> 2U);
-                             }
-                             return h;
-                           }};
-      std::unordered_multimap<std::size_t, std::uint32_t> index;
-      const auto                                          find_or_add {[&](dfa_set s) -> std::uint32_t {
-                                                                         const std::size_t h {set_hash(s)};
-                                                                         for (auto [it, end] {index.equal_range(h)}; it != end; ++it) {
-                                                                           if (sets[it->second] == s) {
-                                                                             return it->second;
-                                                                           }
-                                                                         }
-                                                                         index.emplace(h, static_cast<std::uint32_t>(sets.size()));
-                                                                         // False positive: live locals; analyzer mis-models the vector.
-                                                                         // NOLINTNEXTLINE(clang-analyzer-core.NonNullParamChecker)
-                                                                         auto mask {dfa_accept_mask_of(nfa, s)};
-                                                                         sets.push_back(std::move(s));
-                                                                         mask_pre.push_back(std::move(mask));
-                                                                         if (sets.size() > state_cap) {
-                                                                           throw dfa_error("DFA state count exceeded max_dfa_states; "
-                                                                                           "pattern is too complex for a DFA");
-                                                                         }
-                                                                         return static_cast<std::uint32_t>(sets.size() - 1);
-                                                                       }};
+      // Known sets by content, so a lookup is a logarithmic search rather than a comparison with every
+      // state.
+      std::map<dfa_set, std::uint32_t> index;
+      const auto                       find_or_add {[&](dfa_set s) -> std::uint32_t {
+                                                      if (const auto known {index.find(s)}; known != index.end()) {
+                                                        return known->second;
+                                                      }
+                                                      index.emplace(s, static_cast<std::uint32_t>(sets.size()));
+                                                      // False positive: live locals; analyzer mis-models the vector.
+                                                      // NOLINTNEXTLINE(clang-analyzer-core.NonNullParamChecker)
+                                                      auto mask {dfa_accept_mask_of(nfa, s)};
+                                                      sets.push_back(std::move(s));
+                                                      mask_pre.push_back(std::move(mask));
+                                                      if (sets.size() > state_cap) {
+                                                        throw dfa_error("DFA state count exceeded max_dfa_states; "
+                                                                        "pattern is too complex for a DFA");
+                                                      }
+                                                      return static_cast<std::uint32_t>(sets.size() - 1);
+                                                    }};
 
       const std::size_t words {(nfa.code.size() + 63U) / 64U};
       sets.emplace_back(words, 0); // state 0 = dead (empty set)
-      index.emplace(set_hash(sets.back()), 0U);
+      index.emplace(sets.back(), 0U);
       mask_pre.push_back(std::vector<std::uint64_t>(mw, 0));
       // Offset 0: text_start holds. Unanchored still starts here (anchors see pos 0).
       out.start = find_or_add(dfa_closure(nfa, entry_seeds, true));
