@@ -586,7 +586,7 @@ namespace real {
                                                       if (const auto known {index.find(s)}; known != index.end()) {
                                                         return known->second;
                                                       }
-                                                      index.emplace(s, static_cast<std::uint32_t>(sets.size()));
+                                                      index.emplace(s, static_cast<std::uint32_t>(index.size())); // index holds one entry per state
                                                       // False positive: live locals; analyzer mis-models the vector.
                                                       // NOLINTNEXTLINE(clang-analyzer-core.NonNullParamChecker)
                                                       auto mask {dfa_accept_mask_of(nfa, s)};
