@@ -97,10 +97,10 @@ TEST(memoized_lexing_is_linear_where_the_plain_one_is_quadratic)
     EXPECT(tokens == n);
     work.push_back(memo.transitions());
   }
-  EXPECT(work[0] <= std::size_t {3000});  // against 500 500 for the plain munch
+  EXPECT(work[0] <= std::size_t {3000}); // against 500 500 for the plain munch
   EXPECT(work[1] <= std::size_t {6000});
   EXPECT(work[2] <= std::size_t {12000});
-  EXPECT(work[2] >= 4000);      // the first walk alone reads every byte: the count is not vacuous
+  EXPECT(work[2] >= 4000);               // the first walk alone reads every byte: the count is not vacuous
 }
 
 TEST(a_memo_is_bound_to_its_subject_and_its_dfa)
