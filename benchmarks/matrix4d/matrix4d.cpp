@@ -10,6 +10,8 @@
  *   2. NO-MATCH NEVER GATED: on a no-match haystack an IL route is memmem-only and must be far below the core
  *      (route-on <= core * NOMATCH_WIN) — the catastrophic-regression class that a size guard, placed wrong,
  *      reintroduces.
+ *   3. SAME ANSWERS: before timing, both sides' matches (start, end, in order) must be identical — a route
+ *      that is fast because it finds something else would otherwise read as a win.
  *
  * Baselines (at least one shape per hot class-scan route, plus short-run regimes — B-bis route hole +
  * O2 short-run tax that a long-only matrix missed):
@@ -33,6 +35,7 @@
 #include <cstring>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -58,6 +61,18 @@ namespace {
     const volatile size_t keep {sink};
     static_cast<void>(keep);
     return std::chrono::duration<double, std::nano>(t1 - t0).count() / (double(iters) * double(text.size()));
+  }
+
+  //! Every match's (start, end), in order: what both sides of a cell must agree on before either is
+  //! timed, since a route that is fast because it answers differently is not a faster route.
+  std::vector<std::pair<std::size_t, std::size_t>> spans(const real::regex& re,
+                                                         std::string_view   text)
+  {
+    std::vector<std::pair<std::size_t, std::size_t>> out;
+    for (const auto& m : re.find_iter(text)) {
+      out.emplace_back(m.start(), m.end());
+    }
+    return out;
   }
 
   //! Both sides of one cell, each keeping its own minimum (a noise floor, not a distribution — a
@@ -169,12 +184,22 @@ namespace {
         const std::string text  {corpus(r.unit, kb)};
         const int         iters {kb <= 64 ? 1500 : (kb <= 256 ? 250 : 40)};
 
-        const pair_reading pr {
-          r.seam == baseline::class_fastpath
-            ? sweep_pair(*r.re, text, iters,
-                         [](bool on) { real::detail::class_fastpath_disabled() = !on; })
-            : sweep_pair(*r.re, text, iters,
-                         [](bool on) { real::detail::inner_literal_route_disabled() = !on; })};
+        const auto set_route {[&r](bool on) {
+                                if (r.seam == baseline::class_fastpath) {
+                                  real::detail::class_fastpath_disabled() = !on;
+                                }
+                                else {
+                                  real::detail::inner_literal_route_disabled() = !on;
+                                }
+                              }};
+        set_route(true);
+        const auto route_spans {spans(*r.re, text)};
+        set_route(false);
+        const auto core_spans {spans(*r.re, text)};
+        set_route(true);
+        const bool differ {route_spans != core_spans};
+
+        const pair_reading pr {sweep_pair(*r.re, text, iters, set_route)};
         double route {pr.route};
         double core  {pr.core};
 
@@ -189,11 +214,12 @@ namespace {
         const bool  regressed {over && !r.core_may_win};
         const bool  gated     {r.seam == baseline::inner_literal && r.routes && r.nomatch
                            && route > core * nomatch_win}; // IL no-match must be memmem-only
-        const char* verdict   {regressed                  ? "*** REGRESSION ***"
+        const char* verdict   {differ                     ? "*** ANSWERS DIFFER ***"
+                               : regressed                ? "*** REGRESSION ***"
                                : gated                    ? "*** NO-MATCH GATED ***"
                                : (over && r.core_may_win) ? "ok (core_may_win, documented)"
                                                           : "ok"};
-        if (regressed || gated) {
+        if (differ || regressed || gated) {
           ++reds;
         }
         std::printf("%-16s %6zu %10.3f %10.3f  %s\n", r.name, kb, route, core, verdict);
