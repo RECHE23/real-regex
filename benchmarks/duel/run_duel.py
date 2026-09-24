@@ -99,7 +99,9 @@ def run(binary, pattern, text, mode=None):
         path = f.name
     cmd = [binary, pattern, path] + ([mode] if mode else [])
     out = subprocess.run(cmd, capture_output=True, text=True).stdout.split()
-    return float(out[0]) if out[0] != "unsupported" else None, int(out[1])
+    if out[0] == "unsupported":
+        return None, 0, None
+    return float(out[0]), int(out[1]), out[2]
 
 
 def main():
@@ -111,18 +113,23 @@ def main():
     rows = []
     json_cases = []
     for label, pat, text in CASES:
-        rr, rc = run(REAL, pat, text)
+        rr, rc, rd = run(REAL, pat, text)
         # rust in "captures" mode: it extracts every group, the apples-to-apples with REAL's find_iter,
         # which always builds the full Match. The default "find" (spans only) would flatter rust unfairly.
-        ur, uc = run(RUST, pat, text, mode="captures")
-        agree = (rc == uc)
+        ur, uc, ud = run(RUST, pat, text, mode="captures")
+        # Same count AND same spans (the digest folds every (start, end)); a ratio between engines that
+        # found different matches compares different work.
+        agree = (rc == uc and rd == ud)
         if rr is None or ur is None:
             verdict = "REAL-only" if ur is None else "rust-only"
         elif rr < ur:
             verdict = f"REAL {ur/rr:.1f}x"
         else:
             verdict = f"rust {rr/ur:.1f}x"
-        print(f"{label:40s} {rr:10.3f} {ur:10.3f} {verdict:>16s}  {'yes' if agree else 'NO('+str(rc)+'/'+str(uc)+')'}")
+        rr_s = f"{rr:10.3f}" if rr is not None else f"{'unsupp.':>10s}"
+        ur_s = f"{ur:10.3f}" if ur is not None else f"{'unsupp.':>10s}"
+        agree_s = 'yes' if agree else ('NO(' + str(rc) + '/' + str(uc) + (')' if rc != uc else ', spans differ)'))
+        print(f"{label:40s} {rr_s} {ur_s} {verdict:>16s}  {agree_s if rr is not None and ur is not None else '—'}")
         rows.append((label, rr, ur, verdict, agree, rc))
         json_cases.append({
             "name": label,
@@ -131,7 +138,8 @@ def main():
             "rust_ns_per_byte": ur,
             "real_count": rc,
             "rust_count": uc,
-            "counts_agree": agree,
+            "counts_agree": rc == uc,
+            "spans_agree": agree,
         })
 
     if args.json:
@@ -153,4 +161,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    divergent = [r[0] for r in main() if r[1] is not None and r[2] is not None and not r[4]]
+    if divergent:
+        print("\nspans differ between the engines on: " + ", ".join(divergent)
+              + " -- those rows' ratios compare different work", file=sys.stderr)
+        sys.exit(1)

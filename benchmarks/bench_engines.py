@@ -90,6 +90,9 @@ def print_cases(doc):
                 row += " " + engine_cell(eng[e], real_samples, corpus_bytes)
             counts = "/".join(str(eng[e]["count"]) if isinstance(eng[e], dict) else "—" for e in engines)
             row += f"   {counts}"
+            # A ratio between engines that found different matches compares different work.
+            if len({eng[e]["count"] for e in engines if isinstance(eng[e], dict)}) > 1:
+                row += "  <-- counts DIVERGE (the ratios on this row compare different work)"
             print(row)
 
 
