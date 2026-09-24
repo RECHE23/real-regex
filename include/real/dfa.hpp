@@ -920,7 +920,8 @@ namespace real {
    *
    * Bound to one \ref dfa and one subject: pass it to \ref dfa::match(std::string_view, std::size_t,
    * dfa_munch_memo&) const with the same pair every time. Memory is one bit per remembered state per
-   * position of the subject, allocated for a state the first time it is remembered.
+   * position of the subject, allocated for a state the first time it is remembered, and nothing else: a
+   * walk replays the stretch after its last accept to mark it rather than holding it.
    */
   class dfa_munch_memo
   {
@@ -949,7 +950,6 @@ namespace real {
 
     std::size_t                                        size_;                  //!< The subject's length.
     std::vector<std::vector<bool>>                     dead_after_;            //!< [state][position]: no accept follows.
-    std::vector<std::pair<std::uint32_t, std::size_t>> trail_;                 //!< Pairs visited since the last accept.
     std::size_t                                        transitions_ {0};       //!< See transitions().
     const void        *                                owner_       {nullptr}; //!< The dfa's tables this memo describes.
   };
@@ -1046,37 +1046,45 @@ namespace real {
       else if (memo.owner_ != tables_.trans.data()) {
         throw std::invalid_argument("real::dfa::match: the memo belongs to another DFA");
       }
+      const auto step {[&](std::uint32_t from, std::size_t at) {
+                         return tables_.trans[(static_cast<std::size_t>(from) * tables_.num_classes)
+                                              + tables_.byte_class[static_cast<std::uint8_t>(subject[at])]];
+                       }};
       std::uint32_t            state {tables_.start};
       std::optional<dfa_match> best;
-      memo.trail_.clear();
-      std::size_t i {offset};
+      // Where the walk last stood on an accepting state (or began): every pair after it leads to no accept.
+      std::uint32_t resume_state {state};
+      std::size_t   resume_at    {offset};
+      std::size_t   i            {offset};
       while (i < subject.size()) {
-        const auto byte {static_cast<std::uint8_t>(subject[i])};
-        state = tables_.trans[(static_cast<std::size_t>(state) * tables_.num_classes) + tables_.byte_class[byte]];
+        state = step(state, i);
         if (state == 0U) { // dead state
           break;
         }
         ++i;
         const std::uint32_t rule {tables_.accept[state]};
         if (rule != detail::dfa_no_rule) {
-          best = dfa_match {.rule_index = rule, .length = i - offset};
-          memo.trail_.clear();
+          best         = dfa_match {.rule_index = rule, .length = i - offset};
+          resume_state = state;
+          resume_at    = i;
           continue;
         }
         const std::vector<bool>& known {memo.dead_after_[state]};
         if (!known.empty() && known[i]) {
           break; // an earlier walk proved no accept follows this pair
         }
-        memo.trail_.emplace_back(state, i);
       }
-      memo.transitions_ += i - offset;
-      for (const auto& [dead_state, position] : memo.trail_) {
-        std::vector<bool>& known {memo.dead_after_[dead_state]};
+      // Replay the deterministic walk from the last accept to where it stopped, marking each pair it
+      // passes: a second read of that stretch instead of holding it, so the memo's memory is its bits alone.
+      for (std::size_t at = resume_at; at < i; ++at) {
+        resume_state = step(resume_state, at);
+        std::vector<bool>& known {memo.dead_after_[resume_state]};
         if (known.empty()) {
           known.resize(memo.size_ + 1, false);
         }
-        known[position] = true;
+        known[at + 1] = true;
       }
+      memo.transitions_ += (i - offset) + (i - resume_at);
       return best;
     }
 

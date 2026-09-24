@@ -74,8 +74,9 @@ not a whole tokenization: a munch walks until the automaton dies, so ``a*b``
 beside ``a`` over ``"aaa…"`` rereads the rest of the subject from every
 position, n(n+1)/2 transitions in all. ``match(subject, offset, memo)`` with a
 ``dfa_munch_memo`` for the subject answers the same and remembers every state a
-walk proved leads to no accept, so tokenizing costs O(states × length) -- 3n
-transitions on that input (Reps, *Maximal-munch tokenization in linear time*,
+walk proved leads to no accept, so tokenizing costs O(states × length) -- 5n
+transitions on that input, the replays that mark the dead pairs included, and one
+bit per remembered state per byte of memory (Reps, *Maximal-munch tokenization in linear time*,
 1998). The price is capture-freedom: the result
 names the winning rule and its length, nothing inside it. Use
 :doc:`basic_regex` when you need groups, or :doc:`regex_set` when you need

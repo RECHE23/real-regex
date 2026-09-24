@@ -81,8 +81,9 @@ TEST(memoized_munch_answers_what_the_plain_munch_answers)
 TEST(memoized_lexing_is_linear_where_the_plain_one_is_quadratic)
 {
   // `a*b` beside `a` over "aaa…": each plain munch walks to the end looking for the b, so lexing n
-  // bytes costs n(n+1)/2 transitions. With the memo the first walk (n steps) records the trail, and
-  // every later munch takes two: the `a` it accepts, then the pair the first walk proved dead.
+  // bytes costs n(n+1)/2 transitions. With the memo the first walk reads n bytes and its replay marks
+  // the n - 1 pairs after its accept; every later munch then takes three: the `a` it accepts, the pair
+  // the first walk proved dead, and the one-step replay that re-marks it.
   const real::dfa          machine {build({"a*b", "a"})};
   std::vector<std::size_t> work;
   for (const std::size_t n : {1000U, 2000U, 4000U}) {
@@ -97,9 +98,9 @@ TEST(memoized_lexing_is_linear_where_the_plain_one_is_quadratic)
     EXPECT(tokens == n);
     work.push_back(memo.transitions());
   }
-  EXPECT(work[0] <= std::size_t {3000}); // against 500 500 for the plain munch
-  EXPECT(work[1] <= std::size_t {6000});
-  EXPECT(work[2] <= std::size_t {12000});
+  EXPECT(work[0] <= std::size_t {5000}); // against 500 500 for the plain munch
+  EXPECT(work[1] <= std::size_t {10000});
+  EXPECT(work[2] <= std::size_t {20000});
   EXPECT(work[2] >= 4000);               // the first walk alone reads every byte: the count is not vacuous
 }
 
