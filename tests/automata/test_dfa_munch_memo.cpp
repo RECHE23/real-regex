@@ -60,7 +60,12 @@ TEST(memoized_munch_answers_what_the_plain_munch_answers)
       const bool  long_subject {round >= 60};
       std::string subject(long_subject ? 100 + (rng() % 300) : rng() % 40, 'a');
       for (char& c : subject) {
-        c = long_subject ? (rng() % 50 != 0 ? 'a' : "bcxy"[rng() % 4]) : "abcxy"[rng() % 5];
+        if (!long_subject) {
+          c = "abcxy"[rng() % 5];
+        }
+        else if (rng() % 50 == 0) {
+          c = "bcxy"[rng() % 4];
+        }
       }
       // A lexing sequence: advance by the answer, or by one byte where nothing matched.
       real::dfa_munch_memo lexing {subject.size()};
