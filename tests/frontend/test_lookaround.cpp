@@ -444,3 +444,18 @@ TEST(lookbehind_cost_grows_linearly_with_its_bound)
   const double wide   {per_byte(200)};
   EXPECT(wide < narrow * 8.0); // linear reads ~4; the retried starts read ~15
 }
+
+// A find_iter step can end before positions the previous step's VM already queried the lookbehind
+// at: the long branch walked to the end, the short one won. The next step asks about an earlier
+// position, and the walk must restart there rather than answer for where it stood.
+TEST(lookbehind_walk_restarts_when_the_next_step_starts_behind_it)
+{
+  const real::regex        re {"[ab]+(?<=(?:ab|ba))b|[ab]"};
+  std::vector<std::size_t> spans;
+  for (const auto& m : re.find_iter(std::string_view {"caaba"})) {
+    spans.push_back(m.start());
+    spans.push_back(m.end());
+  }
+  const std::vector<std::size_t> want {1, 2, 2, 3, 3, 4, 4, 5};
+  EXPECT(spans == want);
+}
