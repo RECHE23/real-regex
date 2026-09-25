@@ -42,7 +42,7 @@
 namespace {
 
   constexpr int k_threads    {8};
-  constexpr int k_iterations {200}; // 200 × 8 simultaneous first-searches × 3 patterns
+  constexpr int k_iterations {200}; // 200 × 8 simultaneous first-searches × 4 patterns
 
   // Shared only for the inject-race proof (deliberately unsynchronized when env is set).
   int g_inject_counter {0};
@@ -88,6 +88,20 @@ namespace {
     h.reserve(4000);
     while (h.size() < 3000) {
       h += "the quick brown fox jumps over the lazy dog ";
+    }
+    return h;
+  }
+
+  // An alternation of class runs with no literal to anchor on: the lazy-DFA search route, whose DFA
+  // sets each thread leases from the regex's pool (dfa_lease) -- the one shared cache the three
+  // shapes above never reach (\w+ is a class run, and the email subject stays under the inner-literal
+  // cold floor).
+  [[nodiscard]] std::string make_dfa_haystack()
+  {
+    std::string h;
+    h.reserve(9000);
+    while (h.size() < 8000) {
+      h += "the quick fox singing 123x and bringing 7x over 42 dogs ";
     }
     return h;
   }
@@ -146,11 +160,13 @@ int main()
   const std::string email_hay {make_email_haystack()};
   const std::string cjk_hay   {make_cjk_haystack()};
   const std::string ascii_hay {make_ascii_haystack()};
+  const std::string dfa_hay   {make_dfa_haystack()};
 
   const case_spec cases[] =   {
     {.name = "email-IL", .pattern = R"((\w+)@(\w+))", .hay = email_hay},
     {.name = "pL-CJK", .pattern = R"(\p{L}+)", .hay = cjk_hay},
     {.name = "wplus-ascii", .pattern = R"(\w+)", .hay = ascii_hay},
+    {.name = "lazy-dfa", .pattern = R"([a-z]+ing|[0-9]+x)", .hay = dfa_hay},
   };
 
   const bool inject {inject_race_enabled()};
