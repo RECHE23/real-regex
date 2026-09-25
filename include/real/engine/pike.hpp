@@ -595,7 +595,7 @@ namespace real::detail {
      * \brief One lookbehind's forward walk over the subject: its threads parked at \ref at, and
      *        whether a match of the sub-pattern ends there.
      *
-     * The walk starts a thread at every aligned position it passes, so its thread list at \ref at
+     * The walk starts a thread at every position it passes, so its thread list at \ref at
      * holds every partial match that could still end later, and a thread reaching `match` at \ref at
      * is a match ending exactly there. Queried at increasing positions — the order the VM visits them
      * in — it advances, and every byte is stepped once per search rather than once per candidate
@@ -6789,12 +6789,14 @@ namespace real::detail {
      * \brief Lookbehind: does the sub-pattern match a window ENDING EXACTLY at \p pos?
      *
      * The match must finish precisely at \p pos, not merely somewhere inside the window — the
-     * defining correctness trap of lookbehind. A start may lie anywhere in `[pos - l_max, pos]`; in
-     * non-bytes mode a start before \p pos may not fall on a UTF-8 continuation byte, which would split
-     * a code point, while \p pos itself is always a start (the empty window).
+     * defining correctness trap of lookbehind. A start may lie anywhere in `[pos - l_max, pos]`, \p pos
+     * itself being the empty window. Outside byte mode a start inside a code point can only match the
+     * empty window: no sub-program consumes from a continuation byte (a code-point op decodes strictly,
+     * a literal begins with its lead byte, and the raw-byte `\C` puts the program in byte mode), so a
+     * start at every position answers the same as starts at code-point boundaries plus the empty window.
      *
      * One forward walk per lookbehind (\ref lookaround_scratch::behind_walk) answers every position:
-     * it starts a thread at each aligned position and steps all of them together, so a query at a
+     * it starts a thread at each position and steps all of them together, so a query at a
      * later position advances it by the bytes in between. Trying each start separately stepped a
      * window of up to `l_max` bytes from up to `l_max` starts at every position — O(l_max^2) per
      * position; the walk steps each byte once per search, and a query that moves backward or leaps
@@ -6814,14 +6816,10 @@ namespace real::detail {
       if (scratch.behind.size() <= sub_id) {
         scratch.behind.resize(prog_.lookarounds.size());
       }
-      lookaround_scratch::behind_walk& walk {scratch.behind[sub_id]};
+      lookaround_scratch::behind_walk& walk      {scratch.behind[sub_id]};
       const std::size_t                code_size {prog_.code.size()};
       const std::size_t                lmax      {static_cast<std::size_t>(sub.l_max)};
       const std::size_t                origin    {pos > lmax ? pos - lmax : 0};
-      const auto                       aligned   {[&](std::size_t q) {
-                                                    return prog_.byte_mode || q >= text_.size()
-                                                           || (static_cast<std::uint8_t>(text_[q]) & 0xC0U) != 0x80U;
-                                                  }};
       if (walk.text != text_.data() || walk.size != text_.size() || walk.at == npos || walk.at > pos
           || walk.at < origin) {
         walk.text  = text_.data();
@@ -6829,9 +6827,7 @@ namespace real::detail {
         walk.at    = origin;
         walk.holds = false;
         walk.threads.reset(code_size);
-        if (aligned(origin)) {
-          sub_add_thread(walk.threads, sub.code_offset, origin, walk.holds);
-        }
+        sub_add_thread(walk.threads, sub.code_offset, origin, walk.holds);
       }
       thread_list& next {scratch.lists[1]};
       while (walk.at < pos) {
@@ -6856,22 +6852,12 @@ namespace real::detail {
             sub_add_thread(next, pc + 1, p + 1, holds);
           }
         }
-        if (aligned(p + 1)) {
-          sub_add_thread(next, sub.code_offset, p + 1, holds); // a start at every aligned position
-        }
+        sub_add_thread(next, sub.code_offset, p + 1, holds); // a start at every position
         std::swap(walk.threads, next);
         walk.holds = holds;
         walk.at    = p + 1;
       }
-      if (walk.holds || aligned(pos)) {
-        return walk.holds; // an aligned pos already carries the empty-window start
-      }
-      // pos inside a code point: the walk started nothing here, but the empty window at pos counts.
-      thread_list& probe {scratch.lists[0]};
-      probe.reset(code_size);
-      bool empty         {false};
-      sub_add_thread(probe, sub.code_offset, pos, empty);
-      return empty;
+      return walk.holds;
     }
 
     /*!
