@@ -6850,23 +6850,23 @@ namespace real::detail {
     constexpr void fill_ahead_table(const lookaround_sub&            sub,
                                     lookaround_scratch::ahead_table& table)
     {
-      lookaround_scratch&       scratch {lookaround_state()};
-      const std::int32_t        base    {sub.code_offset};
-      const std::size_t         width   {static_cast<std::size_t>(sub.code_length)};
-      std::vector<std::uint8_t>* here   {&scratch.reach[0]};
-      std::vector<std::uint8_t>* after  {&scratch.reach[1]};
+      lookaround_scratch&        scratch {lookaround_state()};
+      const std::int32_t         base    {sub.code_offset};
+      const std::size_t          width   {static_cast<std::size_t>(sub.code_length)};
+      std::vector<std::uint8_t>* here    {&scratch.reach[0]};
+      std::vector<std::uint8_t>* after   {&scratch.reach[1]};
       table.text = text_.data();
       table.size = text_.size();
       table.holds.assign((text_.size() / 64U) + 1U, 0U);
       after->assign(width, 0U); // past the end: no consuming instruction can proceed
       const auto at {[&](std::int32_t pc) -> std::uint8_t& {
-        return (*here)[static_cast<std::size_t>(pc - base)];
-      }};
+                       return (*here)[static_cast<std::size_t>(pc - base)];
+                     }};
       for (std::size_t pos {text_.size() + 1}; pos-- > 0;) {
         here->assign(width, 0U);
         const auto set {[&](std::int32_t pc) {
-          at(pc) = 1U;
-        }};
+                          at(pc) = 1U;
+                        }};
         // Instructions whose answer comes from the next position (or is fixed): the consuming ones and
         // match. The epsilon ones are derived below from these.
         for (std::int32_t pc {base}; pc < base + static_cast<std::int32_t>(width); ++pc) {
@@ -6904,8 +6904,8 @@ namespace real::detail {
             if (at(pc) != 0U) {
               continue;
             }
-            const instr& in {prog_.code[static_cast<std::size_t>(pc)]};
-            bool reaches {false};
+            const instr& in      {prog_.code[static_cast<std::size_t>(pc)]};
+            bool         reaches {false};
             switch (in.op) {
               case opcode::jump:
                 reaches = at(in.primary_target) != 0U;
