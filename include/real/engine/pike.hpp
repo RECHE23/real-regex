@@ -610,9 +610,25 @@ namespace real::detail {
       thread_list threads;         //!< The sub-pattern's threads parked at \ref at.
     };
 
-    thread_list              lists[2]; //!< Sub-VM thread lists (pcs only; the sub is capture-free).
-    std::vector<eps_entry>   stack;    //!< Sub-VM epsilon-closure stack.
-    std::vector<behind_walk> behind;   //!< Per lookaround index: its lookbehind walk (unused for lookaheads).
+    /*!
+     * \brief One unbounded lookahead's answer at every position of one subject: bit i is set when the
+     *        sub-pattern matches a prefix of the text from i.
+     *
+     * Filled by one backward pass over the subject (\ref pike_vm::unbounded_lookahead_matches), the
+     * first time the lookahead is asked about in a search, and read thereafter.
+     */
+    struct ahead_table
+    {
+      const char*                text {nullptr}; //!< The subject answered for (data pointer).
+      std::size_t                size {npos};    //!< Its length; npos before the first pass.
+      std::vector<std::uint64_t> holds;          //!< Bit i: the lookahead's sub-pattern matches from i.
+    };
+
+    thread_list               lists[2]; //!< Sub-VM thread lists (pcs only; the sub is capture-free).
+    std::vector<eps_entry>    stack;    //!< Sub-VM epsilon-closure stack.
+    std::vector<behind_walk>  behind;   //!< Per lookaround index: its lookbehind walk (unused for lookaheads).
+    std::vector<ahead_table>  ahead;    //!< Per lookaround index: its unbounded lookahead's table.
+    std::vector<std::uint8_t> reach[2]; //!< The backward pass's rows: pc reaches `match` from a position.
   };
 
   /*!
@@ -6690,6 +6706,7 @@ namespace real::detail {
         }
       }
       const bool matched {sub.direction == look_dir::behind ? lookbehind_matches(sub_id, sub, pos)
+                          : sub.l_max < 0                   ? unbounded_lookahead_matches(sub_id, sub, pos)
                                                             : lookahead_matches(sub, pos)};
       return sub.negative ? !matched : matched;
     }
@@ -6790,6 +6807,133 @@ namespace real::detail {
         nlist->reset(code_size);
       }
       return matched;
+    }
+
+    /*!
+     * \brief Unbounded lookahead: does the sub-pattern match a prefix of the text from \p pos?
+     *
+     * A sub-pattern with no bound (`.*`, `+`, `{n,}`) cannot be run forward from every position — that
+     * is quadratic. Whether it matches from a position depends only on the text after it, so one pass
+     * from the end answers every position: row `pos` says, for each instruction of the sub-program,
+     * whether `match` is reachable from it at `pos`. A consuming instruction reads one byte — a code-point
+     * test decodes the code point and continues into its continuation chain, one byte at a time — so its
+     * entry depends only on row `pos + 1`; `match` holds; and the epsilon instructions (jump, split, a
+     * position assertion evaluated at `pos`) propagate within the row. The answer at `pos` is the
+     * sub-program's entry. The pass runs once per subject, O(n x m) for m instructions, and fills
+     * \ref lookaround_scratch::ahead_table, which every later query reads.
+     *
+     * \param[in] sub_id Index of the lookaround in `prog_.lookarounds`.
+     * \param[in] sub    The lookaround sub-program (`l_max < 0`).
+     * \param[in] pos    Position the lookahead is evaluated at.
+     * \return True when the sub-pattern matches from \p pos.
+     */
+    [[nodiscard]] constexpr bool unbounded_lookahead_matches(std::uint16_t         sub_id,
+                                                             const lookaround_sub& sub,
+                                                             std::size_t           pos)
+    {
+      lookaround_scratch& scratch {lookaround_state()};
+      if (scratch.ahead.size() <= sub_id) {
+        scratch.ahead.resize(prog_.lookarounds.size());
+      }
+      lookaround_scratch::ahead_table& table {scratch.ahead[sub_id]};
+      if (table.text != text_.data() || table.size != text_.size()) {
+        fill_ahead_table(sub, table);
+      }
+      return ((table.holds[pos / 64U] >> (pos % 64U)) & 1U) != 0U;
+    }
+
+    /*!
+     * \brief The backward pass of \ref unbounded_lookahead_matches: every position's answer, into \p table.
+     * \param[in]     sub   The lookaround sub-program.
+     * \param[in,out] table The table to fill for the current subject.
+     */
+    constexpr void fill_ahead_table(const lookaround_sub&            sub,
+                                    lookaround_scratch::ahead_table& table)
+    {
+      lookaround_scratch&        scratch {lookaround_state()};
+      const std::int32_t         base    {sub.code_offset};
+      const std::size_t          width   {static_cast<std::size_t>(sub.code_length)};
+      std::vector<std::uint8_t>* here    {&scratch.reach[0]};
+      std::vector<std::uint8_t>* after   {&scratch.reach[1]};
+      table.text = text_.data();
+      table.size = text_.size();
+      table.holds.assign((text_.size() / 64U) + 1U, 0U);
+      after->assign(width, 0U); // past the end: no consuming instruction can proceed
+      const auto at {[&](std::int32_t pc) -> std::uint8_t& {
+                       return (*here)[static_cast<std::size_t>(pc - base)];
+                     }};
+      for (std::size_t pos {text_.size() + 1}; pos-- > 0;) {
+        here->assign(width, 0U);
+        const auto set {[&](std::int32_t pc) {
+                          at(pc) = 1U;
+                        }};
+        // Instructions whose answer comes from the next position (or is fixed): the consuming ones and
+        // match. The epsilon ones are derived below from these.
+        for (std::int32_t pc {base}; pc < base + static_cast<std::int32_t>(width); ++pc) {
+          const instr& in {prog_.code[static_cast<std::size_t>(pc)]};
+          if (in.op == opcode::match) {
+            set(pc);
+            continue;
+          }
+          if (pos >= text_.size()) {
+            continue;
+          }
+          const auto byte_value {static_cast<std::uint8_t>(text_[pos])};
+          if (in.op == opcode::klass_cp) {
+            const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, pos)};
+            if (dc.valid && cp_class_matches_idx(in.arg16, dc.cp)
+                && (*after)[static_cast<std::size_t>(pc + 1 + static_cast<std::int32_t>(4 - dc.length) - base)] != 0U) {
+              set(pc);
+            }
+          }
+          else if ((in.op == opcode::byte && byte_value == in.arg8)
+                   || (in.op == opcode::klass && prog_.classes[in.arg16].test(byte_value))) {
+            if ((*after)[static_cast<std::size_t>(pc + 1 - base)] != 0U) {
+              set(pc);
+            }
+          }
+        }
+        // Propagate within the row: an epsilon instruction reaches match when a successor does. Rounds
+        // run from the last instruction to the first, so an edge that points forward -- the usual
+        // jump and split -- settles in the round that reaches it, and only a loop's edge back needs
+        // another round; the rounds stop when one changes nothing.
+        bool changed {true};
+        while (changed) {
+          changed = false;
+          for (std::int32_t pc {base + static_cast<std::int32_t>(width)}; pc-- > base;) {
+            if (at(pc) != 0U) {
+              continue;
+            }
+            const instr& in      {prog_.code[static_cast<std::size_t>(pc)]};
+            bool         reaches {false};
+            switch (in.op) {
+              case opcode::jump:
+                reaches = at(in.primary_target) != 0U;
+                break;
+              case opcode::split:
+                reaches = at(in.primary_target) != 0U || at(in.secondary_target) != 0U;
+                break;
+              case opcode::save:
+                reaches = at(pc + 1) != 0U;
+                break;
+              case opcode::assert_position:
+                reaches = at(pc + 1) != 0U
+                          && assertion_holds(static_cast<assert_kind>(in.arg8), pos, in.arg16 != 0U);
+                break;
+              default:
+                break;
+            }
+            if (reaches) {
+              at(pc)  = 1U;
+              changed = true;
+            }
+          }
+        }
+        if (at(base) != 0U) {
+          table.holds[pos / 64U] |= std::uint64_t {1} << (pos % 64U);
+        }
+        std::swap(here, after);
+      }
     }
 
     /*!

@@ -57,11 +57,11 @@ TEST(features_probe_00_06_core_groups_capturing_non_capturing_named)
   EXPECT_EQ(re.pattern(), std::string_view(R"RRX((?P<x>a)(?:b))RRX"));
 }
 
-TEST(features_probe_00_07_core_lookahead_lookbehind_bounded)
+TEST(features_probe_00_07_core_lookahead_lookbehind)
 {
-  // Core / Lookahead & lookbehind (bounded) — status: supported (must compile)
-  const real::regex re(R"RRX((?<=a)b(?=c))RRX");
-  EXPECT_EQ(re.pattern(), std::string_view(R"RRX((?<=a)b(?=c))RRX"));
+  // Core / Lookahead & lookbehind — status: supported (must compile)
+  const real::regex re(R"RRX((?<=a)b(?=.*c))RRX");
+  EXPECT_EQ(re.pattern(), std::string_view(R"RRX((?<=a)b(?=.*c))RRX"));
 }
 
 TEST(features_probe_00_08_core_possessive_quantifiers_a_a_a_a_n_m)

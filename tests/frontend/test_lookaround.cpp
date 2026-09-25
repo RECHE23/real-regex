@@ -117,11 +117,11 @@ TEST(lookahead_negative_sub_partially_matches_then_fails)
   EXPECT_EQ(real::regex("a(?!bc)").search("abx")[0], "a"sv);
 }
 
-TEST(lookaround_rejects_unbounded_sub)
+TEST(lookbehind_rejects_unbounded_sub)
 {
-  // True unbounded (*, +, {n,}) → "unbounded lookaround …", and the message must carry the
-  // REWRITE, not only the constraint: `(?=.*[A-Z])` is the shape users arrive with, and a
-  // message that says "bound it" without saying `.* -> .{0,N}` leaves them stuck.
+  // An unbounded lookbehind (*, +, {n,}) is refused, and the message carries the REWRITE, not only
+  // the constraint: a message that says "bound it" without saying `.* -> .{0,N}` leaves people stuck.
+  // An unbounded LOOKAHEAD is accepted (see the unbounded_lookahead tests below).
   const auto expect_unbounded = [](const char* pat) {
                                   bool threw = false;
                                   try {
@@ -129,17 +129,17 @@ TEST(lookaround_rejects_unbounded_sub)
                                   } catch (const real::regex_error& e) {
                                     threw = true;
                                     const std::string_view what {e.what()};
-                                    EXPECT(what.find("unbounded lookaround") != std::string_view::npos);
+                                    EXPECT(what.find("unbounded lookbehind") != std::string_view::npos);
                                     EXPECT(what.find(".{0,") != std::string_view::npos);
                                   }
                                   EXPECT(threw);
                                 };
-  expect_unbounded("(?=a*)");
-  expect_unbounded("(?=a+)");
-  expect_unbounded("(?=a{2,})");
-  expect_unbounded("(?<=a*)");    // behind, unbounded
+  expect_unbounded("(?<=a*)");
   expect_unbounded("(?<!a+)");
-  expect_unbounded("(?<=\\w+)b"); // true unbounded word run
+  expect_unbounded("(?<=a{2,})");
+  expect_unbounded("(?<=\\w+)b");           // true unbounded word run
+  static_cast<void>(real::regex("(?=a*)")); // the same bodies ahead compile
+  static_cast<void>(real::regex("(?!a{2,})"));
 
   // The advice has to be true, not merely encouraging: the rewrite the message prints is
   // compiled here, on the password shape that sends people to that message in the first place.
@@ -458,4 +458,84 @@ TEST(lookbehind_walk_restarts_when_the_next_step_starts_behind_it)
   }
   const std::vector<std::size_t> want {1, 2, 2, 3, 3, 4, 4, 5};
   EXPECT(spans == want);
+}
+
+// --- unbounded lookahead as one backward pass ---------------------------------------------------------
+
+// (?=X) holds at i exactly when X matches a prefix of the text from i -- which the pattern (?:X) alone,
+// anchored at i by match(text, i) with the whole text as context, answers without any lookaround code.
+// Bodies with no bound, with assertions inside, with code-point classes; subjects mixing ASCII, two- and
+// three-byte code points and stray bytes; every byte position.
+TEST(unbounded_lookahead_equals_its_body_matched_from_each_position)
+{
+  const std::string_view bodies[]   {".*z", "a+b", "[ab]*c", "\\w+\\b", "(?:ab)+$", "é.*", ".*\\d", "x*",
+                                     "[^a]+a", "(?:a|bc)*d", "中+", "\\s*$", "b{2,}"};
+  const std::string_view alphabet[] {"a", "b", "c", "z", "é", "中", "1", " ", "d", "\x80", "\xC3"};
+  std::uint32_t          seed       {424242};
+  const auto             next       {[&seed] {
+                                       seed = (seed * 1664525U) + 1013904223U;
+                                       return seed >> 8U;
+                                     }};
+  int compared {0};
+  for (const std::string_view body : bodies) {
+    const real::regex whole {"(?:" + std::string(body) + ")"};
+    const real::regex ahead {"(?=" + std::string(body) + ")"};
+    const real::regex neg   {"(?!" + std::string(body) + ")"};
+    for (int round {0}; round < 40; ++round) {
+      std::string text;
+      for (std::uint32_t k {0}, n {next() % 12}; k < n; ++k) {
+        text += alphabet[next() % std::size(alphabet)];
+      }
+      for (std::size_t i {0}; i <= text.size(); ++i) {
+        const bool expected {static_cast<bool>(whole.match(text, i))};
+        EXPECT_EQ(static_cast<bool>(ahead.match(text, i)), expected);
+        EXPECT_EQ(static_cast<bool>(neg.match(text, i)), !expected);
+      }
+      ++compared;
+    }
+  }
+  EXPECT_EQ(compared, 13 * 40);
+}
+
+// The shape people arrive with: every condition an unbounded lookahead from the start.
+TEST(unbounded_lookahead_password_rules)
+{
+  const real::regex rules {"^(?=.*\\d)(?=.*[a-z])(?=.*[A-Z]).{8,}$"};
+  EXPECT(rules.search("abcDEF12"));
+  EXPECT(!rules.search("abcdef12"));  // no capital
+  EXPECT(!rules.search("ABCDEF12"));  // no lower case
+  EXPECT(!rules.search("abcDEFgh"));  // no digit
+  EXPECT(!rules.search("aB1"));       // too short
+}
+
+// Each find_iter step asks about later positions of the same text: the table is filled once and read.
+TEST(unbounded_lookahead_find_iter)
+{
+  const real::regex        re {"\\w+(?=.*!)"};
+  std::vector<std::string> words;
+  for (const auto& m : re.find_iter(std::string_view {"ab cd! ef gh"})) {
+    words.emplace_back(m[0]);
+  }
+  const std::vector<std::string> want {"ab", "cd"};
+  EXPECT(words == want);
+}
+
+// One pass per subject: doubling the text doubles the work (rerunning the body from every position
+// would quadruple it).
+TEST(unbounded_lookahead_cost_is_linear_in_the_text)
+{
+  const auto cost {[](std::size_t n) {
+                     const real::regex re {"(?=[ab]*z)a"};
+                     const std::string text(n, 'a'); // no z: the body runs to the end from every position
+                     double            best {1e30};
+                     for (int rep {0}; rep < 3; ++rep) {
+                       const auto t0 {std::chrono::steady_clock::now()};
+                       EXPECT_EQ(re.count_matches(text), 0U);
+                       best = std::min(best, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+                     }
+                     return best;
+                   }};
+  const double small {cost(16384)};
+  const double large {cost(65536)};
+  EXPECT(large < small * 8.0); // linear reads ~4; quadratic ~16
 }

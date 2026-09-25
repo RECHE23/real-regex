@@ -43,9 +43,11 @@ it is a cost you must budget for if you accept untrusted patterns.
 The legal, non-bypass worst cases, and where each constant comes from (`include/real/core/config.hpp`
 unless noted):
 
-- **Bounded lookaround**: the constant grows with `k`, the number of lookarounds in the pattern, and with
-  each one's size, its length `L` capped at `max_lookaround_length` (255 bytes). A lookahead runs a sub-match
-  at every position it is tested, about `O(n · k · L)`. A lookbehind runs as one forward walk per search
+- **Lookaround**: the constant grows with `k`, the number of lookarounds in the pattern, and with each one's
+  size. A bounded lookahead (length `L`, capped at `max_lookaround_length`, 255 bytes) runs a sub-match at
+  every position it is tested, about `O(n · k · L)`. An unbounded lookahead runs one backward pass over the
+  whole subject the first time a search tests it, about `O(n · m)` for its `m` instructions, and then reads
+  a bit per position — paid in full even when the match is found early, and one bit per byte of memory. A lookbehind runs as one forward walk per search
   that carries every start together, about `O(n · k · m)` with `m` its sub-program's size, which grows with
   `L` but is not squared by it. Measured 2026-09-25 (x86-64, g++ 13.3, `-O2`, one run each):
   `(?<=a{1,L}b)a` over 10 KB of `a` costs 0.83, 1.73 and 3.14 µs per byte for `L` = 50, 100, 200 — 32 ms

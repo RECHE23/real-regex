@@ -75,14 +75,14 @@ limit.
 | `(?=…)` `(?!…)` | lookahead, positive / negative |
 | `(?<=…)` `(?<!…)` | lookbehind, positive / negative |
 
-An unbounded lookaround is rejected with `real::regex_error`, never silently
-approximated. A capturing group inside a lookaround is accepted and numbered,
-but its capture stays empty — `None` where `re` fills it
-({ref}`div_lookaround_captures`). Bounding one is usually a local edit — the
-validation shape `^(?=.*[A-Z])(?=.*\d).{8,}$` becomes
-`^(?=.{0,32}[A-Z])(?=.{0,32}\d).{8,}$`. The cap is 255 **bytes** matched by
-the sub-pattern, so a bound in characters can still be refused on non-ASCII
-text (a UTF-8 `.` is up to four bytes).
+A lookahead may be unbounded: the validation shape `^(?=.*[A-Z])(?=.*\d).{8,}$`
+compiles as written, and costs one backward pass over the subject per search,
+linear in its length. A lookbehind must be bounded — an unbounded one is
+rejected with `real::regex_error`, never silently approximated — and matches at
+most 255 **bytes**, so a bound in characters can still be refused on non-ASCII
+text (a UTF-8 `.` is up to four bytes); variable width is fine (`(?<=a|bb)`).
+A capturing group inside a lookaround is accepted and numbered, but its capture
+stays empty — `None` where `re` fills it ({ref}`div_lookaround_captures`).
 
 ## Unicode properties
 

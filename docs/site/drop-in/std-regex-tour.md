@@ -58,7 +58,7 @@ Object-level reference: {doc}`std::regex compatibility <../reference/compat-std>
 
 ## Differences & limitations
 
-- **Per-pattern fallback.** A backreference, an oversized or unbounded lookaround, a
+- **Per-pattern fallback.** A backreference, an oversized or unbounded lookbehind, a
   non-ASCII `[...]` member — anything REAL cannot prove equivalent routes to
   `std::regex` transparently, at construction; `uses_real()` surfaces it. Every
   routing rule lives in the {doc}`compatibility reference <std-regex-reference>`.

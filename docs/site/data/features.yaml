@@ -72,11 +72,11 @@ categories:
         status: supported
         note: "capture is write-only -- there is no backreference to read it"
         pattern: "(?P<x>a)(?:b)"
-      - construct: "Lookahead & lookbehind (bounded)"
+      - construct: "Lookahead & lookbehind"
         status: supported
-        note: "REAL's ReDoS-safe bounded lookaround; a group inside stays empty — `re` fills it"
+        note: "linear and ReDoS-safe; a lookahead may be unbounded (`(?=.*\\d)`), a lookbehind matches at most 255 bytes; a group inside stays empty — `re` fills it"
         link: "differences-from-re#div_lookaround_captures"
-        pattern: "(?<=a)b(?=c)"
+        pattern: "(?<=a)b(?=.*c)"
       - construct: "Possessive quantifiers `a*+ a++ a?+ a{n,m}+`"
         status: supported
         note: "over a single atom, or one wrapped in one capturing group -- linear, ReDoS-safe; `re` 3.11+/PCRE2 parity, RE2/Rust `regex`/Go `regexp` reject the syntax; a compound body is planned"

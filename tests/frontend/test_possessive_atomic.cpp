@@ -123,25 +123,23 @@ TEST(compound_body_and_alternation_rejected)
 
 TEST(possessive_inside_lookaround_rejected)
 {
-  // Unbounded possessive/atomic constructs inside a lookaround are ALREADY rejected by the
-  // pre-existing, generic "unbounded lookaround" check (l_max_bytes doesn't know about Tier 1's
-  // possessive semantics at all -- it just sees an ordinary node_kind::repeat with max == -1
-  // and rejects on that basis alone, exactly as it would for an ordinary unbounded greedy
-  // repeat). Confirmed by exception message, not just type -- these do NOT exercise the new
-  // capture_free checks below; they exercise the pre-existing path, which is itself worth
-  // pinning (both reasons lead to rejection, but via genuinely different code).
+  // An unbounded possessive/atomic construct inside a LOOKBEHIND is rejected by the generic
+  // "unbounded lookbehind" check (l_max_bytes sees an ordinary repeat with max == -1, whatever the
+  // possessive flag), confirmed by the message: a path distinct from the capture_free checks below.
   {
     bool threw = false;
     try {
-      real::regex r("(?=a*+)");
+      real::regex r("(?<=a*+)");
     } catch (const real::regex_error& e) {
       threw = true;
-      EXPECT(std::string_view(e.what()).find("unbounded lookaround") != std::string_view::npos);
+      EXPECT(std::string_view(e.what()).find("unbounded lookbehind") != std::string_view::npos);
     }
     EXPECT(threw);
   }
-  EXPECT_THROWS(real::regex("(?<=a*+)"), real::regex_error);
-  EXPECT_THROWS(real::regex("(?=(?>a*))"), real::regex_error); // unbounded -> same pre-existing path
+  // An unbounded lookahead is accepted, so an unbounded possessive or atomic body inside one reaches
+  // the capture_free checks below, like a bounded one does.
+  EXPECT_THROWS(real::regex("(?=a*+)"), real::regex_error);
+  EXPECT_THROWS(real::regex("(?=(?>a*))"), real::regex_error);
 
   // BOUNDED possessive/atomic constructs inside a lookaround pass the unbounded check (a{2,4}+'s
   // l_max_bytes is a finite 4, regardless of the possessive flag l_max_bytes doesn't consult) --

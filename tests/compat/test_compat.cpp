@@ -164,7 +164,7 @@ namespace {
       {R"(\<tag)", "<tag>", Backend::real},
       // Fallback triggers (exercise the std backend).
       {R"((\w+)\s+\1)", "hi hi", Backend::fallback},      // backreference
-      {R"((?=.{8,})\w+)", "abcdefgh", Backend::fallback}, // unbounded-width lookahead
+      {R"((?=.{8,})\w+)", "abcdefgh", Backend::real},     // unbounded-width lookahead: real since it is linear
     };
     return c;
   }
@@ -187,9 +187,9 @@ TEST(compat_corpus_backend_and_differential)
       EXPECT(std::regex_search(e.subject, std::regex(e.pattern, std::regex::ECMAScript)));
     }
   }
-  // q3 — fallback rate over this generic corpus. Two of the entries (backref, unbounded lookahead)
-  // route to std; the rest stay on real. A high rate would mean the screen is too wide.
-  EXPECT_EQ(fallback_count, 2U);
+  // q3 — fallback rate over this generic corpus. One of the entries (the backreference) routes to
+  // std; the rest stay on real. A high rate would mean the screen is too wide.
+  EXPECT_EQ(fallback_count, 1U);
   EXPECT(fallback_count * 5U < corpus().size()); // < 20% fallback
 }
 

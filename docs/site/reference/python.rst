@@ -107,7 +107,7 @@ aliases (``I`` / ``IGNORECASE``, …) are the same object.
    :value: False
 
    Module-level policy for a pattern the linear engine cannot represent
-   (backreferences, conditionals, an unbounded lookaround). The default is
+   (backreferences, conditionals, an unbounded lookbehind). The default is
    strict: such a pattern raises :class:`error`. Set ``real.fallback = True``,
    or pass ``fallback=True`` to :func:`compile` / the module functions, to
    delegate that pattern to the standard-library ``re`` -- which may accept
