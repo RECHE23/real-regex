@@ -6850,7 +6850,7 @@ namespace real::detail {
     }
 
     /*!
-     * \brief The backward pass of \ref unbounded_lookahead_matches: every position's answer, into \p table.
+     * \brief Fills \p table with every position's answer, for \ref unbounded_lookahead_matches to read.
      * \param[in]     sub   The lookaround sub-program.
      * \param[in,out] table The table to fill for the current subject.
      */
