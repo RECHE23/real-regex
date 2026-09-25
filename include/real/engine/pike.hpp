@@ -1348,8 +1348,9 @@ namespace real::detail {
           {
             const dfa_lease dfas {prog_.immut};
             ensure_set_il_prefix_rev(*prog_.immut, *dfas);
-            if (dfas->il_prefix_rev.has_value()) {
-              s = dfas->il_prefix_rev->reverse_start(text, h, min_match_start);
+            shared_dfa_set& set {*dfas};
+            if (set.il_prefix_rev.has_value()) {
+              s = set.il_prefix_rev->reverse_start(text, h, min_match_start);
             }
             else {
               s = npos;
@@ -1908,16 +1909,22 @@ namespace real::detail {
         ensure_immutables(); // the DFAs still need the byte program and the shared alphabet
       }
       const dfa_lease dfas {immut};
-      ensure_set_search_dfas(*immut, *dfas);
-      if (!dfas->fwd.has_value() || !dfas->rev.has_value() || !dfas->fwd->eligible()) {
+      shared_dfa_set& set {*dfas};
+      ensure_set_search_dfas(*immut, set);
+      if (!set.fwd.has_value() || !set.rev.has_value()) {
+        return false;
+      }
+      lazy_dfa&    fwd {*set.fwd};
+      reverse_dfa& rev {*set.rev};
+      if (!fwd.eligible()) {
         return false;
       }
       // With per-iterator caches, thrashing re-armed on each new iterator. On a shared slot a sticky thrash
       // flag would permanently decline the DFA route for every later search on this regex — re-arm
       // per logical entry. Callers that walk many candidates (A2) still call begin_scan once more
       // for a single thrash window across that loop; a double-reset here is harmless.
-      dfas->fwd->begin_scan();
-      std::forward<Fn>(fn)(*dfas->fwd, *dfas->rev);
+      fwd.begin_scan();
+      std::forward<Fn>(fn)(fwd, rev);
       return true;
     }
 
