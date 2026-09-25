@@ -15,6 +15,7 @@
 #include <vector>
 
 #include <real/real.hpp>
+#include <real/version.hpp>
 #include <real/regex_set.hpp>
 
 namespace {
@@ -134,6 +135,16 @@ static real_regex* compile_one(const char* pattern, size_t len, uint32_t flags, 
   return guarded_compile(report, [&] {
     return new real_regex {real::regex(std::string_view(pattern, len), static_cast<real::flags>(flags))};
   });
+}
+
+uint32_t real_abi_version(void)
+{
+  return REAL_ABI_VERSION;
+}
+
+const char* real_version(void)
+{
+  return REAL_VERSION_STRING;
 }
 
 real_regex* real_compile(const char* pattern, size_t len, uint32_t flags,

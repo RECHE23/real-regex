@@ -25,6 +25,8 @@ Everything for reading, extending, and trusting the engine.
   [TESTS.md](https://github.com/RECHE23/real-regex/blob/main/docs/TESTS.md).
 - **Development workflow** — the build/test harness (SciForge) and the
   make-target taxonomy: {doc}`Development workflow <workflow>`.
+- **Versioning and stability** — what each surface promises, how a
+  deprecation runs and how a break ships: {doc}`Versioning <versioning>`.
 
 ```{toctree}
 :hidden:
@@ -32,4 +34,5 @@ Everything for reading, extending, and trusting the engine.
 
 how-it-works
 workflow
+versioning
 ```

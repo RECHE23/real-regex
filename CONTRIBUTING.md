@@ -94,7 +94,6 @@ in mind:
   engine sources are vendored into `bindings/rust/vendor/` (git-ignored; carried into the package by the
   `include = [… "vendor/**"]` whitelist in `Cargo.toml`) — regenerate them with `make rust-vendor`, never
   edit them by hand.
-- **A breaking change mid-year bumps the year (the major).** SemVer consumers pin with a caret (`^2026.7`),
-  which treats a minor/patch bump as non-breaking. REAL grows without breaking by principle; if a genuinely
-  breaking change ever ships mid-year, bump the *year* so the caret protects downstream, rather than slipping
-  a break through a minor bump.
+- **The year is the major.** What each surface promises, how a deprecation runs and how a break ships
+  (on the `next` branch, released as the next year's first version) is the
+  [versioning and stability policy](docs/site/developer/versioning.md); a release follows it.

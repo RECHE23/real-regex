@@ -6,6 +6,7 @@
 #include <real_capi.h>
 
 #include <real/real.hpp>
+#include <real/version.hpp>
 
 #include <cstdint>
 #include <cstring>
@@ -21,6 +22,13 @@ namespace {
     char err[256] = {0};
     return real_compile(pat, std::strlen(pat), flags, err, sizeof err, &code);
   }
+}
+
+// The interface reports the version it was built with, so a binding that links it can refuse a mismatch.
+TEST(capi_reports_its_abi_and_release_versions)
+{
+  EXPECT_EQ(real_abi_version(), static_cast<uint32_t>(REAL_ABI_VERSION));
+  EXPECT_EQ(std::string_view(real_version()), std::string_view(REAL_VERSION_STRING));
 }
 
 TEST(capi_compile_iterate_groups)

@@ -56,6 +56,18 @@ extern "C" {
 typedef struct real_regex real_regex;   /* a compiled pattern */
 typedef struct real_iter  real_iter;    /* a match cursor over one subject */
 
+/* The version of this interface: moves only on an incompatible change to its functions, enums or flags
+ * (additions leave it), and only with a new year of releases -- see the versioning policy
+ * (docs/site/developer/versioning.md). */
+#define REAL_ABI_VERSION 1
+
+/* The REAL_ABI_VERSION the library was built with. A binding that links the library rather than compiling
+ * it compares this with the REAL_ABI_VERSION of the header it was built against, at load time. */
+uint32_t real_abi_version(void);
+
+/* The REAL release the library was built from, as "YEAR.MONTH.PATCH" (static storage; never NULL). */
+const char* real_version(void);
+
 /* Error classification written to real_compile's `code` out-param: a stable, machine-readable tag so a
  * binding classifies a rejection without matching on the message text. */
 enum {

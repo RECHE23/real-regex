@@ -113,7 +113,16 @@ def extract_functions(body: str) -> list[str]:
     return decls
 
 
+def extract_abi_version(header_text: str) -> int:
+    """The header's REAL_ABI_VERSION; a header without one is not this interface."""
+    m = re.search(r"^#\s*define\s+REAL_ABI_VERSION\s+(\d+)\s*$", header_text, flags=re.M)
+    if m is None:
+        raise SystemExit("gen_capi_abi_golden: bindings/c/real_capi.h defines no REAL_ABI_VERSION")
+    return int(m.group(1))
+
+
 def generate(header_text: str) -> str:
+    abi_version = extract_abi_version(header_text)
     body = strip_comments(header_text)
     # Drop preprocessor noise; keep braces until enums are extracted.
     body = re.sub(r'#\s*include[^\n]*', " ", body)
@@ -131,6 +140,9 @@ def generate(header_text: str) -> str:
         "# REAL C ABI golden — GENERATED from bindings/c/real_capi.h",
         "# DO NOT EDIT BY HAND. Regenerate: python3 tools/gen_capi_abi_golden.py",
         "# Source of truth: the header. This file is a pin so silent contract drift fails CI.",
+        "",
+        "# --- interface version (moves with an incompatible change; see make check-abi-bump) ---",
+        f"ABI_VERSION {abi_version}",
         "",
         "# --- enums (ordinal contract) ---",
     ]

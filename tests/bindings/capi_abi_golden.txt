@@ -2,6 +2,9 @@
 # DO NOT EDIT BY HAND. Regenerate: python3 tools/gen_capi_abi_golden.py
 # Source of truth: the header. This file is a pin so silent contract drift fails CI.
 
+# --- interface version (moves with an incompatible change; see make check-abi-bump) ---
+ABI_VERSION 1
+
 # --- enums (ordinal contract) ---
 ENUM REAL_ERR_NONE=0
 ENUM REAL_ERR_SYNTAX=1
@@ -21,6 +24,8 @@ FLAG ascii=64
 FLAG dollar_endonly=128
 
 # --- functions (normalized prototypes, param names stripped) ---
+FN uint32_t real_abi_version(void)
+FN const char* real_version(void)
 FN real_regex* real_compile(const char*,size_t,uint32_t,char*,size_t,int*)
 FN real_regex* real_compile_ex(const char*,size_t,uint32_t,char*,size_t,int*,size_t*)
 FN size_t real_group_count(const real_regex*)

@@ -66,7 +66,7 @@ include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
 	full-local-gate-impl gcc-check route-probe alloc-probe alloc-cold-probe ac-regime sabotage-sweep sabotage-help check-blind-guard blind-guards \
-        lint misra check-state-zeroing check-percall-copies route-surface-parity bench-compilers fuzz fuzz-compat fuzz-compat-known fuzz-re2 check-capi-abi check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
+        lint misra check-state-zeroing check-percall-copies route-surface-parity bench-compilers fuzz fuzz-compat fuzz-compat-known fuzz-re2 check-capi-abi check-abi-bump check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
@@ -225,6 +225,13 @@ fuzz-re2:
 # Enum/flag value pins live in tests/bindings/test_capi_abi.cpp (real::flags cross-check).
 check-capi-abi:
 	@$(MAKE) -C tools check-capi-abi
+
+# The C ABI moves additively within a year: a golden line that the last release had and this tree
+# lacks passes only with REAL_ABI_VERSION moved up (docs/site/developer/versioning.md). The
+# self-test runs first, so a verdict rule that stopped biting fails before it is trusted.
+check-abi-bump: ## [gates] An incompatible C ABI change must move REAL_ABI_VERSION
+	@python3 tools/check_abi_bump.py --self-test
+	@python3 tools/check_abi_bump.py
 
 # Features-probe .inc drift vs docs/site/data/features.yaml. Thin
 # delegation, same shape as check-capi-abi just above — see tools/Makefile's own
@@ -838,6 +845,8 @@ full-local-gate-impl:
 	@$(MAKE) check-pins
 	@echo "── [7/25] check-capi-abi (C ABI golden vs real_capi.h)"
 	@$(MAKE) check-capi-abi
+	@echo "── [7a/25] check-abi-bump (an incompatible C ABI change moves REAL_ABI_VERSION)"
+	@$(MAKE) check-abi-bump
 	@echo "── [8/25] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
 	@$(MAKE) doc-no-coverage
 	# Comment-FORM gate, deliberately right after doc-no-coverage: that step runs the LOCAL
