@@ -6705,9 +6705,16 @@ namespace real::detail {
           return sub.negative ? !matched : matched;
         }
       }
-      const bool matched {sub.direction == look_dir::behind ? lookbehind_matches(sub_id, sub, pos)
-                          : sub.l_max < 0                   ? unbounded_lookahead_matches(sub_id, sub, pos)
-                                                            : lookahead_matches(sub, pos)};
+      bool matched {false};
+      if (sub.direction == look_dir::behind) {
+        matched = lookbehind_matches(sub_id, sub, pos);
+      }
+      else if (sub.l_max < 0) {
+        matched = unbounded_lookahead_matches(sub_id, sub, pos);
+      }
+      else {
+        matched = lookahead_matches(sub, pos);
+      }
       return sub.negative ? !matched : matched;
     }
 
