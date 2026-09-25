@@ -111,6 +111,7 @@ int main()
 #endif
   std::printf("\n\n");
 
+  int mismatches {0};
   std::printf("== TABLE A: FILTRE which-matched (%zu present + (N-%zu) absent → full scan) ==\n",
               P.size(), P.size());
   std::printf("%4s | %-11s | %-11s | %-11s | actives HS/RE2/REAL\n", "N", "HS", "RE2::Set",
@@ -130,6 +131,17 @@ int main()
     }
     const real::regex_set set(views);
     std::size_t           real_n {0};
+    // Which patterns matched, as ids: the answer every engine's row is compared on, not just its size.
+    std::set<unsigned> real_ids;
+    {
+      unsigned id {0};
+      for (bool b : set.matches(text)) {
+        if (b) {
+          real_ids.insert(id);
+        }
+        ++id;
+      }
+    }
     const double t_real {best_ms(
       [&] {
         real_n = 0;
@@ -162,6 +174,14 @@ int main()
         re2_n = m.size();
       },
       7)};
+    std::set<unsigned> re2_ids;
+    {
+      std::vector<int> m;
+      rs.Match(text, &m);
+      for (const int id : m) {
+        re2_ids.insert(static_cast<unsigned>(id));
+      }
+    }
 #else
     const double      t_re2 {0};
     const std::size_t re2_n {0};
@@ -203,15 +223,19 @@ int main()
     const std::size_t hs_n {0};
 #endif
 
-    const char* ok {
-#if defined(HAVE_RE2) && defined(HAVE_HS)
-      (hs_n == re2_n && re2_n == real_n) ? "OK" : "**MISMATCH**"
-#elif defined(HAVE_RE2)
-      (re2_n == real_n) ? "OK" : "**MISMATCH**"
-#else
-      "OK"
+    // No reference engine built in means nothing was compared: "n/a", never "OK".
+    bool compared {false};
+    bool agree {true};
+#if defined(HAVE_RE2)
+    compared = true;
+    agree    = agree && re2_ids == real_ids;
 #endif
-    };
+#if defined(HAVE_HS)
+    compared = true;
+    agree    = agree && g_hs_ids == real_ids;
+#endif
+    const char* ok {!compared ? "n/a (no reference engine)" : agree ? "OK" : "**MISMATCH**"};
+    mismatches += compared && !agree ? 1 : 0;
 
     std::printf("%4d | %6.0f MB/s | %6.0f MB/s | %6.0f MB/s | %zu/%zu/%zu %s\n", N,
                 t_hs > 0 ? MB / (t_hs / 1e3) : 0.0, t_re2 > 0 ? MB / (t_re2 / 1e3) : 0.0,
@@ -220,10 +244,15 @@ int main()
 
   std::printf("\n== TABLE B: EXTRACTION all-matches non-overlapping (present patterns only) ==\n");
   std::printf("%4s | %-11s | %-11s | counts REAL/RE2\n", "N", "REAL Nwalk", "RE2 Nwalk");
+  int previous_n {0};
   for (const int N : {4, 8, static_cast<int>(P.size())}) {
     if (N > static_cast<int>(P.size())) {
       break;
     }
+    if (N == previous_n) { // the whole set can be one of the fixed sizes: one row per size
+      continue;
+    }
+    previous_n = N;
     std::vector<std::string> pats(P.begin(), P.begin() + N);
     std::vector<real::regex> rr;
     for (const auto& p : pats) {
@@ -263,9 +292,15 @@ int main()
     }
     std::printf("%4d | %6.0f MB/s | %6.0f MB/s | %lu/%lu %s\n", N, MB / (t_real / 1e3),
                 MB / (t_re2 / 1e3), rn, r2, rn == r2 ? "OK" : "**MISMATCH**");
+    mismatches += rn == r2 ? 0 : 1;
 #else
     std::printf("%4d | %6.0f MB/s | %6s | %lu/—\n", N, MB / (t_real / 1e3), "n/a", rn);
 #endif
+  }
+  if (mismatches != 0) {
+    std::fprintf(stderr, "mp_bench: %d row(s) where the engines disagree; their throughput compares different work\n",
+                 mismatches);
+    return 1;
   }
   return 0;
 }

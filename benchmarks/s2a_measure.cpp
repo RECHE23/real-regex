@@ -3,6 +3,7 @@
 //   c++ -O2 -Iinclude [-DHAVE_RE2 $(pkg-config --cflags --libs re2)] benchmarks/s2a_measure.cpp
 #include <chrono>
 #include <cstdio>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,9 @@
 #  include <re2/re2.h>
 #  include <re2/set.h>
 #endif
+
+//! Rows whose engines found different patterns; any makes the run fail.
+static int g_mismatches {0};
 
 static std::string corpus_dense(std::size_t bytes)
 {
@@ -178,21 +182,33 @@ static void run_regime(const char* name, const std::string& text)
         re2_n = m.size();
       },
       7)};
-    std::size_t f_n {0};
-    for (bool b : f_skip) {
-      if (b) {
-        ++f_n;
+    // Which patterns matched, as ids on both sides: the answer compared, not just how many.
+    std::set<unsigned> re2_ids;
+    {
+      std::vector<int> m;
+      rs.Match(text, &m);
+      for (const int id : m) {
+        re2_ids.insert(static_cast<unsigned>(id));
       }
     }
-    const bool ok {ok_real && f_n == re2_n};
+    std::set<unsigned> fused_ids;
+    for (unsigned id {0}; id < f_skip.size(); ++id) {
+      if (f_skip[id]) {
+        fused_ids.insert(id);
+      }
+    }
+    const std::size_t f_n {fused_ids.size()};
+    const bool        ok {ok_real && fused_ids == re2_ids};
     std::printf("%4d | %8zu | %8.0f MB/s | %8.0f MB/s | %8.0f MB/s | %8.0f MB/s | %s (set %zu/%zu skip=%d)\n",
                 N, fused.state_count(), MB / (t_skip / 1e3), MB / (t_nosk / 1e3), MB / (tn / 1e3),
                 MB / (tr / 1e3), ok ? "OK" : "**MISMATCH**", f_n, re2_n,
                 static_cast<int>(fused.has_first_byte_skip()));
+    g_mismatches += ok ? 0 : 1;
 #else
     std::printf("%4d | %8zu | %8.0f MB/s | %8.0f MB/s | %8.0f MB/s | %8s | %s (skip=%d)\n", N,
                 fused.state_count(), MB / (t_skip / 1e3), MB / (t_nosk / 1e3), MB / (tn / 1e3), "n/a",
                 ok_real ? "OK" : "**MISMATCH**", static_cast<int>(fused.has_first_byte_skip()));
+    g_mismatches += ok_real ? 0 : 1;
 #endif
     (void) sink;
   }
@@ -203,5 +219,10 @@ int main()
   std::printf("fused which_matched | first-byte skip vs no-skip | same-host\n");
   run_regime("DENSE log-like", corpus_dense(1u << 20));
   run_regime("SPARSE realistic", corpus_sparse(1u << 20));
+  if (g_mismatches != 0) {
+    std::fprintf(stderr, "s2a_measure: %d row(s) whose engines disagree; their throughput compares different work\n",
+                 g_mismatches);
+    return 1;
+  }
   return 0;
 }
