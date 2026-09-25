@@ -1058,7 +1058,7 @@ namespace real::detail {
         st.fwd_dfa;
       }) {
         if (!lazy_dfa_route_disabled()) {
-          // anchored_end on the shared confirm DFA (under slot.mu). begin_scan mirrors the per-regex design
+          // anchored_end on this thread's confirm DFA (see dfa_lease). begin_scan mirrors the per-regex design
           // forward_end's per-confirm thrash reset; the transition cache itself stays warm across iters.
           std::size_t match_end {npos};
           const bool  dfa_ok    {
@@ -1324,13 +1324,12 @@ namespace real::detail {
             abandon = true; // no per-regex cache, or the prefix is not byte-DFA-eligible — let the core VM handle it
             return false;
           }
-          // Shared IL-prefix reverse under slot.mu (warmed once per regex via epoch).
+          // This thread's IL-prefix reverse DFA for this regex (built once per thread and program).
           {
-            shared_dfa_slot&                  slot {shared_dfa_for(prog_.immut)};
-            const std::lock_guard<std::mutex> lock {slot.mu};
-            ensure_slot_il_prefix_rev_unlocked(*prog_.immut, slot);
-            if (slot.il_prefix_rev.has_value()) {
-              s = slot.il_prefix_rev->reverse_start(text, h, min_match_start);
+            const dfa_lease dfas {prog_.immut};
+            ensure_set_il_prefix_rev(*prog_.immut, *dfas);
+            if (dfas->il_prefix_rev.has_value()) {
+              s = dfas->il_prefix_rev->reverse_start(text, h, min_match_start);
             }
             else {
               s = npos;
@@ -1728,7 +1727,7 @@ namespace real::detail {
       if (immut->built_for.load(std::memory_order_acquire) == want) {
         return;
       }
-      // Rebuild under a striped lock (not slot.mu / map_mu — reset_shared_dfas re-locks those).
+      // Rebuild under a striped lock (not map_mu / pool_mu — reset_shared_dfas re-locks those).
       const std::lock_guard<std::mutex> lock {detail::immut_build_mu(immut)};
       if (immut->built_for.load(std::memory_order_relaxed) == want) {
         return; // double-check
@@ -1829,40 +1828,40 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Warm shared search DFAs for \p immut into \p slot (caller holds \p slot.mu).
+     * \brief Builds the search DFAs for \p immut into this thread's leased \p set, once.
      * \param[in]     immut Per-regex immutables naming the program to build for.
-     * \param[in,out] slot  Process-wide DFA slot to populate.
+     * \param[in,out] set   The leased DFA set to populate.
      */
-    void ensure_slot_search_dfas_unlocked(detail::regex_immutables& immut,
-                                          shared_dfa_slot&          slot)
+    void ensure_set_search_dfas(detail::regex_immutables& immut,
+                                shared_dfa_set&           set)
     {
       if (!immut.byte_prog.eligible) {
         return;
       }
-      if (!slot.fwd.has_value()) {
-        slot.fwd.emplace(immut.byte_prog.code, immut.byte_prog.classes, lazy_dfa::state_budget, &immut.alphabet);
-        slot.rev.emplace(immut.byte_prog.code, immut.byte_prog.classes, reverse_dfa::state_budget, &immut.alphabet);
+      if (!set.fwd.has_value()) {
+        set.fwd.emplace(immut.byte_prog.code, immut.byte_prog.classes, lazy_dfa::state_budget, &immut.alphabet);
+        set.rev.emplace(immut.byte_prog.code, immut.byte_prog.classes, reverse_dfa::state_budget, &immut.alphabet);
       }
     }
 
     /*!
-     * \brief Warm shared IL-prefix reverse DFA (caller holds \p slot.mu).
+     * \brief Builds the IL-prefix reverse DFA for \p immut into this thread's leased \p set, once.
      * \param[in]     immut Per-regex immutables naming the program to build for.
-     * \param[in,out] slot  Process-wide DFA slot to populate.
+     * \param[in,out] set   The leased DFA set to populate.
      */
-    void ensure_slot_il_prefix_rev_unlocked(detail::regex_immutables& immut,
-                                            shared_dfa_slot&          slot)
+    void ensure_set_il_prefix_rev(detail::regex_immutables& immut,
+                                  shared_dfa_set&           set)
     {
       if (!immut.il_prefix_prog.eligible) {
         return;
       }
-      if (!slot.il_prefix_rev.has_value()) {
-        slot.il_prefix_rev.emplace(immut.il_prefix_prog.code, immut.il_prefix_prog.classes);
+      if (!set.il_prefix_rev.has_value()) {
+        set.il_prefix_rev.emplace(immut.il_prefix_prog.code, immut.il_prefix_prog.classes);
       }
     }
 
     /*!
-     * \brief Run \p fn with the shared search DFAs under the slot lock.
+     * \brief Run \p fn with this thread's search DFAs for the regex (see \ref dfa_lease), taking no lock.
      * \param[in] fn Callable taking `(lazy_dfa& fwd, reverse_dfa& rev)`.
      * \return True when \p fn ran; false when the route must stay on the Pike VM (no immut / ineligible).
      */
@@ -1874,9 +1873,9 @@ namespace real::detail {
         return false; // no cache → no DFA route, same contract as the per-regex design
       }
       // ensure_op_table, not ensure_immutables: \p fn is try_shared_lazy_dfa_search, whose confirm steps
-      // DO extract through op_table. It must be built BEFORE slot.mu is taken -- ensure_op_table locks
-      // immut_build_mu, and reset_shared_dfas walks immut_build_mu -> map_mu/slot.mu, so building it inside
-      // the lambda would invert that order.
+      // DO extract through op_table. It must be built BEFORE the lease is taken -- ensure_op_table locks
+      // immut_build_mu, and reset_shared_dfas walks immut_build_mu -> map_mu/pool_mu, so building it inside
+      // the lambda would take them in the other order.
       // The extractor is built ONLY when there is something to extract. `fn`'s confirm step fills
       // out_slots through op_table, but a 2-slot program has nothing but the span the DFA already
       // found -- and when the table is absent the confirm falls to run_general, which is the same
@@ -1888,18 +1887,17 @@ namespace real::detail {
       else {
         ensure_immutables(); // the DFAs still need the byte program and the shared alphabet
       }
-      shared_dfa_slot&                  slot {shared_dfa_for(immut)};
-      const std::lock_guard<std::mutex> lock {slot.mu};
-      ensure_slot_search_dfas_unlocked(*immut, slot);
-      if (!slot.fwd.has_value() || !slot.rev.has_value() || !slot.fwd->eligible()) {
+      const dfa_lease dfas {immut};
+      ensure_set_search_dfas(*immut, *dfas);
+      if (!dfas->fwd.has_value() || !dfas->rev.has_value() || !dfas->fwd->eligible()) {
         return false;
       }
       // With per-iterator caches, thrashing re-armed on each new iterator. On a shared slot a sticky thrash
       // flag would permanently decline the DFA route for every later search on this regex — re-arm
       // per logical entry. Callers that walk many candidates (A2) still call begin_scan once more
       // for a single thrash window across that loop; a double-reset here is harmless.
-      slot.fwd->begin_scan();
-      std::forward<Fn>(fn)(*slot.fwd, *slot.rev);
+      dfas->fwd->begin_scan();
+      std::forward<Fn>(fn)(*dfas->fwd, *dfas->rev);
       return true;
     }
 
