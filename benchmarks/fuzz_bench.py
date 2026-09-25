@@ -54,18 +54,23 @@ signal.signal(signal.SIGALRM, _alarm)
 
 
 def time_call(fn, timeout):
-    """Returns (seconds, timed_out). Bounds fn with SIGALRM."""
+    """Returns (seconds, timed_out, result). Bounds fn with SIGALRM."""
     signal.setitimer(signal.ITIMER_REAL, timeout)
     start = time.perf_counter()
     try:
-        fn()
+        result = fn()
     except _Timeout:
-        return timeout, True
+        return timeout, True, None
     except (re.error, ValueError):
-        return 0.0, False
+        return 0.0, False, None
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
-    return time.perf_counter() - start, False
+    return time.perf_counter() - start, False, result
+
+
+def span_of(match):
+    """The answer both engines must agree on before a ratio counts: the match's span, or None."""
+    return match.span() if match is not None else None
 
 
 # A generator that — unlike the differential one — deliberately allows the
@@ -128,6 +133,7 @@ def main(json_path=None):
     real_total = 0.0
     re_total = 0.0
     compared = 0
+    divergent = []  # (pattern, text) where REAL and re found different spans
 
     gc.disable()  # no collection pause inside the timed region
     try:
@@ -143,8 +149,12 @@ def main(json_path=None):
             except real.error:
                 continue
 
-            t_real, _ = time_call(lambda: xp.search(text), RE_TIMEOUT)
-            t_re, timed_out = time_call(lambda: rp.search(text), RE_TIMEOUT)
+            t_real, _, real_match = time_call(lambda: xp.search(text), RE_TIMEOUT)
+            t_re, timed_out, re_match = time_call(lambda: rp.search(text), RE_TIMEOUT)
+            # A ratio between engines that found different matches compares different work.
+            if not timed_out and span_of(real_match) != span_of(re_match):
+                divergent.append((pattern, text))
+                continue
             compared += 1
             real_total += t_real
             re_total += t_re
@@ -206,6 +216,12 @@ def main(json_path=None):
         with open(json_path, "w") as fh:
             json.dump(payload, fh, indent=2)
         print(f"JSON written: {json_path}")
+    if divergent:
+        print(f"\nFAIL: REAL and re found different spans on {len(divergent)} case(s); they are left out of "
+              "every ratio above:", file=sys.stderr)
+        for pattern, text in divergent[:8]:
+            print(f"    {pattern!r} on {text[:40]!r}", file=sys.stderr)
+        return 1
     return 0
 
 
