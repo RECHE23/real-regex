@@ -60,6 +60,22 @@ fn bench(c: &mut Criterion) {
         let re = real_regex::Regex::new(pat).unwrap();
         let rx = regex::Regex::new(pat).unwrap();
 
+        // Every group below times a question both crates must answer the same way; a ratio between
+        // engines that found different matches compares different work, so the answers are compared
+        // first, untimed: every match's span, and every group's span.
+        let real_spans: Vec<(usize, usize)> = re.find_iter(&text).map(|m| (m.start(), m.end())).collect();
+        let crate_spans: Vec<(usize, usize)> = rx.find_iter(&text).map(|m| (m.start(), m.end())).collect();
+        assert_eq!(real_spans, crate_spans, "{name}: find spans differ between real and regex");
+        let real_groups: Vec<Vec<Option<(usize, usize)>>> = re
+            .captures_iter(&text)
+            .map(|c| (0..c.len()).map(|i| c.get(i).map(|m| (m.start(), m.end()))).collect())
+            .collect();
+        let crate_groups: Vec<Vec<Option<(usize, usize)>>> = rx
+            .captures_iter(&text)
+            .map(|c| (0..c.len()).map(|i| c.get(i).map(|m| (m.start(), m.end()))).collect())
+            .collect();
+        assert_eq!(real_groups, crate_groups, "{name}: capture spans differ between real and regex");
+
         // find: whole-match spans (the span-0 fast path — allocates nothing per match).
         let mut find = c.benchmark_group(format!("find/{name}"));
         find.throughput(Throughput::Bytes(text.len() as u64));
