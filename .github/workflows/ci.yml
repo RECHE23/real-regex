@@ -181,6 +181,65 @@ jobs:
           printf '#include "real/real.hpp"\n#include "real/dfa.hpp"\nint main() {}\n' > win32_tu.cpp
           g++ -std=c++20 -m32 -Werror -Iinclude -fsyntax-only win32_tu.cpp
 
+  # The whole suite where size_t is 32 bits. The syntax-only job above catches a narrowing that does not
+  # compile; this one catches an offset that compiles and overflows, which is a wrong answer.
+  i686:
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: real-regex
+      - uses: actions/checkout@v6
+        with:
+          repository: RECHE23/sciforge
+          ref: v2026.9.2
+          path: sciforge
+      - name: Install the i686 cross compiler
+        run: sh real-regex/tools/ci-apt-ubuntu.sh g++-14-i686-linux-gnu cmake
+      - name: Build the suite for i686
+        run: |
+          cmake -S real-regex -B build-i686 -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=i686-linux-gnu-g++-14 -DCMAKE_EXE_LINKER_FLAGS=-static \
+            -DSCIFORGE_INCLUDE_DIR="$GITHUB_WORKSPACE/sciforge/include"
+          cmake --build build-i686 --target real_tests_bin -j4
+      - name: The test binary is 32-bit
+        run: file build-i686/real_tests_bin | grep -q 'ELF 32-bit'
+      - name: Run the suite
+        working-directory: real-regex
+        run: ../build-i686/real_tests_bin
+
+  # The whole suite on a big-endian target (s390x), under qemu: the word-at-a-time scans must not depend
+  # on byte order. GCC 14, not 13: libstdc++ 13 compares a vector<unsigned> with memcmp on big-endian,
+  # and GCC 13 reports a spurious -Wstringop-overread there, which -Werror makes fatal.
+  big-endian:
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: real-regex
+      - uses: actions/checkout@v6
+        with:
+          repository: RECHE23/sciforge
+          ref: v2026.9.2
+          path: sciforge
+      - name: Install the s390x cross compiler and qemu
+        run: sh real-regex/tools/ci-apt-ubuntu.sh g++-14-s390x-linux-gnu qemu-user-static cmake
+      - name: Build the suite for s390x
+        run: |
+          cmake -S real-regex -B build-s390x -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=s390x-linux-gnu-g++-14 -DCMAKE_EXE_LINKER_FLAGS=-static \
+            -DSCIFORGE_INCLUDE_DIR="$GITHUB_WORKSPACE/sciforge/include"
+          cmake --build build-s390x --target real_tests_bin -j4
+      - name: The test binary is big-endian
+        run: file build-s390x/real_tests_bin | grep -q 'MSB'
+      - name: Run the suite under qemu
+        working-directory: real-regex
+        run: qemu-s390x-static ../build-s390x/real_tests_bin
+
   # Smokes, 60 s per target from a fresh corpus; the long runs are fuzz-long.yml.
   fuzz:
     needs: preflight
