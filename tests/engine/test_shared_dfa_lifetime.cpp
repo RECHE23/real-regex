@@ -256,7 +256,7 @@ TEST(shared_regex_scans_in_parallel_with_the_same_answers)
 {
   const real::regex  re {"[a-z]+ing|[0-9]+x"};
   std::string        text;
-  while (text.size() < std::size_t {256} * 1024) {
+  while (text.size() < std::size_t {256} *1024) {
     text += "the quick fox singing 123x and bringing 7x over 42 dogs ";
   }
   const std::size_t        expected {re.count_matches(text)};
