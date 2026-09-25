@@ -2104,7 +2104,7 @@ namespace real::detail {
      * \param[in]     capture_free Whether captures are suppressed here (inside a lookaround).
      * \throws real::regex_error when \p body is not Tier 1 eligible, or \p capture_free is
      *         true (a possessive/atomic construct inside a lookaround) — the lookaround
-     *         sub-VM's own dispatch (pike.hpp's `lookahead_matches`/`sub_fullmatch_window`/
+     *         sub-VM's own dispatch (pike.hpp's `lookahead_matches`/`lookbehind_matches`/
      *         `sub_add_thread`) hard-assumes only `byte`/`klass`/`klass_cp` ever appear in a
      *         sub-region; `klass_cp_loop_possessive` there would silently read the WRONG class
      *         table (`classes` instead of `cp_classes`, since `in.arg16` means something

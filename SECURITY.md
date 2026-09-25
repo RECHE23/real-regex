@@ -43,13 +43,14 @@ it is a cost you must budget for if you accept untrusted patterns.
 The legal, non-bypass worst cases, and where each constant comes from (`include/real/core/config.hpp`
 unless noted):
 
-- **Bounded lookaround**: each lookaround runs a sub-match at every position it is tested, so the constant
-  grows with `k`, the number of lookarounds in the pattern, and with `L`, each one's length, capped at
-  `max_lookaround_length` (255 bytes). A lookahead costs about `O(n · k · L)`. A **lookbehind costs about
-  `O(n · k · L²)`**: its body is re-tried from every start within `L` bytes behind the position. Measured
-  2026-09-24 (arm64, Apple clang 16, `-O2`, one run each): `(?<=a{1,L}b)a` over `a…` costs 24, 75 and
-  271 µs per byte for `L` = 50, 100, 200 — 10 KB takes 2.7 s at `L` = 200. Still linear in `n`, but a
-  pattern supplier can buy a large per-byte constant with one long lookbehind.
+- **Bounded lookaround**: the constant grows with `k`, the number of lookarounds in the pattern, and with
+  each one's size, its length `L` capped at `max_lookaround_length` (255 bytes). A lookahead runs a sub-match
+  at every position it is tested, about `O(n · k · L)`. A lookbehind runs as one forward walk per search
+  that carries every start together, about `O(n · k · m)` with `m` its sub-program's size, which grows with
+  `L` but is not squared by it. Measured 2026-09-25 (x86-64, g++ 13.3, `-O2`, one run each):
+  `(?<=a{1,L}b)a` over 10 KB of `a` costs 0.83, 1.73 and 3.14 µs per byte for `L` = 50, 100, 200 — 32 ms
+  at `L` = 200. The same session read 31.5, 118.5 and 462 µs per byte (4.7 s) before, when the body was
+  re-tried from every start within `L` bytes behind the position.
 - **Lazy-DFA thrash falling back to the general Pike VM**: the DFA state cache holds up to `state_budget`
   (4096, `include/real/automata/lazy_dfa.hpp`) states before a flush; `thrash_flushes` (2) flushes within
   one scan trip a fallback to the slower general engine for the rest of that scan — still linear, at a

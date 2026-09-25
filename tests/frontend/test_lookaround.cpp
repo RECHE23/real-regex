@@ -3,7 +3,13 @@
 // Python re-parity lives in python/tests; here we pin the rejection of unbounded / nested /
 // over-long sub-patterns and the capture-isolation of the sub-VM. Subjects are ASCII so the
 // byte/char distinction does not intrude.
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <iterator>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include <sciforge/test/framework.hpp>
 #include "real/automata/lazy_dfa.hpp" // trailing_la_route_disabled
@@ -357,4 +363,84 @@ TEST(trailing_la_every_surface_agrees)
       }
     }
   }
+}
+
+// --- lookbehind as one forward walk -----------------------------------------------------------------
+
+namespace {
+
+  //! Every position where (?<=X) holds, by brute force independent of the lookaround code: some
+  //! start s -- the position itself, or a code-point boundary before it -- has X fullmatch [s, i).
+  std::vector<std::size_t> behind_oracle(const real::regex& body,
+                                         std::string_view   text)
+  {
+    std::vector<std::size_t> holds;
+    for (std::size_t i {0}; i <= text.size(); ++i) {
+      for (std::size_t s {0}; s <= i; ++s) {
+        const bool aligned {s == i || (static_cast<unsigned char>(text[s]) & 0xC0U) != 0x80U};
+        if (aligned && body.fullmatch(text.substr(s, i - s))) {
+          holds.push_back(i);
+          break;
+        }
+      }
+    }
+    return holds;
+  }
+} // namespace
+
+// The walk carries every start forward together, restarts when a query moves back or leaps past the
+// window, and counts the empty window at a position inside a code point: each of those against the
+// brute force, at every byte of subjects mixing ASCII, two- and three-byte code points and stray bytes.
+TEST(lookbehind_walk_equals_every_start_tried_alone)
+{
+  const std::string_view bodies[] {"a", "ab", "a|bb", "a{1,3}b", "[ab]{2,4}", "é", "(?:é|ab)", "x?",
+                                   "\\w{1,3}", "[^a]{0,2}", "(?:ab){1,3}", "中é?", ".b"};
+  // Stray continuation and truncated lead bytes put positions inside no valid code point, where only the
+  // empty window starts.
+  const std::string_view alphabet[] {"a", "b", "ab", "é", "中", "1", " ", "x", "\x80", "\xC3"};
+  std::uint32_t          seed       {12345};
+  const auto             next       {[&seed] {
+                                       seed = seed * 1664525U + 1013904223U;
+                                       return seed >> 8U;
+                                     }};
+  int compared {0};
+  for (const std::string_view body : bodies) {
+    const real::regex whole  {std::string(body)};
+    const real::regex behind {"(?<=" + std::string(body) + ")"};
+    for (int round {0}; round < 40; ++round) {
+      std::string text;
+      for (std::uint32_t k {0}, n {next() % 12}; k < n; ++k) {
+        text += alphabet[next() % std::size(alphabet)];
+      }
+      std::vector<std::size_t> got;
+      for (std::size_t i {0}; i <= text.size(); ++i) {
+        if (behind.match(text, i)) { // the lookbehind sees the whole text before i
+          got.push_back(i);
+        }
+      }
+      EXPECT(got == behind_oracle(whole, text));
+      ++compared;
+    }
+  }
+  EXPECT_EQ(compared, 13 * 40);
+}
+
+// The work is linear in the window, not quadratic: widening the bound four times costs about four
+// times as much per byte (each start used to replay the window from scratch -- sixteen times).
+TEST(lookbehind_cost_grows_linearly_with_its_bound)
+{
+  const std::string text(8192, 'a'); // no 'b': every start runs until the window closes
+  const auto        per_byte {[&text](int bound) {
+                                const real::regex re {"(?<=a{1," + std::to_string(bound) + "}b)a"};
+                                double            best {1e30};
+                                for (int rep {0}; rep < 3; ++rep) {
+                                  const auto t0 {std::chrono::steady_clock::now()};
+                                  EXPECT_EQ(re.count_matches(text), 0U);
+                                  best = std::min(best, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+                                }
+                                return best;
+                              }};
+  const double narrow {per_byte(50)};
+  const double wide   {per_byte(200)};
+  EXPECT(wide < narrow * 8.0); // linear reads ~4; the retried starts read ~15
 }

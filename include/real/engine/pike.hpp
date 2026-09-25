@@ -591,8 +591,28 @@ namespace real::detail {
    */
   struct lookaround_scratch
   {
-    thread_list            lists[2]; //!< Sub-VM thread lists (pcs only; the sub is capture-free).
-    std::vector<eps_entry> stack;    //!< Sub-VM epsilon-closure stack.
+    /*!
+     * \brief One lookbehind's forward walk over the subject: its threads parked at \ref at, and
+     *        whether a match of the sub-pattern ends there.
+     *
+     * The walk starts a thread at every aligned position it passes, so its thread list at \ref at
+     * holds every partial match that could still end later, and a thread reaching `match` at \ref at
+     * is a match ending exactly there. Queried at increasing positions — the order the VM visits them
+     * in — it advances, and every byte is stepped once per search rather than once per candidate
+     * start.
+     */
+    struct behind_walk
+    {
+      const char* text  {nullptr}; //!< The subject walked (data pointer); another subject restarts.
+      std::size_t size  {0};       //!< The subject's length.
+      std::size_t at    {npos};    //!< Where the threads are parked; npos before the first query.
+      bool        holds {false};   //!< A match of the sub-pattern ends exactly at \ref at.
+      thread_list threads;         //!< The sub-pattern's threads parked at \ref at.
+    };
+
+    thread_list              lists[2]; //!< Sub-VM thread lists (pcs only; the sub is capture-free).
+    std::vector<eps_entry>   stack;    //!< Sub-VM epsilon-closure stack.
+    std::vector<behind_walk> behind;   //!< Per lookaround index: its lookbehind walk (unused for lookaheads).
   };
 
   /*!
@@ -6662,7 +6682,7 @@ namespace real::detail {
           return sub.negative ? !matched : matched;
         }
       }
-      const bool matched {sub.direction == look_dir::behind ? lookbehind_matches(sub, pos)
+      const bool matched {sub.direction == look_dir::behind ? lookbehind_matches(sub_id, sub, pos)
                                                             : lookahead_matches(sub, pos)};
       return sub.negative ? !matched : matched;
     }
@@ -6768,97 +6788,90 @@ namespace real::detail {
     /*!
      * \brief Lookbehind: does the sub-pattern match a window ENDING EXACTLY at \p pos?
      *
-     * The match must finish precisely at \p pos, not merely somewhere inside the window —
-     * the defining correctness trap of lookbehind. Candidate starts run from \p pos backward
-     * to `pos - l_max` (bytes, A1); in non-bytes mode a start may not fall on a UTF-8
-     * continuation byte, which would split a codepoint (A9). The first start whose sub-pattern
-     * fullmatches `[s, pos)` is a witness.
+     * The match must finish precisely at \p pos, not merely somewhere inside the window — the
+     * defining correctness trap of lookbehind. A start may lie anywhere in `[pos - l_max, pos]`; in
+     * non-bytes mode a start before \p pos may not fall on a UTF-8 continuation byte, which would split
+     * a code point, while \p pos itself is always a start (the empty window).
      *
-     * \param[in] sub The lookaround sub-program.
-     * \param[in] pos Position the sub must end exactly at.
-     * \return True when some candidate start in the window fullmatches up to \p pos.
+     * One forward walk per lookbehind (\ref lookaround_scratch::behind_walk) answers every position:
+     * it starts a thread at each aligned position and steps all of them together, so a query at a
+     * later position advances it by the bytes in between. Trying each start separately stepped a
+     * window of up to `l_max` bytes from up to `l_max` starts at every position — O(l_max^2) per
+     * position; the walk steps each byte once per search, and a query that moves backward or leaps
+     * more than `l_max` ahead restarts it at `pos - l_max`, which is as far back as a match ending at
+     * \p pos can begin.
+     *
+     * \param[in] sub_id Index of the lookaround in `prog_.lookarounds`.
+     * \param[in] sub    The lookaround sub-program.
+     * \param[in] pos    Position the sub must end exactly at.
+     * \return True when some start in the window fullmatches up to \p pos.
      */
-    [[nodiscard]] constexpr bool lookbehind_matches(const lookaround_sub& sub,
+    [[nodiscard]] constexpr bool lookbehind_matches(std::uint16_t         sub_id,
+                                                    const lookaround_sub& sub,
                                                     std::size_t           pos)
     {
-      const std::size_t lmax         {static_cast<std::size_t>(sub.l_max)};
-      const std::size_t window_start {pos > lmax ? pos - lmax : 0};
-      for (std::size_t s {pos};; --s) {
-        // s == pos reads nothing (always a valid boundary); for s < pos the start must begin
-        // a codepoint — not a 0x80–0xBF continuation byte — unless we are in raw-bytes mode.
-        const bool aligned {prog_.byte_mode || s >= pos
-                            || (static_cast<std::uint8_t>(text_[s]) & 0xC0U) != 0x80U};
-        if (aligned && sub_fullmatch_window(sub.code_offset, s, pos)) {
-          return true;
-        }
-        if (s == window_start) {
-          break; // reached the far edge; stop before s underflows past 0
+      lookaround_scratch& scratch {lookaround_state()};
+      if (scratch.behind.size() <= sub_id) {
+        scratch.behind.resize(prog_.lookarounds.size());
+      }
+      lookaround_scratch::behind_walk& walk {scratch.behind[sub_id]};
+      const std::size_t                code_size {prog_.code.size()};
+      const std::size_t                lmax      {static_cast<std::size_t>(sub.l_max)};
+      const std::size_t                origin    {pos > lmax ? pos - lmax : 0};
+      const auto                       aligned   {[&](std::size_t q) {
+                                                    return prog_.byte_mode || q >= text_.size()
+                                                           || (static_cast<std::uint8_t>(text_[q]) & 0xC0U) != 0x80U;
+                                                  }};
+      if (walk.text != text_.data() || walk.size != text_.size() || walk.at == npos || walk.at > pos
+          || walk.at < origin) {
+        walk.text  = text_.data();
+        walk.size  = text_.size();
+        walk.at    = origin;
+        walk.holds = false;
+        walk.threads.reset(code_size);
+        if (aligned(origin)) {
+          sub_add_thread(walk.threads, sub.code_offset, origin, walk.holds);
         }
       }
-      return false;
-    }
-
-    /*!
-     * \brief Reports whether the sub-program, run from \p start, reaches `match` EXACTLY at
-     *        \p pos (a fullmatch of `[start, pos)`), on the isolated sub-scratch.
-     *
-     * A `match` reached before \p pos (a shorter window) is deliberately discarded — lookbehind
-     * requires the sub to end at \p pos. Touches only `state_.lookaround`.
-     *
-     * \param[in] code_offset Entry program counter of the sub-program.
-     * \param[in] start       Candidate start offset.
-     * \param[in] pos         Offset the sub must end exactly at.
-     * \return True when the sub matches `[start, pos)` exactly.
-     */
-    [[nodiscard]] constexpr bool sub_fullmatch_window(std::int32_t code_offset,
-                                                      std::size_t  start,
-                                                      std::size_t  pos)
-    {
-      const std::size_t code_size {prog_.code.size()};
-      thread_list*      clist     {&lookaround_state().lists[0]};
-      thread_list*      nlist     {&lookaround_state().lists[1]};
-      clist->reset(code_size);
-      nlist->reset(code_size);
-      bool here {false};
-      sub_add_thread(*clist, code_offset, start, here);
-      if (start == pos) {
-        return here; // empty window: the sub must match the empty string exactly at pos
-      }
-      bool sink {false}; // matches reached before pos: collected then ignored
-      for (std::size_t p {start}; p < pos; ++p) {
-        if (clist->pcs.empty()) {
-          return false;
-        }
-        const bool last       {p + 1 == pos};
-        bool       at_pos     {false};
-        const auto byte_value {static_cast<std::uint8_t>(text_[p])};
-        for (const std::int32_t pc : clist->pcs) {
-          const instr& in      {prog_.code[static_cast<std::size_t>(pc)]};
+      thread_list& next {scratch.lists[1]};
+      while (walk.at < pos) {
+        const std::size_t p          {walk.at};
+        const auto        byte_value {static_cast<std::uint8_t>(text_[p])};
+        bool              holds      {false};
+        next.reset(code_size);
+        for (const std::int32_t pc : walk.threads.pcs) {
+          const instr& in {prog_.code[static_cast<std::size_t>(pc)]};
           if (in.op == opcode::klass_cp) {
             const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, p)};
             if (dc.valid && cp_class_matches_idx(in.arg16, dc.cp)) {
-              sub_add_thread(*nlist, pc + 1 + static_cast<std::int32_t>(4 - dc.length), p + 1,
-                             last ? at_pos : sink);
+              sub_add_thread(next, pc + 1 + static_cast<std::int32_t>(4 - dc.length), p + 1, holds);
             }
             continue;
           }
           // Otherwise the parked pc is a byte/klass; the ternary's else assumes klass.
           assert((in.op == opcode::byte || in.op == opcode::klass) && "lookaround parked a non-consuming op");
-          const bool   consume {in.op == opcode::byte ? byte_value == in.arg8
-                                                      : prog_.classes[in.arg16].test(byte_value)};
+          const bool consume {in.op == opcode::byte ? byte_value == in.arg8
+                                                    : prog_.classes[in.arg16].test(byte_value)};
           if (consume) {
-            sub_add_thread(*nlist, pc + 1, p + 1, last ? at_pos : sink);
+            sub_add_thread(next, pc + 1, p + 1, holds);
           }
         }
-        if (last) {
-          return at_pos; // a match counts only when it ends exactly at pos
+        if (aligned(p + 1)) {
+          sub_add_thread(next, sub.code_offset, p + 1, holds); // a start at every aligned position
         }
-        thread_list* const done {clist};
-        clist = nlist;
-        nlist = done;
-        nlist->reset(code_size);
+        std::swap(walk.threads, next);
+        walk.holds = holds;
+        walk.at    = p + 1;
       }
-      return false; // intentionally uncovered: the p+1==pos iteration always returns above
+      if (walk.holds || aligned(pos)) {
+        return walk.holds; // an aligned pos already carries the empty-window start
+      }
+      // pos inside a code point: the walk started nothing here, but the empty window at pos counts.
+      thread_list& probe {scratch.lists[0]};
+      probe.reset(code_size);
+      bool empty         {false};
+      sub_add_thread(probe, sub.code_offset, pos, empty);
+      return empty;
     }
 
     /*!
@@ -6869,8 +6882,9 @@ namespace real::detail {
      * epsilon) and no `assert_lookaround` (nesting is rejected at compile time). Touches only
      * `state_.lookaround->stack`, never the main `state_`. Linearity: `mark_seen` dedups
      * epsilon threads within a generation; once `p` advances, the same (pc,p) cannot recur,
-     * so each `assert_lookaround` is evaluated at most once per position → O(n·k·L). No memo
-     * table is needed (it would be redundant and break constexpr).
+     * so each `assert_lookaround` is evaluated at most once per position: a lookahead costs O(L)
+     * there, and a lookbehind advances its forward walk (\ref lookbehind_matches) by the bytes since
+     * its last query.
      *
      * \param[in,out] list    The sub thread list to populate.
      * \param[in]     pc0     The sub-program counter to seed from.
@@ -6927,7 +6941,7 @@ namespace real::detail {
           // distinct reason: the compiler rejects a possessive/atomic quantifier inside a
           // lookaround (emit_possessive_repeat / emit_atomic_group throw on capture_free), so a
           // sub-program never contains one of these either — this dispatcher (and lookahead_
-          // matches'/sub_fullmatch_window's own inline byte/klass/klass_cp-only dispatch) would
+          // matches'/lookbehind_matches's own inline byte/klass/klass_cp-only dispatch) would
           // otherwise silently misread klass_cp_loop_possessive's arg16 against the wrong class
           // table. Folded into this same arm (not a separate one) — bugprone-branch-clone flags
           // adjacent case labels whose bodies are both just `break;`, comments notwithstanding.
