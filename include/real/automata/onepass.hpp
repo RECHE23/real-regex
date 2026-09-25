@@ -1351,15 +1351,22 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Returns \p set to \p slot's pool.
+     * \brief Returns \p set to \p slot's pool, or frees it when the pool cannot take it.
+     *
+     * Called from destructors, so it cannot throw: a lock that fails or a pool that cannot grow leaves
+     * \p set to be freed here instead of pooled, which costs the next lease a rebuild and nothing else.
      * \param[in,out] slot The slot the set belongs to.
      * \param[in]     set  The set given back.
      */
     static void give(shared_dfa_slot&                slot,
-                     std::unique_ptr<shared_dfa_set> set)
+                     std::unique_ptr<shared_dfa_set> set) noexcept
     {
-      const std::lock_guard<std::mutex> lock {slot.pool_mu};
-      slot.free.push_back(std::move(set));
+      try {
+        const std::lock_guard<std::mutex> lock {slot.pool_mu};
+        slot.free.push_back(std::move(set));
+      }
+      catch (...) { // NOLINT(bugprone-empty-catch) -- the set is freed with `set`; see above
+      }
     }
 
     shared_dfa_slot*                 slot_   {nullptr};     //!< The slot the set belongs to.
