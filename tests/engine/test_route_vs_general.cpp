@@ -39,7 +39,7 @@ namespace {
     seam_fn     flag;
   };
 
-  // Eleven levers, one per disable seam that can take a pike_vm::run dispatch (or its immediate
+  // Twelve levers, one per disable seam that can take a pike_vm::run dispatch (or its immediate
   // fallback) off the production path. `trailing_la` is a no-op inside pike_vm::run -- kept so a
   // knob-count shrink cannot silently drop a seam -- and `fixed_shape_route_disabled` is honoured at
   // compile time, so the runtime toggle is a no-op for that route; hint-blanking covers it.
@@ -55,6 +55,7 @@ namespace {
     {.name = "lazy_dfa",            .flag = real::detail::lazy_dfa_route_disabled     },
     {.name = "rare_disc",           .flag = real::detail::rare_disc_route_disabled    },
     {.name = "trailing_la",         .flag = real::detail::trailing_la_route_disabled  },
+    {.name = "bounded_backtrack",   .flag = real::detail::bounded_backtrack_route_disabled},
   };
   struct spec
   {
@@ -267,7 +268,7 @@ TEST(route_vs_general_witnesses_are_in_the_product)
   EXPECT(saw_wb_il);
 
   const std::size_t n_knobs {sizeof(k_knobs) / sizeof(k_knobs[0])};
-  EXPECT_EQ(n_knobs, static_cast<std::size_t>(11));
+  EXPECT_EQ(n_knobs, static_cast<std::size_t>(12));
   EXPECT(std::size(k_patterns) >= 50);
 }
 

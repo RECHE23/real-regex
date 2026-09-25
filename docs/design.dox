@@ -511,6 +511,36 @@ Two traps and one lesson worth recording:
 Parked follow-ups, named: an **alternation-sibling** extraction (a literal common to every top-level branch,
 `foo|foobar`), and a **multi-literal** set (memmem-of-several) for patterns with no single required literal.
 
+\subsection g_backtrack 7.9 Delivered: the bounded backtracker (a short search without the VM's machinery)
+
+A short search that reaches the general loop spent most of its time on bookkeeping the subject never
+amortised: `(\w+)@(\w+)` over nine bytes cost about 11 000 instructions, nearly all of them thread-list
+resets and the capture pool, per call. For a subject small enough that a bit per (instruction, position)
+fits \ref real::detail::bounded_backtrack_bits, the general loop now walks the same program depth first
+(`pike_vm::run_bounded_backtrack`): a split's preferred branch first, each start in turn, every pair
+marked when entered and pruned when reached again. Each pair is entered once, so the O(n x m) bound holds;
+the stack of pending branches holds slot restores beside them, and spills to the heap past 256.
+
+It gives the VM's answer, not merely *a* leftmost-first answer, and two properties carry that:
+
+- **The loop-exit rule reads the same marks.** A `jump` into a loop head already entered at this position
+  takes the loop's exit (the VM's guard against an empty iteration). Only the walk at a position marks it,
+  and it marks in the VM's order, so that position's marks are the VM's `seen` set at the moment of the jump.
+- **What a failed exploration marked is closed under every transition** — a split holds both branches, and
+  a jump takes a loop's exit only when the head, and so its body, was entered — so none of it reaches a
+  match. Marks may therefore be kept across starts, and a start the prefilter rules out skipped, although
+  the VM seeds such starts while other threads live and starts a position's list afresh when none does.
+  Both VM behaviours were first reproduced; sabotaging either changed nothing over 49 104 differential
+  comparisons, and the argument above is why, so they were removed.
+
+A program with a lookaround stays on the VM: a lookbehind walk pays for being asked out of order, and a
+depth-first walk asks out of order. The eligibility is a hint (`pattern_hints::bounded_backtrack`), so the
+differentials that blank the hints to reach the plain VM still reach it; the knob
+`bounded_backtrack_route_disabled` gives the route-against-VM differential in one binary.
+
+On `(\w+)@(\w+)` a search over 9 bytes runs about a fifth of the instructions it did on the VM, and one
+over 63 bytes about an eighth, on x86-64 and arm64 alike.
+
 \section g_map 8. Architecture map: who does what
 
 The headers under `include/real/` are partitioned into dependency tiers, and a header may include only from

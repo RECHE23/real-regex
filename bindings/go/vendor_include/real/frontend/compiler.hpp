@@ -410,6 +410,10 @@ namespace real::detail {
       if (prog.slot_count != 2U) {
         prog.hints.capture_free_walk = false;
       }
+      // A lookaround is evaluated at whatever position a thread reaches it, and the backtracker reaches
+      // positions out of order -- which a lookbehind walk pays for by restarting. The VM keeps those.
+      prog.hints.bounded_backtrack = static_cast<std::uint8_t>(prog.lookarounds.empty()
+                                                               && prog.slot_count <= bounded_backtrack_max_slots);
       // The required inner literal + its prefix boundary (a single AST walk). Recorded in hints for the
       // inner-literal search route (pike_vm::run dispatches to run_inner_literal); kept off the program
       // code, so byte-identity is untouched.

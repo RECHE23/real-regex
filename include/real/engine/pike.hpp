@@ -225,6 +225,132 @@ namespace real::detail {
   };
 
   /*!
+   * \brief The bounded backtracker's whole state for one search, on the caller's stack (see
+   *        `pike_vm::run_bounded_backtrack`).
+   *
+   * Rows are positions relative to the search's start. Nothing is zeroed on construction: the search
+   * clears the rows from its first start to the subject's end when it makes that start, so one whose
+   * prefilter finds no start clears nothing. Clearing a row only when the walk reaches it costs a test
+   * per byte consumed, which measured dearer than the words it saves.
+   */
+  // MISRA deviation, documented in docs/MISRA.md: \ref marks, \ref slots and \ref jobs carry no initializer.
+  // A mark is read only in a row the search cleared first, a slot only after the start set it, a job only
+  // below \ref depth; zeroing them would cost 3.3 KiB of stores per search on subjects of a few bytes.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init,hicpp-member-init)
+  struct backtrack_frame
+  {
+    /*!
+     * \brief One pending branch: explore instruction `pc` at row `row`, or -- `pc` negative -- restore
+     *        slot `-pc - 1` to `row`, read as a position or \ref unset.
+     */
+    struct job
+    {
+      std::int32_t  pc;  //!< Instruction to explore, or `-(slot + 1)` for a restore.
+      std::uint32_t row; //!< Row to explore at, or the value to restore.
+    };
+
+    static constexpr std::uint32_t unset       {0xFFFFFFFFU};             //!< A restored slot's npos (rows stay far below).
+    static constexpr std::size_t   inline_jobs {256};                     //!< Jobs held before spilling to the heap.
+
+    std::array<std::uint64_t, bounded_backtrack_bits / 64U>    marks;     //!< Bit row x width + pc: entered already.
+    std::array<std::size_t, bounded_backtrack_max_slots>       slots;     //!< The explored branch's capture slots.
+    std::array<job, inline_jobs>                               jobs;      //!< Pending branches, most recent last.
+    std::vector<job>                                           spill;     //!< Pending branches past \ref inline_jobs.
+    std::size_t                                                depth {0}; //!< Jobs held in \ref jobs.
+    std::size_t                                                width {0}; //!< Instructions per row.
+
+    /*!
+     * \brief Clears the marks of rows [\p first, \p rows), in whole words.
+     * \param[in] first The first start's row: no row before it is ever read.
+     * \param[in] rows  Rows the search spans.
+     */
+    void clear(std::size_t first,
+               std::size_t rows)
+    {
+      const auto from {static_cast<std::ptrdiff_t>((first * width) / 64U)};
+      const auto to   {static_cast<std::ptrdiff_t>(((rows * width) + 63U) / 64U)};
+      std::fill(marks.begin() + from, marks.begin() + to, std::uint64_t {0});
+    }
+
+    /*!
+     * \brief Whether (\p pc, \p row) was entered already.
+     * \param[in] pc  Instruction.
+     * \param[in] row Row.
+     * \return True when it was.
+     */
+    [[nodiscard]] bool marked(std::int32_t pc,
+                              std::size_t  row) const
+    {
+      const std::size_t bit {(row * width) + static_cast<std::size_t>(pc)};
+      return ((marks[bit / 64U] >> (bit % 64U)) & 1U) != 0U;
+    }
+
+    /*!
+     * \brief Marks (\p pc, \p row) entered.
+     * \param[in] pc  Instruction.
+     * \param[in] row Row.
+     * \return False when it was entered already.
+     */
+    bool enter(std::int32_t pc,
+               std::size_t  row)
+    {
+      const std::size_t   bit  {(row * width) + static_cast<std::size_t>(pc)};
+      const std::uint64_t mask {std::uint64_t {1} << (bit % 64U)};
+      if ((marks[bit / 64U] & mask) != 0U) {
+        return false;
+      }
+      marks[bit / 64U] |= mask;
+      return true;
+    }
+
+    /*!
+     * \brief Holds a pending branch.
+     * \param[in] j The branch.
+     */
+    void push(job j)
+    {
+      if (depth < inline_jobs) {
+        jobs[depth++] = j;
+      }
+      else {
+        spill.push_back(j);
+      }
+    }
+
+    /*!
+     * \brief Takes the most recent pending branch.
+     * \param[out] j The branch.
+     * \return False when none is pending.
+     */
+    bool pop(job& j)
+    {
+      if (!spill.empty()) {
+        j = spill.back();
+        spill.pop_back();
+        return true;
+      }
+      if (depth == 0) {
+        return false;
+      }
+      j = jobs[--depth];
+      return true;
+    }
+
+    /*!
+     * \brief Sets slot \p slot to \p value, holding its old value to restore when the branch is left.
+     * \param[in] slot  The slot.
+     * \param[in] value Its new value.
+     */
+    void save(std::uint16_t slot,
+              std::size_t   value)
+    {
+      const std::size_t old {slots[slot]};
+      push({.pc   = -static_cast<std::int32_t>(slot) - 1, .row = old == npos ? unset : static_cast<std::uint32_t>(old)});
+      slots[slot] = value;
+    }
+  };
+
+  /*!
    * \brief Copy-on-write pool of capture blocks (COW) — the one capture-slot mechanism for both storages.
    *
    * A per-thread value model would snapshot all `slot_count` capture values every time a thread is stepped
@@ -1003,6 +1129,13 @@ namespace real::detail {
     {
       text_ = text;
       const std::size_t code_size {prog_.code.size()};
+      // A short subject never amortises the VM's per-position lists and capture pool; a bit per
+      // (instruction, position) is cheaper. The forward-stop contract belongs to the VM's own scan.
+      if (!std::is_constant_evaluated() && prog_.hints.bounded_backtrack != 0U && forward_stop == nullptr
+          && sem_ == match_semantics::first && text.size() - start < bounded_backtrack_bits
+          && (text.size() - start + 1U) * code_size <= bounded_backtrack_bits && !bounded_backtrack_route_disabled()) {
+        return run_bounded_backtrack(text, start, mode, out_slots);
+      }
       auto*             clist     {&state_.list_a};
       auto*             nlist     {&state_.list_b};
       clist->reset(code_size);
@@ -6218,6 +6351,233 @@ namespace real::detail {
       // keep flip == 0 and are byte-identical. ascii_word == unicode default matches iff not flipped.
       const bool ascii_word {prog_.unicode_word == word_ness_flipped};
       return real::detail::assertion_holds(kind, text_, pos, ascii_word); // shared free function
+    }
+
+    /*!
+     * \brief The general loop's answer, by backtracking under a bit per (instruction, position).
+     *
+     * Walks the program depth first in the VM's priority order -- a split's preferred branch first, each
+     * start in turn -- and marks every (instruction, position) it enters; reaching a marked pair again
+     * prunes the branch, as the VM's list drops a thread already present. The first `match` reached is the
+     * VM's answer. A `jump` into a loop head already entered at this position takes the loop's exit, as in
+     * the VM, reading this position's marks -- the VM's `seen` set there, entered in the same order,
+     * because only the walk at a position marks it.
+     *
+     * Marks are kept across starts, and every start the prefilter rules out is skipped, where the VM seeds
+     * one while other threads live and starts a position's list afresh when none does. Neither changes the
+     * answer: the pairs an exploration marked without matching are closed under every transition -- a
+     * split holds both branches, and a jump takes a loop's exit only when the head, and so its body, was
+     * entered -- so none of them reaches a match, and pruning them removes only branches that fail.
+     *
+     * Each pair is entered at most once, so the cost is O(n x m), the VM's bound; the caller holds
+     * n x m under \ref bounded_backtrack_bits.
+     *
+     * \param[in]  text      Subject (already in `text_`).
+     * \param[in]  start     Byte offset to begin at.
+     * \param[in]  mode      Anchoring: full, prefix or search.
+     * \param[out] out_slots Capture slots, filled on a match.
+     * \return True on a match.
+     */
+    template <typename OutSlots>
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    bool run_bounded_backtrack(std::string_view text,
+                               std::size_t      start,
+                               run_mode         mode,
+                               OutSlots&        out_slots)
+    {
+      prof::tick_event(prof::event::bounded_backtrack);
+      backtrack_frame   frame;
+      const std::size_t size {text.size()};
+      const bool        cf   {prog_.hints.capture_free_walk};
+      frame.width = prog_.code.size();
+      out_slots.assign(prog_.slot_count, npos);
+      bool        cleared {false}; // before the first start no row is read
+      std::size_t pos     {start};
+      while (true) {
+        if (mode == run_mode::search) {
+          pos = next_candidate(text, pos, start);
+          if (pos > size) {
+            return false; // no further start (npos included)
+          }
+        }
+        if (!cleared) {
+          frame.clear(pos - start, size - start + 1U);
+          cleared = true;
+        }
+        if (seed_viable(text, pos, start) && backtrack_from(frame, pos, start, mode, cf, out_slots)) {
+          return true;
+        }
+        if (mode != run_mode::search || pos >= size) {
+          return false;
+        }
+        ++pos;
+      }
+    }
+
+    /*!
+     * \brief Every branch from `pc 0` at \p seed, in priority order -- one start of \ref run_bounded_backtrack.
+     * \param[in,out] frame     The search's marks, leaf flags, slots and pending branches.
+     * \param[in]     seed      The start.
+     * \param[in]     start     The search's start (row 0).
+     * \param[in]     mode      Anchoring (a full match must end at the text's end).
+     * \param[in]     cf        The program's capture-free walk: only group 0's start is carried.
+     * \param[out]    out_slots Capture slots, filled on a match.
+     * \return True when a branch matched.
+     */
+    template <typename OutSlots>
+    bool backtrack_from(backtrack_frame& frame,
+                        std::size_t      seed,
+                        std::size_t      start,
+                        run_mode         mode,
+                        bool             cf,
+                        OutSlots&        out_slots)
+    {
+      const std::uint16_t slot_count {prog_.slot_count};
+      for (std::uint16_t s {0}; s < slot_count; ++s) {
+        frame.slots[s] = npos;
+      }
+      frame.push({.pc = 0, .row = static_cast<std::uint32_t>(seed - start)});
+      backtrack_frame::job j {};
+      while (frame.pop(j)) {
+        if (j.pc < 0) {
+          frame.slots[static_cast<std::size_t>(-j.pc - 1)] = j.row == backtrack_frame::unset ? npos : j.row;
+          continue;
+        }
+        std::int32_t pc  {j.pc};
+        std::size_t  pos {start + j.row};
+        // Follow the preferred branch until it dies; every other branch waits on the stack.
+        while (frame.enter(pc, pos - start)) {
+          const instr& instruction {prog_.code[static_cast<std::size_t>(pc)]};
+          std::int32_t next        {-1}; // the thread's next instruction; -1 when it dies here
+          switch (instruction.op) {
+            case opcode::jump:
+              {
+                std::int32_t head {instruction.primary_target};
+                for (int hops = 0; hops < max_loop_hops && frame.marked(head, pos - start)
+                     && prog_.code[static_cast<std::size_t>(head)].op == opcode::jump; ++hops) {
+                  head = prog_.code[static_cast<std::size_t>(head)].primary_target;
+                }
+                const instr& head_instruction {prog_.code[static_cast<std::size_t>(head)]};
+                next = frame.marked(head, pos - start) && head_instruction.op == opcode::split
+                         ? head_instruction.secondary_target : instruction.primary_target;
+              }
+              break;
+            case opcode::split:
+              frame.push({.pc = instruction.secondary_target, .row = static_cast<std::uint32_t>(pos - start)});
+              next            = instruction.primary_target;
+              break;
+            case opcode::save:
+              if (!cf) {
+                frame.save(instruction.arg16, pos);
+              }
+              else if (instruction.arg16 == 0U) {
+                frame.save(0, pos);
+              }
+              next = pc + 1;
+              break;
+            case opcode::assert_position:
+              if (assertion_holds(static_cast<assert_kind>(instruction.arg8), pos, instruction.arg16 != 0U)) {
+                next = pc + 1;
+              }
+              break;
+            case opcode::assert_lookaround:
+              break; // not reached: the hint excludes a program with lookarounds
+            case opcode::byte:
+              if (pos < text_.size() && static_cast<std::uint8_t>(text_[pos]) == instruction.arg8) {
+                next = pc + 1;
+                ++pos;
+              }
+              break;
+            case opcode::klass:
+              if (pos < text_.size() && prog_.classes[instruction.arg16].test(static_cast<std::uint8_t>(text_[pos]))) {
+                next = pc + 1;
+                ++pos;
+              }
+              break;
+            case opcode::klass_cp:
+              if (pos < text_.size()) {
+                const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, pos)};
+                if (dc.valid && cp_class_matches_idx(instruction.arg16, dc.cp)) {
+                  next = pc + 1 + static_cast<std::int32_t>(4 - dc.length);
+                  ++pos;
+                }
+              }
+              break;
+            case opcode::match:
+              if ((mode == run_mode::full && pos != text_.size())
+                  || (pos == frame.slots[0] && frame.slots[0] < forbid_empty_until_)) {
+                break;
+              }
+              if (cf) {
+                out_slots[0] = frame.slots[0];
+                out_slots[1] = pos;
+              }
+              else {
+                for (std::uint16_t s {0}; s < slot_count; ++s) {
+                  out_slots[s] = frame.slots[s];
+                }
+              }
+              return true;
+            case opcode::byte_loop_possessive:
+            case opcode::klass_loop_possessive:
+            case opcode::klass_cp_loop_possessive:
+              next = backtrack_possessive(frame, instruction, pc, pos, cf);
+              break;
+          }
+          if (next < 0) {
+            break;
+          }
+          pc = next;
+        }
+      }
+      return false;
+    }
+
+    /*!
+     * \brief A possessive loop's step in \ref backtrack_from. The VM decides it when the thread arrives, so
+     *        a match consumes (writing the loop's capture, if it has one) and a miss leaves by the exit at
+     *        the same position.
+     * \param[in,out] frame       The search's frame (slots, pending restores).
+     * \param[in]     instruction The possessive instruction.
+     * \param[in]     pc          Its program counter.
+     * \param[in,out] pos         The position; advanced by one on a match.
+     * \param[in]     cf          The program's capture-free walk: the loop's capture is not recorded.
+     * \return The thread's next instruction.
+     */
+    std::int32_t backtrack_possessive(backtrack_frame& frame,
+                                      const instr&     instruction,
+                                      std::int32_t     pc,
+                                      std::size_t&     pos,
+                                      bool             cf)
+    {
+      std::size_t length {0}; // bytes the atom spans; 0 on a miss
+      if (pos < text_.size()) {
+        const auto byte_value {static_cast<std::uint8_t>(text_[pos])};
+        if (instruction.op == opcode::byte_loop_possessive) {
+          length = byte_value == instruction.arg8 ? 1U : 0U;
+        }
+        else if (instruction.op == opcode::klass_loop_possessive) {
+          length = prog_.classes[instruction.arg16].test(byte_value) ? 1U : 0U;
+        }
+        else {
+          const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, pos)};
+          length = dc.valid && cp_class_matches_idx(instruction.arg16, dc.cp) ? dc.length : 0U;
+        }
+      }
+      if (length == 0U) {
+        return instruction.secondary_target;
+      }
+      if (instruction.primary_target >= 0 && !cf) {
+        const auto slot {static_cast<std::uint16_t>(instruction.primary_target)};
+        frame.save(slot, pos);
+        frame.save(static_cast<std::uint16_t>(slot + 1U), pos + length);
+      }
+      const std::int32_t next {instruction.op == opcode::klass_cp_loop_possessive
+                                 ? pc + 1 + static_cast<std::int32_t>(4 - length) : pc + 1};
+      ++pos;
+      return next;
     }
 
     /*!

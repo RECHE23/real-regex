@@ -49,6 +49,18 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Test seam: force the general loop off the bounded backtracker onto the Pike VM, so a
+   *        differential can assert that both give the same answer on every small subject. Not for production
+   *        use -- the backtracker reproduces the VM's priority order by contract, and this proves it.
+   * \return Reference to the process-wide seam flag; set it to true to take the route out.
+   */
+  inline bool& bounded_backtrack_route_disabled()
+  {
+    static bool disabled {false};
+    return disabled;
+  }
+
+  /*!
    * \brief Test seam: force the matcher off the inner-literal search route onto the core search, so a
    *        differential can assert routed and unrouted searches agree. Not for production use — the route is
    *        transparent by contract (its reverse bound never advances mid-search, so it cannot miss a leftmost

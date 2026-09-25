@@ -63,12 +63,13 @@ namespace real::detail::prof {
     cascade,
     rare_byte,
     memmem,
-    wb_b1_drop,     //!< compile-time drop observed at first dispatch
-    wb_b2_wrap,     //!< runtime wrap: class/cp loop with wb_lead|wb_trail
+    wb_b1_drop,        //!< compile-time drop observed at first dispatch
+    wb_b2_wrap,        //!< runtime wrap: class/cp loop with wb_lead|wb_trail
     il_abandoned,
-    pool_incref,    //!< COW capture-block refcount taken (one per `split` in the epsilon walk)
-    pool_decref,    //!< COW capture-block refcount dropped (one per thread death)
-    pool_cow_write, //!< COW capture-block written (one per `save`, group 0 included)
+    pool_incref,       //!< COW capture-block refcount taken (one per `split` in the epsilon walk)
+    pool_decref,       //!< COW capture-block refcount dropped (one per thread death)
+    pool_cow_write,    //!< COW capture-block written (one per `save`, group 0 included)
+    bounded_backtrack, //!< the general loop answered by the bounded backtracker (small subject)
     count_
   };
 
@@ -200,6 +201,7 @@ namespace real::detail::prof {
       case event::pool_incref: return "pool_incref";
       case event::pool_decref: return "pool_decref";
       case event::pool_cow_write: return "pool_cow_write";
+      case event::bounded_backtrack: return "bounded_backtrack";
       case event::count_: return "?";
     }
     return "?";

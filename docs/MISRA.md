@@ -77,6 +77,23 @@ there carries one.
 0) and is not flagged, because the synthetic MISRA translation unit instantiates `real::regex`, which uses
 `small_vec`. The justification is the same one.
 
+### `cppcoreguidelines-pro-type-member-init` / `hicpp-member-init` on `backtrack_frame`
+
+Suppressed on the struct itself (a scoped `NOLINTNEXTLINE`). The bounded backtracker's frame lives on the
+stack of one search, and three of its members carry no initializer: `marks` (1 KiB, a bit per instruction and
+position), `slots` (the explored branch's capture slots) and `jobs` (2 KiB of pending branches). Each is
+written before it is read: a mark only in a row the search cleared at its first start, a slot only after the
+start set every slot to npos, a job only below `depth`, which starts at 0. The route exists for subjects of a
+few bytes, where zeroing all three would be 3.3 KiB of stores per search against a walk of a few hundred
+instructions.
+
+Verified rather than argued: the route's tests pass under ASan/UBSan, under valgrind memcheck with zero
+errors (x86-64, g++ 13.3), and rebuilt with clang's `-ftrivial-auto-var-init=pattern`, which fills the frame
+with a poison pattern — nothing depends on the value.
+
+Residual cost, as for `basic_pike_state`: a member added to `backtrack_frame` later without an initializer
+would not be flagged. Every other member carries one.
+
 ## Style / tooling deviations (pre-existing)
 
 These checks are disabled because they conflict with deliberate, idiomatic choices

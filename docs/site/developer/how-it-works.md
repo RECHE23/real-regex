@@ -47,7 +47,9 @@ that bound; backreferences are refused up front.
 3. **Match.** A Pike VM simulates the NFA. At each input position it holds
    the set of live threads; each thread is a program counter plus capture
    slots. No thread is ever replayed, so the work per byte is bounded by
-   the program size.
+   the program size. A short subject is walked depth first instead, under
+   a bit per (instruction, position): the same bound and the same answers,
+   without the per-position bookkeeping a few bytes never amortise.
 
 A compiled regex is immutable and shareable across threads. An iterator is
 not.
