@@ -209,6 +209,7 @@ def main() -> int:
                         "events": a.get("events") or {},
                         "route_dominant": dom,
                         "matches": t.get("matches"),
+                        "spans": t.get("spans"),
                         "forced": {"route": force, "ns_per_b_p50": timing.get("ns_per_b_p50")},
                     }
                     rows.append(row)
@@ -219,6 +220,7 @@ def main() -> int:
         k = (r["label"], r["corpus"]["tag"], r["surface"])
         by_base.setdefault(k, {})[r["forced"]["route"]] = r
 
+    divergent = []
     for k, fmap in by_base.items():
         base = fmap.get("none")
         if not base or base["timing"]["ns_per_b_p50"] is None:
@@ -228,6 +230,11 @@ def main() -> int:
             if force == "none":
                 r["dispatch_dominated"] = False
                 r["dominated_by"] = None
+                continue
+            # A forced route that is faster because it finds something else dominates nothing.
+            if (r.get("matches"), r.get("spans")) != (base.get("matches"), base.get("spans")):
+                r["answers_differ"] = True
+                divergent.append(f"{k[0]} / {k[1]} / {k[2]} forced {force}")
                 continue
             fns = r["timing"]["ns_per_b_p50"]
             if fns is None or base_ns <= 0:
@@ -296,6 +303,10 @@ def main() -> int:
     OUT_MD.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"wrote {OUT_JSONL} ({len(rows)} rows)")
     print(f"wrote {OUT_MD}")
+    if divergent:
+        print("FAIL: a forced route and the normal dispatch found different matches on: "
+              + "; ".join(divergent), file=sys.stderr)
+        return 1
     return 0
 
 

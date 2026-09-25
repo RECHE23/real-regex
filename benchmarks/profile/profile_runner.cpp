@@ -65,6 +65,22 @@ static std::size_t run_surface(const real::regex& re,
   return re.count_matches(text);
 }
 
+// Every match's (start, end) folded with 64-bit FNV-1a: what a forced route and the normal dispatch must
+// agree on before either's time is compared with the other's.
+static unsigned long long span_digest(const real::regex& re,
+                                      std::string_view   text)
+{
+  unsigned long long digest = 0xcbf29ce484222325ULL;
+  for (const auto& m : re.find_iter(text)) {
+    for (const unsigned long long v : {static_cast<unsigned long long>(m.start()),
+                                       static_cast<unsigned long long>(m.end())}) {
+      digest ^= v;
+      digest *= 0x100000001b3ULL;
+    }
+  }
+  return digest;
+}
+
 static void print_json_string(const char* s)
 {
   std::fputc('"', stdout);
@@ -145,7 +161,7 @@ static int emit(std::string_view   mode,
     else {
       std::printf(",\"timing\":{\"ns_per_b_p50\":%.6f,\"p95\":%.6f,\"n\":%d}", p50, p95, N);
     }
-    std::printf(",\"matches\":%zu", matches);
+    std::printf(",\"matches\":%zu,\"spans\":\"%016llx\"", matches, span_digest(re, text));
   }
   else if (mode == "attr") {
 #if !defined(REAL_PROFILE)
