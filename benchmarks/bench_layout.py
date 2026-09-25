@@ -150,8 +150,8 @@ def build(tree: Path, out: Path, align: int, pad: int, sciforge: Path, extra_env
     subprocess.run(cmd, check=True, env={**extra_env})
 
 
-def measure(binary: Path, env: dict[str, str]) -> dict[str, float]:
-    """Runs one draw and returns {case name: REAL ns/B}.
+def measure(binary: Path, env: dict[str, str]) -> tuple[dict[str, float], dict[str, int]]:
+    """Runs one draw and returns ({case name: REAL ns/B}, {case name: REAL's answer}).
 
     ns/B is derived exactly as `bench_engines.py` derives the published tables -- median of the raw
     samples over the corpus size -- so a number here is comparable with a number there, and this
@@ -160,12 +160,23 @@ def measure(binary: Path, env: dict[str, str]) -> dict[str, float]:
     proc = subprocess.run([str(binary)], capture_output=True, text=True, check=True, env=env)
     doc = json.loads(proc.stdout)
     out: dict[str, float] = {}
+    answers: dict[str, int] = {}
     for key in ("cases", "unicode_cases"):
         for case in doc.get(key, []):
             real = case.get("engines", {}).get("real")
             if isinstance(real, dict) and real.get("samples"):
                 out[case["name"]] = statistics.median(real["samples"]) / float(case["corpus_bytes"])
-    return out
+                answers[case["name"]] = real["count"]
+    return out, answers
+
+
+def same_answers(a: dict[str, int], b: dict[str, int]) -> None:
+    """Exits unless both builds answered every row the same: a layout delta between builds that found
+    different matches measures a behaviour change, not a layout."""
+    differ = sorted(name for name in a.keys() & b.keys() if a[name] != b[name])
+    if differ:
+        sys.exit("bench_layout: the two builds answer differently on " + ", ".join(differ)
+                 + " -- not a layout comparison")
 
 
 def sweep_pair(tree_a: Path, tree_b: Path, draws: list[tuple[int, int]], sciforge: Path,
@@ -196,10 +207,11 @@ def sweep_pair(tree_a: Path, tree_b: Path, draws: list[tuple[int, int]], sciforg
             for i, (a, b) in enumerate(bins):
                 print(f"  run rep {rep + 1}/{reps} draw {i + 1}/{len(bins)}", file=sys.stderr)
                 # A then B then B then A: the two orders cancel any residual within-pair drift.
-                a1 = measure(a, env)
-                b1 = measure(b, env)
-                b2 = measure(b, env)
-                a2 = measure(a, env)
+                a1, a_answers = measure(a, env)
+                b1, b_answers = measure(b, env)
+                b2, _ = measure(b, env)
+                a2, _ = measure(a, env)
+                same_answers(a_answers, b_answers)
                 ra.append({k: min(a1[k], a2[k]) for k in a1.keys() & a2.keys()})
                 rb.append({k: min(b1[k], b2[k]) for k in b1.keys() & b2.keys()})
     return ra, rb

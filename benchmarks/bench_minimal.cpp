@@ -106,14 +106,12 @@ namespace {
     bool        expect_hit {true};
   };
 
-  //! Discards a warm-up scan, then returns \p n per-scan times in nanoseconds.
-  std::vector<double> collect(const real::regex& re,
-                              const std::string& text,
-                              int                n,
-                              surface            api,
-                              bool               expect_hit)
+  //! One scan of \p text through \p api; its result is also the row's answer, which an A/B of two builds
+  //! compares before comparing their times.
+  std::size_t scan_once(const real::regex& re,
+                        const std::string& text,
+                        surface            api)
   {
-    const auto scan = [&re, &text](surface api) -> std::size_t {
       switch (api) {
         case surface::count:
           return re.count_matches(text);
@@ -132,7 +130,16 @@ namespace {
           return hits;
         }
       }
-    };
+  }
+
+  //! Discards a warm-up scan, then returns \p n per-scan times in nanoseconds.
+  std::vector<double> collect(const real::regex& re,
+                              const std::string& text,
+                              int                n,
+                              surface            api,
+                              bool               expect_hit)
+  {
+    const auto scan = [&re, &text](surface which) { return scan_once(re, text, which); };
     (void) scan(api);
     // BATCH THE TIMED REGION, calibrated per case. A per-call row measures ~40 ns, and reading the clock
     // around a single call of that length measures the CLOCK: the per-call rows read 0.0 ns under one
@@ -312,6 +319,7 @@ int main()
     std::snprintf(head, sizeof head, "%s{\"name\":\"%s\",\"corpus_bytes\":%zu,\"engines\":{\"real\":{",
                   i ? "," : "", json_name(cases[i].name).c_str(), cases[i].corpus.size());
     out += head;
+    out += "\"count\":" + std::to_string(scan_once(re, cases[i].corpus, cases[i].api)) + ",";
     out += "\"samples\":" + json_samples(samples) + "}}}";
   }
   out += "]}";
