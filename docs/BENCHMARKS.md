@@ -1092,9 +1092,16 @@ actual gate).
   `make bench-duel`) also produce the **Unicode — comparative** section's rows above — no
   separate target; the Unicode corpora/patterns are additional cases inside the same two
   harnesses.
-- **Equality first.** Both harnesses verify identical results (and per-engine match
-  counts) before timing, so a divergence shows up as a correctness failure, not a
-  misleading speed number.
+- **Equality first.** A ratio between two sides that found different matches compares different
+  work, so every harness that prints one checks the answers too. This bullet once claimed that for
+  two harnesses while one compared nothing and the other a warm-up count; what each checks now:
+  `bench-duel` folds every match's span into a digest on both sides and exits 1 when they differ;
+  `bench-matrix` / `matrix-gate`, `bench-percall`, `fuzz_bench.py`, the Rust binding's criterion
+  bench and the profile grid compare spans (or the full answer) between their two sides and fail
+  on a difference; `bench-multipattern` and `s2a_measure` compare which patterns matched;
+  `bench-layout` stops when two builds answer differently. `bench-engines` compares match counts
+  across four engines whose semantics differ by design (ASCII `\w`, byte-level `.`), so it flags a
+  divergent row rather than failing, and the Unicode section below explains each flag.
 - **Not gated.** These *absolute-throughput* targets are excluded from `full-local-gate`
   on purpose: a noisy wall-time measurement must never turn a clean build red.
 - **Measure x86-64 on the native g++ 13.3 host, not in Docker on a second machine.** Same six cores
