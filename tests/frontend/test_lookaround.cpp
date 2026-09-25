@@ -400,7 +400,7 @@ TEST(lookbehind_walk_equals_every_start_tried_alone)
   const std::string_view alphabet[] {"a", "b", "ab", "é", "中", "1", " ", "x", "\x80", "\xC3"};
   std::uint32_t          seed       {12345};
   const auto             next       {[&seed] {
-                                       seed = seed * 1664525U + 1013904223U;
+                                       seed = (seed * 1664525U) + 1013904223U;
                                        return seed >> 8U;
                                      }};
   int compared {0};

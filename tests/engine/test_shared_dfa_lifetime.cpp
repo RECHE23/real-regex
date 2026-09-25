@@ -256,12 +256,13 @@ TEST(shared_regex_scans_in_parallel_with_the_same_answers)
 {
   const real::regex  re {"[a-z]+ing|[0-9]+x"};
   std::string        text;
-  while (text.size() < 256 * 1024) {
+  while (text.size() < std::size_t {256} * 1024) {
     text += "the quick fox singing 123x and bringing 7x over 42 dogs ";
   }
   const std::size_t        expected {re.count_matches(text)};
   std::atomic<int>         wrong    {0};
   std::vector<std::thread> pool;
+  pool.reserve(8);
   for (int t = 0; t < 8; ++t) {
     pool.emplace_back([&] {
                         for (int round = 0; round < 4; ++round) {
