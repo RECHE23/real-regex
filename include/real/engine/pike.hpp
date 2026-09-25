@@ -1428,7 +1428,7 @@ namespace real::detail {
               if (prog_.immut != nullptr && prog_.immut->byte_prog.eligible) {
                 abandon                     = true;
                 state_.il_abandoned         = true; // sticky: dense memmem stream loses to core for this haystack
-                il_density_last_abandoned() = true;
+                il_density_last_abandoned().store(true, std::memory_order_relaxed);
                 return false;
               }
             }
@@ -1797,7 +1797,8 @@ namespace real::detail {
           state_.ac_decided = false;
         }
         if (state_.ac_decided) {
-          ac_density_last_verdict() = state_.ac_dense ? ac_verdict::automaton : ac_verdict::cascade;
+          ac_density_last_verdict().store(state_.ac_dense ? ac_verdict::automaton : ac_verdict::cascade,
+                                          std::memory_order_relaxed);
           return state_.ac_dense;
         }
         const std::size_t branches {static_cast<std::size_t>(prog_.hints.alternation_branch_count)};
@@ -1869,7 +1870,8 @@ namespace real::detail {
                                          && completed * 100U <= cands * ac_completion_pct};
         state_.ac_dense           = work >= want && completion_ok;
         state_.ac_decided         = true;
-        ac_density_last_verdict() = state_.ac_dense ? ac_verdict::automaton : ac_verdict::cascade;
+        ac_density_last_verdict().store(state_.ac_dense ? ac_verdict::automaton : ac_verdict::cascade,
+                                        std::memory_order_relaxed);
         return state_.ac_dense;
       }
       else {

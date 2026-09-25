@@ -16,10 +16,12 @@
 //     2. barrier-sync N threads
 //     3. ALL run the first search/find_iter simultaneously on that same regex
 //
-// Patterns cover the three cache arms:
+// Patterns cover the three cache arms, and the two density gates' recorded decisions:
 //   (a) sparse-email  (\w+)@(\w+)  → IL prefix reverse + shared confirm-DFA
 //   (b) \p{L}+ on CJK              → cp-class route + immutables (cp_hi is thread_local, not shared)
 //   (c) plain \w+ on long ASCII    → ensure_immutables + lazy-DFA search slot
+//   (d) (?:\w+)_(?:\w+), dense `_` → the inner-literal density gate's recorded abandon
+//   (e) 24-word alternation        → the Aho-Corasick density gate's recorded verdict
 //
 // Injected-race proof: set REAL_TSAN_INJECT_RACE=1 to write an unsynchronized counter from every
 // thread during the barrier window — TSan must report a race (proves the harness can go red).
@@ -106,6 +108,34 @@ namespace {
     return h;
   }
 
+  // Dense failing inner-literal candidates -- a `_` every 16 bytes that no `\w+_\w+` completes, then one
+  // that does: the inner-literal density gate abandons the route on this subject, and records that it did.
+  [[nodiscard]] std::string make_il_dense_haystack()
+  {
+    std::string unit(16, ' ');
+    unit[1] = '_';
+    std::string h;
+    while (h.size() < 20000) {
+      h += unit;
+    }
+    h += "id_42";
+    return h;
+  }
+
+  // Heads of a 24-word alternation every other byte, none completing: the Aho-Corasick density gate decides
+  // on this subject, and records its verdict.
+  [[nodiscard]] std::string make_ac_dense_haystack()
+  {
+    static constexpr std::string_view heads {"abcdefghijklmnopqrstuvwx"};
+    std::string                       h;
+    for (std::size_t i = 0; h.size() < 4000; ++i) {
+      h += heads[i % heads.size()];
+      h += '_';
+    }
+    h += "tango";
+    return h;
+  }
+
   struct case_spec
   {
     const char  *    name;
@@ -161,12 +191,20 @@ int main()
   const std::string cjk_hay   {make_cjk_haystack()};
   const std::string ascii_hay {make_ascii_haystack()};
   const std::string dfa_hay   {make_dfa_haystack()};
+  const std::string il_hay    {make_il_dense_haystack()};
+  const std::string ac_hay    {make_ac_dense_haystack()};
 
   const case_spec cases[] =   {
     {.name = "email-IL", .pattern = R"((\w+)@(\w+))", .hay = email_hay},
     {.name = "pL-CJK", .pattern = R"(\p{L}+)", .hay = cjk_hay},
     {.name = "wplus-ascii", .pattern = R"(\w+)", .hay = ascii_hay},
     {.name = "lazy-dfa", .pattern = R"([a-z]+ing|[0-9]+x)", .hay = dfa_hay},
+    // The two density gates record their decision for tests to read; every thread records it at once.
+    {.name    = "il-density", .pattern = R"((?:\w+)_(?:\w+))", .hay = il_hay},
+    {.name    = "ac-density",
+     .pattern = "alpha|bravo|charlie|delta|echo|foxtrot|golf|hotel|india|juliet|kilo|lima|mike|november|oscar|"
+                "papa|quebec|romeo|sierra|tango|uniform|victor|whiskey|xray",
+     .hay = ac_hay},
   };
 
   const bool inject {inject_race_enabled()};

@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <ranges>
 #include <bit>
 #include <cstddef>
@@ -212,13 +213,15 @@ namespace real::detail {
    * the gate goes. That is why the constant has no test guarding its value -- there is nothing semantic
    * to assert, and this seam is what makes the two routes comparable at all.
    *
-   * One store, on a path that already writes two sticky fields beside it.
+   * One store, on a path that already writes two sticky fields beside it. Atomic because every search
+   * that abandons writes it, from whatever thread runs the search: a plain `bool` is a data race between
+   * two threads searching at once. The store is relaxed, which compiles to the plain store it replaces.
    *
    * \return Reference to the process-wide flag; clear it before a search to arm it.
    */
-  inline bool& il_density_last_abandoned()
+  inline std::atomic<bool>& il_density_last_abandoned()
   {
-    static bool abandoned {false};
+    static std::atomic<bool> abandoned {false};
     return abandoned;
   }
 
@@ -243,13 +246,15 @@ namespace real::detail {
    * SKIPPING bytes. That assertion turned the sanitize leg red while the engine was correct. Timing
    * belongs in `benchmarks/ac_regime.cpp`; a test asserts the decision.
    *
-   * One store per haystack, on the same path as the guard fields it reports on.
+   * One store per search, on the same path as the guard fields it reports on. Atomic for the reason
+   * \ref il_density_last_abandoned is: searches on different threads all write it. Relaxed, so the store
+   * costs what the plain one did.
    *
    * \return Reference to the process-wide verdict; assign \ref ac_verdict::not_consulted to arm it.
    */
-  inline ac_verdict& ac_density_last_verdict()
+  inline std::atomic<ac_verdict>& ac_density_last_verdict()
   {
-    static ac_verdict verdict {ac_verdict::not_consulted};
+    static std::atomic<ac_verdict> verdict {ac_verdict::not_consulted};
     return verdict;
   }
 
