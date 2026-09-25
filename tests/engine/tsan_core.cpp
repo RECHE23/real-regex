@@ -4,12 +4,14 @@
 // std_engine mutex. The 7.45 shared-confirm path and its friends were claimed "concurrent const
 // race-free" from a one-off; nothing tracked drives:
 //   - ensure_immutables / built_for identity on mutable immut_ (storage.hpp)
-//   - shared_dfa_for map insert + per-slot mutex (onepass.hpp / pike.hpp)
+//   - shared_dfa_for map insert + per-thread DFA sets taken from and returned to the slot's pool
+//     (dfa_lease, onepass.hpp / pike.hpp)
 //   - first warm of shared fwd/rev/il_prefix_rev DFAs
 //
 // Critical design (without this the harness is a false negative):
-//   built_for + striped rebuild lock + per-slot mutex ⇒ first arriver fills, late arrivers see
-//   filled → NO race window if threads start staggered. So each iteration:
+//   built_for + striped rebuild lock ⇒ first arriver fills, late arrivers see filled → NO race window
+//   if threads start staggered; the DFA sets are per thread, taken from the slot's pool at the first
+//   scan, which the simultaneous start makes every thread do at once. So each iteration:
 //     1. construct one FRESH const real::regex (empty built_for / empty slot)
 //     2. barrier-sync N threads
 //     3. ALL run the first search/find_iter simultaneously on that same regex

@@ -6,6 +6,7 @@
 #include <real/automata/onepass.hpp>
 
 #include <atomic>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <thread>
@@ -177,4 +178,101 @@ TEST(shared_dfa_reused_immutables_address_serves_a_fresh_slot)
   }
   slot_reuse.reset();
   EXPECT_EQ(shared_dfa_map_size_for_test(), baseline);
+}
+
+// --- dfa_lease: one thread's DFA set per regex, no lock during a scan ---------------------------------
+
+TEST(dfa_lease_keeps_this_threads_set_between_leases)
+{
+  real::detail::regex_immutables      immut {};
+  const real::detail::shared_dfa_set* first {nullptr};
+  {
+    const real::detail::dfa_lease lease {&immut};
+    first = &*lease;
+  }
+  const real::detail::dfa_lease again {&immut};
+  EXPECT(&*again == first); // the same set: no pool round-trip on the same regex
+}
+
+TEST(dfa_lease_nested_gets_its_own_set_and_returns_it)
+{
+  real::detail::regex_immutables      outer_immut {};
+  real::detail::regex_immutables      inner_immut {};
+  const real::detail::dfa_lease       outer       {&outer_immut};
+  const real::detail::shared_dfa_set* nested_set  {nullptr};
+  {
+    // A lease taken while this thread's cached set is held -- the same regex or another -- must not
+    // hand the outer scan's set away.
+    const real::detail::dfa_lease same  {&outer_immut};
+    EXPECT(&*same != &*outer);
+    const real::detail::dfa_lease other {&inner_immut};
+    EXPECT(&*other != &*outer);
+    EXPECT(&*other != &*same);
+    nested_set = &*same;
+  }
+  // The nested set went back to the outer regex's pool; the next nested lease on it reuses it.
+  const real::detail::dfa_lease reused {&outer_immut};
+  EXPECT(&*reused == nested_set);
+}
+
+TEST(dfa_lease_a_thread_returns_its_set_when_it_ends)
+{
+  real::detail::regex_immutables      immut      {};
+  const real::detail::shared_dfa_set* thread_set {nullptr};
+  std::thread                         user       {[&] {
+                                                    const real::detail::dfa_lease lease {&immut};
+                                                    thread_set = &*lease;
+                                                  }};
+  user.join();
+  // This thread's cached set belongs to another regex (or none), so it takes from the pool: the set
+  // the finished thread gave back.
+  real::detail::regex_immutables elsewhere {};
+  {
+    const real::detail::dfa_lease move_away {&elsewhere};
+  }
+  const real::detail::dfa_lease lease {&immut};
+  EXPECT(&*lease == thread_set);
+}
+
+TEST(dfa_lease_clears_a_set_built_for_an_earlier_program)
+{
+  real::detail::regex_immutables immut  {};
+  std::uint64_t                  before {0};
+  {
+    const real::detail::dfa_lease lease {&immut};
+    before = lease->generation;
+  }
+  real::detail::reset_shared_dfas(&immut); // what a rebuild at the same address does
+  const real::detail::dfa_lease lease {&immut};
+  EXPECT(lease->generation == before + 1);
+  EXPECT(!lease->fwd.has_value());
+  EXPECT(!lease->rev.has_value());
+  EXPECT(!lease->il_prefix_rev.has_value());
+}
+
+// Threads sharing one regex each scan through their own DFAs: the answers stay the single-thread
+// ones, and none waits on another's scan.
+TEST(shared_regex_scans_in_parallel_with_the_same_answers)
+{
+  const real::regex  re {"[a-z]+ing|[0-9]+x"};
+  std::string        text;
+  while (text.size() < 256 * 1024) {
+    text += "the quick fox singing 123x and bringing 7x over 42 dogs ";
+  }
+  const std::size_t        expected {re.count_matches(text)};
+  std::atomic<int>         wrong    {0};
+  std::vector<std::thread> pool;
+  for (int t = 0; t < 8; ++t) {
+    pool.emplace_back([&] {
+                        for (int round = 0; round < 4; ++round) {
+                          if (re.count_matches(text) != expected) {
+                            ++wrong;
+                          }
+                        }
+                      });
+  }
+  for (std::thread& th : pool) {
+    th.join();
+  }
+  EXPECT(wrong.load() == 0);
 }
