@@ -64,7 +64,9 @@ O(len(text)) -- and never backtracks (ReDoS-safe by construction).
   returns an owning ``std::string``. ``split`` and group views borrow the
   subject.
 - **Sharing.** A compiled regex is immutable and can be used from many
-  threads. An iterator is not shared.
+  threads. Each thread scans through its own lazy-DFA caches, so threads
+  sharing one regex do not wait on each other: throughput grows with the
+  thread count. An iterator is not shared.
 
 Example
 -------
