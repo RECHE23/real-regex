@@ -410,7 +410,11 @@ lookaround — those keep the general VM; position assertions came later, see \r
 - **Linearity under thrash — the fallback is per-scan.** When the state cache exceeds its budget it is
   flushed; two flushes within one search trip a *thrash* flag, and the engine abandons the DFA and finishes
   **that one search** on the Pike VM. It never re-derives the automaton from every start position — the
-  `O(n·k)` two-pass trap. One forward pass or one Pike pass, per search, always linear.
+  `O(n·k)` two-pass trap. One forward pass or one Pike pass, per search, always linear. The step that crosses
+  the limit returns the dead state, which ends the scan's loop, and the scan reports a quit, the same one a
+  Unicode word boundary next to a non-ASCII byte raises (\ref g_dfalook); so the test sits on the cache-miss
+  path and at the scan's exit, not on each byte. (Until 2026-09-26 the flag was set and read by nothing, and
+  `(a|b)*a(a|b){12}c` over random `a`/`b` ran at four times the VM's cost; it now runs at 0.9 times.)
 
 The `kFirstMatch` boundary rule was validated out-of-engine against the Pike VM (the two acids, a
 198k-case alternation differential, and mixed/nullable adversarials) before any of this was written; the

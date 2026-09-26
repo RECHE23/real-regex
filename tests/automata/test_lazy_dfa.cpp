@@ -2,6 +2,8 @@
 // These pin the machinery: the byte-class alphabet, the priority-ordered subset construction, the memoized
 // transition cache (hit/miss), the bounded eviction (flush) + thrash detector, and the kFirstMatch forward
 // pass itself — its reported end differential against the Pike VM, with a teeth-verified priority cut.
+#include <cstdint>
+#include <string>
 #include <utility>
 
 #include <sciforge/test/framework.hpp>
@@ -527,4 +529,36 @@ TEST(lazy_dfas_quit_on_a_unicode_word_boundary_next_to_non_ascii)
   EXPECT_EQ(rev_trail.reverse_start("x\xC3\xA9", 1, 0), reverse_dfa::quit_pos);  // `é` after the match's end
   EXPECT_EQ(fwd_lead.forward_end(" x", 0), 2U);
   EXPECT_EQ(fwd_lead.forward_end("\xC3\xA9x", 0), lazy_dfa::quit_pos);
+}
+
+// A DFA built to quit ends a scan whose cache thrashes and reports a quit, so its caller finishes on the VM;
+// one that is not keeps flushing and answers. A tiny budget makes the thrash certain: `[ab]*a[ab]{8}c` needs a
+// state per window of nine bytes.
+TEST(lazy_dfa_quits_once_its_cache_thrashes)
+{
+  const auto    st   {dynamic_storage::compile("[ab]*a[ab]{8}c", real::flags::none)};
+  std::string   text;
+  std::uint32_t bits {0x2545F491U};
+  while (text.size() < 4096U) {
+    bits ^= bits << 13U;
+    bits ^= bits >> 17U;
+    bits ^= bits << 5U;
+    text += ((bits & 1U) != 0U) ? 'a' : 'b';
+  }
+  lazy_dfa quits {st.program.code, st.program.classes, 16, nullptr, false, true, true};
+  lazy_dfa keeps {st.program.code, st.program.classes, 16};
+  EXPECT_EQ(quits.forward_end(text), lazy_dfa::quit_pos);
+  EXPECT_EQ(keeps.forward_end(text), real::npos);
+  EXPECT(keeps.thrashing());
+  quits.begin_scan();
+  EXPECT(quits.anchored_end(text, 0).quit);
+
+  // The scans of a program with assertions quit the same way; before a match their dead state keeps seeding,
+  // so the forward one tests for the thrash where it steps rather than where its loop ends.
+  const auto dollar     {dynamic_storage::compile("[ab]*a[ab]{8}c$", real::flags::none)};
+  lazy_dfa   look_quits {dollar.program.code, dollar.program.classes, 16, nullptr, false, true, true};
+  EXPECT(look_quits.looks());
+  EXPECT_EQ(look_quits.forward_end(text), lazy_dfa::quit_pos);
+  look_quits.begin_scan();
+  EXPECT(look_quits.anchored_end(text, 0).quit);
 }

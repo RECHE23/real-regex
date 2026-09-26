@@ -1139,8 +1139,9 @@ namespace real::detail {
    *
    * The cache is bounded: once it reaches \ref state_budget states it is flushed and rebuilt (states are
    * cheap to recompute; a bounded cache keeps memory flat). `state_budget` flushes crossed within one
-   * scan (see \ref begin_scan) trips \ref thrashing — the signal an eventual caller uses to abandon the
-   * DFA and finish that one search on the Pike VM, per-scan and linear, never re-attempting per position.
+   * scan (see \ref begin_scan) trips \ref thrashing. A DFA built to quit then ends the scan and reports a
+   * quit, and its caller finishes that one search on the Pike VM, per-scan and linear, never re-attempting
+   * per position.
    *
    * A program with an op no forward DFA can represent — a position assertion (`\b`, `^`, `$`), a
    * `klass_cp`, or a lookaround — is \ref eligible "ineligible"; this only builds the machinery, it does
@@ -1183,10 +1184,11 @@ namespace real::detail {
      * \param[in] byte_mode Whether a match may start at any byte. In text mode it may not start inside a code
      *                    point; with assertions an empty match could otherwise be found there (the scans
      *                    then do not seed at a continuation byte, as the VM does not).
-     * \param[in] word_quit With Unicode word-ness (\p ascii_word false), carry the word boundaries anyway and
-     *                    quit where one must be decided next to a non-ASCII byte: between two ASCII bytes a
-     *                    Unicode word boundary is an ASCII one. A scan that quits says so, and its caller
-     *                    asks the VM.
+     * \param[in] word_quit Let a scan quit, and say so, where the DFA cannot answer well: with Unicode
+     *                    word-ness (\p ascii_word false), where a word boundary must be decided next to a
+     *                    non-ASCII byte (between two ASCII bytes a Unicode word boundary is an ASCII one);
+     *                    and once the cache thrashes (\ref thrashing), where building states costs more than
+     *                    the VM would. The caller then asks the VM.
      */
     explicit constexpr lazy_dfa(std::span<const instr>      code,
                                 std::span<const char_class> classes,
@@ -1198,7 +1200,7 @@ namespace real::detail {
       : code_ {code}, classes_ {classes},
         alpha_ {shared_alpha != nullptr ? *shared_alpha : compute_lazy_alphabet(code, classes)},
         eligible_ {compute_eligibility(code, ascii_word || word_quit)}, byte_mode_ {byte_mode},
-        word_quit_ {word_quit && !ascii_word},
+        word_quit_ {word_quit && !ascii_word}, may_quit_ {word_quit},
         look_ {std::ranges::any_of(code, [](const instr& in) { return in.op == opcode::assert_position; })},
         plain_ {eligible_ && !look_}, budget_ {budget}
     {
@@ -1320,7 +1322,7 @@ namespace real::detail {
         state = matched ? step(state, byte) : step_seeded(state, byte);
         ++pos;
       }
-      return best_end;
+      return (thrashing_ && may_quit_) ? quit_pos : best_end;
     }
 
     /*! \brief \ref anchored_end's result: the match end (or \ref real::npos) and how far the walk got. */
@@ -1406,6 +1408,9 @@ namespace real::detail {
         state = (trans != no_transition) ? trans : step(state, byte); // anchored: never re-seed -- a match starts at `start` or not at all
         ++pos;
       }
+      if (thrashing_ && may_quit_) {
+        return {.end = npos, .scanned_to = pos, .quit = true};
+      }
       return {.end = best_end, .scanned_to = pos};
     }
 
@@ -1462,8 +1467,9 @@ namespace real::detail {
         trans_[(static_cast<std::size_t>(state) * alpha_.count) + cls] = result;   // no flush: `state` is still valid, so cache the edge
       }
       // On a flush mid-step the caller's `state` id is stale; `result` is a fresh post-flush id, and the
-      // caller re-seeds. (An eventual forward pass falls back to Pike once \ref thrashing trips.)
-      return result;
+      // caller re-seeds. A scan that may quit stops here once the cache thrashes: the dead state ends its
+      // loop, and the scan reports a quit.
+      return (thrashing_ && may_quit_) ? dead_state : result;
     }
 
   private:
@@ -1501,7 +1507,7 @@ namespace real::detail {
       if (stats_.flushes == flushes_before) {
         trans_seeded_[(static_cast<std::size_t>(state) * alpha_.count) + cls] = result;
       }
-      return result;
+      return (thrashing_ && may_quit_) ? dead_state : result; // see step()
     }
 
     /*!
@@ -1544,7 +1550,7 @@ namespace real::detail {
       if (stats_.flushes == flushes_before) {
         state_cut_[state] = result; // no flush: `state` is still valid, memoise the edge
       }
-      return result;
+      return (thrashing_ && may_quit_) ? dead_state : result; // see step()
     }
 
     /*!
@@ -2027,6 +2033,9 @@ namespace real::detail {
         }
         else {
           state = seed ? step_seeded(here, byte) : step(here, byte);
+          if (thrashing_ && may_quit_) {
+            return quit_pos; // before a match the dead state keeps seeding, so the loop would not end on it
+          }
         }
         ++pos;
       }
@@ -2085,6 +2094,9 @@ namespace real::detail {
         const std::uint32_t cached {trans_[(static_cast<std::size_t>(here) * count) + alpha_.of[byte]]};
         state = cached != no_transition ? cached : step(here, byte);
         ++pos;
+      }
+      if (thrashing_ && may_quit_) {
+        return {.end = npos, .scanned_to = pos, .quit = true};
       }
       return {.end = best_end, .scanned_to = pos};
     }
@@ -2212,6 +2224,7 @@ namespace real::detail {
     bool                          eligible_    {false};                                         //!< \ref compute_eligibility's verdict, fixed at construction.
     bool                          byte_mode_   {true};                                          //!< A match may start at any byte (else only at a code-point start).
     bool                          word_quit_   {false};                                         //!< Unicode word boundaries carried, quitting next to a non-ASCII byte.
+    bool                          may_quit_    {false};                                         //!< A scan may quit: on a Unicode word boundary next to non-ASCII, and once its cache thrashes.
     mutable bool                  quit_hit_    {false};                                         //!< Set by holds_ahead() inside one resolve(): that resolution is quit_state.
     bool                          look_        {false};                                         //!< The program carries position assertions (the look paths).
     bool                          plain_       {false};                                         //!< Eligible and without assertions: the scans' one-test common path.

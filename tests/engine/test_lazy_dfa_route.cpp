@@ -336,3 +336,42 @@ TEST(lazy_dfa_span_filler_keeps_the_single_pass)
     EXPECT_EQ(out[i].end, expected[i].second);
   }
 }
+
+// A pattern whose DFA needs a state per window of the subject thrashes the cache: every step builds a state.
+// The scan then quits and the VM finishes the search, instead of building states for the whole subject at
+// four times the VM's cost. The reference is the same regex with the DFAs taken out by their knob.
+//
+// Measured on 1 MB of random a/b (best of three, 2026-09-26, arm64): 0.9x the VM with the quit, 3.8x without
+// it. The bound sits at 1.8x.
+TEST(lazy_dfa_thrash_hands_the_search_to_the_vm)
+{
+  using clock_type = std::chrono::steady_clock;
+  std::string   text;
+  std::uint32_t bits {0x2545F491U};
+  while (text.size() < 1000000U) {
+    bits ^= bits << 13U;
+    bits ^= bits >> 17U;
+    bits ^= bits << 5U;
+    text += ((bits & 1U) != 0U) ? 'a' : 'b';
+  }
+  const auto best_ns {[](const auto& run) {
+                        double best {-1.0};
+                        for (int r {0}; r < 3; ++r) {
+                          const auto   t0 {clock_type::now()};
+                          run();
+                          const double ns {std::chrono::duration<double, std::nano>(clock_type::now() - t0).count()};
+                          best = (best < 0.0 || ns < best) ? ns : best;
+                        }
+                        return best;
+                      }};
+  const real::regex re       {"(a|b)*a(a|b){12}c"};
+  std::size_t       routed_n {0};
+  std::size_t       vm_n     {0};
+  const double      routed   {best_ns([&] { routed_n = re.count_matches(text); })};
+  real::detail::lazy_dfa_route_disabled() = true;
+  const double      vm       {best_ns([&] { vm_n = re.count_matches(text); })};
+  real::detail::lazy_dfa_route_disabled() = false;
+  std::printf("  (a|b)*a(a|b){12}c: %.2fx the VM\n", routed / vm);
+  EXPECT_EQ(routed_n, vm_n);
+  EXPECT(routed < 1.8 * vm);
+}
