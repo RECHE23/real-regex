@@ -225,13 +225,13 @@ TEST(lazy_dfa_a2_unbounded_reach_scales_linearly)
 }
 
 // Inside a long run of candidate bytes that no match ends, each anchored walk from a candidate rereads the
-// run the previous one crossed. The walks give way to one forward pass and one reverse once they have read
-// more than `anchored_walk_budget` bytes per byte advanced. No answer changes and the cost stays linear,
-// so only a comparison sees it: the reference is the bare forward pass over the same text, built from the
-// same program in this binary, so machine speed cancels.
+// run the previous one crossed. The walks give way to one forward pass and one reverse once the walks that
+// found nothing cost clearly more than that pass would (`anchored_walk_bill`). No answer changes and the cost
+// stays linear, so only a comparison sees it: the reference is the bare forward pass over the same text,
+// built from the same program in this binary, so machine speed cancels.
 //
-// Measured on 200 KB (best of seven, 2026-09-26, arm64): with the budget both queries run at 1.04x and
-// 1.02x the bare pass; without it count_matches ran at 18.7x and search at 9.4x. The bound sits at 3x.
+// Measured on 200 KB (best of seven, 2026-09-26, arm64): with the bill both queries run at 1.04x and 1.02x the
+// bare pass; with the walks kept, count_matches ran at 18.7x and search at 9.4x. The bound sits at 3x.
 TEST(lazy_dfa_anchored_walks_give_way_to_one_pass)
 {
   using clock_type = std::chrono::steady_clock;
@@ -269,4 +269,70 @@ TEST(lazy_dfa_anchored_walks_give_way_to_one_pass)
   EXPECT(counts < ratio_bound * pass);
   EXPECT(finds < ratio_bound * pass);
   EXPECT(sink != 0U);
+}
+
+namespace {
+
+  //! Feeds \ref real::detail::anchored_walk_bill a walk that finds nothing every \p every bytes, each reading
+  //! \p length bytes, over \p span bytes; returns the byte crossed when it first gives way, or npos.
+  std::size_t bill_gives_way_at(std::size_t every,
+                                std::size_t length,
+                                std::size_t span)
+  {
+    real::detail::anchored_walk_bill bill {};
+    for (std::size_t crossed {0}; crossed < span; crossed += every) {
+      if (bill.overspent(length, crossed)) {
+        return crossed;
+      }
+    }
+    return real::npos;
+  }
+} // namespace
+
+// The verdicts at the shapes the bill was measured on. Walks that find nothing on most candidates give way
+// early, whether they are short (`[a-z]\d` on prose: one every 1.4 bytes, reading 2) or long
+// (`[a-z ]*x\d\d\d\d`: one every 1.1 bytes, reading 12); sparse candidates keep their walks over a whole
+// megabyte (`q[a-z]*z`, `(?a)\bfox\b|\bdog\b`: one every 28 bytes or more, reading 1 or 2), where the walks
+// cost a tenth of the pass. Without the price of a walk, the short case never gives way; with a verdict
+// that always gives way, the sparse one loses the walks.
+TEST(anchored_walk_bill_verdicts)
+{
+  constexpr std::size_t megabyte {std::size_t {1} << 20U};
+  EXPECT(bill_gives_way_at(2, 2, megabyte) < 256U);          // dense short walks, which read less than the bound alone
+  EXPECT(bill_gives_way_at(1, 12, megabyte) < 256U);         // dense long walks
+  EXPECT(bill_gives_way_at(8, 24, megabyte) < 4096U);        // sparser walks that reread three bytes per byte
+  EXPECT_EQ(bill_gives_way_at(28, 2, megabyte), real::npos); // sparse candidates keep their walks
+  EXPECT_EQ(bill_gives_way_at(12, 3, megabyte), real::npos); // at six tenths of the bound
+}
+
+// Once the walks give way, the span filler that feeds count_matches and find_iter carries on in the single
+// pass itself. Handing the rest back to the per-match route instead walks the same candidates again after
+// every match, which cost count_matches 1.2x to 1.9x on dense matches (`\w+\d+` on prose: 134 M against
+// 248 M instructions over 2 MB). On `\w+\d+` the walks give way before the first match, so a filler that
+// hands back returns no span at all.
+TEST(lazy_dfa_span_filler_keeps_the_single_pass)
+{
+  std::string text;
+  while (text.size() < 4096U) {
+    text += "the quick fox singing 123x and bringing 7x over 42 dogs ";
+  }
+  const real::regex                                re {R"(\w+\d+)"};
+  std::vector<std::pair<std::size_t, std::size_t>> expected;
+  for (const auto& m : re.find_iter(text)) {
+    expected.emplace_back(m.start(), m.end());
+    if (expected.size() == 4U) {
+      break;
+    }
+  }
+  real::detail::dynamic_storage::state_type                                       state;
+  const real::detail::program_view                                                prog    {re.raw_program()}; // the VM holds it by reference
+  real::detail::pike_vm<real::detail::dynamic_storage::state_type, true>          vm      {prog, state};
+  real::detail::pike_vm<real::detail::dynamic_storage::state_type, true>::cp_span out[4]  {};
+  bool                                                                            partial {false};
+  const std::size_t                                                               n       {vm.fill_lazy_dfa_spans(text, 0, out, 4, partial)};
+  EXPECT_EQ(n, 4U);
+  for (std::size_t i {0}; i < n && i < expected.size(); ++i) {
+    EXPECT_EQ(out[i].start, expected[i].first);
+    EXPECT_EQ(out[i].end, expected[i].second);
+  }
 }

@@ -200,13 +200,14 @@ TEST(dfa_with_assertions_starts_no_match_inside_a_code_point)
   }
 }
 
-// A program with assertions finds its matches in one forward pass and one reverse, never by an anchored walk
-// from every candidate: that walk rescans each run the single pass crosses once, and costs no more than a
-// constant factor, so no answer changes and no complexity test sees it. The reference here is the bare
-// forward pass over the same text, built from the same program in this binary, so machine speed cancels.
+// A program with assertions walks from candidates like any other, and gives way to one forward pass and one
+// reverse when those walks reread the text: inside a run that no match ends, a walk per candidate rescans what
+// the single pass crosses once. That costs a constant factor, so no answer changes and no complexity test sees
+// it. The reference here is the bare forward pass over the same text, built from the same program in this
+// binary, so machine speed cancels.
 //
-// Measured on 200 KB (best of seven, 2026-09-26, arm64): both queries run at 1.00x the bare pass; the walk
-// per candidate ran count_matches at 23.6x and 25.2x and search at 11.7x and 12.6x. The bound sits at 3x,
+// Measured on 200 KB (best of seven, 2026-09-26, arm64): both queries run at about 1.0x the bare pass; walks
+// kept to the end ran count_matches at 23.6x and 25.2x and search at 11.7x and 12.6x. The bound sits at 3x,
 // three times the passing ratio and a quarter of the smallest failing one.
 TEST(dfa_with_assertions_scans_once_not_once_per_candidate)
 {

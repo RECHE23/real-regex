@@ -804,6 +804,44 @@ namespace real::detail {
   inline constexpr int max_loop_hops {8};
 
   /*!
+   * \brief Tells when the anchored walks from candidates should give way to one forward pass and one
+   *        reverse, from what the walks that found no match have cost against the distance crossed.
+   *
+   * Each walk costs a setup and the next candidate's search, then a price per byte it reads; inside a run
+   * of candidate bytes that no match ends, each one also rereads the run the last one crossed. Measured on
+   * 2 MB of prose and of log lines (arm64, instructions retired, 2026-09-26), over 20 pattern and subject
+   * pairs, the walks won wherever at most 0.036 walks per byte crossed found nothing, and lost wherever
+   * 0.4 or more did -- by up to 6x, and by 1.2x even among dense matches. Nothing fell between. The score
+   * `8 * walks + bytes read`, per byte crossed, was at most 0.43 where the walks won and at least 4.65
+   * where they lost; the bound sits at 1.5, a factor of about three from each side. Namespace-scoped so its
+   * verdicts are tested on their own, without a search.
+   */
+  struct anchored_walk_bill
+  {
+    static constexpr std::size_t per_walk      {16};   //!< One walk that found nothing, doubled with the rest.
+    static constexpr std::size_t per_walk_byte {2};    //!< One byte such a walk read.
+    static constexpr std::size_t per_pass_byte {3};    //!< One byte crossed: the bound of 1.5, doubled.
+    static constexpr std::size_t slack         {64};   //!< About four walks before any verdict: a batch of spans starts a fresh bill, and the gap each side is wide.
+
+    std::size_t walks                          {0};    //!< Walks that found no match.
+    std::size_t read                           {0};    //!< Bytes those walks read.
+
+    /*!
+     * \brief Bills one walk that found no match, and tells whether the walks should give way.
+     * \param[in] length  Bytes the walk read.
+     * \param[in] crossed Bytes from where the walks began to the walk's candidate.
+     * \return True once the single pass would clearly cost less.
+     */
+    [[nodiscard]] constexpr bool overspent(std::size_t length,
+                                           std::size_t crossed)
+    {
+      ++walks;
+      read += length;
+      return (per_walk * walks) + (per_walk_byte * read) > slack + (per_pass_byte * crossed);
+    }
+  };
+
+  /*!
    * \brief The Pike VM, generic over the scratch-state container policy.
    * \tparam State A \ref basic_pike_state instantiation (vector- or static-backed).
    * \tparam StateBoundToProgram The caller guarantees this state is never used with a second program —
@@ -1625,50 +1663,6 @@ namespace real::detail {
   private:
 
     /*!
-     * \brief How many bytes the anchored walks from candidates may read per byte they advance before the
-     *        scan gives up on them for one forward pass and one reverse.
-     *
-     * Each walk from a candidate rereads the run the previous one crossed: inside a long run of candidate
-     * bytes that no match ends, the walks read the run once per candidate. Measured on 2 MB (arm64,
-     * instructions retired, 2026-09-26), count_matches read 2.3 bytes per byte on `[a-z]+ing|[0-9]+x`, where
-     * the walks win by 28 %, 3.8 on `\w+\d+`, where the single pass wins by 39 %, and 23 on
-     * `[a-z ]*x\d\d\d\d`, where it wins 11.5x. The bound sits well above the crossover the two first
-     * suggest: it catches the large losses, and two points do not locate a crossover.
-     */
-    static constexpr std::size_t anchored_walk_budget {8};
-
-    /*!
-     * \brief Bytes the walks may read before \ref anchored_walk_budget is applied, so a first walk longer
-     *        than the distance advanced so far does not end the walks.
-     */
-    static constexpr std::size_t anchored_walk_slack {512};
-
-    /*!
-     * \brief Bills one anchored walk that found no match, and tells whether the walks have read too much for
-     *        the distance they advanced.
-     *
-     * A walk no longer than \ref anchored_walk_budget is not billed: each candidate advances at least one
-     * byte, so such walks alone never exceed the budget, and leaving them out keeps the common short walk
-     * to one compare.
-     * \param[in,out] walked  Bytes the billed walks read since \p origin.
-     * \param[in]     length  Bytes this walk read.
-     * \param[in]     origin  Where the walks began.
-     * \param[in]     reached The candidate the walk started at.
-     * \return True once a forward pass and a reverse would cost less.
-     */
-    [[nodiscard]] static constexpr bool anchored_walks_overspent(std::size_t& walked,
-                                                                 std::size_t  length,
-                                                                 std::size_t  origin,
-                                                                 std::size_t  reached)
-    {
-      if (length <= anchored_walk_budget) {
-        return false;
-      }
-      walked += length;
-      return walked > anchored_walk_slack + (anchored_walk_budget * (reached - origin));
-    }
-
-    /*!
      * \brief Density-gate sample size and threshold (inner-literal → core/DFA when candidate density is high).
      *
      * Candidate density is what decides: below the crossover the inner literal skips most of the subject,
@@ -2164,13 +2158,11 @@ namespace real::detail {
       std::size_t         scan_start {start};
       const bool          used       {
         with_search_dfas([&](lazy_dfa& fwd, reverse_dfa& rev) {
-                           // A2: anchored-from-candidate when first_bytes is sound; else forward_end + reverse. A
-                           // program with assertions takes the single pass: its anchored walk per candidate rescans
-                           // every run the pass crosses once.
-                           if (prog_.hints.first_bytes_valid && !fwd.looks()) {
+                           // A2: anchored-from-candidate when first_bytes is sound; else forward_end + reverse.
+                           if (prog_.hints.first_bytes_valid) {
                              fwd.begin_scan();
-                             std::size_t c      {scan_start};
-                             std::size_t walked {0};
+                             std::size_t        c    {scan_start};
+                             anchored_walk_bill bill {};
                              while (true) {
                                c = next_candidate(text, c, scan_start);
                                if (c > text.size()) {
@@ -2205,7 +2197,7 @@ namespace real::detail {
                                // No match starts at c: the single pass takes over from the next byte when a walk
                                // reached the end, or when the walks reread the text more than it would.
                                if (anchored.scanned_to >= text.size()
-                                   || anchored_walks_overspent(walked, anchored.scanned_to - c, scan_start, c)) {
+                                   || bill.overspent(anchored.scanned_to - c, c - scan_start)) {
                                  scan_start = c + 1;
                                  break;
                                }
@@ -5956,22 +5948,15 @@ namespace real::detail {
       std::size_t n    {0};
       const bool  used {
         with_search_dfas([&](lazy_dfa& fwd, reverse_dfa& rev) {
-                           // The reverse DFA serves the fallback sub-scan only, which this filler declines; naming it
-                           // keeps the callback signature `with_search_dfas` hands out.
-                           static_cast<void>(rev);
-                           if (fwd.looks()) {
-                             // A program with assertions is scanned once, forward then back (the per-match
-                             // route); an anchored walk per candidate rescans every run and loses to it.
-                             return;
-                           }
                            fwd.begin_scan();
-                           std::size_t pos    {start};
-                           std::size_t walked {0};
+                           std::size_t        pos      {start};
+                           anchored_walk_bill bill     {};
+                           bool        one_pass {false}; // the walks gave way: forward pass and reverse from here on
                            while (n < cap && pos <= text.size() && text.size() - pos >= lazy_dfa_min_input) {
-                             std::size_t hit {npos};
-                             std::size_t end {npos};
-                             std::size_t c   {pos};
-                             while (true) {
+                             std::size_t hit  {npos};
+                             std::size_t end  {npos};
+                             std::size_t from {pos};
+                             for (std::size_t c {pos}; !one_pass;) {
                                c = next_candidate(text, c, pos);
                                if (c > text.size()) {
                                  partial = false; // PROVEN spent: no candidate byte remains anywhere ahead
@@ -5984,11 +5969,23 @@ namespace real::detail {
                                  end = anchored.end;
                                  break;
                                }
-                               if (anchored.scanned_to >= text.size()
-                                   || anchored_walks_overspent(walked, anchored.scanned_to - c, start, c)) {
-                                 return; // the per-match route's territory, which passes once; partial stays set
-                               }
                                ++c;
+                               if (anchored.scanned_to >= text.size()
+                                   || bill.overspent(anchored.scanned_to - (c - 1U), c - 1U - start)) {
+                                 // No match starts before c. Handing the rest to the per-match route would walk
+                                 // these candidates again; the pass takes over here instead.
+                                 one_pass = true;
+                                 from     = c;
+                               }
+                             }
+                             if (one_pass) {
+                               end = fwd.forward_end(text, from);
+                               prefilter_note_scan((end == npos ? text.size() : end) - from);
+                               if (end == npos) {
+                                 partial = false; // PROVEN spent: the pass seeded every position from here
+                                 return;
+                               }
+                               hit = rev.reverse_start(text, end, from);
                              }
                              if (end == hit) {
                                // A zero-width match carries the find_iter empty-match rule (`forbid_empty_until_`),
