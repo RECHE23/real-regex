@@ -8,6 +8,7 @@
 #include <real/frontend/compiler.hpp>
 
 #include <cstring>
+#include <string>
 #include <string_view>
 
 namespace {
@@ -194,4 +195,36 @@ TEST(inner_literal_prefix_program_stored)
 
   const real::detail::dynamic_program p3 {real::detail::compile(real::detail::parse(R"(\\w+)", real::flags::none), real::flags::none)};
   EXPECT(p3.prefix_code.empty());  // no required literal
+}
+
+// A peeled lead boundary is checked at the leftmost start the reverse prefix finds, and only there. That
+// is sound for a lone run of word characters -- every later start follows a word character, so none can
+// be a boundary -- and for nothing else: `\B\w+e` over "99\n99e" wants the start INSIDE the run, and
+// `\b[^ ]+e` over " -abe" wants the start after the `-`. Those decline, and give the Pike VM's answer.
+TEST(inner_literal_peeled_lead_boundary_is_sound)
+{
+  EXPECT(extract(R"(\b\w+@\w+\b)").found());   // a lone word run: the leftmost start is the only boundary
+  EXPECT(extract(R"(\b(\w+)@)").found());      // a group around it changes nothing
+  EXPECT(!extract(R"(\B\w+e)").found());       // `\B` wants a start inside the run
+  EXPECT(!extract(R"(\b[^ ]+e)").found());     // a class with non-word members: a later start can be one
+  EXPECT(!extract(R"(\b\w+ \w+@)").found());   // two runs: a later run's start can be a boundary
+
+  // Behaviour past the inner-literal size floor, against the answers Python's re gives.
+  std::string text(100000, ' ');
+  text += "99\n99e -abe xabcd";
+  const auto span {[&text](std::string_view pattern, real::flags f) {
+                     const auto m {real::regex(pattern, f).search(text)};
+                     return m ? std::to_string(m.start()) + "," + std::to_string(m.end()) : std::string {"none"};
+                   }};
+  EXPECT_EQ(span(R"(\B\w+e)", real::flags::none), std::string {"100004,100006"});
+  EXPECT_EQ(span(R"(\B\w+e)", real::flags::bytes), std::string {"100004,100006"});
+  EXPECT_EQ(span(R"(\B\d+e)", real::flags::none), std::string {"100004,100006"});
+  EXPECT_EQ(span(R"(\b[^ ]+e)", real::flags::bytes), std::string {"100000,100006"}); // `[^ ]` holds the newline
+  EXPECT_EQ(span(R"(\B[a-z]+c)", real::flags::none), std::string {"100013,100016"});
+  EXPECT_EQ(span(R"(\b\w+e)", real::flags::none), std::string {"100003,100006"});
+
+  // The leftmost start of the run is the `-`, which no boundary precedes; the match starts after it.
+  text.resize(100000);
+  text += "-abe";
+  EXPECT_EQ(span(R"(\b[^ ]+e)", real::flags::bytes), std::string {"100001,100004"});
 }
