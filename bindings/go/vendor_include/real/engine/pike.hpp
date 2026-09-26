@@ -1290,6 +1290,14 @@ namespace real::detail {
             }
             const std::size_t e {match_end};
             stop = e;
+            if (prog_.slot_count <= 2) {
+              // No group to fill: the anchored walk's end is the match's, and no engine needs to run. A pattern
+              // whose classes hold its own literal is not one-pass, and fell to the VM here on every candidate.
+              out_slots.assign(2, npos);
+              out_slots[0] = s;
+              out_slots[1] = e;
+              return true;
+            }
             ensure_op_table();
             if (prog_.immut != nullptr && prog_.immut->op_table.has_value() && prog_.immut->op_table->eligible()
                 && prog_.immut->op_table->extract(text, s, e, out_slots)) {

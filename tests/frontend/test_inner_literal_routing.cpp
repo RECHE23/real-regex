@@ -8,6 +8,7 @@
 #include <real/real.hpp>
 
 #include <chrono>
+#include <cstdio>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -437,4 +438,40 @@ TEST(inner_literal_hints_require_the_whole_literal_not_its_first_byte)
     EXPECT_EQ(m.end(), 5U);
   }
   real::detail::inner_literal_guard_disabled() = false;
+}
+
+// With no group to fill, the inner-literal confirm takes the anchored walk's end as the match's and runs no
+// engine. `[^ ]+=[^ ]+` is not one-pass -- its classes hold the literal -- so without that shortcut it ran the
+// Pike VM on every candidate's window. `\S+=\S+` finds the same matches by the same route through its
+// two-run confirm, so it is the reference, and machine speed cancels.
+//
+// Measured on 200 KB of log lines (best of seven, 2026-09-26, arm64): 3.4x the reference with the shortcut,
+// 87x without it. The bound sits at 12x, 3.5x above the one and 7x below the other.
+TEST(il_confirm_without_groups_runs_no_engine)
+{
+  using clock_type = std::chrono::steady_clock;
+  constexpr double ratio_bound {12.0};
+  std::string      text;
+  while (text.size() < 200000U) {
+    text += "2026-09-26 12:04:11 INFO user=alice id=4821 path=/api/v2/items status=200 ms=13\n";
+  }
+  const auto best_ns {[](const auto& run) {
+                        double best {-1.0};
+                        for (int r {0}; r < 7; ++r) {
+                          const auto   t0 {clock_type::now()};
+                          run();
+                          const double ns {std::chrono::duration<double, std::nano>(clock_type::now() - t0).count()};
+                          best = (best < 0.0 || ns < best) ? ns : best;
+                        }
+                        return best;
+                      }};
+  const real::regex re        {"[^ ]+=[^ ]+"};
+  const real::regex reference {R"(\S+=\S+)"};
+  std::size_t       counted   {0};
+  std::size_t       expected  {0};
+  const double      routed    {best_ns([&] { counted = re.count_matches(text); })};
+  const double      baseline  {best_ns([&] { expected = reference.count_matches(text); })};
+  std::printf("  [^ ]+=[^ ]+: %.2fx the two-run confirm\n", routed / baseline);
+  EXPECT_EQ(counted, expected);
+  EXPECT(routed < ratio_bound * baseline);
 }
