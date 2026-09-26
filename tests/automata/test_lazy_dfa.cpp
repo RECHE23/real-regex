@@ -18,7 +18,12 @@ TEST(lazy_dfa_eligibility)
   EXPECT(lazy_dfa(plain.program.code, plain.program.classes).eligible());        // byte classes: representable
 
   const auto asserted {dynamic_storage::compile("\\bfoo", real::flags::none)};
-  EXPECT(!lazy_dfa(asserted.program.code, asserted.program.classes).eligible()); // \b: position assertion
+  EXPECT(!lazy_dfa(asserted.program.code, asserted.program.classes).eligible()); // Unicode \b: no byte decides it
+  EXPECT(lazy_dfa(asserted.program.code, asserted.program.classes, lazy_dfa::state_budget, nullptr, true)
+         .eligible());                                                           // ASCII \b: the byte before and after do
+
+  const auto anchored {dynamic_storage::compile("^foo$", real::flags::multiline)};
+  EXPECT(lazy_dfa(anchored.program.code, anchored.program.classes).eligible());  // anchors: the context and the next byte
 
   const auto uni {dynamic_storage::compile("\\w", real::flags::none)};
   EXPECT(!lazy_dfa(uni.program.code, uni.program.classes).eligible());           // klass_cp: variable-width

@@ -1232,12 +1232,14 @@ namespace real::detail {
           // anchored_end on this thread's confirm DFA (see dfa_lease). begin_scan mirrors the per-regex design
           // forward_end's per-confirm thrash reset; the transition cache itself stays warm across iters.
           std::size_t match_end {npos};
+          bool        looks     {false};
           const bool  dfa_ok    {
             with_search_dfas([&](lazy_dfa& fwd, reverse_dfa& /*rev*/) {
                                fwd.begin_scan();
                                const auto ar {fwd.anchored_end(text, s)};
                                match_end = ar.end;
                                stop      = (ar.end != npos) ? ar.end : ar.scanned_to;
+                               looks     = fwd.looks();
                              })};
           if (dfa_ok) {
             if (match_end == npos) {
@@ -1255,7 +1257,9 @@ namespace real::detail {
                 && prog_.immut->op_table->extract(text, s, e, out_slots)) {
               return true;
             }
-            return run_general<false>(text.substr(0, e), s, run_mode::prefix, out_slots, &stop);
+            // A program that looks past a position (`$`, `\b`) reads the text beyond e: slicing there would turn
+            // e into an end of text for it.
+            return run_general<false>(looks ? text : text.substr(0, e), s, run_mode::prefix, out_slots, &stop);
           }
         }
       }
@@ -1917,10 +1921,18 @@ namespace real::detail {
       if (immut->byte_prog.eligible) {
         immut->alphabet =
           compute_lazy_alphabet(immut->byte_prog.code, immut->byte_prog.classes); // shared by both DFAs
+        immut->look_prog = {};
       }
       else {
         immut->alphabet = {};
+        // Declined on a position assertion, perhaps: the search DFAs can carry anchors and ASCII word
+        // boundaries (lazy_dfa::close_look), so they get the Tier-B program. Every other consumer of
+        // byte_prog keeps reading its verdict.
+        immut->look_prog = build_byte_program(prog_, /*keep_assertions=*/ true);
       }
+      immut->look_alphabet = immut->look_prog.eligible
+                               ? compute_lazy_alphabet(immut->look_prog.code, immut->look_prog.classes)
+                               : lazy_byte_alphabet {};
       immut->il_prefix_prog  = {};
       immut->il_min_haystack = 0;
       if (!prog_.prefix_code.empty()) { // IL: expand the inner-literal prefix once per program
@@ -2010,13 +2022,17 @@ namespace real::detail {
     void ensure_set_search_dfas(detail::regex_immutables& immut,
                                 shared_dfa_set&           set)
     {
-      if (!immut.byte_prog.eligible) {
+      if (set.fwd.has_value()) {
+        return; // built on this set's first search: every later one returns here
+      }
+      const bool          look {!immut.byte_prog.eligible};
+      const byte_program& bp   {look ? immut.look_prog : immut.byte_prog};
+      if (!bp.eligible) {
         return;
       }
-      if (!set.fwd.has_value()) {
-        set.fwd.emplace(immut.byte_prog.code, immut.byte_prog.classes, lazy_dfa::state_budget, &immut.alphabet);
-        set.rev.emplace(immut.byte_prog.code, immut.byte_prog.classes, reverse_dfa::state_budget, &immut.alphabet);
-      }
+      const lazy_byte_alphabet* alpha {look ? &immut.look_alphabet : &immut.alphabet};
+      set.fwd.emplace(bp.code, bp.classes, lazy_dfa::state_budget, alpha, !bp.unicode_word, prog_.byte_mode);
+      set.rev.emplace(bp.code, bp.classes, reverse_dfa::state_budget, alpha, !bp.unicode_word);
     }
 
     /*!
@@ -2104,8 +2120,10 @@ namespace real::detail {
       std::size_t         scan_start {start};
       const bool          used       {
         with_search_dfas([&](lazy_dfa& fwd, reverse_dfa& rev) {
-                           // A2: anchored-from-candidate when first_bytes is sound; else forward_end + reverse.
-                           if (prog_.hints.first_bytes_valid) {
+                           // A2: anchored-from-candidate when first_bytes is sound; else forward_end + reverse. A
+                           // program with assertions takes the single pass: its anchored walk per candidate rescans
+                           // every run the pass crosses once.
+                           if (prog_.hints.first_bytes_valid && !fwd.looks()) {
                              fwd.begin_scan();
                              std::size_t c {scan_start};
                              while (true) {
@@ -2135,7 +2153,8 @@ namespace real::detail {
                                    return;
                                  }
                                  prof::tick_route(prof::route::general_window);
-                                 dfa_result = run_general<Cascade>(text.substr(0, match_end), c, mode, out_slots);
+                                 dfa_result = run_general<Cascade>(fwd.looks() ? text : text.substr(0, match_end), c, mode,
+                                                                   out_slots);
                                  return;
                                }
                                if (anchored.scanned_to >= text.size()) {
@@ -2145,7 +2164,7 @@ namespace real::detail {
                                ++c;
                              }
                            }
-                           const std::size_t match_end {fwd.forward_end(text.substr(scan_start))};
+                           const std::size_t match_end {fwd.forward_end(text, scan_start)};
                            prefilter_note_scan(text.size() - scan_start);
                            if (match_end == npos) {
                              prof::tick_route(prof::route::lazy_dfa_fwd_rev);
@@ -2153,7 +2172,7 @@ namespace real::detail {
                              dfa_result = false;
                              return;
                            }
-                           const std::size_t abs_end   {scan_start + match_end};
+                           const std::size_t abs_end   {match_end};
                            const std::size_t abs_start {rev.reverse_start(text, abs_end, scan_start)};
                            prof::tick_route(prof::route::lazy_dfa_fwd_rev);
                            if (prog_.slot_count <= 2) {
@@ -2170,7 +2189,8 @@ namespace real::detail {
                              return;
                            }
                            prof::tick_route(prof::route::general_window);
-                           dfa_result = run_general<Cascade>(text.substr(0, abs_end), abs_start, mode, out_slots);
+                           dfa_result = run_general<Cascade>(fwd.looks() ? text : text.substr(0, abs_end), abs_start, mode,
+                                                             out_slots);
                          })};
       if (used && dfa_result.has_value()) {
         return dfa_result;
@@ -5891,6 +5911,11 @@ namespace real::detail {
                            // The reverse DFA serves the fallback sub-scan only, which this filler declines; naming it
                            // keeps the callback signature `with_search_dfas` hands out.
                            static_cast<void>(rev);
+                           if (fwd.looks()) {
+                             // A program with assertions is scanned once, forward then back (the per-match
+                             // route); an anchored walk per candidate rescans every run and loses to it.
+                             return;
+                           }
                            fwd.begin_scan();
                            std::size_t pos {start};
                            while (n < cap && pos <= text.size() && text.size() - pos >= lazy_dfa_min_input) {

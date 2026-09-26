@@ -816,6 +816,8 @@ namespace real::detail {
   {
     byte_program           byte_prog;                     //!< klass_cp-expanded byte program (empty until built).
     lazy_byte_alphabet     alphabet;                      //!< byte-class alphabet of byte_prog (shared by both DFAs, else recomputed per scan).
+    byte_program           look_prog;                     //!< byte program with its position assertions kept, built only when byte_prog declined: the search DFAs run it.
+    lazy_byte_alphabet     look_alphabet;                 //!< byte-class alphabet of look_prog.
     std::optional<onepass> op_table;                      //!< one-pass extractor, present iff the pattern is one-pass.
     byte_program           il_prefix_prog;                //!< IL: the inner-literal prefix's byte program (ineligible until built). Per-regex so the reverse DFA that spans it is a cheap shared wrapper, not a per-find_iter rebuild.
     std::size_t            il_min_haystack {};            //!< IL cold floor: first candidate-scan on this regex only fires at or above this size when the haystack HAS a match (0 = always). Warm scans use \ref il_warm_floor (shared reverse DFA in \ref shared_dfa_slot). Checked ONLY after the first memmem hit — no-match is never gated. Scaled by prefix byte-program size; see \ref pike_vm::run_inner_literal.

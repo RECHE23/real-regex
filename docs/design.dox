@@ -384,8 +384,8 @@ finds the match *end*, then the Pike VM runs only inside the window `[start, end
 so the DFA carries the throughput and the Pike VM remains the single source of match semantics.
 
 This subsection is the **contract the forward pass must satisfy**, written before it is wired in
-(\ref real::detail::lazy_dfa is the inert scaffolding today). For every *eligible* pattern (no position
-assertion, no `klass_cp`, no lookaround — those keep the general VM) and every text:
+(\ref real::detail::lazy_dfa is the inert scaffolding today). For every *eligible* pattern (no `klass_cp`, no
+lookaround — those keep the general VM; position assertions came later, see \ref g_dfalook) and every text:
 
 - **Boundary equivalence.** `span(pike) = (s, e)` **iff** the forward pass reports end `e` and the
   start-finder reports `s`. The forward pass is `kFirstMatch`, **not** earliest-end and **not**
@@ -419,7 +419,8 @@ in-repo property-net asserts it at each step from here on.
 **What it is wired to (and what a Unicode class costs).** `pike.hpp` routes an eligible search — after the
 fast paths, at run time, in search mode, past a measured input threshold — through the two passes: the
 forward DFA finds the end, the reverse finds the start, the Pike VM runs only on that `[s, e]` window for
-the groups and the empty-match rule. Eligibility is *no position assertion and no lookaround*; a Unicode
+the groups and the empty-match rule. Eligibility is *no lookaround* (and, since \ref g_dfalook, no position
+assertion a byte cannot decide); a Unicode
 `\w \d \s` (`klass_cp`) is made representable by expanding it, via the shared `utf8_range_sequences`, into a
 byte-range sub-automaton in a **byte-program** the DFAs own — the Pike program stays byte-identical. That
 byte-program is large (a `\w` is thousands of instructions), which surfaced one trap worth recording: the
@@ -540,6 +541,45 @@ differentials that blank the hints to reach the plain VM still reach it; the kno
 
 On `(\w+)@(\w+)` a search over 9 bytes runs about a fifth of the instructions it did on the VM, and one
 over 63 bytes about an eighth, on x86-64 and arm64 alike.
+
+\subsection g_dfalook 7.10 Delivered: position assertions in the lazy DFAs
+
+`^`, `$`, `\A`, `\z`, `\Z` and a `\b` or `\B` whose word-ness is ASCII (`flags::ascii`, `flags::bytes`) no
+longer take a pattern off the lazy DFAs. Each assertion is decided by at most two facts: what the byte
+before the position is, and what the byte after it is (or that the text ends there, or ends with one final
+newline). The DFAs carry the first fact in the state and read the second from the text.
+
+- **The alphabet splits on the two properties.** When the program has an assertion, `\n` and the ASCII word
+  bytes each get classes of their own (two extra predicates in `compute_lazy_alphabet`), so any byte of a
+  class tells whether it is a newline and whether it is a word byte.
+- **Forward: the left context is in the state, the right one is pending.** A state is its ordered program
+  counters plus a sentinel for the context of the position (start of text, after a newline, after a word
+  byte). `\A` and `^` look only behind and are decided while the state is closed. An assertion that looks
+  ahead stays in the state as a pending counter; before the accept test and the step, `resolve` decides
+  it on the class of the next byte, on the end of the text, or on a final newline (two keys past the
+  classes), and memoizes the result per (state, key).
+- **Reverse: the mirror.** The start-finder walks right to left, so the context it carries is the right one
+  (end of text, before a newline, before a word byte, before a final newline). An assertion that looks
+  left is pending and is decided by the byte read next; one decided true stays in the set, because the
+  edges into it are only reached once it is decided.
+- **What is not a seed.** An assertion can empty a start state (`^` in mid-line), so before the first
+  accept the dead state keeps reseeding instead of ending the scan. In text mode no match starts inside
+  a code point: the forward pass does not seed on a continuation byte (an empty `\B` holds between the
+  two bytes of `é`). The reverse pass needs no such rule: every consuming path of a text-mode program
+  begins at an ASCII or lead byte, and an empty match sits at an end the forward pass aligned.
+- **The window is the whole text.** A program that looks past a position reads the bytes beyond the match
+  end, so the Pike VM that fills the groups runs on the whole text from the start, not on a slice that
+  would turn the end into an end of text.
+- **One pass, not one walk per candidate.** A program with assertions takes the forward pass and then the
+  reverse, in `search` and in `count_matches`; an anchored walk from every candidate rescans each run the
+  single pass crosses once. On 2 MB of English-like text (arm64, instructions retired, 2026-09-26),
+  `count_matches` for `(?m)[a-z]+ing$` went from 935 M to 80 M instructions and `[a-z ]*x$` from 1 121 M to
+  79 M; patterns without assertions stayed within 0.2 %. The walk per candidate costs a constant factor,
+  so no complexity test sees it: `dfa_with_assertions_scans_once_not_once_per_candidate` times both
+  queries against the bare forward pass in the same binary.
+
+A `\b` whose word-ness is Unicode, the default in text mode, is still refused: whether `é` is a word
+character is a property of the code point, which no single byte decides.
 
 \section g_map 8. Architecture map: who does what
 
