@@ -156,3 +156,17 @@ TEST(compiled_names_flags_and_substitution)
   EXPECT(!plain.search("a dog"));
   EXPECT(real::compiled::abi_matches());
 }
+
+// can_extend crosses the ABI with the engine's answer, for every anchor of a few texts.
+TEST(compiled_can_extend_agrees_with_the_engine)
+{
+  for (const std::string_view pattern : {"[a-z]+", R"(\w+\b)", "ab|a", R"(\d+(?=x))", "é+"}) {
+    const real::regex           engine {pattern};
+    const real::compiled::regex facade {pattern};
+    for (const std::string_view text : {"", "ab", "ab ", "12x", "é\xC3"}) {
+      for (std::size_t start {0}; start <= text.size() + 1U; ++start) {
+        EXPECT_EQ(facade.can_extend(text, start), engine.can_extend(text, start));
+      }
+    }
+  }
+}

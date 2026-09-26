@@ -150,6 +150,13 @@ enum {
 int real_match(const real_regex* re, const char* text, size_t len,
               size_t start, size_t end, int mode, size_t* spans);
 
+/* Whether real_match(re, text, len, start, len, REAL_MODE_MATCH, ...) could come out differently if the text
+ * continued past `len` -- what a caller lexing text that arrives in pieces asks before committing to a
+ * match. The end of the text is a place more text may follow, not its end, so `$`, `\b` or a lookahead that
+ * read it answer 1. Conservative: 1 where more text might change nothing, never 0 where it would.
+ * Returns 1 or 0, and -1 on error (NULL re, or NULL text with a nonzero len). */
+int real_can_extend(const real_regex* re, const char* text, size_t len, size_t start);
+
 /* Applies a Python re-compatible replacement template across the non-overlapping matches of `re` in
  * [text, text+len), replacing up to `count` of them (0 = all, matching re.sub's default; no pos/endpos —
  * re.sub has none either). Template syntax: \1..\<N> and \g<n>/\g<name> group references, \n \t \r \f \v \a

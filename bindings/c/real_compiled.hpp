@@ -288,6 +288,24 @@ namespace real::compiled {
     }
 
     /*!
+     * \brief Whether \ref match at \p start could come out differently if \p text continued past its end: what
+     *        a caller lexing text that arrives in pieces asks before committing to a match (conservative --
+     *        true may only delay it).
+     * \param[in] text  The text available so far.
+     * \param[in] start The anchor.
+     * \return True when more text could change the match.
+     */
+    [[nodiscard]] bool can_extend(std::string_view text,
+                                  std::size_t      start = 0) const
+    {
+      const int answer {real_can_extend(handle_.get(), text.data(), text.size(), start)};
+      if (answer < 0) {
+        throw error("real::compiled: the library failed while probing a match", 0, npos);
+      }
+      return answer == 1;
+    }
+
+    /*!
      * \brief Every non-overlapping match of \p text, in order (Python `re.finditer`).
      * \param[in] text The subject.
      * \return The matches.

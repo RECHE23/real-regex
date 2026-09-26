@@ -284,13 +284,18 @@ TEST(capi_count_and_match)
   EXPECT(real_match(re, "xxabcyy", 7, 0, 7, REAL_MODE_SEARCH, spans) == 1);
   EXPECT(spans[0] == 2 && spans[1] == 5 && spans[2] == 3 && spans[3] == 4);
   EXPECT(real_match(re, "abcxyz", 6, 0, 6, REAL_MODE_MATCH, spans) == 1 && spans[1] == 3);
-  EXPECT(real_match(re, "xabc", 4, 0, 4, REAL_MODE_MATCH, spans) == 0);        // not anchored at 0
+  EXPECT(real_match(re, "xabc", 4, 0, 4, REAL_MODE_MATCH, spans) == 0);      // not anchored at 0
   EXPECT(real_match(re, "abc", 3, 0, 3, REAL_MODE_FULLMATCH, spans) == 1);
-  EXPECT(real_match(re, "abcx", 4, 0, 4, REAL_MODE_FULLMATCH, spans) == 0);    // a trailing byte
-  EXPECT(real_match(re, "xabcx", 5, 1, 4, REAL_MODE_FULLMATCH, spans) == 1);   // the region [1, 4)
+  EXPECT(real_match(re, "abcx", 4, 0, 4, REAL_MODE_FULLMATCH, spans) == 0);  // a trailing byte
+  EXPECT(real_match(re, "xabcx", 5, 1, 4, REAL_MODE_FULLMATCH, spans) == 1); // the region [1, 4)
   EXPECT(spans[0] == 1 && spans[1] == 4);
-  EXPECT(real_match(re, "xxabc", 5, 0, 5, 99, spans) == 1 && spans[0] == 2);   // an unknown mode searches
-  EXPECT(real_match(re, "abc", 3, 0, 3, REAL_MODE_SEARCH, nullptr) == 1);      // spans are optional
+  EXPECT(real_match(re, "xxabc", 5, 0, 5, 99, spans) == 1 && spans[0] == 2); // an unknown mode searches
+  EXPECT(real_can_extend(re, "ab", 2, 0) == 1);                              // the pattern may still complete
+  EXPECT(real_can_extend(re, "abcx", 4, 0) == 0);                            // decided by the text there
+  EXPECT(real_can_extend(re, nullptr, 0, 0) == 1);                           // (NULL, 0): everything is still to come
+  EXPECT(real_can_extend(re, nullptr, 3, 0) == -1);                          // a claimed length with nothing behind it
+  EXPECT(real_can_extend(nullptr, "abc", 3, 0) == -1);
+  EXPECT(real_match(re, "abc", 3, 0, 3, REAL_MODE_SEARCH, nullptr) == 1);    // spans are optional
   EXPECT(real_match(nullptr, "abc", 3, 0, 3, REAL_MODE_SEARCH, spans) == -1);
   EXPECT(real_match(re, nullptr, 3, 0, 3, REAL_MODE_SEARCH, spans) == -1);
   real_free(re);

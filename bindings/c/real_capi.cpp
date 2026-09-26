@@ -291,6 +291,19 @@ size_t real_count_matches(const real_regex* re, const char* text, size_t len)
   }
 }
 
+int real_can_extend(const real_regex* re, const char* text, size_t len, size_t start)
+{
+  if (re == nullptr || (text == nullptr && len != 0)) {
+    return -1;
+  }
+  try {
+    return re->rx.can_extend(std::string_view(text, len), start) ? 1 : 0;
+  }
+  catch (...) {
+    return -1;
+  }
+}
+
 int real_match(const real_regex* re, const char* text, size_t len,
                size_t start, size_t end, int mode, size_t* spans)
 {
