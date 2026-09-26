@@ -11,6 +11,7 @@
 #include <real/real.hpp>
 
 #include <chrono>
+#include <cstdio>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -221,4 +222,51 @@ TEST(lazy_dfa_a2_unbounded_reach_scales_linearly)
   // while staying genuinely unmatched (no literal terminator in the corpus).
   expect_search_is_linear(R"(\w+.*x)", corpus_all_a);
   expect_search_is_linear(R"((x|y)*z)", corpus_xy);
+}
+
+// Inside a long run of candidate bytes that no match ends, each anchored walk from a candidate rereads the
+// run the previous one crossed. The walks give way to one forward pass and one reverse once they have read
+// more than `anchored_walk_budget` bytes per byte advanced. No answer changes and the cost stays linear,
+// so only a comparison sees it: the reference is the bare forward pass over the same text, built from the
+// same program in this binary, so machine speed cancels.
+//
+// Measured on 200 KB (best of seven, 2026-09-26, arm64): with the budget both queries run at 1.04x and
+// 1.02x the bare pass; without it count_matches ran at 18.7x and search at 9.4x. The bound sits at 3x.
+TEST(lazy_dfa_anchored_walks_give_way_to_one_pass)
+{
+  using clock_type = std::chrono::steady_clock;
+  constexpr double ratio_bound {3.0};
+  std::string      text;
+  while (text.size() < 200000U) {
+    text += "the quick fox singing 123x and bringing 7x over 42 dogs ";
+  }
+  const auto best_ns {[](const auto& run) {
+                        double best {-1.0};
+                        for (int r {0}; r < 7; ++r) {
+                          const auto   t0 {clock_type::now()};
+                          run();
+                          const double ns {std::chrono::duration<double, std::nano>(clock_type::now() - t0).count()};
+                          best = (best < 0.0 || ns < best) ? ns : best;
+                        }
+                        return best;
+                      }};
+  const std::string_view       pattern  {"[a-z ]*x\\d\\d\\d\\d"};
+  const auto                   compiled {real::detail::dynamic_storage::compile(pattern, real::flags::none)};
+  const auto                   pv       {compiled.view()};
+  const auto                   bp       {real::detail::build_byte_program(pv)};
+  real::detail::lazy_dfa       fwd(bp.code, bp.classes);
+  const real::regex            re       {std::string {pattern}};
+  std::size_t                  sink     {0};
+  EXPECT(fwd.eligible());
+  const double pass                     {best_ns([&] {
+                                                   fwd.begin_scan();
+                                                   sink += fwd.forward_end(text, 0);
+                                                 })};
+  const double counts {best_ns([&] { sink += re.count_matches(text); })};
+  const double finds  {best_ns([&] { sink += re.search(text) ? 1U : 0U; })};
+  std::printf("  %s: count_matches %.2fx, search %.2fx the bare forward pass\n", std::string {pattern}.c_str(),
+              counts / pass, finds / pass);
+  EXPECT(counts < ratio_bound * pass);
+  EXPECT(finds < ratio_bound * pass);
+  EXPECT(sink != 0U);
 }
