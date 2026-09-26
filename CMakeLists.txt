@@ -51,6 +51,35 @@ target_compile_features(real INTERFACE cxx_std_20)
 include(GNUInstallDirs)
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
+# The compiled library, opt-in: the engine built once into real::capi, reached through the C ABI
+# (real_capi.h) or the C++ façade over it (real_compiled.hpp), so a consumer's translation units parse
+# neither the engine nor its Unicode tables. Static or shared per BUILD_SHARED_LIBS. The shared
+# library's SOVERSION is the header's REAL_ABI_VERSION, which moves only on an incompatible change.
+option(REAL_BUILD_CAPI "Build the compiled library real::capi (C ABI + real_compiled.hpp)" OFF)
+if(REAL_BUILD_CAPI)
+    file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/bindings/c/real_capi.h REAL_ABI_LINE
+         REGEX "^#define REAL_ABI_VERSION [0-9]+$")
+    string(REGEX REPLACE "^#define REAL_ABI_VERSION " "" REAL_ABI_VERSION "${REAL_ABI_LINE}")
+    add_library(real_capi bindings/c/real_capi.cpp)
+    add_library(real::capi ALIAS real_capi)
+    target_link_libraries(real_capi PRIVATE real)
+    target_include_directories(real_capi PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/bindings/c>
+        $<INSTALL_INTERFACE:include>)
+    target_compile_features(real_capi PUBLIC cxx_std_20)
+    set_target_properties(real_capi PROPERTIES
+        VERSION ${PROJECT_VERSION}
+        SOVERSION ${REAL_ABI_VERSION}
+        EXPORT_NAME capi
+        WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    install(TARGETS real_capi EXPORT realTargets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES bindings/c/real_capi.h bindings/c/real_compiled.hpp
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+endif()
+
 # find_package(real CONFIG) support: export the interface target and generate a
 # config package, so a downstream CMake project can consume the installed
 # library idiomatically, exactly as it consumes any system library:

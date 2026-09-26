@@ -15,12 +15,17 @@ FUZZ_TIME ?= 60
 build: ## Source-only shim (real_capi.cpp / .h) — built by its consumers (c-test, the rust crate), nothing standalone
 	@echo "bindings/c: the C ABI shim is source-only; c-test and the crate build it."
 
-test: ## Build and run the C ABI tests (test_capi.c linked against the shim)
+test: ## Build and run the C ABI tests (test_capi.c) and a consumer of the C++ façade, both linked against the shim
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXSTD) -O2 $(INCLUDES) -c $(ROOT)/bindings/c/real_capi.cpp -o $(BUILD)/real_capi.o
 	cc -I$(ROOT)/bindings/c -c $(ROOT)/bindings/c/test_capi.c -o $(BUILD)/test_capi.o
 	$(CXX) $(BUILD)/test_capi.o $(BUILD)/real_capi.o -o $(BUILD)/capi_test   # C++ driver links the right stdlib
 	$(BUILD)/capi_test
+	# The C++ façade over the same object, compiled with bindings/c ALONE on the include path: include/ is
+	# absent, so a real_compiled.hpp that reached an engine header would fail to compile here.
+	$(CXX) $(CXXSTD) -O2 -Wall -Wextra -Werror -I$(ROOT)/bindings/c $(ROOT)/bindings/c/test_compiled_consumer.cpp \
+	    $(BUILD)/real_capi.o -o $(BUILD)/compiled_consumer
+	$(BUILD)/compiled_consumer
 
 fuzz: ## libFuzzer over the C ABI shim under ASan/UBSan (FUZZ_TIME=secs)
 	@mkdir -p $(FUZZ_DIR)/corpus-capi

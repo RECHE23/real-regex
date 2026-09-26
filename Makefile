@@ -1135,14 +1135,15 @@ example-check: ## [nets] Compile + run every examples/cpp/*.cpp directly against
 # with -DBUILD_TESTING=OFF (noarch LIBDIR=lib, no SciForge — the library stands alone), then
 # consume it the three supported C++ ways plus a negative check that the C++20 guard fires. CXX is
 # honored (run under clang and g++). Used by the install-smoke CI job.
-install-smoke: ## [release] System install end to end: find_package + pkg-config + direct-copy + C++20 guard
+install-smoke: ## [release] System install end to end: find_package + pkg-config + direct-copy + C++20 guard + real::capi
 	@set -e; \
 	 pfx=$$(mktemp -d); cfg=$$(mktemp -d); work=$$(mktemp -d); \
 	 trap 'rm -rf "$$pfx" "$$cfg" "$$work"' EXIT; \
 	 cxx="$${CXX:-c++}"; \
 	 echo "install-smoke: install REAL -> $$pfx (LIBDIR=lib), consumer cxx=$$cxx"; \
 	 $(CMAKE) -S . -B "$$cfg" -DCMAKE_INSTALL_PREFIX="$$pfx" -DCMAKE_INSTALL_LIBDIR=lib \
-	          -DBUILD_TESTING=OFF >/dev/null; \
+	          -DBUILD_TESTING=OFF -DREAL_BUILD_CAPI=ON >/dev/null; \
+	 $(CMAKE) --build "$$cfg" >/dev/null; \
 	 $(CMAKE) --install "$$cfg" >/dev/null; \
 	 expected=$$(sed -nE 's/^version = "([0-9][0-9.]*)"/\1/p' pyproject.toml); \
 	 printf '#include <real/real.hpp>\n#include <real/version.hpp>\nstatic_assert(REAL_VERSION_MAJOR >= 2026, "version macro visible");\nint main(){ const real::regex r("[0-9]+"); return r.search("x42").matched() ? 0 : 1; }\n' > "$$work/smoke.cpp"; \
@@ -1190,7 +1191,14 @@ install-smoke: ## [release] System install end to end: find_package + pkg-config
 	   echo "install-smoke: FAIL — built+ran $$n of $$m examples; missing$$miss"; \
 	   exit 1; \
 	 fi; \
-	 echo "install-smoke: OK (find_package + pkg-config + direct-copy + negative guard + examples $$n of $$m)"
+	 echo "  (f) the compiled library: find_package(real) + real::capi, a consumer of real_compiled.hpp"; \
+	 mkdir -p "$$work/capi"; \
+	 cp bindings/c/test_compiled_consumer.cpp "$$work/capi/consumer.cpp"; \
+	 printf 'cmake_minimum_required(VERSION 3.16)\nproject(c CXX)\nfind_package(real CONFIG REQUIRED)\nadd_executable(c consumer.cpp)\ntarget_link_libraries(c PRIVATE real::capi)\n' > "$$work/capi/CMakeLists.txt"; \
+	 $(CMAKE) -S "$$work/capi" -B "$$work/capi/b" -DCMAKE_PREFIX_PATH="$$pfx" >/dev/null; \
+	 $(CMAKE) --build "$$work/capi/b" >/dev/null; \
+	 "$$work/capi/b/c"; \
+	 echo "install-smoke: OK (find_package + pkg-config + direct-copy + negative guard + examples $$n of $$m + real::capi)"
 
 # Installs the package from the repository root (root pyproject.toml builds the
 # abi3 extension against include/). uninstall removes it by distribution name.

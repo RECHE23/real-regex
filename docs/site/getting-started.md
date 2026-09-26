@@ -27,6 +27,35 @@ required; every header asserts it. Consume with CMake
 a plain `-I`. The [SciForge](https://github.com/RECHE23/sciforge) harness is
 for the test suite, never for the library.
 
+### Compile the engine once
+
+Every translation unit that includes `<real/real.hpp>` compiles the engine
+and its Unicode tables: several seconds per file at `-O2`. A project with
+many such files can build the engine once instead, as a library, and include
+a header that reaches none of it:
+
+```cmake
+# configure REAL with -DREAL_BUILD_CAPI=ON, then:
+find_package(real CONFIG REQUIRED)
+target_link_libraries(app PRIVATE real::capi)
+```
+
+```cpp
+#include <real_compiled.hpp>
+
+const real::compiled::regex re {R"((\w+)@(\w+))"};
+if (const auto m {re.search("mail bob@host now")}) {
+  std::string_view user {m.str(1)};   // "bob"
+}
+```
+
+A file that includes it compiles in under a second. `real::compiled` has
+`search`, `match` and `fullmatch` over a region, `find_all`, `count`, `sub`
+and group names; results own their spans, so they outlive the regex. What it
+gives up is the header-only engine's: `static_regex`, inlining into the
+caller, the compatibility layers. The library is static or shared
+(`BUILD_SHARED_LIBS`), and `real_capi.h` beside it is the same interface in C.
+
 ## First match
 
 The same snippets the landing shows — compiled and run by CI, not illustrations.

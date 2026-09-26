@@ -6,8 +6,9 @@
  *
  * Thread safety: every function taking a `const real_regex*` / `const real_regex_set*` only reads it — a
  * single compiled pattern (or set) may be shared across threads and matched against concurrently, with no
- * external locking. Each call allocates its own scratch (VM state, capture slots) internally; nothing is
- * cached on the handle. `real_iter`/`real_iter_next` are the one exception: an iterator is a cursor with
+ * external locking. Each call allocates its own scratch (VM state, capture slots) internally. The lazily
+ * built DFA caches do live on the handle, as a pool from which each thread leases its own set, so two
+ * threads never scan through one cache. `real_iter`/`real_iter_next` are the one exception: an iterator is a cursor with
  * mutable position, so a single `real_iter*` must not be driven from more than one thread at a time (a
  * fresh iterator per thread is fine, from the same `real_regex*`).
  *
