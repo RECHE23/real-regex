@@ -1295,6 +1295,32 @@ namespace real {
     }
 
     /*!
+     * \brief Whether `match(text, pos)` could come out differently if \p text continued past its end.
+     *
+     * For text that arrives in pieces: a lexer may commit to the match at \p pos only once no further text
+     * can change it. `[a-z]+` on `"ab"` could still grow; on `"ab "` it cannot. The end of \p text is
+     * treated as a place more text may follow, not as the end of the subject, so `$`, `\b` or a lookahead
+     * that read it make the answer true. Conservative: it may say true where more text would in fact
+     * change nothing, never false where it would. Runs the general matcher, not the fast paths.
+     *
+     * \param[in] text The text available so far.
+     * \param[in] pos  Byte offset the match is anchored at.
+     * \return True when text past the end of \p text could change the match at \p pos.
+     */
+    [[nodiscard]] bool can_extend(std::string_view text,
+                                  std::size_t      pos = 0) const
+    {
+      if (pos > text.size()) {
+        return true; // the anchor lies in text still to come
+      }
+      typename Storage::state_type                        state;
+      const detail::program_view&                         prog {program_.view()};
+      detail::pike_vm<typename Storage::state_type, true> vm(prog, state);
+      typename Storage::slot_storage                      slots;
+      return vm.extends_past_end(text, pos, slots);
+    }
+
+    /*!
      * \brief Region-aware `fullmatch`: the whole region `[pos, endpos)` must match.
      *
      * \param[in] text   Subject.

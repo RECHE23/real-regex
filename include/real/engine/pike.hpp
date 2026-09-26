@@ -1120,7 +1120,7 @@ namespace real::detail {
      *                          inner-literal route's linearity backstop.
      * \return True on a match.
      */
-    template <bool Cascade = false, typename OutSlots>
+    template <bool Cascade = false, bool Probe = false, typename OutSlots>
     constexpr bool run_general(std::string_view text,
                                std::size_t      start,
                                run_mode         mode,
@@ -1131,7 +1131,7 @@ namespace real::detail {
       const std::size_t code_size {prog_.code.size()};
       // A short subject never amortises the VM's per-position lists and capture pool; a bit per
       // (instruction, position) is cheaper. The forward-stop contract belongs to the VM's own scan.
-      if (!std::is_constant_evaluated() && prog_.hints.bounded_backtrack != 0U && forward_stop == nullptr
+      if (!Probe && !std::is_constant_evaluated() && prog_.hints.bounded_backtrack != 0U && forward_stop == nullptr
           && sem_ == match_semantics::first && text.size() - start < bounded_backtrack_bits
           && (text.size() - start + 1U) * code_size <= bounded_backtrack_bits && !bounded_backtrack_route_disabled()) {
         return run_bounded_backtrack(text, start, mode, out_slots);
@@ -1161,7 +1161,9 @@ namespace real::detail {
           // away (drop) the seed's own threads here.
           clist->reset(code_size);
         }
-        if (seeding && seed_viable(text, pos, start)) {
+        // A probing run seeds without the prefilter: at the end of the text there is no first byte to test,
+        // which is exactly the case it must see.
+        if (seeding && (Probe || seed_viable(text, pos, start))) {
           // a seed shares the canonical all-npos block (one incref, no allocation); the first save
           // in its closure copies-on-write off it, so block 0 is never mutated.
           if (!prog_.hints.capture_free_walk) {
@@ -1169,8 +1171,8 @@ namespace real::detail {
           }
           // Capture-free: `pos` is what `save 0` at pc 0 will set anyway; passing it keeps the parameter
           // meaningful rather than a sentinel the walk happens to ignore.
-          add_thread(*clist, 0, pos,
-                     prog_.hints.capture_free_walk ? pos : std::size_t {pool_type::npos_block});
+          add_thread<Probe>(*clist, 0, pos,
+                            prog_.hints.capture_free_walk ? pos : std::size_t {pool_type::npos_block});
         }
         if (clist->pcs.empty()) {
           // The seed itself may die in the closure (failed assertion):
@@ -1184,7 +1186,7 @@ namespace real::detail {
           continue;
         }
         detail::prof::tick_thread_count(clist->pcs.size());
-        step(*clist, *nlist, pos, mode, matched, out_slots);
+        step<Probe>(*clist, *nlist, pos, mode, matched, out_slots);
         auto* swap {clist};
         clist = nlist;
         nlist = swap;
@@ -1598,7 +1600,8 @@ namespace real::detail {
 
     //! \brief Match semantics for the current run (\ref match_semantics::first by default; \ref
     //!        match_semantics::longest is the experimental opt-in). Read by \ref step and the fast-path routing.
-    match_semantics sem_ {match_semantics::first};
+    match_semantics sem_     {match_semantics::first};
+    bool            extends_ {false}; //!< Set by a probing run (\ref extends_past_end) when more text could change the answer.
 
     /*!
      * \brief The concrete thread-list type taken from the bound `State`.
@@ -6583,6 +6586,115 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Whether a match anchored at \p start could come out differently if \p text continued past its
+     *        end: the question a caller lexing text that arrives in pieces must answer before it may commit
+     *        to a token.
+     *
+     * Runs the general loop in prefix mode with probes compiled in (\ref probe_step, \ref probe_closure).
+     * In prefix mode a match cuts every lower-priority thread, so a thread still alive when the text runs
+     * out outranks the match found, and more text can change the answer. So can anything that read the end
+     * of the text as an end: an assertion that looks right (`$`, `\Z`, `\b`, ...), a lookahead whose window
+     * reaches it, a code point cut short by it. The answer is conservative -- true where a closer look
+     * might say false -- never the other way: a caller that waits on a true loses time, not tokens.
+     *
+     * \param[in]  text      The text available so far.
+     * \param[in]  start     Where the match is anchored.
+     * \param[out] out_slots The match on \p text as it stands (prefix mode).
+     * \return True when text past the end could change the match.
+     */
+    template <typename OutSlots>
+    bool extends_past_end(std::string_view text,
+                          std::size_t      start,
+                          OutSlots&        out_slots)
+    {
+      forbid_empty_until_ = 0;
+      sem_                = match_semantics::first;
+      extends_            = false;
+      static_cast<void>(run_general<false, true>(text, start, run_mode::prefix, out_slots));
+      return extends_;
+    }
+
+    /*!
+     * \brief Whether the code point at \p pos is not all there: past the end of the text, or a sequence the end
+     *        cuts short -- what a class test or a word boundary at \p pos would read more text to decide.
+     * \param[in] pos The position.
+     * \return True when more text could change what is read at \p pos.
+     */
+    [[nodiscard]] constexpr bool cut_short(std::size_t pos) const
+    {
+      return pos >= text_.size()
+             || (pos + 4U > text_.size() && !detail::decode_codepoint_strict(text_, pos).valid);
+    }
+
+    /*!
+     * \brief \ref extends_past_end's probe on a thread about to consume at \p pos: one alive at the end of the
+     *        text, or at a code point the end cuts short, would read what comes next.
+     * \param[in] instruction The thread's instruction.
+     * \param[in] pos         The position it consumes at.
+     */
+    constexpr void probe_step(const instr& instruction,
+                              std::size_t  pos)
+    {
+      const bool byte_at_end    {(instruction.op == opcode::byte || instruction.op == opcode::klass) && pos >= text_.size()};
+      const bool code_point_cut {instruction.op == opcode::klass_cp && cut_short(pos)};
+      extends_ = extends_ || byte_at_end || code_point_cut;
+    }
+
+    /*!
+     * \brief \ref extends_past_end's probe on an epsilon step at \p pos: an assertion that looks right, a
+     *        lookahead, or a possessive test whose answer the end of the text decides.
+     * \param[in] instruction The instruction the closure walk is at.
+     * \param[in] pos         The position.
+     */
+    constexpr void probe_closure(const instr& instruction,
+                                 std::size_t  pos)
+    {
+      const std::size_t size {text_.size()};
+      bool              open {false};
+      switch (instruction.op) {
+        case opcode::assert_position:
+          switch (static_cast<assert_kind>(instruction.arg8)) {
+            case assert_kind::text_start:
+            case assert_kind::line_start:
+              break; // looks left only
+            case assert_kind::text_end:
+            case assert_kind::line_end:
+              open = pos >= size;
+              break;
+            case assert_kind::text_end_or_final_newline:
+              // `$` also holds just before a FINAL newline, which is final only while nothing follows it.
+              open = pos >= size || (pos + 1U == size && text_[pos] == '\n');
+              break;
+            case assert_kind::word_boundary:
+            case assert_kind::not_word_boundary:
+            case assert_kind::word_start:
+            case assert_kind::word_end:
+              open = cut_short(pos);
+              break;
+          }
+          break;
+        case opcode::assert_lookaround:
+          {
+            // A window that reaches the end may read past it, an assertion at its own end included.
+            const lookaround_sub& sub {prog_.lookarounds[instruction.arg16]};
+            open = sub.direction == look_dir::ahead
+                   && (sub.l_max < 0 || pos + static_cast<std::size_t>(sub.l_max) >= size);
+            break;
+          }
+        case opcode::byte_loop_possessive:
+        case opcode::klass_loop_possessive:
+          open = pos >= size;
+          break;
+        case opcode::klass_cp_loop_possessive:
+          open = cut_short(pos);
+          break;
+        default:
+          break;
+      }
+      extends_ = extends_ || open;
+    }
+
+    /*!
      * \brief Advances every thread of \p clist by the byte at \p pos.
      *
      * Survivors that consumed a byte land in \p nlist. A thread reaching
@@ -6597,7 +6709,7 @@ namespace real::detail {
      * \param[in,out] matched    Set to `true` when a match is recorded.
      * \param[out]    out_slots  Receives the slots of an accepted match.
      */
-    template <typename OutSlots>
+    template <bool Probe = false, typename OutSlots>
     constexpr void step(list_type&  clist,
                         list_type&  nlist,
                         std::size_t pos,
@@ -6609,17 +6721,20 @@ namespace real::detail {
       for (std::size_t i = 0; i < clist.pcs.size(); ++i) {
         const std::int32_t pc          {clist.pcs[i]};
         const instr&       instruction {prog_.code[static_cast<std::size_t>(pc)]};
+        if constexpr (Probe) {
+          probe_step(instruction, pos);
+        }
         switch (instruction.op) {
           case opcode::byte:
             if (pos < text_.size() &&
                 static_cast<std::uint8_t>(text_[pos]) == instruction.arg8) {
-              advance_thread(clist, nlist, i, pc + 1, pos + 1);
+              advance_thread<Probe>(clist, nlist, i, pc + 1, pos + 1);
             }
             break;
           case opcode::klass:
             if (pos < text_.size() &&
                 prog_.classes[instruction.arg16].test(static_cast<std::uint8_t>(text_[pos]))) {
-              advance_thread(clist, nlist, i, pc + 1, pos + 1);
+              advance_thread<Probe>(clist, nlist, i, pc + 1, pos + 1);
             }
             break;
           case opcode::klass_cp:
@@ -6627,8 +6742,8 @@ namespace real::detail {
               const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, pos)};
               if (dc.valid &&
                   cp_class_matches_idx(instruction.arg16, dc.cp)) {
-                advance_thread(clist, nlist, i,
-                               pc + 1 + static_cast<std::int32_t>(4 - dc.length), pos + 1);
+                advance_thread<Probe>(clist, nlist, i,
+                                      pc + 1 + static_cast<std::int32_t>(4 - dc.length), pos + 1);
               }
             }
             break;
@@ -6642,7 +6757,7 @@ namespace real::detail {
             // rationale (a same-round-convergent alternation sibling could otherwise steal
             // priority from a step()-time exit decision, a real bug this redesign closes).
             tier1_capture_on_match(clist, i, instruction.primary_target, pos, pos + 1);
-            advance_thread(clist, nlist, i, pc + 1, pos + 1);
+            advance_thread<Probe>(clist, nlist, i, pc + 1, pos + 1);
             break;
           case opcode::klass_cp_loop_possessive:
             {
@@ -6651,8 +6766,8 @@ namespace real::detail {
               // second decision.
               const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, pos)};
               tier1_capture_on_match(clist, i, instruction.primary_target, pos, pos + dc.length);
-              advance_thread(clist, nlist, i,
-                             pc + 1 + static_cast<std::int32_t>(4 - dc.length), pos + 1);
+              advance_thread<Probe>(clist, nlist, i,
+                                    pc + 1 + static_cast<std::int32_t>(4 - dc.length), pos + 1);
               break;
             }
           case opcode::match:
@@ -6766,6 +6881,7 @@ namespace real::detail {
      * \param[in]     next_pc  Program counter the thread continues at.
      * \param[in]     next_pos Text position the thread continues at.
      */
+    template <bool Probe = false>
     constexpr void advance_thread(list_type&   clist,
                                   list_type&   nlist,
                                   std::size_t  i,
@@ -6776,7 +6892,7 @@ namespace real::detail {
         state_.pool.incref(static_cast<std::uint32_t>(clist.slots[i])); // the new closure holds its own ref
       }
       // Capture-free: this is group 0's start, full width, and no ref exists to take.
-      add_thread(nlist, next_pc, next_pos, clist.slots[i]);
+      add_thread<Probe>(nlist, next_pc, next_pos, clist.slots[i]);
     }
 
     /*!
@@ -6857,6 +6973,7 @@ namespace real::detail {
      *                              field would have been. Otherwise the block the walk starts on, on which
      *                              the caller passes an already-owned ref.
      */
+    template <bool Probe = false>
     constexpr void add_thread(list_type&   list,
                               std::int32_t pc0,
                               std::size_t  pos,
@@ -6889,6 +7006,9 @@ namespace real::detail {
         }
         list.mark_seen(pc);
         const instr& instruction {prog_.code[static_cast<std::size_t>(pc)]};
+        if constexpr (Probe) {
+          probe_closure(instruction, pos);
+        }
         switch (instruction.op) {
           case opcode::jump:
             {
