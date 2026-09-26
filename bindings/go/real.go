@@ -573,6 +573,21 @@ func (r *Regexp) FullMatch(text []byte) bool {
 	return rc == 1
 }
 
+// CanExtend reports whether the match anchored at byte offset start could come out differently if text
+// continued past its end -- what a lexer fed text in pieces asks before committing to a token, and a REAL
+// extension (Go's regexp has no such question). The end of text is where more text may follow, so a `$`,
+// a `\b` or a lookahead that read it answers true. Conservative: true may only make the caller wait, false
+// is final. A negative start panics, as a negative index would.
+func (r *Regexp) CanExtend(text []byte, start int) bool {
+	if start < 0 {
+		panic("real: CanExtend with a negative start")
+	}
+	ctext, freeText := cBytes(text)
+	defer freeText()
+	// An internal error (-1) answers true as well: waiting is the side that loses nothing.
+	return C.real_can_extend(r.re, (*C.char)(ctext), C.size_t(len(text)), C.size_t(start)) != 0
+}
+
 // dollarProbe is a dummy match so regexp.Expand itself classifies templates.
 // A handwritten $1/$&/${name} list was wrong in both directions: it missed
 // $name (Go's documented spelling) and rejected $& (which Expand leaves literal).

@@ -75,3 +75,11 @@ fn backreference_stays_error_even_with_fallback() {
     // The regex crate has no backreferences either, so delegating one still fails — fallback is not magic.
     assert!(RegexBuilder::new(r"(\w+)\1").fallback(true).build().is_err());
 }
+
+#[test]
+fn a_delegated_pattern_cannot_rule_out_more_text() {
+    // The regex crate has no such question, so a delegated pattern answers the conservative way: wait.
+    let re = fb(r"\p{Word_Break=ALetter}+");
+    assert_eq!(re.engine(), Engine::Fallback);
+    assert!(re.can_extend("abc ", 0));
+}

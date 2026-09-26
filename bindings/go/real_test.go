@@ -805,3 +805,25 @@ func TestEmptyMatchEnumerationMatchesStdlib(t *testing.T) {
 		t.Fatalf("denominator changed: %d cases", len(cases)) // a deleted row must fail, not shrink
 	}
 }
+
+func TestCanExtend(t *testing.T) {
+	re := MustCompile("[a-z]+")
+	if !re.CanExtend([]byte("ab"), 0) {
+		t.Error(`[a-z]+ on "ab" may still grow`)
+	}
+	if re.CanExtend([]byte("ab "), 0) {
+		t.Error(`[a-z]+ on "ab " is decided by the space`)
+	}
+	if !MustCompile(`\w+\b`).CanExtend([]byte("ab"), 0) {
+		t.Error(`the boundary reads the next character`)
+	}
+	if MustCompile("a|ab").CanExtend([]byte("a"), 0) {
+		t.Error(`leftmost-first: a wins whatever follows`)
+	}
+	defer func() {
+		if recover() == nil {
+			t.Error("a negative start must panic")
+		}
+	}()
+	_ = re.CanExtend([]byte("ab"), -1)
+}

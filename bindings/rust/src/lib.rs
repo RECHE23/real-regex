@@ -38,6 +38,7 @@ extern "C" {
     fn real_iter_next(iter: *mut RealIter, spans: *mut usize) -> i32;
     fn real_iter_free(iter: *mut RealIter);
     fn real_count_matches(re: *const RealRegex, text: *const c_char, len: usize) -> usize;
+    fn real_can_extend(re: *const RealRegex, text: *const c_char, len: usize, start: usize) -> i32;
     fn real_set_compile_ex(patterns: *const *const c_char, lens: *const usize, n: usize, flags: u32,
                            errbuf: *mut c_char, errbuf_len: usize, code: *mut i32,
                            err_pos: *mut usize) -> *mut RealRegexSet;
@@ -462,6 +463,20 @@ impl Regex {
     /// Like [`is_match`](Regex::is_match), searching from byte offset `start`.
     pub fn is_match_at(&self, text: &str, start: usize) -> bool {
         self.raw(text, Some(start)).advance().is_some()
+    }
+
+    /// Whether the match anchored at byte offset `start` could come out differently if `text` continued
+    /// past its end: what a lexer fed text in pieces asks before committing to a token. The end of `text`
+    /// is where more text may follow, so a `$`, a `\b` or a lookahead that read it answers `true`.
+    /// Conservative: `true` may only make the caller wait, `false` is final. A pattern delegated to the
+    /// `regex` crate (the `fallback` feature) cannot answer, and says `true`.
+    pub fn can_extend(&self, text: &str, start: usize) -> bool {
+        if self.handle.is_null() {
+            return true;
+        }
+        // SAFETY: the handle is live for &self and the pointer/length pair describes `text`.
+        let rc = unsafe { real_can_extend(self.handle, text.as_ptr().cast::<c_char>(), text.len(), start) };
+        rc != 0 // an internal error (-1) answers true as well: waiting is the side that loses nothing
     }
 
     /// The leftmost match's whole-match span, or `None`.
@@ -1571,7 +1586,7 @@ impl<'t> Iterator for SplitN<'_, 't> {
 /// mirrors the top-level string API. Group 0 is the whole match; spans are byte offsets.
 pub mod bytes {
     use super::{
-        compile_handle, real_find_iter, real_find_iter_at, real_free, CaptureLocations, Error,
+        compile_handle, real_can_extend, real_find_iter, real_find_iter_at, real_free, CaptureLocations, Error,
         GroupInfo, RawSpans, RealRegex, SlotStore, FLAG_ASCII, FLAG_DOTALL, FLAG_ICASE,
         FLAG_MULTILINE, FLAG_VERBOSE,
     };
@@ -1661,6 +1676,15 @@ pub mod bytes {
         /// Whether the pattern matches at or after byte offset `start`.
         pub fn is_match_at(&self, text: &[u8], start: usize) -> bool {
             self.raw(text, Some(start)).advance().is_some()
+        }
+
+        /// Whether the match anchored at byte offset `start` could come out differently if `text`
+        /// continued past its end (see [`crate::Regex::can_extend`]). Conservative: `true` may only
+        /// make the caller wait, `false` is final.
+        pub fn can_extend(&self, text: &[u8], start: usize) -> bool {
+            // SAFETY: the handle is live for &self and the pointer/length pair describes `text`.
+            let rc = unsafe { real_can_extend(self.handle, text.as_ptr().cast::<c_char>(), text.len(), start) };
+            rc != 0
         }
 
         /// The capture groups of the leftmost match, or `None`.
