@@ -3302,8 +3302,9 @@ namespace real::detail {
         out_slots.assign(prog_.slot_count, npos);
         return false;
       }
-      std::size_t match_start {start};
-      std::size_t match_end   {};
+      std::size_t match_start     {start};
+      bool        first_candidate {true}; // the window-edge guard's one candidate
+      std::size_t match_end       {};
       while (true) {
         if (mode == run_mode::search) {
           while (match_start < text.size() && !in_class(match_start)) {
@@ -3315,10 +3316,12 @@ namespace real::detail {
           }
           // the DROP rule window-edge guard: a candidate found by scanning forward past a non-class byte
           // is provably preceded by one (the scan just confirmed it), so the DROP rule’s redundancy
-          // argument holds unconditionally there. The ONE exception is the very first candidate
-          // when it coincides with `start` itself (no forward scan occurred) AND `start > 0` --
-          // see pattern_hints::wb_lead_maximal_run's own doc comment for the full argument.
-          if (prog_.hints.wb_lead_maximal_run && match_start == start && match_start > 0 &&
+          // argument holds unconditionally there. The exception is the first candidate when no whole
+          // code point lies between `start` and it (window_cut_before) AND it is past 0 -- see
+          // pattern_hints::wb_lead_maximal_run's own doc comment for the full argument.
+          const bool edge {first_candidate && match_start > 0 && window_cut_before(text, start, match_start)};
+          first_candidate = false;
+          if (prog_.hints.wb_lead_maximal_run && edge &&
               !assertion_holds(assert_kind::word_boundary, match_start, false)) {
             match_start = scan_end(match_start); // no genuine boundary here: skip this whole run
             continue;
@@ -3632,7 +3635,7 @@ namespace real::detail {
         if constexpr (WbEdge) {
           if (wb_edge) {
             wb_edge = false; // can only ever be the FIRST candidate -- see the pre-loop initialiser
-            if (i == start
+            if (window_cut_before(text, start, i)
                 && !detail::assertion_holds(assert_kind::word_boundary, text, i, !prog_.unicode_word)) {
               i = end; // no genuine boundary here: skip this whole run, as the general route does
               continue;
@@ -3839,7 +3842,7 @@ namespace real::detail {
         if constexpr (WbEdge) {
           if (wb_edge) {
             wb_edge = false; // can only ever be the FIRST candidate -- see the pre-loop initialiser
-            if (i == start
+            if (window_cut_before(text, start, i)
                 && !detail::assertion_holds(assert_kind::word_boundary, text, i, !prog_.unicode_word)) {
               i = end; // no genuine boundary here: skip this whole run, as the general route does
               continue;
@@ -4102,6 +4105,7 @@ namespace real::detail {
       }
       std::size_t match_start {start};
       std::size_t match_end   {};
+      bool        first       {true}; // the first candidate: the one the window edge can mislead
       while (true) {
         if (mode == run_mode::search) {
           while (match_start < text.size() && !in_class(match_start)) {
@@ -4112,10 +4116,14 @@ namespace real::detail {
           }
           // the DROP rule window-edge guard: a candidate found by scanning forward past a non-class
           // code point is provably preceded by one, so the DROP rule’s redundancy argument holds
-          // unconditionally there. The ONE exception is the very first candidate when it
-          // coincides with `start` itself (no forward scan occurred) AND `start > 0` -- see
+          // unconditionally there. The exception is the first candidate when no whole code point lies
+          // between `start` and it: it coincides with `start` (no forward scan occurred), or the window
+          // begins inside a code point and the scan crossed only its continuation bytes -- the code
+          // point before the candidate then starts before the window and the scan never saw it. See
           // pattern_hints::wb_lead_maximal_run's own doc comment for the full argument.
-          if (prog_.hints.wb_lead_maximal_run && match_start == start && match_start > 0 &&
+          const bool edge {first && match_start > 0 && window_cut_before(text, start, match_start)};
+          first = false;
+          if (prog_.hints.wb_lead_maximal_run && edge &&
               !assertion_holds(assert_kind::word_boundary, match_start, false)) {
             const std::size_t skip {extend_run(match_start)};
             if (skip == npos) {
@@ -4333,7 +4341,8 @@ namespace real::detail {
         write_success(start, end, body_end);
         return true;
       }
-      std::size_t pos {start};
+      bool        first_candidate {true}; // the window-edge guard's one candidate
+      std::size_t pos             {start};
       while (pos <= text.size()) {
         if (min_nonzero) {
           while (pos < text.size() && !in_class(pos)) {
@@ -4343,7 +4352,9 @@ namespace real::detail {
             break;
           }
         }
-        if (pos == start && b1_edge_blocks(pos)) {
+        const bool edge {first_candidate && window_cut_before(text, start, pos)};
+        first_candidate = false;
+        if (edge && b1_edge_blocks(pos)) {
           // No genuine boundary at the window's own edge: skip past this whole run (a candidate
           // reached by scanning forward past a non-class byte is provably preceded by one, so
           // this guard can never re-trigger on a LATER iteration of this same loop).
@@ -6612,6 +6623,33 @@ namespace real::detail {
       extends_            = false;
       static_cast<void>(run_general<false, true>(text, start, run_mode::prefix, out_slots));
       return extends_;
+    }
+
+    /*!
+     * \brief Whether no whole code point lies between \p start and \p candidate: the candidate IS \p start, or
+     *        only continuation bytes separate them.
+     *
+     * The DROP rule's window-edge guard asks it of a search's first candidate. A candidate reached by
+     * scanning forward past a whole non-class character is preceded by that character, so a dropped leading
+     * `\b` holds there. But when the window begins inside a code point, the scan crosses only that code
+     * point's tail, and the character before the candidate is one that started before the window -- which
+     * the scan never saw, and which may be a word character.
+     *
+     * \param[in] text      The subject.
+     * \param[in] start     The window's start.
+     * \param[in] candidate The first candidate, at or after \p start.
+     * \return True when the character before \p candidate is not one the scan crossed.
+     */
+    [[nodiscard]] static constexpr bool window_cut_before(std::string_view text,
+                                                          std::size_t      start,
+                                                          std::size_t      candidate)
+    {
+      for (std::size_t i {start}; i < candidate; ++i) {
+        if ((static_cast<std::uint8_t>(text[i]) & 0xC0U) != 0x80U) {
+          return false;
+        }
+      }
+      return true;
     }
 
     /*!

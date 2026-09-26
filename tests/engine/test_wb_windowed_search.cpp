@@ -124,8 +124,14 @@ TEST(wb_windowed_search_leading_b_cp_class_loop)
   run_search_matrix(R"(\b\p{L}+)", text,
                     {{.pos  = 0, .endpos = text.size(), .expect = text},
                       {.pos = 1, .endpos = text.size(), .expect = std::nullopt},
+                      // Inside the `é`: the scan to the first candidate crosses only its continuation byte,
+                      // so the letter before the candidate is the `é` the window cut, and no boundary is there.
+                      {.pos = 2, .endpos = text.size(), .expect = std::nullopt},
                       {.pos = 3, .endpos = text.size(), .expect = std::nullopt},
                       {.pos = text.size(), .endpos = text.size(), .expect = std::nullopt}});
+  // The same edge under `\w+`, with a match past it: the first boundary is at `abc`.
+  const std::string mixed {"xe z\ny\xc3\xa9x_\xc3\xa9 abc 99"};
+  run_search_matrix(R"(\b\w+)", mixed, {{.pos = 7, .endpos = mixed.size(), .expect = "abc"}});
 }
 
 // --- possessive loop (run_possessive_loop_generic) --------------------------------------
@@ -140,6 +146,10 @@ TEST(wb_windowed_search_leading_b_possessive_plus)
                       {.pos = 2, .endpos = 5, .expect = std::nullopt},
                       {.pos = 3, .endpos = 5, .expect = std::nullopt},
                       {.pos = 4, .endpos = 5, .expect = std::nullopt}});
+  // A window that begins inside a code point: the letter before the first candidate is the `é` the
+  // window cut, so the first boundary is at `abc`.
+  const std::string mixed {"xe z\ny\xc3\xa9x_\xc3\xa9 abc 99"};
+  run_search_matrix(R"(\b\w++)", mixed, {{.pos = 7, .endpos = mixed.size(), .expect = "abc"}});
 }
 
 TEST(wb_windowed_match_leading_b_possessive_plus)
