@@ -556,8 +556,8 @@ over 63 bytes about an eighth, on x86-64 and arm64 alike.
 
 \subsection g_dfalook 7.10 Delivered: position assertions in the lazy DFAs
 
-`^`, `$`, `\A`, `\z`, `\Z` and a `\b` or `\B` whose word-ness is ASCII (`flags::ascii`, `flags::bytes`) no
-longer take a pattern off the lazy DFAs. Each assertion is decided by at most two facts: what the byte
+`^`, `$`, `\A`, `\z`, `\Z`, `\b`, `\B`, `\<` and `\>` no longer take a pattern off the lazy DFAs (a Unicode
+word boundary with a quit, see the last paragraph). Each assertion is decided by at most two facts: what the byte
 before the position is, and what the byte after it is (or that the text ends there, or ends with one final
 newline). The DFAs carry the first fact in the state and read the second from the text.
 
@@ -590,8 +590,23 @@ newline). The DFAs carry the first fact in the state and read the second from th
   sees them: `dfa_with_assertions_scans_once_not_once_per_candidate` times both queries against the bare
   forward pass in the same binary, and `anchored_walk_bill_verdicts` pins the rule.
 
-A `\b` whose word-ness is Unicode, the default in text mode, is still refused: whether `é` is a word
-character is a property of the code point, which no single byte decides.
+**Unicode word boundaries, and the quit.** In text mode `\b`, `\B`, `\<` and `\>` use Unicode word-ness,
+and whether `é` is a word character is a property of the code point, which no single byte decides. Between
+two ASCII bytes, though, a Unicode word boundary is an ASCII one: the VM reads the byte itself on each side
+when it is below 0x80 (`word_before` and `word_after`). So the search DFAs carry these boundaries as ASCII
+ones and *quit* where one must be decided next to a non-ASCII byte (`undecidable_word`; `\<` and `\>` quit
+only when the ASCII side does not settle them). The alphabet splits off non-ASCII bytes, and their context is
+newline and word at once, a value no ASCII byte takes, so no table grows. The quit is tested in
+`holds_ahead` and `holds_left`, which every decision goes through, including those inside a resolution's
+own closure; `resolve` then returns a sentinel, `quit_state`, that is never interned and survives a flush.
+The scans hand it back in their result (`anchored_result::quit`, `quit_pos`), and every caller of the search
+DFAs gives that search, and only that one, to the VM: a quit is local to where a boundary met a non-ASCII
+byte, and giving the whole subject to the VM after the first quit cost `\b\w+ing\b` 44&nbsp;% more on prose
+with curly quotes. On 1&nbsp;MB of ASCII prose (arm64, 2026-09-26),
+`count_matches` for `\b\w+ing\b` went from 10.2 to 2.8&nbsp;ms; on prose with curly quotes and on French no
+pattern measured was slower, and `\bfox\b|\bdog\b` was three times faster, its walks rarely meeting a
+non-ASCII byte. `dfa_unicode_word_boundaries_quit_next_to_non_ascii` puts a non-ASCII byte at each place a
+route could meet it and compares every query with the plain VM.
 
 \section g_map 8. Architecture map: who does what
 

@@ -508,3 +508,23 @@ TEST(byte_program_declines_an_empty_program)
                                                                  real::flags::none)};
   EXPECT(real::detail::build_byte_program(one.view()).eligible);
 }
+
+// With word_quit, a Unicode word boundary is decided between two ASCII bytes and quits next to a non-ASCII
+// one, in both scans: going back, `\b` before `x` reads the byte to its left, and the end of the match
+// reads its right context from the byte after it.
+TEST(lazy_dfas_quit_on_a_unicode_word_boundary_next_to_non_ascii)
+{
+  const auto  lead      {dynamic_storage::compile(R"(\bx)", real::flags::none)};
+  const auto  trail     {dynamic_storage::compile(R"(x\b)", real::flags::none)};
+  reverse_dfa rev_lead  {lead.program.code, lead.program.classes, reverse_dfa::state_budget, nullptr, false, true};
+  reverse_dfa rev_trail {trail.program.code, trail.program.classes, reverse_dfa::state_budget, nullptr, false, true};
+  lazy_dfa    fwd_lead  {lead.program.code, lead.program.classes, lazy_dfa::state_budget, nullptr, false, false, true};
+  EXPECT(rev_lead.eligible());
+  EXPECT(fwd_lead.eligible());
+  EXPECT_EQ(rev_lead.reverse_start(" x", 2, 0), 1U);                             // ASCII both sides: decided
+  EXPECT_EQ(rev_lead.reverse_start("\xC3\xA9x", 3, 0), reverse_dfa::quit_pos);   // `é` to the left of the boundary
+  EXPECT_EQ(rev_trail.reverse_start("x ", 1, 0), 0U);
+  EXPECT_EQ(rev_trail.reverse_start("x\xC3\xA9", 1, 0), reverse_dfa::quit_pos);  // `é` after the match's end
+  EXPECT_EQ(fwd_lead.forward_end(" x", 0), 2U);
+  EXPECT_EQ(fwd_lead.forward_end("\xC3\xA9x", 0), lazy_dfa::quit_pos);
+}

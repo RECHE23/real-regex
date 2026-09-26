@@ -1031,10 +1031,10 @@ namespace real::detail {
    */
   struct shared_dfa_set
   {
-    std::optional<lazy_dfa>    fwd;              //!< Forward lazy DFA, absent until a route first needs it.
-    std::optional<reverse_dfa> rev;              //!< Reverse lazy DFA, for finding a match start from its end.
-    std::optional<reverse_dfa> il_prefix_rev;    //!< Reverse DFA over the inner-literal PREFIX sub-program only.
-    std::uint64_t              generation {0};   //!< The slot generation these DFAs were built under.
+    std::optional<lazy_dfa>    fwd;                  //!< Forward lazy DFA, absent until a route first needs it.
+    std::optional<reverse_dfa> rev;                  //!< Reverse lazy DFA, for finding a match start from its end.
+    std::optional<reverse_dfa> il_prefix_rev;        //!< Reverse DFA over the inner-literal PREFIX sub-program only.
+    std::uint64_t              generation {0};       //!< The slot generation these DFAs were built under.
   };
 
   /*!

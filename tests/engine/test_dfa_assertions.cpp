@@ -186,7 +186,7 @@ TEST(dfa_with_assertions_agrees_with_the_vm)
 TEST(dfa_with_assertions_starts_no_match_inside_a_code_point)
 {
   for (const std::string_view pattern : {"(?a)\\B", "(?a)\\Bx?", "(?a)\\B\\w*"}) {
-    for (const std::string_view unit : {"a\xC3\xA9", "\xC3\xA9" "a b"}) {
+    for (const std::string_view unit : {"a\xC3\xA9", "\303\251a b"}) {
       std::string text;
       while (text.size() < 700U) {
         text += unit;
@@ -248,4 +248,125 @@ TEST(dfa_with_assertions_scans_once_not_once_per_candidate)
     EXPECT(finds < ratio_bound * pass);
     EXPECT(sink != 0U);
   }
+}
+
+// Unicode word boundaries -- the default in text mode -- ride in the DFAs as ASCII ones and quit where one
+// must be decided next to a non-ASCII byte: there only the code point tells, and the VM answers. Every route
+// that reads the search DFAs must honour the quit: the single match, the walks from candidates, the forward
+// pass and the reverse, the span filler behind count_matches and find_iter, and the inner-literal confirm.
+// The subjects put a non-ASCII byte first, last, in the middle, far from any word and against one, where the
+// Unicode verdict differs from the ASCII one (`é` is a word character: no boundary inside `café`).
+TEST(dfa_unicode_word_boundaries_quit_next_to_non_ascii)
+{
+  static constexpr std::string_view patterns[] {R"(\b\w+\b)",     R"(\b[a-z]+ing\b)", R"(\bfox\b|\bdog\b)", R"(\w+\b)",
+                                                R"(\B\w\B)",      R"(\<\w+\>)",       R"(\b\w+ing\b)",      R"((\w+)\b)",
+                                                R"(\d+\b)",       R"(x\b)",           R"(\b\w)",            R"(\w\b\W)",
+                                                R"(\bcaf\w*\b)",  R"(é\b)",           R"(\b[a-z]+ \d+\b)",  R"(\S+ing\b)"};
+  static constexpr std::string_view inserts[] {"\xC3\xA9", "\xE6\x97\xA5\xE6\x9C\xAC", "\xE2\x80\x99", "caf\xC3\xA9", "a\xC3\xA9x",
+                                               "\303\251a", "fox\xC3\xA9", "\303\251dog"};
+  std::string base;
+  while (base.size() < 700U) {
+    base += "the quick fox singing 123x and bringing 7x over 42 dogs ";
+  }
+  int compared {0};
+  for (const std::string_view pattern : patterns) {
+    const real::regex re {std::string {pattern}};
+    for (const std::string_view insert : inserts) {
+      for (const std::size_t at : {std::size_t {0}, std::size_t {1}, std::size_t {5}, std::size_t {23}, base.size() / 2U,
+                                   base.size() - 3U, base.size()}) {
+        std::string text         {base};
+        text.insert(at, insert);
+        const std::string routed {answers(re, text)};
+        const std::string pure   {pure_answers(pattern, real::flags::none, text)};
+        EXPECT_EQ(routed, vm_answers(re, text));
+        EXPECT_EQ(routed.substr(0, pure.size()), pure);
+        ++compared;
+      }
+    }
+    // All ASCII: nothing quits, and the DFA answers alone.
+    const std::string pure   {pure_answers(pattern, real::flags::none, base)};
+    const std::string routed {answers(re, base)};
+    EXPECT_EQ(routed, vm_answers(re, base));
+    EXPECT_EQ(routed.substr(0, pure.size()), pure);
+  }
+  EXPECT(compared > 800);
+}
+
+// The same, on random patterns built from word boundaries, word classes and `é`, over subjects that mix ASCII
+// words with non-ASCII bytes: every enumerating query against the same regex with the DFAs taken out by their
+// knob. This seed reaches a confirm that ignores a quit and a `\<` decided on one side only, which the fixed
+// cases above do not.
+TEST(dfa_unicode_word_boundaries_random)
+{
+  std::uint64_t state {0x9E3779B97F4A7C14ULL};
+  const auto    next  {[&state] {
+                         state ^= state << 13U;
+                         state ^= state >> 7U;
+                         state ^= state << 17U;
+                         return static_cast<std::uint32_t>(state >> 32U);
+                       }};
+  static constexpr std::string_view assertions[] {"\\b", "\\B", "\\<", "\\>"};
+  static constexpr std::string_view atoms[]      {"\\w+", "\\w*", "\\w", "[a-z]+", "\xC3\xA9", "x", "s", "ing", "\\W", ".",
+                                                  "\\d+", " ", "(\\w+)", "caf", "\\S+", "(?:a|\xC3\xA9)"};
+  static constexpr std::string_view pieces[]     {"a", "\xC3\xA9", "\xE2\x80\x99", "caf", "ing", "s", " ", "x",
+                                                  "\xE6\x97\xA5", "\n", "1", "_", "sing", " the "};
+  for (int round {0}; round < 4000; ++round) {
+    std::string pattern;
+    for (std::uint32_t k {1U + (next() % 4U)}; k > 0; --k) {
+      if (next() % 2U != 0U) {
+        pattern += assertions[next() % std::size(assertions)];
+      }
+      pattern += atoms[next() % std::size(atoms)];
+    }
+    if (next() % 2U != 0U) {
+      pattern += assertions[next() % std::size(assertions)];
+    }
+    std::string text;
+    while (text.size() < 600U + (next() % 300U)) {
+      text += pieces[next() % std::size(pieces)];
+    }
+    const real::regex re      {pattern};
+    const std::string routed  {answers(re, text) + " #" + std::to_string(re.count_matches(text))};
+    real::detail::lazy_dfa_route_disabled() = true;
+    const std::size_t counted {re.count_matches(text)};
+    real::detail::lazy_dfa_route_disabled() = false;
+    const std::string vm      {vm_answers(re, text) + " #" + std::to_string(counted)};
+    if (routed != vm) {
+      std::printf("/%s/ on a %zu-byte subject:\n  dfa  %s\n  vm   %s\n", pattern.c_str(), text.size(),
+                  routed.substr(0, 200).c_str(), vm.substr(0, 200).c_str());
+    }
+    EXPECT_EQ(routed, vm);
+  }
+}
+
+// On an all-ASCII subject no Unicode word boundary quits, so the default text mode runs as fast as `(?a)`:
+// the alphabet keeps non-ASCII bytes in classes of their own. Were a punctuation byte to share a class with
+// them, every boundary next to it would quit and the search would run on the VM, 3.6x slower here.
+// Measured on 200 KB (best of seven, 2026-09-26, arm64): 1.0x; the bound sits at 1.8x.
+TEST(dfa_unicode_word_boundaries_cost_nothing_on_ascii)
+{
+  using clock_type = std::chrono::steady_clock;
+  std::string text;
+  while (text.size() < 200000U) {
+    text += "the quick fox singing 123x and bringing 7x over 42 dogs ";
+  }
+  const auto best_ns {[](const auto& run) {
+                        double best {-1.0};
+                        for (int r {0}; r < 7; ++r) {
+                          const auto   t0 {clock_type::now()};
+                          run();
+                          const double ns {std::chrono::duration<double, std::nano>(clock_type::now() - t0).count()};
+                          best = (best < 0.0 || ns < best) ? ns : best;
+                        }
+                        return best;
+                      }};
+  const real::regex unicode   {R"(\bfox\b|\bdog\b)"};
+  const real::regex ascii     {R"((?a)\bfox\b|\bdog\b)"};
+  std::size_t       n_unicode {0};
+  std::size_t       n_ascii   {0};
+  const double      t_unicode {best_ns([&] { n_unicode = unicode.count_matches(text); })};
+  const double      t_ascii   {best_ns([&] { n_ascii = ascii.count_matches(text); })};
+  std::printf("  \\bfox\\b|\\bdog\\b: Unicode word-ness at %.2fx the ASCII one\n", t_unicode / t_ascii);
+  EXPECT_EQ(n_unicode, n_ascii);
+  EXPECT(t_unicode < 1.8 * t_ascii);
 }

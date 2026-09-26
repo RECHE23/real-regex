@@ -940,8 +940,11 @@ namespace real::detail {
       word.set_range(static_cast<std::uint8_t>('A'), static_cast<std::uint8_t>('Z'));
       word.set_range(static_cast<std::uint8_t>('0'), static_cast<std::uint8_t>('9'));
       word.set(static_cast<std::uint8_t>('_'));
+      char_class high;
+      high.set_range(static_cast<std::uint8_t>(0x80U), static_cast<std::uint8_t>(0xFFU));
       class_preds.push_back(newline);
       class_preds.push_back(word);
+      class_preds.push_back(high); // a Unicode word boundary is decided only between two ASCII bytes
     }
     // A byte's signature -- which predicates hold it -- does not depend on the classes formed so far, so
     // it is built ONCE per byte and then grouped. Comparing each byte against every open class instead
@@ -1094,6 +1097,40 @@ namespace real::detail {
   };
 
   /*!
+   * \brief Whether a word assertion needs a code point's word-ness that one byte does not give: a side it
+   *        reads is a non-ASCII byte, and the ASCII side does not settle it alone.
+   *
+   * Between two ASCII bytes a Unicode word boundary is an ASCII one: the VM reads the byte itself on each
+   * side when it is below 0x80 (assert_eval.hpp). `\<` is false after an ASCII word byte or before an ASCII
+   * non-word byte whatever the other side is, and `\>` likewise, so those need no code point.
+   * \param[in] kind          The assertion.
+   * \param[in] prev_word     The byte before is an ASCII word byte.
+   * \param[in] prev_nonascii The byte before is not ASCII.
+   * \param[in] next_word     The byte after is an ASCII word byte.
+   * \param[in] next_nonascii The byte after is not ASCII.
+   * \return True when only the VM can decide it.
+   */
+  [[nodiscard]] constexpr bool undecidable_word(assert_kind kind,
+                                                bool        prev_word,
+                                                bool        prev_nonascii,
+                                                bool        next_word,
+                                                bool        next_nonascii)
+  {
+    switch (kind) {
+      case assert_kind::word_boundary:
+      case assert_kind::not_word_boundary: return prev_nonascii || next_nonascii;
+      case assert_kind::word_start:        return !prev_word && (next_nonascii || (prev_nonascii && next_word));
+      case assert_kind::word_end:          return !next_word && (prev_nonascii || (next_nonascii && prev_word));
+      case assert_kind::text_start:
+      case assert_kind::text_end:
+      case assert_kind::text_end_or_final_newline:
+      case assert_kind::line_start:
+      case assert_kind::line_end:          return false;
+    }
+    return false;
+  }
+
+  /*!
    * \brief A lazy priority-preserving forward DFA over a Pike program (the kFirstMatch forward pass).
    *
    * A DFA state is the ordered epsilon-closure of a set of program counters (the Pike thread list's PCs,
@@ -1115,6 +1152,8 @@ namespace real::detail {
 
     static constexpr std::uint32_t dead_state     {0};           //!< The empty state: every transition from it stays here.
     static constexpr std::uint32_t no_transition  {0xFFFFFFFFU}; //!< A not-yet-computed cached transition.
+    static constexpr std::uint32_t quit_state     {0xFFFFFFFEU}; //!< What resolve() gives when a Unicode word boundary meets a non-ASCII byte; never interned.
+    static constexpr std::size_t   quit_pos       {npos - 1U};   //!< What forward_end() gives when its scan quit (see \ref anchored_result::quit).
     static constexpr std::uint32_t no_match_idx   {0xFFFFFFFFU}; //!< A state whose ordered set holds no accept.
     static constexpr std::size_t   state_budget   {4096};        //!< Cached states before a flush (the memory cap).
     static constexpr std::size_t   thrash_flushes {2};           //!< Flushes within one scan that trip \ref thrashing.
@@ -1144,24 +1183,30 @@ namespace real::detail {
      * \param[in] byte_mode Whether a match may start at any byte. In text mode it may not start inside a code
      *                    point; with assertions an empty match could otherwise be found there (the scans
      *                    then do not seed at a continuation byte, as the VM does not).
+     * \param[in] word_quit With Unicode word-ness (\p ascii_word false), carry the word boundaries anyway and
+     *                    quit where one must be decided next to a non-ASCII byte: between two ASCII bytes a
+     *                    Unicode word boundary is an ASCII one. A scan that quits says so, and its caller
+     *                    asks the VM.
      */
     explicit constexpr lazy_dfa(std::span<const instr>      code,
                                 std::span<const char_class> classes,
                                 std::size_t                 budget       = state_budget,
                                 const lazy_byte_alphabet*   shared_alpha = nullptr,
                                 bool                        ascii_word   = false,
-                                bool                        byte_mode    = true)
+                                bool                        byte_mode    = true,
+                                bool                        word_quit    = false)
       : code_ {code}, classes_ {classes},
         alpha_ {shared_alpha != nullptr ? *shared_alpha : compute_lazy_alphabet(code, classes)},
-        eligible_ {compute_eligibility(code, ascii_word)}, byte_mode_ {byte_mode},
+        eligible_ {compute_eligibility(code, ascii_word || word_quit)}, byte_mode_ {byte_mode},
+        word_quit_ {word_quit && !ascii_word},
         look_ {std::ranges::any_of(code, [](const instr& in) { return in.op == opcode::assert_position; })},
         plain_ {eligible_ && !look_}, budget_ {budget}
     {
       if (look_) {
-        // The alphabet splits on newline and ASCII word bytes when the program carries assertions
-        // (compute_lazy_alphabet), so any byte of a class tells that class's properties.
+        // The alphabet splits on newline, ASCII word bytes and non-ASCII bytes when the program carries
+        // assertions (compute_lazy_alphabet), so any byte of a class tells that class's properties.
         for (unsigned b {0}; b < 256U; ++b) {
-          class_ctx_[alpha_.of[b]] = ctx_of(static_cast<std::uint8_t>(b));
+          class_ctx_[alpha_.of[b]] = (word_quit_ && b >= 0x80U) ? ctx_nonascii : ctx_of(static_cast<std::uint8_t>(b));
         }
       }
       flush();                 // seeds the dead state (0) and the start state (1)
@@ -1281,8 +1326,9 @@ namespace real::detail {
     /*! \brief \ref anchored_end's result: the match end (or \ref real::npos) and how far the walk got. */
     struct anchored_result
     {
-      std::size_t end;        //!< Match end, or \ref real::npos.
-      std::size_t scanned_to; //!< Position the walk stopped at (see \ref anchored_end).
+      std::size_t end        {npos};  //!< Match end, or \ref real::npos.
+      std::size_t scanned_to {0};     //!< Position the walk stopped at (see \ref anchored_end).
+      bool        quit       {false}; //!< A Unicode word boundary met a non-ASCII byte: the answer is the VM's.
     };
 
     /*!
@@ -1534,7 +1580,38 @@ namespace real::detail {
     static constexpr std::uint8_t  ctx_start      {1};       //!< The position is the start of the text.
     static constexpr std::uint8_t  ctx_newline    {2};       //!< The byte before it is a newline.
     static constexpr std::uint8_t  ctx_word       {4};       //!< The byte before it is an ASCII word byte.
+    static constexpr std::uint8_t  ctx_nonascii   {6};       //!< The byte before it is not ASCII (word_quit only): newline and word at once, which no ASCII byte is.
     static constexpr std::uint16_t key_unknown    {0xFFFFU}; //!< Closing inside a step: the next byte is not known yet.
+
+    /*!
+     * \brief Whether context \p ctx says the byte it describes is a newline.
+     * \param[in] ctx Context bits.
+     * \return True for a newline; false for a non-ASCII byte, which also carries the newline bit.
+     */
+    [[nodiscard]] static constexpr bool is_newline_ctx(std::uint8_t ctx)
+    {
+      return (ctx & ctx_nonascii) == ctx_newline;
+    }
+
+    /*!
+     * \brief Whether context \p ctx says the byte it describes is an ASCII word byte.
+     * \param[in] ctx Context bits.
+     * \return True for an ASCII word byte.
+     */
+    [[nodiscard]] static constexpr bool is_word_ctx(std::uint8_t ctx)
+    {
+      return (ctx & ctx_nonascii) == ctx_word;
+    }
+
+    /*!
+     * \brief Whether context \p ctx says the byte it describes is not ASCII.
+     * \param[in] ctx Context bits.
+     * \return True for a non-ASCII byte under word_quit.
+     */
+    [[nodiscard]] static constexpr bool is_nonascii_ctx(std::uint8_t ctx)
+    {
+      return (ctx & ctx_nonascii) == ctx_nonascii;
+    }
 
     /*!
      * \brief The context a position has after \p b.
@@ -1577,7 +1654,7 @@ namespace real::detail {
       if (kind == assert_kind::text_start) {
         return (ctx & ctx_start) != 0U;
       }
-      return (ctx & ctx_start) != 0U || (ctx & ctx_newline) != 0U; // line_start
+      return (ctx & ctx_start) != 0U || is_newline_ctx(ctx); // line_start
     }
 
     /*!
@@ -1593,9 +1670,14 @@ namespace real::detail {
     {
       const bool end        {key == alpha_.count};
       const bool final_nl   {key == alpha_.count + 1U};
-      const bool next_nl    {final_nl || (key < alpha_.count && (class_ctx_[key] & ctx_newline) != 0U)};
-      const bool next_word  {key < alpha_.count && (class_ctx_[key] & ctx_word) != 0U};
-      const bool prev_word  {(ctx & ctx_word) != 0U};
+      const bool next_nl    {final_nl || (key < alpha_.count && is_newline_ctx(class_ctx_[key]))};
+      const bool next_word  {key < alpha_.count && is_word_ctx(class_ctx_[key])};
+      const bool prev_word  {is_word_ctx(ctx)};
+      if (word_quit_ && undecidable_word(kind, prev_word, is_nonascii_ctx(ctx), next_word,
+                                         key < alpha_.count && is_nonascii_ctx(class_ctx_[key]))) {
+        quit_hit_ = true; // resolve() turns the whole resolution into quit_state
+        return false;
+      }
       switch (kind) {
         case assert_kind::text_end:                  return end;
         case assert_kind::text_end_or_final_newline: return end || final_nl;
@@ -1831,6 +1913,7 @@ namespace real::detail {
       pcs.pop_back();
       std::vector<std::int32_t> out;
       std::vector<char>         seen(code_.size(), 0);
+      quit_hit_ = false;
       for (const std::int32_t pc : pcs) {
         const instr& in {code_[static_cast<std::size_t>(pc)]};
         if (in.op == opcode::assert_position) {
@@ -1842,6 +1925,10 @@ namespace real::detail {
           seen[static_cast<std::size_t>(pc)] = 1;
           out.push_back(pc);
         }
+      }
+      if (quit_hit_) {
+        res_[slot] = quit_state; // the same state and key meet the same byte: memoizing it is exact
+        return quit_state;
       }
       const std::size_t   flushes_before {stats_.flushes};
       const std::uint32_t result         {intern(out)};
@@ -1882,10 +1969,10 @@ namespace real::detail {
      * \param[in] pos  The position.
      * \return The start context at 0, else the context after the byte before \p pos.
      */
-    [[nodiscard]] static constexpr std::uint8_t ctx_at(std::string_view text,
-                                                       std::size_t      pos)
+    [[nodiscard]] std::uint8_t ctx_at(std::string_view text,
+                                      std::size_t      pos) const
     {
-      return pos == 0 ? ctx_start : ctx_of(static_cast<std::uint8_t>(text[pos - 1U]));
+      return pos == 0 ? ctx_start : class_ctx_[alpha_.of[static_cast<std::uint8_t>(text[pos - 1U])]];
     }
 
     /*!
@@ -1909,7 +1996,13 @@ namespace real::detail {
       const std::uint16_t count    {alpha_.count};
       while (true) {
         // Only a state holding a pending assertion reads what follows it; the rest are their own resolution.
-        std::uint32_t here {state_pending_[state] != 0U ? resolve(state, key_at(text, pos)) : state};
+        std::uint32_t here {state};
+        if (state_pending_[state] != 0U) {
+          here = resolve(state, key_at(text, pos));
+          if (here == quit_state) {
+            return quit_pos;
+          }
+        }
         if (state_match_idx_[here] != no_match_idx) {
           best_end = pos;
           matched  = true;
@@ -1969,7 +2062,14 @@ namespace real::detail {
       std::size_t         pos      {start};
       const std::uint16_t count    {alpha_.count};
       while (true) {
-        std::uint32_t here {state_pending_[state] != 0U ? resolve(state, key_at(text, pos)) : state};
+        std::uint32_t here {state};
+        if (state_pending_[state] != 0U) {
+          here = resolve(state, key_at(text, pos));
+          if (here == quit_state) {
+            // Even past an accept: whether a longer match wins is what the boundary would have told.
+            return {.end = npos, .scanned_to = pos, .quit = true};
+          }
+        }
         if (state_match_idx_[here] != no_match_idx) {
           best_end = pos;
           const std::uint32_t cut {state_cut_[here]};
@@ -2111,6 +2211,8 @@ namespace real::detail {
     lazy_byte_alphabet            alpha_;                                                       //!< Byte-to-class map; its count is the row stride.
     bool                          eligible_    {false};                                         //!< \ref compute_eligibility's verdict, fixed at construction.
     bool                          byte_mode_   {true};                                          //!< A match may start at any byte (else only at a code-point start).
+    bool                          word_quit_   {false};                                         //!< Unicode word boundaries carried, quitting next to a non-ASCII byte.
+    mutable bool                  quit_hit_    {false};                                         //!< Set by holds_ahead() inside one resolve(): that resolution is quit_state.
     bool                          look_        {false};                                         //!< The program carries position assertions (the look paths).
     bool                          plain_       {false};                                         //!< Eligible and without assertions: the scans' one-test common path.
     std::array<std::uint8_t, 256> class_ctx_   {};                                              //!< Class -> the context after one of its bytes (look programs).
@@ -2182,6 +2284,8 @@ namespace real::detail {
 
     static constexpr std::uint32_t dead_state    {0};           //!< The empty state: every transition from it stays here.
     static constexpr std::uint32_t no_transition {0xFFFFFFFFU}; //!< A not-yet-computed cached transition.
+    static constexpr std::uint32_t quit_state    {0xFFFFFFFEU}; //!< What resolve() gives when a Unicode word boundary meets a non-ASCII byte; never interned.
+    static constexpr std::size_t   quit_pos      {npos - 1U};   //!< What reverse_start() gives when its scan quit.
     static constexpr std::size_t   state_budget  {4096};        //!< Cached states before a flush (the memory cap).
 
     /*!
@@ -2192,21 +2296,24 @@ namespace real::detail {
      * \param[in] shared_alpha A precomputed alphabet the caller shares per regex, or null to compute it here.
      * \param[in] ascii_word   Whether the program's word boundaries use ASCII word-ness: only then does one
      *                         byte decide them. False, the default, declines any word boundary.
+     * \param[in] word_quit    With Unicode word-ness, carry the word boundaries and quit next to a non-ASCII
+     *                         byte (see \ref lazy_dfa's).
      */
     explicit constexpr reverse_dfa(std::span<const instr>      code,
                                    std::span<const char_class> classes,
                                    std::size_t                 budget       = state_budget,
                                    const lazy_byte_alphabet*   shared_alpha = nullptr,
-                                   bool                        ascii_word   = false)
+                                   bool                        ascii_word   = false,
+                                   bool                        word_quit    = false)
       : code_ {code}, classes_ {classes},
         alpha_ {shared_alpha != nullptr ? *shared_alpha : compute_lazy_alphabet(code, classes)},
-        eligible_ {compute_eligibility(code, ascii_word)},
+        eligible_ {compute_eligibility(code, ascii_word || word_quit)}, word_quit_ {word_quit && !ascii_word},
         look_ {std::ranges::any_of(code, [](const instr& in) { return in.op == opcode::assert_position; })},
         budget_ {budget}
     {
       if (look_) {
         for (unsigned b {0}; b < 256U; ++b) {
-          class_ctx_[alpha_.of[b]] = right_ctx_of(static_cast<std::uint8_t>(b));
+          class_ctx_[alpha_.of[b]] = (word_quit_ && b >= 0x80U) ? rctx_nonascii : right_ctx_of(static_cast<std::uint8_t>(b));
         }
       }
       // Transpose the program: rev_eps_[x] = the pcs with a forward epsilon edge to x; rev_consume_[x] = the
@@ -2330,6 +2437,38 @@ namespace real::detail {
     static constexpr std::uint8_t  rctx_newline  {2};       //!< The byte after it is a newline.
     static constexpr std::uint8_t  rctx_word     {4};       //!< The byte after it is an ASCII word byte.
     static constexpr std::uint8_t  rctx_final_nl {8};       //!< The byte after it is a newline that ends the text.
+    static constexpr std::uint8_t  rctx_nonascii {6};       //!< The byte after it is not ASCII (word_quit only): newline and word at once, which no ASCII byte is.
+
+    /*!
+     * \brief Whether right context \p ctx says the byte it describes is a newline.
+     * \param[in] ctx Context bits.
+     * \return True for a newline; false for a non-ASCII byte, which also carries the newline bit.
+     */
+    [[nodiscard]] static constexpr bool is_newline_ctx(std::uint8_t ctx)
+    {
+      return (ctx & rctx_nonascii) == rctx_newline;
+    }
+
+    /*!
+     * \brief Whether right context \p ctx says the byte it describes is an ASCII word byte.
+     * \param[in] ctx Context bits.
+     * \return True for an ASCII word byte.
+     */
+    [[nodiscard]] static constexpr bool is_word_ctx(std::uint8_t ctx)
+    {
+      return (ctx & rctx_nonascii) == rctx_word;
+    }
+
+    /*!
+     * \brief Whether right context \p ctx says the byte it describes is not ASCII.
+     * \param[in] ctx Context bits.
+     * \return True for a non-ASCII byte under word_quit.
+     */
+    [[nodiscard]] static constexpr bool is_nonascii_ctx(std::uint8_t ctx)
+    {
+      return (ctx & rctx_nonascii) == rctx_nonascii;
+    }
+
     static constexpr std::uint16_t key_unknown   {0xFFFFU}; //!< Closing inside a step: the byte to the left is not read yet.
     // A set's entries: a pc reached; an assertion still to decide, encoded below every context sentinel
     // (a decided assertion is an ordinary member -- the consuming edge into it must stay findable); and at
@@ -2363,13 +2502,13 @@ namespace real::detail {
      * \param[in] pos  The position.
      * \return Its context bits.
      */
-    [[nodiscard]] static constexpr std::uint8_t right_ctx_at(std::string_view text,
-                                                             std::size_t      pos)
+    [[nodiscard]] std::uint8_t right_ctx_at(std::string_view text,
+                                            std::size_t      pos) const
     {
       if (pos >= text.size()) {
         return rctx_end;
       }
-      const std::uint8_t ctx {right_ctx_of(static_cast<std::uint8_t>(text[pos]))};
+      const std::uint8_t ctx {class_ctx_[alpha_.of[static_cast<std::uint8_t>(text[pos])]]};
       return (text[pos] == '\n' && pos + 1U == text.size()) ? static_cast<std::uint8_t>(ctx | rctx_final_nl) : ctx;
     }
 
@@ -2397,7 +2536,7 @@ namespace real::detail {
       switch (kind) {
         case assert_kind::text_end:                  return (ctx & rctx_end) != 0U;
         case assert_kind::text_end_or_final_newline: return (ctx & rctx_end) != 0U || (ctx & rctx_final_nl) != 0U;
-        case assert_kind::line_end:                  return (ctx & rctx_end) != 0U || (ctx & rctx_newline) != 0U;
+        case assert_kind::line_end:                  return (ctx & rctx_end) != 0U || is_newline_ctx(ctx);
         default:                                     return false;
       }
     }
@@ -2414,9 +2553,14 @@ namespace real::detail {
                                   std::uint16_t key) const
     {
       const bool start     {key == alpha_.count};
-      const bool prev_nl   {!start && (class_ctx_[key] & rctx_newline) != 0U};
-      const bool prev_word {!start && (class_ctx_[key] & rctx_word) != 0U};
-      const bool next_word {(ctx & rctx_word) != 0U};
+      const bool prev_nl   {!start && is_newline_ctx(class_ctx_[key])};
+      const bool prev_word {!start && is_word_ctx(class_ctx_[key])};
+      const bool next_word {is_word_ctx(ctx)};
+      if (word_quit_ && undecidable_word(kind, prev_word, !start && is_nonascii_ctx(class_ctx_[key]), next_word,
+                                         is_nonascii_ctx(ctx))) {
+        quit_hit_ = true; // resolve() turns the whole resolution into quit_state
+        return false;
+      }
       switch (kind) {
         case assert_kind::text_start:        return start;
         case assert_kind::line_start:        return start || prev_nl;
@@ -2511,6 +2655,7 @@ namespace real::detail {
       pcs.pop_back();
       std::vector<char>         seen(code_.size(), 0);
       std::vector<std::int32_t> set;
+      quit_hit_ = false;
       for (const std::int32_t entry : pcs) {
         const std::int32_t pc {is_pending(entry) ? pending_base - entry : entry};
         seen[static_cast<std::size_t>(pc)] = 1;
@@ -2520,6 +2665,10 @@ namespace real::detail {
         }
       }
       rev_closure_look(set, seen, ctx, key); // no entry pending: the key decides every assertion it meets
+      if (quit_hit_) {
+        res_[slot] = quit_state; // the same state and key meet the same bytes: memoizing it is exact
+        return quit_state;
+      }
       set.erase(std::unique(set.begin(), set.end()), set.end());
       const std::size_t   flushes_before {flushes_};
       const std::uint32_t result         {intern(set)};
@@ -2605,6 +2754,9 @@ namespace real::detail {
       while (true) {
         const std::uint16_t key  {pos == 0 ? alpha_.count : static_cast<std::uint16_t>(alpha_.of[static_cast<std::uint8_t>(text[pos - 1U])])};
         const std::uint32_t here {resolve(state, key)};
+        if (here == quit_state) {
+          return quit_pos;
+        }
         // No start lands inside a code point in text mode, with no test for it: every consuming path of a
         // text-mode program begins at an ASCII or lead byte, and an empty match sits at an end the forward
         // pass already aligned.
@@ -2814,6 +2966,8 @@ namespace real::detail {
     std::span<const char_class>                                                classes_;                    //!< Its byte classes, likewise borrowed.
     lazy_byte_alphabet                                                         alpha_;                      //!< Byte-to-class map; its count is the row stride.
     bool                                                                       eligible_    {false};        //!< \ref compute_eligibility's verdict, fixed at construction.
+    bool                                                                       word_quit_   {false};        //!< Unicode word boundaries carried, quitting next to a non-ASCII byte.
+    mutable bool                                                               quit_hit_    {false};        //!< Set by holds_left() inside one resolve(): that resolution is quit_state.
     bool                                                                       look_        {false};        //!< The program carries position assertions (the look paths).
     std::array<std::uint8_t, 256>                                              class_ctx_   {};             //!< Class -> the right context a byte of it gives (look programs).
     std::array<std::uint32_t, 16>                                              starts_      {};             //!< Right context -> start state, per \ref flush (look programs).

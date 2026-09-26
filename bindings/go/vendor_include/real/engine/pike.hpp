@@ -1271,6 +1271,7 @@ namespace real::detail {
           // forward_end's per-confirm thrash reset; the transition cache itself stays warm across iters.
           std::size_t match_end {npos};
           bool        looks     {false};
+          bool        quit      {false};
           const bool  dfa_ok    {
             with_search_dfas([&](lazy_dfa& fwd, reverse_dfa& /*rev*/) {
                                fwd.begin_scan();
@@ -1278,8 +1279,12 @@ namespace real::detail {
                                match_end = ar.end;
                                stop      = (ar.end != npos) ? ar.end : ar.scanned_to;
                                looks     = fwd.looks();
+                               quit      = ar.quit;
                              })};
-          if (dfa_ok) {
+          if (quit) {
+            stop = s; // the walk proved nothing: the VM below confirms from s
+          }
+          if (dfa_ok && !quit) {
             if (match_end == npos) {
               // A bare forward_end miss would set stop = text.size(); keep a floor of s for the IL backstop.
               if (stop < s) {
@@ -2077,8 +2082,11 @@ namespace real::detail {
         return;
       }
       const lazy_byte_alphabet* alpha {look ? &immut.look_alphabet : &immut.alphabet};
-      set.fwd.emplace(bp.code, bp.classes, lazy_dfa::state_budget, alpha, !bp.unicode_word, prog_.byte_mode);
-      set.rev.emplace(bp.code, bp.classes, reverse_dfa::state_budget, alpha, !bp.unicode_word);
+      // Unicode word boundaries ride along and quit next to a non-ASCII byte; every caller of these DFAs
+      // reads the quit and asks the VM.
+      set.fwd.emplace(bp.code, bp.classes, lazy_dfa::state_budget, alpha, !bp.unicode_word, prog_.byte_mode,
+                      /*word_quit=*/ true);
+      set.rev.emplace(bp.code, bp.classes, reverse_dfa::state_budget, alpha, !bp.unicode_word, /*word_quit=*/ true);
     }
 
     /*!
@@ -2139,6 +2147,9 @@ namespace real::detail {
       // flag would permanently decline the DFA route for every later search on this regex — re-arm
       // per logical entry. Callers that walk many candidates (A2) still call begin_scan once more
       // for a single thrash window across that loop; a double-reset here is harmless.
+      // A scan that quits hands only its own search to the VM: the next one tries the DFAs again, since a
+      // quit is local to where a boundary met a non-ASCII byte (on prose with curly quotes, giving the whole
+      // subject to the VM after the first quit cost \b\w+ing\b 44 % more).
       fwd.begin_scan();
       std::forward<Fn>(fn)(fwd, rev);
       return true;
@@ -2179,6 +2190,9 @@ namespace real::detail {
                                  return;
                                }
                                const auto anchored {fwd.anchored_end(text, c)};
+                               if (anchored.quit) {
+                                 return; // dfa_result stays empty: the VM answers this search
+                               }
                                prefilter_note_scan(anchored.scanned_to - c);
                                if (anchored.end != npos) {
                                  const std::size_t match_end {anchored.end};
@@ -2213,6 +2227,9 @@ namespace real::detail {
                              }
                            }
                            const std::size_t match_end {fwd.forward_end(text, scan_start)};
+                           if (match_end == lazy_dfa::quit_pos) {
+                             return; // dfa_result stays empty: the VM answers this search
+                           }
                            prefilter_note_scan(text.size() - scan_start);
                            if (match_end == npos) {
                              prof::tick_route(prof::route::lazy_dfa_fwd_rev);
@@ -2222,6 +2239,9 @@ namespace real::detail {
                            }
                            const std::size_t abs_end   {match_end};
                            const std::size_t abs_start {rev.reverse_start(text, abs_end, scan_start)};
+                           if (abs_start == reverse_dfa::quit_pos) {
+                             return; // the start is a boundary's to tell: the VM answers this search
+                           }
                            prof::tick_route(prof::route::lazy_dfa_fwd_rev);
                            if (prog_.slot_count <= 2) {
                              out_slots.assign(2, npos);
@@ -5971,6 +5991,9 @@ namespace real::detail {
                                  return;
                                }
                                const auto anchored {fwd.anchored_end(text, c)};
+                               if (anchored.quit) {
+                                 return; // the per-match route's territory; partial stays set
+                               }
                                prefilter_note_scan(anchored.scanned_to - c);
                                if (anchored.end != npos) {
                                  hit = c;
@@ -5988,12 +6011,18 @@ namespace real::detail {
                              }
                              if (one_pass) {
                                end = fwd.forward_end(text, from);
+                               if (end == lazy_dfa::quit_pos) {
+                                 return; // partial stays set
+                               }
                                prefilter_note_scan((end == npos ? text.size() : end) - from);
                                if (end == npos) {
                                  partial = false; // PROVEN spent: the pass seeded every position from here
                                  return;
                                }
                                hit = rev.reverse_start(text, end, from);
+                               if (hit == reverse_dfa::quit_pos) {
+                                 return; // partial stays set
+                               }
                              }
                              if (end == hit) {
                                // A zero-width match carries the find_iter empty-match rule (`forbid_empty_until_`),
