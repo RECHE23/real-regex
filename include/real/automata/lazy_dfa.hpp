@@ -2603,8 +2603,8 @@ namespace real::detail {
       std::size_t   best  {npos};
       std::size_t   pos   {e};
       while (true) {
-        const auto    key  {pos == 0 ? alpha_.count : alpha_.of[static_cast<std::uint8_t>(text[pos - 1U])]};
-        std::uint32_t here {resolve(state, key)};
+        const std::uint16_t key  {pos == 0 ? alpha_.count : static_cast<std::uint16_t>(alpha_.of[static_cast<std::uint8_t>(text[pos - 1U])])};
+        const std::uint32_t here {resolve(state, key)};
         // No start lands inside a code point in text mode, with no test for it: every consuming path of a
         // text-mode program begins at an ASCII or lead byte, and an empty match sits at an end the forward
         // pass already aligned.

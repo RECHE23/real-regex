@@ -1625,6 +1625,50 @@ namespace real::detail {
   private:
 
     /*!
+     * \brief How many bytes the anchored walks from candidates may read per byte they advance before the
+     *        scan gives up on them for one forward pass and one reverse.
+     *
+     * Each walk from a candidate rereads the run the previous one crossed: inside a long run of candidate
+     * bytes that no match ends, the walks read the run once per candidate. Measured on 2 MB (arm64,
+     * instructions retired, 2026-09-26), count_matches read 2.3 bytes per byte on `[a-z]+ing|[0-9]+x`, where
+     * the walks win by 28 %, 3.8 on `\w+\d+`, where the single pass wins by 39 %, and 23 on
+     * `[a-z ]*x\d\d\d\d`, where it wins 11.5x. The bound sits well above the crossover the two first
+     * suggest: it catches the large losses, and two points do not locate a crossover.
+     */
+    static constexpr std::size_t anchored_walk_budget {8};
+
+    /*!
+     * \brief Bytes the walks may read before \ref anchored_walk_budget is applied, so a first walk longer
+     *        than the distance advanced so far does not end the walks.
+     */
+    static constexpr std::size_t anchored_walk_slack {512};
+
+    /*!
+     * \brief Bills one anchored walk that found no match, and tells whether the walks have read too much for
+     *        the distance they advanced.
+     *
+     * A walk no longer than \ref anchored_walk_budget is not billed: each candidate advances at least one
+     * byte, so such walks alone never exceed the budget, and leaving them out keeps the common short walk
+     * to one compare.
+     * \param[in,out] walked  Bytes the billed walks read since \p origin.
+     * \param[in]     length  Bytes this walk read.
+     * \param[in]     origin  Where the walks began.
+     * \param[in]     reached The candidate the walk started at.
+     * \return True once a forward pass and a reverse would cost less.
+     */
+    [[nodiscard]] static constexpr bool anchored_walks_overspent(std::size_t& walked,
+                                                                 std::size_t  length,
+                                                                 std::size_t  origin,
+                                                                 std::size_t  reached)
+    {
+      if (length <= anchored_walk_budget) {
+        return false;
+      }
+      walked += length;
+      return walked > anchored_walk_slack + (anchored_walk_budget * (reached - origin));
+    }
+
+    /*!
      * \brief Density-gate sample size and threshold (inner-literal → core/DFA when candidate density is high).
      *
      * Candidate density is what decides: below the crossover the inner literal skips most of the subject,
@@ -2125,7 +2169,8 @@ namespace real::detail {
                            // every run the pass crosses once.
                            if (prog_.hints.first_bytes_valid && !fwd.looks()) {
                              fwd.begin_scan();
-                             std::size_t c {scan_start};
+                             std::size_t c      {scan_start};
+                             std::size_t walked {0};
                              while (true) {
                                c = next_candidate(text, c, scan_start);
                                if (c > text.size()) {
@@ -2157,7 +2202,10 @@ namespace real::detail {
                                                                    out_slots);
                                  return;
                                }
-                               if (anchored.scanned_to >= text.size()) {
+                               // No match starts at c: the single pass takes over from the next byte when a walk
+                               // reached the end, or when the walks reread the text more than it would.
+                               if (anchored.scanned_to >= text.size()
+                                   || anchored_walks_overspent(walked, anchored.scanned_to - c, scan_start, c)) {
                                  scan_start = c + 1;
                                  break;
                                }
@@ -5917,7 +5965,8 @@ namespace real::detail {
                              return;
                            }
                            fwd.begin_scan();
-                           std::size_t pos {start};
+                           std::size_t pos    {start};
+                           std::size_t walked {0};
                            while (n < cap && pos <= text.size() && text.size() - pos >= lazy_dfa_min_input) {
                              std::size_t hit {npos};
                              std::size_t end {npos};
@@ -5935,8 +5984,9 @@ namespace real::detail {
                                  end = anchored.end;
                                  break;
                                }
-                               if (anchored.scanned_to >= text.size()) {
-                                 return; // the fallback sub-scan's territory; partial stays set
+                               if (anchored.scanned_to >= text.size()
+                                   || anchored_walks_overspent(walked, anchored.scanned_to - c, start, c)) {
+                                 return; // the per-match route's territory, which passes once; partial stays set
                                }
                                ++c;
                              }

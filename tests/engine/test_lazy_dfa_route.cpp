@@ -250,7 +250,7 @@ TEST(lazy_dfa_anchored_walks_give_way_to_one_pass)
                         }
                         return best;
                       }};
-  const std::string_view       pattern  {"[a-z ]*x\\d\\d\\d\\d"};
+  const std::string_view       pattern  {R"([a-z ]*x\d\d\d\d)"};
   const auto                   compiled {real::detail::dynamic_storage::compile(pattern, real::flags::none)};
   const auto                   pv       {compiled.view()};
   const auto                   bp       {real::detail::build_byte_program(pv)};
