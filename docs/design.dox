@@ -406,7 +406,12 @@ lookaround — those keep the general VM; position assertions came later, see \r
 - **Empty matches.** The CPython&nbsp;3.7+ `finditer` rule carries across the two passes: after an empty
   match the next may not be empty at the same position (`forbid_empty_until_`, UTF-8-aligned), enforced on
   the same slot-0 comparison the Pike loop already uses — the forward pass reports the end, the Pike window
-  applies the rule.
+  applies the rule. The rule binds one position, so the search after an empty match splits in two: the VM,
+  anchored at that position with the rule applied, decides whether a non-empty match starts there, and past
+  it the DFAs search from the next character boundary with the rule lifted. Anchors read the whole text
+  (`\A` holds at 0, `\b` reads the byte before), so starting there changes no verdict. Leaving the whole
+  search to the VM had it find every other match of a pattern that can match empty: until 2026-09-26 `.*`
+  counted lines 700 times slower than `.+` (48&nbsp;ms against 0.07 over 400&nbsp;KB; now 3.7&nbsp;ms).
 - **Linearity under thrash — the fallback is per-scan.** When the state cache exceeds its budget it is
   flushed; two flushes within one search trip a *thrash* flag, and the engine abandons the DFA and finishes
   **that one search** on the Pike VM. It never re-derives the automaton from every start position — the

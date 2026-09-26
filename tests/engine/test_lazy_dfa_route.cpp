@@ -375,3 +375,45 @@ TEST(lazy_dfa_thrash_hands_the_search_to_the_vm)
   EXPECT_EQ(routed_n, vm_n);
   EXPECT(routed < 1.8 * vm);
 }
+
+// After an empty match the next may not be empty at the same spot. That rule binds one position: the VM
+// decides whether a non-empty match starts there, and past it the search takes the DFAs. Every enumeration of
+// a pattern that can match empty, in text and byte mode, over subjects with multi-byte code points (the next
+// boundary is a code point away) and a final newline, against the same regex with the DFAs taken out.
+TEST(lazy_dfa_route_after_an_empty_match)
+{
+  static constexpr std::string_view patterns[] {".*", "x*", "[^\"]*", "(?:)|a", "a??", "\\w*", "(a|)", "(?m)^", "$", "\\B",
+                                                "\xC3\xA9*", "(?:ab)*", "a*?", "\\b", "(?m)$", "[a-z]*\\d*", "(?:x|\xC3\xA9)*"};
+  static constexpr std::string_view units[]    {"xxab a\n", "\xC3\xA9x\xC3\xA9 \"ab\"\n", "a\xE6\x97\xA5xx\n\n", "abab  x9"};
+  int                               compared   {0};
+  for (const std::string_view pattern : patterns) {
+    for (const real::flags fl : {real::flags::none, real::flags::bytes}) {
+      const real::regex re {std::string {pattern}, fl};
+      for (const std::string_view unit : units) {
+        std::string text;
+        while (text.size() < 700U) {
+          text += unit;
+        }
+        const auto enumerate {[&] {
+                                std::string out {std::to_string(re.count_matches(text)) + ":"};
+                                std::size_t found {0};
+                                for (const auto& m : re.find_iter(text)) {
+                                  if (++found > text.size() + 1U) {
+                                    out += " (runaway)"; // an empty match yielded twice at one spot
+                                    break;
+                                  }
+                                  out += " " + std::to_string(m.start()) + "-" + std::to_string(m.end());
+                                }
+                                return out;
+                              }};
+        const std::string routed {enumerate()};
+        real::detail::lazy_dfa_route_disabled() = true;
+        const std::string vm     {enumerate()};
+        real::detail::lazy_dfa_route_disabled() = false;
+        EXPECT_EQ(routed, vm);
+        ++compared;
+      }
+    }
+  }
+  EXPECT(compared > 100);
+}

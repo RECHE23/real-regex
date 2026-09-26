@@ -1122,17 +1122,31 @@ namespace real::detail {
             return true;
           }
         }
-        // forbid_empty_until_ != 0 means the iterator just yielded an empty match and the next may not be
-        // empty at the same spot; forward_end does not model that rule, so those searches stay on the Pike
-        // VM (which does). Empty-matching patterns thus alternate DFA/VM across a find_iter; all others route.
         if (!std::is_constant_evaluated() && !lazy_dfa_route_disabled() && mode == run_mode::search
             && sem_ == match_semantics::first // kFirstMatch forward pass; longest uses the general loop below
-            && forbid_empty_until_ == 0 && text.size() - start >= lazy_dfa_min_input) {
-          // noinline out of run() so the shared-DFA body cannot bloat class-loop codegen (x86
-          // witness/wplus regression pattern — same fix shape as ensure_ac_automaton).
-          if (const std::optional<bool> dfa_result {
-            try_shared_lazy_dfa_search<Cascade>(text, start, mode, out_slots)}) {
-            return *dfa_result;
+            && text.size() - start >= lazy_dfa_min_input) {
+          std::size_t dfa_start {start};
+          if (forbid_empty_until_ > start) {
+            // The iterator just yielded an empty match at `start`, and the next may not be empty there. The
+            // DFAs do not model that rule, but it binds one position only: the VM decides whether a non-empty
+            // match starts at `start` (anchored there, the rule applied), and past it the search routes as
+            // any other. Leaving the whole search to the VM had it find every other match of a pattern that
+            // can match empty -- `.*` ran 700 times slower than `.+`.
+            if (run_general<false>(text, start, run_mode::prefix, out_slots)) {
+              return true;
+            }
+            dfa_start = forbid_empty_until_; // the next character boundary, or past the end
+          }
+          if (dfa_start <= text.size() && text.size() - dfa_start >= lazy_dfa_min_input) {
+            const std::size_t forbid {forbid_empty_until_};
+            forbid_empty_until_ = 0;
+            // noinline out of run() so the shared-DFA body cannot bloat class-loop codegen (x86
+            // witness/wplus regression pattern — same fix shape as ensure_ac_automaton).
+            const std::optional<bool> dfa_result {try_shared_lazy_dfa_search<Cascade>(text, dfa_start, mode, out_slots)};
+            forbid_empty_until_ = forbid; // the VM below, if the DFAs declined, applies the rule itself
+            if (dfa_result) {
+              return *dfa_result;
+            }
           }
         }
       }
