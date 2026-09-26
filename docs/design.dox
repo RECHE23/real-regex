@@ -429,14 +429,15 @@ priority cut is `O(state size)`, so on those wide states it must be **memoized p
 
 **When the walks from candidates give way.** With sound first bytes the search does not run the forward
 pass: it walks an anchored DFA from each candidate, which hands back the start with the end. Inside a
-long run of candidate bytes that no match ends, each walk rereads what the previous one crossed. The walks
-bill what they read and give way to one forward pass and one reverse once they exceed
-`anchored_walk_budget` (8) bytes per byte advanced. Measured on 2&nbsp;MB (arm64, instructions retired,
-2026-09-26): 2.3 bytes per byte on `[a-z]+ing|[0-9]+x`, where the walks win by 28&nbsp;%; 3.8 on `\w+\d+`,
-where the single pass wins by 39&nbsp;%; 23 on `[a-z ]*x\d\d\d\d`, where it wins 11.5×. The bound sits above
-a crossover that two points do not locate: a model that also weighs the match density (no match makes the
-walks lose from a ratio of 1) is a named follow-up. The criterion suite's `alternation` row took 43&nbsp;%
-off `find`.
+long run of candidate bytes that no match ends, each walk rereads what the previous one crossed.
+`anchored_walk_bill` bills the walks that find nothing and gives way to one forward pass and one reverse
+once `8 × walks + bytes read` passes 1.5 per byte crossed; the span filler behind `count_matches` and
+`find_iter` then carries on in that pass instead of handing back to the per-match route. Measured over 32
+pattern and subject pairs on 2&nbsp;MB of prose and of log lines (arm64, instructions retired, 2026-09-26),
+the walks won wherever at most 0.036 walks per byte crossed found nothing (`e[a-z]*e`: 13&nbsp;M against
+92&nbsp;M) and lost wherever 0.4 or more did (`[a-z]{2}\d`: 234&nbsp;M against 92&nbsp;M), with nothing between;
+the score sat at most at 0.43 on one side and at least at 4.65 on the other. The rule stayed within 15&nbsp;%
+of the better route on all 32, twelve of them patterns it was not fitted on.
 
 **The bilan — what the arc bought, measured (`(\w+)@(\w+)`, default flags).** Against REAL's own pre-arc
 Pike VM: no-match **7.0×**, sparse **6.0×**, dense **1.3×**. The no-match and sparse subjects — validation,
@@ -581,13 +582,13 @@ newline). The DFAs carry the first fact in the state and read the second from th
 - **The window is the whole text.** A program that looks past a position reads the bytes beyond the match
   end, so the Pike VM that fills the groups runs on the whole text from the start, not on a slice that
   would turn the end into an end of text.
-- **One pass, not one walk per candidate.** A program with assertions takes the forward pass and then the
-  reverse, in `search` and in `count_matches`; an anchored walk from every candidate rescans each run the
-  single pass crosses once. On 2 MB of English-like text (arm64, instructions retired, 2026-09-26),
-  `count_matches` for `(?m)[a-z]+ing$` went from 935 M to 80 M instructions and `[a-z ]*x$` from 1 121 M to
-  79 M; patterns without assertions stayed within 0.2 %. The walk per candidate costs a constant factor,
-  so no complexity test sees it: `dfa_with_assertions_scans_once_not_once_per_candidate` times both
-  queries against the bare forward pass in the same binary.
+- **Walks or one pass, by the same bill.** A program with assertions walks from candidates like any other and
+  gives way by `anchored_walk_bill` (\ref g_lazydfa). On 2&nbsp;MB of prose (arm64, instructions retired,
+  2026-09-26), `count_matches` for `(?m)[a-z]+ing$` went from 935&nbsp;M to 80&nbsp;M instructions and
+  `(?a)\bfox\b|\bdog\b`, whose candidates are rare, kept its walks at 54&nbsp;M, against 177&nbsp;M for the pass;
+  patterns without assertions stayed within 0.2&nbsp;%. The walks cost a constant factor, so no complexity test
+  sees them: `dfa_with_assertions_scans_once_not_once_per_candidate` times both queries against the bare
+  forward pass in the same binary, and `anchored_walk_bill_verdicts` pins the rule.
 
 A `\b` whose word-ness is Unicode, the default in text mode, is still refused: whether `é` is a word
 character is a property of the code point, which no single byte decides.
@@ -672,10 +673,6 @@ Recorded, not scheduled — deliberate next steps the current design leaves room
   currently lives inline in the routing; extracting it would let the router and the tests name it directly.
 - **A one-pass *search* (spans-only).** The one-pass table can locate matches unanchored, not only extract
   captures on a located window — a future `real::regex` search path, not a new public automaton.
-- **A route model for the walks from candidates.** `anchored_walk_budget` is a fixed 8 bytes read per byte
-  advanced, placed above a crossover two measurements did not locate. `[a-z]+x\d` with no match still
-  searches at 3.1× the bare forward pass, at 3 bytes per byte: with no match the walks lose from a ratio of
-  1, while dense short matches let them win at 2.3. A budget that also weighs matches found would catch it.
 - **An earliest-completion (`first-accept`) mode.** The forward pass currently runs to the greedy end of the
   leftmost match; stopping at the first accepting state (priority ignored) would give a true "shortest match"
   end — what the rust `regex` crate's `shortest_match` returns. Small, and it would let the Rust binding drop
