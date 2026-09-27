@@ -631,7 +631,8 @@ namespace real {
       // BOTH class routes now accept a `{k,}` minimum. The code-point one had been declined twice on
       // a cost measured in the four-engine harness that does not exist in a consumer-shaped
       // translation unit -- see fill_cp_class_spans's note and docs/MEASUREMENT.md §5.5.
-      const bool cp_class {batchable && no_wrap && prog.hints.greedy_cp_class >= 0
+      // A kept wrap rides along: the filler checks it per run (fill_cp_class_spans's WbKept).
+      const bool cp_class {batchable && prog.hints.greedy_cp_class >= 0
                            && prog.hints.greedy_cp_class_end == 0
       }; // no is_constant_evaluated: see above
 
@@ -999,8 +1000,14 @@ namespace real {
         // through a flag of its own (see the constructor's `cp_class`). Nothing else can arrive here:
         // batch_eligible_ is the disjunction of exactly these four.
         detail::prof::tick_route(detail::prof::route::cp_class_loop);
-        batch_n_ = wb_edge_ ? bvm.template fill_cp_class_spans<true>(text_, pos_, batch_, batch_cap)
-                            : bvm.template fill_cp_class_spans<false>(text_, pos_, batch_, batch_cap);
+        if (wb_kept_) {
+          batch_n_ = wb_edge_ ? bvm.template fill_cp_class_spans<true, true>(text_, pos_, batch_, batch_cap)
+                              : bvm.template fill_cp_class_spans<false, true>(text_, pos_, batch_, batch_cap);
+        }
+        else {
+          batch_n_ = wb_edge_ ? bvm.template fill_cp_class_spans<true>(text_, pos_, batch_, batch_cap)
+                              : bvm.template fill_cp_class_spans<false>(text_, pos_, batch_, batch_cap);
+        }
       }
       batch_i_ = 0;
       return batch_n_ != 0;

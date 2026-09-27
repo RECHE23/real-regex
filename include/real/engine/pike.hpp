@@ -3844,15 +3844,16 @@ namespace real::detail {
      * hoists `asc` once for the batch instead of once per match.
      *
      * Narrow by construction, and the guard is the caller's (\ref basic_match_iterator): search
-     * semantics, no `\b`/`\B` wrap, no `{k,}` minimum. Those shapes have bookkeeping this loop does
-     * not reproduce, and batching them would answer a different question than the one asked.
+     * semantics. A kept `\b`/`\B` wrap (\p WbKept) is checked per run, with the per-match route's retry:
+     * a run whose wrap does not hold is skipped whole -- `\b\w` answered one match per route entry
+     * until it was, five times the cost of `\b\w+`, which drops its `\b` and was batched.
      * \param[in]  text  The subject.
      * \param[in]  start Where to begin.
      * \param[out] out   Buffer for the spans found.
      * \param[in]  cap   Capacity of \p out; the walk stops there and resumes from the last end.
      * \return How many spans were written.
      */
-    template <bool WbEdge>
+    template <bool WbEdge, bool WbKept = false>
     constexpr std::size_t fill_cp_class_spans(std::string_view text,
                                               std::size_t      start,
                                               cp_span*         out,
@@ -3973,6 +3974,21 @@ namespace real::detail {
         if (min_len > 1 && count_cps(i, end) < min_len) {
           i = end;
           continue;
+        }
+        // The per-match route's WRAP retry: a run whose kept wrap does not hold is skipped whole. The free
+        // evaluator on this filler's own `text`, for the reason given at the WbEdge guard above.
+        if constexpr (WbKept) {
+          const bool ascii {!prog_.unicode_word};
+          if ((prog_.hints.wb_lead != 0
+               && !detail::assertion_holds(prog_.hints.wb_lead == 2 ? assert_kind::not_word_boundary : assert_kind::word_boundary,
+                                           text, i, ascii))
+              || (prog_.hints.wb_trail != 0
+                  && !detail::assertion_holds(prog_.hints.wb_trail == 2 ? assert_kind::not_word_boundary
+                                                                        : assert_kind::word_boundary,
+                                              text, end, ascii))) {
+            i = end;
+            continue;
+          }
         }
         out[n] = cp_span {.start = i, .end = end};
         ++n;

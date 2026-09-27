@@ -18,6 +18,7 @@
 #include <vector>
 
 #include <sciforge/test/framework.hpp>
+#include "real/automata/lazy_dfa.hpp" // class_fastpath_disabled
 #include "real/real.hpp"
 
 namespace {
@@ -424,5 +425,26 @@ TEST(the_public_counters_agree_with_the_walk)
     const spans       it {by_iteration(re, text)};
     EXPECT_EQ(re.count_matches(text), it.size());
     EXPECT_EQ(re.find_all(text).size(), it.size());
+  }
+}
+
+// A kept `\b`/`\B` wrap on a code-point class is batched too, the filler checking it per run and skipping a
+// run whose wrap fails, as the per-match route does. The batched walk against repeated search and against the
+// general VM (the class fast paths taken out), over ASCII and accented words across many batch boundaries.
+TEST(the_batched_walk_keeps_a_word_boundary_wrap)
+{
+  std::string text;
+  while (text.size() < 3000U) {
+    text += "caf\xC3\xA9 _x9 na\xC3\xAFve 42 d\xC3\xA9j\xC3\xA0 a1b2 \xC3\xA9t\xC3\xA9, xy ";
+  }
+  for (const char* p : {R"(\b\w)", R"(\w\b)", R"(\B\w)", R"(\w\B)", R"(\b\d+\b)", R"(\b\p{L})", R"(\b\p{L}+\b)",
+                        R"(\B\d)", R"(\b\w{2,}\b)", R"((?a)\b\w)"}) {
+    const real::regex re      {p};
+    const spans       batched {by_iteration(re, text)};
+    EXPECT_EQ(batched, by_search(re, text));
+    real::detail::class_fastpath_disabled() = true;
+    EXPECT_EQ(batched, by_iteration(re, text));
+    real::detail::class_fastpath_disabled() = false;
+    EXPECT(!batched.empty());
   }
 }
