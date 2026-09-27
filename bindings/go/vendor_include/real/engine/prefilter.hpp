@@ -31,6 +31,7 @@
 #include "real/unicode/unicode_props.hpp" // word_ranges — exact \w identity for the DROP rule
 
 #include <array>
+#include <atomic>
 
 namespace real::detail {
 
@@ -57,6 +58,28 @@ namespace real::detail {
     prefilter_work_units() += static_cast<std::uint64_t>(n);
 #else
     (void) n;
+#endif
+  }
+
+  /*!
+   * \brief Pike VM runs over a window the DFAs found, counted for the tests that pin which windows need no VM.
+   *        Relaxed atomic: threads searching at once bill it concurrently.
+   * \return A reference to the process-wide counter.
+   */
+  inline std::atomic<std::uint64_t>& vm_window_runs() noexcept
+  {
+    static std::atomic<std::uint64_t> runs {0};
+    return runs;
+  }
+
+  /*!
+   * \brief Bill one Pike VM run over a DFA window to \ref vm_window_runs. A no-op unless the test binary
+   *        defines \c REAL_TEST_INSTRUMENT.
+   */
+  inline void note_vm_window() noexcept
+  {
+#if defined(REAL_TEST_INSTRUMENT)
+    vm_window_runs().fetch_add(1, std::memory_order_relaxed);
 #endif
   }
 

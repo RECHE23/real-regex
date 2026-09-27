@@ -370,3 +370,73 @@ TEST(dfa_unicode_word_boundaries_cost_nothing_on_ascii)
   EXPECT_EQ(n_unicode, n_ascii);
   EXPECT(t_unicode < 1.8 * t_ascii);
 }
+
+// A program of saves, atoms and greedy `atom+` loops has its groups read by one walk that takes every loop as
+// far as it goes (pike_vm::match_run_shape), over the window the DFAs found. Where that walk is not the
+// VM's path it cannot end at the window's end -- `(\w+)(\d+)` must give digits back, `(a+)(a+)` must leave
+// one `a` -- and the VM decides. Every group of every query against the plain VM.
+TEST(dfa_run_shape_groups_match_the_vm)
+{
+  static constexpr std::string_view patterns[] {R"((\w+)\s+(\w+))", R"((\w+)(\d+))",   R"((a+)(a+))",      R"((\d+)\s+(\w+))",
+                                                R"(([a-z]+)(\d+))", "(\xC3\xA9+)(\\w+)", R"((\S+)\s+(\S+))", R"(x(\w+)y)",
+                                                R"((\w)(\w+))",     R"((\w+)(\w))",     R"(([ab]+)b(a+))",  R"((\p{L}+) (\d+))",
+                                                R"((\w+)\s*=\s*(\w+))", R"((\w*)x(\d*))", R"((a*)(a*))",   R"((\w+?)x)",
+                                                R"((\w+)\s+=\s+(\w+))", R"(([a-z]+)\s+(\d+))", R"(=(\s*)(\w*))", R"((\d*)(\d+))"};
+  static constexpr std::string_view units[]    {"the quick fox 42 dogs ", "aaa aa a9 99x ", "x\xC3\xA9\xC3\xA9t\xC3\xA9 12 abba y ",
+                                                "xabcy x9y aab ba key = val n=7  x  =  y "};
+  int compared                                 {0};
+  for (const std::string_view pattern : patterns) {
+    const real::regex re {std::string {pattern}};
+    for (const std::string_view unit : units) {
+      std::string text;
+      while (text.size() < 700U) {
+        text += unit;
+      }
+      const std::string routed {answers(re, text)};
+      const std::string pure   {pure_answers(pattern, real::flags::none, text)};
+      EXPECT_EQ(routed, vm_answers(re, text));
+      EXPECT_EQ(routed.substr(0, pure.size()), pure);
+      ++compared;
+    }
+  }
+  EXPECT(compared == 80);
+}
+
+// The walk does the VM's work for a run shape: `(\w+)\s+(\w+)` enumerates without one Pike VM run over a DFA
+// window, where every match used to need one (27 % of its instructions on prose). `(\w+)(\d+)` is the control:
+// its walk cannot end at the window's end, so the VM still runs, which shows the counter counts.
+TEST(dfa_run_shape_needs_no_vm_window)
+{
+  std::string text;
+  while (text.size() < 4096U) {
+    text += "the quick fox 42 dogs a9 key = val n=7 aaaaaaaaaaaaaaaaaaaaaaaa 5 ";
+  }
+  const real::regex walked   {R"((\w+)\s+(\w+))"};
+  const real::regex backs_up {R"((\w+)(\d+))"};
+  std::size_t       found    {0};
+  real::detail::vm_window_runs() = 0;
+  for (const auto& m : walked.find_iter(text)) {
+    found += m.matched() ? 1U : 0U;
+  }
+  EXPECT(found > 100U);
+  EXPECT_EQ(real::detail::vm_window_runs().load(), 0U);
+  // Each route that reaches a window: the walks from candidates (above), the forward pass and reverse
+  // (`[a-z]+` walks give way on the long runs), and the inner-literal confirm (`=` is its literal, and `\w`
+  // beside `\s` is not one-pass: both start code points with 0xC2). `\s*` is a star loop.
+  for (const std::string_view pattern : {R"(([a-z]+)\s+(\d+))", R"((\w+)\s+=\s+(\w+))", R"((\w+)\s*=\s*(\w+))"}) {
+    const real::regex re {std::string {pattern}};
+    found = 0;
+    for (const auto& m : re.find_iter(text)) {
+      found += m.matched() ? 1U : 0U;
+    }
+    EXPECT(found > 50U);
+    EXPECT_EQ(real::detail::vm_window_runs().load(), 0U);
+  }
+  found = 0;
+  real::detail::vm_window_runs() = 0;
+  for (const auto& m : backs_up.find_iter(text)) {
+    found += m.matched() ? 1U : 0U;
+  }
+  EXPECT(found > 100U);
+  EXPECT(real::detail::vm_window_runs().load() > 0U);
+}

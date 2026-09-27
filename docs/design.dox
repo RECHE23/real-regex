@@ -496,6 +496,17 @@ and hash-cons here uses an in-house FNV over bucket-vectors instead (the lazy-DF
 minimizer, the UTF-8 trie memo), which also keeps them literal types for `constexpr`. The standing rule:
 **no `std::hash` or `std::unordered_*` in `include/real/`.**
 
+**When the table declines: a run of classes.** A Unicode `\w` is never one-pass at the byte level, so with
+groups to fill every window the DFAs found went to the Pike VM. A program of saves, atoms (a byte, a byte
+class, a code-point class) and greedy `atom+` and `atom*` loops needs no engine: the walk that takes every
+loop as far as its atom matches, never backing up, chose the preferred branch at every loop whenever it
+could, so when it reaches `match` it is the highest-priority path and its groups are the VM's
+(`pike_vm::match_run_shape`); it ends where the DFAs said the match ends, since a loop cut short by that
+bound would put the VM's end past it. When an atom fails the walk -- `(\w+)(\d+)` must give digits back --
+the VM decides. `(\w+)\s+(\w+)` lost 27&nbsp;% of its instructions on prose and 28&nbsp;% on log lines (arm64,
+2026-09-26), and it, `(\w+)\s*=\s*(\w+)` and the inner-literal confirm of `(\w+)\s+=\s+(\w+)` run no VM
+window at all, which a counter compiled into the test binary only (`vm_window_runs`) pins.
+
 \subsection g_innerlit 7.8 Delivered: the inner-literal prefilter route (the date, decapitated)
 
 The gap §7.6 named — a pattern whose match does not *begin* with a literal, so no prefix/rare-byte hint helps,

@@ -42,6 +42,7 @@ namespace real::detail::prof {
     aho_corasick,      //!< multi-literal automaton, past the branch-count threshold.
     onepass_full,
     onepass_window,
+    run_shape_window,  //!< Groups read by one greedy walk over a window the DFAs found (`pike_vm::match_run_shape`).
     lazy_dfa_anchored, //!< first-byte candidate + anchored_end
     lazy_dfa_fwd_rev,  //!< unanchored forward + reverse
     general_full,
@@ -174,6 +175,7 @@ namespace real::detail::prof {
       case route::aho_corasick: return "aho_corasick";
       case route::onepass_full: return "onepass_full";
       case route::onepass_window: return "onepass_window";
+      case route::run_shape_window: return "run_shape_window";
       case route::lazy_dfa_anchored: return "lazy_dfa_anchored";
       case route::lazy_dfa_fwd_rev: return "lazy_dfa_fwd_rev";
       case route::general_full: return "general_full";

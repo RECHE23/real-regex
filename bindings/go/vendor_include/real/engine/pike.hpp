@@ -1322,8 +1322,12 @@ namespace real::detail {
                 && prog_.immut->op_table->extract(text, s, e, out_slots)) {
               return true;
             }
+            if (prog_.immut != nullptr && prog_.immut->run_shape && match_run_shape(text, s, e, out_slots)) {
+              return true;
+            }
             // A program that looks past a position (`$`, `\b`) reads the text beyond e: slicing there would turn
             // e into an end of text for it.
+            note_vm_window();
             return run_general<false>(looks ? text : text.substr(0, e), s, run_mode::prefix, out_slots, &stop);
           }
         }
@@ -1990,14 +1994,15 @@ namespace real::detail {
       }
       else {
         immut->alphabet = {};
-        // Declined on a position assertion, perhaps: the search DFAs can carry anchors and ASCII word
-        // boundaries (lazy_dfa::close_look), so they get the Tier-B program. Every other consumer of
-        // byte_prog keeps reading its verdict.
+        // Declined on a position assertion, perhaps: the search DFAs can carry anchors and word boundaries
+        // (lazy_dfa::close_look), so they get the Tier-B program. Every other consumer of byte_prog keeps
+        // reading its verdict.
         immut->look_prog = build_byte_program(prog_, /*keep_assertions=*/ true);
       }
       immut->look_alphabet = immut->look_prog.eligible
                                ? compute_lazy_alphabet(immut->look_prog.code, immut->look_prog.classes)
                                : lazy_byte_alphabet {};
+      immut->run_shape       = prog_.slot_count > 2 && is_run_shape(prog_);
       immut->il_prefix_prog  = {};
       immut->il_min_haystack = 0;
       if (!prog_.prefix_code.empty()) { // IL: expand the inner-literal prefix once per program
@@ -2225,7 +2230,14 @@ namespace real::detail {
                                    dfa_result = true;
                                    return;
                                  }
+                                 if (prog_.immut != nullptr && prog_.immut->run_shape
+                                     && match_run_shape(text, c, match_end, out_slots)) {
+                                   prof::tick_route(prof::route::run_shape_window);
+                                   dfa_result = true;
+                                   return;
+                                 }
                                  prof::tick_route(prof::route::general_window);
+                                 note_vm_window();
                                  dfa_result = run_general<Cascade>(fwd.looks() ? text : text.substr(0, match_end), c, mode,
                                                                    out_slots);
                                  return;
@@ -2270,7 +2282,14 @@ namespace real::detail {
                              dfa_result = true;
                              return;
                            }
+                           if (prog_.immut != nullptr && prog_.immut->run_shape
+                               && match_run_shape(text, abs_start, abs_end, out_slots)) {
+                             prof::tick_route(prof::route::run_shape_window);
+                             dfa_result = true;
+                             return;
+                           }
                            prof::tick_route(prof::route::general_window);
+                           note_vm_window();
                            dfa_result = run_general<Cascade>(fwd.looks() ? text : text.substr(0, abs_end), abs_start, mode,
                                                              out_slots);
                          })};
@@ -4962,6 +4981,160 @@ namespace real::detail {
           break; // reached a trailing \b/\B or match
         }
       }
+    }
+
+    /*!
+     * \brief Whether \p prog is saves, atoms (a byte, a byte class, a code-point class) and greedy `atom+`
+     *        and `atom*` loops, then `match`: nothing else, no alternation, no lazy loop, no assertion.
+     *
+     * For such a program the walk that takes every loop as far as its atom matches, never backing up, is
+     * the highest-priority path: at each loop it chose the preferred branch whenever that branch could be
+     * taken. So when that walk reaches `match` its groups are the VM's (\ref match_run_shape), and when an
+     * atom fails it, the VM decides.
+     * \param[in] prog The program.
+     * \return True for that shape.
+     */
+    [[nodiscard]] static constexpr bool is_run_shape(const program_view& prog)
+    {
+      std::size_t pc {0};
+      while (pc < prog.code.size()) {
+        const instr& in    {prog.code[pc]};
+        std::size_t  width {0};
+        if (in.op == opcode::save) {
+          ++pc;
+          continue;
+        }
+        if (in.op == opcode::match) {
+          return pc + 1U == prog.code.size();
+        }
+        if (in.op == opcode::split) {
+          // `atom*`: split(atom, past), atom, jump back to the split.
+          const std::size_t atom {pc + 1U};
+          const std::size_t back {atom + (atom < prog.code.size() && prog.code[atom].op == opcode::klass_cp ? 4U : 1U)};
+          const bool        star {in.primary_target == static_cast<std::int32_t>(atom) && atom < prog.code.size()
+                                  && (prog.code[atom].op == opcode::byte || prog.code[atom].op == opcode::klass
+                                      || prog.code[atom].op == opcode::klass_cp)
+                                  && back < prog.code.size() && prog.code[back].op == opcode::jump
+                                  && prog.code[back].primary_target == static_cast<std::int32_t>(pc)
+                                  && in.secondary_target == static_cast<std::int32_t>(back) + 1};
+          if (!star) {
+            return false; // a lazy loop or an alternation
+          }
+          pc = back + 1U;
+          continue;
+        }
+        if (in.op == opcode::byte || in.op == opcode::klass) {
+          width = 1;
+        }
+        else if (in.op == opcode::klass_cp) {
+          width = 4; // the four-slot construct (see run_cp_class_loop's `pc += 3`)
+        }
+        else {
+          return false;
+        }
+        const std::size_t next {pc + width};
+        // A split back to this atom makes it `atom+`; any other split is the next element's, read there.
+        if (next < prog.code.size() && prog.code[next].op == opcode::split
+            && prog.code[next].primary_target == static_cast<std::int32_t>(pc)) {
+          if (prog.code[next].secondary_target != static_cast<std::int32_t>(next) + 1) {
+            return false;
+          }
+          pc = next + 1U;
+        }
+        else {
+          pc = next;
+        }
+      }
+      return false;
+    }
+
+    /*!
+     * \brief Consumes the atom at \p pc at \p at, within \p e.
+     * \param[in]     text The subject.
+     * \param[in]     pc   The atom's instruction.
+     * \param[in,out] at   The position; advanced past the atom when it matches.
+     * \param[in]     e    The window's end.
+     * \return True when the atom matched.
+     */
+    [[nodiscard]] constexpr bool run_shape_atom(std::string_view text,
+                                                std::size_t      pc,
+                                                std::size_t&     at,
+                                                std::size_t      e) const
+    {
+      if (at >= e) {
+        return false;
+      }
+      const instr& in {prog_.code[pc]};
+      if (in.op == opcode::byte) {
+        if (static_cast<std::uint8_t>(text[at]) != in.arg8) {
+          return false;
+        }
+        ++at;
+        return true;
+      }
+      if (in.op == opcode::klass) {
+        if (!prog_.classes[in.arg16].test(static_cast<std::uint8_t>(text[at]))) {
+          return false;
+        }
+        ++at;
+        return true;
+      }
+      const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, at)};
+      if (!dc.valid || at + dc.length > e || !cp_class_holds(prog_.cp_classes[in.arg16], dc.cp)) {
+        return false;
+      }
+      at += dc.length;
+      return true;
+    }
+
+    /*!
+     * \brief Fills the groups of a match the DFAs found at [\p s, \p e) for a program of \ref is_run_shape
+     *        "run shape", by one walk that takes every loop as far as it goes.
+     * \param[in]  text      The subject.
+     * \param[in]  s         Match start.
+     * \param[in]  e         Match end.
+     * \param[out] out_slots Slots to fill.
+     * \return True when the walk reaches `match` (its groups are the VM's, and it ends at \p e, where the VM's
+     *         path ends); false leaves the answer to the VM.
+     */
+    template <typename OutSlots>
+    [[nodiscard]] constexpr bool match_run_shape(std::string_view text,
+                                                 std::size_t      s,
+                                                 std::size_t      e,
+                                                 OutSlots&        out_slots) const
+    {
+      out_slots.assign(prog_.slot_count, npos);
+      std::size_t at {s};
+      std::size_t pc {0};
+      while (pc < prog_.code.size()) {
+        const instr& in {prog_.code[pc]};
+        if (in.op == opcode::save) {
+          out_slots[static_cast<std::size_t>(in.arg16)] = at;
+          ++pc;
+          continue;
+        }
+        if (in.op == opcode::match) {
+          return true;
+        }
+        if (in.op == opcode::split) { // `atom*` (is_run_shape vouched for the shape)
+          while (run_shape_atom(text, pc + 1U, at, e)) {}
+          pc = static_cast<std::size_t>(in.secondary_target);
+          continue;
+        }
+        if (!run_shape_atom(text, pc, at, e)) {
+          return false;
+        }
+        const std::size_t next {pc + (in.op == opcode::klass_cp ? 4U : 1U)};
+        if (next < prog_.code.size() && prog_.code[next].op == opcode::split
+            && prog_.code[next].primary_target == static_cast<std::int32_t>(pc)) {
+          while (run_shape_atom(text, pc, at, e)) {}
+          pc = next + 1U;
+        }
+        else {
+          pc = next;
+        }
+      }
+      return false;
     }
 
     /*!
