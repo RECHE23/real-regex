@@ -42,7 +42,7 @@ answer is not a benchmark win.
 
 | | |
 | --- | --- |
-| Version | REAL `2026.9.7` + tree `18809f4` — **tables moved (measured).** Three runs per ISA, minimum per cell (§A, §E, §Unicode), median of three (§B). The engine train since `2026.8.15` moved §E and §B most: `word-boundary` and the class rows gained up to 1.6× on both ISAs against the rust crate, `date no-match` became a tie, and the fuzzed corpus's aggregate fell from 241 ms to ~4 ms. §A's x86-64 class rows moved 5–17 % at unchanged executed instructions and swung 4–9 % between two same-day builds, so they are read as layout (§A's reading). One row regressed with a mechanism: `alternation` on x86-64, +13 % against the last stamp, with 14 % more branch mispredictions under cachegrind at fewer instructions — left open. Train and deltas: `CHANGELOG.md`. |
+| Version | REAL `2026.9.7` + tree `18809f4` — **tables moved (measured).** Three runs per ISA, minimum per cell (§A, §E, §Unicode), median of three (§B). The engine train since `2026.8.15` moved §E and §B most: `word-boundary` and the class rows gained up to 1.6× on both ISAs against the rust crate, `date no-match` became a tie, and the fuzzed corpus's aggregate fell from 241 ms to ~4 ms. §A's x86-64 class rows moved 5–17 % at unchanged executed instructions and swung 4–9 % between two same-day builds, so they are read as layout (§A's reading). `alternation` on x86-64 read +13 % against the last stamp; isolated from the bench binary it is no slower (§A's reading), so it is read as layout too. Train and deltas: `CHANGELOG.md`. |
 | Machines | §A on **two ISAs**: `x86-64` (g++ 13.3.0) *and* `arm64` (Apple clang 16, **on AC power** — see `docs/MEASUREMENT.md` §3.5 for why the state is declared and why its cost must not be assumed). §B / §E on arm64 (§E's x86-64 leg noted inline where it diverges — see §E). §multi-pattern measured on **x86-64** (g++ 13.3, RE2 + Hyperscan 5.4) |
 | Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (built from source on x86-64 to pin the exact version — and the pin only applies when `PKG_CONFIG_PATH` points at that build, since the recipe resolves the library through `pkg-config` and the system package otherwise wins silently; `make bench-engines` now prints the version it actually LINKED — and the pin needs `LD_LIBRARY_PATH` pointing at that build too, or the loader picks the system 10.42 at run time even though the build compiled against 10.47, which this stamp's first x86-64 pass did, because this document named 10.47 for a leg that had measured 10.42 and nothing in the output could contradict it); RE2 (10.0 on x86-64, 11.0 on arm64 — version-differs-by-leg, uncontested given the margins). Multi-pattern: RE2::Set, Hyperscan (optional). §E: rust `regex` 1.12.4 |
 | Python | CPython 3.14.6, `re` (stdlib) vs the in-place REAL `2026.9.7` extension at tree `25b33dc` (one commit past §A's `18809f4`: the line-start skip, which moved `word starts` 16× → 51×), median of three runs per cell. `sub · dates with refs` remains the known-unstable row. Train: `CHANGELOG.md`. |
@@ -120,9 +120,13 @@ three consecutive stamps while the tables were right — see each bullet's own n
   same rows swung by 4–9 % between two builds measured on the same day whose code differs only in a
   dispatch branch these rows never execute, at byte-identical instruction counts (`fields` 2.79 against
   3.05, `single` 5.07 against 5.39). One build is one layout; `make bench-layout` is the instrument that
-  judges a change. The one move with a mechanism is `alternation` on x86-64, 1.67 → 1.89: fewer
-  instructions but 14 % more branch mispredictions under cachegrind's simulation, left open rather than
-  bisected across the whole train; the same row gained on arm64, 1.77 → 1.58. The rest of arm64 is
+  judges a change. `alternation` on x86-64, 1.67 → 1.89, looked like a move with a mechanism — fewer
+  instructions but 14 % more branch mispredictions under cachegrind's simulation — and is not one. The
+  same `count_matches` over the same 200 KB in a driver of its own (2026-09-27, `-O2`, five alternating
+  runs, minimum): on this table's x86-64 host (g++ 13.3) `2026.8.15` reads 1.886 ns/B and `18809f4` 1.869;
+  on a Cascade Lake x86-64 (g++ 15.2) 1.677 against 1.544, with 17 % *fewer* hardware branch misses
+  (`perf stat`, 35.0 k → 28.9 k over 3000 scans). The 1.67 was the old bench binary's layout; the row
+  gained on arm64 as well, 1.77 → 1.58. The rest of arm64 is
   within 4 % except `date`, 0.55 → 0.53.
 - **The gauge.** `std::regex`, PCRE2 and RE2 are third-party constants, so their columns are the drift
   witness. RE2's seven x86-64 rows `words`, `digits`, `fields`, `alternation`, `date`, `hex` and
