@@ -2004,7 +2004,10 @@ namespace real::detail {
         // Only a state holding a pending assertion reads what follows it; the rest are their own resolution.
         std::uint32_t here {state};
         if (state_pending_[state] != 0U) {
-          here = resolve(state, key_at(text, pos));
+          // The memoized resolution read inline, as the cached edges are; resolve() only on a miss.
+          const std::uint16_t key  {key_at(text, pos)};
+          const std::uint32_t memo {res_[(static_cast<std::size_t>(state) * (count + 2U)) + key]};
+          here = memo != no_transition ? memo : resolve(state, key);
           if (here == quit_state) {
             return quit_pos;
           }
@@ -2073,7 +2076,10 @@ namespace real::detail {
       while (true) {
         std::uint32_t here {state};
         if (state_pending_[state] != 0U) {
-          here = resolve(state, key_at(text, pos));
+          // The memoized resolution read inline, as the cached edges are; resolve() only on a miss.
+          const std::uint16_t key  {key_at(text, pos)};
+          const std::uint32_t memo {res_[(static_cast<std::size_t>(state) * (count + 2U)) + key]};
+          here = memo != no_transition ? memo : resolve(state, key);
           if (here == quit_state) {
             // Even past an accept: whether a longer match wins is what the boundary would have told.
             return {.end = npos, .scanned_to = pos, .quit = true};
@@ -2761,14 +2767,21 @@ namespace real::detail {
                                    std::size_t      e,
                                    std::size_t      resume)
     {
-      std::uint32_t state {start_for(right_ctx_at(text, e))};
-      std::size_t   best  {npos};
-      std::size_t   pos   {e};
+      std::uint32_t       state {start_for(right_ctx_at(text, e))};
+      std::size_t         best  {npos};
+      std::size_t         pos   {e};
+      const std::uint16_t count {alpha_.count};
       while (true) {
         const std::uint16_t key  {pos == 0 ? alpha_.count : static_cast<std::uint16_t>(alpha_.of[static_cast<std::uint8_t>(text[pos - 1U])])};
-        const std::uint32_t here {resolve(state, key)};
-        if (here == quit_state) {
-          return quit_pos;
+        std::uint32_t       here {state};
+        if (state_pending_[state] != 0U) {
+          // The memoized resolution and the cached edge below are read inline; resolve() and step() only on
+          // a miss (this loop runs once per byte of every match).
+          const std::uint32_t memo {res_[(static_cast<std::size_t>(state) * (count + 1U)) + key]};
+          here = memo != no_transition ? memo : resolve(state, key);
+          if (here == quit_state) {
+            return quit_pos;
+          }
         }
         // No start lands inside a code point in text mode, with no test for it: every consuming path of a
         // text-mode program begins at an ASCII or lead byte, and an empty match sits at an end the forward
@@ -2783,8 +2796,13 @@ namespace real::detail {
         const auto byte {static_cast<std::uint8_t>(text[pos])};
         // The class of a newline cannot say whether it is the text's last byte, which `$` asks; that one
         // step builds its state with the context read from the text.
-        state = (byte == '\n' && pos + 1U == text.size()) ? step_with(here, byte, right_ctx_at(text, pos))
-                                                          : step(here, byte);
+        if (byte == '\n' && pos + 1U == text.size()) {
+          state = step_with(here, byte, right_ctx_at(text, pos));
+        }
+        else {
+          const std::uint32_t cached {trans_[(static_cast<std::size_t>(here) * count) + alpha_.of[byte]]};
+          state = cached != no_transition ? cached : step(here, byte);
+        }
       }
       return best;
     }
