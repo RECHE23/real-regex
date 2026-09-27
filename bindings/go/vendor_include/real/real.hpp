@@ -1003,8 +1003,8 @@ namespace real {
         // batch_eligible_ is the disjunction of exactly these four.
         detail::prof::tick_route(detail::prof::route::cp_class_loop);
         if (wb_kept_) {
-          batch_n_ = wb_edge_ ? bvm.template fill_cp_class_spans<true, true>(text_, pos_, batch_, batch_cap)
-                              : bvm.template fill_cp_class_spans<false, true>(text_, pos_, batch_, batch_cap);
+          batch_n_ = wb_edge_ ? bvm.template fill_cp_class_spans_wrapped<true>(text_, pos_, batch_, batch_cap)
+                              : bvm.template fill_cp_class_spans_wrapped<false>(text_, pos_, batch_, batch_cap);
         }
         else {
           batch_n_ = wb_edge_ ? bvm.template fill_cp_class_spans<true>(text_, pos_, batch_, batch_cap)

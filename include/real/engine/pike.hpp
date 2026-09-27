@@ -3844,16 +3844,14 @@ namespace real::detail {
      * hoists `asc` once for the batch instead of once per match.
      *
      * Narrow by construction, and the guard is the caller's (\ref basic_match_iterator): search
-     * semantics. A kept `\b`/`\B` wrap (\p WbKept) is checked per run, with the per-match route's retry:
-     * a run whose wrap does not hold is skipped whole -- `\b\w` answered one match per route entry
-     * until it was, five times the cost of `\b\w+`, which drops its `\b` and was batched.
+     * semantics, no `\b`/`\B` wrap (a kept one goes through \ref fill_cp_class_spans_wrapped).
      * \param[in]  text  The subject.
      * \param[in]  start Where to begin.
      * \param[out] out   Buffer for the spans found.
      * \param[in]  cap   Capacity of \p out; the walk stops there and resumes from the last end.
      * \return How many spans were written.
      */
-    template <bool WbEdge, bool WbKept = false>
+    template <bool WbEdge>
     constexpr std::size_t fill_cp_class_spans(std::string_view text,
                                               std::size_t      start,
                                               cp_span*         out,
@@ -3975,21 +3973,6 @@ namespace real::detail {
           i = end;
           continue;
         }
-        // The per-match route's WRAP retry: a run whose kept wrap does not hold is skipped whole. The free
-        // evaluator on this filler's own `text`, for the reason given at the WbEdge guard above.
-        if constexpr (WbKept) {
-          const bool ascii {!prog_.unicode_word};
-          if ((prog_.hints.wb_lead != 0
-               && !detail::assertion_holds(prog_.hints.wb_lead == 2 ? assert_kind::not_word_boundary : assert_kind::word_boundary,
-                                           text, i, ascii))
-              || (prog_.hints.wb_trail != 0
-                  && !detail::assertion_holds(prog_.hints.wb_trail == 2 ? assert_kind::not_word_boundary
-                                                                        : assert_kind::word_boundary,
-                                              text, end, ascii))) {
-            i = end;
-            continue;
-          }
-        }
         out[n] = cp_span {.start = i, .end = end};
         ++n;
         i = end;
@@ -3998,6 +3981,62 @@ namespace real::detail {
         }
       }
       return n;
+    }
+
+    /*!
+     * \brief \ref fill_cp_class_spans for a pattern with a kept `\b`/`\B` wrap: its spans, less those whose
+     *        wrap does not hold.
+     *
+     * The plain filler emits every maximal run; the per-match route skips a run whose wrap fails, whole, and
+     * tries the next -- which is dropping that span. So this filters the plain filler's batches and refills
+     * until one span survives or the runs are spent, never handing back an empty batch while runs remain
+     * (the iterator reads an empty one as the end). Kept apart, and cold: a template parameter on the plain
+     * filler instead changed GCC's inlining of its code-point lookup, and `\p{L}+` -- which never has a
+     * wrap -- ran 5.6 % more instructions on x86-64. `\b\w` answered one match per route entry before this,
+     * five times the cost of `\b\w+`, whose `\b` is dropped as redundant.
+     * \param[in]  text  The subject.
+     * \param[in]  start Where to begin.
+     * \param[out] out   Buffer for the spans found.
+     * \param[in]  cap   Capacity of \p out.
+     * \return How many spans were written.
+     */
+    template <bool WbEdge>
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline, cold))
+#endif
+    constexpr std::size_t fill_cp_class_spans_wrapped(std::string_view text,
+                                                      std::size_t      start,
+                                                      cp_span*         out,
+                                                      std::size_t      cap)
+    {
+      const bool        ascii   {!prog_.unicode_word};
+      const assert_kind lead_k  {prog_.hints.wb_lead == 2 ? assert_kind::not_word_boundary : assert_kind::word_boundary};
+      const assert_kind trail_k {prog_.hints.wb_trail == 2 ? assert_kind::not_word_boundary : assert_kind::word_boundary};
+      std::size_t       pos     {start};
+      std::size_t       kept    {0};
+      bool              first   {true}; // only the first refill may sit at a caller-supplied edge
+      while (kept < cap) {
+        // Refill into the free tail, then keep the survivors in place: a batch fills up rather than
+        // returning the one span in four that `\b\w` keeps.
+        const std::size_t got {first ? fill_cp_class_spans<WbEdge>(text, pos, out + kept, cap - kept)
+                                     : fill_cp_class_spans<false>(text, pos, out + kept, cap - kept)};
+        first = false;
+        if (got == 0) {
+          break;
+        }
+        pos = out[kept + got - 1].end;
+        const std::size_t filled {kept + got}; // fixed: `kept` grows inside the loop
+        for (std::size_t k {kept}; k < filled; ++k) {
+          // The free evaluator on this filler's own `text`, for the reason given at fill_cp_class_spans's
+          // WbEdge guard.
+          if ((prog_.hints.wb_lead == 0 || detail::assertion_holds(lead_k, text, out[k].start, ascii))
+              && (prog_.hints.wb_trail == 0 || detail::assertion_holds(trail_k, text, out[k].end, ascii))) {
+            out[kept] = out[k];
+            ++kept;
+          }
+        }
+      }
+      return kept;
     }
 
     /*!
