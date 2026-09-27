@@ -188,7 +188,9 @@ namespace {
   // One wave on a FRESH mid-sized regex_set: every thread's whole-subject matches() counts toward the
   // deferred fused build, so the threads cross its budget together -- one builds under call_once while
   // the others wait on it or still walk, and all read the published DFA after. Returns the number of
-  // threads whose every answer equalled the single-threaded one.
+  // threads whose every answer equalled the single-threaded one, or -1 when the threads' walks together
+  // did not leave the fused DFA built. A thread cannot check that alone: under TSan's scheduling one may
+  // finish its rounds before the others have walked their share of the budget.
   int set_wave(std::string_view         hay,
                const std::vector<bool>& expected)
   {
@@ -213,7 +215,6 @@ namespace {
                                same = same && set.matches(hay) == expected;
                                same = same && set.is_match(hay);
                              }
-                             same = same && set.uses_fused();
                              if (same) {
                                agreed.fetch_add(1, std::memory_order_relaxed);
                              }
@@ -221,6 +222,9 @@ namespace {
     }
     for (auto& th : threads) {
       th.join();
+    }
+    if (!set.uses_fused()) {
+      return -1; // k_threads x rounds x hay walked is at least twice the budget
     }
     return agreed.load(std::memory_order_relaxed);
   }
