@@ -2,6 +2,28 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.9.8
+
+9.8 (**the DFA carries assertions; the tables move**): **THE STAMP MOVES TO `2026.9.7` + tree `18809f4`**,
+both ISAs re-measured (three runs per ISA, minimum per cell; §B median of three at `25b33dc`, one commit
+later, whose line-start skip is the only change past `18809f4` and touches no §A/§E/§Unicode row).
+**§E moved most:** against the rust crate, `class [a-z]+` 1.648 → 1.150 ns/B arm64 and 2.273 → 1.978
+x86-64, `word-boundary` 2.722 → 1.688 and 4.330 → 2.457, and `date no-match` went from rust 1.9× / 1.1×
+to a tie on both ISAs (NEON single-byte scan). REAL now leads all nine §Unicode duel rows on both ISAs.
+**§B:** `word starts ASCII` 25.80× → 50.89×; fuzzed corpus aggregate REAL 241 ms → ~4 ms; `sub · dates
+with refs` still unstable (48–93×). **§A x86-64:** the class-scan rows moved 5–17 % at unchanged executed
+instructions and swung 4–9 % between two same-day builds (`a60ac82` vs `18809f4`, byte-identical
+instruction counts) — read as layout, not work. **One regression with a mechanism, left open:**
+`alternation the|fox|dog` on x86-64, 1.67 → 1.89 ns/B, fewer instructions and 14 % more branch
+mispredictions (cachegrind). **Two regressions found by this re-stamp and fixed before it:** `\p{L}+`
++5.6 % instructions on x86-64 from a template parameter on the code-point filler (18809f4), and
+`(?m)^\w+` +53 % once assertions let the DFA take line-anchored patterns (25b33dc, now 2.1× faster than
+before the train). **Measured but NOT fixed, attributed:** `(?i)café` x86-64 +7.6 % instructions, first
+crossing bisected to `423ca6cb` (pre-train), non-monotonic across commits — the GCC `count_matches`
+inlining cliff. **Multi-pattern:** `regex_set` fuses from N = 56, so N = 64/128 read ~426/~466 MB/s
+(were ~83/~39 for N-walks); N = 32 is the dip (~228). **Not re-measured:** §E.1–E.5 (dated arcs, their
+own protocols), §C, §D.
+
 ## v2026.9.7
 
 9.7 (**a tokenization is linear, not only a munch**): **THESE TABLES DO NOT MOVE, AND THE STAMP IS
