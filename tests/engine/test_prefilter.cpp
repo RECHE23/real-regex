@@ -7,6 +7,7 @@
 #include <chrono>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <sciforge/test/framework.hpp>
 #include "real/real.hpp"
@@ -821,6 +822,111 @@ TEST(literal_search_equals_the_platform_find_everywhere)
     }
   }
   EXPECT(checked > 20000U); // the cross product actually ran (a silently empty loop would "pass")
+}
+
+// The adaptive literal search must answer what the platform search answers whatever it is told about the
+// needle and the subject: every offset as the "rarest" byte (the answer may not depend on the choice),
+// a fresh density, one forced dense (the pair filter from the first call), and one carried across every
+// search of a subject as the engine keeps it -- over small alphabets, so stops come dense, occurrences
+// overlap and the switch lands mid-subject, with needles that repeat their bytes and run past 16.
+TEST(literal_adaptive_search_answers_as_find_for_every_plan)
+{
+  std::uint32_t state {0x9E3779B9U};
+  const auto    next  {[&state] {
+                         state ^= state << 13U;
+                         state ^= state >> 17U;
+                         state ^= state << 5U;
+                         return state;
+                       }};
+  std::vector<std::string> haystacks;
+  for (const std::size_t alphabet : {2U, 3U, 4U}) {
+    for (const std::size_t n : {0U, 1U, 5U, 17U, 63U, 64U, 65U, 130U, 700U}) {
+      std::string h;
+      for (std::size_t i = 0; i < n; ++i) {
+        h += static_cast<char>('a' + (next() % alphabet));
+      }
+      haystacks.push_back(h);
+    }
+  }
+  haystacks.push_back(std::string(300, 'a') + "b" + std::string(300, 'a') + "ab");
+  const std::vector<std::string> needles {"ab", "ba", "aa", "abab", "aab", "bab", "abc", "cab", "abcd", "dcba",
+                                          "aaaaab", "abababab", "abcabcabcabcabcabcab" /* 20 bytes */};
+  std::size_t checked                    {0};
+  std::size_t switched                   {0};
+  for (const std::string& hay : haystacks) {
+    const std::string_view text {hay};
+    for (const std::string& n : needles) {
+      const std::string_view needle {n};
+      for (std::size_t rare = 0; rare < needle.size(); ++rare) {
+        real::detail::literal_density carried {};
+        for (std::size_t pos = 0; pos <= text.size() + 1; ++pos) {
+          std::size_t want {real::npos};
+          if (pos <= text.size()) {
+            const auto off {text.substr(pos).find(needle)};
+            want = off == std::string_view::npos ? real::npos : pos + off;
+          }
+          real::detail::literal_density fresh {};
+          real::detail::literal_density dense {.cands = 0, .origin = real::npos, .dense = true};
+          EXPECT_EQ(real::detail::find_literal_adaptive(text, pos, needle, rare, fresh), want);
+          EXPECT_EQ(real::detail::find_literal_adaptive(text, pos, needle, rare, dense), want);
+          EXPECT_EQ(real::detail::find_literal_adaptive(text, pos, needle, rare, carried), want);
+          ++checked;
+        }
+        switched += carried.dense ? 1U : 0U;
+      }
+    }
+  }
+  EXPECT(checked > 100000U); // the cross product ran
+  EXPECT(switched > 50U);    // and the carried density did switch on many subjects, not on none
+}
+
+// The switch itself, both ways: a needle whose rarest byte is common in the subject turns the density
+// dense within the first stops, and one whose rarest byte is rare there never does. The engine's routes
+// keep one density per subject, so a regex that walks both subjects in turn must answer each right.
+TEST(literal_adaptive_search_switches_only_where_the_rarest_byte_is_common)
+{
+  std::string common;
+  while (common.size() < 4000U) {
+    common += "some ordinary prose with words and more words here ";
+  }
+  const std::string needle                {"error"}; // `r` is its rarest byte by the static table, and common in prose
+  const std::size_t rare                  {real::detail::literal_rarest_offset(needle)};
+  EXPECT_EQ(needle[rare], 'r');
+  real::detail::literal_density dense_one {};
+  EXPECT_EQ(real::detail::find_literal_adaptive(common, 0, needle, rare, dense_one), real::npos);
+  EXPECT(dense_one.dense);
+
+  std::string sparse;
+  for (int i {0}; i < 16; ++i) {
+    sparse += std::string(500U, '.') + "r"; // stops that fail, far apart: the byte is rare here
+  }
+  const std::size_t where                  {sparse.size()};
+  sparse += "error";
+  real::detail::literal_density sparse_one {};
+  EXPECT_EQ(real::detail::find_literal_adaptive(sparse, 0, needle, rare, sparse_one), where);
+  EXPECT_EQ(sparse_one.cands, 16U);
+  EXPECT(!sparse_one.dense);
+
+  const real::regex re {"error"};
+  for (int round {0}; round < 2; ++round) {
+    EXPECT_EQ(re.count_matches(common + "error" + common), 1U); // a dense subject, the density kept per subject
+    EXPECT_EQ(re.count_matches(sparse), 1U);                    // then a sparse one: the kept density resets
+  }
+  std::string many;
+  while (many.size() < 20000U) {
+    many += "an error, then some words, then error again; ";
+  }
+  std::size_t want {0};
+  for (std::size_t at {many.find("error")}; at != std::string::npos; at = many.find("error", at + 5U)) {
+    ++want;
+  }
+  EXPECT_EQ(re.count_matches(many), want);
+  std::size_t spans {0};
+  for (const auto& m : re.find_iter(many)) {
+    EXPECT_EQ(many.substr(m.start(), 5U), "error");
+    ++spans;
+  }
+  EXPECT_EQ(spans, want);
 }
 
 // The same primitives under constant evaluation take the scalar path (no intrinsics in a constexpr

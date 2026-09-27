@@ -420,6 +420,13 @@ namespace real::detail {
       const inner_literal il {extract_inner_literal(tree_)};
       prog.hints.inner_literal             = il.bytes;
       prog.hints.inner_literal_len         = il.len;
+      if (il.len >= 2) {
+        std::array<char, 16> chars {};
+        for (std::size_t k = 0; k < il.len; ++k) {
+          chars[k] = static_cast<char>(il.bytes[k]);
+        }
+        prog.hints.inner_literal_rare = literal_rarest_offset(std::string_view {chars.data(), il.len});
+      }
       prog.hints.inner_literal_prefix      = il.prefix_child_count;
       // Peel-lead skip for the reverse-prefix (see build_prefix_ast). Non-zero only when the
       // IL route is live. confirm_at still runs the full program (lead/trail `\b`/`\B` checked there).

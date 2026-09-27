@@ -780,6 +780,9 @@ namespace real::detail {
     const void       *                ac_text             {nullptr}; //!< AC: the haystack \ref ac_dense was decided on.
     bool                              ac_decided          {false};   //!< AC: the density sample has run on this haystack.
     bool                              ac_dense            {false};   //!< AC: candidates are dense enough that the automaton wins.
+    const void       *                lit_text            {nullptr}; //!< Literal search: the haystack the two densities below refer to.
+    literal_density                   lit_prefix_density  {};        //!< Literal search: what this haystack showed of the prefix's rarest byte.
+    literal_density                   lit_inner_density   {};        //!< Literal search: the same for the inner literal.
     // AC fields placed LAST (own reason as pattern_hints::alternation_branch_count): inserting
     // here right after il_prefix_for would shift il_text/
     // il_abandoned/il_density_cands/il_density_origin (the inner-literal density-gate fields, read
@@ -1337,6 +1340,47 @@ namespace real::detail {
     }
 
     /*!
+     * \brief The next occurrence of a literal of the pattern's hints at or after \p pos, by
+     *        `find_literal_adaptive` with a density kept for the whole subject.
+     *
+     * A subject whose rarest literal byte proved common goes to the two-byte filter on every later search at
+     * once, rather than re-proving it once per match. A storage without the fields (a compile-time one)
+     * keeps the density for the call only, which is correct and re-learns; constant evaluation takes the
+     * plain searches.
+     *
+     * \param[in] text  The subject.
+     * \param[in] pos   Index to start from.
+     * \param[in] lit   The literal (the prefix or the inner literal).
+     * \param[in] rare  Offset of its rarest byte, from the hints.
+     * \param[in] inner Whether \p lit is the inner literal (each literal keeps its own density).
+     * \return The index of the occurrence, else \ref real::npos.
+     */
+    constexpr std::size_t find_on_subject(std::string_view text,
+                                          std::size_t      pos,
+                                          std::string_view lit,
+                                          std::size_t      rare,
+                                          bool             inner) const
+    {
+      if (std::is_constant_evaluated() || lit.size() < 2U) {
+        return inner ? find_literal(text, pos, lit) : find_prefix(text, pos, lit);
+      }
+      if constexpr (requires(State & st) {
+        st.lit_prefix_density;
+      }) {
+        if (state_.lit_text != static_cast<const void*>(text.data())) {
+          state_.lit_prefix_density = {}; // a fresh haystack: its bytes are judged anew
+          state_.lit_inner_density  = {};
+          state_.lit_text           = static_cast<const void*>(text.data());
+        }
+        return find_literal_adaptive(text, pos, lit, rare, inner ? state_.lit_inner_density : state_.lit_prefix_density);
+      }
+      else {
+        literal_density density {};
+        return find_literal_adaptive(text, pos, lit, rare, density);
+      }
+    }
+
+    /*!
      * \brief Re-enables the inner-literal route and clears its density counters on a new haystack.
      *
      * ONE MECHANISM, not two: the route's guards are sticky per haystack (`il_abandoned`, and the density
@@ -1408,7 +1452,7 @@ namespace real::detail {
       std::size_t       min_pre_start   {start}; // literal-scan floor (last confirm's reach) — the linearity backstop
       bool              first_candidate {true};
       while (true) {
-        const std::size_t h {find_literal(text, pos, lit)};
+        const std::size_t h {find_on_subject(text, pos, lit, prog_.hints.inner_literal_rare, true)};
         if (h != npos) {
           detail::prof::tick_prefilter_candidate();
         }
@@ -6131,7 +6175,7 @@ namespace real::detail {
       std::size_t            n   {0};
       std::size_t            pos {start};
       while (n < cap) {
-        const std::size_t cand {find_prefix(text, pos, lit)};
+        const std::size_t cand {find_on_subject(text, pos, lit, prog_.hints.prefix_rare, false)};
         if (cand == npos) {
           break;
         }
@@ -6499,7 +6543,8 @@ namespace real::detail {
                                 std::size_t      len,
                                 OutSlots&        out_slots)
     {
-      const std::size_t cand {find_prefix(text, start, std::string_view(prog_.hints.prefix.data(), len))};
+      const std::size_t cand {find_on_subject(text, start, std::string_view(prog_.hints.prefix.data(), len),
+                                              prog_.hints.prefix_rare, false)};
       if (cand == npos) {
         out_slots.assign(prog_.slot_count, npos);
         return false;
@@ -6643,7 +6688,8 @@ namespace real::detail {
         }
       }
       if (hints.prefix_size >= 2) {
-        return find_prefix(text, pos, std::string_view(hints.prefix.data(), hints.prefix_size));
+        return find_on_subject(text, pos, std::string_view(hints.prefix.data(), hints.prefix_size), hints.prefix_rare,
+                               false);
       }
       if (hints.rare_byte >= 0) {
         // A required rare byte sits `rare_offset` into every match: memchr it (SIMD), then back up to the

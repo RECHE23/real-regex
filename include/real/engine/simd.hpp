@@ -103,8 +103,7 @@ namespace real::detail {
    * answers "could the needle start at candidate `l`?" for both probes at once. Two bytes rejects far
    * more than one, and the survivors still get a full verify.
    *
-   * The one primitive with no SSE2 twin: its only caller is NEON-gated, x86-64 keeping the platform
-   * substring search, whose vectors are wider than this 128-bit floor. A twin here would be unrouted.
+   * Its SSE2 twin below serves the same caller: the literal scan runs on both ISAs.
    * \param[in] buf16_a 16 already-loaded bytes at the candidate starts (the caller's MISRA-clean memcpy).
    * \param[in] a       The needle byte expected at the first probe offset.
    * \param[in] buf16_b 16 already-loaded bytes at the candidate starts + delta (same, shifted).
@@ -263,6 +262,29 @@ namespace real::detail {
     const __m128i out1   {_mm_or_si128(below1, above1)};
     const __m128i bad    {_mm_and_si128(out0, out1)};
     return (~static_cast<mask_t>(_mm_movemask_epi8(bad))) & 0xFFFFU;
+  }
+
+  /*!
+   * \brief Mask of the candidate starts where both needle probes match -- the SSE2 leg of the NEON overload
+   *        above (prefilter.hpp's `simd_literal_scan`).
+   * \param[in] buf16_a 16 already-loaded bytes at the candidate starts (the caller's MISRA-clean memcpy).
+   * \param[in] a       The needle byte expected at the first probe offset.
+   * \param[in] buf16_b 16 already-loaded bytes at the candidate starts + delta (same, shifted).
+   * \param[in] b       The needle byte expected at the second probe offset.
+   * \return The 16-lane mask.
+   */
+  inline mask_t load_pair_mask(const std::uint8_t * buf16_a,
+                               std::uint8_t         a,
+                               const std::uint8_t * buf16_b,
+                               std::uint8_t         b)
+  {
+    __m128i va {};
+    __m128i vb {};
+    std::memcpy(&va, buf16_a, 16); // MISRA-clean byte loads (no pointer type-pun)
+    std::memcpy(&vb, buf16_b, 16);
+    const __m128i eq_a {_mm_cmpeq_epi8(va, _mm_set1_epi8(static_cast<char>(a)))};
+    const __m128i eq_b {_mm_cmpeq_epi8(vb, _mm_set1_epi8(static_cast<char>(b)))};
+    return static_cast<mask_t>(_mm_movemask_epi8(_mm_and_si128(eq_a, eq_b)));
   }
 
   /*! \brief `true` if no lane of \p m is set. */
