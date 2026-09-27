@@ -6653,8 +6653,22 @@ namespace real::detail {
         return find_byte(text, pos, static_cast<char>(hints.single_first));
       }
       if (hints.line_anchored && pos != start) {
-        const std::size_t nl {find_byte(text, pos - 1, '\n')};
-        return nl == npos ? npos : nl + 1;
+        // A line start whose first byte no match can begin with is no candidate: skip to the next line
+        // rather than hand it to a seed or a walk that fails there. `(?m)^\w+` over prose whose lines start
+        // with a space paid a DFA walk's setup per line for nothing.
+        std::size_t from {pos - 1};
+        while (true) {
+          const std::size_t nl {find_byte(text, from, '\n')};
+          if (nl == npos) {
+            return npos;
+          }
+          const std::size_t cand {nl + 1};
+          if (!hints.first_bytes_valid || cand >= text.size()
+              || hints.first_bytes.test(static_cast<std::uint8_t>(text[cand]))) {
+            return cand;
+          }
+          from = cand;
+        }
       }
       if (hints.small_set_size >= 2) {
         // Adaptive: probe a short window with the bitmap loop first (one test per byte — the baseline

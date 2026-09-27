@@ -473,3 +473,32 @@ TEST(dfa_count_of_a_pattern_with_groups_is_batched)
     EXPECT(counted > 10U);
   }
 }
+
+// A line-anchored pattern's candidates are the line starts whose first byte a match can begin with: a line
+// that starts with a space is skipped before any seed or DFA walk, which is what makes `(?m)^\w+` over
+// prose whose lines start with a space cheap. Pinned on the skip itself, then every query against the VM
+// on subjects whose lines start with a space, a word, a digit and nothing.
+TEST(line_anchored_candidates_skip_lines_no_match_can_start)
+{
+  const real::regex                                                      re   {R"(^\w+)", real::flags::multiline};
+  const real::detail::program_view                                       prog {re.raw_program()};
+  real::detail::dynamic_storage::state_type                              state;
+  real::detail::pike_vm<real::detail::dynamic_storage::state_type, true> vm   {prog, state};
+  EXPECT(prog.hints.line_anchored);
+  EXPECT_EQ(vm.next_candidate("x\n b\n c\ndd", 1, 0), 8U); // the lines " b" and " c" are passed over
+
+  for (const std::string_view pattern : {R"(^\w+)", R"(^[a-z]+$)", R"(^\s*\w+)", R"(^\d+)", R"(^.*$)", R"(^[A-Z]\w*)",
+                                         R"(^ \w+)", R"(^\S+ \d+)"}) {
+    for (const std::string_view unit : {"the fox\n jumps over\n12 dogs\n\nAlpha beta\n ", "\n \n x\n", "word\n"}) {
+      std::string text;
+      while (text.size() < 700U) {
+        text += unit;
+      }
+      const real::regex rx     {std::string {pattern}, real::flags::multiline};
+      const std::string routed {answers(rx, text)};
+      const std::string pure   {pure_answers(pattern, real::flags::multiline, text)};
+      EXPECT_EQ(routed, vm_answers(rx, text));
+      EXPECT_EQ(routed.substr(0, pure.size()), pure);
+    }
+  }
+}
