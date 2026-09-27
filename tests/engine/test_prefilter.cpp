@@ -878,6 +878,15 @@ TEST(literal_adaptive_search_answers_as_find_for_every_plan)
   }
   EXPECT(checked > 100000U); // the cross product ran
   EXPECT(switched > 50U);    // and the carried density did switch on many subjects, not on none
+
+  // A start past every candidate, up to the edge of size_t: no scan, whatever the density says (a scan
+  // would step past the end of the subject and wrap its bound).
+  for (const std::size_t pos : {real::npos, real::npos - 1U, real::npos - 64U, std::size_t {5000}}) {
+    real::detail::literal_density fresh {};
+    real::detail::literal_density dense {.cands = 0, .origin = real::npos, .dense = true};
+    EXPECT_EQ(real::detail::find_literal_adaptive("abcabcabc"sv, pos, "bc"sv, 1U, fresh), real::npos);
+    EXPECT_EQ(real::detail::find_literal_adaptive("abcabcabc"sv, pos, "bc"sv, 1U, dense), real::npos);
+  }
 }
 
 // The switch itself, both ways: a needle whose rarest byte is common in the subject turns the density
@@ -893,8 +902,12 @@ TEST(literal_adaptive_search_switches_only_where_the_rarest_byte_is_common)
   const std::size_t rare                  {real::detail::literal_rarest_offset(needle)};
   EXPECT_EQ(needle[rare], 'r');
   real::detail::literal_density dense_one {};
+  real::detail::literal_pair_scans() = 0;
   EXPECT_EQ(real::detail::find_literal_adaptive(common, 0, needle, rare, dense_one), real::npos);
   EXPECT(dense_one.dense);
+  EXPECT_EQ(real::detail::literal_pair_scans().load(), 1U); // the switch handed the rest to the filter
+  EXPECT_EQ(real::detail::find_literal_adaptive(common, 0, needle, rare, dense_one), real::npos);
+  EXPECT_EQ(real::detail::literal_pair_scans().load(), 2U); // and a dense subject goes to it at once
 
   std::string sparse;
   for (int i {0}; i < 16; ++i) {

@@ -105,6 +105,28 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Literal searches the two-byte block filter answered (a dense subject), counted for the tests that
+   *        pin when the adaptive literal search hands over.
+   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
+   */
+  inline std::atomic<std::uint64_t>& literal_pair_scans() noexcept
+  {
+    static std::atomic<std::uint64_t> scans {0};
+    return scans;
+  }
+
+  /*!
+   * \brief Bill one pair-filter search to \ref literal_pair_scans. A no-op unless the test binary defines
+   *        \c REAL_TEST_INSTRUMENT.
+   */
+  inline void note_literal_pair_scan() noexcept
+  {
+#if defined(REAL_TEST_INSTRUMENT)
+    literal_pair_scans().fetch_add(1, std::memory_order_relaxed);
+#endif
+  }
+
+  /*!
    * \brief Batches the lazy-DFA span filler produced, counted for the tests that pin which walks it serves.
    * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
    */
@@ -2656,6 +2678,7 @@ namespace real::detail {
 #endif
 #if defined(__ARM_NEON) || defined(__SSE2__)
     if (density.dense) {
+      note_literal_pair_scan();
       return simd_literal_scan(text, pos, literal);
     }
 #endif
@@ -2685,6 +2708,7 @@ namespace real::detail {
 #if defined(__ARM_NEON) || defined(__SSE2__)
       if (density.cands >= literal_dense_min_cands && cand - density.origin < density.cands * literal_dense_gap) {
         density.dense = true;
+        note_literal_pair_scan();
         return simd_literal_scan(text, cand + 1, literal);
       }
 #endif
