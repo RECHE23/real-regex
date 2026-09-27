@@ -339,36 +339,35 @@ TEST(dfa_unicode_word_boundaries_random)
   }
 }
 
-// On an all-ASCII subject no Unicode word boundary quits, so the default text mode runs as fast as `(?a)`:
-// the alphabet keeps non-ASCII bytes in classes of their own. Were a punctuation byte to share a class with
-// them, every boundary next to it would quit and the search would run on the VM, 3.6x slower here.
-// Measured on 200 KB (best of seven, 2026-09-26, arm64): 1.0x; the bound sits at 1.8x.
-TEST(dfa_unicode_word_boundaries_cost_nothing_on_ascii)
+// On an all-ASCII subject no Unicode word boundary quits, so the default text mode takes the DFAs as `(?a)`
+// does: the alphabet keeps non-ASCII bytes in classes of their own. Were a punctuation byte to share a class
+// with them, every boundary next to it would quit and hand its search to the VM (3.6x slower on 200 KB,
+// arm64). The quits are counted rather than timed: a clock on a shared CI runner read 2.84x one day for the
+// same build. And the count is shown to move where a boundary does meet a non-ASCII byte.
+TEST(dfa_unicode_word_boundaries_never_quit_on_ascii)
 {
-  using clock_type = std::chrono::steady_clock;
   std::string text;
   while (text.size() < 200000U) {
     text += "the quick fox singing 123x and bringing 7x over 42 dogs ";
   }
-  const auto best_ns {[](const auto& run) {
-                        double best {-1.0};
-                        for (int r {0}; r < 7; ++r) {
-                          const auto   t0 {clock_type::now()};
-                          run();
-                          const double ns {std::chrono::duration<double, std::nano>(clock_type::now() - t0).count()};
-                          best = (best < 0.0 || ns < best) ? ns : best;
-                        }
-                        return best;
-                      }};
   const real::regex unicode   {R"(\bfox\b|\bdog\b)"};
   const real::regex ascii     {R"((?a)\bfox\b|\bdog\b)"};
-  std::size_t       n_unicode {0};
-  std::size_t       n_ascii   {0};
-  const double      t_unicode {best_ns([&] { n_unicode = unicode.count_matches(text); })};
-  const double      t_ascii   {best_ns([&] { n_ascii = ascii.count_matches(text); })};
-  std::printf("  \\bfox\\b|\\bdog\\b: Unicode word-ness at %.2fx the ASCII one\n", t_unicode / t_ascii);
-  EXPECT_EQ(n_unicode, n_ascii);
-  EXPECT(t_unicode < 1.8 * t_ascii);
+  real::detail::dfa_quits() = 0;
+  const std::size_t n_unicode {unicode.count_matches(text)};
+  EXPECT_EQ(real::detail::dfa_quits().load(), 0U);
+  EXPECT_EQ(n_unicode, ascii.count_matches(text));
+  EXPECT(n_unicode > 0U);
+
+  // The witness, on the same route and scale: a curly apostrophe after every `fox` puts a boundary next to a
+  // non-ASCII byte throughout. (One apostrophe at the tail of the subject would not do: the last stretch is
+  // served by another route, and the count would stay 0 there for a reason that is not this property.)
+  std::string curly;
+  while (curly.size() < 200000U) {
+    curly += "the quick fox\u2019s singing 123x and bringing 7x over 42 dogs ";
+  }
+  real::detail::dfa_quits() = 0;
+  EXPECT_EQ(unicode.count_matches(curly), ascii.count_matches(curly));
+  EXPECT(real::detail::dfa_quits().load() > 0U);
 }
 
 // A program of saves, atoms and greedy `atom+` loops has its groups read by one walk that takes every loop as
