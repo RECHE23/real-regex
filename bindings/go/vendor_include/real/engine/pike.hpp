@@ -5000,6 +5000,35 @@ namespace real::detail {
     }
 
     /*!
+     * \brief The one atom of a loop body [\p begin, \p end) that holds nothing else but saves -- a group
+     *        around one atom, repeated: `([aeiou])+`.
+     * \param[in] prog  The program.
+     * \param[in] begin The body's first instruction (the loop split's preferred target).
+     * \param[in] end   The loop split.
+     * \return The atom's instruction, or \ref real::npos when the body is anything else.
+     */
+    [[nodiscard]] static constexpr std::size_t run_shape_loop_atom(const program_view& prog,
+                                                                   std::size_t         begin,
+                                                                   std::size_t         end)
+    {
+      std::size_t atom {npos};
+      for (std::size_t pc {begin}; pc < end;) {
+        const opcode op {prog.code[pc].op};
+        if (op == opcode::save) {
+          ++pc;
+        }
+        else if (atom == npos && (op == opcode::byte || op == opcode::klass || op == opcode::klass_cp)) {
+          atom = pc;
+          pc  += op == opcode::klass_cp ? 4U : 1U;
+        }
+        else {
+          return npos;
+        }
+      }
+      return atom;
+    }
+
+    /*!
      * \brief Whether \p prog is saves, atoms (a byte, a byte class, a code-point class) and greedy `atom+`
      *        and `atom*` loops, then `match`: nothing else, no alternation, no lazy loop, no assertion.
      *
@@ -5022,6 +5051,15 @@ namespace real::detail {
         }
         if (in.op == opcode::match) {
           return pc + 1U == prog.code.size();
+        }
+        if (in.op == opcode::split && in.primary_target < static_cast<std::int32_t>(pc)) {
+          // A group around one atom, repeated: the body saves, the atom, saves; the split back to it.
+          if (in.secondary_target != static_cast<std::int32_t>(pc) + 1
+              || run_shape_loop_atom(prog, static_cast<std::size_t>(in.primary_target), pc) == npos) {
+            return false;
+          }
+          ++pc;
+          continue;
         }
         if (in.op == opcode::split) {
           // `atom*`: split(atom, past), atom, jump back to the split.
@@ -5131,6 +5169,24 @@ namespace real::detail {
         }
         if (in.op == opcode::match) {
           return true;
+        }
+        if (in.op == opcode::split && in.primary_target < static_cast<std::int32_t>(pc)) {
+          // A group around one atom, repeated (the body ran once to get here). Each further round tries the
+          // atom first: a thread that enters the body and fails the atom dies with the saves it made, so
+          // the groups keep the last round that completed.
+          const auto        begin {static_cast<std::size_t>(in.primary_target)};
+          const std::size_t atom  {run_shape_loop_atom(prog_, begin, pc)};
+          const std::size_t after {atom + (prog_.code[atom].op == opcode::klass_cp ? 4U : 1U)};
+          for (std::size_t probe {at}; run_shape_atom(text, atom, probe, e); at = probe) {
+            for (std::size_t k {begin}; k < atom; ++k) {
+              out_slots[static_cast<std::size_t>(prog_.code[k].arg16)] = at;
+            }
+            for (std::size_t k {after}; k < pc; ++k) {
+              out_slots[static_cast<std::size_t>(prog_.code[k].arg16)] = probe;
+            }
+          }
+          ++pc;
+          continue;
         }
         if (in.op == opcode::split) { // `atom*` (is_run_shape vouched for the shape)
           while (run_shape_atom(text, pc + 1U, at, e)) {}
@@ -6241,6 +6297,9 @@ namespace real::detail {
                          })};
       if (!used) {
         n = 0; // no shared DFAs on this regex yet: nothing found and nothing proven
+      }
+      if (n != 0) {
+        note_dfa_span_batch();
       }
       return n;
     }

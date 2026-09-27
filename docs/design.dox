@@ -503,7 +503,9 @@ loop as far as its atom matches, never backing up, chose the preferred branch at
 could, so when it reaches `match` it is the highest-priority path and its groups are the VM's
 (`pike_vm::match_run_shape`); it ends where the DFAs said the match ends, since a loop cut short by that
 bound would put the VM's end past it. When an atom fails the walk -- `(\w+)(\d+)` must give digits back --
-the VM decides. `(\w+)\s+(\w+)` lost 27&nbsp;% of its instructions on prose and 28&nbsp;% on log lines (arm64,
+the VM decides. A group around one repeated atom, `(\s)+`, is a loop whose body holds saves around the
+atom: each further round tries the atom first, so the groups keep the last round that completed, as the VM's
+do. `(\w+)\s+(\w+)` lost 27&nbsp;% of its instructions on prose and 28&nbsp;% on log lines (arm64,
 2026-09-26), and it, `(\w+)\s*=\s*(\w+)` and the inner-literal confirm of `(\w+)\s+=\s+(\w+)` run no VM
 window at all, which a counter compiled into the test binary only (`vm_window_runs`) pins.
 

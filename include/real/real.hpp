@@ -690,7 +690,9 @@ namespace real {
       batch_lazy_dfa_  = batchable && no_wrap && !prog.hints.wb_lead_maximal_run
                          && !detail::lazy_dfa_route_disabled()
                          && prog.hints.first_bytes_valid && !prog.hints.empty_match_possible
-                         && prog.slot_count <= 2
+                         // Groups need no filling for a walk that reads none (count_matches): the filler
+                         // hands back spans only, so a pattern's groups need not cost it the batch.
+                         && (prog.slot_count <= 2 || prog.hints.capture_free_walk)
                          && prog.hints.alternation_branch_count < 4
                          && prog.hints.trailing_lookaround < 0
                          && detail::pike_vm<typename Storage::state_type, true>::lazy_dfa_is_the_route(prog.hints)

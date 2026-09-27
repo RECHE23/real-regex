@@ -381,7 +381,9 @@ TEST(dfa_run_shape_groups_match_the_vm)
                                                 R"(([a-z]+)(\d+))", "(\xC3\xA9+)(\\w+)", R"((\S+)\s+(\S+))", R"(x(\w+)y)",
                                                 R"((\w)(\w+))",     R"((\w+)(\w))",     R"(([ab]+)b(a+))",  R"((\p{L}+) (\d+))",
                                                 R"((\w+)\s*=\s*(\w+))", R"((\w*)x(\d*))", R"((a*)(a*))",   R"((\w+?)x)",
-                                                R"((\w+)\s+=\s+(\w+))", R"(([a-z]+)\s+(\d+))", R"(=(\s*)(\w*))", R"((\d*)(\d+))"};
+                                                R"((\w+)\s+=\s+(\w+))", R"(([a-z]+)\s+(\d+))", R"(=(\s*)(\w*))", R"((\d*)(\d+))",
+                                                R"((\s)+(\w)+)", R"((\w)+\s+(\w)+)", R"((a|e|i|o|u)+)", R"(((\w))+)",
+                                                R"((\s\w)+)",     R"((\w\s)+x)",      R"((\w\s)+\w*)",   R"((\w)(\s\w)+)"};
   static constexpr std::string_view units[]    {"the quick fox 42 dogs ", "aaa aa a9 99x ", "x\xC3\xA9\xC3\xA9t\xC3\xA9 12 abba y ",
                                                 "xabcy x9y aab ba key = val n=7  x  =  y "};
   int compared                                 {0};
@@ -399,7 +401,7 @@ TEST(dfa_run_shape_groups_match_the_vm)
       ++compared;
     }
   }
-  EXPECT(compared == 80);
+  EXPECT(compared == 112);
 }
 
 // The walk does the VM's work for a run shape: `(\w+)\s+(\w+)` enumerates without one Pike VM run over a DFA
@@ -423,7 +425,9 @@ TEST(dfa_run_shape_needs_no_vm_window)
   // Each route that reaches a window: the walks from candidates (above), the forward pass and reverse
   // (`[a-z]+` walks give way on the long runs), and the inner-literal confirm (`=` is its literal, and `\w`
   // beside `\s` is not one-pass: both start code points with 0xC2). `\s*` is a star loop.
-  for (const std::string_view pattern : {R"(([a-z]+)\s+(\d+))", R"((\w+)\s+=\s+(\w+))", R"((\w+)\s*=\s*(\w+))"}) {
+  // A group around one repeated atom, `(\s)+`, is a loop whose body holds saves around the atom.
+  for (const std::string_view pattern : {R"(([a-z]+)\s+(\d+))", R"((\w+)\s+=\s+(\w+))", R"((\w+)\s*=\s*(\w+))",
+                                         R"((\s)+(\w)+)", R"((\w)+\s+(\w)+)"}) {
     const real::regex re {std::string {pattern}};
     found = 0;
     for (const auto& m : re.find_iter(text)) {
@@ -439,4 +443,33 @@ TEST(dfa_run_shape_needs_no_vm_window)
   }
   EXPECT(found > 100U);
   EXPECT(real::detail::vm_window_runs().load() > 0U);
+}
+
+// count_matches reads no group, so a pattern with groups takes the lazy DFA's span batch like one without:
+// counted by the batch, by walking find_iter, and with the DFAs taken out, the three agree.
+TEST(dfa_count_of_a_pattern_with_groups_is_batched)
+{
+  std::string text;
+  while (text.size() < 4096U) {
+    text += "the quick fox 42 dogs a9 key = val \xC3\xA9t\xC3\xA9 aaaa ";
+  }
+  for (const std::string_view pattern : {R"((a|e|i|o|u)+)", R"((\w)+)", R"((\w+)\s+(\w+))", R"(([a-z]+)\s+(\d+))",
+                                         R"((\s)+(\w)+)", R"((\w+)(\d+))"}) {
+    const real::regex re     {std::string {pattern}};
+    std::size_t       walked {0};
+    for (const auto& m : re.find_iter(text)) {
+      walked += m.matched() ? 1U : 0U;
+    }
+    real::detail::dfa_span_batches() = 0;
+    const std::size_t counted {re.count_matches(text)};
+    if (pattern != R"((\w+)(\d+))") { // backs up inside its window: not a walk the span filler serves
+      EXPECT(real::detail::dfa_span_batches().load() > 0U);
+    }
+    real::detail::lazy_dfa_route_disabled() = true;
+    const std::size_t vm      {re.count_matches(text)};
+    real::detail::lazy_dfa_route_disabled() = false;
+    EXPECT_EQ(counted, walked);
+    EXPECT_EQ(counted, vm);
+    EXPECT(counted > 10U);
+  }
 }

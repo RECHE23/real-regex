@@ -84,6 +84,27 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Batches the lazy-DFA span filler produced, counted for the tests that pin which walks it serves.
+   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
+   */
+  inline std::atomic<std::uint64_t>& dfa_span_batches() noexcept
+  {
+    static std::atomic<std::uint64_t> batches {0};
+    return batches;
+  }
+
+  /*!
+   * \brief Bill one lazy-DFA span batch to \ref dfa_span_batches. A no-op unless the test binary defines
+   *        \c REAL_TEST_INSTRUMENT.
+   */
+  inline void note_dfa_span_batch() noexcept
+  {
+#if defined(REAL_TEST_INSTRUMENT)
+    dfa_span_batches().fetch_add(1, std::memory_order_relaxed);
+#endif
+  }
+
+  /*!
    * \brief True if \p kind is `\b` or `\B` (the only position asserts a fast path wraps).
    * \param[in] kind Assertion kind from `assert_position`.
    * \return Whether it is a word-boundary assertion.
