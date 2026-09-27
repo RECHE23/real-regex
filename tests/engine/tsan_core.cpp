@@ -193,6 +193,7 @@ namespace {
                const std::vector<bool>& expected)
   {
     std::vector<std::string> pats;
+    pats.reserve(real::regex_set::fused_deferred_min_eligible + 6U);
     for (std::size_t i = 0; i < real::regex_set::fused_deferred_min_eligible + 6U; ++i) {
       pats.push_back("ERR" + std::to_string(i) + "[0-9]{2}[a-z]+");
     }
@@ -260,7 +261,7 @@ int main()
   }
 
   std::string set_hay;
-  while (set_hay.size() < 64U * 1024U) {
+  while (set_hay.size() < std::size_t {64} *1024U) {
     set_hay += "log ERR1042abc filler ERR2342zz text\n";
   }
   std::vector<bool> set_expected(real::regex_set::fused_deferred_min_eligible + 6U, false);

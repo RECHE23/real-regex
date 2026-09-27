@@ -249,6 +249,7 @@ TEST(regex_set_builds_its_fused_dfa_once_it_has_walked_enough)
 {
   const auto make = [](std::size_t n, std::size_t ineligible) {
                       std::vector<std::string> pats;
+                      pats.reserve(n);
                       for (std::size_t i = 0; i < n; ++i) {
                         pats.push_back(i < ineligible ? "X" + std::to_string(i) + "(?=[0-9])"
                                                       : "ERR" + std::to_string(i) + "[0-9]{2}[a-z]+");
@@ -294,7 +295,8 @@ TEST(regex_set_builds_its_fused_dfa_once_it_has_walked_enough)
   EXPECT(set.is_match(subject));
   EXPECT(!set.is_match("nothing here"));
   EXPECT(set.which(subject, 1) == expected);
-  const real::regex_set copy {set}; // a copy shares the built DFA
+  real::regex_set copy {"placeholder"};
+  copy = set; // a copy shares the built DFA
   EXPECT(copy.uses_fused());
   EXPECT(copy.which(subject) == expected);
 
