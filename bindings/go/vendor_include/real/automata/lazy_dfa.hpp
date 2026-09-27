@@ -1300,10 +1300,11 @@ namespace real::detail {
         return forward_end_look(text, start);
       }
       begin_scan();
-      std::uint32_t state    {start_state_}; // the seed at the start (a re-seeding state)
-      std::size_t   best_end {npos};
-      bool          matched  {false};
-      std::size_t   pos      {start};
+      std::uint32_t       state    {start_state_}; // the seed at the start (a re-seeding state)
+      std::size_t         best_end {npos};
+      bool                matched  {false};
+      std::size_t         pos      {start};
+      const std::uint16_t count    {alpha_.count};
       while (true) {
         const std::uint32_t midx {state_match_idx_[state]};
         if (midx != no_match_idx) {
@@ -1319,7 +1320,14 @@ namespace real::detail {
         }
         const std::uint8_t byte {static_cast<std::uint8_t>(text[pos])};
         // pre-match transitions re-seed (unanchored search continues); post-match ones do not (leftmost).
-        state = matched ? step(state, byte) : step_seeded(state, byte);
+        // The cached edge read inline, as the anchored scan does; step()/step_seeded() only on a miss.
+        const std::uint32_t cached {(matched ? trans_ : trans_seeded_)[(static_cast<std::size_t>(state) * count) + alpha_.of[byte]]};
+        if (cached != no_transition) {
+          state = cached;
+        }
+        else {
+          state = matched ? step(state, byte) : step_seeded(state, byte);
+        }
         ++pos;
       }
       return (thrashing_ && may_quit_) ? quit_pos : best_end;
@@ -2431,9 +2439,10 @@ namespace real::detail {
       if (look_) {
         return reverse_start_look(text, e, resume);
       }
-      std::uint32_t state {start_state_}; // rev-closure of the forward `match`
-      std::size_t   best  {npos};
-      std::size_t   pos   {e};
+      std::uint32_t       state {start_state_}; // rev-closure of the forward `match`
+      std::size_t         best  {npos};
+      std::size_t         pos   {e};
+      const std::uint16_t count {alpha_.count};
       while (true) {
         if (state_has_start_[state] != 0) {
           best = pos; // reached the original start: [pos, e] matches; kLongest keeps the smallest pos
@@ -2442,7 +2451,9 @@ namespace real::detail {
           break;
         }
         --pos;
-        state = step(state, static_cast<std::uint8_t>(text[pos]));
+        const auto          byte   {static_cast<std::uint8_t>(text[pos])};
+        const std::uint32_t cached {trans_[(static_cast<std::size_t>(state) * count) + alpha_.of[byte]]};
+        state = cached != no_transition ? cached : step(state, byte); // the cached edge inline; step() on a miss
       }
       return best;
     }
