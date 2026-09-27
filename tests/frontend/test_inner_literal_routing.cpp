@@ -7,6 +7,7 @@
 #include <real/automata/lazy_dfa.hpp> // inner_literal_route_disabled
 #include <real/real.hpp>
 
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <string>
@@ -455,13 +456,20 @@ TEST(il_confirm_without_groups_runs_no_engine)
   while (text.size() < 200000U) {
     text += "2026-09-26 12:04:11 INFO user=alice id=4821 path=/api/v2/items status=200 ms=13\n";
   }
-  const auto best_ns {[](const auto& run) {
-                        double best {-1.0};
+  // Best of seven rounds, the runs alternating within each round: a clock that speeds up part-way through (a
+  // shared runner leaving a quiet period) then weighs on every run alike, not on whichever was timed first.
+  const auto best_ns {[](const auto&... runs) {
+                        std::array<double, sizeof...(runs)> best {};
+                        best.fill(-1.0);
+                        const auto one {[](const auto& run, double& slot) {
+                                          const auto   t0 {clock_type::now()};
+                                          run();
+                                          const double ns {std::chrono::duration<double, std::nano>(clock_type::now() - t0).count()};
+                                          slot = (slot < 0.0 || ns < slot) ? ns : slot;
+                                        }};
                         for (int r {0}; r < 7; ++r) {
-                          const auto   t0 {clock_type::now()};
-                          run();
-                          const double ns {std::chrono::duration<double, std::nano>(clock_type::now() - t0).count()};
-                          best = (best < 0.0 || ns < best) ? ns : best;
+                          std::size_t k {0};
+                          (one(runs, best[k++]), ...);
                         }
                         return best;
                       }};
@@ -469,8 +477,10 @@ TEST(il_confirm_without_groups_runs_no_engine)
   const real::regex reference {R"(\S+=\S+)"};
   std::size_t       counted   {0};
   std::size_t       expected  {0};
-  const double      routed    {best_ns([&] { counted = re.count_matches(text); })};
-  const double      baseline  {best_ns([&] { expected = reference.count_matches(text); })};
+  const auto        times     {best_ns([&] { counted = re.count_matches(text); },
+                                       [&] { expected = reference.count_matches(text); })};
+  const double      routed    {times[0]};
+  const double      baseline  {times[1]};
   std::printf("  [^ ]+=[^ ]+: %.2fx the two-run confirm\n", routed / baseline);
   EXPECT_EQ(counted, expected);
   EXPECT(routed < ratio_bound * baseline);

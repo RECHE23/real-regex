@@ -10,6 +10,7 @@
 #include <real/automata/lazy_dfa.hpp> // lazy_dfa_route_disabled
 #include <real/real.hpp>
 
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <string>
@@ -240,13 +241,20 @@ TEST(lazy_dfa_anchored_walks_give_way_to_one_pass)
   while (text.size() < 200000U) {
     text += "the quick fox singing 123x and bringing 7x over 42 dogs ";
   }
-  const auto best_ns {[](const auto& run) {
-                        double best {-1.0};
+  // Best of seven rounds, the runs alternating within each round: a clock that speeds up part-way through (a
+  // shared runner leaving a quiet period) then weighs on every run alike, not on whichever was timed first.
+  const auto best_ns {[](const auto&... runs) {
+                        std::array<double, sizeof...(runs)> best {};
+                        best.fill(-1.0);
+                        const auto one {[](const auto& run, double& slot) {
+                                          const auto   t0 {clock_type::now()};
+                                          run();
+                                          const double ns {std::chrono::duration<double, std::nano>(clock_type::now() - t0).count()};
+                                          slot = (slot < 0.0 || ns < slot) ? ns : slot;
+                                        }};
                         for (int r {0}; r < 7; ++r) {
-                          const auto   t0 {clock_type::now()};
-                          run();
-                          const double ns {std::chrono::duration<double, std::nano>(clock_type::now() - t0).count()};
-                          best = (best < 0.0 || ns < best) ? ns : best;
+                          std::size_t k {0};
+                          (one(runs, best[k++]), ...);
                         }
                         return best;
                       }};
@@ -258,12 +266,14 @@ TEST(lazy_dfa_anchored_walks_give_way_to_one_pass)
   const real::regex            re       {std::string {pattern}};
   std::size_t                  sink     {0};
   EXPECT(fwd.eligible());
-  const double pass                     {best_ns([&] {
+  const auto times                      {best_ns([&] {
                                                    fwd.begin_scan();
                                                    sink += fwd.forward_end(text, 0);
-                                                 })};
-  const double counts {best_ns([&] { sink += re.count_matches(text); })};
-  const double finds  {best_ns([&] { sink += re.search(text) ? 1U : 0U; })};
+                                                 },
+                                                 [&] { sink += re.count_matches(text); }, [&] { sink += re.search(text) ? 1U : 0U; })};
+  const double pass   {times[0]};
+  const double counts {times[1]};
+  const double finds  {times[2]};
   std::printf("  %s: count_matches %.2fx, search %.2fx the bare forward pass\n", std::string {pattern}.c_str(),
               counts / pass, finds / pass);
   EXPECT(counts < ratio_bound * pass);
@@ -354,23 +364,33 @@ TEST(lazy_dfa_thrash_hands_the_search_to_the_vm)
     bits ^= bits << 5U;
     text += ((bits & 1U) != 0U) ? 'a' : 'b';
   }
-  const auto best_ns {[](const auto& run) {
-                        double best {-1.0};
+  // Best of three rounds, the two runs alternating within each: a clock that speeds up part-way through then
+  // weighs on both alike, not on whichever was timed first.
+  const auto best_ns {[](const auto& first, const auto& second) {
+                        std::array<double, 2> best {-1.0, -1.0};
+                        const auto            one {[](const auto& run, double& slot) {
+                                                     const auto   t0 {clock_type::now()};
+                                                     run();
+                                                     const double ns {std::chrono::duration<double, std::nano>(clock_type::now() - t0).count()};
+                                                     slot = (slot < 0.0 || ns < slot) ? ns : slot;
+                                                   }};
                         for (int r {0}; r < 3; ++r) {
-                          const auto   t0 {clock_type::now()};
-                          run();
-                          const double ns {std::chrono::duration<double, std::nano>(clock_type::now() - t0).count()};
-                          best = (best < 0.0 || ns < best) ? ns : best;
+                          one(first, best[0]);
+                          one(second, best[1]);
                         }
                         return best;
                       }};
   const real::regex re       {"(a|b)*a(a|b){12}c"};
   std::size_t       routed_n {0};
   std::size_t       vm_n     {0};
-  const double      routed   {best_ns([&] { routed_n = re.count_matches(text); })};
-  real::detail::lazy_dfa_route_disabled() = true;
-  const double      vm       {best_ns([&] { vm_n = re.count_matches(text); })};
-  real::detail::lazy_dfa_route_disabled() = false;
+  const auto        times    {best_ns([&] { routed_n = re.count_matches(text); },
+                                      [&] {
+                                        real::detail::lazy_dfa_route_disabled() = true;
+                                        vm_n                                    = re.count_matches(text);
+                                        real::detail::lazy_dfa_route_disabled() = false;
+                                      })};
+  const double      routed   {times[0]};
+  const double      vm       {times[1]};
   std::printf("  (a|b)*a(a|b){12}c: %.2fx the VM\n", routed / vm);
   EXPECT_EQ(routed_n, vm_n);
   EXPECT(routed < 1.8 * vm);
