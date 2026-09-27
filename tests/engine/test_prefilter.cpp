@@ -840,3 +840,39 @@ TEST(literal_search_constexpr_leg_agrees)
   EXPECT_EQ(real::detail::find_prefix("aaaaaaaaaaaaaaaaaaab"sv, 3, "ab"sv), 18U);
   EXPECT_EQ(real::detail::find_prefix("abcdefghijklmnopqrst"sv, 0, "pq"sv), 15U);
 }
+
+// find_byte scans 64 bytes per round on NEON (simd_byte_scan), rejecting a round on one test and taking the
+// first lane of the first block with a hit; elsewhere it is the platform memchr. Either way it must return
+// the leftmost occurrence at or after pos: a hit in every lane of every block of a round, in the scalar
+// tail, at pos itself, and none at all, from every start, against a plain loop.
+TEST(find_byte_returns_the_leftmost_hit_from_every_start)
+{
+  using real::detail::find_byte;
+  std::string text(300, 'a');
+  const auto  scalar {[&](std::size_t pos, char byte) {
+                        for (std::size_t i {pos}; i < text.size(); ++i) {
+                          if (text[i] == byte) {
+                            return i;
+                          }
+                        }
+                        return real::npos;
+                      }};
+  for (const std::size_t at : {std::size_t {0}, std::size_t {1}, std::size_t {15}, std::size_t {16}, std::size_t {17},
+                               std::size_t {31}, std::size_t {47}, std::size_t {63}, std::size_t {64}, std::size_t {100},
+                               std::size_t {255}, std::size_t {256}, std::size_t {299}}) {
+    text.assign(300, 'a');
+    text[at] = 'x';
+    if (at + 7U < text.size()) {
+      text[at + 7U] = 'x'; // a second hit in the same round: the first must win
+    }
+    for (std::size_t pos {0}; pos < text.size(); ++pos) {
+      EXPECT_EQ(find_byte(text, pos, 'x'), scalar(pos, 'x'));
+    }
+  }
+  text.assign(300, 'a');
+  for (std::size_t pos {0}; pos < text.size(); ++pos) {
+    EXPECT_EQ(find_byte(text, pos, 'x'), real::npos);
+    EXPECT_EQ(find_byte(text, pos, 'a'), pos);
+  }
+  EXPECT_EQ(find_byte(text, text.size(), 'a'), real::npos);
+}
