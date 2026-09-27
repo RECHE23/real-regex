@@ -176,8 +176,10 @@ TABLE B — extraction non-overlapping (counts equal REAL/RE2):
   `fused_min_eligible` (56) and builds its fused which-matched DFA from there, which is what the table now
   shows: ~426–466 MB/s at N = 64 and 128, where the last stamp read ~83 and ~39 for the N-walks alone.
   N = 32 is the dip, ~228 MB/s against the fused ~426 one row down: on this corpus fusing there would pay,
-  but the threshold was calibrated with the automaton's build cost in the balance, and moving it is its
-  own question, left open here.
+  but the threshold was calibrated with the automaton's build cost in the balance. Since this stamp a set
+  of `fused_deferred_min_eligible` (24) to 55 members builds its fused DFA once its whole-subject calls
+  have walked 1 MiB, so a set kept for more than a subject or two of this size takes the fused scan; the
+  N = 32 row was not re-measured with it.
 
 - **Architectural gap:** single-pass engines (RE2::Set, Hyperscan) stay **flat** in N; pure N-walks
   **degrade** hard (e.g. ~421 → 41 MB/s from N=32 → 256 on arm64). Stage-2 fused which-matched

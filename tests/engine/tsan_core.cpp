@@ -30,6 +30,7 @@
 //   REAL_TSAN_INJECT_RACE=1 make tsan-core   # expect non-zero / TSan report
 
 #include <real/real.hpp>
+#include <real/regex_set.hpp>
 
 #include <atomic>
 #include <barrier>
@@ -183,6 +184,45 @@ namespace {
     }
     return hits.load(std::memory_order_relaxed);
   }
+
+  // One wave on a FRESH mid-sized regex_set: every thread's whole-subject matches() counts toward the
+  // deferred fused build, so the threads cross its budget together -- one builds under call_once while
+  // the others wait on it or still walk, and all read the published DFA after. Returns the number of
+  // threads whose every answer equalled the single-threaded one.
+  int set_wave(std::string_view         hay,
+               const std::vector<bool>& expected)
+  {
+    std::vector<std::string> pats;
+    for (std::size_t i = 0; i < real::regex_set::fused_deferred_min_eligible + 6U; ++i) {
+      pats.push_back("ERR" + std::to_string(i) + "[0-9]{2}[a-z]+");
+    }
+    const std::vector<std::string_view> views(pats.begin(), pats.end());
+    const real::regex_set               set    {std::span<const std::string_view> {views}};
+    const std::size_t                   rounds {(real::regex_set::fused_deferred_bytes / hay.size() / k_threads) + 2U};
+
+    std::barrier             sync              {k_threads};
+    std::atomic<int>         agreed            {0};
+    std::vector<std::thread> threads;
+    threads.reserve(static_cast<std::size_t>(k_threads));
+    for (int t = 0; t < k_threads; ++t) {
+      threads.emplace_back([&] {
+                             sync.arrive_and_wait();
+                             bool same {true};
+                             for (std::size_t r = 0; r < rounds; ++r) {
+                               same = same && set.matches(hay) == expected;
+                               same = same && set.is_match(hay);
+                             }
+                             same = same && set.uses_fused();
+                             if (same) {
+                               agreed.fetch_add(1, std::memory_order_relaxed);
+                             }
+                           });
+    }
+    for (auto& th : threads) {
+      th.join();
+    }
+    return agreed.load(std::memory_order_relaxed);
+  }
 } // namespace
 
 int main()
@@ -216,6 +256,20 @@ int main()
   for (int iter = 0; iter < k_iterations; ++iter) {
     for (const case_spec& c : cases) {
       total_hits += race_wave(c.pattern, c.hay, inject);
+    }
+  }
+
+  std::string set_hay;
+  while (set_hay.size() < 64U * 1024U) {
+    set_hay += "log ERR1042abc filler ERR2342zz text\n";
+  }
+  std::vector<bool> set_expected(real::regex_set::fused_deferred_min_eligible + 6U, false);
+  set_expected[10] = true;
+  set_expected[23] = true;
+  for (int iter = 0; iter < 20; ++iter) {
+    if (set_wave(set_hay, set_expected) != k_threads) {
+      std::printf("tsan_core: FAIL regex_set wave %d: a thread saw a different answer or no fused DFA\n", iter);
+      return 2;
     }
   }
 

@@ -26,6 +26,8 @@ real::basic_match_iterator:
 
 real::regex_set:
   fused_min_eligible: calibrated fused-scan threshold; not part of the which-matched contract
+  fused_deferred_min_eligible: calibrated deferred fused-build threshold; not part of the which-matched contract
+  fused_deferred_bytes: calibrated deferred fused-build budget; not part of the which-matched contract
   uses_fused: instrumentation -- whether this instance took the fused path
   eligible_count: instrumentation -- fused subset size
 

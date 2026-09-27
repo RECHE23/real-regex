@@ -241,6 +241,124 @@ TEST(regex_set_fused_threshold_edges_and_mixed_sets)
   EXPECT(s60b.is_match("X07")); // an ineligible member is still searched, by N-walk
 }
 
+// The deferred fused build. A set of fused_deferred_min_eligible to fused_min_eligible members starts on
+// walks and builds its fused DFA once, when its whole-subject matches() calls have walked
+// fused_deferred_bytes in total -- the call that crosses the budget is already answered by it. Region
+// calls and is_match neither count nor build. The answers never change, only the route.
+TEST(regex_set_builds_its_fused_dfa_once_it_has_walked_enough)
+{
+  const auto make = [](std::size_t n, std::size_t ineligible) {
+                      std::vector<std::string> pats;
+                      for (std::size_t i = 0; i < n; ++i) {
+                        pats.push_back(i < ineligible ? "X" + std::to_string(i) + "(?=[0-9])"
+                                                      : "ERR" + std::to_string(i) + "[0-9]{2}[a-z]+");
+                      }
+                      return pats;
+                    };
+  const auto views_of = [](const std::vector<std::string>& pats) {
+                          return std::vector<std::string_view>(pats.begin(), pats.end());
+                        };
+  std::string subject;
+  while (subject.size() < 300000) {
+    subject += "log ERR1042abc and X07 then ERR2342zz filler text\n";
+  }
+  const std::size_t calls_under {real::regex_set::fused_deferred_bytes / subject.size()};
+  EXPECT(calls_under >= 2U); // the budget is crossed by a later call, not the first
+
+  // Mid-sized, all eligible: walks until the budget, the fused DFA from the call that crosses it.
+  const auto               pats30  {make(30, 0)};
+  const auto               views30 {views_of(pats30)};
+  const real::regex_set    set     {std::span<const std::string_view> {views30}};
+  std::vector<std::size_t> expected;
+  for (std::size_t i = 0; i < pats30.size(); ++i) {
+    if (real::regex(pats30[i]).search(subject)) {
+      expected.push_back(i);
+    }
+  }
+  EXPECT_EQ(expected.size(), 2U); // ERR10 and ERR23
+  EXPECT(!set.uses_fused());
+  for (int i {0}; i < 50; ++i) {
+    EXPECT(set.which(subject, 1) == expected); // a region call: walked, never counted
+    EXPECT(set.is_match(subject));             // an any-match call: walked, never counted
+  }
+  EXPECT(!set.uses_fused());
+  for (std::size_t i {0}; i < calls_under; ++i) {
+    EXPECT(set.which(subject) == expected);
+    EXPECT(!set.uses_fused());
+    EXPECT_EQ(set.eligible_count(), 0U);
+  }
+  EXPECT(set.which(subject) == expected); // crosses the budget
+  EXPECT(set.uses_fused());
+  EXPECT_EQ(set.eligible_count(), 30U);
+  EXPECT(set.which(subject) == expected);
+  EXPECT(set.is_match(subject));
+  EXPECT(!set.is_match("nothing here"));
+  EXPECT(set.which(subject, 1) == expected);
+  const real::regex_set copy {set}; // a copy shares the built DFA
+  EXPECT(copy.uses_fused());
+  EXPECT(copy.which(subject) == expected);
+
+  // Mid-sized with ineligible members: they are still searched once the others fuse.
+  const auto            pats40  {make(40, 8)};
+  const auto            views40 {views_of(pats40)};
+  const real::regex_set mixed   {std::span<const std::string_view> {views40}};
+  for (std::size_t i {0}; i <= calls_under; ++i) {
+    const auto hit {mixed.which(subject)};
+    EXPECT(hit == (std::vector<std::size_t> {0, 10, 23})); // X0 before a digit by walk, the two ERR by the DFA at the end
+  }
+  EXPECT(mixed.uses_fused());
+  EXPECT_EQ(mixed.eligible_count(), 32U);
+
+  // Large but with too few eligibles to fuse at construction: deferred, the partition already done.
+  const auto            pats60  {make(60, 10)};
+  const auto            views60 {views_of(pats60)};
+  const real::regex_set big     {std::span<const std::string_view> {views60}};
+  EXPECT(!big.uses_fused());
+  for (std::size_t i {0}; i <= calls_under; ++i) {
+    EXPECT(big.which(subject) == (std::vector<std::size_t> {0, 10, 23}));
+  }
+  EXPECT(big.uses_fused());
+  EXPECT_EQ(big.eligible_count(), 50U);
+
+  // Mid-sized with too few eligibles: the deferred build gives up and the set keeps walking.
+  const auto            pats30x  {make(30, 10)};
+  const auto            views30x {views_of(pats30x)};
+  const real::regex_set few      {std::span<const std::string_view> {views30x}};
+  for (std::size_t i {0}; i <= calls_under + 1U; ++i) {
+    EXPECT(few.which(subject) == (std::vector<std::size_t> {0, 10, 23}));
+  }
+  EXPECT(!few.uses_fused());
+
+  // Below the deferred threshold: never fuses, however much it walks.
+  const auto            pats23  {make(real::regex_set::fused_deferred_min_eligible - 1U, 0)};
+  const auto            views23 {views_of(pats23)};
+  const real::regex_set small   {std::span<const std::string_view> {views23}};
+  for (std::size_t i {0}; i <= calls_under + 1U; ++i) {
+    EXPECT(small.which(subject) == (std::vector<std::size_t> {10}));
+  }
+  EXPECT(!small.uses_fused());
+}
+
+// A fused DFA past its bound, where each member alone fits: construction never builds it for a
+// mid-sized set, and the deferred build must not throw out of matches() -- it gives up and walks.
+TEST(regex_set_deferred_build_past_the_dfa_bound_keeps_walking)
+{
+  std::vector<std::string> pats {"a.{7}", "b.{7}", "c.{7}"}; // 59 states each, far past the bound fused
+  for (std::size_t i {pats.size()}; i < real::regex_set::fused_deferred_min_eligible; ++i) {
+    pats.push_back("ERR" + std::to_string(i) + "[0-9]{2}");
+  }
+  const std::vector<std::string_view> views(pats.begin(), pats.end());
+  const real::regex_set               set {std::span<const std::string_view> {views}};
+  std::string                         subject(real::regex_set::fused_deferred_bytes + 1U, 'z');
+  subject += "a1234567";
+  std::vector<bool> expected(pats.size(), false);
+  expected[0] = true;
+  EXPECT(set.matches(subject) == expected); // crosses the budget: the build is tried and given up
+  EXPECT(!set.uses_fused());
+  EXPECT_EQ(set.eligible_count(), 0U);
+  EXPECT(set.matches(subject) == expected);
+}
+
 // --- byte filter: the SKIP path, which nothing above exercises ---------------------------------
 //
 // Every subject in this file so far contains a byte one member can start with, so the filter finds a
