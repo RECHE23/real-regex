@@ -2967,14 +2967,23 @@ namespace real::detail {
     bool dense   {}; //!< Its first bytes stop often enough that the pair filter takes the subject.
   };
 
-  //! \brief Whether this target has the nibble fingerprint (a table lookup per nibble: AArch64, or x86 built with
-  //!        SSSE3). A plan built elsewhere never claims one: the fingerprint's reach is shorter than the pairs',
-  //!        and a scan that bounded its blocks by it while masking by the pairs would read past the subject.
+  /*!
+   * \brief Whether the nibble fingerprint can run here: AArch64 always, x86 when the build enables SSSE3 or, with
+   *        gcc or clang, when the running CPU has it. A plan built elsewhere never claims one: the fingerprint's
+   *        reach is shorter than the pairs', and a scan that bounded its blocks by it while masking by the pairs
+   *        would read past the subject.
+   * \return True when a plan may carry the fingerprint.
+   */
+  inline bool alternation_nibbles_supported()
+  {
 #if defined(__aarch64__) || defined(__SSSE3__)
-  inline constexpr bool alternation_nibbles_available {true};
+    return true;
+#elif defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__))
+    return cpu_has_ssse3();
 #else
-  inline constexpr bool alternation_nibbles_available {false};
+    return false;
 #endif
+  }
 
   //! \brief Fewest branches for which the fingerprint replaces the pairs. Two pairs are two compares a block, a
   //!        fingerprint six table lookups: on x86 (SSSE3) `cat|dog` measured +13 % by the fingerprint and three
@@ -3010,12 +3019,14 @@ namespace real::detail {
 
   /*!
    * \brief The block filter a dense alternation's scan runs: the nibble fingerprint of each branch's first three
-   *        bytes where \p nibbles (AArch64, or x86 built with SSSE3: a table lookup per nibble, a cost per block
-   *        that does not grow with the branches), else the byte pairs.
+   *        bytes where \p nibbles (a table lookup per nibble, a cost per block that does not grow with the
+   *        branches; see \ref alternation_nibbles_supported), else the byte pairs. The sample's filter: the scan
+   *        runs its own loop for each (pike_vm::alternation_nibble_scan).
    *
    * Both mark a superset of the starts where some branch matches, and neither says which: the caller verifies
    * every marked start in branch order, so priority does not depend on how branches share a bucket.
-   * \param[in] at      The first of the 16 starts; \ref alternation_filter_reach bytes past its 16 are read.
+   * \param[in] at      The first of the 16 starts; `plan.max_d` bytes past its 16 are read (two for the
+   *                    fingerprint).
    * \param[in] plan    The branches' probes and fingerprint.
    * \param[in] nibbles Whether to take the fingerprint (`plan.nibbles`, and the seam not set).
    * \return The mask.
@@ -3024,26 +3035,14 @@ namespace real::detail {
                                         const alternation_pairs& plan,
                                         bool                     nibbles)
   {
-#if defined(__aarch64__) || defined(__SSSE3__)
+#if defined(__aarch64__) || defined(__SSSE3__) || (defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__)))
     if (nibbles) {
-      return load_nibble3_mask(at, plan.nibble_lo, plan.nibble_hi);
+      return load_nibble3_mask(at, plan.nibble_lo, plan.nibble_hi); // a call where it is built for SSSE3 alone
     }
 #else
     static_cast<void>(nibbles);
 #endif
     return alternation_pair_mask(at, plan);
-  }
-
-  /*!
-   * \brief How far past its 16 starts \ref alternation_filter_mask reads.
-   * \param[in] plan    The branches' probes.
-   * \param[in] nibbles As \ref alternation_filter_mask.
-   * \return The reach in bytes.
-   */
-  inline std::size_t alternation_filter_reach(const alternation_pairs& plan,
-                                              bool                     nibbles)
-  {
-    return nibbles ? std::size_t {2} : std::size_t {plan.max_d};
   }
 
   /*!
@@ -3078,8 +3077,8 @@ namespace real::detail {
 
   /*!
    * \brief Counts, over \ref alternation_sample_bytes bytes at \p at, the starts each filter would stop on.
-   * \param[in] at      The sample's start; \ref alternation_sample_bytes + \ref alternation_filter_reach bytes
-   *                    must follow it.
+   * \param[in] at      The sample's start; \ref alternation_sample_bytes + `plan.max_d` bytes (two for the
+   *                    fingerprint) must follow it.
    * \param[in] mem     The first bytes, padded to eight by repeating one (the members compares read all of them).
    * \param[in] cnt     How many of \p mem are distinct members.
    * \param[in] plan    The branches' probe pairs.

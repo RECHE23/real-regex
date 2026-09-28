@@ -39,6 +39,9 @@
 #  include <emmintrin.h>   // SSE2 16-byte membership masks (x86-64 floor)
 #  if defined(__SSSE3__)
 #    include <tmmintrin.h> // SSSE3 byte shuffle: the nibble fingerprint, where the build enables it
+#  elif defined(__GNUC__) || defined(__clang__)
+#    include <cpuid.h>     // whether the running CPU has SSSE3, for the fingerprint chosen at run time
+#    include <tmmintrin.h> // SSSE3 byte shuffle, for functions built for it alone
 #  endif
 #endif
 
@@ -472,16 +475,40 @@ namespace real::detail {
     return static_cast<mask_t>(_mm_movemask_epi8(hit));
   }
 
-#if defined(__SSSE3__)
+#if defined(__SSSE3__) || defined(__GNUC__) || defined(__clang__)
+#  if !defined(__SSSE3__)
   /*!
-   * \brief \ref load_nibble3_mask's x86 leg, on the SSSE3 byte shuffle: compiled only where the build enables
-   *        SSSE3 (it is not in the x86-64 floor; `-mssse3`, `-march=` of any recent CPU, or a toolchain whose
-   *        default target has it).
+   * \brief Whether the running CPU has SSSE3, asked once (`cpuid` leaf 1, ECX bit 9). Not
+   *        `__builtin_cpu_supports`: that reads a model libgcc or compiler-rt fills in, which not every link
+   *        provides.
+   * \return True when \ref load_nibble3_mask may run.
+   */
+  inline bool cpu_has_ssse3()
+  {
+    static const bool has {[] {
+                             unsigned int eax {};
+                             unsigned int ebx {};
+                             unsigned int ecx {};
+                             unsigned int edx {};
+                             return __get_cpuid(1U, &eax, &ebx, &ecx, &edx) != 0 && (ecx & (1U << 9U)) != 0U;
+                           }()};
+    return has;
+  }
+
+#  endif
+
+  /*!
+   * \brief \ref load_nibble3_mask's x86 leg, on the SSSE3 byte shuffle, which is not in the x86-64 floor. Where
+   *        the build enables SSSE3 it is an ordinary function; elsewhere it is built for SSSE3 alone and may run
+   *        only once \ref cpu_has_ssse3 said so -- and it inlines only into a caller built the same way.
    * \param[in] at The first of the 16 starts; `at + 17` must be readable.
    * \param[in] lo Three 16-byte tables, low nibble to bucket bits, one per fingerprint byte.
    * \param[in] hi The same for the high nibble.
    * \return The mask.
    */
+#  if !defined(__SSSE3__)
+  __attribute__((target("ssse3")))
+#  endif
   inline mask_t load_nibble3_mask(const char                                         * at,
                                   const std::array<std::array<std::uint8_t, 16>, 3>&   lo,
                                   const std::array<std::array<std::uint8_t, 16>, 3>&   hi)

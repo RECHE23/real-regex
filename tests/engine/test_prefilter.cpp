@@ -27,13 +27,12 @@ namespace {
 #else
   constexpr bool pair_filter {false};
 #endif
-  //! \brief Whether this target masks a dense alternation by the nibble fingerprint (a table lookup: AArch64, or
-  //!        x86 built with SSSE3).
-#if defined(__aarch64__) || defined(__SSSE3__)
-  constexpr bool nibble_filter {true};
-#else
-  constexpr bool nibble_filter {false};
-#endif
+  //! \brief Whether a dense alternation is masked by the nibble fingerprint here: AArch64, x86 built with SSSE3,
+  //!        or x86 whose CPU has it (asked at run time).
+  bool nibble_filter()
+  {
+    return real::detail::alternation_nibbles_supported();
+  }
 
   real::detail::pattern_hints hints_of(std::string_view pattern,
                                        real::flags      f = real::flags::none)
@@ -1196,7 +1195,7 @@ TEST(alternation_nibble_filter_answers_as_the_pairs_and_the_first_bytes)
       EXPECT_EQ(re.count_matches(s), first_bytes.size());
     }
   }
-  EXPECT(nibble_filter ? real::detail::alternation_nibble_blocks().load() > 1000U
+  EXPECT(nibble_filter() ? real::detail::alternation_nibble_blocks().load() > 1000U
                        : real::detail::alternation_nibble_blocks().load() == 0U);
   // A one-byte branch leaves the plan without a fingerprint: its bucket would mark every start.
   real::detail::alternation_nibble_blocks() = 0;
@@ -1208,7 +1207,7 @@ TEST(alternation_nibble_filter_answers_as_the_pairs_and_the_first_bytes)
   real::detail::alternation_nibble_blocks() = 0;
   const real::regex two {"ab|cd"};
   EXPECT(two.count_matches(subjects[0]) > 0U);
-  EXPECT(nibble_filter && real::detail::alternation_nibbles_min_branches <= 2U
+  EXPECT(nibble_filter() && real::detail::alternation_nibbles_min_branches <= 2U
            ? real::detail::alternation_nibble_blocks().load() > 100U
            : real::detail::alternation_nibble_blocks().load() == 0U);
   real::detail::alternation_nibble_blocks() = 0;
@@ -1245,6 +1244,21 @@ TEST(alternation_filter_blocks_stay_inside_the_subject)
   EXPECT(want > 100U);
   EXPECT(pair_filter ? real::detail::alternation_pair_blocks().load() > 100U
                      : real::detail::alternation_pair_blocks().load() == 0U);
+}
+
+// On x86 without SSSE3 in the build the fingerprint is chosen at run time from cpuid. The runtime's own model of
+// the CPU is a second instrument (it is not what the engine reads): the choice must agree with it, or every
+// fingerprint test above would silently follow a detection that never says yes.
+TEST(alternation_fingerprint_follows_the_cpu)
+{
+#if defined(__SSE2__) && !defined(__SSSE3__) && (defined(__GNUC__) || defined(__clang__))
+  __builtin_cpu_init();
+  EXPECT_EQ(real::detail::alternation_nibbles_supported(), __builtin_cpu_supports("ssse3") != 0);
+#elif defined(__aarch64__) || defined(__SSSE3__)
+  EXPECT(real::detail::alternation_nibbles_supported());
+#else
+  EXPECT(!real::detail::alternation_nibbles_supported());
+#endif
 }
 
 // Twelve branches reach the Aho-Corasick gate, whose candidate density is the first bytes': on a subject where

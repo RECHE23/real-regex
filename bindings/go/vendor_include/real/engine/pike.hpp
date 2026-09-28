@@ -5797,13 +5797,15 @@ namespace real::detail {
                                           std::size_t                        cnt,
                                           const MatchAt&                     match_at) const
     {
-      const std::size_t sz      {text.size()};
-      const bool        nibbles {pairs.nibbles && !alternation_nibbles_disabled()};
-      const std::size_t reach   {alternation_filter_reach(pairs, nibbles)};
-      for (; pos + 16 + reach <= sz; pos += 16) {
+#if defined(__aarch64__) || defined(__SSSE3__) || (defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__)))
+      if (pairs.nibbles && !alternation_nibbles_disabled()) {
+        return alternation_nibble_scan(text, pos, pairs, mem, cnt, match_at);
+      }
+#endif
+      const std::size_t sz {text.size()};
+      for (; pos + 16 + pairs.max_d <= sz; pos += 16) {
         note_alternation_pair_block();
-        note_alternation_nibble_block(nibbles);
-        mask_t mask {alternation_filter_mask(text.data() + pos, pairs, nibbles)};
+        mask_t mask {alternation_pair_mask(text.data() + pos, pairs)};
         while (!empty(mask)) {
           note_alternation_pair_candidate();
           const std::size_t lane {first_lane(mask)};
@@ -5814,6 +5816,75 @@ namespace real::detail {
           mask = clear_first(mask);
         }
       }
+      return alternation_members_tail(text, pos, mem, cnt, match_at);
+    }
+
+#if defined(__aarch64__) || defined(__SSSE3__) || (defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__)))
+    /*!
+     * \brief \ref alternation_pair_scan's blocks masked by the nibble fingerprint instead of the pairs. Its own
+     *        loop, because on x86 without SSSE3 in the build the whole loop is built for SSSE3 (the mask inlines
+     *        only into a caller built so) and is entered only when the plan said the CPU has it.
+     * \tparam MatchAt As \ref alternation_pair_scan.
+     * \param[in] text     The subject.
+     * \param[in] pos      The first block's start.
+     * \param[in] pairs    The plan, with its fingerprint.
+     * \param[in] mem      The branches' first bytes.
+     * \param[in] cnt      How many of \p mem are valid.
+     * \param[in] match_at The branch verifier.
+     * \return The first match, and where the blocks stopped.
+     */
+    template <typename MatchAt>
+    [[nodiscard]]
+#  if !defined(__aarch64__) && !defined(__SSSE3__)
+    __attribute__((noinline, target("ssse3")))
+#  elif defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#  endif
+    alternation_hit alternation_nibble_scan(std::string_view                   text,
+                                            std::size_t                        pos,
+                                            const alternation_pairs&           pairs,
+                                            std::array<std::uint8_t, 8>        mem,
+                                            std::size_t                        cnt,
+                                            const MatchAt&                     match_at) const
+    {
+      const std::size_t sz {text.size()};
+      for (; pos + 18 <= sz; pos += 16) { // the fingerprint reads two bytes past a block's starts
+        note_alternation_pair_block();
+        note_alternation_nibble_block(true);
+        mask_t mask {load_nibble3_mask(text.data() + pos, pairs.nibble_lo, pairs.nibble_hi)};
+        while (!empty(mask)) {
+          note_alternation_pair_candidate();
+          const std::size_t lane {first_lane(mask)};
+          const std::size_t me   {match_at(pos + lane)};
+          if (me != npos) {
+            return alternation_hit {.start = pos + lane, .end = me, .resume = pos};
+          }
+          mask = clear_first(mask);
+        }
+      }
+      return alternation_members_tail(text, pos, mem, cnt, match_at);
+    }
+
+#endif
+
+    /*!
+     * \brief The last blocks of a filtered scan, those the filter's reach does not fit in: by the first bytes.
+     * \tparam MatchAt As \ref alternation_pair_scan.
+     * \param[in] text     The subject.
+     * \param[in] pos      The first block left.
+     * \param[in] mem      The branches' first bytes, padded.
+     * \param[in] cnt      How many of \p mem are valid.
+     * \param[in] match_at The branch verifier.
+     * \return The first match, and where the blocks stopped.
+     */
+    template <typename MatchAt>
+    [[nodiscard]] alternation_hit alternation_members_tail(std::string_view                   text,
+                                                           std::size_t                        pos,
+                                                           const std::array<std::uint8_t, 8>& mem,
+                                                           std::size_t                        cnt,
+                                                           const MatchAt&                     match_at) const
+    {
+      const std::size_t sz {text.size()};
       for (; pos + 16 <= sz; pos += 16) {
         std::array<std::uint8_t, 16> buf {};
         std::memcpy(buf.data(), text.data() + pos, 16); // MISRA-clean byte load (no pointer type-pun)
@@ -6020,7 +6091,7 @@ namespace real::detail {
     [[nodiscard]] alternation_pairs build_alternation_pairs() const
     {
       alternation_pairs plan {};
-      plan.nibbles = alternation_nibbles_available; // until a branch too short for a fingerprint says otherwise
+      plan.nibbles = alternation_nibbles_supported(); // until a branch too short for a fingerprint says otherwise
       const auto&       code {prog_.code};
       std::size_t       pc   {prog_.hints.body_pc == 0 ? std::size_t {1} : static_cast<std::size_t>(prog_.hints.body_pc)};
       while (true) {
