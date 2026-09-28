@@ -34,9 +34,12 @@
 #include <cstring>
 
 #if defined(__ARM_NEON)
-#  include <arm_neon.h>  // NEON 16-byte membership masks (aarch64 floor)
+#  include <arm_neon.h>    // NEON 16-byte membership masks (aarch64 floor)
 #elif defined(__SSE2__)
-#  include <emmintrin.h> // SSE2 16-byte membership masks (x86-64 floor)
+#  include <emmintrin.h>   // SSE2 16-byte membership masks (x86-64 floor)
+#  if defined(__SSSE3__)
+#    include <tmmintrin.h> // SSSE3 byte shuffle: the nibble fingerprint, where the build enables it
+#  endif
 #endif
 
 namespace real::detail {
@@ -468,6 +471,39 @@ namespace real::detail {
     }
     return static_cast<mask_t>(_mm_movemask_epi8(hit));
   }
+
+#if defined(__SSSE3__)
+  /*!
+   * \brief \ref load_nibble3_mask's x86 leg, on the SSSE3 byte shuffle: compiled only where the build enables
+   *        SSSE3 (it is not in the x86-64 floor; `-mssse3`, `-march=` of any recent CPU, or a toolchain whose
+   *        default target has it).
+   * \param[in] at The first of the 16 starts; `at + 17` must be readable.
+   * \param[in] lo Three 16-byte tables, low nibble to bucket bits, one per fingerprint byte.
+   * \param[in] hi The same for the high nibble.
+   * \return The mask.
+   */
+  inline mask_t load_nibble3_mask(const char                                         * at,
+                                  const std::array<std::array<std::uint8_t, 16>, 3>&   lo,
+                                  const std::array<std::array<std::uint8_t, 16>, 3>&   hi)
+  {
+    const __m128i low4 {_mm_set1_epi8(0x0F)};
+    __m128i       hit  {_mm_set1_epi8(-1)};
+    for (std::size_t k = 0; k < 3; ++k) {
+      __m128i blk {};
+      __m128i tlo {};
+      __m128i thi {};
+      std::memcpy(&blk, at + k, 16); // MISRA-clean byte loads (no pointer type-pun)
+      std::memcpy(&tlo, lo[k].data(), 16);
+      std::memcpy(&thi, hi[k].data(), 16);
+      const __m128i by_lo {_mm_shuffle_epi8(tlo, _mm_and_si128(blk, low4))};
+      const __m128i by_hi {_mm_shuffle_epi8(thi, _mm_and_si128(_mm_srli_epi16(blk, 4), low4))};
+      hit                 = _mm_and_si128(hit, _mm_and_si128(by_lo, by_hi));
+    }
+    const mask_t empty_lanes {static_cast<mask_t>(_mm_movemask_epi8(_mm_cmpeq_epi8(hit, _mm_setzero_si128())))};
+    return (~empty_lanes) & 0xFFFFU;
+  }
+
+#endif
 
   /*!
    * \brief Mask of the candidate starts where both needle probes match -- the SSE2 leg of the NEON overload

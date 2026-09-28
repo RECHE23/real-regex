@@ -6048,6 +6048,7 @@ namespace real::detail {
         add_branch_nibbles(plan, branch);
         ++plan.count;
         if (!is_split) {
+          plan.nibbles = plan.nibbles && plan.count >= alternation_nibbles_min_branches;
           return plan;
         }
         pc = static_cast<std::size_t>(code[pc].secondary_target);

@@ -2967,13 +2967,22 @@ namespace real::detail {
     bool dense   {}; //!< Its first bytes stop often enough that the pair filter takes the subject.
   };
 
-  //! \brief Whether this target has the nibble fingerprint (a table lookup per nibble, AArch64 only). A plan
-  //!        built elsewhere never claims one: the fingerprint's reach is shorter than the pairs', and a scan that
-  //!        bounded its blocks by it while masking by the pairs would read past the subject.
-#if defined(__aarch64__)
+  //! \brief Whether this target has the nibble fingerprint (a table lookup per nibble: AArch64, or x86 built with
+  //!        SSSE3). A plan built elsewhere never claims one: the fingerprint's reach is shorter than the pairs',
+  //!        and a scan that bounded its blocks by it while masking by the pairs would read past the subject.
+#if defined(__aarch64__) || defined(__SSSE3__)
   inline constexpr bool alternation_nibbles_available {true};
 #else
   inline constexpr bool alternation_nibbles_available {false};
+#endif
+
+  //! \brief Fewest branches for which the fingerprint replaces the pairs. Two pairs are two compares a block, a
+  //!        fingerprint six table lookups: on x86 (SSSE3) `cat|dog` measured +13 % by the fingerprint and three
+  //!        branches break even; AArch64's lookups are cheap enough that two branches already gain.
+#if defined(__aarch64__)
+  inline constexpr std::size_t alternation_nibbles_min_branches {2};
+#else
+  inline constexpr std::size_t alternation_nibbles_min_branches {3};
 #endif
 
   inline constexpr std::size_t alternation_sample_min   {4096}; //!< Shorter rests are scanned by the first bytes, unsampled (at least the sample and its reach).
@@ -3001,8 +3010,8 @@ namespace real::detail {
 
   /*!
    * \brief The block filter a dense alternation's scan runs: the nibble fingerprint of each branch's first three
-   *        bytes where \p nibbles (AArch64: a table lookup per nibble, a cost per block that does not grow with
-   *        the branches), else the byte pairs.
+   *        bytes where \p nibbles (AArch64, or x86 built with SSSE3: a table lookup per nibble, a cost per block
+   *        that does not grow with the branches), else the byte pairs.
    *
    * Both mark a superset of the starts where some branch matches, and neither says which: the caller verifies
    * every marked start in branch order, so priority does not depend on how branches share a bucket.
@@ -3015,7 +3024,7 @@ namespace real::detail {
                                         const alternation_pairs& plan,
                                         bool                     nibbles)
   {
-#if defined(__aarch64__)
+#if defined(__aarch64__) || defined(__SSSE3__)
     if (nibbles) {
       return load_nibble3_mask(at, plan.nibble_lo, plan.nibble_hi);
     }

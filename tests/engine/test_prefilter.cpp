@@ -27,8 +27,9 @@ namespace {
 #else
   constexpr bool pair_filter {false};
 #endif
-  //! \brief Whether this target masks a dense alternation by the nibble fingerprint (a table lookup, AArch64).
-#if defined(__aarch64__)
+  //! \brief Whether this target masks a dense alternation by the nibble fingerprint (a table lookup: AArch64, or
+  //!        x86 built with SSSE3).
+#if defined(__aarch64__) || defined(__SSSE3__)
   constexpr bool nibble_filter {true};
 #else
   constexpr bool nibble_filter {false};
@@ -1203,6 +1204,16 @@ TEST(alternation_nibble_filter_answers_as_the_pairs_and_the_first_bytes)
   const real::regex one_byte {"a|bcd|cde"};
   EXPECT(one_byte.count_matches(subjects[0]) > 0U);
   EXPECT_EQ(real::detail::alternation_nibble_blocks().load(), 0U);
+  // Two branches: the fingerprint only where its minimum admits two (two pairs are cheaper on x86).
+  real::detail::alternation_nibble_blocks() = 0;
+  const real::regex two {"ab|cd"};
+  EXPECT(two.count_matches(subjects[0]) > 0U);
+  EXPECT(nibble_filter && real::detail::alternation_nibbles_min_branches <= 2U
+           ? real::detail::alternation_nibble_blocks().load() > 100U
+           : real::detail::alternation_nibble_blocks().load() == 0U);
+  real::detail::alternation_nibble_blocks() = 0;
+  real::detail::alternation_pair_blocks()   = 0;
+  EXPECT(one_byte.count_matches(subjects[0]) > 0U);
   // ...while the pairs still mask its blocks: the fingerprint was declined, not the dense scan.
   EXPECT(pair_filter ? real::detail::alternation_pair_blocks().load() > 100U
                      : real::detail::alternation_pair_blocks().load() == 0U);
