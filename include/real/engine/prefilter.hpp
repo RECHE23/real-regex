@@ -2641,9 +2641,20 @@ namespace real::detail {
   //! \brief Stops the rarest-byte scan makes before its density is judged: fewer say nothing.
   inline constexpr std::uint32_t literal_dense_min_cands {8};
 
-  //! \brief Mean bytes between stops below which the rarest byte counts as common: a stop costs about
-  //!        what the pair filter spends crossing this many bytes (x86-64 and arm64, 2026-09-27).
-  inline constexpr std::size_t literal_dense_gap {128};
+  /*!
+   * \brief Mean bytes between stops below which the rarest byte counts as common: under it, a stop costs
+   *        more than the pair filter spends crossing that many bytes.
+   *
+   * Per ISA, since the single-byte scan is not the same width. Over 1 MB with the byte recurring every
+   * `gap` bytes and no match (2026-09-27, best of 15): x86-64's `memchr` (g++ 13.3) equals the filter near
+   * 70 bytes (0.097 against 0.089 ms at 64, 0.067 against 0.089 at 96); arm64's 128-bit loop (Apple clang)
+   * near 190 (0.067 against 0.050 at 128, 0.048 against 0.049 at 192).
+   */
+#if defined(__ARM_NEON)
+  inline constexpr std::size_t literal_dense_gap {192};
+#else
+  inline constexpr std::size_t literal_dense_gap {64};
+#endif
 
   /*!
    * \brief Index of the first occurrence of \p literal in `text[pos..)`, or \ref real::npos, by its rarest
