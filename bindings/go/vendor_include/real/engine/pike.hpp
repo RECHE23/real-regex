@@ -1355,11 +1355,11 @@ namespace real::detail {
      * \param[in] inner Whether \p lit is the inner literal (each literal keeps its own density).
      * \return The index of the occurrence, else \ref real::npos.
      */
-    constexpr std::size_t find_on_subject(std::string_view text,
-                                          std::size_t      pos,
-                                          std::string_view lit,
-                                          std::size_t      rare,
-                                          bool             inner) const
+    [[nodiscard]] constexpr std::size_t find_on_subject(std::string_view text,
+                                                        std::size_t      pos,
+                                                        std::string_view lit,
+                                                        std::size_t      rare,
+                                                        bool             inner) const
     {
       if (std::is_constant_evaluated() || lit.size() < 2U) {
         return inner ? find_literal(text, pos, lit) : find_prefix(text, pos, lit);
