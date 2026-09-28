@@ -821,6 +821,15 @@ namespace real {
        * APPENDED LAST, per this struct's placement rule.
        */
       std::int32_t single_class {-1};
+
+      //! \brief Offset of the rarest byte of \ref prefix (by `byte_frequency`), the byte the literal search
+      //!        scans first (prefilter.hpp's `find_literal_adaptive`). Meaningful when \ref prefix_size >= 2.
+      //!        APPENDED LAST, per this struct's placement rule.
+      std::uint8_t prefix_rare {};
+
+      //! \brief Offset of the rarest byte of \ref inner_literal, as \ref prefix_rare. Meaningful when
+      //!        \ref inner_literal_len >= 2.
+      std::uint8_t inner_literal_rare {};
     };
 
     /*!
