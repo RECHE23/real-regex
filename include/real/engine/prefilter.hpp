@@ -127,6 +127,28 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Literal searches whose first stop failed and that went on out of line, counted for the tests that
+   *        pin that a byte the subject showed rare is the one scanned first.
+   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
+   */
+  inline std::atomic<std::uint64_t>& literal_rest_scans() noexcept
+  {
+    static std::atomic<std::uint64_t> scans {0};
+    return scans;
+  }
+
+  /*!
+   * \brief Bill one out-of-line literal search to \ref literal_rest_scans. A no-op unless the test binary
+   *        defines \c REAL_TEST_INSTRUMENT.
+   */
+  inline void note_literal_rest_scan() noexcept
+  {
+#if defined(REAL_TEST_INSTRUMENT)
+    literal_rest_scans().fetch_add(1, std::memory_order_relaxed);
+#endif
+  }
+
+  /*!
    * \brief Batches the lazy-DFA span filler produced, counted for the tests that pin which walks it serves.
    * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
    */
@@ -2764,6 +2786,7 @@ namespace real::detail {
                                                 std::size_t      rare,
                                                 literal_density& density)
   {
+    note_literal_rest_scan();
     const std::size_t len {literal.size()};
 #if defined(__ARM_NEON) || defined(__SSE2__)
     if (density.dense) {

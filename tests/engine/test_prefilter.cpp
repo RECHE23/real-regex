@@ -959,6 +959,13 @@ TEST(literal_adaptive_search_switches_only_where_the_rarest_byte_is_common)
   EXPECT_EQ(learned.rare, 0U); // `c`, counted over the stretch
   EXPECT(!learned.dense);
   EXPECT_EQ(real::detail::literal_pair_scans().load(), 0U);
+  // Learned, `c` is scanned first: here every `c` starts a `com`, so each search ends on its first stop.
+  real::detail::literal_rest_scans() = 0;
+  for (std::size_t at {real::detail::find_literal_adaptive(mmm, 0, com, m_at, learned)}; at != real::npos;
+       at = real::detail::find_literal_adaptive(mmm, at + 1, com, m_at, learned)) {
+    EXPECT_EQ(mmm.substr(at, 3U), "com");
+  }
+  EXPECT_EQ(real::detail::literal_rest_scans().load(), 0U);
 
   const real::regex re            {"error"};
   std::string       dense_subject {common};
