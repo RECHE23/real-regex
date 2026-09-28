@@ -783,8 +783,7 @@ namespace real::detail {
     const void       *                lit_text            {nullptr}; //!< Literal search: the haystack the two densities below refer to.
     literal_density                   lit_prefix_density  {};        //!< Literal search: what this haystack showed of the prefix's rarest byte.
     literal_density                   lit_inner_density   {};        //!< Literal search: the same for the inner literal.
-    const void       *                alt_plan_for        {nullptr}; //!< Alternation: the program \ref alt_pairs was built from.
-    alternation_pairs                 alt_pairs           {};        //!< Alternation: each branch's probe pair.
+    const alternation_pairs*          alt_pairs           {nullptr}; //!< Alternation: the regex's probe pairs (\ref regex_immutables::alt_pairs), null until built.
     const void       *                alt_text            {nullptr}; //!< Alternation: the haystack \ref alt_density refers to.
     alternation_density               alt_density         {};        //!< Alternation: what this haystack showed of the first bytes.
     // AC fields placed LAST (own reason as pattern_hints::alternation_branch_count): inserting
@@ -2505,6 +2504,33 @@ namespace real::detail {
       // harness reaches this function 410 times and ALWAYS with immutables, so seam_run_aho_corasick
       // keeps exercising the route; a per-state fallback here measured zero executions.
       return nullptr;
+    }
+
+    /*!
+     * \brief The regex's alternation probe pairs, built once per regex in its immutables, or null when there
+     *        is no per-regex cache: the caller then scans by the first bytes. Same identity discipline as
+     *        \ref ac_ready, and one acquire load once built.
+     * \return The plan, or null.
+     */
+    [[nodiscard]]
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    const alternation_pairs* alternation_pairs_ready() const
+    {
+      const auto* const               program {static_cast<const void*>(prog_.code.data())};
+      detail::regex_immutables* const immut   {prog_.immut};
+      if (immut == nullptr) {
+        return nullptr;
+      }
+      if (immut->alt_pairs_for.load(std::memory_order_acquire) != program) {
+        const std::lock_guard<std::mutex> lock {detail::immut_build_mu(immut)};
+        if (immut->alt_pairs_for.load(std::memory_order_relaxed) != program) { // double-check
+          immut->alt_pairs = build_alternation_pairs();
+          immut->alt_pairs_for.store(program, std::memory_order_release);
+        }
+      }
+      return immut->alt_pairs.has_value() ? &*immut->alt_pairs : nullptr;
     }
 
     //! \brief The capture-block pool type of the bound `State` (COW) — heap-backed for dynamic,
@@ -5830,7 +5856,7 @@ namespace real::detail {
       }) {
         if (state_.alt_text == static_cast<const void*>(text.data()) && state_.alt_density.decided
             && !alternation_pairs_disabled()) {
-          return state_.alt_density.dense ? &state_.alt_pairs : nullptr;
+          return state_.alt_density.dense ? state_.alt_pairs : nullptr;
         }
       }
       return alternation_plan_decide(text, pos, mem, cnt);
@@ -5866,24 +5892,23 @@ namespace real::detail {
           state_.alt_text    = static_cast<const void*>(text.data());
         }
         if (state_.alt_density.decided) {
-          return state_.alt_density.dense ? &state_.alt_pairs : nullptr;
+          return state_.alt_density.dense ? state_.alt_pairs : nullptr;
         }
         if (pos >= text.size() || text.size() - pos < alternation_sample_min) {
           return nullptr; // a short rest: the first bytes, unsampled
         }
-        if (state_.alt_plan_for != static_cast<const void*>(prog_.code.data())) {
-          state_.alt_pairs    = build_alternation_pairs();
-          state_.alt_plan_for = static_cast<const void*>(prog_.code.data());
+        if (state_.alt_pairs == nullptr) {
+          state_.alt_pairs = alternation_pairs_ready();
         }
         // Dense first bytes are worth the pairs only when most of their stops are false: where they are the
         // matches themselves, the pairs stop as often and the first bytes' loop is the cheaper one.
         state_.alt_density.decided = true;
-        if (state_.alt_pairs.count != 0U) {
-          const alternation_sample sample {alternation_sample_hits(text.data() + pos, mem.data(), cnt, state_.alt_pairs)};
+        if (state_.alt_pairs != nullptr && state_.alt_pairs->count != 0U) {
+          const alternation_sample sample {alternation_sample_hits(text.data() + pos, mem.data(), cnt, *state_.alt_pairs)};
           state_.alt_density.dense = sample.first_bytes * alternation_dense_gap > alternation_sample_bytes
                                      && sample.pairs * 2U < sample.first_bytes;
         }
-        return state_.alt_density.dense ? &state_.alt_pairs : nullptr;
+        return state_.alt_density.dense ? state_.alt_pairs : nullptr;
       }
       else {
         static_cast<void>(text);
@@ -5931,6 +5956,8 @@ namespace real::detail {
         plan.lead[plan.count]  = code[branch].arg8;
         plan.probe[plan.count] = code[branch + probe_at].arg8;
         plan.delta[plan.count] = static_cast<std::uint8_t>(probe_at);
+        plan.lead_splat[plan.count].fill(plan.lead[plan.count]);
+        plan.probe_splat[plan.count].fill(plan.probe[plan.count]);
         plan.max_d             = std::max(plan.max_d, static_cast<std::uint8_t>(probe_at));
         ++plan.count;
         if (!is_split) {

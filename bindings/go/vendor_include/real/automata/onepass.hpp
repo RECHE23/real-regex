@@ -42,6 +42,7 @@
 #include <vector>
 
 #include "real/engine/aho_corasick.hpp"
+#include "real/engine/prefilter.hpp"
 #include "real/engine/assert_eval.hpp"
 #include "real/automata/lazy_dfa.hpp"
 #include "real/core/program.hpp"
@@ -874,6 +875,13 @@ namespace real::detail {
     //!        cache's own history records what bundling a route-specific product into the shared flag
     //!        cost every other route (see \ref op_table_for).
     std::atomic<const void*> ac_for {nullptr};
+
+    //! \brief The alternation's probe pairs, their splats included, or empty when never built. Per REGEX, not
+    //!        per state: the splats are 512 bytes, and in a state that is fresh per `search()` gcc zeroed them
+    //!        with the rest of the state on every call (check-state-zeroing).
+    std::optional<alternation_pairs> alt_pairs;
+
+    std::atomic<const void*> alt_pairs_for {nullptr}; //!< \c prog.code.data() \ref alt_pairs was built for, or null (its own identity atomic, as \ref ac_for).
 
     //! \brief \c prog.code.data() \ref op_table was built for, or null. Same identity discipline as
     //!        \ref rows_for and for the same reason: the extractor is needed only by the routes that fill

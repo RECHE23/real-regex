@@ -1147,8 +1147,7 @@ namespace real {
         const void                     *                lit_text            {nullptr}; //!< Literal search: the haystack the two densities below refer to.
         literal_density                                 lit_prefix_density  {};        //!< Literal search: what this haystack showed of the prefix's rarest byte.
         literal_density                                 lit_inner_density   {};        //!< Literal search: the same for the inner literal.
-        const void                     *                alt_plan_for        {nullptr}; //!< Alternation: the program \ref alt_pairs was built from.
-        alternation_pairs                               alt_pairs           {};        //!< Alternation: each branch's probe pair.
+        const alternation_pairs*                        alt_pairs           {nullptr}; //!< Alternation: the regex's probe pairs (\ref regex_immutables::alt_pairs), null until built.
         const void                     *                alt_text            {nullptr}; //!< Alternation: the haystack \ref alt_density refers to.
         alternation_density                             alt_density         {};        //!< Alternation: what this haystack showed of the first bytes.
         //! \brief This storage benefits from the multi-literal route (\ref pike_vm::ac_ready). A marker,

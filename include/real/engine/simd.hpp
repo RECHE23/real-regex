@@ -27,6 +27,7 @@
 
 #include "real/version.hpp"
 
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -39,6 +40,11 @@
 #endif
 
 namespace real::detail {
+
+  //! \brief One byte in all 16 lanes, stored as bytes: built once, loaded by every block that compares against
+  //!         it. Not a vector type, so it sits in `std::array` with no attribute to drop, and in a plan that
+  //!         targets without vectors also carry.
+  using byte_splat = std::array<std::uint8_t, 16>;
 
 #if defined(__ARM_NEON)
 
@@ -171,6 +177,33 @@ namespace real::detail {
     const uint8x16_t eq_a {vceqq_u8(vld1q_u8(buf16_a), vdupq_n_u8(a))};
     const uint8x16_t eq_b {vceqq_u8(vld1q_u8(buf16_b), vdupq_n_u8(b))};
     const uint8x16_t hit  {vandq_u8(eq_a, eq_b)};
+    return vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(hit), 4)), 0);
+  }
+
+  /*!
+   * \brief Mask of the 16 starts at \p at where some pair `(lead[i] at the start, probe[i] at start + delta[i])`
+   *        sits: the pairs' hits OR-ed as vectors and narrowed once, rather than one mask per pair.
+   * \param[in] at    The first of the 16 starts; `at + 15 + delta[i]` must be readable for every pair.
+   * \param[in] lead  Each pair's first byte, splatted.
+   * \param[in] probe Each pair's second byte, splatted.
+   * \param[in] delta Each pair's offset between them.
+   * \param[in] count How many pairs.
+   * \return The mask.
+   */
+  inline mask_t load_pairs_mask(const char         * at,
+                                const byte_splat   * lead,
+                                const byte_splat   * probe,
+                                const std::uint8_t * delta,
+                                std::size_t          count)
+  {
+    uint8x16_t blk {};
+    std::memcpy(&blk, at, 16); // MISRA-clean byte loads (no pointer type-pun)
+    uint8x16_t hit {vdupq_n_u8(0)};
+    for (std::size_t i = 0; i < count; ++i) {
+      uint8x16_t far {};
+      std::memcpy(&far, at + delta[i], 16);
+      hit = vorrq_u8(hit, vandq_u8(vceqq_u8(blk, vld1q_u8(lead[i].data())), vceqq_u8(far, vld1q_u8(probe[i].data()))));
+    }
     return vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(hit), 4)), 0);
   }
 
@@ -373,6 +406,37 @@ namespace real::detail {
     const __m128i out1   {_mm_or_si128(below1, above1)};
     const __m128i bad    {_mm_and_si128(out0, out1)};
     return (~static_cast<mask_t>(_mm_movemask_epi8(bad))) & 0xFFFFU;
+  }
+
+  /*!
+   * \brief The pairs' mask of 16 starts, OR-ed as vectors with one movemask. SSE2 leg of the NEON overload above,
+   *        where splatting in the loop cost four instructions per byte (no byte shuffle before SSSE3).
+   * \param[in] at    The first of the 16 starts; `at + 15 + delta[i]` must be readable for every pair.
+   * \param[in] lead  Each pair's first byte, splatted.
+   * \param[in] probe Each pair's second byte, splatted.
+   * \param[in] delta Each pair's offset between them.
+   * \param[in] count How many pairs.
+   * \return The mask.
+   */
+  inline mask_t load_pairs_mask(const char         * at,
+                                const byte_splat   * lead,
+                                const byte_splat   * probe,
+                                const std::uint8_t * delta,
+                                std::size_t          count)
+  {
+    __m128i blk {};
+    std::memcpy(&blk, at, 16); // MISRA-clean byte loads (no pointer type-pun)
+    __m128i hit {_mm_setzero_si128()};
+    for (std::size_t i = 0; i < count; ++i) {
+      __m128i far {};
+      std::memcpy(&far, at + delta[i], 16);
+      __m128i a   {};
+      __m128i b   {};
+      std::memcpy(&a, lead[i].data(), 16);
+      std::memcpy(&b, probe[i].data(), 16);
+      hit = _mm_or_si128(hit, _mm_and_si128(_mm_cmpeq_epi8(blk, a), _mm_cmpeq_epi8(far, b)));
+    }
+    return static_cast<mask_t>(_mm_movemask_epi8(hit));
   }
 
   /*!

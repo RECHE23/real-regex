@@ -2919,11 +2919,13 @@ namespace real::detail {
    */
   struct alternation_pairs
   {
-    std::uint8_t                 count {}; //!< Branches planned; 0 means no plan.
-    std::uint8_t                 max_d {}; //!< Largest probe offset: a block reads up to this far past its 16 starts.
-    std::array<std::uint8_t, 16> lead  {}; //!< Each branch's first byte.
-    std::array<std::uint8_t, 16> probe {}; //!< Each branch's second probe byte.
-    std::array<std::uint8_t, 16> delta {}; //!< Its offset in the branch (at most 15; 0 probes the first byte twice).
+    std::uint8_t                 count       {}; //!< Branches planned; 0 means no plan.
+    std::uint8_t                 max_d       {}; //!< Largest probe offset: a block reads up to this far past its 16 starts.
+    std::array<std::uint8_t, 16> lead        {}; //!< Each branch's first byte.
+    std::array<std::uint8_t, 16> probe       {}; //!< Each branch's second probe byte.
+    std::array<std::uint8_t, 16> delta       {}; //!< Its offset in the branch (at most 15; 0 probes the first byte twice).
+    std::array<byte_splat, 16>   lead_splat  {}; //!< \ref lead, each in all 16 lanes: a block loads rather than broadcasts it.
+    std::array<byte_splat, 16>   probe_splat {}; //!< \ref probe, likewise.
   };
 
   /*!
@@ -2955,15 +2957,7 @@ namespace real::detail {
   inline mask_t alternation_pair_mask(const char*              at,
                                       const alternation_pairs& plan)
   {
-    std::array<std::uint8_t, 16> lead_blk {};
-    std::memcpy(lead_blk.data(), at, 16); // MISRA-clean byte loads (no pointer type-pun)
-    mask_t mask                           {};
-    for (std::size_t i = 0; i < plan.count; ++i) {
-      std::array<std::uint8_t, 16> probe_blk {};
-      std::memcpy(probe_blk.data(), at + plan.delta[i], 16);
-      mask = mask_or(mask, load_pair_mask(lead_blk.data(), plan.lead[i], probe_blk.data(), plan.probe[i]));
-    }
-    return mask;
+    return load_pairs_mask(at, plan.lead_splat.data(), plan.probe_splat.data(), plan.delta.data(), plan.count);
   }
 
   /*!
