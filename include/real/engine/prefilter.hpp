@@ -2765,16 +2765,15 @@ namespace real::detail {
       origin = cands == 0U ? cand : origin;
       next   = cand + 1;
       ++cands;
-#if defined(__ARM_NEON) || defined(__SSE2__)
       if (cands >= literal_dense_min_cands && cand - origin < cands * literal_dense_gap) {
         // The static rank chose a byte this subject uses often. Before giving up on a single byte, count
         // each needle byte over the stretch these stops crossed: one rare there is scanned instead, once
         // per subject; none rare enough, and the pair filter takes over.
-        const std::string_view seen       {text.substr(origin, cand + len - origin)};
-        std::size_t            best       {rare};
-        std::size_t            best_count {cands};
         if (density.rare == npos) {
-          std::array<std::uint32_t, 256> counts {}; // one pass over the stretch, whatever the needle's length
+          const std::string_view         seen       {text.substr(origin, cand + len - origin)};
+          std::size_t                    best       {rare};
+          std::size_t                    best_count {cands};
+          std::array<std::uint32_t, 256> counts     {}; // one pass over the stretch, whatever the needle's length
           for (const char c : seen) {
             ++counts[static_cast<std::uint8_t>(c)];
           }
@@ -2785,20 +2784,23 @@ namespace real::detail {
               best_count = count;
             }
           }
+          if (best != rare && best_count * literal_dense_gap < seen.size()) {
+            density.rare = best; // the byte this subject is scanned by from here
+            cands        = 0;
+            rare         = best;
+            byte         = literal[best];
+            continue;
+          }
+          density.rare = rare; // judged, and none rarer: not judged again on this subject
         }
-        if (density.rare == npos && best != rare && best_count * literal_dense_gap < seen.size()) {
-          density.rare = best;
-          cands        = 0;
-          rare         = best;
-          byte         = literal[best];
-          continue;
-        }
+#if defined(__ARM_NEON) || defined(__SSE2__)
         store_literal_density(density, cands, origin, next);
         density.dense = true;
         note_literal_pair_scan();
         return simd_literal_scan(text, cand + 1, literal);
-      }
 #endif
+        // No pair filter on this target: the single-byte scan goes on.
+      }
     }
     store_literal_density(density, cands, origin, next);
     return npos;

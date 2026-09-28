@@ -17,6 +17,15 @@ using real::detail::dynamic_storage;
 
 namespace {
 
+  // Whether this target has the two-byte block filter the adaptive literal search hands a dense subject to.
+  // Without it (no SSE2 or NEON macro: i686 by default, s390x, MSVC), a dense subject keeps the single-byte
+  // scan, and the witnesses of the handover must see none.
+#if defined(__ARM_NEON) || defined(__SSE2__)
+  constexpr bool pair_filter {true};
+#else
+  constexpr bool pair_filter {false};
+#endif
+
   real::detail::pattern_hints hints_of(std::string_view pattern,
                                        real::flags      f = real::flags::none)
   {
@@ -876,8 +885,8 @@ TEST(literal_adaptive_search_answers_as_find_for_every_plan)
       }
     }
   }
-  EXPECT(checked > 100000U); // the cross product ran
-  EXPECT(switched > 50U);    // and the carried density did switch on many subjects, not on none
+  EXPECT(checked > 100000U);                             // the cross product ran
+  EXPECT(pair_filter ? switched > 50U : switched == 0U); // the carried density switched on many subjects, not on none
 
   // A start past every candidate, up to the edge of size_t: no scan, whatever the density says (a scan
   // would step past the end of the subject and wrap its bound).
@@ -914,14 +923,15 @@ TEST(literal_adaptive_search_switches_only_where_the_rarest_byte_is_common)
   real::detail::literal_density dense_one {};
   real::detail::literal_pair_scans() = 0;
   EXPECT_EQ(real::detail::find_literal_adaptive(common, 0, needle, rare, dense_one), real::npos);
-  EXPECT(dense_one.dense);
-  EXPECT_EQ(real::detail::literal_pair_scans().load(), 1U); // the switch handed the rest to the filter
+  EXPECT_EQ(dense_one.dense, pair_filter);
+  const std::uint64_t per_search {pair_filter ? 1U : 0U};
+  EXPECT_EQ(real::detail::literal_pair_scans().load(), per_search);      // the switch handed the rest to the filter
   EXPECT_EQ(real::detail::find_literal_adaptive(common, 0, needle, rare, dense_one), real::npos);
-  EXPECT_EQ(real::detail::literal_pair_scans().load(), 2U); // and a dense subject goes to it at once
+  EXPECT_EQ(real::detail::literal_pair_scans().load(), 2U * per_search); // and a dense subject goes to it at once
   // Even where the rarest byte would have answered on its first stop: dense means the filter, from entry.
   real::detail::literal_density preset {.cands = 0, .origin = real::npos, .last = real::npos, .dense = true};
   EXPECT_EQ(real::detail::find_literal_adaptive("error and more"sv, 0, needle, rare, preset), 0U);
-  EXPECT_EQ(real::detail::literal_pair_scans().load(), 3U);
+  EXPECT_EQ(real::detail::literal_pair_scans().load(), 3U * per_search);
 
   std::string sparse;
   for (int i {0}; i < 16; ++i) {
