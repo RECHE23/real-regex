@@ -2664,6 +2664,11 @@ namespace real::detail {
    * \param[in,out] density What this subject has shown so far.
    * \return The index of the first occurrence at or after \p pos, else \ref real::npos.
    */
+  // Out of line: its callers include next_candidate, which the class and rare-byte routes run per candidate
+  // without ever reaching a literal. Inlined there, it cost `\d{4}-\d{2}-\d{2}` 7 % on arm64.
+#if defined(__GNUC__) || defined(__clang__)
+  __attribute__((noinline))
+#endif
   inline std::size_t find_literal_adaptive(std::string_view text,
                                            std::size_t      pos,
                                            std::string_view literal,
