@@ -2633,8 +2633,10 @@ namespace real::detail {
    */
   struct literal_density
   {
-    std::uint32_t cands  {};     //!< Stops the rarest-byte scan made on this subject.
+    std::uint32_t cands  {};     //!< Distinct stops the rarest-byte scan made on this subject.
     std::size_t   origin {npos}; //!< Offset of the first of them.
+    std::size_t   last   {npos}; //!< Offset of the furthest of them: a search that starts behind it counts no stop twice.
+    std::size_t   rare   {npos}; //!< Offset scanned instead of the hints' one, once this subject showed it rarer.
     bool          dense  {};     //!< Sticky: the pair filter takes this subject from here on.
   };
 
@@ -2700,7 +2702,10 @@ namespace real::detail {
     }
 #endif
     const std::size_t last  {text.size() - len}; // last index a match could start at
-    const char        byte  {literal[rare]};
+    if (density.rare != npos) {
+      rare = density.rare;
+    }
+    char              byte  {literal[rare]};
     const char* const base  {text.data()};
     std::size_t       p     {pos};
     while (p <= last) {
@@ -2718,12 +2723,45 @@ namespace real::detail {
       if (std::memcmp(base + cand, literal.data(), len) == 0) {
         return cand;
       }
-      if (density.origin == npos) {
-        density.origin = cand;
+      // Searches on one subject may start behind one another (a batch fills ahead, a per-match search
+      // resumes behind it): a stop counts once, or re-counted stops would read as density.
+      if (density.last == npos || cand > density.last) {
+        if (density.origin == npos) {
+          density.origin = cand;
+        }
+        density.last = cand;
+        ++density.cands;
       }
-      ++density.cands;
 #if defined(__ARM_NEON) || defined(__SSE2__)
       if (density.cands >= literal_dense_min_cands && cand - density.origin < density.cands * literal_dense_gap) {
+        // The static rank chose a byte this subject uses often. Before giving up on a single byte, count
+        // each needle byte over the stretch these stops crossed: one rare there is scanned instead, once
+        // per subject; none rare enough, and the pair filter takes over.
+        const std::string_view seen       {text.substr(density.origin, cand + len - density.origin)};
+        std::size_t            best       {rare};
+        std::size_t            best_count {density.cands};
+        if (density.rare == npos) {
+          std::array<std::uint32_t, 256> counts {}; // one pass over the stretch, whatever the needle's length
+          for (const char c : seen) {
+            ++counts[static_cast<std::uint8_t>(c)];
+          }
+          for (std::size_t k = 0; k < len; ++k) {
+            const std::size_t count {counts[static_cast<std::uint8_t>(literal[k])]};
+            if (count < best_count) {
+              best       = k;
+              best_count = count;
+            }
+          }
+        }
+        if (density.rare == npos && best != rare && best_count * literal_dense_gap < seen.size()) {
+          density.rare   = best;
+          density.cands  = 0;
+          density.origin = npos;
+          rare           = best;
+          byte           = literal[best];
+          p              = cand + 1;
+          continue;
+        }
         density.dense = true;
         note_literal_pair_scan();
         return simd_literal_scan(text, cand + 1, literal);

@@ -866,7 +866,7 @@ TEST(literal_adaptive_search_answers_as_find_for_every_plan)
             want = off == std::string_view::npos ? real::npos : pos + off;
           }
           real::detail::literal_density fresh {};
-          real::detail::literal_density dense {.cands = 0, .origin = real::npos, .dense = true};
+          real::detail::literal_density dense {.cands = 0, .origin = real::npos, .last = real::npos, .dense = true};
           EXPECT_EQ(real::detail::find_literal_adaptive(text, pos, needle, rare, fresh), want);
           EXPECT_EQ(real::detail::find_literal_adaptive(text, pos, needle, rare, dense), want);
           EXPECT_EQ(real::detail::find_literal_adaptive(text, pos, needle, rare, carried), want);
@@ -885,7 +885,7 @@ TEST(literal_adaptive_search_answers_as_find_for_every_plan)
   const std::string long_subject(300U, 'b');
   for (const std::size_t pos : {real::npos, real::npos - 1U, real::npos - 64U, std::size_t {5000}}) {
     real::detail::literal_density fresh {};
-    real::detail::literal_density dense {.cands = 0, .origin = real::npos, .dense = true};
+    real::detail::literal_density dense {.cands = 0, .origin = real::npos, .last = real::npos, .dense = true};
     EXPECT_EQ(real::detail::find_literal_adaptive(long_subject, pos, "bb"sv, 1U, fresh), real::npos);
     EXPECT_EQ(real::detail::find_literal_adaptive(long_subject, pos, "bb"sv, 1U, dense), real::npos);
   }
@@ -919,7 +919,7 @@ TEST(literal_adaptive_search_switches_only_where_the_rarest_byte_is_common)
   EXPECT_EQ(real::detail::find_literal_adaptive(common, 0, needle, rare, dense_one), real::npos);
   EXPECT_EQ(real::detail::literal_pair_scans().load(), 2U); // and a dense subject goes to it at once
   // Even where the rarest byte would have answered on its first stop: dense means the filter, from entry.
-  real::detail::literal_density preset {.cands = 0, .origin = real::npos, .dense = true};
+  real::detail::literal_density preset {.cands = 0, .origin = real::npos, .last = real::npos, .dense = true};
   EXPECT_EQ(real::detail::find_literal_adaptive("error and more"sv, 0, needle, rare, preset), 0U);
   EXPECT_EQ(real::detail::literal_pair_scans().load(), 3U);
 
@@ -933,6 +933,32 @@ TEST(literal_adaptive_search_switches_only_where_the_rarest_byte_is_common)
   EXPECT_EQ(real::detail::find_literal_adaptive(sparse, 0, needle, rare, sparse_one), where);
   EXPECT_EQ(sparse_one.cands, 16U);
   EXPECT(!sparse_one.dense);
+
+  // The static rank can be wrong for a subject: `com` ranks `m` rarest, and here `m` is everywhere while
+  // `c` is not. Once `m` proves common, the bytes of the stretch crossed are counted and `c` is scanned
+  // instead, for the rest of the subject, rather than the pair filter.
+  std::string mmm;
+  for (int i {0}; i < 40; ++i) {
+    mmm += "mammoth memo; mummy hums ";
+    if (i % 10 == 9) {
+      mmm += "com ";
+    }
+  }
+  const std::string             com     {"com"};
+  const std::size_t             m_at    {real::detail::literal_rarest_offset(com)};
+  real::detail::literal_density learned {};
+  EXPECT_EQ(com[m_at], 'm');
+  real::detail::literal_pair_scans() = 0;
+  std::size_t found {0};
+  for (std::size_t at {real::detail::find_literal_adaptive(mmm, 0, com, m_at, learned)}; at != real::npos;
+       at = real::detail::find_literal_adaptive(mmm, at + 1, com, m_at, learned)) {
+    EXPECT_EQ(mmm.substr(at, 3U), "com");
+    ++found;
+  }
+  EXPECT_EQ(found, 4U);
+  EXPECT_EQ(learned.rare, 0U); // `c`, counted over the stretch
+  EXPECT(!learned.dense);
+  EXPECT_EQ(real::detail::literal_pair_scans().load(), 0U);
 
   const real::regex re {"error"};
   for (int round {0}; round < 2; ++round) {
