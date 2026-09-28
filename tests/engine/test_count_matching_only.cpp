@@ -128,3 +128,27 @@ TEST(count_matching_only_honours_the_region)
   EXPECT_EQ(re.count_matches(subject, 6, 16), 2U);
   EXPECT_EQ(re.count_matches(subject, 6, 6), 0U);
 }
+
+TEST(count_matching_only_fills_no_group_after_the_dfa_found_the_span)
+{
+  // A confirm that has the span from the DFAs fills the groups by the one-pass table or, failing it, a VM
+  // run over the window. A walk that reads no group needs neither: each pattern below runs the VM over a
+  // window when find_iter reads its groups (the witness that the window is reached), and never under
+  // count_matches -- which must still count what find_iter finds.
+  std::string text;
+  while (text.size() < 8192U) {
+    text += "error 2026-06-13 req=a3f9c1d8 path=/api some ordinary prose 42 dogs a9 key = val warn 2026-06-14 ";
+  }
+  // The inner-literal confirm (`req=` is the literal) and the lazy DFA's walk from a first-byte candidate:
+  // the two places that fill groups after the span is known and that a matching-only walk reaches.
+  for (const char* pattern : {R"((info|error|warn)\s+\d{4}-\d{2}-\d{2}\s+req=[a-f0-9]+)", R"(q=(\w+)(\d))"}) {
+    const real::regex re        {pattern};
+    real::detail::vm_window_runs() = 0;
+    const std::size_t reference {by_iteration(re, text)};
+    EXPECT(reference > 50U);
+    EXPECT(real::detail::vm_window_runs().load() > 0U);
+    real::detail::vm_window_runs() = 0;
+    EXPECT_EQ(re.count_matches(text), reference);
+    EXPECT_EQ(real::detail::vm_window_runs().load(), 0U);
+  }
+}

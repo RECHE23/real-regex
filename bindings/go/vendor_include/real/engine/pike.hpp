@@ -1325,6 +1325,14 @@ namespace real::detail {
               out_slots[1] = e;
               return true;
             }
+            if (prog_.hints.capture_free_walk) {
+              // A walk that reads no group (count_matches): the span is its whole answer, and filling the
+              // groups would run the one-pass table or the VM over a match already found.
+              out_slots.assign(prog_.slot_count, npos);
+              out_slots[0] = s;
+              out_slots[1] = e;
+              return true;
+            }
             ensure_op_table();
             if (prog_.immut != nullptr && prog_.immut->op_table.has_value() && prog_.immut->op_table->eligible()
                 && prog_.immut->op_table->extract(text, s, e, out_slots)) {
@@ -2268,6 +2276,14 @@ namespace real::detail {
                                  prof::tick_route(prof::route::lazy_dfa_anchored);
                                  if (prog_.slot_count <= 2) {
                                    out_slots.assign(2, npos);
+                                   out_slots[0] = c;
+                                   out_slots[1] = match_end;
+                                   dfa_result   = true;
+                                   return;
+                                 }
+                                 if (prog_.hints.capture_free_walk) {
+                                   // As confirm_at: a walk that reads no group has its answer in the span.
+                                   out_slots.assign(prog_.slot_count, npos);
                                    out_slots[0] = c;
                                    out_slots[1] = match_end;
                                    dfa_result   = true;
