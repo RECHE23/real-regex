@@ -185,6 +185,18 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Test seam: keep an alternation's block scans on its first bytes, whatever its subject's density, so a
+   *        differential can assert the pair filter and the first-byte scan find the same matches in one binary.
+   *        Not for production use — same contract as the other route-disabled seams.
+   * \return Reference to the process-wide seam flag; set it to true to take the pair filter out.
+   */
+  inline bool& alternation_pairs_disabled()
+  {
+    static bool disabled {false};
+    return disabled;
+  }
+
+  /*!
    * \brief Test seam : take the Aho-Corasick DENSITY gate out, so the route is chosen on branch
    *        count alone — the behaviour that shipped before the gate existed.
    *

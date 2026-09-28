@@ -1055,3 +1055,120 @@ TEST(find_byte_returns_the_leftmost_hit_from_every_start)
   }
   EXPECT_EQ(find_byte(text, text.size(), 'a'), real::npos);
 }
+
+// An alternation whose first bytes are dense in its subject scans each branch's byte pair instead; the answers
+// must not move. Random alternations -- literals, classes, case folding, shared prefixes, a branch that is a
+// prefix of a later one, one-byte branches -- over subjects long enough to be sampled, on small alphabets
+// where first bytes are everywhere, against the same regex with the pair filter taken out: count_matches,
+// every find_iter span, and search from starts across the subject.
+TEST(alternation_pair_filter_answers_as_the_first_byte_scan)
+{
+  std::uint32_t state {0x2545F491U};
+  const auto    next  {[&state] {
+                         state ^= state << 13U;
+                         state ^= state >> 17U;
+                         state ^= state << 5U;
+                         return state;
+                       }};
+  const std::string alphabet {"abcdeABC-"};
+  const auto        word {[&](std::size_t len) {
+                            std::string w;
+                            for (std::size_t i = 0; i < len; ++i) {
+                              w += alphabet[next() % 6U]; // lowercase letters and some capitals
+                            }
+                            return w;
+                          }};
+  std::vector<std::string> patterns {"ab|abc", "abc|ab", "a|bc|cab", "[ab]c|ca|b[cd]e", "(?i)abc|bca|cab",
+                                     "\\b(?:ab|cd)\\b", "aab|aba|baa|bab|abb|bba", "e|de|cde|bcde"};
+  for (int i {0}; i < 12; ++i) {
+    std::string       p;
+    const std::size_t branches {2U + (next() % 7U)};
+    for (std::size_t b = 0; b < branches; ++b) {
+      p += (b == 0 ? "" : "|") + word(1U + (next() % 5U));
+    }
+    patterns.push_back(p);
+  }
+  std::vector<std::string> subjects;
+  for (int i {0}; i < 4; ++i) {
+    std::string s;
+    while (s.size() < 6000U) {
+      s += alphabet[next() % alphabet.size()];
+    }
+    subjects.push_back(s);
+  }
+  const auto spans {[](const real::regex& re, const std::string& s) {
+                      std::vector<std::pair<std::size_t, std::size_t>> out;
+                      for (const auto& m : re.find_iter(s)) {
+                        out.emplace_back(m.start(), m.end());
+                      }
+                      return out;
+                    }};
+  std::size_t compared {0};
+  real::detail::alternation_pair_blocks() = 0;
+  for (const std::string& p : patterns) {
+    const real::regex re {p};
+    for (const std::string& s : subjects) {
+      real::detail::alternation_pairs_disabled() = true;
+      const std::size_t        n_off     {re.count_matches(s)};
+      const auto               spans_off {spans(re, s)};
+      std::vector<std::size_t> starts_off;
+      for (std::size_t from = 0; from < s.size(); from += 997U) {
+        const auto m {re.search(s, from)};
+        starts_off.push_back(m ? m.start() : real::npos);
+      }
+      real::detail::alternation_pairs_disabled() = false;
+      EXPECT_EQ(re.count_matches(s), n_off);
+      EXPECT(spans(re, s) == spans_off);
+      std::size_t k {0};
+      for (std::size_t from = 0; from < s.size(); from += 997U) {
+        const auto m {re.search(s, from)};
+        EXPECT_EQ(m ? m.start() : real::npos, starts_off[k++]);
+      }
+      ++compared;
+    }
+  }
+  EXPECT_EQ(compared, patterns.size() * subjects.size());
+  // The comparison compared something: on these subjects the pair filter did run where the target has it.
+  EXPECT(pair_filter ? real::detail::alternation_pair_blocks().load() > 1000U
+                     : real::detail::alternation_pair_blocks().load() == 0U);
+}
+
+// The pair filter only for a subject whose first bytes the sample finds dense: none on a subject where they
+// never appear, none on one too short to sample, and some on a dense one.
+TEST(alternation_pair_filter_only_where_first_bytes_are_dense)
+{
+  const real::regex re {"cat|dog|fish|bird|fox|bear"};
+  std::string       digits;
+  while (digits.size() < 20000U) {
+    digits += "0123456789 42 7 1999 3.14 ";
+  }
+  std::string prose;
+  while (prose.size() < 20000U) {
+    prose += "the quick brown fox jumps over the lazy dog while the cat sleeps by the bird; because bread "
+             "counts differ, bold cooks fold dough before breakfast ";
+  }
+  const std::string short_prose {prose.substr(0, 4000U)};
+  real::detail::alternation_pairs_disabled() = true;
+  const std::size_t want_short  {re.count_matches(short_prose)};
+  const std::size_t want_long   {re.count_matches(prose)};
+  real::detail::alternation_pairs_disabled() = false;
+  real::detail::alternation_pair_blocks()    = 0;
+  EXPECT_EQ(re.count_matches(digits), 0U);
+  EXPECT_EQ(real::detail::alternation_pair_blocks().load(), 0U);
+  EXPECT_EQ(re.count_matches(short_prose), want_short);
+  EXPECT_EQ(real::detail::alternation_pair_blocks().load(), 0U); // below the sampled size: first bytes only
+  real::detail::alternation_pair_candidates() = 0;
+  EXPECT_EQ(re.count_matches(prose), want_long);
+  EXPECT(want_long > 500U);
+  // The second probe filters: the candidates it leaves are few beside the first-byte hits (every c d f b of the
+  // prose), barely more than the matches themselves.
+  std::size_t first_byte_hits {0};
+  for (const char c : prose) {
+    first_byte_hits += (c == 'c' || c == 'd' || c == 'f' || c == 'b') ? 1U : 0U;
+  }
+  if constexpr (pair_filter) {
+    EXPECT(real::detail::alternation_pair_candidates().load() < first_byte_hits / 2U);
+  }
+  EXPECT(pair_filter ? real::detail::alternation_pair_blocks().load() > 0U
+                     : real::detail::alternation_pair_blocks().load() == 0U);
+}
