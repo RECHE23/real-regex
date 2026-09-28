@@ -783,6 +783,10 @@ namespace real::detail {
     const void       *                lit_text            {nullptr}; //!< Literal search: the haystack the two densities below refer to.
     literal_density                   lit_prefix_density  {};        //!< Literal search: what this haystack showed of the prefix's rarest byte.
     literal_density                   lit_inner_density   {};        //!< Literal search: the same for the inner literal.
+    const void       *                alt_plan_for        {nullptr}; //!< Alternation: the program \ref alt_pairs was built from.
+    alternation_pairs                 alt_pairs           {};        //!< Alternation: each branch's probe pair.
+    const void       *                alt_text            {nullptr}; //!< Alternation: the haystack \ref alt_density refers to.
+    alternation_density               alt_density         {};        //!< Alternation: what this haystack showed of the first bytes.
     // AC fields placed LAST (own reason as pattern_hints::alternation_branch_count): inserting
     // here right after il_prefix_for would shift il_text/
     // il_abandoned/il_density_cands/il_density_origin (the inner-literal density-gate fields, read
@@ -5714,6 +5718,213 @@ namespace real::detail {
     }
 
     /*!
+     * \brief A match the pair scan found (`start == npos`: none), and where the block scans stopped.
+     */
+    struct alternation_hit
+    {
+      std::size_t start  {npos}; //!< Start of the match, or npos.
+      std::size_t end    {npos}; //!< Its end.
+      std::size_t resume {};     //!< First offset no block scan covered: the scalar tail's start.
+    };
+
+#if defined(__ARM_NEON) || defined(__SSE2__)
+    /*!
+     * \brief The block scans of a dense subject: each branch's byte pair on every block its reach fits in, then
+     *        the first bytes on the last blocks, verifying candidates in order with \p match_at.
+     *
+     * Out of line so the first-byte loop of its callers keeps the code it had: inlined, the larger body cost
+     * that loop half its speed on a subject its first bytes never stop on.
+     * \tparam MatchAt `std::size_t(std::size_t start)`: the end of the first branch matching at `start`, or npos.
+     * \param[in] text     The subject.
+     * \param[in] pos      The first block's start.
+     * \param[in] pairs    The branches' probe pairs.
+     * \param[in] mem      The branches' first bytes.
+     * \param[in] cnt      How many of \p mem are valid.
+     * \param[in] match_at The branch verifier.
+     * \return The first match, and where the blocks stopped.
+     */
+    template <typename MatchAt>
+    [[nodiscard]]
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    alternation_hit alternation_pair_scan(std::string_view                   text,
+                                          std::size_t                        pos,
+                                          const alternation_pairs&           pairs,
+                                          std::array<std::uint8_t, 8>        mem,
+                                          std::size_t                        cnt,
+                                          const MatchAt&                     match_at) const
+    {
+      const std::size_t sz {text.size()};
+      for (; pos + 16 + pairs.max_d <= sz; pos += 16) {
+        note_alternation_pair_block();
+        mask_t mask {alternation_pair_mask(text.data() + pos, pairs)};
+        while (!empty(mask)) {
+          note_alternation_pair_candidate();
+          const std::size_t lane {first_lane(mask)};
+          const std::size_t me   {match_at(pos + lane)};
+          if (me != npos) {
+            return alternation_hit {.start = pos + lane, .end = me, .resume = pos};
+          }
+          mask = clear_first(mask);
+        }
+      }
+      for (; pos + 16 <= sz; pos += 16) {
+        std::array<std::uint8_t, 16> buf {};
+        std::memcpy(buf.data(), text.data() + pos, 16); // MISRA-clean byte load (no pointer type-pun)
+        mask_t mask                      {load_members_padded_mask(buf.data(), mem.data(), cnt)};
+        while (!empty(mask)) {
+          const std::size_t lane {first_lane(mask)};
+          const std::size_t me   {match_at(pos + lane)};
+          if (me != npos) {
+            return alternation_hit {.start = pos + lane, .end = me, .resume = pos};
+          }
+          mask = clear_first(mask);
+        }
+      }
+      return alternation_hit {.start = npos, .end = npos, .resume = pos};
+    }
+
+#endif
+
+    /*!
+     * \brief The alternation's probe pairs when this subject's first bytes are dense, for the block scans of
+     *        \ref run_alternation and \ref fill_alternation_spans; null otherwise, or when the storage keeps no
+     *        state for them (a compile-time one), or no plan fits.
+     *
+     * Decided once per subject, from \ref alternation_sample_bytes bytes at \p pos, and only when at least
+     * \ref alternation_sample_min remain: a short subject is scanned by the first bytes, unsampled. The
+     * plan is built once per program from its branches, read as the scans' `match_at` reads them. Out of
+     * line: its callers' first-byte loops keep the code they had.
+     * \param[in] text The subject.
+     * \param[in] pos  Where the scan starts.
+     * \param[in] mem  The branches' first bytes.
+     * \param[in] cnt  How many of \p mem are valid.
+     * \return The plan, or null.
+     */
+    [[nodiscard]] const alternation_pairs* alternation_plan(std::string_view                   text,
+                                                            std::size_t                        pos,
+                                                            std::array<std::uint8_t, 8>        mem,
+                                                            std::size_t                        cnt) const
+    {
+      // The decision in line once made (one per subject, and a search per match may ask it again); making it,
+      // out of line.
+      if constexpr (requires(State & st) {
+        st.alt_pairs;
+      }) {
+        if (state_.alt_text == static_cast<const void*>(text.data()) && state_.alt_density.decided
+            && !alternation_pairs_disabled()) {
+          return state_.alt_density.dense ? &state_.alt_pairs : nullptr;
+        }
+      }
+      return alternation_plan_decide(text, pos, mem, cnt);
+    }
+
+    /*!
+     * \brief Out of line, the half of \ref alternation_plan that resets the density on a new subject, samples it,
+     *        and builds the plan.
+     * \param[in] text The subject.
+     * \param[in] pos  Where the scan starts.
+     * \param[in] mem  The branches' first bytes, padded.
+     * \param[in] cnt  How many of \p mem are valid.
+     * \return The plan, or null.
+     */
+    [[nodiscard]]
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    const alternation_pairs* alternation_plan_decide(std::string_view                   text,
+                                                     std::size_t                        pos,
+                                                     std::array<std::uint8_t, 8>        mem,
+                                                     std::size_t                        cnt) const
+    {
+#if defined(__ARM_NEON) || defined(__SSE2__)
+      if constexpr (requires(State & st) {
+        st.alt_pairs;
+      }) {
+        if (alternation_pairs_disabled()) {
+          return nullptr;
+        }
+        if (state_.alt_text != static_cast<const void*>(text.data())) {
+          state_.alt_density = {}; // a fresh haystack: its first bytes are judged anew
+          state_.alt_text    = static_cast<const void*>(text.data());
+        }
+        if (state_.alt_density.decided) {
+          return state_.alt_density.dense ? &state_.alt_pairs : nullptr;
+        }
+        if (pos >= text.size() || text.size() - pos < alternation_sample_min) {
+          return nullptr; // a short rest: the first bytes, unsampled
+        }
+        if (state_.alt_plan_for != static_cast<const void*>(prog_.code.data())) {
+          state_.alt_pairs    = build_alternation_pairs();
+          state_.alt_plan_for = static_cast<const void*>(prog_.code.data());
+        }
+        // Dense first bytes are worth the pairs only when most of their stops are false: where they are the
+        // matches themselves, the pairs stop as often and the first bytes' loop is the cheaper one.
+        state_.alt_density.decided = true;
+        if (state_.alt_pairs.count != 0U) {
+          const alternation_sample sample {alternation_sample_hits(text.data() + pos, mem.data(), cnt, state_.alt_pairs)};
+          state_.alt_density.dense = sample.first_bytes * alternation_dense_gap > alternation_sample_bytes
+                                     && sample.pairs * 2U < sample.first_bytes;
+        }
+        return state_.alt_density.dense ? &state_.alt_pairs : nullptr;
+      }
+      else {
+        static_cast<void>(text);
+        static_cast<void>(pos);
+        static_cast<void>(mem);
+        static_cast<void>(cnt);
+        return nullptr;
+      }
+#else
+      // No pair filter on this target: the first bytes scan every subject.
+      static_cast<void>(text);
+      static_cast<void>(pos);
+      static_cast<void>(mem);
+      static_cast<void>(cnt);
+      return nullptr;
+#endif
+    }
+
+    /*!
+     * \brief Each branch's first byte and its farthest byte within 15 of it, read from the split chain in
+     *        source order as the scans' `match_at` reads it.
+     * \return The plan; `count == 0` when a branch does not start with a byte or the branches outnumber it.
+     */
+    [[nodiscard]] alternation_pairs build_alternation_pairs() const
+    {
+      alternation_pairs plan {};
+      const auto&       code {prog_.code};
+      std::size_t       pc   {prog_.hints.body_pc == 0 ? std::size_t {1} : static_cast<std::size_t>(prog_.hints.body_pc)};
+      while (true) {
+        const bool        is_split {code[pc].op == opcode::split};
+        const std::size_t branch   {is_split ? static_cast<std::size_t>(code[pc].primary_target) : pc};
+        if (plan.count == plan.lead.size() || branch >= code.size() || code[branch].op != opcode::byte) {
+          return alternation_pairs {};
+        }
+        std::size_t probe_at {0};
+        for (std::size_t k = 1; k <= 15 && branch + k < code.size(); ++k) {
+          const opcode op {code[branch + k].op};
+          if (op != opcode::byte && op != opcode::klass) {
+            break;
+          }
+          if (op == opcode::byte) {
+            probe_at = k;
+          }
+        }
+        plan.lead[plan.count]  = code[branch].arg8;
+        plan.probe[plan.count] = code[branch + probe_at].arg8;
+        plan.delta[plan.count] = static_cast<std::uint8_t>(probe_at);
+        plan.max_d             = std::max(plan.max_d, static_cast<std::uint8_t>(probe_at));
+        ++plan.count;
+        if (!is_split) {
+          return plan;
+        }
+        pc = static_cast<std::size_t>(code[pc].secondary_target);
+      }
+    }
+
+    /*!
      * \brief Fast path for an alternation of straight-line branches.
      *
      * Each branch is a fixed-width byte/klass sequence, so at a candidate the
@@ -5803,15 +6014,27 @@ namespace real::detail {
       if (!std::is_constant_evaluated() && prog_.hints.small_set_size >= 2 && prog_.hints.small_set_size <= 8) {
         const std::size_t           cnt {prog_.hints.small_set_size};
         std::array<std::uint8_t, 8> mem {};
-        for (std::size_t i = 0; i < cnt; ++i) {
-          mem[i] = static_cast<std::uint8_t>(prog_.hints.small_set[i]);
+        for (std::size_t i = 0; i < mem.size(); ++i) {
+          // The unused slots repeat a member, for the unrolled eight-way compare.
+          mem[i] = static_cast<std::uint8_t>(prog_.hints.small_set[i < cnt ? i : 0]);
         }
         const std::size_t sz  {text.size()};
         std::size_t       pos {start};
+        // A subject whose first bytes are dense goes to each branch's byte pair, out of line; the others keep
+        // the first-byte loop exactly as it was.
+        if (const alternation_pairs* pairs {alternation_plan(text, pos, mem, cnt)}; pairs != nullptr) {
+          const alternation_hit found {alternation_pair_scan(text, pos, *pairs, mem, cnt,
+                                                             [&](std::size_t at) { return match_at(at, false); })};
+          if (found.start != npos) {
+            write_span(found.start, found.end);
+            return true;
+          }
+          pos = found.resume;
+        }
         for (; pos + 16 <= sz; pos += 16) {
           std::array<std::uint8_t, 16> buf {};
           std::memcpy(buf.data(), text.data() + pos, 16); // MISRA-clean byte load (no pointer type-pun)
-          mask_t mask                      {load_members_mask(buf.data(), mem.data(), cnt)};
+          mask_t mask                      {load_members_padded_mask(buf.data(), mem.data(), cnt)};
           while (!empty(mask)) {
             const std::size_t lane {first_lane(mask)};
             const std::size_t me   {match_at(pos + lane, false)};
@@ -5903,12 +6126,15 @@ namespace real::detail {
                             };
       const std::size_t           cnt {prog_.hints.small_set_size};
       std::array<std::uint8_t, 8> mem {};
-      for (std::size_t i = 0; i < cnt; ++i) {
-        mem[i] = static_cast<std::uint8_t>(prog_.hints.small_set[i]);
+      for (std::size_t i = 0; i < mem.size(); ++i) {
+        // The unused slots repeat a member, for the unrolled eight-way compare.
+        mem[i] = static_cast<std::uint8_t>(prog_.hints.small_set[i < cnt ? i : 0]);
       }
-      const std::size_t sz  {text.size()};
-      std::size_t       n   {0};
-      std::size_t       pos {start};
+      const std::size_t sz                 {text.size()};
+      std::size_t       n                  {0};
+      std::size_t       pos                {start};
+      // Decided once for the whole fill, not per span: matches may be only bytes apart.
+      const alternation_pairs* const pairs {std::is_constant_evaluated() ? nullptr : alternation_plan(text, pos, mem, cnt)};
       while (pos < sz && n < cap) {
         std::size_t hit {npos};
         std::size_t end {npos};
@@ -5924,10 +6150,17 @@ namespace real::detail {
         // loop below covers the whole subject rather than only a tail -- same answers, no vectors.
 #if defined(__ARM_NEON) || defined(__SSE2__)
         if (!std::is_constant_evaluated()) {
-          for (; pos + 16 <= sz; pos += 16) {
+          // As run_alternation: a dense subject to the byte pairs, out of line; the others to the first bytes.
+          if (pairs != nullptr) {
+            const alternation_hit found {alternation_pair_scan(text, pos, *pairs, mem, cnt, match_at)};
+            hit = found.start;
+            end = found.end;
+            pos = found.start != npos ? found.start : found.resume;
+          }
+          for (; hit == npos && pos + 16 <= sz; pos += 16) {
             std::array<std::uint8_t, 16> buf {};
             std::memcpy(buf.data(), text.data() + pos, 16);
-            mask_t mask                      {load_members_mask(buf.data(), mem.data(), cnt)};
+            mask_t mask                      {load_members_padded_mask(buf.data(), mem.data(), cnt)};
             while (!empty(mask)) {
               const std::size_t lane {first_lane(mask)};
               const std::size_t me   {match_at(pos + lane)};

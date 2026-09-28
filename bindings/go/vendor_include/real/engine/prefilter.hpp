@@ -149,6 +149,50 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Alternation blocks the pair filter masked (a dense subject), counted for the tests that pin when an
+   *        alternation's scan turns to it.
+   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
+   */
+  inline std::atomic<std::uint64_t>& alternation_pair_blocks() noexcept
+  {
+    static std::atomic<std::uint64_t> blocks {0};
+    return blocks;
+  }
+
+  /*!
+   * \brief Bill one pair-filtered alternation block to \ref alternation_pair_blocks. A no-op unless the test
+   *        binary defines \c REAL_TEST_INSTRUMENT.
+   */
+  inline void note_alternation_pair_block() noexcept
+  {
+#if defined(REAL_TEST_INSTRUMENT)
+    alternation_pair_blocks().fetch_add(1, std::memory_order_relaxed);
+#endif
+  }
+
+  /*!
+   * \brief Candidates the alternation pair filter left to verify, counted for the tests that pin that its second
+   *        probe does filter.
+   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
+   */
+  inline std::atomic<std::uint64_t>& alternation_pair_candidates() noexcept
+  {
+    static std::atomic<std::uint64_t> candidates {0};
+    return candidates;
+  }
+
+  /*!
+   * \brief Bill one pair-filter candidate to \ref alternation_pair_candidates. A no-op unless the test binary
+   *        defines \c REAL_TEST_INSTRUMENT.
+   */
+  inline void note_alternation_pair_candidate() noexcept
+  {
+#if defined(REAL_TEST_INSTRUMENT)
+    alternation_pair_candidates().fetch_add(1, std::memory_order_relaxed);
+#endif
+  }
+
+  /*!
    * \brief Batches the lazy-DFA span filler produced, counted for the tests that pin which walks it serves.
    * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
    */
@@ -2865,6 +2909,121 @@ namespace real::detail {
     }
     return find_literal_adaptive_rest(text, pos, literal, rare, density);
   }
+
+  /*!
+   * \brief Two probe bytes per branch of a literal alternation: the branch's first byte and one byte further
+   *        in it, for the pair filter an alternation's block scan turns to once the first bytes prove common.
+   *
+   * Built from the program once per search state (not kept in the hints, which every search copies). `count`
+   * is 0 when a branch has no byte at its start, or the alternation has more branches than the arrays.
+   */
+  struct alternation_pairs
+  {
+    std::uint8_t                 count {}; //!< Branches planned; 0 means no plan.
+    std::uint8_t                 max_d {}; //!< Largest probe offset: a block reads up to this far past its 16 starts.
+    std::array<std::uint8_t, 16> lead  {}; //!< Each branch's first byte.
+    std::array<std::uint8_t, 16> probe {}; //!< Each branch's second probe byte.
+    std::array<std::uint8_t, 16> delta {}; //!< Its offset in the branch (at most 15; 0 probes the first byte twice).
+  };
+
+  /*!
+   * \brief Whether an alternation's first bytes are dense in one subject, decided once from a sample of it.
+   */
+  struct alternation_density
+  {
+    bool decided {}; //!< The sample has run on this subject.
+    bool dense   {}; //!< Its first bytes stop often enough that the pair filter takes the subject.
+  };
+
+  inline constexpr std::size_t alternation_sample_min   {4096}; //!< Shorter rests are scanned by the first bytes, unsampled (at least the sample and its reach).
+  inline constexpr std::size_t alternation_sample_bytes {512};  //!< Bytes sampled for the first bytes' density.
+
+  //! \brief Mean bytes between first-byte hits in the sample below which the pair filter takes over (both
+  //!        ISAs, where the prototype's first-byte scan and pair filter crossed on 500 KB of log lines).
+  inline constexpr std::size_t alternation_dense_gap {32};
+
+#if defined(__ARM_NEON) || defined(__SSE2__)
+  /*!
+   * \brief Mask of the 16 starts at \p at where some branch's two probe bytes both sit.
+   *
+   * Every branch's pair is a necessary condition of that branch, so a start no pair marks matches no branch;
+   * the caller verifies the marked ones in branch order, as it does the first-byte candidates.
+   * \param[in] at   The first of the 16 starts; `at + 15 + plan.max_d` must be inside the subject.
+   * \param[in] plan The branches' probes.
+   * \return The mask.
+   */
+  inline mask_t alternation_pair_mask(const char*              at,
+                                      const alternation_pairs& plan)
+  {
+    std::array<std::uint8_t, 16> lead_blk {};
+    std::memcpy(lead_blk.data(), at, 16); // MISRA-clean byte loads (no pointer type-pun)
+    mask_t mask                           {};
+    for (std::size_t i = 0; i < plan.count; ++i) {
+      std::array<std::uint8_t, 16> probe_blk {};
+      std::memcpy(probe_blk.data(), at + plan.delta[i], 16);
+      mask = mask_or(mask, load_pair_mask(lead_blk.data(), plan.lead[i], probe_blk.data(), plan.probe[i]));
+    }
+    return mask;
+  }
+
+  /*!
+   * \brief The first-byte mask of 16 bytes against \p cnt members, with the fewest unrolled compares that cover
+   *        them: four, six or eight slots, the unused ones repeating a member.
+   * \param[in] buf16 16 already-loaded bytes.
+   * \param[in] mem   The members, padded to eight by repeating one.
+   * \param[in] cnt   How many are distinct (1..8).
+   * \return The mask.
+   */
+  inline mask_t load_members_padded_mask(const std::uint8_t * buf16,
+                                         const std::uint8_t * mem,
+                                         std::size_t          cnt)
+  {
+    if (cnt <= 4) {
+      return load_members4_mask(buf16, mem);
+    }
+    if (cnt <= 6) {
+      return load_members6_mask(buf16, mem);
+    }
+    return load_members8_mask(buf16, mem);
+  }
+
+  /*!
+   * \brief What a sample of a subject shows an alternation's two filters stopping on.
+   */
+  struct alternation_sample
+  {
+    std::size_t first_bytes {}; //!< Starts the first-byte mask marks.
+    std::size_t pairs       {}; //!< Starts the pair mask marks: the matches, and the false stops the pairs keep.
+  };
+
+  /*!
+   * \brief Counts, over \ref alternation_sample_bytes bytes at \p at, the starts each filter would stop on.
+   * \param[in] at   The sample's start; \ref alternation_sample_bytes + `plan.max_d` bytes must follow it.
+   * \param[in] mem  The first bytes, padded to eight by repeating one (the members compares read all of them).
+   * \param[in] cnt  How many of \p mem are distinct members.
+   * \param[in] plan The branches' probe pairs.
+   * \return Both counts.
+   */
+  inline alternation_sample alternation_sample_hits(const char*              at,
+                                                    const std::uint8_t *     mem,
+                                                    std::size_t              cnt,
+                                                    const alternation_pairs& plan)
+  {
+    alternation_sample sample {};
+    for (std::size_t off = 0; off < alternation_sample_bytes; off += 16) {
+      std::array<std::uint8_t, 16> buf {};
+      std::memcpy(buf.data(), at + off, 16); // MISRA-clean byte load (no pointer type-pun)
+      for (mask_t mask {load_members_padded_mask(buf.data(), mem, cnt)}; !empty(mask); mask = clear_first(mask)) {
+        ++sample.first_bytes;
+      }
+      for (mask_t mask {alternation_pair_mask(at + off, plan)}; !empty(mask); mask = clear_first(mask)) {
+        ++sample.pairs;
+      }
+    }
+    return sample;
+  }
+
+#endif
 
   /*!
    * \brief Index of the first occurrence of \p literal in `text[pos..)`, or \ref real::npos.
