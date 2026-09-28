@@ -2,6 +2,23 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.9.9
+
+9.9 (**a DFA builds three times faster, and a mid-sized set fuses once it pays**): **THESE TABLES DO
+NOT MOVE, AND THE STAMP STAYS AT `2026.9.7` + tree `18809f4`.** **NO CELL WAS RE-RUN, AND NONE IS
+EDITED.** The route code a §A/§E/§Unicode cell runs is untouched: the train changes how a `real::dfa` is
+built (no cell times a build) and when a `regex_set` of 24 to 55 members builds its fused DFA.
+**Multi-pattern, measured outside the table** (`mp_bench`, REAL only, x86-64, g++ 13.3, best of 7, two
+runs, 2026-09-27): N = 32 195 → 480 MB/s, the dip the 9.8 stamp named, now on the fused scan once the set
+has walked 1 MiB; N = 16, 64 and 128 unchanged within run-to-run (585/561 → 596/596, 460/448 → 481/468,
+475/463 → 440/461). Table A keeps its stamped figures until the next two-ISA re-stamp.
+**Corrections to the 9.8 entry**, measured 2026-09-27 in a driver of its own (`count_matches` over the
+table's 200 KB corpus, `-O2`, five alternating runs, minimum): `alternation the|fox|dog` on x86-64 is
+**not** a regression — on the table's x86-64 host (g++ 13.3) `2026.8.15` 1.886 against `18809f4` 1.869
+ns/B, on a Cascade Lake x86-64 (g++ 15.2) 1.677 against 1.544 with 17 % fewer hardware branch misses;
+the stamp's 1.67 was the old bench binary's layout (§A's reading corrected). `(?i)café`'s +7.6 %
+instructions on x86-64 never reached the clock: 0.894 against 0.897 ns/B on the table's host.
+
 ## v2026.9.8
 
 9.8 (**the DFA carries assertions; the tables move**): **THE STAMP MOVES TO `2026.9.7` + tree `18809f4`**,
