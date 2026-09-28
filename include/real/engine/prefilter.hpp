@@ -2662,8 +2662,7 @@ namespace real::detail {
     bool          dense  {};     //!< Sticky: the pair filter takes this subject from here on.
   };
 
-  //! \brief Stops the rarest-byte scan makes before its density is judged: fewer say nothing.
-  inline constexpr std::uint32_t literal_dense_min_cands {8};
+  inline constexpr std::uint32_t literal_dense_min_cands {8}; //!< Stops the rarest-byte scan makes before its density is judged: fewer say nothing.
 
   /*!
    * \brief Mean bytes between stops below which the rarest byte counts as common: under it, a stop costs
