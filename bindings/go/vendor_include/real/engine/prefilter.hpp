@@ -2809,9 +2809,9 @@ namespace real::detail {
    * \brief Index of the first occurrence of \p literal in `text[pos..)`, or \ref real::npos, by its rarest
    *        byte while that byte is rare in the subject and by the two-byte block filter once it is not.
    *
-   * The rarest byte (offset \p rare) is scanned with `memchr` on x86-64 and \ref simd_byte_scan on NEON,
+   * The rarest byte (offset \p rare) is scanned with `memchr` on x86-64 and `simd_byte_scan` on NEON,
    * each stop verified. Once \ref literal_dense_min_cands stops sit less than \ref literal_dense_gap bytes
-   * apart on average, \p density turns dense and \ref simd_literal_scan takes over from the stop after
+   * apart on average, \p density turns dense and `simd_literal_scan` takes over from the stop after
    * the last one -- from the stop's START plus one, so an occurrence overlapping it is still found. The
    * decision depends on the subject's bytes only: the same subject always takes the same route. Every
    * position is a candidate at most once and a verify costs `O(|literal|)`, so the search stays linear.
