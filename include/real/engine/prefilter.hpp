@@ -2287,8 +2287,9 @@ namespace real::detail {
     // This is a measured veto, and the reason it is SEMANTIC rather than an ISA gate. A pattern like
     // `[0-9]{2}:[0-9]{2}` carries `rare_byte = ':'`, so next_candidate memchrs it -- and where the
     // platform's memchr is wider than this filter's 128-bit block, the pair path loses to it, while on the
-    // other ISA it wins. That is the same per-ISA trap the NEON-gated literal filter hit. But unlike that
-    // one, the discriminator here is not the ISA: it is whether a single byte suffices at all. An icase
+    // other ISA it wins. The literal filter met the same trap while it ran on NEON alone, until it learned
+    // to scan the rarest byte first. Here the discriminator is not the ISA either: it is whether a single
+    // byte suffices at all. An icase
     // literal has no single-byte position (`(?i)cafe` is four 2-sets, rare_byte and single_first both -1),
     // so nothing memchrs it and the pair filter wins on BOTH ISAs. Vetoing on the hint keeps that win
     // everywhere instead of surrendering one ISA to a gate.
@@ -2567,7 +2568,7 @@ namespace real::detail {
     std::size_t       p     {pos};
     // Four blocks (64 candidates) per round. A no-match scan spends all its time in the reject test, and
     // libc `memchr` sets the bar there by covering 64 B per round: at one block per round this filter
-    // measured ~13 % SLOWER than the platform `find` it replaces on a pure miss, despite rejecting on two
+    // measured ~13 % SLOWER than the platform `find` on a pure miss, despite rejecting on two
     // bytes instead of one. Four independent load pairs per round (ILP, one branch) turn that into ~2.5x
     // FASTER than memchr — the two-byte selectivity finally paying at memchr's throughput. Masks are
     // consumed in block order, and within a mask in lane order, so candidates are still visited strictly
