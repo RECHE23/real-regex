@@ -960,10 +960,13 @@ TEST(literal_adaptive_search_switches_only_where_the_rarest_byte_is_common)
   EXPECT(!learned.dense);
   EXPECT_EQ(real::detail::literal_pair_scans().load(), 0U);
 
-  const real::regex re {"error"};
+  const real::regex re            {"error"};
+  std::string       dense_subject {common};
+  dense_subject += "error";
+  dense_subject += common;
   for (int round {0}; round < 2; ++round) {
-    EXPECT_EQ(re.count_matches(common + "error" + common), 1U); // a dense subject, the density kept per subject
-    EXPECT_EQ(re.count_matches(sparse), 1U);                    // then a sparse one: the kept density resets
+    EXPECT_EQ(re.count_matches(dense_subject), 1U); // a dense subject, the density kept per subject
+    EXPECT_EQ(re.count_matches(sparse), 1U);        // then a sparse one: the kept density resets
   }
   std::string many;
   while (many.size() < 20000U) {

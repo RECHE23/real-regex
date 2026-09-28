@@ -2677,11 +2677,30 @@ namespace real::detail {
    * \param[in,out] density What this subject has shown so far.
    * \return The index of the first occurrence at or after \p pos, else \ref real::npos.
    */
-  // Out of line: its callers include next_candidate, which the class and rare-byte routes run per candidate
-  // without ever reaching a literal. Inlined there, it cost `\d{4}-\d{2}-\d{2}` 7 % on arm64.
-#if defined(__GNUC__) || defined(__clang__)
-  __attribute__((noinline))
-#endif
+  inline std::size_t find_literal_adaptive_rest(std::string_view text,
+                                                std::size_t      pos,
+                                                std::string_view literal,
+                                                std::size_t      rare,
+                                                literal_density& density);
+
+  /*!
+   * \brief Writes the adaptive search's local density back (\ref find_literal_adaptive_rest keeps it in
+   *        locals while it scans).
+   * \param[out] density The subject's density.
+   * \param[in]  cands   Distinct stops counted.
+   * \param[in]  origin  Offset of the first.
+   * \param[in]  next    First offset not yet counted (0: none counted).
+   */
+  constexpr void store_literal_density(literal_density& density,
+                                       std::uint32_t    cands,
+                                       std::size_t      origin,
+                                       std::size_t      next) noexcept
+  {
+    density.cands  = cands;
+    density.origin = origin;
+    density.last   = next == 0U ? npos : next - 1U;
+  }
+
   inline std::size_t find_literal_adaptive(std::string_view text,
                                            std::size_t      pos,
                                            std::string_view literal,
@@ -2695,6 +2714,57 @@ namespace real::detail {
 #if defined(REAL_TEST_INSTRUMENT)
     prefilter_note_scan(text.size() - pos);
 #endif
+    // A dense subject goes to the pair filter inline, as the lead-pair search always did; the first stop of a
+    // sparse one inline too, since where matches are dense most searches end on it. The rest, out of line.
+#if defined(__ARM_NEON) || defined(__SSE2__)
+    if (density.dense) {
+      note_literal_pair_scan();
+      return simd_literal_scan(text, pos, literal);
+    }
+#endif
+    {
+      const std::size_t k     {density.rare != npos ? density.rare : rare};
+      const std::size_t last  {text.size() - len};
+#if defined(__ARM_NEON)
+      const std::size_t hit   {simd_byte_scan(text.substr(0, last + k + 1), pos + k, static_cast<std::uint8_t>(literal[k]))};
+#else
+      const void* const found {std::memchr(text.data() + pos + k, literal[k], last - pos + 1)};
+      const std::size_t hit   {found == nullptr ? npos : static_cast<std::size_t>(static_cast<const char*>(found) - text.data())};
+#endif
+      if (hit == npos) {
+        return npos;
+      }
+      if (std::memcmp(text.data() + hit - k, literal.data(), len) == 0) {
+        return hit - k;
+      }
+      pos = hit - k; // the stop failed: the rest finds it again and counts it
+    }
+    return find_literal_adaptive_rest(text, pos, literal, rare, density);
+  }
+
+  /*!
+   * \brief The body of \ref find_literal_adaptive past its first stop: the pair filter for a dense subject,
+   *        else the rarest-byte scan that counts its stops and judges their density.
+   *
+   * Out of line: its callers include next_candidate, which the class and rare-byte routes run per candidate
+   * without ever reaching a literal. Inlined there, it cost `\d{4}-\d{2}-\d{2}` 7 % on arm64.
+   * \param[in]     text    The subject text.
+   * \param[in]     pos     Index to start from (a stop the caller saw fail, or where a dense search starts).
+   * \param[in]     literal The needle (>= 2 bytes).
+   * \param[in]     rare    Offset of its rarest byte by the hints.
+   * \param[in,out] density What this subject has shown so far.
+   * \return The index of the first occurrence at or after \p pos, else \ref real::npos.
+   */
+#if defined(__GNUC__) || defined(__clang__)
+  __attribute__((noinline))
+#endif
+  inline std::size_t find_literal_adaptive_rest(std::string_view text,
+                                                std::size_t      pos,
+                                                std::string_view literal,
+                                                std::size_t      rare,
+                                                literal_density& density)
+  {
+    const std::size_t len {literal.size()};
 #if defined(__ARM_NEON) || defined(__SSE2__)
     if (density.dense) {
       note_literal_pair_scan();
@@ -2713,11 +2783,6 @@ namespace real::detail {
     std::uint32_t     cands  {density.cands};
     std::size_t       origin {density.origin};
     std::size_t       next   {density.last == npos ? 0U : density.last + 1U}; // first offset not yet counted
-    const auto        save   {[&] {
-                                density.cands  = cands;
-                                density.origin = origin;
-                                density.last   = next == 0U ? npos : next - 1U;
-                              }};
     while (p <= last) {
       // The rarest byte of a candidate starting at or before `last` sits at or before `last + rare`.
 #if defined(__ARM_NEON)
@@ -2727,12 +2792,12 @@ namespace real::detail {
       const std::size_t hit   {found == nullptr ? npos : static_cast<std::size_t>(static_cast<const char*>(found) - base)};
 #endif
       if (hit == npos) {
-        save();
+        store_literal_density(density, cands, origin, next);
         return npos;
       }
       const std::size_t cand {hit - rare};
       if (std::memcmp(base + cand, literal.data(), len) == 0) {
-        save();
+        store_literal_density(density, cands, origin, next);
         return cand;
       }
       p = cand + 1;
@@ -2772,14 +2837,14 @@ namespace real::detail {
           byte         = literal[best];
           continue;
         }
-        save();
+        store_literal_density(density, cands, origin, next);
         density.dense = true;
         note_literal_pair_scan();
         return simd_literal_scan(text, cand + 1, literal);
       }
 #endif
     }
-    save();
+    store_literal_density(density, cands, origin, next);
     return npos;
   }
 
