@@ -1206,6 +1206,27 @@ TEST(alternation_nibble_filter_answers_as_the_pairs_and_the_first_bytes)
                      : real::detail::alternation_pair_blocks().load() == 0U);
 }
 
+// Twelve branches reach the Aho-Corasick gate, whose candidate density is the first bytes': on a subject where
+// they are dense it chose the automaton, calibrated against the first-byte scan. The filtered block scan beats
+// the automaton there, so a subject the alternation's filter takes stays on the alternation -- same answers.
+TEST(alternation_filter_keeps_a_dense_subject_from_the_automaton)
+{
+  const real::regex re {"cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog|owl|eel"};
+  std::string       prose;
+  while (prose.size() < 20000U) {
+    prose += "the quick brown fox jumps over the lazy dog while the cat sleeps by the bird; because bread "
+             "counts differ, bold cooks fold dough before breakfast ";
+  }
+  real::detail::aho_corasick_route_disabled() = true;
+  const std::size_t want {re.count_matches(prose)};
+  real::detail::aho_corasick_route_disabled() = false;
+  EXPECT(want > 500U);
+  real::detail::alternation_pair_blocks() = 0;
+  EXPECT_EQ(re.count_matches(prose), want);
+  EXPECT(pair_filter ? real::detail::alternation_pair_blocks().load() > 1000U
+                     : real::detail::alternation_pair_blocks().load() == 0U);
+}
+
 // The pair filter only for a subject whose first bytes the sample finds dense: none on a subject where they
 // never appear, none on one too short to sample, and some on a dense one.
 TEST(alternation_pair_filter_only_where_first_bytes_are_dense)

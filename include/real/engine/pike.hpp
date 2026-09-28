@@ -1093,7 +1093,7 @@ namespace real::detail {
         // branch — falls through to run_alternation below, zero behavior change).
         if constexpr (requires { State::supports_aho_corasick; }) {
           if (!std::is_constant_evaluated() && !aho_corasick_route_disabled() && mode == run_mode::search
-              && prog_.hints.alternation_branch_count >= ac_branch_floor
+              && prog_.hints.alternation_branch_count >= ac_branch_floor && !alternation_filter_takes(text, start)
               && ac_density_favours_automaton(text, start)) {
             if (ac_ready() != nullptr) {
               prof::tick_route(prof::route::aho_corasick);
@@ -5863,6 +5863,37 @@ namespace real::detail {
         }
       }
       return alternation_plan_decide(text, pos, mem, cnt);
+    }
+
+    /*!
+     * \brief Whether \ref run_alternation will mask this subject's blocks by its pairs or fingerprint: a dense
+     *        subject, whose candidate density is also what makes the Aho-Corasick gate choose the automaton. The
+     *        gate was calibrated against the first-byte scan; the filtered scan beats the automaton on those
+     *        subjects (twelve words over 500 KB of log lines: 0.36 against 1.62 ms on x86-64, 0.095 against
+     *        1.44 on arm64), so the alternation keeps them.
+     * \param[in] text  The subject.
+     * \param[in] start Where the search starts.
+     * \return True when the alternation's block filter takes the subject.
+     */
+    [[nodiscard]] bool alternation_filter_takes(std::string_view text,
+                                                std::size_t      start) const
+    {
+#if defined(__ARM_NEON) || defined(__SSE2__)
+      const std::size_t cnt {prog_.hints.small_set_size};
+      if (cnt < 2 || cnt > 8) {
+        return false; // no block scan for this alternation: nothing to keep
+      }
+      std::array<std::uint8_t, 8> mem {};
+      for (std::size_t i = 0; i < mem.size(); ++i) {
+        // The unused slots repeat a member, as the block scans pad them.
+        mem[i] = static_cast<std::uint8_t>(prog_.hints.small_set[i < cnt ? i : 0]);
+      }
+      return alternation_plan(text, start, mem, cnt) != nullptr;
+#else
+      static_cast<void>(text);
+      static_cast<void>(start);
+      return false;
+#endif
     }
 
     /*!
