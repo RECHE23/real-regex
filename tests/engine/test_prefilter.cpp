@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstring>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -1202,6 +1204,34 @@ TEST(alternation_nibble_filter_answers_as_the_pairs_and_the_first_bytes)
   EXPECT(one_byte.count_matches(subjects[0]) > 0U);
   EXPECT_EQ(real::detail::alternation_nibble_blocks().load(), 0U);
   // ...while the pairs still mask its blocks: the fingerprint was declined, not the dense scan.
+  EXPECT(pair_filter ? real::detail::alternation_pair_blocks().load() > 100U
+                     : real::detail::alternation_pair_blocks().load() == 0U);
+}
+
+// A block reads past its 16 starts by the reach of the filter that masks it: fifteen for a pair probing a long
+// branch's last byte, two for the fingerprint. A subject in a buffer of exactly its size, dense in first bytes,
+// with branches sixteen bytes long: the last blocks must stop where the filter's own reach ends. A plan that
+// claimed the fingerprint on a target without it bounded the blocks by two while the pairs read fifteen past
+// them: an ASan build reported the heap overflow here.
+TEST(alternation_filter_blocks_stay_inside_the_subject)
+{
+  const real::regex re {"abcdefghijklmnop|bcdefghijklmnopa|cdefghijklmnopab"};
+  std::string       text;
+  while (text.size() < 6000U) {
+    text += "abcabcbcacab abcdefghijklmnop ";
+  }
+  // A dense tail with no match, so the scan runs its blocks to the end rather than stopping on a match.
+  text += "abcabcbcacab abcabcbcacab abcabcbcacab abc";
+  const std::size_t             n     {text.size()};
+  const std::unique_ptr<char[]> exact {new char[n]};
+  std::memcpy(exact.get(), text.data(), n);
+  const std::string_view subject      {exact.get(), n};
+  real::detail::alternation_pairs_disabled() = true;
+  const std::size_t want              {re.count_matches(subject)};
+  real::detail::alternation_pairs_disabled() = false;
+  real::detail::alternation_pair_blocks()    = 0;
+  EXPECT_EQ(re.count_matches(subject), want);
+  EXPECT(want > 100U);
   EXPECT(pair_filter ? real::detail::alternation_pair_blocks().load() > 100U
                      : real::detail::alternation_pair_blocks().load() == 0U);
 }

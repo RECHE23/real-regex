@@ -2967,6 +2967,15 @@ namespace real::detail {
     bool dense   {}; //!< Its first bytes stop often enough that the pair filter takes the subject.
   };
 
+  //! \brief Whether this target has the nibble fingerprint (a table lookup per nibble, AArch64 only). A plan
+  //!        built elsewhere never claims one: the fingerprint's reach is shorter than the pairs', and a scan that
+  //!        bounded its blocks by it while masking by the pairs would read past the subject.
+#if defined(__aarch64__)
+  inline constexpr bool alternation_nibbles_available {true};
+#else
+  inline constexpr bool alternation_nibbles_available {false};
+#endif
+
   inline constexpr std::size_t alternation_sample_min   {4096}; //!< Shorter rests are scanned by the first bytes, unsampled (at least the sample and its reach).
   inline constexpr std::size_t alternation_sample_bytes {512};  //!< Bytes sampled for the first bytes' density.
 

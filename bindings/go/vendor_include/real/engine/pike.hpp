@@ -5973,6 +5973,9 @@ namespace real::detail {
     constexpr void add_branch_nibbles(alternation_pairs& plan,
                                       std::size_t        branch) const
     {
+      if (!plan.nibbles) {
+        return; // no fingerprint on this target, or a branch already declined it
+      }
       const auto&        code  {prog_.code};
       const std::uint8_t bit   {static_cast<std::uint8_t>(1U << (plan.count % 8U))};
       std::size_t        width {0};
@@ -6017,7 +6020,7 @@ namespace real::detail {
     [[nodiscard]] alternation_pairs build_alternation_pairs() const
     {
       alternation_pairs plan {};
-      plan.nibbles = true; // until a branch too short for a fingerprint says otherwise
+      plan.nibbles = alternation_nibbles_available; // until a branch too short for a fingerprint says otherwise
       const auto&       code {prog_.code};
       std::size_t       pc   {prog_.hints.body_pc == 0 ? std::size_t {1} : static_cast<std::size_t>(prog_.hints.body_pc)};
       while (true) {
