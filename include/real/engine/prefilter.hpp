@@ -2701,13 +2701,23 @@ namespace real::detail {
       return simd_literal_scan(text, pos, literal);
     }
 #endif
-    const std::size_t last  {text.size() - len}; // last index a match could start at
+    const std::size_t last {text.size() - len}; // last index a match could start at
     if (density.rare != npos) {
       rare = density.rare;
     }
-    char              byte  {literal[rare]};
-    const char* const base  {text.data()};
-    std::size_t       p     {pos};
+    char              byte   {literal[rare]};
+    const char* const base   {text.data()};
+    std::size_t       p      {pos};
+    // The density in locals: the scan calls out on every stop, and fields behind a reference would be
+    // reloaded after each call. Written back on every way out.
+    std::uint32_t     cands  {density.cands};
+    std::size_t       origin {density.origin};
+    std::size_t       next   {density.last == npos ? 0U : density.last + 1U}; // first offset not yet counted
+    const auto        save   {[&] {
+                                density.cands  = cands;
+                                density.origin = origin;
+                                density.last   = next == 0U ? npos : next - 1U;
+                              }};
     while (p <= last) {
       // The rarest byte of a candidate starting at or before `last` sits at or before `last + rare`.
 #if defined(__ARM_NEON)
@@ -2717,29 +2727,31 @@ namespace real::detail {
       const std::size_t hit   {found == nullptr ? npos : static_cast<std::size_t>(static_cast<const char*>(found) - base)};
 #endif
       if (hit == npos) {
+        save();
         return npos;
       }
       const std::size_t cand {hit - rare};
       if (std::memcmp(base + cand, literal.data(), len) == 0) {
+        save();
         return cand;
       }
+      p = cand + 1;
       // Searches on one subject may start behind one another (a batch fills ahead, a per-match search
       // resumes behind it): a stop counts once, or re-counted stops would read as density.
-      if (density.last == npos || cand > density.last) {
-        if (density.origin == npos) {
-          density.origin = cand;
-        }
-        density.last = cand;
-        ++density.cands;
+      if (cand < next) {
+        continue;
       }
+      origin = cands == 0U ? cand : origin;
+      next   = cand + 1;
+      ++cands;
 #if defined(__ARM_NEON) || defined(__SSE2__)
-      if (density.cands >= literal_dense_min_cands && cand - density.origin < density.cands * literal_dense_gap) {
+      if (cands >= literal_dense_min_cands && cand - origin < cands * literal_dense_gap) {
         // The static rank chose a byte this subject uses often. Before giving up on a single byte, count
         // each needle byte over the stretch these stops crossed: one rare there is scanned instead, once
         // per subject; none rare enough, and the pair filter takes over.
-        const std::string_view seen       {text.substr(density.origin, cand + len - density.origin)};
+        const std::string_view seen       {text.substr(origin, cand + len - origin)};
         std::size_t            best       {rare};
-        std::size_t            best_count {density.cands};
+        std::size_t            best_count {cands};
         if (density.rare == npos) {
           std::array<std::uint32_t, 256> counts {}; // one pass over the stretch, whatever the needle's length
           for (const char c : seen) {
@@ -2754,21 +2766,20 @@ namespace real::detail {
           }
         }
         if (density.rare == npos && best != rare && best_count * literal_dense_gap < seen.size()) {
-          density.rare   = best;
-          density.cands  = 0;
-          density.origin = npos;
-          rare           = best;
-          byte           = literal[best];
-          p              = cand + 1;
+          density.rare = best;
+          cands        = 0;
+          rare         = best;
+          byte         = literal[best];
           continue;
         }
+        save();
         density.dense = true;
         note_literal_pair_scan();
         return simd_literal_scan(text, cand + 1, literal);
       }
 #endif
-      p = cand + 1;
     }
+    save();
     return npos;
   }
 
