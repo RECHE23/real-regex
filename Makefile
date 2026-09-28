@@ -1022,12 +1022,19 @@ sabotage-help: ## [bench] How to break one exact line and verify a guard reacts 
 # diagnostic (C4456) to an error under /WX -- so a shadowed local compiled clean through every local
 # step and through clang and gcc in CI, and failed only on the Windows leg. It cost a round trip; the
 # flag costs nothing.
+# The second compile drops the vector ISA macros. check-no-simd cannot stand in for it: it parses the
+# headers under clang and instantiates nothing, so a template body is never checked there, and clang does
+# not flag an unused local whose initializer calls a function. GCC does, in the instantiation: a plan
+# declared outside the `#if` that alone reads it was unused on i686 and s390x and broke both CI legs.
+# The C API instantiates every engine, so this TU reaches the SIMD-guarded bodies with the guards off.
 gcc-check: ## [gates] Compile the engine headers under gcc -Werror (the diagnostics clang lacks)
 	@if command -v docker >/dev/null 2>&1; then \
-	   docker run --rm --platform linux/amd64 -v "$(CURDIR)":/src -w /src gcc:14 \
+	   docker run --rm --platform linux/amd64 -v "$(CURDIR)":/src -w /src gcc:14 sh -c ' \
 	     g++ -std=c++20 -O2 -Wall -Wextra -Wshadow -Werror -I include -I bindings/c \
 	         -c bindings/c/real_capi.cpp -o /dev/null \
-	   && echo "gcc-check: clean under g++ 14 (-Wall -Wextra -Wshadow -Werror)"; \
+	     && g++ -std=c++20 -O2 -Wall -Wextra -Wshadow -Werror -U__SSE2__ -U__AVX2__ -I include -I bindings/c \
+	         -c bindings/c/real_capi.cpp -o /dev/null' \
+	   && echo "gcc-check: clean under g++ 14 (-Wall -Wextra -Wshadow -Werror), with and without the vector ISA macros"; \
 	 else \
 	   echo "step 9: gcc-check (the diagnostics clang lacks) -- docker absent" | tee -a $(GATE_SKIPS); \
 	   echo "  CI's linux-gcc and cmake legs remain the backstop."; \

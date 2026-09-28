@@ -6133,8 +6133,10 @@ namespace real::detail {
       const std::size_t sz                 {text.size()};
       std::size_t       n                  {0};
       std::size_t       pos                {start};
+#if defined(__ARM_NEON) || defined(__SSE2__)
       // Decided once for the whole fill, not per span: matches may be only bytes apart.
       const alternation_pairs* const pairs {std::is_constant_evaluated() ? nullptr : alternation_plan(text, pos, mem, cnt)};
+#endif
       while (pos < sz && n < cap) {
         std::size_t hit {npos};
         std::size_t end {npos};
