@@ -25,6 +25,12 @@ namespace {
 #else
   constexpr bool pair_filter {false};
 #endif
+  //! \brief Whether this target masks a dense alternation by the nibble fingerprint (a table lookup, AArch64).
+#if defined(__aarch64__)
+  constexpr bool nibble_filter {true};
+#else
+  constexpr bool nibble_filter {false};
+#endif
 
   real::detail::pattern_hints hints_of(std::string_view pattern,
                                        real::flags      f = real::flags::none)
@@ -1130,6 +1136,73 @@ TEST(alternation_pair_filter_answers_as_the_first_byte_scan)
   EXPECT_EQ(compared, patterns.size() * subjects.size());
   // The comparison compared something: on these subjects the pair filter did run where the target has it.
   EXPECT(pair_filter ? real::detail::alternation_pair_blocks().load() > 1000U
+                     : real::detail::alternation_pair_blocks().load() == 0U);
+}
+
+// The nibble fingerprint marks a superset of the starts where a branch matches, shared by up to two branches a
+// bucket, and the scan verifies every marked start in BRANCH order -- so priority must not depend on buckets. Over
+// more than eight branches whose prefixes cross buckets, two-byte branches (a wildcard third position), classes at
+// each fingerprint position, case folding and `\b`, on long subjects with matches in the last block and the tail,
+// every find_iter span must agree three ways: fingerprint, pairs (the seam), first bytes alone.
+TEST(alternation_nibble_filter_answers_as_the_pairs_and_the_first_bytes)
+{
+  std::uint32_t state {0x9E3779B9U};
+  const auto    next  {[&state] {
+                         state ^= state << 13U;
+                         state ^= state >> 17U;
+                         state ^= state << 5U;
+                         return state;
+                       }};
+  const std::string              alphabet {"abcdeABC -"};
+  const std::vector<std::string> patterns {
+    // "abc" is branch 1, "abcd" branch 9: both in bucket 1 here, and "ab" (branch 0) outranks both.
+    "ab|abc|bcd|cde|dea|eab|bca|cab|dab|abcd", "abcd|xy|yz|zx|bc|cd|de|ea|ab|abc", "ab|cd|ea", "[ab]cd|a[bc]d|ab[cd]",
+    // A plan needs every branch to open on a byte: classes at the second and third fingerprint positions.
+    "a[bc]d|b[cd]e|ab[cd]|c[de]a",
+    "(?i)abc|bcd|cde", "\\b(?:abc|bcd|cd)\\b", "a|bcd|cde", "cab|abc|bca|bab|aba|cbc|ded|eae|dad|ede|cdc|bdb"};
+  std::vector<std::string> subjects;
+  for (int i {0}; i < 3; ++i) {
+    std::string s;
+    while (s.size() < 6000U) {
+      s += alphabet[next() % alphabet.size()];
+    }
+    // Matches straddling the last blocks and inside the scalar tail.
+    s += "zzabcdzzabc";
+    subjects.push_back(s);
+  }
+  const auto spans {[](const real::regex& re, const std::string& s) {
+                      std::vector<std::pair<std::size_t, std::size_t>> out;
+                      for (const auto& m : re.find_iter(s)) {
+                        out.emplace_back(m.start(), m.end());
+                      }
+                      return out;
+                    }};
+  real::detail::alternation_nibble_blocks() = 0;
+  for (const std::string& p : patterns) {
+    const real::regex re {p};
+    for (const std::string& s : subjects) {
+      real::detail::alternation_pairs_disabled() = true;
+      const auto first_bytes {spans(re, s)};
+      real::detail::alternation_pairs_disabled()   = false;
+      real::detail::alternation_nibbles_disabled() = true;
+      const auto pairs   {spans(re, s)};
+      real::detail::alternation_nibbles_disabled() = false;
+      const auto nibbles {spans(re, s)};
+      EXPECT(pairs == first_bytes);
+      EXPECT(nibbles == first_bytes);
+      EXPECT_EQ(re.count_matches(s), first_bytes.size());
+    }
+  }
+  EXPECT(nibble_filter ? real::detail::alternation_nibble_blocks().load() > 1000U
+                       : real::detail::alternation_nibble_blocks().load() == 0U);
+  // A one-byte branch leaves the plan without a fingerprint: its bucket would mark every start.
+  real::detail::alternation_nibble_blocks() = 0;
+  real::detail::alternation_pair_blocks()   = 0;
+  const real::regex one_byte {"a|bcd|cde"};
+  EXPECT(one_byte.count_matches(subjects[0]) > 0U);
+  EXPECT_EQ(real::detail::alternation_nibble_blocks().load(), 0U);
+  // ...while the pairs still mask its blocks: the fingerprint was declined, not the dense scan.
+  EXPECT(pair_filter ? real::detail::alternation_pair_blocks().load() > 100U
                      : real::detail::alternation_pair_blocks().load() == 0U);
 }
 

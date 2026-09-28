@@ -207,6 +207,36 @@ namespace real::detail {
     return vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(hit), 4)), 0);
   }
 
+#if defined(__aarch64__)
+  /*!
+   * \brief Mask of the 16 starts at \p at whose three bytes all fall in one bucket's fingerprint: for byte `k`
+   *        of a start, a bucket bit is set where both `lo[k][byte & 15]` and `hi[k][byte >> 4]` carry it, and a
+   *        start is marked when some bit survives all three bytes. A table lookup per nibble (`tbl`, AArch64
+   *        only), so the cost per block does not grow with the number of branches.
+   * \param[in] at The first of the 16 starts; `at + 17` must be readable.
+   * \param[in] lo Three 16-byte tables, low nibble to bucket bits, one per fingerprint byte.
+   * \param[in] hi The same for the high nibble.
+   * \return The mask.
+   */
+  inline mask_t load_nibble3_mask(const char                                       * at,
+                                  const std::array<std::array<std::uint8_t, 16>, 3>& lo,
+                                  const std::array<std::array<std::uint8_t, 16>, 3>& hi)
+  {
+    const uint8x16_t low4 {vdupq_n_u8(0x0F)};
+    uint8x16_t       hit  {vdupq_n_u8(0xFF)};
+    for (std::size_t k = 0; k < 3; ++k) {
+      uint8x16_t blk         {};
+      std::memcpy(&blk, at + k, 16); // MISRA-clean byte loads (no pointer type-pun)
+      const uint8x16_t by_lo {vqtbl1q_u8(vld1q_u8(lo[k].data()), vandq_u8(blk, low4))};
+      const uint8x16_t by_hi {vqtbl1q_u8(vld1q_u8(hi[k].data()), vshrq_n_u8(blk, 4))};
+      hit                    = vandq_u8(hit, vandq_u8(by_lo, by_hi));
+    }
+    const uint8x16_t marked {vtstq_u8(hit, hit)};
+    return vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(marked), 4)), 0);
+  }
+
+#endif
+
   /*!
    * \brief Mask of the lanes where `buf16[l] == a` -- the single-byte scan (prefilter.hpp's
    *        `simd_byte_scan`). NEON only, like \ref load_pair_mask, and for the same reason: its caller is

@@ -171,6 +171,33 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Alternation blocks the nibble fingerprint masked (among \ref alternation_pair_blocks), counted for the
+   *        tests that pin when the fingerprint rather than the pairs does it.
+   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
+   */
+  inline std::atomic<std::uint64_t>& alternation_nibble_blocks() noexcept
+  {
+    static std::atomic<std::uint64_t> blocks {0};
+    return blocks;
+  }
+
+  /*!
+   * \brief Bill one fingerprint-masked block to \ref alternation_nibble_blocks. A no-op unless the test binary
+   *        defines \c REAL_TEST_INSTRUMENT.
+   * \param[in] nibbles Whether the block was masked by the fingerprint.
+   */
+  inline void note_alternation_nibble_block(bool nibbles) noexcept
+  {
+#if defined(REAL_TEST_INSTRUMENT)
+    if (nibbles) {
+      alternation_nibble_blocks().fetch_add(1, std::memory_order_relaxed);
+    }
+#else
+    static_cast<void>(nibbles);
+#endif
+  }
+
+  /*!
    * \brief Candidates the alternation pair filter left to verify, counted for the tests that pin that its second
    *        probe does filter.
    * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
@@ -2919,13 +2946,16 @@ namespace real::detail {
    */
   struct alternation_pairs
   {
-    std::uint8_t                 count       {}; //!< Branches planned; 0 means no plan.
-    std::uint8_t                 max_d       {}; //!< Largest probe offset: a block reads up to this far past its 16 starts.
-    std::array<std::uint8_t, 16> lead        {}; //!< Each branch's first byte.
-    std::array<std::uint8_t, 16> probe       {}; //!< Each branch's second probe byte.
-    std::array<std::uint8_t, 16> delta       {}; //!< Its offset in the branch (at most 15; 0 probes the first byte twice).
-    std::array<byte_splat, 16>   lead_splat  {}; //!< \ref lead, each in all 16 lanes: a block loads rather than broadcasts it.
-    std::array<byte_splat, 16>   probe_splat {}; //!< \ref probe, likewise.
+    std::uint8_t                                count       {}; //!< Branches planned; 0 means no plan.
+    std::uint8_t                                max_d       {}; //!< Largest probe offset: a block reads up to this far past its 16 starts.
+    std::array<std::uint8_t, 16>                lead        {}; //!< Each branch's first byte.
+    std::array<std::uint8_t, 16>                probe       {}; //!< Each branch's second probe byte.
+    std::array<std::uint8_t, 16>                delta       {}; //!< Its offset in the branch (at most 15; 0 probes the first byte twice).
+    std::array<byte_splat, 16>                  lead_splat  {}; //!< \ref lead, each in all 16 lanes: a block loads rather than broadcasts it.
+    std::array<byte_splat, 16>                  probe_splat {}; //!< \ref probe, likewise.
+    bool                                        nibbles     {}; //!< \ref nibble_lo and \ref nibble_hi are valid: every branch is at least two bytes wide.
+    std::array<std::array<std::uint8_t, 16>, 3> nibble_lo   {}; //!< Per fingerprint byte, low nibble to the bits of the buckets (branch index mod 8) it admits.
+    std::array<std::array<std::uint8_t, 16>, 3> nibble_hi   {}; //!< The same for the high nibble.
   };
 
   /*!
@@ -2961,6 +2991,44 @@ namespace real::detail {
   }
 
   /*!
+   * \brief The block filter a dense alternation's scan runs: the nibble fingerprint of each branch's first three
+   *        bytes where \p nibbles (AArch64: a table lookup per nibble, a cost per block that does not grow with
+   *        the branches), else the byte pairs.
+   *
+   * Both mark a superset of the starts where some branch matches, and neither says which: the caller verifies
+   * every marked start in branch order, so priority does not depend on how branches share a bucket.
+   * \param[in] at      The first of the 16 starts; \ref alternation_filter_reach bytes past its 16 are read.
+   * \param[in] plan    The branches' probes and fingerprint.
+   * \param[in] nibbles Whether to take the fingerprint (`plan.nibbles`, and the seam not set).
+   * \return The mask.
+   */
+  inline mask_t alternation_filter_mask(const char*              at,
+                                        const alternation_pairs& plan,
+                                        bool                     nibbles)
+  {
+#if defined(__aarch64__)
+    if (nibbles) {
+      return load_nibble3_mask(at, plan.nibble_lo, plan.nibble_hi);
+    }
+#else
+    static_cast<void>(nibbles);
+#endif
+    return alternation_pair_mask(at, plan);
+  }
+
+  /*!
+   * \brief How far past its 16 starts \ref alternation_filter_mask reads.
+   * \param[in] plan    The branches' probes.
+   * \param[in] nibbles As \ref alternation_filter_mask.
+   * \return The reach in bytes.
+   */
+  inline std::size_t alternation_filter_reach(const alternation_pairs& plan,
+                                              bool                     nibbles)
+  {
+    return nibbles ? std::size_t {2} : std::size_t {plan.max_d};
+  }
+
+  /*!
    * \brief The first-byte mask of 16 bytes against \p cnt members, with the fewest unrolled compares that cover
    *        them: four, six or eight slots, the unused ones repeating a member.
    * \param[in] buf16 16 already-loaded bytes.
@@ -2992,16 +3060,19 @@ namespace real::detail {
 
   /*!
    * \brief Counts, over \ref alternation_sample_bytes bytes at \p at, the starts each filter would stop on.
-   * \param[in] at   The sample's start; \ref alternation_sample_bytes + `plan.max_d` bytes must follow it.
-   * \param[in] mem  The first bytes, padded to eight by repeating one (the members compares read all of them).
-   * \param[in] cnt  How many of \p mem are distinct members.
-   * \param[in] plan The branches' probe pairs.
+   * \param[in] at      The sample's start; \ref alternation_sample_bytes + \ref alternation_filter_reach bytes
+   *                    must follow it.
+   * \param[in] mem     The first bytes, padded to eight by repeating one (the members compares read all of them).
+   * \param[in] cnt     How many of \p mem are distinct members.
+   * \param[in] plan    The branches' probe pairs.
+   * \param[in] nibbles Whether the block filter is the fingerprint (\ref alternation_filter_mask).
    * \return Both counts.
    */
   inline alternation_sample alternation_sample_hits(const char*              at,
                                                     const std::uint8_t *     mem,
                                                     std::size_t              cnt,
-                                                    const alternation_pairs& plan)
+                                                    const alternation_pairs& plan,
+                                                    bool                     nibbles)
   {
     alternation_sample sample {};
     for (std::size_t off = 0; off < alternation_sample_bytes; off += 16) {
@@ -3010,7 +3081,7 @@ namespace real::detail {
       for (mask_t mask {load_members_padded_mask(buf.data(), mem, cnt)}; !empty(mask); mask = clear_first(mask)) {
         ++sample.first_bytes;
       }
-      for (mask_t mask {alternation_pair_mask(at + off, plan)}; !empty(mask); mask = clear_first(mask)) {
+      for (mask_t mask {alternation_filter_mask(at + off, plan, nibbles)}; !empty(mask); mask = clear_first(mask)) {
         ++sample.pairs;
       }
     }

@@ -197,6 +197,18 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Test seam: mask a dense alternation's blocks by its byte pairs rather than by the nibble fingerprint,
+   *        so a differential can assert both filters find the same matches in one binary. Same contract as the
+   *        other route-disabled seams.
+   * \return Reference to the process-wide seam flag; set it to true to take the fingerprint out.
+   */
+  inline bool& alternation_nibbles_disabled()
+  {
+    static bool disabled {false};
+    return disabled;
+  }
+
+  /*!
    * \brief Test seam : take the Aho-Corasick DENSITY gate out, so the route is chosen on branch
    *        count alone — the behaviour that shipped before the gate existed.
    *

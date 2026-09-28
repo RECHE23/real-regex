@@ -5797,10 +5797,13 @@ namespace real::detail {
                                           std::size_t                        cnt,
                                           const MatchAt&                     match_at) const
     {
-      const std::size_t sz {text.size()};
-      for (; pos + 16 + pairs.max_d <= sz; pos += 16) {
+      const std::size_t sz      {text.size()};
+      const bool        nibbles {pairs.nibbles && !alternation_nibbles_disabled()};
+      const std::size_t reach   {alternation_filter_reach(pairs, nibbles)};
+      for (; pos + 16 + reach <= sz; pos += 16) {
         note_alternation_pair_block();
-        mask_t mask {alternation_pair_mask(text.data() + pos, pairs)};
+        note_alternation_nibble_block(nibbles);
+        mask_t mask {alternation_filter_mask(text.data() + pos, pairs, nibbles)};
         while (!empty(mask)) {
           note_alternation_pair_candidate();
           const std::size_t lane {first_lane(mask)};
@@ -5904,7 +5907,8 @@ namespace real::detail {
         // matches themselves, the pairs stop as often and the first bytes' loop is the cheaper one.
         state_.alt_density.decided = true;
         if (state_.alt_pairs != nullptr && state_.alt_pairs->count != 0U) {
-          const alternation_sample sample {alternation_sample_hits(text.data() + pos, mem.data(), cnt, *state_.alt_pairs)};
+          const alternation_sample sample {alternation_sample_hits(text.data() + pos, mem.data(), cnt, *state_.alt_pairs,
+                                                                   state_.alt_pairs->nibbles && !alternation_nibbles_disabled())};
           state_.alt_density.dense = sample.first_bytes * alternation_dense_gap > alternation_sample_bytes
                                      && sample.pairs * 2U < sample.first_bytes;
         }
@@ -5928,6 +5932,53 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Adds the branch at \p branch to \p plan's nibble fingerprint, in bucket `plan.count % 8`: each of its
+     *        first three positions admits its byte, or every member of its class; a position past the branch's end
+     *        admits anything (only that bucket loses selectivity). A branch one byte wide leaves the plan without a
+     *        fingerprint: its bucket would mark every start.
+     * \param[in,out] plan   The plan being built; `plan.count` is this branch's index.
+     * \param[in]     branch The branch's first instruction.
+     */
+    constexpr void add_branch_nibbles(alternation_pairs& plan,
+                                      std::size_t        branch) const
+    {
+      const auto&        code  {prog_.code};
+      const std::uint8_t bit   {static_cast<std::uint8_t>(1U << (plan.count % 8U))};
+      std::size_t        width {0};
+      while (width < 3 && branch + width < code.size()
+             && (code[branch + width].op == opcode::byte || code[branch + width].op == opcode::klass)) {
+        ++width;
+      }
+      if (width < 2) {
+        plan.nibbles = false;
+        return;
+      }
+      for (std::size_t k = 0; k < 3; ++k) {
+        const auto admit = [&](std::uint8_t b) {
+                             plan.nibble_lo[k][b & 0x0FU] |= bit;
+                             plan.nibble_hi[k][b >> 4U]   |= bit;
+                           };
+        if (k >= width) {
+          for (std::size_t n = 0; n < 16; ++n) {
+            plan.nibble_lo[k][n] |= bit;
+            plan.nibble_hi[k][n] |= bit;
+          }
+        }
+        else if (code[branch + k].op == opcode::byte) {
+          admit(code[branch + k].arg8);
+        }
+        else {
+          const char_class& cc {prog_.classes[static_cast<std::size_t>(code[branch + k].arg16)]};
+          for (std::size_t b = 0; b < 256; ++b) {
+            if (cc.test(static_cast<std::uint8_t>(b))) {
+              admit(static_cast<std::uint8_t>(b));
+            }
+          }
+        }
+      }
+    }
+
+    /*!
      * \brief Each branch's first byte and its farthest byte within 15 of it, read from the split chain in
      *        source order as the scans' `match_at` reads it.
      * \return The plan; `count == 0` when a branch does not start with a byte or the branches outnumber it.
@@ -5935,6 +5986,7 @@ namespace real::detail {
     [[nodiscard]] alternation_pairs build_alternation_pairs() const
     {
       alternation_pairs plan {};
+      plan.nibbles = true; // until a branch too short for a fingerprint says otherwise
       const auto&       code {prog_.code};
       std::size_t       pc   {prog_.hints.body_pc == 0 ? std::size_t {1} : static_cast<std::size_t>(prog_.hints.body_pc)};
       while (true) {
@@ -5959,6 +6011,7 @@ namespace real::detail {
         plan.lead_splat[plan.count].fill(plan.lead[plan.count]);
         plan.probe_splat[plan.count].fill(plan.probe[plan.count]);
         plan.max_d             = std::max(plan.max_d, static_cast<std::uint8_t>(probe_at));
+        add_branch_nibbles(plan, branch);
         ++plan.count;
         if (!is_split) {
           return plan;
