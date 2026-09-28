@@ -64,6 +64,60 @@ namespace real::detail {
   }
 
   /*!
+   * \brief \ref load_members_mask against exactly eight members, unrolled: a caller with fewer repeats one of
+   *        them in the unused slots (an OR with itself changes nothing). No loop is left for the compiler to
+   *        unroll or not, which it decides by the size of the function around it -- in a scan loop that
+   *        decision halved the speed of a six-member set.
+   * \param[in] buf16   16 already-loaded bytes (the caller's MISRA-clean memcpy).
+   * \param[in] members Eight member bytes.
+   * \return The 16-lane mask.
+   */
+  inline mask_t load_members8_mask(const std::uint8_t * buf16,
+                                   const std::uint8_t * members)
+  {
+    const uint8x16_t blk {vld1q_u8(buf16)};
+    const uint8x16_t e01 {vorrq_u8(vceqq_u8(blk, vdupq_n_u8(members[0])), vceqq_u8(blk, vdupq_n_u8(members[1])))};
+    const uint8x16_t e23 {vorrq_u8(vceqq_u8(blk, vdupq_n_u8(members[2])), vceqq_u8(blk, vdupq_n_u8(members[3])))};
+    const uint8x16_t e45 {vorrq_u8(vceqq_u8(blk, vdupq_n_u8(members[4])), vceqq_u8(blk, vdupq_n_u8(members[5])))};
+    const uint8x16_t e67 {vorrq_u8(vceqq_u8(blk, vdupq_n_u8(members[6])), vceqq_u8(blk, vdupq_n_u8(members[7])))};
+    const uint8x16_t eq  {vorrq_u8(vorrq_u8(e01, e23), vorrq_u8(e45, e67))};
+    return vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(eq), 4)), 0);
+  }
+
+  /*!
+   * \brief \ref load_members8_mask for at most four members: four slots, the same padding rule.
+   * \param[in] buf16   16 already-loaded bytes (the caller's MISRA-clean memcpy).
+   * \param[in] members Four member bytes.
+   * \return The 16-lane mask.
+   */
+  inline mask_t load_members4_mask(const std::uint8_t * buf16,
+                                   const std::uint8_t * members)
+  {
+    const uint8x16_t blk {vld1q_u8(buf16)};
+    const uint8x16_t e01 {vorrq_u8(vceqq_u8(blk, vdupq_n_u8(members[0])), vceqq_u8(blk, vdupq_n_u8(members[1])))};
+    const uint8x16_t e23 {vorrq_u8(vceqq_u8(blk, vdupq_n_u8(members[2])), vceqq_u8(blk, vdupq_n_u8(members[3])))};
+    const uint8x16_t eq  {vorrq_u8(e01, e23)};
+    return vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(eq), 4)), 0);
+  }
+
+  /*!
+   * \brief \ref load_members8_mask for at most six members: six slots, the same padding rule.
+   * \param[in] buf16   16 already-loaded bytes (the caller's MISRA-clean memcpy).
+   * \param[in] members Six member bytes.
+   * \return The 16-lane mask.
+   */
+  inline mask_t load_members6_mask(const std::uint8_t * buf16,
+                                   const std::uint8_t * members)
+  {
+    const uint8x16_t blk {vld1q_u8(buf16)};
+    const uint8x16_t e01 {vorrq_u8(vceqq_u8(blk, vdupq_n_u8(members[0])), vceqq_u8(blk, vdupq_n_u8(members[1])))};
+    const uint8x16_t e23 {vorrq_u8(vceqq_u8(blk, vdupq_n_u8(members[2])), vceqq_u8(blk, vdupq_n_u8(members[3])))};
+    const uint8x16_t e45 {vorrq_u8(vceqq_u8(blk, vdupq_n_u8(members[4])), vceqq_u8(blk, vdupq_n_u8(members[5])))};
+    const uint8x16_t eq  {vorrq_u8(vorrq_u8(e01, e23), e45)};
+    return vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(eq), 4)), 0);
+  }
+
+  /*!
    * \brief Mask of \p buf16 against a HOMOGENEOUS fixed-shape's shared <= 2-range set
    *        (prefilter.hpp's `class_range_count`).
    * \param[in] buf16 16 already-loaded bytes (the caller's MISRA-clean memcpy).
@@ -169,6 +223,13 @@ namespace real::detail {
     return m & ~(static_cast<mask_t>(0xF) << (4U * lane));
   }
 
+  /*! \brief The lanes set in \p a or \p b. */
+  inline mask_t mask_or(mask_t a,
+                        mask_t b)
+  {
+    return a | b;
+  }
+
   /*!
    * \brief `true` if every lane in `[start, start + len)` of \p m is set. The caller clamps \p len to
    *        `16 - start`; a \p len reaching lane 16 reads as the mask's full width.
@@ -227,6 +288,56 @@ namespace real::detail {
       eq = _mm_or_si128(eq, _mm_cmpeq_epi8(blk, _mm_set1_epi8(static_cast<char>(members[i]))));
     }
     return static_cast<mask_t>(_mm_movemask_epi8(eq));
+  }
+
+  /*!
+   * \brief \ref load_members_mask against exactly eight members, unrolled. SSE2 leg of the NEON overload above.
+   * \param[in] buf16   16 already-loaded bytes (the caller's MISRA-clean memcpy).
+   * \param[in] members Eight member bytes.
+   * \return The 16-lane mask.
+   */
+  inline mask_t load_members8_mask(const std::uint8_t * buf16,
+                                   const std::uint8_t * members)
+  {
+    __m128i blk {};
+    std::memcpy(&blk, buf16, 16); // MISRA-clean byte load (no pointer type-pun)
+    const auto    eq_at {[&](std::size_t i) { return _mm_cmpeq_epi8(blk, _mm_set1_epi8(static_cast<char>(members[i]))); }};
+    const __m128i e01   {_mm_or_si128(eq_at(0), eq_at(1))};
+    const __m128i e23   {_mm_or_si128(eq_at(2), eq_at(3))};
+    const __m128i e45   {_mm_or_si128(eq_at(4), eq_at(5))};
+    const __m128i e67   {_mm_or_si128(eq_at(6), eq_at(7))};
+    return static_cast<mask_t>(_mm_movemask_epi8(_mm_or_si128(_mm_or_si128(e01, e23), _mm_or_si128(e45, e67))));
+  }
+
+  /*!
+   * \brief \ref load_members8_mask for at most four members. SSE2 leg of the NEON overload above.
+   * \param[in] buf16   16 already-loaded bytes (the caller's MISRA-clean memcpy).
+   * \param[in] members Four member bytes.
+   * \return The 16-lane mask.
+   */
+  inline mask_t load_members4_mask(const std::uint8_t * buf16,
+                                   const std::uint8_t * members)
+  {
+    __m128i blk {};
+    std::memcpy(&blk, buf16, 16); // MISRA-clean byte load (no pointer type-pun)
+    const auto    eq_at {[&](std::size_t i) { return _mm_cmpeq_epi8(blk, _mm_set1_epi8(static_cast<char>(members[i]))); }};
+    return static_cast<mask_t>(_mm_movemask_epi8(_mm_or_si128(_mm_or_si128(eq_at(0), eq_at(1)), _mm_or_si128(eq_at(2), eq_at(3)))));
+  }
+
+  /*!
+   * \brief \ref load_members8_mask for at most six members. SSE2 leg of the NEON overload above.
+   * \param[in] buf16   16 already-loaded bytes (the caller's MISRA-clean memcpy).
+   * \param[in] members Six member bytes.
+   * \return The 16-lane mask.
+   */
+  inline mask_t load_members6_mask(const std::uint8_t * buf16,
+                                   const std::uint8_t * members)
+  {
+    __m128i blk {};
+    std::memcpy(&blk, buf16, 16); // MISRA-clean byte load (no pointer type-pun)
+    const auto    eq_at {[&](std::size_t i) { return _mm_cmpeq_epi8(blk, _mm_set1_epi8(static_cast<char>(members[i]))); }};
+    const __m128i e0123 {_mm_or_si128(_mm_or_si128(eq_at(0), eq_at(1)), _mm_or_si128(eq_at(2), eq_at(3)))};
+    return static_cast<mask_t>(_mm_movemask_epi8(_mm_or_si128(e0123, _mm_or_si128(eq_at(4), eq_at(5)))));
   }
 
   /*!
@@ -303,6 +414,13 @@ namespace real::detail {
   inline mask_t clear_first(mask_t m)
   {
     return m & (m - 1U);
+  }
+
+  /*! \brief The lanes set in \p a or \p b. */
+  inline mask_t mask_or(mask_t a,
+                        mask_t b)
+  {
+    return a | b;
   }
 
   /*!
