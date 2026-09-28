@@ -881,12 +881,22 @@ TEST(literal_adaptive_search_answers_as_find_for_every_plan)
 
   // A start past every candidate, up to the edge of size_t: no scan, whatever the density says (a scan
   // would step past the end of the subject and wrap its bound).
+  // The subject is longer than the filter's four blocks, so a wrapped bound would send it reading.
+  const std::string long_subject(300U, 'b');
   for (const std::size_t pos : {real::npos, real::npos - 1U, real::npos - 64U, std::size_t {5000}}) {
     real::detail::literal_density fresh {};
     real::detail::literal_density dense {.cands = 0, .origin = real::npos, .dense = true};
-    EXPECT_EQ(real::detail::find_literal_adaptive("abcabcabc"sv, pos, "bc"sv, 1U, fresh), real::npos);
-    EXPECT_EQ(real::detail::find_literal_adaptive("abcabcabc"sv, pos, "bc"sv, 1U, dense), real::npos);
+    EXPECT_EQ(real::detail::find_literal_adaptive(long_subject, pos, "bb"sv, 1U, fresh), real::npos);
+    EXPECT_EQ(real::detail::find_literal_adaptive(long_subject, pos, "bb"sv, 1U, dense), real::npos);
   }
+
+  // Billed once per call, the rest of the subject: a search that billed nothing would make the work
+  // counters that guard against quadratic rescans read zero, and pass.
+  const std::string             miss(10000U, 'a');
+  real::detail::literal_density none {};
+  real::detail::prefilter_work_units() = 0;
+  EXPECT_EQ(real::detail::find_literal_adaptive(miss, 0, "zq"sv, 0U, none), real::npos);
+  EXPECT_EQ(real::detail::prefilter_work_units(), 10000U);
 }
 
 // The switch itself, both ways: a needle whose rarest byte is common in the subject turns the density
@@ -908,6 +918,10 @@ TEST(literal_adaptive_search_switches_only_where_the_rarest_byte_is_common)
   EXPECT_EQ(real::detail::literal_pair_scans().load(), 1U); // the switch handed the rest to the filter
   EXPECT_EQ(real::detail::find_literal_adaptive(common, 0, needle, rare, dense_one), real::npos);
   EXPECT_EQ(real::detail::literal_pair_scans().load(), 2U); // and a dense subject goes to it at once
+  // Even where the rarest byte would have answered on its first stop: dense means the filter, from entry.
+  real::detail::literal_density preset {.cands = 0, .origin = real::npos, .dense = true};
+  EXPECT_EQ(real::detail::find_literal_adaptive("error and more"sv, 0, needle, rare, preset), 0U);
+  EXPECT_EQ(real::detail::literal_pair_scans().load(), 3U);
 
   std::string sparse;
   for (int i {0}; i < 16; ++i) {
