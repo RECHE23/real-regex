@@ -2681,31 +2681,6 @@ namespace real::detail {
 #endif
 
   /*!
-   * \brief Index of the first occurrence of \p literal in `text[pos..)`, or \ref real::npos, by its rarest
-   *        byte while that byte is rare in the subject and by the two-byte block filter once it is not.
-   *
-   * The rarest byte (offset \p rare) is scanned with `memchr` on x86-64 and \ref simd_byte_scan on NEON,
-   * each stop verified. Once \ref literal_dense_min_cands stops sit less than \ref literal_dense_gap bytes
-   * apart on average, \p density turns dense and \ref simd_literal_scan takes over from the stop after
-   * the last one -- from the stop's START plus one, so an occurrence overlapping it is still found. The
-   * decision depends on the subject's bytes only: the same subject always takes the same route. Every
-   * position is a candidate at most once and a verify costs `O(|literal|)`, so the search stays linear.
-   * Billed once per call to the test work counter, as \ref find_prefix always was.
-   *
-   * \param[in]     text    The subject text.
-   * \param[in]     pos     Index to start searching from.
-   * \param[in]     literal The needle (>= 2 bytes).
-   * \param[in]     rare    Offset of its rarest byte (\ref literal_rarest_offset), below `literal.size()`.
-   * \param[in,out] density What this subject has shown so far.
-   * \return The index of the first occurrence at or after \p pos, else \ref real::npos.
-   */
-  inline std::size_t find_literal_adaptive_rest(std::string_view text,
-                                                std::size_t      pos,
-                                                std::string_view literal,
-                                                std::size_t      rare,
-                                                literal_density& density);
-
-  /*!
    * \brief Writes the adaptive search's local density back (\ref find_literal_adaptive_rest keeps it in
    *        locals while it scans).
    * \param[out] density The subject's density.
@@ -2721,47 +2696,6 @@ namespace real::detail {
     density.cands  = cands;
     density.origin = origin;
     density.last   = next == 0U ? npos : next - 1U;
-  }
-
-  inline std::size_t find_literal_adaptive(std::string_view text,
-                                           std::size_t      pos,
-                                           std::string_view literal,
-                                           std::size_t      rare,
-                                           literal_density& density)
-  {
-    const std::size_t len {literal.size()};
-    if (len > text.size() || pos > text.size() - len) {
-      return npos;
-    }
-#if defined(REAL_TEST_INSTRUMENT)
-    prefilter_note_scan(text.size() - pos);
-#endif
-    // A dense subject goes to the pair filter inline, as the lead-pair search always did; the first stop of a
-    // sparse one inline too, since where matches are dense most searches end on it. The rest, out of line.
-#if defined(__ARM_NEON) || defined(__SSE2__)
-    if (density.dense) {
-      note_literal_pair_scan();
-      return simd_literal_scan(text, pos, literal);
-    }
-#endif
-    {
-      const std::size_t k     {density.rare != npos ? density.rare : rare};
-      const std::size_t last  {text.size() - len};
-#if defined(__ARM_NEON)
-      const std::size_t hit   {simd_byte_scan(text.substr(0, last + k + 1), pos + k, static_cast<std::uint8_t>(literal[k]))};
-#else
-      const void* const found {std::memchr(text.data() + pos + k, literal[k], last - pos + 1)};
-      const std::size_t hit   {found == nullptr ? npos : static_cast<std::size_t>(static_cast<const char*>(found) - text.data())};
-#endif
-      if (hit == npos) {
-        return npos;
-      }
-      if (std::memcmp(text.data() + hit - k, literal.data(), len) == 0) {
-        return hit - k;
-      }
-      pos = hit - k; // the stop failed: the rest finds it again and counts it
-    }
-    return find_literal_adaptive_rest(text, pos, literal, rare, density);
   }
 
   /*!
@@ -2869,6 +2803,66 @@ namespace real::detail {
     }
     store_literal_density(density, cands, origin, next);
     return npos;
+  }
+
+  /*!
+   * \brief Index of the first occurrence of \p literal in `text[pos..)`, or \ref real::npos, by its rarest
+   *        byte while that byte is rare in the subject and by the two-byte block filter once it is not.
+   *
+   * The rarest byte (offset \p rare) is scanned with `memchr` on x86-64 and \ref simd_byte_scan on NEON,
+   * each stop verified. Once \ref literal_dense_min_cands stops sit less than \ref literal_dense_gap bytes
+   * apart on average, \p density turns dense and \ref simd_literal_scan takes over from the stop after
+   * the last one -- from the stop's START plus one, so an occurrence overlapping it is still found. The
+   * decision depends on the subject's bytes only: the same subject always takes the same route. Every
+   * position is a candidate at most once and a verify costs `O(|literal|)`, so the search stays linear.
+   * Billed once per call to the test work counter, as \ref find_prefix always was.
+   *
+   * \param[in]     text    The subject text.
+   * \param[in]     pos     Index to start searching from.
+   * \param[in]     literal The needle (>= 2 bytes).
+   * \param[in]     rare    Offset of its rarest byte (\ref literal_rarest_offset), below `literal.size()`.
+   * \param[in,out] density What this subject has shown so far.
+   * \return The index of the first occurrence at or after \p pos, else \ref real::npos.
+   */
+  inline std::size_t find_literal_adaptive(std::string_view text,
+                                           std::size_t      pos,
+                                           std::string_view literal,
+                                           std::size_t      rare,
+                                           literal_density& density)
+  {
+    const std::size_t len {literal.size()};
+    if (len > text.size() || pos > text.size() - len) {
+      return npos;
+    }
+#if defined(REAL_TEST_INSTRUMENT)
+    prefilter_note_scan(text.size() - pos);
+#endif
+    // A dense subject goes to the pair filter inline, as the lead-pair search always did; the first stop of a
+    // sparse one inline too, since where matches are dense most searches end on it. The rest, out of line.
+#if defined(__ARM_NEON) || defined(__SSE2__)
+    if (density.dense) {
+      note_literal_pair_scan();
+      return simd_literal_scan(text, pos, literal);
+    }
+#endif
+    {
+      const std::size_t k     {density.rare != npos ? density.rare : rare};
+      const std::size_t last  {text.size() - len};
+#if defined(__ARM_NEON)
+      const std::size_t hit   {simd_byte_scan(text.substr(0, last + k + 1), pos + k, static_cast<std::uint8_t>(literal[k]))};
+#else
+      const void* const found {std::memchr(text.data() + pos + k, literal[k], last - pos + 1)};
+      const std::size_t hit   {found == nullptr ? npos : static_cast<std::size_t>(static_cast<const char*>(found) - text.data())};
+#endif
+      if (hit == npos) {
+        return npos;
+      }
+      if (std::memcmp(text.data() + hit - k, literal.data(), len) == 0) {
+        return hit - k;
+      }
+      pos = hit - k; // the stop failed: the rest finds it again and counts it
+    }
+    return find_literal_adaptive_rest(text, pos, literal, rare, density);
   }
 
   /*!
