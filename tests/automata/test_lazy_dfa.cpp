@@ -2,7 +2,9 @@
 // These pin the machinery: the byte-class alphabet, the priority-ordered subset construction, the memoized
 // transition cache (hit/miss), the bounded eviction (flush) + thrash detector, and the kFirstMatch forward
 // pass itself — its reported end differential against the Pike VM, with a teeth-verified priority cut.
+#include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <utility>
 
@@ -264,6 +266,102 @@ TEST(reverse_dfa_full_span_differential_vs_pike)
     }
   }
   EXPECT(checked >= 200U);
+}
+
+// The three scans the router calls, each held to the VM query it stands for from every start: anchored_end
+// to match(text, s), forward_end to search(text, s), reverse_start to that search's start. The DFAs are built
+// as the router builds them (the assertion-keeping program when the plain one declines). Each query runs
+// twice on one DFA, so the second walk reads the states the first built; the small budgets flush mid-walk.
+struct scan_tally
+{
+  std::size_t compared {0};
+  std::size_t quits    {0};
+};
+
+static void scans_agree_with_the_vm(const char       * pat,
+                                    const std::string& text,
+                                    std::size_t        budget,
+                                    scan_tally       & tally)
+{
+  const real::regex rx {pat};
+  const auto        st {dynamic_storage::compile(pat, real::flags::none)};
+  auto              bp {real::detail::build_byte_program(st.program.view())};
+  if (!bp.eligible) {
+    bp = real::detail::build_byte_program(st.program.view(), /*keep_assertions=*/ true);
+  }
+  EXPECT(bp.eligible);
+  const bool  ascii_word {!bp.unicode_word};
+  lazy_dfa    fwd        {bp.code, bp.classes, budget, nullptr, ascii_word, st.program.byte_mode, bp.unicode_word};
+  reverse_dfa rev        {bp.code, bp.classes, budget, nullptr, ascii_word, bp.unicode_word};
+  for (std::size_t s {0}; s <= text.size(); ++s) {
+    if (s < text.size() && (static_cast<unsigned char>(text[s]) & 0xC0U) == 0x80U) {
+      continue; // no match starts inside a code point in text mode
+    }
+    const auto        anchored {rx.match(text, s)};
+    const auto        found    {rx.search(text, s)};
+    const std::size_t want_end {anchored.matched() ? anchored.end() : real::npos};
+    const std::size_t want_fwd {found.matched() ? found.end() : real::npos};
+    for (int pass {0}; pass < 2; ++pass) {
+      fwd.begin_scan();
+      const auto a {fwd.anchored_end(text, s)};
+      if (a.quit) {
+        ++tally.quits;
+      }
+      else {
+        if (a.end != want_end) {
+          std::printf("/%s/ budget %zu anchored at %zu pass %d: dfa %zu vm %zu\n", pat, budget, s, pass, a.end,
+                      want_end);
+        }
+        EXPECT_EQ(a.end, want_end);
+        ++tally.compared;
+      }
+      const std::size_t e {fwd.forward_end(text, s)};
+      if (e == lazy_dfa::quit_pos) {
+        ++tally.quits;
+        continue;
+      }
+      if (e != want_fwd) {
+        std::printf("/%s/ budget %zu forward from %zu pass %d: dfa %zu vm %zu\n", pat, budget, s, pass, e, want_fwd);
+      }
+      EXPECT_EQ(e, want_fwd);
+      ++tally.compared;
+      if (!found.matched()) {
+        continue;
+      }
+      const std::size_t r {rev.reverse_start(text, found.end(), s)};
+      if (r == reverse_dfa::quit_pos) {
+        ++tally.quits;
+        continue;
+      }
+      if (r != found.start()) {
+        std::printf("/%s/ budget %zu reverse from %zu pass %d: dfa %zu vm %zu\n", pat, budget, found.end(), pass, r,
+                    found.start());
+      }
+      EXPECT_EQ(r, found.start());
+      ++tally.compared;
+    }
+  }
+}
+
+TEST(lazy_dfa_scans_agree_with_the_vm_cold_warm_and_flushing)
+{
+  const char* pats[] {
+    "a|ab", "ab|a", "a+?b?", "(a|b)*c", "abc", R"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", R"((\w+)@(\w+)\.(\w+))",
+    "a$", "(?m)^a$", R"((?a)\ba\b)", R"(\ba\b)"};
+  const char* texts[] {
+    "", "a", "ab", "abd", "abc", "aab", "ababbc", "a\n", "b\na\n", "xa a", "caf\xC3\xA9 a", "b a\xE4\xB8\xAD",
+    "10.0.0.1 x 192.168.1.255", "jo\xC3\xA9@ex.com u@\xE4\xB8\xAD.cn ab@c"};
+  const std::size_t budgets[] {2, 3, 4, 8, lazy_dfa::state_budget};
+  scan_tally        tally;
+  for (const char* p : pats) {
+    for (const char* t : texts) {
+      for (const std::size_t b : budgets) {
+        scans_agree_with_the_vm(p, t, b, tally);
+      }
+    }
+  }
+  EXPECT(tally.compared >= 20000U);
+  EXPECT(tally.quits > 0U); // the Unicode \b next to `é` and `中`: a quit is an answer handed to the VM
 }
 
 // End-to-end: the lazy-DFA ROUTING (forward end + reverse start + windowed Pike) must give the same spans
