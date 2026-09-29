@@ -32,6 +32,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string_view>
 
 #if defined(__ARM_NEON)
 #  include <arm_neon.h>    // NEON 16-byte membership masks (aarch64 floor)
@@ -42,6 +43,10 @@
 #  elif defined(__GNUC__) || defined(__clang__)
 #    include <cpuid.h>     // whether the running CPU has SSSE3, for the fingerprint chosen at run time
 #    include <tmmintrin.h> // SSSE3 byte shuffle, for functions built for it alone
+#  endif
+#  if defined(__AVX2__) || defined(__GNUC__) || defined(__clang__)
+#    include <cpuid.h>     // whether the running CPU has AVX2, for the literal scan chosen at run time
+#    include <immintrin.h> // AVX2 32-byte compares: the literal scan, built for it alone where the build lacks it
 #  endif
 #endif
 
@@ -528,6 +533,128 @@ namespace real::detail {
     }
     const mask_t empty_lanes {static_cast<mask_t>(_mm_movemask_epi8(_mm_cmpeq_epi8(hit, _mm_setzero_si128())))};
     return (~empty_lanes) & 0xFFFFU;
+  }
+
+#endif
+
+#if defined(__AVX2__) || defined(__GNUC__) || defined(__clang__)
+#  if !defined(__AVX2__)
+  /*!
+   * \brief Whether the running CPU can run AVX2 code, asked once: the AVX2 bit (`cpuid` leaf 7), and the
+   *        operating system saving the 256-bit registers (OSXSAVE and AVX in leaf 1, then XCR0's SSE and AVX
+   *        state bits) -- a CPU with AVX2 under a system that does not save them faults on the first one.
+   * \return True when \ref avx2_literal_scan may run.
+   */
+  inline bool cpu_has_avx2()
+  {
+    static const bool has {[] {
+                             unsigned int eax {};
+                             unsigned int ebx {};
+                             unsigned int ecx {};
+                             unsigned int edx {};
+                             if (__get_cpuid(1U, &eax, &ebx, &ecx, &edx) == 0 || (ecx & (1U << 27U)) == 0U
+                                 || (ecx & (1U << 28U)) == 0U) {
+                               return false;
+                             }
+                             unsigned int xcr0_lo {};
+                             unsigned int xcr0_hi {};
+                             __asm__ ("xgetbv" : "=a" (xcr0_lo), "=d" (xcr0_hi) : "c" (0U));
+                             static_cast<void>(xcr0_hi);
+                             if ((xcr0_lo & 6U) != 6U || __get_cpuid_max(0U, nullptr) < 7U) {
+                               return false;
+                             }
+                             __cpuid_count(7U, 0U, eax, ebx, ecx, edx);
+                             return (ebx & (1U << 5U)) != 0U;
+                           }()};
+    return has;
+  }
+
+#  endif
+
+  /*!
+   * \brief The 32 candidate starts at \p at where the needle's first and last bytes both sit (\ref avx2_literal_scan's
+   *        block). Its own function because a lambda inside a function built for AVX2 is not built for it.
+   * \param[in] at    The first candidate; `at + 31 + delta` must be readable.
+   * \param[in] delta The last byte's offset from a candidate.
+   * \param[in] lead  The first byte, splatted (by reference: gcc refuses a 256-bit vector passed by value in a
+   *                  translation unit not built for AVX, `-Wpsabi`).
+   * \param[in] trail The last byte, splatted.
+   * \return One bit per candidate.
+   */
+#  if !defined(__AVX2__)
+  __attribute__((target("avx2")))
+#  endif
+  inline std::uint32_t avx2_pair_block(const char*    at,
+                                       std::size_t    delta,
+                                       const __m256i& lead,
+                                       const __m256i& trail)
+  {
+    __m256i a {};
+    __m256i b {};
+    std::memcpy(&a, at, 32); // MISRA-clean byte loads (no pointer type-pun)
+    std::memcpy(&b, at + delta, 32);
+    return static_cast<std::uint32_t>(
+      _mm256_movemask_epi8(_mm256_and_si256(_mm256_cmpeq_epi8(a, lead), _mm256_cmpeq_epi8(b, trail))));
+  }
+
+  /*!
+   * \brief The two-byte literal filter (prefilter.hpp's `simd_literal_scan`, same contract) on 32-byte blocks,
+   *        two a round. Where the build lacks AVX2 it is built for AVX2 alone and may run only once
+   *        \ref cpu_has_avx2 said so.
+   * \param[in] text    The subject.
+   * \param[in] pos     Index to start searching from.
+   * \param[in] literal The needle, at least two bytes.
+   * \return The index of the first occurrence at or after \p pos, else `npos` (`std::size_t(-1)`).
+   */
+#  if !defined(__AVX2__)
+  __attribute__((target("avx2")))
+#  endif
+  inline std::size_t avx2_literal_scan(std::string_view text,
+                                       std::size_t      pos,
+                                       std::string_view literal)
+  {
+    constexpr std::size_t not_found {static_cast<std::size_t>(-1)};
+    const std::size_t     len       {literal.size()};
+    if (text.size() < len) {
+      return not_found;
+    }
+    const std::size_t last  {text.size() - len}; // last index a match could start at
+    const std::size_t delta {len - 1};           // the trail byte's offset from a candidate start
+    const char* const base  {text.data()};
+    const __m256i     lead  {_mm256_set1_epi8(literal.front())};
+    const __m256i     trail {_mm256_set1_epi8(literal[delta])};
+    std::size_t       p     {pos};
+    // A block covers candidates [p, p + 32): the furthest reads its trail byte at p + 31 + delta, which
+    // `p + 32 <= last + 1` keeps inside the text. Masks are consumed in block then lane order, so the first
+    // verified hit is the leftmost.
+    while (p + 64 <= last + 1) {
+      const std::uint32_t m0 {avx2_pair_block(base + p, delta, lead, trail)};
+      const std::uint32_t m1 {avx2_pair_block(base + p + 32, delta, lead, trail)};
+      for (std::size_t u = 0; u < 2; ++u) {
+        for (std::uint32_t m {u == 0 ? m0 : m1}; m != 0U; m &= m - 1U) {
+          const std::size_t cand {p + (u * 32) + static_cast<std::size_t>(std::countr_zero(m))};
+          if (std::memcmp(base + cand, literal.data(), len) == 0) {
+            return cand;
+          }
+        }
+      }
+      p += 64;
+    }
+    for (; p + 32 <= last + 1; p += 32) {
+      for (std::uint32_t m {avx2_pair_block(base + p, delta, lead, trail)}; m != 0U; m &= m - 1U) {
+        const std::size_t cand {p + static_cast<std::size_t>(std::countr_zero(m))};
+        if (std::memcmp(base + cand, literal.data(), len) == 0) {
+          return cand;
+        }
+      }
+    }
+    for (; p <= last; ++p) { // tail: fewer than 32 candidate starts left
+      if (base[p] == literal.front() && base[p + delta] == literal[delta]
+          && std::memcmp(base + p, literal.data(), len) == 0) {
+        return p;
+      }
+    }
+    return not_found;
   }
 
 #endif

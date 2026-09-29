@@ -919,6 +919,54 @@ TEST(literal_adaptive_search_answers_as_find_for_every_plan)
 // The switch itself, both ways: a needle whose rarest byte is common in the subject turns the density
 // dense within the first stops, and one whose rarest byte is rare there never does. The engine's routes
 // keep one density per subject, so a regex that walks both subjects in turn must answer each right.
+// On x86 whose CPU has AVX2 the literal filter runs on 32-byte blocks, chosen at run time where the build lacks
+// AVX2. Both widths must find the same leftmost occurrence from every start: needles of 2..16 bytes, subjects on
+// a small alphabet so candidates are everywhere, matches straddling block edges and inside the scalar tail.
+TEST(literal_filter_answers_the_same_on_either_block_width)
+{
+#if defined(__ARM_NEON) || defined(__SSE2__) // the block filter exists only where a vector ISA does
+  std::uint32_t state {0x1B873593U};
+  const auto    next  {[&state] {
+                         state ^= state << 13U;
+                         state ^= state >> 17U;
+                         state ^= state << 5U;
+                         return state;
+                       }};
+  real::detail::literal_avx2_scans() = 0;
+  for (int round {0}; round < 40; ++round) {
+    std::string       text;
+    const std::size_t size {200U + (next() % 900U)};
+    while (text.size() < size) {
+      text += "abcab"[next() % 5U];
+    }
+    std::string       needle;
+    const std::size_t len {2U + (next() % 15U)};
+    for (std::size_t i = 0; i < len; ++i) {
+      needle += "abc"[next() % 3U];
+    }
+    text += needle; // at least one occurrence, in the last bytes
+    for (std::size_t pos = 0; pos < text.size(); pos += 1U + (next() % 7U)) {
+      real::detail::literal_avx2_disabled() = true;
+      const std::size_t want {real::detail::simd_literal_scan(text, pos, needle)};
+      real::detail::literal_avx2_disabled() = false;
+      EXPECT_EQ(real::detail::simd_literal_scan(text, pos, needle), want);
+      EXPECT_EQ(want, text.find(needle, pos));
+    }
+  }
+#if defined(__AVX2__)
+  EXPECT(real::detail::literal_avx2_scans().load() > 0U);
+#elif defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__))
+  // The runtime's own CPU model, a second instrument: the wider scan runs exactly where the CPU has AVX2.
+  __builtin_cpu_init();
+  EXPECT_EQ(real::detail::literal_avx2_scans().load() > 0U, __builtin_cpu_supports("avx2") != 0);
+#else
+  EXPECT_EQ(real::detail::literal_avx2_scans().load(), 0U);
+#endif
+#else
+  EXPECT_EQ(real::detail::literal_avx2_scans().load(), 0U);
+#endif
+}
+
 TEST(literal_adaptive_search_switches_only_where_the_rarest_byte_is_common)
 {
   std::string common;

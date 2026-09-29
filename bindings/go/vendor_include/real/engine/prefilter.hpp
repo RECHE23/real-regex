@@ -127,6 +127,28 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Literal filter searches that ran on 32-byte AVX2 blocks, counted for the tests that pin where the
+   *        wider scan is taken.
+   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
+   */
+  inline std::atomic<std::uint64_t>& literal_avx2_scans() noexcept
+  {
+    static std::atomic<std::uint64_t> scans {0};
+    return scans;
+  }
+
+  /*!
+   * \brief Test seam: keep the literal filter on 16-byte blocks where the CPU has AVX2, so a differential can
+   *        compare both widths in one binary. Not for production use.
+   * \return Reference to the process-wide seam flag.
+   */
+  inline bool& literal_avx2_disabled()
+  {
+    static bool disabled {false};
+    return disabled;
+  }
+
+  /*!
    * \brief Literal searches whose first stop failed and that went on out of line, counted for the tests that
    *        pin that a byte the subject showed rare is the one scanned first.
    * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
@@ -2649,6 +2671,18 @@ namespace real::detail {
                                        std::size_t      pos,
                                        std::string_view literal)
   {
+#if defined(__AVX2__) || (defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__)))
+#  if defined(__AVX2__)
+    if (!literal_avx2_disabled()) {
+#  else
+    if (!literal_avx2_disabled() && cpu_has_avx2()) {
+#  endif
+#  if defined(REAL_TEST_INSTRUMENT)
+      literal_avx2_scans().fetch_add(1, std::memory_order_relaxed);
+#  endif
+      return avx2_literal_scan(text, pos, literal); // twice the block, where the CPU has it
+    }
+#endif
     const std::size_t len {literal.size()};
     if (text.size() < len) {
       return npos;
