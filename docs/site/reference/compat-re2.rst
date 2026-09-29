@@ -29,7 +29,7 @@ Interface
 
 .. doxygenclass:: real::compat::re2::RE2::Options
    :project: real
-   :members: Options, longest_match, set_longest_match
+   :members: Options, longest_match, set_longest_match, max_mem, set_max_mem
 
 Complexity
 ----------

@@ -651,3 +651,91 @@ TEST(fullmatch_floating_follows_the_locale_as_re2_does)
   }
 #endif
 }
+
+namespace {
+  //! \brief `n` copies of `a{1000}`: a program of about 1000 * n instructions.
+  std::string thousand_as(int n)
+  {
+    std::string p;
+    for (int i {0}; i < n; ++i) {
+      p += "a{1000}";
+    }
+    return p;
+  }
+
+  //! \brief The program bytes `max_mem` is held against, counted as the layer counts them.
+  std::size_t program_bytes_of(const std::string& pattern)
+  {
+    const real::regex                re {pattern};
+    const real::detail::program_view p  {re.raw_program()};
+    return sizeof(real::detail::dynamic_program) + p.code.size_bytes() + p.classes.size_bytes() + p.names.size_bytes()
+           + p.lookarounds.size_bytes() + p.cp_classes.size_bytes() + p.cp_ranges.size_bytes()
+           + p.prefix_code.size_bytes() + p.prefix_classes.size_bytes() + p.prefix_cp_classes.size_bytes()
+           + p.prefix_cp_ranges.size_bytes();
+  }
+} // namespace
+
+// max_mem bounds the compiled program as RE2 bounds it: two thirds of it, in bytes, and a pattern past that
+// fails with ErrorPatternTooLarge and RE2's own text. The default rejects nothing REAL compiles.
+TEST(max_mem_bounds_the_compiled_program)
+{
+  rc2::RE2::Options small;
+  small.set_max_mem(1 << 20);
+  const rc2::RE2 over {thousand_as(100), small}; // about 1.2 MB of program against 0.7 MB
+  EXPECT(!over.ok());
+  EXPECT(over.error_code() == rc2::RE2::ErrorCode::ErrorPatternTooLarge);
+  EXPECT_EQ(over.error(), std::string {"pattern too large - compile failed"});
+  const rc2::RE2 fits {thousand_as(262)}; // near REAL's instruction bound, inside the 8 MiB default
+  EXPECT(fits.ok());
+  EXPECT(rc2::RE2::FullMatch(std::string(262000, 'a'), fits));
+}
+
+// The bound, exactly: a budget whose two thirds is the program's size takes it, one byte less refuses it.
+TEST(max_mem_bound_is_two_thirds_of_the_budget)
+{
+  const std::string   pattern {thousand_as(5)};
+  const std::size_t   bytes   {program_bytes_of(pattern)};
+  const std::int64_t  exact   {static_cast<std::int64_t>(((bytes * 3) + 1) / 2)}; // two thirds of it is `bytes`
+  rc2::RE2::Options   at;
+  at.set_max_mem(exact);
+  EXPECT((rc2::RE2 {pattern, at}.ok()));
+  rc2::RE2::Options below;
+  below.set_max_mem(exact - 2);
+  EXPECT(!(rc2::RE2 {pattern, below}.ok()));
+}
+
+// Where two thirds of the budget is not positive, RE2 bounds the program to 100 000 instructions.
+TEST(max_mem_of_zero_bounds_instructions)
+{
+  rc2::RE2::Options none;
+  none.set_max_mem(0);
+  EXPECT((rc2::RE2 {thousand_as(99), none}.ok()));
+  const rc2::RE2 over {thousand_as(101), none};
+  EXPECT(!over.ok());
+  EXPECT(over.error_code() == rc2::RE2::ErrorCode::ErrorPatternTooLarge);
+}
+
+// A program past REAL's own instruction bound is too large, not malformed, whatever max_mem says.
+TEST(program_past_the_instruction_bound_is_too_large)
+{
+  rc2::RE2::Options huge;
+  huge.set_max_mem(std::int64_t {1} << 40);
+  const rc2::RE2 over {thousand_as(300), huge};
+  EXPECT(!over.ok());
+  EXPECT(over.error_code() == rc2::RE2::ErrorCode::ErrorPatternTooLarge);
+}
+
+// A set whose members together exceed max_mem fails to compile, as RE2's does; each member alone fits.
+TEST(set_compile_fails_past_max_mem)
+{
+  rc2::RE2::Options small;
+  small.set_max_mem(1 << 20);
+  rc2::RE2::Set set {small, rc2::RE2::Anchor::UNANCHORED};
+  EXPECT_EQ(set.Add(thousand_as(40), nullptr), 0);
+  EXPECT_EQ(set.Add(thousand_as(40), nullptr), 1);
+  EXPECT(!set.Compile());
+  rc2::RE2::Set roomy {rc2::RE2::Options {}, rc2::RE2::Anchor::UNANCHORED};
+  EXPECT_EQ(roomy.Add(thousand_as(40), nullptr), 0);
+  EXPECT_EQ(roomy.Add(thousand_as(40), nullptr), 1);
+  EXPECT(roomy.Compile());
+}

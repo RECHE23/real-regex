@@ -105,8 +105,6 @@ real::compat::re2::Arg:
   parse: engine-facing decoder
 real::compat::re2::RE2::Options:
   Encoding: encoding enum; construction rejects non-UTF-8
-  max_mem: RE2 knob REAL does not honour
-  set_max_mem: RE2 knob REAL does not honour
   encoding: see Encoding
   set_encoding: rejected at construction unless UTF-8
   posix_syntax: rejected at construction

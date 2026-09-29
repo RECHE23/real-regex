@@ -555,7 +555,7 @@ namespace real::detail {
       }
       prog.hints.nullable_captured_repeat = ast_has_nullable_captured_repeat(tree_, tree_.root);
       if (prog.code.size() > max_program_size) {
-        throw regex_error("program too large", 0);
+        throw regex_error(std::string {program_too_large}, 0);
       }
       return prog;
     }
@@ -595,7 +595,7 @@ namespace real::detail {
                                instr            instruction)
     {
       if (prog.code.size() >= max_program_size) {
-        throw regex_error("program too large", 0);
+        throw regex_error(std::string {program_too_large}, 0);
       }
       prog.code.push_back(instruction);
     }
