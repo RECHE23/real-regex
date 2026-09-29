@@ -252,6 +252,17 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Subjects an alternation wider than the small set scanned by the fingerprint, counted for the tests
+   *        that pin when it takes one.
+   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
+   */
+  inline std::atomic<std::uint64_t>& alternation_wide_scans() noexcept
+  {
+    static std::atomic<std::uint64_t> scans {0};
+    return scans;
+  }
+
+  /*!
    * \brief Candidates the alternation pair filter left to verify, counted for the tests that pin that its second
    *        probe does filter.
    * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
@@ -3060,8 +3071,11 @@ namespace real::detail {
   inline constexpr std::size_t alternation_nibbles_min_branches {3};
 #endif
 
-  inline constexpr std::size_t alternation_sample_min   {4096}; //!< Shorter rests are scanned by the first bytes, unsampled (at least the sample and its reach).
-  inline constexpr std::size_t alternation_sample_bytes {512};  //!< Bytes sampled for the first bytes' density.
+  inline constexpr std::size_t alternation_sample_min        {4096}; //!< Shorter rests are scanned by the first bytes, unsampled (at least the sample and its reach).
+  inline constexpr std::size_t alternation_sample_bytes      {512};  //!< Bytes sampled for the first bytes' density.
+  inline constexpr std::size_t alternation_wide_min_branches {9};    //!< Fewest branches with more first bytes than the small set holds.
+  inline constexpr std::size_t alternation_wide_max_branches {16};   //!< Most branches the fingerprint's plan holds.
+  inline constexpr std::size_t alternation_wide_false_budget {256};  //!< Past this many false candidates times branches in a sample, the automaton scans cheaper than the fingerprint and its verifier.
 
   //! \brief Mean bytes between first-byte hits in the sample below which the pair filter takes over (both
   //!        ISAs, where the prototype's first-byte scan and pair filter crossed on 500 KB of log lines).

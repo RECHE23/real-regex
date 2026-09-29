@@ -1092,6 +1092,13 @@ namespace real::detail {
         // (ensure_ac_automaton declines, leaving it unset, on a pathological icase-expansion
         // branch — falls through to run_alternation below, zero behavior change).
         if constexpr (requires { State::supports_aho_corasick; }) {
+          // More first bytes than the small set holds: the fingerprint, ahead of the automaton, when its sample
+          // says the subject's false candidates are sparse enough. A refusal falls to the gate below unchanged.
+          if (!std::is_constant_evaluated() && mode == run_mode::search && alternation_wide_may_take(text)) {
+            if (const std::optional<bool> wide {run_alternation_wide(text, start, out_slots)}; wide.has_value()) {
+              return *wide;
+            }
+          }
           if (!std::is_constant_evaluated() && !aho_corasick_route_disabled() && mode == run_mode::search
               && prog_.hints.alternation_branch_count >= ac_branch_floor && !alternation_filter_takes(text, start)
               && ac_density_favours_automaton(text, start)) {
@@ -5903,6 +5910,8 @@ namespace real::detail {
      * \brief \ref alternation_pair_scan's blocks masked by the nibble fingerprint instead of the pairs. Its own
      *        loop, because on x86 without SSSE3 in the build the whole loop is built for SSSE3 (the mask inlines
      *        only into a caller built so) and is entered only when the plan said the CPU has it.
+     * \tparam MemberTail Scan the last blocks by the first bytes (\ref alternation_members_tail); false hands
+     *                    them back through `resume`, for a caller with more first bytes than the small set.
      * \tparam MatchAt As \ref alternation_pair_scan.
      * \param[in] text     The subject.
      * \param[in] pos      The first block's start.
@@ -5912,7 +5921,7 @@ namespace real::detail {
      * \param[in] match_at The branch verifier.
      * \return The first match, and where the blocks stopped.
      */
-    template <typename MatchAt>
+    template <bool MemberTail = true, typename MatchAt>
     [[nodiscard]]
 #  if !defined(__aarch64__) && !defined(__SSSE3__)
     __attribute__((noinline, target("ssse3")))
@@ -5943,7 +5952,12 @@ namespace real::detail {
           mask = clear_first(mask);
         }
       }
-      return alternation_members_tail(text, pos, mem, cnt, match_at);
+      if constexpr (MemberTail) {
+        return alternation_members_tail(text, pos, mem, cnt, match_at);
+      }
+      else {
+        return alternation_hit {.start = npos, .end = npos, .resume = pos}; // the caller scans the rest
+      }
     }
 
 #endif
@@ -5952,6 +5966,8 @@ namespace real::detail {
     /*!
      * \brief \ref alternation_nibble_scan on 32 starts a block (AVX2), then 16 for the last blocks. Built for AVX2
      *        where the build lacks it, and entered only once the CPU has said so.
+     * \tparam MemberTail Scan the last blocks by the first bytes (\ref alternation_members_tail); false hands
+     *                    them back through `resume`, for a caller with more first bytes than the small set.
      * \tparam MatchAt As \ref alternation_pair_scan.
      * \param[in] text     The subject.
      * \param[in] pos      The first block's start.
@@ -5961,7 +5977,7 @@ namespace real::detail {
      * \param[in] match_at The branch verifier.
      * \return The first match, and where the blocks stopped.
      */
-    template <typename MatchAt>
+    template <bool MemberTail = true, typename MatchAt>
     [[nodiscard]]
 #  if !defined(__AVX2__)
     __attribute__((noinline, target("avx2")))
@@ -5994,7 +6010,12 @@ namespace real::detail {
           }
         }
       }
-      return alternation_members_tail(text, pos, mem, cnt, match_at);
+      if constexpr (MemberTail) {
+        return alternation_members_tail(text, pos, mem, cnt, match_at);
+      }
+      else {
+        return alternation_hit {.start = npos, .end = npos, .resume = pos}; // the caller scans the rest
+      }
     }
 
 #endif
@@ -6166,6 +6187,175 @@ namespace real::detail {
       return nullptr;
 #endif
     }
+
+    /*!
+     * \brief Whether \ref run_alternation_wide may take this search: an alternation with more first bytes than the
+     *        small set holds and no single first byte, within the fingerprint plan's branches, on a subject its
+     *        sample has not refused. The cheap half, inline, so that a refused subject costs no call.
+     * \param[in] text The subject.
+     * \return False when the route certainly declines.
+     */
+    [[nodiscard]] bool alternation_wide_may_take(std::string_view text) const
+    {
+      if constexpr (requires(State & st) {
+        st.alt_pairs;
+      }) {
+        const std::size_t branches {prog_.hints.alternation_branch_count};
+        if (prog_.hints.small_set_size != 0 || prog_.hints.single_first >= 0
+            || branches < alternation_wide_min_branches || branches > alternation_wide_max_branches) {
+          return false;
+        }
+        return state_.alt_text != static_cast<const void*>(text.data()) || !state_.alt_density.decided
+               || state_.alt_density.dense;
+      }
+      else {
+        static_cast<void>(text);
+        return false;
+      }
+    }
+
+    /*!
+     * \brief Search route for an alternation of literals with more first bytes than the small set holds: the
+     *        blocks the nibble fingerprint marks, verified in branch order (priority unchanged), then the last
+     *        bytes by the first-byte table. Taken per subject on a sample: where false candidates are dense
+     *        enough that verifying them costs more than the automaton's walk, it declines, and the automaton's
+     *        gate decides as before. Out of line: \ref run is shared by every route.
+     * \tparam OutSlots Output slot container.
+     * \param[in]  text      The subject.
+     * \param[in]  start     Where the search starts.
+     * \param[out] out_slots The span, on a match.
+     * \return Matched or not when the route took the search; empty when it declined.
+     */
+    template <typename OutSlots>
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    std::optional<bool> run_alternation_wide(std::string_view text,
+                                             std::size_t      start,
+                                             OutSlots&        out_slots)
+    {
+#if (defined(__ARM_NEON) || defined(__SSE2__)) && (defined(__aarch64__) || defined(__SSSE3__) || (defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__))))
+      if constexpr (requires(State & st) {
+        st.alt_pairs;
+      }) {
+        if (!prog_.hints.first_bytes_valid || alternation_pairs_disabled() || alternation_nibbles_disabled()) {
+          return std::nullopt;
+        }
+        const auto& code {prog_.code};
+        // As run_alternation's: the first branch in source order that matches at the start, boundaries included.
+        const auto match_at = [&](std::size_t match_start) -> std::size_t {
+                                std::size_t pc {prog_.hints.body_pc == 0
+                                                  ? std::size_t {1}
+                                                  : static_cast<std::size_t>(prog_.hints.body_pc)};
+                                while (true) {
+                                  const bool        is_split  {code[pc].op == opcode::split};
+                                  const std::size_t branch    {is_split ? static_cast<std::size_t>(code[pc].primary_target) : pc};
+                                  const std::size_t match_end {match_byte_klass_run(text, branch, match_start)};
+                                  if (match_end != npos && wb_boundaries_ok(match_start, match_end)) {
+                                    return match_end;
+                                  }
+                                  if (!is_split) {
+                                    return npos;
+                                  }
+                                  pc = static_cast<std::size_t>(code[pc].secondary_target);
+                                }
+                              };
+        if (state_.alt_text != static_cast<const void*>(text.data())) {
+          state_.alt_density = {}; // a fresh haystack: sampled anew
+          state_.alt_text    = static_cast<const void*>(text.data());
+        }
+        if (!state_.alt_density.decided) {
+          if (start >= text.size() || text.size() - start < alternation_sample_min) {
+            return std::nullopt; // a short rest: left to the automaton's gate, and a longer rest may still sample
+          }
+          if (state_.alt_pairs == nullptr) {
+            state_.alt_pairs = alternation_pairs_ready();
+          }
+          state_.alt_density.decided = true;
+          state_.alt_density.dense   = state_.alt_pairs != nullptr && state_.alt_pairs->count != 0U
+                                       && state_.alt_pairs->nibbles
+                                       && alternation_wide_sample_sparse(text, start, *state_.alt_pairs, match_at);
+        }
+        if (!state_.alt_density.dense) {
+          return std::nullopt;
+        }
+#  if defined(REAL_TEST_INSTRUMENT)
+        alternation_wide_scans().fetch_add(1, std::memory_order_relaxed);
+#  endif
+        const alternation_pairs&          pairs {*state_.alt_pairs};
+        const std::array<std::uint8_t, 8> mem   {}; // the scans' first-byte tail is not taken here
+        alternation_hit                   found {};
+#  if defined(__AVX2__)
+        found = alternation_avx2_disabled() ? alternation_nibble_scan<false>(text, start, pairs, mem, 0, match_at)
+                                            : alternation_nibble_scan_avx2<false>(text, start, pairs, mem, 0, match_at);
+#  elif defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__))
+        found = !alternation_avx2_disabled() && cpu_has_avx2()
+                  ? alternation_nibble_scan_avx2<false>(text, start, pairs, mem, 0, match_at)
+                  : alternation_nibble_scan<false>(text, start, pairs, mem, 0, match_at);
+#  else
+        found = alternation_nibble_scan<false>(text, start, pairs, mem, 0, match_at);
+#  endif
+        // The last bytes, where a block's fingerprint would read past the subject: by the first-byte table.
+        for (std::size_t pos {found.resume}; found.start == npos && pos < text.size(); ++pos) {
+          if (prog_.hints.first_bytes.test(static_cast<std::uint8_t>(text[pos]))) {
+            const std::size_t me {match_at(pos)};
+            if (me != npos) {
+              found = alternation_hit {.start = pos, .end = me, .resume = pos};
+            }
+          }
+        }
+        if (found.start == npos) {
+          out_slots.assign(2, npos);
+          return false;
+        }
+        ensure_slot_size(out_slots, 2);
+        out_slots[0] = found.start;
+        out_slots[1] = found.end;
+        return true;
+      }
+#endif
+      static_cast<void>(text);
+      static_cast<void>(start);
+      static_cast<void>(out_slots);
+      return std::nullopt;
+    }
+
+#if (defined(__ARM_NEON) || defined(__SSE2__)) && (defined(__aarch64__) || defined(__SSSE3__) || (defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__))))
+    /*!
+     * \brief Whether a sample of \ref alternation_sample_bytes starts from \p start shows false candidates sparse
+     *        enough for \ref run_alternation_wide: each one the fingerprint marks and no branch matches costs a
+     *        verification of every branch, which past \ref alternation_wide_false_budget costs more than the
+     *        automaton's walk. Stops as soon as the budget is spent.
+     * \tparam MatchAt The branch verifier's type.
+     * \param[in] text     The subject; \ref alternation_sample_min bytes past \p start are readable.
+     * \param[in] start    The sample's first start.
+     * \param[in] pairs    The plan, with its fingerprint.
+     * \param[in] match_at The branch verifier.
+     * \return True when the fingerprint should scan the subject.
+     */
+    template <typename MatchAt>
+    [[nodiscard]] bool alternation_wide_sample_sparse(std::string_view         text,
+                                                      std::size_t              start,
+                                                      const alternation_pairs& pairs,
+                                                      const MatchAt&           match_at) const
+    {
+      const std::size_t branches {prog_.hints.alternation_branch_count};
+      std::size_t       cost     {0};
+      for (std::size_t off {0}; off < alternation_sample_bytes; off += 16) {
+        for (mask_t mask {load_nibble3_mask(text.data() + start + off, pairs.nibble_lo, pairs.nibble_hi)};
+             !empty(mask); mask = clear_first(mask)) {
+          if (match_at(start + off + first_lane(mask)) == npos) {
+            cost += branches;
+            if (cost > alternation_wide_false_budget) {
+              return false;
+            }
+          }
+        }
+      }
+      return true;
+    }
+
+#endif
 
     /*!
      * \brief Adds the branch at \p branch to \p plan's nibble fingerprint, in bucket `plan.count % 8`: each of its
