@@ -81,6 +81,36 @@ namespace {
   // repeat adds no NEW divergence class (spans are pinned by the dedicated {n}/{n,m} tests), it only
   // multiplies allocation traffic -- which ASAN instruments heavily enough to amplify a `{999}`-class
   // pattern from a flat ~0.13 ms native run into a many-second smoke, with no new bug behind it.
+  // The third shape, which neither predicate below can see: a run of unbounded quantifiers side by side,
+  // with no group around them -- `a+a*a+`, `\0+\0\0*\0+`. Each quantifier a backtracker must place is a
+  // degree of a polynomial in the subject's length, so three or more over a long run of the same byte is
+  // effectively unbounded for std: a smoke run died on `libFuzzer: timeout after 11 seconds` with every frame
+  // inside std::__detail::_Executor. Counted, not parsed, and approximate the same way: escapes and classes
+  // are skipped, and a false positive only shortens a subject.
+  bool stacked_unbounded_quantifiers(std::string_view pat)
+  {
+    int  unbounded {0};
+    bool in_class  {false};
+    for (std::size_t i = 0; i < pat.size(); ++i) {
+      const char c {pat[i]};
+      if (c == '\\') {
+        ++i;
+        continue;
+      }
+      if (in_class) {
+        in_class = (c != ']');
+        continue;
+      }
+      if (c == '[') {
+        in_class = true;
+      }
+      else if (c == '*' || c == '+' || (c == ',' && i + 1 < pat.size() && pat[i + 1] == '}')) {
+        ++unbounded;
+      }
+    }
+    return unbounded >= 3;
+  }
+
   constexpr std::size_t max_counted_repeat_load {256};
 
   // A quantifier applied to a group that itself contains an unbounded quantifier -- `(a+)+`, `(a*)*`,
@@ -250,8 +280,9 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     return 0; // ASAN-allocator load, not a new divergence class -- see counted_repeat_load's comment
   }
   if (subject.size() > max_nested_quantifier_subject
-      && (nested_unbounded_quantifier(pattern) || quantified_nullable_group(pattern))) {
-    return 0; // std, the oracle, has no bound for these shapes -- see the two predicates above
+      && (nested_unbounded_quantifier(pattern) || quantified_nullable_group(pattern)
+          || stacked_unbounded_quantifiers(pattern))) {
+    return 0; // std, the oracle, has no bound for these shapes -- see the three predicates above
   }
 
   real::compat::regex compat;
