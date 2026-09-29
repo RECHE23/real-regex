@@ -3,8 +3,9 @@
 // Makes the "concurrent const operations on one shared regex are race-free" claim reproducible from
 // the repository: several threads share two real-backed regex objects and hammer the operations that
 // lazily build the cached std engine (a constraining match flag routes search to std; a nullable
-// replace routes to std). std_engine() builds lazy_std_ under a static build mutex and returns the
-// reference under the same lock, so there is no data race on the mutable member.
+// replace routes to std). std_engine() builds lazy_std_ under a static build mutex and publishes it once;
+// every later call reads it without the lock. Copies are made while the first build runs: a copy takes the
+// engine only once published, else builds its own.
 //
 // This is a standalone TU on purpose: it does not link the test framework or test_static.cpp (whose
 // non-atomic global operator-new counter, for the zero-allocation tests, would itself race under any
@@ -28,6 +29,7 @@ int main()
   const rc::regex  nullab(R"(\w*)");  // nullable real-backed: replace routes to std
   std::atomic<int> matches              {0};
   std::atomic<int> replaced             {0};
+  std::atomic<int> copied_wrong         {0};
 
   constexpr int            thread_count {8};
   constexpr int            iterations   {500};
@@ -44,6 +46,11 @@ int main()
                              if (!rc::regex_replace(subject, nullab, std::string("x")).empty()) {
                                replaced.fetch_add(1);
                              }
+                             // The copy is the object under test: made while another thread builds.
+                             const rc::regex copy {nullab}; // NOLINT(performance-unnecessary-copy-initialization)
+                             if (rc::regex_replace(subject, copy, std::string("x")) != "xx xx") {
+                               copied_wrong.fetch_add(1);
+                             }
                            }
                          });
   }
@@ -52,7 +59,7 @@ int main()
   }
 
   const int expected {thread_count * iterations};
-  if (matches.load() != expected || replaced.load() != expected) {
+  if (matches.load() != expected || replaced.load() != expected || copied_wrong.load() != 0) {
     std::printf("tsan_compat: FAIL matches=%d replaced=%d expected=%d\n", matches.load(),
                 replaced.load(), expected);
     return 1;

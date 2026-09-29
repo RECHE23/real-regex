@@ -3,6 +3,10 @@
 // RE2, not part of this tracked suite). This file exercises the wrapper's own contract: option
 // wiring, the no-fallback/no-exception error shape, Arg extraction, Consume/Replace semantics,
 // QuoteMeta, and Set.
+#include <clocale>
+#if defined(__APPLE__)
+#  include <xlocale.h> // newlocale/uselocale: not declared by <clocale> under libstdc++ on Darwin
+#endif
 #include <string>
 #include <string_view>
 #include <vector>
@@ -602,4 +606,48 @@ TEST(raw_byte_escape_reachable_through_set)
   std::vector<int> hits;
   EXPECT(set.Match("aXb", &hits));
   EXPECT_EQ(hits.size(), std::size_t {1});
+}
+
+// A leading `+` on an integer, as RE2's `strtol`-based parse takes it; one sign only, and none on an unsigned
+// destination that the value could not hold.
+TEST(fullmatch_integer_takes_a_leading_plus)
+{
+  int           i {};
+  long          l {};
+  unsigned int  u {};
+  EXPECT(rc2::RE2::FullMatch("+12", "(.*)", &i));
+  EXPECT_EQ(i, 12);
+  EXPECT(rc2::RE2::FullMatch("+12", "(.*)", &l));
+  EXPECT_EQ(l, 12L);
+  EXPECT(rc2::RE2::FullMatch("+12", "(.*)", &u));
+  EXPECT_EQ(u, 12U);
+  EXPECT(!rc2::RE2::FullMatch("+-12", "(.*)", &i));
+  EXPECT(!rc2::RE2::FullMatch("++12", "(.*)", &i));
+  EXPECT(!rc2::RE2::FullMatch("+", "(.*)", &i));
+  EXPECT(!rc2::RE2::FullMatch("-12", "(.*)", &u));
+  EXPECT(!rc2::RE2::FullMatch(" 12", "(.*)", &i));
+}
+
+// Floating-point groups read the C locale's decimal separator, as RE2 does: under a locale whose separator is a
+// comma, "1,5" parses and "1.5" does not. Checked only where such a locale is installed.
+TEST(fullmatch_floating_follows_the_locale_as_re2_does)
+{
+  double d {};
+  EXPECT(rc2::RE2::FullMatch("1.5", "(.*)", &d));
+  EXPECT_EQ(d, 1.5);
+#if defined(__unix__) || defined(__APPLE__)
+  // This thread's locale only (uselocale), which the strto* functions read.
+  auto* const french {newlocale(LC_NUMERIC_MASK, "fr_FR.UTF-8", static_cast<locale_t>(nullptr))};
+  if (french != static_cast<locale_t>(nullptr)) {
+    auto* const    previous {uselocale(french)};
+    const bool     comma    {rc2::RE2::FullMatch("1,5", "(.*)", &d)};
+    const double   value    {d};
+    const bool     dot      {rc2::RE2::FullMatch("1.5", "(.*)", &d)};
+    uselocale(previous);
+    freelocale(french);
+    EXPECT(comma);
+    EXPECT_EQ(value, 1.5);
+    EXPECT(!dot);
+  }
+#endif
 }

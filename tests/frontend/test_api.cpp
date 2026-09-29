@@ -777,3 +777,29 @@ TEST(match_result_spans_flat_layout)
   EXPECT(empty.spans().empty());
   EXPECT_EQ(empty.spans().size(), 0U);
 }
+
+// A null C string reads as the empty subject, as the C API treats it, on every overload that takes one: building a
+// std::string_view from it is undefined.
+TEST(null_c_string_reads_as_the_empty_subject)
+{
+  const char* const none     {nullptr};
+  const real::regex empty_ok {"a*"};
+  const real::regex needs_a  {"a"};
+  EXPECT(empty_ok.match(none).matched());
+  EXPECT(empty_ok.fullmatch(none).matched());
+  EXPECT(empty_ok.search(none).matched());
+  EXPECT(!needs_a.search(none).matched());
+  EXPECT(!needs_a.match(none, 0, real::npos).matched());
+  EXPECT(!needs_a.fullmatch(none, 0, real::npos).matched());
+  EXPECT(!needs_a.search(none, 0, real::npos).matched());
+  EXPECT(needs_a.find_all(none).empty());
+  std::size_t iterated {0};
+  for (const auto& m : needs_a.find_iter(none)) {
+    static_cast<void>(m);
+    ++iterated;
+  }
+  EXPECT_EQ(iterated, 0U);
+  EXPECT_EQ(needs_a.split(none).size(), 1U);
+  EXPECT(!needs_a.search_longest(none).matched());
+  EXPECT(!real::regex {"a"}.search(none).matched()); // the owning (rvalue) overloads
+}
