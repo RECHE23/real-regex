@@ -5888,6 +5888,9 @@ namespace real::detail {
         return alternation_nibble_scan(text, pos, pairs, mem, cnt, match_at);
       }
 #endif
+      if (!pairs.pairs) {
+        return alternation_hit {.start = npos, .end = npos, .resume = pos}; // no pairs: the first bytes scan it all
+      }
       const std::size_t sz {text.size()};
       for (; pos + 16 + pairs.max_d <= sz; pos += 16) {
         note_alternation_pair_block();
@@ -6161,8 +6164,8 @@ namespace real::detail {
         // Dense first bytes are worth the pairs only when most of their stops are false: where they are the
         // matches themselves, the pairs stop as often and the first bytes' loop is the cheaper one.
         state_.alt_density.decided = true;
-        if (state_.alt_pairs != nullptr && state_.alt_pairs->count != 0U) {
-          const bool               nibbles {state_.alt_pairs->nibbles && !alternation_nibbles_disabled()};
+        const bool nibbles {state_.alt_pairs != nullptr && state_.alt_pairs->nibbles && !alternation_nibbles_disabled()};
+        if (state_.alt_pairs != nullptr && state_.alt_pairs->count != 0U && (nibbles || state_.alt_pairs->pairs)) {
           const alternation_sample sample  {alternation_sample_hits(text.data() + pos, mem.data(), cnt, *state_.alt_pairs,
                                                                     nibbles)};
           const std::size_t        gap     {nibbles ? alternation_dense_gap_nibbles : alternation_dense_gap};
@@ -6408,22 +6411,28 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Each branch's first byte and its farthest byte within 15 of it, read from the split chain in
-     *        source order as the scans' `match_at` reads it.
-     * \return The plan; `count == 0` when a branch does not start with a byte or the branches outnumber it.
+     * \brief Each branch's first byte and its farthest byte within 15 of it (the pairs, when every branch opens
+     *        on a byte), and the branches' nibble fingerprint, read from the split chain in source order as the
+     *        scans' `match_at` reads it. A branch that opens on a class leaves the plan without pairs; the
+     *        fingerprint then carries it alone, whatever its minimum of branches against the pairs.
+     * \return The plan; `count == 0` when a branch opens on neither a byte nor a class, the branches outnumber
+     *         it, or neither filter holds.
      */
     [[nodiscard]] alternation_pairs build_alternation_pairs() const
     {
-      alternation_pairs plan {};
+      alternation_pairs plan        {};
+      bool              heads_bytes {true};
       plan.nibbles = alternation_nibbles_supported(); // until a branch too short for a fingerprint says otherwise
-      const auto&       code {prog_.code};
-      std::size_t       pc   {prog_.hints.body_pc == 0 ? std::size_t {1} : static_cast<std::size_t>(prog_.hints.body_pc)};
+      const auto&       code        {prog_.code};
+      std::size_t       pc          {prog_.hints.body_pc == 0 ? std::size_t {1} : static_cast<std::size_t>(prog_.hints.body_pc)};
       while (true) {
         const bool        is_split {code[pc].op == opcode::split};
         const std::size_t branch   {is_split ? static_cast<std::size_t>(code[pc].primary_target) : pc};
-        if (plan.count == plan.lead.size() || branch >= code.size() || code[branch].op != opcode::byte) {
+        if (plan.count == plan.lead.size() || branch >= code.size()
+            || (code[branch].op != opcode::byte && code[branch].op != opcode::klass)) {
           return alternation_pairs {};
         }
+        heads_bytes = heads_bytes && code[branch].op == opcode::byte;
         std::size_t probe_at {0};
         for (std::size_t k = 1; k <= 15 && branch + k < code.size(); ++k) {
           const opcode op {code[branch + k].op};
@@ -6443,7 +6452,11 @@ namespace real::detail {
         add_branch_nibbles(plan, branch);
         ++plan.count;
         if (!is_split) {
-          plan.nibbles = plan.nibbles && plan.count >= alternation_nibbles_min_branches;
+          plan.pairs   = heads_bytes;
+          plan.nibbles = plan.nibbles && (plan.count >= alternation_nibbles_min_branches || !plan.pairs);
+          if (!plan.pairs && !plan.nibbles) {
+            return alternation_pairs {};
+          }
           return plan;
         }
         pc = static_cast<std::size_t>(code[pc].secondary_target);

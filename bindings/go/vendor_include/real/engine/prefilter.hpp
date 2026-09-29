@@ -3018,19 +3018,21 @@ namespace real::detail {
    * \brief Two probe bytes per branch of a literal alternation: the branch's first byte and one byte further
    *        in it, for the pair filter an alternation's block scan turns to once the first bytes prove common.
    *
-   * Built from the program once per search state (not kept in the hints, which every search copies). `count`
-   * is 0 when a branch has no byte at its start, or the alternation has more branches than the arrays.
+   * Built from the program once per regex (not kept in the hints, which every search copies). `count` is 0 when
+   * a branch starts with neither a byte nor a class, or the alternation has more branches than the arrays; a
+   * nonzero `count` carries the pairs, the fingerprint, or both (\ref pairs, \ref nibbles).
    */
   struct alternation_pairs
   {
     std::uint8_t                                count       {}; //!< Branches planned; 0 means no plan.
     std::uint8_t                                max_d       {}; //!< Largest probe offset: a block reads up to this far past its 16 starts.
-    std::array<std::uint8_t, 16>                lead        {}; //!< Each branch's first byte.
+    std::array<std::uint8_t, 16>                lead        {}; //!< Each branch's first byte (valid with \ref pairs).
     std::array<std::uint8_t, 16>                probe       {}; //!< Each branch's second probe byte.
     std::array<std::uint8_t, 16>                delta       {}; //!< Its offset in the branch (at most 15; 0 probes the first byte twice).
     std::array<byte_splat, 16>                  lead_splat  {}; //!< \ref lead, each in all 16 lanes: a block loads rather than broadcasts it.
     std::array<byte_splat, 16>                  probe_splat {}; //!< \ref probe, likewise.
     bool                                        nibbles     {}; //!< \ref nibble_lo and \ref nibble_hi are valid: every branch is at least two bytes wide.
+    bool                                        pairs       {}; //!< \ref lead, \ref probe and \ref delta are valid: every branch starts with a byte.
     std::array<std::array<std::uint8_t, 16>, 3> nibble_lo   {}; //!< Per fingerprint byte, low nibble to the bits of the buckets (branch index mod 8) it admits.
     std::array<std::array<std::uint8_t, 16>, 3> nibble_hi   {}; //!< The same for the high nibble.
   };
@@ -3073,7 +3075,7 @@ namespace real::detail {
 
   inline constexpr std::size_t alternation_sample_min        {4096}; //!< Shorter rests are scanned by the first bytes, unsampled (at least the sample and its reach).
   inline constexpr std::size_t alternation_sample_bytes      {512};  //!< Bytes sampled for the first bytes' density.
-  inline constexpr std::size_t alternation_wide_min_branches {9};    //!< Fewest branches with more first bytes than the small set holds.
+  inline constexpr std::size_t alternation_wide_min_branches {2};    //!< Fewest branches the wide route considers: branches that open on classes outgrow the small set with a few.
   inline constexpr std::size_t alternation_wide_max_branches {16};   //!< Most branches the fingerprint's plan holds.
   inline constexpr std::size_t alternation_wide_false_budget {256};  //!< Past this many false candidates times branches in a sample, the automaton scans cheaper than the fingerprint and its verifier.
 

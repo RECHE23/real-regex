@@ -155,7 +155,8 @@ TEST(alternation_wide_takes_a_sparse_subject_from_the_automaton)
 }
 
 // Where it declines, and the automaton's gate is asked as before: seventeen branches (past the plan), ten branches
-// on one first byte (its own scan by that byte), case folding (classes, no plan), a one-byte branch (no fingerprint), a subject short of the floor, and
+// on one first byte (its own scan by that byte), case folding that reaches a non-ASCII code point (`i` folds to
+// `ı` and `İ`: not a fixed alternation), a one-byte branch (no fingerprint), a subject short of the floor, and
 // false candidates too dense for the sample.
 TEST(alternation_wide_declines_what_it_cannot_scan_cheaper)
 {
@@ -227,4 +228,151 @@ TEST(alternation_wide_plan_follows_an_assignment)
   real::detail::alternation_pairs_disabled() = false;
   EXPECT(want > 1000U);
   EXPECT_EQ(re.count_matches(s), want);
+}
+
+// Branches that open on a class -- case folding, or a class written out -- have no pairs, and the fingerprint
+// carries them alone. Random alternations of 2 to 16 such branches, folded or not, some in word boundaries, over
+// subjects dense in their first bytes with matches of flipped case planted, the last one near the end: the
+// fingerprint answers as the first-byte walk, the pairs-less decision and the automaton.
+TEST(alternation_class_heads_answer_as_the_routes_they_replace)
+{
+  std::uint32_t state {0x6A09E667U};
+  const auto    next  {[&state] {
+                         state ^= state << 13U;
+                         state ^= state >> 17U;
+                         state ^= state << 5U;
+                         return state;
+                       }};
+  const std::string letters     {"cdfqzabCDFQZ19-"};
+  const std::string filler      {"cdfabCDFAB qz19-."};
+  std::size_t       fingerprint {0};
+  std::size_t       wide        {0};
+  for (int round {0}; round < 300; ++round) {
+    const std::size_t        branches {2U + (next() % 15U)};
+    std::vector<std::string> body;
+    std::string              alternation;
+    for (std::size_t b {0}; b < branches; ++b) {
+      std::string       branch;
+      const std::size_t width {next() % 8U == 0U ? 1U + (next() % 4U) : 2U + (next() % 3U)};
+      while (branch.size() < width) {
+        branch += letters[next() % letters.size()];
+      }
+      if (branch[0] == '-') {
+        branch[0] = 'z';
+      }
+      if (b > 0) {
+        alternation += '|';
+      }
+      alternation += branch;
+      body.push_back(branch);
+    }
+    if (next() % 5U == 0U) {
+      alternation.insert(0, "\\b(?:");
+      alternation.append(")\\b");
+    }
+    const std::uint32_t form    {next() % 8U};
+    std::string         pattern;
+    if (form < 5U) {
+      pattern = "(?i)";
+    }
+    else if (form == 5U) {
+      pattern = "[a-d]q|"; // a class head written out, case kept
+    }
+    pattern += alternation;
+    std::string       s;
+    const std::size_t size {4096U + (next() % 9000U)};
+    while (s.size() < size) {
+      s += filler[next() % filler.size()];
+    }
+    const std::size_t planted {next() % 6U};
+    for (std::size_t k {0}; k < planted; ++k) {
+      std::string x {body[next() % body.size()]};
+      for (char& c : x) {
+        if (next() % 2U == 0U && c >= 'a' && c <= 'z') {
+          c = static_cast<char>(c - 'a' + 'A');
+        }
+      }
+      const std::size_t at {k == 0 ? s.size() - x.size() - (next() % 40U) : next() % (s.size() - x.size())};
+      s.replace(at, x.size(), x);
+    }
+    const real::regex re {pattern};
+    real::detail::alternation_nibble_blocks() = 0;
+    real::detail::alternation_wide_scans()    = 0;
+    const span_list got {spans_of(re, s)};
+    fingerprint                               += real::detail::alternation_nibble_blocks().load() != 0U ? 1U : 0U;
+    wide                                      += real::detail::alternation_wide_scans().load() != 0U ? 1U : 0U;
+    real::detail::alternation_pairs_disabled() = true;
+    const span_list walk {spans_of(re, s)};
+    real::detail::alternation_pairs_disabled()   = false;
+    real::detail::alternation_nibbles_disabled() = true;
+    const span_list pairs_only {spans_of(re, s)};
+    real::detail::alternation_nibbles_disabled() = false;
+    real::detail::aho_corasick_route_disabled()  = true;
+    const span_list no_automaton {spans_of(re, s)};
+    real::detail::aho_corasick_route_disabled() = false;
+    if (got != walk || got != pairs_only || got != no_automaton) {
+      std::printf("/%s/ on %zu bytes: %zu, walk %zu, pairs %zu, no automaton %zu\n", pattern.c_str(), s.size(),
+                  got.size(), walk.size(), pairs_only.size(), no_automaton.size());
+    }
+    EXPECT(got == walk);
+    EXPECT(got == pairs_only);
+    EXPECT(got == no_automaton);
+  }
+  std::printf("  class heads: %zu of 300 cases fingerprinted, %zu by the wide route\n", fingerprint, wide);
+  EXPECT(fingerprint_here() ? fingerprint >= 60U && wide >= 20U : fingerprint == 0U && wide == 0U);
+}
+
+// Where branches open on classes, the fingerprint takes their dense subjects: three folded branches (a small set
+// of six first bytes), five (ten: past the small set, the wide route), a class written out, and two branches --
+// on x86 two pairs would beat a fingerprint, but there are no pairs here.
+TEST(alternation_class_heads_take_the_fingerprint)
+{
+  std::string dense                                             {repeated("dab cfd adc fbd tqb BqA ", 20000)};
+  dense += " cQz FQZ tqz aqz";
+  const std::vector<std::pair<std::string, std::size_t>> shapes {
+    {"(?i)cqz|dqz|fqz", 2U}, {"(?i)cqz|dqz|fqz|bqz|tqz", 3U}, {"[a-z]qz|dqz", 2U}, {"(?i)cq|fq", 2U}};
+  for (const auto& [pattern, want] : shapes) {
+    const real::regex re {pattern};
+    real::detail::alternation_nibble_blocks() = 0;
+    EXPECT_EQ(re.count_matches(dense), want);
+    EXPECT(fingerprint_here() ? real::detail::alternation_nibble_blocks().load() > 500U
+                              : real::detail::alternation_nibble_blocks().load() == 0U);
+  }
+  // One scan per search: each match found starts the next.
+  EXPECT_EQ(wide_scans_for(real::regex {"(?i)cqz|dqz|fqz|bqz|tqz"}, dense), fingerprint_here() ? 4U : 0U);
+  EXPECT_EQ(wide_scans_for(real::regex {"[a-z]qz|dqz"}, dense), fingerprint_here() ? 3U : 0U);
+}
+
+// A plan without pairs never runs them: the decision is kept for the subject, and a fill that meets the
+// fingerprint switched off after it falls to the first bytes, not to pairs whose lead bytes are unset.
+TEST(alternation_without_pairs_never_runs_them)
+{
+  std::string s    {repeated("dab cfd adc fbd ", 40000)};
+  std::size_t want {0};
+  for (std::size_t at {2000}; at + 3U < s.size(); at += 32U) {
+    s.replace(at, 3, "cQz");
+    ++want;
+  }
+  const real::regex re {"(?i)cqz|dqz|fqz"};
+  std::size_t       n  {0};
+  for (const auto& m : re.find_iter(s)) {
+    static_cast<void>(m);
+    ++n;
+    real::detail::alternation_nibbles_disabled() = true;
+  }
+  real::detail::alternation_nibbles_disabled() = false;
+  EXPECT_EQ(n, want);
+}
+
+// With the fingerprint off, a plan without pairs has no block filter: the alternation keeps nothing from the
+// automaton's gate, which is asked as before.
+TEST(alternation_without_pairs_leaves_the_automaton_its_gate)
+{
+  const real::regex re {"(?i)cqz|dqz|fqz|bqz"};
+  const std::string s  {repeated("dab cfd adc fbd bqa ", 20000)};
+  real::detail::alternation_nibbles_disabled() = true;
+  real::detail::ac_density_last_verdict().store(real::detail::ac_verdict::not_consulted);
+  EXPECT_EQ(re.count_matches(s), 0U);
+  real::detail::alternation_nibbles_disabled() = false;
+  EXPECT(real::detail::ac_density_last_verdict().load() != real::detail::ac_verdict::not_consulted);
 }
