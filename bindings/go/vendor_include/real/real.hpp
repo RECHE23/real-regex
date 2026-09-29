@@ -718,8 +718,10 @@ namespace real {
                          && !detail::inner_literal_route_disabled()
                          && !prog.hints.empty_match_possible && prog.slot_count == 2
                          && detail::pike_vm<typename Storage::state_type, true>::inner_literal_is_the_route(prog);
+      batch_fixed_     = batchable && prog.slot_count == 2 && !prog.hints.empty_match_possible
+                         && detail::pike_vm<typename Storage::state_type, true>::fixed_shape_is_the_route(prog);
       batch_eligible_  = batch_bytes_ || batch_cp_ascii_ || batch_single_cl_ || cp_class || batch_alt_
-                         || batch_lazy_dfa_ || batch_exact_lit_ || batch_inner_lit_;
+                         || batch_lazy_dfa_ || batch_exact_lit_ || batch_inner_lit_ || batch_fixed_;
     }
 
     /*!
@@ -893,6 +895,7 @@ namespace real {
     //! \brief Batch the inner-literal route (%pike.hpp's `fill_inner_literal_spans`) — the seventh, and the
     //!        second to need \ref batch_partial_ (its guards abandon).
     bool                                                                  batch_inner_lit_  {};
+    bool                                                                  batch_fixed_      {}; //!< Batch the fixed-shape route (\ref detail::pike_vm::fill_fixed_shape_spans).
     //! \brief That filler stopped WITHOUT proving the subject spent, so an empty buffer means "resume on
     //!        the per-match path", not "the walk is over". Never set by the other four fillers, whose
     //!        scans cover the whole subject and for which an empty buffer IS exhaustion.
@@ -982,6 +985,10 @@ namespace real {
       else if (batch_exact_lit_) {
         detail::prof::tick_route(detail::prof::route::exact_literal);
         batch_n_ = bvm.fill_exact_literal_spans(text_, pos_, batch_, batch_cap);
+      }
+      else if (batch_fixed_) {
+        detail::prof::tick_route(detail::prof::route::fixed_shape);
+        batch_n_ = bvm.fill_fixed_shape_spans(text_, pos_, batch_, batch_cap);
       }
       else if (batch_inner_lit_) {
         detail::prof::tick_route(detail::prof::route::inner_literal);

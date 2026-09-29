@@ -6609,6 +6609,67 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Is the fixed-shape route the one `run()` would take for this program, in a groupless search?
+     *
+     * Mirrors the cascade above \ref run_fixed_shape, one clause per earlier route, for the same reason
+     * \ref lazy_dfa_is_the_route states: a batched walk bypasses `run()`, so batching a shape an earlier route
+     * claims takes it off that route. The inner-literal route declines fixed shapes itself.
+     * \param[in] prog The program.
+     * \return True when \ref fill_fixed_shape_spans answers as the per-match walk does.
+     */
+    [[nodiscard]] static constexpr bool fixed_shape_is_the_route(const program_view& prog) noexcept
+    {
+      const pattern_hints& hints {prog.hints};
+      return hints.fixed_shape
+             && hints.fs_pair_width < 2                          // the two-position pair route sits above
+             && hints.fs_end_anchor == 0                         // an end anchor post-checks each match
+             && hints.exact_literal_len == 0                     // exact-literal search sits above
+             && hints.greedy_class_loop < 0                      // the byte-class loop sits above
+             && hints.greedy_cp_class < 0                        // so does the code-point one
+             && hints.possessive_class.kind == class_kind::none; // and the three possessive loops
+    }
+
+    /*!
+     * \brief Fills up to \p cap fixed-shape matches from \p start without re-entering the route gate.
+     *
+     * Calls \ref run_fixed_shape rather than copying it, as \ref fill_inner_literal_spans calls its route: the
+     * scan and verify are the per-match walk's own, so the two cannot disagree, and what goes is the walk's
+     * return through the iterator and `run()`'s cascade per match -- about a quarter of a dense date row.
+     * \param[in]  text  The subject.
+     * \param[in]  start Where the walk resumes.
+     * \param[out] out   The spans found.
+     * \param[in]  cap   Capacity of \p out.
+     * \return How many spans were written.
+     */
+    std::size_t fill_fixed_shape_spans(std::string_view text,
+                                       std::size_t      start,
+                                       cp_span        * out,
+                                       std::size_t      cap)
+    {
+      // What run() sets before any route: the route's assertions read the subject through text_.
+      text_               = text;
+      forbid_empty_until_ = 0;
+      sem_                = match_semantics::first;
+#if defined(REAL_TEST_INSTRUMENT)
+      fixed_shape_batches().fetch_add(1, std::memory_order_relaxed);
+#endif
+      slot_pair   slots {};
+      std::size_t n     {0};
+      std::size_t pos   {start};
+      while (n < cap && pos <= text.size() && run_fixed_shape(text, pos, run_mode::search, slots)) {
+        const std::size_t s {slots[0]};
+        const std::size_t e {slots[1]};
+        if (e == s) {
+          break; // an empty match needs the walk's own advance rule: leave it to the per-match path
+        }
+        out[n] = cp_span {.start = s, .end = e};
+        ++n;
+        pos = e;
+      }
+      return n;
+    }
+
+    /*!
      * \brief Is the lazy-DFA route the one `run()` would actually take for this program?
      *
      * MIRRORS `run()`'s CASCADE, and it has to: a batched walk bypasses `run()` entirely, so batching a

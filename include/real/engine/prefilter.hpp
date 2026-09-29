@@ -171,6 +171,16 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Batches the fixed-shape filler produced, counted for the tests that pin which walks it serves.
+   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
+   */
+  inline std::atomic<std::uint64_t>& fixed_shape_batches() noexcept
+  {
+    static std::atomic<std::uint64_t> batches {0};
+    return batches;
+  }
+
+  /*!
    * \brief Literal searches whose first stop failed and that went on out of line, counted for the tests that
    *        pin that a byte the subject showed rare is the one scanned first.
    * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).

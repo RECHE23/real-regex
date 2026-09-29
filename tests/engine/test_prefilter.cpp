@@ -1354,6 +1354,52 @@ TEST(alternation_fingerprint_takes_sparser_subjects_than_the_pairs)
   real::detail::alternation_nibbles_disabled() = false;
 }
 
+// A walk over a fixed shape fills its spans in batches (fill_fixed_shape_spans) where search() still goes through
+// run() per match. Both must agree on every span: dense and sparse subjects, a kept `\b` wrap, a region start
+// inside a match, and shapes an earlier route claims (the two-position pair filter) which must not batch.
+TEST(fixed_shape_batches_answer_as_the_per_match_walk)
+{
+  std::string text;
+  for (int i {0}; i < 400; ++i) {
+    text += "id," + std::to_string(2000 + i) + "-0" + std::to_string(1 + (i % 9)) + "-1" + std::to_string(i % 10)
+            + ",x7f" + std::to_string(i) + "ab,cafe,";
+  }
+  const auto by_search = [](const real::regex& re, const std::string& s, std::size_t from) {
+                           std::vector<std::pair<std::size_t, std::size_t>> out;
+                           std::size_t                                      pos {from};
+                           while (pos <= s.size()) {
+                             const auto m {re.search(s, pos)};
+                             if (!m.matched()) {
+                               break;
+                             }
+                             out.emplace_back(m.start(), m.end());
+                             pos = m.end() > m.start() ? m.end() : m.end() + 1;
+                           }
+                           return out;
+                         };
+  const auto by_iter = [](const real::regex& re, const std::string& s, std::size_t from) {
+                         std::vector<std::pair<std::size_t, std::size_t>> out;
+                         for (const auto& m : re.find_iter(s, from)) {
+                           out.emplace_back(m.start(), m.end());
+                         }
+                         return out;
+                       };
+  real::detail::fixed_shape_batches() = 0;
+  for (const char* p : {"[0-9]{4}-[0-9]{2}-[0-9]{2}", "\\b[0-9]{4}\\b", "[0-9a-f]{4}", "\\B[0-9]{2}", "x7f[0-9]"}) {
+    const real::regex re {p};
+    for (const std::size_t from : {std::size_t {0}, std::size_t {5}, std::size_t {1234}}) {
+      EXPECT(by_iter(re, text, from) == by_search(re, text, from));
+    }
+    EXPECT_EQ(re.count_matches(text), by_search(re, text, 0).size());
+  }
+  EXPECT(real::detail::fixed_shape_batches().load() > 0U);
+  // The pair route sits above the fixed shape in run(): its shapes keep the per-match walk.
+  real::detail::fixed_shape_batches() = 0;
+  const real::regex pair {"[ab][cd]"};
+  EXPECT_EQ(pair.count_matches(text), by_search(pair, text, 0).size());
+  EXPECT_EQ(real::detail::fixed_shape_batches().load(), 0U);
+}
+
 // Twelve branches reach the Aho-Corasick gate, whose candidate density is the first bytes': on a subject where
 // they are dense it chose the automaton, calibrated against the first-byte scan. The filtered block scan beats
 // the automaton there, so a subject the alternation's filter takes stays on the alternation -- same answers.
