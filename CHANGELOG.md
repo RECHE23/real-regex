@@ -2,6 +2,46 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.9.10
+
+9.10 (**literals and alternations catch up with the regex crate**): **THE TABLES MOVE, AND THE STAMP IS
+NOW `2026.9.9` + tree `aa22707`** — three runs per ISA, minimum per cell (§A, §E, §Unicode), median of three
+(§B), 2026-09-29. **The x86-64 host changed with this stamp**: the previous one (a shared container, g++
+13.3) was saturated for the whole re-stamp; x86-64 now reads an idle Skylake-family core with g++ 15.3.1,
+PCRE2 10.47 and RE2 2025-11-05 built from source. Every x86-64 cell moved with the host, gauges included
+(RE2's `words` 28.23 → 18.51), so §A/§E/§Unicode's x86-64 columns are not read against the last stamp.
+§multi-pattern keeps the `2026.9.7` stamp: its x86-64 host with Hyperscan is the saturated one.
+**On arm64, the column that kept its host:** §A `alternation the|fox|dog` 1.58 → 1.29 ns/B, past PCRE2-JIT
+(0.98× → 1.21×); `literal` (csv `charlie`) 0.20 → 0.21 and §Unicode's CJK literal 0.38 → 0.41, the adaptive
+literal search's density bookkeeping on subjects whose rarest byte is common (the bench binary of both
+trees on the same day: `charlie` 0.198 → 0.208 ns/B, `你好` 0.366 → 0.383); §E `ident` 5.930 → 6.699 ns/B
+at 0.8 % *fewer* instructions (x86-64 `perf stat`, 219.4 M → 217.7 M), a placement-sensitive row that lands
+between 6.6 and 8.5 ns/B across the train's commits that never touch its route; the rest within 5 %. §B
+`alternation · findall` 2.60× → 68.99× against `re`.
+**The train, measured outside the table** (`count_matches` over 500 KB of log lines unless stated, best of
+many runs, cycles by `perf stat` where noted), each on one host before and after:
+- **A literal is found by its rarest byte and a two-byte filter** (5b83f9c…536196b): x86-64 g++ 13.3,
+  2026-09-28, hello 0.125 → 0.057 ms, error 0.28 → 0.080, the 0.276 → 0.074, StatusLine 0.905 → 0.611;
+  arm64 within 3 % on the literal rows, `charlie` +7 %.
+- **An alternation of literals scans each branch's byte pair once its first bytes prove falsely dense**
+  (9bf360a, ed2bbcd): x86-64 g++ 13.3, ten words 2.06 → 0.69 ms, info|error|warn 1.02 → 0.28; digits
+  (no first byte) unchanged or faster.
+- **`count_matches` fills no group after the DFAs placed the match** (cf949c6): the issue-#3 StatusLine
+  x86-64 g++ 15.2 0.54 → 0.085 ms (regex 1.13.1: 0.105), arm64 0.338 → 0.092 (regex 0.094).
+- **The pairs compared against per-regex splats, OR-ed as vectors** (2edee15): x86-64 g++ 15.2, cycles,
+  ten words −34 %, prose ten words −27 %, digits parity; arm64 cat|dog +7.6 %.
+- **A nibble fingerprint on AArch64, then x86 with SSSE3 in the build or chosen at run time** (714cc35,
+  d34b47d, 39c562e): arm64 ten words 0.224 → 0.098 ms, info|error|warn 0.158 → 0.066; x86-64 SSE2 build,
+  cycles, ten words −47 %, info|error|warn −44 %, prose ten words −32 %; two branches stay on the pairs on x86.
+- **The Aho-Corasick gate leaves the alternation a subject its filter takes** (1bd78d9): twelve words x86-64
+  1.62 → 0.36 ms, arm64 1.44 → 0.098.
+- **32-byte AVX2 blocks for the literal filter and the fingerprint, chosen at run time** (9da510f, 95e912c):
+  hello 0.054 → 0.035 ms (Skylake) / 0.038 → 0.022 (Zen 2); ten words 0.171 → 0.112 (Skylake) / 0.161 →
+  0.090 (Zen 2). A subject with no first byte moved ±45 % on Skylake at identical instruction counts and
+  returned to parity with branches aligned to 32 bytes: placement.
+The issue-#3 comparison on x86-64 (the crate built for the SSE2 floor, choices at run time, Skylake, idle):
+Alternation 25× behind the regex crate → 1.35× behind, Literal 6× → 1.6×, StatusLine 7.5× behind → 1.2× ahead.
+
 ## v2026.9.9
 
 9.9 (**a DFA builds three times faster, and a mid-sized set fuses once it pays**): **THESE TABLES DO
