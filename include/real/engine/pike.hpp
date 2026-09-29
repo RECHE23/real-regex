@@ -5386,11 +5386,23 @@ namespace real::detail {
           ++pc;
         }
         else { // klass_cp: one whole code point, then past the four-slot construct
-          const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, at)};
-          if (!dc.valid || !cp_class_holds(prog_.cp_classes[instruction.arg16], dc.cp)) {
-            return npos;
+          const cp_class& cc   {prog_.cp_classes[instruction.arg16]};
+          const auto      lead {static_cast<std::uint8_t>(text[at])};
+          if (lead < 0x80U) {
+            // An ASCII byte is its own code point: the class's ASCII bitmap answers without the decoder,
+            // which the compiler keeps out of line and this walk would otherwise call once per atom.
+            if (!cc.ascii.test(lead)) {
+              return npos;
+            }
+            ++at;
           }
-          at += dc.length;
+          else {
+            const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, at)};
+            if (!dc.valid || !cp_class_holds(cc, dc.cp)) {
+              return npos;
+            }
+            at += dc.length;
+          }
           pc += 4;
         }
       }
