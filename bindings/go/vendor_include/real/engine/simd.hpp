@@ -540,6 +540,16 @@ namespace real::detail {
 #if defined(__AVX2__) || defined(__GNUC__) || defined(__clang__)
 #  if !defined(__AVX2__)
   /*!
+   * \brief XCR0, the register state the operating system saves on a context switch (its bits 1 and 2: SSE and
+   *        AVX). The instruction is XSAVE's, hence the target; the caller has checked OSXSAVE first.
+   * \return XCR0.
+   */
+  __attribute__((target("xsave"))) inline std::uint64_t read_xcr0()
+  {
+    return _xgetbv(0U);
+  }
+
+  /*!
    * \brief Whether the running CPU can run AVX2 code, asked once: the AVX2 bit (`cpuid` leaf 7), and the
    *        operating system saving the 256-bit registers (OSXSAVE and AVX in leaf 1, then XCR0's SSE and AVX
    *        state bits) -- a CPU with AVX2 under a system that does not save them faults on the first one.
@@ -556,11 +566,7 @@ namespace real::detail {
                                  || (ecx & (1U << 28U)) == 0U) {
                                return false;
                              }
-                             unsigned int xcr0_lo {};
-                             unsigned int xcr0_hi {};
-                             __asm__ ("xgetbv" : "=a" (xcr0_lo), "=d" (xcr0_hi) : "c" (0U));
-                             static_cast<void>(xcr0_hi);
-                             if ((xcr0_lo & 6U) != 6U || __get_cpuid_max(0U, nullptr) < 7U) {
+                             if ((read_xcr0() & 6U) != 6U || __get_cpuid_max(0U, nullptr) < 7U) {
                                return false;
                              }
                              __cpuid_count(7U, 0U, eax, ebx, ecx, edx);

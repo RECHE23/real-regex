@@ -896,6 +896,8 @@ full-local-gate-impl:
 	@if command -v $(SPHINXBUILD) >/dev/null 2>&1; then $(MAKE) docs-site-gate; else echo "step 10: docs-site-gate -- $(SPHINXBUILD) absent (sphinx: make gate-venv)" | tee -a $(GATE_SKIPS); fi
 	@echo "── [12/25] misra (single synthetic TU)"
 	@$(MAKE) misra
+	@echo "── [12b/25] misra-x86 (the same TU for x86-64, where the ISA-chosen bodies compile)"
+	@$(MAKE) -C tools misra-x86
 	@echo "── [13/25] c-test"
 	@$(MAKE) c-test
 	# examples/cpp/*.cpp direct compile+run -- unconditional, not

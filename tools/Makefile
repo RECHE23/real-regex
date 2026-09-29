@@ -95,6 +95,25 @@ misra: ## MISRA C++:2023-oriented analysis
 	    --header-filter='include/real/.*' \
 	    $(BUILD)/misra_tu.cpp -- $(CXXSTD) $(INCLUDES)
 
+# misra above analyses the headers for THIS host's ISA, and on arm64 that leaves every x86-only body unread: the
+# SSSE3/AVX2 legs chosen at run time, their cpuid and XCR0 checks. Those carry MISRA findings of their own (inline
+# assembler, const locals) that only an x86 analysis reports, so the same TU runs again under x86-64 in a
+# container: once at the SSE2 floor (the run-time choices) and once with SSSE3 in the build.
+misra-x86: ## MISRA analysis again for x86-64 (container), where the ISA-chosen bodies compile
+	@mkdir -p $(BUILD)
+	@printf '#include <real/real.hpp>\nint main(){ try { const real::regex r("a"); return r.search("a") ? 0 : 1; } catch (...) { return 2; } }\n' > $(BUILD)/misra_x86_tu.cpp
+	@if command -v docker >/dev/null 2>&1; then \
+	   for isa in "" "-mssse3"; do \
+	     docker run --rm --platform linux/amd64 -v "$(abspath $(ROOT))":/src -v "$(abspath $(SCIFORGE_LINT))":/lint \
+	       -v "$(abspath $(BUILD))":/b -w /src silkeh/clang:21 \
+	       clang-tidy --quiet --config-file=/lint/clang-tidy-misra --checks='-cppcoreguidelines-pro-type-union-access' \
+	         --header-filter='include/real/.*' /b/misra_x86_tu.cpp -- $(CXXSTD) $(INCLUDES) $$isa || exit 1; \
+	   done; \
+	   echo "misra-x86: clean for x86-64 at the SSE2 floor and with SSSE3"; \
+	 else \
+	   echo "misra-x86 -- docker absent; CI's lint/misra (x86-64) remains the backstop"; \
+	 fi
+
 format: ## Uncrustify, in place
 	cd $(ROOT) && uncrustify -c $(SCIFORGE_LINT)/uncrustify.cfg --replace --no-backup $(FORMAT_FILES)
 
