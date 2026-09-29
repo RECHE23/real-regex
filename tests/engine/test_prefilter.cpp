@@ -1228,6 +1228,7 @@ TEST(alternation_nibble_filter_answers_as_the_pairs_and_the_first_bytes)
                       return out;
                     }};
   real::detail::alternation_nibble_blocks() = 0;
+  real::detail::alternation_avx2_blocks()   = 0;
   for (const std::string& p : patterns) {
     const real::regex re {p};
     for (const std::string& s : subjects) {
@@ -1237,14 +1238,29 @@ TEST(alternation_nibble_filter_answers_as_the_pairs_and_the_first_bytes)
       real::detail::alternation_nibbles_disabled() = true;
       const auto pairs   {spans(re, s)};
       real::detail::alternation_nibbles_disabled() = false;
+      real::detail::alternation_avx2_disabled()    = true;
+      const auto narrow  {spans(re, s)};
+      real::detail::alternation_avx2_disabled() = false;
       const auto nibbles {spans(re, s)};
       EXPECT(pairs == first_bytes);
+      EXPECT(narrow == first_bytes);
       EXPECT(nibbles == first_bytes);
       EXPECT_EQ(re.count_matches(s), first_bytes.size());
     }
   }
   EXPECT(nibble_filter() ? real::detail::alternation_nibble_blocks().load() > 1000U
                        : real::detail::alternation_nibble_blocks().load() == 0U);
+  // The 32-start blocks run exactly where the fingerprint does and the CPU has AVX2 (the runtime's own CPU model,
+  // a second instrument, where the choice is made at run time).
+#if defined(__AVX2__)
+  EXPECT(real::detail::alternation_avx2_blocks().load() > 100U);
+#elif defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__))
+  __builtin_cpu_init();
+  EXPECT_EQ(real::detail::alternation_avx2_blocks().load() > 100U,
+            nibble_filter() && __builtin_cpu_supports("avx2") != 0);
+#else
+  EXPECT_EQ(real::detail::alternation_avx2_blocks().load(), 0U);
+#endif
   // A one-byte branch leaves the plan without a fingerprint: its bucket would mark every start.
   real::detail::alternation_nibble_blocks() = 0;
   real::detail::alternation_pair_blocks()   = 0;
@@ -1326,7 +1342,8 @@ TEST(alternation_filter_keeps_a_dense_subject_from_the_automaton)
   EXPECT(want > 500U);
   real::detail::alternation_pair_blocks() = 0;
   EXPECT_EQ(re.count_matches(prose), want);
-  EXPECT(pair_filter ? real::detail::alternation_pair_blocks().load() > 1000U
+  // Blocks of 16 or 32 starts: most of the subject is scanned by the filter either way.
+  EXPECT(pair_filter ? real::detail::alternation_pair_blocks().load() > prose.size() / 64U
                      : real::detail::alternation_pair_blocks().load() == 0U);
 }
 

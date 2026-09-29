@@ -127,6 +127,28 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Test seam: keep the alternation fingerprint on 16-byte blocks where the CPU has AVX2, so a differential
+   *        can compare both widths in one binary. Not for production use.
+   * \return Reference to the process-wide seam flag.
+   */
+  inline bool& alternation_avx2_disabled()
+  {
+    static bool disabled {false};
+    return disabled;
+  }
+
+  /*!
+   * \brief Alternation blocks the fingerprint masked 32 starts at a time (AVX2), counted for the tests that pin
+   *        where the wider scan runs.
+   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
+   */
+  inline std::atomic<std::uint64_t>& alternation_avx2_blocks() noexcept
+  {
+    static std::atomic<std::uint64_t> blocks {0};
+    return blocks;
+  }
+
+  /*!
    * \brief Literal filter searches that ran on 32-byte AVX2 blocks, counted for the tests that pin where the
    *        wider scan is taken.
    * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).

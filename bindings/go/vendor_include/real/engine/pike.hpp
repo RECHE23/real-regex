@@ -5799,6 +5799,15 @@ namespace real::detail {
     {
 #if defined(__aarch64__) || defined(__SSSE3__) || (defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__)))
       if (pairs.nibbles && !alternation_nibbles_disabled()) {
+#  if defined(__AVX2__)
+        if (!alternation_avx2_disabled()) {
+          return alternation_nibble_scan_avx2(text, pos, pairs, mem, cnt, match_at);
+        }
+#  elif defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__))
+        if (!alternation_avx2_disabled() && cpu_has_avx2()) {
+          return alternation_nibble_scan_avx2(text, pos, pairs, mem, cnt, match_at);
+        }
+#  endif
         return alternation_nibble_scan(text, pos, pairs, mem, cnt, match_at);
       }
 #endif
@@ -5860,6 +5869,55 @@ namespace real::detail {
             return alternation_hit {.start = pos + lane, .end = me, .resume = pos};
           }
           mask = clear_first(mask);
+        }
+      }
+      return alternation_members_tail(text, pos, mem, cnt, match_at);
+    }
+
+#endif
+
+#if defined(__AVX2__) || (defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__)))
+    /*!
+     * \brief \ref alternation_nibble_scan on 32 starts a block (AVX2), then 16 for the last blocks. Built for AVX2
+     *        where the build lacks it, and entered only once the CPU has said so.
+     * \tparam MatchAt As \ref alternation_pair_scan.
+     * \param[in] text     The subject.
+     * \param[in] pos      The first block's start.
+     * \param[in] pairs    The plan, with its fingerprint.
+     * \param[in] mem      The branches' first bytes.
+     * \param[in] cnt      How many of \p mem are valid.
+     * \param[in] match_at The branch verifier.
+     * \return The first match, and where the blocks stopped.
+     */
+    template <typename MatchAt>
+    [[nodiscard]]
+#  if !defined(__AVX2__)
+    __attribute__((noinline, target("avx2")))
+#  else
+    __attribute__((noinline))
+#  endif
+    alternation_hit alternation_nibble_scan_avx2(std::string_view                   text,
+                                                 std::size_t                        pos,
+                                                 const alternation_pairs&           pairs,
+                                                 std::array<std::uint8_t, 8>        mem,
+                                                 std::size_t                        cnt,
+                                                 const MatchAt&                     match_at) const
+    {
+      const std::size_t sz {text.size()};
+      for (; pos + 34 <= sz; pos += 32) { // the fingerprint reads two bytes past a block's starts
+        note_alternation_pair_block();
+        note_alternation_nibble_block(true);
+#  if defined(REAL_TEST_INSTRUMENT)
+        alternation_avx2_blocks().fetch_add(1, std::memory_order_relaxed);
+#  endif
+        for (std::uint32_t mask {avx2_nibble3_mask(text.data() + pos, pairs.nibble_lo, pairs.nibble_hi)}; mask != 0U;
+             mask &= mask - 1U) {
+          note_alternation_pair_candidate();
+          const std::size_t at {pos + static_cast<std::size_t>(std::countr_zero(mask))};
+          const std::size_t me {match_at(at)};
+          if (me != npos) {
+            return alternation_hit {.start = at, .end = me, .resume = pos};
+          }
         }
       }
       return alternation_members_tail(text, pos, mem, cnt, match_at);

@@ -598,6 +598,39 @@ namespace real::detail {
   }
 
   /*!
+   * \brief \ref load_nibble3_mask on 32 starts: the same six lookups, each table repeated in both 128-bit lanes
+   *        (the 256-bit byte shuffle works within a lane). Built for AVX2 where the build lacks it, like
+   *        \ref avx2_literal_scan.
+   * \param[in] at The first of the 32 starts; `at + 33` must be readable.
+   * \param[in] lo Three 16-byte tables, low nibble to bucket bits, one per fingerprint byte.
+   * \param[in] hi The same for the high nibble.
+   * \return One bit per start.
+   */
+#  if !defined(__AVX2__)
+  __attribute__((target("avx2")))
+#  endif
+  inline std::uint32_t avx2_nibble3_mask(const char                                         * at,
+                                         const std::array<std::array<std::uint8_t, 16>, 3>&   lo,
+                                         const std::array<std::array<std::uint8_t, 16>, 3>&   hi)
+  {
+    const __m256i low4 {_mm256_set1_epi8(0x0F)};
+    __m256i       hit  {_mm256_set1_epi8(-1)};
+    for (std::size_t k = 0; k < 3; ++k) {
+      __m256i blk {};
+      __m128i tlo {};
+      __m128i thi {};
+      std::memcpy(&blk, at + k, 32); // MISRA-clean byte loads (no pointer type-pun)
+      std::memcpy(&tlo, lo[k].data(), 16);
+      std::memcpy(&thi, hi[k].data(), 16);
+      const __m256i by_lo {_mm256_shuffle_epi8(_mm256_broadcastsi128_si256(tlo), _mm256_and_si256(blk, low4))};
+      const __m256i by_hi {
+        _mm256_shuffle_epi8(_mm256_broadcastsi128_si256(thi), _mm256_and_si256(_mm256_srli_epi16(blk, 4), low4))};
+      hit = _mm256_and_si256(hit, _mm256_and_si256(by_lo, by_hi));
+    }
+    return ~static_cast<std::uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(hit, _mm256_setzero_si256())));
+  }
+
+  /*!
    * \brief The two-byte literal filter (prefilter.hpp's `simd_literal_scan`, same contract) on 32-byte blocks,
    *        two a round. Where the build lacks AVX2 it is built for AVX2 alone and may run only once
    *        \ref cpu_has_avx2 said so.
