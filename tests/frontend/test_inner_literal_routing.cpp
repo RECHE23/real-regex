@@ -485,3 +485,28 @@ TEST(il_confirm_without_groups_runs_no_engine)
   EXPECT_EQ(counted, expected);
   EXPECT(routed < ratio_bound * baseline);
 }
+
+#if defined(REAL_TEST_INSTRUMENT)
+// A scan whose prefix goes back through the reverse DFA leases the DFA set once and keeps it: the confirm of
+// each candidate reuses it. Leasing per candidate, for the reverse and again for the confirm, took two per
+// dot of `1.2`, whose prefix reaches back and whose confirm fails, and one per dot of `a.b`, whose prefix
+// does not. The subject is past the route's cold floor, sparse enough that the density gate keeps the
+// route, and every dot but the last three fails.
+TEST(il_scan_leases_its_dfas_once)
+{
+  const real::regex re {R"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"};
+  std::string       text;
+  while (text.size() < 200000U) {
+    text += "some ordinary prose with not much in it at all, then a.b and 1.2 here ";
+  }
+  text += "at 10.0.2.15 now";
+  EXPECT(re.search(text).matched()); // warms the regex: the first search builds its DFAs
+  real::detail::dfa_leases_taken() = 0;
+  const auto m {re.search(text)};
+  EXPECT(m.matched());
+  EXPECT_EQ(m.start(), text.size() - 13U);
+  const std::uint64_t leases {real::detail::dfa_leases_taken().load()};
+  EXPECT(leases >= 1U); // the scan did go through the DFAs
+  EXPECT(leases <= 4U); // thousands of failed dots, a handful of leases
+}
+#endif

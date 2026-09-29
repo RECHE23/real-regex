@@ -1292,15 +1292,19 @@ namespace real::detail {
           std::size_t match_end {npos};
           bool        looks     {false};
           bool        quit      {false};
-          const bool  dfa_ok    {
-            with_search_dfas([&](lazy_dfa& fwd, reverse_dfa& /*rev*/) {
-                               fwd.begin_scan();
-                               const auto ar {fwd.anchored_end(text, s)};
-                               match_end = ar.end;
-                               stop      = (ar.end != npos) ? ar.end : ar.scanned_to;
-                               looks     = fwd.looks();
-                               quit      = ar.quit;
-                             })};
+          const auto  walk      {[&](lazy_dfa& fwd) {
+                                   fwd.begin_scan();
+                                   const auto ar {fwd.anchored_end(text, s)};
+                                   match_end = ar.end;
+                                   stop      = (ar.end != npos) ? ar.end : ar.scanned_to;
+                                   looks     = fwd.looks();
+                                   quit      = ar.quit;
+                                 }};
+          // Inside an inner-literal scan whose prefix reverse leased the set, the walk reuses it.
+          const bool  dfa_ok    {scan_set_ != nullptr ? walk_on_scan_set(walk)
+                                                      : with_search_dfas([&](lazy_dfa& fwd, reverse_dfa& /*rev*/) {
+                                                                           walk(fwd);
+                                                                         })};
           if (quit) {
             note_dfa_quit();
             stop = s; // the walk proved nothing: the VM below confirms from s
@@ -1462,6 +1466,11 @@ namespace real::detail {
       const std::size_t min_match_start {start}; // reverse floor = this search's start (the finditer resume); never advances mid-call
       std::size_t       min_pre_start   {start}; // literal-scan floor (last confirm's reach) — the linearity backstop
       bool              first_candidate {true};
+      // Leased by the first prefix reverse and kept for the scan, so the confirm after it does not lease
+      // again: with it, every candidate would take two. Declared before the guard, so the guard clears
+      // scan_set_ before the lease ends.
+      std::optional<dfa_lease> lease;
+      const scan_set_reset     held {scan_set_};
       while (true) {
         const std::size_t h {find_on_subject(text, pos, lit, prog_.hints.inner_literal_rare, true)};
         if (h != npos) {
@@ -1626,9 +1635,12 @@ namespace real::detail {
           }
           // This thread's IL-prefix reverse DFA for this regex (built once per thread and program).
           {
-            const dfa_lease dfas {prog_.immut};
-            ensure_set_il_prefix_rev(*prog_.immut, *dfas);
-            shared_dfa_set& set {*dfas};
+            if (!lease.has_value()) {
+              lease.emplace(prog_.immut);
+              scan_set_ = &**lease;
+            }
+            shared_dfa_set& set {*scan_set_};
+            ensure_set_il_prefix_rev(*prog_.immut, set);
             if (set.il_prefix_rev.has_value()) {
               s = set.il_prefix_rev->reverse_start(text, h, min_match_start);
             }
@@ -1712,8 +1724,34 @@ namespace real::detail {
 
   private:
 
-    const program_view& prog_;  //!< The program being executed (borrowed; a stable lvalue that outlives the VM).
-    State&              state_; //!< Borrowed reusable scratch state.
+    const program_view& prog_;               //!< The program being executed (borrowed; a stable lvalue that outlives the VM).
+    State&              state_;              //!< Borrowed reusable scratch state.
+    shared_dfa_set*     scan_set_ {nullptr}; //!< The set an inner-literal scan leased for its prefix reverse, or null.
+
+    /*!
+     * \brief Clears \ref scan_set_ when an inner-literal scan returns, before its lease ends.
+     */
+    struct scan_set_reset
+    {
+      shared_dfa_set** slot; //!< The VM's \ref scan_set_.
+
+      /*!
+       * \brief Watches \p vm_slot for the scan's length.
+       * \param[in,out] vm_slot The VM's \ref scan_set_, cleared on destruction.
+       */
+      explicit scan_set_reset(shared_dfa_set*& vm_slot) noexcept : slot {&vm_slot}
+      {}
+
+      scan_set_reset(const scan_set_reset&)            = delete;
+      scan_set_reset& operator=(const scan_set_reset&) = delete;
+      scan_set_reset(scan_set_reset&&)                 = delete;
+      scan_set_reset& operator=(scan_set_reset&&)      = delete;
+
+      ~scan_set_reset()
+      {
+        *slot = nullptr;
+      }
+    };
     std::string_view    text_;  //!< The subject text for the current run.
 
     /*!
@@ -2227,6 +2265,26 @@ namespace real::detail {
       // subject to the VM after the first quit cost \b\w+ing\b 44 % more).
       fwd.begin_scan();
       std::forward<Fn>(fn)(fwd, rev);
+      return true;
+    }
+
+    /*!
+     * \brief \ref with_search_dfas's forward walk on the set an inner-literal scan already leased.
+     * \param[in] walk Callable taking `(lazy_dfa& fwd)`.
+     * \return True when \p walk ran; false when the route must stay on the Pike VM.
+     */
+    template <typename Walk>
+    bool walk_on_scan_set(const Walk& walk)
+    {
+      if (prog_.slot_count > 2) {
+        ensure_op_table(); // no rebuild: the scan's ensure_immutables already matched this program
+      }
+      shared_dfa_set& set {*scan_set_};
+      ensure_set_search_dfas(*prog_.immut, set);
+      if (!set.fwd.has_value() || !set.rev.has_value() || !set.fwd->eligible()) {
+        return false;
+      }
+      walk(*set.fwd);
       return true;
     }
 
