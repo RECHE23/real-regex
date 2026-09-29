@@ -1325,6 +1325,35 @@ TEST(alternation_fingerprint_follows_the_cpu)
 #endif
 }
 
+// The fingerprint's cost per block is fixed, so it takes a subject at a lower density of false stops than the
+// pairs do: one false first byte every 64 bytes is past the pairs' threshold (32) and inside the fingerprint's
+// (128). Same answers either way.
+TEST(alternation_fingerprint_takes_sparser_subjects_than_the_pairs)
+{
+  const real::regex re {"cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog"};
+  std::string       text;
+  while (text.size() < 16384U) {
+    text += std::string(62, 'e') + "cx"; // `c` opens `cat` and fails at once: a false stop every 64 bytes
+  }
+  text                                      += "a cat";
+  real::detail::alternation_pairs_disabled() = true;
+  const std::size_t want {re.count_matches(text)};
+  real::detail::alternation_pairs_disabled() = false;
+  EXPECT_EQ(want, 1U);
+  real::detail::alternation_pair_blocks()   = 0;
+  real::detail::alternation_nibble_blocks() = 0;
+  EXPECT_EQ(re.count_matches(text), want);
+  EXPECT(nibble_filter() ? real::detail::alternation_nibble_blocks().load() > 100U
+                         : real::detail::alternation_pair_blocks().load() == 0U);
+  // With the fingerprint taken out, the pairs keep their own threshold and leave this subject to the first bytes.
+  real::detail::alternation_nibbles_disabled() = true;
+  real::detail::alternation_pair_blocks()      = 0;
+  const real::regex fresh {"cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog"};
+  EXPECT_EQ(fresh.count_matches(text), want);
+  EXPECT_EQ(real::detail::alternation_pair_blocks().load(), 0U);
+  real::detail::alternation_nibbles_disabled() = false;
+}
+
 // Twelve branches reach the Aho-Corasick gate, whose candidate density is the first bytes': on a subject where
 // they are dense it chose the automaton, calibrated against the first-byte scan. The filtered block scan beats
 // the automaton there, so a subject the alternation's filter takes stays on the alternation -- same answers.

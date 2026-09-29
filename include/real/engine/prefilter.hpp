@@ -3057,6 +3057,12 @@ namespace real::detail {
   //!        ISAs, where the prototype's first-byte scan and pair filter crossed on 500 KB of log lines).
   inline constexpr std::size_t alternation_dense_gap {32};
 
+  //! \brief The same threshold for a plan that masks by the nibble fingerprint, whose cost per block is fixed:
+  //!        against the first-byte loop it crossed at 256-512 bytes between false stops (1 MB subjects with no
+  //!        match, arm64 and x86-64 AVX2, 3 to 10 branches, 2026-09-29), and at 128 its worst ratio measured
+  //!        0.77 of the loop's time.
+  inline constexpr std::size_t alternation_dense_gap_nibbles {128};
+
 #if defined(__ARM_NEON) || defined(__SSE2__)
   /*!
    * \brief Mask of the 16 starts at \p at where some branch's two probe bytes both sit.

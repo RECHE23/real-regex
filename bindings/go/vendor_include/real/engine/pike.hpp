@@ -6079,9 +6079,11 @@ namespace real::detail {
         // matches themselves, the pairs stop as often and the first bytes' loop is the cheaper one.
         state_.alt_density.decided = true;
         if (state_.alt_pairs != nullptr && state_.alt_pairs->count != 0U) {
-          const alternation_sample sample {alternation_sample_hits(text.data() + pos, mem.data(), cnt, *state_.alt_pairs,
-                                                                   state_.alt_pairs->nibbles && !alternation_nibbles_disabled())};
-          state_.alt_density.dense = sample.first_bytes * alternation_dense_gap > alternation_sample_bytes
+          const bool               nibbles {state_.alt_pairs->nibbles && !alternation_nibbles_disabled()};
+          const alternation_sample sample  {alternation_sample_hits(text.data() + pos, mem.data(), cnt, *state_.alt_pairs,
+                                                                    nibbles)};
+          const std::size_t        gap     {nibbles ? alternation_dense_gap_nibbles : alternation_dense_gap};
+          state_.alt_density.dense = sample.first_bytes * gap > alternation_sample_bytes
                                      && sample.pairs * 2U < sample.first_bytes;
         }
         return state_.alt_density.dense ? state_.alt_pairs : nullptr;
