@@ -220,6 +220,73 @@ namespace real::detail {
 
 #if defined(__aarch64__)
   /*!
+   * \brief The fingerprint's six tables, loaded once per scan by \ref load_nibble3_tables.
+   */
+  struct nibble3_tables
+  {
+    uint8x16_t lo0; //!< Low nibble to bucket bits, first fingerprint byte.
+    uint8x16_t lo1; //!< The same, second byte.
+    uint8x16_t lo2; //!< The same, third byte.
+    uint8x16_t hi0; //!< High nibble to bucket bits, first fingerprint byte.
+    uint8x16_t hi1; //!< The same, second byte.
+    uint8x16_t hi2; //!< The same, third byte.
+  };
+
+  /*!
+   * \brief Loads the fingerprint's six tables for \ref load_nibble3_mask, once per scan: read from the plan
+   *        per block, they were loaded again on every block where the compiler did not hoist them.
+   * \param[in]  lo  Three 16-byte tables, low nibble to bucket bits, one per fingerprint byte.
+   * \param[in]  hi  The same for the high nibble.
+   * \param[out] out The tables in registers.
+   */
+  inline void load_nibble3_tables(const std::array<std::array<std::uint8_t, 16>, 3>& lo,
+                                  const std::array<std::array<std::uint8_t, 16>, 3>& hi,
+                                  nibble3_tables&                                    out)
+  {
+    out.lo0 = vld1q_u8(lo[0].data());
+    out.lo1 = vld1q_u8(lo[1].data());
+    out.lo2 = vld1q_u8(lo[2].data());
+    out.hi0 = vld1q_u8(hi[0].data());
+    out.hi1 = vld1q_u8(hi[1].data());
+    out.hi2 = vld1q_u8(hi[2].data());
+  }
+
+  /*!
+   * \brief One fingerprint byte's lookups on 16 starts: the bucket bits both of its nibbles allow.
+   * \param[in] blk  The 16 bytes at that byte's offset.
+   * \param[in] tlo  Its low-nibble table.
+   * \param[in] thi  Its high-nibble table.
+   * \return The bucket bits per start.
+   */
+  inline uint8x16_t nibble_lookup(uint8x16_t blk,
+                                  uint8x16_t tlo,
+                                  uint8x16_t thi)
+  {
+    return vandq_u8(vqtbl1q_u8(tlo, vandq_u8(blk, vdupq_n_u8(0x0F))), vqtbl1q_u8(thi, vshrq_n_u8(blk, 4)));
+  }
+
+  /*!
+   * \brief \ref load_nibble3_mask on tables \ref load_nibble3_tables loaded.
+   * \param[in] at The first of the 16 starts; `at + 17` must be readable.
+   * \param[in] t  The tables.
+   * \return The mask.
+   */
+  inline mask_t load_nibble3_mask(const char          * at,
+                                  const nibble3_tables& t)
+  {
+    uint8x16_t b0 {};
+    uint8x16_t b1 {};
+    uint8x16_t b2 {};
+    std::memcpy(&b0, at, 16); // MISRA-clean byte loads (no pointer type-pun)
+    std::memcpy(&b1, at + 1, 16);
+    std::memcpy(&b2, at + 2, 16);
+    const uint8x16_t hit    {vandq_u8(vandq_u8(nibble_lookup(b0, t.lo0, t.hi0), nibble_lookup(b1, t.lo1, t.hi1)),
+                                      nibble_lookup(b2, t.lo2, t.hi2))};
+    const uint8x16_t marked {vtstq_u8(hit, hit)};
+    return vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(marked), 4)), 0);
+  }
+
+  /*!
    * \brief Mask of the 16 starts at \p at whose three bytes all fall in one bucket's fingerprint: for byte `k`
    *        of a start, a bucket bit is set where both `lo[k][byte & 15]` and `hi[k][byte >> 4]` carry it, and a
    *        start is marked when some bit survives all three bytes. A table lookup per nibble (`tbl`, AArch64
@@ -233,17 +300,9 @@ namespace real::detail {
                                   const std::array<std::array<std::uint8_t, 16>, 3>& lo,
                                   const std::array<std::array<std::uint8_t, 16>, 3>& hi)
   {
-    const uint8x16_t low4 {vdupq_n_u8(0x0F)};
-    uint8x16_t       hit  {vdupq_n_u8(0xFF)};
-    for (std::size_t k = 0; k < 3; ++k) {
-      uint8x16_t blk         {};
-      std::memcpy(&blk, at + k, 16); // MISRA-clean byte loads (no pointer type-pun)
-      const uint8x16_t by_lo {vqtbl1q_u8(vld1q_u8(lo[k].data()), vandq_u8(blk, low4))};
-      const uint8x16_t by_hi {vqtbl1q_u8(vld1q_u8(hi[k].data()), vshrq_n_u8(blk, 4))};
-      hit                    = vandq_u8(hit, vandq_u8(by_lo, by_hi));
-    }
-    const uint8x16_t marked {vtstq_u8(hit, hit)};
-    return vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(marked), 4)), 0);
+    nibble3_tables t {};
+    load_nibble3_tables(lo, hi, t);
+    return load_nibble3_mask(at, t);
   }
 
 #endif
@@ -503,6 +562,82 @@ namespace real::detail {
 #  endif
 
   /*!
+   * \brief The fingerprint's six tables, loaded once per scan by \ref load_nibble3_tables.
+   */
+  struct nibble3_tables
+  {
+    __m128i lo0; //!< Low nibble to bucket bits, first fingerprint byte.
+    __m128i lo1; //!< The same, second byte.
+    __m128i lo2; //!< The same, third byte.
+    __m128i hi0; //!< High nibble to bucket bits, first fingerprint byte.
+    __m128i hi1; //!< The same, second byte.
+    __m128i hi2; //!< The same, third byte.
+  };
+
+  /*!
+   * \brief Loads the fingerprint's six tables for \ref load_nibble3_mask, once per scan: read from the plan
+   *        per block, they were loaded again on every block where the compiler did not hoist them.
+   * \param[in]  lo  Three 16-byte tables, low nibble to bucket bits, one per fingerprint byte.
+   * \param[in]  hi  The same for the high nibble.
+   * \param[out] out The tables in registers.
+   */
+  inline void load_nibble3_tables(const std::array<std::array<std::uint8_t, 16>, 3>& lo,
+                                  const std::array<std::array<std::uint8_t, 16>, 3>& hi,
+                                  nibble3_tables&                                    out)
+  {
+    std::memcpy(&out.lo0, lo[0].data(), 16); // MISRA-clean byte copies (no pointer type-pun)
+    std::memcpy(&out.lo1, lo[1].data(), 16);
+    std::memcpy(&out.lo2, lo[2].data(), 16);
+    std::memcpy(&out.hi0, hi[0].data(), 16);
+    std::memcpy(&out.hi1, hi[1].data(), 16);
+    std::memcpy(&out.hi2, hi[2].data(), 16);
+  }
+
+  /*!
+   * \brief One fingerprint byte's lookups on 16 starts: the bucket bits both of its nibbles allow.
+   * \param[in] blk The 16 bytes at that byte's offset.
+   * \param[in] tlo Its low-nibble table.
+   * \param[in] thi Its high-nibble table.
+   * \return The bucket bits per start.
+   */
+#  if !defined(__SSSE3__)
+  __attribute__((target("ssse3")))
+#  endif
+  inline __m128i nibble_lookup(const __m128i& blk,
+                               const __m128i& tlo,
+                               const __m128i& thi)
+  {
+    const __m128i low4 {_mm_set1_epi8(0x0F)};
+    return _mm_and_si128(_mm_shuffle_epi8(tlo, _mm_and_si128(blk, low4)),
+                         _mm_shuffle_epi8(thi, _mm_and_si128(_mm_srli_epi16(blk, 4), low4)));
+  }
+
+  /*!
+   * \brief \ref load_nibble3_mask on tables \ref load_nibble3_tables loaded. Built for SSSE3 alone where the
+   *        build lacks it, like the other overload.
+   * \param[in] at The first of the 16 starts; `at + 17` must be readable.
+   * \param[in] t  The tables.
+   * \return The mask.
+   */
+#  if !defined(__SSSE3__)
+  __attribute__((target("ssse3")))
+#  endif
+  inline mask_t load_nibble3_mask(const char          * at,
+                                  const nibble3_tables& t)
+  {
+    __m128i b0 {};
+    __m128i b1 {};
+    __m128i b2 {};
+    std::memcpy(&b0, at, 16); // MISRA-clean byte loads (no pointer type-pun)
+    std::memcpy(&b1, at + 1, 16);
+    std::memcpy(&b2, at + 2, 16);
+    const __m128i hit         {_mm_and_si128(_mm_and_si128(nibble_lookup(b0, t.lo0, t.hi0), nibble_lookup(b1, t.lo1, t.hi1)),
+                                             nibble_lookup(b2, t.lo2, t.hi2))};
+    const mask_t  empty_lanes {static_cast<mask_t>(_mm_movemask_epi8(_mm_cmpeq_epi8(hit, _mm_setzero_si128())))};
+    return (~empty_lanes) & 0xFFFFU;
+  }
+
+  /*!
    * \brief \ref load_nibble3_mask's x86 leg, on the SSSE3 byte shuffle, which is not in the x86-64 floor. Where
    *        the build enables SSSE3 it is an ordinary function; elsewhere it is built for SSSE3 alone and may run
    *        only once \ref cpu_has_ssse3 said so -- and it inlines only into a caller built the same way.
@@ -518,21 +653,9 @@ namespace real::detail {
                                   const std::array<std::array<std::uint8_t, 16>, 3>&   lo,
                                   const std::array<std::array<std::uint8_t, 16>, 3>&   hi)
   {
-    const __m128i low4 {_mm_set1_epi8(0x0F)};
-    __m128i       hit  {_mm_set1_epi8(-1)};
-    for (std::size_t k = 0; k < 3; ++k) {
-      __m128i blk {};
-      __m128i tlo {};
-      __m128i thi {};
-      std::memcpy(&blk, at + k, 16); // MISRA-clean byte loads (no pointer type-pun)
-      std::memcpy(&tlo, lo[k].data(), 16);
-      std::memcpy(&thi, hi[k].data(), 16);
-      const __m128i by_lo {_mm_shuffle_epi8(tlo, _mm_and_si128(blk, low4))};
-      const __m128i by_hi {_mm_shuffle_epi8(thi, _mm_and_si128(_mm_srli_epi16(blk, 4), low4))};
-      hit                 = _mm_and_si128(hit, _mm_and_si128(by_lo, by_hi));
-    }
-    const mask_t empty_lanes {static_cast<mask_t>(_mm_movemask_epi8(_mm_cmpeq_epi8(hit, _mm_setzero_si128())))};
-    return (~empty_lanes) & 0xFFFFU;
+    nibble3_tables t {};
+    load_nibble3_tables(lo, hi, t);
+    return load_nibble3_mask(at, t);
   }
 
 #endif
@@ -630,35 +753,92 @@ namespace real::detail {
   }
 
   /*!
-   * \brief \ref load_nibble3_mask on 32 starts: the same six lookups, each table repeated in both 128-bit lanes
-   *        (the 256-bit byte shuffle works within a lane). Built for AVX2 where the build lacks it, like
+   * \brief The fingerprint's six tables for \ref avx2_nibble3_mask, each repeated in both 128-bit lanes (the
+   *        256-bit byte shuffle works within a lane). Filled once per scan: read from the plan per block, the
+   *        tables were loaded and broadcast again on every block where the compiler did not hoist them.
+   */
+  struct avx2_nibble3_tables
+  {
+    __m256i lo0; //!< Low nibble to bucket bits, first fingerprint byte.
+    __m256i lo1; //!< The same, second byte.
+    __m256i lo2; //!< The same, third byte.
+    __m256i hi0; //!< High nibble to bucket bits, first fingerprint byte.
+    __m256i hi1; //!< The same, second byte.
+    __m256i hi2; //!< The same, third byte.
+  };
+
+  /*!
+   * \brief Fills \p out from the plan's 16-byte tables. Built for AVX2 where the build lacks it, like
    *        \ref avx2_literal_scan.
+   * \param[in]  lo  Three 16-byte tables, low nibble to bucket bits, one per fingerprint byte.
+   * \param[in]  hi  The same for the high nibble.
+   * \param[out] out The tables, broadcast.
+   */
+#  if !defined(__AVX2__)
+  __attribute__((target("avx2")))
+#  endif
+  inline void avx2_nibble3_broadcast(const std::array<std::array<std::uint8_t, 16>, 3>& lo,
+                                     const std::array<std::array<std::uint8_t, 16>, 3>& hi,
+                                     avx2_nibble3_tables&                               out)
+  {
+    __m128i t {}; // one lane at a time: MISRA-clean byte copies (no pointer type-pun)
+    std::memcpy(&t, lo[0].data(), 16);
+    out.lo0 = _mm256_broadcastsi128_si256(t);
+    std::memcpy(&t, lo[1].data(), 16);
+    out.lo1 = _mm256_broadcastsi128_si256(t);
+    std::memcpy(&t, lo[2].data(), 16);
+    out.lo2 = _mm256_broadcastsi128_si256(t);
+    std::memcpy(&t, hi[0].data(), 16);
+    out.hi0 = _mm256_broadcastsi128_si256(t);
+    std::memcpy(&t, hi[1].data(), 16);
+    out.hi1 = _mm256_broadcastsi128_si256(t);
+    std::memcpy(&t, hi[2].data(), 16);
+    out.hi2 = _mm256_broadcastsi128_si256(t);
+  }
+
+  /*!
+   * \brief One fingerprint byte's lookups on 32 starts: the bucket bits both of its nibbles allow.
+   * \param[in] blk  The 32 bytes at that byte's offset.
+   * \param[in] tlo  Its low-nibble table, broadcast.
+   * \param[in] thi  Its high-nibble table, broadcast.
+   * \param[in] low4 0x0F in every byte.
+   * \return The bucket bits per start.
+   */
+#  if !defined(__AVX2__)
+  __attribute__((target("avx2")))
+#  endif
+  inline __m256i avx2_nibble_lookup(const __m256i& blk,
+                                    const __m256i& tlo,
+                                    const __m256i& thi,
+                                    const __m256i& low4)
+  {
+    return _mm256_and_si256(_mm256_shuffle_epi8(tlo, _mm256_and_si256(blk, low4)),
+                            _mm256_shuffle_epi8(thi, _mm256_and_si256(_mm256_srli_epi16(blk, 4), low4)));
+  }
+
+  /*!
+   * \brief \ref load_nibble3_mask on 32 starts: the same six lookups, on tables \ref avx2_nibble3_broadcast
+   *        filled. Built for AVX2 where the build lacks it, like \ref avx2_literal_scan.
    * \param[in] at The first of the 32 starts; `at + 33` must be readable.
-   * \param[in] lo Three 16-byte tables, low nibble to bucket bits, one per fingerprint byte.
-   * \param[in] hi The same for the high nibble.
+   * \param[in] t  The broadcast tables.
    * \return One bit per start.
    */
 #  if !defined(__AVX2__)
   __attribute__((target("avx2")))
 #  endif
-  inline std::uint32_t avx2_nibble3_mask(const char                                         * at,
-                                         const std::array<std::array<std::uint8_t, 16>, 3>&   lo,
-                                         const std::array<std::array<std::uint8_t, 16>, 3>&   hi)
+  inline std::uint32_t avx2_nibble3_mask(const char                * at,
+                                         const avx2_nibble3_tables&  t)
   {
     const __m256i low4 {_mm256_set1_epi8(0x0F)};
-    __m256i       hit  {_mm256_set1_epi8(-1)};
-    for (std::size_t k = 0; k < 3; ++k) {
-      __m256i blk {};
-      __m128i tlo {};
-      __m128i thi {};
-      std::memcpy(&blk, at + k, 32); // MISRA-clean byte loads (no pointer type-pun)
-      std::memcpy(&tlo, lo[k].data(), 16);
-      std::memcpy(&thi, hi[k].data(), 16);
-      const __m256i by_lo {_mm256_shuffle_epi8(_mm256_broadcastsi128_si256(tlo), _mm256_and_si256(blk, low4))};
-      const __m256i by_hi {
-        _mm256_shuffle_epi8(_mm256_broadcastsi128_si256(thi), _mm256_and_si256(_mm256_srli_epi16(blk, 4), low4))};
-      hit = _mm256_and_si256(hit, _mm256_and_si256(by_lo, by_hi));
-    }
+    __m256i       b0   {};
+    __m256i       b1   {};
+    __m256i       b2   {};
+    std::memcpy(&b0, at, 32); // MISRA-clean byte loads (no pointer type-pun)
+    std::memcpy(&b1, at + 1, 32);
+    std::memcpy(&b2, at + 2, 32);
+    const __m256i hit {_mm256_and_si256(_mm256_and_si256(avx2_nibble_lookup(b0, t.lo0, t.hi0, low4),
+                                                         avx2_nibble_lookup(b1, t.lo1, t.hi1, low4)),
+                                        avx2_nibble_lookup(b2, t.lo2, t.hi2, low4))};
     return ~static_cast<std::uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(hit, _mm256_setzero_si256())));
   }
 

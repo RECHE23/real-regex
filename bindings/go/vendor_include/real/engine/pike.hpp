@@ -5926,11 +5926,13 @@ namespace real::detail {
                                             std::size_t                        cnt,
                                             const MatchAt&                     match_at) const
     {
-      const std::size_t sz {text.size()};
+      const std::size_t sz     {text.size()};
+      nibble3_tables    tables {};
+      load_nibble3_tables(pairs.nibble_lo, pairs.nibble_hi, tables);
       for (; pos + 18 <= sz; pos += 16) { // the fingerprint reads two bytes past a block's starts
         note_alternation_pair_block();
         note_alternation_nibble_block(true);
-        mask_t mask {load_nibble3_mask(text.data() + pos, pairs.nibble_lo, pairs.nibble_hi)};
+        mask_t mask {load_nibble3_mask(text.data() + pos, tables)};
         while (!empty(mask)) {
           note_alternation_pair_candidate();
           const std::size_t lane {first_lane(mask)};
@@ -5973,14 +5975,16 @@ namespace real::detail {
                                                  std::size_t                        cnt,
                                                  const MatchAt&                     match_at) const
     {
-      const std::size_t sz {text.size()};
+      const std::size_t   sz     {text.size()};
+      avx2_nibble3_tables tables {};
+      avx2_nibble3_broadcast(pairs.nibble_lo, pairs.nibble_hi, tables);
       for (; pos + 34 <= sz; pos += 32) { // the fingerprint reads two bytes past a block's starts
         note_alternation_pair_block();
         note_alternation_nibble_block(true);
 #  if defined(REAL_TEST_INSTRUMENT)
         alternation_avx2_blocks().fetch_add(1, std::memory_order_relaxed);
 #  endif
-        for (std::uint32_t mask {avx2_nibble3_mask(text.data() + pos, pairs.nibble_lo, pairs.nibble_hi)}; mask != 0U;
+        for (std::uint32_t mask {avx2_nibble3_mask(text.data() + pos, tables)}; mask != 0U;
              mask &= mask - 1U) {
           note_alternation_pair_candidate();
           const std::size_t at {pos + static_cast<std::size_t>(std::countr_zero(mask))};
