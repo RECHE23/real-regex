@@ -4232,7 +4232,9 @@ namespace real::detail {
     // coverage floor like simd.hpp — a branch clang never compiles shouldn't inflate this file's line
     // count. #else (in run_cp_class_loop below) is the original nested-closure shape, untouched.
 #if defined(__GNUC__) && !defined(__clang__)
-#include "real/engine/cpclass_gcc.hpp"
+#  define REAL_CPCLASS_FRAGMENT_SITE // the fragments refuse to compile anywhere else
+#  include "real/engine/cpclass_gcc.hpp"
+#  undef REAL_CPCLASS_FRAGMENT_SITE
 #endif
 
     template <typename OutSlots>
@@ -4246,7 +4248,9 @@ namespace real::detail {
       const std::size_t min_len  {prog_.hints.greedy_cp_class_min};
       const std::size_t cp_index {static_cast<std::size_t>(prog_.hints.greedy_cp_class)};
 #if defined(__GNUC__) && !defined(__clang__)
-#include "real/engine/cpclass_gcc_loop.hpp"
+#  define REAL_CPCLASS_FRAGMENT_SITE
+#  include "real/engine/cpclass_gcc_loop.hpp"
+#  undef REAL_CPCLASS_FRAGMENT_SITE
 #else
       const std::uint8_t* const  asc {cp_ascii_table(cp_index)};
       // Membership of a non-ASCII code point (>= 0x80): page path inlined here so European streams
