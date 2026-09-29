@@ -120,9 +120,10 @@ three consecutive stamps while the tables were right — see each bullet's own n
   on x86-64 is measured outside the table, on one host, before and after: see `CHANGELOG.md`.
 - **What moved on arm64, the column that kept its host.** `alternation` 1.58 → 1.29 ns/B: the per-branch
   block filters of this train (byte pairs, then the nibble fingerprint), which is also what put the row
-  past PCRE2. `literal` 0.20 → 0.21: the adaptive literal search's density bookkeeping costs the csv
-  `charlie` row about 5 % here, measured with the bench binary of both trees on the same day (0.198 →
-  0.208 ns/B), and the logs and prose rows gain instead (`CHANGELOG.md`). `lookahead` 4.61 → 4.41. The
+  past PCRE2. `literal` 0.20 → 0.21 is layout, not work: the csv `charlie` row measured 0.191 → 0.200 ns/B
+  in a driver of its own, and both trees read 0.200 once built with functions and loops aligned to 64
+  bytes (`-falign-functions=64 -falign-loops=64`, 2026-09-29) — the last stamp's tree had the luckier
+  layout. `lookahead` 4.61 → 4.41. The
   rest is within 3 %.
 - **The gauge.** `std::regex`, PCRE2 and RE2 are third-party constants, so their columns are the drift
   witness. RE2's seven arm64 rows `words`, `digits`, `fields`, `alternation`, `date`, `hex` and `literal`
@@ -982,8 +983,8 @@ divergence to flag here). REAL `find_iter` vs rust `find_iter`, min-of-15.
 **REAL leads all nine rows on both ISAs.** This table is the cleaner Unicode comparison than the three-way one
 above, because rust's Unicode-aware defaults for `\w` and `.` remove the semantics confound entirely — every
 row's match count agrees. Against the last stamp the arm64 rows are within 3 % except the CJK literal, 0.38 →
-0.41 ns/B: the adaptive literal search's density bookkeeping on a subject whose rarest byte is common, the
-same cost §A's `literal` row shows. **x86-64, same harness** (g++ 15.3.1, `-O3`/LTO, the new host of §A):
+0.41 ns/B: layout, like §A's `literal` row — with functions and loops aligned to 64 bytes both trees read
+0.188 ns/B on the same subject in a driver of their own. **x86-64, same harness** (g++ 15.3.1, `-O3`/LTO, the new host of §A):
 `\w+` **2.59** (2.8×), `\p{L}+` **2.43** (2.8×), `\p{N}+` **3.49** (1.3×), `sc=Han` **4.05** (2.1×),
 `scx=Cyrl` **4.73** (2.0×), `(?i)` accented **0.48** (3.2×), accented class **2.81** (4.4×), CJK literal
 **0.48** (2.1×), `.` emoji **2.42** (8.1×) — nine of nine REAL's on that leg too.
