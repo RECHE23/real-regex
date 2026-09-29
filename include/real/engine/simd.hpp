@@ -578,6 +578,32 @@ namespace real::detail {
 #  endif
 
   /*!
+   * \brief \ref avx2_pair_block without the narrowing: the lanes as a vector, so four blocks can be OR-ed and
+   *        tested once before any is narrowed to a mask.
+   * \param[in]  at    The first candidate; `at + 31 + delta` must be readable.
+   * \param[in]  delta The last byte's offset from a candidate.
+   * \param[in]  lead  The first byte, splatted.
+   * \param[in]  trail The last byte, splatted.
+   * \param[out] hits  0xFF in each lane whose candidate has both bytes (by reference, for the reason
+   *                   \ref avx2_pair_block states).
+   */
+#  if !defined(__AVX2__)
+  __attribute__((target("avx2")))
+#  endif
+  inline void avx2_pair_hits(const char*    at,
+                             std::size_t    delta,
+                             const __m256i& lead,
+                             const __m256i& trail,
+                             __m256i&       hits)
+  {
+    __m256i a {};
+    __m256i b {};
+    std::memcpy(&a, at, 32); // MISRA-clean byte loads (no pointer type-pun)
+    std::memcpy(&b, at + delta, 32);
+    hits = _mm256_and_si256(_mm256_cmpeq_epi8(a, lead), _mm256_cmpeq_epi8(b, trail));
+  }
+
+  /*!
    * \brief The 32 candidate starts at \p at where the needle's first and last bytes both sit (\ref avx2_literal_scan's
    *        block). Its own function because a lambda inside a function built for AVX2 is not built for it.
    * \param[in] at    The first candidate; `at + 31 + delta` must be readable.
@@ -666,18 +692,34 @@ namespace real::detail {
     // A block covers candidates [p, p + 32): the furthest reads its trail byte at p + 31 + delta, which
     // `p + 32 <= last + 1` keeps inside the text. Masks are consumed in block then lane order, so the first
     // verified hit is the leftmost.
-    while (p + 64 <= last + 1) {
-      const std::uint32_t m0 {avx2_pair_block(base + p, delta, lead, trail)};
-      const std::uint32_t m1 {avx2_pair_block(base + p + 32, delta, lead, trail)};
-      for (std::size_t u = 0; u < 2; ++u) {
-        for (std::uint32_t m {u == 0 ? m0 : m1}; m != 0U; m &= m - 1U) {
-          const std::size_t cand {p + (u * 32) + static_cast<std::size_t>(std::countr_zero(m))};
-          if (std::memcmp(base + cand, literal.data(), len) == 0) {
-            return cand;
+    // Four blocks a round, OR-ed and tested once: a round with no candidate costs no narrowing at all, the
+    // shape of a `memchr` that covers 128 bytes per test.
+    while (p + 128 <= last + 1) {
+      __m256i h0 {};
+      __m256i h1 {};
+      __m256i h2 {};
+      __m256i h3 {};
+      avx2_pair_hits(base + p, delta, lead, trail, h0);
+      avx2_pair_hits(base + p + 32, delta, lead, trail, h1);
+      avx2_pair_hits(base + p + 64, delta, lead, trail, h2);
+      avx2_pair_hits(base + p + 96, delta, lead, trail, h3);
+      const __m256i any {_mm256_or_si256(_mm256_or_si256(h0, h1), _mm256_or_si256(h2, h3))};
+      if (_mm256_testz_si256(any, any) == 0) {
+        // Named, not an array of four: gcc drops the vector type's attributes as a template argument.
+        const std::uint32_t masks[4] {static_cast<std::uint32_t>(_mm256_movemask_epi8(h0)), // NOLINT(*-avoid-c-arrays)
+                                      static_cast<std::uint32_t>(_mm256_movemask_epi8(h1)),
+                                      static_cast<std::uint32_t>(_mm256_movemask_epi8(h2)),
+                                      static_cast<std::uint32_t>(_mm256_movemask_epi8(h3))};
+        for (std::size_t u = 0; u < 4; ++u) {
+          for (std::uint32_t m {masks[u]}; m != 0U; m &= m - 1U) {
+            const std::size_t cand {p + (u * 32) + static_cast<std::size_t>(std::countr_zero(m))};
+            if (std::memcmp(base + cand, literal.data(), len) == 0) {
+              return cand;
+            }
           }
         }
       }
-      p += 64;
+      p += 128;
     }
     for (; p + 32 <= last + 1; p += 32) {
       for (std::uint32_t m {avx2_pair_block(base + p, delta, lead, trail)}; m != 0U; m &= m - 1U) {
