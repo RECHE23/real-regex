@@ -42,8 +42,8 @@ answer is not a benchmark win.
 
 | | |
 | --- | --- |
-| Version | REAL `2026.9.9` + tree `aa22707` — **tables moved (measured).** Three runs per ISA, minimum per cell (§A, §E, §Unicode), median of three (§B). The train since `2026.9.9` is the literal prefilter: `alternation` on arm64 1.58 → 1.29 ns/B and past PCRE2-JIT (§A), `alternation · findall` 2.60× → 68.99× against `re` (§B). §A's, §E's and §Unicode's x86-64 figures moved with a change of host (next row) and are not read against the last stamp; what the train did on x86-64 is measured on one host, before and after, in `CHANGELOG.md`. §multi-pattern keeps the `2026.9.7` stamp, not re-run. Train and deltas: `CHANGELOG.md`. |
-| Machines | §A on **two ISAs**: `x86-64` (g++ 15.3.1 on an idle Skylake-family core — **a new host at this stamp**: the previous one, a shared container with g++ 13.3, was saturated for the whole re-stamp) *and* `arm64` (Apple clang 16, **on AC power** — see `docs/MEASUREMENT.md` §3.5 for why the state is declared and why its cost must not be assumed). §B on arm64; §E and §Unicode's duel on both, x86-64 on §A's host. §multi-pattern measured on **x86-64** at the `2026.9.7` stamp (g++ 13.3, RE2 + Hyperscan 5.4), on the saturated host, and not re-run |
+| Version | REAL `2026.9.9` + tree `aa22707` — **tables moved (measured).** Three runs per ISA, minimum per cell (§A, §E, §Unicode), median of three (§B). The train since `2026.9.9` is the literal prefilter: `alternation` on arm64 1.58 → 1.29 ns/B and past PCRE2-JIT (§A), `alternation · findall` 2.60× → 68.99× against `re` (§B). §A's, §E's and §Unicode's x86-64 figures moved with a change of host (next row) and are not read against the last stamp; what the train did on x86-64 is measured on one host, before and after, in `CHANGELOG.md`. §multi-pattern re-measured at tree `600b0fb` on the original x86-64 host once that host was free again (its saturation was an orphaned build of this project's own, not a neighbour). Train and deltas: `CHANGELOG.md`. |
+| Machines | §A on **two ISAs**: `x86-64` (g++ 15.3.1 on an idle Skylake-family core — **a new host at this stamp**: the previous one, a container with g++ 13.3, was saturated for the whole re-stamp — by an orphaned build of this project's own, found afterwards) *and* `arm64` (Apple clang 16, **on AC power** — see `docs/MEASUREMENT.md` §3.5 for why the state is declared and why its cost must not be assumed). §B on arm64; §E and §Unicode's duel on both, x86-64 on §A's host. §multi-pattern measured on **x86-64** (g++ 13.3, RE2 + Hyperscan 5.4) on the original host, at tree `600b0fb` |
 | Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (the x86-64 host's system package; `make bench-engines` prints the version it actually LINKED, which the recipe resolves through `pkg-config`, so a second installation wins silently unless `PKG_CONFIG_PATH` and `LD_LIBRARY_PATH` both point at the intended one); RE2 (2025-11-05, soname 11, built from source on x86-64 — the host carries the library but not its headers; 11.0 on arm64). Multi-pattern: RE2::Set, Hyperscan (optional). §E: rust `regex` 1.12.4 |
 | Python | CPython 3.14.6, `re` (stdlib) vs the in-place REAL `2026.9.9` extension at tree `aa22707`, median of three runs per cell. `sub · dates with refs` remains the known-unstable row. Train: `CHANGELOG.md`. |
 | Method | §A: median of N = 30 paired batches, bootstrap CI, **three full runs per ISA with the minimum taken per cell** (both ISAs — one run does not survive a host's episodic interference); match counts equal on every case, both ISAs. §E: `run_duel.py` best-of-15 per run, minimum of three runs per cell, REAL `count_matches` vs rust `find_iter`/`captures_iter`, match counts equal; `real_bench` built by hand at `-O3 -flto` as the tables state (the `make bench-duel` recipe builds it at `-O2`). §multi-pattern: best-of-7, `make bench-multipattern`. **Every ratio below is computed from the raw ns/B pair, and `benchmarks/verify_bench_ratios.py` re-derives all of them plus §A's reading bullets — `make check-bench-ratios`, step 7b of the local gate, part of `gate-doc` whenever this file is touched, and a step of the **Docs-site** workflow — which is the one CI net with no `paths-ignore`, so it fires on the doc-only pushes that edit this file.** That wiring is new, and the sentence it replaces was not true when it was written: the script was called from nothing at all, and running it for the first time failed on two cells — a third once its rounding rule was made exact — while every range, per-row pair and count in §A's bullets had been stale for three stamps. A checker nothing runs is a claim, not a check |
@@ -114,7 +114,8 @@ three consecutive stamps while the tables were right — see each bullet's own n
   0.87×) and `lookahead` (**1.13×** / 0.83×). PCRE2 keeps exactly one on both ISAs: `date` (0.92× /
   0.73×).
 - **The x86-64 host changed with this stamp, so its column cannot be read against the last one.** The
-  previous x86-64 host (g++ 13.3, a shared container) was saturated for the whole re-stamp; this one is an
+  previous x86-64 host (g++ 13.3, a container) was saturated for the whole re-stamp — by an orphaned build of
+  this project's own, found afterwards; this one is an
   idle Skylake-family core with g++ 15.3.1, and every x86-64 cell here — REAL's and the gauges' alike —
   moved with it (RE2's `words` 28.23 → 18.51, `std::regex`'s `literal` 15.30 → 9.62). What the train did
   on x86-64 is measured outside the table, on one host, before and after: see `CHANGELOG.md`.
@@ -149,34 +150,37 @@ equal-set / equal-count asserts.
 | **A — filtre / IDS** | which-matched (which patterns hit ≥ once) | REAL N-walks (`regex_set`), RE2::Set, Hyperscan `SINGLEMATCH` | yes — 8 present + (N−8) absent |
 | **B — extraction** | all non-overlapping matches | REAL `count_matches` N-walks, RE2 `FindAndConsume` N-walks | inherent (present patterns only) |
 
-**x86-64** (g++ 13.3, RE2, Hyperscan 5.4, 1 MiB log-like corpus, best-of-7 MB/s, higher is better):
+**x86-64** (g++ 13.3, RE2, Hyperscan 5.4, 1 MiB log-like corpus, best-of-7 MB/s, best of three runs, higher is better; tree `600b0fb`, 2026-09-29, on the stamp's original x86-64 host — §A's new host has no Hyperscan):
 
 TABLE A — which-matched (sets equal when all engines compile):
 
 | N | HS single | RE2::Set | REAL `regex_set` |
 | ---: | ---: | ---: | ---: |
-| 16 | ~345 | ~441 | **~667** (fastest) — N-walks |
-| 32 | ~321 | ~452 | ~228 — N-walks |
-| 64 | ~379 | ~452 | ~426 — fused |
-| 128 | ~381 | ~452 | **~466** (fastest) — fused |
+| 16 | ~343 | ~444 | **~677** (fastest) — N-walks |
+| 32 | ~322 | ~451 | ~399 — fused after 1 MiB |
+| 64 | ~383 | ~452 | ~398 — fused |
+| 128 | ~379 | ~452 | ~388 — fused |
 
 TABLE B — extraction non-overlapping (counts equal REAL/RE2):
 
 | N | REAL N-walks | RE2 N-walks |
 | ---: | ---: | ---: |
-| 4 | ~200 | ~70 |
-| 8 | ~131 | ~42 |
+| 4 | ~285 | ~70 |
+| 8 | ~157 | ~42 |
 
 **Reading — capacity first, speed second:**
 
-- **The `2026.9.7` stamp (`18809f4`, x86-64, best of three runs of best-of-7; not re-run at the `aa22707` stamp):** `regex_set` walks each member below
-  `fused_min_eligible` (56) and builds its fused which-matched DFA from there, which is what the table now
-  shows: ~426–466 MB/s at N = 64 and 128, where the last stamp read ~83 and ~39 for the N-walks alone.
-  N = 32 is the dip, ~228 MB/s against the fused ~426 one row down: on this corpus fusing there would pay,
-  but the threshold was calibrated with the automaton's build cost in the balance. Since this stamp a set
-  of `fused_deferred_min_eligible` (24) to 55 members builds its fused DFA once its whole-subject calls
-  have walked 1 MiB, so a set kept for more than a subject or two of this size takes the fused scan; the
-  N = 32 row was not re-measured with it.
+- **This stamp (`600b0fb`, x86-64, best of three runs of best-of-7).** `regex_set` walks each member below
+  `fused_deferred_min_eligible` (24), builds its fused which-matched DFA once a set of 24 to 55 members has
+  walked 1 MiB, and at construction from `fused_min_eligible` (56). N = 32 therefore reads the fused scan
+  now, ~399 MB/s against the N-walks' ~228 at the last stamp. **The N = 64 and 128 rows read lower than the
+  last stamp (~398 and ~388 against ~426 and ~466) and are layout, not work:** the same bench source built
+  against the `2026.9.9` tree and this one, both with branches aligned to 32 bytes
+  (`-Wa,-mbranches-within-32B-boundaries`; this host is a Coffee Lake core, which the JCC erratum makes
+  placement-sensitive), reads 465–478 and 464–465 MB/s at N = 64, and 732–751 against 735 at N = 16. A
+  bisect over the train's commits moved N = 64 between 368 and 481 MB/s on commits that do not touch the
+  set's scan. **Table B's gain is work:** aligned the same way, extraction reads 228 → 298 MB/s at N = 4
+  and 143 → 164 at N = 8 (the literal search of this train), with RE2's column unchanged at 69 and 42.
 
 - **Architectural gap:** single-pass engines (RE2::Set, Hyperscan) stay **flat** in N; pure N-walks
   **degrade** hard (e.g. ~421 → 41 MB/s from N=32 → 256 on arm64). Stage-2 fused which-matched
