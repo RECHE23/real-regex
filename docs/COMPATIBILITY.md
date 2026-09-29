@@ -226,22 +226,31 @@ literal `$0`), so `real` cannot pick one without risking a silent divergence.
 ## Errors and thread-safety
 
 Every compat entry point that can fail throws a **`real::compat::regex_error`** (which *is* a
-`std::regex_error`), never a raw `std` one — construction (POSIX/wide/custom-traits screens, the
-real→std fallback) and the lazy `std` build alike. A pattern `real` accepts but `std` rejects (a
-*real superset*, e.g. `\A` = literal `A` on `real`, rejected by `std`) runs `search`/`match` on
-`real`; it reaches `std` only via a constraining match flag or a nullable / `$0` / sed
-`regex_replace`, or an iterator routed to `std`. If that `std` build fails, the error is a **late but
-homogeneous** `compat::regex_error` — construction succeeded (the pattern is valid for `real`), and
-the error appears only when the `std`-only operation is first invoked (an error, never a silent
-wrong result).
+`std::regex_error`), never a raw `std` one: construction (POSIX/wide/custom-traits screens, the
+real→std fallback), the lazy `std` build, and the `std` engine's own failures while it matches (libc++
+gives up on a pattern such as `(?:a?){1000}` with `error_complexity` during the match, not at its build).
 
-The `std` engine for a real-backed pattern is built lazily on demand under a **build mutex**, and the
-read is taken under the same lock, so concurrent `const` operations on one shared regex object are
-race-free for **both** nullable and non-nullable patterns — preserving `std`'s guarantee that
-concurrent `const` operations on one object are safe (verified under ThreadSanitizer — `make tsan`,
-which also runs in CI). The build is per operation and cold relative to matching. (`std::once_flag`
-would be lighter but is non-copyable, and `basic_regex` must stay copyable like `std::regex`; the
-static mutex keeps the value semantics defaulted.)
+A real-backed pattern reaches `std` through four routes only: `regex_search`/`regex_match` with a
+match flag `real` does not honour; `regex_replace` on a nullable pattern, with such a flag, with
+`format_sed`, or with a format using `$0`; a `regex_iterator` (and so a `regex_token_iterator`) on a
+nullable pattern or with such a flag; and `std_engine()` itself. A pattern `real` accepts but `std`
+rejects (a *real superset*: a lookbehind, a named group, `a{,2}`; on libc++ also `\A` = literal `A`)
+runs `search`/`match` on `real`, and fails only when one of those routes first builds its `std` engine:
+a **late but homogeneous** `compat::regex_error`, never a silent wrong result. A caller who wants that
+error at construction calls `std_engine()` once after building the regex; nothing pays for it otherwise.
+
+The `std` engine for a real-backed pattern is built on first use under a **build mutex** and published
+once: every later call reads it without the lock, so operations on patterns that reach `std` do not
+queue behind one another, and concurrent `const` operations on one shared regex object are race-free
+for **both** nullable and non-nullable patterns, as `std` guarantees (verified under ThreadSanitizer —
+`make tsan`, which also runs in CI — including copies made while another thread builds). A copy takes
+the engine once it is published, else builds its own. (`std::once_flag` is non-copyable, and
+`basic_regex` must stay copyable like `std::regex`.)
+
+An operation that runs on `std::regex` inherits its limits. libstdc++'s matcher recurses per character
+and overflows the stack on long runs: on an 8 MiB stack, from about 50 KB of one run, measured for
+`[^,]*` iterated, `(?:a|b)*` replaced and `(?:a|b)+c` searched with `match_not_bol` (g++ 14, arm64,
+2026-09-29). Operations that stay on `real` do not.
 
 ## Behaviour after a failed match
 

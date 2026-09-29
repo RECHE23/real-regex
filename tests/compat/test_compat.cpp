@@ -1327,7 +1327,8 @@ TEST(compat_late_std_error_is_homogeneous)
                             }
                           }};
   std::string super; // real-accepted (literal), std-rejected
-  for (const char* cand : {R"(\A)", R"(\Z)", R"(\a)"}) {
+  // A lookbehind first: both libc++ and libstdc++ reject it, so the late path is reached on either.
+  for (const char* cand : {R"((?<=a)b)", R"(\A)", R"(\Z)", R"(\a)"}) {
     if (rc::regex(cand).uses_real() && std_rejects(cand)) {
       super = cand;
       break;
@@ -1342,7 +1343,7 @@ TEST(compat_late_std_error_is_homogeneous)
 
   const rc::regex   re(super);
   EXPECT(re.uses_real());
-  const std::string txt {"xAZy"};
+  const std::string txt {"xabAZy"};  // holds a match of every candidate
   EXPECT(rc::regex_search(txt, re)); // flag-free search runs on real, no std needed
 
   bool       threw_compat {false};
@@ -1602,4 +1603,36 @@ TEST(compat_word_boundary_conformance)
   EXPECT(rc::regex_search(ab, m, rb));
   EXPECT(m.position(0) == 1);
   EXPECT(m.length(0) == 0);
+}
+
+// A std backend can fail while it matches, long after construction (libc++ gives up on `(?:a?){1000}` with
+// error_complexity): every error the layer reports is the compat type, never a raw std::regex_error, on the
+// replace, search and iterator routes that reach std.
+TEST(compat_std_errors_while_matching_are_the_compat_type)
+{
+  const rc::regex   re(R"((?:a?){1000})"); // nullable: replace and iteration take std
+  const std::string subject {"xab"};
+  std::size_t       raw    {0};
+  std::size_t       thrown {0};
+  const auto        check  {[&raw, &thrown](auto&& operation) {
+                              try {
+                                operation();
+                              }
+                              catch (const std::regex_error& e) {
+                                ++thrown;
+                                if (dynamic_cast<const rc::regex_error*>(&e) == nullptr) {
+                                  ++raw;
+                                }
+                              }
+                            }};
+  check([&] { static_cast<void>(rc::regex_replace(subject, re, std::string("-"))); });
+  check([&] {
+          for (rc::sregex_iterator it {subject.begin(), subject.end(), re}, end; it != end; ++it) {}
+        });
+  check([&] {
+          rc::smatch m;
+          static_cast<void>(rc::regex_search(subject, m, re, rc::regex_constants::match_not_bol));
+        });
+  std::printf("  std errors while matching: %zu thrown, %zu raw\n", thrown, raw);
+  EXPECT_EQ(raw, 0U);
 }

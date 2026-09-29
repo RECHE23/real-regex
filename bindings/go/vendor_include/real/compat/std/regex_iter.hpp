@@ -75,7 +75,7 @@ namespace real::compat {
           return;
         }
       }
-      std_it_.emplace(first, last, re.std_engine(), detail::to_std_match(flags));
+      detail::std_call([&] { std_it_.emplace(first, last, re.std_engine(), detail::to_std_match(flags)); });
       sync_std();
     }
 
@@ -170,7 +170,7 @@ namespace real::compat {
           return *this;
         }
       }
-      ++(*std_it_);
+      detail::std_call([&] { ++(*std_it_); });
       sync_std();
       return *this;
     }

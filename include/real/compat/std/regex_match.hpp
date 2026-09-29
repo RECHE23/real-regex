@@ -545,8 +545,10 @@ namespace real::compat {
       const std::basic_regex<CharT, Traits>& std_engine {re.std_engine()}; // lazy-built if real-backed
       std::match_results<BidirIt>            std_m;
       const auto                             sf         {to_std_match(mf)};
-      const bool                             ok         {anchored ? std::regex_match(first, last, std_m, std_engine, sf)
-                              : std::regex_search(first, last, std_m, std_engine, sf)};
+      const bool                             ok         {std_call([&] {
+                                                                    return anchored ? std::regex_match(first, last, std_m, std_engine, sf)
+                                                                                : std::regex_search(first, last, std_m, std_engine, sf);
+                                                                  })};
       if (!ok) {
         m.set_ready_no_match();
         return false;
@@ -582,8 +584,10 @@ namespace real::compat {
       }
       const std::basic_regex<CharT, Traits>& std_engine {re.std_engine()};
       const auto                             sf         {to_std_match(mf)};
-      return anchored ? std::regex_match(first, last, std_engine, sf)
-                      : std::regex_search(first, last, std_engine, sf);
+      return std_call([&] {
+                        return anchored ? std::regex_match(first, last, std_engine, sf)
+                                        : std::regex_search(first, last, std_engine, sf);
+                      });
     }
   } // namespace detail
 
@@ -913,7 +917,7 @@ namespace real::compat {
   {
     if constexpr (!detail::real_eligible<CharT, Traits>) {
       // wide / custom-traits: always std (real is not eligible for this CharT).
-      return std::regex_replace(s, re.std_engine(), fmt, detail::to_std_match(flags));
+      return detail::std_call([&] { return std::regex_replace(s, re.std_engine(), fmt, detail::to_std_match(flags)); });
     }
     else {
       // Route to std when: the pattern is not real-traversable (std/nullable), OR a flag the real
@@ -922,7 +926,7 @@ namespace real::compat {
       // Only then does the real expander run.
       if (!re.uses_real_traversal() || !detail::replace_stays_real(flags)
           || detail::format_forces_std(std::string_view {fmt})) {
-        return std::regex_replace(s, re.std_engine(), fmt, detail::to_std_match(flags));
+        return detail::std_call([&] { return std::regex_replace(s, re.std_engine(), fmt, detail::to_std_match(flags)); });
       }
       const real::regex&     engine     {std::get<real::regex>(re.engine())};
       const std::string_view text       {s};

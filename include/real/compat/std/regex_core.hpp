@@ -699,6 +699,29 @@ namespace real::compat {
     }
 
     /*!
+     * \brief Runs \p call on the std backend and reports its errors as \ref real::compat::regex_error, the
+     *        type every error of this layer has. A `std::basic_regex` can fail while it matches
+     *        (`error_complexity`, `error_stack`), long after it was built.
+     * \tparam Call A callable taking no argument.
+     * \param[in] call The std operation.
+     * \return What \p call returns.
+     * \throws real::compat::regex_error when \p call throws a `std::regex_error`.
+     */
+    template <typename Call>
+    decltype(auto) std_call(Call && call)
+    {
+      try {
+        return std::forward<Call>(call)();
+      }
+      catch (const regex_error&) {
+        throw; // already the compat type (a lazy build's error)
+      }
+      catch (const std::regex_error& std_error) {
+        throw regex_error(std_error);
+      }
+    }
+
+    /*!
      * \brief A `std::basic_regex` built on first use and published once: a reader after the build takes no
      *        lock, and a copy made while another thread builds sees either the finished engine or none (the
      *        copy then builds its own). Copyable, so the regex that holds it stays copyable.
