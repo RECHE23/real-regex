@@ -27,6 +27,7 @@
 #include <chrono>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include <sciforge/test/framework.hpp>
 #include "real/real.hpp"
@@ -62,24 +63,31 @@ namespace {
     "[\\w\\d]",
   };
 
-  //! \brief Best-of-\ref reps nanoseconds to compile \p pattern with \p f.
-  //! \param[in] pattern The pattern to compile.
-  //! \param[in] f       Flags to compile with.
-  //! \return Best elapsed nanoseconds.
-  double best_compile_ns(const std::string& pattern,
-                         real::flags        f)
+  //! \brief Best-of-\ref reps nanoseconds to compile each of \p small and \p large with \p f, alternating one
+  //!        with the other every round: a stretch of load on a shared runner then weighs on both alike instead
+  //!        of on whichever was being timed, and the ratio of the two bests keeps meaning something.
+  //! \param[in] small The smaller pattern.
+  //! \param[in] large The larger pattern.
+  //! \param[in] f     Flags to compile with.
+  //! \return The best elapsed nanoseconds of each, small first.
+  std::pair<double, double> best_compile_ns(const std::string& small,
+                                            const std::string& large,
+                                            real::flags        f)
   {
-    double best {-1.0};
+    double     best_small {-1.0};
+    double     best_large {-1.0};
+    const auto time_one   {[f](const std::string& pattern, double& best) {
+                             const auto        t0 {clock_type::now()};
+                             const real::regex rx(pattern, f);
+                             const double      ns {std::chrono::duration<double, std::nano>(clock_type::now() - t0).count()};
+                             best = (best < 0.0 || ns < best) ? ns : best;
+                             (void) rx;
+                           }};
     for (int r = 0; r < reps; ++r) {
-      const auto        t0 {clock_type::now()};
-      const real::regex rx(pattern, f);
-      const double      ns {std::chrono::duration<double, std::nano>(clock_type::now() - t0).count()};
-      if (best < 0.0 || ns < best) {
-        best = ns;
-      }
-      (void) rx;
+      time_one(small, best_small);
+      time_one(large, best_large);
     }
-    return best;
+    return {best_small, best_large};
   }
 
   //! \brief Nanoseconds one further repetition of \p construct costs, under \p f.
@@ -91,7 +99,8 @@ namespace {
   {
     const std::string small {std::string(construct) + "{" + std::to_string(k_small) + "}"};
     const std::string large {std::string(construct) + "{" + std::to_string(k_large) + "}"};
-    return (best_compile_ns(large, f) - best_compile_ns(small, f)) / static_cast<double>(k_large - k_small);
+    const auto [s, l] {best_compile_ns(small, large, f)};
+    return (l - s) / static_cast<double>(k_large - k_small);
   }
 } // namespace
 
@@ -118,8 +127,8 @@ TEST(compile_scaling_icase_marginal_matches_plain_marginal)
 // the fold ran per repetition; it must now grow far slower than the repeat count does.
 TEST(compile_scaling_repeat_is_far_cheaper_than_linear)
 {
-  const double small {best_compile_ns("\\w{" + std::to_string(k_small) + "}", real::flags::icase)};
-  const double large {best_compile_ns("\\w{" + std::to_string(k_large) + "}", real::flags::icase)};
+  const auto [small, large] {best_compile_ns("\\w{" + std::to_string(k_small) + "}", "\\w{" + std::to_string(k_large) + "}",
+                                             real::flags::icase)};
   EXPECT(small > 0.0);
 
   // Linear in the repeat count would be 32x here. Before the fold cache this read 31.92x; it now reads
@@ -134,8 +143,7 @@ TEST(compile_scaling_scoped_icase_is_memoized_per_mode)
 {
   const std::string small {"(?i:\\w{" + std::to_string(k_small) + "})\\w{" + std::to_string(k_small) + "}"};
   const std::string large {"(?i:\\w{" + std::to_string(k_large) + "})\\w{" + std::to_string(k_large) + "}"};
-  const double      a     {best_compile_ns(small, real::flags::none)};
-  const double      b     {best_compile_ns(large, real::flags::none)};
+  const auto [a, b] {best_compile_ns(small, large, real::flags::none)};
   EXPECT(a > 0.0);
 
   const double size_ratio {static_cast<double>(k_large) / static_cast<double>(k_small)};
