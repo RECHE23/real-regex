@@ -526,3 +526,26 @@ TEST(unbounded_lookahead_cost_is_linear_in_the_text)
     EXPECT_EQ(real::detail::ahead_table_rows().load(), n + 1U);
   }
 }
+
+// The bound is in bytes, and the refusal says so: 128 `é` are 128 characters and 256 bytes.
+TEST(lookaround_bound_is_named_in_bytes)
+{
+  std::string pattern {"(?<="};
+  for (int i {0}; i < 128; ++i) {
+    pattern += "\xC3\xA9";
+  }
+  pattern += ")a";
+  bool        refused {false};
+  std::string what;
+  try {
+    const real::regex re {pattern};
+  }
+  catch (const real::regex_error& e) {
+    refused = true;
+    what    = e.what();
+  }
+  EXPECT(refused);
+  EXPECT(what.find("255 bytes") != std::string::npos);
+  const real::regex fits {"(?<=" + pattern.substr(4, std::size_t {2} *127U) + ")a"}; // 127 of them: 254 bytes
+  EXPECT(fits.search("x").matched() == false);
+}
