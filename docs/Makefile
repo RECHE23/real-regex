@@ -31,10 +31,12 @@ COV_HTML := $(BUILD)/coverage/html
 .DEFAULT_GOAL := help
 
 # HTML output is incremental: flipping SOURCE_BROWSER / VERBATIM_HEADERS /
-# INTERACTIVE_SVG leaves the old *_source.html and *_org.svg until wiped.
+# INTERACTIVE_SVG leaves the old *_source.html and *_org.svg until wiped. The XML
+# is too: a class removed from the headers keeps its compound file, and
+# check-doc-style, which reads every file there, refuses the orphan as stale.
 doc: ## Generate API reference (Doxygen) with embedded coverage (root runs coverage-html first)
 	mkdir -p $(BUILD)/doc
-	rm -rf $(BUILD)/doc/html
+	rm -rf $(BUILD)/doc/html $(BUILD)/doc/xml
 	cd $(ROOT) && doxygen Doxyfile
 	@rm -rf $(BUILD)/doc/html/coverage
 	@cp -R $(COV_HTML) $(BUILD)/doc/html/coverage
@@ -44,7 +46,7 @@ doc: ## Generate API reference (Doxygen) with embedded coverage (root runs cover
 # needs the API reference). It does not rebuild the coverage report.
 doc-no-coverage: ## Generate API reference without coverage report
 	mkdir -p $(BUILD)/doc
-	rm -rf $(BUILD)/doc/html
+	rm -rf $(BUILD)/doc/html $(BUILD)/doc/xml
 	cd $(ROOT) && doxygen Doxyfile
 	@echo "API reference: $(BUILD)/doc/html/index.html"
 
