@@ -60,6 +60,7 @@
 #include <real/version.hpp>
 
 #include <cstdint>
+#include <cstdio>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -187,9 +188,9 @@ namespace real::compat::re2 {
       }
 
       /*!
-       * \brief Whether to log syntax/execution errors. Stored for API shape; this layer reports
-       *        errors through `RE2::error()` regardless, never a logging side-channel.
-       * \return Whether construction failures are logged.
+       * \brief Whether compile errors are logged. Reads `true` by default, as RE2's does; logging itself is
+       *        opt-in here (see \ref set_log_errors), and `RE2::ok()`/`RE2::error()` report errors either way.
+       * \return The setting.
        */
       [[nodiscard]] bool log_errors() const noexcept
       {
@@ -197,12 +198,15 @@ namespace real::compat::re2 {
       }
 
       /*!
-       * \brief Sets `log_errors`.
+       * \brief Sets `log_errors`. Only an explicit `set_log_errors(true)` arms the logging -- the message RE2
+       *        writes to stderr on a failed compile, "Error parsing" with the pattern and the error -- so code that never
+       *        asked for it sees nothing new; `set_log_errors(false)` disarms it.
        * \param[in] value The new setting.
        */
       void set_log_errors(bool value) noexcept
       {
-        log_errors_ = value;
+        log_errors_       = value;
+        log_errors_armed_ = value;
       }
 
       /*!
@@ -359,19 +363,22 @@ namespace real::compat::re2 {
 
     private:
 
-      std::int64_t  max_mem_       {8 << 20};      //!< RE2's default budget (see \ref max_mem).
-      Encoding      encoding_      {EncodingUTF8}; //!< The pattern/text encoding.
-      bool          posix_syntax_  {false};        //!< POSIX egrep syntax restriction.
-      bool          longest_match_ {false};        //!< Leftmost-longest vs leftmost-first.
-      bool          log_errors_    {true};         //!< Log syntax/execution errors (inert here).
-      bool          literal_       {false};        //!< Match the pattern as a literal string.
-      bool          never_nl_      {false};        //!< Never match `\n`.
-      bool          dot_nl_        {false};        //!< `.` also matches `\n`.
-      bool          never_capture_ {false};        //!< Parse every `(...)` as non-capturing.
-      bool          case_sensitive_{true};         //!< Case-sensitive by default.
-      bool          perl_classes_  {false};        //!< POSIX-mode-only; inert here.
-      bool          word_boundary_ {false};        //!< POSIX-mode-only; inert here.
-      bool          one_line_      {false};        //!< POSIX-mode-only; inert here.
+      friend class RE2;                               // reads log_errors_armed_, which is not part of RE2's Options interface
+
+      std::int64_t  max_mem_          {8 << 20};      //!< RE2's default budget (see \ref max_mem).
+      Encoding      encoding_         {EncodingUTF8}; //!< The pattern/text encoding.
+      bool          posix_syntax_     {false};        //!< POSIX egrep syntax restriction.
+      bool          longest_match_    {false};        //!< Leftmost-longest vs leftmost-first.
+      bool          log_errors_       {true};         //!< The `log_errors` setting, `true` by default as RE2's.
+      bool          log_errors_armed_ {false};        //!< Set by an explicit `set_log_errors(true)`: only then is anything logged.
+      bool          literal_          {false};        //!< Match the pattern as a literal string.
+      bool          never_nl_         {false};        //!< Never match `\n`.
+      bool          dot_nl_           {false};        //!< `.` also matches `\n`.
+      bool          never_capture_    {false};        //!< Parse every `(...)` as non-capturing.
+      bool          case_sensitive_   {true};         //!< Case-sensitive by default.
+      bool          perl_classes_     {false};        //!< POSIX-mode-only; inert here.
+      bool          word_boundary_    {false};        //!< POSIX-mode-only; inert here.
+      bool          one_line_         {false};        //!< POSIX-mode-only; inert here.
     };
 
     /*!
@@ -435,6 +442,7 @@ namespace real::compat::re2 {
           if (error != nullptr) {
             *error = std::string(reason);
           }
+          RE2::log_error(options_, "Error parsing", pattern, reason); // RE2's Set prints the pattern whole
           return -1;
         }
         std::string wrapped {anchor_wrap(pattern)};
@@ -446,6 +454,7 @@ namespace real::compat::re2 {
           if (error != nullptr) {
             *error = e.what();
           }
+          RE2::log_error(options_, "Error parsing", pattern, e.what());
           return -1;
         }
         const int index {static_cast<int>(patterns_.size())};
@@ -908,6 +917,45 @@ namespace real::compat::re2 {
     }
 
     /*!
+     * \brief Writes the message RE2 writes to stderr on a failed compile, once an explicit
+     *        `set_log_errors(true)` armed the logging: "Error parsing" with the pattern and the error for a
+     *        pattern it cannot parse, "Error compiling" with the pattern for one too large.
+     * \param[in] options The options the compile ran under.
+     * \param[in] what    "Error parsing" or "Error compiling".
+     * \param[in] pattern The pattern, as RE2 prints it.
+     * \param[in] detail  The error, or empty for none.
+     */
+    static void log_error(const Options&   options,
+                          std::string_view what,
+                          std::string_view pattern,
+                          std::string_view detail)
+    {
+      if (!options.log_errors_armed_) {
+        return;
+      }
+      std::string line {what};
+      line += " '";
+      line += pattern;
+      line += "'";
+      if (!detail.empty()) {
+        line += ": ";
+        line += detail;
+      }
+      line += '\n';
+      static_cast<void>(std::fputs(line.c_str(), stderr));
+    }
+
+    /*!
+     * \brief The pattern as RE2 prints it in a compile error: its first 100 bytes and `...` past that.
+     * \param[in] pattern The pattern.
+     * \return The printed form.
+     */
+    [[nodiscard]] static std::string trunc(std::string_view pattern)
+    {
+      return pattern.size() < 100U ? std::string {pattern} : std::string {pattern.substr(0, 100)} + "...";
+    }
+
+    /*!
      * \brief Compiles `pattern_` under `options`, or records why it could not be compiled.
      * \param[in] pattern The pattern text (pre-`literal()`-expansion).
      * \param[in] options The construction options.
@@ -919,6 +967,7 @@ namespace real::compat::re2 {
       if (!reason.empty()) {
         error_      = reason;
         error_code_ = ErrorCode::ErrorUnsupported;
+        log_error(options, "Error parsing", trunc(pattern), error_);
         return;
       }
       longest_match_ = options.longest_match();
@@ -929,17 +978,20 @@ namespace real::compat::re2 {
         if (e.cause() == real::detail::program_too_large) {
           error_      = std::string {pattern_too_large};
           error_code_ = ErrorCode::ErrorPatternTooLarge;
+          log_error(options, "Error compiling", trunc(pattern), {});
           return;
         }
         error_      = e.what();
         error_code_ = e.kind() == real::error_kind::unsupported ? ErrorCode::ErrorUnsupported
                                                                  : ErrorCode::ErrorSyntax;
+        log_error(options, "Error parsing", trunc(pattern), error_);
         return;
       }
       if (!within_budget(program_bytes(*regex_), regex_->raw_program().code.size(), options.max_mem())) {
         regex_.reset();
         error_      = std::string {pattern_too_large};
         error_code_ = ErrorCode::ErrorPatternTooLarge;
+        log_error(options, "Error compiling", trunc(pattern), {});
         return;
       }
       num_captures_ = static_cast<int>(regex_->group_count());

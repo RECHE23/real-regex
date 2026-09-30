@@ -32,8 +32,12 @@ RE2::PartialMatch("info@example.com", R"((\w+)@(\w+))", &user, &host);
 - **`RE2::Options`** — `set_longest_match` is honored by every unanchored
   search, and `set_max_mem` bounds the compiled program as RE2's does (a pattern
   past two thirds of it fails with `ErrorPatternTooLarge`, counted in bytes of
-  REAL's program); options with no REAL-side equivalent are rejected at
-  construction, never silently ignored (details below).
+  REAL's program); `log_errors()` reads `true` by default, as RE2's, and an
+  explicit `set_log_errors(true)` makes a failed compile write RE2's stderr
+  message (`Error parsing '<pattern>': <error>`), with `ok()` / `error()`
+  unchanged -- nothing is written unless it was asked for; options with no
+  REAL-side equivalent are rejected at construction, never silently ignored
+  (details below).
 - **`RE2::Set`** — Add / Compile / Match, multi-pattern which-matched on
   `real::regex_set`.
 

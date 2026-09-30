@@ -7,9 +7,13 @@
 #if defined(__APPLE__)
 #  include <xlocale.h> // newlocale/uselocale: not declared by <clocale> under libstdc++ on Darwin
 #endif
+#include <cstdio>
 #include <string>
 #include <string_view>
 #include <vector>
+#if !defined(_WIN32)
+#  include <unistd.h> // dup/dup2: stderr captured for the log_errors tests
+#endif
 
 #include <sciforge/test/framework.hpp>
 #include "real/compat/re2/re2.hpp"
@@ -739,3 +743,105 @@ TEST(set_compile_fails_past_max_mem)
   EXPECT_EQ(roomy.Add(thousand_as(40), nullptr), 1);
   EXPECT(roomy.Compile());
 }
+
+#if !defined(_WIN32)
+namespace {
+  //! \brief What \p body writes to stderr, captured through a temporary file.
+  template <typename Body>
+  std::string stderr_of(const Body& body)
+  {
+    std::FILE* const capture {std::tmpfile()};
+    if (capture == nullptr) {
+      return "<no capture>";
+    }
+    static_cast<void>(std::fflush(stderr));
+    const int saved {dup(fileno(stderr))};
+    if (saved < 0) {
+      static_cast<void>(std::fclose(capture));
+      return "<no capture>";
+    }
+    dup2(fileno(capture), fileno(stderr));
+    body();
+    static_cast<void>(std::fflush(stderr));
+    dup2(saved, fileno(stderr));
+    close(saved);
+    static_cast<void>(std::fseek(capture, 0, SEEK_SET));
+    std::string out;
+    for (int c {std::fgetc(capture)}; c != EOF; c = std::fgetc(capture)) {
+      out += static_cast<char>(c);
+    }
+    static_cast<void>(std::fclose(capture));
+    return out;
+  }
+} // namespace
+
+// log_errors reads true by default, as RE2's, and logs nothing until set_log_errors(true) arms it; then a failed
+// compile writes RE2's message, and ok()/error() report the same either way.
+TEST(re2_log_errors_is_opt_in_and_writes_re2s_message)
+{
+  const rc2::RE2::Options defaults;
+  EXPECT(defaults.log_errors());
+  std::string quiet_error;
+  EXPECT_EQ(stderr_of([&] {
+                        const rc2::RE2 re {"a(b", defaults};
+                        EXPECT(!re.ok());
+                        quiet_error = re.error();
+                      }),
+            std::string {});
+
+  rc2::RE2::Options armed;
+  armed.set_log_errors(true);
+  std::string       logged_error;
+  const std::string logged {stderr_of([&] {
+                                        const rc2::RE2 re {"a(b", armed};
+                                        EXPECT(!re.ok());
+                                        logged_error = re.error();
+                                      })};
+  EXPECT_EQ(logged, "Error parsing 'a(b': " + logged_error + "\n");
+  EXPECT_EQ(logged_error, quiet_error);
+
+  rc2::RE2::Options disarmed;
+  disarmed.set_log_errors(true);
+  disarmed.set_log_errors(false);
+  EXPECT_EQ(stderr_of([&] { static_cast<void>(rc2::RE2 {"a(b", disarmed}); }), std::string {});
+  EXPECT_EQ(stderr_of([&] { static_cast<void>(rc2::RE2 {"a(b", armed}.ok()); }).empty(), false);
+  EXPECT_EQ(stderr_of([&] { static_cast<void>(rc2::RE2 {"ab", armed}); }), std::string {}); // a pattern that compiles
+}
+
+// A pattern past max_mem logs RE2's "Error compiling"; a long one is printed as its first 100 bytes and "...";
+// a set's Add prints the pattern whole, as RE2's does.
+TEST(re2_log_errors_names_the_pattern_as_re2_does)
+{
+  rc2::RE2::Options armed;
+  armed.set_log_errors(true);
+  armed.set_max_mem(1024); // two thirds of a KiB: far below this pattern
+  std::string big;
+  for (int i {0}; i < 2000; ++i) {
+    big += "ab|";
+  }
+  big += "cd";
+  bool too_large {false};
+  EXPECT_EQ(stderr_of([&] {
+                        const rc2::RE2 re {big, armed};
+                        too_large = re.error_code() == rc2::RE2::ErrorCode::ErrorPatternTooLarge;
+                      }),
+            "Error compiling '" + big.substr(0, 100) + "...'\n");
+  EXPECT(too_large);
+
+  rc2::RE2::Options parse;
+  parse.set_log_errors(true);
+  const std::string long_bad {std::string(150, 'x') + "("};
+  const std::string printed  {stderr_of([&] { static_cast<void>(rc2::RE2 {long_bad, parse}); })};
+  EXPECT(printed.rfind("Error parsing '" + long_bad.substr(0, 100) + "...': ", 0) == 0U);
+
+  rc2::RE2::Set     set      {parse, rc2::RE2::Anchor::UNANCHORED};
+  std::string       error;
+  const std::string from_add {stderr_of([&] { EXPECT_EQ(set.Add(long_bad, &error), -1); })};
+  std::string       want     {"Error parsing '"};
+  want += long_bad;
+  want += "': ";
+  want += error;
+  want += '\n';
+  EXPECT_EQ(from_add, want);
+}
+#endif

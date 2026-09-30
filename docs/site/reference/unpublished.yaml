@@ -109,8 +109,6 @@ real::compat::re2::RE2::Options:
   set_encoding: rejected at construction unless UTF-8
   posix_syntax: rejected at construction
   set_posix_syntax: rejected at construction
-  log_errors: RE2 knob REAL does not honour
-  set_log_errors: RE2 knob REAL does not honour
   literal: RE2 knob REAL does not honour
   set_literal: RE2 knob REAL does not honour
   never_nl: rejected at construction
