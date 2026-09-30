@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <limits>
 #include <ranges>
 #include <bit>
 #include <cstddef>
@@ -714,6 +715,221 @@ namespace real::detail {
     }
   }
 
+  //! Branches from which a literal alternation is factored into a trie in the byte program: below it the
+  //! flat alternation's states are small, and its byte program stays the one every smaller pattern has.
+  inline constexpr std::size_t alternation_trie_min_branches {64};
+
+  /*!
+   * \brief Test seam: build the byte program's literal alternations flat, so a differential can hold the trie
+   *        against them in one binary. Not for production use.
+   * \return A reference to the process-wide flag.
+   */
+  inline bool& alternation_trie_disabled()
+  {
+    static bool disabled {false};
+    return disabled;
+  }
+
+  /*!
+   * \brief A literal alternation (every branch a run of `byte` ops converging on one exit) factored into a trie
+   *        that keeps leftmost-first priority.
+   *
+   * A flat alternation of N words puts all N first bytes in the start state and all N threads in every state
+   * a search seeds, so a state of a 14 500-word alternation held 15 000 pcs (60 KB) and its cache filled in a
+   * few hundred states. Factored, a state holds one pc per live trie node.
+   *
+   * Priority is kept by chunks: a node's items are grouped into chunks, a branch ending at a node closes the
+   * node's current chunk with an END item (a jump to the exit), and a later branch merges only into the last
+   * chunk. Two items of one chunk are on distinct bytes, so no text reaches both; items of different chunks
+   * keep the branches' declared order.
+   */
+  struct literal_alt_trie
+  {
+    /*!
+     * \brief One alternative of a node: a byte leading to a child, or the END of a branch.
+     */
+    struct item
+    {
+      std::int16_t byte  {-1}; //!< The byte, or -1 for END (the jump to the exit).
+      std::int32_t child {-1}; //!< The child node of a byte item.
+    };
+
+    /*!
+     * \brief One trie node: its alternatives in priority order.
+     */
+    struct node
+    {
+      std::vector<item> items;           //!< Alternatives, highest priority first.
+      std::uint32_t     chunk_begin {0}; //!< First item a later branch may merge into.
+    };
+
+    std::vector<node>         nodes {node {}}; //!< The trie; node 0 is the root.
+    std::vector<std::int32_t> order;           //!< Emission order, root first.
+    std::vector<std::int32_t> node_pc;         //!< Each node's pc, relative to the trie's first.
+    std::vector<bool>         falls;           //!< The node's last item falls through into its child (no jump).
+    std::size_t               size {0};        //!< Instructions the trie emits.
+
+    /*!
+     * \brief Adds the branch whose bytes are `code[b, e)`.
+     * \param[in] code The program.
+     * \param[in] b    The branch's first `byte`.
+     * \param[in] e    One past its last.
+     */
+    constexpr void insert(std::span<const instr> code,
+                          std::size_t            b,
+                          std::size_t            e)
+    {
+      std::size_t at {0};
+      for (std::size_t pc {b}; pc < e; ++pc) {
+        const auto   byte  {static_cast<std::int16_t>(code[pc].arg8)};
+        std::int32_t child {-1};
+        for (std::size_t i {nodes[at].chunk_begin}; i < nodes[at].items.size(); ++i) {
+          if (nodes[at].items[i].byte == byte) {
+            child = nodes[at].items[i].child;
+            break;
+          }
+        }
+        if (child < 0) {
+          child                            = static_cast<std::int32_t>(nodes.size());
+          nodes[at].items.push_back({.byte = byte, .child = child});
+          nodes.emplace_back();
+        }
+        at = static_cast<std::size_t>(child);
+      }
+      node& end {nodes[at]};
+      if (end.items.empty() || end.items.back().byte >= 0) { // a second END in a row is the same exit
+        end.items.push_back({.byte = -1, .child = -1});
+      }
+      end.chunk_begin = static_cast<std::uint32_t>(end.items.size());
+    }
+
+    /*!
+     * \brief Orders the nodes and sizes the emission: preorder with each node's last child right after it, so a
+     *        chain of one-child nodes is a straight run of `byte` ops.
+     */
+    constexpr void layout()
+    {
+      std::vector<std::int32_t> stack {0};
+      while (!stack.empty()) {
+        const std::int32_t id {stack.back()};
+        stack.pop_back();
+        order.push_back(id);
+        for (const item& it : nodes[static_cast<std::size_t>(id)].items) { // first to last: the last child pops next
+          if (it.byte >= 0) {
+            stack.push_back(it.child);
+          }
+        }
+      }
+      node_pc.assign(nodes.size(), 0);
+      falls.assign(nodes.size(), false);
+      std::size_t off {0};
+      for (std::size_t k {0}; k < order.size(); ++k) {
+        const auto  id {static_cast<std::size_t>(order[k])};
+        const node& nd {nodes[id]};
+        node_pc[id] = static_cast<std::int32_t>(off);
+        std::size_t sz {nd.items.size() - 1U}; // a split before every item but the last
+        for (const item& it : nd.items) {
+          sz += it.byte >= 0 ? 2U : 1U;        // byte + jump, or the END jump
+        }
+        if (nd.items.back().byte >= 0 && k + 1U < order.size() && order[k + 1U] == nd.items.back().child) {
+          falls[id] = true;
+          --sz;
+        }
+        off += sz;
+      }
+      size = off;
+    }
+
+    /*!
+     * \brief Emits the trie at the end of \p bp.
+     * \param[in,out] bp    The byte program.
+     * \param[in]     after The exit's pc in \p bp.
+     */
+    constexpr void emit(byte_program& bp,
+                        std::int32_t  after) const
+    {
+      const auto base {static_cast<std::int32_t>(bp.code.size())};
+      for (const std::int32_t id : order) {
+        const node&       nd {nodes[static_cast<std::size_t>(id)]};
+        const std::size_t k  {nd.items.size()};
+        for (std::size_t j {0}; j < k; ++j) {
+          const item&        it   {nd.items[j]};
+          const auto         here {static_cast<std::int32_t>(bp.code.size())};
+          const std::int32_t body {it.byte >= 0 ? 2 : 1};
+          if (j + 1U < k) {
+            bp.code.push_back({.op = opcode::split, .primary_target = here + 1, .secondary_target = here + 1 + body});
+          }
+          if (it.byte >= 0) {
+            bp.code.push_back({.op = opcode::byte, .arg8 = static_cast<std::uint8_t>(it.byte)});
+            if (j + 1U != k || !falls[static_cast<std::size_t>(id)]) {
+              bp.code.push_back({.op = opcode::jump, .primary_target = base + node_pc[static_cast<std::size_t>(it.child)]});
+            }
+          }
+          else {
+            bp.code.push_back({.op = opcode::jump, .primary_target = after});
+          }
+        }
+      }
+    }
+  };
+
+  /*!
+   * \brief The literal alternation starting at a `split`: its exit and each branch's bytes.
+   */
+  struct literal_alt_chain
+  {
+    std::size_t                                      exit {0}; //!< The pc every branch reaches.
+    std::vector<std::pair<std::size_t, std::size_t>> words;    //!< Each branch's `[first byte, one past last)`.
+  };
+
+  /*!
+   * \brief Whether `[pc, exit)` is a chain of `split`s whose branches are runs of `byte` ops jumping forward to
+   *        one exit, the last branch falling through to it.
+   * \param[in]  code The program.
+   * \param[in]  pc   The candidate first `split`.
+   * \param[out] out  The chain, when it is one.
+   * \return True when it is.
+   */
+  constexpr bool detect_literal_alt(std::span<const instr> code,
+                                    std::size_t            pc,
+                                    literal_alt_chain&     out)
+  {
+    out.words.clear();
+    if (code[pc].op != opcode::split || code[pc].primary_target != static_cast<std::int32_t>(pc) + 1) {
+      return false;
+    }
+    std::size_t  s    {pc};
+    std::int64_t exit {-1};
+    while (true) {
+      const instr& in {code[s]};
+      if (in.op == opcode::split && in.primary_target == static_cast<std::int32_t>(s) + 1) {
+        std::size_t j {s + 1U};
+        while (j < code.size() && code[j].op == opcode::byte) {
+          ++j;
+        }
+        if (j < code.size() && code[j].op == opcode::jump && (exit < 0 || code[j].primary_target == exit)
+            && in.secondary_target == static_cast<std::int32_t>(j) + 1 && code[j].primary_target > static_cast<std::int32_t>(j)) {
+          exit = code[j].primary_target;
+          out.words.emplace_back(s + 1U, j);
+          s = j + 1U;
+          continue;
+        }
+      }
+      break; // `s` opens the last branch: bytes up to the exit
+    }
+    if (exit < 0 || out.words.empty() || static_cast<std::size_t>(exit) < s) {
+      return false;
+    }
+    for (std::size_t j {s}; j < static_cast<std::size_t>(exit); ++j) {
+      if (code[j].op != opcode::byte) {
+        return false;
+      }
+    }
+    out.words.emplace_back(s, static_cast<std::size_t>(exit));
+    out.exit = static_cast<std::size_t>(exit);
+    return true;
+  }
+
   //! Cap on the expanded byte-program's instruction count (the running `cur` total below, checked as it
   //! grows). Each `klass_cp` occurrence gets its OWN freshly-built UTF-8 trie here (unshared even when many
   //! occurrences reference the identical class — e.g. every copy of a `{k}`-repeated `\w`), so a large
@@ -844,8 +1060,38 @@ namespace real::detail {
     std::vector<bool>             class_built(prog.cp_classes.size(), false);
     std::vector<const utf8_trie*> tries(n, nullptr);              // the trie for each klass_cp pc
     std::size_t                   cur {0};
+    // Literal alternations of many branches, factored (see literal_alt_trie). Only at run time: the
+    // compile-time storage keeps the flat program it has always built.
+    std::vector<literal_alt_trie> alt_tries;
+    std::vector<std::size_t>      alt_exit;
+    std::vector<std::int32_t>     alt_at;
+    bool                          alt_on {false}; // assigned, not initialized: a `const bool` initializer is itself constant-evaluated
+    if (!std::is_constant_evaluated()) {
+      alt_on = !alternation_trie_disabled();
+    }
+    if (alt_on) {
+      alt_at.assign(n, -1);
+    }
+    literal_alt_chain chain;
     for (std::size_t pc = 0; pc < n; ++pc) {
       map[pc] = static_cast<std::int32_t>(cur);
+      if (alt_on && prog.code[pc].op == opcode::split && detect_literal_alt(prog.code, pc, chain)
+          && chain.words.size() >= alternation_trie_min_branches) {
+        literal_alt_trie trie;
+        for (const auto& [b, e] : chain.words) {
+          trie.insert(prog.code, b, e);
+        }
+        trie.layout();
+        alt_at[pc] = static_cast<std::int32_t>(alt_tries.size());
+        alt_exit.push_back(chain.exit);
+        for (std::size_t t {pc + 1U}; t < chain.exit; ++t) {
+          map[t] = static_cast<std::int32_t>(cur);
+        }
+        cur += trie.size;
+        alt_tries.push_back(std::move(trie));
+        pc = chain.exit - 1U;
+        continue;
+      }
       if (prog.code[pc].op == opcode::klass_cp) {
         const std::size_t ci {static_cast<std::size_t>(prog.code[pc].arg16)};
         if (!class_built[ci]) {
@@ -876,6 +1122,12 @@ namespace real::detail {
                       }};
     for (std::size_t pc = 0; pc < n; ++pc) {
       const instr& in {prog.code[pc]};
+      if (alt_on && alt_at[pc] >= 0) {
+        const auto k {static_cast<std::size_t>(alt_at[pc])};
+        alt_tries[k].emit(bp, map[alt_exit[k]]);
+        pc = alt_exit[k] - 1U;
+        continue;
+      }
       if (in.op == opcode::klass_cp) {
         emit_utf8_trie(bp, *tries[pc], map[pc + 4], range_intern);
         pc += 3;
@@ -1205,7 +1457,7 @@ namespace real::detail {
     static constexpr std::size_t   quit_pos       {npos - 1U};   //!< What forward_end() gives when its scan quit (see \ref anchored_result::quit).
     static constexpr std::uint32_t no_match_idx   {0xFFFFFFFFU}; //!< A state whose ordered set holds no accept.
     static constexpr std::uint32_t pending_idx    {0xFFFFFFFEU}; //!< A state whose accept waits on a pending assertion: only resolve() decides it.
-    static constexpr std::size_t   state_budget   {4096};        //!< Cached states before a flush (the memory cap).
+    static constexpr std::size_t   state_budget   {65536};       //!< Cached states before a flush; the memory cap is \ref lazy_dfa_byte_budget.
     static constexpr std::size_t   thrash_flushes {2};           //!< Flushes within one scan that trip \ref thrashing.
 
     /*!
@@ -2473,7 +2725,7 @@ namespace real::detail {
     static constexpr std::uint32_t no_transition {0xFFFFFFFFU}; //!< A not-yet-computed cached transition.
     static constexpr std::uint32_t quit_state    {0xFFFFFFFEU}; //!< What resolve() gives when a Unicode word boundary meets a non-ASCII byte; never interned.
     static constexpr std::size_t   quit_pos      {npos - 1U};   //!< What reverse_start() gives when its scan quit.
-    static constexpr std::size_t   state_budget  {4096};        //!< Cached states before a flush (the memory cap).
+    static constexpr std::size_t   state_budget  {65536};       //!< Cached states before a flush; the memory cap is \ref lazy_dfa_byte_budget.
 
     /*!
      * \brief Builds the (initially empty) reverse DFA, transposing the program's edges as it goes.
