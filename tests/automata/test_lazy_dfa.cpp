@@ -660,3 +660,48 @@ TEST(lazy_dfa_quits_once_its_cache_thrashes)
   look_quits.begin_scan();
   EXPECT(look_quits.anchored_end(text, 0).quit);
 }
+
+// A scan with assertions quits, or answers right, whichever of its builds the budget's flush lands in: a flush
+// inside the cut after an accept hands back the dead state, which must not read as the match's end. Small
+// budgets put flushes everywhere; every answer is the unflushed DFA's or a quit.
+TEST(lazy_dfa_look_scan_quits_when_its_cut_flushes)
+{
+  const char* const patterns[] {"[^ ]+x?$", R"((?m)[^ ]+(?m:$)\s+)", R"((?a)\b[^ ]+\b\s+(?m:$))",
+                                R"((?m)[a-z]$[^ ]+\B)", R"((?a)[a-z]+\b)"};
+  const char* const units[]    {"abc 12 x word ", "ab\nxyz e \n", "word x\n\nab 99 ", "abcdefghij klmnop\n"};
+  std::size_t       cases      {0};
+  std::size_t       wrong      {0};
+  std::size_t       quits      {0};
+  for (const char* const p : patterns) {
+    const auto st {dynamic_storage::compile(p, real::flags::none)};
+    for (const char* const u : units) {
+      std::string text;
+      while (text.size() < 700U) {
+        text += u;
+      }
+      for (std::size_t start {0}; start < 64U; ++start) {
+        lazy_dfa          whole {st.program.code, st.program.classes, lazy_dfa::state_budget, nullptr, true, true, false};
+        const std::size_t want  {whole.forward_end(text, start)};
+        for (std::size_t budget {3}; budget <= 12U; ++budget) {
+          lazy_dfa small {st.program.code, st.program.classes, budget, nullptr, true, true, true};
+          if (!small.eligible() || !small.looks()) {
+            continue;
+          }
+          const std::size_t got {small.forward_end(text, start)};
+          ++cases;
+          quits += got == lazy_dfa::quit_pos ? 1U : 0U;
+          if (got != lazy_dfa::quit_pos && got != want) {
+            if (wrong < 5U) {
+              std::printf("/%s/ from %zu, budget %zu: %zu, unflushed %zu\n", p, start, budget, got, want);
+            }
+            ++wrong;
+          }
+        }
+      }
+    }
+  }
+  std::printf("  look scans: %zu cases, %zu quit\n", cases, quits);
+  EXPECT(cases > 5000U);
+  EXPECT(quits > 0U);
+  EXPECT_EQ(wrong, 0U);
+}

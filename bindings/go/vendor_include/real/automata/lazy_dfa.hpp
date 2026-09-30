@@ -2079,7 +2079,8 @@ namespace real::detail {
         }
         ++pos;
       }
-      return best_end;
+      // As the other scans: a cut that flushed hands back the dead state, which ends the loop as a match's end.
+      return (thrashing_ && may_quit_) ? quit_pos : best_end;
     }
 
     /*!
