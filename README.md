@@ -26,7 +26,10 @@ from end to end, with an `re`-compatible Python binding.
   arm64 with Apple clang 16.0.0 (`-O2`), a TU that includes `<real/real.hpp>`
   and constructs one `real::regex` took 4.3 s and produced 213 KiB of
   `__text`; the same TU with `<regex>` took 1.1 s and 47 KiB. Order of
-  magnitude, not a ledger cell.
+  magnitude, not a ledger cell. To pay it once, build the compiled library
+  (`-DREAL_BUILD_CAPI=ON`, target `real::capi`) and include
+  `<real_compiled.hpp>`: a file that includes it parses neither the engine nor
+  its Unicode tables and compiles in under a second (see [Getting started](https://reche23.github.io/real-regex/getting-started.html)).
 
 ## The problem
 
