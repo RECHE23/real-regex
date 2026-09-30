@@ -2225,8 +2225,9 @@ namespace real::detail {
       // Unicode word boundaries ride along and quit next to a non-ASCII byte; every caller of these DFAs
       // reads the quit and asks the VM.
       set.fwd.emplace(bp.code, bp.classes, lazy_dfa::state_budget, alpha, !bp.unicode_word, prog_.byte_mode,
-                      /*word_quit=*/ true, prog_.hints.raw_byte_starts);
-      set.rev.emplace(bp.code, bp.classes, reverse_dfa::state_budget, alpha, !bp.unicode_word, /*word_quit=*/ true);
+                      /*word_quit=*/ true, prog_.hints.raw_byte_starts, lazy_dfa_byte_budget());
+      set.rev.emplace(bp.code, bp.classes, reverse_dfa::state_budget, alpha, !bp.unicode_word, /*word_quit=*/ true,
+                      lazy_dfa_byte_budget());
     }
 
     /*!

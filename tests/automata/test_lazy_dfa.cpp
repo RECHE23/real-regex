@@ -705,3 +705,132 @@ TEST(lazy_dfa_look_scan_quits_when_its_cut_flushes)
   EXPECT(quits > 0U);
   EXPECT_EQ(wrong, 0U);
 }
+
+namespace {
+  //! \brief `(?:w1|…|wN)[0-9]`: N random lowercase words of \p width letters and a digit, which keeps it off the
+  //!        Aho-Corasick route; its states hold up to N pcs each, so its cache grows by bytes long before states.
+  std::string words_then_digit(std::size_t n,
+                               std::size_t width)
+  {
+    std::uint32_t bits {0x9E3779B9U};
+    std::string   out  {"(?:"};
+    for (std::size_t i {0}; i < n; ++i) {
+      out += i == 0U ? "" : "|";
+      for (std::size_t k {0}; k < width; ++k) {
+        bits ^= bits << 13U;
+        bits ^= bits >> 17U;
+        bits ^= bits << 5U;
+        out  += static_cast<char>('a' + (bits % 26U));
+      }
+    }
+    return out + ")[0-9]";
+  }
+
+  //! \brief \p size random lowercase letters: every byte extends some word's prefix, so states keep coming.
+  std::string random_letters(std::size_t size)
+  {
+    std::uint32_t bits {0x2545F491U};
+    std::string   out;
+    while (out.size() < size) {
+      bits ^= bits << 13U;
+      bits ^= bits >> 17U;
+      bits ^= bits << 5U;
+      out  += static_cast<char>('a' + (bits % 26U));
+    }
+    return out;
+  }
+} // namespace
+
+// The cache flushes on its bytes before its states, holds no more than the budget and one state past it, and
+// answers as a cache that never flushes, or quits.
+TEST(lazy_dfa_flushes_on_its_byte_budget)
+{
+  const auto        st    {dynamic_storage::compile(words_then_digit(40, 8), real::flags::none)};
+  const std::string text  {random_letters(16384) + "7"};
+  lazy_dfa          whole {st.program.code, st.program.classes};
+  const std::size_t want  {whole.forward_end(text)};
+  EXPECT_EQ(whole.stats().byte_flushes, 0U);
+  for (const bool quits : {false, true}) {
+    lazy_dfa small        {st.program.code, st.program.classes, lazy_dfa::state_budget, nullptr, false, true, quits, false,
+                           std::size_t {16} << 10U};
+    const std::size_t got {small.forward_end(text)};
+    EXPECT(small.stats().byte_flushes > 0U);
+    EXPECT_EQ(small.stats().byte_flushes, small.stats().flushes);
+    EXPECT(got == want || (quits && got == lazy_dfa::quit_pos));
+    EXPECT(small.bytes() <= (std::size_t {16} << 10U) + (std::size_t {1} << 10U));
+  }
+}
+
+// At the default, an alternation of 500 words over 64 KiB builds its states without one byte flush.
+TEST(lazy_dfa_default_byte_budget_leaves_a_working_set_alone)
+{
+  const auto        st   {dynamic_storage::compile(words_then_digit(500, 16), real::flags::none)};
+  const std::string text {random_letters(65536)};
+  lazy_dfa          dfa  {st.program.code, st.program.classes};
+  EXPECT_EQ(dfa.forward_end(text), real::npos);
+  EXPECT_EQ(dfa.stats().byte_flushes, 0U);
+  EXPECT(dfa.bytes() > 0U);
+}
+
+// A budget of one byte still answers: the floor keeps the dead and start states, so a flush leaves room to step.
+TEST(lazy_dfa_answers_on_a_one_byte_budget)
+{
+  const auto        st    {dynamic_storage::compile(words_then_digit(40, 8), real::flags::none)};
+  const std::string text  {random_letters(2048) + "7"};
+  lazy_dfa          whole {st.program.code, st.program.classes};
+  lazy_dfa          tiny  {st.program.code, st.program.classes, lazy_dfa::state_budget, nullptr, false, true, false, false, 1};
+  EXPECT_EQ(tiny.forward_end(text), whole.forward_end(text));
+  EXPECT(tiny.stats().byte_flushes > 0U);
+}
+
+// The reverse walk counts its bytes the same way and answers as its unflushed self: `(?:words)[a-z]*[0-9]` read
+// backward keeps a new set of word suffixes at every letter, so its states hold far more than the budget.
+TEST(reverse_dfa_flushes_on_its_byte_budget)
+{
+  std::string pattern     {words_then_digit(40, 8)};
+  pattern.insert(pattern.size() - 5U, "[a-z]*");
+  const auto        st    {dynamic_storage::compile(pattern, real::flags::none)};
+  const std::string text  {random_letters(16384) + "7"};
+  reverse_dfa       whole {st.program.code, st.program.classes};
+  reverse_dfa       small {st.program.code, st.program.classes, reverse_dfa::state_budget, nullptr, false, false,
+                           std::size_t {4} << 10U};
+  for (std::size_t e {text.size()}; e > text.size() - 64U; --e) {
+    EXPECT_EQ(small.reverse_start(text, e, 0), whole.reverse_start(text, e, 0));
+  }
+  EXPECT(whole.bytes() > (std::size_t {8} << 10U)); // the walk builds past the budget, or nothing here is tested
+  EXPECT_EQ(whole.byte_flushes(), 0U);
+  EXPECT(small.byte_flushes() > 0U);
+  EXPECT(small.bytes() <= (std::size_t {4} << 10U) + (std::size_t {1} << 10U));
+}
+
+// A budget of nothing still answers in both directions: the reverse flush re-interns its start through the same
+// test, which must leave the dead and start states alone.
+TEST(lazy_dfas_answer_on_a_zero_byte_budget)
+{
+  const auto        st        {dynamic_storage::compile("[a-z]*" + words_then_digit(40, 8), real::flags::none)};
+  const std::string text      {random_letters(512) + "7"};
+  lazy_dfa          fwd_whole {st.program.code, st.program.classes};
+  lazy_dfa          fwd_none  {st.program.code, st.program.classes, lazy_dfa::state_budget, nullptr, false, true, false, false, 0};
+  EXPECT_EQ(fwd_none.forward_end(text), fwd_whole.forward_end(text));
+  reverse_dfa rev_whole       {st.program.code, st.program.classes};
+  reverse_dfa rev_none        {st.program.code, st.program.classes, reverse_dfa::state_budget, nullptr, false, false, 0};
+  EXPECT_EQ(rev_none.reverse_start(text, text.size(), 0), rev_whole.reverse_start(text, text.size(), 0));
+  EXPECT(rev_none.byte_flushes() > 0U);
+}
+
+// The search DFAs are built with the process budget: a small one makes the scan flush until it quits, and the
+// VM answers the same.
+TEST(search_dfas_take_the_byte_budget)
+{
+  const std::string pattern {words_then_digit(300, 8)};
+  const std::string text    {random_letters(32768) + "7"};
+  const real::regex whole   {pattern};
+  const auto        want    {whole.search(text)};
+  real::detail::lazy_dfa_byte_budget() = std::size_t {8} << 10U;
+  real::detail::dfa_quits()            = 0;
+  const real::regex small {pattern};
+  const auto        got   {small.search(text)};
+  real::detail::lazy_dfa_byte_budget() = real::detail::lazy_dfa_default_byte_budget;
+  EXPECT_EQ(got.matched(), want.matched());
+  EXPECT(real::detail::dfa_quits().load() > 0U);
+}

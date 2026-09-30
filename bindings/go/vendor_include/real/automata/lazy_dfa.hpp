@@ -49,6 +49,21 @@ namespace real::detail {
     return disabled;
   }
 
+  //! Bytes one lazy DFA's state cache may hold by default (pc-sets, rows, hash entries), per direction: past
+  //! it the cache flushes as it does past its state budget. Above what any alternation of 2 000 words builds
+  //! without thrashing (30 MB); a pattern past it flushes, and a scan that keeps flushing quits to the VM.
+  inline constexpr std::size_t lazy_dfa_default_byte_budget {std::size_t {64} << 20U};
+
+  /*!
+   * \brief Test seam: the byte budget the search DFAs are built with (read at each DFA's construction).
+   * \return A reference to the process-wide budget; \ref lazy_dfa_default_byte_budget unless a test moved it.
+   */
+  inline std::size_t& lazy_dfa_byte_budget()
+  {
+    static std::size_t budget {lazy_dfa_default_byte_budget};
+    return budget;
+  }
+
   /*!
    * \brief Test seam: force the general loop off the bounded backtracker onto the Pike VM, so a
    *        differential can assert that both give the same answer on every small subject. Not for production
@@ -1193,6 +1208,7 @@ namespace real::detail {
       std::size_t misses       {0};   //!< Transitions that had to run subset construction.
       std::size_t flushes      {0};   //!< Cache flushes over this object's lifetime.
       std::size_t scan_flushes {0};   //!< flushes in the current scan (reset by \ref begin_scan).
+      std::size_t byte_flushes {0};   //!< Of \ref flushes, those the byte budget called, the state budget not reached.
     };
 
     /*!
@@ -1216,6 +1232,7 @@ namespace real::detail {
      *                    the VM would. The caller then asks the VM.
      * \param[in] raw_byte_starts The program was compiled with \ref flags::allow_raw_byte, so a lead that opens on a
      *                    continuation byte is built as any other (see \ref pattern_hints::raw_byte_starts).
+     * \param[in] byte_budget Bytes the cached states may hold before a flush; see \ref lazy_dfa_byte_budget.
      */
     explicit constexpr lazy_dfa(std::span<const instr>      code,
                                 std::span<const char_class> classes,
@@ -1224,7 +1241,8 @@ namespace real::detail {
                                 bool                        ascii_word      = false,
                                 bool                        byte_mode       = true,
                                 bool                        word_quit       = false,
-                                bool                        raw_byte_starts = false)
+                                bool                        raw_byte_starts = false,
+                                std::size_t                 byte_budget     = lazy_dfa_default_byte_budget)
       : code_ {code}, classes_ {classes},
         alpha_ {shared_alpha != nullptr ? *shared_alpha : compute_lazy_alphabet(code, classes)},
         eligible_ {compute_eligibility(code, ascii_word || word_quit) && (byte_mode || raw_byte_starts || !opens_on_continuation(code, classes))},
@@ -1234,7 +1252,7 @@ namespace real::detail {
         plain_ {eligible_ && !look_}, stride_ {alpha_.count + 2U},
         // A state id is its row's offset: the last row's cells must stay below the special ids, and a flush
         // at the budget still interns one state past it.
-        budget_ {std::min(budget, (std::size_t {quit_state} / stride_) - 2U)}
+        budget_ {std::min(budget, (std::size_t {quit_state} / stride_) - 2U)}, byte_budget_ {byte_budget}
     {
       if (look_) {
         // The alphabet splits on newline, ASCII word bytes and non-ASCII bytes when the program carries
@@ -1299,6 +1317,15 @@ namespace real::detail {
     [[nodiscard]] const counters& stats() const
     {
       return stats_;
+    }
+
+    /*!
+     * \brief Bytes the cached states hold now, as the byte budget counts them.
+     * \return The bytes.
+     */
+    [[nodiscard]] std::size_t bytes() const
+    {
+      return bytes_;
     }
 
     /*!
@@ -2223,7 +2250,9 @@ namespace real::detail {
       if (found != pc_set_cache::not_found) {
         return found * stride_; // the cache keeps row indices (it is shared with reverse_dfa); an id is an offset
       }
-      if (state_pcs_.size() >= budget_) {
+      const bool by_states {state_pcs_.size() >= budget_};
+      if (by_states || bytes_ >= byte_budget_) {
+        stats_.byte_flushes += by_states ? 0U : 1U;
         flush();
         return intern_fresh(pcs);   // rebuild from empty; the seeded start remains reachable
       }
@@ -2270,6 +2299,8 @@ namespace real::detail {
         res_.insert(res_.end(), stride_, no_transition);
       }
       cache_.insert(pcs, row);
+      bytes_ += (pcs.size() * sizeof(std::int32_t)) + sizeof(std::vector<std::int32_t>) + sizeof(std::uint32_t)
+                + (std::size_t {look_ ? 3U : 2U} *stride_ * sizeof(std::uint32_t)); // the pc-set, its hash entry, its rows
       return row * stride_;
     }
 
@@ -2286,6 +2317,7 @@ namespace real::detail {
           thrashing_ = true;
         }
       }
+      bytes_ = 0;
       state_pcs_.clear();
       trans_.clear();
       trans_seeded_.clear();
@@ -2379,17 +2411,19 @@ namespace real::detail {
     // allocations of 16 146 and cost 98 KB, and FLATTENING this into one pool with an offset per
     // state -- the fix the trie builder uses -- changed the count by exactly ZERO. Whether they
     // still hold on today's scaffolding-dominated cost is unknown until that attribution exists.
-    mutable std::vector<std::int32_t>                                          stack_;           //!< close_into's work stack, hoisted: it ran once per pc of the source state.
-    std::vector<std::vector<std::int32_t>>                                     state_pcs_;       //!< state id -> ordered pc-set.
-    std::vector<std::uint32_t>                                                 trans_;           //!< [state + accept_col] accept word, [state + cut_col] memoized cut, [state + trans_col + class] next, unseeded (post-match).
-    std::vector<std::uint32_t>                                                 trans_seeded_;    //!< The same rows re-seeding (pre-match); its accept word repeats trans_'s, its cut cell is unused.
-    std::vector<std::uint32_t>                                                 res_;             //!< [state + key] -> resolved state (look programs); a key spans the row's count + 2 cells.
-    pc_set_cache                                                               cache_;           //!< pc-set -> row index, the memo behind \ref intern.
+    mutable std::vector<std::int32_t>                                          stack_;          //!< close_into's work stack, hoisted: it ran once per pc of the source state.
+    std::vector<std::vector<std::int32_t>>                                     state_pcs_;      //!< state id -> ordered pc-set.
+    std::vector<std::uint32_t>                                                 trans_;          //!< [state + accept_col] accept word, [state + cut_col] memoized cut, [state + trans_col + class] next, unseeded (post-match).
+    std::vector<std::uint32_t>                                                 trans_seeded_;   //!< The same rows re-seeding (pre-match); its accept word repeats trans_'s, its cut cell is unused.
+    std::vector<std::uint32_t>                                                 res_;            //!< [state + key] -> resolved state (look programs); a key spans the row's count + 2 cells.
+    pc_set_cache                                                               cache_;          //!< pc-set -> row index, the memo behind \ref intern.
 
-    std::uint32_t stride_    {2};                                                                //!< Cells per row, alpha_.count + 2: a state id is its row's offset.
-    std::size_t   budget_    {state_budget};                                                     //!< Cached states tolerated before a \ref flush.
-    counters      stats_     {};                                                                 //!< Live counters, exposed by \ref stats.
-    bool          thrashing_ {false};                                                            //!< Set once this scan crossed \ref thrash_flushes flushes.
+    std::uint32_t stride_      {2};                                                             //!< Cells per row, alpha_.count + 2: a state id is its row's offset.
+    std::size_t   budget_      {state_budget};                                                  //!< Cached states tolerated before a \ref flush.
+    std::size_t   byte_budget_ {lazy_dfa_default_byte_budget};                                  //!< Cached bytes tolerated before a \ref flush.
+    std::size_t   bytes_       {0};                                                             //!< Bytes the cached states hold (pc-sets, rows, hash entries).
+    counters      stats_       {};                                                              //!< Live counters, exposed by \ref stats.
+    bool          thrashing_   {false};                                                         //!< Set once this scan crossed \ref thrash_flushes flushes.
   };
 
   /*!
@@ -2420,18 +2454,20 @@ namespace real::detail {
      *                         byte decide them. False, the default, declines any word boundary.
      * \param[in] word_quit    With Unicode word-ness, carry the word boundaries and quit next to a non-ASCII
      *                         byte (see \ref lazy_dfa's).
+     * \param[in] byte_budget  Bytes the cached states may hold before a flush; see \ref lazy_dfa_byte_budget.
      */
     explicit constexpr reverse_dfa(std::span<const instr>      code,
                                    std::span<const char_class> classes,
                                    std::size_t                 budget       = state_budget,
                                    const lazy_byte_alphabet*   shared_alpha = nullptr,
                                    bool                        ascii_word   = false,
-                                   bool                        word_quit    = false)
+                                   bool                        word_quit    = false,
+                                   std::size_t                 byte_budget  = lazy_dfa_default_byte_budget)
       : code_ {code}, classes_ {classes},
         alpha_ {shared_alpha != nullptr ? *shared_alpha : compute_lazy_alphabet(code, classes)},
         eligible_ {compute_eligibility(code, ascii_word || word_quit)}, word_quit_ {word_quit && !ascii_word},
         look_ {std::ranges::any_of(code, [](const instr& in) { return in.op == opcode::assert_position; })},
-        budget_ {budget}
+        budget_ {budget}, byte_budget_ {byte_budget}
     {
       if (look_) {
         for (unsigned b {0}; b < 256U; ++b) {
@@ -2515,6 +2551,24 @@ namespace real::detail {
     [[nodiscard]] bool eligible() const
     {
       return eligible_;
+    }
+
+    /*!
+     * \brief Bytes the cached states hold now, as the byte budget counts them.
+     * \return The bytes.
+     */
+    [[nodiscard]] std::size_t bytes() const
+    {
+      return bytes_;
+    }
+
+    /*!
+     * \brief Flushes over this object's lifetime that the byte budget called, the state budget not reached.
+     * \return The count.
+     */
+    [[nodiscard]] std::size_t byte_flushes() const
+    {
+      return byte_flushes_;
     }
 
     /*!
@@ -3043,7 +3097,11 @@ namespace real::detail {
       if (found != pc_set_cache::not_found) {
         return found;
       }
-      if (state_pcs_.size() >= budget_) {
+      const bool by_states {state_pcs_.size() >= budget_};
+      // Past the dead and start states only: flush() re-interns the start through here, and on a budget the
+      // start alone fills it would flush again for ever.
+      if (by_states || (bytes_ >= byte_budget_ && state_pcs_.size() > 2U)) {
+        byte_flushes_ += by_states ? 0U : 1U;
         flush();
       }
       const auto id {static_cast<std::uint32_t>(state_pcs_.size())};
@@ -3065,6 +3123,8 @@ namespace real::detail {
         res_.insert(res_.end(), alpha_.count + 1U, no_transition);
       }
       cache_.insert(pcs, id);
+      bytes_ += (pcs.size() * sizeof(std::int32_t)) + sizeof(std::vector<std::int32_t>) + sizeof(std::uint32_t) + 2U
+                + (std::size_t {alpha_.count} *sizeof(std::uint32_t)) + (look_ ? (alpha_.count + 1U) * sizeof(std::uint32_t) : 0U);
       return id;
     }
 
@@ -3074,6 +3134,7 @@ namespace real::detail {
     constexpr void flush()
     {
       ++flushes_;
+      bytes_ = 0;
       state_pcs_.clear();
       trans_.clear();
       state_has_start_.clear();
@@ -3099,30 +3160,33 @@ namespace real::detail {
       start_state_ = intern(start);
     }
 
-    std::span<const instr>                                                     code_;                       //!< The byte program, owned by the caller.
-    std::span<const char_class>                                                classes_;                    //!< Its byte classes, likewise borrowed.
-    lazy_byte_alphabet                                                         alpha_;                      //!< Byte-to-class map; its count is the row stride.
-    bool                                                                       eligible_    {false};        //!< \ref compute_eligibility's verdict, fixed at construction.
-    bool                                                                       word_quit_   {false};        //!< Unicode word boundaries carried, quitting next to a non-ASCII byte.
-    mutable bool                                                               quit_hit_    {false};        //!< Set by holds_left() inside one resolve(): that resolution is quit_state.
-    bool                                                                       look_        {false};        //!< The program carries position assertions (the look paths).
-    std::array<std::uint8_t, 256>                                              class_ctx_   {};             //!< Class -> the right context a byte of it gives (look programs).
-    std::array<std::uint32_t, 16>                                              starts_      {};             //!< Right context -> start state, per \ref flush (look programs).
-    std::int32_t                                                               match_pc_    {-1};           //!< The forward `match` pc — this pass's start; -1 when absent.
-    std::uint32_t                                                              start_state_ {0};            //!< Id of \ref match_pc_'s backward closure, re-interned by each \ref flush.
-    std::size_t                                                                budget_      {state_budget}; //!< Cached states tolerated before a \ref flush.
-    std::size_t                                                                flushes_     {0};            //!< bumped by flush(); step()'s stale-state guard against a mid-call reset.
-    std::vector<std::int32_t>                                                  rev_eps_pool_;               //!< transposed epsilon edges, CSR-packed.
-    std::vector<std::uint32_t>                                                 rev_eps_at_;                 //!< CSR offsets into \ref rev_eps_pool_, size code+2.
-    std::vector<std::int32_t>                                                  rev_consume_pool_;           //!< transposed consuming edges, CSR-packed.
-    std::vector<std::uint32_t>                                                 rev_consume_at_;             //!< CSR offsets into \ref rev_consume_pool_.
-    mutable std::vector<std::int32_t>                                          stack_;                      //!< rev_closure's work stack, hoisted for the same reason.
-    std::vector<std::vector<std::int32_t>>                                     state_pcs_;                  //!< state id -> sorted pc-set.
-    std::vector<std::uint32_t>                                                 trans_;                      //!< flat [state*stride + class] -> next.
-    std::vector<char>                                                          state_has_start_;            //!< state -> reaches the program start (an accept).
-    std::vector<std::uint8_t>                                                  state_pending_;              //!< state -> holds a pending assertion (look programs).
-    std::vector<std::uint32_t>                                                 res_;                        //!< flat [state*(count+1) + key] -> resolved state (look programs).
-    pc_set_cache                                                               cache_;                      //!< pc-set -> state id, the memo behind \ref intern.
+    std::span<const instr>                                                     code_;                                        //!< The byte program, owned by the caller.
+    std::span<const char_class>                                                classes_;                                     //!< Its byte classes, likewise borrowed.
+    lazy_byte_alphabet                                                         alpha_;                                       //!< Byte-to-class map; its count is the row stride.
+    bool                                                                       eligible_     {false};                        //!< \ref compute_eligibility's verdict, fixed at construction.
+    bool                                                                       word_quit_    {false};                        //!< Unicode word boundaries carried, quitting next to a non-ASCII byte.
+    mutable bool                                                               quit_hit_     {false};                        //!< Set by holds_left() inside one resolve(): that resolution is quit_state.
+    bool                                                                       look_         {false};                        //!< The program carries position assertions (the look paths).
+    std::array<std::uint8_t, 256>                                              class_ctx_    {};                             //!< Class -> the right context a byte of it gives (look programs).
+    std::array<std::uint32_t, 16>                                              starts_       {};                             //!< Right context -> start state, per \ref flush (look programs).
+    std::int32_t                                                               match_pc_     {-1};                           //!< The forward `match` pc — this pass's start; -1 when absent.
+    std::uint32_t                                                              start_state_  {0};                            //!< Id of \ref match_pc_'s backward closure, re-interned by each \ref flush.
+    std::size_t                                                                budget_       {state_budget};                 //!< Cached states tolerated before a \ref flush.
+    std::size_t                                                                flushes_      {0};                            //!< bumped by flush(); step()'s stale-state guard against a mid-call reset.
+    std::size_t                                                                byte_budget_  {lazy_dfa_default_byte_budget}; //!< Cached bytes tolerated before a \ref flush.
+    std::size_t                                                                bytes_        {0};                            //!< Bytes the cached states hold.
+    std::size_t                                                                byte_flushes_ {0};                            //!< Flushes the byte budget called, the state budget not reached.
+    std::vector<std::int32_t>                                                  rev_eps_pool_;                                //!< transposed epsilon edges, CSR-packed.
+    std::vector<std::uint32_t>                                                 rev_eps_at_;                                  //!< CSR offsets into \ref rev_eps_pool_, size code+2.
+    std::vector<std::int32_t>                                                  rev_consume_pool_;                            //!< transposed consuming edges, CSR-packed.
+    std::vector<std::uint32_t>                                                 rev_consume_at_;                              //!< CSR offsets into \ref rev_consume_pool_.
+    mutable std::vector<std::int32_t>                                          stack_;                                       //!< rev_closure's work stack, hoisted for the same reason.
+    std::vector<std::vector<std::int32_t>>                                     state_pcs_;                                   //!< state id -> sorted pc-set.
+    std::vector<std::uint32_t>                                                 trans_;                                       //!< flat [state*stride + class] -> next.
+    std::vector<char>                                                          state_has_start_;                             //!< state -> reaches the program start (an accept).
+    std::vector<std::uint8_t>                                                  state_pending_;                               //!< state -> holds a pending assertion (look programs).
+    std::vector<std::uint32_t>                                                 res_;                                         //!< flat [state*(count+1) + key] -> resolved state (look programs).
+    pc_set_cache                                                               cache_;                                       //!< pc-set -> state id, the memo behind \ref intern.
   };
 } // namespace real::detail
 
