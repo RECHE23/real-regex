@@ -800,14 +800,6 @@ namespace real::detail {
     static constexpr bool supports_aho_corasick {true};
   };
 
-  //! \brief Cap on how far a jump chain is followed to a loop head (empty-iteration exit routing);
-  //!        a loop join reaches its split in one hop, so this is a generous bound, never a hot cost.
-  // A GENEROUS BOUND on an unreachable path, not a tuning knob: a loop join reaches its split in one
-  // hop, so eight is headroom against a shape the compiler does not emit. Nothing guards its value,
-  // because no pattern gets near it -- which is the intent, and a test manufacturing a nine-hop chain
-  // would pin the bound rather than any behaviour the engine has. Namespace-scoped because the DFA
-  // fidelity decision (`dfa.hpp`) replays this same closure walk and must read the same bound.
-  inline constexpr int max_loop_hops {8};
 
   /*!
    * \brief Tells when the anchored walks from candidates should give way to one forward pass and one

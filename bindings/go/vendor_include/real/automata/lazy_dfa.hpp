@@ -37,6 +37,15 @@
 
 namespace real::detail {
 
+  //! \brief Cap on how far a jump chain is followed to a loop head (empty-iteration exit routing);
+  //!        a loop join reaches its split in one hop, so this is a generous bound, never a hot cost.
+  // A GENEROUS BOUND on an unreachable path, not a tuning knob: a loop join reaches its split in one
+  // hop, so eight is headroom against a shape the compiler does not emit. Nothing guards its value,
+  // because no pattern gets near it -- which is the intent, and a test manufacturing a nine-hop chain
+  // would pin the bound rather than any behaviour the engine has. Namespace-scoped because every closure
+  // walk -- the VM's, the backtracker's, the lazy DFA's, the DFA fidelity decision's -- reads the same bound.
+  inline constexpr int max_loop_hops {8};
+
   /*!
    * \brief Test seam: force the matcher off the lazy-DFA route onto the pure Pike VM, so a differential can
    *        assert that routed and unrouted searches give identical results within one binary. Not for
@@ -1907,7 +1916,7 @@ namespace real::detail {
             stack_.push_back(in.primary_target);
             break;
           case opcode::jump:
-            stack_.push_back(in.primary_target);
+            stack_.push_back(loop_exit_target(in, seen));
             break;
           case opcode::save:
             stack_.push_back(cur + 1);
@@ -1916,6 +1925,28 @@ namespace real::detail {
             break;   // assert / klass_cp / lookaround: only reachable for ineligible programs (not built)
         }
       }
+    }
+
+    /*!
+     * \brief Where a `jump` leads within one step's closure, as in the VM: into a loop head the closure already
+     *        entered at this position, the loop's exit. An empty iteration ends the loop there, in its priority
+     *        place, before any branch that would consume.
+     * \param[in] in   The `jump`.
+     * \param[in] seen This step's visited marks.
+     * \return The pc to continue at.
+     */
+    [[nodiscard]] constexpr std::int32_t loop_exit_target(const instr&             in,
+                                                          const std::vector<char>& seen) const
+    {
+      std::int32_t head {in.primary_target};
+      for (int hops {0}; hops < max_loop_hops && seen[static_cast<std::size_t>(head)] != 0
+           && code_[static_cast<std::size_t>(head)].op == opcode::jump;
+           ++hops) {
+        head = code_[static_cast<std::size_t>(head)].primary_target;
+      }
+      const instr& target {code_[static_cast<std::size_t>(head)]};
+      return seen[static_cast<std::size_t>(head)] != 0 && target.op == opcode::split ? target.secondary_target
+                                                                                   : in.primary_target;
     }
 
     /*!
@@ -1954,7 +1985,7 @@ namespace real::detail {
             stack_.push_back(in.primary_target);
             break;
           case opcode::jump:
-            stack_.push_back(in.primary_target);
+            stack_.push_back(loop_exit_target(in, seen));
             break;
           case opcode::save:
             stack_.push_back(cur + 1);
