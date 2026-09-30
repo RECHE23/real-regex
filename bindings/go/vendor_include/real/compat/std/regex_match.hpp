@@ -573,7 +573,9 @@ namespace real::compat {
                        bool                              anchored,
                        regex_constants::match_flag_type  mf)
     {
-      if constexpr (real_eligible<CharT, Traits>) {
+      // Only a contiguous range is a string_view: std::to_address accepts any iterator with an arrow, and on a
+      // deque, a list or a reverse iterator it names one element, not the range. Those run on std.
+      if constexpr (real_eligible<CharT, Traits> && std::contiguous_iterator<BidirIt>) {
         if (re.uses_real() && real_honors(mf)) {
           const std::string_view sv     {std::to_address(first),
                                          static_cast<std::size_t>(std::distance(first, last))};

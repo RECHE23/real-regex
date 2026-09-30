@@ -412,7 +412,9 @@ differential fuzzer (517 k iterations, zero remaining both-accept divergence):
   `search`/`match` -- only for `regex_replace`/iterators, where the advance-after-empty-match rule
   differs from ECMAScript.
 - `match_results` requires a **contiguous** iterator (a `std::deque` sequence is rejected at
-  compile time): sub-matches are built from byte offsets.
+  compile time): sub-matches are built from byte offsets. `regex_search` / `regex_match` without
+  `match_results` accept any bidirectional iterator; a non-contiguous one (a `std::deque`, a `std::list`,
+  a reverse iterator) runs on `std::regex`, with its cost.
 - Matching against an rvalue `std::string` is deleted (the result would dangle), as in `real`/`std`.
 
 ## Performance (measured, real backend vs std::regex)

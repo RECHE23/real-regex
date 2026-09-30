@@ -6,6 +6,8 @@
 // the allowlisted libstdc++ deviations, where the compat (spec) behavior is pinned instead.
 //
 // Both backends are exercised (real-backed AND the std fallback) so coverage is honest.
+#include <list>
+#include <deque>
 #include <regex>
 #include <sstream>
 #include <string>
@@ -1772,4 +1774,30 @@ TEST(compat_replace_range_with_prev_avail_reads_the_callers_context)
                      std::regex_constants::match_prev_avail);
   EXPECT_EQ(glued_got, glued_want);
   EXPECT_EQ(glued_got, "a <a>");
+}
+
+// A non-contiguous range -- a deque past its first block, a list, a reverse iterator -- runs on std in the
+// overloads that take no match_results, where it compiles: an arrow on its iterator names one element, not the
+// range, and REAL would read past it.
+TEST(compat_non_contiguous_range_without_results_answers_as_std)
+{
+  std::string subject(10000, 'a');
+  subject += "needle";
+  const std::deque<char> deque(subject.begin(), subject.end());
+  const std::list<char>  list(subject.begin(), subject.end());
+  const rc::regex        needle     {"needle"};
+  const std::regex       ref_needle {"needle"};
+  const rc::regex        whole      {"a*needle"};
+  const std::regex       ref_whole  {"a*needle"};
+  EXPECT_EQ(rc::regex_search(deque.begin(), deque.end(), needle), std::regex_search(deque.begin(), deque.end(), ref_needle));
+  EXPECT_EQ(rc::regex_search(list.begin(), list.end(), needle), std::regex_search(list.begin(), list.end(), ref_needle));
+  EXPECT_EQ(rc::regex_match(deque.begin(), deque.end(), whole), std::regex_match(deque.begin(), deque.end(), ref_whole));
+  EXPECT_EQ(rc::regex_match(list.begin(), list.end(), whole), std::regex_match(list.begin(), list.end(), ref_whole));
+  EXPECT(rc::regex_search(list.begin(), list.end(), needle));
+  const std::string  reversed      {"eldeen and more"};
+  const rc::regex    backwards     {"needle"};
+  const std::regex   ref_backwards {"needle"};
+  EXPECT_EQ(rc::regex_search(reversed.crbegin(), reversed.crend(), backwards),
+            std::regex_search(reversed.crbegin(), reversed.crend(), ref_backwards));
+  EXPECT(rc::regex_search(reversed.crbegin(), reversed.crend(), backwards));
 }
