@@ -834,3 +834,100 @@ TEST(search_dfas_take_the_byte_budget)
   EXPECT_EQ(got.matched(), want.matched());
   EXPECT(real::detail::dfa_quits().load() > 0U);
 }
+
+namespace {
+  //! \brief \p size random `a`/`b` bytes: `[ab]*a[ab]{k}c` meets a new state at almost every byte.
+  std::string random_ab(std::size_t size)
+  {
+    std::uint32_t bits {0x9E3779B9U};
+    std::string   out;
+    while (out.size() < size) {
+      bits ^= bits << 13U;
+      bits ^= bits >> 17U;
+      bits ^= bits << 5U;
+      out  += ((bits & 1U) != 0U) ? 'a' : 'b';
+    }
+    return out;
+  }
+} // namespace
+
+// Past its first fill, a cache that fills again before reading ten bytes per state quits instead of flushing,
+// keeps what it built, and the next search on it quits at its first miss without building anything.
+TEST(lazy_dfa_quits_on_a_cache_that_does_not_pay)
+{
+  const auto        st   {dynamic_storage::compile("[ab]*a[ab]{10}c", real::flags::none)};
+  const std::string text {random_ab(8192) + "c"};
+  lazy_dfa          dfa  {st.program.code, st.program.classes, 64, nullptr, false, true, true};
+  EXPECT_EQ(dfa.forward_end(text), lazy_dfa::quit_pos);
+  EXPECT_EQ(dfa.stats().flushes, 1U);
+  EXPECT_EQ(dfa.stats().refused_flushes, 1U);
+  const std::size_t misses {dfa.stats().misses};
+  EXPECT_EQ(dfa.forward_end(text), lazy_dfa::quit_pos);
+  EXPECT_EQ(dfa.stats().flushes, 1U);
+  EXPECT(dfa.stats().misses - misses <= 2U); // the first miss asks, and is refused
+}
+
+// A cache that reads far more than ten bytes per state between its fills flushes as often as it must and never
+// quits: long runs no state of `[ab]*a[ab]{4}c` changes on, between six-byte bursts that each build fewer states
+// than the budget holds, and together more.
+TEST(lazy_dfa_keeps_flushing_a_cache_that_pays)
+{
+  const auto        st    {dynamic_storage::compile("[ab]*a[ab]{4}c", real::flags::none)};
+  const std::string noise {random_ab(std::size_t {6} *40U)};
+  std::string       text;
+  for (std::size_t burst {0}; burst < 40U; ++burst) {
+    text += std::string(2000, 'x');
+    text += noise.substr(burst * 6U, 6);
+  }
+  text += "aabbac";
+  lazy_dfa          whole {st.program.code, st.program.classes};
+  lazy_dfa          small {st.program.code, st.program.classes, 20, nullptr, false, true, true};
+  const std::size_t want  {whole.forward_end(text)};
+  EXPECT_EQ(small.forward_end(text), want);
+  EXPECT(small.stats().flushes >= 2U);
+  EXPECT_EQ(small.stats().refused_flushes, 0U);
+}
+
+// A refused flush hands its caller the dead state without caching the edge: a later search on the same DFA
+// answers right or quits, never a match missed.
+TEST(lazy_dfa_refused_flush_caches_nothing)
+{
+  const auto        st        {dynamic_storage::compile("[ab]*a[ab]{10}c", real::flags::none)};
+  const std::string noisy     {random_ab(8192) + "c"};
+  const std::string plain     {std::string(64, 'a') + "c"};
+  lazy_dfa          whole     {st.program.code, st.program.classes};
+  lazy_dfa          dfa       {st.program.code, st.program.classes, 64, nullptr, false, true, true};
+  const std::size_t want      {whole.forward_end(plain)};
+  EXPECT_EQ(dfa.forward_end(noisy), lazy_dfa::quit_pos);
+  const std::size_t got       {dfa.forward_end(plain)};
+  EXPECT(got == want || got == lazy_dfa::quit_pos);
+  EXPECT(want != real::npos);
+}
+
+// The bytes count from the last flush, not from the DFA's birth: a long search that never flushed does not buy a
+// later noisy one its refills.
+TEST(lazy_dfa_progress_counts_from_the_last_flush)
+{
+  const auto        st    {dynamic_storage::compile("[ab]*a[ab]{10}c", real::flags::none)};
+  const std::string quiet (100000, 'x');
+  const std::string noisy {random_ab(8192) + "c"};
+  lazy_dfa          dfa   {st.program.code, st.program.classes, 64, nullptr, false, true, true};
+  EXPECT_EQ(dfa.forward_end(quiet), real::npos);
+  EXPECT_EQ(dfa.forward_end(noisy), lazy_dfa::quit_pos);
+  EXPECT_EQ(dfa.stats().refused_flushes, 1U);
+}
+
+// The bytes of every search since the last flush count: many short searches that each read too little for a
+// refill on their own, and enough together, keep flushing without a quit.
+TEST(lazy_dfa_progress_counts_across_searches)
+{
+  const auto        st    {dynamic_storage::compile("[ab]*a[ab]{4}c", real::flags::none)};
+  const std::string noise {random_ab(std::size_t {6} *60U)};
+  lazy_dfa          dfa   {st.program.code, st.program.classes, 20, nullptr, false, true, true};
+  for (std::size_t search {0}; search < 60U; ++search) {
+    const std::string text {std::string(100, 'x') + noise.substr(search * 6U, 6)};
+    EXPECT(dfa.forward_end(text) != lazy_dfa::quit_pos);
+  }
+  EXPECT(dfa.stats().flushes >= 2U);
+  EXPECT_EQ(dfa.stats().refused_flushes, 0U);
+}

@@ -1458,18 +1458,22 @@ namespace real::detail {
     static constexpr std::uint32_t no_match_idx   {0xFFFFFFFFU}; //!< A state whose ordered set holds no accept.
     static constexpr std::uint32_t pending_idx    {0xFFFFFFFEU}; //!< A state whose accept waits on a pending assertion: only resolve() decides it.
     static constexpr std::size_t   state_budget   {65536};       //!< Cached states before a flush; the memory cap is \ref lazy_dfa_byte_budget.
-    static constexpr std::size_t   thrash_flushes {2};           //!< Flushes within one scan that trip \ref thrashing.
+    static constexpr std::size_t   thrash_flushes {2};           //!< Flushes within one scan that trip \ref thrashing, where the scan may not quit.
+    //! Bytes read per cached state below which a DFA that may quit refuses its next flush and quits instead: a cache
+    //! that fills again before it has read ten bytes per state costs more to rebuild than the VM costs to scan.
+    static constexpr std::size_t   quit_bytes_per_state {10};
 
     /*!
      * \brief Cache-behaviour counters, for the policy tests and later tuning.
      */
     struct counters
     {
-      std::size_t hits         {0};   //!< Transitions served from the cached row.
-      std::size_t misses       {0};   //!< Transitions that had to run subset construction.
-      std::size_t flushes      {0};   //!< Cache flushes over this object's lifetime.
-      std::size_t scan_flushes {0};   //!< flushes in the current scan (reset by \ref begin_scan).
-      std::size_t byte_flushes {0};   //!< Of \ref flushes, those the byte budget called, the state budget not reached.
+      std::size_t hits            {0}; //!< Transitions served from the cached row.
+      std::size_t misses          {0}; //!< Transitions that had to run subset construction.
+      std::size_t flushes         {0}; //!< Cache flushes over this object's lifetime.
+      std::size_t scan_flushes    {0}; //!< flushes in the current scan (reset by \ref begin_scan).
+      std::size_t byte_flushes    {0}; //!< Of \ref flushes, those the byte budget called, the state budget not reached.
+      std::size_t refused_flushes {0}; //!< Flushes refused for want of progress: the scan quit instead.
     };
 
     /*!
@@ -1563,7 +1567,8 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Whether this scan crossed \ref thrash_flushes flushes — the cache is not paying for it.
+     * \brief Whether this scan stopped paying: its cache filled again before reading \ref quit_bytes_per_state
+     *        bytes per state (or, for a DFA that may not quit, crossed \ref thrash_flushes flushes).
      * \return True once the caller should abandon the DFA and finish the search on the Pike VM.
      */
     [[nodiscard]] bool thrashing() const
@@ -1624,6 +1629,7 @@ namespace real::detail {
       std::size_t         best_end {npos};
       bool                matched  {false};
       std::size_t         pos      {start};
+      scan_origin_ = start;
       while (true) {
         // Both tables carry the accept word, so the walk before a match reads one row per byte.
         const std::uint32_t midx {(matched ? trans_ : trans_seeded_)[state + accept_col]};
@@ -1646,10 +1652,12 @@ namespace real::detail {
           state = cached;
         }
         else {
-          state = matched ? step(state, byte) : step_seeded(state, byte);
+          miss_pos_ = pos;
+          state     = matched ? step(state, byte) : step_seeded(state, byte);
         }
         ++pos;
       }
+      window_bytes_ += pos - scan_origin_;
       return (thrashing_ && may_quit_) ? quit_pos : best_end;
     }
 
@@ -1716,6 +1724,7 @@ namespace real::detail {
       std::uint32_t state    {start_state_};
       std::size_t   best_end {npos};
       std::size_t   pos      {start};
+      scan_origin_ = start;
       while (true) {
         const std::uint32_t midx {trans_[state + accept_col]};
         if (midx != no_match_idx) {
@@ -1732,9 +1741,16 @@ namespace real::detail {
         const std::uint8_t  byte  {static_cast<std::uint8_t>(text[pos])};
         const std::uint8_t  cls   {alpha_.of[byte]};
         const std::uint32_t trans {trans_[state + trans_col + cls]};  // the state id is its row's offset: no multiply on the chain
-        state = (trans != no_transition) ? trans : step(state, byte); // anchored: never re-seed -- a match starts at `start` or not at all
+        if (trans != no_transition) {
+          state = trans;
+        }
+        else {
+          miss_pos_ = pos;
+          state     = step(state, byte); // anchored: never re-seed -- a match starts at `start` or not at all
+        }
         ++pos;
       }
+      window_bytes_ += pos - scan_origin_;
       if (thrashing_ && may_quit_) {
         return {.end = npos, .scanned_to = pos, .quit = true};
       }
@@ -1789,9 +1805,9 @@ namespace real::detail {
           close_any(pc + consumed_width(pc), next, seen, ctx);
         }
       }
-      const std::size_t   flushes_before {stats_.flushes};
+      const std::size_t   flushes_before {epoch_};
       const std::uint32_t result         {intern_any(std::move(next), ctx)}; // may grow/flush the tables — do not hold a reference
-      if (stats_.flushes == flushes_before) {
+      if (epoch_ == flushes_before) {
         trans_[state + trans_col + cls] = result;   // no flush: `state` is still valid, so cache the edge
       }
       // On a flush mid-step the caller's `state` id is stale; `result` is a fresh post-flush id, and the
@@ -1830,9 +1846,9 @@ namespace real::detail {
         }
       }
       close_any(0, next, seen, ctx); // re-seed at the lowest priority (deduped against the advanced threads)
-      const std::size_t   flushes_before {stats_.flushes};
+      const std::size_t   flushes_before {epoch_};
       const std::uint32_t result         {intern_any(std::move(next), ctx)};
-      if (stats_.flushes == flushes_before) {
+      if (epoch_ == flushes_before) {
         trans_seeded_[state + trans_col + cls] = result;
       }
       return (thrashing_ && may_quit_) ? dead_state : result; // see step()
@@ -1873,9 +1889,9 @@ namespace real::detail {
       if (memo != no_transition) {
         return memo;
       }
-      const std::size_t   flushes_before {stats_.flushes};
+      const std::size_t   flushes_before {epoch_};
       const std::uint32_t result         {cut(state, trans_[state + accept_col])}; // intern may flush/realloc
-      if (stats_.flushes == flushes_before) {
+      if (epoch_ == flushes_before) {
         trans_[state + cut_col] = result; // no flush: `state` is still valid, memoise the edge
       }
       return (thrashing_ && may_quit_) ? dead_state : result; // see step()
@@ -2344,9 +2360,9 @@ namespace real::detail {
         res_[slot] = quit_state; // the same state and key meet the same byte: memoizing it is exact
         return quit_state;
       }
-      const std::size_t   flushes_before {stats_.flushes};
+      const std::size_t   flushes_before {epoch_};
       const std::uint32_t result         {intern(out)};
-      if (stats_.flushes == flushes_before) {
+      if (epoch_ == flushes_before) {
         res_[slot] = result;
       }
       return result;
@@ -2369,9 +2385,9 @@ namespace real::detail {
       std::vector<std::int32_t> pcs;
       std::vector<char>         seen(code_.size(), 0);
       close_look(0, pcs, seen, ctx, key_unknown);
-      const std::size_t   flushes_before {stats_.flushes};
+      const std::size_t   flushes_before {epoch_};
       const std::uint32_t result         {intern_any(std::move(pcs), ctx)};
-      if (stats_.flushes == flushes_before) {
+      if (epoch_ == flushes_before) {
         starts_[ctx] = result;
       }
       return result;
@@ -2407,6 +2423,7 @@ namespace real::detail {
       std::size_t   best_end {npos};
       bool          matched  {false};
       std::size_t   pos      {start};
+      scan_origin_ = start;
       while (true) {
         // Only a state holding a pending assertion reads what follows it; the rest are their own resolution.
         std::uint32_t here {state};
@@ -2444,7 +2461,8 @@ namespace real::detail {
           state = cached;
         }
         else {
-          state = seed ? step_seeded(here, byte) : step(here, byte);
+          miss_pos_ = pos;
+          state     = seed ? step_seeded(here, byte) : step(here, byte);
           if (thrashing_ && may_quit_) {
             return quit_pos; // before a match the dead state keeps seeding, so the loop would not end on it
           }
@@ -2452,6 +2470,7 @@ namespace real::detail {
         ++pos;
       }
       // As the other scans: a cut that flushed hands back the dead state, which ends the loop as a match's end.
+      window_bytes_ += pos - scan_origin_;
       return (thrashing_ && may_quit_) ? quit_pos : best_end;
     }
 
@@ -2482,6 +2501,7 @@ namespace real::detail {
       std::uint32_t state    {start_for(ctx_at(text, start))};
       std::size_t   best_end {npos};
       std::size_t   pos      {start};
+      scan_origin_ = start;
       while (true) {
         std::uint32_t here {state};
         std::uint32_t word {trans_[state + accept_col]};
@@ -2509,9 +2529,16 @@ namespace real::detail {
         }
         const auto          byte   {static_cast<std::uint8_t>(text[pos])};
         const std::uint32_t cached {trans_[here + trans_col + alpha_.of[byte]]};
-        state = cached != no_transition ? cached : step(here, byte);
+        if (cached != no_transition) {
+          state = cached;
+        }
+        else {
+          miss_pos_ = pos;
+          state     = step(here, byte);
+        }
         ++pos;
       }
+      window_bytes_ += pos - scan_origin_;
       if (thrashing_ && may_quit_) {
         return {.end = npos, .scanned_to = pos, .quit = true};
       }
@@ -2535,6 +2562,15 @@ namespace real::detail {
       }
       const bool by_states {state_pcs_.size() >= budget_};
       if (by_states || bytes_ >= byte_budget_) {
+        // Past its first fill, a cache that filled again before reading ten bytes per state is not paying: the
+        // scan quits to the VM and the full cache is kept, so the next search's first miss asks again.
+        const std::size_t window {window_bytes_ + (miss_pos_ >= scan_origin_ ? miss_pos_ - scan_origin_ : 0U)};
+        if (may_quit_ && stats_.flushes != 0U && window < quit_bytes_per_state * state_pcs_.size()) {
+          ++stats_.refused_flushes;
+          thrashing_ = true;
+          ++epoch_; // the caller's state ids stay valid, but the dead state handed back must not be cached
+          return dead_state;
+        }
         stats_.byte_flushes += by_states ? 0U : 1U;
         flush();
         return intern_fresh(pcs);   // rebuild from empty; the seeded start remains reachable
@@ -2596,9 +2632,12 @@ namespace real::detail {
       if (!first) {
         ++stats_.flushes;
         ++stats_.scan_flushes;
-        if (stats_.scan_flushes >= thrash_flushes) {
-          thrashing_ = true;
+        ++epoch_;
+        if (!may_quit_ && stats_.scan_flushes >= thrash_flushes) {
+          thrashing_ = true; // informational where the scan may not quit; a scan that may, quits on its progress
         }
+        window_bytes_ = 0;
+        scan_origin_  = miss_pos_;
       }
       bytes_ = 0;
       state_pcs_.clear();
@@ -2694,19 +2733,23 @@ namespace real::detail {
     // allocations of 16 146 and cost 98 KB, and FLATTENING this into one pool with an offset per
     // state -- the fix the trie builder uses -- changed the count by exactly ZERO. Whether they
     // still hold on today's scaffolding-dominated cost is unknown until that attribution exists.
-    mutable std::vector<std::int32_t>                                          stack_;          //!< close_into's work stack, hoisted: it ran once per pc of the source state.
-    std::vector<std::vector<std::int32_t>>                                     state_pcs_;      //!< state id -> ordered pc-set.
-    std::vector<std::uint32_t>                                                 trans_;          //!< [state + accept_col] accept word, [state + cut_col] memoized cut, [state + trans_col + class] next, unseeded (post-match).
-    std::vector<std::uint32_t>                                                 trans_seeded_;   //!< The same rows re-seeding (pre-match); its accept word repeats trans_'s, its cut cell is unused.
-    std::vector<std::uint32_t>                                                 res_;            //!< [state + key] -> resolved state (look programs); a key spans the row's count + 2 cells.
-    pc_set_cache                                                               cache_;          //!< pc-set -> row index, the memo behind \ref intern.
+    mutable std::vector<std::int32_t>                                          stack_;        //!< close_into's work stack, hoisted: it ran once per pc of the source state.
+    std::vector<std::vector<std::int32_t>>                                     state_pcs_;    //!< state id -> ordered pc-set.
+    std::vector<std::uint32_t>                                                 trans_;        //!< [state + accept_col] accept word, [state + cut_col] memoized cut, [state + trans_col + class] next, unseeded (post-match).
+    std::vector<std::uint32_t>                                                 trans_seeded_; //!< The same rows re-seeding (pre-match); its accept word repeats trans_'s, its cut cell is unused.
+    std::vector<std::uint32_t>                                                 res_;          //!< [state + key] -> resolved state (look programs); a key spans the row's count + 2 cells.
+    pc_set_cache                                                               cache_;        //!< pc-set -> row index, the memo behind \ref intern.
 
-    std::uint32_t stride_      {2};                                                             //!< Cells per row, alpha_.count + 2: a state id is its row's offset.
-    std::size_t   budget_      {state_budget};                                                  //!< Cached states tolerated before a \ref flush.
-    std::size_t   byte_budget_ {lazy_dfa_default_byte_budget};                                  //!< Cached bytes tolerated before a \ref flush.
-    std::size_t   bytes_       {0};                                                             //!< Bytes the cached states hold (pc-sets, rows, hash entries).
-    counters      stats_       {};                                                              //!< Live counters, exposed by \ref stats.
-    bool          thrashing_   {false};                                                         //!< Set once this scan crossed \ref thrash_flushes flushes.
+    std::uint32_t stride_       {2};                                                          //!< Cells per row, alpha_.count + 2: a state id is its row's offset.
+    std::size_t   budget_       {state_budget};                                               //!< Cached states tolerated before a \ref flush.
+    std::size_t   byte_budget_  {lazy_dfa_default_byte_budget};                               //!< Cached bytes tolerated before a \ref flush.
+    std::size_t   bytes_        {0};                                                          //!< Bytes the cached states hold (pc-sets, rows, hash entries).
+    counters      stats_        {};                                                           //!< Live counters, exposed by \ref stats.
+    std::size_t   epoch_        {0};                                                          //!< Bumped by every flush and every refused one: a caller's cached ids went stale.
+    std::size_t   scan_origin_  {0};                                                          //!< Where the bytes the current scan has read are counted from.
+    std::size_t   miss_pos_     {0};                                                          //!< Position of the scan's latest cache miss.
+    std::size_t   window_bytes_ {0};                                                          //!< Bytes read since the last flush by scans that have ended.
+    bool          thrashing_    {false};                                                      //!< Set once this scan stopped paying: a refused flush, or \ref thrash_flushes flushes where it may not quit.
   };
 
   /*!
