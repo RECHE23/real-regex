@@ -383,6 +383,21 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Whether a match can open on a UTF-8 continuation byte (`10xxxxxx`).
+     * \param[in] first_bytes The pattern's possible first bytes.
+     * \return True when one of them is a continuation byte.
+     */
+    static constexpr bool opens_on_continuation(const char_class& first_bytes)
+    {
+      for (unsigned b {0x80U}; b <= 0xBFU; ++b) {
+        if (first_bytes.test(static_cast<std::uint8_t>(b))) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    /*!
      * \brief Emits the full NFA program for the bound AST.
      * \return The compiled \ref dynamic_program (code, classes, names, hints).
      * \throws real::regex_error if the program exceeds \ref max_program_size.
@@ -554,6 +569,19 @@ namespace real::detail {
         }
       }
       prog.hints.nullable_captured_repeat = ast_has_nullable_captured_repeat(tree_, tree_.root);
+      // In text mode a match never starts on a UTF-8 continuation byte (pike_vm::seed_viable). A pattern that can
+      // open on one -- a raw `\x80`-`\xBF` at its lead -- is left to the VM and the DFAs, which hold that rule; the
+      // literal, alternation and loop routes find the byte wherever it sits. Last, so no route hint set above
+      // survives it; the facts the compat layer reads about the pattern are kept. Under allow_raw_byte a `\C` lead
+      // may start inside a code point, as RE2's does, and keeps its routes.
+      prog.hints.raw_byte_starts = has_flag(flags_, flags::allow_raw_byte);
+      if (!prog.byte_mode && !prog.hints.raw_byte_starts && prog.hints.first_bytes_valid
+          && opens_on_continuation(prog.hints.first_bytes)) {
+        pattern_hints facts {};
+        facts.empty_match_possible     = prog.hints.empty_match_possible;
+        facts.nullable_captured_repeat = prog.hints.nullable_captured_repeat;
+        prog.hints                     = facts;
+      }
       if (prog.code.size() > max_program_size) {
         throw regex_error(std::string {program_too_large}, 0);
       }

@@ -1214,17 +1214,21 @@ namespace real::detail {
      *                    non-ASCII byte (between two ASCII bytes a Unicode word boundary is an ASCII one);
      *                    and once the cache thrashes (\ref thrashing), where building states costs more than
      *                    the VM would. The caller then asks the VM.
+     * \param[in] raw_byte_starts The program was compiled with \ref flags::allow_raw_byte, so a lead that opens on a
+     *                    continuation byte is built as any other (see \ref pattern_hints::raw_byte_starts).
      */
     explicit constexpr lazy_dfa(std::span<const instr>      code,
                                 std::span<const char_class> classes,
-                                std::size_t                 budget       = state_budget,
-                                const lazy_byte_alphabet*   shared_alpha = nullptr,
-                                bool                        ascii_word   = false,
-                                bool                        byte_mode    = true,
-                                bool                        word_quit    = false)
+                                std::size_t                 budget          = state_budget,
+                                const lazy_byte_alphabet*   shared_alpha    = nullptr,
+                                bool                        ascii_word      = false,
+                                bool                        byte_mode       = true,
+                                bool                        word_quit       = false,
+                                bool                        raw_byte_starts = false)
       : code_ {code}, classes_ {classes},
         alpha_ {shared_alpha != nullptr ? *shared_alpha : compute_lazy_alphabet(code, classes)},
-        eligible_ {compute_eligibility(code, ascii_word || word_quit)}, byte_mode_ {byte_mode},
+        eligible_ {compute_eligibility(code, ascii_word || word_quit) && (byte_mode || raw_byte_starts || !opens_on_continuation(code, classes))},
+        byte_mode_ {byte_mode},
         word_quit_ {word_quit && !ascii_word}, may_quit_ {word_quit},
         look_ {std::ranges::any_of(code, [](const instr& in) { return in.op == opcode::assert_position; })},
         plain_ {eligible_ && !look_}, stride_ {alpha_.count + 2U},
@@ -1587,6 +1591,64 @@ namespace real::detail {
         trans_[state + cut_col] = result; // no flush: `state` is still valid, memoise the edge
       }
       return (thrashing_ && may_quit_) ? dead_state : result; // see step()
+    }
+
+    /*!
+     * \brief Whether a match can open on a UTF-8 continuation byte: a byte or class the start's closure reaches
+     *        takes one. In text mode such a match may not start inside a code point, and neither the forward
+     *        scan's seeds nor the reverse walk's start test for that; the VM does (pike_vm::seed_viable).
+     * \param[in] code    The program's instruction stream.
+     * \param[in] classes Its classes.
+     * \return True when some first byte is `10xxxxxx`.
+     */
+    static constexpr bool opens_on_continuation(std::span<const instr>      code,
+                                                std::span<const char_class> classes)
+    {
+      std::vector<std::uint8_t>  seen(code.size(), 0);
+      std::vector<std::int32_t>  stack {0};
+      const auto                 takes {[](const char_class& c) {
+                                          for (unsigned b {0x80U}; b <= 0xBFU; ++b) {
+                                            if (c.test(static_cast<std::uint8_t>(b))) {
+                                              return true;
+                                            }
+                                          }
+                                          return false;
+                                        }};
+      while (!stack.empty()) {
+        const std::int32_t pc {stack.back()};
+        stack.pop_back();
+        if (pc < 0 || static_cast<std::size_t>(pc) >= code.size() || seen[static_cast<std::size_t>(pc)] != 0) {
+          continue;
+        }
+        seen[static_cast<std::size_t>(pc)] = 1;
+        const instr& in {code[static_cast<std::size_t>(pc)]};
+        switch (in.op) {
+          case opcode::byte:
+            if ((in.arg8 & 0xC0U) == 0x80U) {
+              return true;
+            }
+            break;
+          case opcode::klass:
+            if (takes(classes[in.arg16])) {
+              return true;
+            }
+            break;
+          case opcode::split:
+            stack.push_back(in.primary_target);
+            stack.push_back(in.secondary_target);
+            break;
+          case opcode::jump:
+            stack.push_back(in.primary_target);
+            break;
+          case opcode::save:
+          case opcode::assert_position:
+            stack.push_back(pc + 1);
+            break;
+          default:
+            break; // match, or an op no forward DFA represents
+        }
+      }
+      return false;
     }
 
     /*!

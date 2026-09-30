@@ -830,6 +830,12 @@ namespace real {
       //! \brief Offset of the rarest byte of \ref inner_literal, as \ref prefix_rare. Meaningful when
       //!        \ref inner_literal_len >= 2.
       std::uint8_t inner_literal_rare {};
+
+      //! \brief Compiled with \ref flags::allow_raw_byte, so a lead that opens on a UTF-8 continuation byte (RE2's
+      //!        `\C`) keeps its routes and its lazy DFA, whose matches may start inside a code point as RE2's do.
+      //!        In text mode otherwise such a lead is left to the VM, which starts a match only on a code
+      //!        point. APPENDED LAST, per this struct's placement rule (it fits the trailing padding).
+      bool raw_byte_starts {};
     };
 
     /*!
