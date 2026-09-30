@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <string>
 #include <utility>
 
@@ -930,4 +931,25 @@ TEST(lazy_dfa_progress_counts_across_searches)
   }
   EXPECT(dfa.stats().flushes >= 2U);
   EXPECT_EQ(dfa.stats().refused_flushes, 0U);
+}
+
+// A closure's marks are its own: a new computation sees none of the last one's, including across the wrap of
+// the generation counter, where a mark left 2^32 computations ago would otherwise read as entered.
+TEST(visit_marks_start_each_computation_empty)
+{
+  real::detail::visit_marks marks;
+  marks.begin(8);
+  marks.set(3);
+  EXPECT(marks.test(3));
+  EXPECT(!marks.test(4));
+  marks.begin(8);
+  EXPECT(!marks.test(3));
+  marks.set(5);
+  marks.gen     = std::numeric_limits<std::uint32_t>::max(); // the next computation wraps
+  marks.mark[2] = 0U;                                        // a mark as old as the wrap
+  marks.begin(8);
+  EXPECT(!marks.test(2));
+  EXPECT(!marks.test(5));
+  marks.begin(12); // another program's size: all fresh
+  EXPECT(!marks.test(11));
 }

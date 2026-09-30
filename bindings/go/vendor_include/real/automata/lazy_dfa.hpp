@@ -1431,6 +1431,52 @@ namespace real::detail {
   }
 
   /*!
+   * \brief The pcs one closure computation has entered, by generation: starting a computation bumps the
+   *        generation instead of clearing a mark per pc, so a cache miss costs its closure, not the program's
+   *        size. A byte program of a large alternation runs to hundreds of thousands of instructions.
+   */
+  struct visit_marks
+  {
+    std::vector<std::uint32_t> mark;     //!< Per pc: the generation that last entered it.
+    std::uint32_t              gen {0};  //!< The current computation's generation.
+
+    /*!
+     * \brief Starts a computation over \p size pcs: none is entered yet.
+     * \param[in] size The program's size.
+     */
+    constexpr void begin(std::size_t size)
+    {
+      if (mark.size() != size) {
+        mark.assign(size, 0U);
+        gen = 0;
+      }
+      if (++gen == 0U) { // wrapped: the marks of 2^32 computations ago would read as entered
+        std::ranges::fill(mark, 0U);
+        gen = 1;
+      }
+    }
+
+    /*!
+     * \brief Whether \p pc was entered in this computation.
+     * \param[in] pc The pc.
+     * \return True when it was.
+     */
+    [[nodiscard]] constexpr bool test(std::int32_t pc) const
+    {
+      return mark[static_cast<std::size_t>(pc)] == gen;
+    }
+
+    /*!
+     * \brief Marks \p pc entered in this computation.
+     * \param[in] pc The pc.
+     */
+    constexpr void set(std::int32_t pc)
+    {
+      mark[static_cast<std::size_t>(pc)] = gen;
+    }
+  };
+
+  /*!
    * \brief A lazy priority-preserving forward DFA over a Pike program (the kFirstMatch forward pass).
    *
    * A DFA state is the ordered epsilon-closure of a set of program counters (the Pike thread list's PCs,
@@ -1798,8 +1844,8 @@ namespace real::detail {
       }
       ++stats_.misses;
       std::vector<std::int32_t> next;
-      std::vector<char>         seen(code_.size(), 0);
-      const std::uint8_t        ctx {class_ctx_[cls]};
+      visit_marks&              seen {begin_visit()};
+      const std::uint8_t        ctx  {class_ctx_[cls]};
       for (const std::int32_t pc : state_pcs_[state / stride_]) {
         if (consumes(pc, byte)) {
           close_any(pc + consumed_width(pc), next, seen, ctx);
@@ -1819,6 +1865,16 @@ namespace real::detail {
   private:
 
     /*!
+     * \brief Starts a closure computation on this DFA's marks.
+     * \return The marks, none entered.
+     */
+    constexpr visit_marks& begin_visit()
+    {
+      marks_.begin(code_.size());
+      return marks_;
+    }
+
+    /*!
      * \brief Like \ref step, but re-seeds: the unanchored-search variant appends pc 0's closure at the
      *        lowest priority, so a fresh thread starts at every position until a match is found. Cached in
      *        its own transition row (the pre-match state family).
@@ -1836,10 +1892,10 @@ namespace real::detail {
         return cached;
       }
       ++stats_.misses;
-      const std::vector<std::int32_t> pcs {state_pcs_[state / stride_]}; // copy: intern() below may realloc state_pcs_
+      const std::vector<std::int32_t> pcs  {state_pcs_[state / stride_]}; // copy: intern() below may realloc state_pcs_
       std::vector<std::int32_t>       next;
-      std::vector<char>               seen(code_.size(), 0);
-      const std::uint8_t              ctx {class_ctx_[cls]};
+      visit_marks&                    seen {begin_visit()};
+      const std::uint8_t              ctx  {class_ctx_[cls]};
       for (const std::int32_t pc : pcs) {
         if (consumes(pc, byte)) {
           close_any(pc + consumed_width(pc), next, seen, ctx);
@@ -2147,7 +2203,7 @@ namespace real::detail {
      */
     constexpr void close_into(std::int32_t               pc,
                               std::vector<std::int32_t>& out,
-                              std::vector<char>&         seen) const
+                              visit_marks&               seen) const
     {
       // Structurally unreachable through the only two callers (step/step_seeded, both private): every pc
       // they pass is either 0 (the program start) or pc+1 of a consuming instruction's own valid pc, and a
@@ -2168,10 +2224,10 @@ namespace real::detail {
       while (!stack_.empty()) {
         const std::int32_t cur {stack_.back()};
         stack_.pop_back();
-        if (cur < 0 || static_cast<std::size_t>(cur) >= code_.size() || seen[static_cast<std::size_t>(cur)] != 0) {
+        if (cur < 0 || static_cast<std::size_t>(cur) >= code_.size() || seen.test(cur)) {
           continue;
         }
-        seen[static_cast<std::size_t>(cur)] = 1;
+        seen.set(cur);
         const instr& in {code_[static_cast<std::size_t>(cur)]};
         switch (in.op) {
           case opcode::byte:
@@ -2204,16 +2260,16 @@ namespace real::detail {
      * \return The pc to continue at.
      */
     [[nodiscard]] constexpr std::int32_t loop_exit_target(const instr&             in,
-                                                          const std::vector<char>& seen) const
+                                                          const visit_marks&       seen) const
     {
       std::int32_t head {in.primary_target};
-      for (int hops {0}; hops < max_loop_hops && seen[static_cast<std::size_t>(head)] != 0
+      for (int hops {0}; hops < max_loop_hops && seen.test(head)
            && code_[static_cast<std::size_t>(head)].op == opcode::jump;
            ++hops) {
         head = code_[static_cast<std::size_t>(head)].primary_target;
       }
       const instr& target {code_[static_cast<std::size_t>(head)]};
-      return seen[static_cast<std::size_t>(head)] != 0 && target.op == opcode::split ? target.secondary_target
+      return seen.test(head) && target.op == opcode::split ? target.secondary_target
                                                                                    : in.primary_target;
     }
 
@@ -2229,7 +2285,7 @@ namespace real::detail {
      */
     constexpr void close_look(std::int32_t               pc,
                               std::vector<std::int32_t>& out,
-                              std::vector<char>&         seen,
+                              visit_marks&               seen,
                               std::uint8_t               ctx,
                               std::uint16_t              key) const
     {
@@ -2237,10 +2293,10 @@ namespace real::detail {
       while (!stack_.empty()) {
         const std::int32_t cur {stack_.back()};
         stack_.pop_back();
-        if (cur < 0 || static_cast<std::size_t>(cur) >= code_.size() || seen[static_cast<std::size_t>(cur)] != 0) {
+        if (cur < 0 || static_cast<std::size_t>(cur) >= code_.size() || seen.test(cur)) {
           continue;
         }
-        seen[static_cast<std::size_t>(cur)] = 1;
+        seen.set(cur);
         const instr& in {code_[static_cast<std::size_t>(cur)]};
         switch (in.op) {
           case opcode::byte:
@@ -2290,7 +2346,7 @@ namespace real::detail {
      */
     constexpr void close_any(std::int32_t               pc,
                              std::vector<std::int32_t>& out,
-                             std::vector<char>&         seen,
+                             visit_marks&               seen,
                              std::uint8_t               ctx) const
     {
       if (look_) {
@@ -2342,7 +2398,7 @@ namespace real::detail {
       const auto                ctx {static_cast<std::uint8_t>(-1 - pcs.back())};
       pcs.pop_back();
       std::vector<std::int32_t> out;
-      std::vector<char>         seen(code_.size(), 0);
+      visit_marks&              seen {begin_visit()};
       quit_hit_ = false;
       for (const std::int32_t pc : pcs) {
         const instr& in {code_[static_cast<std::size_t>(pc)]};
@@ -2351,8 +2407,8 @@ namespace real::detail {
             close_look(pc + 1, out, seen, ctx, key);
           }
         }
-        else if (seen[static_cast<std::size_t>(pc)] == 0) {
-          seen[static_cast<std::size_t>(pc)] = 1;
+        else if (!seen.test(pc)) {
+          seen.set(pc);
           out.push_back(pc);
         }
       }
@@ -2383,7 +2439,7 @@ namespace real::detail {
         return starts_[ctx];
       }
       std::vector<std::int32_t> pcs;
-      std::vector<char>         seen(code_.size(), 0);
+      visit_marks&              seen     {begin_visit()};
       close_look(0, pcs, seen, ctx, key_unknown);
       const std::size_t   flushes_before {epoch_};
       const std::uint32_t result         {intern_any(std::move(pcs), ctx)};
@@ -2661,7 +2717,7 @@ namespace real::detail {
         res_.insert(res_.end(), stride_, dead_state);
       }
       std::vector<std::int32_t> start;
-      std::vector<char>         seen(code_.size(), 0);
+      visit_marks&              seen {begin_visit()};
       if (look_) {
         // The start of the text: the context forward_end and anchored_end at 0 ask for.
         close_look(0, start, seen, ctx_start, key_unknown);
@@ -2749,6 +2805,7 @@ namespace real::detail {
     std::size_t   scan_origin_  {0};                                                          //!< Where the bytes the current scan has read are counted from.
     std::size_t   miss_pos_     {0};                                                          //!< Position of the scan's latest cache miss.
     std::size_t   window_bytes_ {0};                                                          //!< Bytes read since the last flush by scans that have ended.
+    visit_marks   marks_        {};                                                           //!< The pcs the closure being computed has entered (\ref begin_visit).
     bool          thrashing_    {false};                                                      //!< Set once this scan stopped paying: a refused flush, or \ref thrash_flushes flushes where it may not quit.
   };
 
@@ -2935,6 +2992,16 @@ namespace real::detail {
 
   private:
 
+    /*!
+     * \brief Starts a closure computation on this DFA's marks.
+     * \return The marks, none entered.
+     */
+    constexpr visit_marks& begin_visit()
+    {
+      marks_.begin(code_.size());
+      return marks_;
+    }
+
     // Backward, the text to the RIGHT of a position is what the scan has read, and the text to its left is
     // what it reads next. So the right side is a state's context and the left side is a pending
     // assertion's key: a byte class, or the start of the text.
@@ -3088,7 +3155,7 @@ namespace real::detail {
      * \param[in]     key  The byte to the left, or \ref key_unknown.
      */
     constexpr void rev_closure_look(std::vector<std::int32_t>& set,
-                                    std::vector<char>&         seen,
+                                    visit_marks&               seen,
                                     std::uint8_t               ctx,
                                     std::uint16_t              key) const
     {
@@ -3099,14 +3166,14 @@ namespace real::detail {
         for (std::size_t k = rev_eps_at_[static_cast<std::size_t>(pc)];
              k < rev_eps_at_[static_cast<std::size_t>(pc) + 1]; ++k) {
           const std::int32_t pred {rev_eps_pool_[k]};
-          if (seen[static_cast<std::size_t>(pred)] != 0) {
+          if (seen.test(pred)) {
             continue;
           }
           const instr& in {code_[static_cast<std::size_t>(pred)]};
           if (in.op == opcode::assert_position) {
             const auto kind {static_cast<assert_kind>(in.arg8)};
             if (looks_left(kind) && key == key_unknown) {
-              seen[static_cast<std::size_t>(pred)] = 1;
+              seen.set(pred);
               set.push_back(pending_base - pred); // undecided: its predecessors are reached once it is decided
               continue;
             }
@@ -3114,7 +3181,7 @@ namespace real::detail {
               continue; // the edge does not exist at this position
             }
           }
-          seen[static_cast<std::size_t>(pred)] = 1;
+          seen.set(pred);
           set.push_back(pred);
           stack_.push_back(pred);
         }
@@ -3155,15 +3222,15 @@ namespace real::detail {
       if (cached != no_transition) {
         return cached;
       }
-      std::vector<std::int32_t> pcs {state_pcs_[state]};                          // copy: intern may realloc
-      const auto                ctx {static_cast<std::uint8_t>(-1 - pcs.back())}; // mark_context appends it last
+      std::vector<std::int32_t> pcs  {state_pcs_[state]};                          // copy: intern may realloc
+      const auto                ctx  {static_cast<std::uint8_t>(-1 - pcs.back())}; // mark_context appends it last
       pcs.pop_back();
-      std::vector<char>         seen(code_.size(), 0);
+      visit_marks&              seen {begin_visit()};
       std::vector<std::int32_t> set;
       quit_hit_ = false;
       for (const std::int32_t entry : pcs) {
         const std::int32_t pc {is_pending(entry) ? pending_base - entry : entry};
-        seen[static_cast<std::size_t>(pc)] = 1;
+        seen.set(pc);
         // A pending assertion the key decides true stays a member: the closure below reaches its predecessors.
         if (!is_pending(entry) || holds_left(static_cast<assert_kind>(code_[static_cast<std::size_t>(pc)].arg8), ctx, key)) {
           set.push_back(pc);
@@ -3195,9 +3262,9 @@ namespace real::detail {
         return starts_[ctx];
       }
       std::vector<std::int32_t> set;
-      std::vector<char>         seen(code_.size(), 0);
+      visit_marks&              seen {begin_visit()};
       if (match_pc_ >= 0) {
-        seen[static_cast<std::size_t>(match_pc_)] = 1;
+        seen.set(match_pc_);
         set.push_back(match_pc_);
         rev_closure_look(set, seen, ctx, key_unknown);
       }
@@ -3222,15 +3289,15 @@ namespace real::detail {
                             std::uint8_t  byte,
                             std::uint8_t  ctx)
     {
-      const std::vector<std::int32_t> pcs {state_pcs_[state]};
+      const std::vector<std::int32_t> pcs  {state_pcs_[state]};
       std::vector<std::int32_t>       next;
-      std::vector<char>               seen(code_.size(), 0);
+      visit_marks&                    seen {begin_visit()};
       for (const std::int32_t pc : pcs) {
         for (std::size_t k = rev_consume_at_[static_cast<std::size_t>(pc)];
              k < rev_consume_at_[static_cast<std::size_t>(pc) + 1]; ++k) {
           const std::int32_t pred {rev_consume_pool_[k]};
-          if (consumes(pred, byte) && seen[static_cast<std::size_t>(pred)] == 0) {
-            seen[static_cast<std::size_t>(pred)] = 1;
+          if (consumes(pred, byte) && !seen.test(pred)) {
+            seen.set(pred);
             next.push_back(pred);
           }
         }
@@ -3300,7 +3367,7 @@ namespace real::detail {
      * \param[in,out] seen Per-pc visited marks, sized to the program.
      */
     constexpr void rev_closure(std::vector<std::int32_t>& set,
-                               std::vector<char>&         seen) const
+                               visit_marks&               seen) const
     {
       // Member stack, same reason as close_into's: one heap block per call otherwise. Seeded from the
       // whole set here rather than a single pc, since the reverse closure starts from all of them.
@@ -3311,8 +3378,8 @@ namespace real::detail {
         for (std::size_t k = rev_eps_at_[static_cast<std::size_t>(pc)];
              k < rev_eps_at_[static_cast<std::size_t>(pc) + 1]; ++k) {
           const std::int32_t pred {rev_eps_pool_[k]};
-          if (seen[static_cast<std::size_t>(pred)] == 0) {
-            seen[static_cast<std::size_t>(pred)] = 1;
+          if (!seen.test(pred)) {
+            seen.set(pred);
             set.push_back(pred);
             stack_.push_back(pred);
           }
@@ -3335,15 +3402,15 @@ namespace real::detail {
       if (cached != no_transition) {
         return cached;
       }
-      const std::vector<std::int32_t> pcs {state_pcs_[state]}; // copy: intern may realloc
+      const std::vector<std::int32_t> pcs  {state_pcs_[state]}; // copy: intern may realloc
       std::vector<std::int32_t>       next;
-      std::vector<char>               seen(code_.size(), 0);
+      visit_marks&                    seen {begin_visit()};
       for (const std::int32_t pc : pcs) {
         for (std::size_t k = rev_consume_at_[static_cast<std::size_t>(pc)];
              k < rev_consume_at_[static_cast<std::size_t>(pc) + 1]; ++k) {
           const std::int32_t pred {rev_consume_pool_[k]};
-          if (consumes(pred, byte) && seen[static_cast<std::size_t>(pred)] == 0) {
-            seen[static_cast<std::size_t>(pred)] = 1;
+          if (consumes(pred, byte) && !seen.test(pred)) {
+            seen.set(pred);
             next.push_back(pred);
           }
         }
@@ -3477,9 +3544,9 @@ namespace real::detail {
         return; // start states are per right context (start_for), built on first use
       }
       std::vector<std::int32_t> start;
-      std::vector<char>         seen(code_.size(), 0);
+      visit_marks&              seen {begin_visit()};
       if (match_pc_ >= 0) {
-        seen[static_cast<std::size_t>(match_pc_)] = 1;
+        seen.set(match_pc_);
         start.push_back(match_pc_);
         rev_closure(start, seen);
       }
@@ -3498,6 +3565,7 @@ namespace real::detail {
     std::int32_t                                                               match_pc_     {-1};                           //!< The forward `match` pc — this pass's start; -1 when absent.
     std::uint32_t                                                              start_state_  {0};                            //!< Id of \ref match_pc_'s backward closure, re-interned by each \ref flush.
     std::size_t                                                                budget_       {state_budget};                 //!< Cached states tolerated before a \ref flush.
+    visit_marks                                                                marks_        {};                             //!< The pcs the closure being computed has entered (\ref begin_visit).
     std::size_t                                                                flushes_      {0};                            //!< bumped by flush(); step()'s stale-state guard against a mid-call reset.
     std::size_t                                                                byte_budget_  {lazy_dfa_default_byte_budget}; //!< Cached bytes tolerated before a \ref flush.
     std::size_t                                                                bytes_        {0};                            //!< Bytes the cached states hold.
