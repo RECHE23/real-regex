@@ -198,7 +198,7 @@ TEST(fixed_shape_pair_route_stays_linear_in_billed_work)
                         ++matches;
                       }
                       EXPECT(matches > 0U);
-                      return real::detail::prefilter_work_units();
+                      return real::detail::prefilter_work_units().load();
                     };
   (void) work(1U << 12);                      // warmup, discarded
   const std::uint64_t small {work(1U << 18)}; // 256 KiB

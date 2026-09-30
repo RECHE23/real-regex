@@ -40,12 +40,13 @@ namespace real::detail {
   /*!
    * \brief Prefilter work counter for the O(n) vs O(n²) smoke test.
    *        Always declared (clang-tidy / tests see the symbol). Billing is a no-op unless
-   *        \c REAL_TEST_INSTRUMENT is defined on the test binary — wheel/prod pay nothing.
+   *        \c REAL_TEST_INSTRUMENT is defined on the test binary — wheel/prod pay nothing. Relaxed atomic,
+   *        as the other counters: threads searching at once bill it concurrently.
    * \return A reference to the process-wide counter.
    */
-  inline std::uint64_t& prefilter_work_units() noexcept
+  inline std::atomic<std::uint64_t>& prefilter_work_units() noexcept
   {
-    static std::uint64_t units {0};
+    static std::atomic<std::uint64_t> units {0};
     return units;
   }
 
@@ -57,7 +58,7 @@ namespace real::detail {
   inline void prefilter_note_scan(std::size_t n) noexcept
   {
 #if defined(REAL_TEST_INSTRUMENT)
-    prefilter_work_units() += static_cast<std::uint64_t>(n);
+    prefilter_work_units().fetch_add(static_cast<std::uint64_t>(n), std::memory_order_relaxed);
 #else
     (void) n;
 #endif
