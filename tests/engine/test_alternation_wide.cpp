@@ -1,6 +1,7 @@
 //! An alternation of literals with more first bytes than the small set holds: the nibble fingerprint scans it
 //! where its sample finds false candidates sparse, and the automaton's gate decides the rest as before. These pin
 //! its answers against the routes it replaces, where it is taken and where it declines, and the fields it reads.
+#include <array>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -375,4 +376,140 @@ TEST(alternation_without_pairs_leaves_the_automaton_its_gate)
   EXPECT_EQ(re.count_matches(s), 0U);
   real::detail::alternation_nibbles_disabled() = false;
   EXPECT(real::detail::ac_density_last_verdict().load() != real::detail::ac_verdict::not_consulted);
+}
+
+namespace {
+  //! \brief One case-folded spelling of \p c, drawn by \p next: `i`, `s` and `k` fold to non-ASCII code points
+  //!        (`İ ı`, `ſ`, the Kelvin sign), the other letters to their other case.
+  template <typename Next>
+  std::string folded(char  c,
+                     Next& next)
+  {
+    switch (c) {
+      case 'i': {
+          const std::array<const char*, 4> v {"i", "I", "\xC4\xB0", "\xC4\xB1"};
+          return v[next() % v.size()];
+        }
+      case 'k': {
+          const std::array<const char*, 3> v {"k", "K", "\xE2\x84\xAA"};
+          return v[next() % v.size()];
+        }
+      case 's': {
+          const std::array<const char*, 3> v {"s", "S", "\xC5\xBF"};
+          return v[next() % v.size()];
+        }
+      default:
+        return std::string(1, next() % 2U == 0U ? static_cast<char>(c - 'a' + 'A') : c);
+    }
+  }
+} // namespace
+
+// An alternation whose branches hold an `i`, `s` or `k` under case folding is not a fixed alternation: those
+// fold to non-ASCII code points. The fingerprint of their UTF-8 variants picks the candidates the anchored walk
+// confirms; random ones over subjects dense in their first bytes, with folded matches and stray lead and
+// continuation bytes, answer as the first-byte scan and the VM.
+TEST(alternation_variants_answer_as_the_first_bytes_and_the_vm)
+{
+  std::uint32_t state {0x510E527FU};
+  const auto    next  {[&state] {
+                         state ^= state << 13U;
+                         state ^= state >> 17U;
+                         state ^= state << 5U;
+                         return state;
+                       }};
+  const std::string                  letters  {"iskaefnqz"};
+  const std::array<const char*, 20>  alphabet {"i", "I", "s", "S", "k", "K", "a", "e", "n", "f", " ", "q", "z",
+                                               "\xC4\xB0", "\xC4\xB1", "\xC5\xBF", "\xE2\x84\xAA", "\xC3\xA9", "\xC4",
+                                               "\xB0"};
+  std::size_t armed {0};
+  for (int round {0}; round < 200; ++round) {
+    const std::size_t        branches {2U + (next() % 12U)};
+    std::vector<std::string> body;
+    std::string              pattern  {"(?i)"};
+    for (std::size_t b {0}; b < branches; ++b) {
+      std::string       branch;
+      const std::size_t width {2U + (next() % 4U)};
+      while (branch.size() < width) {
+        branch += letters[next() % letters.size()];
+      }
+      if (b > 0) {
+        pattern += '|';
+      }
+      pattern += branch;
+      body.push_back(branch);
+    }
+    std::string       s;
+    const std::size_t size {4200U + (next() % 6000U)};
+    while (s.size() < size) {
+      s += alphabet[next() % (next() % 8U == 0U ? 20U : 13U)];
+    }
+    const std::size_t planted {next() % 8U};
+    for (std::size_t k {0}; k < planted; ++k) {
+      std::string x;
+      for (const char c : body[next() % body.size()]) {
+        x += folded(c, next);
+      }
+      const std::size_t at {k == 0 ? s.size() - x.size() - (next() % 40U) : next() % (s.size() - x.size())};
+      s.replace(at, x.size(), x);
+    }
+    const real::regex re {pattern};
+    real::detail::alternation_variant_scans() = 0;
+    const span_list got  {spans_of(re, s)};
+    armed                                     += real::detail::alternation_variant_scans().load() != 0U ? 1U : 0U;
+    real::detail::alternation_pairs_disabled() = true;
+    const span_list first_bytes {spans_of(re, s)};
+    real::detail::alternation_pairs_disabled() = false;
+    real::detail::lazy_dfa_route_disabled()    = true;
+    const span_list vm {spans_of(re, s)};
+    real::detail::lazy_dfa_route_disabled() = false;
+    if (got != first_bytes || got != vm) {
+      std::printf("/%s/ on %zu bytes: %zu, first bytes %zu, vm %zu\n", pattern.c_str(), s.size(), got.size(),
+                  first_bytes.size(), vm.size());
+    }
+    EXPECT(got == first_bytes);
+    EXPECT(got == vm);
+    EXPECT_EQ(re.count_matches(s), vm.size());
+  }
+  std::printf("  variants: %zu of 200 cases took the fingerprint\n", armed);
+  EXPECT(fingerprint_here() ? armed >= 150U : armed == 0U);
+}
+
+// A match spelled only with a non-ASCII fold is found: `İnfo` (U+0130 then `nfo`) matches `(?i)info`, whose
+// fingerprint admits U+0130's lead byte at the start and its continuation where `n` would sit.
+TEST(alternation_variants_find_a_non_ascii_fold)
+{
+  const real::regex re {"(?i)info|error|warn"};
+  std::string       s  {repeated("dab cfd adc fbd ewq ", 20000)};
+  s                                      += "\xC4\xB0nfo and \xC4\xB1NFO and w\xC4\x81rn";
+  real::detail::lazy_dfa_route_disabled() = true;
+  const std::size_t want {re.count_matches(s)};
+  real::detail::lazy_dfa_route_disabled() = false;
+  EXPECT_EQ(want, 2U);
+  real::detail::alternation_variant_scans() = 0;
+  EXPECT_EQ(re.count_matches(s), want);
+  EXPECT(fingerprint_here() ? real::detail::alternation_variant_scans().load() > 0U
+                            : real::detail::alternation_variant_scans().load() == 0U);
+}
+
+// A leading word boundary only narrows where a match starts, so the fingerprint is still a superset of the
+// starts; and where it declines -- one branch, a short subject, a fixed alternation -- nothing is counted.
+TEST(alternation_variants_take_a_leading_boundary_and_decline_the_rest)
+{
+  const std::string s       {repeated("dab cfd adc fbd ewq info fish ", 20000)};
+  const real::regex bounded {R"((?i)\b(?:info|fish)\b)"};
+  real::detail::lazy_dfa_route_disabled() = true;
+  const std::size_t want    {bounded.count_matches(s)};
+  real::detail::lazy_dfa_route_disabled() = false;
+  real::detail::alternation_variant_scans() = 0;
+  EXPECT_EQ(bounded.count_matches(s), want);
+  EXPECT(fingerprint_here() ? real::detail::alternation_variant_scans().load() > 0U
+                            : real::detail::alternation_variant_scans().load() == 0U);
+  for (const std::string& pattern : {std::string {"(?i)info"}, std::string {"(?a)(?i)info|fish"}}) {
+    real::detail::alternation_variant_scans() = 0;
+    static_cast<void>(real::regex {pattern}.count_matches(s));
+    EXPECT_EQ(real::detail::alternation_variant_scans().load(), 0U);
+  }
+  real::detail::alternation_variant_scans() = 0;
+  static_cast<void>(real::regex {"(?i)info|fish"}.count_matches(s.substr(0, 3000)));
+  EXPECT_EQ(real::detail::alternation_variant_scans().load(), 0U);
 }

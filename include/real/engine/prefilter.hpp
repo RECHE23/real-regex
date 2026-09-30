@@ -252,6 +252,17 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Searches a program that is not a fixed alternation took its variants' fingerprint for, counted for
+   *        the tests that pin when it does.
+   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
+   */
+  inline std::atomic<std::uint64_t>& alternation_variant_scans() noexcept
+  {
+    static std::atomic<std::uint64_t> scans {0};
+    return scans;
+  }
+
+  /*!
    * \brief Subjects an alternation wider than the small set scanned by the fingerprint, counted for the tests
    *        that pin when it takes one.
    * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).

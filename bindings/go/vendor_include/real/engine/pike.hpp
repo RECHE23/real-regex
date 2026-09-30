@@ -2320,10 +2320,12 @@ namespace real::detail {
                            // A2: anchored-from-candidate when first_bytes is sound; else forward_end + reverse.
                            if (prog_.hints.first_bytes_valid) {
                              fwd.begin_scan();
-                             std::size_t        c    {scan_start};
-                             anchored_walk_bill bill {};
+                             std::size_t              c       {scan_start};
+                             anchored_walk_bill       bill    {};
+                             const alternation_pairs* cp_plan {variant_plan(text, scan_start)};
                              while (true) {
-                               c = next_candidate(text, c, scan_start);
+                               c = cp_plan != nullptr ? variant_candidate(text, c, *cp_plan)
+                                                      : next_candidate(text, c, scan_start);
                                if (c > text.size()) {
                                  out_slots.assign(prog_.slot_count, npos);
                                  dfa_result = false;
@@ -2591,7 +2593,8 @@ namespace real::detail {
       if (immut->alt_pairs_for.load(std::memory_order_acquire) != program) {
         const std::lock_guard<std::mutex> lock {detail::immut_build_mu(immut)};
         if (immut->alt_pairs_for.load(std::memory_order_relaxed) != program) { // double-check
-          immut->alt_pairs = build_alternation_pairs();
+          // A fixed alternation's plan (pairs and fingerprint); any other program's is its variants' fingerprint.
+          immut->alt_pairs = prog_.hints.fixed_alternation ? build_alternation_pairs() : build_cp_alternation_plan();
           immut->alt_pairs_for.store(program, std::memory_order_release);
         }
       }
@@ -6365,6 +6368,113 @@ namespace real::detail {
 #endif
 
     /*!
+     * \brief The variants' fingerprint for a program that is not a fixed alternation -- an alternation whose
+     *        branches hold a case-folded `i`, `s` or `k`, whose folds reach non-ASCII code points -- when this
+     *        subject's sample finds its first bytes dense and the fingerprint's candidates among them sparse.
+     *        Taken only where \ref next_candidate would scan by the first bytes. The fingerprint admits every
+     *        start a match can have, and a few more (each bucket crosses its members' nibbles); the anchored
+     *        walk that confirms each candidate rejects those, as it rejects a first byte that starts no match.
+     *        No candidate lands inside a code point: a continuation byte's high nibble is no first byte's.
+     *        Decided once per subject.
+     * \param[in] text  The subject.
+     * \param[in] start Where the search starts.
+     * \return The plan, or null to scan by the first bytes.
+     */
+    [[nodiscard]]
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    const alternation_pairs* variant_plan(std::string_view text,
+                                          std::size_t      start)
+    {
+#if (defined(__ARM_NEON) || defined(__SSE2__)) && (defined(__aarch64__) || defined(__SSSE3__) || (defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__))))
+      if constexpr (requires(State & st) {
+        st.alt_pairs;
+      }) {
+        const pattern_hints& h {prog_.hints};
+        if (h.fixed_alternation || h.anchored_start || h.rare_disc >= 0 || h.prefix_size >= 2 || h.rare_byte >= 0
+            || h.single_first >= 0 || h.line_anchored || !h.first_bytes_valid || alternation_pairs_disabled()
+            || alternation_nibbles_disabled()) {
+          return nullptr;
+        }
+        if (state_.alt_text != static_cast<const void*>(text.data())) {
+          state_.alt_density = {}; // a fresh haystack: sampled anew
+          state_.alt_text    = static_cast<const void*>(text.data());
+        }
+        if (!state_.alt_density.decided) {
+          if (start >= text.size() || text.size() - start < alternation_sample_min) {
+            return nullptr; // a short rest: the first bytes, and a longer rest may still sample
+          }
+          if (state_.alt_pairs == nullptr) {
+            state_.alt_pairs = alternation_pairs_ready();
+          }
+          state_.alt_density.decided = true;
+          state_.alt_density.dense   = false;
+          if (state_.alt_pairs != nullptr && state_.alt_pairs->count != 0U && state_.alt_pairs->nibbles) {
+            // Worth it where the first bytes stop often and the fingerprint rarely: the same rule the
+            // alternation's own fingerprint takes a subject by (alternation_plan_decide).
+            std::size_t first  {0};
+            std::size_t marked {0};
+            for (std::size_t off {0}; off < alternation_sample_bytes; off += 16) {
+              const char* const at {text.data() + start + off};
+              for (std::size_t k {0}; k < 16; ++k) {
+                first += h.first_bytes.test(static_cast<std::uint8_t>(at[k])) ? 1U : 0U;
+              }
+              for (mask_t m {load_nibble3_mask(at, state_.alt_pairs->nibble_lo, state_.alt_pairs->nibble_hi)};
+                   !empty(m); m = clear_first(m)) {
+                marked += h.first_bytes.test(static_cast<std::uint8_t>(at[first_lane(m)])) ? 1U : 0U;
+              }
+            }
+            state_.alt_density.dense = first * alternation_dense_gap_nibbles > alternation_sample_bytes
+                                       && marked * 2U < first;
+          }
+        }
+        if (!state_.alt_density.dense) {
+          return nullptr;
+        }
+#  if defined(REAL_TEST_INSTRUMENT)
+        alternation_variant_scans().fetch_add(1, std::memory_order_relaxed);
+#  endif
+        return state_.alt_pairs;
+      }
+#endif
+      static_cast<void>(text);
+      static_cast<void>(start);
+      return nullptr;
+    }
+
+    /*!
+     * \brief The next start at or after \p pos the variants' fingerprint admits (the first bytes, in the last
+     *        blocks it cannot read past).
+     * \param[in] text The subject.
+     * \param[in] pos  Where to look from.
+     * \param[in] plan The fingerprint (\ref variant_plan).
+     * \return The start, or \ref real::npos when none is left.
+     */
+    [[nodiscard]] std::size_t variant_candidate(std::string_view         text,
+                                                std::size_t              pos,
+                                                const alternation_pairs& plan) const
+    {
+      const auto& first {prog_.hints.first_bytes};
+#if (defined(__ARM_NEON) || defined(__SSE2__)) && (defined(__aarch64__) || defined(__SSSE3__) || (defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__))))
+      for (; pos + 18 <= text.size(); pos += 16) { // the fingerprint reads two bytes past a block's starts
+        for (mask_t m {load_nibble3_mask(text.data() + pos, plan.nibble_lo, plan.nibble_hi)}; !empty(m);
+             m = clear_first(m)) {
+          return pos + first_lane(m);
+        }
+      }
+#else
+      static_cast<void>(plan);
+#endif
+      for (; pos < text.size(); ++pos) {
+        if (first.test(static_cast<std::uint8_t>(text[pos]))) {
+          return pos;
+        }
+      }
+      return npos;
+    }
+
+    /*!
      * \brief Adds the branch at \p branch to \p plan's nibble fingerprint, in bucket `plan.count % 8`: each of its
      *        first three positions admits its byte, or every member of its class; a position past the branch's end
      *        admits anything (only that bucket loses selectivity). A branch one byte wide leaves the plan without a
@@ -6412,6 +6522,169 @@ namespace real::detail {
           }
         }
       }
+    }
+
+    /*!
+     * \brief Adds the branch at \p branch to \p plan's fingerprint, following each byte offset 0 to 2 a path
+     *        through it can reach: a byte or class admits its members at every offset reached and moves one
+     *        on; a code-point class admits its ASCII members, and the UTF-8 encoding of each other member laid
+     *        from each offset reached, and moves on by every width it has; where the straight line ends, every
+     *        byte is admitted from each offset reached on. A superset of the bytes a match can start with.
+     * \param[in,out] plan   The plan being built; `plan.count` is this branch's bucket.
+     * \param[in]     branch The branch's first instruction.
+     * \return False when the branch is too short for a fingerprint (a path under two bytes) or opens on a
+     *         code-point class too large to lay out (more than 64 non-ASCII members).
+     */
+    [[nodiscard]] bool add_variant_nibbles(alternation_pairs& plan,
+                                           std::size_t        branch) const
+    {
+      const auto&        code {prog_.code};
+      const std::uint8_t bit  {static_cast<std::uint8_t>(1U << (plan.count % 8U))};
+      const auto         admit {[&plan, bit](std::size_t at, std::uint8_t b) {
+                                  if (at < 3) {
+                                    plan.nibble_lo[at][b & 0x0FU] |= bit;
+                                    plan.nibble_hi[at][b >> 4U]   |= bit;
+                                  }
+                                }};
+      unsigned    reached {1U}; // bit o: a path reaches byte offset o (0 to 2) at pc
+      std::size_t pc      {branch};
+      while ((reached & 7U) != 0U) {
+        if (pc >= code.size()) {
+          return false;
+        }
+        const opcode op   {code[pc].op};
+        unsigned     next {0U};
+        if (op == opcode::byte || op == opcode::klass) {
+          for (std::size_t o {0}; o < 3; ++o) {
+            if (((reached >> o) & 1U) == 0U) {
+              continue;
+            }
+            if (op == opcode::byte) {
+              admit(o, code[pc].arg8);
+            }
+            else {
+              const char_class& cc {prog_.classes[code[pc].arg16]};
+              for (unsigned b {0}; b < 256U; ++b) {
+                if (cc.test(static_cast<std::uint8_t>(b))) {
+                  admit(o, static_cast<std::uint8_t>(b));
+                }
+              }
+            }
+          }
+          next = reached << 1U;
+          pc  += 1;
+        }
+        else if (op == opcode::klass_cp) {
+          const cp_class& cc      {prog_.cp_classes[code[pc].arg16]};
+          std::size_t     members {0};
+          for (std::uint32_t r {0}; r < cc.range_count; ++r) {
+            const code_range& range {prog_.cp_ranges[cc.range_begin + r]};
+            members += static_cast<std::size_t>(range.hi - range.lo) + 1U;
+          }
+          if (members > 64U) {
+            return false;
+          }
+          bool     ascii  {false};
+          unsigned widths {0U};
+          for (std::size_t o {0}; o < 3; ++o) {
+            if (((reached >> o) & 1U) == 0U) {
+              continue;
+            }
+            for (unsigned b {0}; b < 128U; ++b) {
+              if (cc.ascii.test(static_cast<std::uint8_t>(b))) {
+                ascii = true;
+                admit(o, static_cast<std::uint8_t>(b));
+              }
+            }
+            for (std::uint32_t r {0}; r < cc.range_count; ++r) {
+              const code_range& range {prog_.cp_ranges[cc.range_begin + r]};
+              for (std::uint32_t c {range.lo}; c <= range.hi; ++c) {
+                std::uint8_t      bytes[4] {};
+                const std::size_t width    {encode_utf8_bytes(c, bytes)};
+                widths |= 1U << width;
+                for (std::size_t k {0}; k < width; ++k) {
+                  admit(o + k, bytes[k]);
+                }
+              }
+            }
+          }
+          if (ascii) {
+            next |= reached << 1U;
+          }
+          for (unsigned width {2}; width <= 4U; ++width) {
+            if (((widths >> width) & 1U) != 0U) {
+              next |= reached << width;
+            }
+          }
+          pc += 4; // the code-point class and its three continuation slots
+        }
+        else {
+          // The straight line ends: past it, a match may hold any byte.
+          for (std::size_t o {0}; o < 3; ++o) {
+            if (((reached >> o) & 1U) == 0U) {
+              continue;
+            }
+            if (o < 2) {
+              return false; // a path under two bytes: its bucket would mark almost every start
+            }
+            for (std::size_t k {o}; k < 3; ++k) {
+              for (std::size_t n {0}; n < 16; ++n) {
+                plan.nibble_lo[k][n] |= bit;
+                plan.nibble_hi[k][n] |= bit;
+              }
+            }
+          }
+          break;
+        }
+        reached = next;
+      }
+      return true;
+    }
+
+    /*!
+     * \brief The fingerprint of a program laid out as an alternation of straight-line branches (after leading
+     *        position assertions, which only narrow where a match starts) that is not a fixed alternation:
+     *        one of its branches holds a code-point class. No pairs: those need a byte at every head.
+     * \return The plan; `count == 0` when the layout is not that, a branch declines (\ref add_variant_nibbles),
+     *         the branches outnumber the buckets' capacity, or there is no fingerprint on this target.
+     */
+    [[nodiscard]] alternation_pairs build_cp_alternation_plan() const
+    {
+      alternation_pairs plan {};
+      const auto&       code {prog_.code};
+      if (!alternation_nibbles_supported() || code.size() < 3 || code[0].op != opcode::save) {
+        return plan;
+      }
+      std::size_t pc {1};
+      while (pc < code.size() && code[pc].op == opcode::assert_position) {
+        ++pc; // a leading \b or ^ narrows the starts; the fingerprint stays a superset of them
+      }
+      while (true) {
+        if (pc >= code.size()) {
+          return alternation_pairs {};
+        }
+        const bool        is_split {code[pc].op == opcode::split};
+        const std::size_t branch   {is_split ? static_cast<std::size_t>(code[pc].primary_target) : pc};
+        if (plan.count == plan.lead.size() || branch >= code.size()) {
+          return alternation_pairs {};
+        }
+        const opcode head {code[branch].op};
+        if ((head != opcode::byte && head != opcode::klass && head != opcode::klass_cp)
+            || !add_variant_nibbles(plan, branch)) {
+          return alternation_pairs {};
+        }
+        ++plan.count;
+        if (!is_split) {
+          break;
+        }
+        pc = static_cast<std::size_t>(code[pc].secondary_target);
+      }
+      if (plan.count < 2U) {
+        return alternation_pairs {}; // one branch: its first bytes already say most of what this would
+      }
+      plan.nibbles = true;
+      plan.pairs   = false;
+      return plan;
     }
 
     /*!
@@ -7162,15 +7435,16 @@ namespace real::detail {
       const bool  used {
         with_search_dfas([&](lazy_dfa& fwd, reverse_dfa& rev) {
                            fwd.begin_scan();
-                           std::size_t        pos      {start};
-                           anchored_walk_bill bill     {};
+                           std::size_t              pos      {start};
+                           anchored_walk_bill       bill     {};
+                           const alternation_pairs* cp_plan  {variant_plan(text, start)};
                            bool        one_pass {false}; // the walks gave way: forward pass and reverse from here on
                            while (n < cap && pos <= text.size() && text.size() - pos >= lazy_dfa_min_input) {
                              std::size_t hit  {npos};
                              std::size_t end  {npos};
                              std::size_t from {pos};
                              for (std::size_t c {pos}; !one_pass;) {
-                               c = next_candidate(text, c, pos);
+                               c = cp_plan != nullptr ? variant_candidate(text, c, *cp_plan) : next_candidate(text, c, pos);
                                if (c > text.size()) {
                                  partial = false; // PROVEN spent: no candidate byte remains anywhere ahead
                                  return;
