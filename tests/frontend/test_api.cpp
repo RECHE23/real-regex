@@ -2,6 +2,12 @@
 #include <string>
 #include <string_view>
 
+#if !defined(NDEBUG) && !defined(_WIN32)
+#  include <csignal>
+#  include <sys/wait.h>
+#  include <unistd.h>
+#endif
+
 #include <sciforge/test/framework.hpp>
 #include "real/regex.hpp" // the common guess; alias of real.hpp
 
@@ -778,8 +784,9 @@ TEST(match_result_spans_flat_layout)
   EXPECT_EQ(empty.spans().size(), 0U);
 }
 
-// A null C string reads as the empty subject, as the C API treats it, on every overload that takes one: building a
-// std::string_view from it is undefined.
+#if defined(NDEBUG)
+// A null C string reads as the empty subject in a release build, as the C API treats it, on every overload that
+// takes one: building a std::string_view from it is undefined.
 TEST(null_c_string_reads_as_the_empty_subject)
 {
   const char* const none     {nullptr};
@@ -803,3 +810,19 @@ TEST(null_c_string_reads_as_the_empty_subject)
   EXPECT(!needs_a.search_longest(none).matched());
   EXPECT(!real::regex {"a"}.search(none).matched()); // the owning (rvalue) overloads
 }
+#elif !defined(_WIN32)
+// A null C string is a caller's bug, and a debug build stops on it rather than searching the empty subject.
+TEST(null_c_string_stops_a_debug_build)
+{
+  const pid_t child {fork()};
+  if (child == 0) {
+    const char* const none {nullptr};
+    static_cast<void>(real::regex {"a"}.search(none));
+    _exit(0); // reached only if nothing stopped
+  }
+  int status {0};
+  EXPECT(child > 0);
+  EXPECT_EQ(waitpid(child, &status, 0), child);
+  EXPECT(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+}
+#endif

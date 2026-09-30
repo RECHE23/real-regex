@@ -9,6 +9,7 @@
 
 #include "real/version.hpp"
 
+#include <cassert>
 #include <iterator>
 #include <optional>
 #include <span>
@@ -1210,13 +1211,15 @@ namespace real {
 
   namespace detail {
     /*!
-     * \brief A C string as a subject; a null pointer reads as the empty subject, as the C API treats it, where
-     *        constructing a `std::string_view` from it is undefined.
-     * \param[in] text A NUL-terminated string, or null.
+     * \brief A C string as a subject. A null pointer is a caller's bug: a debug build stops on it, and a release
+     *        build reads it as the empty subject, as the C API does, where constructing a `std::string_view` from
+     *        it is undefined.
+     * \param[in] text A NUL-terminated string; null only by mistake.
      * \return The view.
      */
     [[nodiscard]] constexpr std::string_view c_string_subject(const char* text) noexcept
     {
+      assert(text != nullptr && "a null C string: pass \"\" for an empty subject");
       return text == nullptr ? std::string_view {} : std::string_view {text};
     }
   } // namespace detail
