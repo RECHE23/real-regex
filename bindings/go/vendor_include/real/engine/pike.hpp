@@ -8988,6 +8988,9 @@ namespace real::detail {
       table.text = text_.data();
       table.size = text_.size();
       table.holds.assign((text_.size() / 64U) + 1U, 0U);
+      if (!std::is_constant_evaluated()) {
+        note_ahead_table_rows(text_.size() + 1U);
+      }
       after->assign(width, 0U); // past the end: no consuming instruction can proceed
       const auto at {[&](std::int32_t pc) -> std::uint8_t& {
                        return (*here)[static_cast<std::size_t>(pc - base)];
@@ -9111,6 +9114,9 @@ namespace real::detail {
         sub_add_thread(walk.threads, sub.code_offset, origin, walk.holds);
       }
       thread_list& next {scratch.lists[1]};
+      if (!std::is_constant_evaluated() && walk.at < pos) {
+        note_behind_walk_steps(pos - walk.at);
+      }
       while (walk.at < pos) {
         const std::size_t p          {walk.at};
         const auto        byte_value {static_cast<std::uint8_t>(text_[p])};

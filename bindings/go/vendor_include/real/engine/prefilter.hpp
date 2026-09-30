@@ -309,6 +309,52 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Rows the unbounded-lookahead tables were filled with: one per position of each subject a table was
+   *        built for, counted for the test that pins one pass per subject rather than one per position.
+   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
+   */
+  inline std::atomic<std::uint64_t>& ahead_table_rows() noexcept
+  {
+    static std::atomic<std::uint64_t> rows {0};
+    return rows;
+  }
+
+  /*!
+   * \brief Bill \p rows table rows to \ref ahead_table_rows. A no-op unless the test binary defines
+   *        \c REAL_TEST_INSTRUMENT.
+   * \param[in] rows The rows one fill wrote.
+   */
+  inline void note_ahead_table_rows([[maybe_unused]] std::size_t rows) noexcept
+  {
+#if defined(REAL_TEST_INSTRUMENT)
+    ahead_table_rows().fetch_add(rows, std::memory_order_relaxed);
+#endif
+  }
+
+  /*!
+   * \brief Bytes the lookbehind walks stepped, counted for the test that pins one step per byte and search
+   *        whatever the lookbehind's bound, rather than one window per start.
+   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
+   */
+  inline std::atomic<std::uint64_t>& behind_walk_steps() noexcept
+  {
+    static std::atomic<std::uint64_t> steps {0};
+    return steps;
+  }
+
+  /*!
+   * \brief Bill \p steps walk steps to \ref behind_walk_steps. A no-op unless the test binary defines
+   *        \c REAL_TEST_INSTRUMENT.
+   * \param[in] steps The bytes one query stepped.
+   */
+  inline void note_behind_walk_steps([[maybe_unused]] std::size_t steps) noexcept
+  {
+#if defined(REAL_TEST_INSTRUMENT)
+    behind_walk_steps().fetch_add(steps, std::memory_order_relaxed);
+#endif
+  }
+
+  /*!
    * \brief Batches the lazy-DFA span filler produced, counted for the tests that pin which walks it serves.
    * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
    */

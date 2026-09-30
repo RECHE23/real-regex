@@ -4,7 +4,6 @@
 // over-long sub-patterns and the capture-isolation of the sub-VM. Subjects are ASCII so the
 // byte/char distinction does not intrude.
 #include <algorithm>
-#include <chrono>
 #include <cstdint>
 #include <iterator>
 #include <string>
@@ -425,24 +424,19 @@ TEST(lookbehind_walk_equals_every_start_tried_alone)
   EXPECT_EQ(compared, 13 * 40);
 }
 
-// The work is linear in the window, not quadratic: widening the bound four times costs about four
-// times as much per byte (each start used to replay the window from scratch -- sixteen times).
+// The work is linear in the subject whatever the bound: the walk steps each byte about once per search, where
+// trying each start separately stepped a window of up to the bound from every start. Counted, not timed.
 TEST(lookbehind_cost_grows_linearly_with_its_bound)
 {
   const std::string text(8192, 'a'); // no 'b': every start runs until the window closes
-  const auto        per_byte {[&text](int bound) {
-                                const real::regex re {"(?<=a{1," + std::to_string(bound) + "}b)a"};
-                                double            best {1e30};
-                                for (int rep {0}; rep < 3; ++rep) {
-                                  const auto t0 {std::chrono::steady_clock::now()};
-                                  EXPECT_EQ(re.count_matches(text), 0U);
-                                  best = std::min(best, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
-                                }
-                                return best;
-                              }};
-  const double narrow {per_byte(50)};
-  const double wide   {per_byte(200)};
-  EXPECT(wide < narrow * 8.0); // linear reads ~4; the retried starts read ~15
+  for (const int bound : {50, 200}) {
+    const real::regex re {"(?<=a{1," + std::to_string(bound) + "}b)a"};
+    real::detail::behind_walk_steps() = 0;
+    EXPECT_EQ(re.count_matches(text), 0U);
+    const std::uint64_t steps {real::detail::behind_walk_steps().load()};
+    EXPECT(steps > 0U);
+    EXPECT(steps <= 2U * (text.size() + 1U));
+  }
 }
 
 // A find_iter step can end before positions the previous step's VM already queried the lookbehind
@@ -520,22 +514,15 @@ TEST(unbounded_lookahead_find_iter)
   EXPECT(words == want);
 }
 
-// One pass per subject: doubling the text doubles the work (rerunning the body from every position
-// would quadruple it).
+// One pass per subject: the table is filled once, a row per position, where rerunning the body from every position
+// would take a pass per position. Counted rather than timed, so a loaded machine cannot read it wrong.
 TEST(unbounded_lookahead_cost_is_linear_in_the_text)
 {
-  const auto cost {[](std::size_t n) {
-                     const real::regex re {"(?=[ab]*z)a"};
-                     const std::string text(n, 'a'); // no z: the body runs to the end from every position
-                     double            best {1e30};
-                     for (int rep {0}; rep < 3; ++rep) {
-                       const auto t0 {std::chrono::steady_clock::now()};
-                       EXPECT_EQ(re.count_matches(text), 0U);
-                       best = std::min(best, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
-                     }
-                     return best;
-                   }};
-  const double small {cost(16384)};
-  const double large {cost(65536)};
-  EXPECT(large < small * 8.0); // linear reads ~4; quadratic ~16
+  const real::regex re {"(?=[ab]*z)a"};
+  for (const std::size_t n : {std::size_t {16384}, std::size_t {65536}}) {
+    const std::string text(n, 'a'); // no z: the body runs to the end from every position
+    real::detail::ahead_table_rows() = 0;
+    EXPECT_EQ(re.count_matches(text), 0U);
+    EXPECT_EQ(real::detail::ahead_table_rows().load(), n + 1U);
+  }
 }
