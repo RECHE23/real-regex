@@ -960,7 +960,7 @@ namespace real::detail {
     /*!
      * \brief Clears EVERY identity key, so nothing built for the old program survives an assignment.
      *
-     * There are four keys and every one of them must be cleared, because the identity check they perform
+     * There are five keys and every one of them must be cleared, because the identity check they perform
      * can PASS on a stale cache: copy-assigning the program's vector reuses its buffer, so `code.data()`
      * is unchanged and a key left pointing at it still matches. A cache kept that way then serves the
      * PREVIOUS pattern's product -- for `ac_for`, the previous alternation's automaton, which answers
@@ -968,13 +968,15 @@ namespace real::detail {
      * answers in both directions, not a crash.
      *
      * That is why the invariant is "an assignment invalidates every cache" rather than "every cache with
-     * a known reproducer": one of the four has no reproducer today and is cleared all the same.
+     * a known reproducer": `alt_pairs_for` was the one left out, and an alternation assigned over another
+     * of the same compiled size then searched with the previous one's fingerprint.
      */
     void invalidate_all() noexcept
     {
       built_for.store(nullptr, std::memory_order_relaxed);
       rows_for.store(nullptr, std::memory_order_relaxed);
       ac_for.store(nullptr, std::memory_order_relaxed);
+      alt_pairs_for.store(nullptr, std::memory_order_relaxed);
       op_table_for.store(nullptr, std::memory_order_relaxed);
     }
 

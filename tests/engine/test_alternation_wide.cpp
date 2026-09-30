@@ -513,3 +513,30 @@ TEST(alternation_variants_take_a_leading_boundary_and_decline_the_rest)
   static_cast<void>(real::regex {"(?i)info|fish"}.count_matches(s.substr(0, 3000)));
   EXPECT_EQ(real::detail::alternation_variant_scans().load(), 0U);
 }
+
+// Copy-assigning a regex reuses its program's buffer when the sizes allow, so every identity key must be
+// cleared: the alternation plan's was not, and an alternation assigned over another of the same compiled size
+// searched with the previous one's fingerprint -- 2 matches of 2500. Both routes that read the plan: an
+// alternation of at most eight first bytes, and one of more.
+TEST(alternation_plan_follows_a_copy_assignment_that_reuses_the_program)
+{
+  std::string s;
+  while (s.size() < 20000U) {
+    s += "xyq aaa ";
+  }
+  const std::vector<std::pair<std::string, std::string>> pairs {
+    {"abc|bcd|cde|def|efg|fgh|ghi|hij|ijk", "xyq|yqx|qxy|kqx|lqx|mqx|nqx|oqx|pqx"}, // wide: nine first bytes
+    {"abc|bcd|cde", "xyq|yqx|qxy"}};                                                 // small set: three
+  for (const auto& [first, second] : pairs) {
+    real::regex       re     {first};
+    const real::regex other  {second};
+    const void* const buffer {re.raw_program().code.data()};
+    EXPECT_EQ(re.count_matches(s), 0U); // builds the first pattern's plan
+    re = other;
+    if (re.raw_program().code.data() != buffer) {
+      std::printf("  %s: the program buffer was not reused, the case is not reached\n", second.c_str());
+    }
+    EXPECT_EQ(re.count_matches(s), other.count_matches(s));
+    EXPECT_EQ(re.count_matches(s), 2500U);
+  }
+}
