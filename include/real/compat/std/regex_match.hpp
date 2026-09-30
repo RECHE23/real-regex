@@ -1130,6 +1130,13 @@ namespace real::compat {
                          const std::basic_string<CharT>&   fmt,
                          regex_constants::match_flag_type  flags = regex_constants::format_default)
   {
+    if ((flags & regex_constants::match_prev_avail) != 0U) {
+      // `--first` is the caller's to read, and only through the caller's iterators: the copy below starts at
+      // `first`, so std would read the byte before the copy. The flag routes to std in any case.
+      return detail::std_call([&] {
+                                return std::regex_replace(out, first, last, re.std_engine(), fmt, detail::to_std_match(flags));
+                              });
+    }
     const std::basic_string<CharT> result {regex_replace(std::basic_string<CharT>(first, last), re, fmt, flags)};
     return std::copy(result.begin(), result.end(), out);
   }

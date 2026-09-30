@@ -1744,3 +1744,32 @@ TEST(compat_traversal_gate_keeps_what_real_does_not_model)
   EXPECT(!rc::regex {"(ab|)+a"}.uses_real_traversal());
   EXPECT(rc::regex {"(ab)+a"}.uses_real_traversal());
 }
+
+// regex_replace on an iterator range under match_prev_avail reads the context before `first` from the caller's
+// sequence, as std's does: a `\b` there sees the letter before the range, and nothing is read outside it.
+TEST(compat_replace_range_with_prev_avail_reads_the_callers_context)
+{
+  const std::string   s      {std::string(40, 'x') + "b a ba"};
+  const auto          first  {s.begin() + 41};                  // at " a ba": the byte before is 'b'
+  const rc::regex     compat {R"(\ba)"};
+  const std::regex    ref    {R"(\ba)"};
+  std::string         got;
+  std::string         want;
+  rc::regex_replace(std::back_inserter(got), first, s.end(), compat, std::string {"<$&>"},
+                    rc::regex_constants::match_prev_avail);
+  std::regex_replace(std::back_inserter(want), first, s.end(), ref, std::string {"<$&>"},
+                     std::regex_constants::match_prev_avail);
+  EXPECT_EQ(got, want);
+  EXPECT_EQ(got, " <a> ba");
+
+  const std::string glued {std::string(40, 'x') + "ba a"};
+  const auto        at_a  {glued.begin() + 41}; // "a a", with a 'b' before it: no boundary before the first 'a'
+  std::string       glued_got;
+  std::string       glued_want;
+  rc::regex_replace(std::back_inserter(glued_got), at_a, glued.end(), compat, std::string {"<$&>"},
+                    rc::regex_constants::match_prev_avail);
+  std::regex_replace(std::back_inserter(glued_want), at_a, glued.end(), ref, std::string {"<$&>"},
+                     std::regex_constants::match_prev_avail);
+  EXPECT_EQ(glued_got, glued_want);
+  EXPECT_EQ(glued_got, "a <a>");
+}
