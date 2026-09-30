@@ -16,6 +16,6 @@ sentence: **behave identically to `std::regex`, never a silent divergence.**
 
 Under the default strict policy every accepted pattern runs `regex_search` /
 `regex_match` in time linear in the input. `regex_replace` and the iterators
-compose O(n) such operations — quadratic worst case, never exponential; a
-nullable pattern's replace/iteration delegates to std.
+compose O(n) such operations — quadratic worst case, never exponential, a
+nullable pattern included (a nullable POSIX pattern's replace/iteration delegates to std).
 */

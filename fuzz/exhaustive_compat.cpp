@@ -105,6 +105,7 @@ int main(int argc, char** argv)
   long long agree {0};
   long long divergences {0};
   long long tolerated {0}; //!< The documented nullable-loop capture class (exact signature).
+  long long traversal {0}; //!< A non-conforming local std's empty-match traversal (exact signature, see below).
   int       shown {0};
 
   // The ONLY tolerated divergence: the nullable-loop group capture. Its exact signature (mirroring
@@ -127,6 +128,32 @@ int main(int argc, char** argv)
       }
     }
     return differs;
+  };
+
+  // The SECOND tolerated class, on a local std that does not follow [re.regiter.incr] over empty
+  // matches: compat's replace of a nullable pattern follows the standard (as libstdc++ does). Apple's
+  // system libc++ drops the text between empty matches (`x*` over "ab" gives "---" where the standard
+  // gives "-a-b-"), and LLVM's libc++ makes the retry after a first empty match with the text before
+  // it (`\B|^a` over "ba" gives "b-a-" where the standard gives "b--"). Which std this is is asked of
+  // the std itself, as the
+  // class pin below asks it about the empty final iteration: on a conforming std this class must be
+  // empty, and any such divergence is serious. Its exact signature: a nullable pattern, and every
+  // observable but the replace equal.
+  const bool std_follows_traversal {
+    std::regex_replace(std::string {"ab"}, std::regex {"x*"}, std::string {"-"}) == "-a-b-"
+    && std::regex_replace(std::string {"ba"}, std::regex {R"(\B|^a)"}, std::string {"-"}) == "b--"};
+  const auto is_traversal_signature = [std_follows_traversal](const std::string& pattern, const observable& compat,
+                                                              const observable& local) {
+    if (std_follows_traversal || compat.accepts != local.accepts || compat.matched != local.matched
+        || compat.pos != local.pos || compat.len != local.len || compat.groups != local.groups) {
+      return false;
+    }
+    try {
+      return rc::regex(pattern).nullable();
+    }
+    catch (const std::regex_error&) {
+      return false;
+    }
   };
 
   const auto compat_search = [](const std::string& s, rc::smatch& m, const rc::regex& e) {
@@ -155,6 +182,9 @@ int main(int argc, char** argv)
         if (is_empty_iteration_signature(compat, local)) {
           ++tolerated;
         }
+        else if (is_traversal_signature(pattern, compat, local)) {
+          ++traversal;
+        }
         else if (shown < 25) {
           static_cast<void>(std::fprintf(stderr,
                        "DIVERGE pattern=%s input=%s | compat(accept=%d match=%d %ld+%ld repl=%s) "
@@ -168,10 +198,11 @@ int main(int argc, char** argv)
     }
   }
 
-  const long long serious {divergences - tolerated};
+  const long long serious {divergences - tolerated - traversal};
   static_cast<void>(std::printf("exhaustive-compat: %lld cases, agree=%lld, divergences=%lld "
-                                "(documented nullable-loop capture=%lld, serious=%lld)\n",
-                                total, agree, divergences, tolerated, serious));
+                                "(documented nullable-loop capture=%lld, non-conforming std traversal=%lld, "
+                                "serious=%lld)\n",
+                                total, agree, divergences, tolerated, traversal, serious));
   // A run that did not happen is not a pass. An empty corpus makes every judgement below vacuous:
   // `serious == 0` because there was nothing to disagree about, and the count pin refuses it only
   // where the pinned value happens to be non-zero -- so on the MS STL branch, where the residue does
@@ -255,6 +286,22 @@ int main(int argc, char** argv)
     static_cast<void>(std::printf("exhaustive-compat: tolerated pinned at %lld (this std %s the "
                                   "empty final iteration)\n",
                                   expected, std_keeps_empty_iteration ? "keeps" : "drops"));
+    // The traversal class, pinned the same way: zero on a std that follows the standard (it is not
+    // even counted there), and the measured count on Apple's libc++, which does not.
+    static constexpr long long traversal_non_conforming {544175}; //!< default tier, measured on macOS 14's system libc++
+    const long long            expected_traversal {std_follows_traversal ? 0 : traversal_non_conforming};
+    if (traversal != expected_traversal) {
+      static_cast<void>(std::fprintf(stderr,
+                   "exhaustive-compat: FAIL -- non-conforming std traversal=%lld, expected %lld for this "
+                   "std (follows [re.regiter.incr]: %s). This number is quoted in docs/COMPATIBILITY.md "
+                   "and its site mirror; move it there in the same commit, or find out why the class "
+                   "changed size.\n",
+                   traversal, expected_traversal, std_follows_traversal ? "yes" : "no"));
+      return 1;
+    }
+    static_cast<void>(std::printf("exhaustive-compat: traversal pinned at %lld (this std %s the "
+                                  "standard's empty-match traversal)\n",
+                                  expected_traversal, std_follows_traversal ? "follows" : "does not follow"));
   }
   else {
     static_cast<void>(std::printf("exhaustive-compat: tolerated NOT pinned -- widened tier declared "

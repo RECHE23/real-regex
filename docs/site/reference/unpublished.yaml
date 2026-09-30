@@ -51,7 +51,7 @@ real::compat::basic_regex:
   uses_fallback: complement of uses_real
   posix_longest: POSIX routing bit; search/match honour it, callers do not set it
   engine: embedder hook -- the free functions read the variant
-  std_engine: lazy std::regex accessor for the fallback / nullable-replace path
+  std_engine: lazy std::regex accessor for the fallback / constraining-flag path
 real::compat::match_results:
   value_type: iterator trait
   const_reference: iterator trait

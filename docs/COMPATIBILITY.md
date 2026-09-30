@@ -17,8 +17,9 @@ where a `std::regex` drop-in blows up exponentially — pinned by the Fowler/AT&
 `regex_replace` and the iterators *compose* up to O(n) such operations, so their worst-case total is
 **quadratic** — inherent to repeated scanning on any linear engine (RE2 and the Rust `regex` crate
 included), not a REAL limitation — but **never exponential** when running on REAL. A **nullable** pattern's
-replace/iteration delegates to `std::regex` (correct results, not ReDoS-safe): iterating a nullable is
-O(n²) even on a linear engine, so REAL cannot promise linear there and does not pretend to.
+replace/iteration runs on REAL too, advancing past an empty match as the standard requires: iterating a
+nullable is O(n²) in the worst case even on a linear engine, so REAL promises quadratic there, not linear,
+and never exponential.
 
 > New here? Start with the migration tour: [Drop-in for std::regex](@ref std_regex_dropin). This page
 > is the exhaustive per-feature reference; REAL's own differences from Python `re` are in
@@ -87,7 +88,7 @@ ECMAScript-`$` (end-only), ECMAScript-`.` (excludes `\n` and `\r`) semantics lin
    rather than closing it, and the same reason applies here. **All** operations are linear for a
    translated **non-nullable** pattern — `search`/`match` via `search_longest`, `regex_replace`/iterators via
    `find_iter_longest`; a nullable one (`x*`, `a*`) keeps `search` on REAL but delegates its replace/iterate to
-   `std` (POSIX-correct bounds, the empty-match traversal differs — the same exclusion as the ECMAScript path).
+   `std` (POSIX-correct bounds; REAL does not model POSIX's leftmost-longest advance past an empty match).
    Each grammar's shape is honoured: BRE `\(`/`\)` group and `\{n\}` quantify while bare `( ) { } | + ?` are
    literals; awk adds the C-escapes (`\b` is **backspace**, plus `\n\t\r\f\v\a`, `\/`, and octal `\ddd`); grep
    (BRE) and egrep (ERE) read a newline as a top-level alternation of the lines. A construct only the
@@ -139,7 +140,7 @@ do not use `len(findall(...))` as a throughput proxy.
 | `collate` or `nosubs` | locale-sensitive ranges / group-hiding — outside `real`'s model | screened to std up front (the five POSIX grammars themselves translate — see above) |
 | A BRE backreference `\1`-`\9` | `real` does not implement backreferences | translator declines → std fallback (std backtracks them) |
 | `\0` followed by a digit (`\00`, `\012`) | `real` reads a legacy octal escape (Annex B); libstdc++ reads `\0`=NUL then a literal digit — strict ECMAScript makes it a syntax error, so neither is the spec answer | screened to std up front (a both-accept divergence otherwise; the fuzzer found it) |
-| **Nullable patterns in `regex_replace`/iterators** | empty-match *traversal* (advance-after-empty-match) differs between `real` (Python) and ECMAScript | a real-backed pattern that can match empty (`a*`, `(x)?`) routes those operations to a lazily-built `std::regex` — **per operation**, so `search`/`match` keep `real`'s ReDoS-safety even for nullable-ReDoS like `(a*)*` |
+| **Nullable patterns in `regex_replace`/iterators** | the standard's advance past an empty match ([re.regiter.incr]) is `real`'s own (Python's), except the retry after an iteration's first empty match, which reads no text before it | an ECMAScript pattern that can match empty (`a*`, `(x)?`) replaces and iterates on `real`, which makes that retry as the standard does; a nullable **POSIX** pattern routes those operations to a lazily-built `std::regex` — **per operation**, so `search`/`match` keep `real`'s ReDoS-safety even for nullable-ReDoS like `(a*)*` |
 
 These patterns run on `std::regex` and therefore lose the linear-time guarantee — a documented,
 non-silent trade. Prefer ReDoS-safe equivalents for untrusted input.
@@ -171,8 +172,8 @@ The Python binding follows the same policy (`real.compile(pat, fallback=True)`, 
 
 ## The one tolerated divergence: nullable-loop group capture
 
-There is exactly **one** place a real-backed pattern's observable differs from the local `std::regex`,
-and it is documented rather than routed away: **`regex_search`/`regex_match`'s per-group captures**
+Against a `std::regex` that follows the standard, there is exactly **one** place a real-backed
+pattern's observable differs from it, and it is documented rather than routed away: **`regex_search`/`regex_match`'s per-group captures**
 (`m[N]`, `N >= 1`). For a `*`/`+` loop whose body can match empty and captures (`(a*)*`, `(.*)*`,
 `(a|)*`, `(ab|)+a`), `real` records the last **consuming** iteration for the group while `std::regex`
 (ECMAScript, a backtracker) records an extra **empty final** iteration. The whole match — and every
@@ -183,6 +184,16 @@ the Rust `regex` crate, and Go's `regexp` share it**. Note the `std` side itself
 **stdlib-variant**: libstdc++ and libc++ record the empty final iteration (the residue described
 here), while **MS STL keeps the last non-empty iteration — agreeing with `real`'s lineage**, so on
 MSVC this divergence does not exist at all (the test suite pins each stdlib's edge separately).
+
+libc++ does not follow the standard's advance past an empty match. Apple's system libc++ drops the text
+between empty matches (`x*` over `ab` replaces to `---` where the standard and libstdc++ give `-a-b-`),
+and LLVM's libc++ makes the retry after an iteration's first empty match with the text before it
+(`\B|^a` over `ba` replaces to `b-a-` where the standard gives `b--`). This layer follows the standard, so
+on those libraries a nullable pattern's `regex_replace` and iteration differ from the local `std::regex`
+by construction. The exhaustive routing check asks the local std which it is and, on such a std only,
+tolerates exactly that signature (a nullable pattern, every observable but the replace equal):
+**544 175** cases of the default tier on macOS 14's system libc++, and none on libstdc++, where any
+such case fails the check.
 
 **Why `search`/`match` keep it, rather than routing to std.** Routing this class to `std::regex` would
 hand exactly the textbook catastrophic-backtracking patterns — nested nullable quantifiers — to a
@@ -211,8 +222,8 @@ to catch this shape too. So `regex_replace`'s `$N` and `sregex_token_iterator`'s
 The replacement format is ECMAScript: `$$` → `$`, `$&` → the whole match, `` $` `` → the text since
 the previous match, `$'` → the text to the end, `$N` / `$NN` → group N (matching
 `std::regex_replace`, which the differential harness pins). `format_first_only` and `format_no_copy`
-are honoured. A non-nullable real-backed pattern runs the substitution on `real`'s linear traversal;
-a nullable one falls back to `std`. Whether the swap is faster depends on the `std::regex` it replaces:
+are honoured. A real-backed pattern runs the substitution on `real`'s traversal, nullable or not (a
+nullable POSIX pattern excepted, which falls back to `std`). Whether the swap is faster depends on the `std::regex` it replaces:
 on the one measured case it is **~4× faster than libc++'s and ~0.75× — slower — than libstdc++'s**
 (see Performance below).
 
@@ -231,9 +242,9 @@ real→std fallback), the lazy `std` build, and the `std` engine's own failures 
 gives up on a pattern such as `(?:a?){1000}` with `error_complexity` during the match, not at its build).
 
 A real-backed pattern reaches `std` through four routes only: `regex_search`/`regex_match` with a
-match flag `real` does not honour; `regex_replace` on a nullable pattern, with such a flag, with
-`format_sed`, or with a format using `$0`; a `regex_iterator` (and so a `regex_token_iterator`) on a
-nullable pattern or with such a flag; and `std_engine()` itself. A pattern `real` accepts but `std`
+match flag `real` does not honour; `regex_replace` with such a flag, with `format_sed`, with a format
+using `$0`, or on a nullable POSIX pattern; a `regex_iterator` (and so a `regex_token_iterator`) with
+such a flag or on a nullable POSIX pattern; and `std_engine()` itself. A pattern `real` accepts but `std`
 rejects (a *real superset*: a lookbehind, a named group, `a{,2}`; on libc++ also `\A` = literal `A`)
 runs `search`/`match` on `real`, and fails only when one of those routes first builds its `std` engine:
 a **late but homogeneous** `compat::regex_error`, never a silent wrong result. A caller who wants that
@@ -296,17 +307,17 @@ chooses the spec-reasonable behaviour, which may differ from a given `std` on th
 ## Iteration (regex_iterator)
 
 `real::compat::regex_iterator` (with `sregex_iterator` / `cregex_iterator`) walks the non-overlapping
-matches like `std::regex_iterator`. Same per-operation routing as `regex_replace`: a non-nullable
-real-backed pattern drives `real`'s linear traversal (repeated region search — a non-nullable pattern
-never matches empty, so the position always advances and the ECMAScript and `real` sequences agree);
-the std backend and nullable patterns wrap `std::regex_iterator` (whose empty-match advance *is*
-ECMAScript's). The default-constructed iterator is the end sentinel. Constructing from a temporary
+matches like `std::regex_iterator`. Same per-operation routing as `regex_replace`: a real-backed
+pattern drives `real`'s traversal, which advances past an empty match as [re.regiter.incr] does (no
+empty match again where one was, and, after the iteration's first match came out empty, a retry that
+reads no text before it); the std backend, a constraining flag and a nullable POSIX pattern wrap
+`std::regex_iterator`. The default-constructed iterator is the end sentinel. Constructing from a temporary
 regex is `=delete`d (it would dangle), exactly as `std::regex_iterator`. The differential fuzzer
 compares the whole **span sequence** (and each match's `prefix()`/`suffix()`), not just the first
 match — the empty-match traversal being the risk it pins.
 
 `regex_token_iterator` (with `sregex_token_iterator` / `cregex_token_iterator`) wraps that iterator,
-so it inherits the nullable routing unchanged. For each match it yields the requested fields in
+so it inherits the same routing. For each match it yields the requested fields in
 order: `N >= 0` is capture group `N` (a non-participating group is an empty `matched == false`
 token), and `-1` is the text *before* this match since the previous one (the match's `prefix()`),
 which makes `-1` a splitter. After the last match a trailing `-1` field yields the final suffix

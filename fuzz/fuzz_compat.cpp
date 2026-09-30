@@ -260,6 +260,19 @@ namespace {
   // applied to the shapes above, so ordinary patterns keep the full fuzzer-chosen subject.
   constexpr std::size_t max_nested_quantifier_subject {16};
 
+  //! \brief Whether the local std follows [re.regiter.incr] over empty matches. compat's traversal of a
+  //!        nullable pattern follows the standard, as libstdc++ does; Apple's system libc++ drops the text
+  //!        between empty matches (`x*` over "ab" gives "---", not "-a-b-"), and LLVM's libc++ retries after
+  //!        a first empty match with the text before it (`\B|^a` over "ba" gives "b-a-", not "b--"), so on
+  //!        either a nullable pattern's replace and iteration have no oracle.
+  //! \return True on a conforming std.
+  bool std_follows_traversal()
+  {
+    static const bool follows {
+      std::regex_replace(std::string {"ab"}, std::regex {"x*"}, std::string {"-"}) == "-a-b-"
+      && std::regex_replace(std::string {"ba"}, std::regex {R"(\B|^a)"}, std::string {"-"}) == "b--"};
+    return follows;
+  }
 } // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size)
@@ -328,9 +341,10 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     __builtin_trap(); // whole-match span divergence
   }
 
-  // S2 net: regex_replace must match std::regex_replace — the empty-match TRAVERSAL is the new risk.
-  // A nullable real-backed pattern routes to the lazy std backend (so it equals std by construction);
-  // a non-nullable one runs the compat substitution on real's traversal, which must agree with std.
+  // S2 net: regex_replace must match std::regex_replace — the empty-match TRAVERSAL is the risk. A
+  // real-backed pattern, nullable or not, runs the compat substitution on real's traversal, which must
+  // agree with a std that follows the standard (std_follows_traversal).
+  const bool compare_traversal {std_follows_traversal() || !compat.nullable()};
   // S5b: the format is GENERATED from the input (not fixed) so it exercises $0, $N/$NN, $&, $`, $',
   // $$, a lone trailing $, and literals — the branches that were coverage-discovered before.
   std::string fmt;
@@ -355,13 +369,13 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   }
   const std::string compat_out {real::compat::regex_replace(subject, compat, fmt)};
   const std::string std_out {std::regex_replace(subject, std_re, fmt)};
-  if (compat_out != std_out) {
+  if (compare_traversal && compat_out != std_out) {
     __builtin_trap(); // regex_replace divergence (format expansion or empty-match traversal)
   }
 
   // S2b net: the SEQUENCE of match spans from the iterator must equal std::sregex_iterator's — not
-  // just the first match. The empty-match advancement is the risk; a nullable real-backed pattern
-  // routes the iterator to the lazy std backend, a non-nullable one drives real's region traversal.
+  // just the first match. The empty-match advancement is the risk; a real-backed pattern drives real's
+  // traversal, which follows [re.regiter.incr].
   using span = std::pair<long, long>;
   std::vector<span> compat_spans;
   for (real::compat::sregex_iterator it(subject.begin(), subject.end(), compat), end; it != end;
@@ -372,7 +386,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   for (std::sregex_iterator it(subject.begin(), subject.end(), std_re), end; it != end; ++it) {
     std_spans.emplace_back(it->position(0), it->length(0));
   }
-  if (compat_spans != std_spans) {
+  if (compare_traversal && compat_spans != std_spans) {
     __builtin_trap(); // iterator span-sequence divergence (empty-match traversal)
   }
 
@@ -392,7 +406,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
          it != end; ++it) {
       std_tokens.emplace_back(it->str(), it->matched);
     }
-    if (compat_tokens != std_tokens) {
+    if (compare_traversal && compat_tokens != std_tokens) {
       __builtin_trap(); // token-sequence divergence (split fields / trailing suffix derivation)
     }
   }
@@ -428,7 +442,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
            it != end; ++it) {
         std_list.emplace_back(it->str(), it->matched);
       }
-      if (compat_list != std_list) {
+      if (compare_traversal && compat_list != std_list) {
         __builtin_trap(); // token field-list divergence (mixed / out-of-range selectors)
       }
     }

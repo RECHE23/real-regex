@@ -24,6 +24,17 @@ using namespace std::string_view_literals;
 using span_pair = std::pair<std::ptrdiff_t, std::ptrdiff_t>;
 
 namespace {
+  //! \brief Whether the local std follows [re.regiter.incr] over empty matches: Apple's system libc++ drops
+  //!        the text between them (`x*` over "ab" gives "---", not "-a-b-"), and LLVM's libc++ retries after a
+  //!        first empty match with the text before it (`\B|^a` over "ba" gives "b-a-", not "b--"), so on
+  //!        either a nullable pattern's replace and iteration have no oracle and the tests compare them to
+  //!        fixed values instead.
+  //! \return True on a conforming std.
+  bool std_follows_traversal()
+  {
+    return std::regex_replace(std::string {"ab"}, std::regex {"x*"}, std::string {"-"}) == "-a-b-"
+           && std::regex_replace(std::string {"ba"}, std::regex {R"(\B|^a)"}, std::string {"-"}) == "b--";
+  }
 
   // Run real::compat and std::regex on (pattern, subject); assert identical verdict + whole-match
   // span + per-group span. Returns false if either side failed to compile (caller decides).
@@ -325,7 +336,7 @@ TEST(compat_backend_selection)
   const rc::regex can_be_empty("a*");
   EXPECT(can_be_empty.uses_real());
   EXPECT(can_be_empty.nullable());               // matches empty
-  EXPECT(!can_be_empty.uses_real_traversal());   // nullable -> replace/iterate defer to std
+  EXPECT(can_be_empty.uses_real_traversal());    // nullable ECMAScript -> real traversal too ([re.regiter.incr])
 
   // Backreference -> real rejects -> std fallback (std ECMAScript supports backrefs).
   const rc::regex back(R"((a)\1)", rc::regex_constants::ECMAScript, rc::policy::fallback);
@@ -645,18 +656,21 @@ TEST(compat_regex_replace)
     {"o", "foo bar", "0"}, {R"((\w+)@(\w+))", "a@b", "$2.$1"}, {"\\d+", "x12y34", "#"},
     {"(a)(b)", "ab", "$&-$1-$2"}, {"l", "hello", "[$`|$']"}, {"a", "banana", "X"},
     {R"((\d{4})-(\d{2}))", "2026-06", "$2/$1"}, {"x", "axbxc", "$$"},
-    {"x*", "abc", "-"}, // nullable -> lazy std fallback
+    {"x*", "abc", "-"}, // nullable: real's traversal, compared where the local std follows the standard
   };
   for (const auto& [pat, subj, fmt] : cases) {
     const rc::regex   re(pat);
+    if (re.nullable() && !std_follows_traversal()) {
+      continue; // Apple's libc++ drops the text between empty matches: no oracle for this case
+    }
     const std::string got {rc::regex_replace(subj, re, fmt)};
     const std::string ref {std::regex_replace(subj, std::regex(pat, std::regex::ECMAScript), fmt)};
     EXPECT_EQ(got, ref);
   }
 
-  // Nullable pattern uses the lazy std backend for replace (the empty-match traversal differs).
-  EXPECT(rc::regex("a*").uses_real());            // real-backed for search/match
-  EXPECT(!rc::regex("a*").uses_real_traversal()); // but NOT for replace/iterate (nullable)
+  // A nullable pattern replaces on real too, advancing past an empty match as the standard does.
+  EXPECT(rc::regex("a*").uses_real());
+  EXPECT(rc::regex("a*").uses_real_traversal());
 
   // flags: format_first_only, format_no_copy.
   EXPECT_EQ(rc::regex_replace(std::string("a b c"), rc::regex("\\w"), "X",
@@ -738,10 +752,10 @@ TEST(compat_regex_iterator)
   }
   EXPECT_EQ(n, 2U);
 
-  // cregex_iterator std path: a nullable real-backed pattern routes the iterator to std, whose
-  // empty-match advance is ECMAScript's. The span sequence must still equal std::cregex_iterator's.
+  // cregex_iterator over a nullable pattern: real's traversal, whose span sequence must equal
+  // std::cregex_iterator's where the local std follows the standard.
   const rc::regex digits(R"(\d*)");
-  EXPECT(!digits.uses_real_traversal());
+  EXPECT(digits.uses_real_traversal());
   std::vector<span_pair> cgot;
   std::vector<span_pair> cref;
   for (rc::cregex_iterator it(cstr, cstr + 4, digits), e; it != e; ++it) {
@@ -751,10 +765,10 @@ TEST(compat_regex_iterator)
   for (std::cregex_iterator it(cstr, cstr + 4, sdigits), e; it != e; ++it) {
     cref.emplace_back(it->position(0), it->length(0));
   }
-  EXPECT(cgot == cref);
+  EXPECT(!std_follows_traversal() || cgot == cref);
 
-  // Nullable pattern iterates via the std backend (empty-match traversal differs).
-  EXPECT(!rc::regex("x*").uses_real_traversal());
+  // A nullable pattern iterates on real too.
+  EXPECT(rc::regex("x*").uses_real_traversal());
 }
 
 namespace {
@@ -799,8 +813,8 @@ TEST(compat_regex_token_iterator)
   EXPECT(tokens_agree(R"((\d)|([a-z]))", "1a2b", {1, 2})); // alternation: each match fills one of two groups
   EXPECT(tokens_agree(R"((\w+)=(\w+))", "k1=v1 k2=v2", {1, 2, -1}));
 
-  // The std backend (nullable pattern) routes through the same wrapper.
-  EXPECT(!rc::regex(R"(\w*)").uses_real_traversal());
+  // A nullable pattern tokenizes on real's traversal too.
+  EXPECT(rc::regex(R"(\w*)").uses_real_traversal());
   EXPECT(tokens_agree(R"(\w+)", "alpha beta", {0}));
 
   // cregex_token_iterator over a C string (split).
@@ -1356,15 +1370,16 @@ TEST(compat_late_std_error_is_homogeneous)
   }
   EXPECT(threw_compat);
 
-  // Nullable real-superset (super + `*`): no std backend is built at construction (the
-  // std engine is lazy, built per operation), so search still runs on real, and replace surfaces the
-  // wrapped error only when it actually builds and uses the std engine.
+  // Nullable real-superset (super + `*`): no std backend is built at construction (the std engine is
+  // lazy), so search and a plain replace run on real, and a replace whose format reaches std (`$0`)
+  // surfaces the wrapped error only when it actually builds the std engine.
   const rc::regex nullable_super(super + "*");
   EXPECT(nullable_super.uses_real());
-  EXPECT(rc::regex_search(txt, nullable_super)); // real path, fine (nullable matches empty)
+  EXPECT(rc::regex_search(txt, nullable_super));                             // real path, fine (nullable matches empty)
+  EXPECT(!rc::regex_replace(txt, nullable_super, std::string("x")).empty()); // real traversal, no std
   bool threw_compat2 {false};
   try {
-    (void)rc::regex_replace(txt, nullable_super, std::string("x"));
+    (void)rc::regex_replace(txt, nullable_super, std::string("$0"));
   }
   catch (const rc::regex_error&) {
     threw_compat2 = true;
@@ -1635,4 +1650,94 @@ TEST(compat_std_errors_while_matching_are_the_compat_type)
         });
   std::printf("  std errors while matching: %zu thrown, %zu raw\n", thrown, raw);
   EXPECT_EQ(raw, 0U);
+}
+
+namespace {
+  //! \brief The whole-match spans an iterator yields, as (position, length).
+  std::vector<std::pair<long, long>> spans_of(const std::string& s,
+                                              const rc::regex&   re)
+  {
+    std::vector<std::pair<long, long>> out;
+    for (rc::sregex_iterator it {s.begin(), s.end(), re}, end; it != end && out.size() < 64U; ++it) {
+      out.emplace_back(it->position(0), it->length(0));
+    }
+    return out;
+  }
+} // namespace
+
+// A nullable ECMAScript pattern replaces and iterates on REAL, advancing past an empty match as
+// [re.regiter.incr] requires; the values are the standard's (libstdc++ gives the same).
+TEST(compat_nullable_traversal_follows_the_standard)
+{
+  const rc::regex stars {"x*"};
+  EXPECT(stars.uses_real_traversal());
+  EXPECT_EQ(rc::regex_replace(std::string {"abc"}, stars, std::string {"-"}), std::string {"-a-b-c-"});
+  const rc::regex as {"a*"};
+  EXPECT(spans_of("baa", as) == (std::vector<std::pair<long, long>> {{0, 0}, {1, 2}, {3, 0}}));
+  EXPECT_EQ(rc::regex_replace(std::string {"baa"}, as, std::string {"<$&>"}), std::string {"<>b<aa><>"});
+  EXPECT_EQ(rc::regex_replace(std::string {"baa"}, as, std::string {"-"}, rc::regex_constants::format_first_only),
+            std::string {"-baa"});
+}
+
+// After the iteration's first match came out empty, the standard retries a non-empty match there before it
+// grants match_prev_avail, so the text before it is not its context: `\B` at 1 over "aa" holds for the empty
+// match, but the retry reads position 1 as the start, where `\Ba` fails. One match, not two.
+TEST(compat_first_empty_match_retries_without_context)
+{
+  const rc::regex re {R"(\Ba*?)"};
+  EXPECT(spans_of("aa", re) == (std::vector<std::pair<long, long>> {{1, 0}}));
+  EXPECT_EQ(rc::regex_replace(std::string {"aa"}, re, std::string {"-"}), std::string {"a-a"});
+  // And where that retry succeeds: the empty match `\B` makes at 1 over "ba" is retried on "a" read as the
+  // start, where `^a` holds -- a match the text before it would have forbidden.
+  const rc::regex anchored {R"(\B|^a)"};
+  EXPECT(spans_of("ba", anchored) == (std::vector<std::pair<long, long>> {{1, 0}, {1, 1}}));
+  EXPECT_EQ(rc::regex_replace(std::string {"ba"}, anchored, std::string {"-"}), std::string {"b--"});
+}
+
+// A copy resumes after an empty match without meeting it again: copying, then advancing the copy, walks the
+// same sequence as advancing one iterator (a copy that rebuilt its walk at the empty match looped on it).
+TEST(compat_copied_iterator_resumes_after_an_empty_match)
+{
+  const std::string                  s  {"baa"};
+  const rc::regex                    re {"a*"};
+  std::vector<std::pair<long, long>> walked;
+  rc::sregex_iterator                it {s.begin(), s.end(), re};
+  for (const rc::sregex_iterator end; it != end && walked.size() < 16U;) {
+    const rc::sregex_iterator copy {it};
+    walked.emplace_back(copy->position(0), copy->length(0));
+    it = copy;
+    ++it;
+  }
+  EXPECT(walked == spans_of(s, re));
+}
+
+// The field before a match, after a first empty match whose retry failed, starts at that empty match's end:
+// the empty pattern over "\0a" splits into "", "\0", "a".
+TEST(compat_split_field_after_a_failed_retry)
+{
+  const std::string        s     {std::string("\0a", 2)};
+  const rc::regex          empty {""};
+  std::vector<std::string> fields;
+  for (rc::sregex_token_iterator it {s.begin(), s.end(), empty, -1}, end; it != end; ++it) {
+    fields.push_back(it->str());
+  }
+  EXPECT(fields == (std::vector<std::string> {"", std::string("\0", 1), "a"}));
+}
+
+// A long run on a nullable pattern: std's recursive matcher overflowed the stack here under libstdc++;
+// REAL's traversal is linear.
+TEST(compat_nullable_replace_over_a_long_run)
+{
+  const std::string field(100000, 'x');
+  const rc::regex   re {"[^,]*"};
+  EXPECT_EQ(rc::regex_replace(field, re, std::string {"-"}), std::string {"--"});
+}
+
+// What stays on std: a nullable POSIX pattern (leftmost-longest empty matches are not modelled) and a
+// capturing group that is nullable under a quantifier (its capture diverges).
+TEST(compat_traversal_gate_keeps_what_real_does_not_model)
+{
+  EXPECT(!(rc::regex {"a*", rc::regex_constants::extended}.uses_real_traversal()));
+  EXPECT(!rc::regex {"(ab|)+a"}.uses_real_traversal());
+  EXPECT(rc::regex {"(ab)+a"}.uses_real_traversal());
 }

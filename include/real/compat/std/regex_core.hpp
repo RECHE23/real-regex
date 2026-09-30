@@ -1010,12 +1010,10 @@ namespace real::compat {
     /*!
      * \brief Whether the pattern can match the empty string (real's `empty_match_possible` hint).
      *
-     * Empty-match *traversal* (replace / iterate) follows Python's advance rules in `real`, which
-     * differ from ECMAScript. So a nullable real-backed pattern routes those operations to a lazily
-     * built `std::regex` (\ref std_engine) — per operation, not at construction, so `search`/`match`
-     * keep `real`'s linear-time guarantee even on nullable-ReDoS patterns like `(a*)*`.
-     * \return `true` if it is nullable; `regex_replace` then routes to `std`, whose empty-match
-     *         traversal differs from REAL's Python-lineage one.
+     * A nullable pattern's replace and iteration meet empty matches: `real` advances past them as the
+     * standard does (\ref uses_real_traversal), except under a POSIX grammar, where those operations
+     * route to a lazily built `std::regex` (\ref std_engine).
+     * \return `true` if it is nullable.
      */
     [[nodiscard]] bool nullable() const noexcept
     {
@@ -1036,21 +1034,21 @@ namespace real::compat {
     }
 
     /*!
-     * \brief Whether replace/iterate run on the `real` traversal (real-backed AND non-nullable AND no
-     *        nullable captured-repeat group). A nullable pattern delegates replace/iterate to std (the
-     *        empty-match traversal differs; and iterating a nullable pattern whose per-position match
-     *        cost is O(n) is O(n²) on any linear engine, so routing it buys correctness but not a linear
-     *        guarantee — see the nullable note in COMPATIBILITY.md). A pattern with a capturing group
+     * \brief Whether replace/iterate run on the `real` traversal: real-backed, and neither a nullable
+     *        captured-repeat group nor a nullable POSIX pattern. A nullable ECMAScript pattern runs on
+     *        `real` too, advancing past an empty match as [re.regiter.incr] requires (see
+     *        \ref detail::nonempty_at_without_context); a nullable POSIX one stays on std, whose
+     *        leftmost-longest empty-match traversal is not modelled here. A pattern with a capturing group
      *        that is nullable under a quantifier (`(ab|)+a`) is itself non-nullable as a whole, but
      *        real's last-consuming-iteration capture (RE2/Rust/Go lineage) diverges from an ECMAScript
      *        backtracker's extra empty final iteration on that GROUP's span — so it routes too, for the
      *        same reason: `regex_search`/`match` are unaffected (see the nullable-loop group-capture
      *        section of COMPATIBILITY.md — the search residue is intentional, not an oversight).
-     * \return `true` for a real-backed, non-nullable pattern.
+     * \return `true` for a real-backed pattern whose traversal `real` models.
      */
     [[nodiscard]] bool uses_real_traversal() const noexcept
     {
-      return uses_real() && !nullable_ && !nullable_captured_repeat_;
+      return uses_real() && !nullable_captured_repeat_ && !(nullable_ && posix_longest_);
     }
 
     /*!

@@ -43,6 +43,7 @@ SOURCE = ROOT / "fuzz" / "exhaustive_compat.cpp"
 SOURCE_RES = (
     ("tolerated", re.compile(r"tolerated_with_residue\s*\{(\d+)\}")),
     ("space", re.compile(r"cases_at_default_tier\s*\{(\d+)\}")),
+    ("traversal", re.compile(r"traversal_non_conforming\s*\{(\d+)\}")),
 )
 
 #: The live pages that quote it. Both canons and both of their site mirrors.
@@ -57,6 +58,11 @@ PAGES = (
 #: numbers are captured: pinning one of the two would leave the other free to drift, which is the
 #: state this file was in until the space stopped being an approximation.
 PAGE_RE = re.compile(r"([\d][\d ]*?) cases out of ([\d][\d ]*?) in the tier-1 space")
+
+#: The second tolerated class, a non-conforming std's empty-match traversal: quoted by the compat canon and
+#: its mirror only (the divergences pages are about Python `re`, where it has no meaning).
+TRAVERSAL_PAGES = PAGES[:2]
+TRAVERSAL_RE = re.compile(r"\*\*([\d][\d ]*?)\*\* cases of the default tier on macOS")
 
 
 def grouped(value: int) -> str:
@@ -81,13 +87,14 @@ def run(*, page_texts: dict[pathlib.Path, str] | None = None, quiet: bool = Fals
     """Compare every page's quoted count against the C++ constant."""
     expected = measured(source_text)
     if expected is None:
-        print(f"check_tolerated_count: FAIL — `tolerated_with_residue` or `cases_at_default_tier` "
-              f"is missing from {SOURCE.relative_to(ROOT)}. A source of truth moved or was renamed; "
+        print(f"check_tolerated_count: FAIL — `tolerated_with_residue`, `cases_at_default_tier` or "
+              f"`traversal_non_conforming` is missing from {SOURCE.relative_to(ROOT)}. A source of truth moved or was renamed; "
               f"this script is now checking nothing, which is worse than not existing.")
         return 1
 
     texts = page_texts if page_texts is not None else {p: p.read_text(encoding="utf-8") for p in PAGES}
     want_tol, want_space = grouped(expected["tolerated"]), grouped(expected["space"])
+    want_trav = grouped(expected["traversal"])
     bad: list[str] = []
     for path, text in texts.items():
         found = PAGE_RE.findall(text)
@@ -102,21 +109,32 @@ def run(*, page_texts: dict[pathlib.Path, str] | None = None, quiet: bool = Fals
             if quoted_space.strip() != want_space:
                 bad.append(f"{path.relative_to(ROOT)}: quotes a space of {quoted_space.strip()!r}, "
                            f"measured {want_space!r}")
+        if path in TRAVERSAL_PAGES:
+            traversal = TRAVERSAL_RE.findall(text)
+            if not traversal:
+                bad.append(f"{path.relative_to(ROOT)}: the traversal sentence is gone (expected "
+                           f"`**{want_trav}** cases of the default tier on macOS`)")
+            for quoted in traversal:
+                if quoted.strip() != want_trav:
+                    bad.append(f"{path.relative_to(ROOT)}: quotes {quoted.strip()!r} traversal cases, "
+                               f"measured {want_trav!r}")
 
     if bad:
         if not quiet:
             print("check_tolerated_count: FAIL — the docs and the measurement disagree.")
             for line in bad:
                 print(f"    {line}")
-            print(f"    The measurements are `tolerated_with_residue` (= {want_tol}) and "
-                  f"`cases_at_default_tier` (= {want_space}) in {SOURCE.relative_to(ROOT)}. If a "
+            print(f"    The measurements are `tolerated_with_residue` (= {want_tol}), "
+                  f"`cases_at_default_tier` (= {want_space}) and `traversal_non_conforming` "
+                  f"(= {want_trav}) in {SOURCE.relative_to(ROOT)}. If a "
                   f"count really changed, move the constant AND every page in the same commit; if "
                   f"it did not, something regressed in the compat routing or the enumerator.")
         return 1
 
     if not quiet:
         print(f"check_tolerated_count: OK — {len(texts)} page(s) quote {want_tol} out of "
-              f"{want_space}, both counts {SOURCE.relative_to(ROOT)} pins.")
+              f"{want_space}, and {len(TRAVERSAL_PAGES)} the traversal class's {want_trav}: every "
+              f"count {SOURCE.relative_to(ROOT)} pins.")
     return 0
 
 
@@ -133,9 +151,9 @@ def self_test() -> int:
         return 1
     #: Both numbers, on every page: pinning one and self-testing only that one is how the space came
     #: to be an approximation while the class was guarded.
-    for which in ("tolerated", "space"):
+    for which in ("tolerated", "space", "traversal"):
         wanted, drifted = grouped(expected[which]), grouped(expected[which] + 1)
-        for target in PAGES:
+        for target in (TRAVERSAL_PAGES if which == "traversal" else PAGES):
             text = target.read_text(encoding="utf-8")
             if wanted not in text:
                 print(f"check_tolerated_count: SELF-TEST INCONCLUSIVE — cannot inject the {which} "
@@ -157,7 +175,7 @@ def self_test() -> int:
     # captures reach the same branch, and eight verbose runs would bury the signal in their own
     # output. What is asserted is the SENTENCE a reader acts on, and one negative: the drifted value
     # must not be presented as the measurement.
-    for which in ("tolerated", "space"):
+    for which in ("tolerated", "space", "traversal"):
         drifted = grouped(expected[which] + 1)
         target = PAGES[0]
         text = target.read_text(encoding="utf-8")
@@ -180,7 +198,9 @@ def self_test() -> int:
             problems.append(f"exit {code}, expected 1")
         if stderr.strip():
             problems.append(f"wrote to stderr: {stderr.strip()[:80]!r}")
-        for token in ("tolerated_with_residue", "cases_at_default_tier", want_tol, want_space):
+        want_trav = grouped(expected["traversal"])
+        for token in ("tolerated_with_residue", "cases_at_default_tier", "traversal_non_conforming", want_tol,
+                      want_space, want_trav):
             if token not in printed:
                 problems.append(f"the footer never names {token!r}")
         if drifted not in printed:
@@ -198,8 +218,8 @@ def self_test() -> int:
                 print(f"      {line}")
             return 1
 
-    # The arms the drift injections cannot reach: a source that lost a constant (each of the two
-    # alone), a page that lost the sentence, and the clean verdict's own line.
+    # The arms the drift injections cannot reach: a source that lost a constant (each alone), a page
+    # that lost either sentence, and the clean verdict's own line.
     source = SOURCE.read_text(encoding="utf-8")
     pages = {p: p.read_text(encoding="utf-8") for p in PAGES}
 
@@ -222,15 +242,21 @@ def self_test() -> int:
     if drive(page_texts=gone, quiet=True)[0] != 1:
         print("check_tolerated_count: SELF-TEST FAILED — a page that lost the sentence was not refused.")
         return 1
+    gone = dict(pages)
+    gone[TRAVERSAL_PAGES[0]] = TRAVERSAL_RE.sub("many cases of the default tier on macOS", gone[TRAVERSAL_PAGES[0]])
+    if drive(page_texts=gone, quiet=True)[0] != 1:
+        print("check_tolerated_count: SELF-TEST FAILED — a page that lost the traversal sentence was not refused.")
+        return 1
     code, printed = drive(page_texts=pages)
     if code != 0 or "check_tolerated_count: OK" not in printed:
         print(f"check_tolerated_count: SELF-TEST FAILED — the live pages did not produce the OK line (exit {code}).")
         return 1
 
-    print(f"check_tolerated_count: self-test OK — a drift in EITHER count trips the comparison on "
-          f"each of the {len(PAGES)} pages ({2 * len(PAGES)} injections), and the failure path "
-          f"itself prints both constant names, both measured values and the drifted one, on stdout "
-          f"alone; a lost constant (each), a lost sentence and the OK line are driven too.")
+    print(f"check_tolerated_count: self-test OK — a drift in ANY count trips the comparison on "
+          f"each page that quotes it ({2 * len(PAGES) + len(TRAVERSAL_PAGES)} injections), and the "
+          f"failure path itself prints every constant name, every measured value and the drifted one, "
+          f"on stdout alone; a lost constant (each), a lost sentence (each) and the OK line are driven "
+          f"too.")
     return 0
 
 
