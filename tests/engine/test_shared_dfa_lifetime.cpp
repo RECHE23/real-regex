@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <thread>
@@ -276,4 +277,67 @@ TEST(shared_regex_scans_in_parallel_with_the_same_answers)
     th.join();
   }
   EXPECT(wrong.load() == 0);
+}
+
+// A destroyed regex's DFA sets are freed with it: this thread's cached set and the sets other threads gave back
+// to its pool, rather than when this thread next leases another regex.
+TEST(dfa_sets_are_freed_with_their_regex)
+{
+  using real::detail::shared_dfa_set;
+  const std::string  text(4096, 'a');
+  const std::int64_t before {shared_dfa_set::alive().load()};
+  {
+    const real::regex re {"[a-z]+[0-9]*"};
+    EXPECT(re.count_matches(text) > 0U);
+    std::thread other    {[&] { static_cast<void>(re.count_matches(text)); }}; // gives its set back as it ends
+    other.join();
+    EXPECT(shared_dfa_set::alive().load() >= before + 2);
+  }
+  EXPECT_EQ(shared_dfa_set::alive().load(), before);
+}
+
+// A set given back to a slot already retired is freed, not pooled where nothing will lease it. The retired slot
+// can outlive the regex in a thread's last-hit cache (the inner-literal route's): the worker warms a second regex,
+// scans the first and caches its slot, then -- the first destroyed meanwhile -- moves back to the second, giving
+// the first one's set back to a slot its cache still holds.
+TEST(dfa_set_given_back_after_its_regex_died_is_freed)
+{
+  using real::detail::shared_dfa_set;
+  std::string text;
+  while (text.size() < 65536U) {
+    text += "contact alice@example.com or bob@corp.com today and more words here ";
+  }
+  const std::string  plain(4096, 'a');
+  const std::int64_t before             {shared_dfa_set::alive().load()};
+  auto               first              {std::make_unique<real::regex>(R"([a-z]+@[a-z]+\.com)")}; // the inner-literal route, which leases
+  const real::regex  second             {"[a-z]+[0-9]*"};
+  std::atomic<int>   phase              {0};
+  std::int64_t       alive_while_parked {-1};
+  std::thread        worker             {[&] {
+                                           static_cast<void>(second.count_matches(plain)); // warm: its next search rebuilds nothing
+                                           static_cast<void>(first->count_matches(text));
+                                           // What the inner-literal route does on a candidate scan: this thread's last-hit cache now holds the slot.
+                                           static_cast<void>(real::detail::shared_dfa_for(first->raw_program().immut));
+                                           phase = 1;
+                                           while (phase != 2) {
+                                             std::this_thread::yield();
+                                           }
+                                           static_cast<void>(second.count_matches(plain)); // gives the first regex's set back to its retired slot
+                                           phase = 3;
+                                           while (phase != 4) {
+                                             std::this_thread::yield();
+                                           }
+                                         }};
+  while (phase != 1) {
+    std::this_thread::yield();
+  }
+  first.reset();
+  phase = 2;
+  while (phase != 3) {
+    std::this_thread::yield();
+  }
+  alive_while_parked = shared_dfa_set::alive().load();
+  phase              = 4;
+  worker.join();
+  EXPECT_EQ(alive_while_parked, before + 1); // the second regex's set, which the worker still holds
 }
