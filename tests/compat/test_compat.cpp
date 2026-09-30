@@ -1653,11 +1653,14 @@ TEST(compat_std_errors_while_matching_are_the_compat_type)
 }
 
 namespace {
-  //! \brief The whole-match spans an iterator yields, as (position, length).
-  std::vector<std::pair<long, long>> spans_of(const std::string& s,
-                                              const rc::regex&   re)
+  //! A whole match's (position, length), in the type the match reports them in.
+  using span_pair = std::pair<rc::smatch::difference_type, rc::smatch::difference_type>;
+
+  //! \brief The whole-match spans an iterator yields.
+  std::vector<span_pair> spans_of(const std::string& s,
+                                  const rc::regex&   re)
   {
-    std::vector<std::pair<long, long>> out;
+    std::vector<span_pair> out;
     for (rc::sregex_iterator it {s.begin(), s.end(), re}, end; it != end && out.size() < 64U; ++it) {
       out.emplace_back(it->position(0), it->length(0));
     }
@@ -1673,7 +1676,7 @@ TEST(compat_nullable_traversal_follows_the_standard)
   EXPECT(stars.uses_real_traversal());
   EXPECT_EQ(rc::regex_replace(std::string {"abc"}, stars, std::string {"-"}), std::string {"-a-b-c-"});
   const rc::regex as {"a*"};
-  EXPECT(spans_of("baa", as) == (std::vector<std::pair<long, long>> {{0, 0}, {1, 2}, {3, 0}}));
+  EXPECT(spans_of("baa", as) == (std::vector<span_pair> {{0, 0}, {1, 2}, {3, 0}}));
   EXPECT_EQ(rc::regex_replace(std::string {"baa"}, as, std::string {"<$&>"}), std::string {"<>b<aa><>"});
   EXPECT_EQ(rc::regex_replace(std::string {"baa"}, as, std::string {"-"}, rc::regex_constants::format_first_only),
             std::string {"-baa"});
@@ -1685,12 +1688,12 @@ TEST(compat_nullable_traversal_follows_the_standard)
 TEST(compat_first_empty_match_retries_without_context)
 {
   const rc::regex re {R"(\Ba*?)"};
-  EXPECT(spans_of("aa", re) == (std::vector<std::pair<long, long>> {{1, 0}}));
+  EXPECT(spans_of("aa", re) == (std::vector<span_pair> {{1, 0}}));
   EXPECT_EQ(rc::regex_replace(std::string {"aa"}, re, std::string {"-"}), std::string {"a-a"});
   // And where that retry succeeds: the empty match `\B` makes at 1 over "ba" is retried on "a" read as the
   // start, where `^a` holds -- a match the text before it would have forbidden.
   const rc::regex anchored {R"(\B|^a)"};
-  EXPECT(spans_of("ba", anchored) == (std::vector<std::pair<long, long>> {{1, 0}, {1, 1}}));
+  EXPECT(spans_of("ba", anchored) == (std::vector<span_pair> {{1, 0}, {1, 1}}));
   EXPECT_EQ(rc::regex_replace(std::string {"ba"}, anchored, std::string {"-"}), std::string {"b--"});
 }
 
@@ -1698,10 +1701,10 @@ TEST(compat_first_empty_match_retries_without_context)
 // same sequence as advancing one iterator (a copy that rebuilt its walk at the empty match looped on it).
 TEST(compat_copied_iterator_resumes_after_an_empty_match)
 {
-  const std::string                  s  {"baa"};
-  const rc::regex                    re {"a*"};
-  std::vector<std::pair<long, long>> walked;
-  rc::sregex_iterator                it {s.begin(), s.end(), re};
+  const std::string      s  {"baa"};
+  const rc::regex        re {"a*"};
+  std::vector<span_pair> walked;
+  rc::sregex_iterator    it {s.begin(), s.end(), re};
   for (const rc::sregex_iterator end; it != end && walked.size() < 16U;) {
     const rc::sregex_iterator copy {it};
     walked.emplace_back(copy->position(0), copy->length(0));
