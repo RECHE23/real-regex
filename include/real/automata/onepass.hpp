@@ -970,9 +970,14 @@ namespace real::detail {
      * That is why the invariant is "an assignment invalidates every cache" rather than "every cache with
      * a known reproducer": `alt_pairs_for` was the one left out, and an alternation assigned over another
      * of the same compiled size then searched with the previous one's fingerprint.
+     *
+     * The automaton is also released, not only unkeyed: it is the one product whose size follows the
+     * pattern's (up to \ref ac_memory_budget), and a regex assigned a small pattern would otherwise hold
+     * the previous one's until its next alternation search rebuilt it.
      */
     void invalidate_all() noexcept
     {
+      ac.reset();
       built_for.store(nullptr, std::memory_order_relaxed);
       rows_for.store(nullptr, std::memory_order_relaxed);
       ac_for.store(nullptr, std::memory_order_relaxed);

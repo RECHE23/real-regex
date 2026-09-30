@@ -18,8 +18,10 @@
 
 #include "real/version.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <span>
 #include <string_view>
 #include <type_traits>
@@ -1705,7 +1707,10 @@ namespace real::detail {
       std::int32_t  branch_count {};
       if (is_fixed_alternation(code, &wb_lead, &wb_trail, &body_pc, &branch_count)) {
         hints.fixed_alternation        = true;
-        hints.alternation_branch_count = static_cast<std::uint16_t>(branch_count);
+        // Saturated: a wrapped count would read as a handful of branches to the readers that pick a
+        // per-branch route under a small count.
+        hints.alternation_branch_count = static_cast<std::uint16_t>(
+          std::min<std::int32_t>(branch_count, std::numeric_limits<std::uint16_t>::max()));
         // Only set wb_* here if exact_literal / fixed_shape did not already claim them
         // (a pure literal alternation is rare; prefer not clobbering an earlier path).
         if (!hints.fixed_shape && hints.exact_literal_len == 0) {

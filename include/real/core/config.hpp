@@ -26,7 +26,8 @@ namespace real::detail {
    *
    * Bounds the compiler's bounded-repeat unrolling: without it, nested
    * `{1000}` quantifiers expand to hundreds of millions of instructions. Caps
-   * peak match-state memory to a few MiB at the limit.
+   * the program to a few MiB at the limit; what a match builds from it has its own bounds (the lazy DFA's
+   * state budget, the Aho-Corasick automaton's \ref ac_memory_budget).
    */
   inline constexpr std::size_t max_program_size       {262144};
 
