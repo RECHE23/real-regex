@@ -1893,6 +1893,17 @@ namespace real::detail {
 
     static constexpr std::size_t   ac_density_work_threshold_low {1400}; //!< The same product for \ref ac_branch_floor .. \ref ac_branch_threshold branches, where the safe direction is reversed.
 
+    /*!
+     * \brief Branch walks the completion half of the sample may spend, per decision. Each verified candidate
+     *        costs a walk of every branch -- what the cascade pays per candidate -- so a thousand-word
+     *        alternation spent ~2 M instructions deciding on a 100-byte line whose search then cost ~4 k.
+     *        Past the budget, the candidates left are counted for density but not verified: a cascade whose
+     *        every candidate costs that many walks is the slower route whatever they complete. Twelve
+     *        branches verify 85 candidates, more than the window usually holds, so the gate's measured
+     *        region decides as before.
+     */
+    static constexpr std::size_t   ac_completion_walk_budget     {1024};
+
     // A RELATION, not a value. No test reacts to a 4x change in
     // a constant; for a measured threshold the answer to that is a test, but for a relation between
     // constants a test merely samples where an assertion covers every build. The window clamp is
@@ -1997,6 +2008,7 @@ namespace real::detail {
         const std::size_t span_cap           {std::clamp(needed, ac_density_min_span, ac_density_sample_bytes)};
         const std::size_t limit              {text.size() < start + span_cap ? text.size() : start + span_cap};
         std::size_t       cands              {0};
+        std::size_t       checked            {0};
         std::size_t       completed          {0};
         bool              completion_decided {false};
         std::size_t       pos                {start};
@@ -2018,9 +2030,16 @@ namespace real::detail {
           // automaton then wins and amortises it. The direction that must stay cheap is the one that ENDS
           // on the cascade, and it does: two completions are enough to exceed the threshold on any sample
           // this window can hold, so a matching subject bails out after two walks.
-          if (ac_candidate_completes(window, pos)) {
+          const bool verify {(checked + 1U) * branches <= ac_completion_walk_budget};
+#if defined(REAL_TEST_INSTRUMENT)
+          if (verify) {
+            ac_completion_walks().fetch_add(branches, std::memory_order_relaxed);
+          }
+#endif
+          checked += verify ? 1U : 0U;
+          if (verify && ac_candidate_completes(window, pos)) {
             ++completed;
-            if (completed * 100U > cands * ac_completion_pct + 100U) {
+            if (completed * 100U > checked * ac_completion_pct + 100U) {
               // The completed fraction is already past the threshold and more candidates can only be
               // read as more evidence for the cascade. Decline now, before paying for the rest.
               scanned            = pos > start ? pos - start : std::size_t {1};
@@ -2043,8 +2062,9 @@ namespace real::detail {
         const std::size_t work {cands * 1000U * branches / span};
         // BOTH quantities must favour the automaton. Density alone provably cannot decide (see
         // ac_completion_pct), so a dense sample whose candidates keep completing stays on the cascade.
+        // Over the candidates verified: none when one candidate alone would overrun the walk budget.
         const bool        completion_ok {!completion_decided
-                                         && completed * 100U <= cands * ac_completion_pct};
+                                         && completed * 100U <= checked * ac_completion_pct};
         state_.ac_dense           = work >= want && completion_ok;
         state_.ac_decided         = true;
         ac_density_last_verdict().store(state_.ac_dense ? ac_verdict::automaton : ac_verdict::cascade,

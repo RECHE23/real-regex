@@ -252,6 +252,17 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Branch walks the Aho-Corasick gate's completion sample spent, counted for the tests that pin its
+   *        budget.
+   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
+   */
+  inline std::atomic<std::uint64_t>& ac_completion_walks() noexcept
+  {
+    static std::atomic<std::uint64_t> walks {0};
+    return walks;
+  }
+
+  /*!
    * \brief Searches a program that is not a fixed alternation took its variants' fingerprint for, counted for
    *        the tests that pin when it does.
    * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).

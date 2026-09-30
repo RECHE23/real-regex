@@ -277,3 +277,27 @@ TEST(ac_density_gate_high_region_stays_on_the_cascade_just_short_of_the_threshol
   (void) spans(re, sparse);
   EXPECT_EQ(verdict_name(), "cascade");
 }
+
+// The completion half of the sample walks every branch for each candidate it verifies, and a new subject is
+// decided anew: a 5000-branch alternation spent millions of instructions deciding a short line. Its walks are
+// budgeted (1024 per decision, the gate's ac_completion_walk_budget), and the verdict on a dense subject is
+// still the automaton -- a cascade paying 5000 walks per candidate is the slower route.
+TEST(ac_density_gate_budgets_its_completion_walks)
+{
+  const real::regex re   {alternation_of(5000)};
+  const std::string line {dense_subject().substr(0, 600)};
+
+  const seam_scope seam  {false, false};
+  real::detail::ac_completion_walks()     = 0;
+  real::detail::ac_density_last_verdict() = real::detail::ac_verdict::not_consulted;
+  (void) re.search(line);
+  EXPECT(real::detail::ac_completion_walks().load() <= 1024U);
+  EXPECT_EQ(verdict_name(), "automaton");
+
+  // Twelve branches verify every candidate the window holds, as before the budget.
+  const real::regex twelve {alternation_of(12)};
+  real::detail::ac_completion_walks() = 0;
+  (void) twelve.search(line);
+  EXPECT(real::detail::ac_completion_walks().load() > 0U);
+  EXPECT(real::detail::ac_completion_walks().load() % 12U == 0U);
+}
