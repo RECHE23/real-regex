@@ -2,6 +2,40 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.9.11
+
+9.11 (**four wrong answers fixed, and large alternations in bounded memory**): **THE TABLES ARE NOT
+RE-RUN, AND THE STAMP STAYS AT `2026.9.9` + tree `aa22707`.** Unlike 9.9, the route code several cells run
+DID change: the alternation rows (fingerprint past eight first bytes, class heads, case folding, tables
+loaded once per scan), the literal rows on x86 AVX2 (four blocks a round), the fixed-shape rows (spans filled
+in batches) and every lazy-DFA row (ids are row offsets; a loop ends on an empty iteration). The x86-64 host
+that holds the stamp was not reachable, so each change was measured outside the table, each pair on one host
+before and after (`count_matches` over 500 KB of log lines unless stated, 2026-09-28 to 09-30):
+- **Alternations past eight first bytes scan by the fingerprint** (033856b): twelve literals absent from the
+  corpus, x86-64 g++ 15.3.1 −96 % cycles, arm64 1.404 → 0.050 ms; twelve common words x86 −28..−35 %, arm64
+  −38 %. Case-folded (093833d): `(?i)info|error|warn` x86-64 cycles ×0.153.
+- **The fingerprint's tables are loaded once per scan** (ebe27d1): GCC `-O2` (the Go module, RelWithDebInfo)
+  ten words −17 % AVX2, info|error|warn −30 %; `-O3` and clang within ±3 %.
+- **The Aho-Corasick automaton over byte classes** (f909587): 14 500 words, 276 MB → 25 MB live; arm64
+  instructions −60..−63 % on its routes; x86-64 g++ 14.4 `-O3` −46..−63 %; other alternation rows within 1 %.
+- **The lazy DFA's byte budget** (55257dd): `(?:14 500 words)[0-9]` peak 258 → 78 MB; alternations up to
+  2 000 words unchanged in bytes and time.
+- **Lazy-DFA ids are row offsets** (c6b9556): x86-64 g++ 15.2 cycles `\w+\s+\w+` −9.9 %, `[a-z]+ing\b` −4.9 %,
+  CaptureGroups −3.4 %; arm64 CaptureGroups −18 %; no row regresses on either ISA. **An inner-literal candidate
+  leases its DFAs once** (4fec155): IPv4 x86-64 −9.2 % cycles, arm64 −14 %.
+- **Fixed-shape walks fill their spans in batches** (cadffe8): date x86-64 1.12 → 0.92 ns/B; arm64 §A date
+  0.510 → 0.364; byte-class rows +5–7 % on arm64's default build, parity when aligned (placement).
+- **The AVX2 literal scan tests four blocks at once** (58b9705): x86-64 SSE2 build, cycles, `hello` −33 %,
+  `https` −35 %, `the` −20 %.
+- **The loop exit on an empty iteration** (606430e) changes answers, not speed: no timed row's pattern has an
+  empty branch under a loop.
+**Corrections to the 9.10 entry:** the arm64 `literal` (csv `charlie`) 0.20 → 0.21 and §Unicode's CJK literal
+0.38 → 0.41 are layout, not the adaptive search's bookkeeping: in a driver of their own (arm64, Apple clang
+16, `-O2`, 2026-09-29) `charlie` 0.191 → 0.200 ns/B and `你好` 0.178 → 0.188 by default, and both trees read
+0.200 / 0.188 built with `-falign-functions=64 -falign-loops=64` (BENCHMARKS.md corrected in place, 9a399ab).
+The 9.10 entry's "saturated" multi-pattern host was an orphaned build of this project's own; re-measured at
+600b0fb (b76b886).
+
 ## v2026.9.10
 
 9.10 (**literals and alternations catch up with the regex crate**): **THE TABLES MOVE, AND THE STAMP IS
