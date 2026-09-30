@@ -1986,6 +1986,9 @@ namespace real {
      * Lets an embedder (e.g. the Python binding) drive `detail::pike_vm` with
      * caller-owned reusable scratch. Valid as long as this regex is alive.
      *
+     * \warning An advanced, unstable extension point for bindings and embedders: \ref detail::program_view is
+     *          an implementation type, and its members may change in any release. Code that only matches has no
+     *          use for it.
      * \return A non-owning \ref detail::program_view.
      */
     [[nodiscard]] constexpr detail::program_view raw_program() const
