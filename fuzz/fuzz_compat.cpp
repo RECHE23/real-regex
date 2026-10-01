@@ -260,6 +260,21 @@ namespace {
   // applied to the shapes above, so ordinary patterns keep the full fuzzer-chosen subject.
   constexpr std::size_t max_nested_quantifier_subject {16};
 
+  //! \brief Whether the local std honors `match_prev_avail` as the standard does. compat takes the flag on REAL
+  //!        for one search or match; libc++ ignores it for `^` (`^a` over the `a` of "ba" matches) and never lets
+  //!        `\b` hold on an attempt that starts at `last`, so there a search under it has no oracle.
+  //! \return True on a conforming std.
+  bool std_honors_prev_avail()
+  {
+    static const bool honors {[] {
+      const std::string ba {"ba"};
+      const std::string a {"a"};
+      return !std::regex_search(ba.begin() + 1, ba.end(), std::regex {"^a"}, std::regex_constants::match_prev_avail)
+             && std::regex_search(a.end(), a.end(), std::regex {R"(\b)"}, std::regex_constants::match_prev_avail);
+    }()};
+    return honors;
+  }
+
   //! \brief Whether the local std follows [re.regiter.incr] over empty matches. compat's traversal of a
   //!        nullable pattern follows the standard, as libstdc++ does; Apple's system libc++ drops the text
   //!        between empty matches (`x*` over "ab" gives "---", not "-a-b-"), and LLVM's libc++ retries after
@@ -449,8 +464,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   }
 
   // S3 net: a random subset of match flags must produce identical results compat(mf) vs std(mf) on
-  // search + match + iterate. A constraining flag mis-categorized as honored-in-real (real_honors
-  // letting it stay on real) would diverge here. data[0] (otherwise unused) drives the flag subset.
+  // search + match + iterate. A constraining flag mis-categorized as honored-in-real (call_stays_real or
+  // real_honors letting it stay on real) would diverge here. data[0] (otherwise unused) drives the flag subset.
   namespace rcc = real::compat::regex_constants;
   namespace sc  = std::regex_constants;
   const std::uint8_t   fbits {data[0]};
@@ -468,19 +483,22 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   if (prev_avail) { cmf = cmf | rcc::match_prev_avail; smf |= sc::match_prev_avail; }
   const auto lo {prev_avail ? subject.begin() + 1 : subject.begin()};
 
-  real::compat::smatch cmf_m;
-  std::smatch          smf_m;
-  if (real::compat::regex_search(lo, subject.end(), cmf_m, compat, cmf)
-      != std::regex_search(lo, subject.end(), smf_m, std_re, smf)) {
-    __builtin_trap(); // verdict divergence under match flags
-  }
-  if (cmf_m.ready() && smf_m.ready() && cmf_m[0].matched && smf_m[0].matched
-      && (cmf_m.position(0) != smf_m.position(0) || cmf_m.length(0) != smf_m.length(0))) {
-    __builtin_trap(); // span divergence under match flags
-  }
-  if (real::compat::regex_match(lo, subject.end(), compat, cmf)
-      != std::regex_match(lo, subject.end(), std_re, smf)) {
-    __builtin_trap(); // regex_match verdict divergence under match flags
+  // A search or match under match_prev_avail runs on REAL; a std that does not honor the flag is no oracle there.
+  if (!prev_avail || std_honors_prev_avail()) {
+    real::compat::smatch cmf_m;
+    std::smatch          smf_m;
+    if (real::compat::regex_search(lo, subject.end(), cmf_m, compat, cmf)
+        != std::regex_search(lo, subject.end(), smf_m, std_re, smf)) {
+      __builtin_trap(); // verdict divergence under match flags
+    }
+    if (cmf_m.ready() && smf_m.ready() && cmf_m[0].matched && smf_m[0].matched
+        && (cmf_m.position(0) != smf_m.position(0) || cmf_m.length(0) != smf_m.length(0))) {
+      __builtin_trap(); // span divergence under match flags
+    }
+    if (real::compat::regex_match(lo, subject.end(), compat, cmf)
+        != std::regex_match(lo, subject.end(), std_re, smf)) {
+      __builtin_trap(); // regex_match verdict divergence under match flags
+    }
   }
   std::vector<span> compat_mf_spans;
   for (real::compat::sregex_iterator it(lo, subject.end(), compat, cmf), end; it != end; ++it) {
