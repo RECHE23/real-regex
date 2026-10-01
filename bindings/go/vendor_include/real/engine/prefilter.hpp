@@ -2892,6 +2892,17 @@ namespace real::detail {
     bool          dense  {};     //!< Sticky: the pair filter takes this subject from here on.
   };
 
+  /*!
+   * \brief The two literal densities of one subject. A search state keeps them in a `std::optional` beside the
+   *        subject they refer to, built at its first literal search: constructing a state, which every search
+   *        does, then writes a pointer and a flag for them, not two densities.
+   */
+  struct literal_memo
+  {
+    literal_density prefix {}; //!< What the subject showed of the prefix's rarest byte.
+    literal_density inner  {}; //!< The same for the inner literal.
+  };
+
   inline constexpr std::uint32_t literal_dense_min_cands {8}; //!< Stops the rarest-byte scan makes before its density is judged: fewer say nothing.
 
   /*!
@@ -3127,6 +3138,7 @@ namespace real::detail {
     bool decided {}; //!< The sample has run on this subject.
     bool dense   {}; //!< Its first bytes stop often enough that the pair filter takes the subject.
   };
+
 
   /*!
    * \brief Whether the nibble fingerprint can run here: AArch64 always, x86 when the build enables SSSE3 or, with

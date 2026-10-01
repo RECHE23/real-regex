@@ -1059,6 +1059,33 @@ TEST(literal_adaptive_search_switches_only_where_the_rarest_byte_is_common)
   EXPECT_EQ(spans, want);
 }
 
+// A state builds its per-subject memos on first use and keys them by the subject's `data()`. A fresh state's key is
+// null, as a subject's `data()` can be: the memo's absence, not the key, must say that none is held.
+TEST(subject_memos_are_built_for_a_null_subject)
+{
+  const auto literal     {dynamic_storage::compile("needle", real::flags::none)};
+  const auto alternation {dynamic_storage::compile("cat|dog|eel", real::flags::none)};
+  const auto check       {[&]<typename State>() {
+                            const real::detail::program_view lit_view {literal.view()};
+                            State                            lit_state;
+                            const real::detail::pike_vm      lit_vm(lit_view, lit_state);
+                            EXPECT(!lit_state.lit_memo.has_value());
+                            EXPECT_EQ(lit_vm.find_on_subject(std::string_view {}, 0, "needle"sv, 0U, false), real::npos);
+                            EXPECT(lit_state.lit_memo.has_value());
+                            EXPECT(lit_state.lit_text == nullptr);
+
+                            const real::detail::program_view alt_view {alternation.view()};
+                            State                            alt_state;
+                            const real::detail::pike_vm      alt_vm(alt_view, alt_state);
+                            EXPECT(alt_vm.alternation_density_seen(std::string_view {}) == nullptr);
+                            EXPECT(!alt_vm.alternation_density_for(std::string_view {}).decided);
+                            EXPECT(alt_vm.alternation_density_seen(std::string_view {}) != nullptr);
+                            EXPECT(alt_vm.alternation_density_seen("a subject"sv) == nullptr);
+                          }};
+  check.template operator()<real::detail::pike_state>();                  // the test harness's state
+  check.template operator()<real::detail::dynamic_storage::state_type>(); // real::regex's own
+}
+
 // The same primitives under constant evaluation take the scalar path (no intrinsics in a constexpr
 // context), so the two legs are pinned against each other on shapes that cross the lane width.
 TEST(literal_search_constexpr_leg_agrees)
