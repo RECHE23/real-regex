@@ -66,7 +66,7 @@ include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
 	full-local-gate-impl gcc-check route-probe alloc-probe alloc-cold-probe ac-regime sabotage-sweep sabotage-help check-blind-guard blind-guards \
-        lint misra check-state-zeroing check-percall-copies route-surface-parity bench-compilers fuzz fuzz-compat fuzz-compat-known fuzz-re2 check-capi-abi check-abi-bump check-features-probe exhaustive-compat fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
+        lint misra check-state-zeroing check-percall-copies route-surface-parity bench-compilers fuzz fuzz-compat fuzz-compat-known fuzz-re2 check-capi-abi check-abi-bump check-features-probe exhaustive-compat exhaustive-compat-flags exhaustive-compat-flags-smoke fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
@@ -366,6 +366,12 @@ GXX ?= g++-14
 # full-local-gate calls both below as steps 13-14/22.
 exhaustive-compat:
 	@$(MAKE) -C fuzz exhaustive-compat
+
+exhaustive-compat-flags:
+	@$(MAKE) -C fuzz exhaustive-compat-flags
+
+exhaustive-compat-flags-smoke:
+	@$(MAKE) -C fuzz exhaustive-compat-flags-smoke
 
 fowler-compat:
 	@$(MAKE) -C fuzz fowler-compat

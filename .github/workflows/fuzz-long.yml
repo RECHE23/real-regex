@@ -28,6 +28,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The match flags REAL honors on one search or match, compat vs libstdc++ over the whole exhaustive space,
+  # its counts pinned (fuzz/exhaustive_compat_flags.cpp). CI runs every 13th pattern; this runs them all.
+  exhaustive-flags:
+    name: exhaustive compat flag axis
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: real-regex
+      - uses: actions/checkout@v6
+        with:
+          repository: RECHE23/sciforge
+          ref: v2026.9.2
+          path: sciforge
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install clang
+        run: sh real-regex/tools/ci-apt-ubuntu.sh clang
+      - name: Exhaustive compat flag axis, whole space (match flags on REAL vs std::regex)
+        run: make -C real-regex exhaustive-compat-flags
+
   fuzz:
     name: fuzz-long (${{ matrix.target }})
     runs-on: ubuntu-latest

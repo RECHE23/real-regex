@@ -371,8 +371,9 @@ other cell (a subject that DOES match, or a single-element list) is unaffected a
 This is a *per-operation* decision, like the nullable routing: a pattern keeps `real`'s ReDoS-safety
 for the calls `real` honors and only the other calls pay the `std` cost. The differential fuzzer
 generates a random flag subset and compares `compat(mf)` vs `std(mf)` on search + match + iterate,
-which is what proves the partition; the test suite compares the two flags `real` takes against the
-host `std` over every short subject, start and flag set.
+which is what proves the partition. The flags `real` takes are also compared with the host `std` over
+the exhaustive space (`make exhaustive-compat-flags`: every pattern and input of the routing check, under
+each of them and their pairs; every 13th pattern in CI, the whole space weekly).
 
 ## Always-std parts of the surface (wregex, POSIX, nosubs)
 
