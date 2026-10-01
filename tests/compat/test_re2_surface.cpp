@@ -12,19 +12,20 @@ using real::compat::re2::RE2;
 
 namespace {
 
-  template <typename R>
+  // The nested types are parameters: MSVC rejects a functional cast spelled `typename R::Options(...)` here.
+  template <typename R, typename Options, typename Set>
   concept re2_names = requires(const R& c, const char* cs) {
     R(cs, R::Quiet);
     R(cs, R::DefaultOptions);
-    typename R::Options(R::Latin1);
+    Options(R::Latin1);
     R::UNANCHORED;
     R::ANCHOR_START;
     R::ANCHOR_BOTH;
     c.error_code() == R::NoError;
     c.error_code() == R::ErrorPatternTooLarge;
-    typename R::Set(typename R::Options(), R::ANCHOR_BOTH);
+    Set(Options(), R::ANCHOR_BOTH);
   };
-  static_assert(re2_names<RE2>);
+  static_assert(re2_names<RE2, RE2::Options, RE2::Set>);
 } // namespace
 
 TEST(re2_canned_options)
