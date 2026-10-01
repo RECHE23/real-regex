@@ -91,7 +91,7 @@ namespace real::compat {
       match_continuous = 1U << 6U,   //!< The match must start at the first character.
       match_prev_avail = 1U << 7U,   //!< `--first` is valid, so `^` and `\b` may inspect the character before it.
       format_default    = 0,         //!< ECMAScript replacement syntax, copying the unmatched text.
-      format_sed        = 1U << 8U,  //!< sed/POSIX replacement syntax (routes to std).
+      format_sed        = 1U << 8U,  //!< sed's replacement syntax: `&`, a backslash and a digit or character; `$` is literal.
       format_no_copy    = 1U << 9U,  //!< Do not copy the parts of the text that did not match.
       format_first_only = 1U << 10U, //!< Replace only the first match.
     };

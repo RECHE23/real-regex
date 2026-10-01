@@ -227,12 +227,14 @@ nullable POSIX pattern excepted, which falls back to `std`). Whether the swap is
 on the one measured case it is **~4× faster than libc++'s and ~0.75× — slower — than libstdc++'s**
 (see Performance below).
 
-The real expander honours only `format_first_only`, `format_no_copy` (and the `match_any` hint);
-**any other flag routes the whole substitution to `std::regex_replace`** (so compat == std) — a
-constraining match flag (`match_not_bol`, `match_continuous`, …, which the ECMAScript expander cannot
-apply) or **`format_sed`** (POSIX replacement syntax it would mis-read). A format containing **`$0`**
-also routes to std: `$0` is platform-variant (libstdc++ = the whole match, strict-ECMAScript/MSVC = a
-literal `$0`), so `real` cannot pick one without risking a silent divergence.
+The real expanders honour `format_first_only`, `format_no_copy`, **`format_sed`** (and the `match_any`
+hint). Under `format_sed` the format follows sed's rules: `&` is the whole match, `\N` group `N` (`\0`
+the whole match), a backslash before any other character gives that character, a final lone backslash
+is itself, and `$` is an ordinary character; libstdc++ and libc++ agree on every rule. **A constraining
+match flag** (`match_not_bol`, `match_continuous`, …, which the traversal cannot apply) **routes the
+whole substitution to `std::regex_replace`** (so compat == std). An ECMAScript format containing
+**`$0`** also routes to std: `$0` is platform-variant (libstdc++ = the whole match, strict-ECMAScript/MSVC
+= a literal `$0`), so `real` cannot pick one without risking a silent divergence.
 
 ## Errors and thread-safety
 
@@ -242,7 +244,7 @@ real→std fallback), the lazy `std` build, and the `std` engine's own failures 
 gives up on a pattern such as `(?:a?){1000}` with `error_complexity` during the match, not at its build).
 
 A real-backed pattern reaches `std` through four routes only: `regex_search`/`regex_match` with a
-match flag `real` does not honour (see Match flags); `regex_replace` with such a flag, with `format_sed`, with a format
+match flag `real` does not honour (see Match flags); `regex_replace` with such a flag, with an ECMAScript format
 using `$0`, or on a nullable POSIX pattern; a `regex_iterator` (and so a `regex_token_iterator`) with
 such a flag or on a nullable POSIX pattern; and `std_engine()` itself. A pattern `real` accepts but `std`
 rejects (a *real superset*: a lookbehind, a named group, `a{,2}`; on libc++ also `\A` = literal `A`)

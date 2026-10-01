@@ -637,11 +637,10 @@ namespace real::compat {
     }
 
     /*!
-     * \brief Whether `regex_replace` can run its substitution on `real`. The real expander honors
-     *        only `format_first_only` / `format_no_copy` (plus the `match_any` hint); ANY other bit —
-     *        a constraining match flag (`not_bol`, `continuous`, …) OR `format_sed` (POSIX syntax) —
-     *        would be silently ignored by the ECMAScript expander, so the whole substitution routes
-     *        to `std`. (This subsumes the explicit `format_sed` screen; `$0` stays content-based.)
+     * \brief Whether `regex_replace` can run its substitution on `real`. The real expanders honor
+     *        `format_first_only`, `format_no_copy` and `format_sed` (plus the `match_any` hint); ANY
+     *        constraining match flag (`not_bol`, `continuous`, …) would be silently ignored by the
+     *        traversal, so the whole substitution routes to `std`. (`$0` stays content-based.)
      * \param[in] f The match/format flags the caller passed to `regex_replace`.
      * \return `true` if the real expander honors all of them, so the replace may stay on the real backend.
      */
@@ -650,7 +649,7 @@ namespace real::compat {
       using namespace regex_constants;
       constexpr unsigned honored {static_cast<unsigned>(match_default) | static_cast<unsigned>(match_any)
                                   | static_cast<unsigned>(format_first_only)
-                                  | static_cast<unsigned>(format_no_copy)};
+                                  | static_cast<unsigned>(format_no_copy) | static_cast<unsigned>(format_sed)};
       return (static_cast<unsigned>(f) & ~honored) == 0U;
     }
 
@@ -1089,6 +1088,61 @@ namespace real::compat {
     }
 
     /*!
+     * \brief Appends group \p g of \p m, nothing when the group does not exist or did not take part.
+     * \param[in,out] out  Destination.
+     * \param[in]     m    The match.
+     * \param[in]     g    The group number.
+     * \param[in]     text The full subject the match's offsets index into.
+     */
+    template <typename RealMatch>
+    void append_group(std::string&     out,
+                      const RealMatch& m,
+                      std::size_t      g,
+                      std::string_view text)
+    {
+      if (g < m.size() && m.start(g) != real::npos) {
+        out.append(text.substr(m.start(g), m.end(g) - m.start(g)));
+      }
+    }
+
+    /*!
+     * \brief Appends one match's replacement under `format_sed`, the POSIX sed rules: `&` is the whole match,
+     *        a backslash and a digit `N` group `N` (`\0` the whole match), a backslash and any other
+     *        character that character, and a final lone backslash itself; `$` is an ordinary character. A
+     *        group that does not exist or did not take part inserts nothing. libstdc++ and libc++ agree on
+     *        every rule.
+     * \param[in,out] out  Destination the expansion is appended to.
+     * \param[in]     m    The match whose groups the format refers to.
+     * \param[in]     fmt  The replacement format string.
+     * \param[in]     text The full subject the match's offsets index into.
+     */
+    template <typename RealMatch>
+    void expand_sed(std::string&     out,
+                    const RealMatch& m,
+                    std::string_view fmt,
+                    std::string_view text)
+    {
+      for (std::size_t i = 0; i < fmt.size(); ++i) {
+        const char c {fmt[i]};
+        if (c == '&') {
+          append_group(out, m, 0, text);
+        }
+        else if (c != '\\') {
+          out.push_back(c);
+        }
+        else if (i + 1 == fmt.size()) {
+          out.push_back('\\'); // a final lone backslash is itself
+        }
+        else if (const char next {fmt[++i]}; next >= '0' && next <= '9') {
+          append_group(out, m, static_cast<std::size_t>(next - '0'), text);
+        }
+        else {
+          out.push_back(next);
+        }
+      }
+    }
+
+    /*!
      * \brief A REAL match found on a suffix of the subject, seen with the subject's offsets: what the
      *        format expander and the match-results fill read (`size`, `start`, `end`).
      * \tparam RealMatch The engine's match type.
@@ -1155,6 +1209,7 @@ namespace real::compat {
      * \param[in]     text     The subject.
      * \param[in,out] last_end The previous match's end; left at this one's.
      * \param[in]     no_copy  `format_no_copy`: the text between matches is dropped.
+     * \param[in]     sed      `format_sed`: the format follows sed's rules rather than ECMAScript's.
      */
     template <typename RealMatch>
     void append_replacement(std::string&      out,
@@ -1162,13 +1217,19 @@ namespace real::compat {
                             std::string_view  fmt,
                             std::string_view  text,
                             std::size_t&      last_end,
-                            bool              no_copy)
+                            bool              no_copy,
+                            bool              sed)
     {
       const std::size_t prefix_start {last_end};
       if (!no_copy) {
         out.append(text.substr(last_end, match.start(0) - last_end));
       }
-      expand_format(out, match, fmt, text, prefix_start);
+      if (sed) {
+        expand_sed(out, match, fmt, text);
+      }
+      else {
+        expand_format(out, match, fmt, text, prefix_start);
+      }
       last_end = match.end(0);
     }
 
@@ -1228,11 +1289,12 @@ namespace real::compat {
     }
     else {
       // Route to std when: the pattern is not real-traversable (std, nullable POSIX), OR a flag the real
-      // expander cannot honor is set (any constraining match flag or format_sed — see
-      // detail::replace_stays_real), OR the format uses `$0` (platform-variant, format_forces_std).
+      // expander cannot honor is set (any constraining match flag — see detail::replace_stays_real), OR an
+      // ECMAScript format uses `$0` (platform-variant, format_forces_std; under sed `$` is a character).
       // Only then does the real expander run.
+      const bool sed {(flags & regex_constants::format_sed) != 0U};
       if (!re.uses_real_traversal() || !detail::replace_stays_real(flags)
-          || detail::format_forces_std(std::string_view {fmt})) {
+          || (!sed && detail::format_forces_std(std::string_view {fmt}))) {
         return detail::std_call([&] { return std::regex_replace(s, re.std_engine(), fmt, detail::to_std_match(flags)); });
       }
       const real::regex&     engine     {std::get<real::regex>(re.engine())};
@@ -1255,7 +1317,7 @@ namespace real::compat {
         for (const auto& match : matches) {
           const bool retry_first {first && match.start(0) == match.end(0)};
           first = false;
-          detail::append_replacement(out, match, std::string_view {fmt}, text, last_end, no_copy);
+          detail::append_replacement(out, match, std::string_view {fmt}, text, last_end, no_copy, sed);
           done = first_only;
           if (done) {
             break;
@@ -1264,7 +1326,7 @@ namespace real::compat {
             const std::size_t at {match.start(0)};
             if (const auto retry {detail::nonempty_at_without_context(engine, text, at)}; retry.has_value()) {
               detail::append_replacement(out, detail::offset_match<real::regex::result_type> {*retry, at},
-                                         std::string_view {fmt}, text, last_end, no_copy);
+                                         std::string_view {fmt}, text, last_end, no_copy, sed);
               done = first_only;
               if (done) {
                 break;
