@@ -126,12 +126,14 @@ nitpick_ignore = [
     # `doxygenenum::` renders both enums further down this same page.
     ("cpp:identifier", "policy::strict"),
     ("cpp:identifier", "regex_constants::ECMAScript"),
+    ("cpp:identifier", "regex_constants::format_default"),
     ("cpp:identifier", "sub_match<BidirIt>"),
     # compat-* allowlists omit the std typedefs / nested enums those
     # signatures name. Same shape as result_type above: the method is on
     # the page, the trait it mentions is not.
     ("cpp:identifier", "flag_type"),
     ("cpp:identifier", "string_type"),
+    ("cpp:identifier", "char_type"),
     ("cpp:identifier", "size_type"),
     ("cpp:identifier", "const_reference"),
     ("cpp:identifier", "difference_type"),

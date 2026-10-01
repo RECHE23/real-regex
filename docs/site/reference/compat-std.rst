@@ -17,13 +17,13 @@ Interface
 
 .. doxygenclass:: real::compat::basic_regex
    :project: real
-   :members: basic_regex, mark_count, flags, swap, uses_real, uses_real_traversal,
+   :members: basic_regex, assign, operator=, mark_count, flags, swap, uses_real, uses_real_traversal,
              nullable, policy
 
 .. doxygenclass:: real::compat::match_results
    :project: real
    :members: ready, size, empty, operator[], position, length, str, prefix, suffix,
-             begin, end
+             begin, end, format, swap
 
 .. doxygenclass:: real::compat::sub_match
    :project: real

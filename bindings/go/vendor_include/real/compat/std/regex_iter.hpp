@@ -489,6 +489,28 @@ namespace real::compat {
     {}
 
     /*!
+     * \brief Selects the fields of a C array (e.g. `const int fields[] {1, 2}`).
+     * \tparam N The number of fields.
+     * \param[in] first      Start of the character sequence.
+     * \param[in] last       End of the character sequence.
+     * \param[in] re         The pattern; it must outlive this iterator.
+     * \param[in] submatches The fields to cycle through.
+     * \param[in] flags      Match flags, defaulting to \c regex_constants::match_default.
+     */
+    template <std::size_t N>
+    regex_token_iterator(BidirIt                          first,
+                         BidirIt                          last,
+                         const regex_type&                re,
+                         const int (&submatches)[N],
+                         regex_constants::match_flag_type flags = regex_constants::match_default)
+      : regex_token_iterator(first,
+                             last,
+                             re,
+                             std::vector<int>(std::begin(submatches), std::end(submatches)),
+                             flags)
+    {}
+
+    /*!
      * \brief Constructing from a temporary regex would dangle (std::regex_token_iterator parity).
      */
     regex_token_iterator(BidirIt                          first,
@@ -500,6 +522,17 @@ namespace real::compat {
                          BidirIt                          last,
                          const regex_type&&               re,
                          const std::vector<int>&          submatches,
+                         regex_constants::match_flag_type flags = regex_constants::match_default) = delete; //!< \overload
+    regex_token_iterator(BidirIt                          first,
+                         BidirIt                          last,
+                         const regex_type&&               re,
+                         std::initializer_list<int>       submatches,
+                         regex_constants::match_flag_type flags = regex_constants::match_default) = delete; //!< \overload
+    template <std::size_t N>
+    regex_token_iterator(BidirIt                          first,
+                         BidirIt                          last,
+                         const regex_type&&               re,
+                         const int (&submatches)[N],
                          regex_constants::match_flag_type flags = regex_constants::match_default) = delete; //!< \overload
 
     /*!

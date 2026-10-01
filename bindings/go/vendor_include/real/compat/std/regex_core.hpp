@@ -14,6 +14,7 @@
 #include <real/version.hpp>
 
 #include <cstddef>
+#include <initializer_list>
 #include <atomic>
 #include <mutex>
 #include <optional>
@@ -130,7 +131,21 @@ namespace real::compat {
       return static_cast<match_flag_type>(~static_cast<unsigned>(a));
     }
 
-    using error_type = std::regex_constants::error_type; //!< Error categories, aliased to std's so `regex_error::code()` is a true drop-in.
+    using error_type = std::regex_constants::error_type;                                   //!< Error categories, aliased to std's so `regex_error::code()` is a true drop-in.
+
+    inline constexpr error_type error_collate    {std::regex_constants::error_collate};    //!< As std's: an invalid collating element.
+    inline constexpr error_type error_ctype      {std::regex_constants::error_ctype};      //!< As std's: an invalid character class.
+    inline constexpr error_type error_escape     {std::regex_constants::error_escape};     //!< As std's: an invalid escape.
+    inline constexpr error_type error_backref    {std::regex_constants::error_backref};    //!< As std's: an invalid back reference.
+    inline constexpr error_type error_brack      {std::regex_constants::error_brack};      //!< As std's: mismatched brackets.
+    inline constexpr error_type error_paren      {std::regex_constants::error_paren};      //!< As std's: mismatched parentheses.
+    inline constexpr error_type error_brace      {std::regex_constants::error_brace};      //!< As std's: mismatched braces.
+    inline constexpr error_type error_badbrace   {std::regex_constants::error_badbrace};   //!< As std's: an invalid range in braces.
+    inline constexpr error_type error_range      {std::regex_constants::error_range};      //!< As std's: an invalid character range.
+    inline constexpr error_type error_space      {std::regex_constants::error_space};      //!< As std's: out of memory.
+    inline constexpr error_type error_badrepeat  {std::regex_constants::error_badrepeat};  //!< As std's: a repeat with nothing to repeat.
+    inline constexpr error_type error_complexity {std::regex_constants::error_complexity}; //!< As std's; also a strict-policy rejection.
+    inline constexpr error_type error_stack      {std::regex_constants::error_stack};      //!< As std's: out of stack.
   } // namespace regex_constants
 
   /*!
@@ -155,6 +170,15 @@ namespace real::compat {
     explicit regex_error(const std::regex_error& error)
       : std::regex_error(error.code()),
         message_(error.what())
+    {}
+
+    /*!
+     * \brief With a code alone, as `std::regex_error(code)`; the message is std's for that code.
+     * \param[in] code The error category.
+     */
+    explicit regex_error(std::regex_constants::error_type code)
+      : std::regex_error(code),
+        message_(std::regex_error(code).what())
     {}
 
     /*!
@@ -277,6 +301,17 @@ namespace real::compat {
         }
       }
       return false;
+    }
+
+    /*!
+     * \brief Whether the native std reads `$0` in a format as the whole match, as libstdc++ and libc++ do;
+     *        `match_results::format` follows it, being the one place REAL expands a `$0` itself.
+     * \return `true` when `std::regex_replace("a", regex("a"), "$0")` gives back `"a"`; asked once.
+     */
+    [[nodiscard]] inline bool std_dollar_zero_is_match()
+    {
+      static const bool whole {std::regex_replace(std::string {"a"}, std::regex {"a"}, std::string {"$0"}) == "a"};
+      return whole;
     }
 
     /*!
@@ -862,9 +897,23 @@ namespace real::compat {
   {
   public:
 
-    using value_type  = CharT;                               //!< Character type.
-    using flag_type   = regex_constants::syntax_option_type; //!< Option type.
-    using string_type = std::basic_string<CharT>;            //!< Pattern string type.
+    using value_type  = CharT;                                           //!< Character type.
+    using traits_type = Traits;                                          //!< Regex traits (std parity).
+    using string_type = std::basic_string<CharT>;                        //!< Pattern string type.
+    using flag_type   = regex_constants::syntax_option_type;             //!< Option type.
+    using locale_type = typename Traits::locale_type;                    //!< The traits' locale type (std parity).
+
+    static constexpr flag_type icase      {regex_constants::icase};      //!< As `std::basic_regex::icase`.
+    static constexpr flag_type nosubs     {regex_constants::nosubs};     //!< As `std::basic_regex::nosubs`.
+    static constexpr flag_type optimize   {regex_constants::optimize};   //!< As `std::basic_regex::optimize`.
+    static constexpr flag_type collate    {regex_constants::collate};    //!< As `std::basic_regex::collate`.
+    static constexpr flag_type ECMAScript {regex_constants::ECMAScript}; //!< As `std::basic_regex::ECMAScript`.
+    static constexpr flag_type basic      {regex_constants::basic};      //!< As `std::basic_regex::basic`.
+    static constexpr flag_type extended   {regex_constants::extended};   //!< As `std::basic_regex::extended`.
+    static constexpr flag_type awk        {regex_constants::awk};        //!< As `std::basic_regex::awk`.
+    static constexpr flag_type grep       {regex_constants::grep};       //!< As `std::basic_regex::grep`.
+    static constexpr flag_type egrep      {regex_constants::egrep};      //!< As `std::basic_regex::egrep`.
+    static constexpr flag_type multiline  {regex_constants::multiline};  //!< As `std::basic_regex::multiline`.
 
     /*! \brief An empty pattern on the std backend — the variant's first alternative default-constructs. */
     basic_regex() = default;
@@ -881,7 +930,7 @@ namespace real::compat {
                          policy       pol = policy::strict)
     {
       policy_ = pol;
-      assign(std::basic_string_view<CharT>(pattern), f);
+      compile(std::basic_string_view<CharT>(pattern), f);
     }
 
     /*!
@@ -896,7 +945,7 @@ namespace real::compat {
                          policy             pol = policy::strict)
     {
       policy_ = pol;
-      assign(std::basic_string_view<CharT>(pattern), f);
+      compile(std::basic_string_view<CharT>(pattern), f);
     }
 
     /*!
@@ -913,7 +962,7 @@ namespace real::compat {
                 policy       pol = policy::strict)
     {
       policy_ = pol;
-      assign(std::basic_string_view<CharT>(pattern, len), f);
+      compile(std::basic_string_view<CharT>(pattern, len), f);
     }
 
     /*!
@@ -932,7 +981,159 @@ namespace real::compat {
     {
       policy_ = pol;
       const string_type pattern(begin, end);
-      assign(std::basic_string_view<CharT>(pattern), f);
+      compile(std::basic_string_view<CharT>(pattern), f);
+    }
+
+    /*!
+     * \brief Compiles the characters of \p pattern.
+     * \param[in] pattern The pattern text.
+     * \param[in] f       Syntax options.
+     * \param[in] pol     Rejection policy.
+     * \throws real::compat::regex_error on an invalid pattern, or on a strict-policy rejection.
+     */
+    basic_regex(std::initializer_list<CharT> pattern,
+                flag_type                    f   = regex_constants::ECMAScript,
+                policy                       pol = policy::strict)
+    {
+      policy_ = pol;
+      compile(std::basic_string_view<CharT>(pattern.begin(), pattern.size()), f);
+    }
+
+    /*!
+     * \brief Replaces the pattern with \p pattern, as `assign(pattern)`.
+     * \param[in] pattern NUL-terminated pattern text.
+     * \return `*this`.
+     * \throws real::compat::regex_error as \ref assign does; `*this` is then unchanged.
+     */
+    basic_regex& operator=(const CharT* pattern)
+    {
+      assign(pattern);
+      return *this;
+    }
+
+    /*!
+     * \brief Replaces the pattern with \p pattern, as `assign(pattern)`.
+     * \param[in] pattern The pattern text.
+     * \return `*this`.
+     * \throws real::compat::regex_error as \ref assign does; `*this` is then unchanged.
+     */
+    basic_regex& operator=(std::initializer_list<CharT> pattern)
+    {
+      assign(pattern);
+      return *this;
+    }
+
+    /*!
+     * \brief Replaces the pattern with \p pattern, as `assign(pattern)`.
+     * \tparam ST The string's traits.
+     * \tparam SA The string's allocator.
+     * \param[in] pattern The pattern text.
+     * \return `*this`.
+     * \throws real::compat::regex_error as \ref assign does; `*this` is then unchanged.
+     */
+    template <typename ST, typename SA>
+    basic_regex& operator=(const std::basic_string<CharT, ST, SA>& pattern)
+    {
+      assign(pattern);
+      return *this;
+    }
+
+    /*!
+     * \brief Becomes a copy of \p other.
+     * \param[in] other The regex to copy.
+     * \return `*this`.
+     */
+    basic_regex& assign(const basic_regex& other)
+    {
+      *this = other;
+      return *this;
+    }
+
+    /*!
+     * \brief Takes \p other's pattern.
+     * \param[in,out] other The regex to move from.
+     * \return `*this`.
+     */
+    basic_regex& assign(basic_regex&& other) noexcept
+    {
+      *this = std::move(other);
+      return *this;
+    }
+
+    /*!
+     * \brief Compiles \p pattern in place of the current one, under this regex's policy. Every overload gives
+     *        the strong guarantee std's does: on a throw `*this` is unchanged.
+     * \param[in] pattern NUL-terminated pattern text.
+     * \param[in] f       Syntax options.
+     * \return `*this`.
+     * \throws real::compat::regex_error on an invalid pattern, or on a strict-policy rejection.
+     */
+    basic_regex& assign(const CharT* pattern,
+                        flag_type    f = regex_constants::ECMAScript)
+    {
+      return recompile(std::basic_string_view<CharT>(pattern), f);
+    }
+
+    /*!
+     * \brief Compiles the first \p len characters of \p pattern in place of the current pattern.
+     * \param[in] pattern Pattern text.
+     * \param[in] len     Its length in characters.
+     * \param[in] f       Syntax options.
+     * \return `*this`.
+     * \throws real::compat::regex_error as the C-string overload does; `*this` is then unchanged.
+     */
+    basic_regex& assign(const CharT* pattern,
+                        std::size_t  len,
+                        flag_type    f = regex_constants::ECMAScript)
+    {
+      return recompile(std::basic_string_view<CharT>(pattern, len), f);
+    }
+
+    /*!
+     * \brief Compiles \p pattern in place of the current pattern.
+     * \tparam ST The string's traits.
+     * \tparam SA The string's allocator.
+     * \param[in] pattern The pattern text.
+     * \param[in] f       Syntax options.
+     * \return `*this`.
+     * \throws real::compat::regex_error as the C-string overload does; `*this` is then unchanged.
+     */
+    template <typename ST, typename SA>
+    basic_regex& assign(const std::basic_string<CharT, ST, SA>& pattern,
+                        flag_type                               f = regex_constants::ECMAScript)
+    {
+      return recompile(std::basic_string_view<CharT>(pattern.data(), pattern.size()), f);
+    }
+
+    /*!
+     * \brief Compiles the pattern in `[first, last)` in place of the current pattern.
+     * \tparam InputIt An input iterator over characters.
+     * \param[in] first Start of the pattern text.
+     * \param[in] last  One past its end.
+     * \param[in] f     Syntax options.
+     * \return `*this`.
+     * \throws real::compat::regex_error as the C-string overload does; `*this` is then unchanged.
+     */
+    template <typename InputIt>
+    basic_regex& assign(InputIt   first,
+                        InputIt   last,
+                        flag_type f = regex_constants::ECMAScript)
+    {
+      const string_type pattern(first, last);
+      return recompile(std::basic_string_view<CharT>(pattern), f);
+    }
+
+    /*!
+     * \brief Compiles the characters of \p pattern in place of the current pattern.
+     * \param[in] pattern The pattern text.
+     * \param[in] f       Syntax options.
+     * \return `*this`.
+     * \throws real::compat::regex_error as the C-string overload does; `*this` is then unchanged.
+     */
+    basic_regex& assign(std::initializer_list<CharT> pattern,
+                        flag_type                    f = regex_constants::ECMAScript)
+    {
+      return recompile(std::basic_string_view<CharT>(pattern.begin(), pattern.size()), f);
     }
 
     /*!
@@ -1101,13 +1302,31 @@ namespace real::compat {
     compat::policy                                                       policy_                   {policy::strict};              //!< strict rejects ineligible, fallback delegates to std.
 
     /*!
+     * \brief Compiles \p pattern into a fresh regex under this one's policy, then takes it: a throw leaves
+     *        `*this` as it was.
+     * \param[in] pattern The pattern text.
+     * \param[in] f       Syntax options.
+     * \return `*this`.
+     * \throws real::compat::regex_error on an invalid pattern, or on a strict-policy rejection.
+     */
+    basic_regex& recompile(std::basic_string_view<CharT> pattern,
+                           flag_type                     f)
+    {
+      basic_regex fresh;
+      fresh.policy_ = policy_;
+      fresh.compile(pattern, f);
+      swap(fresh);
+      return *this;
+    }
+
+    /*!
      * \brief Compiles \p pattern into this object, replacing whatever it held.
      * \param[in] pattern The pattern text.
      * \param[in] f       Syntax options.
      * \throws real::compat::regex_error on an invalid pattern, or on a strict-policy rejection.
      */
-    void assign(std::basic_string_view<CharT> pattern,
-                flag_type                     f)
+    void compile(std::basic_string_view<CharT> pattern,
+                 flag_type                     f)
     {
       flags_   = f;
       pattern_ = string_type(pattern);

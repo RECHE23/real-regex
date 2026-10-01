@@ -52,6 +52,19 @@ real::compat::basic_regex:
   posix_longest: POSIX routing bit; search/match honour it, callers do not set it
   engine: embedder hook -- the free functions read the variant
   std_engine: lazy std::regex accessor for the fallback / constraining-flag path
+  traits_type: std trait
+  locale_type: std trait
+  icase: std syntax constant, as regex_constants::icase
+  nosubs: std syntax constant, as regex_constants::nosubs
+  optimize: std syntax constant, as regex_constants::optimize
+  collate: std syntax constant, as regex_constants::collate
+  ECMAScript: std syntax constant, as regex_constants::ECMAScript
+  basic: std syntax constant, as regex_constants::basic
+  extended: std syntax constant, as regex_constants::extended
+  awk: std syntax constant, as regex_constants::awk
+  grep: std syntax constant, as regex_constants::grep
+  egrep: std syntax constant, as regex_constants::egrep
+  multiline: std syntax constant, as regex_constants::multiline
 real::compat::match_results:
   value_type: iterator trait
   const_reference: iterator trait
@@ -62,6 +75,9 @@ real::compat::match_results:
   size_type: iterator trait
   char_type: iterator trait
   string_type: iterator trait
+  allocator_type: std trait
+  get_allocator: std parity, the sub-match vector's allocator
+  max_size: std parity, the sub-match vector's limit
   cbegin: twin of begin
   cend: twin of end
   reset: engine-facing fill hook

@@ -423,6 +423,14 @@ differential fuzzer (517 k iterations, zero remaining both-accept divergence):
   `wregex`, and the POSIX grammar engines. Empty-match traversal is *not* a fallback trigger for single
   `search`/`match` -- only for `regex_replace`/iterators, where the advance-after-empty-match rule
   differs from ECMAScript.
+- **Members**: what std names, the test suite pins at compile time against std: `basic_regex`'s class
+  constants (`regex::icase`, `regex::multiline`, …), every `assign` and `operator=` (an invalid pattern
+  leaves the regex unchanged; the policy is kept), the `initializer_list` constructor; `sub_match`'s
+  comparisons with another `sub_match`, a string, a C string and a character, ordering included;
+  `match_results`' `format` (ECMAScript or `format_sed` rules; `$0` reads as the native std reads it),
+  `==`, `swap`, `max_size`, `get_allocator`; the `regex_constants::error_*` codes and `regex_error(code)`;
+  the token iterator's C-array field list. Not provided: `basic_regex::imbue` and `getloc` (REAL's
+  matching does not depend on a locale).
 - Every algorithm and iterator accepts any bidirectional iterator. A non-contiguous range (a `std::deque`, a
   `std::list`, a reverse iterator) is searched on REAL over one contiguous copy, made once per search or per
   `regex_iterator` and shared by its copies: the same answers and the same linear time as over a string, for

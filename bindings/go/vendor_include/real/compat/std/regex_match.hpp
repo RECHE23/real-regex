@@ -92,6 +92,16 @@ namespace real::compat {
     }
 
     /*!
+     * \brief Three-way comparison against a C string (`std::sub_match::compare`).
+     * \param[in] other The NUL-terminated string to compare against.
+     * \return Negative, zero or positive as `str()` orders before, equal to, or after \p other.
+     */
+    [[nodiscard]] int compare(const value_type* other) const
+    {
+      return str().compare(other);
+    }
+
+    /*!
      * \brief Three-way comparison against another sub-match, by matched text.
      * \param[in] other The sub-match to compare against.
      * \return Negative, zero or positive as `str()` orders before, equal to, or after `other.str()`.
@@ -142,6 +152,84 @@ namespace real::compat {
   }
 
   /*!
+   * \brief Ordering between two sub-matches, by matched text (`std::sub_match` parity).
+   * \param[in] lhs The left sub-match.
+   * \param[in] rhs The right sub-match.
+   * \return How `lhs.str()` orders against `rhs.str()`.
+   */
+  template <typename BidirIt>
+  auto operator<=>(const sub_match<BidirIt>& lhs,
+                   const sub_match<BidirIt>& rhs)
+  {
+    return lhs.str() <=> rhs.str();
+  }
+
+  /*!
+   * \brief Ordering against an owned string; the reversed and the `<`, `>` forms follow from it.
+   * \param[in] lhs The sub-match.
+   * \param[in] rhs The string.
+   * \return How `lhs.str()` orders against \p rhs.
+   */
+  template <typename BidirIt>
+  auto operator<=>(const sub_match<BidirIt>&                       lhs,
+                   const typename sub_match<BidirIt>::string_type& rhs)
+  {
+    return lhs.str() <=> rhs;
+  }
+
+  /*!
+   * \brief Equality against a C string.
+   * \param[in] lhs The sub-match.
+   * \param[in] rhs The NUL-terminated string.
+   * \return `true` if they hold the same characters.
+   */
+  template <typename BidirIt>
+  bool operator==(const sub_match<BidirIt>&                      lhs,
+                  const typename sub_match<BidirIt>::value_type* rhs)
+  {
+    return lhs.compare(rhs) == 0;
+  }
+
+  /*!
+   * \brief Ordering against a C string.
+   * \param[in] lhs The sub-match.
+   * \param[in] rhs The NUL-terminated string.
+   * \return How `lhs.str()` orders against \p rhs.
+   */
+  template <typename BidirIt>
+  auto operator<=>(const sub_match<BidirIt>&                      lhs,
+                   const typename sub_match<BidirIt>::value_type* rhs)
+  {
+    return lhs.str() <=> typename sub_match<BidirIt>::string_type(rhs);
+  }
+
+  /*!
+   * \brief Equality against one character: the sub-match holds exactly it.
+   * \param[in] lhs The sub-match.
+   * \param[in] rhs The character.
+   * \return `true` if the matched text is that one character.
+   */
+  template <typename BidirIt>
+  bool operator==(const sub_match<BidirIt>&                      lhs,
+                  const typename sub_match<BidirIt>::value_type& rhs)
+  {
+    return lhs.str() == typename sub_match<BidirIt>::string_type(1, rhs);
+  }
+
+  /*!
+   * \brief Ordering against one character, as against the string holding only it.
+   * \param[in] lhs The sub-match.
+   * \param[in] rhs The character.
+   * \return How `lhs.str()` orders against that string.
+   */
+  template <typename BidirIt>
+  auto operator<=>(const sub_match<BidirIt>&                      lhs,
+                   const typename sub_match<BidirIt>::value_type& rhs)
+  {
+    return lhs.str() <=> typename sub_match<BidirIt>::string_type(1, rhs);
+  }
+
+  /*!
    * \brief Stream the matched text (`std::sub_match` parity). Found by ADL from
    *        `std::cout << m[1]`. Writes `m.str()` — empty when the group did not
    *        participate.
@@ -181,6 +269,7 @@ namespace real::compat {
     using size_type       = std::size_t;                                             //!< Size type.
     using char_type       = typename std::iterator_traits<BidirIt>::value_type;      //!< Character type.
     using string_type     = std::basic_string<char_type>;                            //!< Owning string type.
+    using allocator_type  = Alloc;                                                   //!< Allocator type.
 
     /*!
      * \brief Whether a successful match has been stored.
@@ -198,6 +287,15 @@ namespace real::compat {
     [[nodiscard]] size_type size() const noexcept
     {
       return groups_.size();
+    }
+
+    /*!
+     * \brief The most marks this object could hold.
+     * \return The sub-match vector's limit.
+     */
+    [[nodiscard]] size_type max_size() const noexcept
+    {
+      return groups_.max_size();
     }
 
     /*!
@@ -306,6 +404,168 @@ namespace real::compat {
     [[nodiscard]] const_iterator cend() const
     {
       return groups_.end();
+    }
+
+    /*!
+     * \brief The allocator of the sub-match vector.
+     * \return A copy of it.
+     */
+    [[nodiscard]] allocator_type get_allocator() const
+    {
+      return groups_.get_allocator();
+    }
+
+    /*!
+     * \brief Exchanges the whole state with \p other.
+     * \param[in,out] other The result to swap with.
+     */
+    void swap(match_results& other) noexcept
+    {
+      using std::swap;
+      swap(first_, other.first_);
+      swap(last_, other.last_);
+      groups_.swap(other.groups_);
+      swap(prefix_, other.prefix_);
+      swap(suffix_, other.suffix_);
+      swap(unmatched_, other.unmatched_);
+      swap(ready_, other.ready_);
+    }
+
+    /*!
+     * \brief Writes the format `[fmt_first, fmt_last)` with its references replaced by this match's text
+     *        (`std::match_results::format`).
+     *
+     * ECMAScript rules by default: a dollar followed by a dollar is a dollar, by an ampersand the match, by
+     * a backtick the prefix, by a quote the suffix, by one or two digits a group (one that does not exist
+     * inserts nothing); any other dollar is itself. `$0` follows the native std, where libstdc++ and libc++
+     * read the whole match. Under `format_sed`, sed's rules, as `regex_replace` applies them.
+     * \tparam OutputIter An output iterator over characters.
+     * \param[out] out       Where the result is written.
+     * \param[in]  fmt_first Start of the format.
+     * \param[in]  fmt_last  One past its end.
+     * \param[in]  flags     `format_sed` selects sed's rules; the other bits are ignored.
+     * \return \p out advanced past what was written.
+     * \pre ready()
+     */
+    template <typename OutputIter>
+    OutputIter format(OutputIter                       out,
+                      const char_type*                 fmt_first,
+                      const char_type*                 fmt_last,
+                      regex_constants::match_flag_type flags = regex_constants::format_default) const
+    {
+      const bool sed {(flags & regex_constants::format_sed) != 0U};
+      for (const char_type* at {fmt_first}; at != fmt_last; ++at) {
+        const char_type c {*at};
+        const bool      last {at + 1 == fmt_last};
+        if (sed) {
+          if (c == char_type('&')) {
+            out = copy_group(out, 0);
+          }
+          else if (c != char_type('\\') || last) {
+            *out++ = c; // a final lone backslash is itself
+          }
+          else if (const char_type next {*++at}; next >= char_type('0') && next <= char_type('9')) {
+            out = copy_group(out, static_cast<size_type>(next - char_type('0')));
+          }
+          else {
+            *out++ = next;
+          }
+          continue;
+        }
+        if (c != char_type('$') || last) {
+          *out++ = c;
+          continue;
+        }
+        const char_type next {at[1]};
+        if (next == char_type('$')) {
+          *out++ = next;
+          ++at;
+        }
+        else if (next == char_type('&')) {
+          out = copy_group(out, 0);
+          ++at;
+        }
+        else if (next == char_type('`')) {
+          out = std::copy(prefix_.first, prefix_.second, out);
+          ++at;
+        }
+        else if (next == char_type('\'')) {
+          out = std::copy(suffix_.first, suffix_.second, out);
+          ++at;
+        }
+        else if (next >= char_type('0') && next <= char_type('9')) {
+          const char_type* const digits {at + 1};
+          size_type              group  {static_cast<size_type>(next - char_type('0'))};
+          ++at;
+          if (at + 1 != fmt_last && at[1] >= char_type('0') && at[1] <= char_type('9')) {
+            group = (group * 10) + static_cast<size_type>(at[1] - char_type('0'));
+            ++at;
+          }
+          if (group == 0 && !detail::std_dollar_zero_is_match()) {
+            *out++ = c;
+            out    = std::copy(digits, at + 1, out); // a std that reads `$0` literally
+          }
+          else {
+            out = copy_group(out, group);
+          }
+        }
+        else {
+          *out++ = c;
+        }
+      }
+      return out;
+    }
+
+    /*!
+     * \brief \ref format over a string format.
+     * \tparam OutputIter An output iterator over characters.
+     * \tparam ST         The format's traits.
+     * \tparam SA         The format's allocator.
+     * \param[out] out   Where the result is written.
+     * \param[in]  fmt   The format.
+     * \param[in]  flags `format_sed` selects sed's rules.
+     * \return \p out advanced past what was written.
+     * \pre ready()
+     */
+    template <typename OutputIter, typename ST, typename SA>
+    OutputIter format(OutputIter                                  out,
+                      const std::basic_string<char_type, ST, SA>& fmt,
+                      regex_constants::match_flag_type            flags = regex_constants::format_default) const
+    {
+      return format(out, fmt.data(), fmt.data() + fmt.size(), flags);
+    }
+
+    /*!
+     * \brief \ref format into a new string.
+     * \tparam ST The format's traits.
+     * \tparam SA The format's allocator.
+     * \param[in] fmt   The format.
+     * \param[in] flags `format_sed` selects sed's rules.
+     * \return The expanded format.
+     * \pre ready()
+     */
+    template <typename ST, typename SA>
+    std::basic_string<char_type, ST, SA> format(const std::basic_string<char_type, ST, SA>& fmt,
+                                                regex_constants::match_flag_type            flags = regex_constants::format_default) const
+    {
+      std::basic_string<char_type, ST, SA> result;
+      format(std::back_inserter(result), fmt.data(), fmt.data() + fmt.size(), flags);
+      return result;
+    }
+
+    /*!
+     * \brief \ref format of a C-string format into a new string.
+     * \param[in] fmt   The NUL-terminated format.
+     * \param[in] flags `format_sed` selects sed's rules.
+     * \return The expanded format.
+     * \pre ready()
+     */
+    string_type format(const char_type*                 fmt,
+                       regex_constants::match_flag_type flags = regex_constants::format_default) const
+    {
+      string_type result;
+      format(std::back_inserter(result), fmt, fmt + std::char_traits<char_type>::length(fmt), flags);
+      return result;
     }
 
     // --- engine-facing fill helpers (used by the free functions) ---------------------------
@@ -442,6 +702,21 @@ namespace real::compat {
 
   private:
 
+    /*!
+     * \brief Copies group \p g's text to \p out, nothing when it did not take part or does not exist.
+     * \tparam OutputIter An output iterator over characters.
+     * \param[out] out Where the text is written.
+     * \param[in]  g   The group number.
+     * \return \p out advanced past it.
+     */
+    template <typename OutputIter>
+    OutputIter copy_group(OutputIter out,
+                          size_type  g) const
+    {
+      const value_type& sub {(*this)[g]};
+      return sub.matched ? std::copy(sub.first, sub.second, out) : out;
+    }
+
     BidirIt                            first_     {};      //!< Start of the searched sequence.
     BidirIt                            last_      {};      //!< End of the searched sequence.
     std::vector<value_type, Alloc>     groups_;            //!< Group sub-matches (0 = whole match).
@@ -450,6 +725,39 @@ namespace real::compat {
     value_type                         unmatched_ {};      //!< Sentinel for out-of-range operator[] (anchored at last_).
     bool                               ready_     {false}; //!< Whether a match is stored.
   };
+
+  /*!
+   * \brief Equality of two results (`std::match_results` parity): both not ready, or both ready and both
+   *        empty, or both holding the same text in the prefix, every group and the suffix.
+   * \param[in] lhs The left result.
+   * \param[in] rhs The right result.
+   * \return `true` when they are equal in that sense.
+   */
+  template <typename BidirIt, typename Alloc>
+  bool operator==(const match_results<BidirIt, Alloc>& lhs,
+                  const match_results<BidirIt, Alloc>& rhs)
+  {
+    if (!lhs.ready() || !rhs.ready()) {
+      return !lhs.ready() && !rhs.ready();
+    }
+    if (lhs.empty() || rhs.empty()) {
+      return lhs.empty() && rhs.empty();
+    }
+    return lhs.prefix() == rhs.prefix() && lhs.size() == rhs.size()
+           && std::equal(lhs.begin(), lhs.end(), rhs.begin()) && lhs.suffix() == rhs.suffix();
+  }
+
+  /*!
+   * \brief Exchanges two results (`std::swap` parity).
+   * \param[in,out] lhs One result.
+   * \param[in,out] rhs The other.
+   */
+  template <typename BidirIt, typename Alloc>
+  void swap(match_results<BidirIt, Alloc>& lhs,
+            match_results<BidirIt, Alloc>& rhs) noexcept
+  {
+    lhs.swap(rhs);
+  }
 
   using ssub_match  = sub_match<std::string::const_iterator>;  //!< Sub-match over a std::string.
   using csub_match  = sub_match<const char*>;                  //!< Sub-match over a C string.
