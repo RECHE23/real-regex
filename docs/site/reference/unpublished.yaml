@@ -52,6 +52,7 @@ real::compat::basic_regex:
   posix_longest: POSIX routing bit; search/match honour it, callers do not set it
   engine: embedder hook -- the free functions read the variant
   std_engine: lazy std::regex accessor for the fallback / constraining-flag path
+  end_engine: lazy REAL variant accessor for the match_not_eol / match_not_eow path
   traits_type: std trait
   locale_type: std trait
   icase: std syntax constant, as regex_constants::icase

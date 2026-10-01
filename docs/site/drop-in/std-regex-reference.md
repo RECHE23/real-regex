@@ -357,8 +357,13 @@ other cell (a subject that DOES match, or a single-element list) is unaffected a
   both do; it runs on the VM, linear. A pattern that cannot match empty ignores the flag. A nullable
   capturing group under a quantifier (`(|a)*`) and a POSIX leftmost-longest search route the call to
   `std`.
-- **Every other constraining flag** — `match_not_bol` and `match_not_bow` without `match_prev_avail`,
-  `match_not_eol`, `match_not_eow` — and any constraining flag on an iterator or a
+- **`match_not_eol`** and **`match_not_eow`** keep `real` too, over a rewrite of the pattern built once on
+  first use: under `match_not_eol` a `$` holds at no end of the sequence (outside multiline never; in
+  multiline only before a line terminator), under `match_not_eow` a `\b` holds at no end and a `\B` does.
+  A pattern with nothing those flags change keeps its own engine. A `$` or `\b` inside a lookaround, whose
+  rewrite would nest one lookaround in another, and a POSIX grammar route the call to `std`.
+- **Every other constraining flag** — `match_not_bol` and `match_not_bow` without `match_prev_avail` —
+  and any constraining flag on an iterator or a
   `regex_replace` is not expressible through `real`'s API, so that single operation routes to
   `std::regex` (lazy-built if the pattern is real-backed), which honors every flag by construction. The
   flags are translated by an exhaustive compat→std table.

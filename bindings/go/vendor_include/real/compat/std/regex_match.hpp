@@ -821,10 +821,11 @@ namespace real::compat {
      */
     struct call_shape
     {
-      bool        anchored   {}; //!< `regex_match`: the whole sequence, rather than the leftmost match.
-      bool        continuous {}; //!< `match_continuous`: the match starts at `first`.
-      std::size_t lead       {}; //!< 1 under `match_prev_avail`: the view starts at `--first`, its context.
-      bool        non_empty  {}; //!< `match_not_null` on a pattern that can match empty: no empty match.
+      bool               anchored   {}; //!< `regex_match`: the whole sequence, rather than the leftmost match.
+      bool               continuous {}; //!< `match_continuous`: the match starts at `first`.
+      std::size_t        lead       {}; //!< 1 under `match_prev_avail`: the view starts at `--first`, its context.
+      bool               non_empty  {}; //!< `match_not_null` on a pattern that can match empty: no empty match.
+      const real::regex* engine     {}; //!< The engine that runs: the pattern's, or its `not_eol` / `not_eow` variant.
     };
 
     /*!
@@ -841,7 +842,7 @@ namespace real::compat {
                                  std::string_view                  view,
                                  call_shape                        shape)
     {
-      const real::regex& engine {std::get<real::regex>(re.engine())};
+      const real::regex& engine {*shape.engine};
       if (shape.non_empty) {
         if (shape.anchored) {
           // A whole-sequence match is empty only over an empty sequence.
@@ -917,7 +918,8 @@ namespace real::compat {
      * anyway), and `match_prev_avail` a region search from `first` over a view that starts one character before
      * it. Under `match_prev_avail` the standard ignores `match_not_bol` and `match_not_bow` ([re.matchflag]), and
      * so does this. `match_not_null` is a search that accepts no empty match, where \p not_null_ok says REAL
-     * agrees with the standard on it. `not_eol`, `not_eow` and `not_bol` / `not_bow` alone still route to `std`.
+     * agrees with the standard on it. `match_not_eol` and `match_not_eow` run a rewrite of the pattern (see
+     * `basic_regex::end_engine`), which may still decline. `not_bol` / `not_bow` alone route to `std`.
      * \param[in] mf          The match flags the caller passed.
      * \param[in] anchored    A whole-sequence match (`regex_match`).
      * \param[in] longest     The pattern searches leftmost-longest (a POSIX grammar on REAL).
@@ -936,6 +938,7 @@ namespace real::compat {
       if (not_null_ok) {
         honored |= static_cast<unsigned>(match_not_null);
       }
+      honored |= static_cast<unsigned>(match_not_eol) | static_cast<unsigned>(match_not_eow);
       if (anchored || !longest) {
         honored |= static_cast<unsigned>(match_continuous);
       }
@@ -973,6 +976,28 @@ namespace real::compat {
                          .continuous = (mf & regex_constants::match_continuous) != 0U,
                          .lead       = (mf & regex_constants::match_prev_avail) != 0U ? 1U : 0U,
                          .non_empty  = nullable && (mf & regex_constants::match_not_null) != 0U};
+    }
+
+    /*!
+     * \brief The REAL engine a `regex_search` or `regex_match` with \p mf runs on, or null for `std`.
+     * \param[in] re       The pattern.
+     * \param[in] mf       The match flags.
+     * \param[in] anchored A whole-sequence match (`regex_match`).
+     * \return The pattern's engine, its `not_eol` / `not_eow` variant, or null.
+     */
+    template <typename CharT, typename Traits>
+    [[nodiscard]] const real::regex* real_engine_for(const basic_regex<CharT, Traits>& re,
+                                                     regex_constants::match_flag_type  mf,
+                                                     bool                              anchored)
+    {
+      if (!re.uses_real()
+          || !call_stays_real(mf, anchored, re.posix_longest(),
+                              (mf & regex_constants::match_not_null) == 0U || not_null_stays_real(re))) {
+        return nullptr;
+      }
+      const bool not_eol {(mf & regex_constants::match_not_eol) != 0U};
+      const bool not_eow {(mf & regex_constants::match_not_eow) != 0U};
+      return not_eol || not_eow ? re.end_engine(not_eol, not_eow) : &std::get<real::regex>(re.engine());
     }
 
     /*!
@@ -1043,10 +1068,9 @@ namespace real::compat {
     {
       m.reset(first, last);
       if constexpr (real_eligible<CharT, Traits>) {
-        if (re.uses_real()
-            && call_stays_real(mf, anchored, re.posix_longest(),
-                               (mf & regex_constants::match_not_null) == 0U || not_null_stays_real(re))) {
-          const call_shape shape {shape_of(mf, anchored, re.nullable())};
+        if (const real::regex* const engine {real_engine_for(re, mf, anchored)}; engine != nullptr) {
+          call_shape shape {shape_of(mf, anchored, re.nullable())};
+          shape.engine = engine;
           if constexpr (!std::contiguous_iterator<BidirIt>) {
             // A deque, a list, a reverse iterator: no byte view covers the range, so REAL searches a copy.
             return run_copied(first, last, m, re, shape);
@@ -1099,10 +1123,9 @@ namespace real::compat {
                        regex_constants::match_flag_type  mf)
     {
       if constexpr (real_eligible<CharT, Traits>) {
-        if (re.uses_real()
-            && call_stays_real(mf, anchored, re.posix_longest(),
-                               (mf & regex_constants::match_not_null) == 0U || not_null_stays_real(re))) {
-          const call_shape shape {shape_of(mf, anchored, re.nullable())};
+        if (const real::regex* const engine {real_engine_for(re, mf, anchored)}; engine != nullptr) {
+          call_shape shape {shape_of(mf, anchored, re.nullable())};
+          shape.engine = engine;
           if constexpr (!std::contiguous_iterator<BidirIt>) {
             // std::to_address on a deque, a list or a reverse iterator names one element, not the range: search
             // a contiguous copy instead, which keeps REAL's answers and its linear time.

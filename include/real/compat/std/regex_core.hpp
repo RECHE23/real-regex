@@ -884,6 +884,86 @@ namespace real::compat {
       mutable std::optional<StdRegex> value_;         //!< The engine, set once under the build lock.
       mutable std::atomic<bool>       ready_ {false}; //!< Released after \ref value_ is set: acquire it before reading.
     };
+
+    /*!
+     * \brief \p pattern with what `match_not_eol` and `match_not_eow` say written into it, so that a REAL search
+     *        honors them without a run-time context: under `not_eol` a `$` holds at no end of the sequence (outside
+     *        multiline it never holds; in multiline only before a line terminator), under `not_eow` a `\b` holds
+     *        at no end, and a `\B` does. Classes and escapes are copied as they are.
+     * \param[in] pattern   An ECMAScript pattern as REAL compiles it.
+     * \param[in] not_eol   Rewrite `$`.
+     * \param[in] not_eow   Rewrite `\b` and `\B`.
+     * \param[in] multiline The pattern is multiline.
+     * \return The rewritten pattern.
+     */
+    [[nodiscard]] inline std::string rewrite_end_context(std::string_view pattern,
+                                                         bool             not_eol,
+                                                         bool             not_eow,
+                                                         bool             multiline)
+    {
+      std::string out;
+      out.reserve(pattern.size() + 16U);
+      bool in_class {false};
+      for (std::size_t i {0}; i < pattern.size(); ++i) {
+        const char c {pattern[i]};
+        if (c == '\\' && i + 1 < pattern.size()) {
+          const char next {pattern[i + 1]};
+          ++i;
+          if (!in_class && not_eow && next == 'b') {
+            out += "(?:\\b(?=[\\s\\S]))";
+          }
+          else if (!in_class && not_eow && next == 'B') {
+            out += "(?:\\B|(?![\\s\\S]))";
+          }
+          else {
+            out += c;
+            out += next;
+          }
+          continue;
+        }
+        if (in_class) {
+          in_class = c != ']';
+          out     += c;
+          continue;
+        }
+        if (c == '[') {
+          in_class = true;
+          out     += c;
+          if (i + 1 < pattern.size() && pattern[i + 1] == '^') {
+            out += '^';
+            ++i;
+          }
+          continue;
+        }
+        if (c == '$' && not_eol) {
+          out += multiline ? "(?=[\\n\\r])" : "(?!)";
+          continue;
+        }
+        out += c;
+      }
+      return out;
+    }
+
+    /*!
+     * \brief One variant of a pattern for `match_not_eol` / `match_not_eow`: REAL's compiled rewrite, or the
+     *        original's own engine when the rewrite changed nothing, or neither when REAL does not compile the
+     *        rewrite (a `$` or `\b` inside a lookaround would nest one).
+     */
+    struct end_variant
+    {
+      std::optional<real::regex> engine;            //!< The rewritten pattern, compiled.
+      bool                       unchanged {false}; //!< Nothing to rewrite: the original engine serves.
+    };
+
+    /*!
+     * \brief The three variants a pattern may need: `not_eol`, `not_eow`, both.
+     */
+    struct end_variants
+    {
+      end_variant not_eol; //!< `match_not_eol` alone.
+      end_variant not_eow; //!< `match_not_eow` alone.
+      end_variant both;    //!< Both flags.
+    };
   } // namespace detail
 
   /*!
@@ -1168,6 +1248,7 @@ namespace real::compat {
       std::swap(nullable_captured_repeat_, other.nullable_captured_repeat_);
       std::swap(posix_longest_, other.posix_longest_);
       lazy_std_.swap(other.lazy_std_);
+      end_variants_.swap(other.end_variants_);
       std::swap(policy_, other.policy_);
     }
 
@@ -1288,7 +1369,84 @@ namespace real::compat {
       return *lazy_std_.get();
     }
 
+    /*!
+     * \brief The REAL engine a search under `match_not_eol` / `match_not_eow` runs: this pattern's own when it has
+     *        nothing those flags change, else its rewrite (see \ref detail::rewrite_end_context), built once on
+     *        demand and thread-safely as \ref std_engine is.
+     * \param[in] not_eol `match_not_eol` is set.
+     * \param[in] not_eow `match_not_eow` is set.
+     * \return The engine, or null when the call must go to std (a POSIX grammar, a rewrite REAL does not
+     *         compile).
+     */
+    [[nodiscard]] const real::regex* end_engine(bool not_eol,
+                                                bool not_eow) const
+    requires(detail::real_eligible<CharT, Traits>)
+    {
+      if (!uses_real() || posix_longest_) {
+        return nullptr;
+      }
+      const detail::end_variants* built {end_variants_.get()};
+      if (built == nullptr) {
+        static std::mutex     build_mutex; // one per basic_regex<CharT, Traits> instantiation
+        const std::lock_guard lock {build_mutex};
+        built = end_variants_.get();
+        if (built == nullptr) {
+          built = &end_variants_.publish(build_end_variants());
+        }
+      }
+      const detail::end_variant* variant {&built->not_eow};
+      if (not_eol && not_eow) {
+        variant = &built->both;
+      }
+      else if (not_eol) {
+        variant = &built->not_eol;
+      }
+      if (variant->unchanged) {
+        return &std::get<real::regex>(engine_);
+      }
+      return variant->engine.has_value() ? &*variant->engine : nullptr;
+    }
+
   private:
+
+    /*!
+     * \brief Builds the three `not_eol` / `not_eow` variants of this real-backed ECMAScript pattern.
+     * \return The variants.
+     */
+    [[nodiscard]] detail::end_variants build_end_variants() const
+    requires(detail::real_eligible<CharT, Traits>)
+    {
+      return detail::end_variants {.not_eol = build_end_variant(true, false),
+                                   .not_eow = build_end_variant(false, true),
+                                   .both    = build_end_variant(true, true)};
+    }
+
+    /*!
+     * \brief Builds one `not_eol` / `not_eow` variant of this real-backed ECMAScript pattern.
+     * \param[in] not_eol `match_not_eol` is set.
+     * \param[in] not_eow `match_not_eow` is set.
+     * \return The variant.
+     */
+    [[nodiscard]] detail::end_variant build_end_variant(bool not_eol,
+                                                        bool not_eow) const
+    requires(detail::real_eligible<CharT, Traits>)
+    {
+      detail::end_variant    made;
+      const std::string_view sv        {pattern_.data(), pattern_.size()};
+      const std::string      rewritten {
+        detail::rewrite_end_context(sv, not_eol, not_eow, (flags_ & regex_constants::multiline) != 0U)};
+      if (rewritten == sv) {
+        made.unchanged = true;
+        return made;
+      }
+      try {
+        made.engine.emplace(rewritten, detail::to_real(flags_));
+      }
+      catch (const real::regex_error&) {
+        made.engine.reset(); // REAL does not compile the rewrite: the call goes to std
+      }
+      return made;
+    }
 
     // std backend first so the variant is default-constructible (real::regex has no default ctor).
     std::variant<std::basic_regex<CharT, Traits>, real::regex>           engine_;                                                 //!< Whichever backend compiled this pattern; see \ref uses_real and \ref uses_fallback.
@@ -1299,6 +1457,7 @@ namespace real::compat {
     bool                                                                 nullable_captured_repeat_ {};                            //!< nullable_captured_repeat (real-backed) — a nullable capturing group under a quantifier; see \ref uses_real_traversal.
     bool                                                                 posix_longest_            {};                            //!< A POSIX grammar translated onto REAL: search uses leftmost-longest bounds.
     detail::lazy_std_engine<std::basic_regex<CharT, Traits>>             lazy_std_;                                               //!< Lazy std for nullable replace/iterate.
+    detail::lazy_std_engine<detail::end_variants>                        end_variants_;                                           //!< Lazy REAL variants for match_not_eol / match_not_eow.
     compat::policy                                                       policy_                   {policy::strict};              //!< strict rejects ineligible, fallback delegates to std.
 
     /*!
@@ -1331,6 +1490,7 @@ namespace real::compat {
       flags_   = f;
       pattern_ = string_type(pattern);
       lazy_std_.reset();
+      end_variants_.reset();
       nullable_                 = false;
       nullable_captured_repeat_ = false;
       posix_longest_            = false;
