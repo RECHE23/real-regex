@@ -1597,6 +1597,15 @@ namespace real::detail {
           else {
             const cp_class& cc {prog_.cp_classes[static_cast<std::size_t>(prog_.hints.il_rev_class)]};
             while (s > min_match_start) {
+              // An ASCII byte is its own code point: tested here, so the walk does not hang on whether the
+              // decoder is inlined into this function, which the unit's inlining budget decides.
+              if (const auto prev {static_cast<std::uint8_t>(text[s - 1])}; prev < 0x80U) {
+                if (!cc.ascii.test(prev)) {
+                  break;
+                }
+                --s;
+                continue;
+              }
               const std::size_t               w  {detail::codepoint_retreat(text, s, min_match_start)};
               const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, s - w)};
               if (!dc.valid || dc.length != w || !cp_class_holds(cc, dc.cp)) {
@@ -1669,6 +1678,13 @@ namespace real::detail {
           else {
             const cp_class& cc {prog_.cp_classes[static_cast<std::size_t>(prog_.hints.il_fwd_class)]};
             while (e < text.size()) {
+              if (const auto next {static_cast<std::uint8_t>(text[e])}; next < 0x80U) { // as the reverse run
+                if (!cc.ascii.test(next)) {
+                  break;
+                }
+                ++e;
+                continue;
+              }
               const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, e)};
               if (!dc.valid || !cp_class_holds(cc, dc.cp)) {
                 break;
