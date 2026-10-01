@@ -398,6 +398,9 @@ differential fuzzer (517 k iterations, zero remaining both-accept divergence):
 
 - `$` (no `multiline`) matches only the very end, not before a trailing `\n` (Python's `re` default).
 - `.` (no dotall) excludes `\n` *and* `\r` (ECMAScript line terminators), not just `\n`.
+- With `multiline`, `^` and `$` also match after and before a `\r` (ECMAScript line terminators), as
+  libstdc++ and libc++ do; inside a lookaround they see `\n` only. Such a pattern runs on the Pike VM rather
+  than the lazy DFA (a multiline `^\w+` over 1 MB: about 10x slower than before, still linear).
 - The escapes `\A \Z \< \>` (REAL anchors) and `\a` (Python bell) become **identity-escape literals**
   (`A Z < >`, `a`) — ECMAScript has no such escapes. `\n \r \t \f \v \0 \xHH` are unchanged.
 - A `]` in the head of a class **closes** it: `[]` is the empty class, `[^]` matches any character

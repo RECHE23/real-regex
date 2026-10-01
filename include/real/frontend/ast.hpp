@@ -1196,6 +1196,32 @@ namespace real::detail {
     }
 
     /*!
+     * \brief `^` or `$`. A multiline line in ECMAScript ends at a carriage return as well as a line feed, where
+     *        REAL's multiline anchors know only the line feed, so under \ref flags::ecma a multiline `^` reads as
+     *        `^` or a lookbehind on a carriage return, and `$` as `$` or a lookahead on one. Inside a lookaround,
+     *        which cannot nest one, the anchor stays REAL's own.
+     * \param[in,out] out  The AST being built.
+     * \param[in]     kind \ref anchor_kind::caret or \ref anchor_kind::dollar.
+     * \return The index of the anchor, or of the alternation standing for it.
+     */
+    constexpr std::int32_t line_anchor(ast&        out,
+                                       anchor_kind kind)
+    {
+      const std::int32_t anchor {add_node(out, {.kind = node_kind::anchor, .anchor = kind})};
+      if (!is_ecma() || !has_flag(current_flags(), flags::multiline) || in_lookaround_) {
+        return anchor;
+      }
+      const std::int32_t cr   {add_node(out, {.kind      = node_kind::byte, .byte = static_cast<std::uint8_t>('\r')})};
+      const std::int32_t look {add_node(out, {.kind      = node_kind::lookaround,
+                                              .direction = kind == anchor_kind::caret ? look_dir::behind : look_dir::ahead,
+                                              .child     = cr})};
+      out.nodes[static_cast<std::size_t>(anchor)].next   = look;
+      const std::int32_t alt {add_node(out, {.kind = node_kind::alternation})};
+      out.nodes[static_cast<std::size_t>(alt)].child   = anchor;
+      return alt;
+    }
+
+    /*!
      * \brief Parses one atom: a literal, `.`, a class, a group, an anchor or an escape.
      * \param[in,out] out The AST being built.
      * \return The index of the atom node.
@@ -1210,10 +1236,10 @@ namespace real::detail {
           fail("nothing to repeat");
         case '^':
           ++pos_;
-          return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::caret});
+          return line_anchor(out, anchor_kind::caret);
         case '$':
           ++pos_;
-          return add_node(out, {.kind = node_kind::anchor, .anchor = anchor_kind::dollar});
+          return line_anchor(out, anchor_kind::dollar);
         case '(':
           return parse_group(out);
         case ')':

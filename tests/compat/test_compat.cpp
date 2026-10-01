@@ -1801,3 +1801,54 @@ TEST(compat_non_contiguous_range_without_results_answers_as_std)
             std::regex_search(reversed.crbegin(), reversed.crend(), ref_backwards));
   EXPECT(rc::regex_search(reversed.crbegin(), reversed.crend(), backwards));
 }
+
+// In ECMAScript a multiline line ends at a carriage return as well as a line feed, and both std libraries
+// agree: `^` and `$` see \r, \n and \r\n alike. A plain real::regex keeps its own anchors.
+TEST(compat_multiline_anchors_see_carriage_returns)
+{
+  const auto        ml         {rc::regex_constants::ECMAScript | rc::regex_constants::multiline};
+  const auto        sml        {std::regex::ECMAScript | std::regex::multiline};
+  // No pattern that matches empty here: libc++'s own std::sregex_iterator reads the byte before its range after an
+  // empty multiline match, and the reference must not. `^$` is checked by one search below instead.
+  const char* const patterns[] {"^a", "a$", "^\\w+$", "b$\\r?", "^(?:x|a)"};
+  const char* const subjects[] {"\ra", "a\rb", "x\r\na\r\n", "a\r", "\r\r", "ab\rab\nab", "a\n\ra"};
+  std::size_t       compared   {0};
+  for (const char* const p : patterns) {
+    const rc::regex  compat {p, ml};
+    const std::regex ref    {p, sml};
+    EXPECT(compat.uses_real());
+    for (const char* const s : subjects) {
+      const std::string                            subject {s};
+      std::vector<std::pair<long long, long long>> got;
+      std::vector<std::pair<long long, long long>> want;
+      for (rc::sregex_iterator it {subject.begin(), subject.end(), compat}, end; it != end; ++it) {
+        got.emplace_back(it->position(0), it->length(0));
+      }
+      for (std::sregex_iterator it {subject.begin(), subject.end(), ref}, end; it != end; ++it) {
+        want.emplace_back(it->position(0), it->length(0));
+      }
+      if (got != want) {
+        std::printf("/%s/ multiline: %zu spans, std %zu\n", p, got.size(), want.size());
+      }
+      EXPECT(got == want);
+      ++compared;
+    }
+  }
+  EXPECT_EQ(compared, 35U);
+  for (const char* const s : subjects) { // the empty line between two terminators, by one search
+    const std::string subject        {s};
+    const rc::regex   empty_line     {"^$", ml};
+    const std::regex  ref_empty_line {"^$", sml};
+    rc::smatch        got;
+    std::smatch       want;
+    const bool        found {rc::regex_search(subject, got, empty_line)};
+    EXPECT_EQ(found, std::regex_search(subject, want, ref_empty_line));
+    if (found) {
+      EXPECT_EQ(got.position(0), want.position(0));
+    }
+  }
+  const real::regex own  {"^a", real::flags::multiline}; // REAL's own multiline: \n only
+  EXPECT(!own.search("\ra").matched());
+  const rc::regex inside {"(?=^a)a", ml};                // inside a lookaround the anchor stays REAL's own (no lookaround nests)
+  EXPECT(rc::regex_search(std::string {"\na"}, inside));
+}
