@@ -1,6 +1,7 @@
 //! `regex_replace` under `format_sed` runs on REAL with sed's rules: `&` the whole match, a backslash and a digit a
-//! group, a backslash and any other character that character, a final lone backslash itself, `$` an ordinary
-//! character. libstdc++ and libc++ agree on every rule, so the host std is the oracle. A pattern of REAL's superset
+//! group, a backslash and any other character that character, `$` an ordinary character, and a final lone backslash
+//! kept or dropped as the native std does (libstdc++ and libc++ keep it, MS STL drops it), so the host std is the
+//! oracle. A pattern of REAL's superset
 //! (a lookbehind, which std's grammar rejects) pins that the substitution did not fall back to std, which would
 //! throw instead of answering.
 #include <cstddef>
@@ -52,7 +53,8 @@ TEST(compat_format_sed_rules)
   EXPECT_EQ(sed("xaby", "(a)(b)", R"(\2\1)"), std::string {"xbay"});
   EXPECT_EQ(sed("xaby", "(a)(b)", R"(\&\\)"), std::string {R"(x&\y)"});
   EXPECT_EQ(sed("xaby", "(a)(b)", R"(\n\t\x)"), std::string {"xntxy"});
-  EXPECT_EQ(sed("xaby", "(a)(b)", "<\\"), std::string {"x<\\y"});
+  // A final lone backslash: kept by libstdc++ and libc++, dropped by MS STL; the native std decides.
+  EXPECT_EQ(sed("xaby", "(a)(b)", "<\\"), std::string {real::compat::detail::std_sed_keeps_final_backslash() ? "x<\\y" : "x<y"});
   EXPECT_EQ(sed("xaby", "(a)(b)", "$&$1$0"), std::string {"x$ab$1$0y"});
   EXPECT_EQ(sed("xaby", "(a)(b)", R"(\12)"), std::string {"xa2y"});
   EXPECT_EQ(sed("xay", "(a)(b)?", R"([\2])"), std::string {"x[]y"});

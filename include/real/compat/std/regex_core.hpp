@@ -304,6 +304,19 @@ namespace real::compat {
     }
 
     /*!
+     * \brief Whether the native std keeps a final lone backslash of a `format_sed` format, as libstdc++ and libc++
+     *        do; MS STL drops it. REAL's sed expansion follows the native std there.
+     * \return `true` when `std::regex_replace("a", regex("a"), "\\", format_sed)` gives back a backslash; asked once.
+     */
+    [[nodiscard]] inline bool std_sed_keeps_final_backslash()
+    {
+      static const bool keeps {std::regex_replace(std::string {"a"}, std::regex {"a"}, std::string {"\\"},
+                                                  std::regex_constants::format_sed)
+                               == "\\"};
+      return keeps;
+    }
+
+    /*!
      * \brief Whether the native std reads `$0` in a format as the whole match, as libstdc++ and libc++ do;
      *        `match_results::format` follows it, being the one place REAL expands a `$0` itself.
      * \return `true` when `std::regex_replace("a", regex("a"), "$0")` gives back `"a"`; asked once.

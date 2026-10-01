@@ -461,8 +461,13 @@ namespace real::compat {
           if (c == char_type('&')) {
             out = copy_group(out, 0);
           }
-          else if (c != char_type('\\') || last) {
-            *out++ = c; // a final lone backslash is itself
+          else if (c != char_type('\\')) {
+            *out++ = c;
+          }
+          else if (last) {
+            if (detail::std_sed_keeps_final_backslash()) {
+              *out++ = c; // a final lone backslash, kept or dropped as the native std does
+            }
           }
           else if (const char_type next {*++at}; next >= char_type('0') && next <= char_type('9')) {
             out = copy_group(out, static_cast<size_type>(next - char_type('0')));
@@ -1474,9 +1479,9 @@ namespace real::compat {
     /*!
      * \brief Appends one match's replacement under `format_sed`, the POSIX sed rules: `&` is the whole match,
      *        a backslash and a digit `N` group `N` (`\0` the whole match), a backslash and any other
-     *        character that character, and a final lone backslash itself; `$` is an ordinary character. A
-     *        group that does not exist or did not take part inserts nothing. libstdc++ and libc++ agree on
-     *        every rule.
+     *        character that character; `$` is an ordinary character. A group that does not exist or did not
+     *        take part inserts nothing. A final lone backslash is kept as libstdc++ and libc++ keep it, or dropped
+     *        as MS STL drops it: the native std decides.
      * \param[in,out] out  Destination the expansion is appended to.
      * \param[in]     m    The match whose groups the format refers to.
      * \param[in]     fmt  The replacement format string.
@@ -1497,7 +1502,9 @@ namespace real::compat {
           out.push_back(c);
         }
         else if (i + 1 == fmt.size()) {
-          out.push_back('\\'); // a final lone backslash is itself
+          if (std_sed_keeps_final_backslash()) {
+            out.push_back('\\'); // a final lone backslash, kept or dropped as the native std does
+          }
         }
         else if (const char next {fmt[++i]}; next >= '0' && next <= '9') {
           append_group(out, m, static_cast<std::size_t>(next - '0'), text);

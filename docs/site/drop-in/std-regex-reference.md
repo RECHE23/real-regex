@@ -228,8 +228,9 @@ on the one measured case it is **~4× faster than libc++'s and ~0.75× — slowe
 
 The real expanders honour `format_first_only`, `format_no_copy`, **`format_sed`** (and the `match_any`
 hint). Under `format_sed` the format follows sed's rules: `&` is the whole match, `\N` group `N` (`\0`
-the whole match), a backslash before any other character gives that character, a final lone backslash
-is itself, and `$` is an ordinary character; libstdc++ and libc++ agree on every rule. **A constraining
+the whole match), a backslash before any other character gives that character, and `$` is an ordinary
+character; libstdc++, libc++ and MS STL agree on every rule but one, a final lone backslash, which the
+first two keep and MS STL drops: `real` does as the native std does. **A constraining
 match flag** (`match_not_bol`, `match_continuous`, …, which the traversal cannot apply) **routes the
 whole substitution to `std::regex_replace`** (so compat == std). An ECMAScript format containing
 **`$0`** also routes to std: `$0` is platform-variant (libstdc++ = the whole match, strict-ECMAScript/MSVC
