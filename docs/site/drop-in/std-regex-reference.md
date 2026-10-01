@@ -374,7 +374,7 @@ for the calls `real` honors and only the other calls pay the `std` cost. The dif
 generates a random flag subset and compares `compat(mf)` vs `std(mf)` on search + match + iterate,
 which is what proves the partition. The flags `real` takes are also compared with the host `std` over
 the exhaustive space (`make exhaustive-compat-flags`: every pattern and input of the routing check, under
-each of them and their pairs; every 13th pattern in CI, the whole space weekly).
+each of them and their pairs; the whole space in CI on every push).
 
 ## Always-std parts of the surface (wregex, POSIX, nosubs)
 
@@ -441,8 +441,9 @@ differential fuzzer (517 k iterations, zero remaining both-accept divergence):
   comparisons with another `sub_match`, a string, a C string and a character, ordering included;
   `match_results`' `format` (ECMAScript or `format_sed` rules; `$0` reads as the native std reads it),
   `==`, `swap`, `max_size`, `get_allocator`; the `regex_constants::error_*` codes and `regex_error(code)`;
-  the token iterator's C-array field list. Not provided: `basic_regex::imbue` and `getloc` (REAL's
-  matching does not depend on a locale).
+  the token iterator's C-array field list. **Not supported: `basic_regex::imbue` and `getloc`** --
+  they are not provided, and no call reaches `std` in their place, strict policy or not (REAL's
+  matching does not depend on a locale)..
 - Every algorithm and iterator accepts any bidirectional iterator. A non-contiguous range (a `std::deque`, a
   `std::list`, a reverse iterator) is searched on REAL over one contiguous copy, made once per search or per
   `regex_iterator` and shared by its copies: the same answers and the same linear time as over a string, for

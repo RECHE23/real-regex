@@ -3,10 +3,10 @@ The Drop-in target page for RE2, on the shared per-target template. Canon = the
 file comment of include/real/compat/re2/re2.hpp -- distilled here, not copied.
 -->
 
-# Drop-in for RE2
+# RE2 compatibility layer
 
-**Full drop-in, strict — `real::compat::re2`, header-only, zero-dep.** The `RE2`
-surface you already type, on REAL's linear engine; every accepted pattern is
+**RE2 compatibility layer, strict — `real::compat::re2`, header-only, zero-dep.**
+The parts of the `RE2` surface listed below, on REAL's linear engine; every accepted pattern is
 guaranteed linear, and a construct this layer cannot honor is a clean
 `ok() == false` — RE2's own no-exception contract, never a silent backtrack.
 RE2 itself is a test-time oracle only, never linked.

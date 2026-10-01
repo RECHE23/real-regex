@@ -70,7 +70,7 @@ INCLUDES := -Iinclude
 FUZZ_TIME ?= 30
 FUZZ_DIR  := $(BUILD)/fuzz
 
-.PHONY: fuzz fuzz-compat fuzz-compat-known fuzz-re2 exhaustive-compat exhaustive-compat-build exhaustive-compat-space exhaustive-compat-flags exhaustive-compat-flags-build exhaustive-compat-flags-smoke fowler-compat help
+.PHONY: fuzz fuzz-compat fuzz-compat-known fuzz-re2 exhaustive-compat exhaustive-compat-build exhaustive-compat-space exhaustive-compat-flags exhaustive-compat-flags-build fowler-compat help
 .DEFAULT_GOAL := help
 
 # On macOS with both toolchains installed, a libFuzzer link can fail in two ways and NEITHER error
@@ -196,18 +196,14 @@ exhaustive-compat-space:
 	@$(PYRUN) -c "from sciforge.corpus.exhaustive import enumerate_patterns as P, enumerate_inputs as I; open('$(BUILD)/ec_pats.txt','w').write(chr(10).join(P($(EC_K), tier=2))); open('$(BUILD)/ec_inps.txt','w').write(chr(10).join(I($(EC_N))))"
 
 # The match flags REAL honors on one search or match (continuous, prev_avail, not_null, not_eol, not_eow and
-# their pairs), compat vs the local std over the same space. The full tier pins its counts on a std that honors
-# every flag; the smoke takes every EC_STRIDE-th pattern and pins nothing. Both fail on a serious divergence.
-EC_STRIDE ?= 13
+# their pairs), compat vs the local std over the same space; CI runs it on every push (about 20 s). At the default
+# tier it pins its counts on a std that honors every flag; it fails on a serious divergence.
 exhaustive-compat-flags-build: ## Compile the flag-axis runner only
 	@mkdir -p $(BUILD)
 	@cd $(ROOT) && $(CXX) $(CXXSTD) -O2 $(INCLUDES) fuzz/exhaustive_compat_flags.cpp -o $(BUILD)/exhaustive_compat_flags
 
-exhaustive-compat-flags: exhaustive-compat-flags-build exhaustive-compat-space ## Match flags on REAL vs local std, whole space (weekly)
+exhaustive-compat-flags: exhaustive-compat-flags-build exhaustive-compat-space ## Match flags on REAL vs local std, whole space
 	@$(BUILD)/exhaustive_compat_flags $(BUILD)/ec_pats.txt $(BUILD)/ec_inps.txt 1 $(EC_PIN)
-
-exhaustive-compat-flags-smoke: exhaustive-compat-flags-build exhaustive-compat-space ## Match flags on REAL vs local std, every EC_STRIDE-th pattern (CI)
-	@$(BUILD)/exhaustive_compat_flags $(BUILD)/ec_pats.txt $(BUILD)/ec_inps.txt $(EC_STRIDE) nopin
 
 # The Fowler / AT&T POSIX conformance of the compat layer: the three vendored testregex corpora through
 # real::compat vs the local std, three-way-arbitrated against the corpus's POSIX expectation and bucketed.

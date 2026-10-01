@@ -318,10 +318,9 @@ jobs:
         run: python3 real-regex/tests/corpora/run_conformance.py
       - name: Exhaustive compat routing check (real::compat vs std::regex)
         run: make -C real-regex exhaustive-compat
-      # The match flags REAL honors on one search or match, every 13th pattern of the same space; the whole
-      # space runs weekly (fuzz-long.yml).
-      - name: Exhaustive compat flag axis, smoke (match flags on REAL vs std::regex)
-        run: make -C real-regex exhaustive-compat-flags-smoke
+      # The match flags REAL honors on one search or match, over the whole space of the routing check (~20 s).
+      - name: Exhaustive compat flag axis (match flags on REAL vs std::regex)
+        run: make -C real-regex exhaustive-compat-flags
 
   # Language bindings (bindings/): the C ABI shim and the real-regex Rust crate. Linux coverage for the
   # cross-platform pieces the local macOS gate builds — the shim's C++-driver link and the crate's cc-build.
