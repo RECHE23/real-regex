@@ -242,7 +242,7 @@ real→std fallback), the lazy `std` build, and the `std` engine's own failures 
 gives up on a pattern such as `(?:a?){1000}` with `error_complexity` during the match, not at its build).
 
 A real-backed pattern reaches `std` through four routes only: `regex_search`/`regex_match` with a
-match flag `real` does not honour; `regex_replace` with such a flag, with `format_sed`, with a format
+match flag `real` does not honour (see Match flags); `regex_replace` with such a flag, with `format_sed`, with a format
 using `$0`, or on a nullable POSIX pattern; a `regex_iterator` (and so a `regex_token_iterator`) with
 such a flag or on a nullable POSIX pattern; and `std_engine()` itself. A pattern `real` accepts but `std`
 rejects (a *real superset*: a lookbehind, a named group, `a{,2}`; on libc++ also `\A` = literal `A`)
@@ -343,17 +343,25 @@ other cell (a subject that DOES match, or a single-element list) is unaffected a
 - `match_default` and `match_any` keep the `real` backend. `match_any` is a non-constraining hint
   (return *a* match) that `real` already satisfies by returning the leftmost match, so ignoring it is
   sound.
-- **Any constraining flag** — `match_not_bol`, `match_not_eol`, `match_not_bow`, `match_not_eow`,
-  `match_not_null`, `match_continuous`, `match_prev_avail` — is not expressible through `real`'s API,
-  so that single operation routes to `std::regex` (lazy-built if the pattern is real-backed), which
-  honors every flag by construction. The flags are translated by an exhaustive compat→std table.
+- On one `regex_search` / `regex_match` call, **`match_continuous`** and **`match_prev_avail`** also
+  keep `real`. `match_continuous` is a match anchored at `first` (`real`'s `match`); under a POSIX
+  grammar, whose search is leftmost-longest, a search with it routes to `std`. `match_prev_avail` searches
+  from `first` with the character before it as context: `\b`, `\B`, a multiline `^` and a lookbehind
+  read it (a lookbehind sees that one character, no more), and `^` outside multiline does not hold at
+  `first`. As [re.matchflag] says, `match_not_bol` and `match_not_bow` are then ignored. libc++ differs on
+  two points, both its own defects: it ignores `match_prev_avail` for `^`, and its `\b` never holds on an
+  attempt that starts at `last`. `real::compat` follows the standard and libstdc++ there.
+- **Every other constraining flag** — `match_not_bol` and `match_not_bow` without `match_prev_avail`,
+  `match_not_eol`, `match_not_eow`, `match_not_null` — and any constraining flag on an iterator or a
+  `regex_replace` is not expressible through `real`'s API, so that single operation routes to
+  `std::regex` (lazy-built if the pattern is real-backed), which honors every flag by construction. The
+  flags are translated by an exhaustive compat→std table.
 
 This is a *per-operation* decision, like the nullable routing: a pattern keeps `real`'s ReDoS-safety
-for its flag-free `search`/`match` calls and only the flagged call pays the `std` cost. Affining a
-flag onto `real` (e.g. `match_continuous` → `real`'s anchored `match` at a position) is a measured
-optimization left for later, not a hand-coded partition — the differential fuzzer would otherwise
-have to police a mis-categorization. The fuzzer generates a random flag subset and compares
-`compat(mf)` vs `std(mf)` on search + match + iterate, which is what proves the partition.
+for the calls `real` honors and only the other calls pay the `std` cost. The differential fuzzer
+generates a random flag subset and compares `compat(mf)` vs `std(mf)` on search + match + iterate,
+which is what proves the partition; the test suite compares the two flags `real` takes against the
+host `std` over every short subject, start and flag set.
 
 ## Always-std parts of the surface (wregex, POSIX, nosubs)
 

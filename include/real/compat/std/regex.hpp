@@ -26,8 +26,9 @@
  * `match_flag_type`, `wregex`, the POSIX grammars and `nosubs`. `real` runs the `char` /
  * default-traits / every-group path (see `detail::real_eligible`); wide `CharT`, custom traits,
  * `collate` and `nosubs` are always `std`. `regex_replace` and the iterators run on `real`, a
- * nullable pattern included (see `basic_regex::uses_real_traversal`), and a constraining
- * `match_flag` routes that one operation to `std`.
+ * nullable pattern included (see `basic_regex::uses_real_traversal`). A search or match keeps `real`
+ * under `match_continuous` and `match_prev_avail`; any other constraining `match_flag` routes that one
+ * operation to `std`.
  *
  * See the "Drop-in for std::regex" migration guide and the compatibility reference (COMPATIBILITY.md)
  * in the rendered documentation.

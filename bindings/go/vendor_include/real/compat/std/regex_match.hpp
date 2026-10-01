@@ -352,10 +352,13 @@ namespace real::compat {
      * \brief Fills from real's byte offsets over the sequence `[first_, last_)`.
      *        Templated on the match type — `real::regex::search` returns an SBO-backed result,
      *        not the `std::vector`-backed `real::match_result` alias.
-     * \param[in] match The engine's result, whose group offsets are byte offsets into the sequence.
+     * \param[in] match The engine's result, whose group offsets are byte offsets into the searched view.
+     * \param[in] lead  How many characters the view holds before `first_` (1 under `match_prev_avail`, the
+     *                  context it searched with); no match starts among them.
      */
     template <typename RealMatch>
-    void fill_from_real(const RealMatch& match)
+    void fill_from_real(const RealMatch& match,
+                        std::size_t      lead = 0)
     {
       groups_.clear();
       const std::size_t count {match.size()};
@@ -367,13 +370,13 @@ namespace real::compat {
           groups_.push_back(value_type {.first = last_, .second = last_, .matched = false});
         }
         else {
-          groups_.push_back(value_type {.first   = first_ + static_cast<difference_type>(start),
-                                        .second  = first_ + static_cast<difference_type>(fin),
+          groups_.push_back(value_type {.first   = first_ + static_cast<difference_type>(start - lead),
+                                        .second  = first_ + static_cast<difference_type>(fin - lead),
                                         .matched = true});
         }
       }
-      const std::size_t whole_start {match.start(0)};
-      const std::size_t whole_end   {match.end(0)};
+      const std::size_t whole_start {match.start(0) - lead};
+      const std::size_t whole_end   {match.end(0) - lead};
       prefix_ = value_type {.first   = first_,
                             .second  = first_ + static_cast<difference_type>(whole_start),
                             .matched = whole_start > 0};
@@ -387,13 +390,15 @@ namespace real::compat {
      * \brief Fills from real's byte offsets into a COPY of `[first_, last_)`, a non-contiguous range: each offset
      *        becomes the caller's iterator through \p at, visited in increasing order so that the walk costs the
      *        span the marks cover once, whatever order the groups come in (`((a+)b)` lists its widest mark first).
-     * \tparam Cursor A `detail::offset_cursor` over the sequence.
+     * \tparam Cursor A `detail::offset_cursor` over the copied sequence.
      * \param[in]     match The engine's result, whose offsets index the copy.
      * \param[in,out] at    The cursor; at or before the match's start, left at its last mark.
+     * \param[in]     lead  How many characters the copy holds before `first_` (1 under `match_prev_avail`).
      */
     template <typename RealMatch, typename Cursor>
     void fill_from_real_at(const RealMatch& match,
-                           Cursor&          at)
+                           Cursor&          at,
+                           std::size_t      lead = 0)
     {
       const std::size_t count {match.size()};
       groups_.assign(count, value_type {.first = last_, .second = last_, .matched = false});
@@ -411,7 +416,7 @@ namespace real::compat {
         ((slot % 2) == 0 ? sub.first : sub.second)  = at.to(offset);
         sub.matched                                 = true;
       }
-      prefix_ = value_type {.first = first_, .second = groups_[0].first, .matched = match.start(0) > 0};
+      prefix_ = value_type {.first = first_, .second = groups_[0].first, .matched = match.start(0) > lead};
       suffix_ = value_type {.first = groups_[0].second, .second = last_, .matched = groups_[0].second != last_};
       ready_  = true;
     }
@@ -504,25 +509,40 @@ namespace real::compat {
     };
 
     /*!
-     * \brief The REAL search a non-contiguous range's copy takes: the one `run` makes over contiguous storage.
-     * \param[in] re       The pattern; real-backed.
-     * \param[in] text     The copy.
-     * \param[in] anchored Whole-sequence match rather than leftmost search.
-     * \return The engine's result, offsets into \p text.
+     * \brief What a `regex_search` or `regex_match` call asks of REAL, its match flags included.
+     */
+    struct call_shape
+    {
+      bool        anchored   {}; //!< `regex_match`: the whole sequence, rather than the leftmost match.
+      bool        continuous {}; //!< `match_continuous`: the match starts at `first`.
+      std::size_t lead       {}; //!< 1 under `match_prev_avail`: the view starts at `--first`, its context.
+    };
+
+    /*!
+     * \brief The REAL call for \p shape over \p view, whose first `shape.lead` characters are context only: a
+     *        region search from there sees the character before it for `^`, `\b` and a lookbehind, and `^`
+     *        outside multiline does not hold there, as [re.matchflag] has it for `match_prev_avail`.
+     * \param[in] re    The pattern; real-backed.
+     * \param[in] view  The sequence, behind its context.
+     * \param[in] shape The call.
+     * \return The engine's result, offsets into \p view.
      */
     template <typename CharT, typename Traits>
-    [[nodiscard]] auto find_on_copy(const basic_regex<CharT, Traits>& re,
-                                    std::string_view                  text,
-                                    bool                              anchored)
+    [[nodiscard]] auto find_real(const basic_regex<CharT, Traits>& re,
+                                 std::string_view                  view,
+                                 call_shape                        shape)
     {
       const real::regex& engine {std::get<real::regex>(re.engine())};
-      if (anchored) {
-        return engine.fullmatch(text);
+      if (shape.anchored) {
+        return shape.lead == 0 ? engine.fullmatch(view) : engine.fullmatch(view, shape.lead);
+      }
+      if (shape.continuous) {
+        return shape.lead == 0 ? engine.match(view) : engine.match(view, shape.lead);
       }
       if (re.posix_longest()) {
-        return engine.search_longest(text);
+        return shape.lead == 0 ? engine.search_longest(view) : engine.search_longest(view, shape.lead);
       }
-      return engine.search(text);
+      return shape.lead == 0 ? engine.search(view) : engine.search(view, shape.lead);
     }
 
     /*!
@@ -532,7 +552,7 @@ namespace real::compat {
      * \param[in]  last     One past its end.
      * \param[out] m        Result; reset over `[first, last)` by the caller.
      * \param[in]  re       The pattern; real-backed.
-     * \param[in]  anchored Whole-sequence match rather than leftmost search.
+     * \param[in]  shape    The call; under `match_prev_avail` the copy starts at `--first`.
      * \return `true` if a match was found and \p m filled.
      */
     template <typename BidirIt, typename CharT, typename Traits>
@@ -540,29 +560,27 @@ namespace real::compat {
                     BidirIt                           last,
                     match_results<BidirIt>&           m,
                     const basic_regex<CharT, Traits>& re,
-                    bool                              anchored)
+                    call_shape                        shape)
     {
-      const std::string text(first, last);
-      const auto        result {find_on_copy(re, text, anchored)};
+      const BidirIt     from   {shape.lead == 0 ? first : std::prev(first)};
+      const std::string text(from, last);
+      const auto        result {find_real(re, text, shape)};
       if (!result.matched()) {
         m.set_ready_no_match();
         return false;
       }
-      offset_cursor<BidirIt> at {first, 0};
-      m.fill_from_real_at(result, at);
+      offset_cursor<BidirIt> at {from, 0};
+      m.fill_from_real_at(result, at, shape.lead);
       return true;
     }
 
     /*!
-     * \brief Whether `real` can honor the requested match flags, so the operation may stay on it.
+     * \brief Whether an iteration can honor the requested match flags on `real`, so it may stay there.
      *
      * Only `match_default` and the non-constraining `match_any` hint stay on `real` (which satisfies
-     * `match_any` by returning the leftmost match, so ignoring it is sound). *Any* constraining bit —
-     * `not_bol`, `not_eol`, `not_bow`, `not_eow`, `not_null`, `match_continuous`, `match_prev_avail` —
-     * is not expressible through `real`'s API, so the operation routes to `std`, this layer never
-     * accepting a flag it would then ignore. Narrowing the set (mapping `match_continuous` onto
-     * `real.match(pos)`, say) is a measured optimisation; partitioning the flags by hand without one
-     * only gives the fuzzer more to police.
+     * `match_any` by returning the leftmost match, so ignoring it is sound). Any constraining bit routes
+     * the iteration to `std`, this layer never accepting a flag it would then ignore; a single search or
+     * match honors more of them (\ref call_stays_real).
      * \param[in] mf The match flags the caller passed.
      * \return `true` if every flag in \p mf is expressible through REAL's API, so the operation may stay
      *         on the real backend.
@@ -572,6 +590,50 @@ namespace real::compat {
       constexpr unsigned non_constraining {static_cast<unsigned>(regex_constants::match_default)
                                            | static_cast<unsigned>(regex_constants::match_any)};
       return (static_cast<unsigned>(mf) & ~non_constraining) == 0U;
+    }
+
+    /*!
+     * \brief Whether one `regex_search` or `regex_match` call can honor the requested match flags on `real`.
+     *
+     * Beyond what \ref real_honors accepts, `match_continuous` is a match anchored at `first` (a POSIX
+     * leftmost-longest search has no anchored form, so it stays on `std`; a whole-sequence match starts there
+     * anyway), and `match_prev_avail` a region search from `first` over a view that starts one character before
+     * it. Under `match_prev_avail` the standard ignores `match_not_bol` and `match_not_bow` ([re.matchflag]), and
+     * so does this. `not_eol`, `not_eow`, `not_null` and `not_bol` / `not_bow` alone still route to `std`.
+     * \param[in] mf       The match flags the caller passed.
+     * \param[in] anchored A whole-sequence match (`regex_match`).
+     * \param[in] longest  The pattern searches leftmost-longest (a POSIX grammar on REAL).
+     * \return `true` if the call may stay on the real backend.
+     */
+    [[nodiscard]] inline bool call_stays_real(regex_constants::match_flag_type mf,
+                                              bool                             anchored,
+                                              bool                             longest) noexcept
+    {
+      using namespace regex_constants;
+      const auto bits    {static_cast<unsigned>(mf)};
+      unsigned   honored {static_cast<unsigned>(match_default) | static_cast<unsigned>(match_any)
+                          | static_cast<unsigned>(match_prev_avail)};
+      if (anchored || !longest) {
+        honored |= static_cast<unsigned>(match_continuous);
+      }
+      if ((bits & static_cast<unsigned>(match_prev_avail)) != 0U) {
+        honored |= static_cast<unsigned>(match_not_bol) | static_cast<unsigned>(match_not_bow);
+      }
+      return (bits & ~honored) == 0U;
+    }
+
+    /*!
+     * \brief The REAL call a `regex_search` or `regex_match` with \p mf makes; see \ref call_stays_real.
+     * \param[in] mf       The match flags, which \ref call_stays_real accepted.
+     * \param[in] anchored A whole-sequence match (`regex_match`).
+     * \return The call's shape.
+     */
+    [[nodiscard]] inline call_shape shape_of(regex_constants::match_flag_type mf,
+                                             bool                             anchored) noexcept
+    {
+      return call_shape {.anchored   = anchored,
+                         .continuous = (mf & regex_constants::match_continuous) != 0U,
+                         .lead       = (mf & regex_constants::match_prev_avail) != 0U ? 1U : 0U};
     }
 
     /*!
@@ -623,8 +685,8 @@ namespace real::compat {
 
     /*!
      * \brief Runs the active backend over `[first, last)` and fills \p m. \p anchored selects
-     *        whole-sequence match (regex_match) vs leftmost search (regex_search). A constraining
-     *        match flag (see \ref real_honors) routes to `std` even for a real-backed pattern.
+     *        whole-sequence match (regex_match) vs leftmost search (regex_search). A match flag REAL
+     *        cannot honor (see \ref call_stays_real) routes to `std` even for a real-backed pattern.
      * \param[in]  first    Start of the sequence to run over.
      * \param[in]  last     One past its end.
      * \param[out] m        Result filled on success; left ready-but-unmatched on failure.
@@ -643,32 +705,24 @@ namespace real::compat {
     {
       m.reset(first, last);
       if constexpr (real_eligible<CharT, Traits>) {
-        if (re.uses_real() && real_honors(mf)) {
+        if (re.uses_real() && call_stays_real(mf, anchored, re.posix_longest())) {
+          const call_shape shape {shape_of(mf, anchored)};
           if constexpr (!std::contiguous_iterator<BidirIt>) {
             // A deque, a list, a reverse iterator: no byte view covers the range, so REAL searches a copy.
-            return run_copied(first, last, m, re, anchored);
+            return run_copied(first, last, m, re, shape);
           }
           else {
-            const std::string_view sv     {std::to_address(first),
-                                           static_cast<std::size_t>(std::distance(first, last))};
-            const real::regex&     engine {std::get<real::regex>(re.engine())};
             // A POSIX grammar on REAL routes an unanchored search to leftmost-LONGEST bounds
             // (re.posix_longest()); a whole-sequence match (fullmatch) has one candidate, so longest ==
             // first there.
-            const auto result {[&] {
-                                 if (anchored) {
-                                   return engine.fullmatch(sv);
-                                 }
-                                 if (re.posix_longest()) {
-                                   return engine.search_longest(sv);
-                                 }
-                                 return engine.search(sv);
-                               }()};
+            const std::string_view view   {std::to_address(first) - shape.lead,
+                                           static_cast<std::size_t>(std::distance(first, last)) + shape.lead};
+            const auto             result {find_real(re, view, shape)};
             if (!result.matched()) {
               m.set_ready_no_match(); // std leaves ready()==true, size()==0 on a failed match
               return false;
             }
-            m.fill_from_real(result);
+            m.fill_from_real(result, shape.lead);
             return true;
           }
         }
@@ -694,7 +748,7 @@ namespace real::compat {
      * \param[in] last     One past its end.
      * \param[in] re       The pattern, whose backend decides which engine runs.
      * \param[in] anchored Whole-sequence match rather than leftmost search.
-     * \param[in] mf       Match flags; a constraining one routes to `std`.
+     * \param[in] mf       Match flags; one REAL cannot honor routes to `std`.
      * \return `true` if a match exists.
      */
     template <typename BidirIt, typename CharT, typename Traits>
@@ -705,18 +759,17 @@ namespace real::compat {
                        regex_constants::match_flag_type  mf)
     {
       if constexpr (real_eligible<CharT, Traits>) {
-        if (re.uses_real() && real_honors(mf)) {
+        if (re.uses_real() && call_stays_real(mf, anchored, re.posix_longest())) {
+          const call_shape shape {shape_of(mf, anchored)};
           if constexpr (!std::contiguous_iterator<BidirIt>) {
             // std::to_address on a deque, a list or a reverse iterator names one element, not the range: search
             // a contiguous copy instead, which keeps REAL's answers and its linear time.
-            return find_on_copy(re, std::string(first, last), anchored).matched();
+            return find_real(re, std::string(shape.lead == 0 ? first : std::prev(first), last), shape).matched();
           }
           else {
-            const std::string_view sv     {std::to_address(first),
-                                           static_cast<std::size_t>(std::distance(first, last))};
-            const real::regex&     engine {std::get<real::regex>(re.engine())};
-            return anchored ? engine.fullmatch(sv).matched()
-                   : (re.posix_longest() ? engine.search_longest(sv) : engine.search(sv)).matched();
+            const std::string_view view {std::to_address(first) - shape.lead,
+                                         static_cast<std::size_t>(std::distance(first, last)) + shape.lead};
+            return find_real(re, view, shape).matched();
           }
         }
       }
