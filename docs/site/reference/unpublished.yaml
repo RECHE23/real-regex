@@ -68,6 +68,7 @@ real::compat::match_results:
   set_ready_no_match: engine-facing fill hook
   rebase_prefix: engine-facing fill hook
   fill_from_real: engine-facing fill hook
+  fill_from_real_at: engine-facing fill hook
   fill_from_std: engine-facing fill hook
 real::compat::sub_match:
   iterator: iterator trait

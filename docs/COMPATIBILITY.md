@@ -415,10 +415,14 @@ differential fuzzer (517 k iterations, zero remaining both-accept divergence):
   `wregex`, and the POSIX grammar engines. Empty-match traversal is *not* a fallback trigger for single
   `search`/`match` -- only for `regex_replace`/iterators, where the advance-after-empty-match rule
   differs from ECMAScript.
-- `match_results` requires a **contiguous** iterator (a `std::deque` sequence is rejected at
-  compile time): sub-matches are built from byte offsets. `regex_search` / `regex_match` without
-  `match_results` accept any bidirectional iterator; a non-contiguous one (a `std::deque`, a `std::list`,
-  a reverse iterator) runs on `std::regex`, with its cost.
+- Every algorithm and iterator accepts any bidirectional iterator. A non-contiguous range (a `std::deque`, a
+  `std::list`, a reverse iterator) is searched on REAL over one contiguous copy, made once per search or per
+  `regex_iterator` and shared by its copies: the same answers and the same linear time as over a string, for
+  O(n) extra memory; the iterators handed back are the caller's. `sub_match::view()` exists only over
+  contiguous storage (a view into the copy would dangle); `str()` works everywhere. A range that takes the
+  std route (a constraining flag, `wregex`) runs on `std::regex` over the caller's iterators.
+- libc++'s own `std::regex_iterator`, after an empty multiline match, reads the byte before its range; a
+  pattern on the std route inherits it (std parity, not worked around).
 - Matching against an rvalue `std::string` is deleted (the result would dangle), as in `real`/`std`.
 
 ## Performance (measured, real backend vs std::regex)

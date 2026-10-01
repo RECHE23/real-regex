@@ -21,18 +21,13 @@ namespace real::compat {
   /*!
    * \brief A matched sub-expression: a `[first, second)` range into the searched sequence.
    *
-   * Contiguous iterators only — `sub_match` is built from byte offsets, which requires the
-   * underlying storage to be contiguous (a `std::deque::iterator` is random-access but not
-   * contiguous, so it is rejected).
+   * Any bidirectional iterator, as `std::sub_match`; \ref view alone needs contiguous storage.
    *
-   * \tparam BidirIt A contiguous iterator into the searched sequence.
+   * \tparam BidirIt A bidirectional iterator into the searched sequence.
    */
   template <typename BidirIt>
   class sub_match
   {
-    static_assert(std::contiguous_iterator<BidirIt>,
-                  "real::compat::sub_match requires a contiguous iterator");
-
   public:
 
     using iterator        = BidirIt;                                                 //!< The underlying iterator.
@@ -72,9 +67,14 @@ namespace real::compat {
 
     /*!
      * \brief A non-owning view of the matched text. REAL's addition; `std::sub_match` has no such member.
+     *
+     * Contiguous iterators only: over a `std::deque` or a `std::list` there is no storage for a view to cover,
+     * and an owning string returned under this name would dangle once bound to a `string_view`; \ref str
+     * serves every iterator.
      * \return A view over `[first, second)`, or an empty view when \ref matched is `false`.
      */
     [[nodiscard]] std::basic_string_view<value_type> view() const
+    requires std::contiguous_iterator<BidirIt>
     {
       return matched ? std::basic_string_view<value_type>(std::to_address(first),
                                                           static_cast<std::size_t>(length()))
@@ -164,7 +164,7 @@ namespace real::compat {
    * exact (the end is not derivable from a base pointer alone). Filled either from `real`'s byte
    * offsets or copied from a `std::match_results` on the fallback path.
    *
-   * \tparam BidirIt A contiguous iterator into the searched sequence.
+   * \tparam BidirIt A bidirectional iterator into the searched sequence.
    * \tparam Alloc   Allocator for the sub-match vector (std parity; default suffices).
    */
   template <typename BidirIt, typename Alloc = std::allocator<sub_match<BidirIt>>>
@@ -384,6 +384,39 @@ namespace real::compat {
     }
 
     /*!
+     * \brief Fills from real's byte offsets into a COPY of `[first_, last_)`, a non-contiguous range: each offset
+     *        becomes the caller's iterator through \p at, visited in increasing order so that the walk costs the
+     *        span the marks cover once, whatever order the groups come in (`((a+)b)` lists its widest mark first).
+     * \tparam Cursor A `detail::offset_cursor` over the sequence.
+     * \param[in]     match The engine's result, whose offsets index the copy.
+     * \param[in,out] at    The cursor; at or before the match's start, left at its last mark.
+     */
+    template <typename RealMatch, typename Cursor>
+    void fill_from_real_at(const RealMatch& match,
+                           Cursor&          at)
+    {
+      const std::size_t count {match.size()};
+      groups_.assign(count, value_type {.first = last_, .second = last_, .matched = false});
+      std::vector<std::pair<std::size_t, std::size_t>> marks; // (offset, 2 * group + 1 for an end)
+      marks.reserve(2 * count);
+      for (std::size_t g = 0; g < count; ++g) {
+        if (match.start(g) != real::npos && match.end(g) != real::npos) {
+          marks.emplace_back(match.start(g), 2 * g);
+          marks.emplace_back(match.end(g), (2 * g) + 1);
+        }
+      }
+      std::sort(marks.begin(), marks.end());
+      for (const auto& [offset, slot] : marks) {
+        value_type& sub {groups_[slot / 2]};
+        ((slot % 2) == 0 ? sub.first : sub.second)  = at.to(offset);
+        sub.matched                                 = true;
+      }
+      prefix_ = value_type {.first = first_, .second = groups_[0].first, .matched = match.start(0) > 0};
+      suffix_ = value_type {.first = groups_[0].second, .second = last_, .matched = groups_[0].second != last_};
+      ready_  = true;
+    }
+
+    /*!
      * \brief Copies from a `std::match_results` (the fallback path) over the same sequence.
      * \param[in] match The standard library's result to copy marks, prefix and suffix from.
      */
@@ -427,6 +460,98 @@ namespace real::compat {
 
   /*! \brief Backend routing and format expansion for the compat layer. Not a stable API. */
   namespace detail {
+
+    /*!
+     * \brief Maps offsets into the copy of a non-contiguous range back to the caller's iterators, by moving ONE
+     *        iterator from the offset it last mapped: offsets visited in increasing order cost the distance
+     *        covered, where `std::next(first, offset)` per mark walks a `std::list` from its start every time.
+     * \tparam BidirIt The caller's iterator.
+     */
+    template <typename BidirIt>
+    class offset_cursor
+    {
+    public:
+
+      offset_cursor() = default; //!< Unbound; assigned before use.
+
+      /*!
+       * \brief Binds the cursor to \p it, which sits at \p offset of the sequence.
+       * \param[in] it     An iterator into the caller's sequence.
+       * \param[in] offset Its offset from the sequence start.
+       */
+      offset_cursor(BidirIt     it,
+                    std::size_t offset)
+        : it_ {it}, offset_ {offset}
+      {}
+
+      /*!
+       * \brief Moves to \p offset, either way.
+       * \param[in] offset An offset of the sequence, at most its length.
+       * \return The caller's iterator at \p offset.
+       */
+      BidirIt to(std::size_t offset)
+      {
+        using difference = typename std::iterator_traits<BidirIt>::difference_type;
+        std::advance(it_, static_cast<difference>(offset) - static_cast<difference>(offset_));
+        offset_ = offset;
+        return it_;
+      }
+
+    private:
+
+      BidirIt     it_     {}; //!< The caller's iterator at \ref offset_.
+      std::size_t offset_ {}; //!< Where \ref it_ sits.
+    };
+
+    /*!
+     * \brief The REAL search a non-contiguous range's copy takes: the one `run` makes over contiguous storage.
+     * \param[in] re       The pattern; real-backed.
+     * \param[in] text     The copy.
+     * \param[in] anchored Whole-sequence match rather than leftmost search.
+     * \return The engine's result, offsets into \p text.
+     */
+    template <typename CharT, typename Traits>
+    [[nodiscard]] auto find_on_copy(const basic_regex<CharT, Traits>& re,
+                                    std::string_view                  text,
+                                    bool                              anchored)
+    {
+      const real::regex& engine {std::get<real::regex>(re.engine())};
+      if (anchored) {
+        return engine.fullmatch(text);
+      }
+      if (re.posix_longest()) {
+        return engine.search_longest(text);
+      }
+      return engine.search(text);
+    }
+
+    /*!
+     * \brief \ref run over a non-contiguous range on REAL: the range is copied once, searched, and every offset
+     *        of the result mapped back to the caller's iterators in one forward walk.
+     * \param[in]  first    Start of the sequence.
+     * \param[in]  last     One past its end.
+     * \param[out] m        Result; reset over `[first, last)` by the caller.
+     * \param[in]  re       The pattern; real-backed.
+     * \param[in]  anchored Whole-sequence match rather than leftmost search.
+     * \return `true` if a match was found and \p m filled.
+     */
+    template <typename BidirIt, typename CharT, typename Traits>
+    bool run_copied(BidirIt                           first,
+                    BidirIt                           last,
+                    match_results<BidirIt>&           m,
+                    const basic_regex<CharT, Traits>& re,
+                    bool                              anchored)
+    {
+      const std::string text(first, last);
+      const auto        result {find_on_copy(re, text, anchored)};
+      if (!result.matched()) {
+        m.set_ready_no_match();
+        return false;
+      }
+      offset_cursor<BidirIt> at {first, 0};
+      m.fill_from_real_at(result, at);
+      return true;
+    }
 
     /*!
      * \brief Whether `real` can honor the requested match flags, so the operation may stay on it.
@@ -519,27 +644,33 @@ namespace real::compat {
       m.reset(first, last);
       if constexpr (real_eligible<CharT, Traits>) {
         if (re.uses_real() && real_honors(mf)) {
-          const std::string_view sv     {std::to_address(first),
-                                         static_cast<std::size_t>(std::distance(first, last))};
-          const real::regex&     engine {std::get<real::regex>(re.engine())};
-          // A POSIX grammar on REAL routes an unanchored search to leftmost-LONGEST bounds
-          // (re.posix_longest()); a whole-sequence match (fullmatch) has one candidate, so longest ==
-          // first there.
-          const auto result {[&] {
-                               if (anchored) {
-                                 return engine.fullmatch(sv);
-                               }
-                               if (re.posix_longest()) {
-                                 return engine.search_longest(sv);
-                               }
-                               return engine.search(sv);
-                             }()};
-          if (!result.matched()) {
-            m.set_ready_no_match(); // std leaves ready()==true, size()==0 on a failed match
-            return false;
+          if constexpr (!std::contiguous_iterator<BidirIt>) {
+            // A deque, a list, a reverse iterator: no byte view covers the range, so REAL searches a copy.
+            return run_copied(first, last, m, re, anchored);
           }
-          m.fill_from_real(result);
-          return true;
+          else {
+            const std::string_view sv     {std::to_address(first),
+                                           static_cast<std::size_t>(std::distance(first, last))};
+            const real::regex&     engine {std::get<real::regex>(re.engine())};
+            // A POSIX grammar on REAL routes an unanchored search to leftmost-LONGEST bounds
+            // (re.posix_longest()); a whole-sequence match (fullmatch) has one candidate, so longest ==
+            // first there.
+            const auto result {[&] {
+                                 if (anchored) {
+                                   return engine.fullmatch(sv);
+                                 }
+                                 if (re.posix_longest()) {
+                                   return engine.search_longest(sv);
+                                 }
+                                 return engine.search(sv);
+                               }()};
+            if (!result.matched()) {
+              m.set_ready_no_match(); // std leaves ready()==true, size()==0 on a failed match
+              return false;
+            }
+            m.fill_from_real(result);
+            return true;
+          }
         }
       }
       const std::basic_regex<CharT, Traits>& std_engine {re.std_engine()}; // lazy-built if real-backed
@@ -573,15 +704,20 @@ namespace real::compat {
                        bool                              anchored,
                        regex_constants::match_flag_type  mf)
     {
-      // Only a contiguous range is a string_view: std::to_address accepts any iterator with an arrow, and on a
-      // deque, a list or a reverse iterator it names one element, not the range. Those run on std.
-      if constexpr (real_eligible<CharT, Traits> && std::contiguous_iterator<BidirIt>) {
+      if constexpr (real_eligible<CharT, Traits>) {
         if (re.uses_real() && real_honors(mf)) {
-          const std::string_view sv     {std::to_address(first),
-                                         static_cast<std::size_t>(std::distance(first, last))};
-          const real::regex&     engine {std::get<real::regex>(re.engine())};
-          return anchored ? engine.fullmatch(sv).matched()
-                 : (re.posix_longest() ? engine.search_longest(sv) : engine.search(sv)).matched();
+          if constexpr (!std::contiguous_iterator<BidirIt>) {
+            // std::to_address on a deque, a list or a reverse iterator names one element, not the range: search
+            // a contiguous copy instead, which keeps REAL's answers and its linear time.
+            return find_on_copy(re, std::string(first, last), anchored).matched();
+          }
+          else {
+            const std::string_view sv     {std::to_address(first),
+                                           static_cast<std::size_t>(std::distance(first, last))};
+            const real::regex&     engine {std::get<real::regex>(re.engine())};
+            return anchored ? engine.fullmatch(sv).matched()
+                   : (re.posix_longest() ? engine.search_longest(sv) : engine.search(sv)).matched();
+          }
         }
       }
       const std::basic_regex<CharT, Traits>& std_engine {re.std_engine()};
