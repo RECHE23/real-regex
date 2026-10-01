@@ -824,6 +824,7 @@ namespace real::compat {
       bool        anchored   {}; //!< `regex_match`: the whole sequence, rather than the leftmost match.
       bool        continuous {}; //!< `match_continuous`: the match starts at `first`.
       std::size_t lead       {}; //!< 1 under `match_prev_avail`: the view starts at `--first`, its context.
+      bool        non_empty  {}; //!< `match_not_null` on a pattern that can match empty: no empty match.
     };
 
     /*!
@@ -841,6 +842,14 @@ namespace real::compat {
                                  call_shape                        shape)
     {
       const real::regex& engine {std::get<real::regex>(re.engine())};
+      if (shape.non_empty) {
+        if (shape.anchored) {
+          // A whole-sequence match is empty only over an empty sequence.
+          return view.size() == shape.lead ? real::regex::result_type {} : engine.fullmatch(view, shape.lead);
+        }
+        return shape.continuous ? real::detail::non_empty_access::match(engine, view, shape.lead)
+                                : real::detail::non_empty_access::search(engine, view, shape.lead);
+      }
       if (shape.anchored) {
         return shape.lead == 0 ? engine.fullmatch(view) : engine.fullmatch(view, shape.lead);
       }
@@ -907,20 +916,26 @@ namespace real::compat {
      * leftmost-longest search has no anchored form, so it stays on `std`; a whole-sequence match starts there
      * anyway), and `match_prev_avail` a region search from `first` over a view that starts one character before
      * it. Under `match_prev_avail` the standard ignores `match_not_bol` and `match_not_bow` ([re.matchflag]), and
-     * so does this. `not_eol`, `not_eow`, `not_null` and `not_bol` / `not_bow` alone still route to `std`.
-     * \param[in] mf       The match flags the caller passed.
-     * \param[in] anchored A whole-sequence match (`regex_match`).
-     * \param[in] longest  The pattern searches leftmost-longest (a POSIX grammar on REAL).
+     * so does this. `match_not_null` is a search that accepts no empty match, where \p not_null_ok says REAL
+     * agrees with the standard on it. `not_eol`, `not_eow` and `not_bol` / `not_bow` alone still route to `std`.
+     * \param[in] mf          The match flags the caller passed.
+     * \param[in] anchored    A whole-sequence match (`regex_match`).
+     * \param[in] longest     The pattern searches leftmost-longest (a POSIX grammar on REAL).
+     * \param[in] not_null_ok REAL honors `match_not_null` for this pattern (see \ref not_null_stays_real).
      * \return `true` if the call may stay on the real backend.
      */
     [[nodiscard]] inline bool call_stays_real(regex_constants::match_flag_type mf,
                                               bool                             anchored,
-                                              bool                             longest) noexcept
+                                              bool                             longest,
+                                              bool                             not_null_ok) noexcept
     {
       using namespace regex_constants;
       const auto bits    {static_cast<unsigned>(mf)};
       unsigned   honored {static_cast<unsigned>(match_default) | static_cast<unsigned>(match_any)
                           | static_cast<unsigned>(match_prev_avail)};
+      if (not_null_ok) {
+        honored |= static_cast<unsigned>(match_not_null);
+      }
       if (anchored || !longest) {
         honored |= static_cast<unsigned>(match_continuous);
       }
@@ -931,17 +946,33 @@ namespace real::compat {
     }
 
     /*!
+     * \brief Whether REAL honors `match_not_null` for \p re: always when the pattern cannot match empty (the flag
+     *        then changes nothing); otherwise when its search is leftmost-first and its traversal REAL's (a
+     *        nullable capturing group under a quantifier takes another last iteration than std's).
+     * \param[in] re The pattern; real-backed.
+     * \return `true` if a call under `match_not_null` may stay on REAL.
+     */
+    template <typename CharT, typename Traits>
+    [[nodiscard]] bool not_null_stays_real(const basic_regex<CharT, Traits>& re) noexcept
+    {
+      return !re.nullable() || (re.uses_real_traversal() && !re.posix_longest());
+    }
+
+    /*!
      * \brief The REAL call a `regex_search` or `regex_match` with \p mf makes; see \ref call_stays_real.
      * \param[in] mf       The match flags, which \ref call_stays_real accepted.
      * \param[in] anchored A whole-sequence match (`regex_match`).
+     * \param[in] nullable The pattern can match empty, so `match_not_null` changes what it finds.
      * \return The call's shape.
      */
     [[nodiscard]] inline call_shape shape_of(regex_constants::match_flag_type mf,
-                                             bool                             anchored) noexcept
+                                             bool                             anchored,
+                                             bool                             nullable) noexcept
     {
       return call_shape {.anchored   = anchored,
                          .continuous = (mf & regex_constants::match_continuous) != 0U,
-                         .lead       = (mf & regex_constants::match_prev_avail) != 0U ? 1U : 0U};
+                         .lead       = (mf & regex_constants::match_prev_avail) != 0U ? 1U : 0U,
+                         .non_empty  = nullable && (mf & regex_constants::match_not_null) != 0U};
     }
 
     /*!
@@ -1012,8 +1043,10 @@ namespace real::compat {
     {
       m.reset(first, last);
       if constexpr (real_eligible<CharT, Traits>) {
-        if (re.uses_real() && call_stays_real(mf, anchored, re.posix_longest())) {
-          const call_shape shape {shape_of(mf, anchored)};
+        if (re.uses_real()
+            && call_stays_real(mf, anchored, re.posix_longest(),
+                               (mf & regex_constants::match_not_null) == 0U || not_null_stays_real(re))) {
+          const call_shape shape {shape_of(mf, anchored, re.nullable())};
           if constexpr (!std::contiguous_iterator<BidirIt>) {
             // A deque, a list, a reverse iterator: no byte view covers the range, so REAL searches a copy.
             return run_copied(first, last, m, re, shape);
@@ -1066,8 +1099,10 @@ namespace real::compat {
                        regex_constants::match_flag_type  mf)
     {
       if constexpr (real_eligible<CharT, Traits>) {
-        if (re.uses_real() && call_stays_real(mf, anchored, re.posix_longest())) {
-          const call_shape shape {shape_of(mf, anchored)};
+        if (re.uses_real()
+            && call_stays_real(mf, anchored, re.posix_longest(),
+                               (mf & regex_constants::match_not_null) == 0U || not_null_stays_real(re))) {
+          const call_shape shape {shape_of(mf, anchored, re.nullable())};
           if constexpr (!std::contiguous_iterator<BidirIt>) {
             // std::to_address on a deque, a list or a reverse iterator names one element, not the range: search
             // a contiguous copy instead, which keeps REAL's answers and its linear time.

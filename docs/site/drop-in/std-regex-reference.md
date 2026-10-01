@@ -352,8 +352,13 @@ other cell (a subject that DOES match, or a single-element list) is unaffected a
   `first`. As [re.matchflag] says, `match_not_bol` and `match_not_bow` are then ignored. libc++ differs on
   two points, both its own defects: it ignores `match_prev_avail` for `^`, and its `\b` never holds on an
   attempt that starts at `last`. `real::compat` follows the standard and libstdc++ there.
+- **`match_not_null`** keeps `real` too: the search takes the leftmost position where a non-empty match
+  starts, and there the match the priority order prefers among the non-empty ones, as libstdc++ and libc++
+  both do; it runs on the VM, linear. A pattern that cannot match empty ignores the flag. A nullable
+  capturing group under a quantifier (`(|a)*`) and a POSIX leftmost-longest search route the call to
+  `std`.
 - **Every other constraining flag** — `match_not_bol` and `match_not_bow` without `match_prev_avail`,
-  `match_not_eol`, `match_not_eow`, `match_not_null` — and any constraining flag on an iterator or a
+  `match_not_eol`, `match_not_eow` — and any constraining flag on an iterator or a
   `regex_replace` is not expressible through `real`'s API, so that single operation routes to
   `std::regex` (lazy-built if the pattern is real-backed), which honors every flag by construction. The
   flags are translated by an exhaustive compat→std table.

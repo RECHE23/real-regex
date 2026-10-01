@@ -1222,6 +1222,8 @@ namespace real {
       assert(text != nullptr && "a null C string: pass \"\" for an empty subject");
       return text == nullptr ? std::string_view {} : std::string_view {text};
     }
+
+    struct non_empty_access;
   } // namespace detail
 
   /*!
@@ -2450,6 +2452,38 @@ namespace real {
       return out;
     }
 
+    friend struct detail::non_empty_access;
+
+    /*!
+     * \brief \ref run that accepts no empty match: the leftmost position where a non-empty match starts, and there
+     *        the match the leftmost-first priority prefers among the non-empty ones (`match_not_null`). The DFAs do
+     *        not model the rule, so the VM decides the search; it stays linear. Kept apart from \ref run, whose
+     *        every caller is a hot path.
+     * \param[in] text The subject (must outlive the result).
+     * \param[in] pos  Byte offset to start at.
+     * \param[in] mode Search, or anchored at \p pos (prefix).
+     * \return The match result, with offsets absolute in \p text.
+     */
+    [[nodiscard]] result_type run_non_empty(std::string_view text,
+                                            std::size_t      pos,
+                                            detail::run_mode mode) const
+    {
+      if (pos > text.size()) {
+        return result_type {};
+      }
+      typename Storage::state_type                        state;
+      const detail::program_view&                         prog    {program_.view()};
+      result_type                                         out     {text, pattern(), prog.names};
+      detail::pike_vm<typename Storage::state_type, true> vm(prog, state);
+      const std::size_t                                   nowhere {text.size() + 1}; // empty refused everywhere
+      const bool                                          matched {
+        prog.hints.stop_set_size >= 1
+          ? vm.template run<true>(text, pos, mode, out.engine_slots(), nowhere, match_semantics::first)
+          : vm.template run<false>(text, pos, mode, out.engine_slots(), nowhere, match_semantics::first)};
+      out.engine_set_matched(matched);
+      return out;
+    }
+
   public:
 
     /*!
@@ -2581,6 +2615,47 @@ namespace real {
    * \brief The runtime-compiled regex type — the primary entry point.
    */
   using regex = basic_regex<detail::dynamic_storage>;
+
+  namespace detail {
+    /*!
+     * \brief The searches that accept no empty match (`std::regex_constants::match_not_null`), for the std drop-in;
+     *        not part of REAL's own interface.
+     */
+    struct non_empty_access
+    {
+      /*!
+       * \brief Leftmost search from \p pos that accepts no empty match.
+       * \tparam Storage The regex's storage policy.
+       * \param[in] re   The pattern.
+       * \param[in] text The subject (must outlive the result).
+       * \param[in] pos  Byte offset to start at; the text before it is context.
+       * \return The match, offsets absolute in \p text.
+       */
+      template <typename Storage>
+      [[nodiscard]] static auto search(const basic_regex<Storage>& re,
+                                       std::string_view            text,
+                                       std::size_t                 pos)
+      {
+        return re.run_non_empty(text, pos, run_mode::search);
+      }
+
+      /*!
+       * \brief Match anchored at \p pos that accepts no empty match.
+       * \tparam Storage The regex's storage policy.
+       * \param[in] re   The pattern.
+       * \param[in] text The subject (must outlive the result).
+       * \param[in] pos  Byte offset the match starts at; the text before it is context.
+       * \return The match, offsets absolute in \p text.
+       */
+      template <typename Storage>
+      [[nodiscard]] static auto match(const basic_regex<Storage>& re,
+                                      std::string_view            text,
+                                      std::size_t                 pos)
+      {
+        return re.run_non_empty(text, pos, run_mode::prefix);
+      }
+    };
+  } // namespace detail
 
   /*!
    * \brief The result type of the default, runtime-compiled \ref real::regex.
