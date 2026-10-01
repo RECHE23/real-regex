@@ -1312,13 +1312,18 @@ namespace real::detail {
       assert_kind result    {};
       switch (anchor) {
         case anchor_kind::caret:
-          result = multiline ? assert_kind::line_start : assert_kind::text_start;
+          if (multiline) {
+            result = has_flag(flags_, flags::ecma) ? assert_kind::line_start_cr : assert_kind::line_start;
+          }
+          else {
+            result = assert_kind::text_start;
+          }
           break;
         case anchor_kind::dollar:
           // Default (Python): `$` matches at end OR just before a final `\n`. With the ecma OR dollar_endonly
           // flag, `$` (no multiline) matches only at the very end — ECMAScript / Rust (`\z`) semantics.
           if (multiline) {
-            result = assert_kind::line_end;
+            result = has_flag(flags_, flags::ecma) ? assert_kind::line_end_cr : assert_kind::line_end;
           }
           else if (has_flag(flags_, flags::ecma) || has_flag(flags_, flags::dollar_endonly)) {
             result = assert_kind::text_end;

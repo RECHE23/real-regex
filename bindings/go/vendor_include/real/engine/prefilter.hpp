@@ -941,7 +941,15 @@ namespace real::detail {
     if (code[pc].op == opcode::assert_position) {
       const auto kind {static_cast<assert_kind>(code[pc].arg8)};
       hints.anchored_start = kind == assert_kind::text_start;
-      hints.line_anchored  = kind == assert_kind::line_start;
+      if (kind == assert_kind::line_start) {
+        hints.line_anchored = 1U;
+      }
+      else if (kind == assert_kind::line_start_cr) {
+        hints.line_anchored = 2U; // an ECMAScript line also starts after `\r`
+      }
+      else {
+        hints.line_anchored = 0U;
+      }
     }
   }
 
@@ -2535,7 +2543,7 @@ namespace real::detail {
     // run by here. See pattern_hints::literal_one_search for why this is one precomputed bit and not
     // a per-match condition chain.
     if (hints.exact_literal_len >= 2 && hints.prefix_size == hints.exact_literal_len
-        && !hints.anchored_start && !hints.line_anchored && hints.rare_disc < 0) {
+        && !hints.anchored_start && hints.line_anchored == 0U && hints.rare_disc < 0) {
       bool no_assert {true};
       for (const instr& instruction : code) {
         if (instruction.op == opcode::assert_position) {
@@ -3424,6 +3432,27 @@ namespace real::detail {
         if (byte == mem[i]) {
           return at;
         }
+      }
+    }
+    return npos;
+  }
+
+  /*!
+   * \brief Where an ECMAScript line ends: the index of the first `\n` or `\r` in `text[pos..)`, or \ref real::npos.
+   * \param[in] text The subject.
+   * \param[in] pos  Index to start scanning from.
+   * \return The least index at or after \p pos holding either byte, else npos.
+   */
+  constexpr std::size_t find_line_end_cr(std::string_view text,
+                                         std::size_t      pos)
+  {
+    if (!std::is_constant_evaluated()) {
+      constexpr std::array<std::uint8_t, 8> ends {'\n', '\r'};
+      return find_members(text, pos, ends, 2U);
+    }
+    for (std::size_t i {pos}; i < text.size(); ++i) {
+      if (text[i] == '\n' || text[i] == '\r') {
+        return i;
       }
     }
     return npos;

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -61,7 +62,7 @@ TEST(anchoring_is_detected)
   EXPECT(hints_of("\\Aabc").anchored_start);
   EXPECT(hints_of("^abc").anchored_start); // no multiline: text start
   EXPECT(!hints_of("^abc", real::flags::multiline).anchored_start);
-  EXPECT(hints_of("^abc", real::flags::multiline).line_anchored);
+  EXPECT_EQ(hints_of("^abc", real::flags::multiline).line_anchored, std::uint8_t {1});
   EXPECT(!hints_of("abc").anchored_start);
 }
 
@@ -184,7 +185,7 @@ TEST(line_anchored_candidates_scan_newlines)
   // ^[ab]… in multiline: no usable prefix or single first byte, so the
   // engine jumps from newline to newline.
   const auto h = hints_of("^[ab]+x", real::flags::multiline);
-  EXPECT(h.line_anchored);
+  EXPECT_EQ(h.line_anchored, std::uint8_t {1});
   EXPECT_EQ(static_cast<int>(h.prefix_size), 0);
   EXPECT_EQ(h.single_first, std::int16_t {-1});
   const real::regex rx("^[ab]+x", real::flags::multiline);

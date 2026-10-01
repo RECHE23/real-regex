@@ -493,7 +493,7 @@ TEST(line_anchored_candidates_skip_lines_no_match_can_start)
   const real::detail::program_view                                       prog {re.raw_program()};
   real::detail::dynamic_storage::state_type                              state;
   real::detail::pike_vm<real::detail::dynamic_storage::state_type, true> vm   {prog, state};
-  EXPECT(prog.hints.line_anchored);
+  EXPECT_EQ(prog.hints.line_anchored, std::uint8_t {1});
   EXPECT_EQ(vm.next_candidate("x\n b\n c\ndd", 1, 0), 8U); // the lines " b" and " c" are passed over
 
   for (const std::string_view pattern : {R"(^\w+)", R"(^[a-z]+$)", R"(^\s*\w+)", R"(^\d+)", R"(^.*$)", R"(^[A-Z]\w*)",

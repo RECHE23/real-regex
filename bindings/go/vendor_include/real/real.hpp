@@ -600,7 +600,7 @@ namespace real {
       bool batchable {};
       batchable = !std::is_constant_evaluated() && sem == match_semantics::first
                   && !detail::class_fastpath_disabled()
-                  && !prog.hints.anchored_start && !prog.hints.line_anchored;
+                  && !prog.hints.anchored_start && prog.hints.line_anchored == 0U;
       // A KEPT `\b`/`\B` wrap is handled by the BYTE class filler and by nothing else, so the other
       // routes still require its absence. The assertion is one a word-SUBSET class genuinely needs: a
       // maximal `[a-z]+` run can start after `_` or a digit, so unlike `\b\w+\b`'s this one is not

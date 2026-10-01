@@ -1154,6 +1154,18 @@ namespace real::detail {
   };
 
   /*!
+   * \brief Whether \p in is an ECMAScript line assertion, whose line ends at `\r` as well as `\n`.
+   * \param[in] in An instruction.
+   * \return True for `line_start_cr` / `line_end_cr`.
+   */
+  [[nodiscard]] constexpr bool is_cr_line_assert(const instr& in)
+  {
+    return in.op == opcode::assert_position
+           && (in.arg8 == static_cast<std::uint8_t>(assert_kind::line_start_cr)
+               || in.arg8 == static_cast<std::uint8_t>(assert_kind::line_end_cr));
+  }
+
+  /*!
    * \brief Partition 0..255 by the program's consuming predicates (every `klass` test, every `byte`
    *        literal). Bytes with an identical signature collapse to one class.
    * \param[in] code    The program's instruction stream.
@@ -1235,6 +1247,9 @@ namespace real::detail {
     if (std::ranges::any_of(code, [](const instr& in) { return in.op == opcode::assert_position; })) {
       char_class newline;
       newline.set(static_cast<std::uint8_t>('\n'));
+      if (std::ranges::any_of(code, is_cr_line_assert)) {
+        newline.set(static_cast<std::uint8_t>('\r')); // an ECMAScript line ends at either
+      }
       char_class word;
       word.set_range(static_cast<std::uint8_t>('a'), static_cast<std::uint8_t>('z'));
       word.set_range(static_cast<std::uint8_t>('A'), static_cast<std::uint8_t>('Z'));
@@ -1425,7 +1440,9 @@ namespace real::detail {
       case assert_kind::text_end:
       case assert_kind::text_end_or_final_newline:
       case assert_kind::line_start:
-      case assert_kind::line_end:          return false;
+      case assert_kind::line_end:
+      case assert_kind::line_start_cr:
+      case assert_kind::line_end_cr:       return false;
     }
     return false;
   }
@@ -1568,8 +1585,9 @@ namespace real::detail {
       if (look_) {
         // The alphabet splits on newline, ASCII word bytes and non-ASCII bytes when the program carries
         // assertions (compute_lazy_alphabet), so any byte of a class tells that class's properties.
+        const bool cr {std::ranges::any_of(code, is_cr_line_assert)};
         for (unsigned b {0}; b < 256U; ++b) {
-          class_ctx_[alpha_.of[b]] = (word_quit_ && b >= 0x80U) ? ctx_nonascii : ctx_of(static_cast<std::uint8_t>(b));
+          class_ctx_[alpha_.of[b]] = (word_quit_ && b >= 0x80U) ? ctx_nonascii : ctx_of(static_cast<std::uint8_t>(b), cr);
         }
       }
       flush();                 // seeds the dead state (0) and the start state (1)
@@ -2079,13 +2097,16 @@ namespace real::detail {
 
     /*!
      * \brief The context a position has after \p b.
-     * \param[in] b The byte before the position.
+     * \param[in] b  The byte before the position.
+     * \param[in] cr The program's line assertions are ECMAScript's, which end a line at `\r` too.
      * \return Its context bits.
      */
-    [[nodiscard]] static constexpr std::uint8_t ctx_of(std::uint8_t b)
+    [[nodiscard]] static constexpr std::uint8_t ctx_of(std::uint8_t b,
+                                                       bool         cr)
     {
       const bool word {(b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'};
-      return static_cast<std::uint8_t>((b == '\n' ? ctx_newline : 0U) | (word ? ctx_word : 0U));
+      const bool nl   {b == '\n' || (cr && b == '\r')};
+      return static_cast<std::uint8_t>((nl ? ctx_newline : 0U) | (word ? ctx_word : 0U));
     }
 
     /*!
@@ -2115,10 +2136,21 @@ namespace real::detail {
     [[nodiscard]] static constexpr bool holds_behind(assert_kind  kind,
                                                      std::uint8_t ctx)
     {
-      if (kind == assert_kind::text_start) {
-        return (ctx & ctx_start) != 0U;
+      // Every kind named, so a new one is a compile error here (-Wswitch) rather than a silent answer.
+      switch (kind) {
+        case assert_kind::text_start:    return (ctx & ctx_start) != 0U;
+        case assert_kind::line_start:
+        case assert_kind::line_start_cr: return (ctx & ctx_start) != 0U || is_newline_ctx(ctx); // the context says which bytes end a line
+        case assert_kind::text_end:
+        case assert_kind::text_end_or_final_newline:
+        case assert_kind::line_end:
+        case assert_kind::line_end_cr:
+        case assert_kind::word_boundary:
+        case assert_kind::not_word_boundary:
+        case assert_kind::word_start:
+        case assert_kind::word_end:      return false; // not decided by the left context alone
       }
-      return (ctx & ctx_start) != 0U || is_newline_ctx(ctx); // line_start
+      return false;
     }
 
     /*!
@@ -2145,13 +2177,15 @@ namespace real::detail {
       switch (kind) {
         case assert_kind::text_end:                  return end;
         case assert_kind::text_end_or_final_newline: return end || final_nl;
-        case assert_kind::line_end:                  return end || next_nl;
+        case assert_kind::line_end:
+        case assert_kind::line_end_cr:               return end || next_nl;
         case assert_kind::word_boundary:             return prev_word != next_word;
         case assert_kind::not_word_boundary:         return prev_word == next_word;
         case assert_kind::word_start:                return !prev_word && next_word;
         case assert_kind::word_end:                  return prev_word && !next_word;
         case assert_kind::text_start:
-        case assert_kind::line_start:                return holds_behind(kind, ctx);
+        case assert_kind::line_start:
+        case assert_kind::line_start_cr:             return holds_behind(kind, ctx);
       }
       return false;
     }
@@ -2163,7 +2197,20 @@ namespace real::detail {
      */
     [[nodiscard]] static constexpr bool looks_behind_only(assert_kind kind)
     {
-      return kind == assert_kind::text_start || kind == assert_kind::line_start;
+      switch (kind) {
+        case assert_kind::text_start:
+        case assert_kind::line_start:
+        case assert_kind::line_start_cr:             return true;
+        case assert_kind::text_end:
+        case assert_kind::text_end_or_final_newline:
+        case assert_kind::line_end:
+        case assert_kind::line_end_cr:
+        case assert_kind::word_boundary:
+        case assert_kind::not_word_boundary:
+        case assert_kind::word_start:
+        case assert_kind::word_end:                  return false;
+      }
+      return false;
     }
 
     /*!
@@ -2853,8 +2900,9 @@ namespace real::detail {
         budget_ {budget}, byte_budget_ {byte_budget}
     {
       if (look_) {
+        const bool cr {std::ranges::any_of(code, is_cr_line_assert)};
         for (unsigned b {0}; b < 256U; ++b) {
-          class_ctx_[alpha_.of[b]] = (word_quit_ && b >= 0x80U) ? rctx_nonascii : right_ctx_of(static_cast<std::uint8_t>(b));
+          class_ctx_[alpha_.of[b]] = (word_quit_ && b >= 0x80U) ? rctx_nonascii : right_ctx_of(static_cast<std::uint8_t>(b), cr);
         }
       }
       // Transpose the program: rev_eps_[x] = the pcs with a forward epsilon edge to x; rev_consume_[x] = the
@@ -3059,13 +3107,16 @@ namespace real::detail {
 
     /*!
      * \brief The right context a position has when \p b follows it (not the text's last byte).
-     * \param[in] b The byte after the position.
+     * \param[in] b  The byte after the position.
+     * \param[in] cr The program's line assertions are ECMAScript's, which end a line at `\r` too.
      * \return Its context bits.
      */
-    [[nodiscard]] static constexpr std::uint8_t right_ctx_of(std::uint8_t b)
+    [[nodiscard]] static constexpr std::uint8_t right_ctx_of(std::uint8_t b,
+                                                             bool         cr)
     {
       const bool word {(b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'};
-      return static_cast<std::uint8_t>((b == '\n' ? rctx_newline : 0U) | (word ? rctx_word : 0U));
+      const bool nl   {b == '\n' || (cr && b == '\r')};
+      return static_cast<std::uint8_t>((nl ? rctx_newline : 0U) | (word ? rctx_word : 0U));
     }
 
     /*!
@@ -3092,8 +3143,20 @@ namespace real::detail {
      */
     [[nodiscard]] static constexpr bool looks_left(assert_kind kind)
     {
-      return kind == assert_kind::text_start || kind == assert_kind::line_start || kind == assert_kind::word_boundary
-             || kind == assert_kind::not_word_boundary || kind == assert_kind::word_start || kind == assert_kind::word_end;
+      switch (kind) {
+        case assert_kind::text_start:
+        case assert_kind::line_start:
+        case assert_kind::line_start_cr:
+        case assert_kind::word_boundary:
+        case assert_kind::not_word_boundary:
+        case assert_kind::word_start:
+        case assert_kind::word_end:                  return true;
+        case assert_kind::text_end:
+        case assert_kind::text_end_or_final_newline:
+        case assert_kind::line_end:
+        case assert_kind::line_end_cr:               return false;
+      }
+      return false;
     }
 
     /*!
@@ -3108,9 +3171,17 @@ namespace real::detail {
       switch (kind) {
         case assert_kind::text_end:                  return (ctx & rctx_end) != 0U;
         case assert_kind::text_end_or_final_newline: return (ctx & rctx_end) != 0U || (ctx & rctx_final_nl) != 0U;
-        case assert_kind::line_end:                  return (ctx & rctx_end) != 0U || is_newline_ctx(ctx);
-        default:                                     return false;
+        case assert_kind::line_end:
+        case assert_kind::line_end_cr:               return (ctx & rctx_end) != 0U || is_newline_ctx(ctx);
+        case assert_kind::text_start:
+        case assert_kind::line_start:
+        case assert_kind::line_start_cr:
+        case assert_kind::word_boundary:
+        case assert_kind::not_word_boundary:
+        case assert_kind::word_start:
+        case assert_kind::word_end:                  return false; // decided on the left, by holds_left
       }
+      return false;
     }
 
     /*!
@@ -3135,13 +3206,18 @@ namespace real::detail {
       }
       switch (kind) {
         case assert_kind::text_start:        return start;
-        case assert_kind::line_start:        return start || prev_nl;
+        case assert_kind::line_start:
+        case assert_kind::line_start_cr:     return start || prev_nl;
         case assert_kind::word_boundary:     return prev_word != next_word;
         case assert_kind::not_word_boundary: return prev_word == next_word;
         case assert_kind::word_start:        return !prev_word && next_word;
         case assert_kind::word_end:          return prev_word && !next_word;
-        default:                             return holds_right(kind, ctx);
+        case assert_kind::text_end:
+        case assert_kind::text_end_or_final_newline:
+        case assert_kind::line_end:
+        case assert_kind::line_end_cr:       return holds_right(kind, ctx);
       }
+      return false;
     }
 
     /*!

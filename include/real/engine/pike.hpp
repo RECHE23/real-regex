@@ -6406,7 +6406,7 @@ namespace real::detail {
       }) {
         const pattern_hints& h {prog_.hints};
         if (h.fixed_alternation || h.anchored_start || h.rare_disc >= 0 || h.prefix_size >= 2 || h.rare_byte >= 0
-            || h.single_first >= 0 || h.line_anchored || !h.first_bytes_valid || alternation_pairs_disabled()
+            || h.single_first >= 0 || h.line_anchored != 0U || !h.first_bytes_valid || alternation_pairs_disabled()
             || alternation_nibbles_disabled()) {
           return nullptr;
         }
@@ -7831,17 +7831,22 @@ namespace real::detail {
       if (hints.single_first >= 0) {
         return find_byte(text, pos, static_cast<char>(hints.single_first));
       }
-      if (hints.line_anchored && pos != start) {
+      if (hints.line_anchored != 0U && pos != start) {
         // A line start whose first byte no match can begin with is no candidate: skip to the next line
         // rather than hand it to a seed or a walk that fails there. `(?m)^\w+` over prose whose lines start
         // with a space paid a DFA walk's setup per line for nothing.
         std::size_t from {pos - 1};
         while (true) {
-          const std::size_t nl {find_byte(text, from, '\n')};
+          // An ECMAScript line (line_anchored 2) also ends at `\r`: both bytes in one pass.
+          const std::size_t nl {hints.line_anchored == 2U ? find_line_end_cr(text, from) : find_byte(text, from, '\n')};
           if (nl == npos) {
             return npos;
           }
-          const std::size_t cand {nl + 1};
+          std::size_t cand {nl + 1};
+          if (hints.line_anchored == 2U && text[nl] == '\r' && cand < text.size() && text[cand] == '\n'
+              && hints.first_bytes_valid && !hints.first_bytes.test(std::uint8_t {'\n'})) {
+            ++cand; // `\r\n`: the empty line between them starts no match that cannot begin with `\n`
+          }
           if (!hints.first_bytes_valid || cand >= text.size()
               || hints.first_bytes.test(static_cast<std::uint8_t>(text[cand]))) {
             return cand;
@@ -8297,9 +8302,11 @@ namespace real::detail {
           switch (static_cast<assert_kind>(instruction.arg8)) {
             case assert_kind::text_start:
             case assert_kind::line_start:
+            case assert_kind::line_start_cr:
               break; // looks left only
             case assert_kind::text_end:
             case assert_kind::line_end:
+            case assert_kind::line_end_cr:
               open = pos >= size;
               break;
             case assert_kind::text_end_or_final_newline:

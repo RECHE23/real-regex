@@ -1847,10 +1847,15 @@ TEST(compat_multiline_anchors_see_carriage_returns)
       EXPECT_EQ(got.position(0), want.position(0));
     }
   }
-  const real::regex own  {"^a", real::flags::multiline}; // REAL's own multiline: \n only
+  const real::regex own       {"^a", real::flags::multiline}; // REAL's own multiline: \n only
   EXPECT(!own.search("\ra").matched());
-  const rc::regex inside {"(?=^a)a", ml};                // inside a lookaround the anchor stays REAL's own (no lookaround nests)
-  EXPECT(rc::regex_search(std::string {"\na"}, inside));
+  const rc::regex  inside     {"(?=^a)a", ml};                // inside a lookaround the anchor ends a line at \r too, as std's does
+  const std::regex ref_inside {"(?=^a)a", sml};
+  for (const char* const s : {"\na", "\ra", "\r\na", "xa"}) {
+    const std::string subject {s};
+    EXPECT_EQ(rc::regex_search(subject, inside), std::regex_search(subject, ref_inside));
+  }
+  EXPECT(rc::regex_search(std::string {"\ra"}, inside));
 }
 
 // A search or match without results under match_prev_avail reads the context from the caller's range, as the
