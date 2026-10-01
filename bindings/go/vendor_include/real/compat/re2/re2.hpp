@@ -61,6 +61,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -87,6 +88,18 @@ namespace real::compat::re2 {
   public:
 
     /*!
+     * \brief RE2's canned option sets, convertible to \ref Options as RE2's are, so `RE2 re(p, RE2::Quiet)` reads as
+     *        it does there. `Latin1` and `POSIX` select what this layer rejects at construction (see `Options`).
+     */
+    enum CannedOptions : std::uint8_t
+    {
+      DefaultOptions = 0, //!< The default options.
+      Latin1,             //!< `EncodingLatin1`: rejected at construction.
+      POSIX,              //!< `posix_syntax` and `longest_match`: rejected at construction.
+      Quiet,              //!< `log_errors` off.
+    };
+
+    /*!
      * \brief RE2-compatible construction options. Mirrors real RE2's `RE2::Options` field-for-field
      *        (names, defaults); see the file-level doc comment for which fields this layer honors.
      */
@@ -107,6 +120,18 @@ namespace real::compat::re2 {
        * \brief Default options: UTF-8, leftmost-first, case-sensitive, every RE2 default kept.
        */
       Options() = default;
+
+      /*!
+       * \brief One of RE2's canned option sets. Implicit, as RE2's own, so a canned set passes where `Options` is
+       *        taken.
+       * \param[in] canned The set.
+       */
+      Options(CannedOptions canned) // NOLINT(google-explicit-constructor,hicpp-explicit-conversions)
+        : encoding_ {canned == Latin1 ? EncodingLatin1 : EncodingUTF8},
+          posix_syntax_ {canned == POSIX},
+          longest_match_ {canned == POSIX},
+          log_errors_ {canned != Quiet}
+      {}
 
       /*!
        * \brief The memory budget for the compiled pattern, as RE2's: two thirds of it bound the program,
@@ -403,6 +428,15 @@ namespace real::compat::re2 {
       ANCHOR_START, //!< Match must start at the beginning of the text.
       ANCHOR_BOTH,  //!< Match must span the entire text.
     };
+
+    static constexpr Anchor UNANCHORED              {Anchor::UNANCHORED};              //!< As RE2's `RE2::UNANCHORED`.
+    static constexpr Anchor ANCHOR_START            {Anchor::ANCHOR_START};            //!< As RE2's `RE2::ANCHOR_START`.
+    static constexpr Anchor ANCHOR_BOTH             {Anchor::ANCHOR_BOTH};             //!< As RE2's `RE2::ANCHOR_BOTH`.
+
+    static constexpr ErrorCode NoError              {ErrorCode::NoError};              //!< As RE2's `RE2::NoError`.
+    static constexpr ErrorCode ErrorSyntax          {ErrorCode::ErrorSyntax};          //!< This layer's syntax category.
+    static constexpr ErrorCode ErrorUnsupported     {ErrorCode::ErrorUnsupported};     //!< This layer's unsupported category.
+    static constexpr ErrorCode ErrorPatternTooLarge {ErrorCode::ErrorPatternTooLarge}; //!< As RE2's `RE2::ErrorPatternTooLarge`.
 
     /*!
      * \brief `RE2::Set` — a set of patterns tested together. Mirrors real RE2's `Set`: buffer
@@ -1083,6 +1117,48 @@ namespace real::compat::re2 {
     int                         num_captures_  {};                   //!< Capturing-group count (excl. group 0).
     bool                        longest_match_ {};                   //!< Cached `options_.longest_match()`.
     Options                     options_;                            //!< The construction options.
+  };
+
+  /*!
+   * \brief RE2's `LazyRE2`: a pattern compiled on first use, once, thread-safely -- `static LazyRE2 re = {"a+"};`
+   *        then `RE2::FullMatch(text, *re)`. An aggregate, as RE2's, so the members are public; only
+   *        \ref pattern_ and \ref options_ are meant to be set, by that brace initialisation.
+   */
+  struct LazyRE2
+  {
+    const char*                pattern_;                        //!< The pattern text.
+    RE2::CannedOptions         options_  {RE2::DefaultOptions}; //!< The options it is compiled with.
+    //! Set once, on first use. Its `{}` spares a caller writing `{.pattern_ = ...}` a missing-initializer warning.
+    mutable std::optional<RE2> compiled_ {};                    // NOLINT(readability-redundant-member-init)
+    mutable std::once_flag     once_     {};                    //!< Guards the first use.
+
+    /*!
+     * \brief The compiled pattern.
+     * \return It, compiled on the first call.
+     */
+    const RE2& operator*() const
+    {
+      return *get();
+    }
+
+    /*!
+     * \brief The compiled pattern.
+     * \return A pointer to it, compiled on the first call.
+     */
+    const RE2* operator->() const
+    {
+      return get();
+    }
+
+    /*!
+     * \brief The compiled pattern, compiled on the first call from any thread.
+     * \return A pointer to it.
+     */
+    const RE2* get() const
+    {
+      std::call_once(once_, [this] { compiled_.emplace(std::string_view {pattern_}, RE2::Options {options_}); });
+      return &*compiled_;
+    }
   };
 } // namespace real::compat::re2
 

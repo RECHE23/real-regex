@@ -40,6 +40,16 @@ RE2::PartialMatch("info@example.com", R"((\w+)@(\w+))", &user, &host);
   (details below).
 - **`RE2::Set`** — Add / Compile / Match, multi-pattern which-matched on
   `real::regex_set`.
+- **Spelled as RE2 spells them** — the canned option sets (`RE2 re(p, RE2::Quiet)`;
+  `Latin1` and `POSIX` are rejected at construction), `RE2::UNANCHORED` /
+  `ANCHOR_START` / `ANCHOR_BOTH`, `RE2::NoError` / `ErrorPatternTooLarge`, and
+  `LazyRE2` (`static LazyRE2 re = {"a+"};`, compiled once on first use, from
+  any thread).
+- **Not provided** — the low-level `RE2::Match`, `NamedCapturingGroups` /
+  `CapturingGroupNames`, `Extract` / `Rewrite` / `CheckRewriteString` /
+  `MaxSubmatch`, the `*N` statics, `CRadix` / `Hex` / `Octal`, `error_arg()`,
+  the `Program*` diagnostics, and RE2's fine-grained error codes (this layer
+  reports `ErrorSyntax` / `ErrorUnsupported` / `ErrorPatternTooLarge`).
 
 One include: `<real/compat/re2/re2.hpp>`. Object-level reference:
 {doc}`RE2 compatibility <../reference/compat-re2>`.

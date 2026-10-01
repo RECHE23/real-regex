@@ -118,6 +118,14 @@ real::compat::regex_token_iterator:
 real::compat::re2::RE2:
   ErrorCode: return type of error_code; the method is on the page
   Anchor: unused by the curated statics
+  CannedOptions: canned option sets; Options converts from them
+  UNANCHORED: RE2 spelling of an Anchor value
+  ANCHOR_START: RE2 spelling of an Anchor value
+  ANCHOR_BOTH: RE2 spelling of an Anchor value
+  NoError: RE2 spelling of an ErrorCode value
+  ErrorSyntax: RE2-member spelling of an ErrorCode value
+  ErrorUnsupported: RE2-member spelling of an ErrorCode value
+  ErrorPatternTooLarge: RE2 spelling of an ErrorCode value
 real::compat::re2::Arg:
   Parser: function-pointer type the constructors take
   parse: engine-facing decoder

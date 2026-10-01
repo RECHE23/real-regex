@@ -142,6 +142,7 @@ nitpick_ignore = [
     ("cpp:identifier", "reference"),
     ("cpp:identifier", "ErrorCode"),
     ("cpp:identifier", "Anchor"),
+    ("cpp:identifier", "CannedOptions"),
     ("cpp:identifier", "Parser"),
     ("ref", "namespacereal"),
     ("ref", "namespacereal_1_1compat_1_1re2"),
