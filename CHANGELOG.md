@@ -2,6 +2,33 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.10.0
+
+10.0 (**the `std::regex` drop-in on REAL for most match flags, and four out-of-bounds or wrong answers
+fixed**): **THE TABLES ARE RE-RUN, AND THE STAMP MOVES TO `2026.9.11` + tree `79e6792`**, both ISAs on the
+hosts of the last stamp (three runs per ISA, minimum per cell; six for §E on x86-64, whose host ran in two
+speed modes; §B on an already-built extension). The train's engine changes (2026-09-30 to 10-01):
+- **A literal alternation of 64 branches or more is a trie** (7b55aab): `(?:14 500 words)[0-9]` over 32 KiB,
+  warm 7.7 s → 0.1 ms, peak 78 → 27 MB (arm64); 9 lazy-DFA rows within noise. **The quit rule** (a3099a7)
+  and **closure marks by generation** (3ebd7fa): a 14 500-word alternation's first search 105 → 50 ms.
+- **ECMAScript multiline anchors as engine assertions** (15ec2ef): CRLF log, arm64, `^\w+` 24.3 → 2.06 ms
+  against the desugaring of 58d5ef5, at the speed of the wrong answers before it; no §A/§E row has them.
+- **The inner-literal code-point runs test an ASCII byte without the decoder** (79e6792): §E x86-64 `ident`
+  8.31 → 5.89 and `email` 2.23 → 1.66 ns/B against the tree before it, under the 2026.9.9 stamp (6.30, 1.73);
+  arm64 6.64 → 5.41 and 1.67 → 1.50. Instructions on x86-64: 1 488 M → 1 298 M and 702 M → 568 M.
+What the table shows against the last stamp: x86-64 `single` 4.04 → 3.70, `hex` 1.08 → 1.00 and `date` on both
+ISAs (x86-64 0.56 → 0.50, arm64 0.53 → 0.36: cadffe8, the 9.11 train); x86-64 `literal` +5 % and the CJK literal
++7 % are 58b9705 (four AVX2 blocks a round, paying on a literal every 58 bytes: +6.5 % instructions); x86-64
+`lookahead` +15 % and arm64 `alternation` +6 % are placement (identical instruction counts in a REAL-only unit,
+bench-layout indistinguishable on all 25 rows); arm64 §E `key=` +7.6 % is +2.4 % instructions plus a level
+that alternates from commit to commit. §B `alternation · findall` 68.99× → 68.79×; `words · findall @1KB`
+reads 3.10× (`make python-bench`'s first case reads 12 % slow right after it builds the extension, so the
+table runs `bench.py` on a built one). The multi-pattern section keeps its `600b0fb` stamp.
+**Correction to the 9.11 entry:** "no row regresses on either ISA" for c6b9556 was measured with
+`count_matches` on log lines at `-O2`. In the duel's `-O3 -flto` unit gcc stopped inlining the UTF-8 decoder
+into the inner-literal runs after it: `(\w+)_(\w+)` +12.2 % and `(\w+)@(\w+)` +19.6 % instructions on x86-64,
++32 % and +27 % time. 79e6792 removes the dependence on that decision.
+
 ## v2026.9.11
 
 9.11 (**four wrong answers fixed, and large alternations in bounded memory**): **THE TABLES ARE NOT

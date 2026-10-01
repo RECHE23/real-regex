@@ -112,8 +112,9 @@ three consecutive stamps while the tables were right — see each bullet's own n
   leaning on. `date` is new to that list: PCRE2 kept it on both ISAs at the last stamp. Two more are REAL's on
   **x86-64 only**: `fields` (**1.84×** / 0.84×) and `hex` (**1.50×** / 0.87×). PCRE2 keeps one on both ISAs:
   `lookahead` (0.98× / 0.83×).
-- **What moved, on the same two hosts as the last stamp.** On x86-64, `single` 4.04 → 3.70 ns/B, `hex`
-  1.08 → 1.00 and `date` 0.56 → 0.50; on arm64, `date` 0.53 → 0.36 (−33 %). These gains were not bisected.
+- **What moved, on the same two hosts as the last stamp.** On x86-64, `single` 4.04 → 3.70 ns/B and `hex`
+  1.08 → 1.00, not bisected; `date` 0.56 → 0.50 on x86-64 and 0.53 → 0.36 on arm64 (−33 %) is `cadffe8`, the
+  fixed-shape walks that fill their spans in batches.
   Four rows went the other way, and each was traced:
   - x86-64 `literal` 0.235 → 0.247 (+5 %; §Unicode's CJK literal +7 %) is `58b9705`, the AVX2 literal scan
     that tests four 32-byte blocks at once. On this corpus `charlie` occurs every 58 bytes, so nearly every
