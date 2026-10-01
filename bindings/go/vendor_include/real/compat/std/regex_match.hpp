@@ -586,9 +586,12 @@ namespace real::compat {
       }
       const std::basic_regex<CharT, Traits>& std_engine {re.std_engine()};
       const auto                             sf         {to_std_match(mf)};
+      // The overloads with results: libc++'s without them search a basic_string COPY of a range that is not a
+      // pointer pair, and match_prev_avail then reads the byte before that copy.
+      std::match_results<BidirIt>            unused;
       return std_call([&] {
-                        return anchored ? std::regex_match(first, last, std_engine, sf)
-                                        : std::regex_search(first, last, std_engine, sf);
+                        return anchored ? std::regex_match(first, last, unused, std_engine, sf)
+                                        : std::regex_search(first, last, unused, std_engine, sf);
                       });
     }
   } // namespace detail

@@ -1852,3 +1852,20 @@ TEST(compat_multiline_anchors_see_carriage_returns)
   const rc::regex inside {"(?=^a)a", ml};                // inside a lookaround the anchor stays REAL's own (no lookaround nests)
   EXPECT(rc::regex_search(std::string {"\na"}, inside));
 }
+
+// A search or match without results under match_prev_avail reads the context from the caller's range, as the
+// overload with results does: libc++'s searched a copy and read the byte before it.
+TEST(compat_prev_avail_without_results_reads_the_callers_context)
+{
+  const std::string  s    {"ab"};
+  const rc::regex    re   {R"(\Bb)"};
+  const std::regex   ref  {R"(\Bb)"};
+  std::smatch        sm;
+  const bool         want {std::regex_search(s.begin() + 1, s.end(), sm, ref, std::regex_constants::match_prev_avail)};
+  EXPECT_EQ(rc::regex_search(s.begin() + 1, s.end(), re, rc::regex_constants::match_prev_avail), want);
+  EXPECT(want); // 'a' before 'b': no boundary there
+  const rc::regex  whole      {R"(\Bb)"};
+  std::smatch      sm_whole;
+  const bool       want_whole {std::regex_match(s.begin() + 1, s.end(), sm_whole, ref, std::regex_constants::match_prev_avail)};
+  EXPECT_EQ(rc::regex_match(s.begin() + 1, s.end(), whole, rc::regex_constants::match_prev_avail), want_whole);
+}
