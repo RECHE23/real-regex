@@ -88,16 +88,12 @@ lint-headers:
 # command line with --checks (which appends to the config's Checks), not by forking
 # the shared file. See docs/MISRA.md.
 #
-# The version is CI's: the lint spine pins clang-tidy 18, and the versions do not agree on what they flag (18 does
-# not see an optional checked through a bool, which 22 does), so an analysis under another version passes code CI
-# refuses. MISRA_TIDY takes 18 where it is installed and says so when it falls back.
-MISRA_TIDY_VERSION := 18
-MISRA_TIDY ?= $(or $(shell command -v clang-tidy-$(MISRA_TIDY_VERSION) 2>/dev/null),$(wildcard /opt/homebrew/opt/llvm@$(MISRA_TIDY_VERSION)/bin/clang-tidy),clang-tidy)
+# The clang-tidy CI pins, named in SciForge's lint/misra.mk (MISRA_TIDY, MISRA_TIDY_CHECK, MISRA_TIDY_IMAGE).
+include $(SCIFORGE_LINT)/misra.mk
 misra: ## MISRA C++:2023-oriented analysis
 	mkdir -p $(BUILD)
 	printf '#include <real/real.hpp>\nint main(){ try { const real::regex r("a"); return r.search("a") ? 0 : 1; } catch (...) { return 2; } }\n' > $(BUILD)/misra_tu.cpp
-	@$(MISRA_TIDY) --version | grep -q 'version $(MISRA_TIDY_VERSION)\.' \
-	  || echo "misra -- $(MISRA_TIDY) is not clang-tidy $(MISRA_TIDY_VERSION), the version CI pins: a pass here may fail there"
+	@$(MISRA_TIDY_CHECK)
 	cd $(ROOT) && $(MISRA_TIDY) --config-file=$(SCIFORGE_LINT)/clang-tidy-misra \
 	    --checks='-cppcoreguidelines-pro-type-union-access' \
 	    --header-filter='include/real/.*' \
@@ -113,7 +109,7 @@ misra-x86: ## MISRA analysis again for x86-64 (container), where the ISA-chosen 
 	@if command -v docker >/dev/null 2>&1; then \
 	   for isa in "" "-mssse3"; do \
 	     docker run --rm --platform linux/amd64 -v "$(abspath $(ROOT))":/src -v "$(abspath $(SCIFORGE_LINT))":/lint \
-	       -v "$(abspath $(BUILD))":/b -w /src silkeh/clang:$(MISRA_TIDY_VERSION) \
+	       -v "$(abspath $(BUILD))":/b -w /src $(MISRA_TIDY_IMAGE) \
 	       clang-tidy --quiet --config-file=/lint/clang-tidy-misra --checks='-cppcoreguidelines-pro-type-union-access' \
 	         --header-filter='include/real/.*' /b/misra_x86_tu.cpp -- $(CXXSTD) $(INCLUDES) $$isa || exit 1; \
 	   done; \
