@@ -2451,6 +2451,9 @@ namespace real::detail {
         hints.single_first = static_cast<std::int16_t>(static_cast<unsigned char>(members[0]));
       }
       else if (count >= 2 && count <= 8) {
+        for (auto k = static_cast<std::size_t>(count); k < members.size(); ++k) {
+          members[k] = members[0]; // the block scans compare eight lanes: a spare one repeats a member
+        }
         hints.small_set      = members;
         hints.small_set_size = static_cast<std::uint8_t>(count);
       }

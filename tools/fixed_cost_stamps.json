@@ -1,6 +1,6 @@
 {
   "calls/x86_64-ubuntu-24.04-gcc13": {
-    "alternation": 862,
+    "alternation": 793,
     "anchored": 1197,
     "class": 707,
     "literal": 617,

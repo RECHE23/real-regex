@@ -6,7 +6,9 @@
 // match begins with b; true is a conservative superset. When no first-byte set is
 // usable (an empty match is possible), every byte is allowed (foolproof).
 #include <optional>
+#include <string>
 #include <string_view>
+#include <utility>
 
 #include <sciforge/test/framework.hpp>
 #include "real/real.hpp"
@@ -114,4 +116,24 @@ TEST(empty_match_possible_hint)
   for (const char* p : {"foo", "a+", R"(\d{4})", "[a-z]+"}) {
     EXPECT(!real::regex(p).raw_program().hints.empty_match_possible);
   }
+}
+
+// The alternation's block scans compare eight lanes and read the small set whole: a lane past its members must
+// repeat one, or a spare zero lane would stop the scan on every NUL byte as if it were a first byte.
+TEST(small_set_spare_lanes_repeat_a_member)
+{
+  const std::pair<const char*, std::size_t> cases[] {
+    {"ab|cd", 2}, {"ab|cd|ef", 3}, {"ab|cd|ef|gh|ij", 5}, {"ab|cd|ef|gh|ij|kl|mn", 7}, {"ab|cd|ef|gh|ij|kl|mn|op", 8}};
+  for (const auto& [p, members] : cases) {
+    const real::detail::pattern_hints hints {real::regex(p).raw_program().hints};
+    EXPECT_EQ(hints.small_set_size, members);
+    for (std::size_t k = 0; k < hints.small_set_size; ++k) {
+      EXPECT_EQ(hints.small_set[k], static_cast<char>('a' + (2 * k))); // the members, in byte order
+    }
+    for (std::size_t k = hints.small_set_size; k < hints.small_set.size(); ++k) {
+      EXPECT_EQ(hints.small_set[k], hints.small_set[0]);
+    }
+  }
+  const std::string subject {std::string(64, '\0') + "xx ef"};
+  EXPECT(real::regex("ab|cd|ef").search(subject).matched());
 }

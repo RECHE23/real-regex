@@ -6173,11 +6173,7 @@ namespace real::detail {
       if (cnt < 2 || cnt > 8) {
         return false; // no block scan for this alternation: nothing to keep
       }
-      std::array<std::uint8_t, 8> mem {};
-      for (std::size_t i = 0; i < mem.size(); ++i) {
-        // The unused slots repeat a member, as the block scans pad them.
-        mem[i] = static_cast<std::uint8_t>(prog_.hints.small_set[i < cnt ? i : 0]);
-      }
+      const std::array<std::uint8_t, 8> mem {std::bit_cast<std::array<std::uint8_t, 8>>(prog_.hints.small_set)}; // spare lanes repeat a member
       return alternation_plan(text, start, mem, cnt) != nullptr;
 #else
       static_cast<void>(text);
@@ -6875,14 +6871,10 @@ namespace real::detail {
       // bodies, dead weight on whichever ISA a given CI runner isn't; see simd_fixed_shape_scan's
       // comment for the same fix applied there). Scalar tail (< 16, the net-0-33 pins this boundary).
       if (!std::is_constant_evaluated() && prog_.hints.small_set_size >= 2 && prog_.hints.small_set_size <= 8) {
-        const std::size_t           cnt {prog_.hints.small_set_size};
-        std::array<std::uint8_t, 8> mem {};
-        for (std::size_t i = 0; i < mem.size(); ++i) {
-          // The unused slots repeat a member, for the unrolled eight-way compare.
-          mem[i] = static_cast<std::uint8_t>(prog_.hints.small_set[i < cnt ? i : 0]);
-        }
-        const std::size_t sz  {text.size()};
-        std::size_t       pos {start};
+        const std::size_t                 cnt {prog_.hints.small_set_size};
+        const std::array<std::uint8_t, 8> mem {std::bit_cast<std::array<std::uint8_t, 8>>(prog_.hints.small_set)}; // spare lanes repeat a member
+        const std::size_t                 sz  {text.size()};
+        std::size_t                       pos {start};
         // A subject whose first bytes are dense goes to each branch's byte pair, out of line; the others keep
         // the first-byte loop exactly as it was.
         if (const alternation_pairs* pairs {alternation_plan(text, pos, mem, cnt)}; pairs != nullptr) {
@@ -6987,15 +6979,11 @@ namespace real::detail {
                                 pc = static_cast<std::size_t>(code[pc].secondary_target);
                               }
                             };
-      const std::size_t           cnt {prog_.hints.small_set_size};
-      std::array<std::uint8_t, 8> mem {};
-      for (std::size_t i = 0; i < mem.size(); ++i) {
-        // The unused slots repeat a member, for the unrolled eight-way compare.
-        mem[i] = static_cast<std::uint8_t>(prog_.hints.small_set[i < cnt ? i : 0]);
-      }
-      const std::size_t sz                 {text.size()};
-      std::size_t       n                  {0};
-      std::size_t       pos                {start};
+      const std::size_t                 cnt                {prog_.hints.small_set_size};
+      const std::array<std::uint8_t, 8> mem                {std::bit_cast<std::array<std::uint8_t, 8>>(prog_.hints.small_set)}; // spare lanes repeat a member
+      const std::size_t                 sz                 {text.size()};
+      std::size_t                       n                  {0};
+      std::size_t                       pos                {start};
 #if defined(__ARM_NEON) || defined(__SSE2__)
       // Decided once for the whole fill, not per span: matches may be only bytes apart.
       const alternation_pairs* const pairs {std::is_constant_evaluated() ? nullptr : alternation_plan(text, pos, mem, cnt)};
