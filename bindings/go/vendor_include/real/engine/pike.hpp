@@ -6105,11 +6105,11 @@ namespace real::detail {
      */
     [[nodiscard]] alternation_density& alternation_density_for(std::string_view text) const
     {
-      if (!state_.alt_density.has_value() || state_.alt_text != static_cast<const void*>(text.data())) {
-        state_.alt_density.emplace(); // a fresh haystack: sampled anew
-        state_.alt_text = static_cast<const void*>(text.data());
+      if (state_.alt_density.has_value() && state_.alt_text == static_cast<const void*>(text.data())) {
+        return *state_.alt_density;
       }
-      return *state_.alt_density;
+      state_.alt_text = static_cast<const void*>(text.data());
+      return state_.alt_density.emplace(); // a fresh haystack: sampled anew
     }
 
     /*!
@@ -6119,8 +6119,8 @@ namespace real::detail {
      */
     [[nodiscard]] const alternation_density* alternation_density_seen(std::string_view text) const
     {
-      const bool held {state_.alt_density.has_value() && state_.alt_text == static_cast<const void*>(text.data())};
-      return held ? &*state_.alt_density : nullptr;
+      return state_.alt_density.has_value() && state_.alt_text == static_cast<const void*>(text.data()) ? &*state_.alt_density
+                                                                                                        : nullptr;
     }
 
     /*!
