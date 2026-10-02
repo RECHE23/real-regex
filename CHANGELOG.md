@@ -2,6 +2,28 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.10.1
+
+10.1 (**literals at the regex crate's pace, alternations near it, and a guard on what every call costs**): **THE
+TABLES ARE NOT RE-RUN, AND THE STAMP STAYS AT `2026.9.11` + tree `79e6792`.** The route code several rows run DID
+change, so each change was measured on one host before and after (`count_matches` over issue #3's 500 KB log
+corpus unless stated, 2026-10-02):
+- **The literal pair filter** (002e44a, the rows whose rarest byte is common: §A `literal`, the CJK literal):
+  arm64 `hello` 29.4 → 16.1 µs, `maintainers` 29.5 → 16.6, `error` 32.2 → 30.0; x86-64 without AVX2 −31 %
+  instructions; x86-64 with AVX2 runs its own loop, unchanged.
+- **The alternation fingerprint, loaded once a block** (74d3dc7, §A `alternation` past eight first bytes and the
+  small-set fingerprint): arm64 the ten-word alternation 87.5 → 81.1 µs, its filler alone 49.2 → 40.2; AVX2
+  unchanged.
+- **Alternations of four branches or more batched** (4c4d39c, §A `alternation` from four branches, every
+  find_iter/count row over one): arm64 81.1 → 73.9 µs, x86-64 44.0 → 39.6 M instructions; three branches and a
+  dense twelve-word alternation (the automaton's) unchanged; find_all over 290 KB within 0.1 % on x86-64.
+- **Groups of a confirmed inner-literal window by the backtracker** (5d01daa, rows that iterate a non-one-pass
+  pattern with groups): `StatusLine` find_iter x86-64 490 → 155 µs, arm64 373 → 151; counting unchanged.
+- **Per-call and per-regex costs** (dfbb52d, 4c4f01a, 5cb034d): a short literal search 609 → 591 instructions, a
+  short alternation 862 → 793 (Ubuntu GCC 13), `sizeof(real::regex)` 2 960 → 1 904 bytes; long-subject rows
+  within 0.8 % (a literal's per-search presence test), the per-call rows `check-fixed-cost` now holds.
+No row's stamp moves. The multi-pattern section keeps its `600b0fb` stamp.
+
 ## v2026.10.0
 
 10.0 (**the `std::regex` drop-in on REAL for most match flags, and four out-of-bounds or wrong answers
