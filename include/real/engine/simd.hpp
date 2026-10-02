@@ -192,6 +192,32 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Whether one of the 64 starts at \p lead64 has \p a there and \p b at the matching byte of \p trail64:
+   *        four pair compares OR-ed and one horizontal max, the reject test of prefilter.hpp's
+   *        `simd_literal_scan`, which narrows the per-block masks (\ref load_pair_mask) only when this says a
+   *        block holds a candidate. NEON has no movemask, so a mask per block costs a narrowing shift and a lane
+   *        move each, four a round, where a round without a candidate needs none.
+   * \param[in] lead64  64 already-loaded bytes at the candidate starts (the caller's MISRA-clean memcpy).
+   * \param[in] a       The needle byte expected at the first probe offset.
+   * \param[in] trail64 64 already-loaded bytes at the candidate starts + delta.
+   * \param[in] b       The needle byte expected at the second probe offset.
+   * \return True when some start holds both bytes.
+   */
+  inline bool any_pair64(const std::uint8_t * lead64,
+                         std::uint8_t         a,
+                         const std::uint8_t * trail64,
+                         std::uint8_t         b)
+  {
+    const uint8x16_t va  {vdupq_n_u8(a)};
+    const uint8x16_t vb  {vdupq_n_u8(b)};
+    const uint8x16_t h0  {vandq_u8(vceqq_u8(vld1q_u8(lead64), va), vceqq_u8(vld1q_u8(trail64), vb))};
+    const uint8x16_t h1  {vandq_u8(vceqq_u8(vld1q_u8(lead64 + 16), va), vceqq_u8(vld1q_u8(trail64 + 16), vb))};
+    const uint8x16_t h2  {vandq_u8(vceqq_u8(vld1q_u8(lead64 + 32), va), vceqq_u8(vld1q_u8(trail64 + 32), vb))};
+    const uint8x16_t h3  {vandq_u8(vceqq_u8(vld1q_u8(lead64 + 48), va), vceqq_u8(vld1q_u8(trail64 + 48), vb))};
+    return vmaxvq_u8(vorrq_u8(vorrq_u8(h0, h1), vorrq_u8(h2, h3))) != 0U;
+  }
+
+  /*!
    * \brief Mask of the 16 starts at \p at where some pair `(lead[i] at the start, probe[i] at start + delta[i])`
    *        sits: the pairs' hits OR-ed as vectors and narrowed once, rather than one mask per pair.
    * \param[in] at    The first of the 16 starts; `at + 15 + delta[i]` must be readable for every pair.
@@ -941,6 +967,34 @@ namespace real::detail {
     const __m128i eq_a {_mm_cmpeq_epi8(va, _mm_set1_epi8(static_cast<char>(a)))};
     const __m128i eq_b {_mm_cmpeq_epi8(vb, _mm_set1_epi8(static_cast<char>(b)))};
     return static_cast<mask_t>(_mm_movemask_epi8(_mm_and_si128(eq_a, eq_b)));
+  }
+
+  /*!
+   * \brief Whether one of the 64 starts at \p lead64 has \p a there and \p b at the matching byte of \p trail64:
+   *        the NEON twin's reject test, four pair compares OR-ed and one movemask, so that
+   *        prefilter.hpp's `simd_literal_scan` is the same loop on both ISAs.
+   * \param[in] lead64  64 already-loaded bytes at the candidate starts (the caller's MISRA-clean memcpy).
+   * \param[in] a       The needle byte expected at the first probe offset.
+   * \param[in] trail64 64 already-loaded bytes at the candidate starts + delta.
+   * \param[in] b       The needle byte expected at the second probe offset.
+   * \return True when some start holds both bytes.
+   */
+  inline bool any_pair64(const std::uint8_t * lead64,
+                         std::uint8_t         a,
+                         const std::uint8_t * trail64,
+                         std::uint8_t         b)
+  {
+    const __m128i va  {_mm_set1_epi8(static_cast<char>(a))};
+    const __m128i vb  {_mm_set1_epi8(static_cast<char>(b))};
+    __m128i       any {_mm_setzero_si128()};
+    for (std::size_t k = 0; k < 64; k += 16) {
+      __m128i la {};
+      __m128i tb {};
+      std::memcpy(&la, lead64 + k, 16); // MISRA-clean byte loads (no pointer type-pun)
+      std::memcpy(&tb, trail64 + k, 16);
+      any = _mm_or_si128(any, _mm_and_si128(_mm_cmpeq_epi8(la, va), _mm_cmpeq_epi8(tb, vb)));
+    }
+    return _mm_movemask_epi8(any) != 0;
   }
 
   /*! \brief `true` if no lane of \p m is set. */

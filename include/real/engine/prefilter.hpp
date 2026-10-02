@@ -2828,24 +2828,24 @@ namespace real::detail {
     // FASTER than memchr — the two-byte selectivity finally paying at memchr's throughput. Masks are
     // consumed in block order, and within a mask in lane order, so candidates are still visited strictly
     // left to right: the first verified hit is the leftmost, which the callers require.
+    // A round is rejected by ONE test on the OR of its four blocks (any_pair64); the per-block masks are
+    // narrowed only in a round that holds a candidate, which on NEON saves four mask moves a round.
     constexpr std::size_t unroll {4};
     while (p + (unroll * 16) <= last + 1) {
-      std::array<mask_t, unroll> masks {};
-      for (std::size_t u = 0; u < unroll; ++u) {
-        std::array<std::uint8_t, 16> blk_lead  {};
-        std::array<std::uint8_t, 16> blk_trail {};
-        std::memcpy(blk_lead.data(), base + p + (u * 16), 16); // MISRA-clean byte loads (no type-pun)
-        std::memcpy(blk_trail.data(), base + p + (u * 16) + delta, 16);
-        masks[u] = load_pair_mask(blk_lead.data(), lead, blk_trail.data(), trail);
-      }
-      for (std::size_t u = 0; u < unroll; ++u) {
-        mask_t mask {masks[u]};
-        while (!empty(mask)) {
-          const std::size_t cand {p + (u * 16) + first_lane(mask)};
-          if (std::memcmp(base + cand, literal.data(), len) == 0) {
-            return cand;
+      std::array<std::uint8_t, unroll * 16> blk_lead  {};
+      std::array<std::uint8_t, unroll * 16> blk_trail {};
+      std::memcpy(blk_lead.data(), base + p, unroll * 16); // MISRA-clean byte loads (no type-pun)
+      std::memcpy(blk_trail.data(), base + p + delta, unroll * 16);
+      if (any_pair64(blk_lead.data(), lead, blk_trail.data(), trail)) {
+        for (std::size_t u = 0; u < unroll; ++u) {
+          mask_t mask {load_pair_mask(blk_lead.data() + (u * 16), lead, blk_trail.data() + (u * 16), trail)};
+          while (!empty(mask)) {
+            const std::size_t cand {p + (u * 16) + first_lane(mask)};
+            if (std::memcmp(base + cand, literal.data(), len) == 0) {
+              return cand;
+            }
+            mask = clear_first(mask);
           }
-          mask = clear_first(mask);
         }
       }
       p += unroll * 16;
