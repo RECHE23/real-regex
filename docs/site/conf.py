@@ -231,6 +231,10 @@ linkcheck_ignore = [
     r"https://github\.com/RECHE23/sciforge.*",
 ]
 
+# A link is tried three times before it counts as broken: GitHub's edge can answer a
+# checked link with a transient 5xx (a 504) that a retry a moment later clears.
+linkcheck_retries = 3
+
 # -- quickstart injection ------------------------------------------------------
 #
 # landing.html holds only {{ quickstart_* }} placeholders. This hook reads the
