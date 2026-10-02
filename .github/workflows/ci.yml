@@ -26,7 +26,9 @@ jobs:
   # If any of these fail, the multi-OS matrix / fuzz / coverage never start.
   # Order matches full-local-gate: fast high-signal checks first (doc included).
   preflight:
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: check-fixed-cost holds stamps keyed by this image's system and GCC
+    # (tools/fixed_cost_stamps.json), so the image moves only with a restamp, in the same commit.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
