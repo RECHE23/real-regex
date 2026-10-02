@@ -6955,6 +6955,31 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Whether `run()`'s cascade would hand this subject's search at \p start to the Aho-Corasick automaton
+     *        rather than to `run_alternation`: the gate's conditions in the same order, on the same per-subject
+     *        state, whose verdicts are sticky, so that a batched walk (\ref fill_alternation_spans) asks once and
+     *        never overrules a routing decision that was measured. The fingerprint `run()` tries first needs
+     *        more first bytes than the small set holds, which that walk's eligibility excludes.
+     * \param[in] text  The subject.
+     * \param[in] start Where the walk begins.
+     * \return True when the automaton would take the subject.
+     */
+    [[nodiscard]] bool alternation_automaton_claims(std::string_view text,
+                                                    std::size_t      start)
+    {
+      if constexpr (requires { State::supports_aho_corasick; }) {
+        return !aho_corasick_route_disabled() && prog_.hints.alternation_branch_count >= ac_branch_floor
+               && !alternation_filter_takes(text, start) && ac_density_favours_automaton(text, start)
+               && ac_ready() != nullptr;
+      }
+      else {
+        static_cast<void>(text);
+        static_cast<void>(start);
+        return false;
+      }
+    }
+
+    /*!
      * \brief Fills up to \p cap `fixed_alternation` matches from \p start without leaving the route.
      *
      * The measurement that motivates it is recorded on \ref run_alternation -- holding the pattern and the

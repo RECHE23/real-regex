@@ -642,17 +642,13 @@ namespace real {
       // route declines rather than growing a second body there). Its cost is almost entirely per MATCH
       // rather than per byte, which is what makes batching it worth a route at all.
       // fixed_alternation already excludes captures and asserts by construction, so slot_count is 2.
-      // Branch count BELOW the Aho-Corasick floor, and that bound is the load-bearing one. The AC
-      // gate is consulted inside `run()`, which a batched walk bypasses entirely, so batching a
-      // shape the gate could claim would silently overrule a routing decision that was measured --
-      // and the gate takes the automaton below twelve branches too when the subject is dense enough
-      // (tests/engine/test_ac_density_gate.cpp pins exactly that). Under four branches the automaton
-      // is never considered at all, so nothing is overruled. That subset is also the common one and
-      // contains §A's own `alt the|fox|dog` row. Batching the AC route is a separate piece of work,
-      // not a widening of this condition.
+      // From \ref detail::pike_vm::ac_branch_floor branches up, `run()` may hand the subject to the
+      // Aho-Corasick automaton instead, on the subject's own density, and a batched walk bypasses that gate;
+      // so the first refill asks the cascade the same question on the same state
+      // (pike_vm::alternation_automaton_claims, whose verdicts are sticky per subject) and, where the
+      // automaton would take it, disarms the batch for the walk and leaves every search to `run()`.
       batch_alt_       = batchable && no_wrap && prog.hints.fixed_alternation
                          && prog.hints.alternation_branch_count > 0
-                         && prog.hints.alternation_branch_count < 4
                          && prog.hints.small_set_size >= 2 && prog.hints.small_set_size <= 8
                          && prog.hints.greedy_class_loop < 0 && prog.hints.greedy_cp_class < 0
                          && prog.hints.codepoint_class_ascii < 0 && prog.hints.single_class < 0;
@@ -721,6 +717,7 @@ namespace real {
                          && detail::pike_vm<typename Storage::state_type, true>::inner_literal_is_the_route(prog);
       batch_fixed_     = batchable && prog.slot_count == 2 && !prog.hints.empty_match_possible
                          && detail::pike_vm<typename Storage::state_type, true>::fixed_shape_is_the_route(prog);
+      batch_alt_asks_  = batch_alt_;
       batch_eligible_  = batch_bytes_ || batch_cp_ascii_ || batch_single_cl_ || cp_class || batch_alt_
                          || batch_lazy_dfa_ || batch_exact_lit_ || batch_inner_lit_ || batch_fixed_;
     }
@@ -887,6 +884,7 @@ namespace real {
     //! \brief Batch the fixed-alternation route (\ref real::detail::pike_vm::fill_alternation_spans).
     //!        Its per-match return was 99 % of the row at density -- see that filler's own note.
     bool                                                                  batch_alt_        {};
+    bool                                                                  batch_alt_asks_   {}; //!< The alternation batch has yet to ask whether the automaton takes the subject.
     //! \brief Batch the lazy-DFA route (%pike.hpp's `fill_lazy_dfa_spans`) — the fifth, and the
     //!        one shape recognition never reaches.
     bool                                                                  batch_lazy_dfa_   {};
@@ -976,6 +974,17 @@ namespace real {
         batch_n_ = bvm.fill_single_class_spans(text_, pos_, batch_, batch_cap);
       }
       else if (batch_alt_) {
+        if (batch_alt_asks_) {
+          batch_alt_asks_ = false;
+          if (bvm.alternation_automaton_claims(text_, pos_)) {
+            // The automaton takes this subject: every search goes through `run()`, which hands it there.
+            batch_alt_      = false;
+            batch_eligible_ = false;
+            batch_partial_  = true;
+            batch_n_        = 0;
+            return false;
+          }
+        }
         detail::prof::tick_route(detail::prof::route::alternation);
         batch_n_ = bvm.fill_alternation_spans(text_, pos_, batch_, batch_cap);
       }
