@@ -15,12 +15,13 @@ WHAT IT HOLDS, AND HOW. Two numbers, each against a stamp versioned in tools/fix
   - per-call instructions: callgrind counts a short call of five shapes (a literal, an alternation, an
     anchored match, a class, a miss), as the difference between 2 000 and 1 000 calls, so construction and
     process start cancel. Counted, not timed: the count is exact, where a stopwatch's floor is the size of
-    these effects. It needs x86-64 Linux with valgrind and a real GCC; elsewhere it runs the same probe in
-    the container tools/fixed_cost.Dockerfile builds (amd64, emulated where the host is not: valgrind
-    counts the guest's instructions, so emulation changes the time, not the count). The stamp is keyed by
-    GCC major version and matched within TOLERANCE either way; the file carries one per major CI's runner
-    image can compile with (13 on ubuntu-24.04, 15 on its successor), measured natively for those the
-    container does not build.
+    these effects. Only the probe's own instructions count -- REAL's code, inlined there -- and not the C
+    library's: glibc picks its memchr and memcmp by the CPU's vector features, which differ between an
+    emulated host and a runner, and between runners. The count is still the compiler's, so the stamp is keyed by system
+    and GCC major version, and the one CI judges is taken on CI's own: natively on its runner, or here in
+    tools/fixed_cost.Dockerfile, which is that runner's Ubuntu (amd64, emulated where the host is not:
+    valgrind counts the guest's instructions, so emulation changes the time, not the count). Within
+    TOLERANCE either way. A system without a stamp fails rather than passes: restamp from its image.
 
 A stamp that moves either way fails: growth is the regression this exists for, and a gain left unstamped
 would let a later regression spend it unseen. `--stamp` prints the measured values in the stamp file's
@@ -41,7 +42,7 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 STAMPS = ROOT / "tools" / "fixed_cost_stamps.json"
 DOCKERFILE = ROOT / "tools" / "fixed_cost.Dockerfile"
-IMAGE = "real-regex-fixed-cost:gcc13"
+IMAGE = "real-regex-fixed-cost:ubuntu-24.04"
 SHAPES = ("literal", "alternation", "anchored", "class", "miss")
 TOLERANCE = 0.02  # within it, a stamp holds: GCC patch releases move a count by less than this
 CALLS = (1000, 2000)
@@ -139,20 +140,26 @@ g++ -std=c++20 -O2 -I"$1/include" "$3" -o /tmp/fixed_cost_sizes
 echo "sizes $(/tmp/fixed_cost_sizes)"
 major=$(g++ -dumpversion | cut -d. -f1)
 echo "gcc $major"
+. /etc/os-release
+echo "os $ID-$VERSION_ID"
 for shape in SHAPES; do
   for calls in CALLS; do
-    valgrind --tool=callgrind --callgrind-out-file=/dev/null /tmp/fixed_cost_probe "$shape" "$calls" 2>&1 \
-      | sed -n 's/.*refs: *\([0-9,]*\).*/\1/p' | tr -d , | sed "s/^/$shape $calls /"
+    valgrind --tool=callgrind --callgrind-out-file=/tmp/fixed_cost.cg /tmp/fixed_cost_probe "$shape" "$calls" \
+      >/dev/null 2>&1
+    callgrind_annotate --threshold=100 --show-percs=no /tmp/fixed_cost.cg 2>/dev/null \
+      | awk -v shape="$shape" -v calls="$calls" \
+          '/\[\/tmp\/fixed_cost_probe\]$/ { gsub(",", "", $1); sum += $1 } END { print shape, calls, sum + 0 }'
   done
 done
 """
 
 
 def parse_counts(text):
-    """{'x86_64-gcc<N>': {shape: per-call}} from COUNT_SCRIPT's output."""
+    """{'calls/x86_64-<os>-gcc<N>': {shape: per-call}} from COUNT_SCRIPT's output."""
     major = re.search(r"^gcc (\d+)$", text, re.M)
-    if major is None:
-        raise RuntimeError(f"no compiler version in the count output:\n{text}")
+    system = re.search(r"^os (\S+)$", text, re.M)
+    if major is None or system is None:
+        raise RuntimeError(f"no compiler version or system in the count output:\n{text}")
     totals = {}
     for shape, calls, refs in re.findall(r"^(\w+) (\d+) (\d+)$", text, re.M):
         totals.setdefault(shape, {})[int(calls)] = int(refs)
@@ -161,7 +168,7 @@ def parse_counts(text):
     missing = [s for s in SHAPES if s not in per_call]
     if missing:
         raise RuntimeError(f"no count for {missing}:\n{text}")
-    out = {f"calls/x86_64-gcc{major.group(1)}": per_call}
+    out = {f"calls/x86_64-{system.group(1)}-gcc{major.group(1)}": per_call}
     sizes = re.search(r"^sizes (\S+) (\d+) (\d+) (\d+)$", text, re.M)
     if sizes is not None:
         out[f"sizes/x86_64-{sizes.group(1)}"] = {"regex": int(sizes.group(2)), "immutables": int(sizes.group(3)),
@@ -198,21 +205,23 @@ def measure_calls():
 
 
 def self_test():
-    stamps = {"sizes/arm64-libc++": {"regex": 1904}, "calls/x86_64-gcc13": {"literal": 1000}}
+    stamps = {"sizes/arm64-libc++": {"regex": 1904}, "calls/x86_64-ubuntu-24.04-gcc13": {"literal": 1000}}
     assert judge({"sizes/arm64-libc++": {"regex": 1904}}, stamps) == []
     assert judge({"sizes/arm64-libc++": {"regex": 1905}}, stamps)              # a byte more fails
     assert judge({"sizes/arm64-libc++": {"regex": 1888}}, stamps)              # and a byte less
-    assert judge({"calls/x86_64-gcc13": {"literal": 1020}}, stamps) == []      # within tolerance
-    assert judge({"calls/x86_64-gcc13": {"literal": 1021}}, stamps)            # past it, growing
-    assert judge({"calls/x86_64-gcc13": {"literal": 979}}, stamps)             # past it, shrinking
-    assert judge({"calls/x86_64-gcc14": {"literal": 1000}}, stamps)            # an unstamped compiler
-    assert judge({"calls/x86_64-gcc13": {"class": 1000}}, stamps)              # an unstamped shape
-    text = "gcc 13\n" + "".join(f"{s} {CALLS[0]} 5000\n{s} {CALLS[1]} 9000\n" for s in SHAPES)
-    assert parse_counts(text) == {"calls/x86_64-gcc13": {s: 4 for s in SHAPES}}
+    key = "calls/x86_64-ubuntu-24.04-gcc13"
+    assert judge({key: {"literal": 1020}}, stamps) == []                       # within tolerance
+    assert judge({key: {"literal": 1021}}, stamps)                             # past it, growing
+    assert judge({key: {"literal": 979}}, stamps)                              # past it, shrinking
+    assert judge({"calls/x86_64-ubuntu-24.04-gcc14": {"literal": 1000}}, stamps)  # an unstamped compiler
+    assert judge({"calls/x86_64-debian-12-gcc13": {"literal": 1000}}, stamps)     # an unstamped system
+    assert judge({key: {"class": 1000}}, stamps)                               # an unstamped shape
+    text = "gcc 13\nos ubuntu-24.04\n" + "".join(f"{s} {CALLS[0]} 5000\n{s} {CALLS[1]} 9000\n" for s in SHAPES)
+    assert parse_counts(text) == {key: {s: 4 for s in SHAPES}}
     assert parse_counts("sizes libstdc++ 10 20 30\n" + text)["sizes/x86_64-libstdc++"] == {
         "regex": 10, "immutables": 20, "state": 30}
     try:
-        parse_counts("gcc 13\nliteral 1000 5000\n")
+        parse_counts("gcc 13\nos ubuntu-24.04\nliteral 1000 5000\n")
         raise AssertionError("a missing shape parsed")
     except RuntimeError:
         pass
