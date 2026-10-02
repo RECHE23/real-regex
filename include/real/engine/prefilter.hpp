@@ -87,6 +87,27 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Bounded-backtracker runs, counted for the tests that pin which windows it fills rather than the VM.
+   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
+   */
+  inline std::atomic<std::uint64_t>& bounded_backtrack_runs() noexcept
+  {
+    static std::atomic<std::uint64_t> runs {0};
+    return runs;
+  }
+
+  /*!
+   * \brief Bill one bounded-backtracker run to \ref bounded_backtrack_runs. A no-op unless the test binary
+   *        defines \c REAL_TEST_INSTRUMENT.
+   */
+  inline void note_bounded_backtrack() noexcept
+  {
+#if defined(REAL_TEST_INSTRUMENT)
+    bounded_backtrack_runs().fetch_add(1, std::memory_order_relaxed);
+#endif
+  }
+
+  /*!
    * \brief Searches or confirms the lazy DFAs handed to the VM because a scan quit (a Unicode word boundary
    *        next to a non-ASCII byte, or a thrashing cache), counted for the tests that pin where no scan quits.
    * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).

@@ -203,3 +203,25 @@ TEST(bounded_backtrack_hint)
   EXPECT(hint(groups));
   EXPECT(!hint(groups + "(a)"));
 }
+
+// An inner-literal search confirms a candidate with its forward DFA, which proves where the match ends; a
+// pattern that is not one-pass (Unicode `\s` and `\d` share UTF-8 lead bytes) then fills its groups over that
+// short window. The window has nothing left to scan past its proven end, so it goes to the backtracker, as any
+// short subject does, and not to the VM's lists.
+TEST(bounded_backtrack_fills_an_inner_literal_window)
+{
+  const real::regex re {R"((info|error|warn)\s+\d{4}-\d{2}-\d{2}\s+req=[a-f0-9]+)"};
+  std::string       text;
+  while (text.size() < 200000U) {
+    text += "some filler words here and there, error 2026-06-13 req=a3f9c1d8 path=/x\n";
+  }
+  real::detail::bounded_backtrack_runs() = 0;
+  std::size_t matches {0};
+  for (const auto& m : re.find_iter(text)) {
+    EXPECT_EQ(m.str(1), "error");
+    ++matches;
+  }
+  EXPECT(matches > 2000U);
+  EXPECT(real::detail::bounded_backtrack_runs().load() >= matches);
+  EXPECT_EQ(answers(re, text.substr(0, 4096)), vm_answers(re, text.substr(0, 4096)));
+}

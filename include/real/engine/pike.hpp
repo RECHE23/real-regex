@@ -1343,9 +1343,11 @@ namespace real::detail {
               return true;
             }
             // A program that looks past a position (`$`, `\b`) reads the text beyond e: slicing there would turn
-            // e into an end of text for it.
+            // e into an end of text for it. The walk proved the match ends at e, so `stop` is already its reach,
+            // and without a forward-stop to report the window may go to the bounded backtracker, which fills a
+            // short window's groups without the VM's lists.
             note_vm_window();
-            return run_general<false>(looks ? text : text.substr(0, e), s, run_mode::prefix, out_slots, &stop);
+            return run_general<false>(looks ? text : text.substr(0, e), s, run_mode::prefix, out_slots);
           }
         }
       }
@@ -8087,6 +8089,7 @@ namespace real::detail {
                                OutSlots&        out_slots)
     {
       prof::tick_event(prof::event::bounded_backtrack);
+      note_bounded_backtrack();
       backtrack_frame   frame;
       const std::size_t size {text.size()};
       const bool        cf   {prog_.hints.capture_free_walk};
