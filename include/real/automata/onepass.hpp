@@ -864,11 +864,13 @@ namespace real::detail {
     //!        the DFA caches.
     std::atomic<const void*> rows_for {nullptr};
 
-    //! \brief The multi-literal automaton for a `fixed_alternation` past the branch threshold, or empty
+    //! \brief The multi-literal automaton for a `fixed_alternation` past the branch threshold, or null
     //!        when never built or declined (a pathological icase-fold expansion). Per REGEX, not per state:
     //!        a state is fresh per `search()`, so holding it there rebuilds the whole automaton on every
-    //!        call — a fast path costing orders of magnitude more than the route it replaces.
-    std::optional<ac_automaton> ac;
+    //!        call — a fast path costing orders of magnitude more than the route it replaces. At most one
+    //!        element, on the heap: every regex carries this object and few build an automaton, whose header
+    //!        alone is 432 bytes; a vector, not a `unique_ptr`, so that this type stays literal.
+    std::vector<ac_automaton> ac;
 
     //! \brief \c prog.code.data() \ref ac was built for, or null. Its OWN identity atomic, deliberately
     //!        not folded into \ref built_for — only the alternation route consults the automaton, and this
@@ -876,10 +878,11 @@ namespace real::detail {
     //!        cost every other route (see \ref op_table_for).
     std::atomic<const void*> ac_for {nullptr};
 
-    //! \brief The alternation's probe pairs, their splats included, or empty when never built. Per REGEX, not
+    //! \brief The alternation's probe pairs, their splats included, or null when never built. Per REGEX, not
     //!        per state: the splats are 512 bytes, and in a state that is fresh per `search()` gcc zeroed them
-    //!        with the rest of the state on every call (check-state-zeroing).
-    std::optional<alternation_pairs> alt_pairs;
+    //!        with the rest of the state on every call (check-state-zeroing). At most one element, on the heap,
+    //!        as \ref ac is, since only an alternation builds them.
+    std::vector<alternation_pairs> alt_pairs;
 
     std::atomic<const void*> alt_pairs_for {nullptr}; //!< \c prog.code.data() \ref alt_pairs was built for, or null (its own identity atomic, as \ref ac_for).
 
@@ -977,7 +980,8 @@ namespace real::detail {
      */
     void invalidate_all() noexcept
     {
-      ac.reset();
+      ac.clear();
+      ac.shrink_to_fit();
       built_for.store(nullptr, std::memory_order_relaxed);
       rows_for.store(nullptr, std::memory_order_relaxed);
       ac_for.store(nullptr, std::memory_order_relaxed);

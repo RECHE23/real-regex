@@ -32,7 +32,7 @@ namespace {
   const real::detail::ac_automaton* automaton_of(const real::regex& re)
   {
     const real::detail::regex_immutables* const immut {re.raw_program().immut};
-    return immut != nullptr && immut->ac.has_value() ? &*immut->ac : nullptr;
+    return immut != nullptr && !immut->ac.empty() ? &immut->ac.front() : nullptr;
   }
 
   //! \brief Restores every seam this file moves, whatever a test left them at.
@@ -294,4 +294,25 @@ TEST(ac_branch_count_saturates)
   EXPECT_EQ(hints.alternation_branch_count, std::numeric_limits<std::uint16_t>::max());
   const real::regex re {pattern};
   EXPECT_EQ(re.count_matches("ab_ba_c"), 4U);
+}
+
+// Every regex carries its immutables, and only an alternation builds the automaton or the probe pairs: both live
+// off the object, so a regex that never builds them does not carry their bytes (a SciLex lexer holds one regex
+// per rule). An alternation that builds them still finds them.
+TEST(alternation_products_live_off_the_regex)
+{
+  EXPECT(sizeof(decltype(real::detail::regex_immutables::ac)) < sizeof(real::detail::ac_automaton));
+  EXPECT(sizeof(decltype(real::detail::regex_immutables::alt_pairs)) < sizeof(real::detail::alternation_pairs));
+
+  const seams_reset reset;
+  std::string       pattern;
+  for (const std::string& w : words(40, 6)) {
+    pattern += pattern.empty() ? w : "|" + w;
+  }
+  const real::regex re {pattern};
+  EXPECT(automaton_of(re) == nullptr);
+  std::string subject(4096, ' ');
+  subject += words(40, 6)[7];
+  EXPECT_EQ(re.count_matches(subject), 1U);
+  EXPECT(automaton_of(re) != nullptr);
 }

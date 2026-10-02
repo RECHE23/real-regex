@@ -2584,14 +2584,18 @@ namespace real::detail {
                                                 };
       if (immut != nullptr) {
         if (immut->ac_for.load(std::memory_order_acquire) == program) {
-          return immut->ac.has_value() ? &*immut->ac : nullptr;         // hot path: one acquire load, no mutex
+          return immut->ac.empty() ? nullptr : &immut->ac.front();      // hot path: one acquire load, no mutex
         }
         const std::lock_guard<std::mutex> lock {detail::immut_build_mu(immut)};
         if (immut->ac_for.load(std::memory_order_relaxed) != program) { // double-check
-          immut->ac = build();
+          std::optional<ac_automaton> built {build()};
+          immut->ac.clear();
+          if (built.has_value()) {
+            immut->ac.push_back(std::move(*built));
+          }
           immut->ac_for.store(program, std::memory_order_release);
         }
-        return immut->ac.has_value() ? &*immut->ac : nullptr;
+        return immut->ac.empty() ? nullptr : &immut->ac.front();
       }
       // No per-regex cache to hold it: decline, and the caller falls back to run_alternation. Line
       // coverage is what settled that this is safe rather than the trap it looked like -- the meta-seam
@@ -2621,11 +2625,12 @@ namespace real::detail {
         const std::lock_guard<std::mutex> lock {detail::immut_build_mu(immut)};
         if (immut->alt_pairs_for.load(std::memory_order_relaxed) != program) { // double-check
           // A fixed alternation's plan (pairs and fingerprint); any other program's is its variants' fingerprint.
-          immut->alt_pairs = prog_.hints.fixed_alternation ? build_alternation_pairs() : build_cp_alternation_plan();
+          immut->alt_pairs.clear();
+          immut->alt_pairs.push_back(prog_.hints.fixed_alternation ? build_alternation_pairs() : build_cp_alternation_plan());
           immut->alt_pairs_for.store(program, std::memory_order_release);
         }
       }
-      return immut->alt_pairs.has_value() ? &*immut->alt_pairs : nullptr;
+      return immut->alt_pairs.empty() ? nullptr : &immut->alt_pairs.front();
     }
 
     //! \brief The capture-block pool type of the bound `State` (COW) — heap-backed for dynamic,
