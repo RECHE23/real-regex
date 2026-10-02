@@ -1,0 +1,26 @@
+{
+  "calls/x86_64-gcc13": {
+    "alternation": 841,
+    "anchored": 1286,
+    "class": 681,
+    "literal": 667,
+    "miss": 675
+  },
+  "calls/x86_64-gcc15": {
+    "alternation": 822,
+    "anchored": 1131,
+    "class": 669,
+    "literal": 625,
+    "miss": 651
+  },
+  "sizes/arm64-libc++": {
+    "immutables": 1368,
+    "regex": 1904,
+    "state": 9392
+  },
+  "sizes/x86_64-libstdc++": {
+    "immutables": 1376,
+    "regex": 1920,
+    "state": 9392
+  }
+}

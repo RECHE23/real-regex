@@ -47,7 +47,7 @@ jobs:
           python-version: '3.11'
           update-environment: false
       - name: Install doxygen + build tools
-        run: sh real-regex/tools/ci-apt-ubuntu.sh doxygen graphviz cmake build-essential
+        run: sh real-regex/tools/ci-apt-ubuntu.sh doxygen graphviz cmake build-essential valgrind
       # Same Uncrustify 0.82 pin as lint-cpp (cached — cold build once, then ~instant).
       - name: Cache Uncrustify 0.82.0
         id: uncrustify
@@ -103,6 +103,11 @@ jobs:
           # exists -- it is iterator entry, ~140 ns before any scan), so the shape is counted, not timed.
           echo "── check-percall-copies (count_walk passes the intent, not a mutated 440-byte view)"
           make -C real-regex check-percall-copies
+          # The fixed costs no throughput row sees: sizes and per-call instructions, counted by callgrind
+          # against tools/fixed_cost_stamps.json (valgrind installed above). This runner compiles with the GCC the
+          # stamp is keyed by.
+          echo "── check-fixed-cost (sizes and per-call instructions against their stamps)"
+          make -C real-regex check-fixed-cost
           echo "── python-syntax (bindings/python at the requires-python floor)"
           make -C real-regex python-syntax PYTHON="${{ steps.pyfloor.outputs.python-path }}"
           echo "── check-pins"

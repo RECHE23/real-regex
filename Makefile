@@ -66,7 +66,7 @@ include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
 	full-local-gate-impl gcc-check route-probe alloc-probe alloc-cold-probe ac-regime sabotage-sweep sabotage-help check-blind-guard blind-guards \
-        lint misra check-state-zeroing check-percall-copies route-surface-parity bench-compilers fuzz fuzz-compat fuzz-compat-known fuzz-re2 check-capi-abi check-abi-bump check-features-probe exhaustive-compat exhaustive-compat-flags fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
+        lint misra check-state-zeroing check-percall-copies check-fixed-cost route-surface-parity bench-compilers fuzz fuzz-compat fuzz-compat-known fuzz-re2 check-capi-abi check-abi-bump check-features-probe exhaustive-compat exhaustive-compat-flags fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
@@ -405,6 +405,14 @@ check-state-zeroing:
 check-percall-copies:
 	@$(PYTHON) tools/check_percall_copies.py --self-test >/dev/null
 	@$(PYTHON) tools/check_percall_copies.py
+
+# What every call and every regex pay, which no throughput row can see: the sizes of a regex, its
+# immutables and the search state, and the instructions of five short calls, against the stamps in
+# tools/fixed_cost_stamps.json. Counted by callgrind, natively on x86-64 Linux, else in a container
+# (tools/fixed_cost.Dockerfile); a moved stamp fails either way. See tools/check_fixed_cost.py.
+check-fixed-cost:
+	@$(PYTHON) tools/check_fixed_cost.py --self-test >/dev/null
+	@$(PYTHON) tools/check_fixed_cost.py
 
 # The headers compile where NEITHER SIMD macro is defined. This exists because a real defect shipped
 # through every other check: a filler copied run_alternation's mask-carried block scan and not its
@@ -840,6 +848,8 @@ full-local-gate-impl:
 	@$(MAKE) check-state-zeroing
 	@echo "── [5d/25] check-percall-copies (count_walk must pass the intent, not a mutated 440-byte view)"
 	@$(MAKE) check-percall-copies
+	@echo "── [5e/25] check-fixed-cost (sizes and per-call instructions against their stamps)"
+	@$(MAKE) check-fixed-cost
 	@echo "── [5e/25] python-syntax (bindings/python at the requires-python floor)"
 	@$(MAKE) python-syntax
 	@echo "── [5f/25] check-abi3-floor (the four floor declarations agree)"
