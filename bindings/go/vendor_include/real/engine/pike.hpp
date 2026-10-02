@@ -5978,22 +5978,50 @@ namespace real::detail {
                                             const MatchAt&                     match_at) const
     {
       const std::size_t sz     {text.size()};
+      const std::size_t first  {pos};
       nibble3_tables    tables {};
+      nibble3_carry     carry  {};
       load_nibble3_tables(pairs.nibble_lo, pairs.nibble_hi, tables);
-      for (; pos + 18 <= sz; pos += 16) { // the fingerprint reads two bytes past a block's starts
+      // A block at `pos` completes the starts `pos - 2 .. pos + 13` (nibble3_step); the first block's carry is
+      // zero, so nothing before `first` is marked. Four blocks a round are tested at once (nibble3_round), and
+      // their masks narrowed only in a round that marks a start: candidates are rare against blocks.
+      nibble3_hits      hits   {};
+      for (; pos + 64 <= sz; pos += 64) {
+        for (std::size_t b = 0; b < 4; ++b) {
+          note_alternation_pair_block();
+          note_alternation_nibble_block(true);
+        }
+        if (!nibble3_round(text.data() + pos, tables, carry, hits)) {
+          continue;
+        }
+        for (std::size_t b = 0; b < 4; ++b) {
+          mask_t mask {nibble3_mask_of(hits, b)};
+          while (!empty(mask)) {
+            note_alternation_pair_candidate();
+            const std::size_t at {pos + (b * 16) + first_lane(mask) - 2U};
+            const std::size_t me {match_at(at)};
+            if (me != npos) {
+              return alternation_hit {.start = at, .end = me, .resume = at};
+            }
+            mask = clear_first(mask);
+          }
+        }
+      }
+      for (; pos + 16 <= sz; pos += 16) {
         note_alternation_pair_block();
         note_alternation_nibble_block(true);
-        mask_t mask {load_nibble3_mask(text.data() + pos, tables)};
+        mask_t mask {nibble3_step(text.data() + pos, tables, carry)};
         while (!empty(mask)) {
           note_alternation_pair_candidate();
-          const std::size_t lane {first_lane(mask)};
-          const std::size_t me   {match_at(pos + lane)};
+          const std::size_t at {pos + first_lane(mask) - 2U};
+          const std::size_t me {match_at(at)};
           if (me != npos) {
-            return alternation_hit {.start = pos + lane, .end = me, .resume = pos};
+            return alternation_hit {.start = at, .end = me, .resume = at};
           }
           mask = clear_first(mask);
         }
       }
+      pos = pos == first ? first : pos - 2U; // the last two starts of the last block are the tail's
       if constexpr (MemberTail) {
         return alternation_members_tail(text, pos, mem, cnt, match_at);
       }
