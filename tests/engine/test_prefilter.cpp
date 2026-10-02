@@ -1059,9 +1059,10 @@ TEST(literal_adaptive_search_switches_only_where_the_rarest_byte_is_common)
   EXPECT_EQ(spans, want);
 }
 
-// A state builds its per-subject memos on first use and keys them by the subject's `data()`. A fresh state's key is
-// null, as a subject's `data()` can be: the memo's absence, not the key, must say that none is held.
-TEST(subject_memos_are_built_for_a_null_subject)
+// A state keys its per-subject memos by the subject's `data()`. The literal one is built on first use, and a fresh
+// state's key is null, as a subject's `data()` can be: the memo's absence, not the key, must say that none is
+// held. The alternation density is judged anew whenever the subject changes.
+TEST(subject_memos_follow_the_subject)
 {
   const auto literal     {dynamic_storage::compile("needle", real::flags::none)};
   const auto alternation {dynamic_storage::compile("cat|dog|eel", real::flags::none)};
@@ -1077,10 +1078,13 @@ TEST(subject_memos_are_built_for_a_null_subject)
                             const real::detail::program_view alt_view {alternation.view()};
                             State                            alt_state;
                             const real::detail::pike_vm      alt_vm(alt_view, alt_state);
-                            EXPECT(alt_vm.alternation_density_seen(std::string_view {}) == nullptr);
-                            EXPECT(!alt_vm.alternation_density_for(std::string_view {}).decided);
-                            EXPECT(alt_vm.alternation_density_seen(std::string_view {}) != nullptr);
-                            EXPECT(alt_vm.alternation_density_seen("a subject"sv) == nullptr);
+                            const std::string_view first {"a subject"};
+                            const std::string_view other {"another one"};
+                            alt_vm.alternation_density_for(first).decided = true;
+                            EXPECT(alt_vm.alternation_density_seen(first) != nullptr);
+                            EXPECT(alt_vm.alternation_density_seen(other) == nullptr); // decided for another subject: not this one's
+                            EXPECT(!alt_vm.alternation_density_for(other).decided);    // judged anew
+                            EXPECT(alt_vm.alternation_density_seen(first) == nullptr);
                           }};
   check.template operator()<real::detail::pike_state>();                  // the test harness's state
   check.template operator()<real::detail::dynamic_storage::state_type>(); // real::regex's own

@@ -765,26 +765,26 @@ namespace real::detail {
     //! \brief Isolated sub-scratch for bounded lookaround evaluation, built on first use — see
     //!        \ref real::detail::dynamic_storage::state_type for the measurement that made it lazy.
     std::optional<lookaround_scratch>  lookaround;
-    capture_pool                       pool;                              //!< copy-on-write capture blocks (heap-backed).
-    std::optional<lazy_dfa>            fwd_dfa;                           //!< Fallback when immut is null; prefer shared_fwd_dfa.
-    std::optional<reverse_dfa>         rev_dfa;                           //!< Fallback reverse; prefer shared_rev_dfa.
-    const void        *                dfa_program         {nullptr};     //!< Program the per-state DFAs were built for (fallback).
-    std::optional<reverse_dfa>         il_prefix_rev;                     //!< Fallback IL prefix reverse; prefer shared_il_prefix_rev.
-    const void        *                il_prefix_for       {nullptr};     //!< Fallback: prefix program il_prefix_rev was built for.
-    const void        *                il_text             {nullptr};     //!< IL: the haystack \ref il_abandoned refers to (reset the flag when it changes).
-    bool                               il_abandoned        {false};       //!< IL: a linearity/density guard tripped on this haystack — stay on the core.
-    std::uint32_t                      il_density_cands    {};            //!< IL candidates seen on this haystack (density sample).
-    std::size_t                        il_density_origin   {npos};        //!< Byte offset of the first IL candidate this haystack.
-    const void        *                rare_disc_text      {nullptr};     //!< Rare-disc: haystack \ref rare_disc_abandoned refers to.
-    bool                               rare_disc_abandoned {false};       //!< Rare-disc density guard: stay on prefix for this haystack.
-    const void        *                ac_text             {nullptr};     //!< AC: the haystack \ref ac_dense was decided on.
-    bool                               ac_decided          {false};       //!< AC: the density sample has run on this haystack.
-    bool                               ac_dense            {false};       //!< AC: candidates are dense enough that the automaton wins.
-    const void        *                lit_text            {nullptr};     //!< Literal search: the subject \ref lit_memo refers to.
-    std::optional<literal_memo>        lit_memo;                          //!< Literal search: that subject's densities, built at its first literal search.
-    const alternation_pairs *          alt_pairs           {nullptr};     //!< Alternation: the regex's probe pairs (\ref regex_immutables::alt_pairs), null until built.
-    const void        *                alt_text            {nullptr};     //!< Alternation: the subject \ref alt_density refers to.
-    std::optional<alternation_density> alt_density;                       //!< Alternation: that subject's first-byte density, built at its first sample.
+    capture_pool                       pool;                          //!< copy-on-write capture blocks (heap-backed).
+    std::optional<lazy_dfa>            fwd_dfa;                       //!< Fallback when immut is null; prefer shared_fwd_dfa.
+    std::optional<reverse_dfa>         rev_dfa;                       //!< Fallback reverse; prefer shared_rev_dfa.
+    const void        *                dfa_program         {nullptr}; //!< Program the per-state DFAs were built for (fallback).
+    std::optional<reverse_dfa>         il_prefix_rev;                 //!< Fallback IL prefix reverse; prefer shared_il_prefix_rev.
+    const void        *                il_prefix_for       {nullptr}; //!< Fallback: prefix program il_prefix_rev was built for.
+    const void        *                il_text             {nullptr}; //!< IL: the haystack \ref il_abandoned refers to (reset the flag when it changes).
+    bool                               il_abandoned        {false};   //!< IL: a linearity/density guard tripped on this haystack — stay on the core.
+    std::uint32_t                      il_density_cands    {};        //!< IL candidates seen on this haystack (density sample).
+    std::size_t                        il_density_origin   {npos};    //!< Byte offset of the first IL candidate this haystack.
+    const void        *                rare_disc_text      {nullptr}; //!< Rare-disc: haystack \ref rare_disc_abandoned refers to.
+    bool                               rare_disc_abandoned {false};   //!< Rare-disc density guard: stay on prefix for this haystack.
+    const void        *                ac_text             {nullptr}; //!< AC: the haystack \ref ac_dense was decided on.
+    bool                               ac_decided          {false};   //!< AC: the density sample has run on this haystack.
+    bool                               ac_dense            {false};   //!< AC: candidates are dense enough that the automaton wins.
+    const void        *                lit_text            {nullptr}; //!< Literal search: the subject \ref lit_memo refers to.
+    std::optional<literal_memo>        lit_memo;                      //!< Literal search: that subject's densities, built at its first literal search.
+    const alternation_pairs *          alt_pairs           {nullptr}; //!< Alternation: the regex's probe pairs (\ref regex_immutables::alt_pairs), null until built.
+    const void        *                alt_text            {nullptr}; //!< Alternation: the subject \ref alt_density refers to.
+    alternation_density                alt_density         {};        //!< Alternation: that subject's first-byte density (two flags, cheap to build with every state).
     // AC fields placed LAST (own reason as pattern_hints::alternation_branch_count): inserting
     // here right after il_prefix_for would shift il_text/
     // il_abandoned/il_density_cands/il_density_origin (the inner-literal density-gate fields, read
@@ -6105,11 +6105,11 @@ namespace real::detail {
      */
     [[nodiscard]] alternation_density& alternation_density_for(std::string_view text) const
     {
-      if (state_.alt_density.has_value() && state_.alt_text == static_cast<const void*>(text.data())) {
-        return *state_.alt_density;
+      if (state_.alt_text != static_cast<const void*>(text.data())) {
+        state_.alt_density = {}; // a fresh haystack: sampled anew
+        state_.alt_text    = static_cast<const void*>(text.data());
       }
-      state_.alt_text = static_cast<const void*>(text.data());
-      return state_.alt_density.emplace(); // a fresh haystack: sampled anew
+      return state_.alt_density;
     }
 
     /*!
@@ -6119,8 +6119,7 @@ namespace real::detail {
      */
     [[nodiscard]] const alternation_density* alternation_density_seen(std::string_view text) const
     {
-      return state_.alt_density.has_value() && state_.alt_text == static_cast<const void*>(text.data()) ? &*state_.alt_density
-                                                                                                        : nullptr;
+      return state_.alt_text == static_cast<const void*>(text.data()) ? &state_.alt_density : nullptr;
     }
 
     /*!
