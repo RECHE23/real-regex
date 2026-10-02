@@ -14,7 +14,9 @@ WHAT IT HOLDS, AND HOW. Two numbers, each against a stamp versioned in tools/fix
     standard library, so a stamp is matched exactly.
   - per-call instructions: callgrind counts a short call of five shapes (a literal, an alternation, an
     anchored match, a class, a miss), as the difference between 2 000 and 1 000 calls, so construction and
-    process start cancel. Counted, not timed: the count is exact, where a stopwatch's floor is the size of
+    process start cancel; and one walk of a sixth, `iterate` (find_iter over 64 KiB reading a group of a
+    pattern that is not one-pass, so each confirmed window's groups are filled), as the difference between
+    four walks and two. Counted, not timed: the count is exact, where a stopwatch's floor is the size of
     these effects. Only the probe's own instructions count -- REAL's code, inlined there -- and not the C
     library's: glibc picks its memchr and memcmp by the CPU's vector features, which differ between an
     emulated host and a runner, and between runners. The count is still the compiler's, so the stamp is keyed by system
@@ -43,9 +45,10 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 STAMPS = ROOT / "tools" / "fixed_cost_stamps.json"
 DOCKERFILE = ROOT / "tools" / "fixed_cost.Dockerfile"
 IMAGE = "real-regex-fixed-cost:ubuntu-24.04"
-SHAPES = ("literal", "alternation", "anchored", "class", "miss")
+SHAPES = ("literal", "alternation", "anchored", "class", "miss", "iterate")
 TOLERANCE = 0.02  # within it, a stamp holds: GCC patch releases move a count by less than this
 CALLS = (1000, 2000)
+WALKS = (2, 4)  # "iterate" counts whole walks over 64 KiB, not short calls
 
 SIZE_PROBE = r"""
 #include <cstdio>
@@ -69,25 +72,51 @@ int main()
 CALL_PROBE = r"""
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <string_view>
 #include <real/real.hpp>
+// One function per shape, kept out of line, so that adding a shape does not move another's inlining.
+namespace {
+  [[gnu::noinline]] long calls_of(const real::regex& re, std::string_view subject, bool anchored, long calls)
+  {
+    long hits {0};
+    for (long i = 0; i < calls; ++i) {
+      hits += (anchored ? re.match(subject) : re.search(subject)).matched() ? 1 : 0;
+    }
+    return hits;
+  }
+  [[gnu::noinline]] long literal(long n)     { return calls_of(real::regex {"abc"}, "xxxxabcxxxx", false, n); }
+  [[gnu::noinline]] long alternation(long n) { return calls_of(real::regex {"cat|dog|eel"}, "a dog here", false, n); }
+  [[gnu::noinline]] long anchored(long n)    { return calls_of(real::regex {"[a-z]+[0-9]"}, "abc1", true, n); }
+  [[gnu::noinline]] long klass(long n)       { return calls_of(real::regex {"\\d+"}, "ab 42 cd", false, n); }
+  [[gnu::noinline]] long miss(long n)        { return calls_of(real::regex {"zq+"}, "a subject of forty bytes, no hit in it", false, n); }
+  // A walk that reads a group of a pattern that is not one-pass, over a subject long enough for the
+  // inner-literal route: the groups of each confirmed window.
+  [[gnu::noinline]] long iterate(long walks)
+  {
+    std::string subject;
+    while (subject.size() < 65536) { subject += "some filler words here and there, error 2026-06-13 req=a3f9c1d8 x\n"; }
+    const real::regex re {"(info|error|warn)\\s+\\d{4}-\\d{2}-\\d{2}\\s+req=[a-f0-9]+"};
+    long hits {0};
+    for (long i = 0; i < walks; ++i) {
+      for (const auto& m : re.find_iter(subject)) { hits += m.str(1).empty() ? 0 : 1; }
+    }
+    return hits;
+  }
+}
 int main(int argc, char** argv)
 {
   if (argc != 3) { return 2; }
   const std::string_view shape {argv[1]};
-  const long             calls {std::atol(argv[2])};
-  long                   hits  {0};
-  const auto run {[&](const real::regex& re, std::string_view subject, bool anchored) {
-    for (long i = 0; i < calls; ++i) {
-      hits += (anchored ? re.match(subject) : re.search(subject)).matched() ? 1 : 0;
-    }
-  }};
-  long want {calls};
-  if (shape == "literal")          { run(real::regex {"abc"}, "xxxxabcxxxx", false); }
-  else if (shape == "alternation") { run(real::regex {"cat|dog|eel"}, "a dog here", false); }
-  else if (shape == "anchored")    { run(real::regex {"[a-z]+[0-9]"}, "abc1", true); }
-  else if (shape == "class")       { run(real::regex {"\\d+"}, "ab 42 cd", false); }
-  else if (shape == "miss")        { run(real::regex {"zq+"}, "a subject of forty bytes, no hit in it", false); want = 0; }
+  const long             n     {std::atol(argv[2])};
+  long                   hits  {-1};
+  long                   want  {n};
+  if (shape == "literal")          { hits = literal(n); }
+  else if (shape == "alternation") { hits = alternation(n); }
+  else if (shape == "anchored")    { hits = anchored(n); }
+  else if (shape == "class")       { hits = klass(n); }
+  else if (shape == "miss")        { hits = miss(n); want = 0; }
+  else if (shape == "iterate")     { hits = iterate(n); want = hits > 0 && hits % n == 0 ? hits : -2; }
   else { return 2; }
   std::printf("%ld\n", hits);
   return hits == want ? 0 : 1;
@@ -143,7 +172,9 @@ echo "gcc $major"
 . /etc/os-release
 echo "os $ID-$VERSION_ID"
 for shape in SHAPES; do
-  for calls in CALLS; do
+  counts="CALLS"
+  [ "$shape" = iterate ] && counts="WALKS"
+  for calls in $counts; do
     valgrind --tool=callgrind --callgrind-out-file=/tmp/fixed_cost.cg /tmp/fixed_cost_probe "$shape" "$calls" \
       >/dev/null 2>&1
     callgrind_annotate --threshold=100 --show-percs=no /tmp/fixed_cost.cg 2>/dev/null \
@@ -163,8 +194,11 @@ def parse_counts(text):
     totals = {}
     for shape, calls, refs in re.findall(r"^(\w+) (\d+) (\d+)$", text, re.M):
         totals.setdefault(shape, {})[int(calls)] = int(refs)
-    lo, hi = CALLS
-    per_call = {s: (t[hi] - t[lo]) // (hi - lo) for s, t in totals.items() if lo in t and hi in t}
+    per_call = {}
+    for s, t in totals.items():
+        lo, hi = WALKS if s == "iterate" else CALLS
+        if lo in t and hi in t:
+            per_call[s] = (t[hi] - t[lo]) // (hi - lo)
     missing = [s for s in SHAPES if s not in per_call]
     if missing:
         raise RuntimeError(f"no count for {missing}:\n{text}")
@@ -178,7 +212,8 @@ def parse_counts(text):
 
 def measure_calls():
     """Per-call counts natively on x86-64 Linux, else in the container, else None (and why)."""
-    script = COUNT_SCRIPT.replace("SHAPES", " ".join(SHAPES)).replace("CALLS", " ".join(map(str, CALLS)))
+    script = (COUNT_SCRIPT.replace("SHAPES", " ".join(SHAPES)).replace("WALKS", " ".join(map(str, WALKS)))
+              .replace("CALLS", " ".join(map(str, CALLS))))
     with tempfile.TemporaryDirectory() as tmp:
         probe = pathlib.Path(tmp) / "calls.cpp"
         probe.write_text(CALL_PROBE, encoding="utf-8")
@@ -216,8 +251,12 @@ def self_test():
     assert judge({"calls/x86_64-ubuntu-24.04-gcc14": {"literal": 1000}}, stamps)  # an unstamped compiler
     assert judge({"calls/x86_64-debian-12-gcc13": {"literal": 1000}}, stamps)     # an unstamped system
     assert judge({key: {"class": 1000}}, stamps)                               # an unstamped shape
-    text = "gcc 13\nos ubuntu-24.04\n" + "".join(f"{s} {CALLS[0]} 5000\n{s} {CALLS[1]} 9000\n" for s in SHAPES)
-    assert parse_counts(text) == {key: {s: 4 for s in SHAPES}}
+    text = "gcc 13\nos ubuntu-24.04\n" + "".join(
+        f"{s} {(WALKS if s == 'iterate' else CALLS)[0]} 5000\n{s} {(WALKS if s == 'iterate' else CALLS)[1]} 9000\n"
+        for s in SHAPES)
+    want = {s: 4 for s in SHAPES}
+    want["iterate"] = 4000 // (WALKS[1] - WALKS[0])
+    assert parse_counts(text) == {key: want}
     assert parse_counts("sizes libstdc++ 10 20 30\n" + text)["sizes/x86_64-libstdc++"] == {
         "regex": 10, "immutables": 20, "state": 30}
     try:

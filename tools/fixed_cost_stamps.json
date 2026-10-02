@@ -1,10 +1,11 @@
 {
   "calls/x86_64-ubuntu-24.04-gcc13": {
-    "alternation": 793,
-    "anchored": 1197,
-    "class": 707,
-    "literal": 617,
-    "miss": 672
+    "alternation": 791,
+    "anchored": 1237,
+    "class": 717,
+    "iterate": 4757830,
+    "literal": 615,
+    "miss": 670
   },
   "sizes/arm64-libc++": {
     "immutables": 1368,
