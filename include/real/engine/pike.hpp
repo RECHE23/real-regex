@@ -6304,6 +6304,30 @@ namespace real::detail {
     }
 
     /*!
+     * \brief The fingerprint buckets the three bytes at \p at admit, as the vector scans compute them for a block: a
+     *        bucket's bit survives where both nibbles of each byte carry it. Every bucket where fewer than three
+     *        bytes remain, as the scans leave those starts to the first-byte table.
+     * \param[in] plan The fingerprint (its `nibbles` valid).
+     * \param[in] text The subject.
+     * \param[in] at   The start.
+     * \return The bucket bits.
+     */
+    [[nodiscard]] static std::uint8_t nibble3_buckets(const alternation_pairs& plan,
+                                                      std::string_view         text,
+                                                      std::size_t              at)
+    {
+      if (at + 3 > text.size()) {
+        return 0xFF;
+      }
+      unsigned bits {0xFFU};
+      for (std::size_t k = 0; k < 3; ++k) {
+        const unsigned b {static_cast<unsigned char>(text[at + k])};
+        bits &= static_cast<unsigned>(plan.nibble_lo[k][b & 0x0FU]) & static_cast<unsigned>(plan.nibble_hi[k][b >> 4U]);
+      }
+      return static_cast<std::uint8_t>(bits);
+    }
+
+    /*!
      * \brief Search route for an alternation of literals with more first bytes than the small set holds: the
      *        blocks the nibble fingerprint marks, verified in branch order (priority unchanged), then the last
      *        bytes by the first-byte table. Taken per subject on a sample: where false candidates are dense
@@ -6331,17 +6355,28 @@ namespace real::detail {
           return std::nullopt;
         }
         const auto& code {prog_.code};
-        // As run_alternation's: the first branch in source order that matches at the start, boundaries included.
+        if (state_.alt_pairs == nullptr) {
+          state_.alt_pairs = alternation_pairs_ready();
+        }
+        const alternation_pairs* const plan {state_.alt_pairs};
+        // As run_alternation's: the first branch in source order that matches at the start, boundaries included --
+        // among the branches whose fingerprint bucket (branch index mod 8) the start's three bytes admit. A
+        // branch that matches there admits them, so the others cannot, and skipping them keeps the priority.
         const auto match_at = [&](std::size_t match_start) -> std::size_t {
-                                std::size_t pc {prog_.hints.body_pc == 0
-                                                  ? std::size_t {1}
-                                                  : static_cast<std::size_t>(prog_.hints.body_pc)};
-                                while (true) {
-                                  const bool        is_split  {code[pc].op == opcode::split};
-                                  const std::size_t branch    {is_split ? static_cast<std::size_t>(code[pc].primary_target) : pc};
-                                  const std::size_t match_end {match_byte_klass_run(text, branch, match_start)};
-                                  if (match_end != npos && wb_boundaries_ok(match_start, match_end)) {
-                                    return match_end;
+                                const unsigned buckets {plan != nullptr && plan->nibbles
+                                                          ? unsigned {nibble3_buckets(*plan, text, match_start)}
+                                                          : 0xFFU};
+                                std::size_t        pc      {prog_.hints.body_pc == 0
+                                                              ? std::size_t {1}
+                                                              : static_cast<std::size_t>(prog_.hints.body_pc)};
+                                for (std::size_t index {0};; ++index) {
+                                  const bool        is_split {code[pc].op == opcode::split};
+                                  const std::size_t branch   {is_split ? static_cast<std::size_t>(code[pc].primary_target) : pc};
+                                  if (((buckets >> (index % 8U)) & 1U) != 0U) {
+                                    const std::size_t match_end {match_byte_klass_run(text, branch, match_start)};
+                                    if (match_end != npos && wb_boundaries_ok(match_start, match_end)) {
+                                      return match_end;
+                                    }
                                   }
                                   if (!is_split) {
                                     return npos;

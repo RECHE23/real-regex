@@ -540,3 +540,22 @@ TEST(alternation_plan_follows_a_copy_assignment_that_reuses_the_program)
     EXPECT_EQ(re.count_matches(s), 2500U);
   }
 }
+
+// The wide route verifies a candidate only against the branches of the buckets its three bytes admit. Where fewer
+// than three bytes remain, the scans leave the start to the first-byte table and every branch is tried: a
+// two-byte branch matching in the subject's last two bytes is still found.
+TEST(alternation_wide_finds_a_two_byte_branch_at_the_end)
+{
+  const real::regex re {"(?i)cqz|dqz|fqz|bqz|tqz|pq"};
+  std::string       s  {repeated("dab cfd adc fbd tqb BqA ", 20000)};
+  s += " cQz pq";
+  real::detail::alternation_wide_scans() = 0;
+  const span_list got  {spans_of(re, s)};
+  const auto      wide {real::detail::alternation_wide_scans().load()};
+  real::detail::alternation_pairs_disabled() = true;
+  const span_list walk {spans_of(re, s)};
+  real::detail::alternation_pairs_disabled() = false;
+  EXPECT(got == walk);
+  EXPECT_EQ(got.size(), 2U);
+  EXPECT(fingerprint_here() ? wide > 0U : wide == 0U); // the route under test took the subject
+}
