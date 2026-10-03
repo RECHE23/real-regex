@@ -2,6 +2,26 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.10.2
+
+10.2 (**four wrong answers fixed, a tail after an inner literal kept on its route**): **THE TABLES ARE NOT
+RE-RUN, AND THE STAMP STAYS AT `2026.9.11` + tree `79e6792`.** Each change was measured on one host before and
+after (2026-10-03):
+- **The inner-literal route's soundness** (0108613, rows on that route whose prefix is a class loop or fixed
+  width are untouched; none of the 100 benchmark patterns changes route): `(\w+)_(\w+)` over identifiers,
+  count 757 → 591 µs, find_iter with groups 762 → 835 µs (groups that were wrong are now right).
+- **Batched walks end at a spent subject** (8779091, c3dcb6c; every find_iter/count row on a batched route whose
+  last match is early): §B `alternation findall` 13.0 → 9.6 µs against 10.1 (11.6 published), `\d+` over 1 MiB
+  with one early match 975 → 488 µs; rows whose matches reach the end unchanged.
+- **The wide alternation** (01104d4, 2126b09; §A `alternation` past eight first bytes): twelve words over issue
+  #3's corpus, arm64 1 610 → 1 200 µs, x86-64 829.7 → 666.1 M instructions; small-set alternations within 0.5 %.
+- **One-pass group extraction** (b8f55ab; rows that iterate a one-pass pattern with groups, §B `emails findall
+  groups` 780 → 702 µs): arm64 −14 to −24 %, x86-64 −8 %; `sizeof(real::regex)` 1 904 → 1 928 bytes (arm64),
+  1 920 → 1 944 (x86-64).
+- **An optional tail after an inner literal** (cc1db2a; no benchmark row has the shape): `\w+://[^/ ]+/\S*`
+  over a 200 KB log, arm64 433 → 71 µs.
+No row's stamp moves. The multi-pattern section keeps its `600b0fb` stamp.
+
 ## v2026.10.1
 
 10.1 (**literals at the regex crate's pace, alternations near it, and a guard on what every call costs**): **THE
