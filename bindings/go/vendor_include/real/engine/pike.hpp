@@ -1696,7 +1696,7 @@ namespace real::detail {
             out_slots.assign(prog_.slot_count, npos);
             out_slots[0] = s;
             out_slots[1] = e;
-            fill_two_run_saves(s, h, lit_end, e, out_slots);
+            fill_two_run_saves(text, s, h, lit_end, e, out_slots);
             return true;
           }
           // No suffix member: this candidate cannot match. min_pre_start is not advanced -- the walk reports
@@ -5516,27 +5516,88 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Where the two-run shape's prefix class run, continued forward from \p from, stops.
+     * \param[in] text  The subject.
+     * \param[in] from  A position inside or at the end of the run.
+     * \param[in] limit Where to stop at the latest.
+     * \return The first position at or after \p from that is not a member, or \p limit.
+     */
+    [[nodiscard]] constexpr std::size_t prefix_run_end(std::string_view text,
+                                                       std::size_t      from,
+                                                       std::size_t      limit) const
+    {
+      std::size_t r {from};
+      if (!prog_.hints.il_rev_is_cp) {
+        const char_class& cc {prog_.classes[static_cast<std::size_t>(prog_.hints.il_rev_class)]};
+        while (r < limit && cc.test(static_cast<std::uint8_t>(text[r]))) {
+          ++r;
+        }
+        return r;
+      }
+      const cp_class& cc {prog_.cp_classes[static_cast<std::size_t>(prog_.hints.il_rev_class)]};
+      while (r < limit) {
+        if (const auto next {static_cast<std::uint8_t>(text[r])}; next < 0x80U) {
+          if (!cc.ascii.test(next)) {
+            break;
+          }
+          ++r;
+          continue;
+        }
+        const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text, r)};
+        if (!dc.valid || !cp_class_holds(cc, dc.cp)) {
+          break;
+        }
+        r += dc.length;
+      }
+      return r;
+    }
+
+    /*!
      * \brief Fills capture slots for a `class+ <literal> class+` match, by anchor rather than by offset.
      *
      * The two-run shape has no fixed widths, so \ref fill_fixed_saves's running offset does not apply — but
      * every `save` in it still lands on one of four positions, and which one is decided by where the save
      * sits relative to the two loops and the literal. Walking the program once per MATCH is the same trick
      * \ref fill_fixed_saves uses, and the program is a dozen instructions.
+     * When the literal can occur inside the prefix run (\ref pattern_hints::il_fwd_last), the greedy prefix
+     * gives back only down to the LAST occurrence that still leaves the suffix a member, so the literal is
+     * moved there first: the span is the candidate's, the groups split later.
+     *
+     * \param[in]  text     The subject.
      * \param[in]  s        Match start (the prefix run's beginning).
-     * \param[in]  h        The literal's own start.
-     * \param[in]  lit_end  One past the literal.
+     * \param[in]  h        The candidate literal's start.
+     * \param[in]  lit_end  One past the candidate literal.
      * \param[in]  e        Match end (the suffix run's end).
      * \param[out] out_slots Slots to fill.
      */
     template <typename OutSlots>
-    constexpr void fill_two_run_saves(std::size_t s,
-                                      std::size_t h,
-                                      std::size_t lit_end,
-                                      std::size_t e,
-                                      OutSlots&   out_slots) const
+    constexpr void fill_two_run_saves(std::string_view text,
+                                      std::size_t      s,
+                                      std::size_t      h,
+                                      std::size_t      lit_end,
+                                      std::size_t      e,
+                                      OutSlots&        out_slots) const
     {
-      if (prog_.slot_count <= 2) {
-        return;
+      if (prog_.slot_count <= 2 || prog_.hints.capture_free_walk) {
+        return; // no group to place, or a walk that reads none (count_matches)
+      }
+      if (prog_.hints.il_fwd_last) {
+        const std::size_t len {lit_end - h};
+        std::size_t       r   {prefix_run_end(text, h, e)};
+        if (r + len >= e) {
+          r = e - len - 1; // the suffix needs one member past the literal
+        }
+        for (std::size_t p {r}; p > h; --p) {
+          std::size_t i {0};
+          while (i < len && static_cast<std::uint8_t>(text[p + i]) == prog_.hints.inner_literal[i]) {
+            ++i;
+          }
+          if (i == len) {
+            h = p;
+            break;
+          }
+        }
+        lit_end = h + len;
       }
       std::size_t anchor        {s};
       bool        after_literal {false};

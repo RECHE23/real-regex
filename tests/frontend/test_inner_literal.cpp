@@ -120,6 +120,53 @@ TEST(inner_literal_nullable_alt_search_is_leftmost)
   }
 }
 
+// The scan confirms each literal occurrence from the leftmost start its prefix reaches, so an occurrence
+// inside an earlier match's prefix must not reach only a LATER start, and the two-run confirm must not
+// place the literal where the greedy prefix would not. Four shapes answered wrong, each against Python's
+// `re`: a prefix that shrinks in fixed steps (an alternation of unequal widths, a loop over a wider body)
+// and a two-run whose prefix class holds the literal (the end, or the groups).
+TEST(inner_literal_rigid_prefix_search_is_leftmost)
+{
+  struct expected
+  {
+    std::string_view pattern;
+    std::string_view text;
+    std::size_t      start;
+    std::size_t      end;
+    std::size_t      g1_start;
+    std::size_t      g1_end;
+  };
+  constexpr expected cases[] {
+    {.pattern = R"((xab|a)bb)", .text = "xabbb", .start = 0, .end = 5, .g1_start = 0, .g1_end = 3},
+    {.pattern = R"((ba|bb)+[ax]a)", .text = "aabbbaaaaax", .start = 2, .end = 8, .g1_start = 4, .g1_end = 6},
+    {.pattern = R"([abx]+ba[ab]+)", .text = "aaaxbabaaxbab", .start = 0, .end = 13, .g1_start = real::npos, .g1_end = real::npos},
+    {.pattern = R"((\w+)_(\w+))", .text = "a_b_c", .start = 0, .end = 5, .g1_start = 0, .g1_end = 3},
+  };
+  for (const expected& c : cases) {
+    real::regex re {c.pattern};
+    EXPECT(!re.fullmatch("warm")); // builds the immutables the route reads
+    const auto m   {re.search(c.text)};
+    EXPECT(m);
+    EXPECT_EQ(m.start(), c.start);
+    EXPECT_EQ(m.end(), c.end);
+    if (c.g1_start != real::npos) {
+      EXPECT_EQ(m.start(1), c.g1_start);
+      EXPECT_EQ(m.end(1), c.g1_end);
+    }
+  }
+  // The guards decline the hazard only: these keep the route and the two-run confirm they had.
+  EXPECT(is_lit(extract(R"((info|error|warn)\s+\d{4}-\d{2}-\d{2}\s+req=[a-f0-9]+)"), "req="));
+  EXPECT(is_lit(extract(R"([a-z]+ing\b)"), "ing"));
+  EXPECT(is_lit(extract(R"(\d{1,3}\.\d{1,3})"), "."));
+  EXPECT(real::regex {R"((\w+)@(\w+))"}.raw_program().hints.il_fwd_class >= 0);
+  EXPECT(!real::regex {R"((\w+)@(\w+))"}.raw_program().hints.il_fwd_last);
+  // `_` is a word byte: the two runs keep the span and move the literal to its last occurrence.
+  EXPECT(real::regex {R"((\w+)_(\w+))"}.raw_program().hints.il_fwd_class >= 0);
+  EXPECT(real::regex {R"((\w+)_(\w+))"}.raw_program().hints.il_fwd_last);
+  // `[ab]` cannot cross `x`: no run keeps the span, so the confirm runs the engine.
+  EXPECT(real::regex {R"([abx]+ba[ab]+)"}.raw_program().hints.il_fwd_class < 0);
+}
+
 TEST(inner_literal_declined_soundness)
 {
   // The acid: a bypassing path means the literal is NOT required -> no extraction from inside it.
