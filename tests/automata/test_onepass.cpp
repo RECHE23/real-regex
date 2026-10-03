@@ -441,6 +441,22 @@ TEST(onepass_trivial_accessors)
   EXPECT_EQ(op.slot_count(), std::size_t {6});                                                         // group 0 (start/end) + two user groups
 }
 
+TEST(onepass_built_table_is_held_once)
+{
+  // extract walks the flattened rows, so a built node keeps no edge row of its own: the table would
+  // otherwise sit in every eligible regex twice. The rows still answer, which the extraction shows.
+  const byte_program  bp {byte_prog("(\\w+)@(\\w+)")};
+  const onepass       op {bp};
+  EXPECT(op.eligible());
+  for (const real::detail::onepass_node& node : op.nodes()) {
+    EXPECT(node.edge.empty());
+  }
+  std::vector<std::size_t> slots;
+  EXPECT(op.extract("ab@cd", 0, 5, slots));
+  EXPECT_EQ(slots[2], std::size_t {0});
+  EXPECT_EQ(slots[5], std::size_t {5});
+}
+
 TEST(onepass_epsilon_cycle_and_second_distinct_match_decline)
 {
   // Two more not-one-pass shapes beyond the canonical fixtures above: a nullable loop (an epsilon cycle --
