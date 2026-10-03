@@ -559,3 +559,23 @@ TEST(alternation_wide_finds_a_two_byte_branch_at_the_end)
   EXPECT_EQ(got.size(), 2U);
   EXPECT(fingerprint_here() ? wide > 0U : wide == 0U); // the route under test took the subject
 }
+
+// A walk over an alternation the wide route takes is batched: its filler runs the route's scan from each match's
+// end instead of re-entering run() per match, so a walk with many matches fills several times, and finds what the
+// walk without the fingerprint finds.
+TEST(alternation_wide_walk_is_batched)
+{
+  const real::regex re {"the|and|for|with|not|but|some|just|more|here|words|all"};
+  const std::string s  {repeated("the quick brown fox jumps over the lazy dog while the cat sleeps near the fire\n"
+                                 "some ordinary prose without anything interesting in it at all, just words here\n",
+                                 64000)};
+  real::detail::batch_fills() = 0;
+  const span_list got   {spans_of(re, s)};
+  const auto      fills {real::detail::batch_fills().load()};
+  real::detail::alternation_pairs_disabled() = true;
+  const span_list walk  {spans_of(re, s)};
+  real::detail::alternation_pairs_disabled() = false;
+  EXPECT(got == walk);
+  EXPECT(got.size() > 3000U);
+  EXPECT(fingerprint_here() ? fills > 10U : true);
+}
