@@ -126,6 +126,13 @@ namespace {
     {.pat = "(?i)cafe"},
     {.pat = R"(https?://[^\s]+)"},
     {.pat = "(\\w+)@(\\w+)"},
+    // The inner literal kept before an optional: the route confirms the tail with the full engine.
+    {.pat = "\\w+@\\w*"},
+    {.pat = R"((\w+)@(\w+)\.(\w*))"},
+    {.pat = "\\w+://\\S*"},
+    {.pat = R"(\d+\.\d*)"},
+    {.pat = "\\w+, ?\\w+"},
+    {.pat = R"(\w+=\w*\b)"},
     {.pat = "[a-z]+", .flags = real::flags::bytes},
     {.pat = "\\C+", .flags = real::flags::bytes},
   };
@@ -361,6 +368,7 @@ TEST(route_vs_general_hint_blank_cartesian)
     "\"quoted\"",
     "xhellox",
     "xfoo@barx",
+    "k=v, w=1.5 a.b. x:y z,q 3. j@k.",
     long_hit,
     long_miss,
   };

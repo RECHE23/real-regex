@@ -48,9 +48,26 @@ TEST(inner_literal_d1_pure_lit_alt_only)
   // first-byte/`http` baseline). Mono-byte optional `s?` must decline IL entirely —
   // stays on the prefix/DFA route.
   EXPECT(!extract(R"(https?://[^\s]+)").found());
-  // Optional still declines the whole walk (conservative v1 restored for min==0).
+  // An optional with no inner run before it still declines the whole walk.
   EXPECT(!extract(R"((a)?@b)").found());
   EXPECT(!extract(R"(x*@?y)").found());
+}
+
+TEST(inner_literal_rare_run_before_an_optional_is_kept)
+{
+  // A rare inner run met before an optional is required in every match; the walk keeps it and stops.
+  const auto url {extract(R"(\w+://[^/ ]+/\S*)")};
+  EXPECT(is_lit(url, "://"));
+  EXPECT_EQ(url.prefix_child_count, 1);
+  EXPECT(is_lit(extract(R"(\w+, ?\w+)"), ","));
+  EXPECT(is_lit(extract(R"((\w+)@(\w+)\.(\w*))"), "@"));
+  // Nothing after the optional is taken, though `xyz` alone would outscore `:`.
+  EXPECT(is_lit(extract(R"(\w+:\d?xyz)"), ":"));
+  // A dense byte stays declined: past an optional each candidate costs a full confirm.
+  EXPECT(!extract(R"(\w+ \w*)").found());
+  EXPECT(!extract(R"([a-z]+e[a-z]*)").found());
+  // A head run is never kept here, so `ab` keeps the prefix route.
+  EXPECT(!extract(R"(ab\d?)").found());
 }
 
 // Regression: an alternation with an EMPTY branch is nullable, and a nullable segment cannot stand
