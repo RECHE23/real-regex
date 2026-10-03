@@ -1493,3 +1493,24 @@ TEST(alternation_pair_filter_only_where_first_bytes_are_dense)
   EXPECT(pair_filter ? real::detail::alternation_pair_blocks().load() > 0U
                      : real::detail::alternation_pair_blocks().load() == 0U);
 }
+
+// A batched alternation walk fills its buffer until the subject ends, and a fill that stopped short of the buffer
+// reached that end: the next refill must not scan from the last match to the end again. With one match at the
+// start of a subject whose first bytes are dense, a second scan would cost nearly a second pass of blocks.
+TEST(alternation_batch_scans_its_subject_once)
+{
+  const real::regex re {"cat|dog|bird|fish"};
+  std::string       s  {"a cat "};
+  while (s.size() < 65536U) {
+    s += "cab dab bab fab cob dub bub fob ";
+  }
+  real::detail::alternation_pair_blocks() = 0;
+  std::size_t matches {0};
+  for (const auto& m : re.find_iter(s)) {
+    EXPECT_EQ(m.str(), "cat");
+    ++matches;
+  }
+  EXPECT_EQ(matches, 1U);
+  const auto blocks {real::detail::alternation_pair_blocks().load()};
+  EXPECT(pair_filter ? blocks > 1000U && blocks <= (s.size() / 16U) + 8U : blocks == 0U);
+}

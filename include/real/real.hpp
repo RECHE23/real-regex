@@ -885,6 +885,7 @@ namespace real {
     //!        Its per-match return was 99 % of the row at density -- see that filler's own note.
     bool                                                                  batch_alt_        {};
     bool                                                                  batch_alt_asks_   {}; //!< The alternation batch has yet to ask whether the automaton takes the subject.
+    bool                                                                  batch_alt_spent_  {}; //!< The alternation batch's last fill reached the end of the subject.
     //! \brief Batch the lazy-DFA route (%pike.hpp's `fill_lazy_dfa_spans`) — the fifth, and the
     //!        one shape recognition never reaches.
     bool                                                                  batch_lazy_dfa_   {};
@@ -986,7 +987,10 @@ namespace real {
           }
         }
         detail::prof::tick_route(detail::prof::route::alternation);
-        batch_n_ = bvm.fill_alternation_spans(text_, pos_, batch_, batch_cap);
+        // The filler stops short of the buffer only at the end of the subject, so a fill that did proved the rest
+        // spent: the refill after it ends the walk instead of scanning from the last match to the end again.
+        batch_n_         = batch_alt_spent_ ? 0 : bvm.fill_alternation_spans(text_, pos_, batch_, batch_cap);
+        batch_alt_spent_ = batch_n_ < batch_cap;
       }
       else if (batch_lazy_dfa_) {
         detail::prof::tick_route(detail::prof::route::lazy_dfa_anchored);
