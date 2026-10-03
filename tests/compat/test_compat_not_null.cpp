@@ -88,6 +88,15 @@ TEST(compat_not_null_stays_on_real)
   EXPECT(rc::regex_search(std::string {"ab"}, rc::regex {"(?<=a)b?"}, rx::match_not_null));
 }
 
+// The flag judges the whole match, never a lookahead's own body: `(?=)a` matches "a", which is not empty. libstdc++
+// and libc++ both answer no match here, applying the flag to the empty lookahead, so std is no oracle for it.
+TEST(compat_not_null_spares_an_empty_lookahead_body)
+{
+  EXPECT(search("aaa", 0, rc::regex {"(?=)a"}, rx::match_not_null) == (span {0, 1}));
+  EXPECT(search("ab", 0, rc::regex {"(?=a*)a"}, rx::match_not_null) == (span {0, 1}));
+  EXPECT(search("ab", 0, rc::regex {"(?=)"}, rx::match_not_null) == span {}); // the whole match is still empty
+}
+
 // A pattern that cannot match empty ignores the flag, and keeps its search: the lazy DFA, which the search that
 // refuses empty matches, a VM walk, never takes (`\w+\d{5}` over 1 MB: 2.1 ms against 26.6 ms, arm64, 2026-10-01).
 TEST(compat_not_null_on_a_pattern_that_cannot_match_empty_keeps_the_dfa)

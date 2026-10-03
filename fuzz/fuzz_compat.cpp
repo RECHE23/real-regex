@@ -275,6 +275,17 @@ namespace {
     return honors;
   }
 
+  //! \brief Whether the local std applies match_not_null to the whole match only. libstdc++ and libc++ apply it to
+  //!        a lookahead's own body as well, so `(?=)a` over "a" finds nothing under the flag, where the match "a" is
+  //!        not empty; on such a std a pattern with a lookahead has no oracle under match_not_null.
+  //! \return True on a std that judges only the whole match.
+  bool std_not_null_spares_lookaheads()
+  {
+    static const bool spares {
+      std::regex_search(std::string {"a"}, std::regex {"(?=)a"}, std::regex_constants::match_not_null)};
+    return spares;
+  }
+
   //! \brief Whether the local std follows [re.regiter.incr] over empty matches. compat's traversal of a
   //!        nullable pattern follows the standard, as libstdc++ does; Apple's system libc++ drops the text
   //!        between empty matches (`x*` over "ab" gives "---", not "-a-b-"), and LLVM's libc++ retries after
@@ -483,8 +494,11 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   if (prev_avail) { cmf = cmf | rcc::match_prev_avail; smf |= sc::match_prev_avail; }
   const auto lo {prev_avail ? subject.begin() + 1 : subject.begin()};
 
+  // Under match_not_null a lookahead has no oracle on a std that applies the flag to the lookahead's own body.
+  const bool not_null_oracle {(fbits & 0x20U) == 0U || std_not_null_spares_lookaheads()
+                              || (pattern.find("(?=") == std::string::npos && pattern.find("(?!") == std::string::npos)};
   // A search or match under match_prev_avail runs on REAL; a std that does not honor the flag is no oracle there.
-  if (!prev_avail || std_honors_prev_avail()) {
+  if (not_null_oracle && (!prev_avail || std_honors_prev_avail())) {
     real::compat::smatch cmf_m;
     std::smatch          smf_m;
     if (real::compat::regex_search(lo, subject.end(), cmf_m, compat, cmf)
@@ -508,7 +522,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   for (std::sregex_iterator it(lo, subject.end(), std_re, smf), end; it != end; ++it) {
     std_mf_spans.emplace_back(it->position(0), it->length(0));
   }
-  if (compat_mf_spans != std_mf_spans) {
+  if (not_null_oracle && compat_mf_spans != std_mf_spans) {
     __builtin_trap(); // iterator span-sequence divergence under match flags
   }
 
