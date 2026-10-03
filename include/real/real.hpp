@@ -885,7 +885,7 @@ namespace real {
     //!        Its per-match return was 99 % of the row at density -- see that filler's own note.
     bool                                                                  batch_alt_        {};
     bool                                                                  batch_alt_asks_   {}; //!< The alternation batch has yet to ask whether the automaton takes the subject.
-    bool                                                                  batch_alt_spent_  {}; //!< The alternation batch's last fill reached the end of the subject.
+    bool                                                                  batch_spent_      {}; //!< The last fill stopped short of the buffer at the end of the subject.
     //! \brief Batch the lazy-DFA route (%pike.hpp's `fill_lazy_dfa_spans`) — the fifth, and the
     //!        one shape recognition never reaches.
     bool                                                                  batch_lazy_dfa_   {};
@@ -942,6 +942,15 @@ namespace real {
 #endif
     constexpr bool refill_batch()
     {
+      // Every filler stops short of the buffer only at the end of the subject, unless it says it stopped
+      // without proving that (`batch_partial_`): a short fill that did not say so proved the rest spent, and
+      // the refill after it ends the walk instead of scanning from the last match to the end a second time.
+      if (batch_spent_) {
+        batch_n_ = 0;
+        batch_i_ = 0;
+        return false;
+      }
+      detail::note_batch_fill();
       detail::pike_vm<typename Storage::state_type, true> bvm {prog_, state_};
       if (batch_bytes_) {
         // Four instantiations, chosen once per walk. `wb_edge_` is nearly always false, and when it
@@ -987,10 +996,7 @@ namespace real {
           }
         }
         detail::prof::tick_route(detail::prof::route::alternation);
-        // The filler stops short of the buffer only at the end of the subject, so a fill that did proved the rest
-        // spent: the refill after it ends the walk instead of scanning from the last match to the end again.
-        batch_n_         = batch_alt_spent_ ? 0 : bvm.fill_alternation_spans(text_, pos_, batch_, batch_cap);
-        batch_alt_spent_ = batch_n_ < batch_cap;
+        batch_n_ = bvm.fill_alternation_spans(text_, pos_, batch_, batch_cap);
       }
       else if (batch_lazy_dfa_) {
         detail::prof::tick_route(detail::prof::route::lazy_dfa_anchored);
@@ -1032,7 +1038,8 @@ namespace real {
                               : bvm.template fill_cp_class_spans<false>(text_, pos_, batch_, batch_cap);
         }
       }
-      batch_i_ = 0;
+      batch_spent_ = !batch_partial_ && batch_n_ < batch_cap;
+      batch_i_     = 0;
       return batch_n_ != 0;
     }
 

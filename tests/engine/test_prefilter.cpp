@@ -1514,3 +1514,27 @@ TEST(alternation_batch_scans_its_subject_once)
   const auto blocks {real::detail::alternation_pair_blocks().load()};
   EXPECT(pair_filter ? blocks > 1000U && blocks <= (s.size() / 16U) + 8U : blocks == 0U);
 }
+
+// A batched route whose fill stops short of the buffer only at the end of the subject: a walk with one match calls
+// its filler once, not a second time to scan from that match to the end. One case per such filler (the
+// inner-literal and lazy-DFA fillers may stop without proving the end, and say so).
+TEST(batched_walks_fill_a_spent_subject_once)
+{
+  const std::vector<std::pair<std::string, std::string>> cases {
+    {R"(\d+)", "42"}, {"[0-9]", "7"}, {"needle", "needle"}, {"cat|dog|fish", "dog"}};
+  for (const auto& [pattern, hit] : cases) {
+    const real::regex re {pattern};
+    const std::string s  {hit + " " + std::string(65536U, 'x')};
+    real::detail::batch_fills() = 0;
+    std::size_t matches  {0};
+    for (const auto& m : re.find_iter(s)) {
+      EXPECT_EQ(m.str(), hit);
+      ++matches;
+    }
+    EXPECT_EQ(matches, 1U);
+    if (real::detail::batch_fills().load() != 1U) {
+      std::printf("/%s/: %llu fills\n", pattern.c_str(), static_cast<unsigned long long>(real::detail::batch_fills().load()));
+    }
+    EXPECT_EQ(real::detail::batch_fills().load(), 1U);
+  }
+}
