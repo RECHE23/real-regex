@@ -1284,6 +1284,17 @@ namespace real::detail {
       if constexpr (requires(State & st) {
         st.fwd_dfa;
       }) {
+        if (prog_.slot_count > 2 && !prog_.hints.capture_free_walk) {
+          // Groups to fill on a one-pass pattern whose ends the table knows: one walk finds the end and the
+          // groups, where the forward DFA would read the window first and the table read it again.
+          ensure_op_table();
+          if (prog_.immut != nullptr && prog_.immut->op_table.has_value() && prog_.immut->op_table->ends_known()) {
+            std::size_t       reach {s};
+            const std::size_t e     {prog_.immut->op_table->extract_leftmost(text, s, out_slots, reach)};
+            stop = (e != npos) ? e : reach;
+            return e != npos;
+          }
+        }
         if (!lazy_dfa_route_disabled()) {
           // anchored_end on this thread's confirm DFA (see dfa_lease). begin_scan mirrors the per-regex design
           // forward_end's per-confirm thrash reset; the transition cache itself stays warm across iters.
@@ -1334,7 +1345,7 @@ namespace real::detail {
               out_slots[1] = e;
               return true;
             }
-            ensure_op_table();
+            // The table was built above, where a pattern with groups to fill first asked it for its ends.
             if (prog_.immut != nullptr && prog_.immut->op_table.has_value() && prog_.immut->op_table->eligible()
                 && prog_.immut->op_table->extract(text, s, e, out_slots)) {
               return true;

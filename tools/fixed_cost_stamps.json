@@ -3,18 +3,18 @@
     "alternation": 799,
     "anchored": 1241,
     "class": 717,
-    "iterate": 4663503,
+    "iterate": 4672437,
     "literal": 615,
     "miss": 670
   },
   "sizes/arm64-libc++": {
-    "immutables": 1392,
-    "regex": 1928,
+    "immutables": 1400,
+    "regex": 1936,
     "state": 9392
   },
   "sizes/x86_64-libstdc++": {
-    "immutables": 1400,
-    "regex": 1944,
+    "immutables": 1408,
+    "regex": 1952,
     "state": 9392
   }
 }

@@ -68,9 +68,10 @@ namespace real::detail {
    */
   struct onepass_step
   {
-    std::uint32_t row         {0};     //!< Offset of the target node's row in the flat table; \ref onepass::no_row when unassigned.
-    std::uint32_t assert_mask {0};     //!< As \ref onepass_edge::assert_mask.
-    std::uint64_t cap_mask    {0};     //!< As \ref onepass_edge::cap_mask.
+    std::uint32_t row         {0}; //!< Offset of the target node's row in the flat table; \ref onepass::no_row when unassigned.
+    std::uint32_t target      {0}; //!< The target node, with its \ref onepass::accept_rank in the top byte.
+    std::uint16_t cap_mask    {0}; //!< As \ref onepass_edge::cap_mask (\ref onepass::max_slots bits at most).
+    std::uint16_t assert_mask {0}; //!< As \ref onepass_edge::assert_mask (one bit per \ref assert_kind).
   };
 
   /*!
@@ -83,6 +84,8 @@ namespace real::detail {
     bool                      matches           {false}; //!< Reaching `match` from here (via epsilon).
     std::uint64_t             match_cap_mask    {0};     //!< Slots written when the match is taken.
     std::uint32_t             match_assert_mask {0};     //!< Assertions that must hold at the end for the match (Tier-B).
+    bool                      edge_before_match {false}; //!< An edge was reached before the match in priority order.
+    bool                      edge_after_match  {false}; //!< An edge was reached after it: the match outranks it.
   };
 
   /*!
@@ -101,6 +104,10 @@ namespace real::detail {
 
     static constexpr std::uint32_t no_node          {0xFFFFFFFFU};  //!< "No node yet" sentinel in the pc->node map.
     static constexpr std::uint32_t no_row           {0xFFFFFFFFU};  //!< \ref onepass_step::row of an unassigned edge.
+    static constexpr std::uint8_t  rank_none        {0};            //!< \ref accept_rank of a node that does not accept.
+    static constexpr std::uint8_t  rank_continue    {1};            //!< Accepts, and every edge outranks the match.
+    static constexpr std::uint8_t  rank_match       {2};            //!< Accepts, and the match outranks every edge.
+    static constexpr std::uint8_t  rank_mixed       {3};            //!< Accepts, with edges on both sides of the match.
     static constexpr std::size_t   max_nodes        {65000};        //!< Node cap (RE2's), a memory/DoS bound.
     static constexpr std::size_t   max_slots        {10};           //!< Slot-pointer cap: group 0 + four user groups.
     // SIZING, not behaviour: a dedup hash width. A collision costs a comparison, never an answer, so
@@ -115,6 +122,11 @@ namespace real::detail {
     //! a small automaton refine as long as it needs while a long chain is caught early; the cap sits well
     //! above what the suite's own one-pass patterns reach. Larger declines to the VM, as the other caps do.
     static constexpr std::uint64_t max_minimize_work {100'000'000ULL};
+
+    // onepass_step packs what its fields hold into these widths.
+    static_assert(max_slots <= 16U, "a step's cap_mask holds one bit per slot in 16");
+    static_assert(static_cast<unsigned>(assert_kind::line_end_cr) < 16U, "a step's assert_mask holds one bit per kind in 16");
+    static_assert(max_nodes < (std::size_t {1} << 24U), "a step's target holds a node id below its rank byte");
 
     /*!
      * \param[in] bp        The byte-program to classify.
@@ -267,6 +279,106 @@ namespace real::detail {
         out[static_cast<std::size_t>(std::countr_zero(m))] = e; // saves crossed to the match take e
       }
       return true;
+    }
+
+    /*!
+     * \brief How a node accepts, from the priority order its closure was walked in.
+     * \param[in] node The node.
+     * \return \ref rank_none, \ref rank_continue, \ref rank_match or \ref rank_mixed. A node that accepts with no
+     *         edge has nothing to continue with, so it ranks as \ref rank_match does.
+     */
+    [[nodiscard]] static constexpr std::uint8_t accept_rank(const onepass_node& node) noexcept
+    {
+      if (!node.matches) {
+        return rank_none;
+      }
+      if (node.edge_before_match && node.edge_after_match) {
+        return rank_mixed;
+      }
+      return node.edge_before_match ? rank_continue : rank_match;
+    }
+
+    /*!
+     * \brief Whether \ref extract_leftmost applies: no node accepts with edges on both sides of its match.
+     * \return False when the table is ineligible or some node is \ref rank_mixed.
+     */
+    [[nodiscard]] bool ends_known() const
+    {
+      return eligible_ && ends_known_;
+    }
+
+    /*!
+     * \brief The leftmost-first match anchored at \p s, found and captured in one pass: no end needs to be known
+     *        beforehand, unlike \ref extract.
+     *
+     * Each accepting node met is a candidate end. Where its edges outrank the match (\ref rank_continue) the
+     * walk goes on and a later end replaces it, which is where backtracking would land: a continuation is
+     * tried first and the match is its fallback. Where the match outranks the edges (\ref rank_match) the walk
+     * stops there. The groups are those of the last end kept, so a slot written past it is discarded.
+     *
+     * \pre \ref ends_known().
+     * \param[in]  text  The full subject (assertions read around a position).
+     * \param[in]  s     Match start.
+     * \param[out] out   Capture slots, sized to \ref slot_count, filled on a match.
+     * \param[out] reach How far the walk read, the match's end on a match.
+     * \return The match's end, or \ref real::npos when none begins at \p s.
+     */
+    template <typename OutSlots>
+    [[nodiscard]] std::size_t extract_leftmost(std::string_view text,
+                                               std::size_t      s,
+                                               OutSlots&        out,
+                                               std::size_t&     reach) const
+    {
+      std::array<std::size_t, max_slots> cur  {};
+      std::array<std::size_t, max_slots> kept {};
+      cur.fill(npos);
+      kept.fill(npos);
+      std::uint32_t       stale  {0}; // slots written since the last end kept, or set by its match
+      std::size_t         end    {npos};
+      std::uint32_t       row    {0};
+      std::uint32_t       target {start_};
+      std::size_t         pos    {s};
+      const onepass_step* flat   {steps_.data()};
+      for (;;) {
+        if (const std::uint32_t rank {target >> 24U}; rank != rank_none) {
+          const onepass_node& node {nodes_[target & 0xFFFFFFU]};
+          if (node.match_assert_mask == 0 || asserts_hold(node.match_assert_mask, text, pos)) {
+            for (std::uint32_t m {stale}; m != 0; m &= m - 1) {
+              kept[static_cast<std::size_t>(std::countr_zero(m))] = cur[static_cast<std::size_t>(std::countr_zero(m))];
+            }
+            stale = static_cast<std::uint32_t>(node.match_cap_mask);
+            for (std::uint32_t m {stale}; m != 0; m &= m - 1) {
+              kept[static_cast<std::size_t>(std::countr_zero(m))] = pos;
+            }
+            end = pos;
+            if (rank == rank_match) {
+              break;
+            }
+          }
+        }
+        if (pos == text.size()) {
+          break;
+        }
+        const onepass_step& step {flat[row + alpha_.of[static_cast<std::uint8_t>(text[pos])]]};
+        if (step.row == no_row || (step.assert_mask != 0 && !asserts_hold(step.assert_mask, text, pos))) {
+          break;
+        }
+        for (std::uint32_t m {step.cap_mask}; m != 0; m &= m - 1) {
+          cur[static_cast<std::size_t>(std::countr_zero(m))] = pos;
+        }
+        stale  |= step.cap_mask;
+        row     = step.row;
+        target  = step.target;
+        ++pos;
+      }
+      reach = pos;
+      if (end != npos) {
+        out.assign(slot_count_, npos);
+        for (std::size_t i {0}; i < slot_count_; ++i) {
+          out[i] = kept[i];
+        }
+      }
+      return end;
     }
 
     /*!
@@ -439,17 +551,32 @@ namespace real::detail {
         return;
       }
       const std::size_t width {alpha_.count};
-      steps_.assign(nodes_.size() * width, onepass_step {no_row, 0, 0});
+      steps_.assign(nodes_.size() * width, onepass_step {.row = no_row});
       for (std::size_t n = 0; n < nodes_.size(); ++n) {
         for (std::size_t c = 0; c < width; ++c) {
           const onepass_edge& edge {nodes_[n].edge[c]};
           if (edge.assigned) {
-            steps_[n * width + c] = {static_cast<std::uint32_t>(edge.next * width), edge.assert_mask, edge.cap_mask};
+            steps_[n * width + c] = {.row         = static_cast<std::uint32_t>(edge.next * width),
+                                     .target      = ranked(edge.next),
+                                     .cap_mask    = static_cast<std::uint16_t>(edge.cap_mask),
+                                     .assert_mask = static_cast<std::uint16_t>(edge.assert_mask)};
           }
         }
         // The rows now live in steps_ alone: kept here as well, every eligible regex would carry its table twice.
         nodes_[n].edge = {};
+        ends_known_    = ends_known_ && accept_rank(nodes_[n]) != rank_mixed;
       }
+      start_ = ranked(0);
+    }
+
+    /*!
+     * \brief A node id with its \ref accept_rank in the top byte, as \ref onepass_step::target holds it.
+     * \param[in] node The node id, below 2^24 (\ref max_nodes is far below).
+     * \return The packed value.
+     */
+    [[nodiscard]] constexpr std::uint32_t ranked(std::uint32_t node) const
+    {
+      return node | (static_cast<std::uint32_t>(accept_rank(nodes_[node])) << 24U);
     }
 
     /*!
@@ -529,7 +656,7 @@ namespace real::detail {
       std::vector<std::uint64_t> inv(inv_at[n], 0);
       for (std::size_t i = 0; i < n; ++i) {
         std::uint64_t* v {inv.data() + inv_at[i]};
-        v[0] = nodes_[i].matches ? 1U : 0U;
+        v[0] = accept_rank(nodes_[i]);
         v[1] = nodes_[i].match_cap_mask;
         v[2] = nodes_[i].match_assert_mask;
         std::size_t w {3};
@@ -657,6 +784,8 @@ namespace real::detail {
         nn.matches           = r.matches;
         nn.match_cap_mask    = r.match_cap_mask;
         nn.match_assert_mask = r.match_assert_mask;
+        nn.edge_before_match = r.edge_before_match;
+        nn.edge_after_match  = r.edge_after_match;
         nn.edge.assign(alpha_.count, onepass_edge {});
         for (std::uint16_t x = 0; x < alpha_.count; ++x) {
           if (r.edge[x].assigned) {
@@ -740,6 +869,9 @@ namespace real::detail {
                                                           .cap_mask    = cap_mask,
                                                           .assert_mask = assert_mask,
                                                           .assigned    = true};
+                                     // The closure walks in priority order, so a match already reached outranks
+                                     // this edge, and one reached later is outranked by it.
+                                     (node.matches ? node.edge_after_match : node.edge_before_match) = true;
                                      // NOLINTEND(clang-analyzer-core.NullDereference)
                                      return true;
                                    }};
@@ -798,14 +930,16 @@ namespace real::detail {
       on_path[static_cast<std::size_t>(pc)] = 0; // backtrack: only a cycle bails, a diamond is fine
     }
 
-    std::span<const instr>                  code_;           //!< The byte program being compiled; borrowed, not owned.
-    std::span<const char_class>             classes_;        //!< Its interned byte classes; borrowed alongside \ref code_.
-    lazy_byte_alphabet                      alpha_;          //!< Byte-equivalence classes: what \ref class_of answers with.
-    std::vector<std::vector<std::uint16_t>> class_cover_;    //!< char-class index -> the byte-classes it consumes.
-    std::vector<std::uint32_t>              pc_to_node_;     //!< pc -> node id (or no_node).
-    std::vector<onepass_node>               nodes_;          //!< The table, node 0 being the start; empty until built.
-    std::size_t                             slot_count_ {0}; //!< Capture slots the program uses (\ref slot_count).
-    std::vector<onepass_step>               steps_;          //!< \ref nodes_' edges in one array, row by row: what \ref extract walks.
+    std::span<const instr>                  code_;              //!< The byte program being compiled; borrowed, not owned.
+    std::span<const char_class>             classes_;           //!< Its interned byte classes; borrowed alongside \ref code_.
+    lazy_byte_alphabet                      alpha_;             //!< Byte-equivalence classes: what \ref class_of answers with.
+    std::vector<std::vector<std::uint16_t>> class_cover_;       //!< char-class index -> the byte-classes it consumes.
+    std::vector<std::uint32_t>              pc_to_node_;        //!< pc -> node id (or no_node).
+    std::vector<onepass_node>               nodes_;             //!< The table, node 0 being the start; empty until built.
+    std::size_t                             slot_count_ {0};    //!< Capture slots the program uses (\ref slot_count).
+    std::vector<onepass_step>               steps_;             //!< \ref nodes_' edges in one array, row by row: what \ref extract walks.
+    std::uint32_t                           start_      {0};    //!< Node 0 packed as \ref onepass_step::target is.
+    bool                                    ends_known_ {true}; //!< No node is \ref rank_mixed, so \ref extract_leftmost applies.
 
     //! \brief Table-memory cap; a larger table declines. Constructor parameter, so a test can exercise the
     //!        cap without a pattern big enough to reach \ref max_table_bytes.

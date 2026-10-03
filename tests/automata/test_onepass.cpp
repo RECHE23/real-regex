@@ -457,6 +457,46 @@ TEST(onepass_built_table_is_held_once)
   EXPECT_EQ(slots[5], std::size_t {5});
 }
 
+TEST(onepass_finds_its_own_end)
+{
+  // extract_leftmost ends where backtracking would: past an accept whose edges outrank it, at one that outranks
+  // its edges, and with the groups of the end it kept. Each answer is Python's re.
+  const byte_program       lazy_bp {byte_prog("(\\w+)@(\\w+?)")};
+  const onepass            lazy    {lazy_bp};
+  std::vector<std::size_t> slots;
+  std::size_t              reach   {0};
+  EXPECT(lazy.ends_known());
+  EXPECT_EQ(lazy.extract_leftmost("ab@cd", 0, slots, reach), std::size_t {4}); // the lazy group stops at one
+  EXPECT_EQ(slots[4], std::size_t {3});
+  EXPECT_EQ(slots[5], std::size_t {4});
+  EXPECT_EQ(lazy.extract_leftmost("ab@", 0, slots, reach), real::npos);
+  EXPECT_EQ(reach, std::size_t {3});
+
+  struct expected
+  {
+    const char*  pattern;
+    const char*  text;
+    std::size_t  end;
+    std::size_t  g2_start;
+  };
+  constexpr expected cases[] {
+    {.pattern = R"((\w+)@(\w+?))", .text = "ab@cd", .end = 4, .g2_start = 3},
+    {.pattern = R"((\w+)@(\w+)-??)", .text = "a@b-", .end = 3, .g2_start = 2},            // mixed: the two-pass confirm
+    {.pattern = R"((\w+)@a(?:(b)c)?)", .text = "x@ab", .end = 3, .g2_start = real::npos}, // a slot past the end
+  };
+  for (const expected& c : cases) {
+    const real::regex re {c.pattern};
+    EXPECT(!re.fullmatch("warm")); // builds the immutables the route reads
+    const auto m         {re.search(c.text)};
+    EXPECT(m);
+    EXPECT_EQ(m.start(), std::size_t {0});
+    EXPECT_EQ(m.end(), c.end);
+    EXPECT_EQ(m.start(2), c.g2_start);
+  }
+  const byte_program mixed_bp {byte_prog("(\\w+)@(\\w+)-??")};
+  EXPECT(!onepass {mixed_bp}.ends_known());
+}
+
 TEST(onepass_epsilon_cycle_and_second_distinct_match_decline)
 {
   // Two more not-one-pass shapes beyond the canonical fixtures above: a nullable loop (an epsilon cycle --
