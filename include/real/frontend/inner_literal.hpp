@@ -30,10 +30,9 @@ namespace real::detail {
   /*!
    * \brief The best required inner literal of a pattern (the memmem candidate).
    *
-   * `len == 0` means the pattern declined: a non-literal alternation, an optional (`?`/`*`/`{0,n}`) after a
-   * head run or around a literal too common to pay, a lookaround or a non-wb anchor at the level walked, or
-   * simply no literal run — anything that would make a required literal unsound, or the route slower than
-   * the one it replaces. Top-level `\b`/`\B` are peeled: they set \ref wb_lead / \ref wb_trail and
+   * `len == 0` means the pattern declined: a non-literal alternation, an optional (`?`/`*`/`{0,n}`) not
+   * preceded by a rare inner run, a lookaround or a non-wb anchor at the level walked, or simply no literal
+   * run — anything that would make a required literal unsound, or the route slower than the one it replaces. Top-level `\b`/`\B` are peeled: they set \ref wb_lead / \ref wb_trail and
    * \ref prefix_skip so the reverse-prefix excludes them (asserts are not byte-DFA-eligible) while
    * `confirm_at` still runs the full program (boundaries checked there).
    *
@@ -72,17 +71,16 @@ namespace real::detail {
     }
   };
 
-  //! \brief The least \ref inner_literal::score an inner run needs to be kept when an optional precedes or
-  //!        follows it.
+  //! \brief The least \ref inner_literal::score an inner run needs to be kept when an optional follows it.
   //!
   //! Past an optional the confirm can only be the full engine, once per candidate, so the literal's density
   //! decides whether the route pays. A single byte clears the bound at a frequency of 200 or less (`,` `.`
   //! `:` `=` `@`); a space (1500) or an `e` (1000) does not. Over a 200 KB log, arm64: `\w+, ?\w+`
   //! 400 -> 31 us and `\d+\.\d*` 320 -> 61 us were kept, while `\w+ \w*` 763 -> 1026 us and
   //! `[a-z]+ [a-z]*s` 597 -> 814 us are what the bound refuses.
-  inline constexpr std::uint32_t optional_literal_min_score {1800};
+  inline constexpr std::uint32_t optional_tail_min_score {1800};
 
-  inline constexpr std::size_t inner_literal_max            {16}; //!< The most bytes an inner literal keeps; past this a longer needle costs storage without shrinking the candidate set much.
+  inline constexpr std::size_t inner_literal_max         {16}; //!< The most bytes an inner literal keeps; past this a longer needle costs storage without shrinking the candidate set much.
 
   /*! \brief Helpers for \ref real::detail::extract_inner_literal; not part of any interface. */
   namespace inner_literal_detail {
@@ -98,7 +96,6 @@ namespace real::detail {
       std::int32_t              run_top  {-1};    //!< Top-level child where the current run began (-1 = nested).
       std::int32_t              best_top {-1};    //!< Top-level child where the winning run began.
       bool                      frozen   {false}; //!< An optional was met after an inner run: nothing later is taken.
-      bool                      optional {false}; //!< An optional was met before any run was kept: the kept run must pay.
     };
 
     /*!
@@ -247,13 +244,12 @@ namespace real::detail {
      *
      * Every byte appended is present in *every* match; the confirming scan then verifies the surrounding
      * context. Pure-literal alternations \ref flush and continue (no branch bytes) so a later unconditional
-     * run can still arm. An optional breaks the run, as a class does, and what follows it is still required.
-     * Met before any kept run, it lets the walk go on; met after an inner run, it ends the walk with that run
-     * kept; met after a HEAD run, it declines the whole extraction, which is a choice and not a requirement:
-     * `https?://` would lose its head literal `http`, and a required head is a stronger filter than an inner
-     * scan for `://`. Past an optional the literal must score at least \ref optional_literal_min_score, since
-     * the confirm is then the full engine. A prefix holding an optional over a body wider than one unit is
-     * left to extract_inner_literal's rigid-prefix decline: `(ab)?bb` is `(ab|)bb`.
+     * run can still arm. An optional ends the walk: what was found before it is kept when it is an inner
+     * run scoring at least \ref optional_tail_min_score, and nothing after it is taken. Otherwise it
+     * declines the whole extraction, which is a choice and not a requirement: flushing past it would be
+     * sound, since bytes after an optional are still required, but it would take `https?://` off its head
+     * literal `http`, and a required HEAD is a stronger filter than an inner scan for `://`. Taking only
+     * what PRECEDES the optional leaves that head alone, since a head run is never kept here.
      * \param[in]     tree      The AST holding the node.
      * \param[in]     idx       Node index; a negative index is the empty subtree and succeeds trivially.
      * \param[in,out] st        Walk state the run accumulates into.
@@ -297,12 +293,8 @@ namespace real::detail {
         case node_kind::repeat: {
             if (n.min == 0) {
               flush(st);
-              if (st.best.len == 0) {
-                st.optional = true; // nothing kept yet: a later run is still required in every match
-                return true;
-              }
-              if (st.best_top < 1 || st.best.score < optional_literal_min_score) {
-                return false; // ? * {0,n} after a head run or a common one: DECLINE -- see this function's own doc
+              if (st.best.len == 0 || st.best_top < 1 || st.best.score < optional_tail_min_score) {
+                return false; // ? * {0,n}: DECLINE unless a rare inner run precedes it -- see this function's own doc
               }
               st.frozen = true;
               return true;
@@ -640,9 +632,6 @@ namespace real::detail {
                              || (wb_lead == 1 && st.best_top == 1 && inner_literal_detail::is_word_only_run(tree, kids[lo]))};
       if (!sound_lead) {
         return inner_literal {};
-      }
-      if (st.optional && st.best.score < optional_literal_min_score) {
-        return inner_literal {}; // past an optional the confirm is the full engine: a common literal does not pay
       }
       // The scan confirms each literal occurrence from the LEFTMOST start its prefix reaches. An occurrence
       // inside an earlier match's own prefix text can then reach back only to a later start, through a
