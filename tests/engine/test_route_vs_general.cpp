@@ -133,6 +133,10 @@ namespace {
     {.pat = R"(\d+\.\d*)"},
     {.pat = "\\w+, ?\\w+"},
     {.pat = R"(\w+=\w*\b)"},
+    // The inner literal kept after an optional: its prefix holds the optional, reversed from each candidate.
+    {.pat = R"((\w+) ?= ?(\w+))"},
+    {.pat = R"(\w+\s*:\s*\d+)"},
+    {.pat = R"(x*@?y)"},
     {.pat = "[a-z]+", .flags = real::flags::bytes},
     {.pat = "\\C+", .flags = real::flags::bytes},
   };
@@ -369,6 +373,7 @@ TEST(route_vs_general_hint_blank_cartesian)
     "xhellox",
     "xfoo@barx",
     "k=v, w=1.5 a.b. x:y z,q 3. j@k.",
+    "a = b, c : 12 d:3 xx@y y",
     long_hit,
     long_miss,
   };
