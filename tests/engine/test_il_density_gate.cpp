@@ -316,4 +316,15 @@ TEST(il_bill_reads_no_more_than_it_allows)
   EXPECT_EQ(re.count_matches(run + "x "), std::size_t {0});
   EXPECT(real::detail::inner_literal_reverse_bytes().load() < run.size());
   EXPECT(real::detail::inner_literal_bill_trips().load() > 0U);
+  // Where the match does start back at 0, the cut reverse has not seen it: the route gives way and the core
+  // answers from the true start, never from where the cut stopped. A walk, which takes the route (a single
+  // search here takes the anchored DFA).
+  const std::string whole {run + "x1234"};
+  std::size_t       found {0};
+  for (const auto& m : re.find_iter(whole)) {
+    EXPECT_EQ(m.start(), std::size_t {0});
+    EXPECT_EQ(m.end(), whole.size());
+    ++found;
+  }
+  EXPECT_EQ(found, std::size_t {1});
 }
