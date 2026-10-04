@@ -3075,6 +3075,38 @@ namespace real::detail {
     }
 
     /*!
+     * \brief The end of the maximal run of \p tbl's members that begins with the member at \p match_start.
+     * \tparam Cascade Past \ref cascade_run_threshold bytes, hand the rest to \ref run_cascade_stop, which is sound
+     *                 because a byte-class run never validates UTF-8.
+     * \param[in] text        Subject.
+     * \param[in] tbl         The class's byte membership table.
+     * \param[in] match_start A member's offset.
+     * \return The first offset past the run.
+     */
+    template <bool Cascade>
+    [[nodiscard]] constexpr std::size_t class_run_end(std::string_view    text,
+                                                      const std::uint8_t* tbl,
+                                                      std::size_t         match_start) const
+    {
+      std::size_t match_end {match_start + 1};
+      if constexpr (Cascade) {
+        if (!std::is_constant_evaluated()) {
+          while (match_end < text.size() && tbl[static_cast<std::uint8_t>(text[match_end])] != 0U) {
+            ++match_end;
+            if (match_end - match_start == cascade_run_threshold) {
+              return run_cascade_stop(text, match_end);
+            }
+          }
+          return match_end;
+        }
+      }
+      while (match_end < text.size() && tbl[static_cast<std::uint8_t>(text[match_end])] != 0U) {
+        ++match_end;
+      }
+      return match_end;
+    }
+
+    /*!
      * \brief Fast path for a whole-pattern "class+": a maximal run of class bytes in one scan loop,
      *        exactly the VM's greedy result, with no thread lists.
      *
@@ -3109,8 +3141,8 @@ namespace real::detail {
                             };
       const auto scan_end = [&](std::size_t match_start) -> std::size_t {
                               std::size_t match_end {match_start + 1};
-                              // Memchr-stop after a long run: sound because run_class_loop never
-                              // validates UTF-8 (test_utf8 perimeter).
+                              // As class_run_end, kept inline: that call charges `\w+` and `.` searches through
+                              // run() 0.3-0.4 % (GCC 15, aarch64).
                               if constexpr (Cascade) {
                                 if (!std::is_constant_evaluated()) {
                                   while (match_end < text.size() && in_class(match_end)) {
@@ -3261,25 +3293,7 @@ namespace real::detail {
         const auto in_class = [&](std::size_t i) {
                                 return tbl[static_cast<std::uint8_t>(text[i])] != 0U;
                               };
-        const auto scan_end = [&](std::size_t match_start) -> std::size_t {
-                                std::size_t match_end {match_start + 1};
-                                if constexpr (Cascade) {
-                                  if (!std::is_constant_evaluated()) {
-                                    while (match_end < text.size() && in_class(match_end)) {
-                                      ++match_end;
-                                      if (match_end - match_start == cascade_run_threshold) {
-                                        match_end = run_cascade_stop(text, match_end);
-                                        break;
-                                      }
-                                    }
-                                    return match_end;
-                                  }
-                                }
-                                while (match_end < text.size() && in_class(match_end)) {
-                                  ++match_end;
-                                }
-                                return match_end;
-                              };
+        const auto scan_end = [&](std::size_t match_start) { return class_run_end<Cascade>(text, tbl, match_start); };
 
         const auto sub_id {static_cast<std::uint16_t>(prog_.hints.trailing_lookaround)};
         // Resolve the lookaround ONCE per walk: lookaround_holds re-derives the sub, its length and its
@@ -3412,6 +3426,7 @@ namespace real::detail {
           ++i;
           continue;
         }
+        // As class_run_end, kept inline: that call charges this filler's dense rows 0.3 % (GCC 15).
         std::size_t end {i + 1};
         if constexpr (Cascade) {
           while (end < text.size() && tbl[static_cast<std::uint8_t>(text[end])] != 0U) {
