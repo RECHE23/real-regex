@@ -2110,11 +2110,11 @@ namespace real::detail {
     if (hints.rare_disc < 0) {
       return npos;
     }
-    const auto        disc    {static_cast<char>(hints.rare_disc)};
-    const std::size_t pref    {hints.rare_disc_prefix_len};
-    const bool        has_opt {hints.rare_disc_opt >= 0};
-    const auto        opt_ch  {static_cast<char>(hints.rare_disc_opt)};
-    const std::size_t after   {hints.rare_disc_after_len};
+    const auto        disc     {static_cast<char>(hints.rare_disc)};
+    const std::size_t pref     {hints.rare_disc_prefix_len};
+    const bool        has_opt  {hints.rare_disc_opt >= 0};
+    const auto        opt_ch   {static_cast<char>(hints.rare_disc_opt)};
+    const std::size_t after    {hints.rare_disc_after_len};
     // The shortest back-span is the prefix alone (no optional byte).
     const std::size_t min_back {pref};
     std::size_t       scan     {pos + min_back < text.size() ? pos + min_back : text.size()};

@@ -2269,7 +2269,7 @@ namespace real::detail {
     constexpr std::int32_t parse_escape(ast& out)
     {
       const std::size_t backslash {pos_}; // diagnostics report at the backslash, as `re` does
-      ++pos_; // consume the backslash
+      ++pos_;                             // consume the backslash
       if (eof()) {
         fail("dangling backslash");
       }
@@ -2419,7 +2419,7 @@ namespace real::detail {
         return static_cast<std::uint8_t>(ch);
       }
       const std::size_t backslash {pos_}; // diagnostics report at the backslash
-      ++pos_; // consume the backslash
+      ++pos_;                             // consume the backslash
       if (eof()) {
         fail("dangling backslash");
       }

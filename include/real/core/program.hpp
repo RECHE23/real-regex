@@ -725,9 +725,9 @@ namespace real {
       pattern_hints               hints;             //!< Search-acceleration hints.
       // Codepoint-class marker set by `emit_any_codepoint_class`, so the prefilter need not
       // reverse-engineer the block, whose length varies with the UTF-8 range split.
-      std::int32_t codepoint_mark_ascii  {-1}; //!< ASCII sub-class index of an emitted codepoint-class block (-1 = none).
-      std::int32_t codepoint_mark_offset {-1}; //!< Where that block starts (program offset); the whole-pattern hint requires offset 1.
-      std::int32_t codepoint_mark_end    {-1}; //!< Program offset right after that block ends (-1 = none).
+      std::int32_t codepoint_mark_ascii  {-1};       //!< ASCII sub-class index of an emitted codepoint-class block (-1 = none).
+      std::int32_t codepoint_mark_offset {-1};       //!< Where that block starts (program offset); the whole-pattern hint requires offset 1.
+      std::int32_t codepoint_mark_end    {-1};       //!< Program offset right after that block ends (-1 = none).
 
       /*!
        * \brief Returns a non-owning \ref program_view over this program.

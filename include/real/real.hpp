@@ -2081,7 +2081,7 @@ namespace real {
       // Reference, not a copy (`program_view` is 432 bytes); a prvalue view() is lifetime-extended.
       const detail::program_view&    prog    {program_.view()};
       // Built before the engine runs, which fills its slots in place; after `prog`, whose names it borrows.
-      result_type                    out {text, pattern(), prog.names};
+      result_type                    out     {text, pattern(), prog.names};
       // `state` is fresh for `prog` alone, so the VM may skip its program-identity compare.
       detail::pike_vm<typename Storage::state_type, true> vm(prog, state);
       const auto                                          subject {text.substr(0, end)};
