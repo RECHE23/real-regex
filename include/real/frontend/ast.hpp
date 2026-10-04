@@ -1751,8 +1751,8 @@ namespace real::detail {
     /*!
      * \brief Fails a group name the way `re` does: quoting the name it read, at the name's start.
      *
-     * As `re`: an empty name is `missing group name`, an unterminated one `missing >, unterminated
-     * name`, and a bad character quotes the whole name (`bad character in group name 'a b'`).
+     * As `re`: an empty name is `missing group name`, an unterminated one `missing >, unterminated name`,
+     * and a bad character quotes the whole name it read.
      * \param[in] begin Offset of the name's first byte, which is where `re` reports.
      * \throws real::regex_error always.
      */
@@ -1778,8 +1778,7 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Fails a duplicate group name the way `re` does, naming it and both group numbers
-     *        (`redefinition of group name 'x' as group 2; was group 1`).
+     * \brief Fails a duplicate group name the way `re` does, naming it and both group numbers.
      * \param[in] begin    Offset of the offending name's first byte.
      * \param[in] end      One past its last byte.
      * \param[in] group    The capture number being defined now.
