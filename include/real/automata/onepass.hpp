@@ -855,26 +855,26 @@ namespace real::detail {
       on_path[static_cast<std::size_t>(pc)] = 0; // backtrack: only a cycle bails, a diamond is fine
     }
 
-    std::span<const instr>                  code_;              //!< The byte program being compiled; borrowed, not owned.
-    std::span<const char_class>             classes_;           //!< Its interned byte classes; borrowed alongside \ref code_.
-    lazy_byte_alphabet                      alpha_;             //!< Byte-equivalence classes: what \ref class_of answers with.
-    std::vector<std::vector<std::uint16_t>> class_cover_;       //!< char-class index -> the byte-classes it consumes.
-    std::vector<std::uint32_t>              pc_to_node_;        //!< pc -> node id (or no_node).
-    std::vector<onepass_node>               nodes_;             //!< The table, node 0 being the start; empty until built.
-    std::size_t                             slot_count_ {0};    //!< Capture slots the program uses (\ref slot_count).
-    std::vector<onepass_step>               steps_;             //!< \ref nodes_' edges in one array, row by row: what \ref extract walks.
-    std::uint32_t                           start_      {0};    //!< Node 0 packed as \ref onepass_step::target is.
-    bool                                    ends_known_ {true}; //!< No node is \ref rank_mixed, so \ref extract_leftmost applies.
+    std::span<const instr>                  code_;                           //!< The byte program being compiled; borrowed, not owned.
+    std::span<const char_class>             classes_;                        //!< Its interned byte classes; borrowed alongside \ref code_.
+    lazy_byte_alphabet                      alpha_;                          //!< Byte-equivalence classes: what \ref class_of answers with.
+    std::vector<std::vector<std::uint16_t>> class_cover_;                    //!< char-class index -> the byte-classes it consumes.
+    std::vector<std::uint32_t>              pc_to_node_;                     //!< pc -> node id (or no_node).
+    std::vector<onepass_node>               nodes_;                          //!< The table, node 0 being the start; empty until built.
+    std::size_t                             slot_count_ {0};                 //!< Capture slots the program uses (\ref slot_count).
+    std::vector<onepass_step>               steps_;                          //!< \ref nodes_' edges in one array, row by row: what \ref extract walks.
+    std::uint32_t                           start_      {0};                 //!< Node 0 packed as \ref onepass_step::target is.
+    bool                                    ends_known_ {true};              //!< No node is \ref rank_mixed, so \ref extract_leftmost applies.
 
     std::size_t                             max_bytes_  {max_table_bytes};   //!< Table-memory cap (a constructor test hook).
     std::size_t                             node_cap_   {max_nodes};         //!< Node-count cap; same test-hook role.
     std::uint64_t                           work_cap_   {max_minimize_work}; //!< Moore-refinement work cap; same role.
     bool                                    ascii_word_ {true};              //!< ASCII word-ness for `\b \B \< \>` edge conditions unless `byte_program::unicode_word`.
-    std::int32_t                            bail_node_  {-1};   //!< Node the decline was found at, or -1. Diagnostic only.
-    std::int32_t                            bail_class_ {-1};   //!< Byte-class involved in the decline, or -1.
-    std::int32_t                            bail_pc_    {-1};   //!< Program counter involved in the decline, or -1.
-    bool                                    eligible_   {true}; //!< Cleared by \ref bail; read through \ref eligible.
-    std::string                             bail_reason_;       //!< Human-readable decline reason (\ref bail_reason).
+    std::int32_t                            bail_node_  {-1};                //!< Node the decline was found at, or -1. Diagnostic only.
+    std::int32_t                            bail_class_ {-1};                //!< Byte-class involved in the decline, or -1.
+    std::int32_t                            bail_pc_    {-1};                //!< Program counter involved in the decline, or -1.
+    bool                                    eligible_   {true};              //!< Cleared by \ref bail; read through \ref eligible.
+    std::string                             bail_reason_;                    //!< Human-readable decline reason (\ref bail_reason).
   };
 
   struct regex_immutables;                                       // defined below; the dtor calls the next line

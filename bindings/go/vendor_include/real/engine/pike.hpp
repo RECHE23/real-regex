@@ -4964,6 +4964,52 @@ namespace real::detail {
     }
 
     /*!
+     * \brief The byte length of a code point of the `.`/negated class at \p i, or 0 where none matches.
+     *
+     * As the VM's byte-level expansion: an ASCII byte matches the ASCII set; a valid 2-4 byte UTF-8 sequence
+     * always matches (a negated ASCII class excludes only ASCII); anything else stops. 3-/4-byte leads check
+     * their first continuation against utf8_second_byte_bounds_table, rejecting overlongs (E0 80 80) and
+     * surrogates (ED A0 80); a table lookup, not decode_codepoint_strict, whose full decode costs on this path.
+     * \param[in] text  The subject.
+     * \param[in] i     A position inside \p text.
+     * \param[in] ascii The class's ASCII membership table.
+     * \return The width, 0 to 4.
+     */
+    [[nodiscard]] static constexpr std::size_t codepoint_class_width(std::string_view    text,
+                                                                     std::size_t         i,
+                                                                     const std::uint8_t* ascii)
+    {
+      const auto cont = [&](std::size_t k) {
+                          const auto cont_byte {static_cast<std::uint8_t>(text[k])};
+                          return cont_byte >= 0x80 && cont_byte <= 0xBF;
+                        };
+      const auto byte_value {static_cast<std::uint8_t>(text[i])};
+      if (byte_value < 0x80) {
+        return ascii[byte_value] != 0U ? 1 : 0;
+      }
+      if (byte_value >= 0xC2 && byte_value <= 0xDF) {
+        return i + 1 < text.size() && cont(i + 1) ? 2 : 0;
+      }
+      if (byte_value >= 0xE0 && byte_value <= 0xEF) {
+        if (i + 2 >= text.size()) {
+          return 0;
+        }
+        const detail::utf8_second_byte_bounds& b  {detail::utf8_second_byte_bounds_table[byte_value]};
+        const auto                             b2 {static_cast<std::uint8_t>(text[i + 1])};
+        return b2 >= b.lo && b2 <= b.hi && cont(i + 2) ? 3 : 0;
+      }
+      if (byte_value >= 0xF0 && byte_value <= 0xF4) {
+        if (i + 3 >= text.size()) {
+          return 0;
+        }
+        const detail::utf8_second_byte_bounds& b  {detail::utf8_second_byte_bounds_table[byte_value]};
+        const auto                             b2 {static_cast<std::uint8_t>(text[i + 1])};
+        return b2 >= b.lo && b2 <= b.hi && cont(i + 2) && cont(i + 3) ? 4 : 0;
+      }
+      return 0;
+    }
+
+    /*!
      * \brief Batched twin of \ref run_codepoint_class, filling up to \p cap maximal spans in ONE call.
      *
      * Without it the `.`/negated-class shape paid a full route entry per match where the other class
@@ -4988,38 +5034,7 @@ namespace real::detail {
     {
       const std::uint8_t* const ascii {
         class_table(static_cast<std::size_t>(prog_.hints.codepoint_class_ascii))};
-      const auto cont = [&](std::size_t i) {
-                          const auto cont_byte {static_cast<std::uint8_t>(text[i])};
-                          return cont_byte >= 0x80 && cont_byte <= 0xBF;
-                        };
-      const auto width = [&](std::size_t i) -> std::size_t {
-                           const auto byte_value {static_cast<std::uint8_t>(text[i])};
-                           if (byte_value < 0x80) {
-                             return ascii[byte_value] != 0U ? 1 : 0;
-                           }
-                           if (byte_value >= 0xC2 && byte_value <= 0xDF) {
-                             return i + 1 < text.size() && cont(i + 1) ? 2 : 0;
-                           }
-                           if (byte_value >= 0xE0 && byte_value <= 0xEF) {
-                             if (i + 2 >= text.size()) {
-                               return 0;
-                             }
-                             const detail::utf8_second_byte_bounds& b {
-                               detail::utf8_second_byte_bounds_table[byte_value]};
-                             const auto b2                            {static_cast<std::uint8_t>(text[i + 1])};
-                             return b2 >= b.lo && b2 <= b.hi && cont(i + 2) ? 3 : 0;
-                           }
-                           if (byte_value >= 0xF0 && byte_value <= 0xF4) {
-                             if (i + 3 >= text.size()) {
-                               return 0;
-                             }
-                             const detail::utf8_second_byte_bounds& b {
-                               detail::utf8_second_byte_bounds_table[byte_value]};
-                             const auto b2                            {static_cast<std::uint8_t>(text[i + 1])};
-                             return b2 >= b.lo && b2 <= b.hi && cont(i + 2) && cont(i + 3) ? 4 : 0;
-                           }
-                           return 0;
-                         };
+      const auto  width = [&](std::size_t i) { return codepoint_class_width(text, i, ascii); };
       std::size_t n {0};
       std::size_t i {start};
       while (n < cap && i < text.size()) {
@@ -5085,9 +5100,7 @@ namespace real::detail {
     /*!
      * \brief Fast path for `.` / a negated class, optionally a greedy `+`.
      *
-     * Scans code points as the VM's byte-level expansion would: an ASCII byte matches the ASCII set; a
-     * valid 2–4 byte UTF-8 sequence always matches (a negated ASCII class excludes only ASCII); anything
-     * else stops, as the VM's lead/continuation branches fail. Covers `.+`, `[^,]+`, `.`, `[^,]`.
+     * Scans code points as \ref codepoint_class_width does. Covers `.+`, `[^,]+`, `.`, `[^,]`.
      *
      * \tparam OutSlots Output slot container.
      * \param[in]  text      The subject text.
@@ -5105,42 +5118,7 @@ namespace real::detail {
       const std::uint8_t* const ascii {
         class_table(static_cast<std::size_t>(prog_.hints.codepoint_class_ascii))};
       // Success rewrites both span slots; fail assigns for seam parity.
-
-      const auto cont = [&](std::size_t i) {
-                          const auto cont_byte {static_cast<std::uint8_t>(text[i])};
-                          return cont_byte >= 0x80 && cont_byte <= 0xBF;
-                        };
-      // Byte length of a matching code point at i, or 0. 3-/4-byte leads check their first continuation
-      // against utf8_second_byte_bounds_table, rejecting overlongs (E0 80 80) and surrogates (ED A0 80).
-      // A table lookup, not decode_codepoint_strict: the full decode costs measurably on this path.
-      const auto width = [&](std::size_t i) -> std::size_t {
-                           const auto byte_value {static_cast<std::uint8_t>(text[i])};
-                           if (byte_value < 0x80) {
-                             return ascii[byte_value] != 0U ? 1 : 0;
-                           }
-                           if (byte_value >= 0xC2 && byte_value <= 0xDF) {
-                             return i + 1 < text.size() && cont(i + 1) ? 2 : 0;
-                           }
-                           if (byte_value >= 0xE0 && byte_value <= 0xEF) {
-                             if (i + 2 >= text.size()) {
-                               return 0;
-                             }
-                             const detail::utf8_second_byte_bounds& b {
-                               detail::utf8_second_byte_bounds_table[byte_value]};
-                             const auto b2                            {static_cast<std::uint8_t>(text[i + 1])};
-                             return b2 >= b.lo && b2 <= b.hi && cont(i + 2) ? 3 : 0;
-                           }
-                           if (byte_value >= 0xF0 && byte_value <= 0xF4) {
-                             if (i + 3 >= text.size()) {
-                               return 0;
-                             }
-                             const detail::utf8_second_byte_bounds& b {
-                               detail::utf8_second_byte_bounds_table[byte_value]};
-                             const auto b2                            {static_cast<std::uint8_t>(text[i + 1])};
-                             return b2 >= b.lo && b2 <= b.hi && cont(i + 2) && cont(i + 3) ? 4 : 0;
-                           }
-                           return 0;
-                         };
+      const auto width = [&](std::size_t i) { return codepoint_class_width(text, i, ascii); };
 
       // Keep the recompute of the first width (DELIBERATE): carrying it out of the search loop cut
       // `[^,]+`'s instructions by a fifth yet made `\w+` and the property rows SLOWER (a variable live
