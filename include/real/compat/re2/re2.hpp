@@ -837,7 +837,7 @@ namespace real::compat::re2 {
      *        of the budget for the program, and 100 000 instructions when those two thirds are not positive.
      * \param[in] bytes        The program's size (\ref program_bytes).
      * \param[in] instructions Its instruction count.
-     * \param[in] max_mem      The budget (`Options::max_mem`).
+     * \param[in] max_mem      The budget (\ref Options::max_mem).
      * \return True when it fits.
      */
     [[nodiscard]] static constexpr bool within_budget(std::size_t  bytes,
@@ -854,7 +854,7 @@ namespace real::compat::re2 {
     /*!
      * \brief Translates the `Options` fields this layer honors into `real::flags`.
      * \param[in] options The options to translate.
-     * \return The equivalent `real::flags` set.
+     * \return The equivalent \ref real::flags set.
      */
     [[nodiscard]] static real::flags options_to_flags(const Options& options)
     {

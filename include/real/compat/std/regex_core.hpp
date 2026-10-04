@@ -660,7 +660,7 @@ namespace real::compat {
     /*!
      * \brief Maps compat options to REAL's flags, always with `bytes | ecma`: one REAL byte per `std::regex` char.
      * \param[in] f The compat syntax options.
-     * \return The equivalent `real::flags`.
+     * \return The equivalent \ref real::flags.
      */
     inline real::flags to_real(regex_constants::syntax_option_type f) noexcept
     {
@@ -1259,7 +1259,7 @@ namespace real::compat {
     }
 
     /*!
-     * \brief Whether a POSIX grammar was translated onto REAL (`detail::translate_posix`): a search then
+     * \brief Whether a POSIX grammar was translated onto REAL (\ref detail::translate_posix): a search then
      *        takes leftmost-longest overall bounds, while captures stay the winning thread's rather than
      *        following POSIX subexpression rules. False on the std backend, which applies POSIX itself.
      * \return `true` under a POSIX grammar that REAL is running.
@@ -1286,7 +1286,7 @@ namespace real::compat {
      *        cannot honor, a traversal it does not model, a `$0` format).
      *
      * Thread-safe: a static mutex per instantiation serialises the build only; once published
-     * (`detail::lazy_std_engine`) every call reads it lock-free. Not a `std::once_flag`, which is not
+     * (\ref detail::lazy_std_engine) every call reads it lock-free. Not a `std::once_flag`, which is not
      * copyable, as `basic_regex` must be.
      * \return The wrapped `std::basic_regex`; compiling one on demand if this pattern is real-backed.
      */
@@ -1315,7 +1315,7 @@ namespace real::compat {
 
     /*!
      * \brief The REAL engine a search under `match_not_eol` / `match_not_eow` runs: this pattern's own when it has
-     *        nothing those flags change, else its rewrite (see `detail::rewrite_end_context`), built once on
+     *        nothing those flags change, else its rewrite (see \ref detail::rewrite_end_context), built once on
      *        demand and thread-safely as \ref std_engine is.
      * \param[in] not_eol `match_not_eol` is set.
      * \param[in] not_eow `match_not_eow` is set.
@@ -1524,7 +1524,7 @@ namespace real::compat {
     /*!
      * \brief Compiles \p sv on the standard-library backend and stores it.
      * \param[in] sv The pattern text.
-     * \param[in] f  Syntax options, translated by `detail::to_std`.
+     * \param[in] f  Syntax options, translated by \ref detail::to_std.
      */
     void emplace_std(std::string_view sv,
                      flag_type        f)
