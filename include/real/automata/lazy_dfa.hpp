@@ -1302,6 +1302,34 @@ namespace real::detail {
   };
 
   /*!
+   * \brief Whether a lazy DFA, forward or reversed, can represent every op of \p code.
+   *
+   * Variable-width classes and lookarounds have no DFA representation. Tier 1's possessive-loop family has no
+   * consuming-edge representation either (each DFA's consumes() recognizes byte/klass only): treating it as a dead
+   * end would be an outright wrong DFA. A position assertion is represented -- an edge the closure crosses
+   * where it holds -- unless it is a word boundary whose word-ness is a code point's, which no single byte
+   * decides, or one scoped to the other word-ness.
+   * \param[in] code       The program's instruction stream.
+   * \param[in] ascii_word Whether a word boundary's word-ness is ASCII (then a byte decides it).
+   * \return True when every op is representable.
+   */
+  constexpr bool dfa_representable(std::span<const instr> code,
+                                   bool                   ascii_word)
+  {
+    return std::ranges::none_of(code, [ascii_word](const instr& in) {
+                                  if (in.op == opcode::assert_position) {
+                                    const auto kind {static_cast<assert_kind>(in.arg8)};
+                                    const bool word {kind == assert_kind::word_boundary || kind == assert_kind::not_word_boundary
+                                                     || kind == assert_kind::word_start || kind == assert_kind::word_end};
+                                    return in.arg16 != 0 || (word && !ascii_word);
+                                  }
+                                  return in.op == opcode::assert_lookaround || in.op == opcode::klass_cp
+                                         || in.op == opcode::byte_loop_possessive || in.op == opcode::klass_loop_possessive
+                                         || in.op == opcode::klass_cp_loop_possessive;
+                                });
+  }
+
+  /*!
    * \brief A lazy priority-preserving forward DFA over a Pike program (the kFirstMatch forward pass).
    *
    * A DFA state is the ordered epsilon-closure of a pc set (the Pike thread list in split priority);
@@ -1374,7 +1402,7 @@ namespace real::detail {
                                 std::size_t                 byte_budget     = lazy_dfa_default_byte_budget)
       : code_ {code}, classes_ {classes},
         alpha_ {shared_alpha != nullptr ? *shared_alpha : compute_lazy_alphabet(code, classes)},
-        eligible_ {compute_eligibility(code, ascii_word || word_quit) && (byte_mode || raw_byte_starts || !opens_on_continuation(code, classes))},
+        eligible_ {dfa_representable(code, ascii_word || word_quit) && (byte_mode || raw_byte_starts || !opens_on_continuation(code, classes))},
         byte_mode_ {byte_mode},
         word_quit_ {word_quit && !ascii_word}, may_quit_ {word_quit},
         look_ {std::ranges::any_of(code, [](const instr& in) { return in.op == opcode::assert_position; })},
@@ -1793,31 +1821,6 @@ namespace real::detail {
         }
       }
       return false;
-    }
-
-    /*!
-     * \brief Scan \p code for an op no forward DFA can represent.
-     * \param[in] code       The program's instruction stream.
-     * \param[in] ascii_word Whether a word boundary's word-ness is ASCII (then a byte decides it).
-     * \return True when every op is representable.
-     */
-    static constexpr bool compute_eligibility(std::span<const instr> code,
-                                              bool                   ascii_word)
-    {
-      // Possessive loops have no consuming edge here (consumes() knows byte/klass): read as dead ends they
-      // would make a wrong DFA. An assertion is represented (close_look / resolve) unless it is a word
-      // boundary on code-point word-ness, which no byte decides, or one scoped to the other word-ness.
-      return std::ranges::none_of(code, [ascii_word](const instr& in) {
-                                    if (in.op == opcode::assert_position) {
-                                      const auto kind {static_cast<assert_kind>(in.arg8)};
-                                      const bool word {kind == assert_kind::word_boundary || kind == assert_kind::not_word_boundary
-                                                       || kind == assert_kind::word_start || kind == assert_kind::word_end};
-                                      return in.arg16 != 0 || (word && !ascii_word);
-                                    }
-                                    return in.op == opcode::assert_lookaround || in.op == opcode::klass_cp
-                                           || in.op == opcode::byte_loop_possessive || in.op == opcode::klass_loop_possessive
-                                           || in.op == opcode::klass_cp_loop_possessive;
-                                  });
     }
 
     // What a DFA state knows of the text before its position, and what a pending assertion needs of the
@@ -2545,7 +2548,7 @@ namespace real::detail {
     std::span<const instr>        code_;                //!< The byte program, owned by the caller.
     std::span<const char_class>   classes_;             //!< Its byte classes, likewise borrowed.
     lazy_byte_alphabet            alpha_;               //!< Byte-to-class map; its count plus two is the row stride.
-    bool                          eligible_    {false}; //!< \ref compute_eligibility's verdict, fixed at construction.
+    bool                          eligible_    {false}; //!< \ref dfa_representable's verdict, fixed at construction.
     bool                          byte_mode_   {true};  //!< A match may start at any byte (else only at a code-point start).
     bool                          word_quit_   {false}; //!< Unicode word boundaries carried, quitting next to a non-ASCII byte.
     bool                          may_quit_    {false}; //!< A scan may quit: on a Unicode word boundary next to non-ASCII, and once its cache thrashes.
@@ -2619,7 +2622,7 @@ namespace real::detail {
                                    std::size_t                 byte_budget  = lazy_dfa_default_byte_budget)
       : code_ {code}, classes_ {classes},
         alpha_ {shared_alpha != nullptr ? *shared_alpha : compute_lazy_alphabet(code, classes)},
-        eligible_ {compute_eligibility(code, ascii_word || word_quit)}, word_quit_ {word_quit && !ascii_word},
+        eligible_ {dfa_representable(code, ascii_word || word_quit)}, word_quit_ {word_quit && !ascii_word},
         look_ {std::ranges::any_of(code, [](const instr& in) { return in.op == opcode::assert_position; })},
         budget_ {budget}, byte_budget_ {byte_budget}
     {
@@ -3257,30 +3260,6 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Scan \p code for an op the transposed program cannot represent.
-     * \param[in] code       The program's instruction stream.
-     * \param[in] ascii_word Whether a word boundary's word-ness is ASCII (then a byte decides it).
-     * \return True when every op is representable.
-     */
-    static constexpr bool compute_eligibility(std::span<const instr> code,
-                                              bool                   ascii_word)
-    {
-      // As in the forward DFA: no possessive loop; an assertion is an edge crossed where it holds
-      // (rev_closure_look), unless no byte decides it.
-      return std::ranges::none_of(code, [ascii_word](const instr& in) {
-                                    if (in.op == opcode::assert_position) {
-                                      const auto kind {static_cast<assert_kind>(in.arg8)};
-                                      const bool word {kind == assert_kind::word_boundary || kind == assert_kind::not_word_boundary
-                                                       || kind == assert_kind::word_start || kind == assert_kind::word_end};
-                                      return in.arg16 != 0 || (word && !ascii_word);
-                                    }
-                                    return in.op == opcode::assert_lookaround || in.op == opcode::klass_cp
-                                           || in.op == opcode::byte_loop_possessive || in.op == opcode::klass_loop_possessive
-                                           || in.op == opcode::klass_cp_loop_possessive;
-                                  });
-    }
-
-    /*!
      * \brief Intern a sorted pc-set into a state id (cached), recording whether it reaches the program start.
      * \param[in] pcs The sorted pc-set.
      * \return Its state id, existing or freshly built; \ref dead_state for an empty set.
@@ -3360,7 +3339,7 @@ namespace real::detail {
     std::span<const instr>                                                     code_;                                        //!< The byte program, owned by the caller.
     std::span<const char_class>                                                classes_;                                     //!< Its byte classes, likewise borrowed.
     lazy_byte_alphabet                                                         alpha_;                                       //!< Byte-to-class map; its count is the row stride.
-    bool                                                                       eligible_     {false};                        //!< \ref compute_eligibility's verdict, fixed at construction.
+    bool                                                                       eligible_     {false};                        //!< \ref dfa_representable's verdict, fixed at construction.
     bool                                                                       word_quit_    {false};                        //!< Unicode word boundaries carried, quitting next to a non-ASCII byte.
     mutable bool                                                               quit_hit_     {false};                        //!< Set by holds_left() inside one resolve(): that resolution is quit_state.
     bool                                                                       look_         {false};                        //!< The program carries position assertions (the look paths).
