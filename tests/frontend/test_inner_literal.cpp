@@ -48,9 +48,28 @@ TEST(inner_literal_d1_pure_lit_alt_only)
   // first-byte/`http` baseline). Mono-byte optional `s?` must decline IL entirely —
   // stays on the prefix/DFA route.
   EXPECT(!extract(R"(https?://[^\s]+)").found());
-  // An optional with no inner run before it still declines the whole walk.
-  EXPECT(!extract(R"((a)?@b)").found());
-  EXPECT(!extract(R"(x*@?y)").found());
+  // An optional before any kept run is passed: what follows it is required in every match.
+  EXPECT(is_lit(extract(R"((a)?@b)"), "@b"));
+  EXPECT(is_lit(extract(R"(x*@?y)"), "y"));
+}
+
+TEST(inner_literal_rare_run_after_an_optional_is_kept)
+{
+  const auto kv {extract(R"((\w+) ?= ?(\w+))")};
+  EXPECT(is_lit(kv, "="));
+  EXPECT_EQ(kv.prefix_child_count, 2);
+  EXPECT(is_lit(extract(R"(\w+\s*:\s*\d+)"), ":"));
+  EXPECT(is_lit(extract(R"re((\w+)\s*=\s*"([^"]*)")re"), "="));
+  // Past an optional the literal must pay for a full confirm per candidate: a space does not.
+  EXPECT(!extract(R"(\w+ ?\w* \w+)").found());
+  // An optional over a body wider than one unit makes the prefix rigid: `(ab)?bb` is `(ab|)bb`.
+  EXPECT(!extract(R"((ab)?bb)").found());
+  real::regex re {R"((ab)?bb)"};
+  EXPECT(!re.fullmatch("warm"));
+  const auto m   {re.search("abbb")};
+  EXPECT(m);
+  EXPECT_EQ(m.start(), 0U);
+  EXPECT_EQ(m.end(), 4U);
 }
 
 TEST(inner_literal_rare_run_before_an_optional_is_kept)
