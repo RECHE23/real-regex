@@ -280,14 +280,11 @@ namespace real {
       assert_position,   //!< Epsilon; proceeds only if assertion arg8 holds here.
       match,             //!< Accept.
       assert_lookaround, //!< Epsilon; proceeds only if the lookaround sub-program arg16 holds here.
-      // Possessive tail: the OPTIONAL part of a possessive quantifier over one bare atom; mandatory
-      // copies are unrolled ahead as plain atoms. On a match: consume and fall through to pc+1 like the
-      // plain atom; looping is a `jump` back (X*+) or chained unrolled copies (X{n,m}+), see compiler.hpp's
-      // emit_tier1_loop. `primary_target` is not a branch: it is an optional capture start slot (-1 = none,
-      // end slot = start + 1), written with the consume on success only, because a `save` before the test
-      // would fire on the final failing retry and corrupt the previous iteration's capture.
-      // On no match (or end of text): epsilon IN PLACE to `secondary_target`. Sound only because it never
-      // crosses a position, which is why the family stops at a bare or singly-captured atom.
+      // Possessive tail: the optional part of a possessive quantifier over one bare atom (mandatory copies
+      // are plain atoms ahead). On a match, consume and fall through; looping is a `jump` back or unrolled
+      // copies (compiler.hpp's emit_tier1_loop). `primary_target` is a capture start slot (-1 none), written
+      // with the consume on success only. On no match, epsilon in place to `secondary_target`: sound only
+      // because it never crosses a position, hence a bare or singly-captured atom.
       byte_loop_possessive,     //!< Consume one byte == arg8. See the note above.
       klass_loop_possessive,    //!< Consume one byte in classes[arg16]. See the note above.
       klass_cp_loop_possessive, //!< Consume one code point in cp_classes[arg16], followed by the same 3-slot continuation chain as klass_cp. See the note above.
@@ -400,13 +397,12 @@ namespace real {
      * \brief Search-acceleration hints extracted from a compiled program by `analyze_program`
      *        (prefilter.hpp). They change how fast, never \e what matches.
      *
-     * \note **The field order is load-bearing: a hot prefix, then per-route data.** Offsets 0..86 hold
-     *       what dispatch and the common routes read on every search (\ref prefix, \ref first_bytes, the
-     *       `greedy_*` selectors, \ref fixed_shape, \ref fixed_alternation); the tail is read only by the
-     *       route a pattern takes. **Append new fields at the END**: an insertion higher up reflows every
-     *       later field, and has moved hot fields across a cache line, measurably on patterns that read
-     *       none of the new field. **Do not split this into hot and cold structs**: this order already is
-     *       that split, and moving the tail behind an indirection would charge every route that reads it.
+     * \note **The field order is load-bearing.** Offsets 0..86 are the hot prefix every search reads
+     *       (\ref prefix, \ref first_bytes, the `greedy_*` selectors, \ref fixed_shape,
+     *       \ref fixed_alternation); the tail is per-route. **Append new fields at the END**: an insertion
+     *       reflows every later field and has moved hot fields across a cache line, measurably on patterns
+     *       that read none of it. Do not split into hot and cold structs: an indirection to the tail would
+     *       charge every route that reads it.
      */
     struct pattern_hints
     {
@@ -450,9 +446,8 @@ namespace real {
       std::array<char, 6> stop_set      {};
       std::uint8_t        stop_set_size {}; //!< Members in \ref stop_set — 0 when the complement is too large, else 1..6.
 
-      //! \brief The 2..8 possible first bytes, enumerated for the alternation route's masked block scan.
-      //!        Kept in the cold tail: next to \ref first_bytes, raising its cap to 8 moved the
-      //!        `greedy_class_loop*` fields across a cache line.
+      //! \brief The 2..8 possible first bytes, for the alternation route's masked block scan. In the cold
+      //!        tail: next to \ref first_bytes it moved the `greedy_class_loop*` fields across a cache line.
       std::array<char, 8> small_set      {};
       std::uint8_t        small_set_size {}; //!< Members in \ref small_set — 0 when not a small set, else 2..8.
 
@@ -484,10 +479,9 @@ namespace real {
        * \brief Every `save` in this program writes slot 0 or slot 1, so a thread's whole capture state is
        *        the group-0 START.
        *
-       * Derived by SCANNING the code, not from `group_count`, so it holds for any program producer. It
-       * lets the epsilon walk carry no capture block: with `save 0` at pc 0, every thread one `add_thread`
-       * call adds shares one start (the one passed in, or `pos`). It must stay a guard: a `save 0` behind a
-       * split would hand one branch its sibling's start, a wrong answer.
+       * Derived by scanning the code, so it holds for any producer. The epsilon walk then carries no
+       * capture block: with `save 0` at pc 0, every thread one `add_thread` call adds shares one start. A
+       * `save 0` behind a split would hand one branch its sibling's start, a wrong answer.
        */
       bool                         capture_free_walk    {false};
 
@@ -583,42 +577,22 @@ namespace real {
       std::uint8_t fs_pair_b_lo1 {1}; //!< Position B, second range's low byte; same "no second range" convention.
       std::uint8_t fs_pair_b_hi1 {};  //!< Position B, second range's high byte.
 
-      // The six IL fields below are APPENDED LAST, and that placement is load-bearing: inserting them
-      // mid-struct reflows every field after them and moves the class-loop fast path's own hot fields
-      // across a cache line -- measurably, on patterns that read none of these six. It is the same fault
-      // the small_set note above records for that array's cap raise.
       /*!
-       * \brief IL reverse-by-class: set when the inner-literal PREFIX is exactly one greedy class loop
-       *        (`[a-z]+@…`, `\w+-…`, `\d+\.…`), so the match start for a candidate literal at `h` is the
-       *        start of the class run ending at `h` — a backward scan, no automaton.
+       * \brief IL reverse-by-class: the inner-literal prefix is one greedy class loop (`[a-z]+@…`), so a
+       *        candidate literal at `h` starts its match where the class run ending at `h` starts.
        *
-       * This is the middle case between a `fixed_shape` program (fixed-width throughout, so the
-       * start is arithmetic) and the general reverse pass (a reverse DFA over the prefix sub-program, which
-       * lives in the per-regex immutables). It needs neither: no sub-program, no DFA, no allocation, so a
-       * storage with no immutables — `static_regex` — can run it, which is the point. Leftmost semantics
-       * hold because the run's beginning IS the leftmost start for that candidate, and `confirm_at` verifies
-       * forward regardless, so a rejected candidate costs an advance and never a wrong match.
-       *
-       * -1 when the prefix is not that shape (a fixed repeat count has no `split`, so `\d{4}-…` is excluded
-       * here and stays on the general path).
+       * No sub-program, DFA or allocation, so `static_regex` (no immutables) runs it; `confirm_at` verifies
+       * forward, so a rejected candidate costs an advance, never a wrong match. -1 otherwise (a fixed count,
+       * `\d{4}-…`, has no `split` and stays general).
        */
       std::int32_t il_rev_class {-1};
       bool         il_rev_is_cp {}; //!< \ref il_rev_class indexes `cp_classes` (a `klass_cp` loop) rather than `classes`.
 
       /*!
-       * \brief IL two-run confirm: set when the WHOLE pattern is `class+ <literal> class+` (capture groups
-       *        around either run are transparent), so a confirmed candidate needs no match engine at all.
-       *
-       * With \ref il_rev_class placing the start by walking the prefix class back from the literal, the rest
-       * of the match is the suffix class run forward from the literal's end — and every capture slot is one
-       * of four positions (`s`, the literal's start, the literal's end, `e`). What this buys is aimed at a
-       * storage with NO per-regex cache: a dynamic regex confirms a candidate through its lazy DFA and
-       * one-pass table, while `static_regex` has neither and falls back to the general VM -- most of its
-       * work then being thread management and the copy-on-write capture pool, on a pattern that may have no
-       * capture groups at all. This shape confirms without an engine, so that cost disappears rather than
-       * being reduced.
-       *
-       * -1 when the suffix is not a single greedy class loop reaching the end of the pattern.
+       * \brief IL two-run confirm: the whole pattern is `class+ <literal> class+` (groups around either run
+       *        transparent), so a candidate is confirmed without an engine, every capture slot being one of
+       *        four positions. For `static_regex`, which would otherwise confirm on the general VM. -1 when
+       *        the suffix is not one greedy class loop ending the pattern.
        */
       std::int32_t il_fwd_class {-1};
       bool         il_fwd_is_cp {}; //!< \ref il_fwd_class indexes `cp_classes` rather than `classes`.
@@ -627,69 +601,42 @@ namespace real {
       bool         il_fwd_last {};
 
       /*!
-       * \brief IL fixed code-point shape: the whole pattern is a fixed SEQUENCE of code-point atoms and
-       *        literal bytes — `\d{4}-\d{2}-\d{2}` and its kin — with no loop anywhere.
-       *
-       * `fixed_shape` and its own route already cover the case where that sequence is fixed-width in BYTES, which a
-       * `klass_cp` never is (a Unicode `\d` matches multi-byte digits). But the code-point COUNT is fixed,
-       * so the match start is still arithmetic: step \ref il_cp_prefix_cps code points back from the
-       * candidate literal, then one forward walk verifies every atom and fills every capture. No loop means
-       * no reverse walk to bound and no engine to run.
+       * \brief IL fixed code-point shape: the whole pattern is a fixed sequence of code-point atoms and
+       *        literal bytes (`\d{4}-\d{2}-\d{2}`), no loop. Not byte-fixed (a Unicode `\d` is multi-byte),
+       *        but the code-point count is: step \ref il_cp_prefix_cps code points back from the literal,
+       *        then one forward walk verifies and fills every capture.
        */
       bool         il_cp_shape_eligible {};
       std::uint8_t il_cp_prefix_cps     {}; //!< Code points before the literal in \ref il_cp_shape_eligible.
 
       /*!
-       * \brief Upper bound, in CODE POINTS, on \ref greedy_cp_class's run, or 0 for unbounded.
-       *
-       * `\w+` and `\w{8,}` are unbounded and leave this 0; `\w{8}` sets it to 8, which is what lets the
-       * route accept a counted repeat at all. Without it the recognizer had to decline `X{k}` — the route
-       * knew how to extend greedily and bound the result from BELOW, and an exact count needs the run
-       * stopped from above, since `\w{8}` over a nine-letter word matches the first eight and not the nine.
-       *
-       * APPENDED LAST, and that placement is the change rather than a detail: this struct's hot fields are
-       * read per call on the class-loop path, and inserting a field mid-struct has twice cost this project
-       * double-digit regressions on patterns that read none of it (see \ref alternation_branch_count and
-       * the six IL fields above).
+       * \brief Upper bound, in code points, on \ref greedy_cp_class's run, or 0 for unbounded (`\w+`,
+       *        `\w{8,}`). `\w{8}` sets 8: the run must stop from above (`\w{8}` over a nine-letter word
+       *        matches eight).
        */
       std::uint16_t greedy_cp_class_max {};
 
       /*!
-       * \brief Class index when the WHOLE pattern is a bare single byte-class -- `[a-z]`, `[aeiou]`,
-       *        `[0-9]` with no quantifier at all -- else -1.
+       * \brief Class index when the whole pattern is a bare single byte-class (`[a-z]`; exactly `save 0`,
+       *        `klass`, `save 1`, `match`), else -1.
        *
-       * \ref greedy_class_loop describes `class+` and carries no "single" flag, unlike its two
-       * neighbours (\ref greedy_cp_class_plus, \ref codepoint_class_plus). Without this field the
-       * unquantified form matches no batchable selector and crosses a full route entry PER match, where
-       * all three class routes cross one per BATCH -- which made a single-byte class slower per byte than
-       * `.`, a pattern that matches at every position.
-       *
-       * A SEPARATE field rather than a flag on \ref greedy_class_loop, and that is not a stylistic
-       * choice: sharing that selector forces every pure `class+` call site to branch on the other shape
-       * too, which was measured to cost more than it saves (see \ref trailing_lookaround, which declines
-       * to arm it for the same reason).
-       *
-       * Scope is the 4-opcode program exactly (`save 0`, `klass`, `save 1`, `match`): no capture wrap,
-       * no `\b` wrap, no anchor. A single literal BYTE (`a`) is excluded -- it takes `exact_literal`,
-       * a different route with its own memchr scan.
-       *
-       * APPENDED LAST, per this struct's placement rule.
+       * Without it the form matched no batchable selector and paid a route entry per match. A flag on
+       * \ref greedy_class_loop would make every `class+` site branch on it (as \ref trailing_lookaround).
+       * A literal byte takes `exact_literal` instead.
        */
       std::int32_t single_class {-1};
 
       //! \brief Offset of the rarest byte of \ref prefix (by `byte_frequency`), the byte the literal search
-      //!        scans first (prefilter.hpp's `find_literal_adaptive`). Meaningful when \ref prefix_size >= 2.
-      //!        APPENDED LAST, per this struct's placement rule.
+      //!        scans first (`find_literal_adaptive`). Meaningful when \ref prefix_size >= 2.
       std::uint8_t prefix_rare {};
 
       //! \brief Offset of the rarest byte of \ref inner_literal, as \ref prefix_rare. Meaningful when
       //!        \ref inner_literal_len >= 2.
       std::uint8_t inner_literal_rare {};
 
-      //! \brief Compiled with \ref flags::allow_raw_byte, so a lead that opens on a UTF-8 continuation byte (RE2's
-      //!        `\C`) keeps its routes and its lazy DFA, whose matches may start inside a code point as RE2's do.
-      //!        In text mode otherwise such a lead is left to the VM, which starts a match only on a code
-      //!        point. APPENDED LAST, per this struct's placement rule (it fits the trailing padding).
+      //! \brief Compiled with \ref flags::allow_raw_byte, so a lead opening on a UTF-8 continuation byte (RE2's
+      //!        `\C`) keeps its routes and lazy DFA, matches starting inside a code point as RE2's do. In text
+      //!        mode otherwise such a lead is left to the VM. Fits the trailing padding.
       bool raw_byte_starts {};
     };
 
@@ -739,32 +686,19 @@ namespace real {
       //! \brief Flat byte-class membership tables, `class_tables[i * 256 + b]`, or null when the storage
       //!        has none pre-built (dynamic, which fills them lazily through \ref immut instead).
       //!
-      //! Carried here rather than reached through the state type: a state that names the pattern's own
-      //! arrays is a state that cannot be shared between patterns, and every Pike VM route is then
-      //! instantiated once per pattern. Compile-time storage points these at its `static constexpr`
-      //! arrays, so a constant-folding compiler still sees through to the same addresses.
+      //! Here, not in the state type, so one state type serves many patterns; the compile-time storage
+      //! points these at `static constexpr` arrays a constant-folding compiler still sees through.
       const std::uint8_t*             class_tables    {nullptr};
       const std::uint8_t*             cp_ascii_tables {nullptr}; //!< Flat ASCII tables per `cp_class`: `[i * 256 + b]`. Null as \ref class_tables.
       const std::uint64_t*            cp_page_tables  {nullptr}; //!< Flat page bitmaps per `cp_class`: `[i * 30]`. Null as \ref class_tables.
     };
 
     /*!
-     * \brief This view is COPIED ON EVERY `find_iter` AND `count_matches` CALL, so its size is a per-call
-     *        cost and growing it is a decision, not a detail.
+     * \brief The view is copied on every `find_iter` and `count_matches` call: a fixed per-call cost under
+     *        any throughput row's noise floor, so its size is guarded by counting bytes, not by timing.
      *
-     * A ceiling rather than a stopwatch, and that is the point. A per-call cost of this shape is fixed:
-     * it does not scale with the subject, so it hides under the noise floor of any throughput row and
-     * surfaces only on short inputs. Timing cannot guard it -- the effect is the same order as the floor of
-     * the rows that would carry it -- so it is guarded by COUNTING bytes instead, the same way per-call
-     * allocations are guarded by counting them rather than timing them.
-     *
-     * The number is not a target to hit but a line to notice crossing: ten spans plus \ref pattern_hints
-     * plus the scalars and pointers. Lower it when the view shrinks, and raise it only with the reason
-     * written down -- a change that adds a span here charges every call on both surfaces.
-     *
-     * Guarded on the pointer width because `std::span` is two pointers: a literal byte count would fail on
-     * a 32-bit target for no reason (this project has a `win32-narrowing` CI leg), and the concern -- do
-     * not silently make the per-call copy bigger -- is the same on any width.
+     * Lower the ceiling when the view shrinks; raise it only with the reason written down. 64-bit only:
+     * `std::span` is two pointers, and a 32-bit CI leg exists.
      */
     static_assert(sizeof(void*) != 8 || sizeof(program_view) <= 440,
                   "program_view grew: it is copied once per find_iter/count_matches call. See the note "
@@ -789,10 +723,8 @@ namespace real {
       bool                        byte_mode    {};   //!< \ref flags::bytes mode.
       bool                        unicode_word {};   //!< `\b \B \< \>` use Unicode word-ness (text mode).
       pattern_hints               hints;             //!< Search-acceleration hints.
-      // Codepoint-class marker, set by `emit_any_codepoint_class` at emission so the
-      // prefilter need not reverse-engineer the emitted block's bytecode shape (its
-      // instruction count is not fixed -- it grows with however many lead-byte
-      // branches the canonical UTF-8 range split needs).
+      // Codepoint-class marker set by `emit_any_codepoint_class`, so the prefilter need not
+      // reverse-engineer the block, whose length varies with the UTF-8 range split.
       std::int32_t codepoint_mark_ascii  {-1}; //!< ASCII sub-class index of an emitted codepoint-class block (-1 = none).
       std::int32_t codepoint_mark_offset {-1}; //!< Where that block starts (program offset); the whole-pattern hint requires offset 1.
       std::int32_t codepoint_mark_end    {-1}; //!< Program offset right after that block ends (-1 = none).
