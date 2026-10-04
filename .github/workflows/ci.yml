@@ -266,6 +266,10 @@ jobs:
       # ASan/UBSan. It had no direct fuzzing until the FFI-safety audit; this is the net for that surface.
       - name: C ABI shim fuzzing smoke run (real_compile / find_iter / iter_next)
         run: make c-fuzz FUZZ_TIME=60 CXX=clang++
+      # Every pike_vm route against the general VM over generated patterns (fuzz/route_differential.cpp): the
+      # net that found four wrong answers of the inner-literal route. Longer than the gate's run.
+      - name: Route differential (every route against the general VM)
+        run: make fuzz-routes CXX=clang++ FUZZ_ROUTES_SEEDS="1 2 3 4" FUZZ_ROUTES_INNER=100000 FUZZ_ROUTES_GENERAL=50000
       # ThreadSanitizer proof that concurrent const operations on one shared regex are race-free
       # (std_engine's lazy build under a mutex). Reproduce locally with: make tsan.
       - name: ThreadSanitizer smoke (concurrent std_engine)

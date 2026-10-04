@@ -66,7 +66,7 @@ include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
 	full-local-gate-impl gcc-check route-probe alloc-probe alloc-cold-probe ac-regime sabotage-sweep sabotage-help check-blind-guard blind-guards \
-        lint misra check-state-zeroing check-percall-copies check-fixed-cost route-surface-parity bench-compilers fuzz fuzz-compat fuzz-compat-known fuzz-re2 check-capi-abi check-abi-bump check-features-probe exhaustive-compat exhaustive-compat-flags fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
+        lint misra check-state-zeroing check-percall-copies check-fixed-cost route-surface-parity bench-compilers fuzz fuzz-compat fuzz-compat-known fuzz-re2 fuzz-routes check-capi-abi check-abi-bump check-features-probe exhaustive-compat exhaustive-compat-flags fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
@@ -217,6 +217,9 @@ fuzz-compat-known:
 
 fuzz-re2:
 	@$(MAKE) -C fuzz fuzz-re2
+
+fuzz-routes:
+	@$(MAKE) -C fuzz fuzz-routes
 
 # Lives in tools/Makefile -- see the "--- tools/ ---" comment above for the
 # CI-invariant rationale. Golden GENERATED from bindings/c/real_capi.h, never hand-edited:
@@ -926,6 +929,8 @@ full-local-gate-impl:
 	@$(MAKE) fowler-compat
 	@echo "── [17/25] exhaustive-compat"
 	@$(MAKE) exhaustive-compat
+	@echo "── [17b/25] fuzz-routes (every route against the general VM, generated patterns, fixed seeds)"
+	@$(MAKE) fuzz-routes
 	@echo "── [18/25] test (default CXX; refuses a binary older than the headers)"
 	@$(MAKE) test
 	@echo "── [19/25] rust-test + rust-clippy (every clippy warning an error)"

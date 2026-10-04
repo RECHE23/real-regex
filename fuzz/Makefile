@@ -205,6 +205,20 @@ exhaustive-compat-flags-build: ## Compile the flag-axis runner only
 exhaustive-compat-flags: exhaustive-compat-flags-build exhaustive-compat-space ## Match flags on REAL vs local std, whole space
 	@$(BUILD)/exhaustive_compat_flags $(BUILD)/ec_pats.txt $(BUILD)/ec_inps.txt 1 $(EC_PIN)
 
+# The route differential: every pike_vm route against the general VM, over generated patterns and subjects
+# (see fuzz/route_differential.cpp). The seeds and the two counts size the run: the gate's is a few seconds,
+# CI's fuzz job runs a longer one. Any divergence fails.
+FUZZ_ROUTES_SEEDS   ?= 1 2
+FUZZ_ROUTES_INNER   ?= 20000
+FUZZ_ROUTES_GENERAL ?= 5000
+fuzz-routes: ## Route differential: every route against the general VM (FUZZ_ROUTES_SEEDS/_INNER/_GENERAL)
+	@mkdir -p $(BUILD)
+	@cd $(ROOT) && $(CXX) $(CXXSTD) -O2 $(INCLUDES) fuzz/route_differential.cpp -o $(BUILD)/route_differential
+	@set -e; for seed in $(FUZZ_ROUTES_SEEDS); do \
+	  $(BUILD)/route_differential inner $$seed $(FUZZ_ROUTES_INNER); \
+	  $(BUILD)/route_differential general $$seed $(FUZZ_ROUTES_GENERAL); \
+	done
+
 # The Fowler / AT&T POSIX conformance of the compat layer: the three vendored testregex corpora through
 # real::compat vs the local std, three-way-arbitrated against the corpus's POSIX expectation and bucketed.
 # Hard invariants (lib-stable): b3 == b4 == std_only == 0, the b1 perfect count, and the per-file parsed-case
