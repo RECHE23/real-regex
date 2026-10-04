@@ -980,8 +980,7 @@ namespace real::detail {
         }
         if (prog_.hints.anchored_start) {
           if (start != 0) { // a region past 0 cannot hold a `\A`-anchored match, in any mode
-            out_slots.assign(prog_.slot_count, npos);
-            return false;
+            return fail_slots(out_slots);
           }
           return run_cp_class_loop(text, start,
                                    mode == run_mode::search ? run_mode::prefix : mode, out_slots);
@@ -1092,8 +1091,7 @@ namespace real::detail {
 #endif
       if (sem_ == match_semantics::first && prog_.hints.fixed_shape) {
         if (prog_.hints.anchored_start && start != 0) {
-          out_slots.assign(prog_.slot_count, npos);
-          return false;
+          return fail_slots(out_slots);
         }
         prof::tick_route(prof::route::fixed_shape);
         const bool matched {run_fixed_shape(text, start,
@@ -1104,8 +1102,7 @@ namespace real::detail {
           const bool        at_end {e == text.size()
                                     || (prog_.hints.fs_end_anchor == 2 && e + 1 == text.size() && text[e] == 0x0A)};
           if (!at_end) {
-            out_slots.assign(prog_.slot_count, npos);
-            return false;
+            return fail_slots(out_slots);
           }
         }
         return matched;
@@ -1368,8 +1365,7 @@ namespace real::detail {
               if (stop < s) {
                 stop = s;
               }
-              out_slots.assign(prog_.slot_count, npos);
-              return false;
+              return fail_slots(out_slots);
             }
             const std::size_t e {match_end};
             stop = e;
@@ -1542,8 +1538,7 @@ namespace real::detail {
           detail::prof::tick_prefilter_candidate();
         }
         if (h == npos) {
-          out_slots.assign(prog_.slot_count, npos);
-          return false;   // no more candidates (no-match): memmem-only — the guard below was never reached
+          return fail_slots(out_slots);   // no more candidates (no-match): memmem-only — the guard below was never reached
         }
         if (first_candidate) {
           first_candidate = false;
@@ -2995,8 +2990,7 @@ namespace real::detail {
                                            OutSlots&        out_slots)
     {
       if (prog_.hints.anchored_start && start != 0) {
-        out_slots.assign(prog_.slot_count, npos);
-        return false;
+        return fail_slots(out_slots);
       }
       if (prog_.hints.greedy_class_loop_end != 0) {
         return run_class_loop_end_anchored(text, start, mode, out_slots);
@@ -3058,23 +3052,19 @@ namespace real::detail {
           && tbl[static_cast<std::uint8_t>('\n')] == 0U) {
         --limit; // `$`: class cannot consume the final newline, so the match ends before it
       }
-      const auto fail = [&]() {
-                          out_slots.assign(prog_.slot_count, npos);
-                          return false;
-                        };
       if (limit <= start) {
-        return fail();
+        return fail_slots(out_slots);
       }
       std::size_t match_start {limit};
       while (match_start > start && tbl[static_cast<std::uint8_t>(text[match_start - 1])] != 0U) {
         --match_start;
       }
       if (match_start == limit) {
-        return fail(); // nothing of the class immediately before the anchor
+        return fail_slots(out_slots); // nothing of the class immediately before the anchor
       }
       // `^X+$`: the run must also BEGIN at 0. anchored_impossible() has already refused start != 0.
       if (prog_.hints.anchored_start && match_start != 0) {
-        return fail();
+        return fail_slots(out_slots);
       }
       // ALL modes come here, not just search: the assertion has been peeled OUT of the program, so
       // whoever handles the shape is the only thing left enforcing it. A prefix (`match`) call that
@@ -3082,18 +3072,18 @@ namespace real::detail {
       // pattern forbids.
       if (mode == run_mode::prefix || mode == run_mode::full) {
         if (match_start > start) {
-          return fail(); // the run ending at the anchor does not reach back to the required start
+          return fail_slots(out_slots); // the run ending at the anchor does not reach back to the required start
         }
         match_start = start;
         if (mode == run_mode::full && limit != text.size()) {
-          return fail(); // a full match must span the WHOLE subject, final newline included
+          return fail_slots(out_slots); // a full match must span the WHOLE subject, final newline included
         }
       }
       if (limit - match_start < prog_.hints.greedy_class_loop_min) {
-        return fail();
+        return fail_slots(out_slots);
       }
       if (!wb_boundaries_ok(match_start, limit)) {
-        return fail();
+        return fail_slots(out_slots);
       }
       fill_span_slots(out_slots, match_start, limit);
       return true;
@@ -3659,14 +3649,12 @@ namespace real::detail {
       if (prog_.hints.wb_lead != 0 || prog_.hints.wb_trail != 0) {
         if (mode == run_mode::full || mode == run_mode::prefix) {
           if (start >= text.size() || !in_class(start)) {
-            out_slots.assign(prog_.slot_count, npos);
-            return false;
+            return fail_slots(out_slots);
           }
           const std::size_t match_end {scan_end(start)};
           if ((mode == run_mode::full && match_end != text.size()) ||
               !wb_boundaries_ok(start, match_end) || (match_end - start) < min_len) {
-            out_slots.assign(prog_.slot_count, npos);
-            return false;
+            return fail_slots(out_slots);
           }
           fill_span_slots(out_slots, start, match_end); // ensure_size + write, no npos assign
           return true;
@@ -3687,8 +3675,7 @@ namespace real::detail {
           }
           pos = match_end; // next run (e.g. "9abc def" → skip "abc", try "def")
         }
-        out_slots.assign(prog_.slot_count, npos);
-        return false;
+        return fail_slots(out_slots);
       }
 
       // the DROP rule window-edge guard, mode::full/prefix: anchored at `start` with no retry available --
@@ -3696,8 +3683,7 @@ namespace real::detail {
       if ((mode == run_mode::full || mode == run_mode::prefix) && prog_.hints.wb_lead_maximal_run &&
           start > 0 && start < text.size() && in_class(start) &&
           !assertion_holds(assert_kind::word_boundary, start, false)) {
-        out_slots.assign(prog_.slot_count, npos);
-        return false;
+        return fail_slots(out_slots);
       }
       std::size_t match_start     {start};
       bool        first_candidate {true}; // the window-edge guard's one candidate
@@ -3708,8 +3694,7 @@ namespace real::detail {
             ++match_start;
           }
           if (match_start >= text.size()) {
-            out_slots.assign(prog_.slot_count, npos);
-            return false;
+            return fail_slots(out_slots);
           }
           // the DROP rule window-edge guard: a candidate found by scanning forward past a non-class byte
           // is provably preceded by one (the scan just confirmed it), so the DROP rule’s redundancy
@@ -3725,21 +3710,18 @@ namespace real::detail {
           }
         }
         if (match_start >= text.size() || !in_class(match_start)) {
-          out_slots.assign(prog_.slot_count, npos);
-          return false;
+          return fail_slots(out_slots);
         }
         match_end = scan_end(match_start);
         if (mode == run_mode::full && match_end != text.size()) {
-          out_slots.assign(prog_.slot_count, npos);
-          return false;
+          return fail_slots(out_slots);
         }
         // A maximal run shorter than the required minimum can never satisfy `X{k,}` starting
         // here -- in search mode, skip past the whole (too-short) run and try the next one,
         // exactly like the wb-boundary retry above; anchored modes have no retry, so fail outright.
         if ((match_end - match_start) < min_len) {
           if (mode != run_mode::search) {
-            out_slots.assign(prog_.slot_count, npos);
-            return false;
+            return fail_slots(out_slots);
           }
           match_start = match_end;
           continue;
@@ -3796,8 +3778,7 @@ namespace real::detail {
       if constexpr (!requires(State & st) {
         st.lookaround;
       }) {
-        out_slots.assign(prog_.slot_count, npos);
-        return false;
+        return fail_slots(out_slots);
       }
       else {
         text_ = text; // lookaround_holds reads text_ (callers are outside run())
@@ -3866,13 +3847,11 @@ namespace real::detail {
 
         if (mode == run_mode::full) {
           if (start >= text.size() || !in_class(start)) {
-            out_slots.assign(prog_.slot_count, npos);
-            return false;
+            return fail_slots(out_slots);
           }
           const std::size_t match_end {scan_end(start)};
           if (match_end != text.size() || !la_at(match_end)) {
-            out_slots.assign(prog_.slot_count, npos);
-            return false;
+            return fail_slots(out_slots);
           }
           fill_span_slots(out_slots, start, match_end);
           return true;
@@ -3880,14 +3859,12 @@ namespace real::detail {
 
         if (mode == run_mode::prefix) {
           if (start >= text.size() || !in_class(start)) {
-            out_slots.assign(prog_.slot_count, npos);
-            return false;
+            return fail_slots(out_slots);
           }
           if (try_ends(start, scan_end(start))) {
             return true;
           }
-          out_slots.assign(prog_.slot_count, npos);
-          return false;
+          return fail_slots(out_slots);
         }
 
         std::size_t pos {start};
@@ -3905,8 +3882,7 @@ namespace real::detail {
           }
           pos = match_end;
         }
-        out_slots.assign(prog_.slot_count, npos);
-        return false;
+        return fail_slots(out_slots);
       }
     }
 
@@ -4476,10 +4452,6 @@ namespace real::detail {
                                 return match_end;
                               };
 #endif
-      const auto fail = [&]() {
-                          out_slots.assign(prog_.slot_count, npos);
-                          return false;
-                        };
 
       // The limit a trailing `\Z`/`$` imposes. The recognizer peeled that assertion out of the
       // program, so this is the only thing left enforcing it. `$` (kind 2) matches at the true end
@@ -4520,14 +4492,14 @@ namespace real::detail {
           // search branch below gets it from its own scan). The route's minimum is at least one code
           // point by construction, so an exhausted window can never match.
           if (start >= text.size()) {
-            return fail();
+            return fail_slots(out_slots);
           }
           const std::size_t match_end {extend_run(start)};
           if (match_end == npos || (mode == run_mode::full && match_end != text.size()) ||
               (prog_.hints.greedy_cp_class_end != 0 && !at_end_anchor(match_end)) ||
               !wb_boundaries_ok(start, match_end) ||
               (min_len > 1 && count_cps(start, match_end) < min_len)) {
-            return fail();
+            return fail_slots(out_slots);
           }
           fill_span_slots(out_slots, start, match_end);
           return true;
@@ -4549,7 +4521,7 @@ namespace real::detail {
           }
           pos = match_end == npos ? match_start + 1 : match_end;
         }
-        return fail();
+        return fail_slots(out_slots);
       }
 
       // the DROP rule window-edge guard, mode::full/prefix: anchored at `start` with no retry available --
@@ -4557,7 +4529,7 @@ namespace real::detail {
       if ((mode == run_mode::full || mode == run_mode::prefix) && prog_.hints.wb_lead_maximal_run &&
           start > 0 && start < text.size() && width(start) != 0 &&
           !assertion_holds(assert_kind::word_boundary, start, false)) {
-        return fail();
+        return fail_slots(out_slots);
       }
       std::size_t match_start {start};
       std::size_t match_end   {};
@@ -4568,7 +4540,7 @@ namespace real::detail {
             ++match_start;
           }
           if (match_start >= text.size()) {
-            return fail();
+            return fail_slots(out_slots);
           }
           // the DROP rule window-edge guard: a candidate found by scanning forward past a non-class
           // code point is provably preceded by one, so the DROP rule’s redundancy argument holds
@@ -4583,26 +4555,26 @@ namespace real::detail {
               !assertion_holds(assert_kind::word_boundary, match_start, false)) {
             const std::size_t skip {extend_run(match_start)};
             if (skip == npos) {
-              return fail(); // malformed sequence right at the window edge: nothing to skip to
+              return fail_slots(out_slots); // malformed sequence right at the window edge: nothing to skip to
             }
             match_start = skip; // no genuine boundary here: skip this whole run
             continue;
           }
         }
         if (match_start >= text.size()) {
-          return fail();
+          return fail_slots(out_slots);
         }
         // The first code point must match: this path is only chosen for `\w`/`\w+` (never nullable).
         match_end = extend_run(match_start);
         if (match_end == npos || (mode == run_mode::full && match_end != text.size())) {
-          return fail();
+          return fail_slots(out_slots);
         }
         // A maximal run shorter than the required minimum can never satisfy `X{k,}` starting
         // here -- in search mode, skip past the whole (too-short) run and try the next one;
         // anchored modes have no retry, so fail outright (mirrors run_class_loop's own min-check).
         if (min_len > 1 && count_cps(match_start, match_end) < min_len) {
           if (mode != run_mode::search) {
-            return fail();
+            return fail_slots(out_slots);
           }
           match_start = match_end;
           continue;
@@ -4617,7 +4589,7 @@ namespace real::detail {
         // differential.
         if (prog_.hints.greedy_cp_class_end != 0 && !at_end_anchor(match_end)) {
           if (mode != run_mode::search || match_end <= match_start) {
-            return fail();
+            return fail_slots(out_slots);
           }
           match_start = match_end;
           continue;
@@ -4710,10 +4682,6 @@ namespace real::detail {
                                      out_slots[static_cast<std::size_t>(h.possessive_group_end)] = body_end;
                                    }
                                  };
-      const auto fail = [&]() {
-                          out_slots.assign(prog_.slot_count, npos);
-                          return false;
-                        };
       if (prefix_size > 0) {
         // Delimited ("quoted") shape: no capture, no \b wrap by construction (prefilter.hpp never
         // arms both together) -- suffix_ok / write_success above already cover it exactly.
@@ -4737,20 +4705,20 @@ namespace real::detail {
                                  };
         if (mode == run_mode::full || mode == run_mode::prefix) {
           if (prefix_size > (text.size() >= start ? text.size() - start : 0)) {
-            return fail();
+            return fail_slots(out_slots);
           }
           for (std::uint8_t k {0}; k < prefix_size; ++k) {
             if (text[start + k] != h.possessive_prefix[k]) {
-              return fail();
+              return fail_slots(out_slots);
             }
           }
           const std::size_t body_end {scan_end(start + prefix_size)};
           if (!suffix_ok(body_end)) {
-            return fail();
+            return fail_slots(out_slots);
           }
           const std::size_t end {body_end + suffix_size};
           if (mode == run_mode::full && end != text.size()) {
-            return fail();
+            return fail_slots(out_slots);
           }
           write_success(start, end);
           return true;
@@ -4759,7 +4727,7 @@ namespace real::detail {
         while (true) {
           const std::size_t cand {find_prefix(pos)};
           if (cand == npos) {
-            return fail();
+            return fail_slots(out_slots);
           }
           const std::size_t body_end {scan_end(cand + prefix_size)};
           if (suffix_ok(body_end)) {
@@ -4781,18 +4749,18 @@ namespace real::detail {
                                   };
       if (mode == run_mode::full || mode == run_mode::prefix) {
         if (min_nonzero && (start >= text.size() || !in_class(start))) {
-          return fail();
+          return fail_slots(out_slots);
         }
         if (b1_edge_blocks(start)) {
-          return fail();
+          return fail_slots(out_slots);
         }
         const std::size_t body_end {start < text.size() && in_class(start) ? scan_end(start) : start};
         if (!wb_boundaries_ok(start, body_end) || !suffix_ok(body_end)) {
-          return fail();
+          return fail_slots(out_slots);
         }
         const std::size_t end {body_end + suffix_size};
         if (mode == run_mode::full && end != text.size()) {
-          return fail();
+          return fail_slots(out_slots);
         }
         write_success(start, end, body_end);
         return true;
@@ -4824,7 +4792,7 @@ namespace real::detail {
         }
         pos = body_end > pos ? body_end : pos + 1;
       }
-      return fail();
+      return fail_slots(out_slots);
     }
 
     /*!
@@ -5141,7 +5109,7 @@ namespace real::detail {
      * \param[in]  text      The subject text.
      * \param[in]  start     Index to begin searching at.
      * \param[out] out_slots Receives the matched span on success, `npos` on failure (seam parity with
-     *                       \ref run_fixed_shape's own `fail()`).
+     *                       \ref run_fixed_shape, through \ref fail_slots).
      * \return `true` if the sequence matched.
      */
     template <typename OutSlots>
@@ -5202,17 +5170,13 @@ namespace real::detail {
                                   out_slots[0] = s;
                                   out_slots[1] = e;
                                 };
-        const auto fail = [&]() {
-                            out_slots.assign(2, npos);
-                            return false;
-                          };
         const auto at {[&](std::size_t s) {
                          return match_fixed_body_wb</*SkipSaves=*/ false>(text, s);
                        }};
         if (mode != run_mode::search) {
           const std::size_t match_end {at(start)};
           if (match_end == npos || (mode == run_mode::full && match_end != text.size())) {
-            return fail();
+            return fail_slots(out_slots, 2);
           }
           write_span(start, match_end);
           return true;
@@ -5234,7 +5198,7 @@ namespace real::detail {
             const std::size_t found  {simd_fixed_shape_scan(text, pos, prog_.hints, resume)};
             if (found == npos) {
               if (!fast_search(text, resume, at, out_slots)) {
-                return fail();
+                return fail_slots(out_slots, 2);
               }
               return true;
             }
@@ -5245,11 +5209,11 @@ namespace real::detail {
             }
             pos = found + 1; // body matched but `\b` failed — try next candidate
           }
-          return fail();
+          return fail_slots(out_slots, 2);
         }
 #endif
         if (!fast_search(text, start, at, out_slots)) {
-          return fail();
+          return fail_slots(out_slots, 2);
         }
         return true;
       }
@@ -5596,6 +5560,31 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Clears the capture slots for a search that found nothing, and says so.
+     * \param[out] out_slots The slots, \p count of them set to \ref real::npos.
+     * \param[in]  count     How many: the program's slots, or the two a groupless route writes.
+     * \return False, for the caller to return.
+     */
+    template <typename OutSlots>
+    constexpr bool fail_slots(OutSlots&   out_slots,
+                              std::size_t count) const
+    {
+      out_slots.assign(count, npos);
+      return false;
+    }
+
+    /*!
+     * \brief \ref fail_slots for every slot of the program.
+     * \param[out] out_slots The slots.
+     * \return False, for the caller to return.
+     */
+    template <typename OutSlots>
+    constexpr bool fail_slots(OutSlots& out_slots) const
+    {
+      return fail_slots(out_slots, prog_.slot_count);
+    }
+
+    /*!
      * \brief Where the two-run shape's prefix class run, continued forward from \p from, stops.
      * \param[in] text  The subject.
      * \param[in] from  A position inside or at the end of the run.
@@ -5844,10 +5833,6 @@ namespace real::detail {
       const std::uint8_t* const ascii {
         class_table(static_cast<std::size_t>(prog_.hints.codepoint_class_ascii))};
       // Success rewrites both span slots; fail assigns for seam parity.
-      const auto fail = [&]() {
-                          out_slots.assign(2, npos);
-                          return false;
-                        };
 
       const auto cont = [&](std::size_t i) {
                           const auto cont_byte {static_cast<std::uint8_t>(text[i])};
@@ -5906,11 +5891,11 @@ namespace real::detail {
         }
       }
       if (match_start >= text.size()) {
-        return fail();
+        return fail_slots(out_slots, 2);
       }
       const std::size_t first_width {width(match_start)};
       if (first_width == 0) {
-        return fail();
+        return fail_slots(out_slots, 2);
       }
       std::size_t match_end {match_start + first_width};
       if (prog_.hints.codepoint_class_plus) {
@@ -5960,7 +5945,7 @@ namespace real::detail {
         }
       }
       if (mode == run_mode::full && match_end != text.size()) {
-        return fail();
+        return fail_slots(out_slots, 2);
       }
       ensure_slot_size(out_slots, 2);
       out_slots[0] = match_start;
@@ -7058,10 +7043,6 @@ namespace real::detail {
                                 out_slots[0] = s;
                                 out_slots[1] = e;
                               };
-      const auto fail = [&]() {
-                          out_slots.assign(2, npos);
-                          return false;
-                        };
       const auto& code {prog_.code};
 
       // First branch that matches at \p s (and, for full, spans to the end). The
@@ -7089,7 +7070,7 @@ namespace real::detail {
       if (mode != run_mode::search) {
         const std::size_t match_end {match_at(start, mode == run_mode::full)};
         if (match_end == npos) {
-          return fail();
+          return fail_slots(out_slots, 2);
         }
         write_span(start, match_end);
         return true;
@@ -7149,11 +7130,11 @@ namespace real::detail {
             }
           }
         }
-        return fail();
+        return fail_slots(out_slots, 2);
       }
 #endif
       if (!fast_search(text, start, [&](std::size_t match_start) { return match_at(match_start, false); }, out_slots)) {
-        return fail();
+        return fail_slots(out_slots, 2);
       }
       return true;
     }
@@ -7882,8 +7863,7 @@ namespace real::detail {
         }
         else if (instruction.op == opcode::assert_position) {
           if (!assertion_holds(static_cast<assert_kind>(instruction.arg8), cand + consumed, instruction.arg16 != 0U)) {
-            out_slots.assign(prog_.slot_count, npos);
-            return false;
+            return fail_slots(out_slots);
           }
         }
         else if ((instruction.op == opcode::byte || instruction.op == opcode::klass) && consumed < len) {
@@ -7984,8 +7964,7 @@ namespace real::detail {
       const std::size_t cand {find_on_subject(text, start, std::string_view(prog_.hints.prefix.data(), len),
                                               prog_.hints.prefix_rare, false)};
       if (cand == npos) {
-        out_slots.assign(prog_.slot_count, npos);
-        return false;
+        return fail_slots(out_slots);
       }
       ensure_slot_size(out_slots, prog_.slot_count); // find_prefix guarantees cand + len <= text.size()
       out_slots[0] = cand;
@@ -8032,8 +8011,7 @@ namespace real::detail {
     {
       const std::size_t len {static_cast<std::size_t>(prog_.hints.exact_literal_len)};
       if (len == 0) {
-        out_slots.assign(prog_.slot_count, npos);
-        return false;
+        return fail_slots(out_slots);
       }
       if (mode != run_mode::search) {
         const bool full_ok = mode != run_mode::full || start + len == text.size();
@@ -8064,8 +8042,7 @@ namespace real::detail {
       while (true) {
         const std::size_t cand {next_candidate(text, from, start)};
         if (cand > text.size() || cand + len > text.size()) {
-          out_slots.assign(prog_.slot_count, npos);
-          return false;
+          return fail_slots(out_slots);
         }
         if (literal_at(text, cand, len) && replay_literal(cand, len, out_slots)) {
           return true;
