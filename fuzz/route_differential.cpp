@@ -9,7 +9,8 @@
 //!   * `general`: patterns over classes, quantifiers (lazy ones too), groups, alternations, anchors, `(?i)`
 //!     and UTF-8. At every start position, `search` against the general VM run on the same program with
 //!     its hints blanked; then every match and group of `find_iter` against the same walk with every
-//!     route's disable knob set, which also takes the batched walks off.
+//!     route's disable knob set, which also takes the batched walks off; then `search` again with one knob,
+//!     drawn per pattern, set alone.
 //!   * `inner`: patterns built around a literal, the inner-literal route's own shape, over {a, b, x}. Every
 //!     match and group of `find_iter` with the route on against the route off.
 //!
@@ -20,6 +21,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <iterator>
 #include <optional>
 #include <random>
 #include <set>
@@ -183,6 +185,17 @@ namespace {
     std::mt19937 rng_;
   };
 
+  using knob = bool& (*)();
+
+  //! Every route's disable knob. One set alone leaves the others' routes to answer around it, which is where a
+  //! route's fallback runs: a guard that misbehaves only there is invisible with every knob set at once.
+  constexpr knob knobs[] {real::detail::ac_density_gate_disabled,        real::detail::aho_corasick_route_disabled,
+                          real::detail::bounded_backtrack_route_disabled, real::detail::class_fastpath_disabled,
+                          real::detail::fixed_shape_pair_route_disabled, real::detail::fixed_shape_route_disabled,
+                          real::detail::inner_literal_guard_disabled,    real::detail::inner_literal_route_disabled,
+                          real::detail::lazy_dfa_route_disabled,         real::detail::possessive_fastpath_disabled,
+                          real::detail::rare_disc_route_disabled,        real::detail::trailing_la_route_disabled};
+
   //! Every route's disable knob, set or cleared together: with all of them set a walk takes no route.
   void routes_off(bool off)
   {
@@ -281,6 +294,7 @@ int main(int argc,
       general.emplace(dynamic_storage::compile(pattern, real::flags::none));
       general->program.hints = {};
     }
+    const knob one {knobs[gen.below(static_cast<int>(std::size(knobs)))]}; // this pattern's single knob
     for (const std::string& subject : subjects) {
       std::string why {general_mode ? search_divergence(re, *general, subject) : std::string {}};
       if (why.empty()) {
@@ -295,6 +309,14 @@ int main(int argc,
         routes_off(false);
         if (with != without) {
           why = "find_iter";
+        }
+      }
+      if (why.empty() && general_mode) {
+        one() = true;
+        why   = search_divergence(re, *general, subject);
+        one() = false;
+        if (!why.empty()) {
+          why = "with one knob set, " + why;
         }
       }
       if (!why.empty() && diverged.insert(pattern).second && diverged.size() <= 10U) {
