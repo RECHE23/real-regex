@@ -141,15 +141,11 @@ namespace real::detail {
   }
 
   /*!
-   * \brief Peel an optional `\b`/`\B` assertion at \p p, lead or trail alike (the position is the caller's).
-   *
-   * Not an assert: \p hint stays 0, returns true. A word-boundary assert: records the hint, advances
-   * \p p, returns true. Any other assert: returns false (the shape is disqualified).
-   *
+   * \brief Peels an optional `\b`/`\B` assertion at \p p, lead or trail alike.
    * \param[in]     code Instruction stream.
-   * \param[in,out] p    Program counter (advanced past the assert when peeled).
-   * \param[out]    hint Hint 0/1/2 — see \ref wb_hint_of.
-   * \return false if a non-wb assert blocks the shape.
+   * \param[in,out] p    Program counter, advanced past a peeled assert.
+   * \param[out]    hint 0 when nothing was peeled, else 1/2 (see \ref wb_hint_of).
+   * \return false only when another assertion sits at \p p (the shape is disqualified).
    */
   [[nodiscard]] constexpr bool peel_optional_wb(std::span<const instr> code,
                                                 std::size_t&           p,
@@ -169,8 +165,7 @@ namespace real::detail {
   }
 
   /*!
-   * \brief detect_fast_shapes's outer envelope: `save 0`, optional lead `\b`/`\B`. No-ops safely on a
-   *        shape with no `\b`/`\B` support (e.g. a literal `byte` right after `save 0`).
+   * \brief A fixed shape's lead: `save 0`, an optional `\A`/`^`, an optional `\b`/`\B`.
    */
   struct shape_lead
   {
@@ -178,9 +173,8 @@ namespace real::detail {
     std::uint8_t wb_lead        {}; //!< 0/1/2, see \ref wb_hint_of.
     //! \brief A leading `\A`/`^` (not multiline `^`) was peeled: the shape may only match at 0.
     //!
-    //! A recognizer that does not honour the anchor itself MUST refuse the shape when set: a forward
-    //! scan would return matches the program forbids (the class-loop route reads
-    //! \ref pattern_hints::anchored_start).
+    //! A recognizer that does not honour it MUST refuse the shape: a forward scan would return matches
+    //! the program forbids.
     bool         anchored_start {};
     bool         ok             {}; //!< false: no leading `save 0`, or a non-wb lead assert disqualifies.
   };
@@ -197,7 +191,7 @@ namespace real::detail {
     }
     std::size_t p {1};
     // `\A`/`^` is peeled and reported, not rejected: `^X` searched is `X` in prefix mode, which reaches
-    // the class loop (81x faster on 100 KB). Multiline `^` (line_start) stays disqualifying.
+    // the class loop (81x faster on 100 KB). Multiline `^` stays disqualifying.
     bool anchored {false};
     if (p < code.size() && code[p].op == opcode::assert_position
         && static_cast<assert_kind>(code[p].arg8) == assert_kind::text_start) {
@@ -212,8 +206,8 @@ namespace real::detail {
   }
 
   /*!
-   * \brief The \ref shape_lead counterpart: optional trail `\b`/`\B`, then exactly `save 1`, `match`
-   *        at the end of the program, read from the body's end (which only the caller knows).
+   * \brief The \ref shape_lead counterpart: optional trail `\b`/`\B`, optional `\Z`/`$`, then exactly
+   *        `save 1`, `match` ending the program.
    */
   struct shape_close
   {
@@ -221,7 +215,7 @@ namespace real::detail {
     //! \brief A trailing end anchor was peeled: 0 none, 1 `\Z`, 2 `$` (end, or before ONE final
     //!        newline, which is why `^X$` is not `fullmatch(X)`).
     //!
-    //! Same contract as `shape_lead::anchored_start`: a recognizer that does not honour it MUST refuse.
+    //! A recognizer that does not honour it MUST refuse the shape.
     std::uint8_t end_anchor {};
     bool         ok         {}; //!< false: not exactly `save 1`, `match` at the end after peeling.
   };
@@ -235,16 +229,15 @@ namespace real::detail {
   [[nodiscard]] constexpr shape_close parse_shape_close(std::span<const instr> code,
                                                         std::size_t            from) noexcept
   {
-    // Not through peel_optional_wb: it refuses non-wb asserts, so the end-anchor peel would be
-    // unreachable. The compiler emits `\b` before `$` (`X+\b$`); any other order fails `save 1`/`match`.
+    // Not peel_optional_wb: it refuses non-wb asserts, so the end anchor could never be peeled. The
+    // compiler emits `\b` before `$` (`X+\b$`); any other order fails the `save 1`, `match` test.
     std::uint8_t wb_trail {0};
     if (from < code.size() && code[from].op == opcode::assert_position
         && is_word_boundary_kind(static_cast<assert_kind>(code[from].arg8))) {
       wb_trail = wb_hint_of(static_cast<assert_kind>(code[from].arg8));
       ++from;
     }
-    // `\Z`/`$` limit where the match ends: peeled and reported so the shape routes honour it.
-    // Multiline `$` (line_end) is not peeled and disqualifies.
+    // Multiline `$` is not peeled and disqualifies.
     std::uint8_t end_anchor {0};
     if (from < code.size() && code[from].op == opcode::assert_position) {
       const auto kind {static_cast<assert_kind>(code[from].arg8)};
@@ -307,8 +300,7 @@ namespace real::detail {
   /*!
    * \brief True if \p cc is exactly the canonical Unicode `\w` class (not a user superset).
    *
-   * Compares the ASCII bitmap to \ref is_ascii_word_byte and the non-ASCII ranges to \ref word_ranges.
-   * A \c range_count threshold is unsound: `[\w😀]` would pass, yet `\b[\w😀]+\b` is not `[\w😀]+`.
+   * Range identity, not a \c range_count threshold: `[\w😀]` would pass one, yet `\b[\w😀]+\b` is not `[\w😀]+`.
    *
    * \param[in] cc         The code-point class under test.
    * \param[in] all_ranges Program flat range buffer (\p cc indexes a slice of it).
@@ -352,9 +344,8 @@ namespace real::detail {
   /*!
    * \brief The DROP rule: `\b` next to a full-`\w` maximal run is redundant (`\B` never is).
    *
-   * Sound only for a greedy `+` run, which starts only after a non-word char or the text edge, i.e. at
-   * `\b`. A single code point may start mid-run, where dropping is unsound. Call only when \p lead /
-   * \p trail come from a maximal-run shape (`maximal_run` of \ref resolve_class_wb_hints).
+   * Sound only for a maximal (`+`) run, which starts and ends at `\b` anyway; a single atom may start
+   * mid-run. Call only for a maximal-run shape.
    *
    * \param[in] lead  The lead wrap hint (0/1/2, see \ref wb_hint_of).
    * \param[in] trail The trail wrap hint, same encoding.
@@ -398,7 +389,6 @@ namespace real::detail {
                                                       std::uint8_t& out_lead,
                                                       std::uint8_t& out_trail) noexcept
   {
-    // `\B` + maximal-run scanner is unsound (mid-run starts); unarm. Single-atom `\B` is fine.
     if ((lead == 2 || trail == 2) && maximal_run) {
       return false;
     }
@@ -406,7 +396,6 @@ namespace real::detail {
     if (has_wb && !full_word && !word_sub) {
       return false;
     }
-    // Keep the wrap for subset/`\B`/single-atom `\b`; the DROP rule applies only to maximal full-word + `\b`.
     if (has_wb && (word_sub || full_word) &&
         !(maximal_run && full_word && wb_redundant_for_full_word(lead, trail))) {
       out_lead  = lead;
@@ -423,9 +412,8 @@ namespace real::detail {
    * \brief True if every code point in [\p lo, \p hi] is a Unicode word char (\ref word_ranges),
    *        resuming the scan at \p cursor and leaving it past the last range consulted.
    *
-   * \ref word_ranges is sorted and disjoint, so an ascending caller never revisits a passed range; a
-   * restart at 0 per step made `\w` cost 771^2 steps, 95 % of compiling `\b\w+\b`. \p cursor is a
-   * hint, not a precondition: an out-of-order interval rewinds it, so only speed depends on order.
+   * \p cursor is a hint, not a precondition: an out-of-order interval rewinds it. Restarting at 0 per
+   * interval cost `\w` 771^2 steps, 95 % of compiling `\b\w+\b`.
    *
    * \param[in]     lo     First code point of the interval.
    * \param[in]     hi     Last code point of the interval (inclusive).
@@ -495,8 +483,7 @@ namespace real::detail {
     if (static_cast<std::size_t>(cc.range_begin) + cc.range_count > all_ranges.size()) {
       return false;
     }
-    // One cursor for the whole class: cp_class ranges are sorted and disjoint, so this is one merge of
-    // two sorted lists (an out-of-order range would only cost a rewind).
+    // One cursor for the class: both range lists are sorted, so this is one merge.
     std::size_t cursor {0};
     for (std::uint32_t i = 0; i < cc.range_count; ++i) {
       const code_range& r {all_ranges[static_cast<std::size_t>(cc.range_begin) + i]};
@@ -513,9 +500,8 @@ namespace real::detail {
   }
 
   /*!
-   * \brief Whether byte \p b could be a member of \p cc: a quoted shape's single-byte delimiter that could
-   *        hide inside a `klass_cp_loop_possessive` body makes the delimited fast path decline (see
-   *        \ref pattern_hints::possessive_prefix). A non-ASCII \p b conservatively counts as a member.
+   * \brief Whether byte \p b could be a member of \p cc; a delimiter that could hide in a possessive
+   *        code-point loop makes the delimited fast path decline (\ref pattern_hints::possessive_prefix).
    * \param[in] cc The loop body's code-point class.
    * \param[in] b  The candidate delimiter byte.
    * \return True when \p b could be a member, and for any \p b >= 0x80.
@@ -568,7 +554,6 @@ namespace real::detail {
       }
       exit_pc = exit_pc - 1;
     }
-    // Optional lead \b/\B immediately after save 0.
     if (!peel_optional_wb(code, body, wb_lead)) {
       return false;
     }
@@ -681,8 +666,6 @@ namespace real::detail {
     }
 
     if (hints.prefix_size > 0) {
-      // Leading asserts were crossed above. Allow only word-boundary asserts after the last
-      // prefix byte (a kept wrap: `\bLIT\b` / `LIT\b`); any other trailing/inter assert stays on the VM.
       bool         blocking_assert {};
       bool         seen_byte       {};
       std::uint8_t trail_wb        {};
@@ -980,9 +963,8 @@ namespace real::detail {
               ok = true;
             }
             const shape_close close {ok ? parse_shape_close(code, q) : shape_close {}};
-            // A `\b`/`\B` wrap and an end anchor together are refused: the wrap's own branch (the WRAP
-            // rule) never sees the limit, already peeled out of the program. `[a-z]+\b$` and `\b(?>\w)$`
-            // both diverged.
+            // A `\b`/`\B` wrap with an end anchor is refused: the WRAP branch never sees the peeled limit
+            // (`[a-z]+\b$` and `\b(?>\w)$` diverged).
             if (ok && close.ok
                 && (close.end_anchor == 0 || (lead.wb_lead == 0 && close.wb_trail == 0))
                 && cls >= 0 && static_cast<std::size_t>(cls) < classes.size()
@@ -996,7 +978,7 @@ namespace real::detail {
                                          out_trail)) {
                 // Wrap + end anchor: refused, as gated above.
                 if (close.end_anchor != 0 && (lead.wb_lead != 0 || close.wb_trail != 0)) {
-                  return; // the wrap branch cannot honour a peeled limit
+                  return;
                 }
                 hints.greedy_class_loop     = cls;
                 hints.greedy_class_loop_end = close.end_anchor;
@@ -1107,9 +1089,8 @@ namespace real::detail {
             const bool has_wb {lead.wb_lead != 0 || close.wb_trail != 0};
             // Bare path: no Unicode table walk (keeps constexpr light for static_regex).
             if (!has_wb) {
-              // Wrap + end anchor: refused, as gated above.
               if (close.end_anchor != 0 && (lead.wb_lead != 0 || close.wb_trail != 0)) {
-                return; // the wrap branch cannot honour a peeled limit
+                return;
               }
               hints.greedy_cp_class      = cp_idx;
               hints.greedy_cp_class_end  = close.end_anchor;
@@ -1255,10 +1236,8 @@ namespace real::detail {
           phi1s[len] = phi1;
           ++len;
         }
-        // A peeled anchor refuses both SIMD paths: they read neither anchored_start nor fs_end_anchor, so
-        // they would return a candidate the anchor forbids (`^[0-9]{4}-[0-9]{2}-[0-9]{2}$` reported [0,10)
-        // on "2026-08-10_11:43:27"). An anchored shape has one candidate, nothing to skip; fixed_shape
-        // stays armed and honours both anchors itself.
+        // A peeled anchor refuses both SIMD paths: they read neither anchor, so they would return a
+        // candidate it forbids. An anchored shape has one candidate; fixed_shape honours both anchors.
         if (all_small && len >= 1 && len <= 16 && !lead.anchored_start && end_anchor == 0) {
           bool homogeneous {true};
           for (std::uint32_t k {1}; k < len; ++k) {
@@ -1334,7 +1313,7 @@ namespace real::detail {
         const char_class& ascii_class {classes[static_cast<std::size_t>(ascii)]};
         for (int byte {0x80}; byte <= 0xFF; ++byte) {
           if (ascii_class.test(static_cast<std::uint8_t>(byte))) {
-            ascii = -1; // a high byte would mean a non-ASCII sub-class (see guard above)
+            ascii = -1;
             break;
           }
         }
@@ -1474,12 +1453,11 @@ namespace real::detail {
                                                out_trail);
                 }
               }
-              // A bare unbounded possessive class loop (`[a-z]++`, `(?>[a-z]+)`) is the greedy language
-              // (nothing follows to give back to), so it takes the BATCHED greedy selector. Decide it here,
-              // as a hint: teaching the runtime fillers a class-index parameter cost the Unicode class rows
-              // 5.7 to 9.1 %, this translation unit being at its inlining budget. Bare only: a suffix means
-              // the match is not the run, a capture keeps its slots in possessive_group_start (unread by
-              // the greedy path), and `X*+` without a mandatory copy can match empty.
+              // A bare unbounded possessive class loop (`[a-z]++`) is the greedy language, so it takes the
+              // batched greedy route, decided here as a hint: a class-index parameter in the runtime fillers
+              // cost the Unicode class rows 5.7-9.1 % (inlining budget). Bare only: a suffix means the match
+              // is not the run, a capture lives in possessive_group_start (unread by the greedy path), and
+              // `X*+` with no mandatory copy can match empty.
               const bool redirect {arm && suffix_len == 0 && gs < 0 && has_mandatory && !has_wb
                                    && (loop_ref.kind == class_kind::klass
                                        || loop_ref.kind == class_kind::klass_cp)};
@@ -1621,16 +1599,10 @@ namespace real::detail {
       case '~': case '@': case '^': case '`': return 3;
       default:                           break;
     }
-    // UTF-8 bytes are NOT rare, and ranking them at 1 picked the single most common byte of an
-    // accented corpus as the memchr target: `café`'s rarest-ranked byte was the 0xC3 that leads EVERY
-    // Latin-1 letter, one per few bytes of French prose. Against an ASCII literal of the same match
-    // density in the same corpus that costs several times the scan.
-    //
-    // The ranking that matters is not corpus frequency but SELECTIVITY: a lead byte stands for 64 or
-    // more distinct characters, so it can never discriminate like one ASCII byte. These values put
-    // the Latin-1 leads and every continuation byte above the absolute threshold below, so they are
-    // no longer chosen at all, while the rarer leads stay eligible for scripts whose text is made of
-    // nothing else (CJK picks its lead exactly as before).
+    // UTF-8 bytes are not rare: ranked at 1, `café` memchr'd the 0xC3 that leads every Latin-1 letter,
+    // several times the scan. What counts is selectivity (a lead stands for 64+ characters): these values
+    // keep the Latin-1 leads and every continuation byte above the rarity threshold, while the rarer leads
+    // stay eligible for scripts made of nothing else (CJK).
     if (b >= 0x80U && b <= 0xBFU) {
       return 200;             // continuation: as common as whatever leads it, and shared by every script
     }
@@ -1669,16 +1641,12 @@ namespace real::detail {
   }
 
   /*!
-   * \brief Finds a *required* literal byte at a FIXED offset that is statically far rarer than the
-   *        pattern's first-byte set, and records it (\ref pattern_hints::rare_byte / rare_offset) so the
-   *        search can `memchr` that one byte instead of scanning a common first-byte class per byte.
+   * \brief Records a *required* literal byte at a FIXED offset far rarer than the first-byte set
+   *        (\ref pattern_hints::rare_byte / rare_offset), so the search can `memchr` that one byte.
    *
-   * Walks the leading FIXED-WIDTH shape from the start: `save`/`assert_position` are crossed (no width),
-   * `byte` and `klass` each advance the byte offset by exactly one, and any `byte` is a candidate. It stops
-   * at the first variable-width or branching op — `klass_cp` (a code point is 1–4 bytes, so offsets past it
-   * are not fixed), `split`, `jump`, `match`. The chosen byte must be below an absolute rarity threshold
-   * and several times rarer than the first-byte set, or the existing first-byte scan already suffices. The
-   * hint only filters candidate starts; the VM still verifies, so it is always sound.
+   * Walks the leading fixed-width run and stops at the first variable-width or branching op (`klass_cp`,
+   * `split`, `jump`, `match`). The byte must clear an absolute rarity threshold and be several times rarer
+   * than the first-byte set. Sound: the hint only filters candidate starts.
    *
    * \param[in]     code  The program's instruction stream.
    * \param[in,out] hints Hints to record the rare byte and its offset in.
@@ -1744,10 +1712,8 @@ namespace real::detail {
    * \brief Arms the rare-discriminant prefilter for shapes like `https?://…`:
    *        fixed prefix (`http`) + optional mono-byte (`s?`) + fixed mid with a rare disc (`://`).
    *
-   * Unlike \ref extract_rare_byte, the disc need not sit at a *fixed* match offset (the optional
-   * changes it). Search memchr's the disc and back-verifies the optional shape — never memmem.
-   * Supersedes a weak literal-prefix scan when the disc is several times rarer than the first byte.
-   * Always sound: only filters candidates; the VM confirms.
+   * Unlike \ref extract_rare_byte, the disc need not sit at a fixed offset: the search memchr's it and
+   * back-verifies the optional shape. Sound: it only filters candidates.
    *
    * \param[in]     code  The program's instruction stream.
    * \param[in,out] hints Hints to record the discriminant and its surrounding shape in.
@@ -1792,8 +1758,7 @@ namespace real::detail {
     if (fixed_len < 2) {
       return; // need at least disc + something (or disc mid-run)
     }
-    // Discriminant = rarest byte in the fixed run *after* the optional site (or whole run if no opt).
-    // For `http` + s? + `://`, that is among `://`. For pure `https://`, among the whole string.
+    // The disc is the rarest byte past the optional site (among `://` in `https?://`), else of the whole run.
     const std::uint8_t search_from {saw_opt ? opt_at : static_cast<std::uint8_t>(0)};
     if (search_from >= fixed_len) {
       return;
@@ -1812,11 +1777,9 @@ namespace real::detail {
     if (best_byte < 0 || best_idx < search_from) {
       return;
     }
-    // Prefix before the disc: either fixed[0..best_idx) with no opt, or fixed[0..opt_at) with opt
-    // between prefix and disc (disc must be the first mid byte after opt for the simple shape).
     std::uint8_t prefix_len {};
     if (saw_opt) {
-      // Require disc immediately after the optional site in the fixed mid (URL `://` after `s?`).
+      // The disc must follow the optional immediately (`:` after `s?`).
       if (best_idx != opt_at) {
         return;
       }
@@ -1863,17 +1826,13 @@ namespace real::detail {
   }
 
   /*!
-   * \brief The STRUCTURAL half of \ref pattern_hints::capture_free_walk -- `save 0` is the program's first
-   *        instruction.
+   * \brief The structural half of \ref pattern_hints::capture_free_walk, that `save 0` is the program's
+   *        first instruction.
    *
-   * Split out because the two halves have different owners. This half is a property of the PROGRAM and is
-   * never negotiable: the capture-free walk keeps group 0's start in one `std::size_t` local shared by a
-   * whole epsilon closure, which is only correct while `save 0` cannot be skipped. Behind a split, a branch
-   * that bypassed it would inherit its sibling's start — a wrong ANSWER, not a slow one. The other half
-   * (no `save` past slot 1, and `slot_count == 2`) is a property of what the CALLER WANTS: it says the
-   * pattern has no user groups, so ignoring their writes costs nothing. A caller that does not read
-   * captures — \ref real::basic_regex::count_matches — may set the flag on its own view of the program on
-   * this condition alone.
+   * The walk keeps group 0's start in one scalar shared by a whole epsilon closure, correct only while
+   * `save 0` cannot be skipped: behind a split, a bypassing branch would inherit its sibling's start (a
+   * wrong answer). The other half (no `save` past slot 1) is the caller's: one that reads no captures
+   * (\ref real::basic_regex::count_matches) may set the flag on this condition alone.
    *
    * \param[in] code The instruction stream.
    * \return True when the capture-free walk's single-scalar start is sound for \p code.
@@ -1889,16 +1848,11 @@ namespace real::detail {
    * \param[in] classes        The interned character classes referenced by \p code.
    * \param[in] cp_classes     The match-time code-point classes referenced by `klass_cp`.
    * \param[in] cp_ranges      Flat range buffer the \p cp_classes slices index into.
-   * \param[in] cp_mark_ascii  ASCII sub-class index of an emitted codepoint-class
-   *                           block (-1 = none), as recorded by `emit_any_codepoint_class`.
-   * \param[in] cp_mark_offset Program offset where that block starts (-1 = none); the
-   *                           whole-pattern codepoint fast path requires it to be 1.
-   * \param[in] cp_mark_end    Program offset right after that block ends (-1 = none) --
-   *                           the block's own instruction count is not fixed, so this
-   *                           locates its end instead of a hardcoded size.
+   * \param[in] cp_mark_ascii  ASCII sub-class index of an emitted codepoint-class block (-1 = none).
+   * \param[in] cp_mark_offset Program offset where that block starts (-1 = none).
+   * \param[in] cp_mark_end    Program offset right after that block (-1 = none); its length varies.
    * \param[in] lookarounds    Bounded lookaround subs (trailing-LA class+ detection).
-   * \return The \ref pattern_hints (anchoring, literal prefix, first-byte set,
-   *         and the `class+` / exact-literal fast-path flags).
+   * \return The \ref pattern_hints.
    */
   constexpr pattern_hints analyze_program(std::span<const instr>          code,
                                           std::span<const char_class>     classes,
@@ -1911,15 +1865,9 @@ namespace real::detail {
   {
     pattern_hints hints;
 
-    // Derived by SCAN, not from the group count: any `save` past slot 1 means a thread carries capture
-    // positions someone asked for, and the epsilon walk must keep its refcounted block. See
-    // \ref pattern_hints::capture_free_walk for what the negative case licenses.
-    // Two conditions, and the SECOND is the one the walk's single scalar rests on: `save 0` must be the
-    // program's first instruction. If it sat behind a split, a branch that skipped it would inherit its
-    // sibling's start -- a wrong ANSWER. Every other `save` must write slot 1, which capture-free ignores
-    // because the end IS `pos` at the match. Lookaround sub-programs are regions of this same `code` and
-    // emit no saves of their own (checked: `a(?=b)` and `a(?<=b)c` both carry exactly [pc=0 slot=0] and
-    // [pc=n-2 slot=1]), so a bounded lookaround does not disqualify a pattern here.
+    // Derived by scan, not from the group count. Past the structural half, every `save` must write slot 1,
+    // which the walk ignores (the end is `pos` at the match). Lookaround sub-programs emit no saves, so a
+    // bounded lookaround does not disqualify.
     hints.capture_free_walk = capture_free_walk_structural(code);
     for (std::size_t i = 1; hints.capture_free_walk && i < code.size(); ++i) {
       if (code[i].op == opcode::save && code[i].arg16 != 1U) {
@@ -1927,9 +1875,8 @@ namespace real::detail {
       }
     }
 
-    // A lookaround forces the general Pike VM: no DFA, no pure class-loop — EXCEPT the measured
-    // trailing-LA class+ shape, which arms trailing_lookaround + trailing_la_class (not
-    // greedy_class_loop) so the pure [a-z]+ gate stays a single compare.
+    // A lookaround forces the general Pike VM, except the trailing-LA class+ shape, which arms
+    // trailing_lookaround (not greedy_class_loop) so the pure [a-z]+ gate stays a single compare.
     bool has_lookaround {false};
     for (const instr& in : code) {
       if (in.op == opcode::assert_lookaround) {
@@ -1947,9 +1894,8 @@ namespace real::detail {
     detect_fast_shapes(code, classes, cp_classes, cp_ranges, cp_mark_ascii, cp_mark_offset, cp_mark_end,
                        lookarounds, hints);
 
-    // Clear every pure fast-path hint when a lookaround is present. Trailing-LA class+ already
-    // left greedy_class_loop at −1 and only set trailing_* (so this wipe is a no-op for those).
-    // The literal prefix / first-byte set below stay valid (and sound) filters either way.
+    // Trailing-LA class+ set only trailing_*, which this wipe keeps; the prefix and first-byte set stay
+    // sound filters.
     if (has_lookaround) {
       hints.greedy_class_loop     = -1;
       hints.exact_literal_len     = 0;
@@ -1964,13 +1910,8 @@ namespace real::detail {
       hints.single_first = static_cast<unsigned char>(hints.prefix[0]);
     }
     else if (hints.first_bytes_valid) {
-      // Enumerate the set, stopping once it exceeds eight -- the recognizer's own cap now matches
-      // run_alternation's L-SIMD masked-block scan (pike.hpp), which has always gated on
-      // small_set_size <= 8; only this enumeration cap was left at 4 (the alternation gap:
-      // a 5-8-distinct-first-byte pattern like `cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog`
-      // fell all the way to the bitmap loop, un-accelerated). A single member drives find_byte (one
-      // memchr); two-to-eight members drive the memchr-cascade/SIMD scan (small_set); nine or more
-      // stay on the bitmap loop.
+      // One member drives find_byte (memchr); two to eight the small_set SIMD scan, whose cap must
+      // match run_alternation's small_set_size <= 8 gate; nine or more stay on the bitmap loop.
       std::array<char, 8> members {};
       int                 count   {0};
       for (unsigned byte = 0; byte < 256; ++byte) {
@@ -1996,11 +1937,8 @@ namespace real::detail {
       }
     }
 
-    // For a whole-pattern `class+` run (run_class_loop — a byte-wise scan), record the STOP
-    // bytes (the complement of the accepted set) when there are at most six of them, so the run can
-    // advance by a memchr-cascade to the next stop instead of testing every byte. The stops are derived
-    // from the class table and do NOT enter the compiled program, so byte-identity is unaffected.
-    // Records the bytes below `limit` a class rejects as the stop set, when there are one to six of them.
+    // A whole-pattern class run's stop set: the bytes below `limit` the class rejects, when one to six, so
+    // the run memchr-cascades to the next stop. Outside the program: byte identity is unaffected.
     const auto record_stops {[&hints](const char_class& accepted, unsigned limit) {
                                std::array<char, 6> stops      {};
                                int                 stop_count {0};
@@ -2020,19 +1958,14 @@ namespace real::detail {
     if (hints.greedy_class_loop >= 0) {
       record_stops(classes[static_cast<std::size_t>(hints.greedy_class_loop)], 256U);
     }
-    // A whole-pattern code-point-class run (`.`/`[^x]` in text/ascii mode) accepts EVERY valid
-    // code point >= 0x80 — run_codepoint_class validates the UTF-8 structure but not membership above
-    // ASCII — so once its ASCII complement is small the run can be SWAR-accelerated soundly: memchr the
-    // ASCII stops for an upper bound, high-bit-scan the ASCII stretches, and drop to code-point
-    // validation only across a non-ASCII cluster (so malformed UTF-8 still stops the run, unchanged). The
-    // stops here are only the ASCII bytes the class rejects.
+    // A whole-pattern code-point class (`.`/`[^x]`) accepts every valid code point >= 0x80
+    // (run_codepoint_class checks structure, not membership), so only its ASCII rejects are stops;
+    // malformed UTF-8 still stops the run through code-point validation.
     else if (hints.codepoint_class_ascii >= 0) {
       record_stops(classes[static_cast<std::size_t>(hints.codepoint_class_ascii)], 0x80U);
     }
 
-    // OPT: a required rare literal byte at a fixed offset (e.g. the `-` in `[0-9]{4}-[0-9]{2}-[0-9]{2}`)
-    // gives a single-byte memchr target far more selective than the first-byte class. Computed last, so it
-    // can compare against the finalized first-byte hints. Sound: it only filters candidate starts.
+    // Last, so it compares against the final first-byte hints (the `-` of `[0-9]{4}-[0-9]{2}`).
     extract_rare_byte(code, hints);
     if (hints.prefix_size >= 2) {
       hints.prefix_rare = literal_rarest_offset(std::string_view {hints.prefix.data(), hints.prefix_size});
@@ -2041,30 +1974,16 @@ namespace real::detail {
     // prefix+opt+after. Preferable to a weak literal prefix (`http`) when the disc is rarer.
     extract_rare_discriminant(code, hints);
 
-    // Veto the heterogeneous fixed-shape pair filter when the ordinary prefilter already has a
-    // single-byte `memchr` for this pattern -- a required rare byte at a fixed offset (\ref
-    // pattern_hints::rare_byte) or a unique first byte (\ref pattern_hints::single_first). Placed here,
-    // not in detect_fast_shapes, because neither hint exists yet at that point (both are computed
-    // below/above this line, after the shape walk).
-    //
-    // This is a measured veto, and the reason it is SEMANTIC rather than an ISA gate. A pattern like
-    // `[0-9]{2}:[0-9]{2}` carries `rare_byte = ':'`, so next_candidate memchrs it -- and where the
-    // platform's memchr is wider than this filter's 128-bit block, the pair path loses to it, while on the
-    // other ISA it wins. The literal filter met the same trap while it ran on NEON alone, until it learned
-    // to scan the rarest byte first. Here the discriminator is not the ISA either: it is whether a single
-    // byte suffices at all. An icase
-    // literal has no single-byte position (`(?i)cafe` is four 2-sets, rare_byte and single_first both -1),
-    // so nothing memchrs it and the pair filter wins on BOTH ISAs. Vetoing on the hint keeps that win
-    // everywhere instead of surrendering one ISA to a gate.
+    // A single-byte memchr target (rare_byte, single_first; both exist only past the shape walk) vetoes
+    // the fixed-shape pair filter. Semantic, not an ISA gate: where memchr is wider than the filter's
+    // 128-bit block the pair path loses to it, but an icase literal (`(?i)cafe`) has no byte to memchr
+    // and the pair filter wins on both ISAs.
     if (hints.rare_byte >= 0 || hints.single_first >= 0) {
       hints.fs_pair_width = 0;
     }
 
-    // Fold the exact-literal one-search decision, LAST: it reads anchored_start (extract_anchoring),
-    // prefix_size/exact_literal_len (extract_prefix, already zeroed by the lookaround wipe above when
-    // one is present) and rare_disc (extract_rare_discriminant, just above) -- every contributor has
-    // run by here. See pattern_hints::literal_one_search for why this is one precomputed bit and not
-    // a per-match condition chain.
+    // Last: it reads the anchoring, the prefix (after the lookaround wipe) and rare_disc. See
+    // pattern_hints::literal_one_search.
     if (hints.exact_literal_len >= 2 && hints.prefix_size == hints.exact_literal_len
         && !hints.anchored_start && hints.line_anchored == 0U && hints.rare_disc < 0) {
       bool no_assert {true};
@@ -2087,10 +2006,8 @@ namespace real::detail {
    * \brief The single-byte scan behind \ref find_byte on NEON: 64 bytes per round, rejected by one test on
    *        the OR of four compares (\ref any_byte64).
    *
-   * The platform `memchr` covers 64 bytes per round too, but measured 1250 ns over 64 KB with no hit
-   * (arm64, 2026-09-26) against 625 ns for this loop: a round of four independent compares and one
-   * branch. A round with a hit takes its first set lane in block order, so the first hit returned is the
-   * leftmost. x86-64 keeps the platform `memchr`, whose vectors are wider than this 128-bit floor.
+   * Twice the platform `memchr` on arm64 (64 KB, no hit: 625 against 1250 ns). Lanes are taken in block
+   * order, so the first hit is the leftmost. x86-64 keeps `memchr`, whose vectors are wider.
    * \param[in] text The subject text.
    * \param[in] pos  Index to start scanning from (below `text.size()`).
    * \param[in] byte The byte to find.
@@ -2129,7 +2046,7 @@ namespace real::detail {
   /*!
    * \brief Index of \p byte in `text[pos..)`, or \ref real::npos.
    *
-   * Uses `memchr` at run time and a plain loop during constant evaluation.
+   * `memchr` at run time (NEON: `simd_byte_scan`), a plain loop in constant evaluation.
    *
    * \param[in] text The subject text.
    * \param[in] pos  Index to start scanning from.
@@ -2172,12 +2089,9 @@ namespace real::detail {
   /*!
    * \brief Next candidate start for the rare-discriminant prefilter, or \ref real::npos.
    *
-   * Scans for \p hints.rare_disc with \ref find_byte (memchr/SIMD), then back-verifies
-   * `[prefix][opt?][disc][after]`. Returns the verified match start if it is ≥ \p pos.
-   *
-   * Density abandon: when the disc is dense (many hits that fail back-verify), sets
-   * \p density_abandon and returns npos so the caller can sticky-switch to the prefix path
-   * for the rest of the haystack (same contract as the IL density gate — never miss a match).
+   * Scans for the disc with \ref find_byte, then back-verifies `[prefix][opt?][disc][after]`. After
+   * \ref rare_disc_fail_abandon failed hits it sets \p density_abandon and returns npos; the caller then
+   * takes the prefix path for the rest of the subject.
    *
    * \param[in]  text            Subject.
    * \param[in]  pos             Lower bound on the returned start.
@@ -2201,8 +2115,7 @@ namespace real::detail {
     const bool        has_opt {hints.rare_disc_opt >= 0};
     const auto        opt_ch  {static_cast<char>(hints.rare_disc_opt)};
     const std::size_t after   {hints.rare_disc_after_len};
-    // Shortest legal back-span is prefix alone (http://); with opt, https:// is longer —
-    // must still scan from pos+pref so the no-opt shape is not skipped at the start.
+    // The shortest back-span is the prefix alone (no optional byte).
     const std::size_t min_back {pref};
     std::size_t       scan     {pos + min_back < text.size() ? pos + min_back : text.size()};
     std::uint32_t     fails    {};
@@ -2284,29 +2197,14 @@ namespace real::detail {
    * \brief The two-byte block filter behind \ref find_literal_adaptive, taken once a needle's rarest byte
    *        proved common in the subject.
    *
-   * One vector compare answers "could the needle start here?" for 16 candidate positions at once, at
-   * *two* needle offsets (the first byte and the last) — so a block with no surviving candidate is
-   * skipped 16 bytes at a time for the cost of two loads and an AND. Two probes rather than one is what
-   * makes it worth the vector: a single-byte filter is what `memchr` already gives, and on text where
-   * the lead byte is common (`d` for `dog`) it survives constantly.
+   * One vector compare tests 16 candidate starts at two needle offsets (first and last byte), so a block
+   * with no survivor costs two loads and an AND; one probe would be what `memchr` already gives. Written
+   * once against simd.hpp's \ref mask_t interface, with no ISA branch of its own.
    *
-   * Written ONCE against simd.hpp's uniform \ref mask_t interface (\ref load_pair_mask, \ref empty,
-   * \ref first_lane, \ref clear_first) — no `#if` ISA branch of its own, the same split
-   * `simd_fixed_shape_scan` documents: the intrinsics are ISA-exclusive and live in simd.hpp, this
-   * loop is the same C++ everywhere and is what the test suite exercises on either leg.
-   *
-   * **When it is taken.** A scan of one byte wins while that byte is rare in the subject: x86-64's `memchr`
-   * is twice this block's width, and on 500 KB of log lines with `x` rare it answers `example.com` in
-   * 0.014 ms against this filter's 0.044. It loses once the byte stops being rare, one call per stop: `the`
-   * 0.25 ms by the first byte against 0.051 here, `error` 0.26 against 0.075 (x86-64, g++ 13.3, 2026-09-27;
-   * arm64 alike, where `find_byte` is a 128-bit loop). So \ref find_literal_adaptive scans the rarest byte
-   * first and hands the subject to this filter once its stops come dense, on both ISAs.
-   *
-   * Linearity is unchanged from the scalar path it replaces: the block loop advances 16 per iteration
-   * and each block verifies at most 16 candidates of \p literal bytes each, so the work stays
-   * `O(n · |literal|)` with `|literal|` capped by the hint arrays (16) — the same bound the
-   * memchr-lead-plus-compare scan carried. The caller does the work-counter billing (see
-   * \ref find_prefix), once per call, so this function must not be entered per candidate.
+   * A one-byte scan wins while its byte is rare (x86-64, `example.com` over 500 KB of logs: 0.014 against
+   * 0.044 ms) and loses once it is common (`the`: 0.25 against 0.051), hence the hand-off. Linear: each
+   * block verifies at most 16 candidates. The caller bills the work counter once per call, so this must
+   * not be entered per candidate.
    *
    * \param[in] text    The subject text.
    * \param[in] pos     Index to start searching from.
@@ -2337,15 +2235,9 @@ namespace real::detail {
     const std::size_t delta {len - 1};           // trail's offset from a candidate start
     const char* const base  {text.data()};
     std::size_t       p     {pos};
-    // Four blocks (64 candidates) per round. A no-match scan spends all its time in the reject test, and
-    // libc `memchr` sets the bar there by covering 64 B per round: at one block per round this filter
-    // measured ~13 % SLOWER than the platform `find` on a pure miss, despite rejecting on two
-    // bytes instead of one. Four independent load pairs per round (ILP, one branch) turn that into ~2.5x
-    // FASTER than memchr — the two-byte selectivity finally paying at memchr's throughput. Masks are
-    // consumed in block order, and within a mask in lane order, so candidates are still visited strictly
-    // left to right: the first verified hit is the leftmost, which the callers require.
-    // A round is rejected by ONE test on the OR of its four blocks (any_pair64); the per-block masks are
-    // narrowed only in a round that holds a candidate, which on NEON saves four mask moves a round.
+    // Four blocks (64 candidates) per round, rejected by ONE test on their OR (any_pair64): at one block a
+    // round this filter ran ~13 % slower than `find` on a pure miss, at four ~2.5x faster than memchr.
+    // Masks are taken in block then lane order: the first verified hit is the leftmost, as callers require.
     constexpr std::size_t unroll {4};
     while (p + (unroll * 16) <= last + 1) {
       std::array<std::uint8_t, unroll * 16> blk_lead  {};
@@ -2398,9 +2290,8 @@ namespace real::detail {
    * \brief What the adaptive literal search learned about one subject: whether the needle's rarest byte
    *        is common there.
    *
-   * Kept by the caller for the whole subject (a search state resets it when the subject changes), so a
-   * subject found dense takes the pair filter on every later search at once instead of re-proving it per
-   * match. A fresh value per call is correct too; it only re-learns.
+   * Kept per subject (reset when it changes), so later searches take the pair filter at once. A fresh
+   * value per call is correct too; it only re-learns.
    */
   struct literal_density
   {
@@ -2412,9 +2303,8 @@ namespace real::detail {
   };
 
   /*!
-   * \brief The two literal densities of one subject. A search state keeps them in a `std::optional` beside the
-   *        subject they refer to, built at its first literal search: constructing a state, which every search
-   *        does, then writes a pointer and a flag for them, not two densities.
+   * \brief The two literal densities of one subject, held in a `std::optional` built at the first literal
+   *        search, so constructing a search state (every search does) writes no densities.
    */
   struct literal_memo
   {
@@ -2428,10 +2318,8 @@ namespace real::detail {
    * \brief Mean bytes between stops below which the rarest byte counts as common: under it, a stop costs
    *        more than the pair filter spends crossing that many bytes.
    *
-   * Per ISA, since the single-byte scan is not the same width. Over 1 MB with the byte recurring every
-   * `gap` bytes and no match (2026-09-27, best of 15): x86-64's `memchr` (g++ 13.3) equals the filter near
-   * 70 bytes (0.097 against 0.089 ms at 64, 0.067 against 0.089 at 96); arm64's 128-bit loop (Apple clang)
-   * near 190 (0.067 against 0.050 at 128, 0.048 against 0.049 at 192).
+   * Per ISA, since the one-byte scan's width differs. Measured break-even over 1 MB with no match: x86-64
+   * `memchr` near 70 bytes, the arm64 128-bit loop near 190.
    */
 #if defined(__ARM_NEON)
   inline constexpr std::size_t literal_dense_gap {192};
@@ -2461,8 +2349,8 @@ namespace real::detail {
    * \brief The body of \ref find_literal_adaptive past its first stop: the pair filter for a dense subject,
    *        else the rarest-byte scan that counts its stops and judges their density.
    *
-   * Out of line: its callers include next_candidate, which the class and rare-byte routes run per candidate
-   * without ever reaching a literal. Inlined there, it cost `\d{4}-\d{2}-\d{2}` 7 % on arm64.
+   * Out of line: next_candidate runs per candidate on routes that never reach a literal; inlined there it
+   * cost `\d{4}-\d{2}-\d{2}` 7 % on arm64.
    * \param[in]     text    The subject text.
    * \param[in]     pos     Index to start from (a stop the caller saw fail, or where a dense search starts).
    * \param[in]     literal The needle (>= 2 bytes).
@@ -2570,13 +2458,10 @@ namespace real::detail {
    * \brief Index of the first occurrence of \p literal in `text[pos..)`, or \ref real::npos, by its rarest
    *        byte while that byte is rare in the subject and by the two-byte block filter once it is not.
    *
-   * The rarest byte (offset \p rare) is scanned with `memchr` on x86-64 and `simd_byte_scan` on NEON,
-   * each stop verified. Once \ref literal_dense_min_cands stops sit less than \ref literal_dense_gap bytes
-   * apart on average, \p density turns dense and `simd_literal_scan` takes over from the stop after
-   * the last one -- from the stop's START plus one, so an occurrence overlapping it is still found. The
-   * decision depends on the subject's bytes only: the same subject always takes the same route. Every
-   * position is a candidate at most once and a verify costs `O(|literal|)`, so the search stays linear.
-   * Billed once per call to the test work counter, as \ref find_prefix always was.
+   * Once \ref literal_dense_min_cands stops sit under \ref literal_dense_gap bytes apart on average,
+   * \p density turns dense and the pair filter resumes at the last stop's start plus one, so an overlapping
+   * occurrence is still found. The route depends on the subject's bytes only. Linear: a position is a
+   * candidate at most once. Billed once per call to the test work counter.
    *
    * \param[in]     text    The subject text.
    * \param[in]     pos     Index to start searching from.
@@ -2596,8 +2481,8 @@ namespace real::detail {
       return npos;
     }
     note(counter::prefilter_work_units, text.size() - pos);
-    // A dense subject goes to the pair filter inline, as the lead-pair search always did; the first stop of a
-    // sparse one inline too, since where matches are dense most searches end on it. The rest, out of line.
+    // Inline: a dense subject's pair filter, and a sparse one's first stop (most searches end on it where
+    // matches are dense). The rest is out of line.
 #if defined(__ARM_NEON) || defined(__SSE2__)
     if (density.dense) {
       note(counter::literal_pair_scans);
@@ -2691,13 +2576,12 @@ namespace real::detail {
   inline constexpr std::size_t alternation_wide_false_budget {256};  //!< Past this many false candidates times branches in a sample, the automaton scans cheaper than the fingerprint and its verifier.
 
   //! \brief Mean bytes between first-byte hits in the sample below which the pair filter takes over (both
-  //!        ISAs, where the prototype's first-byte scan and pair filter crossed on 500 KB of log lines).
+  //!        ISAs: where the first-byte scan and the pair filter crossed on 500 KB of log lines).
   inline constexpr std::size_t alternation_dense_gap {32};
 
-  //! \brief The same threshold for a plan that masks by the nibble fingerprint, whose cost per block is fixed:
-  //!        against the first-byte loop it crossed at 256-512 bytes between false stops (1 MB subjects with no
-  //!        match, arm64 and x86-64 AVX2, 3 to 10 branches, 2026-09-29), and at 128 its worst ratio measured
-  //!        0.77 of the loop's time.
+  //! \brief The same threshold for a plan masking by the nibble fingerprint, whose cost per block is fixed: it
+  //!        crossed the first-byte loop at 256-512 bytes between false stops (arm64, x86-64 AVX2, 3 to 10
+  //!        branches); at 128 its worst ratio was 0.77 of the loop's time.
   inline constexpr std::size_t alternation_dense_gap_nibbles {128};
 
 #if defined(__ARM_NEON) || defined(__SSE2__)
@@ -2717,10 +2601,8 @@ namespace real::detail {
   }
 
   /*!
-   * \brief The block filter a dense alternation's scan runs: the nibble fingerprint of each branch's first three
-   *        bytes where \p nibbles (a table lookup per nibble, a cost per block that does not grow with the
-   *        branches; see \ref alternation_nibbles_supported), else the byte pairs. The sample's filter: the scan
-   *        runs its own loop for each (pike_vm::alternation_nibble_scan).
+   * \brief The sample's block filter: the nibble fingerprint of each branch's first three bytes where
+   *        \p nibbles (a cost per block that does not grow with the branches), else the byte pairs.
    *
    * Both mark a superset of the starts where some branch matches, and neither says which: the caller verifies
    * every marked start in branch order, so priority does not depend on how branches share a bucket.
@@ -2809,10 +2691,8 @@ namespace real::detail {
   /*!
    * \brief Index of the first occurrence of \p literal in `text[pos..)`, or \ref real::npos.
    *
-   * A single byte delegates to \ref find_byte (one `memchr`). A multi-byte literal takes
-   * \ref find_literal_adaptive with its rarest byte found here and a density that lasts this call only;
-   * the engine's routes keep one per subject and pass the rarest offset their hints computed. No
-   * platform `memmem` (absent on MSVC); a plain loop during constant evaluation.
+   * One byte is \ref find_byte; a longer literal takes \ref find_literal_adaptive with a density that lasts
+   * this call (the engine's routes keep one per subject). No `memmem` (absent on MSVC).
    *
    * \param[in] text    The subject text.
    * \param[in] pos     Index to start searching from.
@@ -2852,11 +2732,8 @@ namespace real::detail {
   }
 
   /*!
-   * \brief First position >= \p pos where \p prefix occurs in \p text, or npos.
-   *
-   * One byte is \ref find_byte's `memchr`; a longer prefix takes \ref find_literal_adaptive with its rarest
-   * byte found here and a density that lasts this call. The engine's routes keep a density per subject
-   * and pass the offset their hints computed.
+   * \brief First position >= \p pos where \p prefix occurs in \p text, or npos; the dispatch of
+   *        \ref find_literal.
    *
    * \param[in] text   The subject text.
    * \param[in] pos    Index to start searching from.
@@ -2874,9 +2751,7 @@ namespace real::detail {
       return npos;
     }
     if (!std::is_constant_evaluated()) {
-      // A single byte has no second probe to AND, so it stays on find_byte's one memchr. A longer prefix
-      // takes the adaptive search, billed once per call there (a correct O(n) miss bills ~1x the size; a
-      // per-position restart would bill ~N^2/2).
+      // Billed once per call inside: an O(n) miss bills ~1x the size, a per-position restart ~N^2/2.
       if (prefix.size() >= 2U) {
         literal_density density {};
         return find_literal_adaptive(text, pos, prefix, literal_rarest_offset(prefix), density);
@@ -2891,22 +2766,12 @@ namespace real::detail {
   }
 
   /*!
-   * \brief Whether a consumer should ARM a filter on \ref find_members -- one ISA only, and measured.
+   * \brief Whether a consumer should ARM a filter on \ref find_members (one ISA only, measured).
    *
-   * Not "does the scan compile" but "does it beat what it replaces", which is per-ISA, exactly as
-   * `simd_literal_scan`'s own ISA note already found for the two-byte literal filter (named as code, not
-   * cross-referenced: it lives behind an `#if` and Doxygen builds with no vector ISA defined). A set that
-   * skips N per-member searches by scanning their first-byte union once is competing against the
-   * platform's `memchr`, once per member -- and it wins on the ISA where that memchr is no wider than
-   * this loop, while losing by a comparable factor on the ISA where it is twice as wide.
-   *
-   * The asymmetry is structural, not a stray reading: a miss over an eight-byte union does roughly twice
-   * the vector compares of eight sweeps on registers half as wide again. No amount of tuning a 128-bit
-   * loop closes that. A leg with a wider `mask_t` is the honest way to carry this across.
-   *
-   * \ref find_members itself stays compiled under SSE2: the test suite exercises it on either leg, and a
-   * future AVX2 leg plugs in there. What this constant gates is whether a consumer builds a mechanism on
-   * top of it. Shipping the SSE2 leg armed would only invite someone to keep it.
+   * One pass over N members' union competes with N platform `memchr` calls: it wins where memchr is no
+   * wider than this 128-bit loop and loses by a comparable factor where it is twice as wide, a structural
+   * gap no tuning closes (a wider `mask_t` leg would). \ref find_members stays compiled everywhere; this
+   * gates only the mechanisms built on it.
    */
 #if defined(__ARM_NEON)
   inline constexpr bool have_members_scan {true};
@@ -2917,12 +2782,8 @@ namespace real::detail {
   /*!
    * \brief Least index at or after \p pos whose byte is one of \p n members, in ONE pass.
    *
-   * The difference from \ref find_bytes_cascade is the whole reason this exists: that function runs one
-   * `memchr` PER member, so an eight-member set costs eight sweeps of the subject. A consumer that wants to
-   * skip N per-member searches by scanning once therefore gains nothing from it -- measured: a six-byte
-   * union over a 8 KB subject cost what the six searches it replaced cost, for no net gain at all. This
-   * loop tests all \p n members against sixteen bytes at a time, which is what the engine's own
-   * `small_set` band (2..8) is served by.
+   * Unlike \ref find_bytes_cascade (one `memchr` per member: a six-byte union over 8 KB cost what the six
+   * searches it replaced did), this tests all \p n members against sixteen bytes at a time.
    *
    * \param[in] text    The subject.
    * \param[in] pos     Index to start scanning from.
@@ -2938,10 +2799,8 @@ namespace real::detail {
     if (pos >= text.size() || n == 0U) {
       return npos;
     }
-    // The members arrive ALREADY in the layout the mask load wants. An earlier cut took `const char*` and
-    // copied eight bytes into a local array per call: on a subject where the caller's first member matches
-    // immediately -- the case a set's early-exit walk is fastest on -- that copy was most of a measured
-    // +16 % on a 55 ns baseline. A filter consulted on the fast path must cost nothing to consult.
+    // The members arrive in the mask load's layout: a per-call copy into it was most of a +16 % on a
+    // 55 ns early-hit baseline.
     const std::size_t cnt {n <= 8U ? static_cast<std::size_t>(n) : std::size_t {8}};
     const std::size_t sz  {text.size()};
     std::size_t       at  {pos};
@@ -2988,38 +2847,16 @@ namespace real::detail {
   }
 
   /*!
-   * \brief Index of the first byte in `text[pos..)` that belongs to a small (2..4) first-byte set.
+   * \brief Index of the first byte in `text[pos..)` that belongs to a small first-byte set.
    *
-   * A cascade of `std::memchr` — one per set member — taking the minimum hit position. After each hit
-   * the scan window is narrowed to `[pos, best)`, so later members only search the shorter prefix and a
-   * near hit makes the remaining calls cheap. This beats the one-test-per-byte bitmap loop when the set
-   * is small: `memchr` is vectorised in libc, so even four sparse scans cover ground far faster than a
-   * scalar byte loop. During constant evaluation the plain member-wise scan runs instead (the home-made
-   * path — the same shape the bitmap loop takes).
+   * A cascade of `std::memchr`, one per member, keeping the least hit and narrowing the window to
+   * `[pos, best)` for the later members. Constant evaluation runs the plain member-wise scan.
    *
-   * THE QUADRATIC FIX: for **2+ members**, the window is grown **exponentially** (galloping
-   * search) from a modest initial probe, doubling each round, rather than handed the full
-   * remaining haystack up front. A caller that invokes this once per rejected candidate
-   * (`next_candidate`'s icase small-set route) would otherwise pay one `memchr` per set member over
-   * `text.size() - pos` on EVERY such call; a set with an asymmetrically rare or entirely absent
-   * member (e.g. `(?i)cafe`'s `{c, C}` on an all-lowercase haystack) turned that into a full
-   * remaining-text scan on every rejected candidate — O(n) candidates x O(n) scan = O(n^2), same
-   * family as A2's unbounded-reach fix but one level upstream (the candidate SEARCH, not the
-   * anchored walk once a candidate is found). The geometric series bounds one call's total
-   * scanned bytes to at most ~2x the distance to the actual hit (or the remaining text, on a
-   * true miss) — the standard galloping-search argument — independent of any one member's
-   * frequency.
-   *
-   * FIX (mono/multi split): a **single**-member call (`run_cascade_stop`'s class-loop stop-byte
-   * scan is the hot one — its `stop_set_size` is frequently 1) cannot exhibit the O(n^2) above by
-   * construction: one `memchr` call's own cost already equals its progress (the distance to the
-   * hit, or the whole range on a miss) — there is no second member whose scan could redundantly
-   * re-cover ground the first one already paid for. Windowing a mono-member call therefore adds
-   * pure overhead (per-round setup, the narrowing compare, the doubling arithmetic) for zero
-   * safety benefit, measured as a real x86 regression on stop-set-shaped patterns (`[^\x01]+`-
-   * style) once the general galloping fix landed. So `n == 1` takes the direct pre-fix path — one
-   * unbounded `memchr` over `[pos, text.size())` — and every `n >= 2` call keeps the galloping
-   * loop exactly as the galloping fix landed it, untouched.
+   * With two or more members the window gallops (doubling from a seed) rather than spanning the rest:
+   * a caller running this per rejected candidate (next_candidate's icase small-set route) would otherwise
+   * rescan the rest for a rare or absent member (`(?i)cafe`'s `C` in lowercase text), O(n^2). Galloping
+   * bounds a call to ~2x the distance to the hit. One member cannot go quadratic (a memchr costs its
+   * progress), and windowing it regressed x86 stop sets (`[^\x01]+`), so it takes one unbounded `memchr`.
    *
    * \param[in] text The subject text.
    * \param[in] pos  Index to start scanning from.
@@ -3039,9 +2876,7 @@ namespace real::detail {
       const char* const base  {text.data()};
       const std::size_t total {text.size() - pos};
       if (n == 1) {
-        // Mono-member: a single memchr IS the whole search, unwindowed -- see the mono/multi
-        // split note above. Billing mirrors the multi-member loop below: distance-to-hit on a
-        // hit, the full remaining range on a miss (npos).
+        // Billed like the loop below: the distance to the hit, or the whole rest on a miss.
         const void* hit {std::memchr(base + pos, set[0], total)};
         if (hit != nullptr) {
           const std::size_t idx {static_cast<std::size_t>(static_cast<const char*>(hit) - base)};
@@ -3051,16 +2886,9 @@ namespace real::detail {
         note(counter::prefilter_work_units, total);
         return npos;
       }
-      // Initial probe width: the caller (next_candidate's small-set route) already tried a 32-byte bitmap
-      // probe before falling here, so this starts just past it. Members are enumerated in ascending byte
-      // value (see the hint builder above), so for an icase pair like {c, C} the UPPERCASE byte (0x43) is
-      // always member 0 -- checked first, with the full round window, before the far commoner lowercase
-      // byte even gets a chance to narrow it. That makes this seed a genuine trade-off, not a free
-      // parameter: measured across four adversarial shapes (a stop-byte set at a period just under this
-      // window, and (?i)<literal> sparse/no-match/dense), the stop-set win SATURATES near this size while
-      // the icase-sparse/no-match cost keeps climbing past it (a couple of percent at twice the window,
-      // 1024 B) -- so 512-1024 would trade a bounded stop-set win for an
-      // unbounded-looking icase cost. 128 captures the stop-set win in full at a ~2% icase cost.
+      // The seed starts past next_candidate's 32-byte bitmap probe. Members ascend by byte value, so an icase
+      // pair's rare uppercase byte is searched first, with the full window. Measured: the stop-set gain
+      // saturates near 128 while the icase sparse/no-match cost keeps climbing (a few % at 1024).
       constexpr std::size_t seed   {128};
       std::size_t           window {total < seed ? total : seed};
       while (true) {
@@ -3076,7 +2904,7 @@ namespace real::detail {
             }
           }
         }
-        note(counter::prefilter_work_units, win); // bill this round's actual scanned width, like find_prefix does
+        note(counter::prefilter_work_units, win); // this round's scanned width
         if (best != npos) {
           return best;
         }
@@ -3099,10 +2927,8 @@ namespace real::detail {
   /*!
    * \brief Index of the first byte `>= 0x80` in `text[pos, end)`, or \p end if the range is pure ASCII.
    *
-   * A SWAR scan for the high bit: load eight bytes at a time (a `memcpy` into a `std::uint64_t`, so it is
-   * alignment- and aliasing-safe) and test `& 0x8080…`; a clear word skips eight ASCII bytes at once. On
-   * a hit the eight bytes are re-checked scalarly (endianness-free, and only for the one straddling
-   * word); the head/tail run scalar. During constant evaluation the plain scalar loop runs.
+   * SWAR: eight bytes per `memcpy`'d word (alignment- and aliasing-safe); the hit word is rechecked byte by
+   * byte, which keeps it endianness-free.
    *
    * \param[in] text The subject text.
    * \param[in] pos  Start of the range.
