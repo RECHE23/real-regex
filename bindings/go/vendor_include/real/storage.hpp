@@ -2,14 +2,12 @@
  * \file storage.hpp
  * \brief Storage policies: where a program lives and how scratch is allocated.
  *
- * - \ref real::detail::dynamic_storage — everything sized at run time,
- *   exactly once, on the heap (backs `real::regex`).
- * - \ref real::detail::static_storage — the pattern is compiled at compile
- *   time into static constexpr arrays of exact size, and match scratch lives
- *   on the stack: zero allocations (backs `real::static_regex`).
+ * - \ref real::detail::dynamic_storage (backs `real::regex`): sized once at run time, on the heap.
+ * - \ref real::detail::static_storage (backs `real::static_regex`): compiled at compile time into
+ *   exactly sized static constexpr arrays, match scratch on the stack, zero allocations.
  *
- * Exact sizing uses C++20 transient constexpr allocation: the program is
- * built once to measure each array, then rebuilt to fill it.
+ * Exact sizing uses C++20 transient constexpr allocation: the program is built once to measure each
+ * array, then rebuilt to fill it.
  */
 #ifndef REAL_STORAGE_HPP
 #define REAL_STORAGE_HPP
@@ -53,10 +51,7 @@ namespace real {
     char data[N] = {}; //!< The captured characters, including the trailing NUL.
 
     /*!
-     * \brief Captures a string literal.
-     *
-     * Implicit by design: it is what lets a string literal be a non-type
-     * template argument; marking it `explicit` would defeat the purpose.
+     * \brief Captures a string literal. Implicit, so a string literal can be the template argument.
      *
      * \param[in] literal The string literal to capture.
      */
@@ -82,13 +77,11 @@ namespace real {
   namespace detail {
 
     /*!
-     * \brief Fixed-capacity vector backed by an inline array (no heap).
+     * \brief Fixed-capacity vector backed by an inline array (no heap): the subset of `std::vector` the
+     *        Pike VM uses, for the static storage mode.
      *
-     * The subset of `std::vector` the Pike VM uses, for the static storage mode.
-     * Overflow cannot happen for the engine's own containers: `static_storage` sizes each
-     * one exactly via its measure pass, so the `length_error` guards are an unreachable
-     * structural safety net — kept deliberately, and never hit at run time (hence not
-     * covered by the runtime coverage report).
+     * \ref static_storage bounds every engine container from its measure pass, so the `length_error`
+     * guards are an unreachable safety net (hence absent from run-time coverage).
      *
      * \tparam T   Element type.
      * \tparam Cap Inline capacity.
@@ -101,11 +94,8 @@ namespace real {
       /*!
        * \brief Value-initializes \ref data_ during constant evaluation only.
        *
-       * MSVC's constant evaluator refuses an object with an indeterminate subobject even when nothing
-       * reads it: `static_regex`'s compile-time `static_assert`s failed with C2131 (`expression did not
-       * evaluate to a constant`) when this storage was left trivially initialized everywhere. clang and
-       * gcc accept it (C++20 P1331R2), so the runtime path — where the whole point is not paying for the
-       * clear — keeps the trivial initialization on every toolchain.
+       * MSVC's constant evaluator rejects an indeterminate subobject even when unread (C2131); the run-time
+       * path keeps the trivial initialization (P1331R2), which is the point of \ref data_.
        */
       constexpr static_vec() noexcept
       {
@@ -157,10 +147,10 @@ namespace real {
       /*!
        * \brief Ensures at least \p count live elements without re-filling or shrinking.
        *
-       * find_iter reuses capture storage; after the first match \c size already equals
-       * the program slot count and the fast path overwrites every used index — a full
-       * \ref assign of \c npos is dead work. Never shrinks (a multi-group path may have
-       * already sized to \c slot_count > 2 before a span write).
+       * Reused capture storage already holds the slot count after the first match and the writer
+       * overwrites every used index, so a full \ref assign of \c npos would be dead work. New elements
+       * are NOT written: the caller writes every slot it later reads. Never shrinks: a multi-group path
+       * may already be sized to \c slot_count before a span write.
        *
        * \param[in] count Minimum size.
        * \throws std::length_error if \p count exceeds the capacity `Cap`.
@@ -220,7 +210,7 @@ namespace real {
        */
       [[nodiscard]] constexpr T& back()
       {
-        assert(size_ > 0 && "back() on an empty static_vec"); // debug precondition; no-op under NDEBUG
+        assert(size_ > 0 && "back() on an empty static_vec");
         return data_[size_ - 1];
       }
 
@@ -238,40 +228,25 @@ namespace real {
       /*!
        * \brief Inline element storage, deliberately NOT value-initialized at run time.
        *
-       * `static_regex` is stateless (`sizeof` 1), so a `search()` builds a fresh state on the stack every
-       * call, and value-initializing here zeroed the whole worst-case capacity each time -- a cost the
-       * dynamic storage does not pay, since its state lives in the regex object and is reused. Nothing
-       * reads above \ref size_, which starts at 0, so the zeros were never observed. C++20 permits the
-       * trivial default initialization even in a constant expression (P1331R2); reading an element before
-       * writing it would be diagnosed there rather than silently returning garbage.
-       *
-       * On a short subject this is most of the cost of a search: the clear is proportional to the
-       * worst-case capacity while the work is proportional to the subject.
+       * A stateless `static_regex` builds a fresh state per `search()`, and clearing the worst-case
+       * capacity each call would be most of a short-subject search. Nothing reads above \ref size_; in a
+       * constant expression a read before a write is diagnosed.
        */
       std::array<T, Cap> data_;
       std::size_t        size_ {}; //!< Number of elements in use.
     };
 
     /*!
-     * \brief Small-buffer-optimized vector for the dynamic hot paths.
+     * \brief Small-buffer-optimized vector for the dynamic hot paths: up to `InlineCapacity` elements
+     *        inline, spilling to the heap beyond that.
      *
-     * Keeps up to `InlineCapacity` elements inline (no heap), spilling to the
-     * heap beyond that — so the common small-group match avoids allocation
-     * entirely. Used for capture slots and working state in the dynamic mode.
+     * \note \p T must be trivially destructible (`static_assert`): no element destructor ever runs.
      *
-     * \note \p T must be **trivially destructible** (enforced by a `static_assert`):
-     *       small_vec runs no element destructors — inline elements in particular are
-     *       never individually destroyed — which suits its POD-like VM use and keeps the
-     *       hot path allocation- and bookkeeping-free.
-     *
-     * \warning **Run-time invariant — the inline buffer is left UNINITIALIZED** (value-initialized
-     *          only under `std::is_constant_evaluated()`, in the `Storage` union constructor). Every
-     *          element's lifetime is begun by `std::construct_at` (placement-new) before it is read,
-     *          and reads stay within `[0, size_)`. Any accessor added here must preserve that
-     *          write-before-read order, or it reads indeterminate memory — a silent UB
-     *          value-init would mask. MemorySanitizer is the detector — the CI sanitize leg is
-     *          ASan/UBSan, which does not catch this — so run an MSan build when changing how small_vec
-     *          accesses its elements.
+     * \warning At run time the inline buffer is UNINITIALIZED (value-initialized only under constant
+     *          evaluation, in the `Storage` constructor). Every element's lifetime begins with
+     *          `std::construct_at` before it is read, and reads stay within `[0, size_)`; a new accessor
+     *          must keep that write-before-read order. Only MemorySanitizer detects a breach (the CI
+     *          sanitize leg is ASan/UBSan): run an MSan build when changing element access.
      *
      * \tparam T              Element type.
      * \tparam InlineCapacity Number of elements held inline before spilling.
@@ -280,33 +255,25 @@ namespace real {
     class small_vec
     {
       static_assert(InlineCapacity > 0, "InlineCapacity must be positive");
-      // small_vec runs no element destructors — inline elements in particular are never
-      // destroyed (cleanup() only frees the heap block). That is correct only for
-      // trivially-destructible types, which is its sole use (POD-like VM state).
       static_assert(std::is_trivially_destructible_v<T>,
                     "small_vec is for trivially-destructible types only");
 
-      // size_ and capacity_ are ALWAYS std::size_t — never a type narrowed on
-      // InlineCapacity. small_vec spills to the heap and routinely holds far more than
-      // its inline capacity (up to code_size in the VM: ~3·code_size epsilon entries, the
-      // live thread count of a wide alternation, the 2·(groups+1) capture slots). A
-      // uint8_t / uint16_t counter would truncate: at 256 / 65536, static_cast wraps the
-      // capacity to 0, reserve() then sees new_cap ≤ capacity_ and no-ops, so the buffer
-      // is rewritten in place and back() indexes out of bounds. The inline buffer
-      // dominates sizeof, so the wide counter is free.
+      // size_ and capacity_ stay std::size_t, never narrowed on InlineCapacity: a spilled vector holds
+      // far more than inline (~3·code_size eps entries), and a narrow counter wraps the capacity to 0 at
+      // 256 / 65536, so reserve() no-ops and back() indexes out of bounds. The inline buffer dominates
+      // sizeof anyway.
       std::size_t size_     {};               //!< Number of elements in use.
       std::size_t capacity_ {InlineCapacity}; //!< Current capacity.
       bool        is_heap_  {};               //!< True once spilled to the heap.
 
       /*!
-       * \brief Inline element block. A struct (not a bare C array) so the union ctor can activate it as a
-       *        whole with \c construct_at in a constant expression, while \ref inline_data still indexes a
-       *        plain C array — which the static analyzer can bound (a \c std::array's `operator[]` hides
-       *        the extent and trips a false out-of-bounds on \ref transfer_range).
+       * \brief Inline element block: a struct so the union constructor can activate it whole with
+       *        \c construct_at in a constant expression, holding a plain C array the static analyzer can
+       *        bound (`std::array::operator[]` trips a false out-of-bounds on \ref transfer_range).
        */
       struct inline_block
       {
-        T elems[InlineCapacity]; //!< The inline elements, as a plain C array the analyzer can bound.
+        T elems[InlineCapacity]; //!< The inline elements.
       };
 
       /*!
@@ -321,16 +288,11 @@ namespace real {
         /*!
          * \brief Starts in the inline state.
          *
-         * At **run time** the inline buffer is left UNINITIALIZED: small_vec writes every
-         * element through \c std::construct_at (placement-new) before any read (push_back and
-         * assign), so the value-init is pure overhead — and a tokenizing walk builds a fresh slot
-         * buffer per match, of which two slots serve, so it is overhead per match.
-         * At **compile time** the member must be active and initialized for the constexpr
-         * matching path (which assigns through \ref inline_data while it is the active member), so
-         * it is value-initialized there via \c construct_at on the whole \ref inline_block —
-         * activating a class-type member is what a constexpr union allows (an element-wise or bare
-         * C-array activation is not). A constant-evaluated spill switches the active member to
-         * \ref Storage::heap_ptr through \ref adopt_heap, and \ref revert_to_inline switches back.
+         * Run time leaves the inline buffer UNINITIALIZED: every element is written through
+         * \c std::construct_at before any read, and a tokenizing walk builds a fresh slot buffer per
+         * match. Constant evaluation needs the member active and initialized, so it activates the whole
+         * \ref inline_block (a constexpr union can activate a class-type member, not a bare C array).
+         * \ref adopt_heap and \ref revert_to_inline switch the active member.
          */
         constexpr Storage() noexcept
         {
@@ -341,26 +303,19 @@ namespace real {
 
         constexpr ~Storage() {} //!< Destruction handled by \ref cleanup.
 
-        // Rule of Five, made explicit. The union holds a possibly non-trivial T, so
-        // copy/move would be implicitly deleted anyway; small_vec manages copy, move
-        // and element lifetimes itself (is_heap_-aware) and never copies Storage by
-        // value. Declaring these deleted is also a safety guard: a defaulted copy
-        // would byte-copy the union and inherit the wrong active member (double-free).
+        // small_vec copies and moves the elements itself; a defaulted copy would byte-copy the union
+        // with the wrong active member (double free).
         Storage(const Storage&)             = delete;
         Storage& operator=(const Storage&)  = delete;
         Storage(Storage &&)                 = delete;
         Storage& operator=(Storage&&)       = delete;
       } storage_ {}; //!< The active storage, inline or heap.
 
-      // Run-time cache of the active storage base (inline buffer or heap block), refreshed on
-      // every state change via \ref refresh_data. The hot accessors (operator[], back, push_back)
-      // index through it, so they avoid the per-access `is_heap_` branch that the profile showed
-      // dominating add_thread. NOT used during constant evaluation: a pointer to a subobject of
-      // *this is not a usable constant across copies, so the constexpr path keeps the is_heap_
-      // branch (guarded by std::is_constant_evaluated). A dynamic `real::regex` IS constant-
-      // evaluable and does use small_vec, heap spill included, so that branch is live rather than
-      // theoretical -- it is the compile-time path's only way to reach the elements.
-      T* data_ {}; //!< Cached base of the active storage; see the note above, and \ref refresh_data.
+      // Run-time cache of the active storage base, refreshed on every state change (refresh_data): the
+      // hot accessors skip the per-access is_heap_ branch, which dominated add_thread. Unused under
+      // constant evaluation (a pointer into *this is no constant across copies), where the is_heap_
+      // branch stays live: a constant-evaluated real::regex spills too.
+      T* data_ {}; //!< Cached base of the active storage (run time only); see \ref refresh_data.
 
       /*!
        * \brief Refreshes \ref data_ to the active storage base (run time only).
@@ -408,8 +363,7 @@ namespace real {
             return;
           }
         }
-        // Element-wise transfer: the constexpr path, and the run-time path for a
-        // non-trivially-copyable T (the VM's POD element types take the memcpy above).
+        // Element-wise: constant evaluation, or a non-trivially-copyable T.
         for (std::size_t i = 0; i < count; ++i) {
           if constexpr (Move) {
             std::construct_at(&dest[i], std::move(src[i]));
@@ -423,11 +377,8 @@ namespace real {
       /*!
        * \brief Transfers \p other's inline elements into this vector's inline buffer.
        *
-       * The copy/move paths use this when \p other has not spilled. The count is
-       * clamped to `InlineCapacity` — a no-op on the value, since this runs only when
-       * the elements are inline (`size_ <= InlineCapacity`) — but it lets the optimizer
-       * see the inline buffer cannot overflow. Without it, g++ -O3 value-propagates a
-       * spilled source's large `size_` into this then-dead branch and reports a spurious
+       * Runs only when \p other has not spilled, so clamping the count to `InlineCapacity` changes no
+       * value; it stops g++ -O3 propagating a spilled source's `size_` into this branch and warning
        * `-Wstringop-overflow` on the memcpy in \ref transfer_range.
        *
        * \tparam Move If true, move-construct the elements; otherwise copy-construct.
@@ -441,11 +392,10 @@ namespace real {
       }
 
       /*!
-       * \brief Obtains storage for \p n elements, from whichever allocator the current regime allows.
+       * \brief Obtains storage for \p n elements from the allocator the current regime allows.
        *
-       * A raw allocation operator cannot be called in a constant expression, so constant evaluation
-       * goes through `std::allocator`, which C++20 makes usable there. Its blocks are *transient*:
-       * every one must be released before the evaluation ends, which \ref cleanup does.
+       * Constant evaluation cannot call a raw allocation operator, so it uses `std::allocator`, whose
+       * transient blocks must all be released before the evaluation ends (\ref cleanup does).
        *
        * \param[in] n Element count.
        * \return Uninitialized storage for \p n elements.
@@ -477,9 +427,8 @@ namespace real {
       /*!
        * \brief Points the union at \p p, making \ref Storage::heap_ptr the active member.
        *
-       * Constant evaluation has no inactive-member assignment: switching to the pointer requires
-       * beginning its lifetime, which ends the inline buffer's. The run-time statement is left as a
-       * plain assignment — it is on the spill path of every container in the VM.
+       * Constant evaluation must begin the pointer's lifetime (ending the inline buffer's); run time keeps
+       * a plain assignment, on every VM container's spill path.
        *
        * \param[in] p The heap block to adopt.
        */
@@ -495,8 +444,8 @@ namespace real {
       /*!
        * \brief Makes the inline buffer the active union member again, after the heap block is gone.
        *
-       * The moved-from side of a move needs this: it is left inline, so a later constant-evaluated
-       * read through \ref inline_data would otherwise touch an inactive member.
+       * Required wherever a spilled vector returns inline (a moved-from source, an assignment target):
+       * a later constant-evaluated \ref inline_data read would otherwise touch an inactive member.
        */
       constexpr void revert_to_inline() noexcept
       {
@@ -508,9 +457,7 @@ namespace real {
       }
 
       /*!
-       * \brief Frees the heap block, if any. \p T is trivially destructible (see the class
-       *        `static_assert`), so no element destructors run — and inline storage needs no
-       *        cleanup at all.
+       * \brief Frees the heap block, if any; no element destructor runs (\p T is trivially destructible).
        */
       constexpr void cleanup() noexcept
       {
@@ -549,8 +496,7 @@ namespace real {
        */
       constexpr ~small_vec()
       {
-        // Unconditional: a constant-evaluated spill allocates a transient block, and leaving it
-        // unreleased makes the whole constant expression ill-formed.
+        // Unconditional: an unreleased transient block makes the constant expression ill-formed.
         cleanup();
       }
 
@@ -572,8 +518,7 @@ namespace real {
           }
         }
         else {
-          // size_ < capacity_ holds here (checked above); the analyzer cannot relate the active
-          // block's allocation size to size_. data_ is the active base (branchless).
+          // size_ < capacity_ here; the analyzer cannot relate the active block's size to size_.
           // NOLINTNEXTLINE(clang-analyzer-security.ArrayBound)
           std::construct_at(&data_[size_], value);
         }
@@ -594,8 +539,7 @@ namespace real {
         }
         for (std::size_t i = 0; i < count; ++i) {
           if (std::is_constant_evaluated()) {
-            // Compile time: the inline buffer is value-initialized, so assign through it;
-            // the heap path is never taken in a constant expression.
+            // Compile time: no data_ cache; write through the active member.
             if (is_heap_) {
               std::construct_at(&storage_.heap_ptr[i], value);
             }
@@ -604,9 +548,7 @@ namespace real {
             }
           }
           else {
-            // Run time: the inline buffer is uninitialized (see \ref Storage), so this is the
-            // first write — placement-new begins each element's lifetime. data_ is the active
-            // base (inline or heap), branchless like push_back.
+            // Run time: the first write to an uninitialized element begins its lifetime.
             std::construct_at(&data_[i], value);
           }
         }
@@ -616,11 +558,7 @@ namespace real {
       /*!
        * \brief Ensures at least \p count live elements without re-filling or shrinking.
        *
-       * Fast-path find_iter: after the first match, \c size already equals the program
-       * slot count and the writer overwrites every used index — a full \ref assign of \c npos
-       * is dead work. Growing default-constructs only the new tail (caller must write every
-       * slot it later reads). Never shrinks — multi-group fixed-shape may already be sized
-       * to \c slot_count before a span-only write of slots 0/1.
+       * Same contract as \ref static_vec::ensure_size, except that the new tail is value-initialized.
        *
        * \param[in] count Minimum size.
        */
@@ -706,7 +644,7 @@ namespace real {
        */
       [[nodiscard]] constexpr T& back() noexcept
       {
-        assert(size_ > 0 && "back() on an empty small_vec"); // debug precondition; no-op under NDEBUG
+        assert(size_ > 0 && "back() on an empty small_vec");
         if (std::is_constant_evaluated()) {
           return is_heap_ ? storage_.heap_ptr[size_ - 1] : inline_data()[size_ - 1];
         }
@@ -728,9 +666,6 @@ namespace real {
 
       /*!
        * \brief Removes the last element. Precondition: the vector is non-empty.
-       *
-       * For VM-internal use (POD types like size_t, eps_entry) explicit destroy is unnecessary;
-       * full cleanup happens in the destructor / clear when on the heap.
        */
       constexpr void pop_back() noexcept
       {
@@ -753,10 +688,10 @@ namespace real {
         if (is_heap_) {
           deallocate_block(storage_.heap_ptr, capacity_);
         }
-        adopt_heap(new_data); // reads of old_data are done; this ends the inline buffer's lifetime
+        adopt_heap(new_data); // after the last old_data read: this ends the inline buffer's lifetime
         capacity_         = new_capacity;
         is_heap_          = true;
-        refresh_data();       // run-time path only (constexpr threw above); data_ now points at the heap block
+        refresh_data();       // no-op under constant evaluation
       }
 
       /*!
@@ -815,7 +750,7 @@ namespace real {
       }
 
       /*!
-       * \brief Copy constructor (needed for `vector<match_result>` in find_all).
+       * \brief Copy constructor.
        * \param[in] other The vector to copy.
        */
       constexpr small_vec(const small_vec& other)
