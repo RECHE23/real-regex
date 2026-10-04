@@ -259,3 +259,61 @@ TEST(il_floor_lifts_for_short_subjects_once_built)
   EXPECT(real::detail::il_density_last_abandoned());
   EXPECT(span.first != real::npos);
 }
+
+// The bill (inner_literal_bill) gives the route up where reaching and confirming its candidates reads more than
+// the core's one pass would. Its verdicts, on the per-byte profiles it was measured on.
+TEST(il_bill_verdicts)
+{
+  using real::detail::inner_literal_bill;
+  inner_literal_bill losing {}; // a candidate every 19 bytes whose reverse and confirm read 25
+  bool               gave   {false};
+  for (std::size_t k {1}; k <= 200 && !gave; ++k) {
+    gave = losing.overspent(25, 19 * k);
+  }
+  EXPECT(gave);
+  inner_literal_bill winning {}; // a candidate every 42 bytes reading 14: key = value over a log
+  bool               kept    {true};
+  for (std::size_t k {1}; k <= 10000; ++k) {
+    kept = kept && !winning.overspent(14, 42 * k);
+  }
+  EXPECT(kept);
+  EXPECT_EQ(inner_literal_bill {}.allowance(0), std::size_t {64});
+}
+
+TEST(il_bill_gives_way_where_reaching_starts_costs_more)
+{
+  std::string dense;
+  while (dense.size() < 60000U) {
+    dense += "the quick fox singing 123x and bringing 7x over 42 dogs ";
+  }
+  // The reverse of `[a-z]+ [a-z ]+` reads back over each letter run: the route gives way, and the answer stays.
+  const real::regex losing  {R"([a-z]+ [a-z ]+x\d\d\d\d)"};
+  (void) losing.count_matches(dense); // a cold regex keeps the route off below its floor: warm it first
+  real::detail::inner_literal_bill_trips() = 0;
+  const std::size_t counted {losing.count_matches(dense + "ab cd x1234")};
+  EXPECT(real::detail::inner_literal_bill_trips().load() > 0U);
+  EXPECT_EQ(counted, std::size_t {1});
+  // `[a-z]+ [a-z]+` dies at the first space it crosses back: the route wins there, and keeps the subject.
+  const real::regex winning {R"([a-z]+ [a-z]+x\d\d\d\d)"};
+  (void) winning.count_matches(dense);
+  real::detail::inner_literal_bill_trips() = 0;
+  EXPECT_EQ(winning.count_matches(dense + "ab cdx1234"), std::size_t {1});
+  EXPECT_EQ(real::detail::inner_literal_bill_trips().load(), std::uint64_t {0});
+}
+
+TEST(il_bill_reads_no_more_than_it_allows)
+{
+  // One candidate 40 000 bytes into a run the prefix's reverse never leaves: unbounded, that reverse alone reads
+  // the run back to its start; the allowance cuts it at what the bill has left, and the route gives way.
+  std::string run;
+  while (run.size() < 40000U) {
+    run += "ab ";
+  }
+  const real::regex re {R"([a-z]+ [a-z ]+x\d\d\d\d)"};
+  (void) re.count_matches(run);
+  real::detail::inner_literal_reverse_bytes() = 0;
+  real::detail::inner_literal_bill_trips()    = 0;
+  EXPECT_EQ(re.count_matches(run + "x "), std::size_t {0});
+  EXPECT(real::detail::inner_literal_reverse_bytes().load() < run.size());
+  EXPECT(real::detail::inner_literal_bill_trips().load() > 0U);
+}

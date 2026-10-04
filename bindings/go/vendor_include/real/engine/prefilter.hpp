@@ -107,6 +107,51 @@ namespace real::detail {
   }
 
   /*!
+   * \brief Times the inner-literal route gave way on its bill, counted for the tests that pin when it does.
+   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
+   */
+  inline std::atomic<std::uint64_t>& inner_literal_bill_trips() noexcept
+  {
+    static std::atomic<std::uint64_t> trips {0};
+    return trips;
+  }
+
+  /*!
+   * \brief Bill one give-way to \ref inner_literal_bill_trips. A no-op unless the test binary defines
+   *        \c REAL_TEST_INSTRUMENT.
+   */
+  inline void note_inner_literal_bill_trip() noexcept
+  {
+#if defined(REAL_TEST_INSTRUMENT)
+    inner_literal_bill_trips().fetch_add(1, std::memory_order_relaxed);
+#endif
+  }
+
+  /*!
+   * \brief Bytes the inner-literal route's reverse automaton read, counted for the tests that pin its allowance.
+   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
+   */
+  inline std::atomic<std::uint64_t>& inner_literal_reverse_bytes() noexcept
+  {
+    static std::atomic<std::uint64_t> bytes {0};
+    return bytes;
+  }
+
+  /*!
+   * \brief Bill \p n reversed bytes to \ref inner_literal_reverse_bytes. A no-op unless the test binary defines
+   *        \c REAL_TEST_INSTRUMENT.
+   * \param[in] n Bytes one reverse read.
+   */
+  inline void note_inner_literal_reverse(std::size_t n) noexcept
+  {
+#if defined(REAL_TEST_INSTRUMENT)
+    inner_literal_reverse_bytes().fetch_add(static_cast<std::uint64_t>(n), std::memory_order_relaxed);
+#else
+    (void) n;
+#endif
+  }
+
+  /*!
    * \brief Bounded-backtracker runs, counted for the tests that pin which windows it fills rather than the VM.
    * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
    */

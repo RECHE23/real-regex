@@ -839,6 +839,52 @@ namespace real::detail {
   };
 
   /*!
+   * \brief Tells when the inner-literal route's candidates should give way to the core search, from what
+   *        reaching their starts and confirming them read against the distance crossed.
+   *
+   * A candidate's start is found by reversing the prefix, which reads back until its state dies -- over a
+   * run of the prefix's class, the whole run, however near the start it returns -- and its confirm reads
+   * forward from there. Measured over a candidate every 19 bytes inside letter runs and over a 200 KB log
+   * (arm64, 2026-10-03), the route lost to the core where `8 * candidates + bytes read` per byte crossed
+   * reached 1.04 (`[a-z ]+ ?x\d{4}` 1.22x, `[a-z ]*x\d{4}` 1.61x) and won where it stayed at 0.74 or below
+   * (`\d*x\d{4}` 0.65x, `(\w+) ?= ?(\w+)` 0.43x, `\w+\s*:\s*\d+` 0.13x). The bound sits at 0.9, between.
+   * A class walk back is not billed: it reads no automaton, and the measurement counted it at nothing.
+   */
+  struct inner_literal_bill
+  {
+    static constexpr std::size_t per_candidate {80};  //!< One candidate, ten times its weight.
+    static constexpr std::size_t per_read_byte {10};  //!< One byte its reverse or its confirm read.
+    static constexpr std::size_t per_crossed   {9};   //!< One byte crossed: the bound of 0.9, ten times.
+    static constexpr std::size_t slack         {640}; //!< About eight candidates before any verdict.
+
+    std::size_t spent                          {0};   //!< What the candidates have cost so far, in the units above.
+
+    /*!
+     * \brief Bills one candidate the confirm rejected, and tells whether the route should give way.
+     * \param[in] read    Bytes its reverse and its confirm read.
+     * \param[in] crossed Bytes from where the scan began to the candidate.
+     * \return True once the core search would clearly cost less.
+     */
+    [[nodiscard]] constexpr bool overspent(std::size_t read,
+                                           std::size_t crossed)
+    {
+      spent += per_candidate + (per_read_byte * read);
+      return spent > slack + (per_crossed * crossed);
+    }
+
+    /*!
+     * \brief The bytes a candidate's reverse may still read before the bill is spent.
+     * \param[in] crossed Bytes from where the scan began to that candidate.
+     * \return The allowance; zero once the candidates have spent what the core's pass would.
+     */
+    [[nodiscard]] constexpr std::size_t allowance(std::size_t crossed) const
+    {
+      const std::size_t budget {slack + (per_crossed * crossed)};
+      return budget > spent ? (budget - spent) / per_read_byte : 0;
+    }
+  };
+
+  /*!
    * \brief The Pike VM, generic over the scratch-state container policy.
    * \tparam State A \ref basic_pike_state instantiation (vector- or static-backed).
    * \tparam StateBoundToProgram The caller guarantees this state is never used with a second program —
@@ -1469,10 +1515,21 @@ namespace real::detail {
       for (std::size_t i = 0; i < prog_.hints.inner_literal_len; ++i) {
         lit_buf[i] = static_cast<char>(prog_.hints.inner_literal[i]);
       }
-      const std::string_view lit        {lit_buf.data(), prog_.hints.inner_literal_len};
-      const std::int32_t     boundary   {prog_.hints.inner_literal_prefix};
+      const std::string_view lit         {lit_buf.data(), prog_.hints.inner_literal_len};
+      const std::int32_t     boundary    {prog_.hints.inner_literal_prefix};
 
-      std::size_t       pos             {start};
+      std::size_t        pos             {start};
+      inner_literal_bill bill            {};
+      std::size_t        reversed        {0}; // bytes the last candidate's reverse automaton read
+      const auto         give_way        {[&] {
+                                            if constexpr (requires(State & st) {
+            st.il_abandoned;
+          }) {
+                                              state_.il_abandoned = true; // sticky for this haystack, as the density gate's
+                                            }
+                                            note_inner_literal_bill_trip();
+                                            abandon = true;
+                                          }};
       const std::size_t min_match_start {start}; // reverse floor = this search's start (the finditer resume); never advances mid-call
       std::size_t       min_pre_start   {start}; // literal-scan floor (last confirm's reach) — the linearity backstop
       bool              first_candidate {true};
@@ -1661,7 +1718,19 @@ namespace real::detail {
             shared_dfa_set& set {*scan_set_};
             ensure_set_il_prefix_rev(*prog_.immut, set);
             if (set.il_prefix_rev.has_value()) {
-              s = set.il_prefix_rev->reverse_start(text, h, min_match_start);
+              // The reverse reads back until its state dies, which over a run of the prefix's class can be the
+              // whole subject for one candidate: it reads only what the bill still allows, and one cut short has
+              // not found its start, so the route gives way. Only where it may: a start the cut leaves unknown
+              // must never be used, so a route that cannot give way reads to where the state dies.
+              const bool        may_cut {prog_.immut->byte_prog.eligible};
+              const std::size_t allowed {bill.allowance(h - start)};
+              const std::size_t floor   {(may_cut && h - min_match_start > allowed) ? h - allowed : min_match_start};
+              s = set.il_prefix_rev->reverse_start(text, h, floor, &reversed);
+              note_inner_literal_reverse(reversed);
+              if (floor > min_match_start && h - reversed <= floor) {
+                give_way();
+                return false;
+              }
             }
             else {
               s = npos;
@@ -1734,6 +1803,12 @@ namespace real::detail {
           if (confirm_at(text, s, out_slots, stop)) {
             return true;          // confirmed: out_slots holds [s, e]
           }
+          if (bill.overspent(reversed + (stop - s), h - start) && prog_.immut != nullptr
+              && prog_.immut->byte_prog.eligible) {
+            give_way();
+            return false;
+          }
+          reversed = 0;
           if (stop > min_pre_start) {
             min_pre_start = stop; // the failed forward's reach bounds future candidates
           }

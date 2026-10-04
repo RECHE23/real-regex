@@ -3010,14 +3010,17 @@ namespace real::detail {
      * \param[in] text   Subject.
      * \param[in] e      The known match end.
      * \param[in] resume Lower bound the backward scan will not cross.
+     * \param[out] read  When not null, the bytes the scan read: it runs until its state dies or \p resume,
+     *                   past the start it returns.
      * \return The leftmost start at or after \p resume, or \ref real::npos when none was reached.
      */
     [[nodiscard]] std::size_t reverse_start(std::string_view text,
                                             std::size_t      e,
-                                            std::size_t      resume)
+                                            std::size_t      resume,
+                                            std::size_t*     read = nullptr)
     {
       if (look_) {
-        return reverse_start_look(text, e, resume);
+        return reverse_start_look(text, e, resume, read);
       }
       std::uint32_t       state {start_state_}; // rev-closure of the forward `match`
       std::size_t         best  {npos};
@@ -3034,6 +3037,9 @@ namespace real::detail {
         const auto          byte   {static_cast<std::uint8_t>(text[pos])};
         const std::uint32_t cached {trans_[(static_cast<std::size_t>(state) * count) + alpha_.of[byte]]};
         state = cached != no_transition ? cached : step(state, byte); // the cached edge inline; step() on a miss
+      }
+      if (read != nullptr) {
+        *read = e - pos;
       }
       return best;
     }
@@ -3390,11 +3396,13 @@ namespace real::detail {
      * \param[in] text   Subject.
      * \param[in] e      The known match end.
      * \param[in] resume Lower bound the backward scan will not cross.
+     * \param[out] read  As \ref reverse_start's.
      * \return The leftmost start at or after \p resume, or \ref real::npos.
      */
     std::size_t reverse_start_look(std::string_view text,
                                    std::size_t      e,
-                                   std::size_t      resume)
+                                   std::size_t      resume,
+                                   std::size_t*     read)
     {
       std::uint32_t       state {start_for(right_ctx_at(text, e))};
       std::size_t         best  {npos};
@@ -3409,6 +3417,9 @@ namespace real::detail {
           const std::uint32_t memo {res_[(static_cast<std::size_t>(state) * (count + 1U)) + key]};
           here = memo != no_transition ? memo : resolve(state, key);
           if (here == quit_state) {
+            if (read != nullptr) {
+              *read = e - pos;
+            }
             return quit_pos;
           }
         }
@@ -3432,6 +3443,9 @@ namespace real::detail {
           const std::uint32_t cached {trans_[(static_cast<std::size_t>(here) * count) + alpha_.of[byte]]};
           state = cached != no_transition ? cached : step(here, byte);
         }
+      }
+      if (read != nullptr) {
+        *read = e - pos;
       }
       return best;
     }
