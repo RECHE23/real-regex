@@ -7338,6 +7338,18 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Whether no class loop takes the pattern first: the byte-class loop, the code-point one and the three
+     *        possessive loops sit above every literal, shape and alternation route in the cascade.
+     * \param[in] hints The program's hints.
+     * \return True when none of those routes claims it.
+     */
+    [[nodiscard]] static constexpr bool no_class_loop_above(const pattern_hints& hints) noexcept
+    {
+      return hints.greedy_class_loop < 0 && hints.greedy_cp_class < 0
+             && hints.possessive_class.kind == class_kind::none;
+    }
+
+    /*!
      * \brief Is the exact-literal route the one `run()` would take, in its one-search subset?
      *
      * Mirrors `run()`'s cascade for the same reason lazy_dfa_is_the_route does. Only three kinds of route
@@ -7357,9 +7369,7 @@ namespace real::detail {
     {
       return hints.exact_literal_len > 0
              && hints.literal_one_search                         // no capture / assertion / anchor, len >= 2
-             && hints.greedy_class_loop < 0                      // the byte-class loop sits above
-             && hints.greedy_cp_class < 0                        // so does the code-point one
-             && hints.possessive_class.kind == class_kind::none; // and the three possessive loops
+             && no_class_loop_above(hints);
     }
 
     /*!
@@ -7453,9 +7463,7 @@ namespace real::detail {
              && !hints.fixed_shape                               // the route's own gate: IL never beats the fixed-shape scan
              && !prog.prefix_code.empty()                        // the reverse start-finder must exist
              && hints.exact_literal_len == 0                     // exact-literal search sits above
-             && hints.greedy_class_loop < 0                      // the byte-class loop sits above
-             && hints.greedy_cp_class < 0                        // so does the code-point one
-             && hints.possessive_class.kind == class_kind::none; // and the three possessive loops
+             && no_class_loop_above(hints);
     }
 
     /*!
@@ -7474,9 +7482,7 @@ namespace real::detail {
              && hints.fs_pair_width < 2                          // the two-position pair route sits above
              && hints.fs_end_anchor == 0                         // an end anchor post-checks each match
              && hints.exact_literal_len == 0                     // exact-literal search sits above
-             && hints.greedy_class_loop < 0                      // the byte-class loop sits above
-             && hints.greedy_cp_class < 0                        // so does the code-point one
-             && hints.possessive_class.kind == class_kind::none; // and the three possessive loops
+             && no_class_loop_above(hints);
     }
 
     /*!

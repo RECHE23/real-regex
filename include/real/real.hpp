@@ -597,15 +597,19 @@ namespace real {
       // `std::is_constant_evaluated()` there under -Werror=constant-evaluated ("will always
       // evaluate to true"). The two-step form is not manifestly constant-evaluated and keeps the
       // runtime/constexpr split the original four copies had.
-      bool batchable {};
+      using vm = detail::pike_vm<typename Storage::state_type, true>;
+      const detail::pattern_hints& h         {prog.hints};
+      bool                         batchable {};
       batchable = !std::is_constant_evaluated() && sem == match_semantics::first
                   && !detail::class_fastpath_disabled()
-                  && !prog.hints.anchored_start && prog.hints.line_anchored == 0U;
+                  && !h.anchored_start && h.line_anchored == 0U;
       // A KEPT `\b`/`\B` wrap is handled by the BYTE class filler and by nothing else, so the other
       // routes still require its absence. The assertion is one a word-SUBSET class genuinely needs: a
       // maximal `[a-z]+` run can start after `_` or a digit, so unlike `\b\w+\b`'s this one is not
       // redundant, cannot be dropped at recognition time, and has to be evaluated on every span.
-      const bool no_wrap {prog.hints.wb_lead == 0 && prog.hints.wb_trail == 0};
+      const bool                   no_wrap {h.wb_lead == 0 && h.wb_trail == 0};
+      const bool                   plain   {batchable && no_wrap && !h.wb_lead_maximal_run};   // no boundary kept around a match
+      const bool                   no_loop {h.greedy_class_loop < 0 && h.greedy_cp_class < 0}; // neither class loop claims it
       wb_kept_ = !no_wrap;
       // A DROPPED leading `\b` (\ref real::detail::pattern_hints::wb_lead_maximal_run) does not
       // disqualify the two class-run routes: their fillers carry the same one-position window-edge
@@ -613,19 +617,16 @@ namespace real {
       // assertion redundant for -- everywhere except at a caller-supplied `pos` -- lost its route
       // entirely. The other two routes have not been taught the guard and still decline.
       // Each route then adds only its OWN selector, which is what the four lines below now read as.
-      wb_edge_         = prog.hints.wb_lead_maximal_run;
+      wb_edge_         = h.wb_lead_maximal_run;
       // A `{k,}` minimum does not disqualify either class-run route: the fillers apply the same "a
       // too-short maximal run cannot satisfy X{k,}, skip it" rule the general route does. Declining
       // instead costs the pattern its route -- for a length comparison.
-      batch_bytes_     = batchable && prog.hints.greedy_class_loop >= 0
-                         && prog.hints.greedy_class_loop_end == 0;
-      batch_cp_ascii_  = batchable && no_wrap && !prog.hints.wb_lead_maximal_run
-                         && prog.hints.codepoint_class_ascii >= 0
-                         && prog.hints.greedy_class_loop < 0 && prog.hints.greedy_cp_class < 0;
+      batch_bytes_     = batchable && h.greedy_class_loop >= 0
+                         && h.greedy_class_loop_end == 0;
+      batch_cp_ascii_  = plain && h.codepoint_class_ascii >= 0 && no_loop;
       // The bare single byte-class (`[a-z]`, no quantifier) needs no `{k,}` or capture exclusion:
       // the 4-opcode shape pattern_hints::single_class recognizes admits neither.
-      batch_single_cl_ = batchable && no_wrap && !prog.hints.wb_lead_maximal_run
-                         && prog.hints.single_class >= 0;
+      batch_single_cl_ = plain && h.single_class >= 0;
       // The code-point class loop is the fourth batched route and deliberately gets NO member of its
       // own: it is \ref refill_batch's `else`, so naming it would grow the iterator for nothing —
       // and this iterator's size is measured, not assumed (see \ref batch_cap).
@@ -633,8 +634,8 @@ namespace real {
       // a cost measured in the four-engine harness that does not exist in a consumer-shaped
       // translation unit -- see fill_cp_class_spans's note and docs/MEASUREMENT.md §5.5.
       // A kept wrap rides along: the filler checks it per run (fill_cp_class_spans's WbKept).
-      const bool cp_class {batchable && prog.hints.greedy_cp_class >= 0
-                           && prog.hints.greedy_cp_class_end == 0
+      const bool cp_class {batchable && h.greedy_cp_class >= 0
+                           && h.greedy_cp_class_end == 0
       }; // no is_constant_evaluated: see above
 
       // The fixed ALTERNATION, small-set shape only (2..8 distinct branch first bytes -- what the
@@ -647,11 +648,9 @@ namespace real {
       // so the first refill asks the cascade the same question on the same state
       // (pike_vm::alternation_automaton_claims, whose verdicts are sticky per subject) and, where the
       // automaton would take it, disarms the batch for the walk and leaves every search to `run()`.
-      batch_alt_       = batchable && no_wrap && prog.hints.fixed_alternation
-                         && prog.hints.alternation_branch_count > 0
-                         && prog.hints.small_set_size >= 2 && prog.hints.small_set_size <= 8
-                         && prog.hints.greedy_class_loop < 0 && prog.hints.greedy_cp_class < 0
-                         && prog.hints.codepoint_class_ascii < 0 && prog.hints.single_class < 0;
+      const bool alternation {batchable && no_wrap && h.fixed_alternation && h.alternation_branch_count > 0
+                              && no_loop && h.codepoint_class_ascii < 0 && h.single_class < 0};
+      batch_alt_       = alternation && h.small_set_size >= 2 && h.small_set_size <= 8;
       // The LAZY-DFA route, last in the cascade because every shape above it is faster: this is what a
       // pattern falls to when no recognizer claims it, and it was the only route with no filler at all
       // -- 0.9949 engine entries per match against 0.2501 for every batched route (see
@@ -684,16 +683,14 @@ namespace real {
       //     lost its memmem. The predicate lives beside the cascade it mirrors, not here.
       //   * enough RUNWAY. The route declines under `lazy_dfa_min_input` bytes, so on a shorter subject
       //     the filler can only fail -- once per match, for nothing: `short trim replace` +9.7 %.
-      batch_lazy_dfa_  = batchable && no_wrap && !prog.hints.wb_lead_maximal_run
-                         && !detail::lazy_dfa_route_disabled()
-                         && prog.hints.first_bytes_valid && !prog.hints.empty_match_possible
+      batch_lazy_dfa_  = plain && !detail::lazy_dfa_route_disabled() && h.first_bytes_valid && !h.empty_match_possible
                          // Groups need no filling for a walk that reads none (count_matches): the filler
                          // hands back spans only, so a pattern's groups need not cost it the batch.
-                         && (prog.slot_count <= 2 || prog.hints.capture_free_walk)
-                         && prog.hints.alternation_branch_count < 4
-                         && prog.hints.trailing_lookaround < 0
-                         && detail::pike_vm<typename Storage::state_type, true>::lazy_dfa_is_the_route(prog.hints)
-                         && text_bytes >= detail::pike_vm<typename Storage::state_type, true>::lazy_dfa_min_input
+                         && (prog.slot_count <= 2 || h.capture_free_walk)
+                         && h.alternation_branch_count < 4
+                         && h.trailing_lookaround < 0
+                         && vm::lazy_dfa_is_the_route(h)
+                         && text_bytes >= vm::lazy_dfa_min_input
                          && !batch_bytes_ && !batch_cp_ascii_ && !batch_single_cl_ && !cp_class
                          && !batch_alt_;
       // The EXACT-LITERAL route, sixth, and a REOPENED REFUSAL rather than a new idea -- %pike.hpp's
@@ -702,30 +699,21 @@ namespace real {
       // it enlarged `refill_batch` too and charged nothing measurable, so the law the refusal rested on
       // does not hold as stated. If the +10.7 % reproduces, this line goes and the second refutation is
       // recorded with it.
-      batch_exact_lit_ = batchable && no_wrap && !prog.hints.wb_lead_maximal_run
-                         && prog.slot_count == 2
-                         && detail::pike_vm<typename Storage::state_type, true>::exact_literal_is_the_route(prog.hints);
+      batch_exact_lit_ = plain && prog.slot_count == 2 && vm::exact_literal_is_the_route(h);
       // The INNER-LITERAL route, seventh. Same signature as the two above it -- one engine entry per
       // match, a per-match constant flat across densities -- and the same arming
       // discipline: %pike.hpp's `inner_literal_is_the_route` states one clause per route above it in the
       // cascade. `slot_count == 2` is what lets the filler use a two-slot sink and reuse the route function
       // verbatim; a nullable pattern is excluded because the batched span path applies no empty-match rule,
       // and the route's own seam must take this out with it.
-      batch_inner_lit_ = batchable && no_wrap && !prog.hints.wb_lead_maximal_run
-                         && !detail::inner_literal_route_disabled()
-                         && !prog.hints.empty_match_possible && prog.slot_count == 2
-                         && detail::pike_vm<typename Storage::state_type, true>::inner_literal_is_the_route(prog);
-      batch_fixed_     = batchable && prog.slot_count == 2 && !prog.hints.empty_match_possible
-                         && detail::pike_vm<typename Storage::state_type, true>::fixed_shape_is_the_route(prog);
+      batch_inner_lit_ = plain && !detail::inner_literal_route_disabled() && !h.empty_match_possible
+                         && prog.slot_count == 2 && vm::inner_literal_is_the_route(prog);
+      batch_fixed_     = batchable && prog.slot_count == 2 && !h.empty_match_possible && vm::fixed_shape_is_the_route(prog);
       batch_alt_asks_  = batch_alt_;
       // An alternation with MORE first bytes than the small set holds: run() tries the fingerprint route for it
       // (run_alternation_wide) ahead of the automaton's gate, and the filler asks run()'s own questions once,
       // disarming where the route declines. Exclusive of the other batched shapes.
-      batch_wide_      = batchable && no_wrap && prog.hints.fixed_alternation && prog.hints.small_set_size == 0
-                         && prog.hints.alternation_branch_count > 0 && prog.hints.first_bytes_valid
-                         && !prog.hints.empty_match_possible
-                         && prog.hints.greedy_class_loop < 0 && prog.hints.greedy_cp_class < 0
-                         && prog.hints.codepoint_class_ascii < 0 && prog.hints.single_class < 0
+      batch_wide_      = alternation && h.small_set_size == 0 && h.first_bytes_valid && !h.empty_match_possible
                          && !batch_bytes_ && !batch_cp_ascii_ && !batch_single_cl_ && !cp_class && !batch_alt_
                          && !batch_lazy_dfa_;
       batch_eligible_  = batch_bytes_ || batch_cp_ascii_ || batch_single_cl_ || cp_class || batch_alt_ || batch_wide_
