@@ -431,9 +431,9 @@ TEST(lookbehind_cost_grows_linearly_with_its_bound)
   const std::string text(8192, 'a'); // no 'b': every start runs until the window closes
   for (const int bound : {50, 200}) {
     const real::regex re {"(?<=a{1," + std::to_string(bound) + "}b)a"};
-    real::detail::behind_walk_steps() = 0;
+    real::detail::tally(real::detail::counter::behind_walk_steps) = 0;
     EXPECT_EQ(re.count_matches(text), 0U);
-    const std::uint64_t steps {real::detail::behind_walk_steps().load()};
+    const std::uint64_t steps {real::detail::tally(real::detail::counter::behind_walk_steps).load()};
     EXPECT(steps > 0U);
     EXPECT(steps <= 2U * (text.size() + 1U));
   }
@@ -521,9 +521,9 @@ TEST(unbounded_lookahead_cost_is_linear_in_the_text)
   const real::regex re {"(?=[ab]*z)a"};
   for (const std::size_t n : {std::size_t {16384}, std::size_t {65536}}) {
     const std::string text(n, 'a'); // no z: the body runs to the end from every position
-    real::detail::ahead_table_rows() = 0;
+    real::detail::tally(real::detail::counter::ahead_table_rows) = 0;
     EXPECT_EQ(re.count_matches(text), 0U);
-    EXPECT_EQ(real::detail::ahead_table_rows().load(), n + 1U);
+    EXPECT_EQ(real::detail::tally(real::detail::counter::ahead_table_rows).load(), n + 1U);
   }
 }
 

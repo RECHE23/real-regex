@@ -103,12 +103,12 @@ TEST(compat_not_null_on_a_pattern_that_cannot_match_empty_keeps_the_dfa)
 {
   const std::string text(4096, 'a');
   const rc::regex   re {R"(\w+\d{5})"};
-  real::detail::dfa_leases_taken() = 0;
+  real::detail::tally(real::detail::counter::dfa_leases_taken) = 0;
   EXPECT(search(text, 0, re, rx::match_not_null) == span {});
-  EXPECT(real::detail::dfa_leases_taken().load() > 0U);
-  real::detail::dfa_leases_taken() = 0;
+  EXPECT(real::detail::tally(real::detail::counter::dfa_leases_taken).load() > 0U);
+  real::detail::tally(real::detail::counter::dfa_leases_taken) = 0;
   EXPECT(search(text, 0, rc::regex {"x*|b"}, rx::match_not_null) == span {});
-  EXPECT_EQ(real::detail::dfa_leases_taken().load(), std::uint64_t {0}); // the control: the VM walk takes none
+  EXPECT_EQ(real::detail::tally(real::detail::counter::dfa_leases_taken).load(), std::uint64_t {0}); // the control: the VM walk takes none
 }
 
 // A nullable capturing group under a quantifier keeps std: its last iteration is std's, not REAL's.

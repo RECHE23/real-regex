@@ -501,11 +501,11 @@ TEST(il_scan_leases_its_dfas_once)
   }
   text += "at 10.0.2.15 now";
   EXPECT(re.search(text).matched()); // warms the regex: the first search builds its DFAs
-  real::detail::dfa_leases_taken() = 0;
+  real::detail::tally(real::detail::counter::dfa_leases_taken) = 0;
   const auto m {re.search(text)};
   EXPECT(m.matched());
   EXPECT_EQ(m.start(), text.size() - 13U);
-  const std::uint64_t leases {real::detail::dfa_leases_taken().load()};
+  const std::uint64_t leases {real::detail::tally(real::detail::counter::dfa_leases_taken).load()};
   EXPECT(leases >= 1U); // the scan did go through the DFAs
   EXPECT(leases <= 4U); // thousands of failed dots, a handful of leases
 }

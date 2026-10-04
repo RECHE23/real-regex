@@ -961,7 +961,7 @@ namespace real {
         batch_i_ = 0;
         return false;
       }
-      detail::note_batch_fill();
+      detail::note(detail::counter::batch_fills);
       detail::pike_vm<typename Storage::state_type, true> bvm {prog_, state_};
       if (batch_bytes_) {
         // Four instantiations, chosen once per walk. `wb_edge_` is nearly always false, and when it

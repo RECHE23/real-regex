@@ -828,12 +828,12 @@ TEST(search_dfas_take_the_byte_budget)
   const real::regex whole   {pattern};
   const auto        want    {whole.search(text)};
   real::detail::lazy_dfa_byte_budget() = std::size_t {8} << 10U;
-  real::detail::dfa_quits()            = 0;
+  real::detail::tally(real::detail::counter::dfa_quits)            = 0;
   const real::regex small {pattern};
   const auto        got   {small.search(text)};
   real::detail::lazy_dfa_byte_budget() = real::detail::lazy_dfa_default_byte_budget;
   EXPECT_EQ(got.matched(), want.matched());
-  EXPECT(real::detail::dfa_quits().load() > 0U);
+  EXPECT(real::detail::tally(real::detail::counter::dfa_quits).load() > 0U);
 }
 
 namespace {

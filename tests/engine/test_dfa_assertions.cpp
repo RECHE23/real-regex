@@ -362,9 +362,9 @@ TEST(dfa_unicode_word_boundaries_never_quit_on_ascii)
   }
   const real::regex unicode   {R"(\bfox\b|\bdog\b)"};
   const real::regex ascii     {R"((?a)\bfox\b|\bdog\b)"};
-  real::detail::dfa_quits() = 0;
+  real::detail::tally(real::detail::counter::dfa_quits) = 0;
   const std::size_t n_unicode {unicode.count_matches(text)};
-  EXPECT_EQ(real::detail::dfa_quits().load(), 0U);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::dfa_quits).load(), 0U);
   EXPECT_EQ(n_unicode, ascii.count_matches(text));
   EXPECT(n_unicode > 0U);
 
@@ -375,9 +375,9 @@ TEST(dfa_unicode_word_boundaries_never_quit_on_ascii)
   while (curly.size() < 200000U) {
     curly += "the quick fox\u2019s singing 123x and bringing 7x over 42 dogs ";
   }
-  real::detail::dfa_quits() = 0;
+  real::detail::tally(real::detail::counter::dfa_quits) = 0;
   EXPECT_EQ(unicode.count_matches(curly), ascii.count_matches(curly));
-  EXPECT(real::detail::dfa_quits().load() > 0U);
+  EXPECT(real::detail::tally(real::detail::counter::dfa_quits).load() > 0U);
 }
 
 // A program of saves, atoms and greedy `atom+` loops has its groups read by one walk that takes every loop as
@@ -425,12 +425,12 @@ TEST(dfa_run_shape_needs_no_vm_window)
   const real::regex walked   {R"((\w+)\s+(\w+))"};
   const real::regex backs_up {R"((\w+)(\d+))"};
   std::size_t       found    {0};
-  real::detail::vm_window_runs() = 0;
+  real::detail::tally(real::detail::counter::vm_window_runs) = 0;
   for (const auto& m : walked.find_iter(text)) {
     found += m.matched() ? 1U : 0U;
   }
   EXPECT(found > 100U);
-  EXPECT_EQ(real::detail::vm_window_runs().load(), 0U);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::vm_window_runs).load(), 0U);
   // Each route that reaches a window: the walks from candidates (above), the forward pass and reverse
   // (`[a-z]+` walks give way on the long runs), and the inner-literal confirm (`=` is its literal, and `\w`
   // beside `\s` is not one-pass: both start code points with 0xC2). `\s*` is a star loop.
@@ -443,15 +443,15 @@ TEST(dfa_run_shape_needs_no_vm_window)
       found += m.matched() ? 1U : 0U;
     }
     EXPECT(found > 50U);
-    EXPECT_EQ(real::detail::vm_window_runs().load(), 0U);
+    EXPECT_EQ(real::detail::tally(real::detail::counter::vm_window_runs).load(), 0U);
   }
   found = 0;
-  real::detail::vm_window_runs() = 0;
+  real::detail::tally(real::detail::counter::vm_window_runs) = 0;
   for (const auto& m : backs_up.find_iter(text)) {
     found += m.matched() ? 1U : 0U;
   }
   EXPECT(found > 100U);
-  EXPECT(real::detail::vm_window_runs().load() > 0U);
+  EXPECT(real::detail::tally(real::detail::counter::vm_window_runs).load() > 0U);
 }
 
 // count_matches reads no group, so a pattern with groups takes the lazy DFA's span batch like one without:
@@ -469,10 +469,10 @@ TEST(dfa_count_of_a_pattern_with_groups_is_batched)
     for (const auto& m : re.find_iter(text)) {
       walked += m.matched() ? 1U : 0U;
     }
-    real::detail::dfa_span_batches() = 0;
+    real::detail::tally(real::detail::counter::dfa_span_batches) = 0;
     const std::size_t counted {re.count_matches(text)};
     if (pattern != R"((\w+)(\d+))") { // backs up inside its window: not a walk the span filler serves
-      EXPECT(real::detail::dfa_span_batches().load() > 0U);
+      EXPECT(real::detail::tally(real::detail::counter::dfa_span_batches).load() > 0U);
     }
     real::detail::lazy_dfa_route_disabled() = true;
     const std::size_t vm      {re.count_matches(text)};

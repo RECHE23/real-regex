@@ -38,180 +38,60 @@
 namespace real::detail {
 
   /*!
-   * \brief Prefilter work counter for the O(n) vs O(n²) smoke test.
-   *        Always declared (clang-tidy / tests see the symbol). Billing is a no-op unless
-   *        \c REAL_TEST_INSTRUMENT is defined on the test binary — wheel/prod pay nothing. Relaxed atomic,
-   *        as the other counters: threads searching at once bill it concurrently.
-   * \return A reference to the process-wide counter.
+   * \brief The engine's test counters: each counts one mechanism, for the tests that pin when it runs. Billed
+   *        through `note()` only where the test binary defines \c REAL_TEST_INSTRUMENT; a production build
+   *        pays nothing. Process-wide relaxed atomics: threads searching at once bill them concurrently.
    */
-  inline std::atomic<std::uint64_t>& prefilter_work_units() noexcept
+  enum class counter : std::uint8_t
   {
-    static std::atomic<std::uint64_t> units {0};
-    return units;
+    prefilter_work_units,        //!< Bytes the prefilters scanned: the O(n) against O(n²) gates.
+    vm_window_runs,              //!< Pike VM runs over a window the DFAs found.
+    batch_fills,                 //!< Calls a batched walk made to its filler.
+    inner_literal_bill_trips,    //!< Times the inner-literal route gave way on its bill.
+    inner_literal_reverse_bytes, //!< Bytes the inner-literal route's reverse automaton read.
+    bounded_backtrack_runs,      //!< Windows the bounded backtracker filled rather than the VM.
+    dfa_quits,                   //!< Searches or confirms the lazy DFAs handed to the VM because a scan quit.
+    literal_pair_scans,          //!< Literal searches the two-byte block filter answered.
+    alternation_avx2_blocks,     //!< Alternation blocks the fingerprint masked 32 starts at a time (AVX2).
+    literal_avx2_scans,          //!< Literal filter searches that ran on 32-byte AVX2 blocks.
+    fixed_shape_batches,         //!< Batches the fixed-shape filler produced.
+    literal_rest_scans,          //!< Literal searches whose first stop failed and that went on out of line.
+    alternation_pair_blocks,     //!< Alternation blocks the pair filter masked.
+    alternation_nibble_blocks,   //!< Alternation blocks the nibble fingerprint masked, among the pair blocks.
+    ac_completion_walks,         //!< Branch walks the Aho-Corasick gate's completion sample spent.
+    alternation_variant_scans,   //!< Searches that took a program's variant fingerprint.
+    alternation_wide_scans,      //!< Subjects an alternation wider than the small set scanned by the fingerprint.
+    alternation_pair_candidates, //!< Candidates the alternation pair filter left to verify.
+    ahead_table_rows,            //!< Rows the unbounded-lookahead tables were filled with.
+    behind_walk_steps,           //!< Bytes the lookbehind walks stepped.
+    dfa_span_batches,            //!< Batches the lazy-DFA span filler produced.
+    dfa_leases_taken,            //!< DFA set leases taken.
+    count_                       //!< The number of counters.
+  };
+
+  /*!
+   * \brief The value of a test counter, to read or to reset.
+   * \param[in] c The counter.
+   * \return A reference to its process-wide relaxed atomic.
+   */
+  inline std::atomic<std::uint64_t>& tally(counter c) noexcept
+  {
+    static std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(counter::count_)> counts {};
+    return counts[static_cast<std::size_t>(c)];
   }
 
   /*!
-   * \brief Bill \p n scanned bytes to \ref prefilter_work_units. A no-op unless the test binary
-   *        defines \c REAL_TEST_INSTRUMENT.
-   * \param[in] n Bytes the caller just scanned.
+   * \brief Bills \p n to a test counter. A no-op unless the test binary defines \c REAL_TEST_INSTRUMENT.
+   * \param[in] c The counter.
+   * \param[in] n What to add.
    */
-  inline void prefilter_note_scan(std::size_t n) noexcept
+  constexpr void note([[maybe_unused]] counter       c,
+                      [[maybe_unused]] std::uint64_t n = 1) noexcept
   {
 #if defined(REAL_TEST_INSTRUMENT)
-    prefilter_work_units().fetch_add(static_cast<std::uint64_t>(n), std::memory_order_relaxed);
-#else
-    (void) n;
-#endif
-  }
-
-  /*!
-   * \brief Pike VM runs over a window the DFAs found, counted for the tests that pin which windows need no VM.
-   *        Relaxed atomic: threads searching at once bill it concurrently.
-   * \return A reference to the process-wide counter.
-   */
-  inline std::atomic<std::uint64_t>& vm_window_runs() noexcept
-  {
-    static std::atomic<std::uint64_t> runs {0};
-    return runs;
-  }
-
-  /*!
-   * \brief Bill one Pike VM run over a DFA window to \ref vm_window_runs. A no-op unless the test binary
-   *        defines \c REAL_TEST_INSTRUMENT.
-   */
-  inline void note_vm_window() noexcept
-  {
-#if defined(REAL_TEST_INSTRUMENT)
-    vm_window_runs().fetch_add(1, std::memory_order_relaxed);
-#endif
-  }
-
-  /*!
-   * \brief Calls a batched walk made to its filler, counted for the tests that pin how often a walk scans.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& batch_fills() noexcept
-  {
-    static std::atomic<std::uint64_t> fills {0};
-    return fills;
-  }
-
-  /*!
-   * \brief Bill one filler call to \ref batch_fills. A no-op unless the test binary defines \c REAL_TEST_INSTRUMENT.
-   */
-  inline void note_batch_fill() noexcept
-  {
-#if defined(REAL_TEST_INSTRUMENT)
-    batch_fills().fetch_add(1, std::memory_order_relaxed);
-#endif
-  }
-
-  /*!
-   * \brief Times the inner-literal route gave way on its bill, counted for the tests that pin when it does.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& inner_literal_bill_trips() noexcept
-  {
-    static std::atomic<std::uint64_t> trips {0};
-    return trips;
-  }
-
-  /*!
-   * \brief Bill one give-way to \ref inner_literal_bill_trips. A no-op unless the test binary defines
-   *        \c REAL_TEST_INSTRUMENT.
-   */
-  inline void note_inner_literal_bill_trip() noexcept
-  {
-#if defined(REAL_TEST_INSTRUMENT)
-    inner_literal_bill_trips().fetch_add(1, std::memory_order_relaxed);
-#endif
-  }
-
-  /*!
-   * \brief Bytes the inner-literal route's reverse automaton read, counted for the tests that pin its allowance.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& inner_literal_reverse_bytes() noexcept
-  {
-    static std::atomic<std::uint64_t> bytes {0};
-    return bytes;
-  }
-
-  /*!
-   * \brief Bill \p n reversed bytes to \ref inner_literal_reverse_bytes. A no-op unless the test binary defines
-   *        \c REAL_TEST_INSTRUMENT.
-   * \param[in] n Bytes one reverse read.
-   */
-  inline void note_inner_literal_reverse(std::size_t n) noexcept
-  {
-#if defined(REAL_TEST_INSTRUMENT)
-    inner_literal_reverse_bytes().fetch_add(static_cast<std::uint64_t>(n), std::memory_order_relaxed);
-#else
-    (void) n;
-#endif
-  }
-
-  /*!
-   * \brief Bounded-backtracker runs, counted for the tests that pin which windows it fills rather than the VM.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& bounded_backtrack_runs() noexcept
-  {
-    static std::atomic<std::uint64_t> runs {0};
-    return runs;
-  }
-
-  /*!
-   * \brief Bill one bounded-backtracker run to \ref bounded_backtrack_runs. A no-op unless the test binary
-   *        defines \c REAL_TEST_INSTRUMENT.
-   */
-  inline void note_bounded_backtrack() noexcept
-  {
-#if defined(REAL_TEST_INSTRUMENT)
-    bounded_backtrack_runs().fetch_add(1, std::memory_order_relaxed);
-#endif
-  }
-
-  /*!
-   * \brief Searches or confirms the lazy DFAs handed to the VM because a scan quit (a Unicode word boundary
-   *        next to a non-ASCII byte, or a thrashing cache), counted for the tests that pin where no scan quits.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& dfa_quits() noexcept
-  {
-    static std::atomic<std::uint64_t> quits {0};
-    return quits;
-  }
-
-  /*!
-   * \brief Bill one quit scan to \ref dfa_quits. A no-op unless the test binary defines \c REAL_TEST_INSTRUMENT.
-   */
-  inline void note_dfa_quit() noexcept
-  {
-#if defined(REAL_TEST_INSTRUMENT)
-    dfa_quits().fetch_add(1, std::memory_order_relaxed);
-#endif
-  }
-
-  /*!
-   * \brief Literal searches the two-byte block filter answered (a dense subject), counted for the tests that
-   *        pin when the adaptive literal search hands over.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& literal_pair_scans() noexcept
-  {
-    static std::atomic<std::uint64_t> scans {0};
-    return scans;
-  }
-
-  /*!
-   * \brief Bill one pair-filter search to \ref literal_pair_scans. A no-op unless the test binary defines
-   *        \c REAL_TEST_INSTRUMENT.
-   */
-  inline void note_literal_pair_scan() noexcept
-  {
-#if defined(REAL_TEST_INSTRUMENT)
-    literal_pair_scans().fetch_add(1, std::memory_order_relaxed);
+    if (!std::is_constant_evaluated()) { // a compile-time regex runs these paths too, and bills nothing
+      tally(c).fetch_add(n, std::memory_order_relaxed);
+    }
 #endif
   }
 
@@ -227,28 +107,6 @@ namespace real::detail {
   }
 
   /*!
-   * \brief Alternation blocks the fingerprint masked 32 starts at a time (AVX2), counted for the tests that pin
-   *        where the wider scan runs.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& alternation_avx2_blocks() noexcept
-  {
-    static std::atomic<std::uint64_t> blocks {0};
-    return blocks;
-  }
-
-  /*!
-   * \brief Literal filter searches that ran on 32-byte AVX2 blocks, counted for the tests that pin where the
-   *        wider scan is taken.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& literal_avx2_scans() noexcept
-  {
-    static std::atomic<std::uint64_t> scans {0};
-    return scans;
-  }
-
-  /*!
    * \brief Test seam: keep the literal filter on 16-byte blocks where the CPU has AVX2, so a differential can
    *        compare both widths in one binary. Not for production use.
    * \return Reference to the process-wide seam flag.
@@ -257,209 +115,6 @@ namespace real::detail {
   {
     static bool disabled {false};
     return disabled;
-  }
-
-  /*!
-   * \brief Batches the fixed-shape filler produced, counted for the tests that pin which walks it serves.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& fixed_shape_batches() noexcept
-  {
-    static std::atomic<std::uint64_t> batches {0};
-    return batches;
-  }
-
-  /*!
-   * \brief Literal searches whose first stop failed and that went on out of line, counted for the tests that
-   *        pin that a byte the subject showed rare is the one scanned first.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& literal_rest_scans() noexcept
-  {
-    static std::atomic<std::uint64_t> scans {0};
-    return scans;
-  }
-
-  /*!
-   * \brief Bill one out-of-line literal search to \ref literal_rest_scans. A no-op unless the test binary
-   *        defines \c REAL_TEST_INSTRUMENT.
-   */
-  inline void note_literal_rest_scan() noexcept
-  {
-#if defined(REAL_TEST_INSTRUMENT)
-    literal_rest_scans().fetch_add(1, std::memory_order_relaxed);
-#endif
-  }
-
-  /*!
-   * \brief Alternation blocks the pair filter masked (a dense subject), counted for the tests that pin when an
-   *        alternation's scan turns to it.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& alternation_pair_blocks() noexcept
-  {
-    static std::atomic<std::uint64_t> blocks {0};
-    return blocks;
-  }
-
-  /*!
-   * \brief Bill one pair-filtered alternation block to \ref alternation_pair_blocks. A no-op unless the test
-   *        binary defines \c REAL_TEST_INSTRUMENT.
-   */
-  inline void note_alternation_pair_block() noexcept
-  {
-#if defined(REAL_TEST_INSTRUMENT)
-    alternation_pair_blocks().fetch_add(1, std::memory_order_relaxed);
-#endif
-  }
-
-  /*!
-   * \brief Alternation blocks the nibble fingerprint masked (among \ref alternation_pair_blocks), counted for the
-   *        tests that pin when the fingerprint rather than the pairs does it.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& alternation_nibble_blocks() noexcept
-  {
-    static std::atomic<std::uint64_t> blocks {0};
-    return blocks;
-  }
-
-  /*!
-   * \brief Bill one fingerprint-masked block to \ref alternation_nibble_blocks. A no-op unless the test binary
-   *        defines \c REAL_TEST_INSTRUMENT.
-   * \param[in] nibbles Whether the block was masked by the fingerprint.
-   */
-  inline void note_alternation_nibble_block(bool nibbles) noexcept
-  {
-#if defined(REAL_TEST_INSTRUMENT)
-    if (nibbles) {
-      alternation_nibble_blocks().fetch_add(1, std::memory_order_relaxed);
-    }
-#else
-    static_cast<void>(nibbles);
-#endif
-  }
-
-  /*!
-   * \brief Branch walks the Aho-Corasick gate's completion sample spent, counted for the tests that pin its
-   *        budget.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& ac_completion_walks() noexcept
-  {
-    static std::atomic<std::uint64_t> walks {0};
-    return walks;
-  }
-
-  /*!
-   * \brief Searches a program that is not a fixed alternation took its variants' fingerprint for, counted for
-   *        the tests that pin when it does.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& alternation_variant_scans() noexcept
-  {
-    static std::atomic<std::uint64_t> scans {0};
-    return scans;
-  }
-
-  /*!
-   * \brief Subjects an alternation wider than the small set scanned by the fingerprint, counted for the tests
-   *        that pin when it takes one.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& alternation_wide_scans() noexcept
-  {
-    static std::atomic<std::uint64_t> scans {0};
-    return scans;
-  }
-
-  /*!
-   * \brief Candidates the alternation pair filter left to verify, counted for the tests that pin that its second
-   *        probe does filter.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& alternation_pair_candidates() noexcept
-  {
-    static std::atomic<std::uint64_t> candidates {0};
-    return candidates;
-  }
-
-  /*!
-   * \brief Bill one pair-filter candidate to \ref alternation_pair_candidates. A no-op unless the test binary
-   *        defines \c REAL_TEST_INSTRUMENT.
-   */
-  inline void note_alternation_pair_candidate() noexcept
-  {
-#if defined(REAL_TEST_INSTRUMENT)
-    alternation_pair_candidates().fetch_add(1, std::memory_order_relaxed);
-#endif
-  }
-
-  /*!
-   * \brief Rows the unbounded-lookahead tables were filled with: one per position of each subject a table was
-   *        built for, counted for the test that pins one pass per subject rather than one per position.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& ahead_table_rows() noexcept
-  {
-    static std::atomic<std::uint64_t> rows {0};
-    return rows;
-  }
-
-  /*!
-   * \brief Bill \p rows table rows to \ref ahead_table_rows. A no-op unless the test binary defines
-   *        \c REAL_TEST_INSTRUMENT.
-   * \param[in] rows The rows one fill wrote.
-   */
-  inline void note_ahead_table_rows([[maybe_unused]] std::size_t rows) noexcept
-  {
-#if defined(REAL_TEST_INSTRUMENT)
-    ahead_table_rows().fetch_add(rows, std::memory_order_relaxed);
-#endif
-  }
-
-  /*!
-   * \brief Bytes the lookbehind walks stepped, counted for the test that pins one step per byte and search
-   *        whatever the lookbehind's bound, rather than one window per start.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& behind_walk_steps() noexcept
-  {
-    static std::atomic<std::uint64_t> steps {0};
-    return steps;
-  }
-
-  /*!
-   * \brief Bill \p steps walk steps to \ref behind_walk_steps. A no-op unless the test binary defines
-   *        \c REAL_TEST_INSTRUMENT.
-   * \param[in] steps The bytes one query stepped.
-   */
-  inline void note_behind_walk_steps([[maybe_unused]] std::size_t steps) noexcept
-  {
-#if defined(REAL_TEST_INSTRUMENT)
-    behind_walk_steps().fetch_add(steps, std::memory_order_relaxed);
-#endif
-  }
-
-  /*!
-   * \brief Batches the lazy-DFA span filler produced, counted for the tests that pin which walks it serves.
-   * \return A reference to the process-wide counter (relaxed atomic, as \ref vm_window_runs).
-   */
-  inline std::atomic<std::uint64_t>& dfa_span_batches() noexcept
-  {
-    static std::atomic<std::uint64_t> batches {0};
-    return batches;
-  }
-
-  /*!
-   * \brief Bill one lazy-DFA span batch to \ref dfa_span_batches. A no-op unless the test binary defines
-   *        \c REAL_TEST_INSTRUMENT.
-   */
-  inline void note_dfa_span_batch() noexcept
-  {
-#if defined(REAL_TEST_INSTRUMENT)
-    dfa_span_batches().fetch_add(1, std::memory_order_relaxed);
-#endif
   }
 
   /*!
@@ -2710,10 +2365,8 @@ namespace real::detail {
       return npos;
     }
     if (!std::is_constant_evaluated()) {
-#if defined(REAL_TEST_INSTRUMENT)
       // Bill remaining haystack once per call — O(n) path bills ~once; per-pos restart → O(n²) total.
-      prefilter_note_scan(text.size() - pos);
-#endif
+      note(counter::prefilter_work_units, text.size() - pos);
 #if defined(__ARM_NEON)
       return simd_byte_scan(text, pos, static_cast<std::uint8_t>(byte));
 #else
@@ -2891,9 +2544,7 @@ namespace real::detail {
 #  else
     if (!literal_avx2_disabled() && cpu_has_avx2()) {
 #  endif
-#  if defined(REAL_TEST_INSTRUMENT)
-      literal_avx2_scans().fetch_add(1, std::memory_order_relaxed);
-#  endif
+      note(counter::literal_avx2_scans);
       return avx2_literal_scan(text, pos, literal); // twice the block, where the CPU has it
     }
 #endif
@@ -3049,11 +2700,11 @@ namespace real::detail {
                                                 std::size_t      rare,
                                                 literal_density& density)
   {
-    note_literal_rest_scan();
+    note(counter::literal_rest_scans);
     const std::size_t len {literal.size()};
 #if defined(__ARM_NEON) || defined(__SSE2__)
     if (density.dense) {
-      note_literal_pair_scan();
+      note(counter::literal_pair_scans);
       return simd_literal_scan(text, pos, literal);
     }
 #endif
@@ -3126,7 +2777,7 @@ namespace real::detail {
 #if defined(__ARM_NEON) || defined(__SSE2__)
         store_literal_density(density, cands, origin, next);
         density.dense = true;
-        note_literal_pair_scan();
+        note(counter::literal_pair_scans);
         return simd_literal_scan(text, cand + 1, literal);
 #endif
         // No pair filter on this target: the single-byte scan goes on.
@@ -3165,14 +2816,12 @@ namespace real::detail {
     if (len > text.size() || pos > text.size() - len) {
       return npos;
     }
-#if defined(REAL_TEST_INSTRUMENT)
-    prefilter_note_scan(text.size() - pos);
-#endif
+    note(counter::prefilter_work_units, text.size() - pos);
     // A dense subject goes to the pair filter inline, as the lead-pair search always did; the first stop of a
     // sparse one inline too, since where matches are dense most searches end on it. The rest, out of line.
 #if defined(__ARM_NEON) || defined(__SSE2__)
     if (density.dense) {
-      note_literal_pair_scan();
+      note(counter::literal_pair_scans);
       return simd_literal_scan(text, pos, literal);
     }
 #endif
@@ -3617,14 +3266,10 @@ namespace real::detail {
         const void* hit {std::memchr(base + pos, set[0], total)};
         if (hit != nullptr) {
           const std::size_t idx {static_cast<std::size_t>(static_cast<const char*>(hit) - base)};
-#if defined(REAL_TEST_INSTRUMENT)
-          prefilter_note_scan(idx - pos);
-#endif
+          note(counter::prefilter_work_units, idx - pos);
           return idx;
         }
-#if defined(REAL_TEST_INSTRUMENT)
-        prefilter_note_scan(total);
-#endif
+        note(counter::prefilter_work_units, total);
         return npos;
       }
       // Initial probe width: the caller (next_candidate's small-set route) already tried a 32-byte bitmap
@@ -3652,9 +3297,7 @@ namespace real::detail {
             }
           }
         }
-#if defined(REAL_TEST_INSTRUMENT)
-        prefilter_note_scan(win); // bill this round's actual scanned width, like find_prefix does
-#endif
+        note(counter::prefilter_work_units, win); // bill this round's actual scanned width, like find_prefix does
         if (best != npos) {
           return best;
         }

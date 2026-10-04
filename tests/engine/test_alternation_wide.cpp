@@ -47,10 +47,10 @@ namespace {
   std::uint64_t wide_scans_for(const real::regex& re,
                                const std::string& s)
   {
-    real::detail::alternation_wide_scans() = 0;
+    real::detail::tally(real::detail::counter::alternation_wide_scans) = 0;
     real::detail::ac_density_last_verdict().store(real::detail::ac_verdict::not_consulted);
     static_cast<void>(re.count_matches(s));
-    return real::detail::alternation_wide_scans().load();
+    return real::detail::tally(real::detail::counter::alternation_wide_scans).load();
   }
 
   real::detail::pattern_hints hints_of(std::string_view pattern)
@@ -146,11 +146,11 @@ TEST(alternation_wide_takes_a_sparse_subject_from_the_automaton)
   const real::regex re {twelve_none};
   const std::string s  {repeated("some ordinary prose without anything interesting in it at all, just words. ", 20000)};
   EXPECT_EQ(hints_of(twelve_none).small_set_size, 0U);
-  real::detail::alternation_nibble_blocks() = 0;
+  real::detail::tally(real::detail::counter::alternation_nibble_blocks) = 0;
   EXPECT_EQ(wide_scans_for(re, s), fingerprint_here() ? 1U : 0U);
   EXPECT_EQ(re.count_matches(s), 0U);
   if (fingerprint_here()) {
-    EXPECT(real::detail::alternation_nibble_blocks().load() > 500U);
+    EXPECT(real::detail::tally(real::detail::counter::alternation_nibble_blocks).load() > 500U);
     EXPECT(real::detail::ac_density_last_verdict().load() == real::detail::ac_verdict::not_consulted);
   }
 }
@@ -297,11 +297,11 @@ TEST(alternation_class_heads_answer_as_the_routes_they_replace)
       s.replace(at, x.size(), x);
     }
     const real::regex re {pattern};
-    real::detail::alternation_nibble_blocks() = 0;
-    real::detail::alternation_wide_scans()    = 0;
+    real::detail::tally(real::detail::counter::alternation_nibble_blocks) = 0;
+    real::detail::tally(real::detail::counter::alternation_wide_scans)    = 0;
     const span_list got {spans_of(re, s)};
-    fingerprint                               += real::detail::alternation_nibble_blocks().load() != 0U ? 1U : 0U;
-    wide                                      += real::detail::alternation_wide_scans().load() != 0U ? 1U : 0U;
+    fingerprint                               += real::detail::tally(real::detail::counter::alternation_nibble_blocks).load() != 0U ? 1U : 0U;
+    wide                                      += real::detail::tally(real::detail::counter::alternation_wide_scans).load() != 0U ? 1U : 0U;
     real::detail::alternation_pairs_disabled() = true;
     const span_list walk {spans_of(re, s)};
     real::detail::alternation_pairs_disabled()   = false;
@@ -334,10 +334,10 @@ TEST(alternation_class_heads_take_the_fingerprint)
     {"(?i)cqz|dqz|fqz", 2U}, {"(?i)cqz|dqz|fqz|bqz|tqz", 3U}, {"[a-z]qz|dqz", 2U}, {"(?i)cq|fq", 2U}};
   for (const auto& [pattern, want] : shapes) {
     const real::regex re {pattern};
-    real::detail::alternation_nibble_blocks() = 0;
+    real::detail::tally(real::detail::counter::alternation_nibble_blocks) = 0;
     EXPECT_EQ(re.count_matches(dense), want);
-    EXPECT(fingerprint_here() ? real::detail::alternation_nibble_blocks().load() > 500U
-                              : real::detail::alternation_nibble_blocks().load() == 0U);
+    EXPECT(fingerprint_here() ? real::detail::tally(real::detail::counter::alternation_nibble_blocks).load() > 500U
+                              : real::detail::tally(real::detail::counter::alternation_nibble_blocks).load() == 0U);
   }
   // One scan per search: each match found starts the next.
   EXPECT_EQ(wide_scans_for(real::regex {"(?i)cqz|dqz|fqz|bqz|tqz"}, dense), fingerprint_here() ? 4U : 0U);
@@ -453,9 +453,9 @@ TEST(alternation_variants_answer_as_the_first_bytes_and_the_vm)
       s.replace(at, x.size(), x);
     }
     const real::regex re {pattern};
-    real::detail::alternation_variant_scans() = 0;
+    real::detail::tally(real::detail::counter::alternation_variant_scans) = 0;
     const span_list got  {spans_of(re, s)};
-    armed                                     += real::detail::alternation_variant_scans().load() != 0U ? 1U : 0U;
+    armed                                     += real::detail::tally(real::detail::counter::alternation_variant_scans).load() != 0U ? 1U : 0U;
     real::detail::alternation_pairs_disabled() = true;
     const span_list first_bytes {spans_of(re, s)};
     real::detail::alternation_pairs_disabled() = false;
@@ -485,10 +485,10 @@ TEST(alternation_variants_find_a_non_ascii_fold)
   const std::size_t want {re.count_matches(s)};
   real::detail::lazy_dfa_route_disabled() = false;
   EXPECT_EQ(want, 2U);
-  real::detail::alternation_variant_scans() = 0;
+  real::detail::tally(real::detail::counter::alternation_variant_scans) = 0;
   EXPECT_EQ(re.count_matches(s), want);
-  EXPECT(fingerprint_here() ? real::detail::alternation_variant_scans().load() > 0U
-                            : real::detail::alternation_variant_scans().load() == 0U);
+  EXPECT(fingerprint_here() ? real::detail::tally(real::detail::counter::alternation_variant_scans).load() > 0U
+                            : real::detail::tally(real::detail::counter::alternation_variant_scans).load() == 0U);
 }
 
 // A leading word boundary only narrows where a match starts, so the fingerprint is still a superset of the
@@ -500,18 +500,18 @@ TEST(alternation_variants_take_a_leading_boundary_and_decline_the_rest)
   real::detail::lazy_dfa_route_disabled() = true;
   const std::size_t want    {bounded.count_matches(s)};
   real::detail::lazy_dfa_route_disabled() = false;
-  real::detail::alternation_variant_scans() = 0;
+  real::detail::tally(real::detail::counter::alternation_variant_scans) = 0;
   EXPECT_EQ(bounded.count_matches(s), want);
-  EXPECT(fingerprint_here() ? real::detail::alternation_variant_scans().load() > 0U
-                            : real::detail::alternation_variant_scans().load() == 0U);
+  EXPECT(fingerprint_here() ? real::detail::tally(real::detail::counter::alternation_variant_scans).load() > 0U
+                            : real::detail::tally(real::detail::counter::alternation_variant_scans).load() == 0U);
   for (const std::string& pattern : {std::string {"(?i)info"}, std::string {"(?a)(?i)info|fish"}}) {
-    real::detail::alternation_variant_scans() = 0;
+    real::detail::tally(real::detail::counter::alternation_variant_scans) = 0;
     static_cast<void>(real::regex {pattern}.count_matches(s));
-    EXPECT_EQ(real::detail::alternation_variant_scans().load(), 0U);
+    EXPECT_EQ(real::detail::tally(real::detail::counter::alternation_variant_scans).load(), 0U);
   }
-  real::detail::alternation_variant_scans() = 0;
+  real::detail::tally(real::detail::counter::alternation_variant_scans) = 0;
   static_cast<void>(real::regex {"(?i)info|fish"}.count_matches(s.substr(0, 3000)));
-  EXPECT_EQ(real::detail::alternation_variant_scans().load(), 0U);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::alternation_variant_scans).load(), 0U);
 }
 
 // Copy-assigning a regex reuses its program's buffer when the sizes allow, so every identity key must be
@@ -549,9 +549,9 @@ TEST(alternation_wide_finds_a_two_byte_branch_at_the_end)
   const real::regex re {"(?i)cqz|dqz|fqz|bqz|tqz|pq"};
   std::string       s  {repeated("dab cfd adc fbd tqb BqA ", 20000)};
   s += " cQz pq";
-  real::detail::alternation_wide_scans() = 0;
+  real::detail::tally(real::detail::counter::alternation_wide_scans) = 0;
   const span_list got  {spans_of(re, s)};
-  const auto      wide {real::detail::alternation_wide_scans().load()};
+  const auto      wide {real::detail::tally(real::detail::counter::alternation_wide_scans).load()};
   real::detail::alternation_pairs_disabled() = true;
   const span_list walk {spans_of(re, s)};
   real::detail::alternation_pairs_disabled() = false;
@@ -569,9 +569,9 @@ TEST(alternation_wide_walk_is_batched)
   const std::string s  {repeated("the quick brown fox jumps over the lazy dog while the cat sleeps near the fire\n"
                                  "some ordinary prose without anything interesting in it at all, just words here\n",
                                  64000)};
-  real::detail::batch_fills() = 0;
+  real::detail::tally(real::detail::counter::batch_fills) = 0;
   const span_list got   {spans_of(re, s)};
-  const auto      fills {real::detail::batch_fills().load()};
+  const auto      fills {real::detail::tally(real::detail::counter::batch_fills).load()};
   real::detail::alternation_pairs_disabled() = true;
   const span_list walk  {spans_of(re, s)};
   real::detail::alternation_pairs_disabled() = false;

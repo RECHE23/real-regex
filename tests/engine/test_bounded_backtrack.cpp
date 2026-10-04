@@ -215,13 +215,13 @@ TEST(bounded_backtrack_fills_an_inner_literal_window)
   while (text.size() < 200000U) {
     text += "some filler words here and there, error 2026-06-13 req=a3f9c1d8 path=/x\n";
   }
-  real::detail::bounded_backtrack_runs() = 0;
+  real::detail::tally(real::detail::counter::bounded_backtrack_runs) = 0;
   std::size_t matches {0};
   for (const auto& m : re.find_iter(text)) {
     EXPECT_EQ(m.str(1), "error");
     ++matches;
   }
   EXPECT(matches > 2000U);
-  EXPECT(real::detail::bounded_backtrack_runs().load() >= matches);
+  EXPECT(real::detail::tally(real::detail::counter::bounded_backtrack_runs).load() >= matches);
   EXPECT_EQ(answers(re, text.substr(0, 4096)), vm_answers(re, text.substr(0, 4096)));
 }

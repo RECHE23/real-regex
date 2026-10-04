@@ -178,14 +178,12 @@ namespace real::detail {
                                 hints.fs_pair_a_lo1, hints.fs_pair_a_hi1)
                 & load_range_mask(blk_b.data(), hints.fs_pair_b_lo0, hints.fs_pair_b_hi0,
                                   hints.fs_pair_b_lo1, hints.fs_pair_b_hi1)};
-#if defined(REAL_TEST_INSTRUMENT)
       // Bill this round's 16 candidate starts, as find_bytes_cascade bills its rounds. NOT optional:
       // the deterministic work-counter gate is what caught the historical O(n^2) icase cascade, and it
       // caught it only once that function billed. An icase literal reaches THIS path now, so a scan
       // that bills nothing would silently un-cover the very shape the gate exists for (observed:
       // work_units == 0 at both 256 KiB and 1 MiB, turning the assertion into 0 < 0).
-      prefilter_note_scan(16);
-#endif
+      note(counter::prefilter_work_units, 16);
       while (!empty(m)) {
         const std::size_t cand {pos + first_lane(m)};
         const std::size_t e    {verify(cand)};
@@ -1361,7 +1359,7 @@ namespace real::detail {
                                                                            walk(fwd);
                                                                          })};
           if (quit) {
-            note_dfa_quit();
+            note(counter::dfa_quits);
             stop = s; // the walk proved nothing: the VM below confirms from s
           }
           if (dfa_ok && !quit) {
@@ -1403,7 +1401,7 @@ namespace real::detail {
             // e into an end of text for it. The walk proved the match ends at e, so `stop` is already its reach,
             // and without a forward-stop to report the window may go to the bounded backtracker, which fills a
             // short window's groups without the VM's lists.
-            note_vm_window();
+            note(counter::vm_window_runs);
             return run_general<false>(looks ? text : text.substr(0, e), s, run_mode::prefix, out_slots);
           }
         }
@@ -1527,7 +1525,7 @@ namespace real::detail {
           }) {
                                               state_.il_abandoned = true; // sticky for this haystack, as the density gate's
                                             }
-                                            note_inner_literal_bill_trip();
+                                            note(counter::inner_literal_bill_trips);
                                             abandon = true;
                                           }};
       const std::size_t min_match_start {start}; // reverse floor = this search's start (the finditer resume); never advances mid-call
@@ -1726,7 +1724,7 @@ namespace real::detail {
               const std::size_t allowed {bill.allowance(h - start)};
               const std::size_t floor   {(may_cut && h - min_match_start > allowed) ? h - allowed : min_match_start};
               s = set.il_prefix_rev->reverse_start(text, h, floor, &reversed);
-              note_inner_literal_reverse(reversed);
+              note(counter::inner_literal_reverse_bytes, reversed);
               if (floor > min_match_start && h - reversed <= floor) {
                 give_way();
                 return false;
@@ -2125,11 +2123,7 @@ namespace real::detail {
           // on the cascade, and it does: two completions are enough to exceed the threshold on any sample
           // this window can hold, so a matching subject bails out after two walks.
           const bool verify {(checked + 1U) * branches <= ac_completion_walk_budget};
-#if defined(REAL_TEST_INSTRUMENT)
-          if (verify) {
-            ac_completion_walks().fetch_add(branches, std::memory_order_relaxed);
-          }
-#endif
+          note(counter::ac_completion_walks, verify ? branches : 0U);
           checked += verify ? 1U : 0U;
           if (verify && ac_candidate_completes(window, pos)) {
             ++completed;
@@ -2448,10 +2442,10 @@ namespace real::detail {
                                }
                                const auto anchored {fwd.anchored_end(text, c)};
                                if (anchored.quit) {
-                                 note_dfa_quit();
+                                 note(counter::dfa_quits);
                                  return; // dfa_result stays empty: the VM answers this search
                                }
-                               prefilter_note_scan(anchored.scanned_to - c);
+                               note(counter::prefilter_work_units, anchored.scanned_to - c);
                                if (anchored.end != npos) {
                                  const std::size_t match_end {anchored.end};
                                  prof::tick_route(prof::route::lazy_dfa_anchored);
@@ -2484,7 +2478,7 @@ namespace real::detail {
                                    return;
                                  }
                                  prof::tick_route(prof::route::general_window);
-                                 note_vm_window();
+                                 note(counter::vm_window_runs);
                                  dfa_result = run_general<Cascade>(fwd.looks() ? text : text.substr(0, match_end), c, mode,
                                                                    out_slots);
                                  return;
@@ -2501,10 +2495,10 @@ namespace real::detail {
                            }
                            const std::size_t match_end {fwd.forward_end(text, scan_start)};
                            if (match_end == lazy_dfa::quit_pos) {
-                             note_dfa_quit();
+                             note(counter::dfa_quits);
                              return; // dfa_result stays empty: the VM answers this search
                            }
-                           prefilter_note_scan(text.size() - scan_start);
+                           note(counter::prefilter_work_units, text.size() - scan_start);
                            if (match_end == npos) {
                              prof::tick_route(prof::route::lazy_dfa_fwd_rev);
                              out_slots.assign(prog_.slot_count, npos);
@@ -2514,7 +2508,7 @@ namespace real::detail {
                            const std::size_t abs_end   {match_end};
                            const std::size_t abs_start {rev.reverse_start(text, abs_end, scan_start)};
                            if (abs_start == reverse_dfa::quit_pos) {
-                             note_dfa_quit();
+                             note(counter::dfa_quits);
                              return; // the start is a boundary's to tell: the VM answers this search
                            }
                            prof::tick_route(prof::route::lazy_dfa_fwd_rev);
@@ -2538,7 +2532,7 @@ namespace real::detail {
                              return;
                            }
                            prof::tick_route(prof::route::general_window);
-                           note_vm_window();
+                           note(counter::vm_window_runs);
                            dfa_result = run_general<Cascade>(fwd.looks() ? text : text.substr(0, abs_end), abs_start, mode,
                                                              out_slots);
                          })};
@@ -6081,10 +6075,10 @@ namespace real::detail {
       }
       const std::size_t sz {text.size()};
       for (; pos + 16 + pairs.max_d <= sz; pos += 16) {
-        note_alternation_pair_block();
+        note(counter::alternation_pair_blocks);
         mask_t mask {alternation_pair_mask(text.data() + pos, pairs)};
         while (!empty(mask)) {
-          note_alternation_pair_candidate();
+          note(counter::alternation_pair_candidates);
           const std::size_t lane {first_lane(mask)};
           const std::size_t me   {match_at(pos + lane)};
           if (me != npos) {
@@ -6137,8 +6131,8 @@ namespace real::detail {
       nibble3_hits      hits   {};
       for (; pos + 64 <= sz; pos += 64) {
         for (std::size_t b = 0; b < 4; ++b) {
-          note_alternation_pair_block();
-          note_alternation_nibble_block(true);
+          note(counter::alternation_pair_blocks);
+          note(counter::alternation_nibble_blocks);
         }
         if (!nibble3_round(text.data() + pos, tables, carry, hits)) {
           continue;
@@ -6146,7 +6140,7 @@ namespace real::detail {
         for (std::size_t b = 0; b < 4; ++b) {
           mask_t mask {nibble3_mask_of(hits, b)};
           while (!empty(mask)) {
-            note_alternation_pair_candidate();
+            note(counter::alternation_pair_candidates);
             const std::size_t at {pos + (b * 16) + first_lane(mask) - 2U};
             const std::size_t me {match_at(at)};
             if (me != npos) {
@@ -6157,11 +6151,11 @@ namespace real::detail {
         }
       }
       for (; pos + 16 <= sz; pos += 16) {
-        note_alternation_pair_block();
-        note_alternation_nibble_block(true);
+        note(counter::alternation_pair_blocks);
+        note(counter::alternation_nibble_blocks);
         mask_t mask {nibble3_step(text.data() + pos, tables, carry)};
         while (!empty(mask)) {
-          note_alternation_pair_candidate();
+          note(counter::alternation_pair_candidates);
           const std::size_t at {pos + first_lane(mask) - 2U};
           const std::size_t me {match_at(at)};
           if (me != npos) {
@@ -6214,14 +6208,12 @@ namespace real::detail {
       avx2_nibble3_tables tables {};
       avx2_nibble3_broadcast(pairs.nibble_lo, pairs.nibble_hi, tables);
       for (; pos + 34 <= sz; pos += 32) { // the fingerprint reads two bytes past a block's starts
-        note_alternation_pair_block();
-        note_alternation_nibble_block(true);
-#  if defined(REAL_TEST_INSTRUMENT)
-        alternation_avx2_blocks().fetch_add(1, std::memory_order_relaxed);
-#  endif
+        note(counter::alternation_pair_blocks);
+        note(counter::alternation_nibble_blocks);
+        note(counter::alternation_avx2_blocks);
         for (std::uint32_t mask {avx2_nibble3_mask(text.data() + pos, tables)}; mask != 0U;
              mask &= mask - 1U) {
-          note_alternation_pair_candidate();
+          note(counter::alternation_pair_candidates);
           const std::size_t at {pos + static_cast<std::size_t>(std::countr_zero(mask))};
           const std::size_t me {match_at(at)};
           if (me != npos) {
@@ -6558,9 +6550,7 @@ namespace real::detail {
         const alternation_pairs&          pairs {*state_.alt_pairs};
         const std::array<std::uint8_t, 8> mem   {}; // the scans' first-byte tail is not taken here
         const auto                        find  {[&](std::size_t from) {
-#  if defined(REAL_TEST_INSTRUMENT)
-                                                   alternation_wide_scans().fetch_add(1, std::memory_order_relaxed);
-#  endif
+                                                   note(counter::alternation_wide_scans);
                                                    alternation_hit found {};
 #  if defined(__AVX2__)
                                                    found = alternation_avx2_disabled() ? alternation_nibble_scan<false>(text, from, pairs, mem, 0, match_at)
@@ -6719,9 +6709,7 @@ namespace real::detail {
         if (!density.dense) {
           return nullptr;
         }
-#  if defined(REAL_TEST_INSTRUMENT)
-        alternation_variant_scans().fetch_add(1, std::memory_order_relaxed);
-#  endif
+        note(counter::alternation_variant_scans);
         return state_.alt_pairs;
       }
 #endif
@@ -7531,9 +7519,7 @@ namespace real::detail {
       text_               = text;
       forbid_empty_until_ = 0;
       sem_                = match_semantics::first;
-#if defined(REAL_TEST_INSTRUMENT)
-      fixed_shape_batches().fetch_add(1, std::memory_order_relaxed);
-#endif
+      note(counter::fixed_shape_batches);
       slot_pair   slots {};
       std::size_t n     {0};
       std::size_t pos   {start};
@@ -7790,10 +7776,10 @@ namespace real::detail {
                                }
                                const auto anchored {fwd.anchored_end(text, c)};
                                if (anchored.quit) {
-                                 note_dfa_quit();
+                                 note(counter::dfa_quits);
                                  return; // the per-match route's territory; partial stays set
                                }
-                               prefilter_note_scan(anchored.scanned_to - c);
+                               note(counter::prefilter_work_units, anchored.scanned_to - c);
                                if (anchored.end != npos) {
                                  hit = c;
                                  end = anchored.end;
@@ -7811,17 +7797,17 @@ namespace real::detail {
                              if (one_pass) {
                                end = fwd.forward_end(text, from);
                                if (end == lazy_dfa::quit_pos) {
-                                 note_dfa_quit();
+                                 note(counter::dfa_quits);
                                  return; // partial stays set
                                }
-                               prefilter_note_scan((end == npos ? text.size() : end) - from);
+                               note(counter::prefilter_work_units, (end == npos ? text.size() : end) - from);
                                if (end == npos) {
                                  partial = false; // PROVEN spent: the pass seeded every position from here
                                  return;
                                }
                                hit = rev.reverse_start(text, end, from);
                                if (hit == reverse_dfa::quit_pos) {
-                                 note_dfa_quit();
+                                 note(counter::dfa_quits);
                                  return; // partial stays set
                                }
                              }
@@ -7841,7 +7827,7 @@ namespace real::detail {
         n = 0; // no shared DFAs on this regex yet: nothing found and nothing proven
       }
       if (n != 0) {
-        note_dfa_span_batch();
+        note(counter::dfa_span_batches);
       }
       return n;
     }
@@ -8338,7 +8324,7 @@ namespace real::detail {
                                OutSlots&        out_slots)
     {
       prof::tick_event(prof::event::bounded_backtrack);
-      note_bounded_backtrack();
+      note(counter::bounded_backtrack_runs);
       backtrack_frame   frame;
       const std::size_t size {text.size()};
       const bool        cf   {prog_.hints.capture_free_walk};
@@ -9323,7 +9309,7 @@ namespace real::detail {
       table.size = text_.size();
       table.holds.assign((text_.size() / 64U) + 1U, 0U);
       if (!std::is_constant_evaluated()) {
-        note_ahead_table_rows(text_.size() + 1U);
+        note(counter::ahead_table_rows, text_.size() + 1U);
       }
       after->assign(width, 0U); // past the end: no consuming instruction can proceed
       const auto at {[&](std::int32_t pc) -> std::uint8_t& {
@@ -9449,7 +9435,7 @@ namespace real::detail {
       }
       thread_list& next {scratch.lists[1]};
       if (!std::is_constant_evaluated() && walk.at < pos) {
-        note_behind_walk_steps(pos - walk.at);
+        note(counter::behind_walk_steps, pos - walk.at);
       }
       while (walk.at < pos) {
         const std::size_t p          {walk.at};

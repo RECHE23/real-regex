@@ -288,16 +288,16 @@ TEST(ac_density_gate_budgets_its_completion_walks)
   const std::string line {dense_subject().substr(0, 600)};
 
   const seam_scope seam  {false, false};
-  real::detail::ac_completion_walks()     = 0;
+  real::detail::tally(real::detail::counter::ac_completion_walks)     = 0;
   real::detail::ac_density_last_verdict() = real::detail::ac_verdict::not_consulted;
   (void) re.search(line);
-  EXPECT(real::detail::ac_completion_walks().load() <= 1024U);
+  EXPECT(real::detail::tally(real::detail::counter::ac_completion_walks).load() <= 1024U);
   EXPECT_EQ(verdict_name(), "automaton");
 
   // Twelve branches verify every candidate the window holds, as before the budget.
   const real::regex twelve {alternation_of(12)};
-  real::detail::ac_completion_walks() = 0;
+  real::detail::tally(real::detail::counter::ac_completion_walks) = 0;
   (void) twelve.search(line);
-  EXPECT(real::detail::ac_completion_walks().load() > 0U);
-  EXPECT(real::detail::ac_completion_walks().load() % 12U == 0U);
+  EXPECT(real::detail::tally(real::detail::counter::ac_completion_walks).load() > 0U);
+  EXPECT(real::detail::tally(real::detail::counter::ac_completion_walks).load() % 12U == 0U);
 }

@@ -69,9 +69,9 @@ namespace {
     const real::regex  rx {pat};
     const auto         work {[&](std::size_t n) -> std::uint64_t {
                                const std::string text {make_corpus(n)};
-                               real::detail::prefilter_work_units() = 0;
+                               real::detail::tally(real::detail::counter::prefilter_work_units) = 0;
                                EXPECT(!rx.search(text).matched());
-                               return real::detail::prefilter_work_units();
+                               return real::detail::tally(real::detail::counter::prefilter_work_units);
                              }};
     (void) work(1 << 10);                    // warmup (first-call path setup); discarded
     const std::uint64_t small {work(16384)};

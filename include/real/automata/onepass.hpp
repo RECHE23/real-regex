@@ -1371,16 +1371,6 @@ namespace real::detail {
   }
 
   /*!
-   * \brief Leases taken, counted for the tests that pin how many a scan takes.
-   * \return A reference to the process-wide counter (relaxed atomic).
-   */
-  inline std::atomic<std::uint64_t>& dfa_leases_taken() noexcept
-  {
-    static std::atomic<std::uint64_t> taken {0};
-    return taken;
-  }
-
-  /*!
    * \brief This thread's DFA set for one regex, for the lifetime of the lease: a scan through it takes
    *        no lock, so threads sharing a regex no longer queue on its DFAs.
    *
@@ -1400,9 +1390,7 @@ namespace real::detail {
      */
     explicit dfa_lease(regex_immutables* immut)
     {
-#if defined(REAL_TEST_INSTRUMENT)
-      dfa_leases_taken().fetch_add(1, std::memory_order_relaxed);
-#endif
+      note(counter::dfa_leases_taken);
       cache& mine {thread_cache()};
       if (!mine.busy) {
         if (!mine.slot || mine.slot->owner.load(std::memory_order_acquire) != immut) {

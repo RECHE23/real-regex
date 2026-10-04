@@ -313,9 +313,9 @@ TEST(literal_prefilter_throughput_smoke)
   const auto        work {[&](std::size_t n) -> std::uint64_t {
                             std::string text(n, 'a');
                             text += "needle";
-                            real::detail::prefilter_work_units() = 0;
+                            real::detail::tally(real::detail::counter::prefilter_work_units) = 0;
                             EXPECT(rx.search(text).matched());
-                            return real::detail::prefilter_work_units();
+                            return real::detail::tally(real::detail::counter::prefilter_work_units);
                           }};
 
   (void) work(1 << 10);                      // warmup (first-call path setup); discarded
@@ -693,14 +693,14 @@ TEST(icase_literal_cascade_throughput_smoke)
                               text += filler;
                               text += "cafe ";
                             }
-                            real::detail::prefilter_work_units() = 0;
+                            real::detail::tally(real::detail::counter::prefilter_work_units) = 0;
                             std::size_t matches {0};
                             for (const auto& m : rx.find_iter(text)) {
                               (void) m;
                               ++matches;
                             }
                             EXPECT(matches > 0);
-                            return real::detail::prefilter_work_units();
+                            return real::detail::tally(real::detail::counter::prefilter_work_units);
                           }};
   (void) work(1 << 12);                      // warmup (first-call path setup); discarded
   const std::uint64_t small {work(1 << 18)}; // 256 KiB
@@ -722,12 +722,12 @@ TEST(mono_member_cascade_miss_is_single_unwindowed_pass)
   using real::detail::find_bytes_cascade;
   const std::string text (100000, 'a'); // the member never occurs: a genuine full-range miss
   const char        member {'\x01'};
-  real::detail::prefilter_work_units() = 0;
+  real::detail::tally(real::detail::counter::prefilter_work_units) = 0;
   const std::size_t hit = find_bytes_cascade(text, 0, &member, 1);
   EXPECT_EQ(hit, real::npos);
   // Exactly the range scanned once -- not the ~1.9x a windowed re-scan bills on a full miss
   // (contrast: multi_member_cascade_miss_still_windows below, same shape, n=2).
-  EXPECT_EQ(real::detail::prefilter_work_units(), static_cast<std::uint64_t>(text.size()));
+  EXPECT_EQ(real::detail::tally(real::detail::counter::prefilter_work_units), static_cast<std::uint64_t>(text.size()));
 }
 
 TEST(mono_member_cascade_hit_bills_distance_only)
@@ -736,10 +736,10 @@ TEST(mono_member_cascade_hit_bills_distance_only)
   std::string text (100000, 'a');
   text[12345] = '\x01';
   const char member {'\x01'};
-  real::detail::prefilter_work_units() = 0;
+  real::detail::tally(real::detail::counter::prefilter_work_units) = 0;
   const std::size_t hit = find_bytes_cascade(text, 0, &member, 1);
   EXPECT_EQ(hit, 12345U);
-  EXPECT_EQ(real::detail::prefilter_work_units(), 12345ULL); // distance to the hit, not the whole range
+  EXPECT_EQ(real::detail::tally(real::detail::counter::prefilter_work_units), 12345ULL); // distance to the hit, not the whole range
 }
 
 TEST(multi_member_cascade_miss_still_windows)
@@ -750,10 +750,10 @@ TEST(multi_member_cascade_miss_still_windows)
   using real::detail::find_bytes_cascade;
   const std::string text (1000, 'a');
   const char        members[2] {'\x01', '\x02'}; // neither occurs
-  real::detail::prefilter_work_units() = 0;
+  real::detail::tally(real::detail::counter::prefilter_work_units) = 0;
   const std::size_t hit = find_bytes_cascade(text, 0, members, 2);
   EXPECT_EQ(hit, real::npos);
-  EXPECT_EQ(real::detail::prefilter_work_units(), 1896ULL);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::prefilter_work_units), 1896ULL);
 }
 
 TEST(stop_set_class_loop_throughput_smoke_mono_member)
@@ -765,11 +765,11 @@ TEST(stop_set_class_loop_throughput_smoke_mono_member)
   const real::regex rx {"[^\x01]+"};
   const auto        work {[&](std::size_t n) -> std::uint64_t {
                             const std::string text (n, 'a');
-                            real::detail::prefilter_work_units() = 0;
+                            real::detail::tally(real::detail::counter::prefilter_work_units) = 0;
                             const auto m = rx.search(text);
                             EXPECT(m.matched());
                             EXPECT_EQ(m.end(), n);
-                            return real::detail::prefilter_work_units();
+                            return real::detail::tally(real::detail::counter::prefilter_work_units);
                           }};
   (void) work(1 << 12);                      // warmup
   const std::uint64_t small {work(1 << 18)}; // 256 KiB
@@ -912,9 +912,9 @@ TEST(literal_adaptive_search_answers_as_find_for_every_plan)
   // counters that guard against quadratic rescans read zero, and pass.
   const std::string             miss(10000U, 'a');
   real::detail::literal_density none {};
-  real::detail::prefilter_work_units() = 0;
+  real::detail::tally(real::detail::counter::prefilter_work_units) = 0;
   EXPECT_EQ(real::detail::find_literal_adaptive(miss, 0, "zq"sv, 0U, none), real::npos);
-  EXPECT_EQ(real::detail::prefilter_work_units(), 10000U);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::prefilter_work_units), 10000U);
 }
 
 // The switch itself, both ways: a needle whose rarest byte is common in the subject turns the density
@@ -933,7 +933,7 @@ TEST(literal_filter_answers_the_same_on_either_block_width)
                          state ^= state << 5U;
                          return state;
                        }};
-  real::detail::literal_avx2_scans() = 0;
+  real::detail::tally(real::detail::counter::literal_avx2_scans) = 0;
   for (int round {0}; round < 40; ++round) {
     std::string       text;
     const std::size_t size {200U + (next() % 900U)};
@@ -955,16 +955,16 @@ TEST(literal_filter_answers_the_same_on_either_block_width)
     }
   }
 #if defined(__AVX2__)
-  EXPECT(real::detail::literal_avx2_scans().load() > 0U);
+  EXPECT(real::detail::tally(real::detail::counter::literal_avx2_scans).load() > 0U);
 #elif defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__))
   // The runtime's own CPU model, a second instrument: the wider scan runs exactly where the CPU has AVX2.
   __builtin_cpu_init();
-  EXPECT_EQ(real::detail::literal_avx2_scans().load() > 0U, __builtin_cpu_supports("avx2") != 0);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::literal_avx2_scans).load() > 0U, __builtin_cpu_supports("avx2") != 0);
 #else
-  EXPECT_EQ(real::detail::literal_avx2_scans().load(), 0U);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::literal_avx2_scans).load(), 0U);
 #endif
 #else
-  EXPECT_EQ(real::detail::literal_avx2_scans().load(), 0U);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::literal_avx2_scans).load(), 0U);
 #endif
 }
 
@@ -978,17 +978,17 @@ TEST(literal_adaptive_search_switches_only_where_the_rarest_byte_is_common)
   const std::size_t rare                  {real::detail::literal_rarest_offset(needle)};
   EXPECT_EQ(needle[rare], 'r');
   real::detail::literal_density dense_one {};
-  real::detail::literal_pair_scans() = 0;
+  real::detail::tally(real::detail::counter::literal_pair_scans) = 0;
   EXPECT_EQ(real::detail::find_literal_adaptive(common, 0, needle, rare, dense_one), real::npos);
   EXPECT_EQ(dense_one.dense, pair_filter);
   const std::uint64_t per_search {pair_filter ? 1U : 0U};
-  EXPECT_EQ(real::detail::literal_pair_scans().load(), per_search);      // the switch handed the rest to the filter
+  EXPECT_EQ(real::detail::tally(real::detail::counter::literal_pair_scans).load(), per_search);      // the switch handed the rest to the filter
   EXPECT_EQ(real::detail::find_literal_adaptive(common, 0, needle, rare, dense_one), real::npos);
-  EXPECT_EQ(real::detail::literal_pair_scans().load(), 2U * per_search); // and a dense subject goes to it at once
+  EXPECT_EQ(real::detail::tally(real::detail::counter::literal_pair_scans).load(), 2U * per_search); // and a dense subject goes to it at once
   // Even where the rarest byte would have answered on its first stop: dense means the filter, from entry.
   real::detail::literal_density preset {.cands = 0, .origin = real::npos, .last = real::npos, .dense = true};
   EXPECT_EQ(real::detail::find_literal_adaptive("error and more"sv, 0, needle, rare, preset), 0U);
-  EXPECT_EQ(real::detail::literal_pair_scans().load(), 3U * per_search);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::literal_pair_scans).load(), 3U * per_search);
 
   std::string sparse;
   for (int i {0}; i < 16; ++i) {
@@ -1015,7 +1015,7 @@ TEST(literal_adaptive_search_switches_only_where_the_rarest_byte_is_common)
   const std::size_t             m_at    {real::detail::literal_rarest_offset(com)};
   real::detail::literal_density learned {};
   EXPECT_EQ(com[m_at], 'm');
-  real::detail::literal_pair_scans() = 0;
+  real::detail::tally(real::detail::counter::literal_pair_scans) = 0;
   std::size_t found {0};
   for (std::size_t at {real::detail::find_literal_adaptive(mmm, 0, com, m_at, learned)}; at != real::npos;
        at = real::detail::find_literal_adaptive(mmm, at + 1, com, m_at, learned)) {
@@ -1025,14 +1025,14 @@ TEST(literal_adaptive_search_switches_only_where_the_rarest_byte_is_common)
   EXPECT_EQ(found, 4U);
   EXPECT_EQ(learned.rare, 0U); // `c`, counted over the stretch
   EXPECT(!learned.dense);
-  EXPECT_EQ(real::detail::literal_pair_scans().load(), 0U);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::literal_pair_scans).load(), 0U);
   // Learned, `c` is scanned first: here every `c` starts a `com`, so each search ends on its first stop.
-  real::detail::literal_rest_scans() = 0;
+  real::detail::tally(real::detail::counter::literal_rest_scans) = 0;
   for (std::size_t at {real::detail::find_literal_adaptive(mmm, 0, com, m_at, learned)}; at != real::npos;
        at = real::detail::find_literal_adaptive(mmm, at + 1, com, m_at, learned)) {
     EXPECT_EQ(mmm.substr(at, 3U), "com");
   }
-  EXPECT_EQ(real::detail::literal_rest_scans().load(), 0U);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::literal_rest_scans).load(), 0U);
 
   const real::regex re            {"error"};
   std::string       dense_subject {common};
@@ -1192,7 +1192,7 @@ TEST(alternation_pair_filter_answers_as_the_first_byte_scan)
                       return out;
                     }};
   std::size_t compared {0};
-  real::detail::alternation_pair_blocks() = 0;
+  real::detail::tally(real::detail::counter::alternation_pair_blocks) = 0;
   for (const std::string& p : patterns) {
     const real::regex re {p};
     for (const std::string& s : subjects) {
@@ -1217,8 +1217,8 @@ TEST(alternation_pair_filter_answers_as_the_first_byte_scan)
   }
   EXPECT_EQ(compared, patterns.size() * subjects.size());
   // The comparison compared something: on these subjects the pair filter did run where the target has it.
-  EXPECT(pair_filter ? real::detail::alternation_pair_blocks().load() > 1000U
-                     : real::detail::alternation_pair_blocks().load() == 0U);
+  EXPECT(pair_filter ? real::detail::tally(real::detail::counter::alternation_pair_blocks).load() > 1000U
+                     : real::detail::tally(real::detail::counter::alternation_pair_blocks).load() == 0U);
 }
 
 // The nibble fingerprint marks a superset of the starts where a branch matches, shared by up to two branches a
@@ -1259,8 +1259,8 @@ TEST(alternation_nibble_filter_answers_as_the_pairs_and_the_first_bytes)
                       }
                       return out;
                     }};
-  real::detail::alternation_nibble_blocks() = 0;
-  real::detail::alternation_avx2_blocks()   = 0;
+  real::detail::tally(real::detail::counter::alternation_nibble_blocks) = 0;
+  real::detail::tally(real::detail::counter::alternation_avx2_blocks)   = 0;
   for (const std::string& p : patterns) {
     const real::regex re {p};
     for (const std::string& s : subjects) {
@@ -1280,38 +1280,38 @@ TEST(alternation_nibble_filter_answers_as_the_pairs_and_the_first_bytes)
       EXPECT_EQ(re.count_matches(s), first_bytes.size());
     }
   }
-  EXPECT(nibble_filter() ? real::detail::alternation_nibble_blocks().load() > 1000U
-                       : real::detail::alternation_nibble_blocks().load() == 0U);
+  EXPECT(nibble_filter() ? real::detail::tally(real::detail::counter::alternation_nibble_blocks).load() > 1000U
+                       : real::detail::tally(real::detail::counter::alternation_nibble_blocks).load() == 0U);
   // The 32-start blocks run exactly where the fingerprint does and the CPU has AVX2 (the runtime's own CPU model,
   // a second instrument, where the choice is made at run time).
 #if defined(__AVX2__)
-  EXPECT(real::detail::alternation_avx2_blocks().load() > 100U);
+  EXPECT(real::detail::tally(real::detail::counter::alternation_avx2_blocks).load() > 100U);
 #elif defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__))
   __builtin_cpu_init();
-  EXPECT_EQ(real::detail::alternation_avx2_blocks().load() > 100U,
+  EXPECT_EQ(real::detail::tally(real::detail::counter::alternation_avx2_blocks).load() > 100U,
             nibble_filter() && __builtin_cpu_supports("avx2") != 0);
 #else
-  EXPECT_EQ(real::detail::alternation_avx2_blocks().load(), 0U);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::alternation_avx2_blocks).load(), 0U);
 #endif
   // A one-byte branch leaves the plan without a fingerprint: its bucket would mark every start.
-  real::detail::alternation_nibble_blocks() = 0;
-  real::detail::alternation_pair_blocks()   = 0;
+  real::detail::tally(real::detail::counter::alternation_nibble_blocks) = 0;
+  real::detail::tally(real::detail::counter::alternation_pair_blocks)   = 0;
   const real::regex one_byte {"a|bcd|cde"};
   EXPECT(one_byte.count_matches(subjects[0]) > 0U);
-  EXPECT_EQ(real::detail::alternation_nibble_blocks().load(), 0U);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::alternation_nibble_blocks).load(), 0U);
   // Two branches: the fingerprint only where its minimum admits two (two pairs are cheaper on x86).
-  real::detail::alternation_nibble_blocks() = 0;
+  real::detail::tally(real::detail::counter::alternation_nibble_blocks) = 0;
   const real::regex two {"ab|cd"};
   EXPECT(two.count_matches(subjects[0]) > 0U);
   EXPECT(nibble_filter() && real::detail::alternation_nibbles_min_branches <= 2U
-           ? real::detail::alternation_nibble_blocks().load() > 100U
-           : real::detail::alternation_nibble_blocks().load() == 0U);
-  real::detail::alternation_nibble_blocks() = 0;
-  real::detail::alternation_pair_blocks()   = 0;
+           ? real::detail::tally(real::detail::counter::alternation_nibble_blocks).load() > 100U
+           : real::detail::tally(real::detail::counter::alternation_nibble_blocks).load() == 0U);
+  real::detail::tally(real::detail::counter::alternation_nibble_blocks) = 0;
+  real::detail::tally(real::detail::counter::alternation_pair_blocks)   = 0;
   EXPECT(one_byte.count_matches(subjects[0]) > 0U);
   // ...while the pairs still mask its blocks: the fingerprint was declined, not the dense scan.
-  EXPECT(pair_filter ? real::detail::alternation_pair_blocks().load() > 100U
-                     : real::detail::alternation_pair_blocks().load() == 0U);
+  EXPECT(pair_filter ? real::detail::tally(real::detail::counter::alternation_pair_blocks).load() > 100U
+                     : real::detail::tally(real::detail::counter::alternation_pair_blocks).load() == 0U);
 }
 
 // A block reads past its 16 starts by the reach of the filter that masks it: fifteen for a pair probing a long
@@ -1335,11 +1335,11 @@ TEST(alternation_filter_blocks_stay_inside_the_subject)
   real::detail::alternation_pairs_disabled() = true;
   const std::size_t want              {re.count_matches(subject)};
   real::detail::alternation_pairs_disabled() = false;
-  real::detail::alternation_pair_blocks()    = 0;
+  real::detail::tally(real::detail::counter::alternation_pair_blocks)    = 0;
   EXPECT_EQ(re.count_matches(subject), want);
   EXPECT(want > 100U);
-  EXPECT(pair_filter ? real::detail::alternation_pair_blocks().load() > 100U
-                     : real::detail::alternation_pair_blocks().load() == 0U);
+  EXPECT(pair_filter ? real::detail::tally(real::detail::counter::alternation_pair_blocks).load() > 100U
+                     : real::detail::tally(real::detail::counter::alternation_pair_blocks).load() == 0U);
 }
 
 // On x86 without SSSE3 in the build the fingerprint is chosen at run time from cpuid. The runtime's own model of
@@ -1372,17 +1372,17 @@ TEST(alternation_fingerprint_takes_sparser_subjects_than_the_pairs)
   const std::size_t want {re.count_matches(text)};
   real::detail::alternation_pairs_disabled() = false;
   EXPECT_EQ(want, 1U);
-  real::detail::alternation_pair_blocks()   = 0;
-  real::detail::alternation_nibble_blocks() = 0;
+  real::detail::tally(real::detail::counter::alternation_pair_blocks)   = 0;
+  real::detail::tally(real::detail::counter::alternation_nibble_blocks) = 0;
   EXPECT_EQ(re.count_matches(text), want);
-  EXPECT(nibble_filter() ? real::detail::alternation_nibble_blocks().load() > 100U
-                         : real::detail::alternation_pair_blocks().load() == 0U);
+  EXPECT(nibble_filter() ? real::detail::tally(real::detail::counter::alternation_nibble_blocks).load() > 100U
+                         : real::detail::tally(real::detail::counter::alternation_pair_blocks).load() == 0U);
   // With the fingerprint taken out, the pairs keep their own threshold and leave this subject to the first bytes.
   real::detail::alternation_nibbles_disabled() = true;
-  real::detail::alternation_pair_blocks()      = 0;
+  real::detail::tally(real::detail::counter::alternation_pair_blocks)      = 0;
   const real::regex fresh {"cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog"};
   EXPECT_EQ(fresh.count_matches(text), want);
-  EXPECT_EQ(real::detail::alternation_pair_blocks().load(), 0U);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::alternation_pair_blocks).load(), 0U);
   real::detail::alternation_nibbles_disabled() = false;
 }
 
@@ -1416,7 +1416,7 @@ TEST(fixed_shape_batches_answer_as_the_per_match_walk)
                          }
                          return out;
                        };
-  real::detail::fixed_shape_batches() = 0;
+  real::detail::tally(real::detail::counter::fixed_shape_batches) = 0;
   for (const char* p : {"[0-9]{4}-[0-9]{2}-[0-9]{2}", "\\b[0-9]{4}\\b", "[0-9a-f]{4}", "\\B[0-9]{2}", "x7f[0-9]"}) {
     const real::regex re {p};
     for (const std::size_t from : {std::size_t {0}, std::size_t {5}, std::size_t {1234}}) {
@@ -1424,12 +1424,12 @@ TEST(fixed_shape_batches_answer_as_the_per_match_walk)
     }
     EXPECT_EQ(re.count_matches(text), by_search(re, text, 0).size());
   }
-  EXPECT(real::detail::fixed_shape_batches().load() > 0U);
+  EXPECT(real::detail::tally(real::detail::counter::fixed_shape_batches).load() > 0U);
   // The pair route sits above the fixed shape in run(): its shapes keep the per-match walk.
-  real::detail::fixed_shape_batches() = 0;
+  real::detail::tally(real::detail::counter::fixed_shape_batches) = 0;
   const real::regex pair {"[ab][cd]"};
   EXPECT_EQ(pair.count_matches(text), by_search(pair, text, 0).size());
-  EXPECT_EQ(real::detail::fixed_shape_batches().load(), 0U);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::fixed_shape_batches).load(), 0U);
 }
 
 // Twelve branches reach the Aho-Corasick gate, whose candidate density is the first bytes': on a subject where
@@ -1447,11 +1447,11 @@ TEST(alternation_filter_keeps_a_dense_subject_from_the_automaton)
   const std::size_t want {re.count_matches(prose)};
   real::detail::aho_corasick_route_disabled() = false;
   EXPECT(want > 500U);
-  real::detail::alternation_pair_blocks() = 0;
+  real::detail::tally(real::detail::counter::alternation_pair_blocks) = 0;
   EXPECT_EQ(re.count_matches(prose), want);
   // Blocks of 16 or 32 starts: most of the subject is scanned by the filter either way.
-  EXPECT(pair_filter ? real::detail::alternation_pair_blocks().load() > prose.size() / 64U
-                     : real::detail::alternation_pair_blocks().load() == 0U);
+  EXPECT(pair_filter ? real::detail::tally(real::detail::counter::alternation_pair_blocks).load() > prose.size() / 64U
+                     : real::detail::tally(real::detail::counter::alternation_pair_blocks).load() == 0U);
 }
 
 // The pair filter only for a subject whose first bytes the sample finds dense: none on a subject where they
@@ -1473,12 +1473,12 @@ TEST(alternation_pair_filter_only_where_first_bytes_are_dense)
   const std::size_t want_short  {re.count_matches(short_prose)};
   const std::size_t want_long   {re.count_matches(prose)};
   real::detail::alternation_pairs_disabled() = false;
-  real::detail::alternation_pair_blocks()    = 0;
+  real::detail::tally(real::detail::counter::alternation_pair_blocks)    = 0;
   EXPECT_EQ(re.count_matches(digits), 0U);
-  EXPECT_EQ(real::detail::alternation_pair_blocks().load(), 0U);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::alternation_pair_blocks).load(), 0U);
   EXPECT_EQ(re.count_matches(short_prose), want_short);
-  EXPECT_EQ(real::detail::alternation_pair_blocks().load(), 0U); // below the sampled size: first bytes only
-  real::detail::alternation_pair_candidates() = 0;
+  EXPECT_EQ(real::detail::tally(real::detail::counter::alternation_pair_blocks).load(), 0U); // below the sampled size: first bytes only
+  real::detail::tally(real::detail::counter::alternation_pair_candidates) = 0;
   EXPECT_EQ(re.count_matches(prose), want_long);
   EXPECT(want_long > 500U);
   // The second probe filters: the candidates it leaves are few beside the first-byte hits (every c d f b of the
@@ -1488,10 +1488,10 @@ TEST(alternation_pair_filter_only_where_first_bytes_are_dense)
     first_byte_hits += (c == 'c' || c == 'd' || c == 'f' || c == 'b') ? 1U : 0U;
   }
   if constexpr (pair_filter) {
-    EXPECT(real::detail::alternation_pair_candidates().load() < first_byte_hits / 2U);
+    EXPECT(real::detail::tally(real::detail::counter::alternation_pair_candidates).load() < first_byte_hits / 2U);
   }
-  EXPECT(pair_filter ? real::detail::alternation_pair_blocks().load() > 0U
-                     : real::detail::alternation_pair_blocks().load() == 0U);
+  EXPECT(pair_filter ? real::detail::tally(real::detail::counter::alternation_pair_blocks).load() > 0U
+                     : real::detail::tally(real::detail::counter::alternation_pair_blocks).load() == 0U);
 }
 
 // A batched alternation walk fills its buffer until the subject ends, and a fill that stopped short of the buffer
@@ -1504,14 +1504,14 @@ TEST(alternation_batch_scans_its_subject_once)
   while (s.size() < 65536U) {
     s += "cab dab bab fab cob dub bub fob ";
   }
-  real::detail::alternation_pair_blocks() = 0;
+  real::detail::tally(real::detail::counter::alternation_pair_blocks) = 0;
   std::size_t matches {0};
   for (const auto& m : re.find_iter(s)) {
     EXPECT_EQ(m.str(), "cat");
     ++matches;
   }
   EXPECT_EQ(matches, 1U);
-  const auto blocks {real::detail::alternation_pair_blocks().load()};
+  const auto blocks {real::detail::tally(real::detail::counter::alternation_pair_blocks).load()};
   EXPECT(pair_filter ? blocks > 1000U && blocks <= (s.size() / 16U) + 8U : blocks == 0U);
 }
 
@@ -1525,16 +1525,16 @@ TEST(batched_walks_fill_a_spent_subject_once)
   for (const auto& [pattern, hit] : cases) {
     const real::regex re {pattern};
     const std::string s  {hit + " " + std::string(65536U, 'x')};
-    real::detail::batch_fills() = 0;
+    real::detail::tally(real::detail::counter::batch_fills) = 0;
     std::size_t matches  {0};
     for (const auto& m : re.find_iter(s)) {
       EXPECT_EQ(m.str(), hit);
       ++matches;
     }
     EXPECT_EQ(matches, 1U);
-    if (real::detail::batch_fills().load() != 1U) {
-      std::printf("/%s/: %llu fills\n", pattern.c_str(), static_cast<unsigned long long>(real::detail::batch_fills().load()));
+    if (real::detail::tally(real::detail::counter::batch_fills).load() != 1U) {
+      std::printf("/%s/: %llu fills\n", pattern.c_str(), static_cast<unsigned long long>(real::detail::tally(real::detail::counter::batch_fills).load()));
     }
-    EXPECT_EQ(real::detail::batch_fills().load(), 1U);
+    EXPECT_EQ(real::detail::tally(real::detail::counter::batch_fills).load(), 1U);
   }
 }

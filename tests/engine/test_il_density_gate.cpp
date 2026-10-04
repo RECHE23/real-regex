@@ -289,16 +289,16 @@ TEST(il_bill_gives_way_where_reaching_starts_costs_more)
   // The reverse of `[a-z]+ [a-z ]+` reads back over each letter run: the route gives way, and the answer stays.
   const real::regex losing  {R"([a-z]+ [a-z ]+x\d\d\d\d)"};
   (void) losing.count_matches(dense); // a cold regex keeps the route off below its floor: warm it first
-  real::detail::inner_literal_bill_trips() = 0;
+  real::detail::tally(real::detail::counter::inner_literal_bill_trips) = 0;
   const std::size_t counted {losing.count_matches(dense + "ab cd x1234")};
-  EXPECT(real::detail::inner_literal_bill_trips().load() > 0U);
+  EXPECT(real::detail::tally(real::detail::counter::inner_literal_bill_trips).load() > 0U);
   EXPECT_EQ(counted, std::size_t {1});
   // `[a-z]+ [a-z]+` dies at the first space it crosses back: the route wins there, and keeps the subject.
   const real::regex winning {R"([a-z]+ [a-z]+x\d\d\d\d)"};
   (void) winning.count_matches(dense);
-  real::detail::inner_literal_bill_trips() = 0;
+  real::detail::tally(real::detail::counter::inner_literal_bill_trips) = 0;
   EXPECT_EQ(winning.count_matches(dense + "ab cdx1234"), std::size_t {1});
-  EXPECT_EQ(real::detail::inner_literal_bill_trips().load(), std::uint64_t {0});
+  EXPECT_EQ(real::detail::tally(real::detail::counter::inner_literal_bill_trips).load(), std::uint64_t {0});
 }
 
 TEST(il_bill_reads_no_more_than_it_allows)
@@ -311,11 +311,11 @@ TEST(il_bill_reads_no_more_than_it_allows)
   }
   const real::regex re {R"([a-z]+ [a-z ]+x\d\d\d\d)"};
   (void) re.count_matches(run);
-  real::detail::inner_literal_reverse_bytes() = 0;
-  real::detail::inner_literal_bill_trips()    = 0;
+  real::detail::tally(real::detail::counter::inner_literal_reverse_bytes) = 0;
+  real::detail::tally(real::detail::counter::inner_literal_bill_trips)    = 0;
   EXPECT_EQ(re.count_matches(run + "x "), std::size_t {0});
-  EXPECT(real::detail::inner_literal_reverse_bytes().load() < run.size());
-  EXPECT(real::detail::inner_literal_bill_trips().load() > 0U);
+  EXPECT(real::detail::tally(real::detail::counter::inner_literal_reverse_bytes).load() < run.size());
+  EXPECT(real::detail::tally(real::detail::counter::inner_literal_bill_trips).load() > 0U);
   // Where the match does start back at 0, the cut reverse has not seen it: the route gives way and the core
   // answers from the true start, never from where the cut stopped. A walk, which takes the route (a single
   // search here takes the anchored DFA).
