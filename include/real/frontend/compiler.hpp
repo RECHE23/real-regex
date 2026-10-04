@@ -47,12 +47,9 @@ namespace real::detail {
    * \brief Whether \p ranges is what every consumer of a \ref cp_class requires: each range
    *        non-empty, the sequence strictly ascending and disjoint.
    *
-   * Both match-time paths rely on the order: `cp_page_table` / `fill_cp_page_row` stop at the first
-   * range past `cp_page_max`, and `cp_class_matches` binary-searches above it. An unsorted list loses
-   * members silently with an identical program shape. \ref coalesce_ranges yields this; the predicate
-   * is asked at the one point every class passes through. Order and disjointness only, not
-   * minimality: a touching pair (`prev.hi + 1 == next.lo`) is accepted, as it costs a comparison,
-   * never an answer.
+   * Both match-time paths rely on the order (`fill_cp_page_row` stops at the first range past the page,
+   * `cp_class_matches` binary-searches above it): an unsorted list loses members silently. Not
+   * minimality: a touching pair costs a comparison, never an answer.
    *
    * \param[in] ranges The class's non-ASCII ranges, in the order they would be interned.
    * \return Whether they are ordered as the matchers require.
@@ -670,11 +667,9 @@ namespace real::detail {
     static constexpr std::uint16_t intern_cp_class(dynamic_program& prog,
                                                    const class_def& cd)
     {
-      // The single gate: every code-point class passes here, so a producer that skips coalesce_ranges
-      // fails loudly (cp_ranges_are_normalised) instead of answering wrongly. A throw, not an assert: it
-      // must fire in release builds and stop an unordered `static_regex` being a constant expression.
-      // Asked on the new-class path only: dedup compares content, so each distinct class is checked
-      // once. Checking every call added 36% to `(?i:\w{256})\w{256}` against the compile-scaling bound.
+      // The one gate every code-point class passes: a producer that skips coalesce_ranges fails loudly. A
+      // throw, not an assert, so it fires in release and stops an unordered `static_regex`. New classes
+      // only: checking every call added 36% to `(?i:\w{256})\w{256}` against the compile-scaling bound.
       std::size_t index {prog.cp_classes.size()};
       for (std::size_t i = 0; i < prog.cp_classes.size(); ++i) {
         const cp_class& existing {prog.cp_classes[i]};
@@ -1571,10 +1566,8 @@ namespace real::detail {
               return -1;
             }
             if (body > 0 && node.max > max_lookaround_length / body) {
-              // Bounded but over the lookaround cap (e.g. \w{64} = 256 B > 255). Saturate so
-              // emit_lookaround takes the "too long" path — not -1/"unbounded", which would
-              // wrongly advise "use a fixed repeat count" on a count that is already fixed.
-              // max_lookaround_length + 1 is tiny: no int32 overflow.
+              // Bounded but over the cap (`\w{64}` = 256 B): saturate, so the error reads "too long",
+              // not "unbounded".
               return max_lookaround_length + 1;
             }
             return node.max * body;
@@ -1582,16 +1575,13 @@ namespace real::detail {
         case node_kind::group:
           return l_max_bytes(node.child);
         case node_kind::lookaround:
-          // intentionally uncovered: -Wswitch exhaustiveness arm; the parser rejects nested
-          // lookarounds first, so l_max_bytes never recurses into one. Treated as unbounded.
+          // Unreachable (the parser rejects a nested lookaround); read as unbounded.
           return -1;
       }
       return -1;
     }
 
-    // --- atomic groups / possessive quantifiers (Tier 1 -- bare atom or single-captured
-    //     atom; a general "Tier 1.5" for compound bodies was scoped out — see
-    //     emit_possessive_repeat's own note on the VM-architecture wall this sidesteps) -------
+    // --- atomic groups / possessive quantifiers (Tier 1: a bare atom, or one in a capturing group) ---
 
     /*!
      * \brief Is \p index a bare, unwrapped single atom (a literal byte, a character class, or
@@ -1610,9 +1600,7 @@ namespace real::detail {
      * \brief Tier 1 eligibility: is \p index a bare single atom, or an ordinary (non-atomic)
      *        capturing group wrapping exactly one (`X*+`, `(a)*+`, `(?>X*)`, …)?
      *
-     * The dominant real-world shape — the loop carries its own failure locally, within ONE
-     * opcode dispatch (see \ref emit_possessive_repeat's note on why this is what stays
-     * VM-integration-safe when a general compound body does not).
+     * Such a loop fails within one opcode dispatch (see \ref emit_possessive_repeat).
      *
      * \param[in] index Index of the sub-AST node.
      * \return `true` if \p index is Tier 1 eligible.
@@ -1652,28 +1640,12 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Would compiling the sub-AST at \p index ever emit a `split` opcode?
+     * \brief Whether compiling the sub-AST at \p index emits no `split` reachable from the outer flow.
      *
-     * Used ONLY by \ref emit_atomic_group's no-outer-repeat shape: a ONE-SHOT atomic group
-     * (`(?>ab)`, `(?>)`, any fixed/deterministic body with no repetition at all) has NOTHING to
-     * give back regardless of how compound its body is, so compiling it inline via ordinary
-     * \ref emit_node is unconditionally safe — zero new opcodes touched, zero VM risk. This is
-     * NOT the same question as Tier 1.5's (a REPEATED compound body, which \ref
-     * emit_possessive_repeat's own note explains is genuinely unsafe in this VM regardless of
-     * determinism) — a one-shot atomic group never loops, so there is no exit-thread/silent-
-     * death concern to sidestep in the first place.
-     *
-     * Mirrors the ACTUAL compiled shape of each node kind, not an approximation:
-     * - `alternation`: always emits `split` — a genuine choice an outer give-back could still
-     *   backtrack into, so `false` here correctly routes to a real rejection, not silent
-     *   miscompilation.
-     * - `repeat`, non-possessive: emits `split` UNLESS it is an exact bounded count (`min ==
-     *   max`, `max != -1`) — `emit_repeat`'s own "optional copies" loop runs zero times then.
-     * - `group`: an atomic group (`possessive == true`) is always opaque-deterministic from the
-     *   outer view — it either compiles deterministically or the compiler rejects it outright,
-     *   so it never leaks a `split`. An ordinary group is transparent.
-     * - `lookaround`: zero-width from the outer view; any `split` inside its own sub-pattern is
-     *   isolated in a separate, bounded sub-VM region, never part of the outer flow.
+     * Asked only for a one-shot atomic group (\ref emit_atomic_group), which then has nothing to give
+     * back. Mirrors the emitted shape: an alternation always splits; a non-possessive repeat splits
+     * unless `min == max`; an atomic group (deterministic or rejected) and a lookaround (its own
+     * sub-region) are opaque to the outer flow.
      *
      * \param[in] index Index of the sub-AST node.
      * \return `true` if compiling \p index introduces no `split` reachable from the outer flow.
@@ -1711,24 +1683,13 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Emits a Tier 1 atom-test instruction (`byte_loop_possessive`/`klass_loop_
-     *        possessive`/`klass_cp_loop_possessive`), with a placeholder `secondary_target`
-     *        (the on-no-match exit — patch before use) and `primary_target` set to \p
-     *        capture_start_slot (-1 for uncaptured, else the capture group's start slot; the
-     *        end slot is always start+1).
+     * \brief Emits a Tier 1 atom test (`byte_loop_possessive` / `klass_loop_possessive` /
+     *        `klass_cp_loop_possessive`): `secondary_target` is a placeholder for the no-match exit,
+     *        `primary_target` the capture start slot (-1 for none; the end slot is start + 1).
      *
-     * On a match, the opcode itself (pike.hpp's `step()`) writes BOTH capture slots directly,
-     * using the position before the test (start) and after it (end) — rather than a separate
-     * `save` emitted BEFORE the test, which would have to fire speculatively before knowing the
-     * test succeeds. A possessive loop always attempts one more repetition after every success,
-     * so a plain leading `save` would overwrite a PRIOR successful iteration's start the moment
-     * the NEXT (ultimately failing) attempt began — corrupting the capture with a torn
-     * [new-but-failed-start, old-end) pair. Writing both slots atomically with the consume, only
-     * on confirmed success, avoids that. `klass_cp_loop_possessive` still emits the ordinary
-     * 3-slot UTF-8 continuation chain right after itself (identical layout to \ref
-     * emit_klass_cp) — the membership decision is already fully made at the first byte; the
-     * chain is the architecture's mandatory one-byte-per-round validation of the remaining
-     * bytes either way, and the capture write happens once, at the first byte's dispatch.
+     * The opcode writes both capture slots itself, on a match only: a leading `save` would fire on the
+     * failing attempt a possessive loop always makes last and tear the last good capture. The cp form
+     * keeps the three-slot continuation chain of \ref emit_klass_cp.
      *
      * \param[in,out] prog               The program being built.
      * \param[in]     atom               Index of the single-atom AST node (`byte`/`klass`/`any`).
@@ -1748,9 +1709,7 @@ namespace real::detail {
       }
       if (node.kind == node_kind::any) {
         if (node.raw_byte) {
-          // \C (parser-restricted to flags::bytes, so this branch's own bytes-mode klass_loop_possessive
-          // shape already applies): the full 256-bit set, unconditionally -- no dotall/newline exclusion,
-          // matching emit_node's own \C case.
+          // \C: any byte, newline included, as in emit_node.
           char_class all;
           all.set_range(0x00, 0xFF);
           emit(prog, {.op             = opcode::klass_loop_possessive, .arg16 = intern_class(prog, all),
@@ -1812,16 +1771,9 @@ namespace real::detail {
      * \brief Emits a Tier 1 possessive loop over a single atom, optionally wrapped in one
      *        capturing group.
      *
-     * Mandatory copies (up to \p min) are ordinary, unconditional emission — identical to how a
-     * bare atom, or a capturing group wrapping one, already compiles (via \ref emit_node):
-     * failure there needs no exit path, since \p min is required and the thread simply dies,
-     * exactly like any plain consuming instruction. The optional tail is either a genuine
-     * self-loop (`max == -1`: `jump` back to the tail's own start on a match) or a chain of
-     * unrolled optional copies (bounded: natural pc+1 fallthrough chains them, no `jump`
-     * needed) — each copy is one \ref emit_tier1_atom_test, whose `secondary_target` (on no
-     * match) is collected and patched to the construct's shared exit once everything is
-     * emitted, matching the pattern \ref emit_alternation already uses for its own forward
-     * jump targets.
+     * Mandatory copies (\p min) are ordinary emission: a failure there kills the thread. The optional
+     * tail is a self-loop (`max == -1`) or unrolled copies, each one \ref emit_tier1_atom_test whose
+     * no-match exit is patched to the shared exit.
      *
      * \param[in,out] prog          The program being built.
      * \param[in]     atom          Index of the single-atom body (`byte`, `klass`, or `any`).
@@ -1876,40 +1828,22 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Dispatches a possessive quantifier body to Tier 1 or a clean rejection — shared by
-     *        \ref emit_repeat (`X*+`/`X++`/`X?+`/`X{n,m}+`, `(a)*+`-style single-captured-atom
-     *        bodies) and \ref emit_atomic_group's `(?>X*)`-style desugaring.
+     * \brief Dispatches a possessive quantifier body to Tier 1 or a clean rejection; shared by
+     *        \ref emit_repeat and \ref emit_atomic_group.
      *
-     * A general "Tier 1.5" for arbitrary compound deterministic bodies (`(?:ab)*+`, `(?:X++)*+`)
-     * is OUT OF SCOPE against a verified VM-architecture wall, not an assumed one:
-     * `basic_thread_list` (pike.hpp) stores one uniform position per round for its whole thread
-     * list — no per-thread position. A possessive loop's "give up, exit" transition for a
-     * compound body would need to be offered ONLY once the body's own internal attempt has
-     * DEFINITIVELY failed, at whatever round that happens to be — but a Pike-VM thread that
-     * fails simply dies silently; it cannot redirect to an external exit target from wherever
-     * inside the body it died, unless every leaf-emitting instruction in the compiler (byte/
-     * klass/klass_cp/save/assert_position/assert_lookaround) carries that redirect — real new
-     * infrastructure, not "new opcodes only." A bare atom (or one wrapped in exactly one
-     * capturing group) sidesteps this entirely because it fails ONLY within its own single
-     * dispatch — the opcode IS its own fail-redirect, with nothing to propagate. Deferred to a
-     * future design (bounded compound bodies may fit the same priority-kill sub-VM approach
-     * lookaround already uses; unbounded compound bodies will likely stay rejected, the same
-     * boundary as lookbehind's own unbounded rejection).
+     * A compound body (`(?:ab)*+`) is out of scope: the thread list keeps one position per round, and a
+     * thread that fails inside a compound body dies without reaching an exit, so the loop could not
+     * offer its exit only once the body has definitively failed. A single atom fails within its own
+     * dispatch: the opcode is its own fail-redirect.
      *
      * \param[in,out] prog         The program being built.
      * \param[in]     body         Index of the quantified body.
      * \param[in]     min          Minimum repetition count.
      * \param[in]     max          Maximum repetition count (-1 = unbounded).
      * \param[in]     capture_free Whether captures are suppressed here (inside a lookaround).
-     * \throws real::regex_error when \p body is not Tier 1 eligible, or \p capture_free is
-     *         true (a possessive/atomic construct inside a lookaround) — the lookaround
-     *         sub-VM's own dispatch (pike.hpp's `lookahead_matches`/`lookbehind_matches`/
-     *         `sub_add_thread`) hard-assumes only `byte`/`klass`/`klass_cp` ever appear in a
-     *         sub-region; `klass_cp_loop_possessive` there would silently read the WRONG class
-     *         table (`classes` instead of `cp_classes`, since `in.arg16` means something
-     *         different in each) — a latent corruption, not just a missed optimization, so this
-     *         is a hard compile-time reject rather than an attempt to thread the new opcodes
-     *         through three separate hand-written dispatchers as well.
+     * \throws real::regex_error when \p body is not Tier 1 eligible, or \p capture_free is true:
+     *         the lookaround sub-VM's dispatchers know only `byte`/`klass`/`klass_cp`, and would read
+     *         a `klass_cp_loop_possessive`'s index in the wrong class table.
      */
     constexpr void emit_possessive_repeat(dynamic_program& prog,
                                           std::int32_t     body,
@@ -1931,21 +1865,12 @@ namespace real::detail {
     /*!
      * \brief Emits an atomic group `(?>...)`.
      *
-     * Three shapes, in order:
-     * 1. The child is itself an ordinary `repeat` over a Tier-1-eligible body (a bare atom, or
-     *    one wrapped in exactly one capturing group) — `(?>X*)`, `(?>(a)+)`, … — "upgraded" to
-     *    possessive regardless of that inner repeat's own flag, detected BEFORE any
-     *    bounded-width check, so `(?>[^"]*)`/`(?>\d+)` compile (a measured detection-order requirement).
-     *    This is a REPEATED construct, so it is subject to the same Tier-1-only restriction (and
-     *    the same lookaround rejection) as \ref emit_possessive_repeat.
-     * 2. No outer repeat at all, and the body is deterministic (\ref is_deterministic) — `(?>ab)`,
-     *    `(?>)`, any fixed/compound-but-split-free body: nothing to give back regardless of how
-     *    compound the body is (it never loops), so this is unconditionally safe compiled inline
-     *    via ordinary \ref emit_node — zero new opcodes touched, safe even inside a lookaround.
-     * 3. Otherwise (a genuine choice with no outer repeat, e.g. `(?>ab|a)`): an outer give-back
-     *    could still backtrack INTO the alternation's own choice via its `split` even with no
-     *    repeat wrapping it, so inline compilation would be a silent correctness bug, not just a
-     *    missed optimization — the clean rejection \ref emit_possessive_repeat documents.
+     * 1. A child `repeat` over a Tier 1 body (`(?>X*)`, `(?>(a)+)`) becomes possessive whatever its own
+     *    flag, tested before any width check so `(?>[^"]*)` compiles; same restrictions as
+     *    \ref emit_possessive_repeat.
+     * 2. Else a deterministic body (\ref is_deterministic, `(?>ab)`) never gives back, so ordinary
+     *    emission is exact, even inside a lookaround.
+     * 3. Else (`(?>ab|a)`) inline emission would let a give-back reach the inner `split`: rejected.
      *
      * \param[in,out] prog         The program being built.
      * \param[in]     node         The \ref node_kind::group node (`possessive == true`).
@@ -1985,10 +1910,8 @@ namespace real::detail {
                                     flags      compile_flags)
   {
     dynamic_program prog {compiler(tree, compile_flags).compile()};
-    // IL: compile the inner-literal prefix sub-program (the part before the literal) for the reverse
-    // start-finder. Dynamic-only — a static_regex compiles in a constant-evaluated context and keeps the core
-    // search, sidestepping the constexpr budget of a second compile (the "dynamic-only if it would blow the
-    // budget" choice, taken up front). The prefix program is a subset, so this does not recurse into itself.
+    // The inner-literal prefix sub-program, for the reverse start-finder. Dynamic only: a second compile
+    // would pass a static_regex's constexpr budget.
     if (!std::is_constant_evaluated() && prog.hints.inner_literal_prefix >= 1) {
       const dynamic_program pp {
         compiler(build_prefix_ast(tree, prog.hints.inner_literal_prefix,
@@ -1999,12 +1922,6 @@ namespace real::detail {
       prog.prefix_classes    = pp.classes;
       prog.prefix_cp_classes = pp.cp_classes;
       prog.prefix_cp_ranges  = pp.cp_ranges;
-      // IL-FUSION IS GONE, and it was gone before it was removed: its two branches in
-      // run_inner_literal read `il_fused_eligible`, which only this site set and only under
-      // `fixed_shape` -- while the inner-literal route's own gate requires `!fixed_shape`, because the
-      // fixed-shape route beats it (see that gate's note). So the flag could never be true where it was
-      // read. The compiled prefix sub-program `pp` above is still used by the reverse-DFA confirm; only
-      // the arithmetic-verify shortcut, which nothing could reach, is retired.
     }
     return prog;
   }
