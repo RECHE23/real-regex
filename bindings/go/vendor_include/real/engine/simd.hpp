@@ -467,66 +467,13 @@ namespace real::detail {
     return vmaxvq_u8(vorrq_u8(lo, hi)) != 0U;
   }
 
-  /*! \brief `true` if no lane of \p m is set. */
-  inline bool empty(mask_t m)
-  {
-    return m == 0U;
-  }
-
-  /*! \brief Index (0..15) of the first set lane of \p m. UB if `empty(m)`. */
-  inline std::size_t first_lane(mask_t m)
-  {
-    return static_cast<std::size_t>(std::countr_zero(m)) >> 2U;
-  }
+  inline constexpr unsigned lane_shift {2U};          //!< log2 of the bits a lane takes in \ref mask_t.
+  inline constexpr mask_t   full_mask  {~mask_t {0}}; //!< Every one of the 16 lanes set.
 
   /*! \brief \p m with its first set lane cleared. */
   inline mask_t clear_first(mask_t m)
   {
-    const std::size_t lane {first_lane(m)};
-    return m & ~(static_cast<mask_t>(0xF) << (4U * lane));
-  }
-
-  /*! \brief The lanes set in \p a or \p b. */
-  inline mask_t mask_or(mask_t a,
-                        mask_t b)
-  {
-    return a | b;
-  }
-
-  /*!
-   * \brief `true` if every lane in `[start, start + len)` of \p m is set. The caller clamps \p len to
-   *        `16 - start`; a \p len reaching lane 16 reads as the mask's full width.
-   */
-  inline bool window_all_set(mask_t      m,
-                             std::size_t start,
-                             std::size_t len)
-  {
-    const mask_t want {len >= 16 ? ~mask_t {0} : ((mask_t {1} << (4U * len)) - 1U)};
-    return ((m >> (4U * start)) & want) == want;
-  }
-
-  /*!
-   * \brief Index (0..15, absolute — not relative to \p start) of the first CLEAR lane in
-   *        `[start, start + len)` of \p m. UB if `window_all_set(m, start, len)`.
-   */
-  inline std::size_t first_clear_lane(mask_t      m,
-                                      std::size_t start,
-                                      std::size_t len)
-  {
-    const mask_t want  {len >= 16 ? ~mask_t {0} : ((mask_t {1} << (4U * len)) - 1U)};
-    const mask_t fails {(~(m >> (4U * start))) & want};
-    return start + (static_cast<std::size_t>(std::countr_zero(fails)) >> 2U);
-  }
-
-  /*! \brief Index (0..15) of the first set lane of \p m at or after \p from, or 16 if none. */
-  inline std::size_t next_set_lane(mask_t      m,
-                                   std::size_t from)
-  {
-    if (from >= 16U) {
-      return 16U;
-    }
-    const mask_t shifted {m >> (4U * from)};
-    return shifted == 0U ? 16U : from + (static_cast<std::size_t>(std::countr_zero(shifted)) >> 2U);
+    return m & ~(static_cast<mask_t>(0xF) << (4U * (static_cast<std::size_t>(std::countr_zero(m)) >> 2U)));
   }
 
 #elif defined(__SSE2__)
@@ -1213,6 +1160,21 @@ namespace real::detail {
     return _mm_movemask_epi8(any) != 0;
   }
 
+  inline constexpr unsigned lane_shift {0U};      //!< log2 of the bits a lane takes in \ref mask_t.
+  inline constexpr mask_t   full_mask  {0xFFFFU}; //!< Every one of the 16 lanes set.
+
+  /*! \brief \p m with its first set lane cleared. */
+  inline mask_t clear_first(mask_t m)
+  {
+    return m & (m - 1U);
+  }
+
+#endif
+
+#if defined(__ARM_NEON) || defined(__SSE2__)
+  // The lane helpers both masks share: a lane is (1 << lane_shift) bits, so each shift scales by it.
+  inline constexpr unsigned lane_bits {1U << lane_shift}; //!< Bits a lane takes in \ref mask_t.
+
   /*! \brief `true` if no lane of \p m is set. */
   inline bool empty(mask_t m)
   {
@@ -1222,13 +1184,7 @@ namespace real::detail {
   /*! \brief Index (0..15) of the first set lane of \p m. UB if `empty(m)`. */
   inline std::size_t first_lane(mask_t m)
   {
-    return static_cast<std::size_t>(std::countr_zero(m));
-  }
-
-  /*! \brief \p m with its first set lane cleared. */
-  inline mask_t clear_first(mask_t m)
-  {
-    return m & (m - 1U);
+    return static_cast<std::size_t>(std::countr_zero(m)) >> lane_shift;
   }
 
   /*! \brief The lanes set in \p a or \p b. */
@@ -1246,8 +1202,8 @@ namespace real::detail {
                              std::size_t start,
                              std::size_t len)
   {
-    const mask_t want {len >= 16 ? 0xFFFFU : ((mask_t {1} << len) - 1U)};
-    return ((m >> start) & want) == want;
+    const mask_t want {len >= 16 ? full_mask : ((mask_t {1} << (lane_bits * len)) - 1U)};
+    return ((m >> (lane_bits * start)) & want) == want;
   }
 
   /*!
@@ -1258,9 +1214,9 @@ namespace real::detail {
                                       std::size_t start,
                                       std::size_t len)
   {
-    const mask_t want  {len >= 16 ? 0xFFFFU : ((mask_t {1} << len) - 1U)};
-    const mask_t fails {(~(m >> start)) & want};
-    return start + static_cast<std::size_t>(std::countr_zero(fails));
+    const mask_t want  {len >= 16 ? full_mask : ((mask_t {1} << (lane_bits * len)) - 1U)};
+    const mask_t fails {(~(m >> (lane_bits * start))) & want};
+    return start + (static_cast<std::size_t>(std::countr_zero(fails)) >> lane_shift);
   }
 
   /*! \brief Index (0..15) of the first set lane of \p m at or after \p from, or 16 if none. */
@@ -1270,8 +1226,8 @@ namespace real::detail {
     if (from >= 16U) {
       return 16U;
     }
-    const mask_t shifted {m >> from};
-    return shifted == 0U ? 16U : from + static_cast<std::size_t>(std::countr_zero(shifted));
+    const mask_t shifted {m >> (lane_bits * from)};
+    return shifted == 0U ? 16U : from + (static_cast<std::size_t>(std::countr_zero(shifted)) >> lane_shift);
   }
 
 #endif
