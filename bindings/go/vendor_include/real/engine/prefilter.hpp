@@ -2204,25 +2204,25 @@ namespace real::detail {
     // bytes (the complement of the accepted set) when there are at most six of them, so the run can
     // advance by a memchr-cascade to the next stop instead of testing every byte. The stops are derived
     // from the class table and do NOT enter the compiled program, so byte-identity is unaffected.
+    // Records the bytes below `limit` a class rejects as the stop set, when there are one to six of them.
+    const auto record_stops {[&hints](const char_class& accepted, unsigned limit) {
+                               std::array<char, 6> stops      {};
+                               int                 stop_count {0};
+                               for (unsigned byte = 0; byte < limit && stop_count <= 6; ++byte) {
+                                 if (!accepted.test(static_cast<std::uint8_t>(byte))) {
+                                   if (stop_count < 6) {
+                                     stops[static_cast<std::size_t>(stop_count)] = static_cast<char>(byte);
+                                   }
+                                   ++stop_count;
+                                 }
+                               }
+                               if (stop_count >= 1 && stop_count <= 6) {
+                                 hints.stop_set      = stops;
+                                 hints.stop_set_size = static_cast<std::uint8_t>(stop_count);
+                               }
+                             }};
     if (hints.greedy_class_loop >= 0) {
-      const char_class&   accepted   {classes[static_cast<std::size_t>(hints.greedy_class_loop)]};
-      std::array<char, 6> stops      {};
-      int                 stop_count {0};
-      for (unsigned byte = 0; byte < 256; ++byte) {
-        if (!accepted.test(static_cast<std::uint8_t>(byte))) {
-          if (stop_count < 6) {
-            stops[static_cast<std::size_t>(stop_count)] = static_cast<char>(byte);
-          }
-          ++stop_count;
-          if (stop_count > 6) {
-            break;
-          }
-        }
-      }
-      if (stop_count >= 1 && stop_count <= 6) {
-        hints.stop_set      = stops;
-        hints.stop_set_size = static_cast<std::uint8_t>(stop_count);
-      }
+      record_stops(classes[static_cast<std::size_t>(hints.greedy_class_loop)], 256U);
     }
     // A whole-pattern code-point-class run (`.`/`[^x]` in text/ascii mode) accepts EVERY valid
     // code point >= 0x80 — run_codepoint_class validates the UTF-8 structure but not membership above
@@ -2231,24 +2231,7 @@ namespace real::detail {
     // validation only across a non-ASCII cluster (so malformed UTF-8 still stops the run, unchanged). The
     // stops here are only the ASCII bytes the class rejects.
     else if (hints.codepoint_class_ascii >= 0) {
-      const char_class&   accepted   {classes[static_cast<std::size_t>(hints.codepoint_class_ascii)]};
-      std::array<char, 6> stops      {};
-      int                 stop_count {0};
-      for (unsigned byte = 0; byte < 0x80; ++byte) {
-        if (!accepted.test(static_cast<std::uint8_t>(byte))) {
-          if (stop_count < 6) {
-            stops[static_cast<std::size_t>(stop_count)] = static_cast<char>(byte);
-          }
-          ++stop_count;
-          if (stop_count > 6) {
-            break;
-          }
-        }
-      }
-      if (stop_count >= 1 && stop_count <= 6) {
-        hints.stop_set      = stops;
-        hints.stop_set_size = static_cast<std::uint8_t>(stop_count);
-      }
+      record_stops(classes[static_cast<std::size_t>(hints.codepoint_class_ascii)], 0x80U);
     }
 
     // OPT: a required rare literal byte at a fixed offset (e.g. the `-` in `[0-9]{4}-[0-9]{2}-[0-9]{2}`)
