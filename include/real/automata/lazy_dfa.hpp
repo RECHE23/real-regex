@@ -275,11 +275,9 @@ namespace real::detail {
     /*!
      * \brief Outgoing edges: a byte range paired with its target, `-1` meaning accept. Pairwise disjoint.
      *
-     * \note One heap block per node: the tries make ~98 % of build_byte_program's allocations, which
-     *       dominate a cold first search. A pool is not a local edit: `builder::build` is recursive and
-     *       allocates `bounds`/`tails` per level, so it needs a stack-disciplined arena plus a flat
-     *       transition pool with span-based hash/compare. An ASCII-first expansion would remove the work
-     *       instead (see \ref build_byte_program).
+     * \note One heap block per node, ~98 % of build_byte_program's allocations (a cold first search's
+     *       cost). A pool needs a stack-disciplined arena for the recursive builder; an ASCII-first
+     *       expansion would remove the work instead (see \ref build_byte_program).
      */
     std::vector<std::pair<utf8_byte_range, std::int32_t>> trans;
   };
@@ -555,10 +553,9 @@ namespace real::detail {
    * \brief Emits \p trie into \p bp as a deterministic split/klass/jump fragment, interning each edge's
    *        byte range through \p seen.
    *
-   * Accept edges jump to \p after; the root is emitted first, so the fragment's entry is its base pc.
-   * Each edge class is a single range, so `(lo, hi)` is an exact key and equal edges share one class
-   * (`0x80..0xBF` sits on nearly every node); the caller owns \p seen so sharing spans every occurrence.
-   * Sound because a class index is only ever read as "which byte set", never to tell `klass` ops apart.
+   * The root is emitted first, so the entry is the base pc. Equal edges share one class (`0x80..0xBF` sits
+   * on nearly every node): sound because a class index is only read as a byte set, never to tell `klass`
+   * ops apart.
    *
    * \param[in,out] bp    Byte program the fragment is appended to.
    * \param[in]     trie  The trie to emit.
@@ -566,7 +563,7 @@ namespace real::detail {
    * \param[in,out] seen  Byte-range intern table, shared across every occurrence in one program.
    */
 #if defined(__GNUC__) || defined(__clang__)
-  __attribute__((cold)) // build-time only: see the note in prefilter.hpp's detect_fast_shapes
+  __attribute__((cold)) // build-time only, never on a search path
 #endif
   constexpr void emit_utf8_trie(byte_program&        bp,
                                 const utf8_trie&     trie,
@@ -850,16 +847,12 @@ namespace real::detail {
    *                            value lets a test reach the decline cheaply.
    * \return The expanded program, with \ref byte_program::eligible false when it declined.
    */
-  // The expansion is blind to the subject: a text-mode class is expanded in full (orders of magnitude over
-  // its ASCII part for `\w`), and this is most of a first text-mode search. An ASCII-only expansion
-  // (`cp_class::ascii`) would make the whole pipeline trivial, but it is valid only on an ASCII subject:
-  // - pre-scanning the subject costs more than the search it protects (O(n) against a skipping search),
-  //   and a cached verdict does not help, the VM state being fresh per `search()`;
-  // - the viable shape maps every byte >= 0x80 to a sentinel "cannot answer" class so the DFA bails itself
-  //   to the VM, with a second program built lazily on the first non-ASCII haystack and routing that never
-  //   hands the ASCII program a subject it would misread. It changes DFA state semantics: not a local edit.
+  // The expansion is blind to the subject: a text-mode `\w` expands in full, most of a first text-mode
+  // search. An ASCII-only expansion holds only on an ASCII subject: pre-scanning costs more than the search
+  // (the VM state is fresh per search), and the viable shape (bytes >= 0x80 to a "cannot answer" class, a
+  // second program on the first non-ASCII subject) changes DFA state semantics, not a local edit.
 #if defined(__GNUC__) || defined(__clang__)
-  __attribute__((cold)) // build-time only: see the note in prefilter.hpp's detect_fast_shapes
+  __attribute__((cold)) // build-time only, never on a search path
 #endif
   constexpr byte_program build_byte_program(const program_view& prog,
                                             bool                keep_assertions = false,
@@ -1014,7 +1007,7 @@ namespace real::detail {
    * \return The alphabet: a byte-to-class map plus the class count.
    */
 #if defined(__GNUC__) || defined(__clang__)
-  __attribute__((cold)) // build-time only: see the note in prefilter.hpp's detect_fast_shapes
+  __attribute__((cold)) // build-time only, never on a search path
 #endif
   inline constexpr lazy_byte_alphabet compute_lazy_alphabet(std::span<const instr>      code,
                                                             std::span<const char_class> classes)
@@ -1160,8 +1153,7 @@ namespace real::detail {
    */
   struct pc_set_cache
   {
-    // Sizing only: chaining absorbs any load, so no answer depends on it and no test can hold it.
-    static constexpr std::size_t   bucket_count {2048};        //!< Fixed bucket count; chaining absorbs the load.
+    static constexpr std::size_t   bucket_count {2048};        //!< Sizing only: chaining absorbs any load, so no answer depends on it.
     static constexpr std::uint32_t not_found    {0xFFFFFFFFU}; //!< \ref find's miss answer (never a valid state id).
 
     std::vector<std::vector<std::uint32_t>> buckets;           //!< One chain of state ids per bucket.
@@ -1543,9 +1535,8 @@ namespace real::detail {
      * reverse pass is needed. No captures. Does not call \ref begin_scan — a caller trying several candidates
      * for one search calls it once before its loop, since a per-candidate reset would mask thrashing.
      *
-     * Cached transitions and cuts are read inline; \ref step / \ref cut_cached run only on a miss. Same
-     * states and tables, a leaner read; inlined hits do not bump \ref counters::hits (bookkeeping only:
-     * \ref thrashing and \ref flush move only on a miss).
+     * Cached transitions and cuts are read inline (\ref step / \ref cut_cached only on a miss), so hits do
+     * not bump \ref counters::hits.
      *
      * \param[in] text  The subject text.
      * \param[in] start Offset to anchor the match at (must be `<= text.size()`).
@@ -1726,10 +1717,9 @@ namespace real::detail {
     }
 
     /*!
-     * \brief The priority-cut of \p state at its own accept, memoized. `cut` is O(state size) — it rebuilds
-     *        and re-interns the prefix — and a Unicode `klass_cp` byte-program makes states thousands of PCs
-     *        wide, so recomputing it once per match (per find_iter step) dominated. Cached per state, it is
-     *        computed once and then O(1). The state's accept index is fixed, so the cut is deterministic.
+     * \brief The priority-cut of \p state at its own accept, memoized: `cut` is O(state size) and Unicode
+     *        byte-program states run thousands of pcs wide, so a per-match recompute dominated. Exact, since a
+     *        state's accept index is fixed.
      * \param[in] state The accepting state id.
      * \return The cut state, memoized after the first call.
      */
@@ -1814,11 +1804,9 @@ namespace real::detail {
     static constexpr bool compute_eligibility(std::span<const instr> code,
                                               bool                   ascii_word)
     {
-      // Variable-width classes and lookarounds: no forward-DFA representation. Tier 1's possessive-loop
-      // family has no consuming-edge representation here (consumes() below only recognizes byte/klass) —
-      // treating it as a dead end (silently non-consuming) would be an outright wrong DFA. A position
-      // assertion is represented (see close_look / resolve) unless it is a word boundary whose word-ness is
-      // a code point's, which no single byte decides, or one scoped to the other word-ness.
+      // Possessive loops have no consuming edge here (consumes() knows byte/klass): read as dead ends they
+      // would make a wrong DFA. An assertion is represented (close_look / resolve) unless it is a word
+      // boundary on code-point word-ness, which no byte decides, or one scoped to the other word-ness.
       return std::ranges::none_of(code, [ascii_word](const instr& in) {
                                     if (in.op == opcode::assert_position) {
                                       const auto kind {static_cast<assert_kind>(in.arg8)};
@@ -2028,21 +2016,13 @@ namespace real::detail {
                               std::vector<std::int32_t>& out,
                               visit_marks&               seen) const
     {
-      // Structurally unreachable through the only two callers (step/step_seeded, both private): every pc
-      // they pass is either 0 (the program start) or pc+1 of a consuming instruction's own valid pc, and a
-      // well-formed program never ends on a byte/klass op with nothing after it (a `match` always follows
-      // eventually) -- so pc+1 never runs off the end in practice. Kept as the defensive bound close_into's
-      // OWN recursion-turned-stack-loop below also relies on (a split/jump target is trusted, not re-
-      // checked, past this point); testing it would need a hand-crafted malformed program, not a pattern
-      // the compiler can produce.
+      // Unreachable from a well-formed program (a pc is 0 or one past a consuming op, and `match` follows);
+      // a defensive bound only.
       if (pc < 0 || static_cast<std::size_t>(pc) >= code_.size()) {
         return;
       }
-      // The work stack is a MEMBER, not a local. This runs once per pc of the source state, so a
-      // local vector was one heap block per call -- and a single 8 KB first search was measured at
-      // 10 408 allocations across the two DFAs (2026.08 landscape, `\w+@\w+` when the inner-literal
-      // route confirmed through the DFA; see state_pcs_'s comment for why the route is named).
-      // `mutable`: pure scratch, empty in and empty out.
+      // The work stack is a mutable member, empty in and out: as a local it was one heap block per call,
+      // 10 408 allocations in one 8 KB first search.
       stack_.assign(1, pc);
       while (!stack_.empty()) {
         const std::int32_t cur {stack_.back()};
@@ -2576,42 +2556,10 @@ namespace real::detail {
     std::array<std::uint32_t, 8>  starts_      {};      //!< Context -> start state, per \ref flush (look programs).
     std::uint32_t                 start_state_ {0};     //!< Id of the closure of pc 0, re-interned by each \ref flush.
 
-    // A VECTOR OF VECTORS, one heap block per DFA state. What a first search pays here has been
-    // measured twice, and the two measurements DISAGREE because they were taken on different route
-    // landscapes. A measured number in a comment must name the ROUTE it was taken on, not only the
-    // pattern: routes move (three moved the week this was written), and a number whose routing
-    // premise changed reads as current long after it stopped applying. Both are stated with theirs.
-    //
-    // 2026.08, counted rather than timed: `\w+@\w+` on an 8 KB subject made 16 146 allocations
-    // totalling 6.09 MB, against 187 and 163 KB for the ASCII twin `[a-z]+@[a-z]+` -- WHEN THE
-    // INNER-LITERAL ROUTE CONFIRMED THROUGH THIS DFA. Attribution was by disabling routes: lazy
-    // DFA off, the same search made 5 738 / 0.96 MB; inner-literal off as well, 91 / 117 KB. The
-    // per-call locals in the transition path (`step`/`step_seeded`'s `next` and `seen`, the latter
-    // also the memset callgrind put at 5 %) plus close_into's stack were essentially all of it.
-    //
-    // 2026.09.15, same instrument, this tree: `\w+@\w+` no longer reaches the DFA at all -- the
-    // inner-literal route carries it whole (DFA knob on/off: 5 649 vs 5 647). A pattern that DOES
-    // route here today -- `\w+\d+`, no required literal -- pays 3 317 allocations on the cold
-    // first search and ZERO on every warm one, while interning only TWO states. Hoisting the
-    // miss-path scratch (`next`/`seen` into members, a generation stamp for the zeroing) was
-    // written, measured, and REVERTED on these numbers: it removed 36 of 3 315 cold allocations,
-    // ~1 %, far below what this repository's layout instruments can resolve (±3 % floor, code
-    // layout, not noise -- BENCHMARKS.md).
-    //
-    // ATTRIBUTED the same day (benchmarks/alloc_cold_probe.cpp, per-construction-site counting, the
-    // parts summed against the total): build_byte_program is 3 171 of the 3 317 (95.6 %), and the
-    // UTF-8 tries are 3 125 of that (98.5 % -- `\w` alone 2 757, `\d` 368); the shared alphabet 40,
-    // the two DFA constructors 50, the remainder 56. The onepass op_table is NOT among them -- it
-    // builds only for patterns with capture groups (pike.hpp's slot_count guard), and this pattern
-    // has none. So the cold cost is the trie expansion, paid once per regex object; the miss path
-    // is paid per transition. No bench row and no scaling test exercises the cold path -- the
-    // consumer verdict lives in the probe's header.
-    //
-    // STILL TRUE, measured on the 16 146 landscape and worth keeping against the day the
-    // scaffolding is fixed and the miss path matters again: reserving the OUTER vector saved 3
-    // allocations of 16 146 and cost 98 KB, and FLATTENING this into one pool with an offset per
-    // state -- the fix the trie builder uses -- changed the count by exactly ZERO. Whether they
-    // still hold on today's scaffolding-dominated cost is unknown until that attribution exists.
+    // One heap block per DFA state. A first search's cold cost is build_byte_program's UTF-8 tries (~96 % of
+    // its allocations, benchmarks/alloc_cold_probe.cpp), paid once per regex; warm searches allocate nothing.
+    // Hoisting the miss-path scratch into members saved ~1 % of cold allocations, under the ±3 % layout
+    // floor; reserving the outer vector or flattening it into one pool changed nothing.
     mutable std::vector<std::int32_t>                                          stack_;        //!< close_into's work stack, hoisted: it ran once per pc of the source state.
     std::vector<std::vector<std::int32_t>>                                     state_pcs_;    //!< state id -> ordered pc-set.
     std::vector<std::uint32_t>                                                 trans_;        //!< [state + accept_col] accept word, [state + cut_col] memoized cut, [state + trans_col + class] next, unseeded (post-match).
@@ -2681,13 +2629,9 @@ namespace real::detail {
           class_ctx_[alpha_.of[b]] = (word_quit_ && b >= 0x80U) ? rctx_nonascii : right_ctx_of(static_cast<std::uint8_t>(b), cr);
         }
       }
-      // Transpose the program: rev_eps_[x] = the pcs with a forward epsilon edge to x; rev_consume_[x] = the
-      // consuming pcs whose successor is x (a byte/klass at pc goes to pc+1).
-      // TWO PASSES INTO FOUR BUFFERS, not a vector of vectors. The transpose is an adjacency list, and
-      // as one inner vector per pc it was the single largest allocation COUNT in a first search: 7003
-      // blocks for `\w+@\w+` over 8 KB, because `\w` expands to a byte program of thousands of
-      // instructions and nearly every one gets a first push_back. Counting degrees, prefix-summing and
-      // filling gives the same structure in four allocations. Measured by counting, not timing.
+      // Transpose: rev_eps_[x] = the pcs with an epsilon edge to x; rev_consume_[x] = the consuming pcs whose
+      // successor is x. Two passes into four flat buffers: a vector per pc was a first search's largest
+      // allocation count (7003 blocks for `\w+@\w+` over 8 KB).
       const std::size_t n {code.size()};
       rev_eps_at_.assign(n + 2, 0);
       rev_consume_at_.assign(n + 2, 0);
@@ -3235,8 +3179,6 @@ namespace real::detail {
     constexpr void rev_closure(std::vector<std::int32_t>& set,
                                visit_marks&               seen) const
     {
-      // Member stack, same reason as close_into's: one heap block per call otherwise. Seeded from the
-      // whole set here rather than a single pc, since the reverse closure starts from all of them.
       stack_.assign(set.begin(), set.end());
       while (!stack_.empty()) {
         const std::int32_t pc {stack_.back()};
@@ -3288,11 +3230,8 @@ namespace real::detail {
       else {
         rev_closure(next, seen);
       }
-      // Same trap lazy_dfa::step guards against: intern() may flush() mid-call (state_pcs_/trans_ cleared
-      // and rebuilt from scratch), which makes `state` -- the CALLER's index, captured before this call --
-      // stale for the now-reset trans_. Only cache the edge back into trans_[state] when no flush happened
-      // this call; a flush means the caller re-seeds anyway (reverse_start reads the RETURNED state, always
-      // fresh), so the cache write is simply skipped rather than landing on a wrong or out-of-bounds slot.
+      // intern() may flush, leaving the caller's `state` stale: cache the edge only when no flush happened
+      // (the caller reads the returned state).
       const std::size_t   flushes_before {flushes_};
       const std::uint32_t result         {intern(next)};
       if (flushes_ == flushes_before) {
@@ -3326,9 +3265,8 @@ namespace real::detail {
     static constexpr bool compute_eligibility(std::span<const instr> code,
                                               bool                   ascii_word)
     {
-      // Tier 1's possessive-loop family has no consuming-edge representation here (consumes() above only
-      // recognizes byte/klass), as in the forward DFA. A position assertion is an edge the closure crosses
-      // where it holds (rev_closure_look), unless no byte decides it.
+      // As in the forward DFA: no possessive loop; an assertion is an edge crossed where it holds
+      // (rev_closure_look), unless no byte decides it.
       return std::ranges::none_of(code, [ascii_word](const instr& in) {
                                     if (in.op == opcode::assert_position) {
                                       const auto kind {static_cast<assert_kind>(in.arg8)};
@@ -3440,7 +3378,7 @@ namespace real::detail {
     std::vector<std::uint32_t>                                                 rev_eps_at_;                                  //!< CSR offsets into \ref rev_eps_pool_, size code+2.
     std::vector<std::int32_t>                                                  rev_consume_pool_;                            //!< transposed consuming edges, CSR-packed.
     std::vector<std::uint32_t>                                                 rev_consume_at_;                              //!< CSR offsets into \ref rev_consume_pool_.
-    mutable std::vector<std::int32_t>                                          stack_;                                       //!< rev_closure's work stack, hoisted for the same reason.
+    mutable std::vector<std::int32_t>                                          stack_;                                       //!< The closures' work stack, a member to spare a heap block per call.
     std::vector<std::vector<std::int32_t>>                                     state_pcs_;                                   //!< state id -> sorted pc-set.
     std::vector<std::uint32_t>                                                 trans_;                                       //!< flat [state*stride + class] -> next.
     std::vector<char>                                                          state_has_start_;                             //!< state -> reaches the program start (an accept).
