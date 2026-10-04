@@ -1025,22 +1025,7 @@ namespace real {
      */
     [[nodiscard]] std::optional<dfa_match> match(std::string_view rest) const noexcept
     {
-      std::uint32_t             state {tables_.start};
-      std::optional<dfa_match>  best;
-      for (std::size_t i = 0; i < rest.size();) {
-        const auto          byte {static_cast<std::uint8_t>(rest[i])};
-        const std::size_t   cls  {tables_.byte_class[byte]};
-        state = tables_.trans[(static_cast<std::size_t>(state) * tables_.num_classes) + cls];
-        if (state == 0U) { // dead state
-          break;
-        }
-        ++i;
-        const std::uint32_t rule {tables_.accept[state]};
-        if (rule != detail::dfa_no_rule) {
-          best = dfa_match {.rule_index = rule, .length = i};
-        }
-      }
-      return best;
+      return answer(walk<false>(rest, 0, nullptr), 0);
     }
 
     /*!
@@ -1077,31 +1062,12 @@ namespace real {
         return match_armed(subject, offset, memo);
       }
       // Unarmed: the plain walk plus one comparison (see dfa_munch_memo::short_stretch).
-      std::uint32_t state     {tables_.start};
-      std::uint32_t best_rule {detail::dfa_no_rule};
-      std::size_t   best_end  {offset};
-      std::size_t   i         {offset};
-      while (i < subject.size()) {
-        state = tables_.trans[(static_cast<std::size_t>(state) * tables_.num_classes)
-                              + tables_.byte_class[static_cast<std::uint8_t>(subject[i])]];
-        if (state == 0U) { // dead state
-          break;
-        }
-        ++i;
-        const std::uint32_t rule {tables_.accept[state]};
-        if (rule != detail::dfa_no_rule) {
-          best_rule = rule;
-          best_end  = i;
-        }
+      const walk_end w {walk<false>(subject, offset, nullptr)};
+      if (w.stop - w.best_end > dfa_munch_memo::short_stretch) [[unlikely]] {
+        mark_dead_stretch(subject, state_at(subject, offset, w.best_end), w.best_end, w.stop, memo);
       }
-      if (i - best_end > dfa_munch_memo::short_stretch) [[unlikely]] {
-        mark_dead_stretch(subject, state_at(subject, offset, best_end), best_end, i, memo);
-      }
-      memo.transitions_ += i - offset;
-      if (best_rule == detail::dfa_no_rule) {
-        return std::nullopt;
-      }
-      return dfa_match {.rule_index = best_rule, .length = best_end - offset};
+      memo.transitions_ += w.stop - offset;
+      return answer(w, offset);
     }
 
     /*!
@@ -1261,6 +1227,92 @@ namespace real {
   private:
 
     /*!
+     * \brief The state the DFA moves to from \p state on byte \p c (0 is the dead state).
+     * \param[in] state The current state.
+     * \param[in] c     The byte read.
+     * \return The next state.
+     */
+    [[nodiscard]] std::uint32_t next_state(std::uint32_t state,
+                                           char          c) const noexcept
+    {
+      return tables_.trans[(static_cast<std::size_t>(state) * tables_.num_classes)
+                           + tables_.byte_class[static_cast<std::uint8_t>(c)]];
+    }
+
+    /*!
+     * \brief Where a munch walk stopped and the last accept it passed.
+     */
+    struct walk_end
+    {
+      std::uint32_t rule;     //!< The last accepting rule, or detail::dfa_no_rule.
+      std::size_t   best_end; //!< Where that accept ended (the walk's start when none).
+      std::size_t   stop;     //!< Where the walk stopped: a dead state, a proven-dead pair, or the end.
+      std::uint32_t resume;   //!< Armed walks only: the state at \ref best_end, where a dead stretch begins.
+    };
+
+    /*!
+     * \brief The munch walk from the start state at \p offset until the DFA dies or the subject ends.
+     * \tparam Armed Also stop at a (state, position) pair \p memo proved dead, and track the state at the
+     *               last accept; unarmed, the walk is the plain one plus nothing.
+     * \param[in] subject The text.
+     * \param[in] offset  Where the walk starts.
+     * \param[in] memo    The armed memo (Armed only; null otherwise).
+     * \return Where it stopped and its last accept.
+     * \note Force-inlined: out of line, the memo-taking \ref match's per-token walk costs 5-9 % more.
+     */
+    template <bool Armed>
+    [[nodiscard]]
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((always_inline))
+#endif
+    walk_end walk(std::string_view      subject,
+                  std::size_t           offset,
+                  const dfa_munch_memo* memo) const noexcept
+    {
+      std::uint32_t state     {tables_.start};
+      std::uint32_t best_rule {detail::dfa_no_rule};
+      std::size_t   best_end  {offset};
+      std::uint32_t resume    {state};
+      std::size_t   i         {offset};
+      while (i < subject.size()) {
+        state = next_state(state, subject[i]);
+        if (state == 0U) { // dead state
+          break;
+        }
+        ++i;
+        const std::uint32_t rule {tables_.accept[state]};
+        if (rule != detail::dfa_no_rule) {
+          best_rule = rule;
+          best_end  = i;
+          if constexpr (Armed) {
+            resume = state;
+          }
+        }
+        else if constexpr (Armed) {
+          if (memo->marked_[state] != 0U && memo->dead_after_[state][i]) {
+            break; // an earlier walk proved no accept follows this pair
+          }
+        }
+      }
+      return walk_end {.rule = best_rule, .best_end = best_end, .stop = i, .resume = resume};
+    }
+
+    /*!
+     * \brief The public answer for a walk started at \p offset.
+     * \param[in] w      The walk.
+     * \param[in] offset Where it started.
+     * \return The winning rule and length, or `std::nullopt`.
+     */
+    [[nodiscard]] static std::optional<dfa_match> answer(const walk_end& w,
+                                                         std::size_t     offset) noexcept
+    {
+      if (w.rule == detail::dfa_no_rule) {
+        return std::nullopt;
+      }
+      return dfa_match {.rule_index = w.rule, .length = w.best_end - offset};
+    }
+
+    /*!
      * \brief The state a walk from the start state at \p from reaches at \p to (a replay, only on the
      *        rare path that arms a memo).
      * \param[in] subject The text.
@@ -1274,8 +1326,7 @@ namespace real {
     {
       std::uint32_t state {tables_.start};
       for (std::size_t at = from; at < to; ++at) {
-        state = tables_.trans[(static_cast<std::size_t>(state) * tables_.num_classes)
-                              + tables_.byte_class[static_cast<std::uint8_t>(subject[at])]];
+        state = next_state(state, subject[at]);
       }
       return state;
     }
@@ -1296,37 +1347,12 @@ namespace real {
                                          std::size_t      offset,
                                          dfa_munch_memo&  memo) const
     {
-      std::uint32_t state        {tables_.start};
-      std::uint32_t best_rule    {detail::dfa_no_rule};
-      std::size_t   best_end     {offset};
-      std::uint32_t resume_state {state}; // the state at best_end: where the dead stretch begins
-      std::size_t   i            {offset};
-      while (i < subject.size()) {
-        state = tables_.trans[(static_cast<std::size_t>(state) * tables_.num_classes)
-                              + tables_.byte_class[static_cast<std::uint8_t>(subject[i])]];
-        if (state == 0U) { // dead state
-          break;
-        }
-        ++i;
-        const std::uint32_t rule {tables_.accept[state]};
-        if (rule != detail::dfa_no_rule) {
-          best_rule    = rule;
-          best_end     = i;
-          resume_state = state;
-          continue;
-        }
-        if (memo.marked_[state] != 0U && memo.dead_after_[state][i]) {
-          break; // an earlier walk proved no accept follows this pair
-        }
+      const walk_end w {walk<true>(subject, offset, &memo)};
+      if (w.stop - w.best_end > dfa_munch_memo::short_stretch) {
+        mark_dead_stretch(subject, w.resume, w.best_end, w.stop, memo);
       }
-      if (i - best_end > dfa_munch_memo::short_stretch) {
-        mark_dead_stretch(subject, resume_state, best_end, i, memo);
-      }
-      memo.transitions_ += i - offset;
-      if (best_rule == detail::dfa_no_rule) {
-        return std::nullopt;
-      }
-      return dfa_match {.rule_index = best_rule, .length = best_end - offset};
+      memo.transitions_ += w.stop - offset;
+      return answer(w, offset);
     }
 
     /*!
@@ -1353,8 +1379,7 @@ namespace real {
         memo.marked_.assign(tables_.num_states, 0U);
       }
       for (std::size_t at = from; at < to; ++at) {
-        state = tables_.trans[(static_cast<std::size_t>(state) * tables_.num_classes)
-                              + tables_.byte_class[static_cast<std::uint8_t>(subject[at])]];
+        state = next_state(state, subject[at]);
         std::vector<bool>& known {memo.dead_after_[state]};
         if (memo.marked_[state] == 0U) {
           known.resize(memo.size_ + 1, false);
