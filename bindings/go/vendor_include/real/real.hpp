@@ -733,7 +733,7 @@ namespace real {
     constexpr bool refill_batch()
     {
       // A short fill without `batch_partial_` proved the rest spent: end the walk instead of rescanning.
-      if (batch_spent_) {
+      if (batch_spent_) [[unlikely]] {
         batch_n_ = 0;
         batch_i_ = 0;
         return false;
