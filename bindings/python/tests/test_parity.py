@@ -1240,6 +1240,26 @@ class TestCharOffsetScaling(unittest.TestCase):
             f"span reads look super-linear: {best_small:.1f} ms at {small} units, "
             f"{best_large:.1f} ms at {large} (4x the subject)")
 
+    def test_match_cost_does_not_grow_with_the_subject(self):
+        # The default endpos is the subject's end; converting it by walking the UTF-8 from byte 0 made
+        # every match()/search() on a non-ASCII str O(n), a miss at the first character included.
+        def best_ms(units):
+            text = "héllo wörld " * units
+            pattern = real.compile(r"\d+")
+            runs = []
+            for _ in range(3):
+                start = time.perf_counter()
+                for _ in range(50):
+                    pattern.match(text)
+                runs.append((time.perf_counter() - start) * 1000.0)
+            return min(runs)
+
+        small, large = best_ms(500), best_ms(32000)  # 64x the subject
+        # A walk per call grew ~64x; a constant cost stays near 1x. 8x leaves room for noise.
+        self.assertLess(
+            large, small * 8.0 + 0.5,
+            f"match() cost grows with the subject: {small:.2f} ms at 500 units, {large:.2f} ms at 32000")
+
     def test_spans_agree_with_re_out_of_order(self):
         # The monotone walk is an optimisation for in-order reads; reading a saved list backwards
         # must still be correct, which is the case that would silently break if the cursor were

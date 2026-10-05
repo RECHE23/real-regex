@@ -900,19 +900,39 @@ PyType_Spec match_spec = {
 // (char_is_byte), char == byte; otherwise walk the UTF-8 the way compute_char_spans
 // counts codepoints. `char_idx` must already be clamped to [0, char_len]; a char offset
 // always lands on a codepoint boundary, so the byte offset is exact.
+std::size_t chars_past(const subject_view& sv, std::size_t from, Py_ssize_t chars);
+
 std::size_t char_to_byte(const subject_view& sv, Py_ssize_t char_idx) {
+    return chars_past(sv, 0, char_idx);
+}
+
+// The byte offset `chars` code points past byte `from`, a code point boundary of sv (the walk
+// char_to_byte starts at 0). For a bytes subject or a pure-ASCII str, chars == bytes.
+std::size_t chars_past(const subject_view& sv, std::size_t from, Py_ssize_t chars) {
     if (sv.char_is_byte) {
-        return static_cast<std::size_t>(char_idx);
+        return from + static_cast<std::size_t>(chars);
     }
-    std::size_t byte = 0;
+    std::size_t byte = from;
     const auto len = static_cast<std::size_t>(sv.len);
-    for (Py_ssize_t chars = 0; chars < char_idx && byte < len; ++chars) {
+    for (Py_ssize_t n = 0; n < chars && byte < len; ++n) {
         ++byte;  // the lead byte
         while (byte < len && (static_cast<unsigned char>(sv.data[byte]) & 0xC0U) == 0x80U) {
             ++byte;  // skip UTF-8 continuation bytes
         }
     }
     return byte;
+}
+
+// Byte offsets of a clamped [pos, endpos) region. The default endpos is the subject's end and needs
+// no walk; any other end walks on from pos, never again from byte 0 -- a walk from 0 on every call
+// made a non-ASCII match() O(n) even when it failed at its first character.
+std::pair<std::size_t, std::size_t> region_to_bytes(const subject_view& sv, Py_ssize_t pos,
+                                                    Py_ssize_t endpos, Py_ssize_t char_len) {
+    const std::size_t pos_byte = char_to_byte(sv, pos);
+    if (endpos == char_len) {
+        return {pos_byte, static_cast<std::size_t>(sv.len)};
+    }
+    return {pos_byte, endpos >= pos ? chars_past(sv, pos_byte, endpos - pos) : char_to_byte(sv, endpos)};
 }
 
 // byte offset -> char offset, the inverse of char_to_byte and the one an ERROR needs.
@@ -963,8 +983,7 @@ PyObject* run_region(PyObject* self, PyObject* args, PyObject* kwargs, real::det
     const Py_ssize_t char_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
     pos = std::clamp(pos, Py_ssize_t {0}, char_len);
     endpos = std::clamp(endpos, Py_ssize_t {0}, char_len);
-    const std::size_t pos_byte = char_to_byte(sv, pos);
-    const std::size_t end_byte = char_to_byte(sv, endpos);
+    const auto [pos_byte, end_byte] = region_to_bytes(sv, pos, endpos, char_len);
     // pos and endpos are clamped INDEPENDENTLY above, so `pos > endpos` survives clamping and an
     // inverted region reaches here. It cannot hold a match -- not even an empty one -- and `re`
     // agrees: search("abc", 1, 0) on `x*` is None, while pos == endpos still yields the zero-width
@@ -1084,8 +1103,7 @@ PyObject* Pattern_findall(PyObject* self, PyObject* args, PyObject* kwargs) {
     const Py_ssize_t char_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
     pos = std::clamp(pos, Py_ssize_t {0}, char_len);
     endpos = std::clamp(endpos, Py_ssize_t {0}, char_len);
-    const std::size_t pos_byte = char_to_byte(sv, pos);
-    const std::size_t end_byte = char_to_byte(sv, endpos);
+    const auto [pos_byte, end_byte] = region_to_bytes(sv, pos, endpos, char_len);
     PyObject* out = PyList_New(0);
     if (out == nullptr) {
         return nullptr;
@@ -1190,8 +1208,7 @@ PyObject* Pattern_count_matches(PyObject* self, PyObject* args, PyObject* kwargs
     const Py_ssize_t char_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
     pos = std::clamp(pos, Py_ssize_t {0}, char_len);
     endpos = std::clamp(endpos, Py_ssize_t {0}, char_len);
-    const std::size_t pos_byte = char_to_byte(sv, pos);
-    const std::size_t end_byte = char_to_byte(sv, endpos);
+    const auto [pos_byte, end_byte] = region_to_bytes(sv, pos, endpos, char_len);
     const std::size_t scan_len = pos_byte < end_byte ? end_byte - pos_byte : 0;
     try {
         std::size_t n = 0;
@@ -1291,9 +1308,10 @@ PyObject* Pattern_finditer(PyObject* self, PyObject* args, PyObject* kwargs) {
     // One shared walk for the whole scan. A null allocation is not an error: every conversion then
     // starts from byte 0, which is exactly the previous behaviour.
     it->chars = sv.char_is_byte ? nullptr : cursor_new();
+    const auto region = region_to_bytes(sv, pos, endpos, char_len);
     try {
         it->cur = new match_iter_t(
-            pat->rx->find_iter(it->sv.view(), char_to_byte(sv, pos), char_to_byte(sv, endpos)).begin());
+            pat->rx->find_iter(it->sv.view(), region.first, region.second).begin());
     } catch (...) {
         Py_DECREF(reinterpret_cast<PyObject*>(it));  // dealloc frees the refs; cur is null
         return set_cpp_error();  // bad_alloc -> MemoryError, otherwise real.error
@@ -2315,7 +2333,7 @@ int regex_set_parse_region(RegexSetObject* rs, PyObject* args, PyObject* kwargs,
     *pos_byte = char_to_byte(sv, pos);
     if (endpos_given) {
         endpos = std::clamp(endpos, Py_ssize_t {0}, char_len);
-        *end_byte = char_to_byte(sv, endpos);
+        *end_byte = region_to_bytes(sv, pos, endpos, char_len).second;
     } else {
         *end_byte = real::npos;
     }
