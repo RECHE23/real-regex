@@ -4478,10 +4478,9 @@ namespace real::detail {
     /*!
      * \brief Fills the capturing-group slots of a fixed-shape match. Every consuming op is one byte wide,
      *        so each save sits at a constant offset from the match start: one linear pass, no re-match.
-     *        No-op without inner groups (slot_count 2).
      *
-     * Starts at \ref pattern_hints::body_pc, not `1`: a leading `\b`/`\B` (`hints.wb_lead`) sits at pc 1
-     * and the walk would `break` on it at once, silently filling no group (`\B(\w){2}` lost group 1).
+     * Starts at \ref pattern_hints::body_pc, not `1`: a leading `\b`/`\B` sits at pc 1 and the walk would
+     * `break` on it at once, filling no group (`\B(\w){2}`).
      * \param[in]  match_start Byte offset where the match begins.
      * \param[out] out_slots   Receives the group slots.
      */
@@ -4591,7 +4590,7 @@ namespace real::detail {
           width = 1;
         }
         else if (in.op == opcode::klass_cp) {
-          width = 4; // the four-slot construct (see run_cp_class_loop's `pc += 3`)
+          width = 4; // klass_cp and its 3-instruction continuation chain
         }
         else {
           return false;
@@ -4956,9 +4955,9 @@ namespace real::detail {
     /*!
      * \brief Batched twin of \ref run_codepoint_class, filling up to \p cap maximal spans in ONE call.
      *
-     * Without it the `.`/negated-class shape paid a full route entry per match where the other class
-     * routes pay one per sixteen. A NEW function rather than a flag on the existing one: widening a shared
-     * scan lambda by one branch nearly doubled the property-class rows that never used it.
+     * Otherwise the `.`/negated-class shape pays a full route entry per match, the other class routes one
+     * per sixteen. Not a flag on the existing function: widening a shared scan lambda by one branch nearly
+     * doubled the property-class rows that never used it.
      *
      * Search semantics only: \ref basic_match_iterator excludes anchored shapes from batching, and
      * `run_mode::full` keeps \ref run_codepoint_class.
@@ -5139,16 +5138,14 @@ namespace real::detail {
      *        \ref detail::regex_immutables.
      *
      * Search mode only: the automaton's leftmost-first scan IS the candidate search. Runtime only, never
-     * instantiated for the static storage's `State`.
+     * instantiated for the static storage's `State`. `noinline`, NOT `cold` (as \ref ac_ready), since inside
+     * the body of `run()` it regressed the negated-class rows on x86.
      *
      * \tparam OutSlots Output slot container.
      * \param[in]  text      The subject text.
      * \param[in]  start     Index to begin at.
      * \param[out] out_slots Receives the matched span on success.
      * \return `true` if some branch matched.
-     *
-     * `noinline`, NOT `cold`, as \ref ac_ready, to stay out of `run()`'s body, whose shared code regressed
-     * the negated-class rows on x86.
      */
     template <typename OutSlots>
 #if defined(__GNUC__) || defined(__clang__)
@@ -5170,7 +5167,7 @@ namespace real::detail {
         out_slots.assign(2, npos);
         return false;
       }
-      // Span-only (slot_count 2) — ensure_size, no npos fill; both slots rewritten.
+      // Both slots rewritten: no npos fill.
       ensure_slot_size(out_slots, 2);
       out_slots[0] = m.start;
       out_slots[1] = m.end;
@@ -5249,9 +5246,9 @@ namespace real::detail {
 
 #if defined(__aarch64__) || defined(__SSSE3__) || (defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__)))
     /*!
-     * \brief \ref alternation_pair_scan's blocks masked by the nibble fingerprint instead of the pairs. Its own
-     *        loop, because on x86 without SSSE3 in the build the whole loop is built for SSSE3 (the mask inlines
-     *        only into a caller built so) and is entered only when the plan said the CPU has it.
+     * \brief The blocks of \ref alternation_pair_scan masked by the nibble fingerprint instead of the pairs. Its
+     *        own loop: on x86 without SSSE3 in the build it is built for SSSE3 (the mask inlines only into a
+     *        caller built so) and entered only when the plan said the CPU has it.
      * \tparam MemberTail Scan the last blocks by the first bytes (\ref alternation_members_tail); false hands
      *                    them back through `resume`, for a caller with more first bytes than the small set.
      * \tparam MatchAt As \ref alternation_pair_scan.
@@ -5450,13 +5447,13 @@ namespace real::detail {
 
     /*!
      * \brief The alternation's probe pairs when this subject's first bytes are dense, for the block scans of
-     *        \ref run_alternation and \ref fill_alternation_spans; null otherwise, or when the storage keeps no
-     *        state for them (a compile-time one), or no plan fits.
+     *        \ref run_alternation and \ref fill_alternation_spans, else null (a compile-time storage keeps no
+     *        state for them, or no plan fits).
      *
      * Decided once per subject, from \ref alternation_sample_bytes bytes at \p pos, and only when at least
      * \ref alternation_sample_min remain: a short subject is scanned by the first bytes, unsampled. The
-     * plan is built once per program from its branches, read as the scans' `match_at` reads them. Out of
-     * line: its callers' first-byte loops keep the code they had.
+     * plan is built once per program from its branches, read as the scans' `match_at` reads them. Deciding
+     * is out of line (\ref alternation_plan_decide), so the callers' first-byte loops keep their code.
      * \param[in] text The subject.
      * \param[in] pos  Where the scan starts.
      * \param[in] mem  The branches' first bytes.
@@ -5468,7 +5465,7 @@ namespace real::detail {
                                                             std::array<std::uint8_t, 8>        mem,
                                                             std::size_t                        cnt) const
     {
-      // A made decision is read in line (per-match searches ask again); making it is out of line.
+      // A made decision is read in line: per-match searches ask again.
       if constexpr (requires(State & st) {
         st.alt_pairs;
       }) {
@@ -5624,8 +5621,8 @@ namespace real::detail {
      * \brief Search route for an alternation of literals with more first bytes than the small set holds: the
      *        blocks the nibble fingerprint marks, verified in branch order (priority unchanged), then the last
      *        bytes by the first-byte table. Taken per subject on a sample: where false candidates are dense
-     *        enough that verifying them costs more than the automaton's walk, it declines, and the automaton's
-     *        gate decides as before. Out of line: \ref run is shared by every route.
+     *        enough that verifying them costs more than the automaton's walk, it declines to the automaton's
+     *        gate. Out of line: \ref run is shared by every route.
      * \tparam OutSlots Output slot container.
      * \param[in]  text      The subject.
      * \param[in]  start     Where the search starts.
@@ -5766,9 +5763,8 @@ namespace real::detail {
 #if (defined(__ARM_NEON) || defined(__SSE2__)) && (defined(__aarch64__) || defined(__SSSE3__) || (defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__))))
     /*!
      * \brief Whether a sample of \ref alternation_sample_bytes starts from \p start shows false candidates sparse
-     *        enough for \ref run_alternation_wide: each one the fingerprint marks and no branch matches costs a
-     *        verification of every branch, which past \ref alternation_wide_false_budget costs more than the
-     *        automaton's walk. Stops as soon as the budget is spent.
+     *        enough for \ref run_alternation_wide, where each costs a verification of every branch; past
+     *        \ref alternation_wide_false_budget that costs more than the automaton's walk. Stops once spent.
      * \tparam MatchAt The branch verifier's type.
      * \param[in] text     The subject; \ref alternation_sample_min bytes past \p start are readable.
      * \param[in] start    The sample's first start.
@@ -5801,14 +5797,12 @@ namespace real::detail {
 #endif
 
     /*!
-     * \brief The variants' fingerprint for a program that is not a fixed alternation -- an alternation whose
-     *        branches hold a case-folded `i`, `s` or `k`, whose folds reach non-ASCII code points -- when this
-     *        subject's sample finds its first bytes dense and the fingerprint's candidates among them sparse.
-     *        Taken only where \ref next_candidate would scan by the first bytes. The fingerprint admits every
-     *        start a match can have, and a few more (each bucket crosses its members' nibbles); the anchored
-     *        walk that confirms each candidate rejects those, as it rejects a first byte that starts no match.
+     * \brief The variants' fingerprint for a program that is not a fixed alternation (branches holding a
+     *        case-folded `i`, `s` or `k`, folding to non-ASCII), when this subject's sample finds its first
+     *        bytes dense and the fingerprint's candidates among them sparse. Taken only where
+     *        \ref next_candidate would scan by the first bytes; decided once per subject. The fingerprint
+     *        admits every start a match can have and a few more, which the confirming anchored walk rejects.
      *        No candidate lands inside a code point: a continuation byte's high nibble is no first byte's.
-     *        Decided once per subject.
      * \param[in] text  The subject.
      * \param[in] start Where the search starts.
      * \return The plan, or null to scan by the first bytes.
@@ -6288,7 +6282,8 @@ namespace real::detail {
 
     /*!
      * \brief Fills up to \p cap matches of an alternation with more first bytes than the small set holds, from
-     *        \p start, by \ref run_alternation_wide's scan run from each match's end, without re-entering `run()`.
+     *        \p start, by the scan of \ref run_alternation_wide run from each match's end, without re-entering
+     *        `run()`.
      *
      * `run()` hands such an alternation to that route where \ref alternation_wide_may_take says so and the route
      * takes the subject on its sample (a verdict sticky per subject); otherwise the automaton's gate decides. The
@@ -6353,8 +6348,8 @@ namespace real::detail {
      * bytes, \ref pattern_hints::small_set_size), which the mask scan needs; other alternations are not
      * batched, rather than growing a second scan body here (docs/MEASUREMENT.md §5.4).
      *
-     * The scan is a COPY of run_alternation's, not a refactor: relocating that measured hot body risks a
-     * regression worse than this filler's gain. If the copy proves costly, refactor then.
+     * The scan is a COPY of run_alternation's, not a shared call: relocating that measured hot body risks a
+     * regression worse than this filler's gain.
      *
      * \param[in]  text  The subject.
      * \param[in]  start Where to begin.
