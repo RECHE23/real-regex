@@ -2,6 +2,27 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.10.3
+
+10.3 (**groups in one walk, an inner-literal route that gives way, a tenth of the headers gone**): **THE TABLES
+ARE NOT RE-RUN, AND THE STAMP STAYS AT `2026.9.11` + tree `79e6792`.** Each change was measured before and after
+(2026-10-03 to 2026-10-05):
+- **One-pass group extraction finds its end** (36417df; rows that iterate a one-pass pattern with groups, §B
+  `emails findall groups`): `(\w+)@(\w+)\.(\w+)` over 62 KB, find_iter arm64 409 → 294 µs; §B `emails findall
+  groups` 589 µs against 780 published. `sizeof(real::regex)` and the immutables +8 bytes.
+- **The inner-literal bill and the optional before the literal** (a46b8c5, e332005; no §A row has the shapes):
+  `[a-z]+ [a-z ]+x\d{4}` 1.20× → 1.00× against the route-less engine; `\w+\s*:\s*\d+` over a 200 KB log 0.13×.
+- **The walk's inner-literal reset** (a604ebed; no benchmark row): `\w+ [\w ]+x\d{4}` over flat text −20 %
+  instructions, three compilers; other inner-literal rows within 0.2 %.
+- **`real::dfa::match(rest)`** (20c9dbb; §D): −6 to −14 % instructions on a seven-rule lexer.
+- **The trailing-lookaround loop and the `.` route** (f329aba, c61aa4e; §A `lookahead`; the `.`/negated-class
+  route): −2 to −6 % instructions, and −3 to −5 % on UTF-8 text; other rows equal within 60 instructions.
+- **The consolidation commits** (84112d6 to 16151829): instruction counts equal or lower on GCC 13, GCC 15 and
+  GCC 14 (aarch64) for every row measured; declined where one moved.
+§B re-read against the published table (arm64, median of three): every row within 5 % or faster but the
+known-unstable `sub · dates with refs` (median 13.6–26.2 µs, minimum 12.9 against 13.7). No row's stamp moves.
+The multi-pattern section keeps its `600b0fb` stamp.
+
 ## v2026.10.2
 
 10.2 (**four wrong answers fixed, a tail after an inner literal kept on its route**): **THE TABLES ARE NOT
