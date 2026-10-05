@@ -659,6 +659,19 @@ TEST(onepass_fullmatch_routed_equals_pike)
   }
 }
 
+// The one-pass table is deterministic, so its "no" over [start, end] is the answer: a failing fullmatch of a
+// one-pass pattern runs no second engine after it (the bounded backtracker took the window before).
+TEST(onepass_fullmatch_no_runs_no_second_engine)
+{
+  const real::regex rx {R"((\w+)@(\w+))"};
+  (void) rx.fullmatch("warm@up"); // builds the table
+  real::detail::tally(real::detail::counter::bounded_backtrack_runs) = 0;
+  EXPECT(!rx.fullmatch("john@exa mple").matched());
+  EXPECT(!rx.fullmatch("no at sign").matched());
+  EXPECT_EQ(real::detail::tally(real::detail::counter::bounded_backtrack_runs).load(), std::uint64_t {0});
+  EXPECT(rx.fullmatch("john@example").matched());
+}
+
 // onepass keeps `code_` / `classes_` as spans over the byte_program it was built from, and one caller --
 // the Tier-B branch of pike_vm::ensure_op_table -- builds it from a byte_program LOCAL to its own block.
 // Those spans therefore dangle the moment that local dies. Nothing dereferences them (every reader is

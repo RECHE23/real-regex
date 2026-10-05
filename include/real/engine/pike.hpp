@@ -978,10 +978,11 @@ namespace real::detail {
         // one pass (extract returns false when it cannot); no DFA build is paid.
         if (!std::is_constant_evaluated() && !lazy_dfa_route_disabled() && mode == run_mode::full) {
           ensure_op_table();
-          if (prog_.immut != nullptr && prog_.immut->op_table.has_value() && prog_.immut->op_table->eligible()
-              && prog_.immut->op_table->extract(text, start, text.size(), out_slots)) {
+          if (prog_.immut != nullptr && prog_.immut->op_table.has_value() && prog_.immut->op_table->eligible()) {
             prof::tick_route(prof::route::onepass_full);
-            return true;
+            // The table is deterministic: an eligible table that extracts nothing proves the span does not
+            // match, so no engine runs after it.
+            return prog_.immut->op_table->extract(text, start, text.size(), out_slots) || fail_slots(out_slots);
           }
         }
         if (!std::is_constant_evaluated() && !lazy_dfa_route_disabled() && mode == run_mode::search
