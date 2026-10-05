@@ -659,6 +659,20 @@ TEST(onepass_fullmatch_routed_equals_pike)
   }
 }
 
+// With a position assertion Tier-A declines and the immutables build Tier-B as look_prog; the one-pass table
+// takes that program rather than building the same one again (each build expands every Unicode class's trie).
+TEST(onepass_table_reuses_the_tier_b_program)
+{
+  const real::regex rx {R"(\b(\w+)@(\w+)\b)"}; // groups: the confirm asks for the one-pass table
+  std::string       text(5000, 'x');
+  text += " alpha@beta ";
+  real::detail::tally(real::detail::counter::byte_program_builds) = 0;
+  const auto m {rx.search(text)};
+  EXPECT(m.matched());
+  // Tier-A, Tier-B and the inner literal's prefix: the table took Tier-B rather than building a fourth.
+  EXPECT_EQ(real::detail::tally(real::detail::counter::byte_program_builds).load(), std::uint64_t {3});
+}
+
 // The one-pass table is deterministic, so its "no" over [start, end] is the answer: a failing fullmatch of a
 // one-pass pattern runs no second engine after it (the bounded backtracker took the window before).
 TEST(onepass_fullmatch_no_runs_no_second_engine)
