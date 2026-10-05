@@ -160,6 +160,10 @@ TEST(inner_literal_rigid_prefix_search_is_leftmost)
     {.pattern = R"((ba|bb)+[ax]a)", .text = "aabbbaaaaax", .start = 2, .end = 8, .g1_start = 4, .g1_end = 6},
     {.pattern = R"([abx]+ba[ab]+)", .text = "aaaxbabaaxbab", .start = 0, .end = 13, .g1_start = real::npos, .g1_end = real::npos},
     {.pattern = R"((\w+)_(\w+))", .text = "a_b_c", .start = 0, .end = 5, .g1_start = 0, .g1_end = 3},
+    // The prefix run stops at `1` short of the suffix's end: the last `_` before it, not the last one.
+    {.pattern = R"(([a-z_]+)_(\w+))", .text = "ab_c1_d", .start = 0, .end = 7, .g1_start = 0, .g1_end = 2},
+    // A literal the class does not hold: the suffix run ends at its next occurrence.
+    {.pattern = "(\\w+)\xE2\x80\x94(\\w+)", .text = "ab\xE2\x80\x94" "cd\xE2\x80\x94" "ef", .start = 0, .end = 7, .g1_start = 0, .g1_end = 2},
   };
   for (const expected& c : cases) {
     real::regex re {c.pattern};
@@ -182,6 +186,10 @@ TEST(inner_literal_rigid_prefix_search_is_leftmost)
   // `_` is a word byte: the two runs keep the span and move the literal to its last occurrence.
   EXPECT(real::regex {R"((\w+)_(\w+))"}.raw_program().hints.il_fwd_class >= 0);
   EXPECT(real::regex {R"((\w+)_(\w+))"}.raw_program().hints.il_fwd_last);
+  // One class on both sides holding `_`: the prefix run past the literal ends where the suffix does.
+  EXPECT(real::regex {R"((\w+)_(\w+))"}.raw_program().hints.il_fwd_run_to_end);
+  EXPECT(real::regex {R"(([a-z_]+)_(\w+))"}.raw_program().hints.il_fwd_last);
+  EXPECT(!real::regex {R"(([a-z_]+)_(\w+))"}.raw_program().hints.il_fwd_run_to_end);
   // `[ab]` cannot cross `x`: no run keeps the span, so the confirm runs the engine.
   EXPECT(real::regex {R"([abx]+ba[ab]+)"}.raw_program().hints.il_fwd_class < 0);
 }

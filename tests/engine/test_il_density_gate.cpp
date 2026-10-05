@@ -364,3 +364,45 @@ TEST(il_first_build_keeps_the_warm_mark)
   EXPECT(rx.search(medium).matched());
   EXPECT(real::detail::tally(real::detail::counter::inner_literal_reverse_bytes).load() > 0U);
 }
+
+// A static_regex has no per-regex immutables, hence no shared DFAs: its walk must not arm the lazy-DFA filler,
+// which could only answer partial and leave each match to run() after a wasted refill.
+TEST(static_regex_walk_does_not_arm_the_lazy_dfa_filler)
+{
+  constexpr real::static_regex<"[a-z]+[0-9]|[0-9]+[a-z]"> rx;
+  std::string                                             text;
+  while (text.size() < 8000U) {
+    text += "abc1 22x ";
+  }
+  real::detail::tally(real::detail::counter::batch_fills) = 0;
+  std::size_t found {0};
+  for (const auto& m : rx.find_iter(text)) {
+    static_cast<void>(m);
+    ++found;
+  }
+  EXPECT(found > 1000U);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::batch_fills).load(), std::uint64_t {0});
+}
+
+// A two-run fill whose prefix and suffix are one class searches back for the last literal from the suffix's
+// end and must not walk the prefix run once per match; a prefix class that the suffix outgrows still walks
+// it, to find the last literal the prefix reaches. Both answer the groups `re` does.
+TEST(two_run_fill_walks_the_prefix_run_only_when_the_classes_differ)
+{
+  std::string text;
+  while (text.size() < 4000U) {
+    text += "id_42 name_foo val_7 ";
+  }
+  for (const auto& [pattern, walks] : {std::pair {R"((\w+)_(\w+))", false}, std::pair {R"(([a-z_]+)_(\w+))", true}}) {
+    const real::regex rx {pattern};
+    EXPECT(!rx.fullmatch("warm")); // builds the immutables the route reads
+    real::detail::tally(real::detail::counter::il_prefix_run_walks) = 0;
+    std::size_t found {0};
+    for (const auto& m : rx.find_iter(text)) {
+      EXPECT_EQ(m.str(2).find('_'), std::string::npos);
+      ++found;
+    }
+    EXPECT(found > 500U);
+    EXPECT_EQ(real::detail::tally(real::detail::counter::il_prefix_run_walks).load() > 0U, walks);
+  }
+}
