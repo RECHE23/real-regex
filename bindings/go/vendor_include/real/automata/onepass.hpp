@@ -1224,9 +1224,12 @@ namespace real::detail {
    * \brief Drop any DFAs cached for \p immut (caller holds nothing; takes map + slot locks).
    *        Invoked from `pike_vm`'s `ensure_immutables` rebuild so a reused immutables address — or
    *        the same address under a new program — cannot keep a previous pattern's DFAs.
-   * \param[in] immut The regex whose cached DFAs are dropped.
+   * \param[in] immut     The regex whose cached DFAs are dropped.
+   * \param[in] keep_warm Keep \ref shared_dfa_slot::il_warmed on a first build, after which a scan that declined
+   *                      before it still counts as the reuse the warm floor exists for.
    */
-  inline void reset_shared_dfas(regex_immutables* immut)
+  inline void reset_shared_dfas(regex_immutables* immut,
+                                bool              keep_warm = false)
   {
     shared_dfa_slot& slot {shared_dfa_for(immut)};
     // A held set is cleared by its next lease, which sees the generation move; the free ones go now.
@@ -1235,7 +1238,9 @@ namespace real::detail {
       const std::lock_guard<std::mutex> lock {slot.pool_mu};
       slot.free.clear();
     }
-    slot.il_warmed.store(false, std::memory_order_relaxed);
+    if (!keep_warm) {
+      slot.il_warmed.store(false, std::memory_order_relaxed);
+    }
   }
 
   /*!

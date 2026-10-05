@@ -346,7 +346,7 @@ TEST(find_iter_copies_survive_the_reused_buffer)
 // at the top of the loop, the cap let the walk search on, maybe through the whole rest of the subject.
 TEST(capped_replace_and_split_do_not_search_past_the_cap)
 {
-  const real::regex rx {R"((\d)x)"}; // groups keep the walk off the batched spans
+  const real::regex rx   {R"((\d)x)"}; // groups keep the walk off the batched spans
   std::string       text {"1x"};
   text += std::string(200000, 'a');
   text += "2x";

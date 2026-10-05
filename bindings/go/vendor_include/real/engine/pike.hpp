@@ -978,10 +978,11 @@ namespace real::detail {
         // one pass (extract returns false when it cannot); no DFA build is paid.
         if (!std::is_constant_evaluated() && !lazy_dfa_route_disabled() && mode == run_mode::full) {
           ensure_op_table();
-          if (prog_.immut != nullptr && prog_.immut->op_table.has_value() && prog_.immut->op_table->eligible()
-              && prog_.immut->op_table->extract(text, start, text.size(), out_slots)) {
+          if (prog_.immut != nullptr && prog_.immut->op_table.has_value() && prog_.immut->op_table->eligible()) {
             prof::tick_route(prof::route::onepass_full);
-            return true;
+            // The table is deterministic: an eligible table that extracts nothing proves the span does not
+            // match, so no engine runs after it.
+            return prog_.immut->op_table->extract(text, start, text.size(), out_slots) || fail_slots(out_slots);
           }
         }
         if (!std::is_constant_evaluated() && !lazy_dfa_route_disabled() && mode == run_mode::search
@@ -1808,10 +1809,12 @@ namespace real::detail {
       if (immut->built_for.load(std::memory_order_relaxed) == want) {
         return; // double-check
       }
+      const bool first_build {immut->built_for.load(std::memory_order_relaxed) == nullptr};
       // Destroy the old extractor BEFORE replacing the program it spans: onepass keeps spans over
       // byte_prog's buffers.
       immut->op_table.reset();
       immut->op_table_for.store(nullptr, std::memory_order_relaxed); // the extractor is gone with it
+      note(counter::byte_program_builds);
       immut->byte_prog = build_byte_program(prog_);                  // Tier-A: ineligible if assert/lookaround
       if (immut->byte_prog.eligible) {
         immut->alphabet =
@@ -1822,6 +1825,7 @@ namespace real::detail {
         immut->alphabet = {};
         // Perhaps declined on a position assertion: the search DFAs carry anchors and word boundaries
         // (lazy_dfa::close_look), so they get the Tier-B program; other consumers read byte_prog's verdict.
+        note(counter::byte_program_builds);
         immut->look_prog = build_byte_program(prog_, /*keep_assertions=*/ true);
       }
       immut->look_alphabet = immut->look_prog.eligible
@@ -1837,6 +1841,7 @@ namespace real::detail {
         pv.cp_classes         = prog_.prefix_cp_classes;
         pv.cp_ranges          = prog_.prefix_cp_ranges;
         pv.unicode_word       = prog_.unicode_word;
+        note(counter::byte_program_builds);
         immut->il_prefix_prog = build_byte_program(pv);
         // Cold first-scan floor (see run_inner_literal): size * 28 clamped to [64 KB, 512 KB] amortizes the
         // reverse-DFA build (email ~94 KB, date 64 KB). Checked only after the first memmem hit, so
@@ -1845,8 +1850,9 @@ namespace real::detail {
         immut->il_min_haystack =
           std::min<std::size_t>(512UL * 1024, std::max<std::size_t>(64UL * 1024, sz * 28));
       }
-      // Same immut address, new program: drop previous pattern's shared DFAs (not just address-reuse).
-      reset_shared_dfas(immut);
+      // Same immut address, new program: drop previous pattern's shared DFAs (not just address-reuse). A first
+      // build keeps il_warmed: a scan that declined before it is the reuse the warm floor exists for.
+      reset_shared_dfas(immut, /*keep_warm=*/ first_build);
       immut->built_for.store(want, std::memory_order_release);
     }
 
@@ -1873,15 +1879,14 @@ namespace real::detail {
       if (immut->op_table_for.load(std::memory_order_relaxed) == want) {
         return; // double-check
       }
-      // Tier-B differs from Tier-A only at `assert_position`, so without one reuse byte_prog: rebuilding
-      // re-expands every Unicode class's UTF-8 trie (2 of 5 trie builds per regex). Onepass keeps spans
-      // over its source program and the Tier-B local below dies with this block: only the constructor
-      // reads them, so never read `code_` after construction.
+      // Tier-B differs from Tier-A only at `assert_position`. With one, Tier-A declined and ensure_immutables
+      // already built Tier-B as look_prog: the extractor takes it rather than expanding every Unicode class's
+      // UTF-8 trie a second time. Onepass keeps spans over its source program; the rebuild destroys op_table
+      // before it replaces look_prog or byte_prog.
       if (std::any_of(prog_.code.begin(), prog_.code.end(),
                       [](const instr& in) { return in.op == opcode::assert_position; })) {
-        const byte_program tier_b {build_byte_program(prog_, /*keep_assertions=*/ true)};
-        if (tier_b.eligible) {
-          immut->op_table.emplace(tier_b); // one-pass extractor: Tier-A window + Tier-B anchored
+        if (immut->look_prog.eligible) {
+          immut->op_table.emplace(immut->look_prog); // one-pass extractor: Tier-A window + Tier-B anchored
         }
       }
       else if (immut->byte_prog.eligible) {
