@@ -328,3 +328,22 @@ TEST(il_bill_reads_no_more_than_it_allows)
   }
   EXPECT_EQ(found, std::size_t {1});
 }
+
+TEST(il_walk_enters_the_route_once_per_subject)
+{
+  // The candidate's reverse stops at once, but its confirm follows `[\w ]+` to the end of a subject without a
+  // newline, and the route then abandons the subject. A walk refills before any search: the abandon must be
+  // keyed on this subject, or the per-match search re-enables the route and confirms the whole subject again.
+  std::string run {"ab cd xy "};
+  while (run.size() < 60000U) {
+    run += "ab ";
+  }
+  const real::regex re    {R"(\w+ [\w ]+x\d\d\d\d)"};
+  (void) re.count_matches(run);        // a cold regex keeps the route off below its floor: warm it first
+  const std::string fresh {run + " "}; // a fresh subject: the warm-up's verdict is per subject
+  real::detail::tally(real::detail::counter::inner_literal_confirm_bytes) = 0;
+  EXPECT_EQ(re.count_matches(fresh), std::size_t {0});
+  const std::uint64_t read {real::detail::tally(real::detail::counter::inner_literal_confirm_bytes).load()};
+  EXPECT(read > 0U);
+  EXPECT(read <= fresh.size());
+}

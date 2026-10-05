@@ -46,6 +46,7 @@ namespace real::detail {
     batch_fills,                 //!< Calls a batched walk made to its filler.
     inner_literal_bill_trips,    //!< Times the inner-literal route gave way on its bill.
     inner_literal_reverse_bytes, //!< Bytes the inner-literal route's reverse automaton read.
+    inner_literal_confirm_bytes, //!< Bytes the inner-literal route's rejected forward confirms read.
     bounded_backtrack_runs,      //!< Windows the bounded backtracker filled rather than the VM.
     dfa_quits,                   //!< Searches or confirms the lazy DFAs handed to the VM because a scan quit.
     literal_pair_scans,          //!< Literal searches the two-byte block filter answered.

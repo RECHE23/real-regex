@@ -1536,6 +1536,7 @@ namespace real::detail {
           if (confirm_at(text, s, out_slots, stop)) {
             return true;          // confirmed: out_slots holds [s, e]
           }
+          note(counter::inner_literal_confirm_bytes, stop - s);
           if (bill.overspent(reversed + (stop - s), h - start) && prog_.immut != nullptr
               && prog_.immut->byte_prog.eligible) {
             give_way();
@@ -6736,8 +6737,10 @@ namespace real::detail {
         return 0;
       }
       else {
-        // No reset here: run()'s gate owns the per-haystack reset. Resetting here too would clear the gate's
-        // abandon and retry a route that gave up on every match.
+        // The per-haystack reset, as run()'s gate: a walk refills before any search, so without it an abandon
+        // here lands on the previous subject's key and run() clears it, entering the route a second time. Keyed
+        // on the subject, it never clears an abandon run() made on this one.
+        il_reset_on_new_haystack(text);
         if (state_.il_abandoned) {
           disarm = true; // and the caller stops asking: see \p disarm
           return 0;
