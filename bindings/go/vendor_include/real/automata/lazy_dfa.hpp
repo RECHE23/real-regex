@@ -1493,7 +1493,7 @@ namespace real::detail {
      * highest-priority thread reaching `match` (a lower-priority accept is suppressed while a higher one
      * lives). One left-to-right pass: linear per search. No captures: the windowed Pike pass fills the span
      * and applies the empty-match rule. With assertions the scan runs in the whole text, not a slice, so
-     * `^`, `\b`, `$` see what is there (\ref forward_end_look).
+     * `^`, `\b`, `$` see what is there (\ref scan_look).
      *
      * \param[in] text  Subject.
      * \param[in] start Offset the search starts at (the first seed).
@@ -1508,7 +1508,7 @@ namespace real::detail {
           return npos;
         }
         begin_scan();
-        return forward_end_look(text, start);
+        return scan_look<false>(text, start);
       }
       begin_scan();
       std::uint32_t       state    {start_state_}; // the seed at the start (a re-seeding state)
@@ -1580,7 +1580,7 @@ namespace real::detail {
         if (!eligible_) {
           return {.end = npos, .scanned_to = start};
         }
-        return anchored_end_look(text, start);
+        return scan_look<true>(text, start);
       }
       std::uint32_t state    {start_state_};
       std::size_t   best_end {npos};
@@ -2268,18 +2268,37 @@ namespace real::detail {
     }
 
     /*!
-     * \brief \ref forward_end for a program with position assertions. Each position's state is first resolved
-     *        by what follows it (\ref resolve), and the accept test and the step read the resolved state, so an
-     *        accept that a `$` or a `\b` guards is decided with the text on both sides of it.
-     * \param[in] text  Subject.
-     * \param[in] start The first seed's position.
-     * \return The match end in \p text, or \ref real::npos.
+     * \brief Whether \p pos is inside a UTF-8 code point: the byte there is a continuation byte.
+     * \param[in] text The subject.
+     * \param[in] pos  The position.
+     * \return True inside a code point; false at the end or at a code point's first byte.
      */
+    [[nodiscard]] static constexpr bool starts_inside_code_point(std::string_view text,
+                                                                 std::size_t      pos)
+    {
+      return pos < text.size() && (static_cast<std::uint8_t>(text[pos]) & 0xC0U) == 0x80U;
+    }
+
+    /*!
+     * \brief \ref forward_end and \ref anchored_end for a program with position assertions: the walk runs over
+     *        the whole text, so `^`, `\b` and `$` see what is there, and a state holding a pending assertion
+     *        resolves it on the key of what follows.
+     * \tparam Anchored One thread seeded at \p start (\ref anchored_end). Otherwise every position up to the
+     *                  first match seeds a thread (\ref forward_end), and a dead state before a match does not
+     *                  end the walk: an assertion can kill every thread at one position and let the next seed
+     *                  live (`^` after a newline).
+     * \param[in] text  Subject.
+     * \param[in] start The anchor, or the first seed's position.
+     * \return Anchored, the match end and how far the walk got (\ref anchored_result::quit when a Unicode
+     *         boundary met a non-ASCII byte or the cache thrashed); otherwise the match end, \ref real::npos or
+     *         \ref quit_pos.
+     */
+    template <bool Anchored>
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((noinline, cold)) // out of the hot scans' bodies: a program without assertions never calls it
 #endif
-    std::size_t forward_end_look(std::string_view text,
-                                 std::size_t      start)
+    std::conditional_t<Anchored, anchored_result, std::size_t> scan_look(std::string_view text,
+                                                                         std::size_t      start)
     {
       std::uint32_t state    {start_for(ctx_at(text, start))};
       std::size_t   best_end {npos};
@@ -2296,27 +2315,32 @@ namespace real::detail {
           const std::uint32_t memo {res_[state + key]};
           here = memo != no_transition ? memo : resolve(state, key);
           if (here == quit_state) {
-            return quit_pos;
+            // Even past an accept: whether a longer match wins is what the boundary would have told.
+            return look_quit<Anchored>(pos);
           }
           word = trans_[here + accept_col]; // a resolution holds nothing pending
         }
         if (word != no_match_idx) {
           best_end = pos;
           matched  = true;
-          here     = cut_cached(here);
+          if constexpr (Anchored) {
+            const std::uint32_t cut {trans_[here + cut_col]};
+            here = cut != no_transition ? cut : cut_cached(here);
+          }
+          else {
+            here = cut_cached(here);
+          }
           if (here == dead_state) {
             break;
           }
         }
-        // Before a match, a dead state is not the end: an assertion can kill every thread at one position
-        // and let the next seed live (`^` after a newline), so the scan keeps seeding.
-        if (pos >= text.size() || (here == dead_state && matched)) {
+        if (pos >= text.size() || (here == dead_state && (Anchored || matched))) {
           break;
         }
         const auto byte {static_cast<std::uint8_t>(text[pos])};
         // In text mode a match does not start inside a code point: the step onto a continuation byte
         // carries the threads without a fresh seed.
-        const bool seed            {!matched && (byte_mode_ || !starts_inside_code_point(text, pos + 1U))};
+        const bool seed            {!Anchored && !matched && (byte_mode_ || !starts_inside_code_point(text, pos + 1U))};
         // The cached edge read inline, as the plain scans do; step()/step_seeded() only on a miss.
         const std::uint32_t cached {(seed ? trans_seeded_ : trans_)[here + trans_col + alpha_.of[byte]]};
         if (cached != no_transition) {
@@ -2325,86 +2349,43 @@ namespace real::detail {
         else {
           miss_pos_ = pos;
           state     = seed ? step_seeded(here, byte) : step(here, byte);
-          if (thrashing_ && may_quit_) {
-            return quit_pos; // before a match the dead state keeps seeding, so the loop would not end on it
+          if constexpr (!Anchored) {
+            if (thrashing_ && may_quit_) {
+              return look_quit<Anchored>(pos); // the seeding dead state would not end the loop
+            }
           }
         }
         ++pos;
       }
-      // As the other scans: a cut that flushed hands back the dead state, which ends the loop as a match's end.
-      window_bytes_ += pos - scan_origin_;
-      return (thrashing_ && may_quit_) ? quit_pos : best_end;
-    }
-
-    /*!
-     * \brief Whether \p pos is inside a UTF-8 code point: the byte there is a continuation byte.
-     * \param[in] text The subject.
-     * \param[in] pos  The position.
-     * \return True inside a code point; false at the end or at a code point's first byte.
-     */
-    [[nodiscard]] static constexpr bool starts_inside_code_point(std::string_view text,
-                                                                 std::size_t      pos)
-    {
-      return pos < text.size() && (static_cast<std::uint8_t>(text[pos]) & 0xC0U) == 0x80U;
-    }
-
-    /*!
-     * \brief \ref anchored_end for a program with position assertions (see \ref forward_end_look).
-     * \param[in] text  Subject.
-     * \param[in] start The anchor.
-     * \return The match end and how far the walk got.
-     */
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline, cold)) // out of the hot scans' bodies: a program without assertions never calls it
-#endif
-    anchored_result anchored_end_look(std::string_view text,
-                                      std::size_t      start)
-    {
-      std::uint32_t state    {start_for(ctx_at(text, start))};
-      std::size_t   best_end {npos};
-      std::size_t   pos      {start};
-      scan_origin_ = start;
-      while (true) {
-        std::uint32_t here {state};
-        std::uint32_t word {trans_[state + accept_col]};
-        if (word == pending_idx) {
-          // The memoized resolution read inline, as the cached edges are; resolve() only on a miss.
-          const std::uint16_t key  {key_at(text, pos)};
-          const std::uint32_t memo {res_[state + key]};
-          here = memo != no_transition ? memo : resolve(state, key);
-          if (here == quit_state) {
-            // Even past an accept: whether a longer match wins is what the boundary would have told.
-            return {.end = npos, .scanned_to = pos, .quit = true};
-          }
-          word = trans_[here + accept_col];
-        }
-        if (word != no_match_idx) {
-          best_end = pos;
-          const std::uint32_t cut {trans_[here + cut_col]};
-          here = cut != no_transition ? cut : cut_cached(here);
-          if (here == dead_state) {
-            break;
-          }
-        }
-        if (pos >= text.size() || here == dead_state) {
-          break;
-        }
-        const auto          byte   {static_cast<std::uint8_t>(text[pos])};
-        const std::uint32_t cached {trans_[here + trans_col + alpha_.of[byte]]};
-        if (cached != no_transition) {
-          state = cached;
-        }
-        else {
-          miss_pos_ = pos;
-          state     = step(here, byte);
-        }
-        ++pos;
-      }
+      // A cut that flushed hands back the dead state, which ends the loop as a match's end.
       window_bytes_ += pos - scan_origin_;
       if (thrashing_ && may_quit_) {
-        return {.end = npos, .scanned_to = pos, .quit = true};
+        return look_quit<Anchored>(pos);
       }
-      return {.end = best_end, .scanned_to = pos};
+      if constexpr (Anchored) {
+        return anchored_result {.end = best_end, .scanned_to = pos};
+      }
+      else {
+        return best_end;
+      }
+    }
+
+    /*!
+     * \brief \ref scan_look's answer when the walk quits.
+     * \tparam Anchored Which walk quit.
+     * \param[in] pos Where it stopped.
+     * \return The quit result in that walk's form.
+     */
+    template <bool Anchored>
+    [[nodiscard]] static constexpr std::conditional_t<Anchored, anchored_result, std::size_t> look_quit(std::size_t pos)
+    {
+      if constexpr (Anchored) {
+        return anchored_result {.end = npos, .scanned_to = pos, .quit = true};
+      }
+      else {
+        static_cast<void>(pos);
+        return quit_pos;
+      }
     }
 
     /*!
