@@ -347,3 +347,20 @@ TEST(il_walk_enters_the_route_once_per_subject)
   EXPECT(read > 0U);
   EXPECT(read <= fresh.size());
 }
+
+// A short first call marks the regex warm without building anything; the next, longer call builds the
+// immutables, and that first build must not clear the mark, or the warm floor never applies and the route
+// is abandoned below the cold one.
+TEST(il_first_build_keeps_the_warm_mark)
+{
+  const real::regex rx {R"(\w+ [a-z]+x\d\d\d\d)"};
+  (void) rx.search("ab cdx1234"); // below the warm floor: no build
+  std::string medium;
+  while (medium.size() < 8000U) {
+    medium += "the quick fox x12 jumps ";
+  }
+  medium += "ab cdx1234";
+  real::detail::tally(real::detail::counter::inner_literal_reverse_bytes) = 0;
+  EXPECT(rx.search(medium).matched());
+  EXPECT(real::detail::tally(real::detail::counter::inner_literal_reverse_bytes).load() > 0U);
+}

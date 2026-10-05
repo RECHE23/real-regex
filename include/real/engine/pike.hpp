@@ -1809,6 +1809,7 @@ namespace real::detail {
       if (immut->built_for.load(std::memory_order_relaxed) == want) {
         return; // double-check
       }
+      const bool first_build {immut->built_for.load(std::memory_order_relaxed) == nullptr};
       // Destroy the old extractor BEFORE replacing the program it spans: onepass keeps spans over
       // byte_prog's buffers.
       immut->op_table.reset();
@@ -1849,8 +1850,9 @@ namespace real::detail {
         immut->il_min_haystack =
           std::min<std::size_t>(512UL * 1024, std::max<std::size_t>(64UL * 1024, sz * 28));
       }
-      // Same immut address, new program: drop previous pattern's shared DFAs (not just address-reuse).
-      reset_shared_dfas(immut);
+      // Same immut address, new program: drop previous pattern's shared DFAs (not just address-reuse). A first
+      // build keeps il_warmed: a scan that declined before it is the reuse the warm floor exists for.
+      reset_shared_dfas(immut, /*keep_warm=*/ first_build);
       immut->built_for.store(want, std::memory_order_release);
     }
 
