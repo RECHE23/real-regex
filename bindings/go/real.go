@@ -69,10 +69,21 @@ const dollarEndOnly = 128
 // import-path change every year, which is exactly what the tag-prefix scheme avoids.
 var EngineVersion = C.GoString(C.real_go_engine_version())
 
-// cBytes returns a pointer usable as a real_capi (text, len) or (repl, repl_len) argument.
-// (NULL, 0) is a valid empty subject throughout the C ABI (v2026.7.39+) —
-// so an empty slice needs no allocation at all, matching Go's own nil-slice representation.
+// cBytes returns a pointer usable as a real_capi (text, len) or (repl, repl_len) argument:
+// the slice's own memory, not a C copy. cgo allows it because the bytes hold no Go pointer and
+// every function this package passes it to keeps nothing after it returns; real_find_iter*,
+// which does keep its text, must never receive it. (NULL, 0) is a valid empty subject
+// throughout the C ABI (v2026.7.39+), matching Go's own nil-slice representation.
 func cBytes(b []byte) (unsafe.Pointer, func()) {
+	if len(b) == 0 {
+		return nil, func() {}
+	}
+	return unsafe.Pointer(unsafe.SliceData(b)), func() {}
+}
+
+// cCopy is cBytes with a C copy, for a pointer stored where cgo forbids a Go pointer: an array of
+// pointers handed to C (real_set_compile's patterns) may not point into Go memory.
+func cCopy(b []byte) (unsafe.Pointer, func()) {
 	if len(b) == 0 {
 		return nil, func() {}
 	}

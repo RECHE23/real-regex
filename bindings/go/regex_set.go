@@ -33,7 +33,7 @@ func CompileSet(patterns []string) (*RegexSet, error) {
 		}
 	}()
 	for i, p := range patterns {
-		ptr, free := cBytes([]byte(p))
+		ptr, free := cCopy([]byte(p))
 		cpatterns[i] = (*C.char)(ptr)
 		clens[i] = C.size_t(len(p))
 		frees = append(frees, free)
