@@ -39,6 +39,8 @@ extern "C" {
     fn real_iter_free(iter: *mut RealIter);
     fn real_count_matches(re: *const RealRegex, text: *const c_char, len: usize) -> usize;
     fn real_can_extend(re: *const RealRegex, text: *const c_char, len: usize, start: usize) -> i32;
+    fn real_match(re: *const RealRegex, text: *const c_char, len: usize, start: usize, end: usize, mode: i32,
+                  spans: *mut usize) -> i32;
     fn real_set_compile_ex(patterns: *const *const c_char, lens: *const usize, n: usize, flags: u32,
                            errbuf: *mut c_char, errbuf_len: usize, code: *mut i32,
                            err_pos: *mut usize) -> *mut RealRegexSet;
@@ -451,17 +453,64 @@ impl Regex {
         SpanCursor::Real(RawSpans { iter, handle: self.handle, text: text.as_bytes(), ngroups: self.ngroups, buf: vec![0usize; 2 * self.ngroups], origin: start.unwrap_or(0), last_end: None, drive_pos: None, utf8: true, _re: PhantomData })
     }
 
+    // The leftmost match at or after `start`, through one engine call with no iterator: an iterator's first
+    // fill looks for several matches, which for a literal can scan to the end of the haystack, and is a heap
+    // object besides. The cursor's first match is this same one: a non-empty match comes straight from the
+    // engine, and an empty one is searched from `start` with no previous end to be adjacent to. Fills `buf`
+    // (2 * ngroups slots) and returns group 0's span.
+    fn first_into(&self, text: &str, start: usize, buf: &mut [usize]) -> Option<(usize, usize)> {
+        // SAFETY: the handle is live for &self, the pointer/length pair describes `text`, and `buf` holds the
+        // 2 * ngroups slots real_match fills.
+        let rc = unsafe {
+            real_match(self.handle, text.as_ptr().cast::<c_char>(), text.len(), start, text.len(), 0, buf.as_mut_ptr())
+        };
+        match rc {
+            0 => None,
+            -1 => panic!("real-regex: engine search failed"),
+            _ => Some((buf[0], buf[1])),
+        }
+    }
+
+    // `first_into` with a slot buffer on the stack when the groups fit, for the queries that read group 0
+    // only or copy the slots out.
+    fn first_with<R>(&self, text: &str, start: usize, take: impl FnOnce(Option<(usize, usize)>, &[usize]) -> R) -> R {
+        let n = 2 * self.ngroups;
+        if n <= CAPS_INLINE_SLOTS {
+            let mut buf = [usize::MAX; CAPS_INLINE_SLOTS];
+            let got = self.first_into(text, start, &mut buf[..n]);
+            take(got, &buf[..n])
+        } else {
+            let mut buf = vec![usize::MAX; n];
+            let got = self.first_into(text, start, &mut buf);
+            take(got, &buf)
+        }
+    }
+
+    fn uses_engine(&self) -> bool {
+        #[cfg(feature = "fallback")]
+        if self.fallback.is_some() {
+            return false;
+        }
+        true
+    }
+
     fn caps_from<'t>(&self, text: &'t str, cur: &SpanCursor<'_, '_>) -> Captures<'t> {
         Captures { text, slots: cur.slot_store(), groups: Arc::clone(&self.groups) }
     }
 
     /// Whether the pattern matches anywhere in `text`.
     pub fn is_match(&self, text: &str) -> bool {
+        if self.uses_engine() {
+            return self.first_with(text, 0, |got, _| got.is_some());
+        }
         self.raw(text, None).advance().is_some()
     }
 
     /// Like [`is_match`](Regex::is_match), searching from byte offset `start`.
     pub fn is_match_at(&self, text: &str, start: usize) -> bool {
+        if self.uses_engine() {
+            return self.first_with(text, start, |got, _| got.is_some());
+        }
         self.raw(text, Some(start)).advance().is_some()
     }
 
@@ -481,11 +530,17 @@ impl Regex {
 
     /// The leftmost match's whole-match span, or `None`.
     pub fn find<'t>(&self, text: &'t str) -> Option<Match<'t>> {
+        if self.uses_engine() {
+            return self.first_with(text, 0, |got, _| got.map(|(a, b)| Match { text, start: a, end: b }));
+        }
         self.raw(text, None).advance().map(|(a, b)| Match { text, start: a, end: b })
     }
 
     /// Like [`find`](Regex::find), searching from byte offset `start`.
     pub fn find_at<'t>(&self, text: &'t str, start: usize) -> Option<Match<'t>> {
+        if self.uses_engine() {
+            return self.first_with(text, start, |got, _| got.map(|(a, b)| Match { text, start: a, end: b }));
+        }
         self.raw(text, Some(start)).advance().map(|(a, b)| Match { text, start: a, end: b })
     }
 
@@ -496,6 +551,11 @@ impl Regex {
 
     /// The capture groups of the leftmost match, or `None`.
     pub fn captures<'t>(&self, text: &'t str) -> Option<Captures<'t>> {
+        if self.uses_engine() {
+            return self.first_with(text, 0, |got, slots| {
+                got.map(|_| Captures { text, slots: SlotStore::from_flat(slots), groups: Arc::clone(&self.groups) })
+            });
+        }
         {
             let mut c = self.raw(text, None);
             c.advance().map(|_| self.caps_from(text, &c))
@@ -504,6 +564,11 @@ impl Regex {
 
     /// Like [`captures`](Regex::captures), searching from byte offset `start`.
     pub fn captures_at<'t>(&self, text: &'t str, start: usize) -> Option<Captures<'t>> {
+        if self.uses_engine() {
+            return self.first_with(text, start, |got, slots| {
+                got.map(|_| Captures { text, slots: SlotStore::from_flat(slots), groups: Arc::clone(&self.groups) })
+            });
+        }
         {
             let mut c = self.raw(text, Some(start));
             c.advance().map(|_| self.caps_from(text, &c))
@@ -579,7 +644,7 @@ impl Regex {
         if let Some(fb) = &self.fallback {
             return fb.shortest_match(text); // the regex backend gives true earliest-completion
         }
-        self.raw(text, None).advance().map(|(_, e)| e)
+        self.first_with(text, 0, |got, _| got.map(|(_, e)| e))
     }
 
     /// Count non-overlapping matches without materialising match objects (matching-only).
