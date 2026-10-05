@@ -26,8 +26,9 @@ and never exponential.
 > [the divergences page](@ref divergences). The RE2 drop-in (`real::compat::re2`) is a separate
 > compat layer — its syntax contract is documented at the top of `<real/compat/re2/re2.hpp>`.
 
-**The contract:** behave identically to the ECMAScript spec where `real` can prove it, and fall
-back to `std::regex` otherwise — *never a silent divergence*. The ECMAScript spec is the primary
+**The contract:** behave identically to the ECMAScript spec where `real` can prove it; a pattern it
+cannot run is rejected under `policy::strict` (the default) or delegated to `std::regex` under
+`policy::fallback` — *never a silent divergence*. The ECMAScript spec is the primary
 oracle; `std::regex` (libstdc++/libc++) is a secondary oracle whose known deviations from the spec
 are catalogued below (where `real`, following the spec, is the correct one).
 
