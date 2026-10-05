@@ -7,6 +7,7 @@ already follow. The date row is a deliberate no-match scan (no yyyy-mm-dd in its
 not captures."""
 import argparse
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -98,7 +99,10 @@ def run(binary, pattern, text, mode=None):
         f.write(text)
         path = f.name
     cmd = [binary, pattern, path] + ([mode] if mode else [])
-    out = subprocess.run(cmd, capture_output=True, text=True).stdout.split()
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True).stdout.split()
+    finally:
+        os.unlink(path)  # one corpus file per call: kept, a run of the duel leaves ~40 MB behind
     if out[0] == "unsupported":
         return None, 0, None
     return float(out[0]), int(out[1]), out[2]
