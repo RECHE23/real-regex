@@ -237,6 +237,52 @@ def self_test_rebuild() -> int:
     return 0
 
 
+def self_test_interrupted_write() -> int:
+    """The signal that lands DURING the sabotage's own write, deterministically.
+
+    SIGTERM's timing cannot pick that instant; this phase does: the first write to the canary stops
+    halfway (the file truncated, half the text written) and raises as the handler would. The run
+    must come back with the canary whole.
+    """
+    path = ROOT / CANARY
+    original = path.read_text()
+    real_write = Path.write_text
+    state = {"interrupted": False}
+
+    def write_then_interrupt(self: Path, data: str, *args: object, **kwargs: object) -> int:
+        if not state["interrupted"] and self == path and CANARY_NEW in data:
+            state["interrupted"] = True
+            real_write(self, data[: len(data) // 2], *args, **kwargs)
+            raise KeyboardInterrupt("sabotage --self-test: interrupted mid-write")
+        return real_write(self, data, *args, **kwargs)
+
+    saved = {name: signal.getsignal(getattr(signal, name)) for name in ("SIGINT", "SIGTERM")
+             if hasattr(signal, name)}
+    Path.write_text = write_then_interrupt  # type: ignore[method-assign]
+    code: int | None = None
+    try:
+        code = main(["--file", CANARY, "--label", "interrupted-write",
+                     "--old", CANARY_OLD, "--new", CANARY_NEW, "--", sys.executable, "-c", "pass"])
+    except KeyboardInterrupt:
+        pass  # escaped the run: judged below by the canary, as a revert that never ran
+    finally:
+        Path.write_text = real_write  # type: ignore[method-assign]
+        for name, handler in saved.items():
+            signal.signal(getattr(signal, name), handler)
+    got = path.read_text()
+    if got != original:
+        path.write_text(original)
+        print("sabotage --self-test: an interrupt during the sabotage's own write left the canary "
+              "partial — the write must sit inside the revert's try.")
+        return 2
+    if not state["interrupted"] or code != 2:
+        print(f"sabotage --self-test: the mid-write interrupt was not exercised "
+              f"(interrupted={state['interrupted']}, status={code}).")
+        return 2
+    print("sabotage --self-test: a mid-write interrupt restored the canary whole")
+    return 0
+
+
 def self_test() -> int:
     """SIGTERM a run in flight; the canary must come back. SIGKILL is uncatchable and untested."""
     if os.name == "nt":
@@ -308,8 +354,9 @@ def main(argv: list[str]) -> int:
                     help="-- followed by the command whose exit status is the verdict")
     args = ap.parse_args(argv)
     if args.self_test:
-        # Three phases, all or nothing: the mapping, the artifact after a revert, then the signal.
-        for phase in (self_test_artifact_map, self_test_rebuild, self_test):
+        # Four phases, all or nothing: the mapping, the artifact after a revert, then the signal mid-write
+        # and in flight.
+        for phase in (self_test_artifact_map, self_test_rebuild, self_test_interrupted_write, self_test):
             code = phase()
             if code != 0:
                 return code
@@ -345,10 +392,15 @@ def main(argv: list[str]) -> int:
         return 2
 
     install_interrupt_handlers()
-    src.write_text(text.replace(args.old, args.new, 1))
     verdict = 3
     child: subprocess.Popen[str] | None = None
+    artifact: tuple[list[str], str] | None = None
+    written = False
     try:
+        # Inside the try: a signal during the write (the file already truncated) must still reach the
+        # revert below, or the tree keeps a partial file.
+        src.write_text(text.replace(args.old, args.new, 1))
+        written = True
         artifact = artifact_for(rel)
         if artifact is not None and not rebuild(*artifact):
             return 2
@@ -386,7 +438,12 @@ def main(argv: list[str]) -> int:
         verdict = 2
     finally:
         back = src.read_text()
-        if back.count(args.new) == 1:
+        if not written:
+            # Interrupted mid-write: the file holds a prefix of one text or the other, so neither anchor
+            # is trustworthy. The original is known whole; put it back.
+            if back != text:
+                src.write_text(text)
+        elif back.count(args.new) == 1:
             src.write_text(back.replace(args.new, args.old, 1))
         else:
             # No `return` here: a return inside finally swallows an exception in flight, and this
