@@ -1250,9 +1250,13 @@ class TestCharOffsetScaling(unittest.TestCase):
         return (time.perf_counter() - start) * 1000.0
 
     def test_span_reads_scale_linearly(self):
-        small, large = 4000, 16000  # 4x the subject
-        best_small = min(self._elapsed_ms(small, True) for _ in range(3))
-        best_large = min(self._elapsed_ms(large, True) for _ in range(3))
+        # Sizes that keep the small run several milliseconds long, and the two sizes alternated round by
+        # round: a scheduler stall then hits one round of each, not every run of one size.
+        small, large = 8000, 32000  # 4x the subject
+        best_small = best_large = float("inf")
+        for _ in range(5):
+            best_small = min(best_small, self._elapsed_ms(small, True))
+            best_large = min(best_large, self._elapsed_ms(large, True))
         # Linear would be ~4x. Quadratic was ~15x (41.4 -> 633.2). A generous 8x ceiling separates
         # the two by a wide margin while leaving room for scheduler noise on a busy machine.
         self.assertLess(
