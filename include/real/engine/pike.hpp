@@ -6326,6 +6326,11 @@ namespace real::detail {
      * \param[out] disarm  The route declined this subject: batch no more of it.
      * \return How many spans were written.
      */
+    // Out of line: inlined into basic_match_iterator::refill_batch, it costs the class loops there registers
+    // and their walks instructions; a call per buffer of spans is nothing to its own walk.
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
     std::size_t fill_alternation_wide_spans(std::string_view text,
                                             std::size_t      start,
                                             cp_span*         out,
@@ -6633,6 +6638,11 @@ namespace real::detail {
      * \param[in]  cap   Capacity of \p out.
      * \return How many spans were written.
      */
+    // Out of line: inlined into basic_match_iterator::refill_batch, it costs the class loops there registers
+    // and their walks instructions; a call per buffer of spans is nothing to its own walk.
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
     std::size_t fill_fixed_shape_spans(std::string_view text,
                                        std::size_t      start,
                                        cp_span        * out,
@@ -6699,6 +6709,11 @@ namespace real::detail {
      * \param[in]  cap   Capacity of \p out; the walk stops there and resumes from the last end.
      * \return How many spans were written.
      */
+    // Out of line: inlined into basic_match_iterator::refill_batch, it costs the class loops there registers
+    // and their walks instructions; a call per buffer of spans is nothing to its own walk.
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
     std::size_t fill_exact_literal_spans(std::string_view text,
                                          std::size_t      start,
                                          cp_span        * out,
