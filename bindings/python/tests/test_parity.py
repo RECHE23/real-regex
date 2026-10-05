@@ -215,6 +215,26 @@ class TestParity(unittest.TestCase):
         """sub() with a literal replacement yields identical results."""
         self.for_all(lambda p, r, t: self.assertEqual(p.sub("#", t), r.sub("#", t)))
 
+    def test_sub_without_a_replacement_returns_the_subject_itself(self):
+        """A sub() that replaces nothing hands back the very str or bytes object, as re does; a subclass or a
+        bytes-like subject still gets a fresh exact str or bytes."""
+        class Text(str):
+            pass
+
+        for pattern, repl, subject in [("x", "Z", "abc"), ("x", "Z", ""), (b"x", b"Z", b"abc"),
+                                       ("x", "Z", "café " * 1000)]:
+            with self.subTest(pattern=pattern, subject=subject[:8]):
+                self.assertIs(real.compile(pattern).sub(repl, subject), subject)
+                self.assertIs(re.compile(pattern).sub(repl, subject), subject)
+                self.assertEqual(real.compile(pattern).subn(repl, subject), (subject, 0))
+        self.assertIsNot(real.compile("a").sub("a", "abc"), "abc")
+        for subject in [Text("abc"), bytearray(b"abc"), memoryview(b"abc")]:
+            pattern, repl = ("x", "Z") if isinstance(subject, str) else (b"x", b"Z")
+            with self.subTest(subject=type(subject).__name__):
+                out = real.compile(pattern).sub(repl, subject)
+                self.assertIs(type(out), type(re.compile(pattern).sub(repl, subject)))
+                self.assertEqual(out, re.compile(pattern).sub(repl, subject))
+
     def test_sub_with_group_refs_parity(self):
         """sub() with back-references yields identical results."""
         for pattern, repl in [(r"(\w+)@(\w+)", r"\2/\1"),

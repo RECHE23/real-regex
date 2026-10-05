@@ -1231,7 +1231,7 @@ PyObject* MatchIterator_iter(PyObject* self) {
 
 PyObject* MatchIterator_iternext(PyObject* self) {
     auto* it = reinterpret_cast<MatchIteratorObject*>(self);
-    if (*it->cur == match_iter_t {}) {  // default-constructed == end sentinel: exhausted
+    if (it->cur->exhausted()) {  // not `== match_iter_t {}`: that builds a whole iterator, state and all, per step
         return nullptr;                 // NULL with no exception set => StopIteration
     }
     PyObject* obj = nullptr;
@@ -1906,12 +1906,16 @@ PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_c
         }
     }
 
-    PyObject* out = pat->is_bytes != 0
-                        ? PyBytes_FromStringAndSize(result.data(),
-                                                    static_cast<Py_ssize_t>(result.size()))
-                        : PyUnicode_DecodeUTF8(result.data(),
-                                               static_cast<Py_ssize_t>(result.size()),
-                                               nullptr);
+    // Nothing replaced: re hands back the very str or bytes object (a bytes-like subject still gets bytes), and
+    // skipping the decode keeps a no-match sub O(1) past its scan.
+    PyObject* out = done == 0 && (PyUnicode_CheckExact(string) || PyBytes_CheckExact(string))
+                        ? Py_NewRef(string)
+                        : pat->is_bytes != 0
+                            ? PyBytes_FromStringAndSize(result.data(),
+                                                        static_cast<Py_ssize_t>(result.size()))
+                            : PyUnicode_DecodeUTF8(result.data(),
+                                                   static_cast<Py_ssize_t>(result.size()),
+                                                   nullptr);
     if (out == nullptr || !with_count) {
         return out;
     }
