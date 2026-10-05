@@ -341,3 +341,22 @@ TEST(find_iter_copies_survive_the_reused_buffer)
   EXPECT_EQ(saved[2][0], "c333"sv);
   EXPECT_EQ(saved[2][2], "333"sv);
 }
+
+// A capped replace or split stops once the cap is reached, not after searching for the match past it: tested
+// at the top of the loop, the cap let the walk search on, maybe through the whole rest of the subject.
+TEST(capped_replace_and_split_do_not_search_past_the_cap)
+{
+  const real::regex rx {R"((\d)x)"}; // groups keep the walk off the batched spans
+  std::string       text {"1x"};
+  text += std::string(200000, 'a');
+  text += "2x";
+  real::detail::tally(real::detail::counter::prefilter_work_units) = 0;
+  const std::string replaced {rx.replace(text, "#", 1)};
+  EXPECT_EQ(replaced.substr(0, 2), std::string {"#a"});
+  EXPECT_EQ(replaced.substr(replaced.size() - 2), std::string {"2x"});
+  EXPECT(real::detail::tally(real::detail::counter::prefilter_work_units).load() < text.size() * 3 / 2);
+  real::detail::tally(real::detail::counter::prefilter_work_units) = 0;
+  const auto pieces {rx.split(text, 1)};
+  EXPECT_EQ(pieces.size(), std::size_t {3}); // before, the group, the rest
+  EXPECT(real::detail::tally(real::detail::counter::prefilter_work_units).load() < text.size() * 3 / 2);
+}

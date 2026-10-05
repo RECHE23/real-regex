@@ -483,10 +483,7 @@ size_t real_sub(const real_regex* re, const char* text, size_t len,
     std::string             result;
     std::size_t              last {0};
     std::size_t              done {0};
-    for (const auto& m : re->rx.find_iter(subject)) {
-      if (count != 0 && done == count) {
-        break;
-      }
+    for (const auto& m : re->rx.find_iter(subject)) { // the cap after a replacement: real::regex::replace
       result.append(subject.data() + last, m.start() - last);
       for (const auto& seg : segments) {
         if (seg.group < 0) {
@@ -501,7 +498,9 @@ size_t real_sub(const real_regex* re, const char* text, size_t len,
         }
       }
       last = m.end();
-      ++done;
+      if (++done == count) {
+        break;
+      }
     }
     result.append(subject.data() + last, len - last);
     if (n_subs != nullptr) {

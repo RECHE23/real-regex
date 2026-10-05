@@ -1070,14 +1070,15 @@ bool collect_match_spans(PatternObject* pat, const subject_view& sv, std::size_t
         const GilRelease unlocked;
         std::size_t count = 0;
         for (const auto& match : pat->rx->find_iter(sv.view(), pos_byte, endpos_byte)) {
-            if (max_matches != 0 && count == max_matches) {
-                break;
-            }
             for (std::size_t group = 0; group <= ngroups; ++group) {
                 spans.push_back(match.start(group));
                 spans.push_back(match.end(group));
             }
-            ++count;
+            // The cap after a match, not before the next: tested first, the walk had already searched one
+            // match past it, maybe the whole rest of the subject.
+            if (++count == max_matches) {
+                break;
+            }
         }
     } catch (...) {
         return false;  // ~GilRelease re-acquired the GIL during unwinding
@@ -1403,16 +1404,15 @@ PyObject* Pattern_split(PyObject* self, PyObject* args, PyObject* kwargs) {
         try {
             Py_ssize_t done = 0;
             for (const auto& match : pat->rx->find_iter(sv.view())) {
-                if (maxsplit != 0 && done == maxsplit) {
-                    break;
-                }
                 if (!emit_match([&](std::size_t group) {
                     return std::pair {match.start(group), match.end(group)};
                 })) {
                     Py_DECREF(out);
                     return nullptr;
                 }
-                ++done;
+                if (++done == maxsplit) {  // the cap after a split: see collect_match_spans
+                    break;
+                }
             }
         } catch (...) {
             Py_DECREF(out);
@@ -1804,9 +1804,6 @@ void run_template_sub(const real::regex& rx, const subject_view& sv,
     Py_ssize_t last = 0;
     done = 0;
     for (const auto& match : rx.find_iter(sv.view())) {
-        if (count != 0 && done == count) {
-            break;
-        }
         result.append(sv.data + last, static_cast<std::size_t>(match.start()) - last);
         apply_template(segments, sv.data,
                        [&](std::size_t g) -> std::optional<std::pair<std::size_t, std::size_t>> {
@@ -1817,7 +1814,9 @@ void run_template_sub(const real::regex& rx, const subject_view& sv,
                        },
                        result);
         last = static_cast<Py_ssize_t>(match.end());
-        ++done;
+        if (++done == count) {  // the cap after a replacement: see collect_match_spans
+            break;
+        }
     }
     result.append(sv.data + last, static_cast<std::size_t>(sv.len - last));
 }
@@ -1879,9 +1878,6 @@ PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_c
             const Py_ssize_t full_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
             Py_ssize_t       last     = 0;
             for (const auto& match : pat->rx->find_iter(sv.view())) {
-                if (count != 0 && done == count) {
-                    break;
-                }
                 result.append(sv.data + last, static_cast<std::size_t>(match.start()) - last);
                 PyObject* match_obj = make_match(pat, string, match, 0, full_len);
                 if (match_obj == nullptr) {
@@ -1900,7 +1896,9 @@ PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_c
                 result.append(text);
                 Py_DECREF(value);
                 last = static_cast<Py_ssize_t>(match.end());
-                ++done;
+                if (++done == count) {  // the cap after a replacement: see collect_match_spans
+                    break;
+                }
             }
             result.append(sv.data + last, static_cast<std::size_t>(sv.len - last));
         } catch (...) {
