@@ -6474,10 +6474,9 @@ namespace real::detail {
     /*!
      * \brief Is the exact-literal route the one `run()` would take, in its one-search subset?
      *
-     * Mirrors `run()`'s cascade, like lazy_dfa_is_the_route: only the class loops sit above this route
-     * (\ref no_class_loop_above). `literal_one_search` carries the rest: no capture, assertion or anchor,
-     * a literal of >= 2 bytes and `prefix_size == exact_literal_len`, so the answer is `find_prefix` plus
-     * two stores.
+     * Mirrors `run()`'s cascade, like lazy_dfa_is_the_route: only the class loops sit above this route.
+     * `literal_one_search` carries the rest (no capture, assertion or anchor, a literal of >= 2 bytes,
+     * `prefix_size == exact_literal_len`), so the answer is `find_prefix` plus two stores.
      *
      * \param[in] hints The program's shape hints.
      * \return True when no earlier route in the cascade claims this shape.
@@ -6485,7 +6484,7 @@ namespace real::detail {
     [[nodiscard]] static constexpr bool exact_literal_is_the_route(const pattern_hints& hints) noexcept
     {
       return hints.exact_literal_len > 0
-             && hints.literal_one_search                         // no capture / assertion / anchor, len >= 2
+             && hints.literal_one_search
              && no_class_loop_above(hints);
     }
 
@@ -6660,8 +6659,8 @@ namespace real::detail {
     /*!
      * \brief Fills up to \p cap exact-literal matches from \p start without re-entering the route gate.
      *
-     * Enlarging `refill_batch` is not what charges other rows (a later route enlarged it with no cross-row
-     * toll); one extra comparison on `advance`'s hot path is (see \ref run_literal_one_search).
+     * Enlarging `refill_batch` charges no other row; one extra comparison on the hot path of `advance`
+     * does (see \ref run_literal_one_search).
      *
      * No partial state: `find_prefix` scans to the subject's end, so an empty return proves exhaustion.
      *
@@ -6737,8 +6736,8 @@ namespace real::detail {
         return 0;
       }
       else {
-        // No reset here: run()'s gate owns the per-haystack reset. Resetting here too cleared the gate's
-        // abandon, so a route that had given up was retried on every match (3637 entries against 7).
+        // No reset here: run()'s gate owns the per-haystack reset. Resetting here too would clear the gate's
+        // abandon and retry a route that gave up on every match.
         if (state_.il_abandoned) {
           disarm = true; // and the caller stops asking: see \p disarm
           return 0;
@@ -6768,17 +6767,14 @@ namespace real::detail {
     /*!
      * \brief Fills up to \p cap lazy-DFA matches from \p start without re-entering the route gate.
      *
-     * Patterns no shape recognizer claims (`[a-z]+|[0-9]+`) land here and billed one engine entry per
-     * match: the return, not the DFA scan, was the cost.
-     *
-     * Only the anchored-from-candidate sub-scan: \ref try_shared_lazy_dfa_search's second sub-scan
-     * (`forward_end` then `reverse_start`) would add a second body to this TU (docs/MEASUREMENT.md §5.4).
-     * Declining it is free because of \p partial.
+     * Patterns no shape recognizer claims (`[a-z]+|[0-9]+`) land here; per match, the return, not the DFA
+     * scan, is the cost. The anchored walks from candidates give way to one forward pass and reverse, as
+     * in \ref try_shared_lazy_dfa_search.
      *
      * \p partial: an empty return ends the walk in \ref basic_match_iterator::advance, sound only where
-     * the scan covers the whole subject. This route can stop with matches still ahead (fallback
-     * sub-scan, under \ref lazy_dfa_min_input bytes left, no shared DFAs yet), so \p partial stays set
-     * unless exhaustion is PROVEN, and the caller resumes on the per-match path.
+     * the scan covers the whole subject. This route can stop with matches still ahead (a DFA quit, under
+     * \ref lazy_dfa_min_input bytes left, no shared DFAs yet), so \p partial stays set unless exhaustion
+     * is PROVEN, and the caller resumes on the per-match path.
      *
      * \param[in]  text    The subject.
      * \param[in]  start   Where to begin.
@@ -6925,14 +6921,14 @@ namespace real::detail {
         }
       }
       if (prog_.slot_count >= 2) {
-        out_slots[1] = cand + len; // group 0 end — always the full literal (unconditional)
+        out_slots[1] = cand + len; // group 0 end: the full literal
       }
       return true;
     }
 
     /*!
      * \brief The whole exact-literal search in one \ref find_prefix, for a
-     *        \ref pattern_hints::literal_one_search program (see \ref run_exact_literal's call site).
+     *        \ref pattern_hints::literal_one_search program (called from \ref run_exact_literal).
      *
      * `noinline` on a HOT path: inside \ref run_exact_literal it grew a function sharing an inlining unit
      * with \ref run and the class loops, and `[^,]+` (\ref run_codepoint_class) regressed from the growth
@@ -6945,10 +6941,9 @@ namespace real::detail {
      * \param[out] out_slots Receives `[cand, cand + len]` on success.
      * \return `true` if the literal occurs at or after \p start.
      *
-     * \note The span filler (\ref fill_exact_literal_spans) is sound only while it leaves `count_matches`
-     *       unchanged: its cross-row toll came from recompiling that shared entry point (every row
-     *       measures through it), not from enlarging `refill_batch`. Judge a filler change on machine code
-     *       first (function sizes in the consumer unit), then on the layout judgement.
+     * \note The span filler (\ref fill_exact_literal_spans) must leave `count_matches` unchanged:
+     *       recompiling that shared entry point (every row measures through it) charges other rows. Judge
+     *       a filler change on machine code first (function sizes in the consumer unit), then on layout.
      */
     template <typename OutSlots>
 #if defined(__GNUC__) || defined(__clang__)
@@ -7007,10 +7002,9 @@ namespace real::detail {
         }
         return ok;
       }
-      // One `find_prefix` answers the whole search for a `literal_one_search` program (no group,
-      // assertion, anchor or 1-byte literal; prefix_size == exact_literal_len): next_candidate would call
-      // this same find_prefix, literal_at would re-compare its bytes, and replay_literal would write only
-      // [0] = cand, [1] = cand + len. Every other shape keeps the loop and its assertion retry.
+      // One `find_prefix` answers the whole search for a `literal_one_search` program: the loop below
+      // would call the same find_prefix, re-compare its bytes and write only [0] and [1]. Every other
+      // shape keeps the loop and its assertion retry.
       if (!std::is_constant_evaluated() && prog_.hints.literal_one_search && prog_.slot_count == 2) {
         return run_literal_one_search(text, start, len, out_slots);
       }
@@ -7122,7 +7116,7 @@ namespace real::detail {
           ++p;
         }
         if (p < window_end) {
-          return p; // a near (dense) hit — the bitmap probe found it at baseline cost
+          return p; // a near (dense) hit
         }
         if (window_end == text.size()) {
           return npos;
@@ -7209,10 +7203,8 @@ namespace real::detail {
                                                  std::size_t pos,
                                                  bool        word_ness_flipped) const
     {
-      // Word-ness is the program default (\ref program_view::unicode_word), flipped by the instruction's
-      // bit for a scoped (?a:...) / (?-a:...) island.
       const bool ascii_word {prog_.unicode_word == word_ness_flipped};
-      return real::detail::assertion_holds(kind, text_, pos, ascii_word); // shared free function
+      return real::detail::assertion_holds(kind, text_, pos, ascii_word);
     }
 
     /*!
@@ -7470,11 +7462,10 @@ namespace real::detail {
      * \brief Whether no whole code point lies between \p start and \p candidate: the candidate IS \p start, or
      *        only continuation bytes separate them.
      *
-     * The DROP rule's window-edge guard asks it of a search's first candidate. A candidate reached by
-     * scanning forward past a whole non-class character is preceded by that character, so a dropped leading
-     * `\b` holds there. But when the window begins inside a code point, the scan crosses only that code
-     * point's tail, and the character before the candidate is one that started before the window -- which
-     * the scan never saw, and which may be a word character.
+     * The DROP rule's window-edge guard asks it of a search's first candidate: one reached past a whole
+     * non-class character satisfies a dropped leading `\b`, but when the window begins inside a code point
+     * the scan crosses only its tail, and the character before the candidate (unseen, it started before
+     * the window) may be a word character.
      *
      * \param[in] text      The subject.
      * \param[in] start     The window's start.
@@ -7506,8 +7497,8 @@ namespace real::detail {
     }
 
     /*!
-     * \brief \ref extends_past_end's probe on a thread about to consume at \p pos: one alive at the end of the
-     *        text, or at a code point the end cuts short, would read what comes next.
+     * \brief Probe of \ref extends_past_end on a thread about to consume at \p pos: one alive at the end of
+     *        the text, or at a code point the end cuts short, would read what comes next.
      * \param[in] instruction The thread's instruction.
      * \param[in] pos         The position it consumes at.
      */
@@ -7520,7 +7511,7 @@ namespace real::detail {
     }
 
     /*!
-     * \brief \ref extends_past_end's probe on an epsilon step at \p pos: an assertion that looks right, a
+     * \brief Probe of \ref extends_past_end on an epsilon step at \p pos: an assertion that looks right, a
      *        lookahead, or a possessive test whose answer the end of the text decides.
      * \param[in] instruction The instruction the closure walk is at.
      * \param[in] pos         The position.
@@ -7839,11 +7830,10 @@ namespace real::detail {
     {
       auto& pool  {state_.pool};
       auto& stack {state_.stack};
-      // Capture-free walk (\ref pattern_hints::capture_free_walk): the capture state is group 0's start, so
-      // the pool is never touched. A full-width LOCAL, not an `eps_entry` field: that field is 32-bit
-      // (truncates past 4 GiB), and widening it grows the per-call epsilon stack (measured on per-call
-      // rows). One local suffices because `save 0` is the program's FIRST instruction: every thread of
-      // one call shares one start.
+      // Capture-free walk: the capture state is group 0's start and the pool is never touched. A
+      // full-width LOCAL, not an `eps_entry` field: that field is 32-bit (truncates past 4 GiB), and
+      // widening it grows the per-call epsilon stack. One local suffices: `save 0` is the FIRST
+      // instruction, so every thread of one call shares one start.
       const bool  cf    {prog_.hints.capture_free_walk};
       std::size_t start {initial};
       stack.clear();
@@ -7937,12 +7927,10 @@ namespace real::detail {
             list.slots.push_back(cf ? start : static_cast<std::size_t>(block));
             break;
           case opcode::byte_loop_possessive:
-            // Tier 1: decide match/no-match HERE, in the same priority-ordered closure pass, not at step()
-            // one round later: deferred, a same-round-convergent LOWER-priority alternation sibling could
-            // claim the shared convergence pc first ("first seen wins" dedup knows no priority once
-            // insertion order breaks). A match parks as a leaf (step() consumes it and re-inserts the same
-            // pc at pos+1, re-decided here); a miss continues to secondary_target now, at this thread's own
-            // priority position.
+            // Tier 1: decide match/no-match HERE, in the priority-ordered closure pass. Deferred to step(), a
+            // LOWER-priority alternation sibling converging in the same round could claim the shared pc
+            // first (first-seen dedup knows no priority). A match parks as a leaf (step() consumes it and
+            // re-inserts the pc at pos+1); a miss continues to secondary_target now, at this priority.
             if (pos < text_.size() && static_cast<std::uint8_t>(text_[pos]) == instruction.arg8) {
               list.pcs.push_back(pc);
               list.slots.push_back(cf ? start : static_cast<std::size_t>(block));
@@ -8047,7 +8035,7 @@ namespace real::detail {
                                                     std::size_t  pos)
     {
       if (pos >= text_.size()) {
-        return false; // nothing ahead: the body cannot match — (?=…) false / (?!…) true (negated by the caller)
+        return false; // nothing ahead (the caller applies negation)
       }
       if (body.op == opcode::klass_cp) {
         const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, pos)};
@@ -8069,7 +8057,7 @@ namespace real::detail {
                                                      std::size_t  pos)
     {
       if (pos == 0) {
-        return false; // nothing behind: (?<=…) false / (?<!…) true (negated by the caller)
+        return false; // nothing behind (the caller applies negation)
       }
       if (body.op == opcode::klass_cp) {
         std::size_t s {pos - 1};
