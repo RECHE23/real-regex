@@ -42,10 +42,10 @@ answer is not a benchmark win.
 
 | | |
 | --- | --- |
-| Version | REAL `2026.9.11` + tree `79e6792` — **tables moved (measured).** Three runs per ISA, minimum per cell (§A, §E, §Unicode; six for §E on x86-64, whose host ran in two speed modes at this stamp), median of three (§B). Both ISAs on the same hosts as the last stamp, so the columns are read against it. The train since `2026.9.9` is the lazy DFA (trie for literal alternations, a quit rule, closure marks by generation), the compat layer and `79e6792`, which took the decoder off the inner-literal code-point runs: §E `ident` and `email` on x86-64 had lost 32 % and 27 % since the last stamp and are now under it. §multi-pattern keeps the `600b0fb` stamp (its host is the only one with Hyperscan). Train and deltas: `CHANGELOG.md`. |
+| Version | REAL `2026.10.3` + tree `0ec90f28` — **tables moved (measured).** Three runs per ISA, minimum per cell (§A, §E, §Unicode; six for §E on x86-64), median of three (§B). Both ISAs on the same hosts as the last stamp, so the columns are read against it. The train since `2026.9.11` is the alternation automaton and fingerprint, the batched walks (spent subject, wide alternations, fixed shapes, inner literal), the one-pass table, and the inner-literal correctness fix of `2026.10.2`, which costs `ident` and `email` in §E for answers that were wrong before it. §multi-pattern keeps the `600b0fb` stamp (its host is the only one with Hyperscan). Train and deltas: `CHANGELOG.md`. |
 | Machines | §A on **two ISAs**: `x86-64` (g++ 15.3.1 on an idle Skylake-family core, the host of the last stamp) *and* `arm64` (Apple clang 16, **on AC power** — see `docs/MEASUREMENT.md` §3.5 for why the state is declared and why its cost must not be assumed). §B on arm64; §E and §Unicode's duel on both, x86-64 on §A's host. §multi-pattern measured on **x86-64** (g++ 13.3, RE2 + Hyperscan 5.4) on the original host, at tree `600b0fb` |
 | Engines | `std::regex`; **PCRE2 10.47, JIT on, both ISAs** (the x86-64 host's system package; `make bench-engines` prints the version it actually LINKED, which the recipe resolves through `pkg-config`, so a second installation wins silently unless `PKG_CONFIG_PATH` and `LD_LIBRARY_PATH` both point at the intended one); RE2 (2025-11-05, soname 11, built from source on x86-64 — the host carries the library but not its headers; 11.0 on arm64). Multi-pattern: RE2::Set, Hyperscan (optional). §E: rust `regex` 1.12.4 |
-| Python | CPython 3.14.6, `re` (stdlib) vs the in-place REAL `2026.9.11` extension at tree `79e6792`, median of three runs per cell, `benchmarks/bench.py` run on an already-built extension: `make python-bench` builds it first, and its first case, `words · findall @1KB`, read 12 % slow right after that build (5.7–5.8 µs against 5.0–5.1, both trees) — the build's heat, not the code. `sub · dates with refs` remains the known-unstable row. Train: `CHANGELOG.md`. |
+| Python | CPython 3.14.6, `re` (stdlib) vs the in-place REAL `2026.10.3` extension at tree `0ec90f28`, median of three runs per cell, `benchmarks/bench.py` run on an already-built extension: `make python-bench` builds it first, and a run right after that build reads its first case slow (the build's heat, not the code). `sub · dates with refs` remains the known-unstable row. Train: `CHANGELOG.md`. |
 | Method | §A: median of N = 30 paired batches, bootstrap CI, **three full runs per ISA with the minimum taken per cell** (both ISAs — one run does not survive a host's episodic interference); match counts equal on every case, both ISAs. §E: `run_duel.py` best-of-15 per run, minimum of three runs per cell, REAL `count_matches` vs rust `find_iter`/`captures_iter`, match counts equal; `real_bench` built by hand at `-O3 -flto` as the tables state (the `make bench-duel` recipe builds it at `-O2`). §multi-pattern: best-of-7, `make bench-multipattern`. **Every ratio below is computed from the raw ns/B pair, and `benchmarks/verify_bench_ratios.py` re-derives all of them plus §A's reading bullets — `make check-bench-ratios`, step 7b of the local gate, part of `gate-doc` whenever this file is touched, and a step of the **Docs-site** workflow — which is the one CI net with no `paths-ignore`, so it fires on the doc-only pushes that edit this file.** That wiring is new, and the sentence it replaces was not true when it was written: the script was called from nothing at all, and running it for the first time failed on two cells — a third once its rounding rule was made exact — while every range, per-row pair and count in §A's bullets had been stale for three stamps. A checker nothing runs is a claim, not a check |
 
 ## A. C++ engine throughput
@@ -53,41 +53,41 @@ answer is not a benchmark win.
 Each engine compiles the pattern once, then counts all non-overlapping matches over the same corpus; only
 the scan is timed. `ns/B` is nanoseconds per corpus byte (lower is better). `(x)` is *engine_time /
 REAL_time* — **> 1 means REAL is faster**. Match counts agreed across all four engines on every case, on
-both ISAs, on the same `79e6792` tree for this re-stamp.
+both ISAs, on the same `0ec90f28` tree for this re-stamp.
 
 **x86-64** — g++ 15.3.1, N = 30 × 3 runs, PCRE2 10.47-JIT, RE2 2025-11-05 (a Skylake-family core, the host of the last stamp):
 
 | case | REAL ns/B | std::regex | PCRE2-JIT | RE2 |
 | --- | ---: | ---: | ---: | ---: |
-| words `[a-z]+` | 1.62 | 25.58 (**15.83×**) | 6.19 (**3.83×**) | 18.37 (**11.37×**) |
-| digits `[0-9]+` | 0.84 | 15.57 (**18.51×**) | 2.88 (**3.42×**) | 10.20 (**12.13×**) |
-| fields `[^,]+` | 2.15 | 15.91 (**7.38×**) | 3.96 (**1.84×**) | 14.66 (**6.80×**) |
-| single `[a-z]` | 3.70 | 41.23 (**11.15×**) | 19.02 (**5.14×**) | 59.51 (**16.09×**) |
-| words `[a-z]{4,}` | 0.89 | 15.18 (**17.06×**) | 3.28 (**3.69×**) | 10.84 (**12.18×**) |
-| words `[a-z]++` | 1.16 | 19.76 (**17.02×**) | 5.13 (**4.42×**) | unsupported |
-| alternation `the\|fox\|dog` | 1.36 | 20.14 (**14.84×**) | 1.80 (**1.33×**) | 6.91 (**5.09×**) |
-| date `{4}-{2}-{2}` | 0.50 | 11.74 (**23.48×**) | 0.52 (**1.04×**) | 2.80 (**5.60×**) |
-| hex `[0-9a-f]{8}` | 1.00 | 13.47 (**13.43×**) | 1.50 (**1.50×**) | 2.78 (**2.77×**) |
-| literal | 0.25 | 9.40 (**38.06×**) | 0.48 (**1.94×**) | 1.59 (**6.44×**) |
+| words `[a-z]+` | 1.09 | 25.32 (**23.19×**) | 5.12 (**4.69×**) | 18.71 (**17.13×**) |
+| digits `[0-9]+` | 0.80 | 15.42 (**19.35×**) | 2.90 (**3.64×**) | 10.39 (**13.04×**) |
+| fields `[^,]+` | 2.12 | 15.68 (**7.38×**) | 3.98 (**1.87×**) | 14.83 (**6.98×**) |
+| single `[a-z]` | 3.39 | 40.86 (**12.04×**) | 19.01 (**5.60×**) | 59.88 (**17.64×**) |
+| words `[a-z]{4,}` | 0.86 | 14.82 (**17.31×**) | 3.27 (**3.82×**) | 11.03 (**12.89×**) |
+| words `[a-z]++` | 1.08 | 19.44 (**17.98×**) | 5.10 (**4.72×**) | unsupported |
+| alternation `the\|fox\|dog` | 1.26 | 19.65 (**15.56×**) | 1.80 (**1.43×**) | 6.99 (**5.53×**) |
+| date `{4}-{2}-{2}` | 0.48 | 11.77 (**24.27×**) | 0.49 (**1.01×**) | 2.80 (**5.77×**) |
+| hex `[0-9a-f]{8}` | 0.99 | 13.26 (**13.38×**) | 1.51 (**1.52×**) | 2.79 (**2.82×**) |
+| literal | 0.23 | 9.40 (**41.59×**) | 0.48 (**2.12×**) | 1.61 (**7.12×**) |
 | anchored `^[a-z]+$` | 0.41 | unsupported | 0.42 (**1.03×**) | 1.21 (**2.96×**) |
-| lookahead `[a-z]+(?=[a-z])` | 5.54 | 46.72 (**8.43×**) | 5.42 (0.98×) | unsupported |
+| lookahead `[a-z]+(?=[a-z])` | 4.27 | 44.41 (**10.41×**) | 5.43 (**1.27×**) | unsupported |
 
 **arm64** — Apple clang 16, N = 30 × 3 runs, PCRE2 10.47-JIT, RE2 11.0:
 
 | case | REAL ns/B | std::regex | PCRE2-JIT | RE2 |
 | --- | ---: | ---: | ---: | ---: |
-| words `[a-z]+` | 1.18 | 90.90 (**77.03×**) | 2.32 (**1.97×**) | 13.85 (**11.74×**) |
-| digits `[0-9]+` | 0.88 | 82.11 (**93.84×**) | 1.44 (**1.65×**) | 8.38 (**9.58×**) |
-| fields `[^,]+` | 2.22 | 74.80 (**33.71×**) | 1.86 (0.84×) | 11.01 (**4.96×**) |
-| single `[a-z]` | 4.07 | 66.25 (**16.29×**) | 8.06 (**1.98×**) | 41.20 (**10.13×**) |
-| words `[a-z]{4,}` | 0.90 | 72.73 (**80.45×**) | 2.03 (**2.25×**) | 8.13 (**8.99×**) |
+| words `[a-z]+` | 1.18 | 91.03 (**77.14×**) | 2.32 (**1.97×**) | 13.80 (**11.69×**) |
+| digits `[0-9]+` | 0.88 | 81.51 (**93.05×**) | 1.44 (**1.64×**) | 8.38 (**9.57×**) |
+| fields `[^,]+` | 2.24 | 74.19 (**33.16×**) | 1.86 (0.83×) | 10.97 (**4.90×**) |
+| single `[a-z]` | 4.14 | 66.46 (**16.07×**) | 8.04 (**1.94×**) | 41.10 (**9.94×**) |
+| words `[a-z]{4,}` | 0.90 | 73.31 (**81.10×**) | 2.03 (**2.25×**) | 8.07 (**8.93×**) |
 | words `[a-z]++` | 1.18 | unsupported | 2.32 (**1.97×**) | unsupported |
-| alternation `the\|fox\|dog` | 1.36 | 113.14 (**83.01×**) | 1.56 (**1.14×**) | 6.15 (**4.51×**) |
-| date `{4}-{2}-{2}` | 0.36 | 71.53 (**198.69×**) | 0.39 (**1.08×**) | 3.42 (**9.50×**) |
-| hex `[0-9a-f]{8}` | 1.42 | 80.25 (**56.59×**) | 1.24 (0.87×) | 3.40 (**2.40×**) |
-| literal | 0.21 | 30.77 (**145.83×**) | 0.48 (**2.27×**) | 1.35 (**6.40×**) |
+| alternation `the\|fox\|dog` | 1.51 | 112.90 (**74.92×**) | 1.56 (**1.04×**) | 6.14 (**4.07×**) |
+| date `{4}-{2}-{2}` | 0.36 | 71.70 (**198.07×**) | 0.39 (**1.08×**) | 3.41 (**9.42×**) |
+| hex `[0-9a-f]{8}` | 1.42 | 79.94 (**56.41×**) | 1.24 (0.88×) | 3.40 (**2.40×**) |
+| literal | 0.22 | 30.69 (**142.08×**) | 0.48 (**2.22×**) | 1.35 (**6.25×**) |
 | anchored `^[a-z]+$` | 0.32 | unsupported | 0.42 (**1.32×**) | 2.18 (**6.86×**) |
-| lookahead `[a-z]+(?=[a-z])` | 4.41 | 155.85 (**35.36×**) | 3.65 (0.83×) | unsupported |
+| lookahead `[a-z]+(?=[a-z])` | 4.40 | 155.29 (**35.28×**) | 3.65 (0.83×) | unsupported |
 
 **Reading — verdict brut, no dressing up. Every ratio in these bullets is checked against the cells
 above by `make check-bench-ratios`** (local gate step 7b), because the bullets below were wrong for
@@ -99,43 +99,36 @@ three consecutive stamps while the tables were right — see each bullet's own n
      on was the heading above, and extending that heading by one sentence broke the site build. A
      marker's own name is never spelled in brackets outside its marker: two occurrences and the
      extractor silently takes the first, which check-site-anchors refuses. -->
-- **REAL ≫ `std::regex`**, always: **7.38–38.06×** on x86-64, **16.29–198.69×** on arm64 (libc++'s
+- **REAL ≫ `std::regex`**, always: **7.38–41.59×** on x86-64, **16.07–198.07×** on arm64 (libc++'s
   `std::regex` falls even further behind on arm64). Never below 7.38×. These bounds are read off the
   cells by `make check-bench-ratios`; they drifted from the table for three stamps while they were typed.
-- **REAL > RE2**, always where RE2 supports the pattern: **2.77–16.09×** on x86-64, **2.40–11.74×** on
+- **REAL > RE2**, always where RE2 supports the pattern: **2.82–17.64×** on x86-64, **2.40–11.69×** on
   arm64.
-- **REAL vs PCRE2-JIT: nine of twelve rows are REAL's on BOTH ISAs** — `words [a-z]+` (**3.83×**
-  x86-64 / **1.97×** arm64), `digits` (**3.42×** / **1.65×**), `single` (**5.14×** / **1.98×**),
-  `words [a-z]{4,}` (**3.69×** / **2.25×**), `words [a-z]++` (**4.42×** / **1.97×**), `alternation`
-  (**1.33×** / **1.14×**), `date` (**1.04×** / **1.08×**), `literal` (**1.94×** / **2.27×**) and `anchored`
-  (**1.03×** / **1.32×**) — those `anchored` and x86-64 `date` cells a hair over parity, not wins worth
-  leaning on. `date` is new to that list: PCRE2 kept it on both ISAs at the last stamp. Two more are REAL's on
-  **x86-64 only**: `fields` (**1.84×** / 0.84×) and `hex` (**1.50×** / 0.87×). PCRE2 keeps one on both ISAs:
-  `lookahead` (0.98× / 0.83×).
-- **What moved, on the same two hosts as the last stamp.** On x86-64, `single` 4.04 → 3.70 ns/B and `hex`
-  1.08 → 1.00, not bisected; `date` 0.56 → 0.50 on x86-64 and 0.53 → 0.36 on arm64 (−33 %) is `cadffe8`, the
-  fixed-shape walks that fill their spans in batches.
-  Four rows went the other way, and each was traced:
-  - x86-64 `literal` 0.235 → 0.247 (+5 %; §Unicode's CJK literal +7 %) is `58b9705`, the AVX2 literal scan
-    that tests four 32-byte blocks at once. On this corpus `charlie` occurs every 58 bytes, so nearly every
-    128-byte round holds a candidate and pays the grouped test: +6.5 % instructions per scan (`callgrind`,
-    775 026 → 825 681), where the change took 20–35 % of the cycles off sparse literals on log lines. A
-    trade, published as one; a dense-hit fallback is a candidate, not done.
-  - x86-64 `lookahead` 4.81 → 5.54 (+15 %) is placement in this four-engine unit: in a REAL-only unit both
-    trees execute 15 352 222 instructions per scan of this row, and the same tree before `79e6792` read 4.82
-    here. `words [a-z]+` shows the same unit's swing the other way within one day: 1.17 ns/B before
-    `79e6792`, 1.62 after it (1.64 at the last stamp), at 4 127 651 instructions per scan in both.
-  - arm64 `alternation` 1.29 → 1.36 (+6 %) and §Unicode's `\p{L}+` (+5 %) arrived with `79e6792`, a change
-    on another route; `make bench-layout`, which builds eight layouts of each tree, judges all 25 rows
-    indistinguishable between the trees before and after it (`alternation` median −0.0 %): placement.
+- **REAL vs PCRE2-JIT: nine of twelve rows are REAL's on BOTH ISAs** — `words [a-z]+` (**4.69×**
+  x86-64 / **1.97×** arm64), `digits` (**3.64×** / **1.64×**), `single` (**5.60×** / **1.94×**),
+  `words [a-z]{4,}` (**3.82×** / **2.25×**), `words [a-z]++` (**4.72×** / **1.97×**), `alternation`
+  (**1.43×** / **1.04×**), `date` (**1.01×** / **1.08×**), `literal` (**2.12×** / **2.22×**) and `anchored`
+  (**1.03×** / **1.32×**) — the x86-64 `date` and `anchored` cells and the arm64 `alternation` cell a hair
+  over parity, not wins worth leaning on. The other three are REAL's on **x86-64 only**: `fields` (**1.87×** /
+  0.83×), `hex` (**1.52×** / 0.88×) and `lookahead` (**1.27×** / 0.83×). PCRE2 keeps none on both ISAs.
+- **What moved, on the same two hosts as the last stamp.** On x86-64 every row but `anchored` is faster:
+  `lookahead` 5.54 → 4.27 ns/B (−23 %), `single` 3.70 → 3.39, `literal` 0.247 → 0.226 (the dense-literal
+  trade of the last stamp is gone), `alternation` 1.36 → 1.26, `digits` 0.84 → 0.80. `words [a-z]+`
+  1.62 → 1.09 (−32 %) is partly placement in this four-engine unit: PCRE2's cell on the same row moved −17 %
+  with no change of its own, as the last stamp's swing of this row the other way did. On arm64 every row is
+  within 1 % but three: `single` +1.7 %, `literal` +2.4 %, and `alternation` 1.36 → 1.51 (+10.6 %), which
+  arrived in `2026.10.1` with `5cb034d` and `74d3dc79` (the small set carrying its eight lanes, the
+  fingerprint testing four blocks at once): Apple clang lays this row out worse since, and the cost is not
+  recovered at this stamp. It is declared here rather than averaged away.
 - **The gauge.** `std::regex`, PCRE2 and RE2 are third-party constants, so their columns are the drift
-  witness. RE2's ten x86-64 rows read within 1.3 % of the last stamp, and its arm64 rows within 1 % but
-  `alternation` (6.00 → 6.15). A REAL move of 3 % or more clears that on both ISAs.
+  witness. RE2's x86-64 rows read within 1.9 % of the last stamp and its arm64 rows within 0.7 %; PCRE2's
+  arm64 rows within 0.2 %. PCRE2's x86-64 column is the exception that dates a row as placement (`words`
+  −17 %, `date` −6 %): read a REAL move on those x86-64 rows against it.
 - **The lookahead line is PCRE2's on arm64, and the gap is a trade this project chose.** REAL does a
   **bounded lookaround in linear time**; PCRE2 is faster here by **backtracking** (itself ReDoS-able on a
   crafted lookaround), and **RE2 and the rust crate cannot compile the pattern at all**. On x86-64 the
-  row reads PCRE2's by a hair at this stamp (0.98×), where it read REAL's by 1.13× at the last: placement in
-  this unit, as the bullet above shows. The row is `count_matches`; the trailing-lookaround rework of v2026.8.12
+  row is REAL's at this stamp (1.27×), as it was two stamps ago; the last stamp's 0.98× was placement in this
+  unit. The row is `count_matches`; the trailing-lookaround rework of v2026.8.12
   paid 18 % here for −91.8 % on `find_iter`, which is where most callers meet this shape.
 
 ## Multi-pattern — which-matched + extraction (Stage-1 `regex_set`)
@@ -230,25 +223,25 @@ TABLE B — extraction non-overlapping (counts equal REAL/RE2):
 
 | case | `re` | REAL | ratio |
 | --- | ---: | ---: | ---: |
-| date · search @100KB | 1.14 ms | 1.6 µs | **727.24×** |
-| date · findall groups | 1.22 ms | 2.2 µs | **562.50×** |
-| sub · dates with refs | 1.23 ms | 13.7 µs | **89.59×** ⚠ |
-| alternation · findall @100KB | 799.5 µs | 11.6 µs | **68.79×** |
-| word starts ASCII · findall (multiline) | 441.1 µs | 8.8 µs | **50.28×** |
-| digits · sparse findall @100KB | 1.13 ms | 92.8 µs | **12.23×** |
-| literal · miss @1MB | 691.7 µs | 58.4 µs | **11.83×** |
-| literal · hit @1MB | 691.1 µs | 58.5 µs | **11.80×** |
-| sub · spaces @100KB | 2.25 ms | 474.6 µs | **4.78×** |
-| words · findall @1KB | 15.8 µs | 5.1 µs | **3.10×** |
-| words · findall @10KB | 150.3 µs | 64.7 µs | **2.32×** |
-| words · findall @100KB | 1.49 ms | 715.7 µs | **2.08×** |
-| words · dense findall @100KB | 1.51 ms | 741.0 µs | **2.04×** |
-| split · commas @100KB | 77.1 µs | 39.8 µs | **1.93×** |
-| words · findall @1MB | 15.50 ms | 8.31 ms | **1.87×** |
-| emails · findall groups | 1.46 ms | 780.4 µs | **1.87×** |
-| hex ids · findall | 247.2 µs | 133.7 µs | **1.85×** |
-| non-space · Unicode findall | 1.72 ms | 1.21 ms | **1.41×** |
-| literal · anchored miss @1MB | 177 ns | 201 ns | 0.88× |
+| date · search @100KB | 1.14 ms | 1.6 µs | **721.06×** |
+| date · findall groups | 1.23 ms | 2.2 µs | **565.03×** |
+| sub · dates with refs | 1.22 ms | 13.4 µs | **91.57×** ⚠ |
+| alternation · findall @100KB | 799.2 µs | 9.6 µs | **83.13×** |
+| word starts ASCII · findall (multiline) | 452.6 µs | 8.9 µs | **50.66×** |
+| literal · miss @1MB | 691.4 µs | 37.3 µs | **18.56×** |
+| literal · hit @1MB | 699.0 µs | 37.9 µs | **18.49×** |
+| digits · sparse findall @100KB | 1.13 ms | 92.8 µs | **12.19×** |
+| sub · spaces @100KB | 2.21 ms | 470.9 µs | **4.69×** |
+| words · findall @1KB | 15.9 µs | 5.1 µs | **3.11×** |
+| emails · findall groups | 1.46 ms | 583.5 µs | **2.51×** |
+| words · findall @10KB | 152.5 µs | 65.3 µs | **2.33×** |
+| words · findall @100KB | 1.49 ms | 721.8 µs | **2.06×** |
+| words · dense findall @100KB | 1.49 ms | 723.7 µs | **2.06×** |
+| split · commas @100KB | 76.7 µs | 39.6 µs | **1.94×** |
+| words · findall @1MB | 15.58 ms | 8.41 ms | **1.87×** |
+| hex ids · findall | 247.5 µs | 134.4 µs | **1.84×** |
+| non-space · Unicode findall | 1.72 ms | 1.09 ms | **1.57×** |
+| literal · anchored miss @1MB | 178 ns | 198 ns | 0.90× |
 | `(a+)+b` · re n=24 / REAL n=10k (prefilter) | 1087.17 ms | **598 ns** | **~1.8×10⁶×** (ReDoS) |
 
 The reason is worth keeping, because it bounds what §B can ever show: this table's regime is dominated by
@@ -257,7 +250,7 @@ C++ row of eighteen; at this boundary that is invisible. So an engine train that
 should be expected NOT to move §B, and "§B is stale" is a weaker debt than four consecutive release-note
 sets implied. What WOULD move it is per-call work — which is what v2026.8.6 (20–25 % off the fixed per-call
 cost) did, and it shows below. The exception proves the rule's premise rather than breaking it: `alternation ·
-findall` went from 2.60× to 68.99× at the `2026.9.9` stamp (68.79× at this one), because on that subject the scan WAS the cost — the
+findall` went from 2.60× to 68.99× at the `2026.9.9` stamp (83.13× at this one), because on that subject the scan WAS the cost — the
 alternation's first bytes stopped on nearly every word of prose, and this train's per-branch block filters
 removed those stops (`CHANGELOG.md`).
 
@@ -268,11 +261,13 @@ exactly 1.0 — five times gave medians of 0.9958, 1.0006, 0.9994, 0.9981 and 1.
 under 0.4 % at the median. The paired design also absorbs machine state that makes `bench_layout.py`
 unusable on a loaded host, which is why this table is measurable where §A's floors are not.
 
-**⚠ `sub · dates with refs` is not stable at this precision.** The three published runs read 88.67× /
-89.59× / 89.98×, but the day's other runs of the same tree read 45.6–91.3× — a spread as wide as at the last
-two stamps (93 %, 98 %). The median of the published runs is shown, and the disagreement is stated rather
-than hidden behind a bootstrap interval that this row's own re-runs contradict. Every other cell holds
-inside 5 %.
+**⚠ `sub · dates with refs` is not stable at this precision.** The three published runs read 91.57× /
+92.92× / 45.18× — a 2× spread, as at the last three stamps. The median of the published runs is shown, and
+the disagreement is stated rather than hidden behind a bootstrap interval that this row's own re-runs
+contradict. Every other cell holds inside 3.5 % across the three runs, but `anchored miss` (6.7 %, a 200 ns
+call). Against the last stamp, five rows moved past 5 %, all REAL's way: `literal · hit` and `· miss` 11.8× →
+18.5×, `alternation · findall` 68.8× → 83.1×, `emails · findall groups` 1.87× → 2.51×, `non-space · Unicode`
+1.41× → 1.57×.
 
 On the fuzzed corpus (`benchmarks/fuzz_bench.py`, 2886 comparable cases; not re-run at this stamp, the figures are the `2026.9.7` stamp's): aggregate wall time **REAL 3.9–4.0 ms
 vs `re` 45.6 s (~12 000×)** over three runs, and `re` hit **85 catastrophic blow-ups where REAL stayed
@@ -511,53 +506,56 @@ Ratio is `rust_ns/REAL_ns` (> 1 means REAL is faster), from `run_duel.py --json`
 
 | case | REAL ns/B | rust ns/B | winner |
 | --- | ---: | ---: | :--- |
-| literal `dog` | 0.254 | 0.596 | **REAL 2.3×** |
-| alternation `fox\|dog\|cat` | 0.779 | 1.367 | **REAL 1.8×** |
-| class `[a-z]+` | 1.166 | 12.247 | **REAL 10.5×** |
-| digits `[0-9]+` | 1.390 | 17.544 | **REAL 12.6×** |
-| fields `[^,]+` | 2.167 | 9.391 | **REAL 4.3×** |
-| word-boundary `\b\w+\b` | 1.704 | 11.351 | **REAL 6.7×** |
-| email `(\w+)@(\w+)` | 1.501 | 5.269 | **REAL 3.5×** |
-| ident `(\w+)_(\w+)` | 5.413 | 30.794 | **REAL 5.7×** |
+| literal `dog` | 0.263 | 0.596 | **REAL 2.3×** |
+| alternation `fox\|dog\|cat` | 0.777 | 1.366 | **REAL 1.8×** |
+| class `[a-z]+` | 1.168 | 12.274 | **REAL 10.5×** |
+| digits `[0-9]+` | 1.390 | 17.490 | **REAL 12.6×** |
+| fields `[^,]+` | 2.201 | 9.392 | **REAL 4.3×** |
+| word-boundary `\b\w+\b` | 1.736 | 11.345 | **REAL 6.5×** |
+| email `(\w+)@(\w+)` | 1.586 | 5.272 | **REAL 3.3×** |
+| ident `(\w+)_(\w+)` | 6.023 | 30.850 | **REAL 5.1×** |
 | date no-match `\d{4}-\d{2}-\d{2}` | 0.012 | 0.012 | tie 1.0× |
 | date sparse `\d{4}-\d{2}-\d{2}` | 0.045 | 0.076 | **REAL 1.7×** |
-| email sparse `(\w+)@(\w+)` | 0.046 | 0.122 | **REAL 2.7×** |
-| key= `key=(\w+)` | 1.146 | 1.432 | **REAL 1.2×** |
+| email sparse `(\w+)@(\w+)` | 0.048 | 0.122 | **REAL 2.5×** |
+| key= `key=(\w+)` | 0.949 | 1.441 | **REAL 1.5×** |
 
 **x86-64** — g++ 15.3.1, `-O3 -flto` (§A's host, minimum of six runs):
 
 | case | REAL ns/B | rust ns/B | winner |
 | --- | ---: | ---: | :--- |
-| literal `dog` | 0.261 | 0.645 | **REAL 2.5×** |
-| alternation `fox\|dog\|cat` | 1.007 | 1.658 | **REAL 1.6×** |
-| class `[a-z]+` | 1.272 | 15.484 | **REAL 12.2×** |
-| digits `[0-9]+` | 1.345 | 18.620 | **REAL 13.8×** |
-| fields `[^,]+` | 2.127 | 12.872 | **REAL 6.1×** |
-| word-boundary `\b\w+\b` | 1.607 | 13.592 | **REAL 8.5×** |
-| email `(\w+)@(\w+)` | 1.661 | 5.081 | **REAL 3.1×** |
-| ident `(\w+)_(\w+)` | 5.893 | 35.694 | **REAL 6.1×** |
-| date no-match `\d{4}-\d{2}-\d{2}` | 0.014 | 0.014 | tie 1.0× |
-| date sparse `\d{4}-\d{2}-\d{2}` | 0.061 | 0.084 | **REAL 1.4×** |
-| email sparse `(\w+)@(\w+)` | 0.056 | 0.127 | **REAL 2.3×** |
-| key= `key=(\w+)` | 0.962 | 1.724 | **REAL 1.8×** |
+| literal `dog` | 0.259 | 0.643 | **REAL 2.5×** |
+| alternation `fox\|dog\|cat` | 0.995 | 1.642 | **REAL 1.7×** |
+| class `[a-z]+` | 1.330 | 15.461 | **REAL 11.6×** |
+| digits `[0-9]+` | 1.438 | 18.570 | **REAL 12.9×** |
+| fields `[^,]+` | 2.046 | 12.874 | **REAL 6.3×** |
+| word-boundary `\b\w+\b` | 1.715 | 13.590 | **REAL 7.9×** |
+| email `(\w+)@(\w+)` | 1.664 | 5.064 | **REAL 3.0×** |
+| ident `(\w+)_(\w+)` | 6.572 | 35.712 | **REAL 5.4×** |
+| date no-match `\d{4}-\d{2}-\d{2}` | 0.015 | 0.014 | rust 1.1× |
+| date sparse `\d{4}-\d{2}-\d{2}` | 0.064 | 0.084 | **REAL 1.3×** |
+| email sparse `(\w+)@(\w+)` | 0.057 | 0.127 | **REAL 2.2×** |
+| key= `key=(\w+)` | 0.895 | 1.711 | **REAL 1.9×** |
 
 <!-- Keep this marker: docs/site/drop-in/regex.md slices from it, and anchoring that include on
      wording instead broke the site build once when a re-stamp rewrote the sentence below. The
      marker must stay the LAST line of this comment -- the extractor resumes at the next newline. -->
 <!-- [duel-reading] -->
 
-**Reading.** REAL leads 11 of 12 rows on both ISAs. The twelfth, `date no-match`, is a tie on both (0.012
-and 0.014 ns/B each side): both engines cross 1 MB in under 20 µs without a match, so the ratio is on work
-that has already collapsed. Against the last stamp, arm64 moved within 1 % on every row but four: `ident`
-6.70 → 5.41 ns/B, `email` 1.68 → 1.50 and `email sparse` 0.051 → 0.046 are `79e6792` (the inner-literal
-runs test an ASCII byte without the decoder), and `key=` 1.07 → 1.15 executes 2.4 % more instructions
-(x86-64, `callgrind`, 389.2 M → 398.3 M) while its arm64 time alternates between two levels, 1.075 and
-1.107, from commit to commit across the train — placement on top of a small cost, not bisected further.
-On x86-64, `ident` and `email` had lost 32 % and 27 % since the last stamp (`c6b9556`, after which gcc keeps
-the decoder out of line on those runs: +12.2 % and +19.6 % instructions) and `79e6792` took them back under
-it, 6.30 → 5.89 and 1.73 → 1.66. That host ran in two speed modes during this stamp — both engines'
-`literal` and `alternation` rows alternate run to run by 30–45 % — so x86-64 cells are minima of six runs, and
-a row that moved without a code change (`class` 1.95 → 1.27) is that, not work.
+**Reading.** REAL leads 11 of 12 rows on both ISAs. The twelfth, `date no-match`, is a tie on arm64 (0.012
+ns/B each side) and rust's by a hair on x86-64 (0.015 against 0.014): both engines cross 1 MB in under 20 µs
+without a match, so the ratio is on work that has already collapsed. Against the last stamp, `key=` is faster
+on both ISAs (arm64 1.15 → 0.95 ns/B, −17 %; x86-64 0.96 → 0.90), and `fields` on x86-64 (2.13 → 2.05);
+arm64 `literal` reads +3.5 % (0.254 → 0.263), with §A's own `literal` row (+2.4 %), not bisected.
+`ident` and `email` are slower on arm64 (5.41 → 6.02, +11 %; 1.50 → 1.59, +6 %) and `ident` on x86-64 (5.89 →
+6.57, +12 %): that is the inner-literal correctness fix of `2026.10.2` (`0108613`). The last stamp's `ident`
+groups were wrong — over `a_b_c`, `(\w+)_(\w+)` split `a` | `b_c` for `re`'s `a_b` | `c` — and placing them
+right finds, per match, the last `_` the prefix reaches. As first shipped, that walked the prefix run forward
+from each candidate (x86-64 `ident` 8.50 ns/B at `2026.10.3`); `724c956` skips the walk where both runs share
+one class, and what remains is the price of the right groups. On x86-64, `class` +4.6 %, `digits` +6.9 % and
+`word-bound` +6.7 % are the batched walk's dispatch, which inlines every route's filler and grew with each
+route added since `2026.10.1` (`c3dcb6c`, `2126b09`: +2 to +3 % instructions each on these walks under
+gcc at `-O3 -flto`); `b587c6e` took three fillers out of line and recovered part of it (gcc 15: `dog` −11 %,
+`[a-z]+` −1.8 % instructions). x86-64 cells are minima of six runs.
 Capture apples-to-apples is §E.3; the tables above are span/count-only.
 
 ### E.1 The lazy-DFA arc: what it bought, and the gap that remains
@@ -858,15 +856,16 @@ approximate and the cause is stated — it is **not always a UCD-version gap**; 
 turn out to be an ASCII-vs-Unicode *semantics* difference (a different, more fundamental gap than a stale
 data table).
 
-**Stamp.** REAL `2026.9.11` + tree `79e6792`, both ISAs re-measured for this stamp, on the same
+**Stamp.** REAL `2026.10.3` + tree `0ec90f28`, both ISAs re-measured for this stamp, on the same
 three-runs-per-ISA / minimum-per-cell protocol as §A. **arm64** table below: Apple clang 16, `-O2`, N = 30
 (`make bench-engines`). **x86-64**, same harness and N, on §A's host: g++ 15.3.1 with PCRE2 10.47 (the
-version the binary LINKED, printed by the harness) and RE2 2025-11-05: `\w+` mixed **2.912** (pcre2 0.96×,
-re2 **1.08×**), `\p{L}+` CJK **3.037** (0.76× / re2 **4.50×**), `\p{N}+` **3.741** (0.55× / **1.34×**),
-`sc=Han` **4.503** (0.82×), `scx=Cyrl` **5.222** (0.99×), `(?i)café` **0.482** (1.00× / **4.06×**), `[à-ÿ]+`
-**2.771** (**1.66×** / **6.02×**), literal `你好` **0.473** (pcre2 **1.73×**), `.` emoji **2.495** (pcre2
-**4.39×**), ascii witness **1.163** (**4.34×**). The x86-64 literal `你好` row is +7 % on the last stamp, the
-same dense-literal trade as §A's `literal` row (`58b9705`). Oracle: exhaustive
+version the binary LINKED, printed by the harness) and RE2 2025-11-05: `\w+` mixed **2.786** (pcre2 **1.04×**,
+re2 **1.14×**), `\p{L}+` CJK **2.874** (0.79× / re2 **4.75×**), `\p{N}+` **3.323** (0.62× / **1.49×**),
+`sc=Han` **4.086** (0.91×), `scx=Cyrl` **4.832** (**1.06×**), `(?i)café` **0.538** (0.89× / **3.68×**), `[à-ÿ]+`
+**2.683** (**1.74×** / **6.28×**), literal `你好` **0.445** (pcre2 **1.87×**), `.` emoji **2.397** (pcre2
+**3.35×**), ascii witness **1.090** (**4.64×**). Every x86-64 row is faster than at the last stamp (`\w{2,}`
+−17 %, `\p{N}+` −11 %) but `(?i)café`, +12 % with no change on its route, where arm64 reads 0.410 at both
+stamps: placement, which this row has shown on x86-64 before. Oracle: exhaustive
 `\p{L}` over U+0000..10FFFF (surrogates skipped) — **0 mismatch**.
 
 **`(?i)café` was this document's worst ratio, and this train fixed it — after the obvious diagnosis
@@ -927,19 +926,19 @@ raw JSON — every ratio's 95% CI is within ±2% of the point estimate); match c
 
 | case | REAL ns/B | std::regex | PCRE2-JIT (UTF+UCP) | RE2 | counts (real/std/pcre2/re2) |
 | --- | ---: | ---: | ---: | ---: | --- |
-| `\w+` (mixed-script) | 2.196 | 60.30 (**27.46×**) | 1.86 (0.85×) | 3.19 (**1.45×**) | 16218/5406/16218/5406 ⚠ |
-| `\b\w+\b` (mixed-script) | 2.091 | 57.10 (**27.31×**) | 3.04 (**1.45×**) | 3.97 (**1.90×**) | 16218/5406/16218/5406 ⚠ |
-| `\w++` (mixed-script) | 2.192 | unsupported | 1.86 (0.85×) | unsupported | 16218/—/16218/— |
-| `\w{2,}` (mixed-script) | 2.748 | 59.51 (**21.66×**) | 1.78 (0.65×) | 3.93 (**1.43×**) | 16218/5406/16218/5406 ⚠ |
-| `\p{L}+` (CJK) | 2.133 | unsupported | 1.33 (0.62×) | 13.17 (**6.17×**) | 12904/—/12904/12904 |
-| `\p{N}+` (arabic digits) | 2.026 | unsupported | 1.60 (0.79×) | 5.20 (**2.57×**) | 6250/—/6250/6250 |
-| `\p{sc=Han}` (CJK) | 3.127 | unsupported | 2.14 (0.68×) | unsupported | 25808/—/25808/— |
-| `\p{scx=Cyrl}` (mixed-script) | 3.573 | unsupported | 2.68 (0.75×) | unsupported | 32436/—/32436/— |
+| `\w+` (mixed-script) | 2.190 | 59.89 (**27.35×**) | 1.86 (0.85×) | 3.20 (**1.46×**) | 16218/5406/16218/5406 ⚠ |
+| `\b\w+\b` (mixed-script) | 2.091 | 57.04 (**27.28×**) | 3.02 (**1.44×**) | 3.96 (**1.89×**) | 16218/5406/16218/5406 ⚠ |
+| `\w++` (mixed-script) | 2.194 | unsupported | 1.86 (0.85×) | unsupported | 16218/—/16218/— |
+| `\w{2,}` (mixed-script) | 2.750 | 59.42 (**21.61×**) | 1.78 (0.65×) | 3.93 (**1.43×**) | 16218/5406/16218/5406 ⚠ |
+| `\p{L}+` (CJK) | 2.036 | unsupported | 1.34 (0.66×) | 13.19 (**6.48×**) | 12904/—/12904/12904 |
+| `\p{N}+` (arabic digits) | 2.029 | unsupported | 1.61 (0.79×) | 5.20 (**2.56×**) | 6250/—/6250/6250 |
+| `\p{sc=Han}` (CJK) | 3.140 | unsupported | 2.14 (0.68×) | unsupported | 25808/—/25808/— |
+| `\p{scx=Cyrl}` (mixed-script) | 3.586 | unsupported | 2.68 (0.75×) | unsupported | 32436/—/32436/— |
 | `(?i)café` (accented) | 0.410 | unsupported | 0.34 (0.83×) | 1.31 (**3.20×**) | 3509/—/3509/3509 |
-| `[à-ÿ]+` (accented) | 1.960 | 86.93 (**44.35×**) | 2.05 (**1.05×**) | 12.59 (**6.42×**) | 38599/38599/38599/38599 |
-| literal `你好` (CJK) | 0.386 | 28.99 (**75.10×**) | 0.58 (**1.50×**) | 2.62 (**6.79×**) | 6452/6452/6452/6452 |
-| `.` (emoji, one codepoint) | 2.147 | 58.96 (**27.46×**) | 3.86 (**1.80×**) | 19.05 (**8.87×**) | 68306/200039/68306/68306 ⚠ |
-| ascii witness `[a-z]+` | 1.180 | 90.55 (**76.74×**) | 2.24 (**1.90×**) | 13.83 (**11.72×**) | 42108/42108/42108/42108 |
+| `[à-ÿ]+` (accented) | 1.975 | 87.61 (**44.36×**) | 2.05 (**1.04×**) | 12.52 (**6.34×**) | 38599/38599/38599/38599 |
+| literal `你好` (CJK) | 0.402 | 29.06 (**72.29×**) | 0.59 (**1.47×**) | 2.62 (**6.52×**) | 6452/6452/6452/6452 |
+| `.` (emoji, one codepoint) | 2.200 | 58.43 (**26.56×**) | 3.79 (**1.72×**) | 18.93 (**8.60×**) | 68306/200039/68306/68306 ⚠ |
+| ascii witness `[a-z]+` | 1.180 | 92.22 (**78.15×**) | 2.25 (**1.91×**) | 13.94 (**11.81×**) | 42108/42108/42108/42108 |
 
 *(This table carried the `\w+` row TWICE until this stamp — 1.946 and 2.239 ns/B, one left behind by
 an earlier row replacement. `verify_unicode_ratios.py` could not catch it: each duplicate was
@@ -980,15 +979,15 @@ divergence to flag here). REAL `find_iter` vs rust `find_iter`, min-of-15.
 
 | case | REAL ns/B | rust ns/B | winner |
 | --- | ---: | ---: | :--- |
-| `\w+` (mixed-script) | 2.09 | 5.52 | **REAL 2.6×** |
-| `\p{L}+` (CJK) | 1.59 | 5.83 | **REAL 3.7×** |
-| `\p{N}+` (arabic digits) | 2.12 | 3.87 | **REAL 1.8×** |
-| `\p{sc=Han}` (CJK) | 2.94 | 7.10 | **REAL 2.4×** |
-| `\p{scx=Cyrl}` (mixed-script) | 3.12 | 8.04 | **REAL 2.6×** |
-| `(?i)` accented literal | 0.37 | 1.45 | **REAL 3.9×** |
-| `[a-y]` accented class | 1.86 | 10.86 | **REAL 5.8×** |
-| CJK literal | 0.41 | 0.90 | **REAL 2.2×** |
-| `.` (emoji, one codepoint) | 2.05 | 16.64 | **REAL 8.1×** |
+| `\w+` (mixed-script) | 2.06 | 5.50 | **REAL 2.7×** |
+| `\p{L}+` (CJK) | 1.57 | 5.85 | **REAL 3.7×** |
+| `\p{N}+` (arabic digits) | 2.13 | 3.87 | **REAL 1.8×** |
+| `\p{sc=Han}` (CJK) | 2.86 | 7.08 | **REAL 2.5×** |
+| `\p{scx=Cyrl}` (mixed-script) | 3.15 | 8.03 | **REAL 2.5×** |
+| `(?i)` accented literal | 0.37 | 1.44 | **REAL 3.9×** |
+| `[a-y]` accented class | 1.90 | 10.91 | **REAL 5.7×** |
+| CJK literal | 0.43 | 0.90 | **REAL 2.1×** |
+| `.` (emoji, one codepoint) | 2.10 | 16.60 | **REAL 7.9×** |
 
 **REAL leads all nine rows on both ISAs.** This table is the cleaner Unicode comparison than the three-way one
 above, because rust's Unicode-aware defaults for `\w` and `.` remove the semantics confound entirely — every
