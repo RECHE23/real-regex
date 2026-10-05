@@ -562,7 +562,10 @@ namespace real {
       // `forbid_empty_until_` (not nullable); `run()` consults the Aho-Corasick floor per search; a trailing
       // lookaround lives on `advance`'s per-match path (`make route-surface-parity`). `lazy_dfa_is_the_route`,
       // not a residue test: that sent plain literals here and lost memmem. A faster filler's shape stays its own.
-      batch_lazy_dfa_  = plain && !detail::lazy_dfa_route_disabled() && h.first_bytes_valid && !h.empty_match_possible
+      // A compile-time storage has no per-regex immutables, hence no shared DFAs: its filler could only ever
+      // answer partial and leave every match to `run()` after a wasted refill.
+      batch_lazy_dfa_  = plain && !Storage::is_compile_time && !detail::lazy_dfa_route_disabled() && h.first_bytes_valid
+                         && !h.empty_match_possible
                          // A walk that reads no groups (count_matches) gets spans only, so groups need
                          // not cost it the batch.
                          && (prog.slot_count <= 2 || h.capture_free_walk)

@@ -48,6 +48,7 @@ namespace real::detail {
     inner_literal_reverse_bytes, //!< Bytes the inner-literal route's reverse automaton read.
     inner_literal_confirm_bytes, //!< Bytes the inner-literal route's rejected forward confirms read.
     byte_program_builds,         //!< Byte programs built (each expands every Unicode class's UTF-8 trie).
+    il_prefix_run_walks,         //!< Two-run group fills that walked the prefix run on past the literal.
     bounded_backtrack_runs,      //!< Windows the bounded backtracker filled rather than the VM.
     dfa_quits,                   //!< Searches or confirms the lazy DFAs handed to the VM because a scan quit.
     literal_pair_scans,          //!< Literal searches the two-byte block filter answered.

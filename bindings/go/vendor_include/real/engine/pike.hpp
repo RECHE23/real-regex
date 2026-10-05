@@ -4826,6 +4826,7 @@ namespace real::detail {
                                                        std::size_t      from,
                                                        std::size_t      limit) const
     {
+      note(counter::il_prefix_run_walks);
       std::size_t r {from};
       if (!prog_.hints.il_rev_is_cp) {
         const char_class& cc {prog_.classes[static_cast<std::size_t>(prog_.hints.il_rev_class)]};
@@ -4880,7 +4881,7 @@ namespace real::detail {
       }
       if (prog_.hints.il_fwd_last) {
         const std::size_t len {lit_end - h};
-        std::size_t       r   {prefix_run_end(text, h, e)};
+        std::size_t       r   {prog_.hints.il_fwd_run_to_end ? e : prefix_run_end(text, h, e)};
         if (r + len >= e) {
           r = e - len - 1; // the suffix needs one member past the literal
         }
