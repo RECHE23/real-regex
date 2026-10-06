@@ -406,3 +406,32 @@ TEST(two_run_fill_walks_the_prefix_run_only_when_the_classes_differ)
     EXPECT_EQ(real::detail::tally(real::detail::counter::il_prefix_run_walks).load() > 0U, walks);
   }
 }
+
+// Short subjects stay under the inner-literal floor, and the build they would not repay one at a time is paid once
+// they add up to il_short_scan_budget: a regex only ever searched on log lines then takes the route like one that
+// met a long subject, and leaves the bounded backtracker. The answers are the VM's throughout.
+TEST(short_subjects_that_add_up_to_the_budget_build_the_inner_literal_route)
+{
+  const real::regex rx   {R"((\w+)=(\w+))"};
+  const std::string line {"2026-06-13 12:04:55 info worker started pid=4121 queue=default shard=7 retries=0 latency=12ms"};
+  real::detail::lazy_dfa_route_disabled() = true;
+  const auto pure        {rx.search(line)};
+  real::detail::lazy_dfa_route_disabled() = false;
+  EXPECT(pure);
+  real::detail::tally(real::detail::counter::byte_program_builds)    = 0;
+  real::detail::tally(real::detail::counter::bounded_backtrack_runs) = 0;
+  for (int i {0}; i < 100; ++i) {
+    const auto m {rx.search(line)};
+    EXPECT(m && m.start(1) == pure.start(1) && m.end(2) == pure.end(2));
+  }
+  EXPECT_EQ(real::detail::tally(real::detail::counter::byte_program_builds).load(), std::uint64_t {0});
+  EXPECT(real::detail::tally(real::detail::counter::bounded_backtrack_runs).load() >= 100U);
+  for (std::size_t seen {100U * line.size()}; seen <= real::detail::il_short_scan_budget; seen += line.size()) {
+    static_cast<void>(rx.search(line));
+  }
+  EXPECT(real::detail::tally(real::detail::counter::byte_program_builds).load() > 0U);
+  real::detail::tally(real::detail::counter::bounded_backtrack_runs) = 0;
+  const auto m {rx.search(line)};
+  EXPECT(m && m.start(1) == pure.start(1) && m.end(1) == pure.end(1) && m.start(2) == pure.start(2) && m.end(2) == pure.end(2));
+  EXPECT_EQ(real::detail::tally(real::detail::counter::bounded_backtrack_runs).load(), std::uint64_t {0});
+}

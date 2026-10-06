@@ -905,6 +905,9 @@ namespace real::detail {
     std::optional<onepass>     op_table;                  //!< one-pass extractor, present iff the pattern is one-pass.
     byte_program               il_prefix_prog;            //!< IL: the inner-literal prefix's byte program (ineligible until built); per regex, so the reverse DFA over it is shared.
     std::size_t                il_min_haystack {};        //!< IL cold floor: the first candidate scan abandons below this size (0 = never), checked only after a literal hit; see \ref pike_vm::run_inner_literal.
+    //! \brief Bytes of subjects the inner-literal route declined below its floor before the immutables were built,
+    //!        counted to \ref il_short_scan_budget. Relaxed: a lost addition only delays the build.
+    std::atomic<std::size_t> il_short_bytes {0};
     /*!
      * \brief Byte-indexed membership rows, filled on first use of each class and kept for the regex's life.
      *
@@ -1038,6 +1041,7 @@ namespace real::detail {
       alt_pairs_for.store(nullptr, std::memory_order_relaxed);
       op_table_for.store(nullptr, std::memory_order_relaxed);
       prefix_calls.store(0, std::memory_order_relaxed);
+      il_short_bytes.store(0, std::memory_order_relaxed);
     }
 
     /*!
@@ -1165,6 +1169,13 @@ namespace real::detail {
   //!        route saves, even with the reverse DFA already built. A cold first scan uses the higher
   //!        \ref regex_immutables::il_min_haystack.
   inline constexpr std::size_t il_warm_floor {4UL * 1024};
+
+  //! \brief Subject bytes a regex lets the inner-literal route decline under its floor before it builds what the
+  //!        route needs: the cold floor's least amortization. Short subjects that add up to it have paid for the
+  //!        build as one long subject would, and the build lifts both floors for good. Without it a regex only
+  //!        ever searched on short subjects stayed on the bounded backtracker (`(\w+)=(\w+)` over a 95-byte
+  //!        line: 20 000 instructions a search, 1 000 once built, the build repaid within ~300 searches).
+  inline constexpr std::size_t il_short_scan_budget {64UL * 1024};
 
   //! \brief Anchored matches a regex runs before it builds its one-pass table for them. Rent before buying: the
   //!        build (byte program, table, minimization) costs about as much as 5 000 to 13 000 of these calls

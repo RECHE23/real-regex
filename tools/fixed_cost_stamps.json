@@ -8,13 +8,13 @@
     "miss": 670
   },
   "sizes/arm64-libc++": {
-    "immutables": 1400,
-    "regex": 1936,
+    "immutables": 1408,
+    "regex": 1944,
     "state": 9392
   },
   "sizes/x86_64-libstdc++": {
-    "immutables": 1408,
-    "regex": 1952,
+    "immutables": 1416,
+    "regex": 1960,
     "state": 9392
   }
 }

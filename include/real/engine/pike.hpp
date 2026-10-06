@@ -1362,11 +1362,12 @@ namespace real::detail {
           // of magnitude more than the scan; il_warmed is still set (shared_dfa_for keys on the
           // immutables' address). Both floors lift once the build is paid, keyed on `built_for`, never
           // il_warmed: the branch below sets il_warmed on its way out, which would charge the second
-          // short call the build.
+          // short call the build. Short subjects that add up to il_short_scan_budget pay for the build.
           const bool built {prog_.immut != nullptr
                             && prog_.immut->built_for.load(std::memory_order_acquire) == prog_.code.data()};
-          if (!inner_literal_guard_disabled() && prog_.immut != nullptr && !built
-              && text.size() < il_warm_floor) {
+          if (!inner_literal_guard_disabled() && prog_.immut != nullptr && !built && text.size() < il_warm_floor
+              && prog_.immut->il_short_bytes.fetch_add(text.size(), std::memory_order_relaxed) + text.size()
+              < il_short_scan_budget) {
             shared_dfa_for(prog_.immut).il_warmed.store(true, std::memory_order_relaxed);
             abandon = true;
             return false;
