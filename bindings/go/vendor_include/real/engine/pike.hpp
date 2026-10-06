@@ -1056,6 +1056,9 @@ namespace real::detail {
       std::size_t pos     {start};
       while (pos <= text.size()) {
         const bool seeding = (pos == start) || (mode == run_mode::search && !matched);
+        if (seeding && pos != start) {
+          note(counter::vm_reseeds);
+        }
         if (seeding && mode == run_mode::search && !matched && clist->pcs.empty()) {
           // No thread alive: jump to the next viable start (prefilter); single pass, still linear.
           pos = next_candidate(text, pos, start);
@@ -1998,6 +2001,16 @@ namespace real::detail {
     }
 
     /*!
+     * \brief The mode the VM fills a window's groups in once the DFAs proved where the match starts.
+     * \param[in] mode The search's own mode.
+     * \return \ref run_mode::prefix for a search, anchored at the proved start; any other mode unchanged.
+     */
+    [[nodiscard]] static constexpr run_mode window_mode(run_mode mode) noexcept
+    {
+      return mode == run_mode::search ? run_mode::prefix : mode;
+    }
+
+    /*!
      * \brief Lazy-DFA search route on the shared confirm DFAs. \c noinline: inlined, its body inflates
      *        the x86 class-loop codegen of \ref run (as \ref ac_ready).
      * \param[in]  text      Subject.
@@ -2072,8 +2085,10 @@ namespace real::detail {
                                  }
                                  prof::tick_route(prof::route::general_window);
                                  note(counter::vm_window_runs);
-                                 dfa_result = run_general<Cascade>(fwd.looks() ? text : text.substr(0, match_end), c, mode,
-                                                                   out_slots);
+                                 // The walk proved the leftmost match starts at c: anchored there, the VM seeds one
+                                 // thread instead of one per position of the window.
+                                 dfa_result = run_general<Cascade>(fwd.looks() ? text : text.substr(0, match_end), c,
+                                                                   window_mode(mode), out_slots);
                                  return;
                                }
                                // No match starts at c: the single pass takes over from the next byte when a walk
@@ -2126,8 +2141,8 @@ namespace real::detail {
                            }
                            prof::tick_route(prof::route::general_window);
                            note(counter::vm_window_runs);
-                           dfa_result = run_general<Cascade>(fwd.looks() ? text : text.substr(0, abs_end), abs_start, mode,
-                                                             out_slots);
+                           dfa_result = run_general<Cascade>(fwd.looks() ? text : text.substr(0, abs_end), abs_start,
+                                                             window_mode(mode), out_slots);
                          })};
       if (used && dfa_result.has_value()) {
         return dfa_result;
