@@ -1752,6 +1752,14 @@ namespace real::detail {
         const std::size_t needed             {8000U * branches / (want == 0 ? std::size_t {1} : want)};
         const std::size_t span_cap           {std::clamp(needed, ac_density_min_span, ac_density_sample_bytes)};
         const std::size_t limit              {text.size() < start + span_cap ? text.size() : start + span_cap};
+        // A subject the sample would read whole goes to the automaton unsampled: over a short subject the sample
+        // and the cascade cost more than the automaton's own scan, its build included, at every branch count.
+        if (limit == text.size()) {
+          state_.ac_dense   = true;
+          state_.ac_decided = true;
+          ac_density_last_verdict().store(ac_verdict::automaton, std::memory_order_relaxed);
+          return true;
+        }
         std::size_t       cands              {0};
         std::size_t       checked            {0};
         std::size_t       completed          {0};
