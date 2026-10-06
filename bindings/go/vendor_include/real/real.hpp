@@ -664,6 +664,38 @@ namespace real {
 
   private:
 
+    template <typename>
+    friend class basic_regex;
+
+    /*!
+     * \brief Counts the matches left, the current one included, and ends the walk.
+     *
+     * The spans a batched fill buffered past the current match are counted without being handed out:
+     * handing one out writes its slots, which no count reads. The first span of each fill still goes
+     * through \ref advance, so the walk keeps its one path for refills, partial fills and the per-match
+     * fallback.
+     *
+     * \return The number of matches from the current one to the end.
+     */
+    constexpr std::size_t count_rest()
+    {
+      std::size_t n {0};
+      // One loop: split by `batch_eligible_`, `advance` is inlined twice and costs every walk more than the
+      // buffer test it spares a walk that never batches.
+      while (!done_) {
+        ++n;
+        if (const std::size_t left {batch_n_ - batch_i_}; left != 0) {
+          // The current match was handed out of this same fill, so the empty-match guard is already clear,
+          // and the last span's end is where handing each out would have left the walk.
+          n        += left;
+          pos_      = batch_[batch_n_ - 1].end;
+          batch_i_  = batch_n_;
+        }
+        advance();
+      }
+      return n;
+    }
+
     detail::program_view         prog_;                                        //!< The program being run.
     std::string_view             pattern_;                                     //!< Pattern text (named lookups).
     std::string_view             text_;                                        //!< The text being scanned.
@@ -866,6 +898,7 @@ namespace real {
         else {
           detail::pike_vm<typename Storage::state_type, true> wvm {prog_, state_};
           const auto&                                         sp  {batch_[batch_i_++]};
+          detail::note(detail::counter::batch_handouts);
           current_.engine_refill_span(wvm, sp.start, sp.end);
           pos_ = sp.end;
           // No batched filler emits an empty span (each one's own note says why), so the find_iter
@@ -1886,16 +1919,12 @@ namespace real {
     {
       const std::size_t end {endpos < text.size() ? endpos : text.size()};
       // Not a range-for: its `end()` builds a sentinel with a full `state_type` only to compare against, a
-      // large share of a short call; `exhausted()` builds nothing. find_iter keeps paying it: a lazy state
-      // (`std::optional`, a `construct_at` union) cost the working iterator ~26 %, and a distinct sentinel
-      // type would break the C binding's `real_iter` and the homogeneous `std::` algorithms.
+      // large share of a short call. find_iter keeps paying it: a lazy state (`std::optional`, a
+      // `construct_at` union) cost the working iterator ~26 %, and a distinct sentinel type would break the C
+      // binding's `real_iter` and the homogeneous `std::` algorithms.
       basic_match_range<Storage> range {program_.view(), pattern(), text.substr(0, end),
                                         pos,            match_semantics::first, true};
-      std::size_t                n     {};
-      for (auto it = range.begin(); !it.exhausted(); ++it) {
-        ++n;
-      }
-      return n;
+      return range.begin().count_rest();
     }
 
     /*!
