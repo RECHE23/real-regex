@@ -2,6 +2,26 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.10.4
+
+10.4 (**counts that do not hand out, regexes that warm up, bindings that cross once**): **THE TABLES ARE
+RE-RUN AND THE STAMP MOVES TO `2026.10.3` + tree `6a80b657`**, on both ISAs, after a stamp at `0ec90f28` the day
+before (2026-10-05 and 2026-10-06, same hosts):
+- **§A and §Unicode** (`count_matches`, fa6da56): arm64 `single` 4.14 → 1.92 ns/B, `words [a-z]+` 1.18 → 0.78,
+  `digits` 0.88 → 0.65, `.` emoji −42 %; x86-64 `single` 3.39 → 2.20, `digits` 0.80 → 0.67, `.` emoji −32 %.
+  arm64 `alternation` 1.51 → 1.34, under the `2026.9.11` stamp again: the cost 2026.10.1 brought is gone.
+  `lookahead` +1.4 % arm64 and +3.5 % x86-64, the latter with `std::regex`'s own cell (+3.1 %).
+- **§E** (`find_iter`): within 3 % on arm64 and 5 % on x86-64; x86-64 `\p{N}+` +4.4 % at the same instruction
+  count. Since the `2026.9.11` stamp, `ident` and `email` carry what right groups cost (2026.10.2), the two-run
+  fill having taken a third of it back (724c956).
+- **§B**: every row within 2.2 % of the day before but `sub · spaces @100KB` (4.69× → 4.87×); against
+  `2026.9.11`, `literal` 11.8× → 18.8×, `alternation · findall` 68.8× → 82.9×, `emails · findall groups`
+  1.87× → 2.51×.
+- **Not in a table**: a warm regex's `match()` on a one-pass pattern with groups (227063b), short subjects that
+  build the inner-literal route (fdc8a58) or reach the automaton unsampled (7626056), and the bindings' per-call
+  and per-match costs; each measured in its commit and in `docs/release-notes/v2026.10.4.md`.
+The multi-pattern section keeps its `600b0fb` stamp.
+
 ## v2026.10.3
 
 10.3 (**groups in one walk, an inner-literal route that gives way, a tenth of the headers gone**): **THE TABLES
