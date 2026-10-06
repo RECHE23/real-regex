@@ -1538,3 +1538,39 @@ TEST(batched_walks_fill_a_spent_subject_once)
     EXPECT_EQ(real::detail::tally(real::detail::counter::batch_fills).load(), 1U);
   }
 }
+
+// count_matches counts the spans a batched fill buffered without handing each out: on a dense walk only the
+// first of each fill goes through the per-match path. Every batched route answers the count find_iter gives,
+// from the start and from inside the subject, with fills that end short and fills the route gives up on.
+TEST(count_matches_counts_buffered_spans_without_handing_them_out)
+{
+  std::string text;
+  for (int i {0}; text.size() < 20000U; ++i) {
+    text += "cat " + std::to_string(i) + " dog@x.io 2026-10-06 fish bird x7y " + (i % 3 == 0 ? "ab " : "");
+  }
+  const real::regex dense             {"[a-z]+"};
+  real::detail::tally(real::detail::counter::batch_handouts) = 0;
+  const std::size_t counted           {dense.count_matches(text)};
+  const auto        counting_handouts {real::detail::tally(real::detail::counter::batch_handouts).load()};
+  std::size_t       iterated          {0};
+  for (const auto& m : dense.find_iter(text)) {
+    static_cast<void>(m);
+    ++iterated;
+  }
+  EXPECT_EQ(counted, iterated);
+  EXPECT(iterated > 2000U);
+  EXPECT(counting_handouts * 3U < iterated);
+  for (const char* pattern : {"[a-z]+", R"(\b[a-z]+\b)", "[0-9]", R"(\p{L}+)", "ab", "cat|dog|fish",
+                              "cat|dog|fish|bird|fox|bear|wolf|deer|hawk|frog|io|x7y", R"(\d{4}-\d{2}-\d{2})",
+                              R"(\w+@\w+)", "[a-z]+[0-9]|[0-9]+[a-z]", R"(\d+)"}) {
+    const real::regex re {pattern};
+    for (const std::size_t from : {std::size_t {0}, std::size_t {1}, std::size_t {777}, text.size() - 5U}) {
+      std::size_t expected {0};
+      for (const auto& m : re.find_iter(std::string_view {text}.substr(from))) {
+        static_cast<void>(m);
+        ++expected;
+      }
+      EXPECT_EQ(re.count_matches(std::string_view {text}.substr(from)), expected);
+    }
+  }
+}
