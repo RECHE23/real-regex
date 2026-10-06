@@ -632,60 +632,33 @@ func (r *Regexp) ReplaceAll(text, repl []byte) ([]byte, error) {
 	// sequence as well as the expansion, and its sequence is Python re's -- so delegating the whole
 	// job made ReplaceAll the one method that counted matches differently from every other one on
 	// the same object: `x*` over "axbxc" enumerated four matches through FindAllIndex and replaced
-	// six. real_expand is real_sub's inner half, one match at a time, which keeps the template
-	// grammar in a single place while the sequence stays here.
+	// six. real_expand_all is real_sub's inner half over the whole sequence, the template parsed
+	// once, which keeps the grammar in a single place while the sequence stays here.
 	matches := r.FindAllSubmatchIndex(text, -1)
-
-	// With no matches nothing would ever be expanded, and a malformed template would come back a
-	// silent success where real_sub reported it. One expansion against an all-unmatched spans buffer
-	// parses the template and surfaces exactly those errors; its output is discarded. The call is
-	// unconditional so a CLOSED handle still errors, as the post-Close contract requires: a closed
-	// handle has zero slots, and the ABI's own null-re check is what reports it -- one source of
-	// truth for that message rather than a second one spelled out here.
-	if len(matches) == 0 {
-		spans := r.groupSlots()
-		for i := range spans {
-			spans[i] = sizeMax
-		}
-		if C.real_expand(r.re, (*C.char)(ctext), C.size_t(len(text)), spanPtr(spans),
-			C.size_t(len(spans)), (*C.char)(crepl), C.size_t(len(repl)), nil, 0,
-			&errbuf[0], C.size_t(len(errbuf))) == sizeMax {
-			return nil, errors.New(C.GoString(&errbuf[0]))
-		}
-		return append([]byte(nil), text...), nil
+	nslots := 2 * r.groupCount()
+	spans := make([]C.size_t, len(matches)*nslots)
+	for i, m := range matches {
+		copy(spans[i*nslots:(i+1)*nslots], indicesToSpans(m))
 	}
 
-	out := make([]byte, 0, len(text))
-	piece := make([]byte, 64) // reused across matches; grown only when one expansion overflows it
-	last := 0
-	for _, m := range matches {
-		out = append(out, text[last:m[0]]...)
-		spans := indicesToSpans(m)
-		sp := spanPtr(spans)
-		if sp == nil {
-			return nil, errors.New("ReplaceAll: no capture slots")
-		}
-		need := C.real_expand(r.re, (*C.char)(ctext), C.size_t(len(text)), sp, C.size_t(len(spans)),
-			(*C.char)(crepl), C.size_t(len(repl)),
-			(*C.char)(unsafe.Pointer(&piece[0])), C.size_t(len(piece)),
-			&errbuf[0], C.size_t(len(errbuf)))
-		if need == sizeMax {
-			return nil, errors.New(C.GoString(&errbuf[0]))
-		}
-		if int(need) > len(piece) {
-			// Sized on the first call, filled on a second: the two-call convention, entered only
-			// when the reusable buffer was too small rather than on every match.
-			piece = make([]byte, int(need))
-			C.real_expand(r.re, (*C.char)(ctext), C.size_t(len(text)), sp, C.size_t(len(spans)),
-				(*C.char)(crepl), C.size_t(len(repl)),
-				(*C.char)(unsafe.Pointer(&piece[0])), C.size_t(len(piece)),
-				&errbuf[0], C.size_t(len(errbuf)))
-		}
-		out = append(out, piece[:need]...)
-		last = m[1]
+	// With no match the template is still parsed, so a malformed one errors as real_sub's would, and a
+	// CLOSED handle errors through the ABI's own null-re check -- one source of truth for that message.
+	// The output buffer is a guess; a longer expansion is sized by the first call and filled by a second.
+	out := make([]byte, len(text)+len(text)/2+64)
+	expand := func() C.size_t {
+		return C.real_expand_all(r.re, (*C.char)(ctext), C.size_t(len(text)), spanPtr(spans), C.size_t(nslots),
+			C.size_t(len(matches)), (*C.char)(crepl), C.size_t(len(repl)),
+			(*C.char)(unsafe.Pointer(&out[0])), C.size_t(len(out)), &errbuf[0], C.size_t(len(errbuf)))
 	}
-	out = append(out, text[last:]...)
-	return out, nil
+	need := expand()
+	if need == sizeMax {
+		return nil, errors.New(C.GoString(&errbuf[0]))
+	}
+	if int(need) > len(out) {
+		out = make([]byte, int(need))
+		expand()
+	}
+	return out[:need], nil
 }
 
 // ReplaceAllString is ReplaceAll over strings, with the same template syntax and the same errors —
