@@ -718,3 +718,55 @@ TEST(onepass_outlives_the_byte_program_it_was_built_from)
   EXPECT_EQ(text.substr(slots[2], slots[3] - slots[2]), std::string {"alpha"});
   EXPECT_EQ(text.substr(slots[4], slots[5] - slots[4]), std::string {"beta"});
 }
+
+// An anchored match fills its groups through the one-pass table only once the regex has run enough of them to
+// repay the table's build: a regex matched a few times builds nothing.
+TEST(onepass_match_builds_its_table_only_when_warm)
+{
+  const real::regex re {R"((\w+)@(\w+)\.(\w+))"};
+  real::detail::tally(real::detail::counter::byte_program_builds)    = 0;
+  real::detail::tally(real::detail::counter::onepass_anchored_walks) = 0;
+  for (int i {0}; i < 100; ++i) {
+    EXPECT(re.match("alice@example.com and more"));
+  }
+  EXPECT_EQ(real::detail::tally(real::detail::counter::byte_program_builds).load(), std::uint64_t {0});
+  EXPECT_EQ(real::detail::tally(real::detail::counter::onepass_anchored_walks).load(), std::uint64_t {0});
+  for (std::uint32_t i {0}; i <= real::detail::onepass_prefix_warm_calls; ++i) {
+    static_cast<void>(re.match("alice@example.com and more"));
+  }
+  EXPECT(real::detail::tally(real::detail::counter::byte_program_builds).load() > 0U);
+  EXPECT(real::detail::tally(real::detail::counter::onepass_anchored_walks).load() > 0U);
+}
+
+// Once warm, an anchored match answers what the VM alone does: span and every group, hit or miss, at the start
+// and inside the subject.
+TEST(onepass_warm_match_agrees_with_the_vm)
+{
+  constexpr std::string_view patterns[] {R"((\w+)@(\w+)\.(\w+))", R"(([a-z]+)([0-9]+))", R"((\d{4})-(\d{2})-(\d{2}))",
+                                         R"((\d+)\.(\d+)\.(\d+)\.(\d+))", R"(([a-z]+) ([a-z]+))", R"((\w+)=(\w*))",
+                                         R"((a|b)*(c))", R"(([a-z]+)\b(\d*))", R"((x?)(y+))"};
+  constexpr std::string_view subjects[] {"alice@example.com and more", "abcdef12345 tail", "2026-10-06 12:00",
+                                         "10.0.2.15 took", "hello world", "key= value", "ababc", "word 42",
+                                         "no address here", "yyy x", "", "x"};
+  for (const std::string_view pattern : patterns) {
+    const real::regex re {std::string {pattern}};
+    for (std::uint32_t i {0}; i <= real::detail::onepass_prefix_warm_calls; ++i) {
+      static_cast<void>(re.match(subjects[0]));
+    }
+    for (const std::string_view subject : subjects) {
+      for (std::size_t pos {0}; pos <= subject.size(); ++pos) {
+        const auto warm {re.match(subject, pos)};
+        real::detail::lazy_dfa_route_disabled() = true;
+        const auto pure {re.match(subject, pos)};
+        real::detail::lazy_dfa_route_disabled() = false;
+        EXPECT_EQ(warm.matched(), pure.matched());
+        if (warm.matched() && pure.matched()) {
+          for (std::size_t g {0}; g < pure.size(); ++g) {
+            EXPECT_EQ(warm.start(g), pure.start(g));
+            EXPECT_EQ(warm.end(g), pure.end(g));
+          }
+        }
+      }
+    }
+  }
+}

@@ -899,9 +899,12 @@ namespace real::detail {
     byte_program           look_prog;                     //!< byte program keeping its position assertions, built only when byte_prog declined: the search DFAs run it.
     lazy_byte_alphabet     look_alphabet;                 //!< byte-class alphabet of look_prog.
     bool                   run_shape {false};             //!< The program is saves, atoms and greedy `atom+` loops only: pike_vm::match_run_shape reads its groups off a window.
-    std::optional<onepass> op_table;                      //!< one-pass extractor, present iff the pattern is one-pass.
-    byte_program           il_prefix_prog;                //!< IL: the inner-literal prefix's byte program (ineligible until built); per regex, so the reverse DFA over it is shared.
-    std::size_t            il_min_haystack {};            //!< IL cold floor: the first candidate scan abandons below this size (0 = never), checked only after a literal hit; see \ref pike_vm::run_inner_literal.
+    //! \brief Anchored matches run before \ref op_table was built for them, counted to \ref onepass_prefix_warm_calls.
+    //!        Relaxed: a lost increment only delays the build.
+    std::atomic<std::uint32_t> prefix_calls {0};
+    std::optional<onepass>     op_table;                  //!< one-pass extractor, present iff the pattern is one-pass.
+    byte_program               il_prefix_prog;            //!< IL: the inner-literal prefix's byte program (ineligible until built); per regex, so the reverse DFA over it is shared.
+    std::size_t                il_min_haystack {};        //!< IL cold floor: the first candidate scan abandons below this size (0 = never), checked only after a literal hit; see \ref pike_vm::run_inner_literal.
     /*!
      * \brief Byte-indexed membership rows, filled on first use of each class and kept for the regex's life.
      *
@@ -1034,6 +1037,7 @@ namespace real::detail {
       ac_for.store(nullptr, std::memory_order_relaxed);
       alt_pairs_for.store(nullptr, std::memory_order_relaxed);
       op_table_for.store(nullptr, std::memory_order_relaxed);
+      prefix_calls.store(0, std::memory_order_relaxed);
     }
 
     /*!
@@ -1161,6 +1165,12 @@ namespace real::detail {
   //!        route saves, even with the reverse DFA already built. A cold first scan uses the higher
   //!        \ref regex_immutables::il_min_haystack.
   inline constexpr std::size_t il_warm_floor {4UL * 1024};
+
+  //! \brief Anchored matches a regex runs before it builds its one-pass table for them. Rent before buying: the
+  //!        build (byte program, table, minimization) costs about as much as 5 000 to 13 000 of these calls
+  //!        made without it, so a regex matched a few times never pays it, and one matched in a loop pays at
+  //!        most about twice what the best choice made in hindsight would have.
+  inline constexpr std::uint32_t onepass_prefix_warm_calls {8192};
 
   /*!
    * \brief The mutex guarding insert/erase on the process-wide \ref shared_dfa_slot map.

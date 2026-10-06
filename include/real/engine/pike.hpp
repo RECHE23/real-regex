@@ -976,13 +976,31 @@ namespace real::detail {
       }) {
         // Full match: the window is exactly [start, text.size()]. A one-pass pattern fills its captures in
         // one pass (extract returns false when it cannot); no DFA build is paid.
-        if (!std::is_constant_evaluated() && !lazy_dfa_route_disabled() && mode == run_mode::full) {
+        if (mode == run_mode::full && !std::is_constant_evaluated() && !lazy_dfa_route_disabled()) {
           ensure_op_table();
           if (prog_.immut != nullptr && prog_.immut->op_table.has_value() && prog_.immut->op_table->eligible()) {
             prof::tick_route(prof::route::onepass_full);
             // The table is deterministic: an eligible table that extracts nothing proves the span does not
             // match, so no engine runs after it.
             return prog_.immut->op_table->extract(text, start, text.size(), out_slots) || fail_slots(out_slots);
+          }
+        }
+        // An anchored match with groups to fill, on a one-pass pattern whose ends the table knows: one walk finds
+        // the end and the groups, as in confirm_at. The table is deterministic, so a walk that ends nowhere
+        // proves no match begins at `start`. Building it costs as much as thousands of these calls, so a regex
+        // pays it only once it has made enough of them (\ref onepass_prefix_warm_calls).
+        if (mode == run_mode::prefix && !std::is_constant_evaluated() && !lazy_dfa_route_disabled()
+            && sem_ == match_semantics::first && prog_.slot_count > 2 && !prog_.hints.capture_free_walk
+            && forbid_empty_until_ <= start && prog_.immut != nullptr
+            && (prog_.immut->op_table_for.load(std::memory_order_acquire) == prog_.code.data()
+                || prog_.immut->prefix_calls.fetch_add(1, std::memory_order_relaxed) >= onepass_prefix_warm_calls)) {
+          ensure_op_table();
+          if (prog_.immut->op_table.has_value() && prog_.immut->op_table->ends_known()) {
+            prof::tick_route(prof::route::onepass_full);
+            note(counter::onepass_anchored_walks);
+            std::size_t reach {start};
+            return prog_.immut->op_table->extract_leftmost(text, start, out_slots, reach) != npos
+                   || fail_slots(out_slots);
           }
         }
         if (!std::is_constant_evaluated() && !lazy_dfa_route_disabled() && mode == run_mode::search
