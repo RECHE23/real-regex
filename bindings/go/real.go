@@ -39,7 +39,6 @@ import (
 	"errors"
 	"regexp"
 	"runtime"
-	"unicode/utf8"
 	"unsafe"
 )
 
@@ -53,6 +52,10 @@ func (*noCopy) Unlock() {}
 
 // sizeMax is (size_t)-1, the C ABI's error sentinel for count/length-returning functions.
 var sizeMax = ^C.size_t(0)
+
+// findAllBatch is how many matches one real_find_all_regexp call writes: enough that a dense walk crosses
+// cgo rarely, small enough that a walk capped at a few matches allocates little.
+const findAllBatch = 64
 
 // dollarEndOnly is real::flags::dollar_endonly (the C ABI's native numbering, NOT re's). Every
 // pattern this package compiles carries it, because regexp's `$` without `m` is RE2's `\z` -- the
@@ -489,49 +492,41 @@ func (r *Regexp) FindSubmatchIndex(text []byte) []int {
 //	third matches OVERLAP.
 //
 // Hence the cursor: pos advances to the match end, or by one rune past an empty match, and every
-// search starts from it. The cap counts DELIVERED matches and stops the scan, as regexp's does.
+// search starts from it. real_find_all_regexp walks that cursor on the C side, findAllBatch matches at
+// a time over one scratch state, so a walk crosses cgo once per batch rather than once per match. The
+// cap counts DELIVERED matches and stops the scan, as regexp's does: a batch never asks for more.
 func (r *Regexp) FindAllSubmatchIndex(b []byte, n int) [][]int {
 	if n == 0 {
 		return nil
 	}
+	nslots := 2 * r.groupCount()
+	if nslots == 0 {
+		return nil // closed / zero slots
+	}
 	ctext, freeText := cBytes(b)
 	defer freeText()
-	spans := r.groupSlots()
-	sp := spanPtr(spans)
-	if sp == nil {
-		return nil // closed / zero slots — never &spans[0] on empty
+	batch := findAllBatch
+	if n > 0 && n < batch {
+		batch = n // a capped walk sizes its buffer to the cap
 	}
+	buf := make([]C.size_t, batch*nslots)
 	var out [][]int
-	end := len(b)
-	prevEnd := -1 // no preceding match yet: the first span is never abutting
-	for pos := 0; pos <= end; {
-		rc := C.real_match(r.re, (*C.char)(ctext), C.size_t(end),
-			C.size_t(pos), C.size_t(end), C.REAL_MODE_SEARCH, sp)
-		if rc != 1 {
+	pos, prev := C.size_t(0), sizeMax // prev: no preceding match yet, so the first span never abuts
+	for pos <= C.size_t(len(b)) {
+		want := batch
+		if n > 0 && n-len(out) < want {
+			want = n - len(out)
+		}
+		got := C.real_find_all_regexp(r.re, (*C.char)(ctext), C.size_t(len(b)), &pos, &prev, &buf[0],
+			C.size_t(want))
+		if got == sizeMax || got == 0 {
 			break
 		}
-		m := spansToIndices(spans)
-		accept := true
-		if m[0] == m[1] {
-			if m[0] == prevEnd {
-				accept = false
-			}
-			// One rune from POS, not from the match start — regexp advances the cursor it searched
-			// from. A zero width means pos is already at the end, and end+1 leaves the loop.
-			if _, width := utf8.DecodeRune(b[pos:end]); width > 0 {
-				pos += width
-			} else {
-				pos = end + 1
-			}
-		} else {
-			pos = m[1]
+		for i := 0; i < int(got); i++ {
+			out = append(out, spansToIndices(buf[i*nslots:(i+1)*nslots]))
 		}
-		prevEnd = m[1]
-		if accept {
-			out = append(out, m)
-			if n > 0 && len(out) == n {
-				break // stop the scan, like regexp's allMatches: the cap is not a post-slice
-			}
+		if n > 0 && len(out) == n {
+			break // stop the scan, like regexp's allMatches: the cap is not a post-slice
 		}
 	}
 	return out

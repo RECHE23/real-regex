@@ -2,6 +2,7 @@ package real
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -37,3 +38,24 @@ func BenchmarkFindSubmatchIndexEarlyHit(b *testing.B) {
 		}
 	}
 }
+
+// A walk over many matches crosses cgo once per batch: dense words, groups, a sparse subject and a capped
+// walk, each against regexp's own sequence (the differential tests hold the answers).
+var findAllSubject = []byte(strings.Repeat("the quick brown fox x=1 jumps over 42 lazy dogs ", 400))
+
+func benchFindAll(b *testing.B, pattern string, n int) {
+	r := MustCompile(pattern)
+	defer r.Close()
+	b.SetBytes(int64(len(findAllSubject)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if r.FindAllSubmatchIndex(findAllSubject, n) == nil {
+			b.Fatal("no match")
+		}
+	}
+}
+
+func BenchmarkFindAllWords(b *testing.B)  { benchFindAll(b, `[a-z]+`, -1) }
+func BenchmarkFindAllGroups(b *testing.B) { benchFindAll(b, `(\w)=(\d+)`, -1) }
+func BenchmarkFindAllSparse(b *testing.B) { benchFindAll(b, `lazy dogs the`, -1) }
+func BenchmarkFindAllCapped(b *testing.B) { benchFindAll(b, `[a-z]+`, 3) }

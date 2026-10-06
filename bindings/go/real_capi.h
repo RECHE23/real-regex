@@ -150,6 +150,21 @@ enum {
 int real_match(const real_regex* re, const char* text, size_t len,
               size_t start, size_t end, int mode, size_t* spans);
 
+/* Successive matches of `re` in `text` as Go's regexp enumerates them, written in batches: after a match the
+ * scan resumes at its end, after an empty match one code point past where the search began (a malformed
+ * sequence counts as one byte), and an empty match abutting the previous match is skipped. Two matches never
+ * start at the same position. Python re's sequence differs on empty matches; real_find_iter gives that one.
+ *
+ * `*pos` is where the next search starts (0 for a fresh walk) and `*prev_end` the end of the last match seen,
+ * SIZE_MAX before the first; both are updated, so a caller resumes by calling again with them. Up to
+ * `max_matches` matches are written to `spans`, each as real_iter_next writes one (real_group_count pairs,
+ * SIZE_MAX for a group that did not participate). One scratch state serves the whole call, so the engine keeps
+ * what it learns about the subject from one search to the next. The walk is over when `*pos` exceeds `len`.
+ * Returns the number of matches written, or (size_t)-1 on error (NULL re, spans, pos or prev_end, NULL text
+ * with a nonzero len, or an internal engine error). */
+size_t real_find_all_regexp(const real_regex* re, const char* text, size_t len,
+                            size_t* pos, size_t* prev_end, size_t* spans, size_t max_matches);
+
 /* Whether real_match(re, text, len, start, len, REAL_MODE_MATCH, ...) could come out differently if the text
  * continued past `len` -- what a caller lexing text that arrives in pieces asks before committing to a
  * match. The end of the text is a place more text may follow, not its end, so `$`, `\b` or a lookahead that
