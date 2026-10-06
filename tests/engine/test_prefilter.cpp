@@ -1574,3 +1574,39 @@ TEST(count_matches_counts_buffered_spans_without_handing_them_out)
     }
   }
 }
+
+// Once the DFAs prove where the leftmost match starts, the VM that fills its groups runs anchored there: a
+// window too long for the bounded backtracker seeds one thread, not one per position until the match ends.
+// The groups are the ones a search from the window's start gives.
+TEST(window_vm_runs_anchored_at_the_proved_start)
+{
+  const real::regex re   {R"((\w+)(\d+))"};
+  const std::string text {"-- " + std::string(20000U, 'x') + "7 tail"};
+  EXPECT(!re.fullmatch("warm")); // builds the immutables the DFAs live in
+  real::detail::tally(real::detail::counter::vm_window_runs) = 0;
+  real::detail::tally(real::detail::counter::vm_reseeds)     = 0;
+  const auto m {re.search(text)};
+  EXPECT(m);
+  EXPECT_EQ(m.start(1), std::size_t {3});
+  EXPECT_EQ(m.end(1), std::size_t {20003});
+  EXPECT_EQ(m.start(2), std::size_t {20003});
+  EXPECT_EQ(m.end(2), std::size_t {20004});
+  EXPECT(real::detail::tally(real::detail::counter::vm_window_runs).load() > 0U);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::vm_reseeds).load(), std::uint64_t {0});
+  // Words that fail from their first byte overspend the candidate walks, so the match is found by the forward
+  // pass and the reverse one: that window runs anchored too.
+  std::string words;
+  for (int k {0}; k < 500; ++k) {
+    words += std::string(40U, 'x') + " ";
+  }
+  const std::size_t from {words.size()};
+  words += std::string(20000U, 'x') + "7 tail";
+  real::detail::tally(real::detail::counter::vm_window_runs) = 0;
+  real::detail::tally(real::detail::counter::vm_reseeds)     = 0;
+  const auto w {re.search(words)};
+  EXPECT(w);
+  EXPECT_EQ(w.start(1), from);
+  EXPECT_EQ(w.end(2), from + 20001U);
+  EXPECT(real::detail::tally(real::detail::counter::vm_window_runs).load() > 0U);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::vm_reseeds).load(), std::uint64_t {0});
+}
