@@ -1039,6 +1039,48 @@ namespace real {
     }
 
     struct non_empty_access;
+
+    /*!
+     * \brief One attempt over a region, as every single search makes it: the trailing-lookaround walk where the
+     *        pattern has one, else \ref pike_vm::run with its memchr-cascade variant chosen once, here.
+     *
+     * Shared by \ref basic_regex and the bindings that keep their own scratch, so all take the same routes.
+     *
+     * \tparam State    The caller's scratch state.
+     * \tparam Bound    Whether the engine may skip its program-identity check.
+     * \tparam Slots    The capture-slot container the engine fills.
+     * \param[in]  vm      The engine.
+     * \param[in]  prog    The program it runs.
+     * \param[in]  subject The subject, already truncated to the region's end.
+     * \param[in]  pos     Where the attempt starts.
+     * \param[in]  mode    Anchoring.
+     * \param[out] slots   Capture slots, filled on a match.
+     * \param[in]  sem     Match semantics.
+     * \return True on a match.
+     */
+    template <typename State, bool Bound, typename Slots>
+    [[nodiscard]] constexpr bool run_attempt(pike_vm<State, Bound>& vm,
+                                             const program_view&    prog,
+                                             std::string_view       subject,
+                                             std::size_t            pos,
+                                             run_mode               mode,
+                                             Slots&                 slots,
+                                             match_semantics        sem = match_semantics::first)
+    {
+      // `if constexpr` because the static storage has no lookaround scratch.
+      if constexpr (requires(State & st) {
+        st.lookaround;
+      }) {
+        if (sem == match_semantics::first && prog.hints.trailing_lookaround >= 0
+            && (std::is_constant_evaluated() || !trailing_la_route_disabled())) {
+          prof::tick_route(prof::route::trailing_la);
+          return prog.hints.stop_set_size >= 1 ? vm.template run_class_loop_trailing_la<true>(subject, pos, mode, slots)
+                                               : vm.template run_class_loop_trailing_la<false>(subject, pos, mode, slots);
+        }
+      }
+      return prog.hints.stop_set_size >= 1 ? vm.template run<true>(subject, pos, mode, slots, 0, sem)
+                                           : vm.template run<false>(subject, pos, mode, slots, 0, sem);
+    }
   } // namespace detail
 
   /*!
@@ -2116,32 +2158,7 @@ namespace real {
       result_type                    out     {text, pattern(), prog.names};
       // `state` is fresh for `prog` alone, so the VM may skip its program-identity compare.
       detail::pike_vm<typename Storage::state_type, true> vm(prog, state);
-      const auto                                          subject {text.substr(0, end)};
-      // The trailing-lookahead walk stays outside pike_vm::run; `if constexpr` because the static storage
-      // has no lookaround scratch.
-      bool matched {};
-      if constexpr (requires(typename Storage::state_type & st) {
-        st.lookaround;
-      }) {
-        if (sem == match_semantics::first && prog.hints.trailing_lookaround >= 0
-            && (std::is_constant_evaluated() || !detail::trailing_la_route_disabled())) {
-          detail::prof::tick_route(detail::prof::route::trailing_la);
-          matched = prog.hints.stop_set_size >= 1
-                      ? vm.template run_class_loop_trailing_la<true>(subject, pos, mode, out.engine_slots())
-                      : vm.template run_class_loop_trailing_la<false>(subject, pos, mode, out.engine_slots());
-        }
-        else {
-          matched = prog.hints.stop_set_size >= 1
-                      ? vm.template run<true>(subject, pos, mode, out.engine_slots(), 0, sem)
-                      : vm.template run<false>(subject, pos, mode, out.engine_slots(), 0, sem);
-        }
-      }
-      else {
-        // The memchr-cascade variant is chosen once here (a single search), never in the per-byte scan.
-        matched = prog.hints.stop_set_size >= 1
-                    ? vm.template run<true>(subject, pos, mode, out.engine_slots(), 0, sem)
-                    : vm.template run<false>(subject, pos, mode, out.engine_slots(), 0, sem);
-      }
+      const bool                                          matched {detail::run_attempt(vm, prog, text.substr(0, end), pos, mode, out.engine_slots(), sem)};
       // One return statement: the result is NRVO-constructed in the caller and filled in place, sparing a
       // block move whose fixed startup is the whole cost on a groupless pattern. A small-count loop in
       // `transfer_range` instead regressed a dozen rows (it also serves the thread lists' hot path).
