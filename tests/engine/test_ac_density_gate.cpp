@@ -301,3 +301,33 @@ TEST(ac_density_gate_budgets_its_completion_walks)
   EXPECT(real::detail::tally(real::detail::counter::ac_completion_walks).load() > 0U);
   EXPECT(real::detail::tally(real::detail::counter::ac_completion_walks).load() % 12U == 0U);
 }
+
+// A subject the sample would read whole is not sampled: the automaton takes it, which over a short subject
+// costs less than the sample and the cascade together, at every branch count. The answers are the cascade's.
+TEST(ac_density_gate_sends_a_subject_shorter_than_its_sample_to_the_automaton_unsampled)
+{
+  const std::vector<std::string> lines {"2026-06-13 info worker started on kilo shard", "nothing to see on this line",
+                                        "alpha", "", "x", "golf hotel india juliet kilo lima mike november"};
+  for (const std::size_t branches : {std::size_t {4}, std::size_t {12}, std::size_t {24}}) {
+    const real::regex re {alternation_of(branches)};
+    for (const std::string& line : lines) {
+      std::vector<std::pair<std::size_t, std::size_t>> reference;
+      {
+        const seam_scope seam {true, true};
+        reference = spans(re, line);
+      }
+      real::detail::ac_density_last_verdict() = real::detail::ac_verdict::not_consulted;
+      real::detail::tally(real::detail::counter::ac_completion_walks) = 0;
+      EXPECT_EQ(spans(re, line), reference);
+      if (real::detail::ac_density_last_verdict() != real::detail::ac_verdict::not_consulted) {
+        EXPECT_EQ(verdict_name(), "automaton");
+        EXPECT_EQ(real::detail::tally(real::detail::counter::ac_completion_walks).load(), std::uint64_t {0});
+      }
+    }
+  }
+  // One that reaches the gate, so the test cannot pass by never consulting it.
+  const real::regex wide {alternation_of(24)};
+  real::detail::ac_density_last_verdict() = real::detail::ac_verdict::not_consulted;
+  static_cast<void>(wide.search(lines[0]));
+  EXPECT_EQ(verdict_name(), "automaton");
+}
