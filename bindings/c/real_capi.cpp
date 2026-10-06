@@ -574,6 +574,60 @@ size_t real_sub(const real_regex* re, const char* text, size_t len,
   }
 }
 
+namespace {
+  // The one definition of a valid span pair, for every COMPLETE pair the caller supplies, before a byte is
+  // expanded: SIZE_MAX at the start is an unmatched optional group, anything else lies in [0, len], not
+  // inverted. See real_expand for why the perimeter is the buffer, not the template.
+  bool spans_valid(const size_t* spans, size_t nspans, size_t len)
+  {
+    for (std::size_t i = 0; i + 1 < nspans; i += 2) {
+      const std::size_t start {spans[i]};
+      if (start == static_cast<std::size_t>(-1)) {
+        continue;
+      }
+      const std::size_t stop {spans[i + 1]};
+      if (start > len || stop > len || stop < start) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Appends one match's expansion; false with `err` set on a group past the spans supplied.
+  bool append_expansion(const std::vector<sub_segment>& segments, const char* text, const size_t* spans,
+                        size_t nspans, std::string& result, const char*& err)
+  {
+    for (const auto& seg : segments) {
+      if (seg.group < 0) {
+        result.append(seg.literal);
+        continue;
+      }
+      const std::size_t group {static_cast<std::size_t>(seg.group)};
+      // parse_sub_template already refused a group the PATTERN does not have; this checks the caller's
+      // buffer, which is a separate claim -- spans arrive from outside and a short one would otherwise be
+      // read past its end.
+      if (2 * group + 1 >= nspans) {
+        err = "group reference beyond the spans supplied";
+        return false;
+      }
+      const std::size_t start {spans[2 * group]};
+      if (start == static_cast<std::size_t>(-1)) {
+        continue; // unmatched optional group contributes nothing -- re's own rule, as in real_sub
+      }
+      result.append(text + start, spans[2 * group + 1] - start);
+    }
+    return true;
+  }
+
+  size_t deliver(const std::string& result, char* out, size_t outlen)
+  {
+    if (out != nullptr && outlen > 0) {
+      std::memcpy(out, result.data(), std::min(result.size(), outlen));
+    }
+    return result.size();
+  }
+} // namespace
+
 size_t real_expand(const real_regex* re, const char* text, size_t len,
                    const size_t* spans, size_t nspans,
                    const char* repl, size_t repl_len,
@@ -599,46 +653,67 @@ size_t real_expand(const real_regex* re, const char* text, size_t len,
   // binding off by one in a group its template happens not to reference is exactly the class the
   // sentence announces, and exactly the class that got through.
   //
-  // This is the one definition of a valid pair: SIZE_MAX at the start is an unmatched optional group
-  // and contributes nothing (re's rule), anything else must lie inside [0, len] and not be inverted.
   // A purely literal template with a corrupt buffer is refused too -- the promise is about the SPANS,
-  // not about what the template reads. The expansion below reads only pairs this loop has passed.
-  for (std::size_t i = 0; i + 1 < nspans; i += 2) {
-    const std::size_t start {spans[i]};
-    if (start == static_cast<std::size_t>(-1)) {
-      continue;
+  // not about what the template reads. The expansion below reads only pairs spans_valid has passed.
+  if (!spans_valid(spans, nspans, len)) {
+    write_err(errbuf, errbuf_len, "span outside the subject, or inverted");
+    return static_cast<size_t>(-1);
+  }
+  std::string result;
+  const char* err {nullptr};
+  if (!append_expansion(segments, text, spans, nspans, result, err)) {
+    write_err(errbuf, errbuf_len, err);
+    return static_cast<size_t>(-1);
+  }
+  return deliver(result, out, outlen);
+}
+
+size_t real_expand_all(const real_regex* re, const char* text, size_t len,
+                       const size_t* spans, size_t nspans, size_t nmatches,
+                       const char* repl, size_t repl_len,
+                       char* out, size_t outlen,
+                       char* errbuf, size_t errbuf_len)
+{
+  if (re == nullptr || (text == nullptr && len != 0) || (repl == nullptr && repl_len != 0) ||
+      (spans == nullptr && nmatches != 0) || (nmatches != 0 && nspans < 2)) {
+    write_err(errbuf, errbuf_len, "null re/text/repl/spans");
+    return static_cast<size_t>(-1);
+  }
+  try {
+    std::vector<sub_segment> segments;
+    std::string              parse_err;
+    if (!parse_sub_template(re, std::string_view(repl, repl_len), segments, parse_err)) {
+      write_err(errbuf, errbuf_len, parse_err.c_str());
+      return static_cast<size_t>(-1);
     }
-    const std::size_t stop {spans[i + 1]};
-    if (start > len || stop > len || stop < start) {
+    if (!spans_valid(spans, nspans * nmatches, len)) {
       write_err(errbuf, errbuf_len, "span outside the subject, or inverted");
       return static_cast<size_t>(-1);
     }
-  }
-  std::string result;
-  for (const auto& seg : segments) {
-    if (seg.group < 0) {
-      result.append(seg.literal);
-      continue;
+    std::string result;
+    result.reserve(len);
+    std::size_t last {0};
+    for (std::size_t m = 0; m < nmatches; ++m) {
+      const size_t* const match {spans + (m * nspans)};
+      if (match[0] == static_cast<std::size_t>(-1) || match[0] < last) {
+        write_err(errbuf, errbuf_len, "matches out of order, overlapping, or without a span");
+        return static_cast<size_t>(-1);
+      }
+      result.append(text + last, match[0] - last);
+      const char* err {nullptr};
+      if (!append_expansion(segments, text, match, nspans, result, err)) {
+        write_err(errbuf, errbuf_len, err);
+        return static_cast<size_t>(-1);
+      }
+      last = match[1];
     }
-    const std::size_t group {static_cast<std::size_t>(seg.group)};
-    // parse_sub_template already refused a group the PATTERN does not have; this checks the
-    // caller's buffer, which is a separate claim -- spans arrive from outside and a short one
-    // would otherwise be read past its end.
-    if (2 * group + 1 >= nspans) {
-      write_err(errbuf, errbuf_len, "group reference beyond the spans supplied");
-      return static_cast<size_t>(-1);
-    }
-    const std::size_t start {spans[2 * group]};
-    if (start == static_cast<std::size_t>(-1)) {
-      continue; // unmatched optional group contributes nothing -- re's own rule, as in real_sub
-    }
-    result.append(text + start, spans[2 * group + 1] - start);
+    result.append(text + last, len - last);
+    return deliver(result, out, outlen);
   }
-  if (out != nullptr && outlen > 0) {
-    const std::size_t n {std::min(result.size(), outlen)};
-    std::memcpy(out, result.data(), n);
+  catch (...) {
+    write_err(errbuf, errbuf_len, "internal error");
+    return static_cast<size_t>(-1);
   }
-  return result.size();
 }
 
 static real_regex_set* compile_set(const char* const* patterns, const size_t* lens, size_t n, uint32_t flags,

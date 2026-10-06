@@ -150,6 +150,19 @@ enum {
 int real_match(const real_regex* re, const char* text, size_t len,
               size_t start, size_t end, int mode, size_t* spans);
 
+/* real_expand over a whole sequence of matches the caller enumerated: the subject with every match replaced by
+ * its expansion of `repl`, the template parsed once. `spans` holds `nmatches` matches back to back, `nspans`
+ * slots each (real_iter_next's shape, real_find_all_regexp's output); they must come in order and not overlap.
+ * With no match the subject is copied, and the template is still parsed, so its errors surface.
+ *
+ * Same two-call convention and errors as real_expand, plus a match that starts before the previous one ends.
+ * Returns the full output length, or (size_t)-1 on error with `errbuf` filled. */
+size_t real_expand_all(const real_regex* re, const char* text, size_t len,
+                       const size_t* spans, size_t nspans, size_t nmatches,
+                       const char* repl, size_t repl_len,
+                       char* out, size_t outlen,
+                       char* errbuf, size_t errbuf_len);
+
 /* Successive matches of `re` in `text` as Go's regexp enumerates them, written in batches: after a match the
  * scan resumes at its end, after an empty match one code point past where the search began (a malformed
  * sequence counts as one byte), and an empty match abutting the previous match is skipped. Two matches never

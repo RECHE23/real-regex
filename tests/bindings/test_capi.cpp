@@ -486,3 +486,67 @@ TEST(capi_find_all_regexp_batches_the_regexp_sequence)
   EXPECT(pos > 1U);
   real_free(re);
 }
+
+// real_expand_all splices every match's expansion into the subject with the template parsed once: the same
+// bytes as real_expand per match with the text between copied, and the same errors, plus order.
+TEST(capi_expand_all_splices_what_real_expand_gives_per_match)
+{
+  struct expand_case
+  {
+    std::string_view pattern;
+    std::string_view repl;
+  };
+  constexpr expand_case cases[] {{.pattern = R"((\w+)=(\d+))", .repl = R"(\2:\1)"}, {.pattern = "x*", .repl = "-"},
+    {.pattern = R"((a)|(b))", .repl = R"([\1|\2])"}, {.pattern = "z", .repl = "Z"},
+    {.pattern = "", .repl = "."}};
+  constexpr std::string_view texts[] {"k=1 v=22 rest", "axbxc", "abba", "", "no match here"};
+  for (const expand_case& c : cases) {
+    real_regex* re      {real_compile(c.pattern.data(), c.pattern.size(), 0, nullptr, 0, nullptr)};
+    EXPECT(re != nullptr);
+    const size_t nslots {2 * real_group_count(re)};
+    for (const std::string_view text : texts) {
+      std::vector<size_t> spans(64 * nslots);
+      size_t              pos  {0};
+      size_t              prev {SIZE_MAX};
+      const size_t        n    {real_find_all_regexp(re, text.data(), text.size(), &pos, &prev, spans.data(), 64)};
+      std::string         expected;
+      size_t              last {0};
+      for (size_t m = 0; m < n; ++m) {
+        const size_t* const match {spans.data() + (m * nslots)};
+        expected.append(text.substr(last, match[0] - last));
+        char         piece[256];
+        const size_t len {real_expand(re, text.data(), text.size(), match, nslots, c.repl.data(), c.repl.size(), piece,
+                                      sizeof(piece), nullptr, 0)};
+        EXPECT(len < sizeof(piece));
+        expected.append(piece, len);
+        last = match[1];
+      }
+      expected.append(text.substr(last));
+      const size_t need {real_expand_all(re, text.data(), text.size(), spans.data(), nslots, n, c.repl.data(),
+                                         c.repl.size(), nullptr, 0, nullptr, 0)};
+      EXPECT_EQ(need, expected.size());
+      std::string got(need, '\0');
+      EXPECT_EQ(real_expand_all(re, text.data(), text.size(), spans.data(), nslots, n, c.repl.data(), c.repl.size(),
+                                got.data(), got.size(), nullptr, 0),
+                need);
+      EXPECT_EQ(got, expected);
+    }
+    real_free(re);
+  }
+  real_regex * re            {real_compile("(a)", 3, 0, nullptr, 0, nullptr)};
+  char         err[128];
+  const size_t ordered[]     {0, 1, 0, 1, 2, 3, 2, 3};
+  const size_t reversed[]    {2, 3, 2, 3, 0, 1, 0, 1};
+  const size_t overlapping[] {0, 2, 0, 1, 1, 3, 1, 2};
+  const size_t outside[]     {0, 9, 0, 1};
+  EXPECT_EQ(real_expand_all(re, "a-a-", 4, ordered, 4, 2, "<\\1>", 4, nullptr, 0, err, sizeof(err)), size_t {8});
+  EXPECT_EQ(real_expand_all(re, "a-a-", 4, reversed, 4, 2, "x", 1, nullptr, 0, err, sizeof(err)), SIZE_MAX);
+  EXPECT(std::string_view {err}.find("out of order") != std::string_view::npos);
+  EXPECT_EQ(real_expand_all(re, "a-a-", 4, overlapping, 4, 2, "x", 1, nullptr, 0, err, sizeof(err)), SIZE_MAX);
+  EXPECT(std::string_view {err}.find("out of order") != std::string_view::npos);
+  EXPECT_EQ(real_expand_all(re, "a-a-", 4, outside, 4, 1, "x", 1, nullptr, 0, err, sizeof(err)), SIZE_MAX);
+  EXPECT_EQ(real_expand_all(re, "a-a-", 4, nullptr, 4, 0, "\\9", 2, nullptr, 0, err, sizeof(err)), SIZE_MAX);
+  EXPECT_EQ(real_expand_all(re, "a-a-", 4, nullptr, 4, 0, "ok", 2, nullptr, 0, err, sizeof(err)), size_t {4});
+  EXPECT_EQ(real_expand_all(nullptr, "a", 1, nullptr, 0, 0, "x", 1, nullptr, 0, err, sizeof(err)), SIZE_MAX);
+  real_free(re);
+}
