@@ -341,6 +341,62 @@ int real_match(const real_regex* re, const char* text, size_t len,
   }
 }
 
+size_t real_find_all_regexp(const real_regex* re, const char* text, size_t len,
+                            size_t* pos, size_t* prev_end, size_t* spans, size_t max_matches)
+{
+  if (re == nullptr || spans == nullptr || pos == nullptr || prev_end == nullptr || (text == nullptr && len != 0)) {
+    return static_cast<size_t>(-1);
+  }
+  try {
+    const std::string_view                      sv(text, len);
+    const real::detail::program_view            prog {re->rx.raw_program()};
+    // The public shape, as real_iter_next writes it: the program may hold internal slots past the groups'.
+    const size_t                                nslots {2 * (re->rx.group_count() + 1)};
+    real::detail::pike_state                    state;
+    real::detail::dynamic_storage::slot_storage slots;
+    real::detail::pike_vm                       vm(prog, state);
+    size_t                                      at   {*pos};
+    size_t                                      prev {*prev_end};
+    size_t                                      n    {0};
+    while (n < max_matches && at <= len) {
+      if (!real::detail::run_attempt(vm, prog, sv, at, real::detail::run_mode::search, slots)) {
+        at = len + 1;
+        break;
+      }
+      const size_t s0 {slots[0]};
+      const size_t e0 {slots[1]};
+      const bool   accept {s0 != e0 || s0 != prev};
+      if (s0 == e0) {
+        // One code point from where the search began, as regexp advances its cursor; at the end, past it.
+        if (at < len) {
+          const real::detail::decoded_codepoint dc {real::detail::decode_codepoint_strict(sv, at)};
+          at += dc.valid ? dc.length : 1U;
+        }
+        else {
+          at = len + 1;
+        }
+      }
+      else {
+        at = e0;
+      }
+      prev = e0;
+      if (accept) {
+        size_t* const out {spans + (n * nslots)};
+        for (size_t i = 0; i < nslots; ++i) {
+          out[i] = slots[i];
+        }
+        ++n;
+      }
+    }
+    *pos      = at;
+    *prev_end = prev;
+    return n;
+  }
+  catch (...) {
+    return static_cast<size_t>(-1);
+  }
+}
+
 namespace {
   // One parsed piece of a sub() replacement template: literal bytes, or a group reference.
   // Mirrors bindings/python/src/_real.cpp's own repl_segment/parse_template — same proven

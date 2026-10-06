@@ -405,3 +405,84 @@ TEST(capi_set_queries)
   real_set_free(set);
   real_set_free(nullptr);  // intentional no-op
 }
+
+namespace {
+  // Go's regexp enumeration over real_match, one search per call: the reference real_find_all_regexp batches.
+  std::vector<size_t> regexp_walk_by_match(real_regex     * re,
+                                           std::string_view text,
+                                           size_t           nslots)
+  {
+    std::vector<size_t> out;
+    std::vector<size_t> spans(nslots);
+    size_t              prev {SIZE_MAX};
+    for (size_t pos = 0; pos <= text.size();) {
+      if (real_match(re, text.data(), text.size(), pos, text.size(), REAL_MODE_SEARCH, spans.data()) != 1) {
+        break;
+      }
+      const bool accept {spans[0] != spans[1] || spans[0] != prev};
+      if (spans[0] == spans[1]) {
+        if (pos < text.size()) {
+          const auto dc {real::detail::decode_codepoint_strict(text, pos)};
+          pos += dc.valid ? dc.length : 1U;
+        }
+        else {
+          pos = text.size() + 1;
+        }
+      }
+      else {
+        pos = spans[1];
+      }
+      prev = spans[1];
+      if (accept) {
+        out.insert(out.end(), spans.begin(), spans.end());
+      }
+    }
+    return out;
+  }
+} // namespace
+
+// real_find_all_regexp gives Go's regexp sequence in batches: the same matches and groups as one real_match per
+// search, whatever the batch size and however often the caller resumes, empty matches and malformed UTF-8
+// included.
+TEST(capi_find_all_regexp_batches_the_regexp_sequence)
+{
+  const std::string_view patterns[] {"x*", "a*?", R"(\b)", "", R"((\w+)(\d)?)", R"(é|x)", R"([^,]*)", "(a)|(b)"};
+  const std::string_view texts[]    {"axbxc", "", "a", "ab, cd,,ef", "x\xC3\xA9x\xFF\xC3x", "abba", "word 42 x7"};
+  for (const std::string_view pattern : patterns) {
+    real_regex* re      {real_compile(pattern.data(), pattern.size(), 0, nullptr, 0, nullptr)};
+    EXPECT(re != nullptr);
+    const size_t nslots {2 * real_group_count(re)};
+    for (const std::string_view text : texts) {
+      const std::vector<size_t> reference {regexp_walk_by_match(re, text, nslots)};
+      for (const size_t batch : {size_t {1}, size_t {2}, size_t {64}}) {
+        std::vector<size_t> got;
+        std::vector<size_t> buf(batch * nslots);
+        size_t              pos  {0};
+        size_t              prev {SIZE_MAX};
+        while (pos <= text.size()) {
+          const size_t n {real_find_all_regexp(re, text.data(), text.size(), &pos, &prev, buf.data(), batch)};
+          EXPECT(n != SIZE_MAX);
+          got.insert(got.end(), buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(n * nslots));
+          if (n == 0) {
+            break;
+          }
+        }
+        EXPECT_EQ(got, reference);
+      }
+    }
+    real_free(re);
+  }
+  real_regex* re   {real_compile("a", 1, 0, nullptr, 0, nullptr)};
+  size_t      pos  {0};
+  size_t      prev {SIZE_MAX};
+  size_t      spans[2];
+  EXPECT_EQ(real_find_all_regexp(nullptr, "a", 1, &pos, &prev, spans, 1), SIZE_MAX);
+  EXPECT_EQ(real_find_all_regexp(re, nullptr, 1, &pos, &prev, spans, 1), SIZE_MAX);
+  EXPECT_EQ(real_find_all_regexp(re, "a", 1, nullptr, &prev, spans, 1), SIZE_MAX);
+  EXPECT_EQ(real_find_all_regexp(re, "a", 1, &pos, nullptr, spans, 1), SIZE_MAX);
+  EXPECT_EQ(real_find_all_regexp(re, "a", 1, &pos, &prev, nullptr, 1), SIZE_MAX);
+  EXPECT_EQ(real_find_all_regexp(re, "a", 1, &pos, &prev, spans, 1), size_t {1});
+  EXPECT_EQ(real_find_all_regexp(re, "a", 1, &pos, &prev, spans, 1), size_t {0});
+  EXPECT(pos > 1U);
+  real_free(re);
+}
