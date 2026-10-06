@@ -997,6 +997,9 @@ PyObject* run_region(PyObject* self, PyObject* args, PyObject* kwargs, real::det
     }
     const std::string_view region = sv.view().substr(0, end_byte);  // endpos truncation (a view)
 
+    // The attempt takes the routes a C++ search takes (detail::run_attempt: the memchr-cascade variant, the
+    // trailing-lookaround walk), over a lighter scratch than the regex's own SBO state, which a call would pay
+    // to build even on a miss at the first byte.
     // Per-call VM scratch (no shared Pattern state) → reentrant; the scan may run with the
     // GIL released. A reused (thread-local) state is NOT safe: pike_vm caches the class
     // lookup table inside the state keyed by the per-PROGRAM class index, so reuse across
@@ -1019,10 +1022,10 @@ PyObject* run_region(PyObject* self, PyObject* args, PyObject* kwargs, real::det
         bool matched = false;
         if (scan_len >= static_cast<std::size_t>(gil_release_min_bytes)) {
             const GilRelease unlocked;  // released ONLY around the pure-C++ scan
-            matched = vm.run(region, pos_byte, mode, slots);
+            matched = real::detail::run_attempt(vm, prog, region, pos_byte, mode, slots);
         }
         else {
-            matched = vm.run(region, pos_byte, mode, slots);  // small: toggle would cost more
+            matched = real::detail::run_attempt(vm, prog, region, pos_byte, mode, slots);  // small: toggle would cost more
         }
         if (!matched) {
             Py_RETURN_NONE;

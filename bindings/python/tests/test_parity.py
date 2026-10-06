@@ -215,6 +215,20 @@ class TestParity(unittest.TestCase):
         """sub() with a literal replacement yields identical results."""
         self.for_all(lambda p, r, t: self.assertEqual(p.sub("#", t), r.sub("#", t)))
 
+    def test_trailing_lookahead_search_parity(self):
+        """search/match/fullmatch on a trailing lookahead take its route through the binding; every region
+        answers what re does."""
+        for pattern in [r"[a-z]+(?=,)", r"\w+(?=\s)", r"[0-9]+(?!x)", r"[a-z]+(?=[,;])"]:
+            ours, theirs = real.compile(pattern), re.compile(pattern)
+            for text in ["alpha beta, gamma; delta", "12x 34 56x", "no comma here", "", "a,b,c,"]:
+                for pos in range(len(text) + 1):
+                    for endpos in (len(text), max(0, len(text) - 2), pos):
+                        with self.subTest(pattern=pattern, text=text, pos=pos, endpos=endpos):
+                            for name in ("search", "match", "fullmatch"):
+                                a = getattr(ours, name)(text, pos, endpos)
+                                b = getattr(theirs, name)(text, pos, endpos)
+                                self.assertEqual(a and a.span(), b and b.span(), name)
+
     def test_sub_without_a_replacement_returns_the_subject_itself(self):
         """A sub() that replaces nothing hands back the very str or bytes object, as re does; a subclass or a
         bytes-like subject still gets a fresh exact str or bytes."""
