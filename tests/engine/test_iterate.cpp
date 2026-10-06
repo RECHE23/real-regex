@@ -360,3 +360,25 @@ TEST(capped_replace_and_split_do_not_search_past_the_cap)
   EXPECT_EQ(pieces.size(), std::size_t {3}); // before, the group, the rest
   EXPECT(real::detail::tally(real::detail::counter::prefilter_work_units).load() < text.size() * 3 / 2);
 }
+
+// replace reads its template once, before the walk: a malformed or out-of-range reference is an error whatever
+// the subject, as in Python's re.sub, with the offset it always had; well-formed templates give what they gave.
+TEST(replace_reads_its_template_once_and_rejects_a_bad_one_without_a_match)
+{
+  const real::regex re {R"((?<k>\w+)=(\d+))"};
+  for (const std::string_view bad : {"$9", "$", "${}", "${nope}", "$x", "${k", "$18446744073709551616"}) {
+    bool thrown {false};
+    try {
+      static_cast<void>(re.replace("no pairs here", bad));
+    }
+    catch (const real::regex_error&) {
+      thrown = true;
+    }
+    EXPECT(thrown);
+  }
+  EXPECT_EQ(re.replace("a=1 b=22", "[$2:$1|$&|$$|${k}]"), std::string {"[1:a|a=1|$|a] [22:b|b=22|$|b]"});
+  EXPECT_EQ(re.replace("a=1 b=22", "x", 1), std::string {"x b=22"});
+  EXPECT_EQ(re.replace("no pairs", "$1"), std::string {"no pairs"});
+  const real::regex many {"(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)"};
+  EXPECT_EQ(many.replace("-abcdefghijkl-", "<$12$1$10>"), std::string {"-<laj>-"});
+}

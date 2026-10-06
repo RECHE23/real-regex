@@ -1701,20 +1701,35 @@ namespace real {
      * \param[in] replacement The replacement template.
      * \param[in] max_count   Maximum replacements (0 = all).
      * \return The resulting string.
-     * \throws real::regex_error on a malformed group reference in \p replacement.
+     * \throws real::regex_error on a malformed or out-of-range group reference in \p replacement, whether or
+     *         not anything matches (as Python's `re.sub`): the template is read once, before the walk.
      */
     [[nodiscard]] constexpr std::string replace(std::string_view text,
                                                 std::string_view replacement,
                                                 std::size_t      max_count = 0) const
     {
-      std::string result;
-      std::size_t last {};
-      std::size_t done {};
+      const std::vector<replacement_piece> pieces {parse_replacement(replacement)};
+      std::string                          result;
+      std::size_t                          last   {};
+      std::size_t                          done   {};
       // The cap is tested after a replacement, not before the next: tested first, the walk had already searched
       // for one match past the cap, maybe the whole rest of the subject.
       for (const result_type& match : find_iter(text)) {
         result.append(text.substr(last, match.start() - last));
-        expand_replacement(result, match, replacement);
+        for (const replacement_piece& piece : pieces) {
+          if (piece.group == npos) {
+            // One character pushed, not a one-byte slice appended: GCC pays the slice's setup per match.
+            if (piece.literal.size() == 1) {
+              result.push_back(piece.literal.front());
+            }
+            else {
+              result.append(piece.literal);
+            }
+          }
+          else {
+            result.append(match[piece.group]);
+          }
+        }
         last = match.end();
         if (++done == max_count) {
           break;
@@ -2010,26 +2025,36 @@ namespace real {
     }
 
     /*!
-     * \brief Appends \p replacement to \p out, substituting group references.
+     * \brief One piece of a parsed replacement template: a slice of the template, or a group to copy.
+     */
+    struct replacement_piece
+    {
+      std::string_view literal;        //!< The template's slice to copy, when \ref group is \ref npos.
+      std::size_t      group   {npos}; //!< The group to copy, or \ref npos for the literal slice.
+    };
+
+    /*!
+     * \brief Reads \p replacement once into literal slices and group references.
      *
-     * An invalid or out-of-range reference is an error (Python's rule), not left
-     * in place. The template spelling is ECMAScript / `std::regex`: `$1`, not `\1`.
+     * An invalid or out-of-range reference is an error (Python's rule), not left in place, and is reported
+     * whatever the subject. The template spelling is ECMAScript / `std::regex`: `$1`, not `\1`.
      *
-     * \param[in,out] out         The output string to append to.
-     * \param[in]     match       The match supplying the captured groups.
-     * \param[in]     replacement The replacement template (`$$`, `$&`, `$1`, `${name}`).
+     * \param[in] replacement The replacement template (`$$`, `$&`, `$1`, `${name}`).
+     * \return The pieces, in order.
      * \throws real::regex_error on a malformed or out-of-range reference.
      */
-    constexpr void expand_replacement(std::string&       out,
-                                      const result_type& match,
-                                      std::string_view   replacement) const
+    [[nodiscard]] constexpr std::vector<replacement_piece> parse_replacement(std::string_view replacement) const
     {
-      std::size_t i {};
+      std::vector<replacement_piece> pieces;
+      const std::size_t              groups {group_count() + 1};
+      std::size_t                    i      {};
       while (i < replacement.size()) {
-        const char ch {replacement[i]};
-        if (ch != '$') {
-          out.push_back(ch);
-          ++i;
+        if (replacement[i] != '$') {
+          const std::size_t begin {i};
+          while (i < replacement.size() && replacement[i] != '$') {
+            ++i;
+          }
+          pieces.push_back({.literal = replacement.substr(begin, i - begin)});
           continue;
         }
         ++i;
@@ -2038,17 +2063,16 @@ namespace real {
         }
         const char next_ch {replacement[i]};
         if (next_ch == '$') {
-          out.push_back('$');
+          pieces.push_back({.literal = replacement.substr(i, 1)});
           ++i;
         }
         else if (next_ch == '&') {
-          out.append(match[0]);
+          pieces.push_back({.literal = {}, .group = 0});
           ++i;
         }
         else if (next_ch >= '0' && next_ch <= '9') {
           std::size_t group {};
-          while (i < replacement.size() && replacement[i] >= '0' &&
-                 replacement[i] <= '9') {
+          while (i < replacement.size() && replacement[i] >= '0' && replacement[i] <= '9') {
             // Unguarded, a wrapped value lands back in range (`$18446744073709551616` reads as group 0).
             if (group > (npos - 9) / 10) {
               throw regex_error("invalid group reference in replacement", i);
@@ -2056,10 +2080,10 @@ namespace real {
             group = (group * 10) + static_cast<std::size_t>(replacement[i] - '0');
             ++i;
           }
-          if (group >= match.size()) {
+          if (group >= groups) {
             throw regex_error("invalid group reference in replacement", i);
           }
-          out.append(match[group]);
+          pieces.push_back({.literal = {}, .group = group});
         }
         else if (next_ch == '{') {
           const std::size_t name_begin {i + 1};
@@ -2070,18 +2094,18 @@ namespace real {
           if (j == replacement.size() || j == name_begin) {
             throw regex_error("malformed ${name} in replacement", i);
           }
-          const std::size_t group =
-            match.group_index(replacement.substr(name_begin, j - name_begin));
+          const std::size_t group {group_index(replacement.substr(name_begin, j - name_begin))};
           if (group == npos) {
             throw regex_error("unknown group name in replacement", i);
           }
-          out.append(match[group]);
-          i = j + 1;
+          pieces.push_back({.literal = {}, .group = group});
+          i                          = j + 1;
         }
         else {
           throw regex_error("invalid $ escape in replacement", i);
         }
       }
+      return pieces;
     }
 
     /*!
