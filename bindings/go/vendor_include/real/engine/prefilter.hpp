@@ -15,6 +15,7 @@
 // <real/regex_set.hpp>, <real/compat/std/regex.hpp>, <real/compat/re2/re2.hpp>.
 
 #include "real/version.hpp"
+#include "real/core/config.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -814,57 +815,6 @@ namespace real::detail {
   }
 
   /*!
-   * \brief Consuming width in bytes of a straight-line program (`save 0`, byte/klass/save with no nested
-   *        group, `save 1`, `match`): the `fixed_shape` walk of \ref detect_fast_shapes, for a separate
-   *        program such as the inner-literal prefix.
-   *
-   * \param[in] code A complete instruction stream (`save 0` ... `save 1`, `match`).
-   * \return The number of `byte`/`klass` ops consumed, or -1 if \p code is not this shape.
-   */
-  constexpr std::int32_t fixed_run_width(std::span<const instr> code)
-  {
-    std::size_t  i           {};
-    std::int32_t width       {};
-    std::int32_t open_groups {};
-    bool         closed      {};
-    bool         nested      {};
-    if (i >= code.size() || code[i].op != opcode::save || code[i].arg16 != 0) {
-      return -1;
-    }
-    ++i;
-    while (i < code.size()) {
-      const opcode op {code[i].op};
-      if (op == opcode::byte || op == opcode::klass) {
-        ++width;
-        ++i;
-      }
-      else if (op == opcode::save) {
-        const std::int32_t slot {code[i].arg16};
-        if (slot == 1) {
-          closed = true;
-        }
-        else if (slot >= 2 && (slot % 2) == 0) {
-          if (open_groups > 0) {
-            nested = true;
-          }
-          ++open_groups;
-        }
-        else if (slot >= 3) {
-          --open_groups;
-        }
-        ++i;
-      }
-      else {
-        break;
-      }
-    }
-    if (width >= 1 && closed && !nested && i + 1 == code.size() && code[i].op == opcode::match) {
-      return width;
-    }
-    return -1;
-  }
-
-  /*!
    * \brief Reports \p klass as up to two contiguous byte ranges.
    *
    * `[lo0, hi0]` is the first run in byte order, `[lo1, hi1]` the second; with no second run they are
@@ -982,10 +932,6 @@ namespace real::detail {
               if (resolve_class_wb_hints(is_full_ascii_word_class(cc), is_ascii_word_subset_class(cc),
                                          /*maximal_run=*/ true, lead.wb_lead, close.wb_trail, out_lead,
                                          out_trail)) {
-                // Wrap + end anchor: refused, as gated above.
-                if (close.end_anchor != 0 && (lead.wb_lead != 0 || close.wb_trail != 0)) {
-                  return;
-                }
                 hints.greedy_class_loop     = cls;
                 hints.greedy_class_loop_end = close.end_anchor;
                 hints.greedy_class_loop_min = static_cast<std::uint16_t>(k);
@@ -1101,9 +1047,6 @@ namespace real::detail {
             const bool has_wb {lead.wb_lead != 0 || close.wb_trail != 0};
             // Bare path: no Unicode table walk (keeps constexpr light for static_regex).
             if (!has_wb) {
-              if (close.end_anchor != 0 && (lead.wb_lead != 0 || close.wb_trail != 0)) {
-                return;
-              }
               hints.greedy_cp_class      = cp_idx;
               hints.greedy_cp_class_end  = close.end_anchor;
               hints.greedy_cp_class_plus = plus;
@@ -2370,9 +2313,7 @@ namespace real::detail {
    * \param[in,out] density What this subject has shown so far.
    * \return The index of the first occurrence at or after \p pos, else \ref real::npos.
    */
-#if defined(__GNUC__) || defined(__clang__)
-  __attribute__((noinline))
-#endif
+  REAL_NOINLINE
   inline std::size_t find_literal_adaptive_rest(std::string_view text,
                                                 std::size_t      pos,
                                                 std::string_view literal,

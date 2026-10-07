@@ -8,6 +8,7 @@
 #define REAL_REAL_HPP
 
 #include "real/version.hpp"
+#include "real/core/config.hpp"
 
 #include <cassert>
 #include <iterator>
@@ -157,41 +158,6 @@ namespace real {
         pattern_ = {};
         names_   = {};
       }
-    }
-
-    /*!
-     * \internal
-     * \brief Engine-internal: re-run the search into this result's own slot buffer, reusing its capacity.
-     *
-     * `vm.run` fills the slots via `assign`, so a match-dense walk allocates once, not once per match. A
-     * user-held copy stays independent: copying a result deep-copies its slots.
-     *
-     * \tparam Cascade Select the memchr-cascade class-run variant (chosen once per walk).
-     * \tparam Vm      The Pike VM type (kept a template to avoid a header cycle).
-     * \param[in] vm      The VM to run.
-     * \param[in] text    The searched text (borrowed).
-     * \param[in] pos     Start offset for the search.
-     * \param[in] mode    The run mode.
-     * \param[in] forbid  The empty-match forbid-until offset.
-     * \param[in] pattern The pattern text (for named-group resolution).
-     * \param[in] names   The regex's named-group table (borrowed).
-     * \return Whether a match occurred.
-     */
-    template <bool Cascade, typename Vm>
-    constexpr bool engine_refill(Vm&                                  vm,
-                                 std::string_view                     text,
-                                 std::size_t                          pos,
-                                 detail::run_mode                     mode,
-                                 std::size_t                          forbid,
-                                 std::string_view                     pattern,
-                                 std::span<const detail::named_group> names)
-    {
-      const bool ok {vm.template run<Cascade>(text, pos, mode, slots_, forbid)};
-      text_    = text;
-      matched_ = ok;
-      pattern_ = pattern;
-      names_   = names;
-      return ok;
     }
 
     /*!
@@ -503,9 +469,7 @@ namespace real {
      */
     // Keep noinline and cold: `count_matches` inlines the constructor, and inline this logic made every
     // dispatch change tax per-match rows whose code never moved (one added route: `single [a-z]` +10.7 %).
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline, cold))
-#endif
+    REAL_COLD
     constexpr void decide_batching(detail::program_view prog,
                                    match_semantics      sem,
                                    std::size_t          text_bytes)
@@ -762,9 +726,7 @@ namespace real {
      *          byte-identical, moved 17 of 18 rows' medians positive.
      * \return `true` if at least one span was buffered.
      */
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     constexpr bool refill_batch()
     {
       // A short fill without `batch_partial_` proved the rest spent: end the walk instead of rescanning.
@@ -1967,9 +1929,7 @@ namespace real {
      * \return The match count.
      */
     [[nodiscard]]
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     constexpr std::size_t count_walk(std::string_view text,
                                      std::size_t      pos,
                                      std::size_t      endpos) const
@@ -1996,9 +1956,7 @@ namespace real {
      * \return The match count.
      */
     [[nodiscard]]
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline, cold))
-#endif
+    REAL_COLD
     constexpr std::size_t count_trailing_la(std::string_view region,
                                             std::size_t      pos) const
     {
