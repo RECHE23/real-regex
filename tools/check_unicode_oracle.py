@@ -139,7 +139,7 @@ def main() -> int:
     state, reason = verdict()
     if args.print_skip:
         if state != "ready":
-            print(f"step 20: Unicode property cross-oracle did not run -- {reason}")
+            print(f"step 21: Unicode property cross-oracle did not run -- {reason}")
         return 0
     print(f"check-unicode-oracle: {state} -- {reason}")
     return 0 if state == "ready" else 1

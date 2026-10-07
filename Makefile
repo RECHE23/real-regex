@@ -898,9 +898,9 @@ full-local-gate-impl:
 	@$(MAKE) check-percall-copies
 	@echo "── [5e/25] check-fixed-cost (sizes and per-call instructions against their stamps)"
 	@$(MAKE) check-fixed-cost
-	@echo "── [5e/25] python-syntax (bindings/python at the requires-python floor)"
+	@echo "── [5f/25] python-syntax (bindings/python at the requires-python floor)"
 	@$(MAKE) python-syntax
-	@echo "── [5f/25] check-abi3-floor (the four floor declarations agree)"
+	@echo "── [5g/25] check-abi3-floor (the four floor declarations agree)"
 	@$(MAKE) check-abi3-floor
 	@echo "── [6/25] check-pins"
 	@$(MAKE) check-pins
@@ -954,7 +954,7 @@ full-local-gate-impl:
 # without the docs venv on PATH doesn't need to rougir tout le gate) -- the docs-site
 # CI job (ci.yml) is the backstop, so this is never the ONLY net on the site.
 	@echo "── [11/25] docs-site-gate (sphinx -W --keep-going + linkcheck; skipped if sphinx-build absent)"
-	@if command -v $(SPHINXBUILD) >/dev/null 2>&1; then $(MAKE) docs-site-gate; else echo "step 10: docs-site-gate -- $(SPHINXBUILD) absent (sphinx: make gate-venv)" | tee -a $(GATE_SKIPS); fi
+	@if command -v $(SPHINXBUILD) >/dev/null 2>&1; then $(MAKE) docs-site-gate; else echo "step 11: docs-site-gate -- $(SPHINXBUILD) absent (sphinx: make gate-venv)" | tee -a $(GATE_SKIPS); fi
 	@echo "── [12/25] misra (single synthetic TU)"
 	@$(MAKE) misra
 	@echo "── [12b/25] misra-x86 (the same TU for x86-64, where the ISA-chosen bodies compile)"
@@ -987,13 +987,13 @@ full-local-gate-impl:
 	@$(MAKE) python-test
 	@if $(MYPY_PYTHON) -c "import mypy" >/dev/null 2>&1; then \
 	   $(MAKE) python-stubtest; \
-	 else echo "step 20: python-stubtest (.pyi = runtime) -- mypy absent (make gate-venv)" | tee -a $(GATE_SKIPS); fi
+	 else echo "step 21: python-stubtest (.pyi = runtime) -- mypy absent (make gate-venv)" | tee -a $(GATE_SKIPS); fi
 # Go leg: go-check-vendor diffs include/ against the committed vendor copy and fails
 # on drift — it does not write the tree. The one binding NOT otherwise in this gate
 # (its sources are vendored, not built from include/ here). Skipped with a warning when
 # go is absent (the CI go job is the backstop), same shape as the GCC leg.
 	@echo "── [22/25] go-check-vendor + go-test (Go leg; skipped if go absent)"
-	@if command -v go >/dev/null 2>&1; then $(MAKE) go-check-vendor && $(MAKE) go-test; else echo "step 21: go-check-vendor + go-test -- go absent" | tee -a $(GATE_SKIPS); fi
+	@if command -v go >/dev/null 2>&1; then $(MAKE) go-check-vendor && $(MAKE) go-test; else echo "step 22: go-check-vendor + go-test -- go absent" | tee -a $(GATE_SKIPS); fi
 	@echo "── [23/25] lint"
 	@set -euo pipefail; \
 	  mkdir -p $(BUILD); \
@@ -1002,7 +1002,7 @@ full-local-gate-impl:
 	    echo "full-local-gate: FAIL at lint (see $(BUILD)/lint.log)"; exit 1; \
 	  fi
 	@echo "── [24/25] test (GCC leg) + sanitize (slowest last)"
-	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "step 23: test on the GCC leg -- $(GXX) absent" | tee -a $(GATE_SKIPS); fi
+	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "step 24: test on the GCC leg -- $(GXX) absent" | tee -a $(GATE_SKIPS); fi
 	@$(MAKE) sanitize
 	@echo "── [25/25] coverage-check (line floor $(COV_FLOOR)%; refuses a stale coverage binary)"
 	@$(MAKE) coverage-check
@@ -1014,7 +1014,7 @@ full-local-gate-impl:
 	@$(PYTHON) $(ROOT)/tools/check_unicode_oracle.py --self-test >/dev/null
 	@set -eu; \
 	 $(PYTHON) $(ROOT)/tools/check_unicode_oracle.py --print-skip >> $(GATE_SKIPS) \
-	   || echo "step 20: Unicode property cross-oracle did not run -- its own probe failed" >> $(GATE_SKIPS); \
+	   || echo "step 21: Unicode property cross-oracle did not run -- its own probe failed" >> $(GATE_SKIPS); \
 	 n=$$(awk 'END{print NR+0}' $(GATE_SKIPS) 2>/dev/null || echo 0); \
 	 if [ "$$n" -gt 0 ]; then \
 	   echo; \
@@ -1101,7 +1101,7 @@ gcc-check: ## [gates] Compile the engine headers under gcc -Werror (the diagnost
 	         -c bindings/c/real_capi.cpp -o /dev/null' \
 	   && echo "gcc-check: clean under g++ 14 (-Wall -Wextra -Wshadow -Werror), with and without the vector ISA macros"; \
 	 else \
-	   echo "step 9: gcc-check (the diagnostics clang lacks) -- docker absent" | tee -a $(GATE_SKIPS); \
+	   echo "step 10: gcc-check (the diagnostics clang lacks) -- docker absent" | tee -a $(GATE_SKIPS); \
 	   echo "  CI's linux-gcc and cmake legs remain the backstop."; \
 	 fi
 
