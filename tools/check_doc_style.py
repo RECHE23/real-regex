@@ -63,6 +63,8 @@ import time
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 
+import _doxyxml  # noqa: E402  (tools/ is on sys.path: scripts run as tools/<name>.py)
+
 # Every path below is repository-relative, so the process runs FROM the repository: invoked from
 # docs/ with a relative ROOT, the glob matched nothing and the verdict was a vacuous "clean" --
 # the false clean this file exists to prevent, arriving through the working directory.
@@ -118,22 +120,7 @@ def require_fresh_xml() -> None:
     xmls = glob.glob(os.path.join(XML_DIR, "*.xml"))
     if not xmls:
         sys.exit(f"{XML_DIR} holds no XML -- run `doxygen Doxyfile` first, or pass --refresh.")
-    # When Doxygen last RAN, not the oldest file it left behind: it rewrites only the XML whose
-    # content changed, so most files keep an old mtime after a clean run and `min()` here reported
-    # every header as stale forever -- a false STALE, the mirror of the false clean this guard was
-    # added to prevent, and just as useless. index.xml is regenerated on every run, so it dates the
-    # run; max() over the directory is the fallback if a future Doxygen stops rewriting it.
-    index_xml = os.path.join(XML_DIR, "index.xml")
-    run_time = (
-        os.path.getmtime(index_xml)
-        if os.path.isfile(index_xml)
-        else max(os.path.getmtime(p) for p in xmls)
-    )
-    stale = [
-        h
-        for h in glob.glob(os.path.join(ROOT, "**", "*.hpp"), recursive=True)
-        if os.path.getmtime(h) > run_time
-    ]
+    stale = _doxyxml.stale_headers(XML_DIR, ROOT)  # dated by the run, not the oldest file (see there)
     if stale:
         sys.exit(
             f"check_doc_style: the Doxygen XML in {XML_DIR} is OLDER than "
@@ -146,42 +133,6 @@ def require_fresh_xml() -> None:
             "`doxygen Doxyfile` or `make doc-xml` (both trees), or pass --refresh.\n"
             "  `make doc-check` runs in Docker and does not refresh this."
         )
-
-
-def refresh_xml(xml_dir: str = XML_DIR, run=None) -> None:
-    """Regenerate the XML from scratch so it matches the working tree.
-
-    The directory is REMOVED first, because Doxygen's XML output is incremental: it leaves a
-    per-file XML untouched when it decides the compound is unchanged. A refresh that only re-ran
-    doxygen could therefore hand this script line numbers from a previous revision of a header it
-    had just edited -- which is how it came to report a declaration sitting on a comment line.
-    Deleting first costs a few seconds and makes `--refresh` mean what it says.
-    """
-    import shutil
-    import subprocess
-
-    run = run or subprocess.run
-    print("check_doc_style: refreshing build/doc/xml (clean doxygen Doxyfile) ...")
-    shutil.rmtree(xml_dir, ignore_errors=True)
-    proc = run(["doxygen", "Doxyfile"], capture_output=True, text=True)
-    if proc.returncode != 0:
-        sys.exit(f"doxygen failed:\n{proc.stderr[-2000:]}")
-
-
-def xml_named_headers(xml_dir: str) -> set[str]:
-    """include/real/*.hpp paths the XML location tags actually name."""
-    got: set[str] = set()
-    for path in glob.glob(os.path.join(xml_dir, "*.xml")):
-        try:
-            root = ET.parse(path).getroot()
-        except ET.ParseError:
-            continue
-        for loc in root.iter("location"):
-            f = (loc.get("file") or "").replace("\\", "/")
-            idx = f.find("include/real/")
-            if idx >= 0 and f.endswith(".hpp"):
-                got.add(f[idx:])
-    return got
 
 
 def xml_members(only: str | None) -> list[tuple[str, int, str, str]]:
@@ -528,7 +479,7 @@ def judge(fix: bool = False, stats: bool = False, only: str | None = None) -> in
         for p in glob.glob(os.path.join(ROOT, "**", "*.hpp"), recursive=True)
         if not only or only in p
     }
-    got = xml_named_headers(XML_DIR)
+    got = _doxyxml.named_headers(XML_DIR)
     if only:
         got = {p for p in got if only in p}
     if not exp:
@@ -943,35 +894,10 @@ def _self_test_judge() -> list[str]:
     return fails
 
 
-def _self_test_refresh() -> list[str]:
-    """refresh_xml with doxygen substituted: a failure exits naming doxygen, a success clears the directory."""
-    import types
-
-    fails: list[str] = []
-    with tempfile.TemporaryDirectory() as tmp:
-        target = os.path.join(tmp, "xml")
-        for rc, want_exit in ((1, True), (0, False)):
-            os.makedirs(target, exist_ok=True)
-            open(os.path.join(target, "stale.xml"), "w").close()
-            fake = lambda *a, **k: types.SimpleNamespace(returncode=rc, stderr="boom", stdout="")  # noqa: E731
-            out = io.StringIO()
-            try:
-                with contextlib.redirect_stdout(out):
-                    refresh_xml(target, fake)
-                exited = None
-            except SystemExit as stop:
-                exited = str(stop.code)
-            if want_exit and (exited is None or "failed" not in exited):
-                fails.append(f"refresh_xml: a doxygen failure must exit naming it, got {exited!r}")
-            if not want_exit and (exited is not None or os.path.exists(os.path.join(target, "stale.xml"))):
-                fails.append(f"refresh_xml: a success must clear the old XML and not exit, got {exited!r}")
-    return fails
-
-
 def self_test() -> int:
     """Drives the line-level helpers, each prose scanner, and ``judge`` (check, --stats, --fix) alone.
     """
-    fails = _self_test_pure() + _self_test_scanners() + _self_test_judge() + _self_test_refresh()
+    fails = _self_test_pure() + _self_test_scanners() + _self_test_judge()
     for line in fails:
         print(f"SELF-TEST FAILED: {line}")
     if fails:
@@ -993,7 +919,7 @@ def main() -> int:
     if args.self_test:
         return self_test()
     if args.refresh:
-        refresh_xml()
+        _doxyxml.refresh(XML_DIR, "Doxyfile", "check_doc_style")
     return judge(args.fix, args.stats, args.only)
 
 

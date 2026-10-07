@@ -31,6 +31,8 @@ import tempfile
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 
+import _doxyxml  # noqa: E402  (tools/ is on sys.path: scripts run as tools/<name>.py)
+
 # Paths are anchored to the REPOSITORY, not to the caller's working directory: this script runs
 # from the root through `make check-curated-members` and from docs/ through `docs-site-gate`, and
 # a relative path silently means two different places.
@@ -50,19 +52,10 @@ PUBLISH_ALL = "publish_all"
 def require_xml(xml_dir: str = XML_DIR) -> None:
     if not os.path.isdir(xml_dir) or not os.path.isfile(os.path.join(xml_dir, "index.xml")):
         sys.exit(f"{xml_dir} not found -- run `make doc-site-xml`, or pass --refresh.")
-
-
-def refresh_xml(xml_dir: str = XML_DIR, run=None) -> None:
-    """Regenerates xml-site; ``run`` is the doxygen launcher (subprocess.run by default)."""
-    import shutil
-    import subprocess
-
-    run = run or subprocess.run
-    print("check_curated_members: refreshing build/doc/xml-site ...")
-    shutil.rmtree(xml_dir, ignore_errors=True)
-    proc = run(["doxygen", "Doxyfile.site"], capture_output=True, text=True)
-    if proc.returncode != 0:
-        sys.exit(f"doxygen Doxyfile.site failed:\n{(proc.stderr or proc.stdout)[-2000:]}")
+    stale = _doxyxml.stale_headers(xml_dir, os.path.join(_REPO, "include", "real"))
+    if stale:
+        sys.exit(f"check_curated_members: {xml_dir} is OLDER than {len(stale)} header(s), e.g. {stale[0]} -- "
+                 "a member added since would read as unpublished. Run `make doc-site-xml`, or pass --refresh.")
 
 
 def allowlists(rst_dir: str = RST_DIR) -> dict[str, set[str] | None]:
@@ -212,31 +205,6 @@ _GAPS = {
 }
 
 
-def _self_test_refresh() -> list[str]:
-    """refresh_xml with doxygen substituted: a failure exits naming doxygen, a success clears the directory."""
-    import types
-
-    fails: list[str] = []
-    with tempfile.TemporaryDirectory() as tmp:
-        target = os.path.join(tmp, "xml")
-        for rc, want_exit in ((1, True), (0, False)):
-            os.makedirs(target, exist_ok=True)
-            open(os.path.join(target, "stale.xml"), "w").close()
-            fake = lambda *a, **k: types.SimpleNamespace(returncode=rc, stderr="boom", stdout="")  # noqa: E731
-            out = io.StringIO()
-            try:
-                with contextlib.redirect_stdout(out):
-                    refresh_xml(target, fake)
-                exited = None
-            except SystemExit as stop:
-                exited = str(stop.code)
-            if want_exit and (exited is None or "failed" not in exited):
-                fails.append(f"refresh_xml: a doxygen failure must exit naming it, got {exited!r}")
-            if not want_exit and (exited is not None or os.path.exists(os.path.join(target, "stale.xml"))):
-                fails.append(f"refresh_xml: a success must clear the old XML and not exit, got {exited!r}")
-    return fails
-
-
 def self_test() -> int:
     """Drives each gap of ``compare`` alone, then each reader on synthetic files, then ``judge``.
 
@@ -375,16 +343,18 @@ def self_test() -> int:
         if rc != 1 or "FAILED -- 1 allowlist gap(s)" not in out.getvalue():
             print(f"SELF-TEST FAILED: judge: a gap must fail and be counted, got rc={rc}\n    {out.getvalue().strip()}")
             failures += 1
+        os.utime(os.path.join(xml_dir, "index.xml"), (1000, 1000))  # a run older than every header
+        got = refused(require_xml, xml_dir)
+        if got is None or "OLDER than" not in got:
+            print(f"SELF-TEST FAILED: require_xml: XML older than the headers must be refused, got {got!r}")
+            failures += 1
 
-    for line in _self_test_refresh():
-        print(f"SELF-TEST FAILED: {line}")
-        failures += 1
     total = len(gaps) + 11
     if failures:
         print(f"check_curated_members: self-test FAILED ({failures} of {total} case(s))")
         return 1
     print(f"check_curated_members: self-test OK — {total} cases: each gap reached alone, and each reader's "
-          "refusals and skips (continuation lines, malformed yaml, private/friend/namespace members)")
+          "refusals and skips (continuation lines, malformed yaml, private/friend/namespace members, stale XML)")
     return 0
 
 
@@ -396,7 +366,7 @@ def main() -> int:
     if args.self_test:
         return self_test()
     if args.refresh:
-        refresh_xml()
+        _doxyxml.refresh(XML_DIR, "Doxyfile.site", "check_curated_members")
     return judge()
 
 

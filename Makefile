@@ -579,8 +579,8 @@ check-sabotage: ## [gates] The harness's three claims: artifact map, rebuild aft
 check-blind-guard: ## [gates] blind_guard.py tells a driven arm, an undriven one and a crash apart
 	@python3 tools/blind_guard.py --self-test
 
-blind-guards: ## [dev] Blind every condition of each self-tested tools/check_*.py; list what its self-test misses
-	@status=0; for g in $$(grep -l -- '--self-test' tools/check_*.py); do \
+blind-guards: ## [dev] Blind every condition of each self-tested tools/check_*.py and shared tools/_*.py module
+	@status=0; for g in $$(grep -l -- '--self-test' tools/check_*.py tools/_*.py); do \
 	   out=$$(python3 tools/blind_guard.py "$$g") || status=1; printf '%s\n' "$$out" | tail -1; \
 	 done; exit $$status
 

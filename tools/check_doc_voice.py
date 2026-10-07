@@ -29,6 +29,8 @@ import tempfile
 import time
 import xml.etree.ElementTree as ET
 
+import _doxyxml  # noqa: E402  (tools/ is on sys.path: scripts run as tools/<name>.py)
+
 # Paths are anchored to the REPOSITORY, not to the caller's working directory: this script runs
 # from the root through `make check-doc-voice` and from docs/ through `docs-site-gate`, and a
 # relative path silently means two different places.
@@ -71,12 +73,7 @@ def require_xml(repo: str = _REPO) -> None:
     index = os.path.join(xml_dir, "index.xml")
     if not os.path.isfile(index):
         sys.exit(f"{xml_dir} holds no index.xml -- run `make doc-site-xml`, or pass --refresh.")
-    run_time = os.path.getmtime(index)
-    stale = [
-        h
-        for h in glob.glob(os.path.join(_root(repo), "**", "*.hpp"), recursive=True)
-        if os.path.getmtime(h) > run_time
-    ]
+    stale = _doxyxml.stale_headers(xml_dir, _root(repo))
     if stale:
         sys.exit(
             f"check_doc_voice: {xml_dir} is OLDER than {len(stale)} header(s), "
@@ -84,19 +81,6 @@ def require_xml(repo: str = _REPO) -> None:
             "build/doc/xml-site). `doxygen Doxyfile` refreshes the other profile. "
             "Run `make doc-site-xml`, `make doc-xml` (both trees), or pass --refresh."
         )
-
-
-def refresh_xml(xml_dir: str = XML_DIR, run=None) -> None:
-    """Regenerates xml-site; ``run`` is the doxygen launcher (subprocess.run by default)."""
-    import shutil
-    import subprocess
-
-    run = run or subprocess.run
-    print("check_doc_voice: refreshing build/doc/xml-site (doxygen Doxyfile.site) ...")
-    shutil.rmtree(xml_dir, ignore_errors=True)
-    proc = run(["doxygen", "Doxyfile.site"], capture_output=True, text=True)
-    if proc.returncode != 0:
-        sys.exit(f"doxygen Doxyfile.site failed:\n{(proc.stderr or proc.stdout)[-2000:]}")
 
 
 def xml_text(el: ET.Element | None) -> str:
@@ -144,22 +128,6 @@ def site_input_headers(repo: str = _REPO) -> list[str]:
     return sorted(set(found))
 
 
-def xml_named_headers(xml_dir: str) -> set[str]:
-    """include/real/*.hpp paths the XML location tags actually name."""
-    got: set[str] = set()
-    for path in glob.glob(os.path.join(xml_dir, "*.xml")):
-        try:
-            root = ET.parse(path).getroot()
-        except ET.ParseError:
-            continue
-        for loc in root.iter("location"):
-            f = (loc.get("file") or "").replace("\\", "/")
-            idx = f.find("include/real/")
-            if idx >= 0 and f.endswith(".hpp"):
-                got.add(f[idx:])
-    return got
-
-
 def published_comments(repo: str = _REPO) -> list[tuple[str, str, str]]:
     """(qualified-name, kind, comment-text) for every published member/compound."""
     out: list[tuple[str, str, str]] = []
@@ -203,7 +171,7 @@ def judge(repo: str = _REPO) -> int:
     require_xml(repo)
 
     exp = set(site_input_headers(repo))
-    got = xml_named_headers(_xml_dir(repo))
+    got = _doxyxml.named_headers(_xml_dir(repo))
     comments = published_comments(repo)
     if not exp:
         print("check_doc_voice: FAIL -- Doxyfile.site INPUT expanded to 0 headers")
@@ -267,31 +235,6 @@ def _member(file: str, text: str, prot: str = "public", name: str = "f") -> str:
     return (f'<memberdef kind="function" prot="{prot}"><name>{name}</name>'
             f'<briefdescription><para>{text}</para></briefdescription>'
             f'<location file="{file}"/></memberdef>')
-
-
-def _self_test_refresh() -> list[str]:
-    """refresh_xml with doxygen substituted: a failure exits naming doxygen, a success clears the directory."""
-    import types
-
-    fails: list[str] = []
-    with tempfile.TemporaryDirectory() as tmp:
-        target = os.path.join(tmp, "xml")
-        for rc, want_exit in ((1, True), (0, False)):
-            os.makedirs(target, exist_ok=True)
-            open(os.path.join(target, "stale.xml"), "w").close()
-            fake = lambda *a, **k: types.SimpleNamespace(returncode=rc, stderr="boom", stdout="")  # noqa: E731
-            out = io.StringIO()
-            try:
-                with contextlib.redirect_stdout(out):
-                    refresh_xml(target, fake)
-                exited = None
-            except SystemExit as stop:
-                exited = str(stop.code)
-            if want_exit and (exited is None or "failed" not in exited):
-                fails.append(f"refresh_xml: a doxygen failure must exit naming it, got {exited!r}")
-            if not want_exit and (exited is not None or os.path.exists(os.path.join(target, "stale.xml"))):
-                fails.append(f"refresh_xml: a success must clear the old XML and not exit, got {exited!r}")
-    return fails
 
 
 def self_test() -> int:
@@ -388,9 +331,6 @@ def self_test() -> int:
             print(f"SELF-TEST FAILED: {name}: rc={rc} (want {want_rc}), arm {arm!r} "
                   f"{'present' if _ARMS[arm] in text else 'ABSENT'}, other arms {wrong}\n    {text.strip()[:400]}")
             failures += 1
-    for line in _self_test_refresh():
-        print(f"SELF-TEST FAILED: {line}")
-        failures += 1
     if failures:
         print(f"check_doc_voice: self-test FAILED ({failures} of {len(cases)} case(s))")
         return 1
@@ -408,7 +348,7 @@ def main() -> int:
     if args.self_test:
         return self_test()
     if args.refresh:
-        refresh_xml()
+        _doxyxml.refresh(XML_DIR, "Doxyfile.site", "check_doc_voice")
     return judge()
 
 
