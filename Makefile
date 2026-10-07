@@ -35,6 +35,9 @@ PYRUN := PYTHONPATH=$(CURDIR)/bindings/python:$(abspath $(SCIFORGE_PYTHON)) $(PY
 # `GATE_BASE=HEAD~1 make gate-bump` diffs just the latest commit, not everything since origin/main.
 # Default unchanged (fail-closed stays the behavior for anyone who doesn't override it).
 GATE_BASE ?= origin/main
+# What a calibrated gate judges: the files that differ from GATE_BASE, committed or not, and the untracked
+# ones -- `git diff` alone misses a new file, which would pass a category it does not belong to.
+GATE_FILES = { git diff --name-only $(GATE_BASE) -- .; git ls-files --others --exclude-standard; } | sort -u
 # The test harness (framework.hpp) is owned by SciForge; the test TUs include it
 # as <sciforge/test/framework.hpp>. clang-tidy (make lint) needs that path too.
 # Sibling checkout by default — matches the CMake SCIFORGE_INCLUDE_DIR default.
@@ -145,23 +148,9 @@ build: ## [daily] Configure and build the test binary (CMake)
 test: build
 	@$(MAKE) -C tests test BUILD=$(abspath $(BUILD))
 
-sanitize:
-	@$(MAKE) -C tests sanitize BUILD=$(abspath $(BUILD))
-
-coverage:
-	@$(MAKE) -C tests coverage BUILD=$(abspath $(BUILD))
-
-coverage-check:
-	@$(MAKE) -C tests coverage-check BUILD=$(abspath $(BUILD))
-
-coverage-html:
-	@$(MAKE) -C tests coverage-html BUILD=$(abspath $(BUILD))
-
-tsan:
-	@$(MAKE) -C tests tsan BUILD=$(abspath $(BUILD))
-
-tsan-core:
-	@$(MAKE) -C tests tsan-core BUILD=$(abspath $(BUILD))
+TESTS_DELEGATED := sanitize coverage coverage-check coverage-html tsan tsan-core
+$(TESTS_DELEGATED):
+	@$(MAKE) -C tests $@ BUILD=$(abspath $(BUILD))
 
 # --- tools/ (lint clang-tidy, MISRA, uncrustify format, header layering, C ABI golden) ---
 #
@@ -208,20 +197,9 @@ go-%:
 # their root delegations sit with the rest of the tests/ ones, above (near `build`).
 # FUZZ_TIME/FUZZ_DIR/EC_K/EC_N moved into fuzz/Makefile (fuzz-only, nothing else at root
 # consumes them).
-fuzz:
-	@$(MAKE) -C fuzz fuzz
-
-fuzz-compat:
-	@$(MAKE) -C fuzz fuzz-compat
-
-fuzz-compat-known:
-	@$(MAKE) -C fuzz fuzz-compat-known
-
-fuzz-re2:
-	@$(MAKE) -C fuzz fuzz-re2
-
-fuzz-routes:
-	@$(MAKE) -C fuzz fuzz-routes
+FUZZ_DELEGATED := fuzz fuzz-compat fuzz-compat-known fuzz-re2 fuzz-routes
+$(FUZZ_DELEGATED):
+	@$(MAKE) -C fuzz $@
 
 # Lives in tools/Makefile -- see the "--- tools/ ---" comment above for the
 # CI-invariant rationale. Golden GENERATED from bindings/c/real_capi.h, never hand-edited:
@@ -699,7 +677,7 @@ gate-venv: ## [gates] Create $(GATE_VENV) with the gate's optional python tools 
 
 gate-bump: ## [gates] Calibrated gate for a version bump only (version-check + build)
 	@set -euo pipefail; \
-	 files="$$(git diff --name-only $(GATE_BASE) -- .)"; \
+	 files="$$($(GATE_FILES))"; \
 	 bad="$$(printf '%s\n' "$$files" | grep -vE '^(include/real/version\.hpp|pyproject\.toml|bindings/python/real/__init__\.py|bindings/rust/Cargo\.toml|CITATION\.cff|README\.md|docs/release-notes/.*\.md|docs/BENCHMARKS\.md|CHANGELOG\.md)$$' | grep -v '^$$' || true)"; \
 	 if [ -n "$$bad" ]; then \
 	   echo "gate-bump: REFUSED — out-of-category file(s) vs $(GATE_BASE), use full-local-gate:"; \
@@ -715,7 +693,7 @@ gate-bump: ## [gates] Calibrated gate for a version bump only (version-check + b
 
 gate-doc: ## [gates] Calibrated gate for a doc-only change (doc-check/format-check as needed)
 	@set -euo pipefail; \
-	 files="$$(git diff --name-only $(GATE_BASE) -- .)"; \
+	 files="$$($(GATE_FILES))"; \
 	 for f in $$files; do \
 	   case "$$f" in \
 	     *.md|*.dox) continue ;; \
@@ -733,17 +711,17 @@ gate-doc: ## [gates] Calibrated gate for a doc-only change (doc-check/format-che
 	 done; \
 	 echo "gate-doc: category OK (doc-only / comment-only diff)"
 	@set -euo pipefail; \
-	 files="$$(git diff --name-only $(GATE_BASE) -- .)"; \
+	 files="$$($(GATE_FILES))"; \
 	 if printf '%s\n' "$$files" | grep -qE '\.hpp$$|Doxyfile'; then \
 	   echo "── doc-check (headers or Doxyfile touched)"; $(MAKE) doc-check; \
 	 else echo "gate-doc: skip doc-check (no headers/Doxyfile touched)"; fi
 	@set -euo pipefail; \
-	 files="$$(git diff --name-only $(GATE_BASE) -- .)"; \
+	 files="$$($(GATE_FILES))"; \
 	 if printf '%s\n' "$$files" | grep -qE '\.cpp$$'; then \
 	   echo "── format-check (.cpp touched)"; $(MAKE) format-check; \
 	 else echo "gate-doc: skip format-check (no .cpp touched)"; fi
 	@set -euo pipefail; \
-	 files="$$(git diff --name-only $(GATE_BASE) -- .)"; \
+	 files="$$($(GATE_FILES))"; \
 	 if printf '%s\n' "$$files" | grep -qE '^docs/BENCHMARKS\.md$$'; then \
 	   echo "── check-bench-ratios (BENCHMARKS.md touched)"; $(MAKE) check-bench-ratios; \
 	 else echo "gate-doc: skip check-bench-ratios (BENCHMARKS.md untouched)"; fi
@@ -751,7 +729,7 @@ gate-doc: ## [gates] Calibrated gate for a doc-only change (doc-check/format-che
 
 gate-test: ## [gates] Calibrated gate for a tests/-only change (test + sanitize + coverage-check)
 	@set -euo pipefail; \
-	 files="$$(git diff --name-only $(GATE_BASE) -- .)"; \
+	 files="$$($(GATE_FILES))"; \
 	 bad="$$(printf '%s\n' "$$files" | grep -vE '^(tests/|Makefile$$)' | grep -v '^$$' || true)"; \
 	 if [ -n "$$bad" ]; then \
 	   echo "gate-test: REFUSED — out-of-category file(s) vs $(GATE_BASE), use full-local-gate:"; \
@@ -1127,14 +1105,9 @@ gcc-check: ## [gates] Compile the engine headers under gcc -Werror (the diagnost
 	   echo "  CI's linux-gcc and cmake legs remain the backstop."; \
 	 fi
 
-doc-check:
-	@$(MAKE) -C docs doc-check
-
-doc-site-xml:
-	@$(MAKE) -C docs doc-site-xml
-
-doc-xml:
-	@$(MAKE) -C docs doc-xml
+DOCS_DELEGATED := doc-check doc-site-xml doc-xml
+$(DOCS_DELEGATED):
+	@$(MAKE) -C docs $@
 
 # --- benchmarks/ (throughput/duel/matrix/profile — dev-only; matrix-gate is the one CI-relevant gate) ---
 #
@@ -1147,56 +1120,13 @@ doc-xml:
 # CWD=$(ROOT) regardless of where `make` was invoked from). The internal
 # profile-sample-build helper has no root delegation (nothing outside benchmarks/
 # invokes it by name); see benchmarks/Makefile.
-bench-duel:
-	@$(MAKE) -C benchmarks bench-duel
+BENCH_DELEGATED := bench-duel profile-sample profile-callgrind bench-matrix matrix-gate bench-percall bench-engines bench-layout-null bench-layout-min-null bench-static bench-ac-gate bench-route-cliff bench-census bench-dfa-census bench-multipattern
+$(BENCH_DELEGATED):
+	@$(MAKE) -C benchmarks $@
 
-profile-sample:
-	@$(MAKE) -C benchmarks profile-sample
-
-profile-callgrind:
-	@$(MAKE) -C benchmarks profile-callgrind
-
-bench-matrix:
-	@$(MAKE) -C benchmarks bench-matrix
-
-matrix-gate:
-	@$(MAKE) -C benchmarks matrix-gate
-
-bench-percall:
-	@$(MAKE) -C benchmarks bench-percall
-
-bench-engines:
-	@$(MAKE) -C benchmarks bench-engines
-
-bench-layout-null:
-	@$(MAKE) -C benchmarks bench-layout-null
-
-bench-layout:
-	@$(MAKE) -C benchmarks bench-layout BASE=$(BASE) CAND=$(CAND)
-
-bench-layout-min-null:
-	@$(MAKE) -C benchmarks bench-layout-min-null
-
-bench-layout-min:
-	@$(MAKE) -C benchmarks bench-layout-min BASE=$(BASE) CAND=$(CAND)
-
-bench-static:
-	@$(MAKE) -C benchmarks bench-static
-
-bench-ac-gate:
-	@$(MAKE) -C benchmarks bench-ac-gate
-
-bench-route-cliff:
-	@$(MAKE) -C benchmarks bench-route-cliff
-
-bench-census:
-	@$(MAKE) -C benchmarks bench-census
-
-bench-dfa-census:
-	@$(MAKE) -C benchmarks bench-dfa-census
-
-bench-multipattern:
-	@$(MAKE) -C benchmarks bench-multipattern
+BENCH_AB_DELEGATED := bench-layout bench-layout-min
+$(BENCH_AB_DELEGATED):
+	@$(MAKE) -C benchmarks $@ BASE=$(BASE) CAND=$(CAND)
 
 # The light C++ net for examples/cpp/*.cpp: compile+run DIRECTLY against the source tree
 # (-Iinclude, no install step) so a showcase example that stops compiling/running reds here
