@@ -70,6 +70,7 @@ namespace real::detail {
     behind_walk_steps,           //!< Bytes the lookbehind walks stepped.
     dfa_span_batches,            //!< Batches the lazy-DFA span filler produced.
     dfa_leases_taken,            //!< DFA set leases taken.
+    class_folds,                 //!< Case folds the compiler computed for a class (a fold-cache hit costs none).
     count_                       //!< The number of counters.
   };
 
