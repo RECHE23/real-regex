@@ -2,6 +2,24 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.10.5
+
+10.5 (**Unicode lookaheads on the fast route, GCC -O2 builds that inline, a lighter Python match**): **THE TABLES
+ARE NOT RE-RUN, AND THE STAMP STAYS AT `2026.10.3` + tree `6a80b657`.** Each change was measured before and after
+(2026-10-06 and 2026-10-07):
+- **§A / §E / §Unicode rows the train touches**: the GCC `-O2` inlining of the code-point class filler (b1035df)
+  is a GCC change; the tables' arm64 columns are Apple clang and x86-64 is GCC 15 at `-O3 -flto`, where the duel
+  moves `fields [^,]+` −5.6 % and `unicode .` −8.5 % in instructions. The trailing lookahead over a Unicode class
+  (67878c3) is in no table row.
+- **§B**, `bench.py` median of three on arm64 against the stamped table: every row within 1.6 %, but `date ·
+  search @100KB` (1.6 → 1.5 µs, 730.85× → 760.52×) and `literal · anchored miss @1MB` (204 → 190 ns, 0.88× →
+  0.93×). This run found a +6.5 % on `sub · spaces @100KB` that per-commit instruction counts had read neutral,
+  bisected to 7385ec7 and reverted before the release (ab309be).
+- **Not in a table**: Python's per-call costs (2bee5c6, 3812fdf), `replace` with a parsed template (3703763) and
+  the compatibility layer's expander (4f20369); each measured in its commit and in
+  `docs/release-notes/v2026.10.5.md`.
+The multi-pattern section keeps its `600b0fb` stamp.
+
 ## v2026.10.4
 
 10.4 (**counts that do not hand out, regexes that warm up, bindings that cross once**): **THE TABLES ARE
