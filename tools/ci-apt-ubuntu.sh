@@ -36,5 +36,10 @@ sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
   -print \
   -delete
 
-sudo apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+# A mirror that stops answering hung every apt step until the job limit (four jobs on 2026-10-07, 20-30
+# minutes each): bound each connection and retry, so a stalled mirror fails or recovers in minutes.
+APT_NET="-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=3"
+# shellcheck disable=SC2086 # APT_NET is a list of options, split on purpose
+sudo apt-get $APT_NET update
+# shellcheck disable=SC2086
+sudo DEBIAN_FRONTEND=noninteractive apt-get $APT_NET install -y "$@"
