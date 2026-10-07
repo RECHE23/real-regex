@@ -814,14 +814,14 @@ check-push: ## [gates] Before each push: every check whose input the diff touche
 	@$(MAKE) check-doc-voice check-curated-members check-bench-ratios
 	@$(if $(call touched,tools),$(MAKE) check-sabotage && $(MAKE) check-blind-guard,echo "check-push: tools/ untouched -- harness checks skipped")
 	@$(if $(call touched,docs),$(if $(shell command -v $(SPHINXBUILD)),$(MAKE) docs-site-gate,echo "check-push: $(SPHINXBUILD) absent (make gate-venv)" && exit 1),echo "check-push: docs/ untouched -- docs-site-gate skipped")
+	@echo "── lint (headers TU + changed tests)"
+	@$(MAKE) -C tools lint-changed GATE_BASE=$(GATE_BASE)
 	@$(if $(call touched,include),echo "── engine checks (include/ touched)" && $(MAKE) check-fixed-cost && $(MAKE) doc-check && $(MAKE) gcc-check \
 	   && $(MAKE) misra && $(MAKE) -C tools misra-x86 && $(MAKE) c-test && $(MAKE) example-check && $(MAKE) matrix-gate \
 	   && $(MAKE) fowler-compat && $(MAKE) exhaustive-compat && $(MAKE) fuzz-routes && $(MAKE) python-test \
 	   && { if command -v go >/dev/null 2>&1; then $(MAKE) go-check-vendor; else echo "check-push: go absent -- CI checks the vendored headers"; fi; },echo "check-push: include/ untouched -- engine checks skipped")
 	@echo "── test"
 	@$(MAKE) test
-	@echo "── lint (headers TU + changed tests)"
-	@$(MAKE) -C tools lint-changed GATE_BASE=$(GATE_BASE)
 	@echo "── bindings"
 	@$(MAKE) check-touched-bindings
 	@echo "── coverage"
