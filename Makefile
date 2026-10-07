@@ -1098,8 +1098,10 @@ gcc-check: ## [gates] Compile the engine headers under gcc -Werror (the diagnost
 	     g++ -std=c++20 -O2 -Wall -Wextra -Wshadow -Werror -I include -I bindings/c \
 	         -c bindings/c/real_capi.cpp -o /dev/null \
 	     && g++ -std=c++20 -O2 -Wall -Wextra -Wshadow -Werror -U__SSE2__ -U__AVX2__ -I include -I bindings/c \
-	         -c bindings/c/real_capi.cpp -o /dev/null' \
-	   && echo "gcc-check: clean under g++ 14 (-Wall -Wextra -Wshadow -Werror), with and without the vector ISA macros"; \
+	         -c bindings/c/real_capi.cpp -o /dev/null \
+	     && g++ -std=c++20 -O2 -Wall -Wextra -Wshadow -Werror -I include \
+	         -c tools/compat_gcc_tu.cpp -o /dev/null' \
+	   && echo "gcc-check: clean under g++ 14 (-Wall -Wextra -Wshadow -Werror), with and without the vector ISA macros, compat layers included"; \
 	 else \
 	   echo "step 10: gcc-check (the diagnostics clang lacks) -- docker absent" | tee -a $(GATE_SKIPS); \
 	   echo "  CI's linux-gcc and cmake legs remain the backstop."; \
