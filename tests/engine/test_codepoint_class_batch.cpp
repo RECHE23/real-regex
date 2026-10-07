@@ -448,3 +448,16 @@ TEST(the_batched_walk_keeps_a_word_boundary_wrap)
     EXPECT(!batched.empty());
   }
 }
+
+// A member right after a non-member multi-byte code point (`€1`, `é1`, an emoji then a digit): the filler
+// steps past the non-member, and a wrong step there drops or splits the member.
+TEST(the_code_point_filler_resumes_right_after_a_non_member)
+{
+  const std::string text {"é1é22€3😀4 x€y Москва42 ab\xC3\xC3\xA9" "7 \xE2\x82" "8 ÄöÜ9ß"};
+  for (const char* p : {R"(\d+)", R"(\p{L}+)", R"(\w+)", "[é-ü]+", R"(\p{Lu}+)", R"(\d)"}) {
+    const real::regex re {p};
+    EXPECT_EQ(by_iteration(re, text), by_search(re, text));
+    EXPECT_EQ(re.count_matches(text), by_search(re, text).size());
+  }
+  EXPECT_EQ(by_iteration(real::regex {R"(\d+)"}, text).size(), 8U); // 1 22 3 4 42 7 8 9
+}
