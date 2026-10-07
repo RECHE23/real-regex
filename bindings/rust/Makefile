@@ -13,10 +13,10 @@ build: ## Build the crate (debug)
 test: ## Run the crate tests in both feature configurations (default and `fallback`) + the quickstart example
 	rm -rf vendor
 	cargo test --quiet && cargo test --quiet --features fallback
-	# examples/quickstart.rs is the landing page's Rust tab (docs/site/_templates/landing.html,
-	# injected at build time from that file) —
-	# building AND running it here means the code the page shows is exactly the code that's
-	# tested, in-tree, every `rust-test` run.
+# examples/quickstart.rs is the landing page's Rust tab (docs/site/_templates/landing.html,
+# injected at build time from that file) —
+# building AND running it here means the code the page shows is exactly the code that's
+# tested, in-tree, every `rust-test` run.
 	@echo "── quickstart example (in-tree)"
 	cargo run --quiet --example quickstart
 
@@ -39,14 +39,14 @@ vendor: ## Snapshot the engine sources into vendor/ so the crate builds standalo
 
 publish-check: vendor ## Vendor, then let `cargo publish --dry-run` COMPILE the packaged tarball, INCLUDING the quickstart example (the real gate)
 	cargo publish --dry-run --allow-dirty
-	# `cargo publish --dry-run`'s own verify step only compiles the crate's LIB target from the
-	# extracted tarball -- examples are not part of the implicit build it runs (confirmed
-	# empirically: an example placed in a probe crate never appears in the verify step's rustc
-	# invocations, with or without --all-features). So proving examples/quickstart.rs survives
-	# PACKAGING -- the actual point of this check, since it's also the landing page's Rust tab
-	# (docs/site/_templates/landing.html) -- needs one more explicit step: build
-	# and run it from the exact extracted directory cargo publish just left behind
-	# (target/package/<name>-<version>/), standing in for what crates.io would actually ship.
+# `cargo publish --dry-run`'s own verify step only compiles the crate's LIB target from the
+# extracted tarball -- examples are not part of the implicit build it runs (confirmed
+# empirically: an example placed in a probe crate never appears in the verify step's rustc
+# invocations, with or without --all-features). So proving examples/quickstart.rs survives
+# PACKAGING -- the actual point of this check, since it's also the landing page's Rust tab
+# (docs/site/_templates/landing.html) -- needs one more explicit step: build
+# and run it from the exact extracted directory cargo publish just left behind
+# (target/package/<name>-<version>/), standing in for what crates.io would actually ship.
 	@ver=$$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -1); \
 	 pkgdir="target/package/real-regex-$$ver"; \
 	 test -d "$$pkgdir" || { echo "publish-check: FAIL -- $$pkgdir missing (cargo publish --dry-run did not leave the extracted package behind)"; exit 1; }; \

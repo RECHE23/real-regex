@@ -638,10 +638,10 @@ check-bench-ratios:
 gate-venv: ## [gates] Create $(GATE_VENV) with the gate's optional python tools (sphinx pins + mypy)
 	$(PYTHON) -m venv $(GATE_VENV)
 	$(GATE_VENV)/bin/pip install --quiet --upgrade pip
-	# setuptools/wheel are NOT optional extras here: the comment above offers this venv as the way to
-	# run the python suite (`PYTHON=$(GATE_VENV)/bin/python`), and that path builds the extension through
-	# setup.py. A venv created by `python -m venv` on 3.12+ ships neither, so the offer failed on
-	# `ModuleNotFoundError: No module named 'setuptools'` before reaching the cross-oracle it exists to close.
+# setuptools/wheel are NOT optional extras here: the comment above offers this venv as the way to
+# run the python suite (`PYTHON=$(GATE_VENV)/bin/python`), and that path builds the extension through
+# setup.py. A venv created by `python -m venv` on 3.12+ ships neither, so the offer failed on
+# `ModuleNotFoundError: No module named 'setuptools'` before reaching the cross-oracle it exists to close.
 	$(GATE_VENV)/bin/pip install --quiet -r $(ROOT)/docs/requirements.txt mypy 'regex==2025.9.1' setuptools wheel
 	@echo "gate-venv: ready — full-local-gate finds sphinx-build and mypy here (steps 10 and 20 stop skipping)"
 	@$(PYTHON) -c "import regex" >/dev/null 2>&1 \
@@ -879,11 +879,11 @@ full-local-gate-impl:
 	@$(MAKE) check-workflows
 	@echo "── [3/25] version-check"
 	@$(MAKE) version-check
-	# Complements version-check's bench-stamp line, which compares VERSION STRINGS and so only fires
-	# across a release bump. This one asks whether the engine changed in substance since the figures
-	# were stamped -- the case that actually happens between releases, and the one that let a closed
-	# deficit stay documented as open (d7d9485). Warns, never fails: benchmarks cannot be re-run per
-	# commit. Local only -- it reads git history, which a CI shallow clone does not have.
+# Complements version-check's bench-stamp line, which compares VERSION STRINGS and so only fires
+# across a release bump. This one asks whether the engine changed in substance since the figures
+# were stamped -- the case that actually happens between releases, and the one that let a closed
+# deficit stay documented as open (d7d9485). Warns, never fails: benchmarks cannot be re-run per
+# commit. Local only -- it reads git history, which a CI shallow clone does not have.
 	@echo "── [3b/25] check-bench-stamp (engine moved since the benchmarks were stamped?)"
 	@$(MAKE) check-bench-stamp
 	@echo "── [4/25] check-layers"
@@ -910,11 +910,11 @@ full-local-gate-impl:
 	@$(MAKE) check-abi-bump
 	@echo "── [8/25] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
 	@$(MAKE) doc-no-coverage
-	# Comment-FORM gate, deliberately right after doc-no-coverage: that step runs the LOCAL
-	# doxygen, so build/doc/xml is fresh here. It has to be, and the script enforces it --
-	# reading a stale XML made an earlier run report a false clean (line numbers drift, every
-	# entry fails the shape check, nothing is flagged). doc-check below cannot serve instead:
-	# it runs the CI Doxygen inside Docker and never refreshes the local XML.
+# Comment-FORM gate, deliberately right after doc-no-coverage: that step runs the LOCAL
+# doxygen, so build/doc/xml is fresh here. It has to be, and the script enforces it --
+# reading a stale XML made an earlier run report a false clean (line numbers drift, every
+# entry fails the shape check, nothing is flagged). doc-check below cannot serve instead:
+# it runs the CI Doxygen inside Docker and never refreshes the local XML.
 	@echo "── [7b/25] check-doc-style (objects /*! */, attributes //!<)"
 	@$(MAKE) check-doc-style
 	@echo "── [7c/25] check-site-anchors (site slices resolve in their sources)"
@@ -939,20 +939,20 @@ full-local-gate-impl:
 	@$(MAKE) doc-site-xml
 	@$(MAKE) check-doc-voice
 	@$(MAKE) check-curated-members
-	# Arithmetic, so it belongs in the cheap section beside the other doc gates: it re-derives every
-	# ratio in BENCHMARKS.md §A/§E/§Unicode from the ns/B pair beside it AND every range, per-row pair
-	# and count in §A's reading bullets from the cells above them. The prose half is the one that
-	# matters -- checking cells alone reported OK for three stamps while every bullet was stale.
+# Arithmetic, so it belongs in the cheap section beside the other doc gates: it re-derives every
+# ratio in BENCHMARKS.md §A/§E/§Unicode from the ns/B pair beside it AND every range, per-row pair
+# and count in §A's reading bullets from the cells above them. The prose half is the one that
+# matters -- checking cells alone reported OK for three stamps while every bullet was stale.
 	@echo "── [8b/25] check-bench-ratios (§A/§E/§Unicode ratios, and §A's prose against its cells)"
 	@$(MAKE) check-bench-ratios
 	@echo "── [9/25] doc-check (CI-pinned Doxygen when Docker is available)"
 	@$(MAKE) doc-check
 	@echo "── [10/25] gcc-check (the diagnostics clang lacks — see the target)"
 	@$(MAKE) gcc-check
-	# docs/site's own net (-W --keep-going + linkcheck). Same shape as the
-	# GXX/go legs below: skipped with a warning when sphinx-build is absent (a dev
-	# without the docs venv on PATH doesn't need to rougir tout le gate) -- the docs-site
-	# CI job (ci.yml) is the backstop, so this is never the ONLY net on the site.
+# docs/site's own net (-W --keep-going + linkcheck). Same shape as the
+# GXX/go legs below: skipped with a warning when sphinx-build is absent (a dev
+# without the docs venv on PATH doesn't need to rougir tout le gate) -- the docs-site
+# CI job (ci.yml) is the backstop, so this is never the ONLY net on the site.
 	@echo "── [11/25] docs-site-gate (sphinx -W --keep-going + linkcheck; skipped if sphinx-build absent)"
 	@if command -v $(SPHINXBUILD) >/dev/null 2>&1; then $(MAKE) docs-site-gate; else echo "step 10: docs-site-gate -- $(SPHINXBUILD) absent (sphinx: make gate-venv)" | tee -a $(GATE_SKIPS); fi
 	@echo "── [12/25] misra (single synthetic TU)"
@@ -961,11 +961,11 @@ full-local-gate-impl:
 	@$(MAKE) -C tools misra-x86
 	@echo "── [13/25] c-test"
 	@$(MAKE) c-test
-	# examples/cpp/*.cpp direct compile+run -- unconditional, not
-	# skip-if-absent: unlike the OPTIONAL alternate-compiler/toolchain legs below (GXX, go,
-	# sphinx-build), a default C++ compiler is already a hard prerequisite of this entire gate
-	# (build/test/misra/c-test above assume one unconditionally), so example-check rides the
-	# same assumption instead of the "warn and skip" shape reserved for genuinely optional tools.
+# examples/cpp/*.cpp direct compile+run -- unconditional, not
+# skip-if-absent: unlike the OPTIONAL alternate-compiler/toolchain legs below (GXX, go,
+# sphinx-build), a default C++ compiler is already a hard prerequisite of this entire gate
+# (build/test/misra/c-test above assume one unconditionally), so example-check rides the
+# same assumption instead of the "warn and skip" shape reserved for genuinely optional tools.
 	@echo "── [14/25] example-check (examples/cpp/*.cpp direct compile+run)"
 	@$(MAKE) example-check
 	@echo "── [15/25] matrix-gate"
@@ -988,10 +988,10 @@ full-local-gate-impl:
 	@if $(MYPY_PYTHON) -c "import mypy" >/dev/null 2>&1; then \
 	   $(MAKE) python-stubtest; \
 	 else echo "step 20: python-stubtest (.pyi = runtime) -- mypy absent (make gate-venv)" | tee -a $(GATE_SKIPS); fi
-	# Go leg: go-check-vendor diffs include/ against the committed vendor copy and fails
-	# on drift — it does not write the tree. The one binding NOT otherwise in this gate
-	# (its sources are vendored, not built from include/ here). Skipped with a warning when
-	# go is absent (the CI go job is the backstop), same shape as the GCC leg.
+# Go leg: go-check-vendor diffs include/ against the committed vendor copy and fails
+# on drift — it does not write the tree. The one binding NOT otherwise in this gate
+# (its sources are vendored, not built from include/ here). Skipped with a warning when
+# go is absent (the CI go job is the backstop), same shape as the GCC leg.
 	@echo "── [22/25] go-check-vendor + go-test (Go leg; skipped if go absent)"
 	@if command -v go >/dev/null 2>&1; then $(MAKE) go-check-vendor && $(MAKE) go-test; else echo "step 21: go-check-vendor + go-test -- go absent" | tee -a $(GATE_SKIPS); fi
 	@echo "── [23/25] lint"
@@ -1006,11 +1006,11 @@ full-local-gate-impl:
 	@$(MAKE) sanitize
 	@echo "── [25/25] coverage-check (line floor $(COV_FLOOR)%; refuses a stale coverage binary)"
 	@$(MAKE) coverage-check
-	# A SKIP IS NOT A PASS, and inside a numbered list it reads exactly like one -- which is how a
-	# machine without sphinx-build ran this gate as "24 steps green" while step 10, the net for the
-	# site, never executed. Each optional leg appends its own line as it skips, so this block only
-	# reads a ledger and can never disagree with the branch that wrote it. The Unicode cross-oracle
-	# is the one PROBE here: it skips inside the test run, not in a branch this file owns.
+# A SKIP IS NOT A PASS, and inside a numbered list it reads exactly like one -- which is how a
+# machine without sphinx-build ran this gate as "24 steps green" while step 10, the net for the
+# site, never executed. Each optional leg appends its own line as it skips, so this block only
+# reads a ledger and can never disagree with the branch that wrote it. The Unicode cross-oracle
+# is the one PROBE here: it skips inside the test run, not in a branch this file owns.
 	@$(PYTHON) $(ROOT)/tools/check_unicode_oracle.py --self-test >/dev/null
 	@set -eu; \
 	 $(PYTHON) $(ROOT)/tools/check_unicode_oracle.py --print-skip >> $(GATE_SKIPS) \

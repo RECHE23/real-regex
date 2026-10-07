@@ -21,8 +21,8 @@ test: ## Build and run the C ABI tests (test_capi.c) and a consumer of the C++ f
 	cc -I$(ROOT)/bindings/c -c $(ROOT)/bindings/c/test_capi.c -o $(BUILD)/test_capi.o
 	$(CXX) $(BUILD)/test_capi.o $(BUILD)/real_capi.o -o $(BUILD)/capi_test   # C++ driver links the right stdlib
 	$(BUILD)/capi_test
-	# The C++ façade over the same object, compiled with bindings/c ALONE on the include path: include/ is
-	# absent, so a real_compiled.hpp that reached an engine header would fail to compile here.
+# The C++ façade over the same object, compiled with bindings/c ALONE on the include path: include/ is
+# absent, so a real_compiled.hpp that reached an engine header would fail to compile here.
 	$(CXX) $(CXXSTD) -O2 -Wall -Wextra -Werror -I$(ROOT)/bindings/c $(ROOT)/bindings/c/test_compiled_consumer.cpp \
 	    $(BUILD)/real_capi.o -o $(BUILD)/compiled_consumer
 	$(BUILD)/compiled_consumer
@@ -31,10 +31,10 @@ fuzz: ## libFuzzer over the C ABI shim under ASan/UBSan (FUZZ_TIME=secs)
 	@mkdir -p $(FUZZ_DIR)/corpus-capi
 	clang++ $(CXXSTD) -O1 -g $(INCLUDES) -I$(ROOT)/bindings/c \
 	    -fsanitize=fuzzer,address,undefined $(ROOT)/fuzz/fuzz_capi.cpp -o $(FUZZ_DIR)/fuzz_capi
-	# -artifact_prefix or libFuzzer drops crash-*/slow-unit-* into the CURRENT directory, which for
-	# this recipe is a SOURCE directory — one `git add -A` away from being committed, which has
-	# happened. fuzz/Makefile's three targets already carry it; this recipe is a fourth entry point
-	# that did not.
+# -artifact_prefix or libFuzzer drops crash-*/slow-unit-* into the CURRENT directory, which for
+# this recipe is a SOURCE directory — one `git add -A` away from being committed, which has
+# happened. fuzz/Makefile's three targets already carry it; this recipe is a fourth entry point
+# that did not.
 	$(FUZZ_DIR)/fuzz_capi -max_total_time=$(FUZZ_TIME) -timeout=10 \
 	    -artifact_prefix=$(FUZZ_DIR)/ $(FUZZ_DIR)/corpus-capi
 
