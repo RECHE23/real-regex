@@ -41,9 +41,6 @@ import _gen_common as common  # noqa: E402
 import gen_unicode_property_tables as gc_gen  # noqa: E402 - reused for the anti-collision guard
 import gen_unicode_script_tables as script_gen  # noqa: E402 - reused for the anti-collision guard
 
-_MAX_CP = 0x10FFFF
-_SURROGATE_LO = 0xD800
-_SURROGATE_HI = 0xDFFF
 _UCD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ucd")
 
 # (filename, version-header regex, human label for messages)
@@ -67,11 +64,6 @@ def _norm_version(v):
     while len(parts) < 3:
         parts.append("0")
     return tuple(int(p) for p in parts)
-
-
-def _loose(name):
-    """UAX44-LM3-ish loose match key: lowercase, drop spaces / underscores / hyphens."""
-    return name.lower().replace("_", "").replace("-", "").replace(" ", "")
 
 
 def _parse_one(filename, version_re, label):
@@ -105,38 +97,15 @@ def _parse_one(filename, version_re, label):
     return per_prop, version
 
 
-def _coalesce(ranges):
-    """Sort and merge adjacent/overlapping [lo, hi] ranges into the minimal sorted, disjoint form."""
-    ranges = sorted(ranges)
-    merged = []
-    for lo, hi in ranges:
-        if merged and lo <= merged[-1][1] + 1:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
-        else:
-            merged.append((lo, hi))
-    return merged
-
-
 def _validate_structure(name, ranges):
     """Sorted, disjoint, no surrogate overlap -- the invariant a single property's own table must hold."""
     prev_hi = -1
     for lo, hi in ranges:
         if lo > hi or lo <= prev_hi:
             sys.exit(f"gen_unicode_binprop_tables: {name} table not sorted/disjoint near U+{lo:04X}")
-        if lo <= _SURROGATE_HI and hi >= _SURROGATE_LO:
+        if lo <= common.SURROGATE_HI and hi >= common.SURROGATE_LO:
             sys.exit(f"gen_unicode_binprop_tables: {name} range U+{lo:04X}..U+{hi:04X} overlaps the surrogate block")
         prev_hi = hi
-
-
-def _in_ranges(ranges, cp):
-    lo, hi = 0, len(ranges)
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if ranges[mid][1] < cp:
-            lo = mid + 1
-        else:
-            hi = mid
-    return lo < len(ranges) and ranges[lo][0] <= cp <= ranges[lo][1]
 
 
 def _cross_check_regex(tables, version):
@@ -164,9 +133,9 @@ def _cross_check_regex(tables, version):
                   file=sys.stderr)
             continue
         common.validate_exhaustive(
-            (cp for cp in range(0, _MAX_CP + 1) if not (_SURROGATE_LO <= cp <= _SURROGATE_HI)),
+            common.non_surrogate_cps(),
             lambda cp, r=ranges, m=matcher: (
-                f"{name} U+{cp:04X}" if _in_ranges(r, cp) != bool(m.match(chr(cp))) else None),
+                f"{name} U+{cp:04X}" if common.in_ranges(r, cp) != bool(m.match(chr(cp))) else None),
             lambda n, nm=name: sys.exit(f"ABORT {nm}: {n} code point(s) disagree with the regex module"))
 
 
@@ -175,11 +144,11 @@ def _gc_and_script_loose_keys():
     approximation -- see the anti-collision guard note in the module docstring)."""
     gc_keys = set()
     for name in gc_gen._CATEGORIES + gc_gen._GROUPS:  # noqa: SLF001 - intentional tooling-internal reuse
-        gc_keys.add(gc_gen._loose(name))
+        gc_keys.add(common.loose(name))
         if name in gc_gen._GC_LONG:
-            gc_keys.add(gc_gen._loose(gc_gen._GC_LONG[name]))
+            gc_keys.add(common.loose(gc_gen._GC_LONG[name]))
     script_entries, _ = script_gen._parse_scripts_txt(script_gen._SCRIPTS_TXT)  # noqa: SLF001
-    script_keys = {script_gen._loose(name) for _, _, name in script_entries}
+    script_keys = {common.loose(name) for _, _, name in script_entries}
     return gc_keys, script_keys
 
 
@@ -190,7 +159,7 @@ def _check_no_collisions(names):
     gc_keys, script_keys = _gc_and_script_loose_keys()
     collisions = []
     for name in names:
-        key = _loose(name)
+        key = common.loose(name)
         if key in gc_keys:
             collisions.append(f"{name} (loose {key!r}) collides with a General_Category alias")
         if key in script_keys:
@@ -262,7 +231,7 @@ def _emit(tables, version, path):
     out += ["  //! \\brief Binary-property names, loose-keyed; for the `\\p{...}` parser (no namespace prefix,"]
     out += ["  //!        same as PCRE2: `\\p{Alphabetic}`, not `\\p{bp=Alphabetic}`)."]
     out += ["  inline constexpr binprop_alias_entry binprop_aliases[] {"]
-    out += [f'    {{"{_loose(n)}", binprop::{n}}},' for n in names]
+    out += [f'    {{"{common.loose(n)}", binprop::{n}}},' for n in names]
     out += ["  };", ""]
     out += ["  /*!"]
     out += ["   * \\brief Resolve a loose-normalized binary-property name to its value, or `count` if unknown."]
@@ -295,7 +264,7 @@ def generate(path):
             if name in tables:
                 sys.exit(f"gen_unicode_binprop_tables: {name} defined in both {label} and another source "
                           f"-- unexpected cross-file collision, investigate before regenerating")
-            tables[name] = _coalesce(ranges)
+            tables[name] = common.coalesce(ranges)
     distinct_versions = {_norm_version(v) for v in versions.values()}
     if len(distinct_versions) != 1:
         sys.exit(f"gen_unicode_binprop_tables: source version mismatch across files: {versions}")

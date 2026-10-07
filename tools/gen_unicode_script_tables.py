@@ -27,9 +27,6 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _gen_common as common  # noqa: E402
 
-_MAX_CP = 0x10FFFF
-_SURROGATE_LO = 0xD800
-_SURROGATE_HI = 0xDFFF
 _SCRIPTS_TXT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ucd", "Scripts.txt")
 _PROPERTY_VALUE_ALIASES_TXT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ucd",
                                            "PropertyValueAliases.txt")
@@ -60,11 +57,6 @@ def parse_sc_short_codes(path=_PROPERTY_VALUE_ALIASES_TXT):
     if version is None:
         sys.exit("gen_unicode_script_tables: PropertyValueAliases.txt is missing its version header")
     return short_of, version
-
-
-def _loose(name):
-    """UAX44-LM3-ish loose match key: lowercase, drop spaces / underscores / hyphens."""
-    return name.lower().replace("_", "").replace("-", "").replace(" ", "")
 
 
 def _parse_scripts_txt(path):
@@ -105,7 +97,7 @@ def _validate_structure(entries):
     for lo, hi, name in entries:
         if lo > hi or lo <= prev_hi:
             sys.exit(f"gen_unicode_script_tables: table not sorted/disjoint near U+{lo:04X} ({name})")
-        if lo <= _SURROGATE_HI and hi >= _SURROGATE_LO:
+        if lo <= common.SURROGATE_HI and hi >= common.SURROGATE_LO:
             sys.exit(f"gen_unicode_script_tables: range U+{lo:04X}..U+{hi:04X} overlaps the surrogate block")
         prev_hi = hi
 
@@ -141,7 +133,7 @@ def _cross_check_regex(entries):
         return f"U+{cp:04X} parsed {name}" if not matcher.match(chr(cp)) else None
 
     common.validate_exhaustive(
-        (cp for cp in range(0, _MAX_CP + 1) if not (_SURROGATE_LO <= cp <= _SURROGATE_HI)),
+        common.non_surrogate_cps(),
         _check, lambda n: sys.exit(f"gen_unicode_script_tables: {n} code point(s) disagree with the regex module"))
 
 
@@ -229,7 +221,7 @@ def _emit(entries, version, short_of, path):
     out += ["  inline constexpr script_alias_entry script_aliases[] {"]
     # A short code that coincides with its own script's long name (Thai, Lisu, Cham, ...) would otherwise
     # duplicate the row -- harmless (both resolve to the same value) but noise in the generated table.
-    aliases = sorted({(_loose(n), n) for n in names} | {(_loose(short_of[n]), n) for n in names})
+    aliases = sorted({(common.loose(n), n) for n in names} | {(common.loose(short_of[n]), n) for n in names})
     out += [f'    {{"{key}", script::{n}}},' for key, n in aliases]
     out += ["  };", ""]
     out += ["  /*!"]
@@ -268,7 +260,7 @@ def generate(path):
     key_owner = {}
     collisions = []
     for n in names:
-        for key in (_loose(n), _loose(short_of[n])):
+        for key in (common.loose(n), common.loose(short_of[n])):
             owner = key_owner.setdefault(key, n)
             if owner != n:
                 collisions.append((key, owner, n))

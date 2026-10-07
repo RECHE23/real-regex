@@ -27,9 +27,6 @@ _PATTERNS = {"word": re.compile(r"\w"), "digit": re.compile(r"\d"), "space": re.
 # Known Unicode-16.0.0 totals; the version pin catches a bump before these would.
 _EXPECTED = {"word": (142940, 771), "digit": (760, 71), "space": (29, 10)}
 
-_SURROGATE_LO = 0xD800
-_SURROGATE_HI = 0xDFFF
-_MAX_CP = 0x10FFFF
 
 
 def _matches(pat, cp):
@@ -40,13 +37,13 @@ def build_ranges(pat):
     """Coalesce the code points matching \\p{pat} into sorted inclusive [lo, hi] ranges."""
     ranges = []
     cp = 0
-    while cp <= _MAX_CP:
-        if _SURROGATE_LO <= cp <= _SURROGATE_HI:
-            cp = _SURROGATE_HI + 1
+    while cp <= common.MAX_CP:
+        if common.SURROGATE_LO <= cp <= common.SURROGATE_HI:
+            cp = common.SURROGATE_HI + 1
             continue
         if _matches(pat, cp):
             lo = cp
-            while cp <= _MAX_CP and not (_SURROGATE_LO <= cp <= _SURROGATE_HI) and _matches(pat, cp):
+            while cp <= common.MAX_CP and not (common.SURROGATE_LO <= cp <= common.SURROGATE_HI) and _matches(pat, cp):
                 cp += 1
             ranges.append((lo, cp - 1))
         else:
@@ -65,13 +62,6 @@ def in_ranges(ranges, cp):
     return lo < len(ranges) and ranges[lo][0] <= cp <= ranges[lo][1]
 
 
-def _non_surrogate_cps():
-    """All code points in [0, _MAX_CP] except the surrogate block."""
-    for cp in range(0, _MAX_CP + 1):
-        if not (_SURROGATE_LO <= cp <= _SURROGATE_HI):
-            yield cp
-
-
 def validate(name, ranges, pat):
     """Second pass: every code point's range membership must equal re.fullmatch. Abort on mismatch."""
     total = sum(hi - lo + 1 for lo, hi in ranges)
@@ -80,7 +70,7 @@ def validate(name, ranges, pat):
         sys.exit(f"ABORT {name}: got {total} cp / {len(ranges)} ranges, expected {exp_cp} / {exp_ranges} "
                  f"(Unicode {unicodedata.unidata_version}; update _EXPECTED if a data bump is intended)")
     common.validate_exhaustive(
-        _non_surrogate_cps(),
+        common.non_surrogate_cps(),
         lambda cp: f"{name} U+{cp:04X}" if in_ranges(ranges, cp) != _matches(pat, cp) else None,
         lambda n: f"ABORT {name}: {n} code point(s) disagree with re")
 

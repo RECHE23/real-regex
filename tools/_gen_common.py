@@ -10,6 +10,47 @@ import sys
 import unicodedata
 
 
+MAX_CP = 0x10FFFF       # the last code point
+SURROGATE_LO = 0xD800   # the surrogate block, which no table holds
+SURROGATE_HI = 0xDFFF
+
+
+def non_surrogate_cps():
+    """All code points in [0, MAX_CP] except the surrogate block."""
+    for cp in range(0, MAX_CP + 1):
+        if not (SURROGATE_LO <= cp <= SURROGATE_HI):
+            yield cp
+
+
+def loose(name):
+    """UAX44-LM3-ish loose match key: lowercase, drop spaces / underscores / hyphens."""
+    return name.lower().replace("_", "").replace("-", "").replace(" ", "")
+
+
+def coalesce(ranges):
+    """Sort and merge adjacent/overlapping [lo, hi] ranges into the minimal sorted, disjoint form."""
+    ranges = sorted(ranges)
+    merged = []
+    for lo, hi in ranges:
+        if merged and lo <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
+        else:
+            merged.append((lo, hi))
+    return merged
+
+
+def in_ranges(ranges, cp):
+    """Whether cp lies in the sorted, disjoint [lo, hi] ranges (binary search)."""
+    lo, hi = 0, len(ranges)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if ranges[mid][1] < cp:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo < len(ranges) and ranges[lo][0] <= cp <= ranges[lo][1]
+
+
 def unidata_version():
     """The running CPython's Unicode data version -- the pin baked into each generated header."""
     return unicodedata.unidata_version

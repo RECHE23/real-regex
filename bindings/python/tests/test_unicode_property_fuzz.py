@@ -41,6 +41,7 @@ import gen_unicode_binprop_tables as binprop_gen  # noqa: E402
 import gen_unicode_property_tables as gc_gen       # noqa: E402
 import gen_unicode_script_tables as script_gen     # noqa: E402
 import gen_unicode_scx_tables as scx_gen           # noqa: E402
+import _gen_common as gen_common                    # noqa: E402
 
 ITERS = int(os.environ.get("REAL_FUZZ_ITERS", "20000"))
 SEED = int(os.environ.get("REAL_FUZZ_SEED", "20260711"))
@@ -89,7 +90,7 @@ class TestUnicodePropertyFuzz(unittest.TestCase):
         for filename, version_re, label in binprop_gen._SOURCES:
             per_prop, _ = binprop_gen._parse_one(filename, version_re, label)
             for name, ranges in per_prop.items():
-                tables[name] = binprop_gen._coalesce(ranges)
+                tables[name] = gen_common.coalesce(ranges)
         cls.binprop_tables = tables
 
     def scx_of(self, cp):
@@ -200,7 +201,7 @@ class TestUnicodePropertyFuzz(unittest.TestCase):
             rx = real.compile(rf"\p{{{name}}}")
             for cp in cps:
                 got = bool(rx.fullmatch(chr(cp)))
-                want = binprop_gen._in_ranges(ranges, cp)
+                want = gen_common.in_ranges(ranges, cp)
                 if got != want:
                     divergences.append((name, cp, got, want))
         self.assertEqual(divergences, [], f"{len(divergences)} binary-property divergence(s), first: {divergences[:5]}")

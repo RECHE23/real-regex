@@ -24,9 +24,6 @@ import unicodedata
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
 import _gen_common as common  # noqa: E402
 
-_MAX_CP = 0x10FFFF
-_SURROGATE_LO = 0xD800
-_SURROGATE_HI = 0xDFFF
 
 # The 29 assignable General_Category values, in UCD order. Cs (surrogate) is omitted: a surrogate is not a
 # scalar value, so it never reaches the matcher, and unicodedata cannot classify chr(surrogate).
@@ -50,11 +47,6 @@ _GC_LONG = {
 }
 
 
-def _loose(name):
-    """UAX44-LM3-ish loose match key: lowercase, drop spaces / underscores / hyphens."""
-    return name.lower().replace("_", "").replace("-", "").replace(" ", "")
-
-
 def _category(cp):
     return unicodedata.category(chr(cp))
 
@@ -63,13 +55,13 @@ def _build_ranges(pred):
     """Coalesce the code points satisfying `pred(cp)` into sorted inclusive [lo, hi] ranges (surrogates skipped)."""
     ranges = []
     cp = 0
-    while cp <= _MAX_CP:
-        if _SURROGATE_LO <= cp <= _SURROGATE_HI:
-            cp = _SURROGATE_HI + 1
+    while cp <= common.MAX_CP:
+        if common.SURROGATE_LO <= cp <= common.SURROGATE_HI:
+            cp = common.SURROGATE_HI + 1
             continue
         if pred(cp):
             lo = cp
-            while cp <= _MAX_CP and not (_SURROGATE_LO <= cp <= _SURROGATE_HI) and pred(cp):
+            while cp <= common.MAX_CP and not (common.SURROGATE_LO <= cp <= common.SURROGATE_HI) and pred(cp):
                 cp += 1
             ranges.append((lo, cp - 1))
         else:
@@ -77,27 +69,10 @@ def _build_ranges(pred):
     return ranges
 
 
-def _in_ranges(ranges, cp):
-    lo, hi = 0, len(ranges)
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if ranges[mid][1] < cp:
-            lo = mid + 1
-        else:
-            hi = mid
-    return lo < len(ranges) and ranges[lo][0] <= cp <= ranges[lo][1]
-
-
-def _non_surrogate_cps():
-    for cp in range(0, _MAX_CP + 1):
-        if not (_SURROGATE_LO <= cp <= _SURROGATE_HI):
-            yield cp
-
-
 def _validate(name, ranges, pred):
     common.validate_exhaustive(
-        _non_surrogate_cps(),
-        lambda cp: f"{name} U+{cp:04X}" if _in_ranges(ranges, cp) != pred(cp) else None,
+        common.non_surrogate_cps(),
+        lambda cp: f"{name} U+{cp:04X}" if common.in_ranges(ranges, cp) != pred(cp) else None,
         lambda n: sys.exit(f"ABORT {name}: {n} code point(s) disagree with unicodedata"))
 
 
@@ -162,9 +137,9 @@ def _emit(tables, path):
     # sorted array with a linear resolve at parse time (never a hot path).
     aliases = []
     for name in _CATEGORIES + _GROUPS:
-        aliases.append((_loose(name), name))
+        aliases.append((common.loose(name), name))
         if name in _GC_LONG:
-            aliases.append((_loose(_GC_LONG[name]), name))
+            aliases.append((common.loose(_GC_LONG[name]), name))
     aliases.sort()
     out += ["  /*! \\brief A loose-normalized (lowercase, no _/-/space) General_Category name and its property. */"]
     out += ["  struct gc_alias_entry"]

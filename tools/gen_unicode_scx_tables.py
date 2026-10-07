@@ -29,9 +29,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _gen_common as common  # noqa: E402
 import gen_unicode_script_tables as script_gen  # noqa: E402 - reused: script parse, enum names, short codes
 
-_MAX_CP = 0x10FFFF
-_SURROGATE_LO = 0xD800
-_SURROGATE_HI = 0xDFFF
 _SCRIPT_EXTENSIONS_TXT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ucd", "ScriptExtensions.txt")
 _LINE = re.compile(r"^([0-9A-Fa-f]{4,6})(?:\.\.([0-9A-Fa-f]{4,6}))?\s*;\s*(.+)$")
 _VERSION = re.compile(r"^#\s*ScriptExtensions-([0-9.]+)\.txt")
@@ -89,18 +86,6 @@ def _parse_script_extensions(path, long_of):
     return overrides, version
 
 
-def _coalesce(ranges):
-    """Sort and merge adjacent/overlapping [lo, hi] ranges into the minimal sorted, disjoint form."""
-    ranges = sorted(ranges)
-    merged = []
-    for lo, hi in ranges:
-        if merged and lo <= merged[-1][1] + 1:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
-        else:
-            merged.append((lo, hi))
-    return merged
-
-
 def _ranges_minus_point(ranges, cp):
     """Remove a single code point from a sorted, disjoint range list (splits the containing range)."""
     out = []
@@ -115,23 +100,12 @@ def _ranges_minus_point(ranges, cp):
     return out
 
 
-def _in_ranges(ranges, cp):
-    lo, hi = 0, len(ranges)
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if ranges[mid][1] < cp:
-            lo = mid + 1
-        else:
-            hi = mid
-    return lo < len(ranges) and ranges[lo][0] <= cp <= ranges[lo][1]
-
-
 def _validate_structure(name, ranges):
     prev_hi = -1
     for lo, hi in ranges:
         if lo > hi or lo <= prev_hi:
             sys.exit(f"gen_unicode_scx_tables: {name} table not sorted/disjoint near U+{lo:04X}")
-        if lo <= _SURROGATE_HI and hi >= _SURROGATE_LO:
+        if lo <= common.SURROGATE_HI and hi >= common.SURROGATE_LO:
             sys.exit(f"gen_unicode_scx_tables: {name} range U+{lo:04X}..U+{hi:04X} overlaps the surrogate block")
         prev_hi = hi
 
@@ -169,11 +143,11 @@ def _cross_check_regex(scx_ranges, names, version):
         sample = set()
         for lo, hi in ranges:
             for cp in (lo - 1, lo, hi, hi + 1):
-                if 0 <= cp <= _MAX_CP and not (_SURROGATE_LO <= cp <= _SURROGATE_HI):
+                if 0 <= cp <= common.MAX_CP and not (common.SURROGATE_LO <= cp <= common.SURROGATE_HI):
                     sample.add(cp)
         for cp in sample:
             expected = bool(matcher.match(chr(cp)))
-            got = _in_ranges(ranges, cp)
+            got = common.in_ranges(ranges, cp)
             if expected != got:
                 mismatches += 1
                 if mismatches <= 8:
@@ -273,7 +247,7 @@ def generate(path):
         ranges = base_ranges[name]
         for cp in removals[name]:
             ranges = _ranges_minus_point(ranges, cp)
-        ranges = _coalesce(ranges + [(cp, cp) for cp in additions[name]])
+        ranges = common.coalesce(ranges + [(cp, cp) for cp in additions[name]])
         _validate_structure(name, ranges)
         scx_ranges[name] = ranges
 
