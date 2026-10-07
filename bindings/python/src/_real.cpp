@@ -25,6 +25,7 @@
 #include <sciforge/binding/gil.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <new>
@@ -522,14 +523,13 @@ PyObject* group_value(MatchObject* match, Py_ssize_t group, PyObject* default_va
     return slice_subject(pat, subject.sv, start, end);
 }
 
-PyObject* Match_group(PyObject* self, PyObject* args) {
+PyObject* Match_group(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
     MatchObject* match = as_match(self);
-    const Py_ssize_t nargs = PyTuple_Size(args);
     if (nargs == 0) {
         return group_value(match, 0, Py_None);
     }
     if (nargs == 1) {
-        const Py_ssize_t group = resolve_group(match, PyTuple_GetItem(args, 0));
+        const Py_ssize_t group = resolve_group(match, args[0]);
         return group < 0 ? nullptr : group_value(match, group, Py_None);
     }
     PyObject* out = PyTuple_New(nargs);
@@ -537,7 +537,7 @@ PyObject* Match_group(PyObject* self, PyObject* args) {
         return nullptr;
     }
     for (Py_ssize_t i = 0; i < nargs; ++i) {
-        const Py_ssize_t group = resolve_group(match, PyTuple_GetItem(args, i));
+        const Py_ssize_t group = resolve_group(match, args[i]);
         PyObject* value = group < 0 ? nullptr : group_value(match, group, Py_None);
         if (value == nullptr) {
             Py_DECREF(out);
@@ -636,15 +636,17 @@ int ensure_char_spans(MatchObject* match) {
 
 enum class span_part : std::uint8_t { start, end, both };
 
-PyObject* match_position(PyObject* self, PyObject* args, span_part part) {
+PyObject* match_position(PyObject* self, PyObject* const* args, Py_ssize_t nargs, span_part part) {
+    static constexpr std::array<const char*, 3> names {"start", "end", "span"};
     MatchObject* match = as_match(self);
-    PyObject* arg = nullptr;
-    if (!PyArg_ParseTuple(args, "|O", &arg)) {
+    if (nargs > 1) {
+        PyErr_Format(PyExc_TypeError, "%s expected at most 1 argument, got %zd",
+                     names[static_cast<std::size_t>(part)], nargs);
         return nullptr;
     }
     Py_ssize_t group = 0;
-    if (arg != nullptr) {
-        group = resolve_group(match, arg);
+    if (nargs == 1) {
+        group = resolve_group(match, args[0]);
         if (group < 0) {
             return nullptr;
         }
@@ -665,14 +667,14 @@ PyObject* match_position(PyObject* self, PyObject* args, span_part part) {
     return nullptr;  // unreachable
 }
 
-PyObject* Match_start(PyObject* self, PyObject* args) {
-    return match_position(self, args, span_part::start);
+PyObject* Match_start(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
+    return match_position(self, args, nargs, span_part::start);
 }
-PyObject* Match_end(PyObject* self, PyObject* args) {
-    return match_position(self, args, span_part::end);
+PyObject* Match_end(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
+    return match_position(self, args, nargs, span_part::end);
 }
-PyObject* Match_span(PyObject* self, PyObject* args) {
-    return match_position(self, args, span_part::both);
+PyObject* Match_span(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
+    return match_position(self, args, nargs, span_part::both);
 }
 
 PyObject* Match_get_re(PyObject* self, void*) { return Py_NewRef(as_match(self)->pattern); }
@@ -688,7 +690,7 @@ PyObject* identity_copy(PyObject* self, PyObject* unused);
 PyObject* type_class_getitem(PyObject* type, PyObject* item);
 
 PyMethodDef match_methods[] = {
-    {"group", Match_group, METH_VARARGS,
+    {"group", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Match_group)), METH_FASTCALL,
      "group($self, /, *groups)\n--\n\n"
      "Return the matched substring or subgroups.\n\n"
      "Args:\n"
@@ -713,21 +715,21 @@ PyMethodDef match_methods[] = {
      "    default: Value for groups that did not participate.\n\n"
      "Returns:\n"
      "    dict: {name: matched_text} for all named groups."},
-    {"start", Match_start, METH_VARARGS,
+    {"start", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Match_start)), METH_FASTCALL,
      "start($self, group=0, /)\n--\n\n"
      "Return the start index of a group in the original string.\n\n"
      "Args:\n"
      "    group (int or str, optional): Group number or name. Defaults to 0.\n\n"
      "Returns:\n"
      "    int: Character index where the group starts."},
-    {"end", Match_end, METH_VARARGS,
+    {"end", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Match_end)), METH_FASTCALL,
      "end($self, group=0, /)\n--\n\n"
      "Return the end index of a group in the original string.\n\n"
      "Args:\n"
      "    group (int or str, optional): Group number or name. Defaults to 0.\n\n"
      "Returns:\n"
      "    int: Character index where the group ends."},
-    {"span", Match_span, METH_VARARGS,
+    {"span", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Match_span)), METH_FASTCALL,
      "span($self, group=0, /)\n--\n\n"
      "Return the (start, end) indices of a group.\n\n"
      "Args:\n"
@@ -962,14 +964,65 @@ Py_ssize_t byte_to_char(std::string_view utf8, std::size_t byte_pos) {
 // offsets for a str subject, BYTE offsets for bytes. The attempt runs over text[0:endpos]
 // starting at pos: pos is the VM start, NOT a slice (so \A and ^ without MULTILINE fail
 // at pos>0); endpos truncates the subject to a view. Capture offsets are absolute.
-PyObject* run_region(PyObject* self, PyObject* args, PyObject* kwargs, real::detail::run_mode mode) {
+// The re signature (string, pos=0, endpos=sys.maxsize) from a vectorcall frame. The limited API has no
+// stack-based argument parser, and the tuple-and-dict one builds an argument tuple on every call.
+int parse_region_args(const char* fname, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames,
+                      PyObject** string, Py_ssize_t* pos, Py_ssize_t* endpos) {
+    static constexpr std::array<const char*, 3> keywords {"string", "pos", "endpos"};
+    std::array<PyObject*, 3> slot {};
+    const Py_ssize_t nkw = kwnames == nullptr ? 0 : PyTuple_Size(kwnames);
+    if (nargs > 3) {
+        PyErr_Format(PyExc_TypeError, "%s() takes at most 3 arguments (%zd given)", fname, nargs + nkw);
+        return -1;
+    }
+    std::copy(args, args + nargs, slot.begin());
+    for (Py_ssize_t k = 0; k < nkw; ++k) {
+        PyObject* const key = PyTuple_GetItem(kwnames, k);
+        std::size_t j = 0;
+        while (j < keywords.size() && PyUnicode_CompareWithASCIIString(key, keywords[j]) != 0) {
+            ++j;
+        }
+        if (j == keywords.size()) {
+            PyErr_Format(PyExc_TypeError, "%s() got an unexpected keyword argument '%U'", fname, key);
+            return -1;
+        }
+        if (slot[j] != nullptr) {
+            PyErr_Format(PyExc_TypeError, "argument for %s() given by name ('%s') and position (%zu)", fname,
+                         keywords[j], j + 1);
+            return -1;
+        }
+        slot[j] = args[nargs + k];
+    }
+    if (slot[0] == nullptr) {
+        PyErr_Format(PyExc_TypeError, "%s() missing required argument 'string' (pos 1)", fname);
+        return -1;
+    }
+    *string = slot[0];
+    for (std::size_t j = 1; j < slot.size(); ++j) {
+        if (slot[j] == nullptr) {
+            continue;
+        }
+        PyObject* const index = PyNumber_Index(slot[j]);
+        if (index == nullptr) {
+            return -1;
+        }
+        const Py_ssize_t value = PyLong_AsSsize_t(index);
+        Py_DECREF(index);
+        if (value == -1 && PyErr_Occurred() != nullptr) {
+            return -1;
+        }
+        *(j == 1 ? pos : endpos) = value;
+    }
+    return 0;
+}
+
+PyObject* run_region(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames,
+                     real::detail::run_mode mode, const char* fname) {
     PatternObject* pat = as_pattern(self);
     PyObject* string = nullptr;
     Py_ssize_t pos = 0;
     Py_ssize_t endpos = PY_SSIZE_T_MAX;
-    static const char* const keywords[] = {"string", "pos", "endpos", nullptr};
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|nn", const_cast<char**>(keywords),
-                                     &string, &pos, &endpos)) {
+    if (parse_region_args(fname, args, nargs, kwnames, &string, &pos, &endpos) < 0) {
         return nullptr;
     }
     subject_ref subject;
@@ -1041,14 +1094,14 @@ PyObject* run_region(PyObject* self, PyObject* args, PyObject* kwargs, real::det
     }
 }
 
-PyObject* Pattern_match(PyObject* self, PyObject* args, PyObject* kwargs) {
-    return run_region(self, args, kwargs, real::detail::run_mode::prefix);
+PyObject* Pattern_match(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames) {
+    return run_region(self, args, nargs, kwnames, real::detail::run_mode::prefix, "match");
 }
-PyObject* Pattern_fullmatch(PyObject* self, PyObject* args, PyObject* kwargs) {
-    return run_region(self, args, kwargs, real::detail::run_mode::full);
+PyObject* Pattern_fullmatch(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames) {
+    return run_region(self, args, nargs, kwnames, real::detail::run_mode::full, "fullmatch");
 }
-PyObject* Pattern_search(PyObject* self, PyObject* args, PyObject* kwargs) {
-    return run_region(self, args, kwargs, real::detail::run_mode::search);
+PyObject* Pattern_search(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames) {
+    return run_region(self, args, nargs, kwnames, real::detail::run_mode::search, "search");
 }
 
 // ---------------------------------------------------------------------------
@@ -2019,7 +2072,7 @@ PyObject* Pattern_get_groupindex(PyObject* self, void*) {
 
 PyMethodDef pattern_methods[] = {
     {"match", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_match)),
-     METH_VARARGS | METH_KEYWORDS,
+     METH_FASTCALL | METH_KEYWORDS,
      "match($self, string, pos=0, endpos=sys.maxsize)\n--\n\n"
      "Try to match at position pos in the string.\n\n"
      "Args:\n"
@@ -2032,7 +2085,7 @@ PyMethodDef pattern_methods[] = {
      "Complexity:\n"
      "    Matching is O(len(string)) -- guaranteed linear; never backtracks (ReDoS-safe)."},
     {"fullmatch", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_fullmatch)),
-     METH_VARARGS | METH_KEYWORDS,
+     METH_FASTCALL | METH_KEYWORDS,
      "fullmatch($self, string, pos=0, endpos=sys.maxsize)\n--\n\n"
      "Try to match the whole region [pos, endpos) of the string.\n\n"
      "Args:\n"
@@ -2044,7 +2097,7 @@ PyMethodDef pattern_methods[] = {
      "Complexity:\n"
      "    Matching is O(len(string)) -- guaranteed linear; never backtracks (ReDoS-safe)."},
     {"search", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_search)),
-     METH_VARARGS | METH_KEYWORDS,
+     METH_FASTCALL | METH_KEYWORDS,
      "search($self, string, pos=0, endpos=sys.maxsize)\n--\n\n"
      "Scan the region [pos, endpos) for the leftmost match.\n\n"
      "Args:\n"

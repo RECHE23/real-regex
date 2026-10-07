@@ -856,6 +856,38 @@ class TestParity(unittest.TestCase):
                 module.sub(r"(?P<x>a)", r"\g<nope>", "a")
         self.assertEqual(len(templates), 4)  # denominator
 
+    def test_argument_parsing_parity(self):
+        """match/search/fullmatch and group/start/end/span parse their arguments by hand from the
+        vectorcall frame: every accepted spelling answers as re does, and every rejected one raises
+        the exception type re raises."""
+        rp, rr = real.compile(r"(a)(b)?"), re.compile(r"(a)(b)?")
+        for name in ("match", "search", "fullmatch"):
+            for args, kwargs in (((" ab",), {}), (("ab", 0), {}), (("xab",), {"pos": 1}),
+                                 ((), {"string": "ab", "endpos": 1}), (("ab", True), {}),
+                                 ((), {"endpos": 2, "pos": 0, "string": "ab"})):
+                pm, rm = getattr(rp, name)(*args, **kwargs), getattr(rr, name)(*args, **kwargs)
+                self.assertEqual(pm and pm.span(), rm and rm.span(), (name, args, kwargs))
+            for args, kwargs in (((), {}), (("a", 0, 1, 2), {}), (("a",), {"foo": 1}),
+                                 (("a",), {"string": "b"}), (("a", 1.5), {}), (("a", 0, "1"), {}),
+                                 (("a", 10**30), {})):
+                with self.assertRaises(Exception) as want:
+                    getattr(rr, name)(*args, **kwargs)
+                with self.assertRaises(type(want.exception), msg=(name, args, kwargs)):
+                    getattr(rp, name)(*args, **kwargs)
+        pm, rm = rp.search("xab"), rr.search("xab")
+        for name in ("group", "start", "end", "span"):
+            for args in ((), (0,), (1,), (2,)):
+                self.assertEqual(getattr(pm, name)(*args), getattr(rm, name)(*args), (name, args))
+            for args in ((3,), ("x",), (1.0,)):
+                with self.assertRaises(Exception) as want:
+                    getattr(rm, name)(*args)
+                with self.assertRaises(type(want.exception), msg=(name, args)):
+                    getattr(pm, name)(*args)
+        self.assertEqual(pm.group(0, 1, 2), rm.group(0, 1, 2))
+        for name in ("start", "end", "span"):
+            with self.assertRaises(TypeError):
+                getattr(pm, name)(1, 2)
+
     def test_many_groups_spans_non_ascii_parity(self):
         """A Match holds its byte spans and its char spans in one allocation sized by the group
         count: with many groups, some unset, every span on both sides of that boundary agrees
