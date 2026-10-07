@@ -31,7 +31,7 @@ EXTRACT_ALL            = NO
 EXTRACT_PRIVATE        = NO
 EXTRACT_STATIC         = YES
 INTERNAL_DOCS          = NO
-PREDEFINED             = DOXYGEN_SHOULD_SKIP_THIS
+PREDEFINED             = DOXYGEN_SHOULD_SKIP_THIS REAL_NOINLINE= REAL_ALWAYS_INLINE= REAL_COLD=
 
 EXCLUDE_SYMBOLS        = engine_* \
                          decide_batching \

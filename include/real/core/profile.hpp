@@ -20,6 +20,8 @@
 #include <cstdint>
 #include <type_traits>
 
+#include "real/core/config.hpp"
+
 /*! \brief Opt-in route/work counters, compiled out unless the profiling build flag is set. */
 namespace real::detail::prof {
 
@@ -186,13 +188,11 @@ namespace real::detail::prof {
 #endif // REAL_PROFILE
 
   // Tick helpers: always_inline so an OFF build erases the call rather than leaving a dead branch.
-#if defined(__GNUC__) || defined(__clang__)
-  __attribute__((always_inline))
-#endif
   /*!
    * \brief Bill one dispatch to route \p r. Erased entirely unless \c REAL_PROFILE is defined.
    * \param[in] r The route that handled the search.
    */
+  REAL_ALWAYS_INLINE
   constexpr void tick_route(route r) noexcept
   {
 #if defined(REAL_PROFILE)
@@ -204,13 +204,11 @@ namespace real::detail::prof {
 #endif
   }
 
-#if defined(__GNUC__) || defined(__clang__)
-  __attribute__((always_inline))
-#endif
   /*!
    * \brief Bill one occurrence of \p e. Erased entirely unless \c REAL_PROFILE is defined.
    * \param[in] e The event to count.
    */
+  REAL_ALWAYS_INLINE
   constexpr void tick_event(event e) noexcept
   {
 #if defined(REAL_PROFILE)
@@ -222,13 +220,11 @@ namespace real::detail::prof {
 #endif
   }
 
-#if defined(__GNUC__) || defined(__clang__)
-  __attribute__((always_inline))
-#endif
   /*!
    * \brief Bill one `step()` carrying \p n live threads. Erased entirely unless \c REAL_PROFILE is defined.
    * \param[in] n Threads in the current list as the step begins.
    */
+  REAL_ALWAYS_INLINE
   constexpr void tick_thread_count(std::size_t n) noexcept
   {
 #if defined(REAL_PROFILE)
@@ -240,9 +236,6 @@ namespace real::detail::prof {
 #endif
   }
 
-#if defined(__GNUC__) || defined(__clang__)
-  __attribute__((always_inline))
-#endif
   /*!
    * \brief Bill one candidate a prefilter produced. Erased entirely unless \c REAL_PROFILE is defined.
    *
@@ -250,6 +243,7 @@ namespace real::detail::prof {
    * literal scan only: a candidate is one `find_literal` hit, a rejection one whose reverse walk reached
    * no match start. Other routes are not folded in, so a zero says nothing about them.
    */
+  REAL_ALWAYS_INLINE
   constexpr void tick_prefilter_candidate() noexcept
   {
 #if defined(REAL_PROFILE)
@@ -259,13 +253,11 @@ namespace real::detail::prof {
 #endif
   }
 
-#if defined(__GNUC__) || defined(__clang__)
-  __attribute__((always_inline))
-#endif
   /*!
    * \brief Bill one prefilter candidate REJECTED by confirmation. See \ref tick_prefilter_candidate
    *        for the scope these two share.
    */
+  REAL_ALWAYS_INLINE
   constexpr void tick_prefilter_rejected() noexcept
   {
 #if defined(REAL_PROFILE)

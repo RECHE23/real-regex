@@ -14,6 +14,7 @@
 // <real/regex_set.hpp>, <real/compat/std/regex.hpp>, <real/compat/re2/re2.hpp>.
 
 #include "real/version.hpp"
+#include "real/core/config.hpp"
 
 #include <algorithm>
 #include <array>
@@ -2047,9 +2048,7 @@ namespace real::detail {
      * \return matched / no-match when the route handled the search; empty when the caller must fall to Pike.
      */
     template <bool Cascade, typename OutSlots>
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     std::optional<bool> try_shared_lazy_dfa_search(std::string_view text,
                                                    std::size_t      start,
                                                    run_mode         mode,
@@ -2216,9 +2215,7 @@ namespace real::detail {
      */
     template <typename Dummy = void>
     [[nodiscard]]
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     const ac_automaton* ac_ready()
     {
       const auto* const                 program {static_cast<const void*>(prog_.code.data())};
@@ -2257,9 +2254,7 @@ namespace real::detail {
      * \return The plan, or null.
      */
     [[nodiscard]]
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     const alternation_pairs* alternation_pairs_ready() const
     {
       const auto* const               program {static_cast<const void*>(prog_.code.data())};
@@ -2311,9 +2306,7 @@ namespace real::detail {
      * \param[in,out] cache       The per-regex immutables.
      * \param[in]     class_index Index into the program's interned byte classes.
      */
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     void verify_class_row(detail::regex_immutables& cache,
                           std::size_t               class_index)
     {
@@ -2337,9 +2330,7 @@ namespace real::detail {
      * \param[in] class_index Index into the program's interned byte classes.
      * \return The state's table.
      */
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     constexpr const std::uint8_t* derive_class_table(std::size_t class_index)
     {
       if (state_.table_class != static_cast<std::int32_t>(class_index)) {
@@ -2363,9 +2354,7 @@ namespace real::detail {
      *        behind an acquire load on the hot path.
      * \param[in,out] cache The per-regex immutables.
      */
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline, cold))
-#endif
+    REAL_COLD
     void ensure_membership_rows(detail::regex_immutables& cache) const
     {
       const std::lock_guard<std::mutex> lock {detail::immut_build_mu(&cache)};
@@ -2398,9 +2387,7 @@ namespace real::detail {
      * \param[in]     klass       The membership set to expand.
      * \param[out]    row         Destination, 256 bytes.
      */
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline, cold))
-#endif
+    REAL_COLD
     static void fill_byte_row(detail::regex_immutables& cache,
                               std::size_t               ready_index,
                               const char_class&         klass,
@@ -2451,9 +2438,7 @@ namespace real::detail {
      * \param[in,out] cache    The per-regex immutables.
      * \param[in]     cp_index Index into the program's code-point classes.
      */
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline, cold))
-#endif
+    REAL_COLD
     void fill_cp_page_row(detail::regex_immutables& cache,
                           std::size_t               cp_index) const
     {
@@ -2491,9 +2476,7 @@ namespace real::detail {
      * \param[in] class_index Index into the program's interned classes.
      * \return Pointer to a 256-entry table: 1 where the byte is in the class.
      */
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((always_inline))
-#endif
+    REAL_ALWAYS_INLINE
     constexpr const std::uint8_t* class_table(std::size_t class_index)
     {
       const std::int32_t key {static_cast<std::int32_t>(class_index)};
@@ -2521,9 +2504,7 @@ namespace real::detail {
      * \return `true` on a match.
      */
     template <bool Cascade, typename OutSlots>
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     constexpr bool run_class_loop_anchored(std::string_view text,
                                            std::size_t      start,
                                            run_mode         mode,
@@ -2619,9 +2600,7 @@ namespace real::detail {
      * \param[in] class_index Index into the program's interned byte classes.
      * \return Pointer to the 256-entry membership row, also cached in the state.
      */
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     constexpr const std::uint8_t* resolve_class_table(std::size_t class_index)
     {
       if (!std::is_constant_evaluated() && prog_.class_tables != nullptr) {
@@ -2645,9 +2624,7 @@ namespace real::detail {
      * \param[in] cp_index Index into the program's `cp_classes`.
      * \return Pointer to a 256-entry table: 1 where the byte (< 0x80) is a member.
      */
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((always_inline))
-#endif
+    REAL_ALWAYS_INLINE
     constexpr const std::uint8_t* cp_ascii_table(std::size_t cp_index)
     {
       // Row-key compare first, as in class_table.
@@ -2738,9 +2715,7 @@ namespace real::detail {
      * \param[in] cp_index Index into the program's `cp_classes`.
      * \return Pointer to the 30-word bitmap (bit `cp - 0x80`).
      */
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((always_inline))
-#endif
+    REAL_ALWAYS_INLINE
     constexpr const std::uint64_t* cp_page_table(std::size_t cp_index)
     {
       // Row-key compare first, as in class_table.
@@ -2819,9 +2794,7 @@ namespace real::detail {
      * \return The installed table, owned by \p cache.
      */
     [[nodiscard]]
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline, cold))
-#endif
+    REAL_COLD
     static const cp_hi_table* cp_hi_build(const program_view&               prog,
                                           std::size_t                       cp_index,
                                           std::uint64_t                     key_fp,
@@ -2969,9 +2942,7 @@ namespace real::detail {
      *
      * \param[in] cp_index Index of the code-point class to resolve.
      */
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     void resolve_hi(std::size_t cp_index)
     {
       state_.hi_ptr   = nullptr;
@@ -3037,9 +3008,7 @@ namespace real::detail {
      */
     // always_inline: out of line, this four-store writer cost 31 instructions a match, mostly the frame.
     template <typename OutSlots>
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((always_inline))
-#endif
+    REAL_ALWAYS_INLINE
     constexpr void fill_span_slots(OutSlots&   out_slots,
                                    std::size_t match_start,
                                    std::size_t match_end) const
@@ -3118,9 +3087,7 @@ namespace real::detail {
      * \return `true` if a non-empty run was found.
      */
     template <bool Cascade, typename OutSlots>
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((always_inline))
-#endif
+    REAL_ALWAYS_INLINE
     constexpr bool run_class_loop(std::string_view text,
                                   std::size_t      start,
                                   run_mode         mode,
@@ -3268,9 +3235,7 @@ namespace real::detail {
      * \return True on a match.
      */
     template <bool Cascade, typename OutSlots>
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline, cold))
-#endif
+    REAL_COLD
     bool run_class_loop_trailing_la(std::string_view text,
                                     std::size_t      start,
                                     run_mode         mode,
@@ -3696,9 +3661,7 @@ namespace real::detail {
      * \return How many spans were written.
      */
     template <bool WbEdge>
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline, cold))
-#endif
+    REAL_COLD
     constexpr std::size_t fill_cp_class_spans_wrapped(std::string_view text,
                                                       std::size_t      start,
                                                       cp_span*         out,
@@ -4457,9 +4420,7 @@ namespace real::detail {
      * \return `true` if the sequence matched.
      */
     template <typename OutSlots>
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     bool run_pair_filtered_shape(std::string_view text,
                                  std::size_t      start,
                                  OutSlots&        out_slots)
@@ -5273,9 +5234,7 @@ namespace real::detail {
      * \return `true` if some branch matched.
      */
     template <typename OutSlots>
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     bool run_aho_corasick(std::string_view text,
                           std::size_t      start,
                           OutSlots&        out_slots)
@@ -5325,9 +5284,7 @@ namespace real::detail {
      */
     template <typename MatchAt>
     [[nodiscard]]
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     alternation_hit alternation_pair_scan(std::string_view                   text,
                                           std::size_t                        pos,
                                           const alternation_pairs&           pairs,
@@ -5637,9 +5594,7 @@ namespace real::detail {
      * \return The plan, or null.
      */
     [[nodiscard]]
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     const alternation_pairs* alternation_plan_decide(std::string_view                   text,
                                                      std::size_t                        pos,
                                                      std::array<std::uint8_t, 8>        mem,
@@ -5760,9 +5715,7 @@ namespace real::detail {
      *         it declined.
      */
     template <typename OutSlots>
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     std::optional<bool> run_alternation_wide(std::string_view text,
                                              std::size_t      start,
                                              OutSlots&        out_slots,
@@ -5933,9 +5886,7 @@ namespace real::detail {
      * \return The plan, or null to scan by the first bytes.
      */
     [[nodiscard]]
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     const alternation_pairs* variant_plan(std::string_view text,
                                           std::size_t      start)
     {
@@ -6424,9 +6375,7 @@ namespace real::detail {
      */
     // Out of line: inlined into basic_match_iterator::refill_batch, it costs the class loops there registers
     // and their walks instructions; a call per buffer of spans is nothing to its own walk.
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     std::size_t fill_alternation_wide_spans(std::string_view text,
                                             std::size_t      start,
                                             cp_span*         out,
@@ -6736,9 +6685,7 @@ namespace real::detail {
      */
     // Out of line: inlined into basic_match_iterator::refill_batch, it costs the class loops there registers
     // and their walks instructions; a call per buffer of spans is nothing to its own walk.
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     std::size_t fill_fixed_shape_spans(std::string_view text,
                                        std::size_t      start,
                                        cp_span        * out,
@@ -6807,9 +6754,7 @@ namespace real::detail {
      */
     // Out of line: inlined into basic_match_iterator::refill_batch, it costs the class loops there registers
     // and their walks instructions; a call per buffer of spans is nothing to its own walk.
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     std::size_t fill_exact_literal_spans(std::string_view text,
                                          std::size_t      start,
                                          cp_span        * out,
@@ -7088,9 +7033,7 @@ namespace real::detail {
      *       a filler change on machine code first (function sizes in the consumer unit), then on layout.
      */
     template <typename OutSlots>
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     bool run_literal_one_search(std::string_view text,
                                 std::size_t      start,
                                 std::size_t      len,
@@ -7371,9 +7314,7 @@ namespace real::detail {
      * \return True on a match.
      */
     template <typename OutSlots>
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     bool run_bounded_backtrack(std::string_view text,
                                std::size_t      start,
                                run_mode         mode,

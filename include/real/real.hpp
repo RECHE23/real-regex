@@ -8,6 +8,7 @@
 #define REAL_REAL_HPP
 
 #include "real/version.hpp"
+#include "real/core/config.hpp"
 
 #include <cassert>
 #include <iterator>
@@ -468,9 +469,7 @@ namespace real {
      */
     // Keep noinline and cold: `count_matches` inlines the constructor, and inline this logic made every
     // dispatch change tax per-match rows whose code never moved (one added route: `single [a-z]` +10.7 %).
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline, cold))
-#endif
+    REAL_COLD
     constexpr void decide_batching(detail::program_view prog,
                                    match_semantics      sem,
                                    std::size_t          text_bytes)
@@ -727,9 +726,7 @@ namespace real {
      *          byte-identical, moved 17 of 18 rows' medians positive.
      * \return `true` if at least one span was buffered.
      */
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     constexpr bool refill_batch()
     {
       // A short fill without `batch_partial_` proved the rest spent: end the walk instead of rescanning.
@@ -1932,9 +1929,7 @@ namespace real {
      * \return The match count.
      */
     [[nodiscard]]
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline))
-#endif
+    REAL_NOINLINE
     constexpr std::size_t count_walk(std::string_view text,
                                      std::size_t      pos,
                                      std::size_t      endpos) const
@@ -1961,9 +1956,7 @@ namespace real {
      * \return The match count.
      */
     [[nodiscard]]
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline, cold))
-#endif
+    REAL_COLD
     constexpr std::size_t count_trailing_la(std::string_view region,
                                             std::size_t      pos) const
     {

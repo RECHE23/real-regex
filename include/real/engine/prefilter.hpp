@@ -15,6 +15,7 @@
 // <real/regex_set.hpp>, <real/compat/std/regex.hpp>, <real/compat/re2/re2.hpp>.
 
 #include "real/version.hpp"
+#include "real/core/config.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -2312,9 +2313,7 @@ namespace real::detail {
    * \param[in,out] density What this subject has shown so far.
    * \return The index of the first occurrence at or after \p pos, else \ref real::npos.
    */
-#if defined(__GNUC__) || defined(__clang__)
-  __attribute__((noinline))
-#endif
+  REAL_NOINLINE
   inline std::size_t find_literal_adaptive_rest(std::string_view text,
                                                 std::size_t      pos,
                                                 std::string_view literal,
