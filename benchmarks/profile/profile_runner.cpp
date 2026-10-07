@@ -199,8 +199,7 @@ static int emit(std::string_view   mode,
       print_json_string(real::detail::prof::event_name(static_cast<real::detail::prof::event>(i)));
       std::printf(":%llu", static_cast<unsigned long long>(c.events[i]));
     }
-    std::printf("},\"bytes_examined\":%llu",
-                static_cast<unsigned long long>(c.bytes_examined));
+    std::printf("}");
 #endif
   }
   else {

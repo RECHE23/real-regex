@@ -161,41 +161,6 @@ namespace real {
 
     /*!
      * \internal
-     * \brief Engine-internal: re-run the search into this result's own slot buffer, reusing its capacity.
-     *
-     * `vm.run` fills the slots via `assign`, so a match-dense walk allocates once, not once per match. A
-     * user-held copy stays independent: copying a result deep-copies its slots.
-     *
-     * \tparam Cascade Select the memchr-cascade class-run variant (chosen once per walk).
-     * \tparam Vm      The Pike VM type (kept a template to avoid a header cycle).
-     * \param[in] vm      The VM to run.
-     * \param[in] text    The searched text (borrowed).
-     * \param[in] pos     Start offset for the search.
-     * \param[in] mode    The run mode.
-     * \param[in] forbid  The empty-match forbid-until offset.
-     * \param[in] pattern The pattern text (for named-group resolution).
-     * \param[in] names   The regex's named-group table (borrowed).
-     * \return Whether a match occurred.
-     */
-    template <bool Cascade, typename Vm>
-    constexpr bool engine_refill(Vm&                                  vm,
-                                 std::string_view                     text,
-                                 std::size_t                          pos,
-                                 detail::run_mode                     mode,
-                                 std::size_t                          forbid,
-                                 std::string_view                     pattern,
-                                 std::span<const detail::named_group> names)
-    {
-      const bool ok {vm.template run<Cascade>(text, pos, mode, slots_, forbid)};
-      text_    = text;
-      matched_ = ok;
-      pattern_ = pattern;
-      names_   = names;
-      return ok;
-    }
-
-    /*!
-     * \internal
      * \brief Binds the subject, pattern and named groups once per walk, not per match.
      * \param[in] text    The subject the walk runs over.
      * \param[in] pattern The pattern text, for diagnostics and group naming.

@@ -78,10 +78,8 @@ namespace real::detail::prof {
   {
     std::uint64_t routes[static_cast<std::size_t>(route::count_)] {};
     std::uint64_t events[static_cast<std::size_t>(event::count_)] {};
-    std::uint64_t bytes_examined                                  {};
     std::uint64_t prefilter_candidates                            {};
     std::uint64_t prefilter_rejected                              {};
-    std::uint64_t run_len_hist[8]                                 {}; //!< log2 buckets for maximal class/cp runs
     //! \brief log2 buckets for the live thread count the general VM carries into each `step()`.
     //!
     //! One thread per position means the VM's per-byte cost is list overhead the shape does not need;
@@ -116,11 +114,6 @@ namespace real::detail::prof {
     ++tls().events[static_cast<std::size_t>(e)];
   }
 
-  inline void add_bytes(std::uint64_t n) noexcept
-  {
-    tls().bytes_examined += n;
-  }
-
   inline void record_thread_count(std::size_t n) noexcept
   {
     unsigned    b {0};
@@ -140,17 +133,6 @@ namespace real::detail::prof {
   inline void record_prefilter_rejected() noexcept
   {
     ++tls().prefilter_rejected;
-  }
-
-  inline void note_run_len(std::size_t len) noexcept
-  {
-    unsigned    b {0};
-    std::size_t x {len};
-    while (x > 1 && b < 7U) {
-      x >>= 1;
-      ++b;
-    }
-    ++tls().run_len_hist[b];
   }
 
   [[nodiscard]] inline const char* route_name(route r) noexcept
@@ -290,42 +272,6 @@ namespace real::detail::prof {
     if (!std::is_constant_evaluated()) {
       record_prefilter_rejected();
     }
-#endif
-  }
-
-#if defined(__GNUC__) || defined(__clang__)
-  __attribute__((always_inline))
-#endif
-  /*!
-   * \brief Bill \p n scanned bytes. Erased entirely unless \c REAL_PROFILE is defined.
-   * \param[in] n Bytes the caller just consumed.
-   */
-  constexpr void tick_bytes(std::uint64_t n) noexcept
-  {
-#if defined(REAL_PROFILE)
-    if (!std::is_constant_evaluated()) {
-      add_bytes(n);
-    }
-#else
-    (void)n;
-#endif
-  }
-
-#if defined(__GNUC__) || defined(__clang__)
-  __attribute__((always_inline))
-#endif
-  /*!
-   * \brief Record a run of \p n accepted units. Erased entirely unless \c REAL_PROFILE is defined.
-   * \param[in] n The run's length.
-   */
-  constexpr void tick_run_len(std::size_t n) noexcept
-  {
-#if defined(REAL_PROFILE)
-    if (!std::is_constant_evaluated()) {
-      note_run_len(n);
-    }
-#else
-    (void)n;
 #endif
   }
 } // namespace real::detail::prof
