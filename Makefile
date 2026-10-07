@@ -66,7 +66,7 @@ include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
 	full-local-gate-impl gcc-check route-probe alloc-probe alloc-cold-probe ac-regime sabotage-sweep sabotage-help check-blind-guard blind-guards \
-        lint misra check-state-zeroing check-percall-copies check-fixed-cost route-surface-parity bench-compilers fuzz fuzz-compat fuzz-compat-known fuzz-re2 fuzz-routes check-capi-abi check-abi-bump check-features-probe exhaustive-compat exhaustive-compat-flags fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate format format-check full-local-gate gate-bump gate-doc gate-test clean \
+        lint misra check-state-zeroing check-percall-copies check-fixed-cost route-surface-parity bench-compilers fuzz fuzz-compat fuzz-compat-known fuzz-re2 fuzz-routes check-capi-abi check-abi-bump check-features-probe exhaustive-compat exhaustive-compat-flags fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate format format-check full-local-gate check-commit check-push check-release check-touched-bindings gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
@@ -85,7 +85,9 @@ SECTIONS := bindings/c bindings/go bindings/python bindings/rust fuzz tests tool
 HELP_GROUPS := daily gates nets release
 help: ## [daily] Aggregated help: top-level targets, then each section's own help
 	@echo "Start here:  make test              — run the test suite (daily loop)"
-	@echo "             make full-local-gate   — every gate, macOS record (pre-push)"
+	@echo "             make check-commit      — before a commit (format, layers, suite, touched bindings)"
+	@echo "             make check-push        — before a push (what the diff touches, plus coverage)"
+	@echo "             make check-release     — before a release (full-local-gate, then coverage)"
 	@echo "             make {python,c,go,rust}-help"
 	@groups_re=$$(echo "$(HELP_GROUPS)" | sed 's/ /|/g'); \
 	 for g in $(HELP_GROUPS); do \
@@ -765,6 +767,72 @@ gate-test: ## [gates] Calibrated gate for a tests/-only change (test + sanitize 
 	@echo "── [3/3] coverage-check"
 	@$(MAKE) coverage-check
 	@echo "gate-test: PASS (test + sanitize + coverage-check)"
+
+# --- tiers: commit / push / release ------------------------------------------------------------
+#
+# Three gates sized to the cost of a miss at each step. A commit is local and amendable, so it runs
+# what the diff can break in seconds. A push spends ~50 min of CI and a red there costs a fix commit,
+# so it runs every check whose input the diff touches, judged against GATE_BASE (working tree
+# included). A release cannot be taken back, so it runs everything, unconditionally. CI stays full on
+# every push: the push tier selects by diff, it never replaces the net behind it.
+#
+#   tier          | always                                   | when the diff touches
+#   check-commit  | format-check, check-layers, test         | a binding: that binding's tests
+#   check-push    | the cheap checks of full-local-gate,     | include/: gcc-check, doc-check, misra (both
+#                 | test, lint-changed, coverage             |   ISAs), c-test, examples, matrix-gate, the
+#                 |                                          |   compat suites, fuzz-routes, python-test,
+#                 |                                          |   go-check-vendor
+#                 |                                          | a binding: that binding's tests
+#                 |                                          | docs/: docs-site-gate; tools/: the harness checks
+#   check-release | full-local-gate, coverage                | -
+#
+# include/ selects the engine checks rather than any one engine directory: every header reaches the
+# others through real.hpp, and a narrower rule is the kind a later diff quietly walks around.
+touched = $(strip $(shell cd $(ROOT) && { git diff --name-only $(GATE_BASE) -- $(1); git ls-files --others --exclude-standard -- $(1); } 2>/dev/null | head -1))
+
+check-touched-bindings: ## [gates] Each binding's tests, for the bindings the diff touches (vs GATE_BASE)
+	@$(if $(call touched,bindings/python),$(MAKE) python-test,echo "bindings: python untouched")
+	@$(if $(call touched,bindings/c bindings/rust),$(MAKE) rust-test && $(MAKE) rust-clippy,echo "bindings: rust untouched")
+	@$(if $(call touched,bindings/c bindings/go),$(if $(shell command -v go),$(MAKE) go-check-vendor && $(MAKE) go-test,echo "bindings: go absent -- CI runs the Go leg"),echo "bindings: go untouched")
+	@$(if $(call touched,bindings/c),$(MAKE) c-test,echo "bindings: C untouched")
+
+check-commit: ## [gates] Before each commit: format, layers, the C++ suite, touched bindings (~1-3 min)
+	@$(MAKE) format-check
+	@$(MAKE) check-layers
+	@$(MAKE) test
+	@$(MAKE) check-touched-bindings
+	@echo "check-commit: PASS"
+
+check-push: ## [gates] Before each push: every check whose input the diff touches, plus coverage
+	@echo "── cheap checks"
+	@$(MAKE) format-check check-workflows version-check check-layers check-no-simd check-sse2-floor \
+	   check-state-zeroing check-percall-copies python-syntax check-abi3-floor check-pins check-capi-abi check-abi-bump
+	@$(MAKE) doc-no-coverage
+	@$(MAKE) check-doc-style check-site-anchors check-doc-mirror check-tolerated-count check-stdlib-attribution \
+	   check-doxygen-pin check-apt-bound check-go-version-labels
+	@$(MAKE) doc-site-xml
+	@$(MAKE) check-doc-voice check-curated-members check-bench-ratios
+	@$(if $(call touched,tools),$(MAKE) check-sabotage && $(MAKE) check-blind-guard,echo "check-push: tools/ untouched -- harness checks skipped")
+	@$(if $(call touched,docs),$(if $(shell command -v $(SPHINXBUILD)),$(MAKE) docs-site-gate,echo "check-push: $(SPHINXBUILD) absent (make gate-venv)" && exit 1),echo "check-push: docs/ untouched -- docs-site-gate skipped")
+	@$(if $(call touched,include),echo "── engine checks (include/ touched)" && $(MAKE) check-fixed-cost && $(MAKE) doc-check && $(MAKE) gcc-check \
+	   && $(MAKE) misra && $(MAKE) -C tools misra-x86 && $(MAKE) c-test && $(MAKE) example-check && $(MAKE) matrix-gate \
+	   && $(MAKE) fowler-compat && $(MAKE) exhaustive-compat && $(MAKE) fuzz-routes && $(MAKE) python-test \
+	   && { if command -v go >/dev/null 2>&1; then $(MAKE) go-check-vendor; else echo "check-push: go absent -- CI checks the vendored headers"; fi; },echo "check-push: include/ untouched -- engine checks skipped")
+	@echo "── test"
+	@$(MAKE) test
+	@echo "── lint (headers TU + changed tests)"
+	@$(MAKE) -C tools lint-changed GATE_BASE=$(GATE_BASE)
+	@echo "── bindings"
+	@$(MAKE) check-touched-bindings
+	@echo "── coverage"
+	@$(MAKE) coverage
+	@echo "check-push: PASS"
+
+check-release: ## [gates] Before each release: full-local-gate, then coverage
+	@$(MAKE) full-local-gate
+	@echo "── coverage"
+	@$(MAKE) coverage
+	@echo "check-release: PASS"
 
 # A lock serialises gates: two in one tree share build/ and contend for the machine, and step 12
 # (matrix-gate) is a TIMING bench whose red cells mean "slower than the pinned figure" -- under

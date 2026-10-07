@@ -34,7 +34,7 @@ include $(ROOT)/mk/help.mk
 # message's path spelling.
 FORMAT_FILES := $(shell cd $(ROOT) && find include tests -name '*.hpp' -o -name '*.cpp' | grep -vE 'include/real/unicode/unicode_(fold|props|property|script|binprop|scx)\.hpp')
 
-.PHONY: lint lint-tests lint-headers misra format format-check check-layers check-capi-abi check-features-probe help
+.PHONY: lint lint-tests lint-headers lint-changed misra format format-check check-layers check-capi-abi check-features-probe help
 .DEFAULT_GOAL := help
 
 # SBO union in storage.hpp: accepted MISRA deviation, named here rather than NOLINT'd
@@ -46,6 +46,21 @@ lint: lint-tests lint-headers ## clang-tidy: tests, then shipped headers (prints
 
 lint-tests:
 	@cd $(ROOT) && find tests -name '*.cpp' | xargs -P $(JOBS) -I{} clang-tidy {} -- $(CXXSTD) $(INCLUDES) -Ibindings/c -I$(SCIFORGE_INCLUDE)
+
+# The push tier's lint: the shipped headers' synthetic TU, and only the test files that differ from GATE_BASE
+# (working tree included). The release gate and CI's lint job run every test file. clang-tidy's exit status
+# does not reflect its warnings, so they are counted.
+GATE_BASE ?= origin/main
+lint-changed: lint-headers
+	@set -eu; cd $(ROOT); \
+	  files=$$( { git diff --name-only --diff-filter=d $(GATE_BASE) -- 'tests/*.cpp'; \
+	              git ls-files --others --exclude-standard -- 'tests/*.cpp'; } | sort -u); \
+	  if [ -z "$$files" ]; then echo "lint-changed: no test file differs from $(GATE_BASE)"; exit 0; fi; \
+	  echo "$$files" | xargs -P $(JOBS) -I{} clang-tidy {} -- $(CXXSTD) $(INCLUDES) -Ibindings/c -I$(SCIFORGE_INCLUDE) \
+	    > $(BUILD)/lint-changed.log 2>&1 || true; \
+	  warns=$$(grep -cE 'tests/[^:]*:[0-9]+:[0-9]+: (warning|error):' $(BUILD)/lint-changed.log || true); \
+	  echo "lint-changed: $$(echo "$$files" | wc -l | tr -d ' ') test file(s), $$warns warnings"; \
+	  if [ "$$warns" != 0 ]; then grep -E 'tests/[^:]*:[0-9]+:[0-9]+: (warning|error):' $(BUILD)/lint-changed.log | head -20; exit 1; fi
 
 # Synthetic TU, same shape as misra. --header-filter overrides HeaderFilterRegex so
 # include/real/ is visible despite the relative -Iinclude spelling. Generated
