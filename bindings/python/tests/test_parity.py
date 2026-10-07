@@ -856,6 +856,18 @@ class TestParity(unittest.TestCase):
                 module.sub(r"(?P<x>a)", r"\g<nope>", "a")
         self.assertEqual(len(templates), 4)  # denominator
 
+    def test_many_groups_spans_non_ascii_parity(self):
+        """A Match holds its byte spans and its char spans in one allocation sized by the group
+        count: with many groups, some unset, every span on both sides of that boundary agrees
+        with re on a subject where byte and char offsets differ."""
+        pattern = "".join(f"(é{i % 10})?(x)" for i in range(40))
+        text = "ç" + "".join(("é" + str(i % 10) if i % 3 else "") + "x" for i in range(40))
+        rp, rr = real.compile(pattern), re.compile(pattern, _text_oracle(pattern, 0))
+        pm, rm = rp.search(text), rr.search(text)
+        self.assertEqual(pm.groups(), rm.groups())
+        self.assertEqual([pm.span(g) for g in range(81)], [rm.span(g) for g in range(81)])
+        self.assertEqual(pm.regs, rm.regs)
+
     def test_lazy_char_spans_non_ascii_parity(self):
         """char_spans is computed lazily (only on .start/.end/.span). Verify the char
         offsets stay correct (parity with re) on a non-ASCII subject — where byte offset

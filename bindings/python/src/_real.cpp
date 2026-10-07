@@ -123,20 +123,28 @@ void cursor_decref(char_cursor* c) {
     if (c != nullptr && --c->refs == 0) { delete c; }
 }
 
+// A variable-size object: its spans follow it in the one allocation Python makes (tp_itemsize), where two
+// heap vectors cost two allocations each per match.
 struct MatchObject {
-    PyObject_HEAD
+    PyObject_VAR_HEAD
     PyObject* subject;  // str or bytes searched
     PyObject* pattern;  // owning PatternObject
     char_cursor* cursor;  // shared monotone UTF-8 walk, or nullptr (then every conversion starts at 0)
-    // 2*(groups+1) entries, -1 for unset. byte_spans index the UTF-8 data;
-    // char_spans are what Python sees (equal for bytes and ASCII subjects).
-    std::vector<Py_ssize_t>* byte_spans;
-    std::vector<Py_ssize_t>* char_spans;
     // Effective (clamped) pos/endpos of the matching call, as re exposes them: character
     // offsets for a str subject, byte offsets for bytes.
     Py_ssize_t pos;
     Py_ssize_t endpos;
+    // Span slots: 2*(groups+1), -1 for unset. The byte spans (indexing the UTF-8 data) come first,
+    // then the char spans Python sees (equal for bytes and ASCII subjects), filled on first use.
+    Py_ssize_t nslots;
+    bool char_ready;
 };
+
+// The byte spans, right after the object; the char spans follow them.
+Py_ssize_t* byte_spans(MatchObject* match) {
+    return reinterpret_cast<Py_ssize_t*>(reinterpret_cast<char*>(match) + sizeof(MatchObject));
+}
+Py_ssize_t* char_spans(MatchObject* match) { return byte_spans(match) + match->nslots; }
 
 PatternObject* as_pattern(PyObject* obj) { return reinterpret_cast<PatternObject*>(obj); }
 MatchObject* as_match(PyObject* obj) { return reinterpret_cast<MatchObject*>(obj); }
@@ -153,8 +161,6 @@ void Pattern_dealloc(PyObject* self) {
 void Match_dealloc(PyObject* self) {
     PyTypeObject* tp = Py_TYPE(self);
     MatchObject* match = as_match(self);
-    delete match->byte_spans;
-    delete match->char_spans;
     cursor_decref(match->cursor);
     Py_XDECREF(match->subject);
     Py_XDECREF(match->pattern);
@@ -360,22 +366,22 @@ int acquire_subject(int is_bytes, PyObject* obj, subject_ref* out) {
 
 // Builds Python-visible spans from byte spans: identity when chars are
 // bytes, otherwise one pass over the subject counting codepoints.
-void compute_char_spans(const subject_view& sv, const std::vector<Py_ssize_t>& byte_spans,
-                        std::vector<Py_ssize_t>& out, char_cursor* cursor = nullptr) {
-    out = byte_spans;
+void compute_char_spans(const subject_view& sv, const Py_ssize_t* bytes, Py_ssize_t* out,
+                        std::size_t nslots, char_cursor* cursor = nullptr) {
+    std::copy(bytes, bytes + nslots, out);
     if (sv.char_is_byte) {
         return;
     }
     std::vector<std::size_t> order;
-    for (std::size_t i = 0; i < byte_spans.size(); ++i) {
-        if (byte_spans[i] >= 0) {
+    for (std::size_t i = 0; i < nslots; ++i) {
+        if (bytes[i] >= 0) {
             order.push_back(i);
         }
     }
     for (std::size_t a = 1; a < order.size(); ++a) {  // insertion sort: tiny n
         const std::size_t key = order[a];
         std::size_t b = a;
-        while (b > 0 && byte_spans[order[b - 1]] > byte_spans[key]) {
+        while (b > 0 && bytes[order[b - 1]] > bytes[key]) {
             order[b] = order[b - 1];
             --b;
         }
@@ -387,13 +393,13 @@ void compute_char_spans(const subject_view& sv, const std::vector<Py_ssize_t>& b
     // finds the cursor ahead of the target and restarts at 0 -- correct, just not accelerated.
     Py_ssize_t byte_at = 0;
     Py_ssize_t chars = 0;
-    const bool resumable = cursor != nullptr && !order.empty() && cursor->byte_at <= byte_spans[order.front()];
+    const bool resumable = cursor != nullptr && !order.empty() && cursor->byte_at <= bytes[order.front()];
     if (resumable) {
         byte_at = cursor->byte_at;
         chars = cursor->chars;
     }
     for (const std::size_t slot : order) {
-        const Py_ssize_t target = byte_spans[slot];
+        const Py_ssize_t target = bytes[slot];
         while (byte_at < target) {
             chars += (static_cast<unsigned char>(sv.data[byte_at]) & 0xC0) != 0x80 ? 1 : 0;
             ++byte_at;
@@ -441,30 +447,23 @@ PyObject* set_cpp_error() { return sciforge::binding::set_cpp_error(error_type);
 
 PyObject* make_match(PatternObject* pat, PyObject* subject, const auto& match,
                      Py_ssize_t pos, Py_ssize_t endpos, char_cursor* cursor = nullptr) {
-    auto* obj = PyObject_New(MatchObject, reinterpret_cast<PyTypeObject*>(match_type));
+    const auto nslots = static_cast<Py_ssize_t>(2 * match.size());
+    auto*      obj    = PyObject_NewVar(MatchObject, reinterpret_cast<PyTypeObject*>(match_type), 2 * nslots);
     if (obj == nullptr) {
         return nullptr;
     }
-    // Initialise every owned field before anything that can throw, so a partial failure
-    // unwinds safely through Match_dealloc (delete on a nullptr span is fine).
-    obj->byte_spans = nullptr;
-    // char_spans is computed lazily (nullptr until the first .start()/.end()/.span()).
-    // .group()/__getitem__ read byte_spans, so a finditer that reads only .group() pays nothing
+    obj->nslots = nslots;
+    // The char spans are computed lazily (char_ready false until the first .start()/.end()/.span()).
+    // .group()/__getitem__ read the byte spans, so a finditer that reads only .group() pays nothing
     // at all; a scan that DOES read spans shares one monotone walk through `cursor`, so the whole
     // iteration is O(subject) rather than O(offset) per match. See ensure_char_spans.
-    obj->char_spans = nullptr;
+    obj->char_ready = false;
     obj->cursor = cursor_incref(cursor);  // null for a one-shot match: it has nothing to share with
     obj->pos = pos;
     obj->endpos = endpos;
     obj->subject = Py_NewRef(subject);
     obj->pattern = Py_NewRef(reinterpret_cast<PyObject*>(pat));
-    try {
-        obj->byte_spans = new std::vector<Py_ssize_t>(2 * match.size());
-    } catch (...) {
-        Py_DECREF(obj);  // dealloc frees the two refs; both spans are nullptr
-        return set_cpp_error();
-    }
-    auto& bytes = *obj->byte_spans;
+    Py_ssize_t* const bytes = byte_spans(obj);
     for (std::size_t group = 0; group < match.size(); ++group) {
         const std::size_t start = match.start(group);
         bytes[2 * group] = start == real::npos ? -1 : static_cast<Py_ssize_t>(start);
@@ -511,11 +510,11 @@ Py_ssize_t resolve_group(MatchObject* match, PyObject* arg) {
 
 PyObject* group_value(MatchObject* match, Py_ssize_t group, PyObject* default_value) {
     PatternObject* pat = as_pattern(match->pattern);
-    const Py_ssize_t start = (*match->byte_spans)[2 * group];
+    const Py_ssize_t start = byte_spans(match)[2 * group];
     if (start < 0) {
         return Py_NewRef(default_value);
     }
-    const Py_ssize_t end = (*match->byte_spans)[(2 * group) + 1];
+    const Py_ssize_t end = byte_spans(match)[(2 * group) + 1];
     subject_ref subject;  // re-acquired per read: a Match pins its subject's OBJECT, not its bytes
     if (acquire_subject(pat->is_bytes, match->subject, &subject) < 0) {
         return nullptr;
@@ -604,15 +603,15 @@ PyObject* Match_groupdict(PyObject* self, PyObject* args, PyObject* kwargs) {
     return out;
 }
 
-// Computes and caches char_spans on first use (lazy). make_match leaves it nullptr; only
-// .start()/.end()/.span() need it, so a finditer reading only .group() (which uses byte_spans)
+// Computes and caches the char spans on first use (lazy). make_match leaves char_ready false; only
+// .start()/.end()/.span() need them, so a finditer reading only .group() (which uses the byte spans)
 // pays nothing here. When spans ARE read, the walk resumes from the scan's shared cursor instead
 // of restarting at byte 0 -- that restart was O(match offset) per match, i.e. quadratic over a
 // non-ASCII scan (measured 11.3 -> 633.2 ms as the subject grew 8x, against 1.6 -> 7.0 for the
 // same loop reading only .group()). Runs under the GIL (every Match method does), so the
 // check-compute-cache is serialized and idempotent; sv is re-derived like group_value.
 int ensure_char_spans(MatchObject* match) {
-    if (match->char_spans != nullptr) {
+    if (match->char_ready) {
         return 0;
     }
     // A bytes-like subject has char == byte, so the char spans ARE the byte spans and the subject
@@ -625,14 +624,13 @@ int ensure_char_spans(MatchObject* match) {
         return -1;
     }
     try {
-        match->char_spans = new std::vector<Py_ssize_t>();
-        compute_char_spans(subject.sv, *match->byte_spans, *match->char_spans, match->cursor);
+        compute_char_spans(subject.sv, byte_spans(match), char_spans(match),
+                           static_cast<std::size_t>(match->nslots), match->cursor);
     } catch (...) {
-        delete match->char_spans;     // nullptr (new threw) or the partly-built vector
-        match->char_spans = nullptr;  // leave it recomputable and dealloc-safe
-        set_cpp_error();
+        set_cpp_error();  // char_ready stays false: recomputable
         return -1;
     }
+    match->char_ready = true;
     return 0;
 }
 
@@ -654,8 +652,8 @@ PyObject* match_position(PyObject* self, PyObject* args, span_part part) {
     if (ensure_char_spans(match) < 0) {
         return nullptr;
     }
-    const Py_ssize_t start = (*match->char_spans)[2 * group];
-    const Py_ssize_t end = (*match->char_spans)[(2 * group) + 1];
+    const Py_ssize_t start = char_spans(match)[2 * group];
+    const Py_ssize_t end = char_spans(match)[(2 * group) + 1];
     switch (part) {
         case span_part::start:
             return PyLong_FromSsize_t(start);
@@ -767,7 +765,8 @@ PyMethodDef match_methods[] = {
 Py_ssize_t match_lastindex_value(MatchObject* match) {
     PatternObject*                   pat   = as_pattern(match->pattern);
     const real::detail::program_view prog  = pat->rx->raw_program();
-    const std::vector<Py_ssize_t>&   spans = *match->byte_spans;
+    const Py_ssize_t* const          spans = byte_spans(match);
+    const auto                       count = static_cast<std::size_t>(match->nslots);
     Py_ssize_t                       last  = -1;
     for (const real::detail::instr& in : prog.code) {
         if (in.op != real::detail::opcode::save) {
@@ -778,7 +777,7 @@ Py_ssize_t match_lastindex_value(MatchObject* match) {
             continue;  // an opening save, or group 0's closing save
         }
         const std::size_t group = (slot - 1U) / 2U;
-        if ((2U * group) < spans.size() && spans[2U * group] >= 0) {
+        if ((2U * group) < count && spans[2U * group] >= 0) {
             last = static_cast<Py_ssize_t>(group);  // participated; a later offset overrides
         }
     }
@@ -814,8 +813,8 @@ PyObject* Match_get_regs(PyObject* self, void* /*closure*/) {
     if (ensure_char_spans(match) < 0) {
         return nullptr;
     }
-    const std::vector<Py_ssize_t>& spans = *match->char_spans;
-    const Py_ssize_t               count = static_cast<Py_ssize_t>(spans.size() / 2);
+    const Py_ssize_t* const spans = char_spans(match);
+    const Py_ssize_t        count = match->nslots / 2;
     PyObject*                      regs  = PyTuple_New(count);
     if (regs == nullptr) {
         return nullptr;
@@ -855,7 +854,7 @@ PyObject* Match_repr(PyObject* self) {
         return nullptr;
     }
     PyObject* result = PyUnicode_FromFormat("<real.Match object; span=(%zd, %zd), match=%.50R>",
-                                            (*match->char_spans)[0], (*match->char_spans)[1], whole);
+                                            char_spans(match)[0], char_spans(match)[1], whole);
     Py_DECREF(whole);
     return result;
 }
@@ -887,7 +886,7 @@ PyType_Slot match_slots[] = {
 PyType_Spec match_spec = {
     "real.Match",
     sizeof(MatchObject),
-    0,
+    sizeof(Py_ssize_t),  // the spans, after the object (see byte_spans)
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_DISALLOW_INSTANTIATION,
     match_slots,
 };
@@ -1955,7 +1954,7 @@ PyObject* Match_expand(PyObject* self, PyObject* template_arg) {
     std::string result;
     apply_template(segments, sv.data,
                    [&](std::size_t g) -> std::optional<std::pair<std::size_t, std::size_t>> {
-                       const Py_ssize_t start = (*match->byte_spans)[2 * g];
+                       const Py_ssize_t start = byte_spans(match)[2 * g];
                        if (start < 0) {
                            return std::nullopt;
                        }
@@ -1964,7 +1963,7 @@ PyObject* Match_expand(PyObject* self, PyObject* template_arg) {
                        // straight into its bytes.
                        const Py_ssize_t from = std::clamp(start, Py_ssize_t {0}, sv.len);
                        const Py_ssize_t to =
-                           std::clamp((*match->byte_spans)[(2 * g) + 1], from, sv.len);
+                           std::clamp(byte_spans(match)[(2 * g) + 1], from, sv.len);
                        return std::optional {
                            std::pair {static_cast<std::size_t>(from), static_cast<std::size_t>(to)}};
                    },
