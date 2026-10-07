@@ -24,7 +24,9 @@
 //
 // The bound below sits at 8x: nine times the worst passing ratio, and a seventh of the smallest failing
 // one. Wall clock in a test is noisy, and that gap is what makes this safe to gate on.
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -102,6 +104,20 @@ namespace {
     const auto [s, l] {best_compile_ns(small, large, f)};
     return (l - s) / static_cast<double>(k_large - k_small);
   }
+
+  //! \brief Class folds the compiler computes for \p pattern under \p f: the fold cache's misses.
+  //! \param[in] pattern The pattern to compile.
+  //! \param[in] f       Flags to compile with.
+  //! \return How many folds compiling it ran.
+  std::uint64_t folds_for(const std::string& pattern,
+                          real::flags        f)
+  {
+    std::atomic<std::uint64_t>& folds  {real::detail::tally(real::detail::counter::class_folds)};
+    const std::uint64_t         before {folds.load()};
+    const real::regex           rx(pattern, f);
+    (void) rx;
+    return folds.load() - before;
+  }
 } // namespace
 
 // Probe 1 — the invariant itself. A repetition under icase must cost about what it costs without, because
@@ -127,14 +143,13 @@ TEST(compile_scaling_icase_marginal_matches_plain_marginal)
 // the fold ran per repetition; it must now grow far slower than the repeat count does.
 TEST(compile_scaling_repeat_is_far_cheaper_than_linear)
 {
-  const auto [small, large] {best_compile_ns("\\w{" + std::to_string(k_small) + "}", "\\w{" + std::to_string(k_large) + "}",
-                                             real::flags::icase)};
-  EXPECT(small > 0.0);
-
-  // Linear in the repeat count would be 32x here. Before the fold cache this read 31.92x; it now reads
-  // about 3.6x, which is the emitted program growing, not the fold repeating.
-  const double size_ratio {static_cast<double>(k_large) / static_cast<double>(k_small)};
-  EXPECT(large / small < size_ratio / 2.0);
+  // Counted, not timed: the fold is the work that repeated (compile time read 31.92x the small pattern's
+  // before the fold cache, 32x being linear), and a clock ratio under a sanitizer on a shared runner
+  // read red for no reason the code had. One fold whatever the repeat count.
+  const std::uint64_t small {folds_for("\\w{" + std::to_string(k_small) + "}", real::flags::icase)};
+  const std::uint64_t large {folds_for("\\w{" + std::to_string(k_large) + "}", real::flags::icase)};
+  EXPECT_EQ(small, 1U);
+  EXPECT_EQ(large, small);
 }
 
 // Probe 3 — a scoped `(?i:...)` folds one class two ways in one pattern, which is why the cache is keyed by
@@ -143,9 +158,11 @@ TEST(compile_scaling_scoped_icase_is_memoized_per_mode)
 {
   const std::string small {"(?i:\\w{" + std::to_string(k_small) + "})\\w{" + std::to_string(k_small) + "}"};
   const std::string large {"(?i:\\w{" + std::to_string(k_large) + "})\\w{" + std::to_string(k_large) + "}"};
-  const auto [a, b] {best_compile_ns(small, large, real::flags::none)};
-  EXPECT(a > 0.0);
-
-  const double size_ratio {static_cast<double>(k_large) / static_cast<double>(k_small)};
-  EXPECT(b / a < size_ratio / 2.0);
+  // Counted, as Probe 2: the scoped class folds once however often it repeats, and the unscoped one never.
+  const std::uint64_t a   {folds_for(small, real::flags::none)};
+  const std::uint64_t b   {folds_for(large, real::flags::none)};
+  EXPECT_EQ(a, 1U);
+  EXPECT_EQ(b, a);
+  // Both modes in one pattern: a cache keyed by class alone would serve the ASCII fold to the Unicode scope.
+  EXPECT_EQ(folds_for("(?i:\\w{" + std::to_string(k_large) + "})(?ai:\\w{" + std::to_string(k_large) + "})", real::flags::none), 2U);
 }
