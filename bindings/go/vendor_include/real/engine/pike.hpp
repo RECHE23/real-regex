@@ -3257,7 +3257,9 @@ namespace real::detail {
      * \brief Trailing-lookaround class+: body scan + longest end where lookaround holds.
      *
      * Cold, noinline, called from real.hpp / find_iter outside \ref run, since it must not share a body or
-     * inlining unit with \ref run_class_loop (the hot [a-z]+ path). Dynamic-only.
+     * inlining unit with \ref run_class_loop (the hot [a-z]+ path). Dynamic-only. A code-point body
+     * (\ref pattern_hints::trailing_la_cp) walks whole code points: a run holds only valid ones, so its
+     * candidate ends are the bytes that are not UTF-8 continuations.
      *
      * \param[in]  text      Subject.
      * \param[in]  start     Byte offset to begin at.
@@ -3274,6 +3276,27 @@ namespace real::detail {
                                     run_mode         mode,
                                     OutSlots&        out_slots)
     {
+      // Two instantiations: a runtime test in the byte walk's per-byte lambdas cost it 9-12 %.
+      return prog_.hints.trailing_la_cp ? trailing_la_walk<Cascade, true>(text, start, mode, out_slots)
+                                        : trailing_la_walk<Cascade, false>(text, start, mode, out_slots);
+    }
+
+    /*!
+     * \brief The body of \ref run_class_loop_trailing_la for one body kind.
+     * \tparam Cascade Whether the byte walk may take its memchr-cascade tail.
+     * \tparam Cp      The body is a `klass_cp` (whole code points) rather than a `klass`.
+     * \param[in]  text      Subject.
+     * \param[in]  start     Byte offset to begin at.
+     * \param[in]  mode      Anchoring: full, prefix or search.
+     * \param[out] out_slots Capture slots, filled on a match.
+     * \return True on a match.
+     */
+    template <bool Cascade, bool Cp, typename OutSlots>
+    bool trailing_la_walk(std::string_view text,
+                          std::size_t      start,
+                          run_mode         mode,
+                          OutSlots&        out_slots)
+    {
       // Static storage has no lookaround scratch and never arms trailing_lookaround.
       if constexpr (!requires(State & st) {
         st.lookaround;
@@ -3282,12 +3305,43 @@ namespace real::detail {
       }
       else {
         text_ = text; // lookaround_holds reads text_ (callers are outside run())
-        const std::uint8_t* const tbl =
-          class_table(static_cast<std::size_t>(prog_.hints.trailing_la_class));
-        const auto in_class = [&](std::size_t i) {
-                                return tbl[static_cast<std::uint8_t>(text[i])] != 0U;
+        constexpr bool            cp       {Cp};
+        const auto                cls      {static_cast<std::size_t>(prog_.hints.trailing_la_class)};
+        const std::uint8_t* const tbl      {cp ? cp_ascii_table(cls) : class_table(cls)};
+        // Byte width of the class member at i, 0 if none.
+        const auto                width_at = [&](std::size_t i) -> std::size_t {
+                                               const auto lead {static_cast<std::uint8_t>(text[i])};
+                                               if (tbl[lead] != 0U) {
+                                                 return 1;
+                                               }
+                                               if (!cp || lead < 0x80U) {
+                                                 return 0;
+                                               }
+                                               const detail::decoded_codepoint dc     {detail::decode_codepoint_strict(text, i)};
+                                               const bool                      member {dc.valid
+                                                                                       && (dc.cp <= cp_page_max ? cp_member_page(cls, dc.cp)
+                                                                                           : cp_member_high(cls, dc.cp))};
+                                               return member ? dc.length : 0;
+                                             };
+        const auto in_class = [&](std::size_t i) { return width_at(i) != 0; };
+        const auto scan_end = [&](std::size_t match_start) {
+                                if (!cp) {
+                                  return class_run_end<Cascade>(text, tbl, match_start);
+                                }
+                                std::size_t e {match_start};
+                                for (std::size_t w {}; e < text.size() && (w = width_at(e)) != 0;) {
+                                  e += w;
+                                }
+                                return e;
                               };
-        const auto scan_end = [&](std::size_t match_start) { return class_run_end<Cascade>(text, tbl, match_start); };
+        // The candidate end before e (> ms): a byte back, then past any UTF-8 continuation bytes.
+        const auto prev_end = [&](std::size_t e) {
+                                --e;
+                                while (cp && (static_cast<std::uint8_t>(text[e]) & 0xC0U) == 0x80U) {
+                                  --e;
+                                }
+                                return e;
+                              };
 
         const auto sub_id {static_cast<std::uint16_t>(prog_.hints.trailing_lookaround)};
         // Resolve the lookaround ONCE per walk: lookaround_holds re-derives the sub, its length and its
@@ -3312,7 +3366,7 @@ namespace real::detail {
                              return matched != la_sub.negative;
                            };
         const auto try_ends = [&](std::size_t ms, std::size_t me) -> bool {
-                                for (std::size_t e = me; e > ms; --e) {
+                                for (std::size_t e = me; e > ms; e = prev_end(e)) {
                                   if (la_at(e)) {
                                     fill_span_slots(out_slots, ms, e);
                                     return true;
