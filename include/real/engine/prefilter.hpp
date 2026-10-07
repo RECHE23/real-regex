@@ -1003,30 +1003,36 @@ namespace real::detail {
       }
     }
 
-    // Trailing-lookaround class+: save 0, klass, split(back, exit), assert_lookaround, jump AFTER,
-    // [sub-program … match], AFTER: save 1, match. Groupless only (a group's save would sit between the
-    // split and the lookaround). The lookaround is an end condition on each maximal run's candidate ends
-    // (run_class_loop); a leading lookaround stays on the general VM.
-    if (hints.greedy_class_loop < 0 && code.size() >= 7 && code[0].op == opcode::save && code[0].arg16 == 0
-        && code[1].op == opcode::klass && code[2].op == opcode::split
-        && code[2].primary_target == 1 && code[2].secondary_target == 3
-        && code[3].op == opcode::assert_lookaround && code[4].op == opcode::jump) {
-      const std::size_t after  {static_cast<std::size_t>(code[4].primary_target)};
-      const std::size_t sub_id {code[3].arg16};
-      // Jump must land on the closing save 1 / match and skip a non-empty sub region that ends in match.
-      if (after >= 6 && after + 1 < code.size() && after + 2 == code.size()
-          && code[after].op == opcode::save && code[after].arg16 == 1
-          && code[after + 1].op == opcode::match
-          && code[after - 1].op == opcode::match // sub-program terminator
-          && sub_id < lookarounds.size()
-          && lookarounds[sub_id].code_offset == 5
-          && lookarounds[sub_id].code_length == static_cast<std::int32_t>(after - 5)
-          && lookarounds[sub_id].direction == look_dir::ahead) {
-        // Not greedy_class_loop: every pure class+ site would then branch on trailing_lookaround.
-        hints.trailing_lookaround = static_cast<std::int16_t>(sub_id);
-        hints.trailing_la_class   = code[1].arg16;
-        hints.greedy_group_start  = -1;
-        hints.greedy_group_end    = -1;
+    // Trailing-lookaround class+: save 0, BODY, split(back, exit), assert_lookaround, jump AFTER,
+    // [sub-program … match], AFTER: save 1, match. BODY is one klass, or a klass_cp and its 3-slot
+    // continuation chain. Groupless only (a group's save would sit between the split and the lookaround).
+    // The lookaround is an end condition on each maximal run's candidate ends (run_class_loop); a leading
+    // lookaround stays on the general VM.
+    if (hints.greedy_class_loop < 0 && code.size() >= 2 && code[0].op == opcode::save && code[0].arg16 == 0
+        && (code[1].op == opcode::klass || code[1].op == opcode::klass_cp)) {
+      const bool        cp    {code[1].op == opcode::klass_cp};
+      const std::size_t split {cp ? std::size_t {5} : std::size_t {2}};
+      if (code.size() >= split + 5 && code[split].op == opcode::split && code[split].primary_target == 1
+          && code[split].secondary_target == static_cast<std::int32_t>(split + 1)
+          && code[split + 1].op == opcode::assert_lookaround && code[split + 2].op == opcode::jump) {
+        const std::size_t after  {static_cast<std::size_t>(code[split + 2].primary_target)};
+        const std::size_t sub_id {code[split + 1].arg16};
+        // Jump must land on the closing save 1 / match and skip a non-empty sub region that ends in match.
+        if (after >= split + 4 && after + 2 == code.size()
+            && code[after].op == opcode::save && code[after].arg16 == 1
+            && code[after + 1].op == opcode::match
+            && code[after - 1].op == opcode::match // sub-program terminator
+            && sub_id < lookarounds.size()
+            && lookarounds[sub_id].code_offset == static_cast<std::int32_t>(split + 3)
+            && lookarounds[sub_id].code_length == static_cast<std::int32_t>(after - (split + 3))
+            && lookarounds[sub_id].direction == look_dir::ahead) {
+          // Not greedy_class_loop: every pure class+ site would then branch on trailing_lookaround.
+          hints.trailing_lookaround = static_cast<std::int16_t>(sub_id);
+          hints.trailing_la_class   = code[1].arg16;
+          hints.trailing_la_cp      = cp;
+          hints.greedy_group_start  = -1;
+          hints.greedy_group_end    = -1;
+        }
       }
     }
 

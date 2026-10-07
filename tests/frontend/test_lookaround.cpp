@@ -306,6 +306,67 @@ TEST(trailing_la_class_loop_modes)
   EXPECT(!neg.fullmatch("abc ")); // trailing space not in body
 }
 
+// A code-point body (`\w`, `\p{L}`, a non-ASCII range) takes the route too, walking whole code points: its
+// candidate ends are code-point boundaries, and a malformed byte ends a run as it ends the VM's. Every mode
+// at every start, and the two walks, against the general VM, over multi-byte, four-byte and broken input.
+namespace {
+
+  //! match, or fullmatch when \p full.
+  real::regex::result_type attempt_anchored(const real::regex& rx,
+                                            std::string_view   t,
+                                            std::size_t        pos,
+                                            bool               full)
+  {
+    return full ? rx.fullmatch(t, pos) : rx.match(t, pos);
+  }
+} // namespace
+
+TEST(trailing_la_code_point_body_routed_equals_core)
+{
+  using real::detail::trailing_la_route_disabled;
+  const char* patterns[] = {
+    R"(\w+(?=,))", R"(\p{L}+(?!é))", R"([é-ü]+(?=é))", R"(\w+(?!\w))", R"(\w+(?!,))", R"(\p{L}+(?![,a]))", R"([\x{100}-\x{10FFFF}a]+(?=a))",
+  };
+  const char* texts[] = {
+    "héllo wörld, again,", "éé,é", "aéé ééa", "ü,", "\xF0\x9F\x98\x80\x61,\xF0\x9F\x98\x80",
+    "ab\xFF\x63,d", "\xC3,\xA9é,", "", ",", "Āa Āé", "ééé",
+  };
+  for (const char* p : patterns) {
+    const real::regex rx(p);
+    EXPECT(rx.raw_program().hints.trailing_lookaround >= 0); // else this test proves nothing
+    EXPECT(rx.raw_program().hints.trailing_la_cp);
+    for (const std::string_view t : texts) {
+      for (std::size_t pos {0}; pos <= t.size(); ++pos) {
+        for (int mode {0}; mode < 3; ++mode) {
+          const auto run = [&](bool off) {
+                             trailing_la_route_disabled() = off;
+                             const auto m {mode == 0 ? rx.search(t, pos) : attempt_anchored(rx, t, pos, mode == 2)};
+                             trailing_la_route_disabled() = false;
+                             return m ? std::pair {m.start(), m.end()} : std::pair {real::npos, real::npos};
+                           };
+          EXPECT(run(false) == run(true));
+        }
+      }
+      trailing_la_route_disabled() = false;
+      const auto routed {rx.find_all(t)};
+      const auto count  {rx.count_matches(t)};
+      trailing_la_route_disabled() = true;
+      const auto core   {rx.find_all(t)};
+      trailing_la_route_disabled() = false;
+      EXPECT_EQ(routed.size(), core.size());
+      EXPECT_EQ(count, core.size());
+      for (std::size_t i = 0; i < routed.size() && i < core.size(); ++i) {
+        EXPECT_EQ(routed[i].start(), core[i].start());
+        EXPECT_EQ(routed[i].end(), core[i].end());
+      }
+    }
+  }
+  EXPECT_EQ(real::regex(R"(\w+(?=,))").search("héllo wörld, x")[0], "wörld"sv);
+  EXPECT_EQ(real::regex(R"(\p{L}+(?=é))").search("aéé")[0], "aé"sv);
+  // A negative lookahead also holds inside a code point; the end must step back to a boundary.
+  EXPECT_EQ(real::regex(R"(\w+(?!,))").search("aé,")[0], "a"sv);
+}
+
 // Every ENTRY POINT must reach the trailing-lookaround route, not just the three that could name the
 // specialization at compile time. `count_matches` and `find_all` branch onto
 // basic_match_range<Storage, TrailingLA = true> internally; `find_iter` cannot -- its return type names

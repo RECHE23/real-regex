@@ -123,7 +123,12 @@ TEST(trailing_lookaround_class_loop_activation)
   EXPECT_EQ(hints_of("(?=[a-z])[a-z]+").greedy_class_loop, -1);
   EXPECT_EQ(hints_of("(a+)(?=b)").trailing_lookaround, -1);        // capturing group
   EXPECT_EQ(hints_of("foo(?=bar)").trailing_lookaround, -1);       // literal body, not class+
-  EXPECT_EQ(hints_of("\\d+(?=px)").trailing_lookaround, -1);       // klass_cp body (text-mode \\d)
+  // A klass_cp body (text-mode \\d) arms it too, walking code points; a UTF-8-expanded class does not.
+  EXPECT(hints_of("\\d+(?=px)").trailing_lookaround >= 0);
+  EXPECT(hints_of("\\d+(?=px)").trailing_la_cp);
+  EXPECT(!hints_of("[a-z]+(?=[a-z])").trailing_la_cp);
+  EXPECT_EQ(hints_of("[^,]+(?=,)").trailing_lookaround, -1);
+  EXPECT_EQ(hints_of("(\\w+)(?=,)").trailing_lookaround, -1);    // capturing group, code-point body
 }
 
 TEST(class_loop_fast_path_results_match_python_semantics)
