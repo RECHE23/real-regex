@@ -70,7 +70,7 @@ include mk/help.mk
         example-check \
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
-        version-check install install-smoke uninstall release help check-layers check-doc-style check-doc-voice check-curated-members check-bench-stamp check-bench-ratios gate-venv check-sse2-floor \
+        version-check install install-smoke uninstall release help check-layers check-doc-style check-doc-voice check-curated-members check-bench-stamp check-bench-ratios gate-venv check-public-tu check-sse2-floor \
         check-site-anchors check-workflows check-abi3-floor check-doc-mirror check-sabotage check-blind-guard check-tolerated-count check-stdlib-attribution check-doxygen-pin check-apt-bound check-go-version-labels
 
 .DEFAULT_GOAL := help
@@ -430,17 +430,18 @@ check-fixed-cost:
 # NOT equivalent to CI's leg, and the difference is stated so nobody reads it as one: `g++ -m32` tests
 # the absent SSE2 baseline AND a 32-bit size_t. This tests only the first. It catches today's class of
 # error, not pointer-width assumptions -- those still belong to CI.
-# The TU lists every PUBLIC top-level header, and regex_set.hpp was missing from it -- real.hpp does not
-# pull the set, so nothing here compiled it without a vector ISA. The hole was latent (the set uses no
-# intrinsics today), and latent is the only kind worth closing before it is not: this gate exists because a
-# copy of simd.hpp's mask loop without its `#if` broke the i386 leg once, and the set is exactly where the
-# next such copy would go -- a byte-filter over the members' first bytes wants `load_members_mask`, whose
-# NEON/SSE2 pair has no fallback. storage.hpp and version.hpp need no line of their own: real.hpp includes
-# both, so the TU already compiles them.
-check-no-simd: ## [gate] Headers must compile with neither __ARM_NEON nor __SSE2__ defined
-	@mkdir -p $(BUILD)
-	@printf '#include "real/real.hpp"\n#include "real/dfa.hpp"\n#include "real/regex_set.hpp"\nint main() {}\n' > $(BUILD)/no_simd_tu.cpp
-	@$(CXX) $(CXXSTD) -U__ARM_NEON -U__SSE2__ -U__AVX2__ -Werror $(INCLUDES) -fsyntax-only $(BUILD)/no_simd_tu.cpp
+# The TU (tools/public_headers_tu.cpp, shared with check-sse2-floor and CI's 32-bit leg) must name every
+# PUBLIC top-level header: real.hpp does not pull regex_set.hpp, and a header missing from the list is
+# compiled by none of the three. check-public-tu refuses the list when include/real/ grows past it. This
+# gate exists because a copy of simd.hpp's mask loop without its `#if` broke the i386 leg once.
+check-public-tu: ## [gate] tools/public_headers_tu.cpp names every include/real/*.hpp
+	@missing=$$(cd $(ROOT) && for h in include/real/*.hpp; do \
+	   grep -qx "#include \"real/$${h##*/}\"" tools/public_headers_tu.cpp || echo "$${h##*/}"; done); \
+	 if [ -n "$$missing" ]; then echo "check-public-tu: tools/public_headers_tu.cpp misses: $$missing"; exit 1; fi; \
+	 echo "check-public-tu: OK — every public top-level header is in the shared TU"
+
+check-no-simd: check-public-tu ## [gate] Headers must compile with neither __ARM_NEON nor __SSE2__ defined
+	@$(CXX) $(CXXSTD) -U__ARM_NEON -U__SSE2__ -U__AVX2__ -Werror $(INCLUDES) -fsyntax-only $(ROOT)/tools/public_headers_tu.cpp
 	@echo "check-no-simd: OK — headers compile with no vector ISA macro"
 
 # THE x86-64 FLOOR, which check-no-simd above cannot stand in for. That target turns every vector ISA off
@@ -454,12 +455,10 @@ check-no-simd: ## [gate] Headers must compile with neither __ARM_NEON nor __SSE2
 # way to make an arm64 build exercise the SSE2 branch. Skips loudly elsewhere; ci.yml's preflight runs on
 # ubuntu-latest and is where this actually fires.
 check-sse2-floor: ## [gate] x86-64: headers must compile with SSE2 but NOT AVX2 (the plain-x86 floor)
-	@mkdir -p $(BUILD)
-	@printf '#include "real/real.hpp"\n#include "real/dfa.hpp"\n#include "real/regex_set.hpp"\nint main() {}\n' > $(BUILD)/sse2_floor_tu.cpp
 	@arch="$$(uname -m)"; \
 	 case "$$arch" in \
 	   x86_64|amd64) \
-	     $(CXX) $(CXXSTD) -msse2 -mno-avx2 -Werror $(INCLUDES) -fsyntax-only $(BUILD)/sse2_floor_tu.cpp \
+	     $(CXX) $(CXXSTD) -msse2 -mno-avx2 -Werror $(INCLUDES) -fsyntax-only $(ROOT)/tools/public_headers_tu.cpp \
 	     && echo "check-sse2-floor: OK — headers compile with SSE2 and no AVX2" ;; \
 	   *) echo "check-sse2-floor: SKIPPED -- $$arch is not x86-64, the SSE2 branch cannot be reached here" \
 	      | tee -a $(GATE_SKIPS) ;; \
@@ -805,7 +804,7 @@ check-commit: ## [gates] Before each commit: format, layers, the C++ suite, touc
 
 check-push: ## [gates] Before each push: every check whose input the diff touches, plus coverage
 	@echo "── cheap checks"
-	@$(MAKE) format-check check-workflows version-check check-layers check-no-simd check-sse2-floor \
+	@$(MAKE) format-check check-workflows version-check check-layers check-public-tu check-no-simd check-sse2-floor \
 	   check-state-zeroing check-percall-copies python-syntax check-abi3-floor check-pins check-capi-abi check-abi-bump
 	@$(MAKE) doc-no-coverage
 	@$(MAKE) check-doc-style check-site-anchors check-doc-mirror check-tolerated-count check-stdlib-attribution \

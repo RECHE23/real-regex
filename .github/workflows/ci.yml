@@ -99,6 +99,8 @@ jobs:
           # compile the same scalar path.
           echo "── check-sse2-floor (x86-64: SSE2 without AVX2)"
           make -C real-regex check-sse2-floor
+          echo "── check-public-tu (the shared TU names every public header; the i386 leg compiles it)"
+          make -C real-regex check-public-tu
           # A per-CALL cost is FIXED, so it hides in every throughput measurement this project owns: the
           # regression this guards against charged 6.8 % on a 3-byte subject and moved none of the 26
           # layout rows. The short row that would have caught it cannot be built (no cheap count_matches
@@ -185,8 +187,7 @@ jobs:
       - name: Syntax-only the engine headers with a 32-bit size_t
         run: |
           set -euo pipefail
-          printf '#include "real/real.hpp"\n#include "real/dfa.hpp"\nint main() {}\n' > win32_tu.cpp
-          g++ -std=c++20 -m32 -Werror -Iinclude -fsyntax-only win32_tu.cpp
+          g++ -std=c++20 -m32 -Werror -Iinclude -fsyntax-only tools/public_headers_tu.cpp
 
   # The whole suite where size_t is 32 bits. The syntax-only job above catches a narrowing that does not
   # compile; this one catches an offset that compiles and overflows, which is a wrong answer.
