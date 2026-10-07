@@ -320,12 +320,12 @@ namespace real::compat {
      */
     template <bool Sed, typename CharT, typename Put, typename Group, typename Prefix, typename Suffix>
     REAL_ALWAYS_INLINE
-    void expand_replacement(const CharT* first,
-                            const CharT* last,
-                            Put&&        put,
-                            Group&&      group,
-                            Prefix&&     prefix,
-                            Suffix&&     suffix)
+    inline void expand_replacement(const CharT* first,
+                                   const CharT* last,
+                                   Put&&        put,
+                                   Group&&      group,
+                                   Prefix&&     prefix,
+                                   Suffix&&     suffix)
     {
       const auto digit = [](CharT c) { return c >= CharT('0') && c <= CharT('9'); };
       if constexpr (Sed) { // a template parameter, not a test per character: that cost regex_replace 2 %
