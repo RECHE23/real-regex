@@ -214,7 +214,7 @@ namespace real {
                                       std::size_t s,
                                       std::size_t e)
     {
-      vm.fill_span_slots(slots_, s, e);
+      vm.write_cp_span_slots(slots_, s, e);
       matched_ = true;
     }
 

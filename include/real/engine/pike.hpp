@@ -2995,8 +2995,6 @@ namespace real::detail {
       }
     }
 
-  public:
-
     /*!
      * \brief Writes a class-loop fast-path result into \p out_slots: the whole-match span in slots
      *        0/1, mirrored into the group's slots for a pattern wrapped in one capturing group
@@ -3023,8 +3021,6 @@ namespace real::detail {
         out_slots[static_cast<std::size_t>(prog_.hints.greedy_group_end)]   = match_end;
       }
     }
-
-  private:
 
     /*!
      * \brief The memchr-cascade run tail: the next stop byte at or after \p from, or the text end. Its own
@@ -3697,6 +3693,24 @@ namespace real::detail {
         }
       }
       return kept;
+    }
+
+    /*!
+     * \brief Writes a buffered span into a caller's slots exactly as the per-match path would.
+     *
+     * Not \ref fill_span_slots called directly: that writer is always_inline, and expanded into the batched
+     * walk's emission it cost Python's `sub` over `\s+` 6.5 % under Apple clang (instruction counts did not
+     * show it).
+     * \param[out] out_slots Slots to fill.
+     * \param[in]  s         Match start.
+     * \param[in]  e         Match end.
+     */
+    template <typename OutSlots>
+    constexpr void write_cp_span_slots(OutSlots&   out_slots,
+                                       std::size_t s,
+                                       std::size_t e)
+    {
+      fill_span_slots(out_slots, s, e);
     }
 
     /*!
