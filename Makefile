@@ -767,8 +767,16 @@ gate-test: ## [gates] Calibrated gate for a tests/-only change (test + sanitize 
 # others through real.hpp, and a narrower rule is the kind a later diff quietly walks around.
 touched = $(strip $(shell cd $(ROOT) && { git diff --name-only $(GATE_BASE) -- $(1); git ls-files --others --exclude-standard -- $(1); } 2>/dev/null | head -1))
 
+# The interpreter at the requires-python floor: the abi3 extension the default PYTHON just built loads there as a
+# wheel does, and the floor's `re` and C API are the ones a version-dependent test or call trips on first.
+PYTHON_FLOOR = python3.$(shell sed -nE 's/^requires-python = ">=3\.([0-9]+)"$$/\1/p' $(ROOT)/pyproject.toml)
+
 check-touched-bindings: ## [gates] Each binding's tests, for the bindings the diff touches (vs GATE_BASE)
 	@$(if $(call touched,bindings/python),$(MAKE) python-test,echo "bindings: python untouched")
+	@$(if $(call touched,bindings/python),$(if $(shell command -v $(PYTHON_FLOOR)),\
+	   echo "── python-test at the floor ($(PYTHON_FLOOR))" && \
+	   PYTHONPATH=$(ROOT)/bindings/python:$(abspath $(SCIFORGE_PYTHON)) $(PYTHON_FLOOR) -m unittest discover -s $(ROOT)/bindings/python/tests,\
+	   echo "bindings: $(PYTHON_FLOOR) absent -- CI's python matrix runs the floor"),true)
 	@$(if $(call touched,bindings/c bindings/rust),$(MAKE) rust-test && $(MAKE) rust-clippy,echo "bindings: rust untouched")
 	@$(if $(call touched,bindings/c bindings/go),$(if $(shell command -v go),$(MAKE) go-check-vendor && $(MAKE) go-test,echo "bindings: go absent -- CI runs the Go leg"),echo "bindings: go untouched")
 	@$(if $(call touched,bindings/c),$(MAKE) c-test,echo "bindings: C untouched")
