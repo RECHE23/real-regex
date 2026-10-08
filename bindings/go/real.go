@@ -17,9 +17,7 @@ package real
 
 /*
 #cgo darwin CXXFLAGS: -std=c++20 -I${SRCDIR}/vendor_include -O2
-#cgo darwin LDFLAGS: -lc++
 #cgo linux CXXFLAGS: -std=c++20 -I${SRCDIR}/vendor_include -O2
-#cgo linux LDFLAGS: -lstdc++
 #include "real_capi.h"
 #include <stdlib.h>
 
