@@ -729,11 +729,11 @@ namespace real::compat::re2 {
       }
       std::string out;
       out.reserve(str->size());
-      out.append(str->substr(0, match.start()));
+      out.append(std::string_view {*str}.substr(0, match.start())); // views: a string's substr is a copy
       if (!expand_rewrite(out, rewrite, match)) {
         return false;
       }
-      out.append(str->substr(match.end()));
+      out.append(std::string_view {*str}.substr(match.end()));
       *str = std::move(out);
       return true;
     }
@@ -759,18 +759,21 @@ namespace real::compat::re2 {
       if (str == nullptr || !re.ok()) {
         return 0;
       }
-      std::string  out;
-      out.reserve(str->size());
-      std::size_t  last           {};
-      int          count          {};
-      bool         have_prev_end  {false};
-      std::size_t  prev_end       {};
-      const auto   matches        {re.longest_match_ ? re.regex_->find_iter_longest(*str) : re.regex_->find_iter(*str)};
+      std::string            out; // sized at the first match: a miss allocates nothing
+      const std::string_view text {*str};
+      std::size_t            last           {};
+      int                    count          {};
+      bool                   have_prev_end  {false};
+      std::size_t            prev_end       {};
+      const auto             matches        {re.longest_match_ ? re.regex_->find_iter_longest(text) : re.regex_->find_iter(text)};
       for (const auto& match : matches) {
         if (match.start() == match.end() && have_prev_end && match.start() == prev_end) {
           continue;
         }
-        out.append(str->substr(last, match.start() - last));
+        if (count == 0) {
+          out.reserve(text.size());
+        }
+        out.append(text.substr(last, match.start() - last)); // a view: a string's substr is a copy
         if (!expand_rewrite(out, rewrite, match)) {
           return 0;
         }
@@ -782,7 +785,7 @@ namespace real::compat::re2 {
       if (count == 0) {
         return 0;
       }
-      out.append(str->substr(last));
+      out.append(text.substr(last));
       *str = std::move(out);
       return count;
     }
