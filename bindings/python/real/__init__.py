@@ -389,6 +389,13 @@ def _rewrite_named_chars(pattern, flags=0):
     return "".join(out)
 
 
+# Native patterns already compiled, keyed (type, pattern, flags), read before anything else compile does: a module
+# function (real.search(p, s), ...) reached the lru_cache through two type tests, a globals() read and a try, which
+# cost it more than the search. Only native patterns, which no fallback policy changes; bounded like re's cache.
+_hot = {}
+_HOT_MAX = 512
+
+
 @functools.lru_cache(maxsize=512)
 def _compile_cached(pattern, flags):
     """Internal cached compilation helper.
@@ -429,6 +436,12 @@ def compile(pattern, flags=0, fallback=None):  # noqa: A001 - mirrors re.compile
         ValueError: If ``pattern`` is a compiled pattern and ``flags`` is non-zero.
         error: If the pattern is invalid, or unsupported and the policy is strict.
     """
+    try:
+        hot = _hot.get((type(pattern), pattern, flags))
+    except TypeError:  # an unhashable pattern (a bytearray) takes the checks below, which word its error
+        hot = None
+    if hot is not None and fallback is None:
+        return hot
     if isinstance(pattern, (Pattern, _FallbackPattern)):
         if flags:
             raise ValueError("cannot process flags argument with a compiled pattern")
@@ -436,16 +449,21 @@ def compile(pattern, flags=0, fallback=None):  # noqa: A001 - mirrors re.compile
     if fallback is None:
         fallback = globals()["fallback"]  # the module-level default policy (real.fallback)
     try:
-        return _compile_cached(pattern, flags)
+        compiled = _compile_cached(pattern, flags)
     except error:
         if fallback:
             return _FallbackPattern(_re.compile(pattern, flags), pattern, flags)
         raise
+    if len(_hot) >= _HOT_MAX:
+        _hot.clear()
+    _hot[(type(pattern), pattern, flags)] = compiled
+    return compiled
 
 
 def purge():
     """Clear the compiled-pattern cache (like ``re.purge``)."""
     _compile_cached.cache_clear()
+    _hot.clear()
 
 
 def match(pattern, string, flags=0):

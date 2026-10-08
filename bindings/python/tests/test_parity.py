@@ -271,6 +271,26 @@ class TestParity(unittest.TestCase):
         repl[1:2] = b"1"
         self.assertEqual(bp.sub(repl, b"a1"), br.sub(repl, b"a1"))
 
+    def test_module_compile_cache_keeps_policy_and_errors(self):
+        """The module functions' cache of compiled patterns holds native patterns only: a pattern compiled through
+        the fallback policy is not served once the policy is strict again, an unhashable pattern still raises the
+        TypeError re raises, and purge() empties it."""
+        previous = real.fallback
+        try:
+            real.fallback = True
+            self.assertEqual(real.compile(r"(a)\1").engine, "re")
+            real.fallback = False
+            with self.assertRaises(real.error):
+                real.compile(r"(a)\1")
+        finally:
+            real.fallback = previous
+        with self.assertRaises(TypeError):
+            real.compile(bytearray(b"a"))
+        self.assertIs(real.compile("a+"), real.compile("a+"))
+        self.assertEqual(real.search("a+", "baa").span(), (1, 3))
+        real.purge()
+        self.assertEqual(real.search("a+", "baa").span(), (1, 3))
+
     def test_sub_with_group_refs_parity(self):
         """sub() with back-references yields identical results."""
         for pattern, repl in [(r"(\w+)@(\w+)", r"\2/\1"),
