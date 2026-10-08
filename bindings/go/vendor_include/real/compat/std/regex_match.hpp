@@ -1418,7 +1418,8 @@ namespace real::compat {
     {
       // The first match on the suffix may be the empty one at its start; the next one then forbids an
       // empty match there, so it starts there only if it is the non-empty match sought.
-      for (const auto& match : engine.find_iter(text.substr(at))) {
+      for (auto walk {engine.find_iter(text.substr(at)).begin()}; !walk.exhausted(); ++walk) {
+        const auto& match {*walk};
         if (match.start(0) != 0) {
           return std::nullopt;
         }
@@ -1472,8 +1473,9 @@ namespace real::compat {
       while (restart && !done) {
         restart = false;
         const auto matches {re.posix_longest() ? engine.find_iter_longest(text, from) : engine.find_iter(text, from)};
-        for (const auto& match : matches) {
-          const bool retry_first {first && match.start(0) == match.end(0)};
+        for (auto walk {matches.begin()}; !walk.exhausted(); ++walk) {
+          const auto& match {*walk};
+          const bool  retry_first {first && match.start(0) == match.end(0)};
           first = false;
           detail::append_replacement(out, match, std::string_view {fmt}, text, last_end, no_copy, sed);
           done = first_only;

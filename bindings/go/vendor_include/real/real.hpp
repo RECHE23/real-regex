@@ -1626,7 +1626,8 @@ namespace real {
           return result;
         }
       }
-      for (const result_type& match : find_iter(text)) {
+      for (auto walk {find_iter(text).begin()}; !walk.exhausted(); ++walk) {
+        const result_type& match {*walk};
         result.push_back(match);
       }
       return result;
@@ -1676,7 +1677,8 @@ namespace real {
       std::size_t                          done   {};
       // The cap is tested after a replacement, not before the next: tested first, the walk had already searched
       // for one match past the cap, maybe the whole rest of the subject.
-      for (const result_type& match : find_iter(text)) {
+      for (auto walk {find_iter(text).begin()}; !walk.exhausted(); ++walk) {
+        const result_type& match {*walk};
         result.append(text.substr(last, match.start() - last));
         for (const replacement_piece& piece : pieces) {
           if (piece.group == npos) {
@@ -1717,7 +1719,8 @@ namespace real {
       std::vector<std::string_view> result;
       std::size_t                   last {};
       std::size_t                   done {};
-      for (const result_type& match : find_iter(text)) { // the cap after a split: see replace
+      for (auto walk {find_iter(text).begin()}; !walk.exhausted(); ++walk) { // the cap after a split: see replace
+        const result_type& match {*walk};
         result.push_back(text.substr(last, match.start() - last));
         for (std::size_t group = 1; group < match.size(); ++group) {
           result.push_back(match[group]);

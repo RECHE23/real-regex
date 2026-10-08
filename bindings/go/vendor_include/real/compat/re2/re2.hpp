@@ -766,7 +766,8 @@ namespace real::compat::re2 {
       bool                   have_prev_end  {false};
       std::size_t            prev_end       {};
       const auto             matches        {re.longest_match_ ? re.regex_->find_iter_longest(text) : re.regex_->find_iter(text)};
-      for (const auto& match : matches) {
+      for (auto walk {matches.begin()}; !walk.exhausted(); ++walk) {
+        const auto& match {*walk};
         if (match.start() == match.end() && have_prev_end && match.start() == prev_end) {
           continue;
         }
