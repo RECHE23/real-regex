@@ -644,6 +644,17 @@ int ensure_char_spans(MatchObject* match) {
     return 0;
 }
 
+// (start, end) as a tuple of two ints. Py_BuildValue parsed its format string on every call; Match.span and
+// regs build one per call or per group.
+PyObject* span_pair(Py_ssize_t start, Py_ssize_t end) {
+    PyObject* const a = PyLong_FromSsize_t(start);
+    PyObject* const b = a == nullptr ? nullptr : PyLong_FromSsize_t(end);
+    PyObject* const pair = b == nullptr ? nullptr : PyTuple_Pack(2, a, b);
+    Py_XDECREF(a);
+    Py_XDECREF(b);
+    return pair;
+}
+
 enum class span_part : std::uint8_t { start, end, both };
 
 PyObject* match_position(PyObject* self, PyObject* const* args, Py_ssize_t nargs, span_part part) {
@@ -672,7 +683,7 @@ PyObject* match_position(PyObject* self, PyObject* const* args, Py_ssize_t nargs
         case span_part::end:
             return PyLong_FromSsize_t(end);
         case span_part::both:
-            return Py_BuildValue("(nn)", start, end);
+            return span_pair(start, end);
     }
     return nullptr;  // unreachable
 }
@@ -832,7 +843,7 @@ PyObject* Match_get_regs(PyObject* self, void* /*closure*/) {
         return nullptr;
     }
     for (Py_ssize_t group = 0; group < count; ++group) {
-        PyObject* pair = Py_BuildValue("(nn)", spans[2 * group], spans[(2 * group) + 1]);
+        PyObject* pair = span_pair(spans[2 * group], spans[(2 * group) + 1]);
         if (pair == nullptr || PyTuple_SetItem(regs, group, pair) < 0) {
             Py_DECREF(regs);
             return nullptr;
