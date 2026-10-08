@@ -1558,17 +1558,33 @@ impl Regex {
 
     /// Replace at most `limit` matches (`0` means all).
     pub fn replacen<'t, R: Replacer>(&self, text: &'t str, limit: usize, mut rep: R) -> Cow<'t, str> {
+        if limit == 1 {
+            // One search, not an iterator: the batched walk fills matches past the first before the cap is seen.
+            return match self.captures(text) {
+                Some(caps) => {
+                    let m = caps.get(0).unwrap();
+                    let mut dst = String::with_capacity(text.len());
+                    dst.push_str(&text[..m.start()]);
+                    rep.replace_append(&caps, &mut dst);
+                    dst.push_str(&text[m.end()..]);
+                    Cow::Owned(dst)
+                }
+                None => Cow::Borrowed(text),
+            };
+        }
         let mut out: Option<String> = None;
         let mut last = 0;
         for (i, caps) in self.captures_iter(text).enumerate() {
-            if limit != 0 && i >= limit {
-                break;
-            }
             let m = caps.get(0).unwrap();
             let dst = out.get_or_insert_with(|| String::with_capacity(text.len()));
             dst.push_str(&text[last..m.start()]);
             rep.replace_append(&caps, dst);
             last = m.end();
+            // The cap after a replacement, not before the next: fetching one match past it scanned the rest of a
+            // sparse subject for a match that was never used.
+            if limit != 0 && i + 1 >= limit {
+                break;
+            }
         }
         match out {
             Some(mut dst) => {
@@ -1839,17 +1855,30 @@ pub mod bytes {
 
         /// Replace at most `limit` matches (`0` = all).
         pub fn replacen<'t, R: Replacer>(&self, text: &'t [u8], limit: usize, mut rep: R) -> Cow<'t, [u8]> {
+            if limit == 1 { // one search: see the str replacen
+                return match self.captures(text) {
+                    Some(caps) => {
+                        let m = caps.get(0).unwrap();
+                        let mut dst = Vec::with_capacity(text.len());
+                        dst.extend_from_slice(&text[..m.start()]);
+                        rep.replace_append(&caps, &mut dst);
+                        dst.extend_from_slice(&text[m.end()..]);
+                        Cow::Owned(dst)
+                    }
+                    None => Cow::Borrowed(text),
+                };
+            }
             let mut out: Option<Vec<u8>> = None;
             let mut last = 0;
             for (i, caps) in self.captures_iter(text).enumerate() {
-                if limit != 0 && i >= limit {
-                    break;
-                }
                 let m = caps.get(0).unwrap();
                 let dst = out.get_or_insert_with(|| Vec::with_capacity(text.len()));
                 dst.extend_from_slice(&text[last..m.start()]);
                 rep.replace_append(&caps, dst);
                 last = m.end();
+                if limit != 0 && i + 1 >= limit { // the cap after a replacement: see the str replacen
+                    break;
+                }
             }
             match out {
                 Some(mut dst) => {
