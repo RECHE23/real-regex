@@ -622,6 +622,10 @@ PyObject* pattern_group_names(PatternObject* pat) {
         }
         PyTuple_SetItem(pairs, i++, pair);
     }
+    if (pat->group_names != nullptr) {  // an allocation above can run a finalizer that let another thread fill it
+        Py_DECREF(pairs);
+        return pat->group_names;
+    }
     pat->group_names = pairs;
     return pairs;
 }
@@ -1897,19 +1901,25 @@ int get_repl_text(PatternObject* pat, PyObject* repl, std::string_view* out, std
             return 0;
         }
         Py_buffer view;
-        if (PyUnicode_Check(repl) || PyObject_GetBuffer(repl, &view, PyBUF_SIMPLE) < 0) {
+        // FULL_RO, not SIMPLE: a strided view (memoryview(b)[::2]) is a bytes-like object re takes too.
+        if (PyUnicode_Check(repl) || PyObject_GetBuffer(repl, &view, PyBUF_FULL_RO) < 0) {
             PyErr_Clear();
             PyErr_SetString(PyExc_TypeError, "expected bytes replacement");
             return -1;
         }
+        int copied = -1;
         try {
-            storage.assign(static_cast<const char*>(view.buf), static_cast<std::size_t>(view.len));
+            storage.resize(static_cast<std::size_t>(view.len));
+            copied = PyBuffer_ToContiguous(storage.data(), &view, view.len, 'C');
         } catch (...) {
             PyBuffer_Release(&view);
             set_cpp_error();
             return -1;
         }
         PyBuffer_Release(&view);
+        if (copied < 0) {
+            return -1;
+        }
         *out = storage;
         return 0;
     }
@@ -2193,7 +2203,11 @@ PyObject* Pattern_get_groupindex(PyObject* self, void*) {
                 return nullptr;
             }
         }
-        pat->group_index = index;
+        if (pat->group_index == nullptr) {  // as in pattern_group_names: another thread may have filled it
+            pat->group_index = index;
+        } else {
+            Py_DECREF(index);
+        }
     }
     return PyDict_Copy(pat->group_index);
 }

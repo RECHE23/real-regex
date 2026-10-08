@@ -272,6 +272,13 @@ class TestParity(unittest.TestCase):
         repl[1:2] = b"1"
         self.assertEqual(bp.sub(repl, b"a1"), br.sub(bytes(repl), b"a1"))
 
+    def test_sub_strided_template(self):
+        """A strided bytes-like template is read element by element, as re reads it (compared with bytes(view): re
+        < 3.12 refuses a memoryview template)."""
+        view = memoryview(b"<x\\y1z>")[::2]
+        self.assertEqual(real.compile(b"(a)").sub(view, b"xay"), re.compile(b"(a)").sub(bytes(view), b"xay"))
+        self.assertEqual(real.compile(b"(a)").search(b"xay").expand(view), re.compile(b"(a)").search(b"xay").expand(bytes(view)))
+
     def test_module_compile_cache_keeps_policy_and_errors(self):
         """The module functions' cache of compiled patterns holds native patterns only: a pattern compiled through
         the fallback policy is not served once the policy is strict again, an unhashable pattern still raises the
