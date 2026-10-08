@@ -1204,7 +1204,8 @@ bool collect_match_spans(PatternObject* pat, const subject_view& sv, std::size_t
     try {
         const GilRelease unlocked;
         std::size_t count = 0;
-        for (const auto& match : pat->rx->find_iter(sv.view(), pos_byte, endpos_byte)) {
+        for (auto walk {pat->rx->find_iter(sv.view(), pos_byte, endpos_byte).begin()}; !walk.exhausted(); ++walk) {
+          const auto& match {*walk};
             for (std::size_t group = 0; group <= ngroups; ++group) {
                 spans.push_back(match.start(group));
                 spans.push_back(match.end(group));
@@ -1306,7 +1307,8 @@ PyObject* Pattern_findall(PyObject* self, PyObject* const* args, Py_ssize_t narg
     // Small region: interleaved scan under the held GIL (releasing it would cost more
     // than the sub-microsecond walk).
     try {
-        for (const auto& match : pat->rx->find_iter(sv.view(), pos_byte, end_byte)) {
+        for (auto walk {pat->rx->find_iter(sv.view(), pos_byte, end_byte).begin()}; !walk.exhausted(); ++walk) {
+          const auto& match {*walk};
             if (!append_item(build_item([&](std::size_t group) {
                 return std::pair {match.start(group), match.end(group)};
             }))) {
@@ -1532,7 +1534,8 @@ PyObject* Pattern_split(PyObject* self, PyObject* const* args, Py_ssize_t nargs,
         // Small subject: interleaved scan under the held GIL. Byte-identical behaviour.
         try {
             Py_ssize_t done = 0;
-            for (const auto& match : pat->rx->find_iter(sv.view())) {
+            for (auto walk {pat->rx->find_iter(sv.view()).begin()}; !walk.exhausted(); ++walk) {
+              const auto& match {*walk};
                 if (!emit_match([&](std::size_t group) {
                     return std::pair {match.start(group), match.end(group)};
                 })) {
@@ -1949,7 +1952,8 @@ void run_template_sub(const real::regex& rx, const subject_view& sv,
                       std::string& result, Py_ssize_t& done) {
     Py_ssize_t last = 0;
     done = 0;
-    for (const auto& match : rx.find_iter(sv.view())) {
+    for (auto walk {rx.find_iter(sv.view()).begin()}; !walk.exhausted(); ++walk) {
+      const auto& match {*walk};
         result.append(sv.data + last, static_cast<std::size_t>(match.start()) - last);
         apply_template(segments, sv.data,
                        [&](std::size_t g) -> std::optional<std::pair<std::size_t, std::size_t>> {
@@ -2046,7 +2050,8 @@ PyObject* sub_impl(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyOb
         try {
             const Py_ssize_t full_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
             Py_ssize_t       last     = 0;
-            for (const auto& match : pat->rx->find_iter(sv.view())) {
+            for (auto walk {pat->rx->find_iter(sv.view()).begin()}; !walk.exhausted(); ++walk) {
+              const auto& match {*walk};
                 result.append(sv.data + last, static_cast<std::size_t>(match.start()) - last);
                 PyObject* match_obj = make_match(pat, string, match, 0, full_len);
                 if (match_obj == nullptr) {
