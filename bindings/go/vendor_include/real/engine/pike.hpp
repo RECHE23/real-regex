@@ -3245,8 +3245,11 @@ namespace real::detail {
     /*!
      * \brief Trailing-lookaround class+: body scan + longest end where lookaround holds.
      *
-     * Cold, noinline, called from real.hpp / find_iter outside \ref run, since it must not share a body or
-     * inlining unit with \ref run_class_loop (the hot [a-z]+ path). Dynamic-only. A code-point body
+     * Called from real.hpp / find_iter outside \ref run, once per match. Only this selector inlines into the
+     * caller; each walk is out of line, since it must not share a body or inlining unit with
+     * \ref run_class_loop (the hot [a-z]+ path). A cold, out-of-line selector made every match two calls,
+     * and clang kept the walk out of it: `[a-z]+(?=[a-z])` through `find_iter` +5 % (Apple clang,
+     * arm64). Dynamic-only. A code-point body
      * (\ref pattern_hints::trailing_la_cp) walks whole code points: a run holds only valid ones, so its
      * candidate ends are the bytes that are not UTF-8 continuations.
      *
@@ -3257,7 +3260,7 @@ namespace real::detail {
      * \return True on a match.
      */
     template <bool Cascade, typename OutSlots>
-    REAL_COLD
+    REAL_ALWAYS_INLINE
     bool run_class_loop_trailing_la(std::string_view text,
                                     std::size_t      start,
                                     run_mode         mode,
@@ -3270,6 +3273,8 @@ namespace real::detail {
 
     /*!
      * \brief The body of \ref run_class_loop_trailing_la for one body kind.
+     *
+     * Out of line but not cold: optimized for size, the walk counted 12-15 % more instructions on GCC.
      * \tparam Cascade Whether the byte walk may take its memchr-cascade tail.
      * \tparam Cp      The body is a `klass_cp` (whole code points) rather than a `klass`.
      * \param[in]  text      Subject.
@@ -3279,6 +3284,7 @@ namespace real::detail {
      * \return True on a match.
      */
     template <bool Cascade, bool Cp, typename OutSlots>
+    REAL_NOINLINE
     bool trailing_la_walk(std::string_view text,
                           std::size_t      start,
                           run_mode         mode,
