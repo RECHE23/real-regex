@@ -266,10 +266,11 @@ class TestParity(unittest.TestCase):
                 rp.sub(r"\9", "a1")
             self.assertEqual(rp.sub(r"\2", "a1"), "1")
         bp, br = real.compile(rb"(\w)(\d)"), re.compile(rb"(\w)(\d)")
+        # Against re with bytes(repl): re < 3.12 refuses a bytearray template (it caches templates by hash).
         repl = bytearray(rb"\2")
-        self.assertEqual(bp.sub(repl, b"a1"), br.sub(repl, b"a1"))
+        self.assertEqual(bp.sub(repl, b"a1"), br.sub(bytes(repl), b"a1"))
         repl[1:2] = b"1"
-        self.assertEqual(bp.sub(repl, b"a1"), br.sub(repl, b"a1"))
+        self.assertEqual(bp.sub(repl, b"a1"), br.sub(bytes(repl), b"a1"))
 
     def test_module_compile_cache_keeps_policy_and_errors(self):
         """The module functions' cache of compiled patterns holds native patterns only: a pattern compiled through
